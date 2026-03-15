@@ -14,7 +14,7 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from ..core.config import settings
+from ..core.config import settings, get_effective_public_base_url
 from ..db import get_db
 from ..models import User
 
@@ -298,6 +298,105 @@ def _exchange_jwt_for_apikey(jwt_token: str) -> str:
     if not active or not (key := (active.get("key") or "").strip()):
         raise ValueError("未获取到 API Key")
     return key
+
+
+# ── 自建微信登录（不用速推）────────────────────────────────────────────────
+
+def _use_own_wechat_login() -> bool:
+    """是否启用自建微信登录（配置了 wechat_app_id + wechat_app_secret）。"""
+    app_id = (getattr(settings, "wechat_app_id", None) or "").strip()
+    secret = (getattr(settings, "wechat_app_secret", None) or "").strip()
+    return bool(app_id and secret)
+
+
+@router.get("/wechat-login-url", summary="自建微信：获取扫码登录授权 URL")
+def get_wechat_login_url(request: Request):
+    """返回微信开放平台网站应用扫码授权 URL。回调地址用 PUBLIC_BASE_URL，未配则用本机 IP:PORT。"""
+    if not _use_own_wechat_login():
+        raise HTTPException(status_code=400, detail="未配置自建微信登录（wechat_app_id/wechat_app_secret）")
+    app_id = (getattr(settings, "wechat_app_id", None) or "").strip()
+    base = get_effective_public_base_url()
+    redirect_uri = quote(f"{base}/auth/wechat-callback", safe="")
+    state = "lobster"
+    url = f"https://open.weixin.qq.com/connect/qrconnect?appid={app_id}&redirect_uri={redirect_uri}&response_type=code&scope=snsapi_login&state={state}"
+    return {"login_url": url}
+
+
+@router.get("/wechat-callback", summary="自建微信：扫码登录回调")
+def wechat_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """微信回调带 code，用 code 换 openid，查/建用户并下发 JWT，重定向到 /?token=。"""
+    if not _use_own_wechat_login():
+        raise HTTPException(status_code=400, detail="未配置自建微信登录")
+    if not (code or "").strip():
+        raise HTTPException(status_code=400, detail="缺少 code 参数")
+    app_id = (getattr(settings, "wechat_app_id", None) or "").strip()
+    app_secret = (getattr(settings, "wechat_app_secret", None) or "").strip()
+    with httpx.Client(timeout=10.0) as client:
+        r = client.get(
+            "https://api.weixin.qq.com/sns/oauth2/access_token",
+            params={
+                "appid": app_id,
+                "secret": app_secret,
+                "code": code.strip(),
+                "grant_type": "authorization_code",
+            },
+        )
+    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    openid = (data.get("openid") or "").strip()
+    if not openid:
+        err = data.get("errmsg") or data.get("error_description") or "微信授权失败"
+        logger.warning("wechat_callback no openid: %s", data)
+        raise HTTPException(status_code=400, detail=err)
+    user = db.query(User).filter(User.wechat_openid == openid).first()
+    if not user:
+        email = f"wx_{openid[:16]}@wechat.lobster.local"
+        if db.query(User).filter(User.email == email).first():
+            email = f"wx_{openid}@wechat.lobster.local"
+        user = User(
+            email=email,
+            hashed_password=get_password_hash(f"wechat-{openid}"),
+            credits=0,
+            role="user",
+            preferred_model="sutui",
+            wechat_openid=openid,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    access_token = create_access_token(data={"sub": str(user.id)})
+    base = get_effective_public_base_url()
+    return RedirectResponse(url=f"{base}/auth/wechat-success?token={access_token}", status_code=302)
+
+
+@router.get("/wechat-success", summary="自建微信：登录成功页（展示 Token，供本地盒子用户复制）")
+def wechat_success(token: Optional[str] = None):
+    """扫码登录成功后跳转至此页。有 PUBLIC_BASE_URL 时从 wechat-callback 跳来。展示 Token 供本地无公网前端用户复制。"""
+    from fastapi.responses import HTMLResponse
+    if not token or not token.strip():
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><meta charset='utf-8'></head><body><p>缺少 token，请重新扫码登录。</p></body></html>",
+            status_code=400,
+        )
+    t = token.strip()
+    html = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>登录成功</title>"
+        "<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:2rem auto;padding:1rem;}"
+        ".token{word-break:break-all;background:#eee;padding:0.75rem;border-radius:6px;margin:0.5rem 0;font-size:0.9rem;}"
+        "button{margin-top:0.5rem;padding:0.5rem 1rem;cursor:pointer;}</style></head><body>"
+        "<h2>登录成功</h2>"
+        "<p>若您使用<strong>本地应用</strong>（无公网），请复制下方 Token 到本地应用中粘贴完成登录：</p>"
+        "<div class='token' id='tok'>" + t.replace("<", "&lt;") + "</div>"
+        "<button onclick=\"navigator.clipboard.writeText(document.getElementById('tok').innerText);this.textContent='已复制'\">复制 Token</button>"
+        "<p style='margin-top:1.5rem;color:#666;font-size:0.9rem'>若您从本服务器打开前端，可<a href='/?token=" + t + "'>点击此处</a>自动完成登录。</p>"
+        "</body></html>"
+    )
+    return HTMLResponse(html)
 
 
 @router.get("/sutui-callback", summary="在线版：速推登录回调，携带 token 参数")

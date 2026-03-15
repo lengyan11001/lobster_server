@@ -1,8 +1,12 @@
 var USE_INDEPENDENT_AUTH = false;
+var USE_OWN_WECHAT_LOGIN = false;
+var USE_OWN_WECHAT_PAY = false;
 (function fetchEdition() {
   fetch(API_BASE + '/api/edition').then(function(r) { return r.ok ? r.json() : {}; }).then(function(d) {
     EDITION = (d && d.edition) === 'online' ? 'online' : 'online';
     USE_INDEPENDENT_AUTH = !!(d && d.use_independent_auth);
+    USE_OWN_WECHAT_LOGIN = !!(d && d.use_own_wechat_login);
+    USE_OWN_WECHAT_PAY = !!(d && d.use_own_wechat_pay);
     if (EDITION === 'online' && d) {
       ALLOW_SELF_CONFIG_MODEL = d.allow_self_config_model !== false;
       RECHARGE_URL = (d.recharge_url && d.recharge_url.trim()) ? d.recharge_url.trim() : null;
@@ -10,10 +14,19 @@ var USE_INDEPENDENT_AUTH = false;
     var sb = document.getElementById('sutuiLoginBlock');
     var form = document.getElementById('loginForm');
     var registerBlock = document.getElementById('registerBlock');
+    var ownWechatBlock = document.getElementById('ownWechatLoginBlock');
     if (EDITION === 'online' && USE_INDEPENDENT_AUTH) {
       if (sb) sb.style.display = 'none';
       if (form) form.style.display = '';
       if (registerBlock) registerBlock.style.display = '';
+      if (ownWechatBlock) {
+        if (USE_OWN_WECHAT_LOGIN) {
+          ownWechatBlock.style.display = 'block';
+          startOwnWechatLogin();
+        } else {
+          ownWechatBlock.style.display = 'none';
+        }
+      }
     } else if (EDITION === 'online' && sb) {
       sb.style.display = 'block';
       if (form) form.style.display = 'none';
@@ -87,6 +100,30 @@ function startSutuiQrLogin() {
   if (refreshBtn) {
     refreshBtn.onclick = function(e) { e.preventDefault(); startSutuiQrLogin(); };
   }
+}
+
+function startOwnWechatLogin() {
+  var img = document.getElementById('ownWechatQrImg');
+  var status = document.getElementById('ownWechatQrStatus');
+  var link = document.getElementById('ownWechatLink');
+  if (!status) return;
+  status.textContent = '正在获取…';
+  if (img) img.style.display = 'none';
+  if (link) link.style.display = 'none';
+  fetch(API_BASE + '/auth/wechat-login-url')  // 自建微信扫码登录.then(function(r) { return r.json(); }).then(function(d) {
+    var url = (d && d.login_url) || '';
+    if (!url) { status.textContent = '获取失败'; return; }
+    status.textContent = '请使用微信扫描二维码登录';
+    if (img) {
+      img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(url);
+      img.style.display = 'inline';
+    }
+    if (link) {
+      link.href = url;
+      link.style.display = 'inline-block';
+      link.textContent = '打开微信扫码登录';
+    }
+  }).catch(function() { status.textContent = '获取失败'; });
 }
 
 (function applyTokenFromUrl() {
@@ -393,14 +430,19 @@ function loadBillingView() {
         if (rechargeResult) { rechargeResult.style.display = 'none'; rechargeResult.innerHTML = ''; }
         rechargeSubmitBtn.disabled = true;
         showMsg(rechargeMsg, '正在创建订单…', false);
-        fetch(API_BASE + '/api/recharge/create', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ package_index: idx }) })
+        var apiUrl = USE_OWN_WECHAT_PAY ? (API_BASE + '/api/recharge/wechat-create') : (API_BASE + '/api/recharge/create');
+        fetch(apiUrl, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ package_index: idx }) })
           .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
           .then(function(x) {
             if (!x.ok && x.data && x.data.detail) { showMsg(rechargeMsg, x.data.detail, true); return; }
             var d = x.data || {};
             showMsg(rechargeMsg, '', false);
             if (rechargeResult) {
-              rechargeResult.innerHTML = '<p><strong>订单号：' + escapeHtml(d.out_trade_no || '') + '</strong></p><p>' + escapeHtml(d.payment_info || '') + '</p>';
+              if (USE_OWN_WECHAT_PAY && d.code_url) {
+                rechargeResult.innerHTML = '<p><strong>订单号：' + escapeHtml(d.out_trade_no || '') + '</strong></p><p>请使用微信扫描下方二维码完成支付：</p><img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(d.code_url) + '" alt="支付二维码" style="max-width:220px;height:auto;margin-top:0.5rem;">';
+              } else {
+                rechargeResult.innerHTML = '<p><strong>订单号：' + escapeHtml(d.out_trade_no || '') + '</strong></p><p>' + escapeHtml(d.payment_info || '') + '</p>';
+              }
               rechargeResult.style.display = 'block';
             }
             if (typeof loadSutuiBalance === 'function') loadSutuiBalance();

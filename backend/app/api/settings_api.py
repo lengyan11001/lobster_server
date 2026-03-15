@@ -16,6 +16,17 @@ from ..models import User
 router = APIRouter()
 
 
+def _use_own_wechat_login() -> bool:
+    return bool((getattr(settings, "wechat_app_id", None) or "").strip() and (getattr(settings, "wechat_app_secret", None) or "").strip())
+
+
+def _use_own_wechat_pay() -> bool:
+    return bool(
+        (getattr(settings, "wechat_mch_id", None) or "").strip()
+        and (getattr(settings, "wechat_pay_apiv3_key", None) or "").strip()
+    )
+
+
 @router.get("/api/edition", summary="当前版本（本构建仅在线版）")
 def get_edition():
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
@@ -24,6 +35,8 @@ def get_edition():
     out = {"edition": edition}
     use_independent = getattr(settings, "lobster_independent_auth", True)
     out["use_independent_auth"] = bool(use_independent)
+    out["use_own_wechat_login"] = _use_own_wechat_login()
+    out["use_own_wechat_pay"] = _use_own_wechat_pay()
     if edition == "online":
         out["allow_self_config_model"] = getattr(settings, "sutui_online_model_self_config", True)
         if not use_independent:

@@ -101,10 +101,27 @@ def _migrate_user_sutui_token():
         logger.warning("Migration sutui_token skipped: %s", e)
 
 
+def _migrate_user_wechat_openid():
+    """Add wechat_openid column to users if missing (自建微信登录)."""
+    from sqlalchemy import text
+    try:
+        if "sqlite" not in settings.database_url:
+            return
+        with engine.connect() as conn:
+            r = conn.execute(text("PRAGMA table_info(users)"))
+            cols = [row[1] for row in r]
+            if "wechat_openid" not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN wechat_openid VARCHAR(64)"))
+                conn.commit()
+    except Exception as e:
+        logger.warning("Migration wechat_openid skipped: %s", e)
+
+
 def create_app() -> FastAPI:
     logger.info("[启动] create_app 开始")
     Base.metadata.create_all(bind=engine)
     _migrate_user_sutui_token()
+    _migrate_user_wechat_openid()
     _ensure_default_user()
     _seed_capability_catalog()
     _auto_start_openclaw()
@@ -153,13 +170,18 @@ def create_app() -> FastAPI:
     assets_dir.mkdir(exist_ok=True)
     app.mount("/media", StaticFiles(directory=str(assets_dir)), name="media")
 
-    static_dir = Path(__file__).resolve().parent.parent.parent / "static"
-    if static_dir.exists():
-        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    if getattr(settings, "serve_frontend", True):
+        static_dir = Path(__file__).resolve().parent.parent.parent / "static"
+        if static_dir.exists():
+            app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+            @app.get("/", include_in_schema=False)
+            def index():
+                return FileResponse(static_dir / "index.html")
+    else:
         @app.get("/", include_in_schema=False)
         def index():
-            return FileResponse(static_dir / "index.html")
+            return JSONResponse(content={"message": "Lobster API only. Use the online client to access."})
 
     logger.info("[启动] create_app 完成")
     return app

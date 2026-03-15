@@ -1,4 +1,4 @@
-"""软件收费模式配置与展示：技能解锁价格、算力套餐（积分兑换比例）；自有充值订单。"""
+"""软件收费模式配置与展示：技能解锁价格、算力套餐（积分兑换比例）；自有充值订单；自建微信支付。"""
 import json
 import logging
 import time
@@ -6,16 +6,31 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..core.config import settings
+from ..core.config import settings, get_effective_public_base_url
 from ..db import get_db
 from .auth import get_current_user
 from ..models import RechargeOrder, User
 
 logger = logging.getLogger(__name__)
+
+
+def _wechat_pay_configured() -> bool:
+    mch_id = (getattr(settings, "wechat_mch_id", None) or "").strip()
+    key = (getattr(settings, "wechat_pay_apiv3_key", None) or "").strip()
+    serial = (getattr(settings, "wechat_pay_serial_no", None) or "").strip()
+    key_path = (getattr(settings, "wechat_pay_private_key_path", None) or "").strip()
+    app_id = (getattr(settings, "wechat_app_id", None) or "").strip()
+    return bool(mch_id and key and serial and key_path and app_id)
+
+
+def _get_public_base_url() -> str:
+    """微信支付回调等用。未配置 PUBLIC_BASE_URL 时用本机 IP:PORT。"""
+    return get_effective_public_base_url()
 
 router = APIRouter()
 
@@ -165,6 +180,133 @@ def create_recharge_order(
 class RechargeCompleteBody(BaseModel):
     out_trade_no: Optional[str] = None
     order_id: Optional[int] = None
+
+
+# ── 自建微信支付（不用速推）────────────────────────────────────────────────
+
+@router.post("/api/recharge/wechat-create", summary="创建充值订单并调微信 Native 下单，返回扫码链接")
+def create_wechat_recharge_order(
+    body: RechargeCreateBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not _use_independent_recharge():
+        raise HTTPException(status_code=400, detail="当前未启用自有充值")
+    if not _wechat_pay_configured():
+        raise HTTPException(status_code=400, detail="未配置自建微信支付（wechat_mch_id/wechat_pay_apiv3_key/wechat_pay_serial_no/wechat_pay_private_key_path/wechat_app_id）")
+    pricing = _get_billing_pricing()
+    packages = pricing.get("credit_packages", _DEFAULT_CREDIT_PACKAGES)
+    if body.package_index is not None:
+        idx = int(body.package_index)
+        if idx < 0 or idx >= len(packages):
+            raise HTTPException(status_code=400, detail="无效套餐")
+        p = packages[idx]
+        amount_yuan = p["price_yuan"]
+        credits = p["credits"]
+    elif body.price_yuan is not None and body.credits is not None:
+        amount_yuan = int(body.price_yuan)
+        credits = int(body.credits)
+        if amount_yuan <= 0 or credits <= 0:
+            raise HTTPException(status_code=400, detail="金额与积分须为正数")
+    else:
+        raise HTTPException(status_code=400, detail="请选择套餐或指定 price_yuan + credits")
+    out_trade_no = f"R{current_user.id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+    order = RechargeOrder(
+        user_id=current_user.id,
+        amount_yuan=amount_yuan,
+        credits=credits,
+        status="pending",
+        out_trade_no=out_trade_no,
+        payment_method="wechat",
+    )
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+    base_url = _get_public_base_url()
+    notify_url = f"{base_url}/api/recharge/wechat-notify"
+    key_path = Path((getattr(settings, "wechat_pay_private_key_path", None) or "").strip())
+    if not key_path.is_absolute():
+        key_path = _BASE_DIR / key_path
+    try:
+        private_key = key_path.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning("wechat pay private key read failed: %s", e)
+        raise HTTPException(status_code=500, detail="微信支付商户私钥读取失败")
+    try:
+        from wechatpayv3 import WeChatPay, WeChatPayType
+        wxpay = WeChatPay(
+            wechatpay_type=WeChatPayType.NATIVE,
+            mchid=(getattr(settings, "wechat_mch_id", None) or "").strip(),
+            private_key=private_key,
+            cert_serial_no=(getattr(settings, "wechat_pay_serial_no", None) or "").strip(),
+            apiv3_key=(getattr(settings, "wechat_pay_apiv3_key", None) or "").strip(),
+            appid=(getattr(settings, "wechat_app_id", None) or "").strip(),
+        )
+        code_url, _ = wxpay.pay(
+            description=f"龙虾积分充值-{credits}积分",
+            out_trade_no=out_trade_no,
+            amount={"total": amount_yuan * 100},
+            notify_url=notify_url,
+        )
+    except Exception as e:
+        logger.exception("wechat pay create failed: %s", e)
+        raise HTTPException(status_code=502, detail="微信下单失败，请稍后重试")
+    return {
+        "order_id": order.id,
+        "out_trade_no": order.out_trade_no,
+        "amount_yuan": order.amount_yuan,
+        "credits": order.credits,
+        "code_url": code_url,
+        "status": order.status,
+    }
+
+
+@router.post("/api/recharge/wechat-notify", summary="微信支付异步回调（验签解密后完成订单加积分）")
+async def wechat_pay_notify(request: Request, db: Session = Depends(get_db)):
+    if not _wechat_pay_configured():
+        return PlainTextResponse("fail", status_code=500)
+    raw = await request.body()
+    headers = dict(request.headers)
+    key_path = Path((getattr(settings, "wechat_pay_private_key_path", None) or "").strip())
+    if not key_path.is_absolute():
+        key_path = _BASE_DIR / key_path
+    try:
+        private_key = key_path.read_text(encoding="utf-8")
+    except Exception:
+        return PlainTextResponse("fail", status_code=500)
+    try:
+        from wechatpayv3 import WeChatPay, WeChatPayType
+        wxpay = WeChatPay(
+            wechatpay_type=WeChatPayType.NATIVE,
+            mchid=(getattr(settings, "wechat_mch_id", None) or "").strip(),
+            private_key=private_key,
+            cert_serial_no=(getattr(settings, "wechat_pay_serial_no", None) or "").strip(),
+            apiv3_key=(getattr(settings, "wechat_pay_apiv3_key", None) or "").strip(),
+            appid=(getattr(settings, "wechat_app_id", None) or "").strip(),
+        )
+        result = wxpay.callback(headers, raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+    except Exception as e:
+        logger.warning("wechat notify callback verify failed: %s", e)
+        return PlainTextResponse("fail", status_code=400)
+    event_type = result.get("event_type") if isinstance(result, dict) else None
+    if not result or event_type != "TRANSACTION.SUCCESS":
+        return PlainTextResponse("success")
+    res = result.get("resource") if isinstance(result.get("resource"), dict) else result
+    out_trade_no = (res.get("out_trade_no") or result.get("out_trade_no") or "").strip()
+    if not out_trade_no:
+        return PlainTextResponse("success")
+    order = db.query(RechargeOrder).filter(RechargeOrder.out_trade_no == out_trade_no).first()
+    if not order or order.status == "paid":
+        return PlainTextResponse("success")
+    user = db.query(User).filter(User.id == order.user_id).first()
+    if user:
+        user.credits = (user.credits or 0) + order.credits
+    order.status = "paid"
+    from datetime import datetime
+    order.paid_at = datetime.utcnow()
+    db.commit()
+    return PlainTextResponse("success")
 
 
 @router.post("/api/recharge/complete", summary="完成充值（管理员/回调：到账加积分）")

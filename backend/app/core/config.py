@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from functools import lru_cache
 from typing import List, Optional
 
@@ -14,7 +15,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./lobster.db"
     host: str = "0.0.0.0"
     port: int = 8000
-    """可选：用于生成素材文件等对外 URL 的根地址（纯 ASCII，避免编码问题）。例: http://192.168.200.57:8000"""
+    """微信/支付回调根地址。不填时自动用本机 LAN IP:PORT；服务器仅公网 IP 无域名时填 http://公网IP:8000"""
     public_base_url: Optional[str] = None
     mcp_port: int = 8001
     """本构建统一为在线版：online（独立登录/注册或速推扫码，速推 Token 来自登录）。"""
@@ -40,6 +41,18 @@ class Settings(BaseSettings):
     sutui_recharge_url: Optional[str] = None
     """是否允许 online 用户自配模型 Key；False 时统一走速推服务端模型（仅 online 使用）"""
     sutui_online_model_self_config: bool = True
+    """为 False 时仅提供 API，不挂载前端静态页与 /；online 客户端用本地页面访问本服务时设为 false。"""
+    serve_frontend: bool = True
+    # 自建微信登录（不用速推）：开放平台网站应用 appid/secret，配置后登录页展示微信扫码
+    wechat_app_id: Optional[str] = None
+    wechat_app_secret: Optional[str] = None
+    # 自建微信支付（不用速推）：商户号、APIv3 密钥，配置后充值可走微信 Native 扫码
+    wechat_mch_id: Optional[str] = None
+    wechat_pay_apiv3_key: Optional[str] = None
+    """微信支付商户证书序列号（回调验签用）"""
+    wechat_pay_serial_no: Optional[str] = None
+    """微信支付商户私钥文件路径（.pem）或 PEM 内容，统一下单签名用"""
+    wechat_pay_private_key_path: Optional[str] = None
     openclaw_gateway_url: Optional[str] = None
     openclaw_gateway_token: Optional[str] = None
     openclaw_agent_id: str = "main"
@@ -63,3 +76,19 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+
+def get_effective_public_base_url() -> str:
+    """微信/支付回调等用的根地址。未配置 PUBLIC_BASE_URL 时用本机 LAN IP + PORT（本地或服务器仅 IP 时可直接用）。"""
+    base = (getattr(settings, "public_base_url", None) or "").strip().rstrip("/")
+    if base:
+        return base
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        ip = "127.0.0.1"
+    port = getattr(settings, "port", 8000)
+    return f"http://{ip}:{port}"

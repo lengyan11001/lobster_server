@@ -19,9 +19,10 @@ echo "[2/2] 安装依赖 pip install -r requirements.txt ..."
 if [ ! -f ".env" ]; then
   cp .env.example .env
   echo ""
-  echo "已复制 .env.example → .env，请编辑 .env 填写 SECRET_KEY、SUTUI_SERVER_TOKEN 等后执行："
+  echo "已复制 .env.example → .env，请编辑 .env 填写 SECRET_KEY、SUTUI_SERVER_TOKEN、微信/支付等后执行："
   echo "  ./scripts/server_start.sh"
+  echo "（若 lobster_server 仓库带了一键配置脚本，可运行: python3 scripts/config_env.py）"
   exit 0
 fi
 
-echo "安装完成。启动：./scripts/server_start.sh"
+echo "安装完成。启动: ./scripts/server_start.sh"

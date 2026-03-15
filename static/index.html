@@ -109,6 +109,14 @@
           <button type="submit">登录</button>
           <div id="loginMsg" class="msg"></div>
         </form>
+        <div id="ownWechatLoginBlock" style="display:none;margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);text-align:center;">
+          <p style="font-size:0.9rem;color:var(--text-muted);margin-bottom:0.5rem;">或使用微信扫码登录</p>
+          <div id="ownWechatQrWrap" style="min-height:200px;">
+            <img id="ownWechatQrImg" src="" alt="微信扫码" style="display:none;width:200px;height:200px;">
+            <p id="ownWechatQrStatus" style="font-size:0.85rem;color:var(--text-muted);">正在获取…</p>
+            <a href="#" id="ownWechatLink" target="_blank" rel="noopener" style="display:none;color:var(--primary);">打开微信扫码登录</a>
+          </div>
+        </div>
         <div id="registerBlock" style="display:none;margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);">
           <p style="font-size:0.9rem;color:var(--text-muted);margin-bottom:0.5rem;">没有账号？</p>
           <form id="registerForm">

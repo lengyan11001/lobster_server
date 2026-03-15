@@ -21,6 +21,8 @@ class User(Base):
     preferred_model: Mapped[str] = mapped_column(String(128), default="openclaw", nullable=False)
     """速推登录后下发的 token，用于调用速推统一接口。"""
     sutui_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    """自建微信登录：开放平台 openid，用于扫码登录关联用户。"""
+    wechat_openid: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
