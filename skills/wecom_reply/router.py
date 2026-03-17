@@ -62,7 +62,10 @@ class WXBizMsgCrypt:
     def __init__(self, token: str, encoding_aes_key: str, corp_id: str):
         self.token = token
         self.corp_id = corp_id
-        key_b64 = encoding_aes_key + "="
+        key_b64 = (encoding_aes_key or "").strip()
+        # 企微 EncodingAESKey 为 43 位，base64 解码需补足到 4 的倍数
+        while len(key_b64) % 4:
+            key_b64 += "="
         self.aes_key = self._b64decode(key_b64)
         if len(self.aes_key) != 32:
             raise ValueError("EncodingAESKey 解码后应为 32 字节")
