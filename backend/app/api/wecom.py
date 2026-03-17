@@ -272,7 +272,8 @@ async def wecom_callback_post(
         if encrypt_el is None or not (encrypt_el.text or "").strip():
             logger.warning("[WeCom] POST 无 Encrypt")
             return Response(content="", status_code=400)
-        msg_encrypt = (unquote((encrypt_el.text or "").strip()) or "").strip()
+        # POST 的 Encrypt 在 XML 体内，通常已是原始 base64，不做 unquote 避免破坏密文
+        msg_encrypt = (encrypt_el.text or "").strip()
         crypt = WXBizMsgCrypt(cfg.token, cfg.encoding_aes_key, cfg.corp_id or "default")
         if not crypt.verify_signature(msg_signature, timestamp, nonce, msg_encrypt):
             logger.warning("[WeCom] POST 验签失败 path=%s", callback_path)
