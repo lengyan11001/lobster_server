@@ -96,10 +96,19 @@ class WXBizMsgCrypt:
         aes_msg = self._b64decode(b64)
         iv = self.aes_key[:16]
         cipher = AES.new(self.aes_key, AES.MODE_CBC, iv)
-        rand_msg = unpad(cipher.decrypt(aes_msg), AES.block_size)
+        decrypted = cipher.decrypt(aes_msg)
+        # 与企微官方库一致：用最后一字节表示 padding 长度并切除，避免 PyCryptodome unpad 对长消息校验过严
+        if len(decrypted) < 16 + 4 + 1:
+            raise ValueError("解密后长度不足")
+        pad_len = decrypted[-1]
+        if not (1 <= pad_len <= 16):
+            raise ValueError("解密后 padding 非法")
+        rand_msg = decrypted[:-pad_len]
         if len(rand_msg) < 16 + 4:
             raise ValueError("解密后长度不足")
         msg_len = int.from_bytes(rand_msg[16:20], "big")
+        if 20 + msg_len > len(rand_msg):
+            raise ValueError("msg_len 越界")
         msg = rand_msg[20 : 20 + msg_len].decode("utf-8")
         return msg
 
