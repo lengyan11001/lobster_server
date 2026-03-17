@@ -300,8 +300,9 @@ async def wecom_callback_post(
         )
         db.add(pending)
         db.commit()
-        # 不主动回复，仅入队；用户通过「拉取并回复」由 AI 生成并发送应用消息
-        reply_xml = _build_reply_xml(from_user, to_user, "")
+        # 先回占位提示，真实 AI 回复在「拉取并回复」后通过应用消息发送
+        placeholder = "稍后由 AI 回复您。"
+        reply_xml = _build_reply_xml(from_user, to_user, placeholder)
         reply_encrypt = crypt.encrypt(reply_xml)
         reply_nonce = "".join(random.choices(string.ascii_letters + string.digits, k=16))
         reply_ts = str(int(time.time()))
