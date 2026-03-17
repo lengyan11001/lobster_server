@@ -138,12 +138,32 @@ def _migrate_wecom_config_secret():
         logger.warning("Migration wecom_configs.secret skipped: %s", e)
 
 
+def _migrate_wecom_agent_id():
+    """Add agent_id to wecom_configs and wecom_pending_messages (发送应用消息时必填)."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            r = conn.execute(text("PRAGMA table_info(wecom_configs)"))
+            cols = [row[1] for row in r]
+            if "agent_id" not in cols:
+                conn.execute(text("ALTER TABLE wecom_configs ADD COLUMN agent_id INTEGER"))
+                conn.commit()
+            r2 = conn.execute(text("PRAGMA table_info(wecom_pending_messages)"))
+            cols2 = [row[1] for row in r2]
+            if "agent_id" not in cols2:
+                conn.execute(text("ALTER TABLE wecom_pending_messages ADD COLUMN agent_id INTEGER"))
+                conn.commit()
+    except Exception as e:
+        logger.warning("Migration wecom agent_id skipped: %s", e)
+
+
 def create_app() -> FastAPI:
     logger.info("[启动] create_app 开始")
     Base.metadata.create_all(bind=engine)
     _migrate_user_sutui_token()
     _migrate_user_wechat_openid()
     _migrate_wecom_config_secret()
+    _migrate_wecom_agent_id()
     _ensure_default_user()
     _seed_capability_catalog()
     _auto_start_openclaw()

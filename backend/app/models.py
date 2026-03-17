@@ -139,6 +139,8 @@ class WecomConfig(Base):
     corp_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     """应用 secret，用于获取 access_token 并调用「发送应用消息」接口（轮询模式下推送回复）。"""
     secret: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    """应用 AgentId（数字），发送应用消息时必填；未填则依赖消息体内的 AgentID。"""
+    agent_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     product_knowledge: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -151,6 +153,8 @@ class WecomPendingMessage(Base):
     wecom_config_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     from_user: Mapped[str] = mapped_column(String(128), nullable=False)
     to_user: Mapped[str] = mapped_column(String(128), nullable=False)
+    """应用 AgentId（从回调 XML AgentID 解析），发送回复时用；为空则用 WecomConfig.agent_id。"""
+    agent_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     msg_type: Mapped[str] = mapped_column(String(32), nullable=False, default="text")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)  # pending, replied, failed

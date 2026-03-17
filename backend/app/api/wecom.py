@@ -283,11 +283,17 @@ async def wecom_callback_post(
         from_user = (parsed.get("FromUserName") or "").strip()
         to_user = (parsed.get("ToUserName") or "").strip()
         content = (parsed.get("Content") or "").strip()
+        agent_id_raw = (parsed.get("AgentID") or parsed.get("AgentId") or "").strip()
+        try:
+            agent_id = int(agent_id_raw) if agent_id_raw else None
+        except ValueError:
+            agent_id = None
         # 入队，供本地轮询拉取
         pending = WecomPendingMessage(
             wecom_config_id=cfg.id,
             from_user=from_user,
             to_user=to_user,
+            agent_id=agent_id,
             content=content,
             msg_type=msg_type or "text",
             status="pending",
@@ -386,21 +392,31 @@ async def wecom_submit_reply(
         r = await client.get(token_url, params={"corpid": cfg.corp_id, "corpsecret": cfg.secret})
         r.raise_for_status()
         data = r.json()
-        if data.get("errcode") != 0:
-            row.status = "failed"
-            db.commit()
-            raise HTTPException(status_code=502, detail=f"企微 gettoken 失败: {data.get('errmsg', '')}")
-        access_token = data.get("access_token", "")
-    # 发送应用消息（to_user 为应用 agentid，from_user 为外部用户 id）
+    if data.get("errcode") != 0:
+        row.status = "failed"
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"企微 gettoken 失败: {data.get('errmsg', '')}")
+    access_token = data.get("access_token", "")
+    # 发送应用消息：touser=接收者 userid（发消息的人），agentid=应用 ID（数字）
+    agentid = getattr(row, "agent_id", None) or getattr(cfg, "agent_id", None)
+    if agentid is None:
+        try:
+            agentid = int(row.to_user) if (row.to_user or "").strip().isdigit() else None
+        except (ValueError, TypeError):
+            agentid = None
+    if agentid is None:
+        row.status = "failed"
+        row.reply_text = (body.reply_text or "")[:500]
+        db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail="缺少应用 AgentId（应用 ID）。请在企微后台应用详情中查看并配置 agent_id，或确保回调消息体内含 AgentID",
+        )
     send_url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={access_token}"
-    try:
-        agentid = int(row.to_user) if (row.to_user or "").strip().isdigit() else row.to_user
-    except (ValueError, TypeError):
-        agentid = row.to_user
     payload = {
         "touser": row.from_user,
         "msgtype": "text",
-        "agentid": agentid,
+        "agentid": int(agentid) if not isinstance(agentid, int) else agentid,
         "text": {"content": (body.reply_text or "").strip() or "收到。"},
     }
     async with httpx.AsyncClient() as client:
