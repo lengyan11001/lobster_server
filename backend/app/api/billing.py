@@ -381,9 +381,16 @@ async def wechat_pay_notify(request: Request, db: Session = Depends(get_db)):
     ③ 已支付订单再次回调直接返回 success 不重复加积分（防重放）；④ 每笔到账记录 callback_amount_fen、wechat_transaction_id 与日志。
     """
     if not _wechat_pay_configured():
+        logger.warning("wechat_notify wechat pay not configured")
         return PlainTextResponse("fail", status_code=500)
     raw = await request.body()
     headers = dict(request.headers)
+    logger.info(
+        "wechat_notify received method=%s content_length=%s has_signature=%s",
+        request.method,
+        len(raw),
+        "Wechatpay-Signature" in headers or "wechatpay-signature" in [h.lower() for h in headers],
+    )
     key_path = Path((getattr(settings, "wechat_pay_private_key_path", None) or "").strip())
     if not key_path.is_absolute():
         key_path = _BASE_DIR / key_path
@@ -419,10 +426,12 @@ async def wechat_pay_notify(request: Request, db: Session = Depends(get_db)):
         wxpay = WeChatPay(**kwargs)
         result = wxpay.callback(headers, raw.decode("utf-8") if isinstance(raw, bytes) else raw)
     except Exception as e:
-        logger.warning("wechat notify callback verify failed: %s", e)
+        logger.warning("wechat_notify callback verify failed: %s", e)
         return PlainTextResponse("fail", status_code=400)
     event_type = result.get("event_type") if isinstance(result, dict) else None
+    logger.info("wechat_notify decoded event_type=%s result_keys=%s", event_type, list(result.keys()) if isinstance(result, dict) else None)
     if not result or event_type != "TRANSACTION.SUCCESS":
+        logger.info("wechat_notify skip non TRANSACTION.SUCCESS event_type=%s", event_type)
         return PlainTextResponse("success")
     # 回调解密后：金额在 amount.total(分)，单号在 out_trade_no、transaction_id
     res = result.get("resource") if isinstance(result.get("resource"), dict) else result
@@ -430,12 +439,13 @@ async def wechat_pay_notify(request: Request, db: Session = Depends(get_db)):
     out_trade_no = (payload.get("out_trade_no") or result.get("out_trade_no") or "").strip()
     if not out_trade_no:
         return PlainTextResponse("success")
+    logger.info("wechat_notify lookup order out_trade_no=%s", out_trade_no)
     order = db.query(RechargeOrder).filter(RechargeOrder.out_trade_no == out_trade_no).first()
     if not order:
         logger.warning("wechat_notify order not found out_trade_no=%s", out_trade_no)
         return PlainTextResponse("success")
     if order.status == "paid":
-        # 已处理过：防重放，直接返回成功，不重复加积分
+        logger.info("wechat_notify order already paid out_trade_no=%s order_id=%s", out_trade_no, order.id)
         return PlainTextResponse("success")
     # 安全校验：回调金额必须与订单金额一致，否则拒绝到账
     amount_info = payload.get("amount") if isinstance(payload.get("amount"), dict) else None
@@ -455,6 +465,7 @@ async def wechat_pay_notify(request: Request, db: Session = Depends(get_db)):
     wechat_transaction_id = (payload.get("transaction_id") or result.get("transaction_id") or "").strip() or None
     if not _apply_wechat_paid_to_order(order, callback_total_fen, wechat_transaction_id, db):
         return PlainTextResponse("fail", status_code=400)
+    logger.info("wechat_notify success order_id=%s out_trade_no=%s credits=%s", order.id, out_trade_no, order.credits)
     return PlainTextResponse("success")
 
 
