@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     wechat_oa_secret: Optional[str] = None
     """服务号回调根地址，不填则用 public_base_url 或 request.base_url"""
     wechat_oa_base_url: Optional[str] = None
+    """服务号消息推送：服务器配置里的 Token（GET 验证用）"""
+    wechat_oa_token: Optional[str] = None
+    """服务号消息推送：EncodingAESKey（明文模式可不参与解密）"""
+    wechat_oa_encoding_aes_key: Optional[str] = None
     # 自建微信支付（不用速推）：商户号、APIv3 密钥，配置后充值可走微信 Native 扫码
     wechat_mch_id: Optional[str] = None
     wechat_pay_apiv3_key: Optional[str] = None
