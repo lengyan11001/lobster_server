@@ -17,8 +17,8 @@ var USE_OWN_WECHAT_PAY = false;
     var ownWechatBlock = document.getElementById('ownWechatLoginBlock');
     if (EDITION === 'online' && USE_INDEPENDENT_AUTH) {
       if (sb) sb.style.display = 'none';
-      if (form) form.style.display = '';
-      if (registerBlock) registerBlock.style.display = '';
+      if (form) { form.style.display = ''; if (window.loadLoginCaptcha) window.loadLoginCaptcha(); }
+      if (registerBlock) { registerBlock.style.display = ''; if (window.loadRegisterCaptcha) window.loadRegisterCaptcha(); }
       if (ownWechatBlock) {
         if (USE_OWN_WECHAT_LOGIN) {
           ownWechatBlock.style.display = 'block';
@@ -148,10 +148,52 @@ window.addEventListener('message', function(e) {
   }
 });
 
+(function setupCaptcha() {
+  function loadLoginCaptcha() {
+    fetch(API_BASE + '/auth/captcha').then(function(r) { return r.json(); }).then(function(d) {
+      if (d && d.captcha_id && d.image) {
+        var img = document.getElementById('loginCaptchaImg');
+        var hid = document.getElementById('loginCaptchaId');
+        var ans = document.getElementById('loginCaptchaAnswer');
+        if (img) img.src = d.image;
+        if (hid) hid.value = d.captcha_id;
+        if (ans) ans.value = '';
+      }
+    }).catch(function() {});
+  }
+  function loadRegisterCaptcha() {
+    fetch(API_BASE + '/auth/captcha').then(function(r) { return r.json(); }).then(function(d) {
+      if (d && d.captcha_id && d.image) {
+        var img = document.getElementById('registerCaptchaImg');
+        var hid = document.getElementById('registerCaptchaId');
+        var ans = document.getElementById('registerCaptchaAnswer');
+        if (img) img.src = d.image;
+        if (hid) hid.value = d.captcha_id;
+        if (ans) ans.value = '';
+      }
+    }).catch(function() {});
+  }
+  var loginImg = document.getElementById('loginCaptchaImg');
+  var loginRefresh = document.getElementById('loginCaptchaRefresh');
+  if (loginImg) loginImg.addEventListener('click', function(e) { e.preventDefault(); loadLoginCaptcha(); });
+  if (loginRefresh) loginRefresh.addEventListener('click', function(e) { e.preventDefault(); loadLoginCaptcha(); });
+  var regImg = document.getElementById('registerCaptchaImg');
+  var regRefresh = document.getElementById('registerCaptchaRefresh');
+  if (regImg) regImg.addEventListener('click', function(e) { e.preventDefault(); loadRegisterCaptcha(); });
+  if (regRefresh) regRefresh.addEventListener('click', function(e) { e.preventDefault(); loadRegisterCaptcha(); });
+  window.loadLoginCaptcha = loadLoginCaptcha;
+  window.loadRegisterCaptcha = loadRegisterCaptcha;
+})();
+
 document.getElementById('loginForm').addEventListener('submit', function(e) {
   e.preventDefault();
   var fd = new FormData(this);
-  var body = new URLSearchParams({ username: fd.get('username'), password: fd.get('password') });
+  var body = new URLSearchParams({
+    username: fd.get('username'),
+    password: fd.get('password'),
+    captcha_id: fd.get('captcha_id') || '',
+    captcha_answer: fd.get('captcha_answer') || ''
+  });
   var msgEl = document.getElementById('loginMsg');
   fetch(API_BASE + '/auth/login', { method: 'POST', body: body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })
     .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
@@ -161,7 +203,10 @@ document.getElementById('loginForm').addEventListener('submit', function(e) {
         localStorage.setItem('token', token);
         showMsg(msgEl, '登录成功', false);
         loadDashboard();
-      } else { showMsg(msgEl, x.data.detail || '登录失败', true); }
+      } else {
+        showMsg(msgEl, x.data.detail || '登录失败', true);
+        if (window.loadLoginCaptcha) window.loadLoginCaptcha();
+      }
     })
     .catch(function() { showMsg(msgEl, '网络错误', true); });
 });
@@ -171,9 +216,15 @@ if (registerForm) {
     e.preventDefault();
     var email = (document.getElementById('registerEmail') || {}).value || '';
     var password = (document.getElementById('registerPassword') || {}).value || '';
+    var captchaId = (document.getElementById('registerCaptchaId') || {}).value || '';
+    var captchaAnswer = (document.getElementById('registerCaptchaAnswer') || {}).value || '';
     var msgEl = document.getElementById('registerMsg');
     if (password.length < 6) { showMsg(msgEl, '密码至少 6 位', true); return; }
-    fetch(API_BASE + '/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email, password: password }) })
+    fetch(API_BASE + '/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email, password: password, captcha_id: captchaId, captcha_answer: captchaAnswer })
+    })
       .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
       .then(function(x) {
         if (x.ok) {
@@ -181,7 +232,10 @@ if (registerForm) {
           localStorage.setItem('token', token);
           showMsg(msgEl, '注册成功', false);
           loadDashboard();
-        } else { showMsg(msgEl, x.data.detail || '注册失败', true); }
+        } else {
+          showMsg(msgEl, x.data.detail || '注册失败', true);
+          if (window.loadRegisterCaptcha) window.loadRegisterCaptcha();
+        }
       })
       .catch(function() { showMsg(msgEl, '网络错误', true); });
   });

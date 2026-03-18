@@ -12,12 +12,13 @@ import bcrypt
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from ..core.config import settings, get_effective_public_base_url
+from ..captcha_util import create_captcha, verify_captcha
 from ..db import get_db
 from ..models import User
 
@@ -47,6 +48,16 @@ class Token(BaseModel):
 class RegisterBody(BaseModel):
     email: str
     password: str
+    captcha_id: str = ""
+    captcha_answer: str = ""
+
+
+@router.get("/captcha", summary="获取图片验证码（登录/注册前调用，传输请使用 HTTPS）")
+def get_captcha():
+    """返回 captcha_id 与 data URI 图片，提交登录/注册时带上 captcha_id 与用户输入的 captcha_answer。
+    生产环境必须使用 HTTPS，以保证验证码答案与密码在传输过程中加密。"""
+    captcha_id, image_data_uri = create_captcha()
+    return {"captcha_id": captcha_id, "image": image_data_uri}
 
 
 def _password_to_bcrypt_input(password: str) -> bytes:
@@ -95,25 +106,33 @@ async def get_current_user(
     return user
 
 
-@router.post("/login", response_model=Token, summary="登录")
-def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db),
-):
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+@router.post("/login", response_model=Token, summary="登录（表单含验证码，传输请使用 HTTPS）")
+async def login(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    username = (form.get("username") or "").strip()
+    password = form.get("password") or ""
+    captcha_id = (form.get("captcha_id") or "").strip()
+    captcha_answer = (form.get("captcha_answer") or "").strip()
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="请输入邮箱和密码")
+    if not verify_captcha(captcha_id, captcha_answer):
+        raise HTTPException(status_code=400, detail="验证码错误或已过期，请刷新后重试")
+    user = db.query(User).filter(User.email == username).first()
+    if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="用户名或密码错误")
     access_token = create_access_token(data={"sub": str(user.id)})
     return Token(access_token=access_token)
 
 
-@router.post("/register", response_model=Token, summary="注册（独立认证时使用）")
+@router.post("/register", response_model=Token, summary="注册（独立认证时使用，请求体含验证码，传输请使用 HTTPS）")
 def register(body: RegisterBody, db: Session = Depends(get_db)):
     from ..core.config import settings
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     use_independent = getattr(settings, "lobster_independent_auth", True)
     if edition != "online" or not use_independent:
         raise HTTPException(status_code=400, detail="当前版本不支持自主注册")
+    if not verify_captcha(body.captcha_id or "", body.captcha_answer or ""):
+        raise HTTPException(status_code=400, detail="验证码错误或已过期，请刷新后重试")
     email = (body.email or "").strip().lower()
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="请输入有效邮箱")

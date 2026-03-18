@@ -80,6 +80,30 @@ def _user_unlocked_package_ids(db: Session, user_id: int) -> set:
     return {r[0] for r in rows}
 
 
+def _capability_to_package_map() -> dict:
+    """capability_id -> (package_id, unlock_price_yuan)，仅包含「需付费解锁」的技能包下的能力。"""
+    registry = _load_registry()
+    out = {}
+    for pkg_id, pkg in registry.get("packages", {}).items():
+        price = pkg.get("unlock_price_yuan")
+        if not price or price <= 0:
+            continue
+        for cap_id in pkg.get("capabilities", {}).keys():
+            out[cap_id] = (pkg_id, int(price))
+    return out
+
+
+def user_can_use_capability(db: Session, user_id: int, capability_id: str) -> bool:
+    """该用户是否可使用此能力：若能力属于需付费解锁的技能包，则必须已解锁。"""
+    cap_map = _capability_to_package_map()
+    pkg_info = cap_map.get(capability_id)
+    if not pkg_info:
+        return True  # 不属付费包，可用
+    package_id, _ = pkg_info
+    unlocked = _user_unlocked_package_ids(db, user_id)
+    return package_id in unlocked
+
+
 @router.get("/skills/store", summary="技能商店列表")
 def list_store(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     registry = _load_registry()

@@ -81,8 +81,8 @@ def update_settings(
     return {"preferred_model": current_user.preferred_model}
 
 
-@router.get("/api/settings/models", summary="可选模型列表")
-def list_models():
+@router.get("/api/settings/models", summary="可选模型列表（需登录）")
+def list_models(current_user: User = Depends(get_current_user)):
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     if edition == "online":
         return {"models": [{"id": "sutui", "name": "速推统一", "description": "由速推提供，无需配置"}]}
@@ -127,8 +127,8 @@ def list_models():
     return {"models": models}
 
 
-@router.get("/api/settings/lan-info", summary="获取局域网访问信息")
-def get_lan_info():
+@router.get("/api/settings/lan-info", summary="获取局域网访问信息（需登录）")
+def get_lan_info(current_user: User = Depends(get_current_user)):
     ip = _get_lan_ip()
     port = getattr(settings, "port", 8000)
     return {

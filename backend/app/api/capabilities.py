@@ -1,4 +1,4 @@
-"""Capabilities: list available capabilities and call logs；调用时按 unit_credits 扣积分（与速推同扣）。"""
+"""Capabilities: list available capabilities and call logs；调用时按 unit_credits 扣积分（与速推同扣）。付费技能仅已解锁用户可用。"""
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +9,7 @@ from ..core.config import settings
 from ..db import get_db
 from .auth import get_current_user
 from ..models import CapabilityCallLog, CapabilityConfig, User
+from .skills import user_can_use_capability
 
 router = APIRouter()
 
@@ -19,30 +20,33 @@ def _should_deduct_credits() -> bool:
     return edition == "online" and getattr(settings, "lobster_independent_auth", True)
 
 
-@router.get("/capabilities/available", summary="当前可用能力列表")
+@router.get("/capabilities/available", summary="当前可用能力列表（含付费技能限制：未解锁的付费技能不会出现在列表中）")
 def list_available(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     rows = db.query(CapabilityConfig).filter(CapabilityConfig.enabled.is_(True)).order_by(CapabilityConfig.capability_id).all()
-    return {
-        "capabilities": [
-            {
-                "capability_id": r.capability_id,
-                "description": r.description,
-                "upstream": r.upstream,
-                "upstream_tool": r.upstream_tool,
-                "arg_schema": r.arg_schema,
-                "is_default": r.is_default,
-                "unit_credits": r.unit_credits,
-            }
-            for r in rows
-        ]
-    }
+    out = []
+    for r in rows:
+        if not user_can_use_capability(db, current_user.id, r.capability_id):
+            continue
+        out.append({
+            "capability_id": r.capability_id,
+            "description": r.description,
+            "upstream": r.upstream,
+            "upstream_tool": r.upstream_tool,
+            "arg_schema": r.arg_schema,
+            "is_default": r.is_default,
+            "unit_credits": r.unit_credits,
+        })
+    return {"capabilities": out}
 
 
-@router.get("/capabilities/registry", summary="能力注册列表")
-def list_registry(db: Session = Depends(get_db)):
+@router.get("/capabilities/registry", summary="能力注册列表（需登录）")
+def list_registry(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     rows = db.query(CapabilityConfig).order_by(CapabilityConfig.capability_id).all()
     return [
         {
@@ -82,6 +86,11 @@ def pre_deduct(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if not user_can_use_capability(db, current_user.id, body.capability_id):
+        raise HTTPException(
+            status_code=403,
+            detail="该能力属于付费技能，请先在技能商店付费解锁后再使用。",
+        )
     if not _should_deduct_credits():
         return {"credits_charged": 0, "message": "未启用积分扣减"}
     cap = db.query(CapabilityConfig).filter(CapabilityConfig.capability_id == body.capability_id).first()
@@ -124,6 +133,11 @@ def record_call(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if not user_can_use_capability(db, current_user.id, body.capability_id):
+        raise HTTPException(
+            status_code=403,
+            detail="该能力属于付费技能，请先在技能商店付费解锁后再使用。",
+        )
     cap = db.query(CapabilityConfig).filter(CapabilityConfig.capability_id == body.capability_id).first()
     unit_credits = int(cap.unit_credits or 0) if cap else 0
     credits_charged = body.credits_charged if body.credits_charged is not None else 0
