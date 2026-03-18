@@ -201,11 +201,21 @@ function loadAssets(query) {
       el.innerHTML = assets.map(function(a) {
         var isImage = a.media_type === 'image';
         var isVideo = a.media_type === 'video';
+        var hasUrl = a.source_url && (a.source_url.indexOf('http') === 0);
         var preview = '';
+        var wrapAttrs = 'data-asset-id="' + escapeAttr(a.asset_id) + '" data-media-type="' + escapeAttr(a.media_type || '') + '" data-source-url="' + (hasUrl ? escapeAttr(a.source_url) : '') + '" style="margin:0.5rem 0;cursor:pointer;" title="' + (hasUrl ? '点击在新窗口预览' : '未同步火山，无法预览') + '"';
         if (isImage) {
-          preview = '<div class="asset-preview-wrap" data-asset-id="' + escapeAttr(a.asset_id) + '" data-media-type="image" style="margin:0.5rem 0;cursor:pointer;" title="点击在新窗口预览"><img src="/media/' + escapeAttr(a.filename) + '" style="max-width:160px;max-height:120px;border-radius:6px;object-fit:cover;pointer-events:none;"></div>';
+          if (hasUrl) {
+            preview = '<div class="asset-preview-wrap" ' + wrapAttrs + '><img src="' + escapeAttr(a.source_url) + '" style="max-width:160px;max-height:120px;border-radius:6px;object-fit:cover;pointer-events:none;"></div>';
+          } else {
+            preview = '<div class="asset-preview-wrap" ' + wrapAttrs + '><div style="max-width:160px;max-height:120px;border-radius:6px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:0.72rem;color:var(--text-muted);padding:0.5rem;">未同步火山<br>无法预览</div></div>';
+          }
         } else if (isVideo) {
-          preview = '<div class="asset-preview-wrap" data-asset-id="' + escapeAttr(a.asset_id) + '" data-media-type="video" style="margin:0.5rem 0;cursor:pointer;" title="点击在新窗口预览"><video src="/media/' + escapeAttr(a.filename) + '" style="max-width:160px;max-height:120px;border-radius:6px;pointer-events:none;" muted preload="metadata"></video></div>';
+          if (hasUrl) {
+            preview = '<div class="asset-preview-wrap" ' + wrapAttrs + '><video src="' + escapeAttr(a.source_url) + '" style="max-width:160px;max-height:120px;border-radius:6px;pointer-events:none;" muted preload="metadata"></video></div>';
+          } else {
+            preview = '<div class="asset-preview-wrap" ' + wrapAttrs + '><div style="max-width:160px;max-height:120px;border-radius:6px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:0.72rem;color:var(--text-muted);padding:0.5rem;">未同步火山<br>无法预览</div></div>';
+          }
         } else {
           preview = '<div style="margin:0.5rem 0;font-size:0.8rem;color:var(--text-muted);">[' + escapeHtml(a.media_type) + '] ' + escapeHtml(a.filename) + '</div>';
         }
@@ -232,25 +242,12 @@ function loadAssets(query) {
       });
       el.querySelectorAll('.asset-preview-wrap').forEach(function(wrap) {
         wrap.addEventListener('click', function() {
-          var aid = wrap.getAttribute('data-asset-id');
-          var mtype = wrap.getAttribute('data-media-type');
-          if (!aid) return;
-          fetch(API_BASE + '/api/assets/' + aid + '/content', { headers: authHeaders() })
-            .then(function(r) { if (!r.ok) throw new Error(r.status); return r.blob(); })
-            .then(function(blob) {
-              var u = URL.createObjectURL(blob);
-              var w = window.open('', '_blank');
-              if (w) {
-                if (mtype === 'video') {
-                  w.document.write('<video src="' + u + '" controls autoplay style="max-width:100%;max-height:100vh;"></video>');
-                } else {
-                  w.document.write('<img src="' + u + '" style="max-width:100%;max-height:100vh;">');
-                }
-                w.document.close();
-              }
-              setTimeout(function() { URL.revokeObjectURL(u); }, 60000);
-            })
-            .catch(function() { alert('预览加载失败'); });
+          var url = wrap.getAttribute('data-source-url');
+          if (!url || url.indexOf('http') !== 0) {
+            alert('未同步火山，无法预览。请先上传并同步至火山。');
+            return;
+          }
+          window.open(url, '_blank');
         });
       });
     })

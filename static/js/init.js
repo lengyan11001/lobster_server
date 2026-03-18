@@ -214,7 +214,7 @@ var registerForm = document.getElementById('registerForm');
 if (registerForm) {
   registerForm.addEventListener('submit', function(e) {
     e.preventDefault();
-    var email = (document.getElementById('registerEmail') || {}).value || '';
+    var account = (document.getElementById('registerEmail') || {}).value || '';
     var password = (document.getElementById('registerPassword') || {}).value || '';
     var captchaId = (document.getElementById('registerCaptchaId') || {}).value || '';
     var captchaAnswer = (document.getElementById('registerCaptchaAnswer') || {}).value || '';
@@ -223,7 +223,7 @@ if (registerForm) {
     fetch(API_BASE + '/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email, password: password, captcha_id: captchaId, captcha_answer: captchaAnswer })
+      body: JSON.stringify({ account: account.trim(), password: password, captcha_id: captchaId, captcha_answer: captchaAnswer })
     })
       .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
       .then(function(x) {

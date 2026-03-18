@@ -14,13 +14,15 @@ from .api.capabilities import router as capabilities_router
 from .api.skills import router as skills_router
 from .api.settings_api import router as settings_router
 from .api.mcp_gateway import router as mcp_gateway_router
+# 自定义配置已迁至客户端；openclaw_config 保留（含 sutui/balance、recharge 等支付）
+# from .api.custom_config import router as custom_config_router
 from .api.openclaw_config import router as openclaw_config_router
-from .api.custom_config import router as custom_config_router
 from .api.billing import router as billing_router
 from .api.consumption_accounts import router as consumption_accounts_router
 from .api.mcp_registry import router as mcp_registry_router
-from .api.assets import router as assets_router
-from .api.publish import router as publish_router
+# 发布账号/任务、素材：已迁至客户端（lobster_online），server 不再提供
+# from .api.assets import router as assets_router
+# from .api.publish import router as publish_router
 from .api.logs_api import router as logs_router
 from .api.wechat_oa import router as wechat_oa_router
 try:
@@ -158,6 +160,37 @@ def _migrate_wecom_agent_id():
         logger.warning("Migration wecom agent_id skipped: %s", e)
 
 
+def _migrate_recharge_amount_fen():
+    """Add amount_fen to recharge_orders（1分钱套餐用分计费）."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            r = conn.execute(text("PRAGMA table_info(recharge_orders)"))
+            cols = [row[1] for row in r]
+            if "amount_fen" not in cols:
+                conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN amount_fen INTEGER DEFAULT 0"))
+                conn.commit()
+    except Exception as e:
+        logger.warning("Migration recharge_orders.amount_fen skipped: %s", e)
+
+
+def _migrate_recharge_callback_audit():
+    """Add callback_amount_fen, wechat_transaction_id to recharge_orders（回调金额与交易号审计）."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            r = conn.execute(text("PRAGMA table_info(recharge_orders)"))
+            cols = [row[1] for row in r]
+            if "callback_amount_fen" not in cols:
+                conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN callback_amount_fen INTEGER"))
+                conn.commit()
+            if "wechat_transaction_id" not in cols:
+                conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN wechat_transaction_id VARCHAR(64)"))
+                conn.commit()
+    except Exception as e:
+        logger.warning("Migration recharge_orders callback_audit skipped: %s", e)
+
+
 def create_app() -> FastAPI:
     logger.info("[启动] create_app 开始")
     Base.metadata.create_all(bind=engine)
@@ -165,6 +198,8 @@ def create_app() -> FastAPI:
     _migrate_user_wechat_openid()
     _migrate_wecom_config_secret()
     _migrate_wecom_agent_id()
+    _migrate_recharge_amount_fen()
+    _migrate_recharge_callback_audit()
     _ensure_default_user()
     _seed_capability_catalog()
     _auto_start_openclaw()
@@ -201,12 +236,13 @@ def create_app() -> FastAPI:
     app.include_router(chat_router, prefix="")
     app.include_router(mcp_gateway_router, prefix="")
     app.include_router(openclaw_config_router, prefix="")
-    app.include_router(custom_config_router, prefix="")
+    # 自定义配置已迁至客户端；server 仅保留支付相关（sutui/balance、recharge 在 openclaw_config 中）
+    # app.include_router(custom_config_router, prefix="")
     app.include_router(billing_router, prefix="")
     app.include_router(consumption_accounts_router, prefix="")
     app.include_router(mcp_registry_router, prefix="")
-    app.include_router(assets_router, prefix="")
-    app.include_router(publish_router, prefix="")
+    # app.include_router(assets_router, prefix="")
+    # app.include_router(publish_router, prefix="")
     app.include_router(logs_router, prefix="")
     app.include_router(wechat_oa_router, prefix="")
     if wecom_router is not None:

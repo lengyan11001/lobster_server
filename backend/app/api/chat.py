@@ -166,6 +166,95 @@ async def _fetch_mcp_tools() -> List[Dict]:
         return []
 
 
+async def get_reply_for_channel(
+    user_message: str,
+    session_id: str = "",
+    system_prompt_extra: str = "",
+) -> str:
+    """供企业微信/抖音等渠道回调使用：仅文本入、文本出。优先直连 LLM，无配置时走 OpenClaw，保证本地盒子仅配 OpenClaw 也能回复。"""
+    if not (user_message or "").strip():
+        return "收到。"
+    model = ""
+    try:
+        model = _pick_default_model()
+    except HTTPException:
+        model = "openclaw"
+    cfg = _resolve_config(model) if model else None
+    sys = (
+        "你是企业微信客服助手。根据用户消息简短、友好地回复。使用中文。"
+        + (("\n" + system_prompt_extra.strip()) if system_prompt_extra else "")
+    )
+    messages: List[Dict[str, str]] = [
+        {"role": "system", "content": sys},
+        {"role": "user", "content": (user_message or "").strip()},
+    ]
+    if cfg:
+        try:
+            reply = await _chat_openai(messages, cfg, [], "", sutui_token=None)
+            return (reply or "").strip() or "收到。"
+        except HTTPException:
+            return "服务暂时不可用，请稍后再试。"
+        except Exception as e:
+            logger.exception("[渠道回复] chat 异常: %s", e)
+            return "处理时遇到问题，请稍后再试。"
+    oc_reply = await _try_openclaw(messages, model or "openclaw", "")
+    if oc_reply:
+        return (oc_reply or "").strip() or "收到。"
+    return "抱歉，当前未配置对话模型或 OpenClaw，无法回复。"
+
+
+async def get_customer_service_reply(
+    user_message: str,
+    company_info: str = "",
+    product_intro: str = "",
+    common_phrases: str = "",
+    history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """客服专用：仅根据提供的公司信息、产品介绍、常用话术回复；匹配不到则只做简短闲聊，严禁编造。"""
+    if not (user_message or "").strip():
+        return "收到。"
+    materials = []
+    if (company_info or "").strip():
+        materials.append("【公司信息】\n" + company_info.strip())
+    if (product_intro or "").strip():
+        materials.append("【产品介绍】\n" + product_intro.strip())
+    if (common_phrases or "").strip():
+        materials.append("【常用话术】\n" + common_phrases.strip())
+    materials_text = "\n\n".join(materials) if materials else "（暂无资料）"
+    sys = (
+        "你是企业微信客服助手。你必须严格遵守以下规则：\n"
+        "1. 仅根据下面「公司信息」「产品介绍」「常用话术」回答与公司、产品相关的问题。\n"
+        "2. 若用户问题无法从上述资料中匹配到任何内容，只可做简短、友好的闲聊（如问候、感谢、请稍候联系人工），严禁编造公司名、产品名、价格、规格等任何未在资料中出现的信息。\n"
+        "3. 回复简短、使用中文。\n\n"
+        + materials_text
+    )
+    messages: List[Dict[str, str]] = [{"role": "system", "content": sys}]
+    if history:
+        for h in history[-10:]:
+            if isinstance(h, dict) and h.get("role") and h.get("content"):
+                messages.append({"role": h["role"], "content": str(h["content"])[:800]})
+    messages.append({"role": "user", "content": (user_message or "").strip()})
+    model = ""
+    try:
+        model = _pick_default_model()
+    except HTTPException:
+        model = "openclaw"
+    cfg = _resolve_config(model) if model else None
+    if cfg:
+        try:
+            reply = await _chat_openai(messages, cfg, [], "", sutui_token=None)
+            return (reply or "").strip() or "收到。"
+        except HTTPException:
+            return "服务暂时不可用，请稍后再试。"
+        except Exception as e:
+            logger.exception("[客服回复] chat 异常: %s", e)
+            return "处理时遇到问题，请稍后再试。"
+    oc_reply = await _try_openclaw(messages, model or "openclaw", "")
+    if oc_reply:
+        return (oc_reply or "").strip() or "收到。"
+    return "抱歉，当前未配置对话模型，无法回复。"
+
+
 async def _exec_tool(
     name: str,
     args: Dict,
@@ -178,6 +267,8 @@ async def _exec_tool(
     phase = None
     if capability_id == "video.generate":
         phase = "video_submit"
+    elif capability_id == "image.generate":
+        phase = "image_submit"
     elif capability_id == "task.get_result":
         phase = "task_polling"
     ev_start = {"type": "tool_start", "name": name, "args": list(args.keys())}
@@ -197,12 +288,41 @@ async def _exec_tool(
     timeout = 120.0
     if name == "invoke_capability" and (args.get("capability_id") or "").strip() == "task.get_result":
         timeout = 35 * 60.0  # 35 min
+
+    def _friendly_tool_error(err: Exception) -> str:
+        raw = str(err or "")
+        low = raw.lower()
+        if (
+            "getaddrinfo failed" in low
+            or "name or service not known" in low
+            or "nodename nor servname provided" in low
+            or "temporary failure in name resolution" in low
+        ):
+            return (
+                "网络解析失败（DNS）：无法解析上游接口域名。"
+                "请检查网络/代理/DNS 配置，确认可访问速推与模型 API 域名后重试。"
+            )
+        if "all connection attempts failed" in low or "connection refused" in low:
+            return "网络连接失败：无法连接到目标服务，请检查网络、端口或服务是否启动。"
+        if "timed out" in low or "timeout" in low:
+            return "请求超时：上游响应过慢，请稍后重试。"
+        return f"工具调用失败: {raw}"
+
     try:
         hdrs: Dict[str, str] = {"Content-Type": "application/json"}
         if token:
             hdrs["Authorization"] = f"Bearer {token}"
         if sutui_token:
             hdrs["X-Sutui-Token"] = sutui_token
+        if capability_id == "video.generate":
+            pl = args.get("payload") or {}
+            img = (pl.get("image_url") or "")
+            mf = pl.get("media_files") or []
+            logger.info(
+                "[CHAT] 发 MCP video.generate 完整 payload（将原样转速推）: image_url=%s media_files=%s",
+                (img[:100] + "…") if len(img) > 100 else (img or "(无)"),
+                mf,
+            )
         async with httpx.AsyncClient(timeout=timeout) as c:
             r = await c.post(MCP_URL, json={
                 "jsonrpc": "2.0", "id": "ct",
@@ -221,7 +341,7 @@ async def _exec_tool(
         else:
             result_text = json.dumps(res, ensure_ascii=False)
     except Exception as e:
-        result_text = f"工具调用失败: {e}"
+        result_text = _friendly_tool_error(e)
         success = False
         logger.warning("[对话] 工具执行异常 name=%s capability_id=%s: %s", name, capability_id, e)
 
@@ -248,6 +368,13 @@ async def _exec_tool(
         ev_end["phase"] = phase
     if phase == "task_polling":
         ev_end["in_progress"] = _is_task_result_in_progress(result_text)
+        if not ev_end.get("in_progress"):
+            ev_end["media_type"] = _extract_media_type_from_task_result(result_text)
+        logger.info(
+            "[进度] task.get_result 单次返回 in_progress=%s status=%s",
+            ev_end.get("in_progress"),
+            _extract_status_for_log(result_text),
+        )
     if progress_cb:
         try:
             await progress_cb(ev_end)
@@ -342,48 +469,184 @@ _TASK_IN_PROGRESS_STATUSES = (
 )
 
 
+def _extract_media_type_from_task_result(result_text: str) -> str:
+    """从 task.get_result 返回的 JSON 中解析 saved_assets[0].media_type。支持 MCP 嵌套 d.result.result.content[0].text."""
+    if not result_text or not result_text.strip():
+        return "video"
+    raw = (result_text or "").strip()
+    try:
+        d = json.loads(raw) if raw.startswith("{") else {}
+        saved = d.get("saved_assets") or (d.get("result") or {}).get("saved_assets")
+        if isinstance(saved, list) and saved:
+            mt = (saved[0].get("media_type") or "").strip().lower()
+            if mt in ("image", "video"):
+                return mt
+        upstream = d.get("result")
+        if isinstance(upstream, dict):
+            inner_result = upstream.get("result")
+            if isinstance(inner_result, dict):
+                content = inner_result.get("content") or []
+                if content and isinstance(content[0], dict):
+                    t = (content[0].get("text") or "").strip()
+                    if t.startswith("{"):
+                        obj = json.loads(t)
+                        saved = obj.get("saved_assets") or []
+                        if isinstance(saved, list) and saved:
+                            mt = (saved[0].get("media_type") or "").strip().lower()
+                            if mt in ("image", "video"):
+                                return mt
+    except Exception:
+        pass
+    return "video"
+
+
+def _extract_status_for_log(result_text: str) -> str:
+    """从 task.get_result 返回文本中解析 status，仅用于日志。路径见 docs/图生视频_MCP调用流程与参数.md"""
+    if not result_text or not result_text.strip():
+        return "?"
+    raw = (result_text or "").strip()
+
+    def _get_status(obj: Any) -> str:
+        if not isinstance(obj, dict):
+            return ""
+        s = (obj.get("status") or "").strip()
+        if s:
+            return s
+        res = obj.get("result")
+        if isinstance(res, dict):
+            content = res.get("content") or []
+            for c in content[:3]:
+                if isinstance(c, dict):
+                    t = (c.get("text") or "").strip()
+                    if t.startswith("{"):
+                        try:
+                            inner = json.loads(t)
+                            s = (inner.get("status") or _get_status(inner.get("result") or {}) or "").strip()
+                            if s:
+                                return s
+                        except Exception:
+                            pass
+        return ""
+
+    try:
+        d = json.loads(raw) if raw.startswith("{") else {}
+        if not d:
+            for part in (raw.split("```") or [raw]):
+                part = part.strip()
+                if part.startswith("{") and "status" in part:
+                    try:
+                        d = json.loads(part)
+                        break
+                    except Exception:
+                        pass
+        if not d:
+            return "?"
+        upstream = d.get("result")
+        if isinstance(upstream, dict):
+            inner_result = upstream.get("result")
+            if isinstance(inner_result, dict):
+                content = inner_result.get("content") or []
+                if content and isinstance(content[0], dict):
+                    t = (content[0].get("text") or "").strip()
+                    if t.startswith("{"):
+                        try:
+                            obj = json.loads(t)
+                            s = (obj.get("status") or "").strip()
+                            if s:
+                                return s
+                        except Exception:
+                            pass
+        s = _get_status(d) or _get_status(upstream or {})
+        if s:
+            return s
+        m = re.search(r'"status"\s*:\s*"([^"]*)"', raw)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+        return "?"
+    except Exception:
+        pass
+    m = re.search(r'"status"\s*:\s*"([^"]*)"', (result_text or ""))
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    return "?"
+
+
 def _is_task_result_in_progress(result_text: str) -> bool:
     """True if task.get_result 表示仍在进行中（需继续 15s 轮询）。先判进行中再判终态，避免「未完成」等误判为终态."""
-    if not result_text:
-        return False
-    raw = (result_text or "").lower()
-    # 1) 先判进行中：任一出现则继续轮询（优先，避免「未完成」里的「完成」误判）
-    for s in _TASK_IN_PROGRESS_STATUSES:
-        if s in raw or s in result_text or f'"status":"{s}"' in raw:
-            return True
-    if any(x in raw for x in ("pending", "processing", "generating", "running", "queued")):
+    if not result_text or not result_text.strip():
+        return True  # 无内容时继续轮询，避免误报「已生成」
+    raw = (result_text or "").strip()
+    status_val = _extract_status_for_log(result_text)
+    if status_val and status_val != "?":
+        s = status_val.strip().lower()
+        for term in _TASK_IN_PROGRESS_STATUSES:
+            if s == term.lower():
+                return True
+        for term in _TASK_TERMINAL_STATUSES:
+            if s == term.lower():
+                return False
         return True
-    # 2) 再判终态
+    raw_lower = raw.lower()
+    if '"status":"completed"' in raw_lower or '"status":"success"' in raw_lower or '"status":"failed"' in raw_lower:
+        return False
+    if "未完成" in raw or "未成功" in raw:
+        return True
+    for s in _TASK_IN_PROGRESS_STATUSES:
+        if s in raw_lower or f'"status":"{s}"' in raw_lower:
+            return True
     for s in _TASK_TERMINAL_STATUSES:
-        if s in raw or s in result_text or f'"status":"{s}"' in raw:
-            return False
-    return False
+        if s not in raw_lower:
+            continue
+        if s in ("完成", "成功") and ("未完成" in raw or "未成功" in raw):
+            continue
+        return False
+    return True
 
 
 def _task_result_hint(result_text: str) -> str:
-    """从 task.get_result 返回文本中提取一句简短状态，供前端展示「查询结果」."""
+    """从 task.get_result 返回文本中提取一句简短状态，供前端展示「查询结果」。status 与 _extract_status_for_log 同路径."""
+    if not result_text or not result_text.strip():
+        return ""
+    status = _extract_status_for_log(result_text)
+    if status and status != "?":
+        if _is_task_result_in_progress(result_text):
+            return f"当前状态: {status}"
+        return f"结果: {status}"
+    if _is_task_result_in_progress(result_text):
+        return "当前状态: 仍生成中"
+    return "结果: 已完成"
+
+
+def _extract_task_id_from_result(result_text: str) -> str:
+    """从 video.generate 或 task.get_result 的返回文本中解析 task_id。路径与 status 一致：d.result.result.content[0].text."""
     if not result_text or not result_text.strip():
         return ""
     raw = (result_text or "").strip()
-    if _is_task_result_in_progress(result_text):
-        try:
-            import json
-            d = json.loads(raw) if raw.startswith("{") else {}
-            status = (d.get("status") or d.get("result", {}).get("status") or "").strip()
-            if status:
-                return f"当前状态: {status}"
-        except Exception:
-            pass
-        return "当前状态: 仍生成中"
     try:
-        import json
         d = json.loads(raw) if raw.startswith("{") else {}
-        status = (d.get("status") or d.get("result", {}).get("status") or "").strip()
-        if status:
-            return f"结果: {status}"
+        if not d:
+            return ""
+        tid = (d.get("task_id") or "").strip()
+        if tid:
+            return tid
+        upstream = d.get("result")
+        if isinstance(upstream, dict):
+            tid = (upstream.get("task_id") or "").strip()
+            if tid:
+                return tid
+            inner_result = upstream.get("result")
+            if isinstance(inner_result, dict):
+                content = inner_result.get("content") or []
+                if content and isinstance(content[0], dict):
+                    t = (content[0].get("text") or "").strip()
+                    if t.startswith("{"):
+                        obj = json.loads(t)
+                        tid = (obj.get("task_id") or "").strip()
+                        if tid:
+                            return tid
+        return ""
     except Exception:
-        pass
-    return "结果: 已完成"
+        return ""
 
 
 async def _chat_openai(

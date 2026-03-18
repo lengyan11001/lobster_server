@@ -40,6 +40,7 @@ _CUSTOM_CONFIGS_FILE = _BASE_DIR / "custom_configs.json"
 # 默认收费模式（可被 custom_configs.json 中 BILLING_PRICING 覆盖）
 _DEFAULT_SKILL_UNLOCK = {"min_yuan": 98, "max_yuan": 198}
 _DEFAULT_CREDIT_PACKAGES = [
+    {"price_fen": 1, "credits": 1, "label": "0.01元(1分) - 1积分"},
     {"price_yuan": 198, "credits": 2000, "label": "198元 - 2000积分"},
     {"price_yuan": 498, "credits": 5000, "label": "498元 - 5000积分"},
     {"price_yuan": 998, "credits": 12000, "label": "998元 - 12000积分"},
@@ -78,15 +79,17 @@ def _get_billing_pricing() -> dict[str, Any]:
             for p in packages:
                 if not isinstance(p, dict):
                     continue
-                price = p.get("price_yuan") or p.get("price")
                 credits = p.get("credits")
-                if price is not None and credits is not None:
+                if credits is None:
+                    continue
+                price_fen = p.get("price_fen")
+                price = p.get("price_yuan") or p.get("price")
+                if price_fen is not None:
+                    label = (p.get("label") or "").strip() or f"{price_fen / 100:.2f}元 - {int(credits)}积分"
+                    out.append({"price_fen": int(price_fen), "credits": int(credits), "label": label})
+                elif price is not None:
                     label = (p.get("label") or "").strip() or f"{int(price)}元 - {int(credits)}积分"
-                    out.append({
-                        "price_yuan": int(price),
-                        "credits": int(credits),
-                        "label": label,
-                    })
+                    out.append({"price_yuan": int(price), "credits": int(credits), "label": label})
             if out:
                 credit_packages = out
             else:
@@ -145,10 +148,17 @@ def create_recharge_order(
         if idx < 0 or idx >= len(packages):
             raise HTTPException(status_code=400, detail="无效套餐")
         p = packages[idx]
-        amount_yuan = p["price_yuan"]
-        credits = p["credits"]
+        if "price_fen" in p:
+            amount_yuan = 0
+            amount_fen = int(p["price_fen"])
+            credits = p["credits"]
+        else:
+            amount_yuan = p["price_yuan"]
+            amount_fen = 0
+            credits = p["credits"]
     elif body.price_yuan is not None and body.credits is not None:
         amount_yuan = int(body.price_yuan)
+        amount_fen = 0
         credits = int(body.credits)
         if amount_yuan <= 0 or credits <= 0:
             raise HTTPException(status_code=400, detail="金额与积分须为正数")
@@ -158,6 +168,7 @@ def create_recharge_order(
     order = RechargeOrder(
         user_id=current_user.id,
         amount_yuan=amount_yuan,
+        amount_fen=amount_fen,
         credits=credits,
         status="pending",
         out_trade_no=out_trade_no,
@@ -166,10 +177,11 @@ def create_recharge_order(
     db.commit()
     db.refresh(order)
     payment_hint = getattr(settings, "lobster_recharge_payment_hint", None) or "请通过微信/支付宝转账并联系管理员完成到账，备注订单号。"
+    _amount_display = (order.amount_fen / 100) if (order.amount_fen or 0) else order.amount_yuan
     return {
         "order_id": order.id,
         "out_trade_no": order.out_trade_no,
-        "amount_yuan": order.amount_yuan,
+        "amount_yuan": _amount_display,
         "credits": order.credits,
         "status": order.status,
         "payment_info": payment_hint,
@@ -202,10 +214,17 @@ def create_wechat_recharge_order(
         if idx < 0 or idx >= len(packages):
             raise HTTPException(status_code=400, detail="无效套餐")
         p = packages[idx]
-        amount_yuan = p["price_yuan"]
-        credits = p["credits"]
+        if "price_fen" in p:
+            amount_yuan = 0
+            amount_fen = int(p["price_fen"])
+            credits = p["credits"]
+        else:
+            amount_yuan = p["price_yuan"]
+            amount_fen = 0
+            credits = p["credits"]
     elif body.price_yuan is not None and body.credits is not None:
         amount_yuan = int(body.price_yuan)
+        amount_fen = 0
         credits = int(body.credits)
         if amount_yuan <= 0 or credits <= 0:
             raise HTTPException(status_code=400, detail="金额与积分须为正数")
@@ -215,6 +234,7 @@ def create_wechat_recharge_order(
     order = RechargeOrder(
         user_id=current_user.id,
         amount_yuan=amount_yuan,
+        amount_fen=amount_fen,
         credits=credits,
         status="pending",
         out_trade_no=out_trade_no,
@@ -233,37 +253,102 @@ def create_wechat_recharge_order(
     except Exception as e:
         logger.warning("wechat pay private key read failed: %s", e)
         raise HTTPException(status_code=500, detail="微信支付商户私钥读取失败")
+    apiv3_key = (getattr(settings, "wechat_pay_apiv3_key", None) or "").strip()[:32]
+    if len(apiv3_key) != 32:
+        logger.warning("wechat pay: WECHAT_PAY_APIV3_KEY length=%s (need 32). Check 商户平台-API安全.", len(apiv3_key))
+    cert_dir_raw = (getattr(settings, "wechat_pay_cert_dir", None) or "").strip()
+    cert_dir: Optional[Path] = None
+    if cert_dir_raw:
+        cert_dir = Path(cert_dir_raw)
+        if not cert_dir.is_absolute():
+            cert_dir = _BASE_DIR / cert_dir
+        cert_dir.mkdir(parents=True, exist_ok=True)
+    public_key_path_raw = (getattr(settings, "wechat_pay_public_key_path", None) or "").strip()
+    public_key_id = (getattr(settings, "wechat_pay_public_key_id", None) or "").strip()
+    public_key_content: Optional[str] = None
+    if public_key_path_raw and public_key_id:
+        pub_path = Path(public_key_path_raw)
+        if not pub_path.is_absolute():
+            pub_path = _BASE_DIR / pub_path
+        try:
+            public_key_content = pub_path.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            logger.warning("wechat pay public key read failed: %s", e)
+            raise HTTPException(status_code=500, detail="微信支付公钥文件读取失败，请检查 wechat_pay_public_key_path")
     try:
         from wechatpayv3 import WeChatPay, WeChatPayType
-        wxpay = WeChatPay(
+        kwargs = dict(
             wechatpay_type=WeChatPayType.NATIVE,
             mchid=(getattr(settings, "wechat_mch_id", None) or "").strip(),
             private_key=private_key,
             cert_serial_no=(getattr(settings, "wechat_pay_serial_no", None) or "").strip(),
-            apiv3_key=(getattr(settings, "wechat_pay_apiv3_key", None) or "").strip(),
+            apiv3_key=apiv3_key,
             appid=(getattr(settings, "wechat_app_id", None) or "").strip(),
         )
-        code_url, _ = wxpay.pay(
+        if cert_dir is not None:
+            kwargs["cert_dir"] = str(cert_dir)
+        if public_key_content and public_key_id:
+            kwargs["public_key"] = public_key_content
+            kwargs["public_key_id"] = public_key_id
+        wxpay = WeChatPay(**kwargs)
+        total_fen = (order.amount_fen or 0) or (order.amount_yuan * 100)
+        # wechatpayv3 pay() 常见返回 (code, message)：code 为状态码，code_url 在 message 里；个别版本或返回 (code_url, _)
+        first, second = wxpay.pay(
             description=f"龙虾积分充值-{credits}积分",
             out_trade_no=out_trade_no,
-            amount={"total": amount_yuan * 100},
+            amount={"total": total_fen},
             notify_url=notify_url,
         )
+        code_url = ""
+        if isinstance(first, str) and first.strip().startswith("weixin://"):
+            code_url = first.strip()
+        elif first == 200 or first == "200":
+            resp = second
+            if isinstance(resp, str):
+                try:
+                    resp = json.loads(resp)
+                except Exception:
+                    resp = {}
+            code_url = (resp.get("code_url") if isinstance(resp, dict) else None) or ""
+            code_url = str(code_url).strip()
+        if not code_url:
+            logger.warning("wechat pay response first=%s second=%s", first, second)
+            raise HTTPException(status_code=502, detail="微信下单返回异常或缺少 code_url，请稍后重试")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("wechat pay create failed: %s", e)
-        raise HTTPException(status_code=502, detail="微信下单失败，请稍后重试")
+        err_msg = str(e).strip()
+        if "platform certificate" in err_msg.lower() or "404" in err_msg or "401" in err_msg or "certificates" in err_msg.lower():
+            detail = (
+                "微信支付平台证书获取失败（GET /v3/certificates 通常返回 404 表示鉴权失败）。"
+                "请核对 .env：商户号(wechat_mch_id)、证书序列号(wechat_pay_serial_no)、APIv3 密钥(wechat_pay_apiv3_key)、"
+                "商户私钥(wechat_pay_private_key_path)、关联 AppID(wechat_app_id) 是否与微信支付商户平台一致；"
+                "或配置 wechat_pay_cert_dir 指向一目录，并从商户平台下载平台证书重命名为 cert.pem 放入该目录后重试。"
+            )
+        else:
+            detail = "微信下单失败，请稍后重试"
+        raise HTTPException(status_code=502, detail=detail)
+    _amount_display = (order.amount_fen / 100) if (order.amount_fen or 0) else order.amount_yuan
     return {
         "order_id": order.id,
         "out_trade_no": order.out_trade_no,
-        "amount_yuan": order.amount_yuan,
+        "amount_yuan": _amount_display,
         "credits": order.credits,
         "code_url": code_url,
         "status": order.status,
     }
 
 
-@router.post("/api/recharge/wechat-notify", summary="微信支付异步回调（验签解密后完成订单加积分）")
+@router.post(
+    "/api/recharge/wechat-notify",
+    summary="微信支付异步回调（验签解密后完成订单加积分）",
+)
 async def wechat_pay_notify(request: Request, db: Session = Depends(get_db)):
+    """
+    安全策略：① 依赖 wechatpayv3 验签，伪造请求无法通过；② 回调金额必须与订单金额一致否则返回 fail 不加积分；
+    ③ 已支付订单再次回调直接返回 success 不重复加积分（防重放）；④ 每笔到账记录 callback_amount_fen、wechat_transaction_id 与日志。
+    """
     if not _wechat_pay_configured():
         return PlainTextResponse("fail", status_code=500)
     raw = await request.body()
@@ -275,16 +360,32 @@ async def wechat_pay_notify(request: Request, db: Session = Depends(get_db)):
         private_key = key_path.read_text(encoding="utf-8")
     except Exception:
         return PlainTextResponse("fail", status_code=500)
+    apiv3_key = (getattr(settings, "wechat_pay_apiv3_key", None) or "").strip()[:32]
+    public_key_path_raw = (getattr(settings, "wechat_pay_public_key_path", None) or "").strip()
+    public_key_id = (getattr(settings, "wechat_pay_public_key_id", None) or "").strip()
+    public_key_content = None
+    if public_key_path_raw and public_key_id:
+        pub_path = Path(public_key_path_raw)
+        if not pub_path.is_absolute():
+            pub_path = _BASE_DIR / pub_path
+        try:
+            public_key_content = pub_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
     try:
         from wechatpayv3 import WeChatPay, WeChatPayType
-        wxpay = WeChatPay(
+        kwargs = dict(
             wechatpay_type=WeChatPayType.NATIVE,
             mchid=(getattr(settings, "wechat_mch_id", None) or "").strip(),
             private_key=private_key,
             cert_serial_no=(getattr(settings, "wechat_pay_serial_no", None) or "").strip(),
-            apiv3_key=(getattr(settings, "wechat_pay_apiv3_key", None) or "").strip(),
+            apiv3_key=apiv3_key,
             appid=(getattr(settings, "wechat_app_id", None) or "").strip(),
         )
+        if public_key_content and public_key_id:
+            kwargs["public_key"] = public_key_content
+            kwargs["public_key_id"] = public_key_id
+        wxpay = WeChatPay(**kwargs)
         result = wxpay.callback(headers, raw.decode("utf-8") if isinstance(raw, bytes) else raw)
     except Exception as e:
         logger.warning("wechat notify callback verify failed: %s", e)
@@ -292,13 +393,38 @@ async def wechat_pay_notify(request: Request, db: Session = Depends(get_db)):
     event_type = result.get("event_type") if isinstance(result, dict) else None
     if not result or event_type != "TRANSACTION.SUCCESS":
         return PlainTextResponse("success")
+    # 回调解密后：金额在 amount.total(分)，单号在 out_trade_no、transaction_id
     res = result.get("resource") if isinstance(result.get("resource"), dict) else result
-    out_trade_no = (res.get("out_trade_no") or result.get("out_trade_no") or "").strip()
+    payload = res if isinstance(res, dict) else result
+    out_trade_no = (payload.get("out_trade_no") or result.get("out_trade_no") or "").strip()
     if not out_trade_no:
         return PlainTextResponse("success")
     order = db.query(RechargeOrder).filter(RechargeOrder.out_trade_no == out_trade_no).first()
-    if not order or order.status == "paid":
+    if not order:
+        logger.warning("wechat_notify order not found out_trade_no=%s", out_trade_no)
         return PlainTextResponse("success")
+    if order.status == "paid":
+        # 已处理过：防重放，直接返回成功，不重复加积分
+        return PlainTextResponse("success")
+    # 安全校验：回调金额必须与订单金额一致，否则拒绝到账
+    amount_info = payload.get("amount") if isinstance(payload.get("amount"), dict) else None
+    callback_total_fen = amount_info.get("total") if amount_info is not None else None
+    if callback_total_fen is not None:
+        callback_total_fen = int(callback_total_fen)
+    expected_fen = (order.amount_fen or 0) or (order.amount_yuan * 100)
+    if callback_total_fen is None:
+        logger.error("wechat_notify amount missing out_trade_no=%s result_keys=%s", out_trade_no, list(result.keys()) if isinstance(result, dict) else None)
+        return PlainTextResponse("fail", status_code=400)
+    if callback_total_fen != expected_fen:
+        logger.error(
+            "wechat_notify amount_mismatch out_trade_no=%s order_id=%s callback_fen=%s expected_fen=%s reject",
+            out_trade_no, order.id, callback_total_fen, expected_fen,
+        )
+        return PlainTextResponse("fail", status_code=400)
+    wechat_transaction_id = (payload.get("transaction_id") or result.get("transaction_id") or "").strip() or None
+    # 写审计字段后再加积分
+    order.callback_amount_fen = callback_total_fen
+    order.wechat_transaction_id = wechat_transaction_id
     user = db.query(User).filter(User.id == order.user_id).first()
     if user:
         user.credits = (user.credits or 0) + order.credits
@@ -306,6 +432,10 @@ async def wechat_pay_notify(request: Request, db: Session = Depends(get_db)):
     from datetime import datetime
     order.paid_at = datetime.utcnow()
     db.commit()
+    logger.info(
+        "wechat_notify paid order_id=%s out_trade_no=%s callback_fen=%s credits_granted=%s user_id=%s transaction_id=%s",
+        order.id, out_trade_no, callback_total_fen, order.credits, order.user_id, wechat_transaction_id,
+    )
     return PlainTextResponse("success")
 
 

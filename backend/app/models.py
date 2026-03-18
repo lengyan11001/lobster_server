@@ -201,12 +201,16 @@ class RechargeOrder(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     amount_yuan: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount_fen: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 不足1元时用分，如 1分=1
     credits: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)  # pending, paid, cancelled
     out_trade_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     payment_method: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    # 审计：微信回调中的实付金额(分)、微信交易号，用于校验与对账
+    callback_amount_fen: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    wechat_transaction_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
 
 
 class SkillUnlock(Base):

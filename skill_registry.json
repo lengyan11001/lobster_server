@@ -9,6 +9,14 @@
       "capabilities": {},
       "tags": ["publish", "douyin", "video"]
     },
+    "xiaohongshu_publish": {
+      "name": "发小红书",
+      "description": "一键将视频、图文（图片）或长文发布到小红书创作者平台。配置发布账号后，在发布管理选择小红书即可使用。",
+      "type": "builtin",
+      "status": "available",
+      "capabilities": {},
+      "tags": ["publish", "xiaohongshu", "video", "image"]
+    },
     "wecom_reply": {
       "name": "企业微信自动回复",
       "description": "接收企业微信消息，由 AI 自动生成回复。配置回调 URL 与 Token 后，5 秒内被动回复用户。",

@@ -46,10 +46,25 @@ class Token(BaseModel):
 
 
 class RegisterBody(BaseModel):
-    email: str
+    account: str  # 字母开头，2～64 位，仅允许字母数字._-
     password: str
     captcha_id: str = ""
     captcha_answer: str = ""
+
+
+# 账号校验规则：字母开头，2～64 位，仅允许 [a-zA-Z0-9._-]，查重与存库统一小写
+def _normalize_and_validate_account(raw: str) -> str:
+    """校验账号格式，返回规范化后的小写账号。不通过则 raise HTTPException。"""
+    account = (raw or "").strip()
+    if not account:
+        raise HTTPException(status_code=400, detail="账号不能为空")
+    if len(account) < 2 or len(account) > 64:
+        raise HTTPException(status_code=400, detail="账号须 2～64 位")
+    if not account[0].isalpha():
+        raise HTTPException(status_code=400, detail="账号须字母开头")
+    if not all(c.isalnum() or c in "._-" for c in account):
+        raise HTTPException(status_code=400, detail="账号仅允许字母、数字、._-")
+    return account.lower()
 
 
 @router.get("/captcha", summary="获取图片验证码（登录/注册前调用，传输请使用 HTTPS）")
@@ -114,12 +129,15 @@ async def login(request: Request, db: Session = Depends(get_db)):
     captcha_id = (form.get("captcha_id") or "").strip()
     captcha_answer = (form.get("captcha_answer") or "").strip()
     if not username or not password:
-        raise HTTPException(status_code=400, detail="请输入邮箱和密码")
+        raise HTTPException(status_code=400, detail="请输入账号和密码")
     if not verify_captcha(captcha_id, captcha_answer):
         raise HTTPException(status_code=400, detail="验证码错误或已过期，请刷新后重试")
-    user = db.query(User).filter(User.email == username).first()
+    account_lower = username.strip().lower()
+    if not account_lower:
+        raise HTTPException(status_code=400, detail="请输入账号和密码")
+    user = db.query(User).filter(User.email == account_lower).first()
     if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="用户名或密码错误")
+        raise HTTPException(status_code=400, detail="账号或密码错误")
     access_token = create_access_token(data={"sub": str(user.id)})
     return Token(access_token=access_token)
 
@@ -133,14 +151,12 @@ def register(body: RegisterBody, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="当前版本不支持自主注册")
     if not verify_captcha(body.captcha_id or "", body.captcha_answer or ""):
         raise HTTPException(status_code=400, detail="验证码错误或已过期，请刷新后重试")
-    email = (body.email or "").strip().lower()
-    if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="请输入有效邮箱")
+    email = _normalize_and_validate_account(body.account)
     if len(body.password or "") < 6:
         raise HTTPException(status_code=400, detail="密码至少 6 位")
     existing = db.query(User).filter(User.email == email).first()
     if existing:
-        raise HTTPException(status_code=400, detail="该邮箱已注册")
+        raise HTTPException(status_code=400, detail="该账号已注册")
     user = User(
         email=email,
         hashed_password=get_password_hash(body.password),

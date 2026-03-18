@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     wechat_pay_serial_no: Optional[str] = None
     """微信支付商户私钥文件路径（.pem）或 PEM 内容，统一下单签名用"""
     wechat_pay_private_key_path: Optional[str] = None
+    """微信支付平台证书目录：SDK 会从此目录读取或下载平台证书。若 GET /v3/certificates 返回 404，可在此目录放置从商户平台下载的 cert.pem 后重试。"""
+    wechat_pay_cert_dir: Optional[str] = None
+    """微信支付公钥模式：公钥文件路径（商户平台-API安全-微信支付公钥-下载）。与 wechat_pay_public_key_id 同时配置则走公钥模式，不再请求 GET /v3/certificates。"""
+    wechat_pay_public_key_path: Optional[str] = None
+    """微信支付公钥模式：公钥ID（截图中的「公钥ID」，形如 PUB_KEY_ID_011736889298...）。勿与 APIv3 密钥混淆。"""
+    wechat_pay_public_key_id: Optional[str] = None
     openclaw_gateway_url: Optional[str] = None
     openclaw_gateway_token: Optional[str] = None
     openclaw_agent_id: str = "main"
