@@ -494,14 +494,38 @@ function loadBillingView() {
             showMsg(rechargeMsg, '', false);
             if (rechargeResult) {
               if (USE_OWN_WECHAT_PAY && d.code_url) {
-                rechargeResult.innerHTML = '<p><strong>订单号：' + escapeHtml(d.out_trade_no || '') + '</strong></p><p>请使用微信扫描下方二维码完成支付：</p><img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(d.code_url) + '" alt="支付二维码" style="max-width:220px;height:auto;margin-top:0.5rem;">';
+                rechargeResult.innerHTML = '<p><strong>订单号：' + escapeHtml(d.out_trade_no || '') + '</strong></p><p>请使用微信扫描下方二维码完成支付：</p><img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(d.code_url) + '" alt="支付二维码" style="max-width:220px;height:auto;margin-top:0.5rem;"><p id="wechatQueryStatus" style="margin-top:0.5rem;font-size:0.9rem;color:var(--text-muted);">支付完成后自动到账…</p>';
+                rechargeResult.style.display = 'block';
+                var outTradeNo = d.out_trade_no;
+                if (outTradeNo) {
+                  var pollCount = 0;
+                  var maxPoll = 150;
+                  var pollTimer = setInterval(function() {
+                    pollCount++;
+                    if (pollCount > maxPoll) { clearInterval(pollTimer); return; }
+                    fetch(API_BASE + '/api/recharge/wechat-query?out_trade_no=' + encodeURIComponent(outTradeNo), { headers: authHeaders() })
+                      .then(function(r) { return r.json(); })
+                      .then(function(q) {
+                        if (q.status === 'paid') {
+                          clearInterval(pollTimer);
+                          var statusEl = document.getElementById('wechatQueryStatus');
+                          if (statusEl) statusEl.textContent = '已到账 ' + (q.credits || 0) + ' 积分';
+                          if (typeof loadSutuiBalance === 'function') loadSutuiBalance();
+                          if (balanceEl) fetch(API_BASE + '/auth/me', { headers: authHeaders() }).then(function(r) { return r.json(); }).then(function(me) { balanceEl.textContent = '我的积分：' + (me && me.credits != null ? me.credits : '--'); });
+                        }
+                      })
+                      .catch(function() {});
+                  }, 2000);
+                }
               } else {
                 rechargeResult.innerHTML = '<p><strong>订单号：' + escapeHtml(d.out_trade_no || '') + '</strong></p><p>' + escapeHtml(d.payment_info || '') + '</p>';
+                rechargeResult.style.display = 'block';
               }
-              rechargeResult.style.display = 'block';
             }
-            if (typeof loadSutuiBalance === 'function') loadSutuiBalance();
-            if (balanceEl) fetch(API_BASE + '/auth/me', { headers: authHeaders() }).then(function(r) { return r.json(); }).then(function(me) { balanceEl.textContent = '我的积分：' + (me && me.credits != null ? me.credits : '--'); });
+            if (!(USE_OWN_WECHAT_PAY && d.code_url)) {
+              if (typeof loadSutuiBalance === 'function') loadSutuiBalance();
+              if (balanceEl) fetch(API_BASE + '/auth/me', { headers: authHeaders() }).then(function(r) { return r.json(); }).then(function(me) { balanceEl.textContent = '我的积分：' + (me && me.credits != null ? me.credits : '--'); });
+            }
           })
           .catch(function() { showMsg(rechargeMsg, '网络错误', true); })
           .finally(function() { rechargeSubmitBtn.disabled = false; });

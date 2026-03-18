@@ -32,6 +32,37 @@ def _get_public_base_url() -> str:
     """微信支付回调等用。未配置 PUBLIC_BASE_URL 时用本机 IP:PORT。"""
     return get_effective_public_base_url()
 
+
+def _apply_wechat_paid_to_order(
+    order: RechargeOrder,
+    paid_total_fen: int,
+    wechat_transaction_id: Optional[str],
+    db: Session,
+) -> bool:
+    """校验金额一致后写入审计、加积分、置已支付。返回 True 表示已处理，False 表示金额不符未处理。"""
+    from datetime import datetime
+    expected_fen = (order.amount_fen or 0) or (order.amount_yuan * 100)
+    if paid_total_fen != expected_fen:
+        logger.error(
+            "wechat paid amount_mismatch out_trade_no=%s order_id=%s paid_fen=%s expected_fen=%s",
+            order.out_trade_no, order.id, paid_total_fen, expected_fen,
+        )
+        return False
+    order.callback_amount_fen = paid_total_fen
+    order.wechat_transaction_id = wechat_transaction_id
+    user = db.query(User).filter(User.id == order.user_id).first()
+    if user:
+        user.credits = (user.credits or 0) + order.credits
+    order.status = "paid"
+    order.paid_at = datetime.utcnow()
+    db.commit()
+    logger.info(
+        "wechat paid (query or notify) order_id=%s out_trade_no=%s paid_fen=%s credits_granted=%s user_id=%s transaction_id=%s",
+        order.id, order.out_trade_no, paid_total_fen, order.credits, order.user_id, wechat_transaction_id,
+    )
+    return True
+
+
 router = APIRouter()
 
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
@@ -422,21 +453,95 @@ async def wechat_pay_notify(request: Request, db: Session = Depends(get_db)):
         )
         return PlainTextResponse("fail", status_code=400)
     wechat_transaction_id = (payload.get("transaction_id") or result.get("transaction_id") or "").strip() or None
-    # 写审计字段后再加积分
-    order.callback_amount_fen = callback_total_fen
-    order.wechat_transaction_id = wechat_transaction_id
-    user = db.query(User).filter(User.id == order.user_id).first()
-    if user:
-        user.credits = (user.credits or 0) + order.credits
-    order.status = "paid"
-    from datetime import datetime
-    order.paid_at = datetime.utcnow()
-    db.commit()
-    logger.info(
-        "wechat_notify paid order_id=%s out_trade_no=%s callback_fen=%s credits_granted=%s user_id=%s transaction_id=%s",
-        order.id, out_trade_no, callback_total_fen, order.credits, order.user_id, wechat_transaction_id,
-    )
+    if not _apply_wechat_paid_to_order(order, callback_total_fen, wechat_transaction_id, db):
+        return PlainTextResponse("fail", status_code=400)
     return PlainTextResponse("success")
+
+
+@router.get("/api/recharge/wechat-query", summary="无公网时轮询：服务器主动查微信订单，已支付则入账（不依赖回调）")
+def wechat_query_order(
+    out_trade_no: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    无公网地址、微信无法回调时：前端在用户扫码支付后轮询本接口；
+    服务器调微信「查询订单」API，若已支付则校验金额并加积分，返回 status=paid。
+    """
+    if not _wechat_pay_configured():
+        raise HTTPException(status_code=400, detail="未配置微信支付")
+    out_trade_no = (out_trade_no or "").strip()
+    if not out_trade_no:
+        raise HTTPException(status_code=400, detail="请传 out_trade_no")
+    order = db.query(RechargeOrder).filter(
+        RechargeOrder.out_trade_no == out_trade_no,
+        RechargeOrder.user_id == current_user.id,
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="订单不存在或无权查询")
+    if order.status == "paid":
+        return {"status": "paid", "credits": order.credits, "order_id": order.id}
+    key_path = Path((getattr(settings, "wechat_pay_private_key_path", None) or "").strip())
+    if not key_path.is_absolute():
+        key_path = _BASE_DIR / key_path
+    try:
+        private_key = key_path.read_text(encoding="utf-8")
+    except Exception:
+        raise HTTPException(status_code=500, detail="商户私钥读取失败")
+    apiv3_key = (getattr(settings, "wechat_pay_apiv3_key", None) or "").strip()[:32]
+    public_key_path_raw = (getattr(settings, "wechat_pay_public_key_path", None) or "").strip()
+    public_key_id = (getattr(settings, "wechat_pay_public_key_id", None) or "").strip()
+    public_key_content: Optional[str] = None
+    if public_key_path_raw and public_key_id:
+        pub_path = Path(public_key_path_raw)
+        if not pub_path.is_absolute():
+            pub_path = _BASE_DIR / pub_path
+        try:
+            public_key_content = pub_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    try:
+        from wechatpayv3 import WeChatPay, WeChatPayType
+        mchid = (getattr(settings, "wechat_mch_id", None) or "").strip()
+        kwargs = dict(
+            wechatpay_type=WeChatPayType.NATIVE,
+            mchid=mchid,
+            private_key=private_key,
+            cert_serial_no=(getattr(settings, "wechat_pay_serial_no", None) or "").strip(),
+            apiv3_key=apiv3_key,
+            appid=(getattr(settings, "wechat_app_id", None) or "").strip(),
+        )
+        if public_key_content and public_key_id:
+            kwargs["public_key"] = public_key_content
+            kwargs["public_key_id"] = public_key_id
+        wxpay = WeChatPay(**kwargs)
+        try:
+            result = wxpay.query_order(out_trade_no=out_trade_no, mchid=mchid)
+        except AttributeError:
+            result = wxpay.query(out_trade_no=out_trade_no, mchid=mchid)
+    except Exception as e:
+        logger.warning("wechat query order failed: %s", e)
+        return {"status": "pending", "message": "查单失败，请稍后再试"}
+    # result 可能是 (code, body) 或直接 body
+    if isinstance(result, (list, tuple)) and len(result) >= 2:
+        code, body = result[0], result[1]
+        if code != 200:
+            return {"status": "pending"}
+        resp = body if isinstance(body, dict) else (json.loads(body) if isinstance(body, str) else {})
+    else:
+        resp = result if isinstance(result, dict) else {}
+    trade_state = (resp.get("trade_state") or "").strip()
+    if trade_state != "SUCCESS":
+        return {"status": "pending"}
+    amount_info = resp.get("amount")
+    paid_fen = int(amount_info.get("total")) if isinstance(amount_info, dict) and amount_info.get("total") is not None else None
+    if paid_fen is None:
+        return {"status": "pending", "message": "查单结果无金额"}
+    wechat_transaction_id = (resp.get("transaction_id") or "").strip() or None
+    if not _apply_wechat_paid_to_order(order, paid_fen, wechat_transaction_id, db):
+        return {"status": "pending", "message": "金额校验未通过"}
+    db.refresh(order)
+    return {"status": "paid", "credits": order.credits, "order_id": order.id}
 
 
 @router.post("/api/recharge/complete", summary="完成充值（管理员/回调：到账加积分）")
