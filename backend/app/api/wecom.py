@@ -281,7 +281,10 @@ async def wecom_callback_post(
         try:
             msg_xml = crypt.decrypt(msg_encrypt)
         except Exception as e:
-            logger.warning("[WeCom] POST 解密失败 path=%s len(encrypt)=%s: %s", callback_path, len(msg_encrypt), e)
+            logger.warning(
+                "[WeCom] POST 解密失败 path=%s len(encrypt)=%s encrypt_preview=%s: %s",
+                callback_path, len(msg_encrypt), (msg_encrypt or "")[:80], e,
+            )
             raise
         parsed = _parse_incoming_xml(msg_xml)
         msg_type = (parsed.get("MsgType") or "").strip().lower()
@@ -305,8 +308,9 @@ async def wecom_callback_post(
         )
         db.add(pending)
         db.commit()
+        logger.info("[WeCom] POST 入队成功 path=%s content_len=%d content_preview=%s", callback_path, len(content), (content or "")[:50])
         # 先回占位提示，真实 AI 回复在「拉取并回复」后通过应用消息发送
-        placeholder = "稍后由 AI 回复您。"
+        placeholder = "请稍后"
         reply_xml = _build_reply_xml(from_user, to_user, placeholder)
         reply_encrypt = crypt.encrypt(reply_xml)
         reply_nonce = "".join(random.choices(string.ascii_letters + string.digits, k=16))
