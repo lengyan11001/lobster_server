@@ -28,7 +28,8 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from .auth import get_current_user, oauth2_scheme
-from .consumption_accounts import get_effective_sutui_token
+# 算力账号已去掉，速推统一走服务器配置 Token（MCP 侧负载均衡）
+# from .consumption_accounts import get_effective_sutui_token
 from ..models import CapabilityCallLog, ChatTurnLog, ToolCallLog, User
 
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
@@ -281,6 +282,21 @@ async def _exec_tool(
             await progress_cb(ev_start)
         except Exception:
             pass
+    if capability_id in ("image.generate", "video.generate", "task.get_result"):
+        pl = args.get("payload") or {}
+        if capability_id == "task.get_result":
+            logger.info(
+                "[素材] MCP 请求 capability_id=%s task_id=%s",
+                capability_id, (pl.get("task_id") or "").strip() or "(空)",
+            )
+        else:
+            logger.info(
+                "[素材] MCP 请求 capability_id=%s payload: model=%s prompt_len=%d image_url=%s",
+                capability_id,
+                (pl.get("model") or "").strip() or "(无)",
+                len((pl.get("prompt") or "").strip()),
+                "有" if (pl.get("image_url") or pl.get("media_files")) else "无",
+            )
     t0 = time.perf_counter()
     success = True
     result_text = ""
@@ -347,6 +363,13 @@ async def _exec_tool(
 
     ms = round((time.perf_counter() - t0) * 1000)
     logger.info("[对话] 工具执行 name=%s capability_id=%s latency_ms=%s success=%s", name, capability_id or "-", ms, success)
+    if capability_id in ("image.generate", "video.generate", "task.get_result"):
+        in_prog = _is_task_result_in_progress(result_text)
+        task_id = _extract_task_id_from_result(result_text) if result_text else ""
+        logger.info(
+            "[素材] MCP 返回 capability_id=%s result_len=%d in_progress=%s task_id=%s preview=%s",
+            capability_id, len(result_text or ""), in_prog, task_id or "(无)", (result_text or "")[:120],
+        )
     urls = _URL_RE.findall(result_text)
     try:
         logs = _pending_tool_logs.get()
@@ -498,6 +521,49 @@ def _extract_media_type_from_task_result(result_text: str) -> str:
     except Exception:
         pass
     return "video"
+
+
+def _extract_saved_assets_from_task_result(result_text: str) -> List[Dict[str, Any]]:
+    """从 task.get_result 返回的 JSON 中解析 saved_assets 列表，供前端展示。路径同 _extract_media_type_from_task_result。"""
+    if not result_text or not result_text.strip():
+        return []
+    raw = (result_text or "").strip()
+    try:
+        d = json.loads(raw) if raw.startswith("{") else {}
+        saved = d.get("saved_assets") or (d.get("result") or {}).get("saved_assets")
+        if isinstance(saved, list) and saved:
+            return [
+                {
+                    "asset_id": (x.get("asset_id") or "").strip(),
+                    "url": (x.get("url") or x.get("file_path") or x.get("path") or "").strip(),
+                    "media_type": (x.get("media_type") or "").strip().lower() or "image",
+                }
+                for x in saved
+                if isinstance(x, dict)
+            ]
+        upstream = d.get("result")
+        if isinstance(upstream, dict):
+            inner_result = upstream.get("result")
+            if isinstance(inner_result, dict):
+                content = inner_result.get("content") or []
+                if content and isinstance(content[0], dict):
+                    t = (content[0].get("text") or "").strip()
+                    if t.startswith("{"):
+                        obj = json.loads(t)
+                        saved = obj.get("saved_assets") or []
+                        if isinstance(saved, list) and saved:
+                            return [
+                                {
+                                    "asset_id": (x.get("asset_id") or "").strip(),
+                                    "url": (x.get("url") or x.get("file_path") or x.get("path") or "").strip(),
+                                    "media_type": (x.get("media_type") or "").strip().lower() or "image",
+                                }
+                                for x in saved
+                                if isinstance(x, dict)
+                            ]
+    except Exception:
+        pass
+    return []
 
 
 def _extract_status_for_log(result_text: str) -> str:
@@ -720,8 +786,61 @@ async def _chat_openai(
                 except Exception:
                     a = {}
                 logger.info("[CHAT] tool_call: %s(%s)", fn.get("name"), list(a.keys()))
+                cap = (a.get("capability_id") or "").strip()
+                if cap in ("image.generate", "video.generate", "task.get_result"):
+                    logger.info("[素材] 模型请求工具 capability_id=%s", cap)
                 res = await _exec_tool(fn.get("name", ""), a, token, sutui_token, progress_cb=progress_cb)
                 if (
+                    fn.get("name") == "invoke_capability"
+                    and cap == "image.generate"
+                    and _is_task_result_in_progress(res)
+                ):
+                    task_id = _extract_task_id_from_result(res)
+                    if task_id:
+                        get_result_args = {"capability_id": "task.get_result", "payload": {"task_id": task_id}}
+                        poll_interval = 15
+                        max_wait_sec = 20 * 60
+                        waited = 0
+                        logger.info("[素材] image.generate 自动轮询开始 task_id=%s interval=%ds max_wait=%ds", task_id, poll_interval, max_wait_sec)
+                        while waited < max_wait_sec:
+                            await asyncio.sleep(poll_interval)
+                            waited += poll_interval
+                            res = await _exec_tool("invoke_capability", get_result_args, token, sutui_token, progress_cb=None)
+                            in_prog = _is_task_result_in_progress(res)
+                            logger.info("[素材] 轮询 image.generate waited=%ds task_id=%s in_progress=%s hint=%s", waited, task_id, in_prog, _task_result_hint(res))
+                            if progress_cb:
+                                try:
+                                    ev = {"type": "task_poll", "message": f"正在查询生成结果…（{waited}秒）"}
+                                    ev["task_id"] = task_id
+                                    ev["result_hint"] = _task_result_hint(res)
+                                    await progress_cb(ev)
+                                except Exception:
+                                    pass
+                            if not in_prog:
+                                saved = _extract_saved_assets_from_task_result(res)
+                                logger.info(
+                                    "[素材] 轮询结束 image.generate task_id=%s saved_assets_count=%d asset_ids=%s urls=%s",
+                                    task_id, len(saved), [x.get("asset_id") for x in saved], [(x.get("url") or "")[:80] for x in saved],
+                                )
+                                break
+                        if progress_cb:
+                            try:
+                                ev_end = {
+                                    "type": "tool_end",
+                                    "name": "invoke_capability",
+                                    "preview": (res or "")[:200],
+                                    "capability_id": "task.get_result",
+                                    "phase": "task_polling",
+                                    "in_progress": False,
+                                }
+                                ev_end["media_type"] = _extract_media_type_from_task_result(res)
+                                ev_end["saved_assets"] = _extract_saved_assets_from_task_result(res)
+                                logger.info("[素材] 推送 tool_end phase=task_polling(图片) saved_assets_count=%d", len(ev_end.get("saved_assets") or []))
+                                await progress_cb(ev_end)
+                                await progress_cb({"type": "status", "message": "正在生成回复…"})
+                            except Exception:
+                                pass
+                elif (
                     fn.get("name") == "invoke_capability"
                     and (a.get("capability_id") or "").strip() == "task.get_result"
                     and _is_task_result_in_progress(res)
@@ -730,11 +849,13 @@ async def _chat_openai(
                     max_wait_sec = 20 * 60
                     waited = 0
                     task_id = (a.get("task_id") or a.get("payload", {}).get("task_id") or "").strip() if isinstance(a.get("payload"), dict) else (a.get("task_id") or "").strip()
+                    logger.info("[素材] task.get_result 自动轮询开始 task_id=%s interval=%ds max_wait=%ds", task_id or "(无)", poll_interval, max_wait_sec)
                     while waited < max_wait_sec:
                         await asyncio.sleep(poll_interval)
                         waited += poll_interval
-                        logger.info("[CHAT] task.get_result 轮询 %ds task_id=%s", waited, task_id or "(无)")
                         res = await _exec_tool(fn.get("name", ""), a, token, sutui_token, progress_cb=None)
+                        in_prog = _is_task_result_in_progress(res)
+                        logger.info("[素材] 轮询 task.get_result waited=%ds task_id=%s in_progress=%s hint=%s", waited, task_id or "(无)", in_prog, _task_result_hint(res))
                         if progress_cb:
                             try:
                                 ev = {"type": "task_poll", "message": f"正在查询生成结果…（{waited}秒）"}
@@ -744,18 +865,24 @@ async def _chat_openai(
                                 await progress_cb(ev)
                             except Exception:
                                 pass
-                        if not _is_task_result_in_progress(res):
+                        if not in_prog:
+                            saved = _extract_saved_assets_from_task_result(res)
+                            logger.info("[素材] 轮询结束 task.get_result task_id=%s saved_assets_count=%d asset_ids=%s", task_id or "(无)", len(saved), [x.get("asset_id") for x in saved])
                             break
                     if progress_cb:
                         try:
-                            await progress_cb({
+                            ev_end = {
                                 "type": "tool_end",
                                 "name": fn.get("name", ""),
                                 "preview": (res or "")[:200],
                                 "capability_id": "task.get_result",
                                 "phase": "task_polling",
                                 "in_progress": False,
-                            })
+                            }
+                            ev_end["media_type"] = _extract_media_type_from_task_result(res)
+                            ev_end["saved_assets"] = _extract_saved_assets_from_task_result(res)
+                            logger.info("[素材] 推送 tool_end phase=task_polling(显式) saved_assets_count=%d", len(ev_end.get("saved_assets") or []))
+                            await progress_cb(ev_end)
                             await progress_cb({"type": "status", "message": "正在生成回复…"})
                         except Exception:
                             pass
@@ -777,8 +904,61 @@ async def _chat_openai(
             results = []
             for tc_info in text_calls:
                 logger.info("[CHAT] text_tool_call: %s(%s)", tc_info["name"], list(tc_info["arguments"].keys()))
+                cap = (tc_info["arguments"].get("capability_id") or "").strip()
+                if cap in ("image.generate", "video.generate", "task.get_result"):
+                    logger.info("[素材] 模型请求工具(text_calls) capability_id=%s", cap)
                 res = await _exec_tool(tc_info["name"], tc_info["arguments"], token, sutui_token, progress_cb=progress_cb)
                 if (
+                    tc_info["name"] == "invoke_capability"
+                    and cap == "image.generate"
+                    and _is_task_result_in_progress(res)
+                ):
+                    task_id = _extract_task_id_from_result(res)
+                    if task_id:
+                        get_result_args = {"capability_id": "task.get_result", "payload": {"task_id": task_id}}
+                        poll_interval = 15
+                        max_wait_sec = 20 * 60
+                        waited = 0
+                        logger.info("[素材] image.generate 自动轮询开始(text_calls) task_id=%s interval=%ds", task_id, poll_interval)
+                        while waited < max_wait_sec:
+                            await asyncio.sleep(poll_interval)
+                            waited += poll_interval
+                            res = await _exec_tool(
+                                tc_info["name"], {"capability_id": "task.get_result", "payload": {"task_id": task_id}},
+                                token, sutui_token, progress_cb=None
+                            )
+                            in_prog = _is_task_result_in_progress(res)
+                            logger.info("[素材] 轮询 image.generate(text_calls) waited=%ds task_id=%s in_progress=%s hint=%s", waited, task_id, in_prog, _task_result_hint(res))
+                            if progress_cb:
+                                try:
+                                    ev = {"type": "task_poll", "message": f"正在查询生成结果…（{waited}秒）"}
+                                    ev["task_id"] = task_id
+                                    ev["result_hint"] = _task_result_hint(res)
+                                    await progress_cb(ev)
+                                except Exception:
+                                    pass
+                            if not in_prog:
+                                saved = _extract_saved_assets_from_task_result(res)
+                                logger.info("[素材] 轮询结束 image.generate(text_calls) task_id=%s saved_assets_count=%d asset_ids=%s", task_id, len(saved), [x.get("asset_id") for x in saved])
+                                break
+                        if progress_cb:
+                            try:
+                                ev_end = {
+                                    "type": "tool_end",
+                                    "name": tc_info["name"],
+                                    "preview": (res or "")[:200],
+                                    "capability_id": "task.get_result",
+                                    "phase": "task_polling",
+                                    "in_progress": False,
+                                }
+                                ev_end["media_type"] = _extract_media_type_from_task_result(res)
+                                ev_end["saved_assets"] = _extract_saved_assets_from_task_result(res)
+                                logger.info("[素材] 推送 tool_end phase=task_polling(图片,text_calls) saved_assets_count=%d", len(ev_end.get("saved_assets") or []))
+                                await progress_cb(ev_end)
+                                await progress_cb({"type": "status", "message": "正在生成回复…"})
+                            except Exception:
+                                pass
+                elif (
                     tc_info["name"] == "invoke_capability"
                     and (tc_info["arguments"].get("capability_id") or "").strip() == "task.get_result"
                     and _is_task_result_in_progress(res)
@@ -788,13 +968,15 @@ async def _chat_openai(
                     waited = 0
                     args = tc_info["arguments"]
                     task_id = (args.get("task_id") or ((args.get("payload") or {}).get("task_id") if isinstance(args.get("payload"), dict) else None) or "").strip()
+                    logger.info("[素材] task.get_result 自动轮询开始(text_calls) task_id=%s interval=%ds", task_id or "(无)", poll_interval)
                     while waited < max_wait_sec:
                         await asyncio.sleep(poll_interval)
                         waited += poll_interval
-                        logger.info("[CHAT] task.get_result 轮询 %ds task_id=%s", waited, task_id or "(无)")
                         res = await _exec_tool(
                             tc_info["name"], tc_info["arguments"], token, sutui_token, progress_cb=None
                         )
+                        in_prog = _is_task_result_in_progress(res)
+                        logger.info("[素材] 轮询 task.get_result(text_calls) waited=%ds task_id=%s in_progress=%s hint=%s", waited, task_id or "(无)", in_prog, _task_result_hint(res))
                         if progress_cb:
                             try:
                                 ev = {"type": "task_poll", "message": f"正在查询生成结果…（{waited}秒）"}
@@ -804,18 +986,24 @@ async def _chat_openai(
                                 await progress_cb(ev)
                             except Exception:
                                 pass
-                        if not _is_task_result_in_progress(res):
+                        if not in_prog:
+                            saved = _extract_saved_assets_from_task_result(res)
+                            logger.info("[素材] 轮询结束 task.get_result(text_calls) task_id=%s saved_assets_count=%d asset_ids=%s", task_id or "(无)", len(saved), [x.get("asset_id") for x in saved])
                             break
                     if progress_cb:
                         try:
-                            await progress_cb({
+                            ev_end = {
                                 "type": "tool_end",
                                 "name": tc_info["name"],
                                 "preview": (res or "")[:200],
                                 "capability_id": "task.get_result",
                                 "phase": "task_polling",
                                 "in_progress": False,
-                            })
+                            }
+                            ev_end["media_type"] = _extract_media_type_from_task_result(res)
+                            ev_end["saved_assets"] = _extract_saved_assets_from_task_result(res)
+                            logger.info("[素材] 推送 tool_end phase=task_polling(显式,text_calls) saved_assets_count=%d", len(ev_end.get("saved_assets") or []))
+                            await progress_cb(ev_end)
                             await progress_cb({"type": "status", "message": "正在生成回复…"})
                         except Exception:
                             pass
@@ -872,6 +1060,25 @@ async def _chat_openai(
                             a = {}
                         logger.info("[CHAT] tool_call(forced): %s(%s)", fn.get("name"), list(a.keys()))
                         res = await _exec_tool(fn.get("name", ""), a, token, sutui_token, progress_cb=progress_cb)
+                        if (
+                            fn.get("name") == "invoke_capability"
+                            and (a.get("capability_id") or "").strip() == "image.generate"
+                            and _is_task_result_in_progress(res)
+                        ):
+                            task_id = _extract_task_id_from_result(res)
+                            if task_id:
+                                get_result_args = {"capability_id": "task.get_result", "payload": {"task_id": task_id}}
+                                poll_interval = 15
+                                max_wait_sec = 20 * 60
+                                waited = 0
+                                logger.info("[素材] image.generate 自动轮询开始(forced) task_id=%s", task_id)
+                                while waited < max_wait_sec:
+                                    await asyncio.sleep(poll_interval)
+                                    waited += poll_interval
+                                    res = await _exec_tool("invoke_capability", get_result_args, token, sutui_token, progress_cb=None)
+                                    if not _is_task_result_in_progress(res):
+                                        logger.info("[素材] 轮询结束 image.generate(forced) task_id=%s saved_assets_count=%d", task_id, len(_extract_saved_assets_from_task_result(res)))
+                                        break
                         cur.append({
                             "role": "tool",
                             "tool_call_id": tc.get("id", ""),
@@ -1130,6 +1337,12 @@ async def chat_endpoint(
     db: Session = Depends(get_db),
 ):
     _pending_tool_logs.set([])
+    logger.info(
+        "[素材] 对话开始(POST /chat) session_id=%s message_len=%d attachment_count=%d",
+        getattr(payload, "session_id", None) or "",
+        len((payload.message or "").strip()),
+        len(getattr(payload, "attachment_asset_ids", None) or []),
+    )
 
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     if edition == "online":
@@ -1194,7 +1407,7 @@ async def chat_endpoint(
             if has_tools
             else (
                 "\n【当前无可用工具】能力服务(MCP 端口 8001)未就绪。"
-                "若用户要求生成图片、视频、发布等，请回复：当前无法使用速推能力，请确认 (1) 已用 start.bat 或 start_headless.bat 启动完整服务（含 MCP）；(2) 已使用速推账号登录或配置算力账号。"
+                "若用户要求生成图片、视频、发布等，请回复：当前无法使用速推能力，请确认 (1) 已用 start.bat 或 start_headless.bat 启动完整服务（含 MCP）；(2) 管理员已在服务器配置 SUTUI_SERVER_TOKEN 或 SUTUI_SERVER_TOKENS。"
                 "可访问 http://本机IP:8000/api/health 查看 mcp.reachable 与 mcp.tools_count。\n\n"
             )
         )
@@ -1236,8 +1449,10 @@ async def chat_endpoint(
                 {"model": model, "mode": "direct", "duration_ms": ms, "tools": len(mcp_tools)},
             )
             db.commit()
+            final_reply = _reply_for_user(reply)
+            logger.info("[素材] 对话结束(POST /chat) session_id=%s reply_len=%d", payload.session_id or "", len(final_reply))
             return JSONResponse(
-                content=ChatResponse(reply=_reply_for_user(reply)).model_dump(),
+                content=ChatResponse(reply=final_reply).model_dump(),
                 headers={"X-Duration-Ms": str(ms)},
             )
         except HTTPException:
@@ -1256,8 +1471,10 @@ async def chat_endpoint(
             {"model": model, "mode": "openclaw", "duration_ms": ms},
         )
         db.commit()
+        final_reply = _reply_for_user(oc_reply)
+        logger.info("[素材] 对话结束(POST /chat) session_id=%s reply_len=%d", payload.session_id or "", len(final_reply))
         return JSONResponse(
-            content=ChatResponse(reply=_reply_for_user(oc_reply)).model_dump(),
+            content=ChatResponse(reply=final_reply).model_dump(),
             headers={"X-Duration-Ms": str(ms)},
         )
 
@@ -1292,6 +1509,11 @@ async def _chat_stream_events(
 
     async def run_chat() -> None:
         _pending_tool_logs.set([])
+        session_id = getattr(payload, "session_id", None) or ""
+        logger.info(
+            "[素材] 对话开始 session_id=%s message_len=%d attachment_count=%d",
+            session_id, len((payload.message or "").strip()), len(getattr(payload, "attachment_asset_ids", None) or []),
+        )
         edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
         if edition == "online":
             model = "sutui"
@@ -1348,7 +1570,7 @@ async def _chat_stream_events(
                 if has_tools
                 else (
                     "\n【当前无可用工具】能力服务(MCP 端口 8001)未就绪。"
-                    "若用户要求生成图片、视频、发布等，请回复：当前无法使用速推能力，请确认 (1) 已用 start.bat 或 start_headless.bat 启动完整服务（含 MCP）；(2) 已使用速推账号登录或配置算力账号。"
+                    "若用户要求生成图片、视频、发布等，请回复：当前无法使用速推能力，请确认 (1) 已用 start.bat 或 start_headless.bat 启动完整服务（含 MCP）；(2) 管理员已在服务器配置 SUTUI_SERVER_TOKEN 或 SUTUI_SERVER_TOKENS。"
                     "可访问 http://本机IP:8000/api/health 查看 mcp.reachable 与 mcp.tools_count。\n\n"
                 )
             )
@@ -1416,6 +1638,7 @@ async def _chat_stream_events(
             final_reply = f"错误：{final_error}"
         else:
             final_reply = _reply_for_user(final_reply)
+        logger.info("[素材] 对话结束 session_id=%s reply_len=%d error=%s", session_id, len(final_reply or ""), bool(final_error))
         await queue.put({"type": "done", "reply": final_reply, "error": final_error})
 
     task = asyncio.create_task(run_chat())
