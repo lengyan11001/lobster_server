@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     wechat_app_secret: Optional[str] = None
     """小程序码跳转的页面路径，如 pages/index/index，扫码后打开该页并带 scene"""
     wechat_miniprogram_page: Optional[str] = None
+    """服务号网页授权（与小程序二选一或并存）：AppID/AppSecret，配置后登录页返回 login_url 供扫码"""
+    wechat_oa_app_id: Optional[str] = None
+    wechat_oa_secret: Optional[str] = None
+    """服务号回调根地址，不填则用 public_base_url 或 request.base_url"""
+    wechat_oa_base_url: Optional[str] = None
     # 自建微信支付（不用速推）：商户号、APIv3 密钥，配置后充值可走微信 Native 扫码
     wechat_mch_id: Optional[str] = None
     wechat_pay_apiv3_key: Optional[str] = None

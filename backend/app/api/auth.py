@@ -312,6 +312,13 @@ def _use_own_wechat_login() -> bool:
     return bool(app_id and secret)
 
 
+def _use_wechat_oa_login() -> bool:
+    """是否启用服务号网页授权登录（配置了 wechat_oa_app_id + wechat_oa_secret）。"""
+    app_id = (getattr(settings, "wechat_oa_app_id", None) or "").strip()
+    secret = (getattr(settings, "wechat_oa_secret", None) or "").strip()
+    return bool(app_id and secret)
+
+
 # 小程序码扫码登录：scene_id -> token，5 分钟有效
 _miniprogram_scene_store: Dict[str, Dict[str, Any]] = {}
 _SCENE_TTL = 300  # 5 min
@@ -344,11 +351,33 @@ def _get_wechat_access_token() -> str:
     return token
 
 
-@router.get("/wechat-login-url", summary="自建微信：获取小程序码（二维码）与 scene_id，前端轮询登录状态")
+def _wechat_oa_base_url(request: Request) -> str:
+    base = (getattr(settings, "wechat_oa_base_url", None) or "").strip().rstrip("/")
+    if base:
+        return base
+    return (get_effective_public_base_url() or str(request.base_url)).rstrip("/")
+
+
+@router.get("/wechat-login-url", summary="自建微信：服务号返回 login_url，小程序返回 scene_id+qr_base64")
 def get_wechat_login_url(request: Request):
-    """生成小程序码，返回 scene_id 与二维码 base64。前端展示二维码并轮询 /auth/wechat-miniprogram-login-status?scene_id=。"""
+    """优先服务号：若配置 wechat_oa_app_id，返回 login_url 供前端生成二维码；否则走小程序码。"""
+    if _use_wechat_oa_login():
+        app_id = (getattr(settings, "wechat_oa_app_id", None) or "").strip()
+        base = _wechat_oa_base_url(request)
+        redirect_uri = f"{base}/auth/wechat-callback"
+        url = (
+            "https://open.weixin.qq.com/connect/oauth2/authorize"
+            f"?appid={quote(app_id, safe='')}"
+            f"&redirect_uri={quote(redirect_uri, safe='')}"
+            "&response_type=code"
+            "&scope=snsapi_userinfo"
+            "&state=login"
+            "#wechat_redirect"
+        )
+        logger.info("[wechat-login-url] 服务号 login_url base=%s", base)
+        return {"login_url": url}
     if not _use_own_wechat_login():
-        raise HTTPException(status_code=400, detail="未配置自建微信登录（wechat_app_id/wechat_app_secret）")
+        raise HTTPException(status_code=400, detail="未配置自建微信登录（wechat_oa_app_id/wechat_oa_secret 或 wechat_app_id/wechat_app_secret）")
     scene_id = secrets.token_hex(8)  # 16 字符，符合微信 scene 32 字限制
     try:
         access_token = _get_wechat_access_token()
@@ -454,20 +483,24 @@ def wechat_miniprogram_login(body: WechatMiniprogramLoginBody, db: Session = Dep
     return Token(access_token=access_token, token_type="bearer")
 
 
-@router.get("/wechat-callback", summary="自建微信：扫码登录回调")
+@router.get("/wechat-callback", summary="自建微信：服务号/网页授权扫码登录回调")
 def wechat_callback(
     request: Request,
     code: Optional[str] = None,
     state: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """微信回调带 code，用 code 换 openid，查/建用户并下发 JWT，重定向到 /?token=。"""
-    if not _use_own_wechat_login():
-        raise HTTPException(status_code=400, detail="未配置自建微信登录")
+    """微信回调带 code，用 code 换 openid，查/建用户并下发 JWT，重定向到 /?token=。优先用服务号 appid/secret。"""
     if not (code or "").strip():
         raise HTTPException(status_code=400, detail="缺少 code 参数")
-    app_id = (getattr(settings, "wechat_app_id", None) or "").strip()
-    app_secret = (getattr(settings, "wechat_app_secret", None) or "").strip()
+    if _use_wechat_oa_login():
+        app_id = (getattr(settings, "wechat_oa_app_id", None) or "").strip()
+        app_secret = (getattr(settings, "wechat_oa_secret", None) or "").strip()
+    elif _use_own_wechat_login():
+        app_id = (getattr(settings, "wechat_app_id", None) or "").strip()
+        app_secret = (getattr(settings, "wechat_app_secret", None) or "").strip()
+    else:
+        raise HTTPException(status_code=400, detail="未配置自建微信登录")
     with httpx.Client(timeout=10.0) as client:
         r = client.get(
             "https://api.weixin.qq.com/sns/oauth2/access_token",
@@ -501,8 +534,9 @@ def wechat_callback(
         db.commit()
         db.refresh(user)
     access_token = create_access_token(data={"sub": str(user.id)})
-    base = get_effective_public_base_url()
-    return RedirectResponse(url=f"{base}/auth/wechat-success?token={access_token}", status_code=302)
+    base = _wechat_oa_base_url(request) if _use_wechat_oa_login() else get_effective_public_base_url()
+    base = (base or "").rstrip("/") or str(request.base_url).rstrip("/")
+    return RedirectResponse(url=f"{base}/?token={access_token}", status_code=302)
 
 
 @router.get("/wechat-success", summary="自建微信：登录成功页（展示 Token，供本地盒子用户复制）")
