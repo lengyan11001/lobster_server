@@ -578,6 +578,18 @@ def _extract_saved_assets_from_task_result(result_text: str) -> List[Dict[str, A
                 out.append(item)
         return out
 
+    def from_output_images(obj: Any) -> List[Dict[str, Any]]:
+        """上游 fal/速推 返回 output.images[].url，无 saved_assets 时从此处取。"""
+        if not isinstance(obj, dict):
+            return []
+        output = obj.get("output")
+        if not isinstance(output, dict):
+            return []
+        images = output.get("images")
+        if not isinstance(images, list) or not images:
+            return []
+        return to_list(images)
+
     try:
         d = json.loads(raw) if raw.startswith("{") else {}
         if not d:
@@ -612,6 +624,9 @@ def _extract_saved_assets_from_task_result(result_text: str) -> List[Dict[str, A
                             out = to_list(saved)
                             if out:
                                 return out
+                        out = from_output_images(obj)
+                        if out:
+                            return out
                     except Exception:
                         pass
             # 2b) result.content[0].text（上游直接 content）
@@ -628,6 +643,9 @@ def _extract_saved_assets_from_task_result(result_text: str) -> List[Dict[str, A
                         out = to_list(saved)
                         if out:
                             return out
+                    out = from_output_images(obj)
+                    if out:
+                        return out
                 except Exception:
                     pass
     except Exception:
