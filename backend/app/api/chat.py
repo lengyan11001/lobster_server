@@ -1164,7 +1164,24 @@ async def _chat_openai(
                                     waited += poll_interval
                                     res = await _exec_tool("invoke_capability", get_result_args, token, sutui_token, progress_cb=None)
                                     if not _is_task_result_in_progress(res):
-                                        logger.info("[素材] 轮询结束 image.generate(forced) task_id=%s saved_assets_count=%d", task_id, len(_extract_saved_assets_from_task_result(res)))
+                                        saved = _extract_saved_assets_from_task_result(res)
+                                        logger.info("[素材] 轮询结束 image.generate(forced) task_id=%s saved_assets_count=%d", task_id, len(saved))
+                                        if progress_cb:
+                                            try:
+                                                ev_end = {
+                                                    "type": "tool_end",
+                                                    "name": "invoke_capability",
+                                                    "preview": (res or "")[:200],
+                                                    "capability_id": "task.get_result",
+                                                    "phase": "task_polling",
+                                                    "in_progress": False,
+                                                    "media_type": _extract_media_type_from_task_result(res),
+                                                    "saved_assets": saved,
+                                                }
+                                                await progress_cb(ev_end)
+                                                await progress_cb({"type": "status", "message": "正在生成回复…"})
+                                            except Exception:
+                                                pass
                                         break
                         cur.append({
                             "role": "tool",
