@@ -70,6 +70,7 @@ class ChatRequest(BaseModel):
     context_id: Optional[str] = None
     model: Optional[str] = None
     attachment_asset_ids: Optional[List[str]] = Field(default_factory=list, description="本条消息附带的素材 ID，将生成可访问 URL 供速推等使用")
+    attachment_image_urls: Optional[List[str]] = Field(default_factory=list, description="图生视频时直接传图片 URL（如上一轮生成的 saved_assets[].url），与 attachment_asset_ids 合并后注入 video.generate")
 
 
 class ChatResponse(BaseModel):
@@ -809,6 +810,7 @@ async def _chat_openai(
     token: str,
     sutui_token: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    attachment_urls: Optional[List[str]] = None,
 ) -> str:
     """OpenAI-compatible chat loop (DeepSeek, OpenAI, Google Gemini)."""
     base = cfg["base_url"].rstrip("/")
@@ -872,6 +874,7 @@ async def _chat_openai(
                     a = json.loads(fn.get("arguments", "{}"))
                 except Exception:
                     a = {}
+                _inject_video_media_urls(a, attachment_urls or [])
                 logger.info("[CHAT] tool_call: %s(%s)", fn.get("name"), list(a.keys()))
                 cap = (a.get("capability_id") or "").strip()
                 if cap in ("image.generate", "video.generate", "task.get_result"):
@@ -990,6 +993,7 @@ async def _chat_openai(
             cur.append({"role": "assistant", "content": preamble or "正在调用工具..."})
             results = []
             for tc_info in text_calls:
+                _inject_video_media_urls(tc_info["arguments"], attachment_urls or [])
                 logger.info("[CHAT] text_tool_call: %s(%s)", tc_info["name"], list(tc_info["arguments"].keys()))
                 cap = (tc_info["arguments"].get("capability_id") or "").strip()
                 if cap in ("image.generate", "video.generate", "task.get_result"):
@@ -1219,6 +1223,7 @@ async def _chat_anthropic(
     token: str,
     sutui_token: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    attachment_urls: Optional[List[str]] = None,
 ) -> str:
     """Anthropic Messages API chat loop."""
     hdrs = {
@@ -1269,8 +1274,12 @@ async def _chat_anthropic(
             ant_msgs.append({"role": "assistant", "content": blocks})
             results = []
             for tu in tus:
+                inp = tu.get("input") if isinstance(tu.get("input"), dict) else {}
+                if not inp:
+                    tu["input"] = inp
+                _inject_video_media_urls(inp, attachment_urls or [])
                 logger.info("tool_call: %s", tu["name"])
-                r = await _exec_tool(tu["name"], tu.get("input", {}), token, sutui_token, progress_cb=progress_cb)
+                r = await _exec_tool(tu["name"], inp, token, sutui_token, progress_cb=progress_cb)
                 results.append({
                     "type": "tool_result",
                     "tool_use_id": tu["id"],
@@ -1425,11 +1434,63 @@ def _build_user_content_with_attachments(
                     pairs.append((aid, u))
             if pairs:
                 logger.info("[CHAT] 注入素材 URL: asset_ids=%s", [p[0] for p in pairs])
-                user_content += "\n\n【用户本条消息上传的素材】生成视频时请使用以下 URL 作为 image_url，勿使用历史中的其他素材。\n"
+                user_content += "\n\n【用户本条消息上传的素材】图生视频时你不要在 video.generate 的 payload 里填 image_url/media_files，由系统自动注入。理解视频/图片时请用以下 URL 作为 sutui.understand_video 的 video_url。\n"
                 user_content += "\n".join(f"- asset_id: {aid}  URL: {u}" for aid, u in pairs)
         except Exception:
             pass
     return user_content or "（无文字）"
+
+
+def _get_attachment_public_urls(
+    payload: ChatRequest,
+    request: Optional[Request],
+    db=None,
+    user_id: Optional[int] = None,
+) -> List[str]:
+    """本条消息附图/图生视频用图：asset_ids 解析为 URL + attachment_image_urls，供 video.generate 注入。"""
+    out: List[str] = []
+    if getattr(payload, "attachment_image_urls", None):
+        for u in (payload.attachment_image_urls or [])[:9]:
+            if isinstance(u, str) and (u := u.strip()) and u.startswith("http"):
+                out.append(u)
+    if getattr(payload, "attachment_asset_ids", None) and request:
+        try:
+            from backend.app.api.assets import build_asset_file_url, get_asset_public_url
+            aids = [a for a in (payload.attachment_asset_ids or [])[:9] if isinstance(a, str) and a.strip()]
+            for aid in aids:
+                aid = aid.strip()
+                if db is not None and user_id is not None:
+                    u = get_asset_public_url(aid, user_id, request, db)
+                else:
+                    u = build_asset_file_url(request, aid)
+                if u and u not in out:
+                    out.append(u)
+        except Exception:
+            pass
+    if out:
+        logger.info("[CHAT] 图生视频可用 URL 数量=%d 首图=%s", len(out), (out[0][:80] + "…") if out and len(out[0]) > 80 else (out[0] if out else ""))
+    return out
+
+
+def _inject_video_media_urls(args: Dict[str, Any], attachment_urls: List[str]) -> None:
+    """video.generate 时：注入图片 URL（filePaths/media_files/image_url）并确保 prompt 含「图生视频」文案，与 lobster 单机版一致。"""
+    if not args or (args.get("capability_id") or "").strip() != "video.generate":
+        return
+    inner = args.get("payload")
+    if not isinstance(inner, dict):
+        inner = {}
+        args["payload"] = inner
+    if attachment_urls:
+        urls = list(attachment_urls)[:9]
+        inner["filePaths"] = urls
+        inner["functionMode"] = "first_last_frames"
+        inner["media_files"] = urls
+        inner["image_url"] = urls[0]
+        logger.info("[CHAT] 图生视频注入 filePaths（%d 张）functionMode=first_last_frames 首图=%s", len(urls), (urls[0][:80] + "…") if len(urls[0]) > 80 else urls[0])
+    existing = (inner.get("prompt") or "").strip()
+    if "图生视频" not in existing:
+        inner["prompt"] = ("图生视频：" + existing) if existing else "图生视频"
+        logger.info("[CHAT] 图生视频 prompt 补全「图生视频」前缀")
 
 
 @router.post("/chat", response_model=ChatResponse, summary="智能对话")
@@ -1493,21 +1554,32 @@ async def chat_endpoint(
             "【工具使用指南】\n"
             "生成图片：invoke_capability(capability_id=\"image.generate\", payload={\"prompt\":\"...\", \"model\":\"jimeng-4.0\"})\n"
             "  → 返回 task_id 后用 task.get_result(task_id) 取结果，结果中 saved_assets[0].asset_id 为素材ID\n"
+            "【图片 prompt 规则】用用户原话作 prompt（去掉指令性表述如「发布到某账号」等），不要改写、不要臆造；仅当用户明确说「让ai写词」「你写词」「帮我写提示词」时才由你撰写 prompt。\n"
             "生成视频：文生视频 invoke_capability(capability_id=\"video.generate\", payload={\"model\":\"st-ai/super-seed2\", \"prompt\":\"...\", \"duration\":5})\n"
-            "  图生视频 同上但 payload 加 image_url（图片需公开 URL，本地图先用 sutui.transfer_url 转存）\n"
+            "  图生视频：当用户本条消息带有上传的图片或附图为「生成的图」时，你只需填写 prompt、model、duration 等，**禁止**在 payload 中填写 image_url 或 media_files（系统会根据用户附图/上一轮生成图自动注入）；无附图时若用户指定了某张图/素材，按速推要求填 image_url 等。\n"
+            "【视频 prompt 规则】video.generate 的 prompt 里**只放「生成内容描述」**，其余一律不进 prompt。\n"
+            "  不进 prompt 的（无论出现在句子的前面、中间还是后面都要去掉）：① 条件（如「用速推的」「用 wan/v2.6/image-to-video」「用某模型」「用上传的图片」）→ 只影响 payload.model 或由系统注入图；② 动作（如「发布到抖音」「发到某账号」「上传小红书」）→ 只触发 publish_content。\n"
+            "  只进 prompt 的：用户说的「生成什么」的表述（如「生成一个产品视频，产品名字a」）。先去掉上述条件与动作，**剩余原文作为 prompt，不要改写、不要臆造**。仅当用户明确说「让ai写词」「你写词」「帮我写提示词」时才由你撰写 prompt。用户提到用某模型时，payload.model 填对应模型（如 wan/v2.6/image-to-video、st-ai/super-seed2）。\n"
             "  → 返回 task_id 后必须调 task.get_result(task_id) 轮询，视频通常 30–120 秒完成\n"
             "生成并发布：先 invoke_capability 生成 → 拿 asset_id → 调 publish_content\n"
-            "当用户要求「发到某账号」「发布到抖音」等时，在 task.get_result 返回成功（含 saved_assets 或 result 中的 asset_id）后，立即调用 publish_content(asset_id, account_nickname, ...)，无需等用户再次确认或点击。\n"
+            "当用户要求「发到某账号」「发布到抖音」「上传小红书」等时，在 task.get_result 返回成功（含 saved_assets 或 result 中的 asset_id）后，立即调用 publish_content(asset_id, account_nickname, ...)，无需等用户再次确认或点击。\n"
+            "理解视频/图片：当用户发送视频或图片并说「理解一下」「总结」「描述画面」「这段视频讲了什么」时，先取用户本条消息附图的公网 URL（见【用户本条消息上传的素材】），再调用 invoke_capability(capability_id=\"sutui.understand_video\", payload={\"video_url\": \"该 URL\", \"prompt\": \"用户的要求或默认描述\"})，将返回的 result 文本融入你的回复。\n"
             "【发布约束】\n"
             "- 发布必须由你调用 publish_content 等工具完成，不得要求用户「点加号」「到发布页」「准备好后告诉我」等手动操作。\n"
-            "- task.get_result 返回成功且用户要求发布时，必须**在同一轮**紧接着调用 publish_content（或先 list_publish_accounts 再 publish_content），禁止只回复「视频已生成，现在去发布」「让我检查某账号是否存在」等文字而不调用工具；若需确认账号，先调 list_publish_accounts，拿到结果后立即调 publish_content。\n"
+            "- task.get_result 返回成功且用户要求发布时，必须**在同一轮**紧接着调用 publish_content（或先 list_publish_accounts 再 publish_content），禁止只回复「图片/视频已生成，现在去发布」「让我检查某账号是否存在」等文字而不调用工具；若需确认账号，先调 list_publish_accounts，拿到结果后立即调 publish_content。\n"
             "- 用户说「用某素材生成视频并发布到某账号」时：发布时 asset_id 必须用 task.get_result 返回的 saved_assets 中的 ID（本次生成的视频），不得用用户提供的垫图/输入素材 ID。\n"
             "- 用户说「用生成的」「发刚才生成的」「用这个生成的素材」时：即指上一轮 task.get_result 已返回结果中的 saved_assets[0].asset_id，直接调用 publish_content(该 asset_id, account_nickname, ...)，不要再次调用 video.generate 或 task.get_result。\n"
-            "- 若 invoke_capability 或 task.get_result 返回错误/失败，必须明确告知用户「本次生成失败」及原因，不得用其他素材或历史结果冒充本次生成成功；只有当前 task.get_result 明确返回成功且含 saved_assets 时，才可回复「视频已生成」并继续发布。失败后禁止自行重试或再生成一个别的视频，只把失败原因提示给用户即可。\n"
+            "- 用户问「生成好了吗」「好了吗」「完成了吗」等时：若对话历史中你上一条回复已明确说明「视频已生成」或「图片已生成」且含有 saved_assets/结果链接，则**不要再次调用 task.get_result**，直接根据历史回复「已经生成好了，您可以…」并引用上条结果；仅当上一条并未返回成功结果或用户是在等待中的追问时，才可再查 task.get_result。\n"
+            "- **区分「提交生成」与「查询结果」**：video.generate 是提交新的生成任务；task.get_result(task_id) 只是查询已有任务的状态/结果，不会新建任务。当你调用 task.get_result 时（例如用户问「生成好了吗」后你去查状态），回复中**禁止**使用「重新提交了任务」「任务已重新提交」「重新尝试生成」等表述，必须明确写成「正在查询您之前的任务结果」或「未重新提交，正在查询之前的任务状态」，避免用户误以为又提交了一次生成。\n"
+            "- 若 invoke_capability 或 task.get_result 返回错误/失败，必须明确告知用户「本次生成失败」及原因，不得用其他素材或历史结果冒充本次生成成功；只有当前 task.get_result 明确返回成功且含 saved_assets 时，根据 saved_assets[0].media_type 回复「图片已生成」或「视频已生成」并继续发布。失败后禁止自行重试或再生成一个别的视频，只把失败原因提示给用户即可。\n"
             "发布：publish_content(asset_id, account_nickname, title, description, tags)\n"
             "打开浏览器：open_account_browser(account_nickname=\"xxx\")\n"
             "检查登录：check_account_login(account_nickname=\"xxx\")\n"
             "查素材：list_assets  查账号：list_publish_accounts\n"
+            "【素材指代与确认】\n"
+            "用户说「用我上传的」「刚才那张」「上次传的」「上次生成的」「用这张图」时，可能指：本条消息附带的图、本会话中之前某条消息附带的图、或 list_assets 返回的最近素材。若不唯一或无法确定指哪张，禁止猜测。\n"
+            "正确做法：先 list_assets（或结合本条消息已附带的素材）得到候选；若有多个候选或不确定，在回复中列出每条候选的「素材 ID」和「图片/视频链接」（便于用户点击查看），并明确问用户「您指的是哪一张？是不是这张？」待用户确认后再用该 asset_id 继续生成或发布。\n"
+            "禁止在未确认时随意选用 list_assets 中的第一条或某一条。\n"
             if has_tools
             else (
                 "\n【当前无可用工具】能力服务(MCP 端口 8001)未就绪。"
@@ -1656,21 +1728,32 @@ async def _chat_stream_events(
                 "【工具使用指南】\n"
                 "生成图片：invoke_capability(capability_id=\"image.generate\", payload={\"prompt\":\"...\", \"model\":\"jimeng-4.0\"})\n"
                 "  → 返回 task_id 后用 task.get_result(task_id) 取结果，结果中 saved_assets[0].asset_id 为素材ID\n"
+                "【图片 prompt 规则】用用户原话作 prompt（去掉指令性表述如「发布到某账号」等），不要改写、不要臆造；仅当用户明确说「让ai写词」「你写词」「帮我写提示词」时才由你撰写 prompt。\n"
                 "生成视频：文生视频 invoke_capability(capability_id=\"video.generate\", payload={\"model\":\"st-ai/super-seed2\", \"prompt\":\"...\", \"duration\":5})\n"
-                "  图生视频 同上但 payload 加 image_url（图片需公开 URL，本地图先用 sutui.transfer_url 转存）\n"
+                "  图生视频：当用户本条消息带有上传的图片或附图为「生成的图」时，你只需填写 prompt、model、duration 等，**禁止**在 payload 中填写 image_url 或 media_files（系统会根据用户附图/上一轮生成图自动注入）；无附图时若用户指定了某张图/素材，按速推要求填 image_url 等。\n"
+                "【视频 prompt 规则】video.generate 的 prompt 里**只放「生成内容描述」**，其余一律不进 prompt。\n"
+                "  不进 prompt 的（无论出现在句子的前面、中间还是后面都要去掉）：① 条件（如「用速推的」「用某模型」「用上传的图片」）→ 只影响 payload.model 或由系统注入图；② 动作（如「发布到抖音」「发到某账号」「上传小红书」）→ 只触发 publish_content。\n"
+                "  只进 prompt 的：用户说的「生成什么」的表述（如「生成一个产品视频，产品名字a」）。先去掉上述条件与动作，**剩余原文作为 prompt，不要改写、不要臆造**。仅当用户明确说「让ai写词」「你写词」「帮我写提示词」时才由你撰写 prompt。用户提到用某模型时，payload.model 填对应模型（如 wan/v2.6/image-to-video、st-ai/super-seed2）。\n"
                 "  → 返回 task_id 后必须调 task.get_result(task_id) 轮询，视频通常 30–120 秒完成\n"
                 "生成并发布：先 invoke_capability 生成 → 拿 asset_id → 调 publish_content\n"
-                "当用户要求「发到某账号」「发布到抖音」等时，在 task.get_result 返回成功（含 saved_assets 或 result 中的 asset_id）后，立即调用 publish_content(asset_id, account_nickname, ...)，无需等用户再次确认或点击。\n"
+                "当用户要求「发到某账号」「发布到抖音」「上传小红书」等时，在 task.get_result 返回成功（含 saved_assets 或 result 中的 asset_id）后，立即调用 publish_content(asset_id, account_nickname, ...)，无需等用户再次确认或点击。\n"
+                "理解视频/图片：当用户发送视频或图片并说「理解一下」「总结」「描述画面」「这段视频讲了什么」时，先取用户本条消息附图的公网 URL（见【用户本条消息上传的素材】），再调用 invoke_capability(capability_id=\"sutui.understand_video\", payload={\"video_url\": \"该 URL\", \"prompt\": \"用户的要求或默认描述\"})，将返回的 result 文本融入你的回复。\n"
                 "【发布约束】\n"
                 "- 发布必须由你调用 publish_content 等工具完成，不得要求用户「点加号」「到发布页」「准备好后告诉我」等手动操作。\n"
-                "- task.get_result 返回成功且用户要求发布时，必须**在同一轮**紧接着调用 publish_content（或先 list_publish_accounts 再 publish_content），禁止只回复「视频已生成，现在去发布」「让我检查某账号是否存在」等文字而不调用工具；若需确认账号，先调 list_publish_accounts，拿到结果后立即调 publish_content。\n"
+                "- task.get_result 返回成功且用户要求发布时，必须**在同一轮**紧接着调用 publish_content（或先 list_publish_accounts 再 publish_content），禁止只回复「图片/视频已生成，现在去发布」「让我检查某账号是否存在」等文字而不调用工具；若需确认账号，先调 list_publish_accounts，拿到结果后立即调 publish_content。\n"
                 "- 用户说「用某素材生成视频并发布到某账号」时：发布时 asset_id 必须用 task.get_result 返回的 saved_assets 中的 ID（本次生成的视频），不得用用户提供的垫图/输入素材 ID。\n"
                 "- 用户说「用生成的」「发刚才生成的」「用这个生成的素材」时：即指上一轮 task.get_result 已返回结果中的 saved_assets[0].asset_id，直接调用 publish_content(该 asset_id, account_nickname, ...)，不要再次调用 video.generate 或 task.get_result。\n"
-                "- 若 invoke_capability 或 task.get_result 返回错误/失败，必须明确告知用户「本次生成失败」及原因，不得用其他素材或历史结果冒充本次生成成功；只有当前 task.get_result 明确返回成功且含 saved_assets 时，才可回复「视频已生成」并继续发布。失败后禁止自行重试或再生成一个别的视频，只把失败原因提示给用户即可。\n"
+                "- 用户问「生成好了吗」「好了吗」「完成了吗」等时：若对话历史中你上一条回复已明确说明「视频已生成」或「图片已生成」且含有 saved_assets/结果链接，则**不要再次调用 task.get_result**，直接根据历史回复「已经生成好了，您可以…」并引用上条结果；仅当上一条并未返回成功结果或用户是在等待中的追问时，才可再查 task.get_result。\n"
+                "- **区分「提交生成」与「查询结果」**：video.generate 是提交新的生成任务；task.get_result(task_id) 只是查询已有任务的状态/结果，不会新建任务。当你调用 task.get_result 时（例如用户问「生成好了吗」后你去查状态），回复中**禁止**使用「重新提交了任务」「任务已重新提交」「重新尝试生成」等表述，必须明确写成「正在查询您之前的任务结果」或「未重新提交，正在查询之前的任务状态」，避免用户误以为又提交了一次生成。\n"
+                "- 若 invoke_capability 或 task.get_result 返回错误/失败，必须明确告知用户「本次生成失败」及原因，不得用其他素材或历史结果冒充本次生成成功；只有当前 task.get_result 明确返回成功且含 saved_assets 时，根据 saved_assets[0].media_type 回复「图片已生成」或「视频已生成」并继续发布。失败后禁止自行重试或再生成一个别的视频，只把失败原因提示给用户即可。\n"
                 "发布：publish_content(asset_id, account_nickname, title, description, tags)\n"
                 "打开浏览器：open_account_browser(account_nickname=\"xxx\")\n"
                 "检查登录：check_account_login(account_nickname=\"xxx\")\n"
                 "查素材：list_assets  查账号：list_publish_accounts\n"
+                "【素材指代与确认】\n"
+                "用户说「用我上传的」「刚才那张」「上次传的」「上次生成的」「用这张图」时，可能指：本条消息附带的图、本会话中之前某条消息附带的图、或 list_assets 返回的最近素材。若不唯一或无法确定指哪张，禁止猜测。\n"
+                "正确做法：先 list_assets（或结合本条消息已附带的素材）得到候选；若有多个候选或不确定，在回复中列出每条候选的「素材 ID」和「图片/视频链接」（便于用户点击查看），并明确问用户「您指的是哪一张？是不是这张？」待用户确认后再用该 asset_id 继续生成或发布。\n"
+                "禁止在未确认时随意选用 list_assets 中的第一条或某一条。\n"
                 if has_tools
                 else (
                     "\n【当前无可用工具】能力服务(MCP 端口 8001)未就绪。"
@@ -1694,6 +1777,7 @@ async def _chat_stream_events(
         if len(messages) > MAX_HISTORY + 1:
             messages = [messages[0]] + messages[-MAX_HISTORY:]
         messages.append({"role": "user", "content": _build_user_content_with_attachments(payload, _request_for_assets, db=db, user_id=current_user.id)})
+        attachment_urls = _get_attachment_public_urls(payload, _request_for_assets, db=db, user_id=current_user.id)
 
         cfg = _resolve_config(resolve_model) if resolve_model else None
         try:
@@ -1703,12 +1787,14 @@ async def _chat_stream_events(
                         messages, cfg, mcp_tools, raw_token,
                         sutui_token=sutui_token,
                         progress_cb=progress_cb,
+                        attachment_urls=attachment_urls,
                     )
                 else:
                     reply = await _chat_openai(
                         messages, cfg, mcp_tools, raw_token,
                         sutui_token=sutui_token,
                         progress_cb=progress_cb,
+                        attachment_urls=attachment_urls,
                     )
                 reply_holder.append(reply)
                 _flush_tool_logs(db, current_user.id, payload.session_id, model)
