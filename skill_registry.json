@@ -2,28 +2,40 @@
   "packages": {
     "douyin_publish": {
       "name": "发抖音",
-      "description": "一键将生成的视频/图文发布到抖音。两种扣费方式：按次扣 10 积分/次，或付费解锁本技能后免费使用。",
+      "description": "一键将生成的视频/图文发布到抖音。默认已安装直接可用；未解锁「添加更多发布账号」时仅可添加 1 个账号。",
       "type": "builtin",
-      "unlock_price_yuan": 148,
+      "default_installed": true,
       "status": "available",
       "capabilities": {},
       "tags": ["publish", "douyin", "video"]
     },
     "xiaohongshu_publish": {
       "name": "发小红书",
-      "description": "一键将视频、图文（图片）或长文发布到小红书创作者平台。配置发布账号后，在发布管理选择小红书即可使用。",
+      "description": "一键将视频、图文发布到小红书。默认已安装直接可用；未解锁「添加更多发布账号」时仅可添加 1 个账号。",
       "type": "builtin",
+      "default_installed": true,
       "status": "available",
       "capabilities": {},
       "tags": ["publish", "xiaohongshu", "video", "image"]
     },
     "wecom_reply": {
       "name": "企业微信自动回复",
-      "description": "接收企业微信消息，由 AI 自动生成回复。配置回调 URL 与 Token 后，5 秒内被动回复用户。",
+      "description": "接收企业微信消息，由 AI 自动生成回复。需 1000 积分解锁后进入配置页并使用。",
       "type": "builtin",
+      "unlock_price_credits": 1000,
       "status": "available",
       "capabilities": {},
       "tags": ["wecom", "chat", "reply"]
+    },
+    "add_more_publish_accounts": {
+      "name": "添加更多发布账号",
+      "description": "解锁后可添加多个抖音/小红书等发布账号（未解锁时仅可添加 1 个）。",
+      "type": "builtin",
+      "unlock_price_credits": 1000,
+      "show_in_store": false,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["publish", "accounts"]
     },
     "sutui_mcp": {
       "name": "速推 MCP",

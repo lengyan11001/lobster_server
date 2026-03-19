@@ -104,6 +104,18 @@ def user_can_use_capability(db: Session, user_id: int, capability_id: str) -> bo
     return package_id in unlocked
 
 
+def _package_capabilities_already_in_catalog(db: Session, pkg: dict) -> bool:
+    """该包声明的能力是否已全部存在于 CapabilityConfig 且 enabled。用于与「能力可用」状态对齐，避免卡片显示未安装但能力能用。"""
+    cap_ids = list((pkg.get("capabilities") or {}).keys())
+    if not cap_ids:
+        return False
+    n_enabled = db.query(CapabilityConfig).filter(
+        CapabilityConfig.capability_id.in_(cap_ids),
+        CapabilityConfig.enabled.is_(True),
+    ).count()
+    return n_enabled == len(cap_ids)
+
+
 @router.get("/skills/store", summary="技能商店列表")
 def list_store(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     registry = _load_registry()
@@ -112,7 +124,15 @@ def list_store(current_user: User = Depends(get_current_user), db: Session = Dep
     packages = registry.get("packages", {})
     out = []
     for pkg_id, pkg in packages.items():
-        is_installed = pkg_id in installed or (pkg.get("unlock_price_yuan") and pkg_id in unlocked)
+        if pkg.get("show_in_store") is False:
+            continue
+        is_installed = (
+            pkg_id in installed
+            or (pkg.get("unlock_price_yuan") and pkg_id in unlocked)
+            or (pkg.get("unlock_price_credits") and pkg_id in unlocked)
+            or pkg.get("default_installed")
+            or _package_capabilities_already_in_catalog(db, pkg)
+        )
         out.append({
             "id": pkg_id,
             "name": pkg.get("name", pkg_id),
@@ -122,6 +142,8 @@ def list_store(current_user: User = Depends(get_current_user), db: Session = Dep
             "status": "installed" if is_installed else pkg.get("status", "available"),
             "capabilities_count": len(pkg.get("capabilities", {})),
             "unlock_price_yuan": pkg.get("unlock_price_yuan"),
+            "unlock_price_credits": pkg.get("unlock_price_credits"),
+            "default_installed": pkg.get("default_installed"),
             "unlocked": pkg_id in unlocked,
         })
     return {"packages": out}
@@ -185,6 +207,7 @@ def install_skill(
         raise HTTPException(status_code=400, detail="该技能包即将推出，暂不可安装")
 
     unlock_price = package.get("unlock_price_yuan")
+    unlock_credits = package.get("unlock_price_credits")
     unlocked = _user_unlocked_package_ids(db, current_user.id)
     if unlock_price and body.package_id not in unlocked:
         return JSONResponse(
@@ -197,13 +220,42 @@ def install_skill(
                 "amount_yuan": unlock_price,
             },
         )
+    if unlock_credits and body.package_id not in unlocked:
+        need = int(unlock_credits)
+        return JSONResponse(
+            status_code=402,
+            content={
+                "detail": f"该技能需 {need} 积分解锁，请先调用「积分解锁」或充值后再安装。",
+                "need_credits_unlock": True,
+                "package_id": body.package_id,
+                "package_name": package.get("name", body.package_id),
+                "amount_credits": need,
+            },
+        )
 
     installed_data = _load_installed()
     installed_list = installed_data.get("installed", [])
-    if body.package_id in installed_list or (unlock_price and body.package_id in unlocked):
-        return {"message": f"{package.get('name', body.package_id)} 已安装", "already_installed": True}
+    if (
+        body.package_id in installed_list
+        or (unlock_price and body.package_id in unlocked)
+        or (unlock_credits and body.package_id in unlocked)
+        or package.get("default_installed")
+    ):
+        return {"message": f"{package.get('name', body.package_id)} 已安装", "already_installed": True, "capabilities_added": 0}
 
+    # 该包能力已全部在 CapabilityConfig 中（如预置或别包装入）→ 视为已安装并同步写入 installed，避免「卡片未安装但能力能用」
     capabilities = package.get("capabilities", {})
+    if capabilities and _package_capabilities_already_in_catalog(db, package):
+        if body.package_id not in installed_list:
+            installed_list.append(body.package_id)
+            installed_data["installed"] = installed_list
+            _save_installed(installed_data)
+        return {
+            "message": f"{package.get('name', body.package_id)} 已安装（能力已在系统中）",
+            "already_installed": True,
+            "capabilities_added": 0,
+        }
+
     if capabilities:
         catalog = _load_local_catalog()
         catalog.update(capabilities)
@@ -251,6 +303,40 @@ def install_skill(
 
 class SkillUnlockOrderCreate(BaseModel):
     package_id: str
+
+
+class UnlockByCreditsRequest(BaseModel):
+    package_id: str
+
+
+@router.post("/skills/unlock-by-credits", summary="使用积分解锁技能（如抖音/小红书/企微 1000 积分）")
+def unlock_by_credits(
+    body: UnlockByCreditsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    registry = _load_registry()
+    packages = registry.get("packages", {})
+    package = packages.get(body.package_id)
+    if not package:
+        raise HTTPException(status_code=404, detail=f"技能包 {body.package_id} 不存在")
+    need = package.get("unlock_price_credits")
+    if not need or int(need) <= 0:
+        raise HTTPException(status_code=400, detail="该技能不支持积分解锁")
+    need = int(need)
+    unlocked = _user_unlocked_package_ids(db, current_user.id)
+    if body.package_id in unlocked:
+        return {"ok": True, "message": f"已解锁 {package.get('name', body.package_id)}", "already_unlocked": True}
+    db.refresh(current_user)
+    if (current_user.credits or 0) < need:
+        raise HTTPException(
+            status_code=402,
+            detail=f"积分不足：解锁需 {need} 积分，当前余额 {current_user.credits or 0}。请先充值。",
+        )
+    current_user.credits = (current_user.credits or 0) - need
+    db.add(SkillUnlock(user_id=current_user.id, package_id=body.package_id))
+    db.commit()
+    return {"ok": True, "message": f"已用 {need} 积分解锁 {package.get('name', body.package_id)}", "credits_deducted": need}
 
 
 class SkillUnlockComplete(BaseModel):

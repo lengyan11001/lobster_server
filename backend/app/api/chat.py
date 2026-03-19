@@ -257,6 +257,71 @@ async def get_customer_service_reply(
     return "抱歉，当前未配置对话模型，无法回复。"
 
 
+def _extract_credits_used_from_mcp_result(result_text: str) -> int:
+    """从 MCP/速推返回的 JSON 文本中解析本次消耗积分；无则返回 0。"""
+    if not (result_text or "").strip():
+        return 0
+    try:
+        raw = result_text.strip()
+        if raw.startswith("{"):
+            d = json.loads(raw)
+        else:
+            d = {}
+            for line in raw.split("\n"):
+                line = line.strip()
+                if line.startswith("{"):
+                    d = json.loads(line)
+                    break
+        for key in ("credits_used", "credits_charged", "cost", "credits"):
+            v = d.get(key)
+            if v is not None and isinstance(v, (int, float)) and v >= 0:
+                return int(v)
+        content = d.get("result", {}).get("content") if isinstance(d.get("result"), dict) else d.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    t = (item.get("text") or "").strip()
+                    if t.startswith("{"):
+                        inner = json.loads(t)
+                        for key in ("credits_used", "credits_charged", "cost", "credits"):
+                            v = inner.get(key) if isinstance(inner, dict) else None
+                            if v is not None and isinstance(v, (int, float)) and v >= 0:
+                                return int(v)
+    except Exception:
+        pass
+    return 0
+
+
+async def _exec_tool_with_balance(
+    name: str,
+    args: Dict,
+    token: str,
+    sutui_token: Optional[str],
+    progress_cb: Optional[Callable[[Dict], Awaitable[None]]],
+    db: Optional[Session],
+    user_id: Optional[int],
+) -> str:
+    """调用工具：invoke_capability 时先校验余额 >0，执行后按返回积分同步扣减。"""
+    cap = (args.get("capability_id") or "").strip() if name == "invoke_capability" else None
+    if name == "invoke_capability" and db is not None and user_id is not None:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user and (user.credits or 0) <= 0:
+            return "积分不足：当前余额为 0，无法使用速推能力。请先充值。"
+    res = await _exec_tool(name, args, token, sutui_token, progress_cb)
+    if name == "invoke_capability" and db is not None and user_id is not None:
+        credits_used = _extract_credits_used_from_mcp_result(res)
+        if credits_used > 0:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                user.credits = (user.credits or 0) - credits_used
+                db.commit()
+                logger.info(
+                    "[CHAT] 速推扣积分 user_id=%s capability_id=%s credits_used=%s balance_after=%s",
+                    user_id, cap, credits_used, user.credits,
+                )
+    return res
+
+
 async def _exec_tool(
     name: str,
     args: Dict,
@@ -811,6 +876,8 @@ async def _chat_openai(
     sutui_token: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     attachment_urls: Optional[List[str]] = None,
+    db: Optional[Session] = None,
+    user_id: Optional[int] = None,
 ) -> str:
     """OpenAI-compatible chat loop (DeepSeek, OpenAI, Google Gemini)."""
     base = cfg["base_url"].rstrip("/")
@@ -879,7 +946,9 @@ async def _chat_openai(
                 cap = (a.get("capability_id") or "").strip()
                 if cap in ("image.generate", "video.generate", "task.get_result"):
                     logger.info("[素材] 模型请求工具 capability_id=%s", cap)
-                res = await _exec_tool(fn.get("name", ""), a, token, sutui_token, progress_cb=progress_cb)
+                res = await _exec_tool_with_balance(
+                    fn.get("name", ""), a, token, sutui_token, progress_cb, db, user_id,
+                )
                 if (
                     fn.get("name") == "invoke_capability"
                     and cap == "image.generate"
@@ -895,7 +964,9 @@ async def _chat_openai(
                         while waited < max_wait_sec:
                             await asyncio.sleep(poll_interval)
                             waited += poll_interval
-                            res = await _exec_tool("invoke_capability", get_result_args, token, sutui_token, progress_cb=None)
+                            res = await _exec_tool_with_balance(
+                                "invoke_capability", get_result_args, token, sutui_token, None, db, user_id,
+                            )
                             in_prog = _is_task_result_in_progress(res)
                             logger.info("[素材] 轮询 image.generate waited=%ds task_id=%s in_progress=%s hint=%s", waited, task_id, in_prog, _task_result_hint(res))
                             if progress_cb:
@@ -943,7 +1014,9 @@ async def _chat_openai(
                     while waited < max_wait_sec:
                         await asyncio.sleep(poll_interval)
                         waited += poll_interval
-                        res = await _exec_tool(fn.get("name", ""), a, token, sutui_token, progress_cb=None)
+                        res = await _exec_tool_with_balance(
+                            fn.get("name", ""), a, token, sutui_token, None, db, user_id,
+                        )
                         in_prog = _is_task_result_in_progress(res)
                         logger.info("[素材] 轮询 task.get_result waited=%ds task_id=%s in_progress=%s hint=%s", waited, task_id or "(无)", in_prog, _task_result_hint(res))
                         if progress_cb:
@@ -998,7 +1071,9 @@ async def _chat_openai(
                 cap = (tc_info["arguments"].get("capability_id") or "").strip()
                 if cap in ("image.generate", "video.generate", "task.get_result"):
                     logger.info("[素材] 模型请求工具(text_calls) capability_id=%s", cap)
-                res = await _exec_tool(tc_info["name"], tc_info["arguments"], token, sutui_token, progress_cb=progress_cb)
+                res = await _exec_tool_with_balance(
+                    tc_info["name"], tc_info["arguments"], token, sutui_token, progress_cb, db, user_id,
+                )
                 if (
                     tc_info["name"] == "invoke_capability"
                     and cap == "image.generate"
@@ -1014,9 +1089,9 @@ async def _chat_openai(
                         while waited < max_wait_sec:
                             await asyncio.sleep(poll_interval)
                             waited += poll_interval
-                            res = await _exec_tool(
+                            res = await _exec_tool_with_balance(
                                 tc_info["name"], {"capability_id": "task.get_result", "payload": {"task_id": task_id}},
-                                token, sutui_token, progress_cb=None
+                                token, sutui_token, None, db, user_id,
                             )
                             in_prog = _is_task_result_in_progress(res)
                             logger.info("[素材] 轮询 image.generate(text_calls) waited=%ds task_id=%s in_progress=%s hint=%s", waited, task_id, in_prog, _task_result_hint(res))
@@ -1063,8 +1138,8 @@ async def _chat_openai(
                     while waited < max_wait_sec:
                         await asyncio.sleep(poll_interval)
                         waited += poll_interval
-                        res = await _exec_tool(
-                            tc_info["name"], tc_info["arguments"], token, sutui_token, progress_cb=None
+                        res = await _exec_tool_with_balance(
+                            tc_info["name"], tc_info["arguments"], token, sutui_token, None, db, user_id,
                         )
                         in_prog = _is_task_result_in_progress(res)
                         logger.info("[素材] 轮询 task.get_result(text_calls) waited=%ds task_id=%s in_progress=%s hint=%s", waited, task_id or "(无)", in_prog, _task_result_hint(res))
@@ -1150,7 +1225,9 @@ async def _chat_openai(
                         except Exception:
                             a = {}
                         logger.info("[CHAT] tool_call(forced): %s(%s)", fn.get("name"), list(a.keys()))
-                        res = await _exec_tool(fn.get("name", ""), a, token, sutui_token, progress_cb=progress_cb)
+                        res = await _exec_tool_with_balance(
+                            fn.get("name", ""), a, token, sutui_token, progress_cb, db, user_id,
+                        )
                         if (
                             fn.get("name") == "invoke_capability"
                             and (a.get("capability_id") or "").strip() == "image.generate"
@@ -1166,7 +1243,9 @@ async def _chat_openai(
                                 while waited < max_wait_sec:
                                     await asyncio.sleep(poll_interval)
                                     waited += poll_interval
-                                    res = await _exec_tool("invoke_capability", get_result_args, token, sutui_token, progress_cb=None)
+                                    res = await _exec_tool_with_balance(
+                                "invoke_capability", get_result_args, token, sutui_token, None, db, user_id,
+                            )
                                     if not _is_task_result_in_progress(res):
                                         saved = _extract_saved_assets_from_task_result(res)
                                         logger.info("[素材] 轮询结束 image.generate(forced) task_id=%s saved_assets_count=%d", task_id, len(saved))
@@ -1224,6 +1303,8 @@ async def _chat_anthropic(
     sutui_token: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     attachment_urls: Optional[List[str]] = None,
+    db: Optional[Session] = None,
+    user_id: Optional[int] = None,
 ) -> str:
     """Anthropic Messages API chat loop."""
     hdrs = {
@@ -1279,7 +1360,9 @@ async def _chat_anthropic(
                     tu["input"] = inp
                 _inject_video_media_urls(inp, attachment_urls or [])
                 logger.info("tool_call: %s", tu["name"])
-                r = await _exec_tool(tu["name"], inp, token, sutui_token, progress_cb=progress_cb)
+                r = await _exec_tool_with_balance(
+                    tu["name"], inp, token, sutui_token, progress_cb, db, user_id,
+                )
                 results.append({
                     "type": "tool_result",
                     "tool_use_id": tu["id"],
@@ -1613,9 +1696,15 @@ async def chat_endpoint(
         try:
             logger.info("[对话] 请求 model=%s tools=%d", model, len(mcp_tools))
             if cfg["provider"] == "anthropic":
-                reply = await _chat_anthropic(messages, cfg, mcp_tools, raw_token, sutui_token=sutui_token)
+                reply = await _chat_anthropic(
+                    messages, cfg, mcp_tools, raw_token, sutui_token=sutui_token,
+                    db=db, user_id=current_user.id,
+                )
             else:
-                reply = await _chat_openai(messages, cfg, mcp_tools, raw_token, sutui_token=sutui_token)
+                reply = await _chat_openai(
+                    messages, cfg, mcp_tools, raw_token, sutui_token=sutui_token,
+                    db=db, user_id=current_user.id,
+                )
 
             ms = round((time.perf_counter() - t0) * 1000)
             _flush_tool_logs(db, current_user.id, payload.session_id, model)
@@ -1788,6 +1877,7 @@ async def _chat_stream_events(
                         sutui_token=sutui_token,
                         progress_cb=progress_cb,
                         attachment_urls=attachment_urls,
+                        db=db, user_id=current_user.id,
                     )
                 else:
                     reply = await _chat_openai(
@@ -1795,6 +1885,7 @@ async def _chat_stream_events(
                         sutui_token=sutui_token,
                         progress_cb=progress_cb,
                         attachment_urls=attachment_urls,
+                        db=db, user_id=current_user.id,
                     )
                 reply_holder.append(reply)
                 _flush_tool_logs(db, current_user.id, payload.session_id, model)

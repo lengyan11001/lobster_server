@@ -18,9 +18,8 @@ from ..models import Asset, CapabilityCallLog, PublishAccount, PublishTask, Skil
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# 抖音发布：未解锁时每成功发布一次扣 10 积分；已解锁（付费套餐）后免费
-DOUBYIN_PUBLISH_CREDITS_PER_USE = 10
-DOUBYIN_PUBLISH_SKILL_PACKAGE_ID = "douyin_publish"
+# 添加更多发布账号：未解锁时仅可添加 1 个账号，解锁后无限制
+ADD_MORE_PUBLISH_ACCOUNTS_PACKAGE_ID = "add_more_publish_accounts"
 
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 BROWSER_DATA_DIR = _BASE_DIR / "browser_data"
@@ -71,6 +70,7 @@ def list_accounts(
     rows = db.query(PublishAccount).filter(
         PublishAccount.user_id == current_user.id,
     ).order_by(PublishAccount.created_at.desc()).all()
+    can_add_more = len(rows) < 1 or _user_has_add_more_accounts_unlock(db, current_user.id)
     return {
         "accounts": [
             {
@@ -87,6 +87,9 @@ def list_accounts(
         "platforms": [
             {"id": k, "name": v["name"]} for k, v in SUPPORTED_PLATFORMS.items()
         ],
+        "can_add_more": can_add_more,
+        "add_more_unlock_package_id": ADD_MORE_PUBLISH_ACCOUNTS_PACKAGE_ID,
+        "add_more_unlock_credits": 1000,
     }
 
 
@@ -98,6 +101,20 @@ def add_account(
 ):
     if body.platform not in SUPPORTED_PLATFORMS:
         raise HTTPException(400, detail=f"不支持的平台: {body.platform}")
+
+    existing_count = db.query(PublishAccount).filter(PublishAccount.user_id == current_user.id).count()
+    if existing_count >= 1 and not _user_has_add_more_accounts_unlock(db, current_user.id):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=402,
+            content={
+                "detail": "当前仅可添加 1 个发布账号。解锁「添加更多发布账号」后可添加多个，需 1000 积分。",
+                "need_credits_unlock": True,
+                "package_id": ADD_MORE_PUBLISH_ACCOUNTS_PACKAGE_ID,
+                "package_name": "添加更多发布账号",
+                "amount_credits": 1000,
+            },
+        )
 
     profile_dir = BROWSER_DATA_DIR / f"{body.platform}_{body.nickname}"
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -284,10 +301,10 @@ async def douyin_dryrun(
         return {"ok": False, "error": str(e)}
 
 
-def _user_has_douyin_unlock(db: Session, user_id: int) -> bool:
+def _user_has_add_more_accounts_unlock(db: Session, user_id: int) -> bool:
     return db.query(SkillUnlock).filter(
         SkillUnlock.user_id == user_id,
-        SkillUnlock.package_id == DOUBYIN_PUBLISH_SKILL_PACKAGE_ID,
+        SkillUnlock.package_id == ADD_MORE_PUBLISH_ACCOUNTS_PACKAGE_ID,
     ).first() is not None
 
 
@@ -318,23 +335,9 @@ async def create_publish_task(
         ).first()
     if not acct:
         raise HTTPException(404, detail="发布账号不存在，请先在「发布管理」中添加账号")
-    # Allow publishing even when status isn't active: run_publish_task will open browser and wait for login.
+    # 抖音/小红书默认已安装直接可用，无需在会话中再校验解锁
 
-    # 抖音发布扣费：已解锁免费，未解锁每成功一次扣 10 积分
     credits_charged = 0
-    if acct.platform == "douyin":
-        if _user_has_douyin_unlock(db, current_user.id):
-            credits_charged = 0
-        else:
-            credits_charged = DOUBYIN_PUBLISH_CREDITS_PER_USE
-            db.refresh(current_user)
-            if (current_user.credits or 0) < credits_charged:
-                raise HTTPException(
-                    status_code=402,
-                    detail=f"积分不足：发布到抖音需 {credits_charged} 积分/次，当前余额 {current_user.credits or 0}。请充值或解锁「发抖音」技能后免费使用。",
-                )
-            current_user.credits = (current_user.credits or 0) - credits_charged
-            db.commit()
 
     task = PublishTask(
         user_id=current_user.id,
@@ -453,7 +456,7 @@ async def create_publish_task(
     }
     if acct.platform == "douyin":
         resp["credits_charged"] = credits_charged
-        resp["douyin_billing"] = "unlocked" if _user_has_douyin_unlock(db, current_user.id) else "per_use"
+        resp["douyin_billing"] = "unlocked"
     if task.status == "need_login" or (task.meta and task.meta.get("driver_result", {}).get("need_login")):
         resp["need_login"] = True
     logger.info("[PUBLISH-API] response: %s", resp)
