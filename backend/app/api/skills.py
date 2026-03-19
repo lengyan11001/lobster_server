@@ -155,6 +155,75 @@ def unlocked_packages(current_user: User = Depends(get_current_user), db: Sessio
     return {"packages": ids}
 
 
+ADD_MORE_PUBLISH_ACCOUNTS_PACKAGE_ID = "add_more_publish_accounts"
+
+
+def _user_has_add_more_publish_accounts_unlock(db: Session, user_id: int) -> bool:
+    return (
+        db.query(SkillUnlock).filter(
+            SkillUnlock.user_id == user_id,
+            SkillUnlock.package_id == ADD_MORE_PUBLISH_ACCOUNTS_PACKAGE_ID,
+        ).first()
+        is not None
+    )
+
+
+@router.get("/skills/publish-add-account-eligible", summary="发布账号：是否允许再添加（仅服务端判定）")
+def publish_add_account_eligible(
+    existing_local_count: int = 0,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """浏览器每次点击「添加账号」前先请求本接口（走公网 API_BASE）。existing_local_count 为当前本机已有账号数，由前端传入。"""
+    if existing_local_count < 1:
+        return {"allowed": True}
+    if _user_has_add_more_publish_accounts_unlock(db, current_user.id):
+        return {"allowed": True}
+    reg = _load_registry()
+    pkg = (reg.get("packages") or {}).get(ADD_MORE_PUBLISH_ACCOUNTS_PACKAGE_ID) or {}
+    amount = int(pkg.get("unlock_price_credits") or 1000)
+    return {
+        "allowed": False,
+        "need_credits_unlock": True,
+        "package_id": ADD_MORE_PUBLISH_ACCOUNTS_PACKAGE_ID,
+        "amount_credits": amount,
+        "detail": "当前仅可添加 1 个发布账号。解锁「添加更多发布账号」后可添加多个。",
+    }
+
+
+WECOM_REPLY_PACKAGE_ID = "wecom_reply"
+
+
+def _user_has_wecom_reply_unlock(db: Session, user_id: int) -> bool:
+    return (
+        db.query(SkillUnlock).filter(
+            SkillUnlock.user_id == user_id,
+            SkillUnlock.package_id == WECOM_REPLY_PACKAGE_ID,
+        ).first()
+        is not None
+    )
+
+
+@router.get("/skills/wecom-config-eligible", summary="企业微信配置：是否已解锁（仅服务端判定）")
+def wecom_config_eligible(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """企微配置存在本机；点击卡片或进入配置页前由浏览器调本接口（走 API_BASE）。"""
+    if _user_has_wecom_reply_unlock(db, current_user.id):
+        return {"allowed": True}
+    reg = _load_registry()
+    pkg = (reg.get("packages") or {}).get(WECOM_REPLY_PACKAGE_ID) or {}
+    amount = int(pkg.get("unlock_price_credits") or 1000)
+    return {
+        "allowed": False,
+        "need_credits_unlock": True,
+        "package_id": WECOM_REPLY_PACKAGE_ID,
+        "amount_credits": amount,
+        "detail": "请使用积分解锁「企业微信自动回复」后再管理本地配置。",
+    }
+
+
 @router.get("/skills/installed", summary="已安装技能列表")
 def list_installed(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     installed_data = _load_installed()

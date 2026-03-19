@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     mcp_port: int = 8001
     """本构建统一为在线版：online（独立登录/注册或速推扫码，速推 Token 来自登录）。"""
     lobster_edition: str = "online"
-    """在线版为 True 时：登录注册与充值全部自维护，不走速推；用户配置算力账号（速推 Token）用于耗算力，速推扣多少我们扣多少积分。"""
+    """在线版为 True 时：登录注册与充值全部自维护，不走速推；速推算力由服务器配置的 SUTUI_SERVER_TOKEN(S) 负载均衡，扣用户积分。"""
     lobster_independent_auth: bool = True
     """完成充值订单时需在请求头 X-Admin-Secret 携带此值（仅服务端/管理员使用）。"""
     lobster_recharge_admin_secret: Optional[str] = None

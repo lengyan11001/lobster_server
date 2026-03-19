@@ -18,7 +18,8 @@ from .api.mcp_gateway import router as mcp_gateway_router
 # from .api.custom_config import router as custom_config_router
 from .api.openclaw_config import router as openclaw_config_router
 from .api.billing import router as billing_router
-from .api.consumption_accounts import router as consumption_accounts_router
+# 算力账号已去掉：速推统一走服务器配置的 SUTUI_SERVER_TOKEN(S)，负载均衡
+# from .api.consumption_accounts import router as consumption_accounts_router
 from .api.mcp_registry import router as mcp_registry_router
 # 发布账号/任务、素材：已迁至客户端（lobster_online），server 不再提供
 # from .api.assets import router as assets_router
@@ -239,7 +240,7 @@ def create_app() -> FastAPI:
     # 自定义配置已迁至客户端；server 仅保留支付相关（sutui/balance、recharge 在 openclaw_config 中）
     # app.include_router(custom_config_router, prefix="")
     app.include_router(billing_router, prefix="")
-    app.include_router(consumption_accounts_router, prefix="")
+    # app.include_router(consumption_accounts_router, prefix="")
     app.include_router(mcp_registry_router, prefix="")
     # app.include_router(assets_router, prefix="")
     # app.include_router(publish_router, prefix="")

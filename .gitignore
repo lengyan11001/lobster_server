@@ -1,5 +1,6 @@
 # 与 lobster 一致：密钥与本地配置
 .env
+.env.deploy
 *.local
 sutui_config.json
 openclaw/.env

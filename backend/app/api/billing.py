@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings, get_effective_public_base_url
 from ..db import get_db
 from .auth import get_current_user
-from ..models import RechargeOrder, User
+from ..models import RechargeOrder, User, CapabilityCallLog
 
 logger = logging.getLogger(__name__)
 
@@ -161,17 +161,20 @@ def get_recharge_packages(current_user: User = Depends(get_current_user)):
 @router.get("/api/recharge/my-orders", summary="当前用户充值订单列表（消费记录用）")
 def get_my_recharge_orders(
     limit: int = 50,
+    offset: int = 0,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    total = db.query(RechargeOrder).filter(RechargeOrder.user_id == current_user.id).count()
     rows = (
         db.query(RechargeOrder)
         .filter(RechargeOrder.user_id == current_user.id)
         .order_by(RechargeOrder.id.desc())
+        .offset(max(0, offset))
         .limit(min(max(limit, 1), 200))
         .all()
     )
-    return [
+    items = [
         {
             "id": r.id,
             "out_trade_no": r.out_trade_no,
@@ -184,6 +187,54 @@ def get_my_recharge_orders(
         }
         for r in rows
     ]
+    return {"items": items, "total": total}
+
+
+@router.get("/api/billing/credit-history", summary="积分变动记录（充值增加、能力/模型调用扣减）")
+def get_credit_history(
+    limit: int = 100,
+    offset: int = 0,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """合并充值到账（+）与能力调用扣费（-），按时间倒序，支持分页。"""
+    out = []
+    paid_orders = (
+        db.query(RechargeOrder)
+        .filter(RechargeOrder.user_id == current_user.id, RechargeOrder.status == "paid")
+        .order_by(RechargeOrder.paid_at.desc())
+        .limit(500)
+        .all()
+    )
+    for r in paid_orders:
+        if (r.paid_at and (r.credits or 0) > 0) or (r.credits or 0) > 0:
+            out.append({
+                "time": (r.paid_at or r.created_at).isoformat() if (r.paid_at or r.created_at) else "",
+                "type": "recharge",
+                "amount": r.credits or 0,
+                "description": "充值到账",
+                "out_trade_no": r.out_trade_no or "",
+            })
+    call_logs = (
+        db.query(CapabilityCallLog)
+        .filter(CapabilityCallLog.user_id == current_user.id, CapabilityCallLog.credits_charged > 0)
+        .order_by(CapabilityCallLog.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    for r in call_logs:
+        out.append({
+            "time": r.created_at.isoformat() if r.created_at else "",
+            "type": "deduct",
+            "amount": -(r.credits_charged or 0),
+            "description": (r.capability_id or "能力调用").strip() or "能力调用",
+            "out_trade_no": "",
+        })
+    out.sort(key=lambda x: x["time"] or "1970-01-01", reverse=True)
+    total = len(out)
+    off = max(0, offset)
+    n = min(max(limit, 1), 200)
+    return {"items": out[off : off + n], "total": total}
 
 
 class RechargeCreateBody(BaseModel):

@@ -305,6 +305,40 @@ def _load_sutui_token() -> str:
     return ""
 
 
+def _get_sutui_tokens_list() -> List[str]:
+    """服务器配置的速推算力 Token 列表：SUTUI_SERVER_TOKENS（逗号分隔）或 SUTUI_SERVER_TOKEN 单条，或 sutui_config.json。"""
+    raw = os.environ.get("SUTUI_SERVER_TOKENS", "").strip()
+    if raw:
+        tokens = [t.strip() for t in raw.split(",") if t.strip()]
+        if tokens:
+            return tokens
+    single = os.environ.get("SUTUI_SERVER_TOKEN", "").strip()
+    if single:
+        return [single]
+    from_file = _load_sutui_token()
+    if from_file:
+        return [from_file]
+    return []
+
+
+_sutui_tokens_list: List[str] = []
+_sutui_token_index = 0
+_sutui_token_lock = asyncio.Lock()
+
+
+async def _next_sutui_token() -> Optional[str]:
+    """从配置的多个速推 Token 中轮询取下一个（负载均衡）。"""
+    global _sutui_tokens_list, _sutui_token_index
+    if not _sutui_tokens_list:
+        _sutui_tokens_list = _get_sutui_tokens_list()
+    if not _sutui_tokens_list:
+        return None
+    async with _sutui_token_lock:
+        idx = _sutui_token_index % len(_sutui_tokens_list)
+        _sutui_token_index += 1
+        return _sutui_tokens_list[idx]
+
+
 def _parse_sse_or_json(resp: httpx.Response) -> Dict[str, Any]:
     """Parse response that may be JSON or SSE (text/event-stream)."""
     ct = (resp.headers.get("content-type") or "").lower()
@@ -326,11 +360,13 @@ async def _call_upstream_mcp_tool(server_url: str, tool_name: str, arguments: Di
         "Accept": "application/json, text/event-stream",
     }
     if upstream_name == "sutui":
-        token = (sutui_token or "").strip() or os.environ.get("SUTUI_SERVER_TOKEN", "").strip() or _load_sutui_token()
+        token = (sutui_token or "").strip()
+        if not token:
+            token = await _next_sutui_token()
         if token:
             auth_headers["Authorization"] = f"Bearer {token}"
         else:
-            return {"error": {"message": "xskill/速推 Token 未配置。请联系管理员配置服务器侧 SUTUI_SERVER_TOKEN。"}}
+            return {"error": {"message": "xskill/速推 Token 未配置。请在服务器配置 SUTUI_SERVER_TOKEN 或 SUTUI_SERVER_TOKENS（逗号分隔多个，负载均衡）。"}}
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         init_body = {
