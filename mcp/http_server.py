@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import OrderedDict
 from pathlib import Path
 import re
 import time
@@ -402,6 +403,89 @@ def _extract_sutui_credits_used(obj: Any, _depth: int = 0) -> int:
     return best
 
 
+# 速推：在 create/generate 时扣费（与 xskill REST tasks/create 的 price 一致）；get_result 仅轮询，不再扣费。
+# 若任务终态失败，按此处记录的 task_id 向龙虾用户退款（与速推侧失败退款语义对齐）。
+_MAX_TASK_BILLED_TRACK = 3000
+_task_billed_on_create: "OrderedDict[str, int]" = OrderedDict()
+
+
+def _remember_task_billed_credits(task_id: str, credits: int) -> None:
+    if not task_id or credits <= 0:
+        return
+    _task_billed_on_create[task_id] = credits
+    _task_billed_on_create.move_to_end(task_id)
+    while len(_task_billed_on_create) > _MAX_TASK_BILLED_TRACK:
+        _task_billed_on_create.popitem(last=False)
+
+
+def _pop_task_billed_credits(task_id: str) -> int:
+    if not task_id:
+        return 0
+    return int(_task_billed_on_create.pop(task_id, 0) or 0)
+
+
+def _extract_task_id_from_sutui_response(obj: Any, _depth: int = 0) -> str:
+    if _depth > 42 or obj is None:
+        return ""
+    if isinstance(obj, dict):
+        for k in ("task_id", "taskId", "id"):
+            v = obj.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        for v in obj.values():
+            t = _extract_task_id_from_sutui_response(v, _depth + 1)
+            if t:
+                return t
+    elif isinstance(obj, list):
+        for it in obj:
+            t = _extract_task_id_from_sutui_response(it, _depth + 1)
+            if t:
+                return t
+    elif isinstance(obj, str):
+        s = obj.strip()
+        if s.startswith("{"):
+            try:
+                return _extract_task_id_from_sutui_response(json.loads(s), _depth + 1)
+            except Exception:
+                pass
+    return ""
+
+
+def _sutui_get_result_is_terminal_failure(resp: Any) -> bool:
+    """get_result 轮询终态且任务失败（非进行中、非成功完成）。"""
+    if not isinstance(resp, dict):
+        return False
+    if resp.get("error"):
+        return True
+    if _is_task_still_in_progress(resp):
+        return False
+    raw = json.dumps(resp, ensure_ascii=False).lower()
+    if '"status":"failed"' in raw or '"status": "failed"' in raw:
+        return True
+    if '"status":"error"' in raw or '"status": "error"' in raw:
+        return True
+    if '"status":"cancelled"' in raw or '"status":"canceled"' in raw:
+        return True
+    if "任务失败" in raw or "生成失败" in raw:
+        return True
+    return False
+
+
+def _sutui_get_result_is_terminal_success(resp: Any) -> bool:
+    if not isinstance(resp, dict) or resp.get("error"):
+        return False
+    if _is_task_still_in_progress(resp):
+        return False
+    raw = json.dumps(resp, ensure_ascii=False).lower()
+    if '"status":"completed"' in raw or '"status": "completed"' in raw:
+        return True
+    if '"status":"success"' in raw or '"status": "success"' in raw:
+        return True
+    if "已完成" in raw or "生成成功" in raw:
+        return True
+    return False
+
+
 def _sutui_phase_label(tool_name: str) -> str:
     """说明速推 MCP 工具与扣费阶段关系（具体以返回 JSON 为准）。"""
     if tool_name == "generate":
@@ -769,9 +853,53 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         )
                 except Exception:
                     pass
+
+            poll_task_id = (payload.get("task_id") or payload.get("taskId") or "").strip()
+            # get_result 终态失败：创建任务时已扣的积分退回龙虾用户（速推侧失败退款时与本机余额对齐）
+            if (
+                token
+                and upstream_tool == "get_result"
+                and poll_task_id
+                and isinstance(upstream_resp, dict)
+                and not upstream_error
+                and _sutui_get_result_is_terminal_failure(upstream_resp)
+            ):
+                refund_amt = _pop_task_billed_credits(poll_task_id)
+                if refund_amt > 0:
+                    try:
+                        async with httpx.AsyncClient(timeout=10.0) as client:
+                            await client.post(
+                                f"{BASE_URL}/capabilities/refund",
+                                json={"capability_id": capability_id, "credits": refund_amt},
+                                headers=_backend_headers(token),
+                            )
+                        logger.info(
+                            "[MCP] 任务终态失败退款 task_id=%s credits=%s（与速推创建任务扣费对应）",
+                            poll_task_id,
+                            refund_amt,
+                        )
+                    except Exception:
+                        logger.exception("[MCP] 任务失败退款接口失败 task_id=%s", poll_task_id)
+            elif (
+                upstream_tool == "get_result"
+                and poll_task_id
+                and isinstance(upstream_resp, dict)
+                and not upstream_error
+                and _sutui_get_result_is_terminal_success(upstream_resp)
+            ):
+                dropped = _pop_task_billed_credits(poll_task_id)
+                if dropped > 0:
+                    logger.info("[MCP] 任务成功，清除创建扣费缓存 task_id=%s billed_was=%s", poll_task_id, dropped)
+
             actual_used = 0
             if isinstance(upstream_resp, dict) and not upstream_error:
-                actual_used = _extract_sutui_credits_used(upstream_resp)
+                # 仅 generate（创建任务）按速推返回扣费；get_result 只轮询不重复扣
+                if upstream_tool == "generate":
+                    actual_used = _extract_sutui_credits_used(upstream_resp)
+                elif upstream_tool == "get_result":
+                    actual_used = 0
+                else:
+                    actual_used = _extract_sutui_credits_used(upstream_resp)
             if pre_deduct_amount > 0:
                 bill_credits = pre_deduct_amount
                 pre_applied_flag = True
@@ -788,6 +916,20 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 credits_charged=(bill_credits if bill_credits > 0 else None),
                 pre_deduct_applied=pre_applied_flag,
             )
+            if (
+                upstream_tool == "generate"
+                and not upstream_error
+                and bill_credits > 0
+                and isinstance(upstream_resp, dict)
+            ):
+                created_tid = _extract_task_id_from_sutui_response(upstream_resp)
+                if created_tid:
+                    _remember_task_billed_credits(created_tid, bill_credits)
+                    logger.info(
+                        "[MCP] 已记录创建任务扣费 task_id=%s credits=%s（失败时凭 task_id 退款）",
+                        created_tid,
+                        bill_credits,
+                    )
             logger.info("[MCP] invoke_capability 完成 capability_id=%s latency_ms=%s ok=%s", capability_id, latency_ms, not bool(upstream_error))
             data: Dict[str, Any] = {"capability_id": capability_id, "result": _redact_sensitive(upstream_resp)}
             if bill_credits > 0:
