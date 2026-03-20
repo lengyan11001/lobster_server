@@ -319,35 +319,44 @@ async def upload_temp_file(
     request: Request = None,
     current_user: User = Depends(get_current_user),
 ):
-    """接收客户端上传的临时文件，返回可访问的URL。这些文件将在视频生成任务完成后自动删除。"""
+    """【服务器端-步骤3.1】接收客户端上传的临时文件，返回可访问的URL。这些文件将在视频生成任务完成后自动删除。"""
+    logger.info("[服务器端-步骤3.1] 收到临时文件上传请求 filename=%s user_id=%s", file.filename, current_user.id if current_user else "N/A")
+    
     data = await file.read()
     if not data:
+        logger.error("[服务器端-步骤3.1] 文件为空")
         raise HTTPException(400, detail="文件为空")
     
-    # 生成临时文件ID
+    logger.info("[服务器端-步骤3.1] 文件读取成功 size=%d", len(data))
+    
+    # 【服务器端-步骤3.2】生成临时文件ID
     temp_id = f"temp_{uuid.uuid4().hex[:16]}"
     name = file.filename or "upload"
     ext = Path(name).suffix or ".bin"
     temp_filename = f"{temp_id}{ext}"
     temp_path = TEMP_ASSETS_DIR / temp_filename
+    logger.info("[服务器端-步骤3.2] 生成临时文件ID temp_id=%s filename=%s", temp_id, temp_filename)
     
-    # 保存临时文件
+    # 【服务器端-步骤3.3】保存临时文件
     temp_path.write_bytes(data)
-    logger.info("[临时文件] 上传成功 temp_id=%s filename=%s size=%d", temp_id, temp_filename, len(data))
+    logger.info("[服务器端-步骤3.3] 临时文件已保存 temp_id=%s path=%s size=%d", temp_id, temp_path, len(data))
     
-    # 生成可访问的URL
+    # 【服务器端-步骤3.4】生成可访问的URL
     from ..core.config import get_settings
     settings = get_settings()
     base = (getattr(settings, "public_base_url", None) or "").strip().rstrip("/")
     if not base and request:
         try:
             base = str((request.base_url or "").rstrip("/"))
+            logger.info("[服务器端-步骤3.4] 从请求获取base_url=%s", base)
         except Exception:
             pass
     if not base:
         base = "http://47.120.39.220:8000"  # 服务器公网地址（默认值）
+        logger.info("[服务器端-步骤3.4] 使用默认base_url=%s", base)
     expiry_ts = int(time.time()) + _ASSET_FILE_EXPIRY_SEC
     public_url = f"{base}/api/assets/temp/{temp_id}?token={_asset_file_token(temp_id, expiry_ts)}&expiry={expiry_ts}"
+    logger.info("[服务器端-步骤3.5] 生成临时文件URL temp_id=%s public_url=%s", temp_id, public_url[:80])
     
     return TempUploadResponse(temp_id=temp_id, public_url=public_url)
 

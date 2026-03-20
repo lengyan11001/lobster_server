@@ -1278,19 +1278,21 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     # 如果是内部地址，自动转存到公开 CDN
                     if is_internal and upstream_name == "sutui" and upstream_url:
                         cdn_url = None
-                        cdn_url = None
-                        # 方法1：尝试使用 TOS 转存（如果配置了 TOS）
+                        # 【服务器端MCP-步骤C.5】方法1：尝试使用 TOS 转存（如果配置了 TOS）
                         try:
                             from backend.app.api.assets import _get_tos_config, _upload_to_tos
                             import httpx
+                            logger.info("[服务器端MCP-步骤C.5] 检查服务器端TOS配置 url_key=%s", url_key)
                             tos_cfg = _get_tos_config()
                             if tos_cfg:
-                                logger.info("[MCP] 尝试使用 TOS 转存内部图片 URL (%s): %s", url_key, url_value[:100])
+                                logger.info("[服务器端MCP-步骤C.5.1] 服务器端TOS配置存在，开始下载内部图片 url_key=%s url_value=%s", url_key, url_value[:100])
                                 async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                                     resp = await client.get(url_value)
+                                    logger.info("[服务器端MCP-步骤C.5.2] 下载响应 status=%d url_key=%s", resp.status_code, url_key)
                                     resp.raise_for_status()
                                     data = resp.content
                                     content_type = resp.headers.get("content-type", "image/jpeg")
+                                    logger.info("[服务器端MCP-步骤C.5.3] 下载成功 size=%d content_type=%s url_key=%s", len(data), content_type, url_key)
                                     # 从 URL 推断扩展名
                                     from urllib.parse import urlparse
                                     from pathlib import Path
@@ -1300,6 +1302,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                     if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
                                         ext = ".jpg"
                                     object_key = f"mcp-transfer/{uuid.uuid4().hex[:12]}{ext}"
+                                    logger.info("[服务器端MCP-步骤C.5.4] 开始上传到TOS object_key=%s url_key=%s", object_key, url_key)
                                     cdn_url = _upload_to_tos(data, object_key, content_type)
                                     if cdn_url:
                                         # 更新对应的字段
@@ -1313,14 +1316,19 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                             idx = int(url_key.split("[")[1].split("]")[0])
                                             if isinstance(payload.get("media_files"), list):
                                                 payload["media_files"][idx] = cdn_url
-                                        logger.info("[MCP] 图片已通过 TOS 转存到 CDN (%s): %s -> %s", url_key, url_value[:80], cdn_url[:80])
+                                        logger.info("[服务器端MCP-步骤C.5.5] TOS转存成功 url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
+                                    else:
+                                        logger.warning("[服务器端MCP-步骤C.5.5] TOS转存失败 url_key=%s", url_key)
+                        except httpx.HTTPStatusError as e:
+                            logger.error("[服务器端MCP-步骤C.5.2] 下载失败 HTTP错误 url_key=%s status=%d url=%s", url_key, e.response.status_code, url_value[:100])
                         except Exception as e:
-                            logger.debug("[MCP] TOS 转存失败，尝试使用 sutui.transfer_url: %s", e)
+                            logger.error("[服务器端MCP-步骤C.5] TOS转存过程异常 url_key=%s error=%s", url_key, str(e), exc_info=True)
                         
-                        # 方法2：如果 TOS 转存失败，使用 sutui.transfer_url
+                        # 【服务器端MCP-步骤C.6】方法2：如果 TOS 转存失败，使用 sutui.transfer_url
                         if not cdn_url:
+                            logger.info("[服务器端MCP-步骤C.6] TOS转存未成功，尝试使用sutui.transfer_url url_key=%s", url_key)
                             try:
-                                logger.info("[MCP] 使用 sutui.transfer_url 转存内部图片 URL (%s): %s", url_key, url_value[:100])
+                                logger.info("[服务器端MCP-步骤C.6.1] 调用sutui.transfer_url url_key=%s url_value=%s", url_key, url_value[:100])
                                 transfer_resp = await _call_upstream_mcp_tool(
                                     upstream_url,
                                     "transfer_url",
@@ -1329,12 +1337,13 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                     sutui_token=sutui_token,
                                     lobster_capability_id=capability_id,
                                 )
+                                logger.info("[服务器端MCP-步骤C.6.2] sutui.transfer_url 调用完成 url_key=%s", url_key)
                                 if isinstance(transfer_resp, dict):
                                     err_obj = transfer_resp.get("error")
                                     if not err_obj:
                                         # 解析转存后的 URL
                                         # 记录完整响应以便调试（info 级别，方便排查问题）
-                                        logger.info("[MCP] sutui.transfer_url 完整响应 (%s): %s", url_key, json.dumps(transfer_resp, ensure_ascii=False, indent=2)[:800])
+                                        logger.info("[服务器端MCP-步骤C.6.3] sutui.transfer_url 完整响应 url_key=%s response=%s", url_key, json.dumps(transfer_resp, ensure_ascii=False, indent=2)[:800])
                                         
                                         # 尝试多种解析方式
                                         cdn_url = None
@@ -1350,7 +1359,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                                         # 检查是否转存失败
                                                         if transfer_data.get("success") is False:
                                                             error_msg = transfer_data.get("error", "未知错误")
-                                                            logger.warning("[MCP] sutui.transfer_url 转存失败 (%s): %s，URL: %s", url_key, error_msg, url_value[:80])
+                                                            logger.error("[服务器端MCP-步骤C.6.3] sutui.transfer_url 转存失败 url_key=%s error=%s URL=%s", url_key, error_msg, url_value[:80])
                                                             break
                                                         # 尝试多种可能的字段名
                                                         cdn_url = (
@@ -1372,7 +1381,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                                                 idx = int(url_key.split("[")[1].split("]")[0])
                                                                 if isinstance(payload.get("media_files"), list):
                                                                     payload["media_files"][idx] = cdn_url
-                                                            logger.info("[MCP] 图片已通过 sutui.transfer_url 转存到 CDN (%s): %s -> %s", url_key, url_value[:80], cdn_url[:80])
+                                                            logger.info("[服务器端MCP-步骤C.6.3] sutui.transfer_url 转存成功（方式1：从content解析）url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
                                                             break
                                                     except json.JSONDecodeError:
                                                         # 如果不是 JSON，可能是直接的 URL 字符串
@@ -1389,10 +1398,10 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                                                 idx = int(url_key.split("[")[1].split("]")[0])
                                                                 if isinstance(payload.get("media_files"), list):
                                                                     payload["media_files"][idx] = cdn_url
-                                                            logger.info("[MCP] 图片已通过 sutui.transfer_url 转存到 CDN（直接 URL）(%s): %s -> %s", url_key, url_value[:80], cdn_url[:80])
+                                                            logger.info("[服务器端MCP-步骤C.6.3] sutui.transfer_url 转存成功（方式1：直接URL字符串）url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
                                                             break
                                                     except Exception as e:
-                                                        logger.debug("[MCP] 解析 transfer_url 响应项失败: %s", e)
+                                                        logger.warning("[服务器端MCP-步骤C.6.3] 解析 transfer_url 响应项失败 url_key=%s error=%s", url_key, str(e))
                                         
                                         # 方式2：直接从 result 中取 URL（某些 MCP 可能直接返回）
                                         if not cdn_url:
@@ -1416,22 +1425,24 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                                         idx = int(url_key.split("[")[1].split("]")[0])
                                                         if isinstance(payload.get("media_files"), list):
                                                             payload["media_files"][idx] = cdn_url
-                                                    logger.info("[MCP] 图片已通过 sutui.transfer_url 转存到 CDN（从 result）(%s): %s -> %s", url_key, url_value[:80], cdn_url[:80])
+                                                    logger.info("[服务器端MCP-步骤C.6.3] sutui.transfer_url 转存成功（方式2：从result解析）url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
                                         
                                         if not cdn_url:
-                                            logger.warning("[MCP] sutui.transfer_url 返回成功但无法解析 CDN URL (%s)，完整响应: %s", url_key, json.dumps(transfer_resp, ensure_ascii=False, indent=2)[:800])
+                                            logger.error("[服务器端MCP-步骤C.6.4] sutui.transfer_url 返回成功但无法解析 CDN URL url_key=%s 完整响应=%s", url_key, json.dumps(transfer_resp, ensure_ascii=False, indent=2)[:800])
                                         else:
                                             # 验证转存后的 URL 是否可访问（简单检查格式）
                                             if not (cdn_url.startswith("http://") or cdn_url.startswith("https://")):
-                                                logger.warning("[MCP] sutui.transfer_url 返回的 URL 格式异常（非 http/https）(%s): %s", url_key, cdn_url[:200])
+                                                logger.error("[服务器端MCP-步骤C.6.4] sutui.transfer_url 返回的 URL 格式异常（非 http/https）url_key=%s url=%s", url_key, cdn_url[:200])
                                                 cdn_url = None  # 重置，让 TOS 或其他方式处理
                                     else:
-                                        logger.warning("[MCP] sutui.transfer_url 返回错误 (%s): %s", url_key, err_obj.get("message", ""))
+                                        logger.error("[服务器端MCP-步骤C.6.2] sutui.transfer_url 返回错误 url_key=%s error=%s", url_key, err_obj.get("message", ""))
                             except Exception as e:
-                                logger.warning("[MCP] 自动转存图片 URL 失败 (%s)，将使用原 URL（可能无法访问）: %s", url_key, e)
+                                logger.error("[服务器端MCP-步骤C.6] sutui.transfer_url 调用异常 url_key=%s error=%s", url_key, str(e), exc_info=True)
                         
                         if not cdn_url:
-                            logger.warning("[MCP] 无法转存内部图片 URL 到公开 CDN (%s)，上游服务可能无法访问: %s", url_key, url_value[:100])
+                            logger.error("[服务器端MCP-步骤C.7] 所有转存方式都失败，将使用原URL（可能无法访问）url_key=%s url_value=%s", url_key, url_value[:100])
+                        else:
+                            logger.info("[服务器端MCP-步骤C.7] 转存成功 url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
             
             t0 = time.perf_counter()
             logger.info("[MCP] invoke_capability capability_id=%s upstream=%s model=%s", capability_id, upstream_name, normalized_model or original_model or "(无)")
