@@ -21,8 +21,8 @@ from .api.billing import router as billing_router
 # 算力账号已去掉：速推统一走服务器配置的 SUTUI_SERVER_TOKEN(S)，负载均衡
 # from .api.consumption_accounts import router as consumption_accounts_router
 from .api.mcp_registry import router as mcp_registry_router
-# 发布账号/任务、素材：已迁至客户端（lobster_online），server 不再提供
-# from .api.assets import router as assets_router
+# 发布/列表等主要在客户端；服务器须保留 assets（upload-temp + /api/assets/temp/*），供本机无 TOS 时中转公网 URL
+from .api.assets import router as assets_router
 # from .api.publish import router as publish_router
 from .api.logs_api import router as logs_router
 from .api.wechat_oa import router as wechat_oa_router
@@ -257,7 +257,7 @@ def create_app() -> FastAPI:
     app.include_router(billing_router, prefix="")
     # app.include_router(consumption_accounts_router, prefix="")
     app.include_router(mcp_registry_router, prefix="")
-    # app.include_router(assets_router, prefix="")
+    app.include_router(assets_router, prefix="")
     # app.include_router(publish_router, prefix="")
     app.include_router(logs_router, prefix="")
     app.include_router(wechat_oa_router, prefix="")
