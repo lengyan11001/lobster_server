@@ -117,9 +117,9 @@ def build_asset_file_url(request: Request, asset_id: str) -> Optional[str]:
 def get_asset_public_url(
     asset_id: str, user_id: int, request: Request, db: Session
 ) -> Optional[str]:
-    """供速推使用的素材 URL：若 asset 有公网 source_url 则直接返回，否则返回带签名的本地 file URL。
-    如果 source_url 是内部地址（如 api.51ins.com），则返回 None，让调用方使用 build_asset_file_url 构建临时 URL，然后由服务器端转存。"""
-    row = db.query(Asset).filter(Asset.id == asset_id, Asset.user_id == user_id).first()
+    """供速推使用的素材 URL：仅当 DB 中 source_url 为可对外拉取的公网地址时返回；内部地址或缺失则返回 None。
+    不再回退到 /api/assets/file/ 签名链（与 lobster_online 一致，避免无效拉图）。"""
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == user_id).first()
     if row and getattr(row, "source_url", None):
         url = (row.source_url or "").strip()
         if url.startswith("http://") or url.startswith("https://"):
@@ -167,7 +167,7 @@ def get_asset_public_url(
                     return None
             # 只有确认不是内部地址时才返回原始 URL
             return url
-    return build_asset_file_url(request, asset_id)
+    return None
 
 
 def _gen_asset_id() -> str:
@@ -293,6 +293,24 @@ async def upload_asset(
 
     content_type = getattr(file, "content_type", "") or ""
     aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(data, ext, content_type)
+    if not tos_public_url:
+        local_path = ASSETS_DIR / fname_or_key
+        try:
+            if local_path.exists():
+                local_path.unlink()
+        except Exception as e:
+            logger.warning("[上传流程-失败] 删除本地文件异常 asset_id=%s err=%s", aid, e)
+        logger.error(
+            "[上传流程-失败] 服务器 /api/assets/upload 无 TOS 公网 URL asset_id=%s 已删本地，终止上传",
+            aid,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "服务器未成功写入 TOS 公网链接，无法用于图生视频等。"
+                "请在服务器 custom_configs.json 配置 TOS_CONFIG，或改用 lobster_online 本机上传（本机 TOS → 失败则 upload-temp）。"
+            ),
+        )
     asset = Asset(
         asset_id=aid,
         user_id=current_user.id,
@@ -303,6 +321,7 @@ async def upload_asset(
     )
     db.add(asset)
     db.commit()
+    logger.info("[上传流程-步骤5] 服务器直连上传完成（TOS）asset_id=%s source_url=%s", aid, tos_public_url[:80])
     return {"asset_id": aid, "filename": fname_or_key, "media_type": mtype, "file_size": fsize}
 
 

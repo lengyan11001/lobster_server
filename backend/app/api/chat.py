@@ -1456,6 +1456,60 @@ def _log_turn(
     ))
 
 
+# ── 附图 URL：与 lobster_online 一致，仅 TOS/upload-temp 等公网 source_url；禁止 /api/assets/file/ 签名链 ──
+
+_MAX_VIDEO_IMAGE_ATTACHMENTS = 9
+_LOCAL_SIGNED_ASSET_PATH = "/api/assets/file/"
+
+
+def _ensure_upstream_image_url(u: str, label: str) -> str:
+    if _LOCAL_SIGNED_ASSET_PATH in u:
+        logger.error("[使用素材-失败] %s 命中已禁止签名链 /api/assets/file/", label)
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} 不可用于图生视频（旧版签名链接）。请使用 TOS 或临时上传返回的公网 URL。",
+        )
+    return u
+
+
+def _resolve_asset_ids_to_public_urls(
+    attachment_asset_ids: Optional[List[str]],
+    request: Request,
+    db,
+    user_id: int,
+) -> List[str]:
+    from backend.app.api.assets import get_asset_public_url
+
+    aids = [
+        a.strip()
+        for a in (attachment_asset_ids or [])[:_MAX_VIDEO_IMAGE_ATTACHMENTS]
+        if isinstance(a, str) and a.strip()
+    ]
+    if not aids:
+        return []
+    out: List[str] = []
+    for aid in aids:
+        logger.info("[使用素材-步骤B.1] 开始处理素材 asset_id=%s", aid)
+        u = get_asset_public_url(aid, user_id, request, db)
+        if not u:
+            logger.error(
+                "[使用素材-失败] asset_id=%s 无公网 source_url（服务器 chat 仅认 DB 中 TOS 等外链）",
+                aid,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"素材 {aid} 没有公网可访问链接。"
+                    "请在服务器配置 TOS 后上传，或使用 lobster_online 本机上传（本机 TOS → upload-temp）。"
+                ),
+            )
+        _ensure_upstream_image_url(u, f"asset {aid}")
+        logger.info("[使用素材-步骤B.2] 公网 URL 已解析 asset_id=%s url=%s", aid, u[:80])
+        out.append(u)
+    logger.info("[使用素材-步骤B.5] 附图 asset 公网 URL 齐全 count=%d asset_ids=%s", len(out), aids)
+    return out
+
+
 # ── Main endpoint ─────────────────────────────────────────────────
 
 def _build_user_content_with_attachments(
@@ -1465,25 +1519,25 @@ def _build_user_content_with_attachments(
     user_id: Optional[int] = None,
 ) -> str:
     user_content = (payload.message or "").strip()
-    if getattr(payload, "attachment_asset_ids", None) and request:
-        try:
-            from backend.app.api.assets import build_asset_file_url, get_asset_public_url
-            pairs = []
-            aids = [a for a in (payload.attachment_asset_ids or [])[:5] if isinstance(a, str) and a.strip()]
-            for aid in aids:
-                aid = aid.strip()
-                if db is not None and user_id is not None:
-                    u = get_asset_public_url(aid, user_id, request, db)
-                else:
-                    u = build_asset_file_url(request, aid)
-                if u:
-                    pairs.append((aid, u))
-            if pairs:
-                logger.info("[CHAT] 注入素材 URL: asset_ids=%s", [p[0] for p in pairs])
-                user_content += "\n\n【用户本条消息上传的素材】图生视频时你不要在 video.generate 的 payload 里填 image_url/media_files，由系统自动注入。理解视频/图片时请用以下 URL 作为 sutui.understand_video 的 video_url。\n"
-                user_content += "\n".join(f"- asset_id: {aid}  URL: {u}" for aid, u in pairs)
-        except Exception:
-            pass
+    if getattr(payload, "attachment_asset_ids", None) and request and db is not None and user_id is not None:
+        from backend.app.api.assets import get_asset_public_url
+
+        pairs = []
+        aids = [a.strip() for a in (payload.attachment_asset_ids or [])[:5] if isinstance(a, str) and a.strip()]
+        for aid in aids:
+            u = get_asset_public_url(aid, user_id, request, db)
+            if not u:
+                logger.error("[CHAT] 附图无公网 URL，中止组装用户消息 asset_id=%s", aid)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"素材 {aid} 没有公网可访问链接，无法继续对话中的图/视频任务。",
+                )
+            _ensure_upstream_image_url(u, f"asset {aid}")
+            pairs.append((aid, u))
+        if pairs:
+            logger.info("[CHAT] 注入素材 URL: asset_ids=%s", [p[0] for p in pairs])
+            user_content += "\n\n【用户本条消息上传的素材】图生视频时你不要在 video.generate 的 payload 里填 image_url/media_files，由系统自动注入。理解视频/图片时请用以下 URL 作为 sutui.understand_video 的 video_url。\n"
+            user_content += "\n".join(f"- asset_id: {aid}  URL: {u}" for aid, u in pairs)
     return user_content or "（无文字）"
 
 
@@ -1493,39 +1547,22 @@ def _get_attachment_public_urls(
     db=None,
     user_id: Optional[int] = None,
 ) -> List[str]:
-    """本条消息附图/图生视频用图：asset_ids 解析为 URL + attachment_image_urls，供 video.generate 注入。"""
+    """attachment_image_urls（显式公网图链）+ asset_ids（DB source_url）。禁止 /api/assets/file/。"""
     out: List[str] = []
     if getattr(payload, "attachment_image_urls", None):
-        for u in (payload.attachment_image_urls or [])[:9]:
-            if isinstance(u, str) and (u := u.strip()) and u.startswith("http"):
+        for raw in (payload.attachment_image_urls or [])[:_MAX_VIDEO_IMAGE_ATTACHMENTS]:
+            if isinstance(raw, str) and (u := raw.strip()) and u.startswith("http"):
+                _ensure_upstream_image_url(u, "attachment_image_urls")
                 out.append(u)
-    if getattr(payload, "attachment_asset_ids", None) and request:
-        try:
-            from backend.app.api.assets import build_asset_file_url, get_asset_public_url
-            aids = [a for a in (payload.attachment_asset_ids or [])[:9] if isinstance(a, str) and a.strip()]
-            for aid in aids:
-                aid = aid.strip()
-                if db is not None and user_id is not None:
-                    u = get_asset_public_url(aid, user_id, request, db)
-                    if not u:
-                        # get_asset_public_url 返回 None 表示是内部地址，使用 build_asset_file_url 构建临时 URL
-                        # 服务器端会检测并转存这个 URL
-                        u = build_asset_file_url(request, aid)
-                        logger.info("[CHAT] 附图检测到内部地址，使用临时 URL（将由服务器端转存）: asset_id=%s url=%s", aid, (u[:80] + "…") if u and len(u) > 80 else u)
-                    else:
-                        # 检查返回的 URL 是否仍然是内部地址（双重检查）
-                        if u and ("api.51ins.com" in u or "token=" in u or "?token" in u):
-                            logger.warning("[CHAT] get_asset_public_url 返回的 URL 仍然是内部地址，强制使用临时 URL: asset_id=%s url=%s", aid, u[:100])
-                            u = build_asset_file_url(request, aid)
-                            logger.info("[CHAT] 附图强制使用临时 URL（将由服务器端转存）: asset_id=%s url=%s", aid, (u[:80] + "…") if u and len(u) > 80 else u)
-                else:
-                    u = build_asset_file_url(request, aid)
-                if u and u not in out:
-                    out.append(u)
-        except Exception:
-            pass
+    if getattr(payload, "attachment_asset_ids", None) and request and db is not None and user_id is not None:
+        more = _resolve_asset_ids_to_public_urls(
+            getattr(payload, "attachment_asset_ids", None), request, db, user_id
+        )
+        for u in more:
+            if u not in out:
+                out.append(u)
     if out:
-        logger.info("[CHAT] 图生视频可用 URL 数量=%d 首图=%s", len(out), (out[0][:80] + "…") if out and len(out[0]) > 80 else (out[0] if out else ""))
+        logger.info("[CHAT] 图生视频可用 URL 数量=%d 首图=%s", len(out), (out[0][:80] + "…") if len(out[0]) > 80 else out[0])
     return out
 
 
@@ -1544,6 +1581,10 @@ def _inject_video_media_urls(args: Dict[str, Any], attachment_urls: List[str]) -
         inner["media_files"] = urls
         inner["image_url"] = urls[0]
         logger.info("[CHAT] 图生视频注入 filePaths（%d 张）functionMode=first_last_frames 首图=%s", len(urls), (urls[0][:80] + "…") if len(urls[0]) > 80 else urls[0])
+    elif not inner.get("media_files") and not inner.get("image_url") and not inner.get("filePaths"):
+        logger.warning(
+            "[CHAT] 图生视频未注入链接：附图为 0 个公网 URL；若用户已附图应已在对话入口被 400 拦截，此处多为文生视频"
+        )
     existing = (inner.get("prompt") or "").strip()
     if "图生视频" not in existing:
         inner["prompt"] = ("图生视频：" + existing) if existing else "图生视频"
@@ -1662,6 +1703,8 @@ async def chat_endpoint(
         messages = [messages[0]] + messages[-MAX_HISTORY:]
     messages.append({"role": "user", "content": _build_user_content_with_attachments(payload, request, db=db, user_id=current_user.id)})
 
+    attachment_urls = _get_attachment_public_urls(payload, request, db=db, user_id=current_user.id)
+
     t0 = time.perf_counter()
 
     # ── Primary path: direct LLM API with MCP tools ──
@@ -1672,11 +1715,13 @@ async def chat_endpoint(
             if cfg["provider"] == "anthropic":
                 reply = await _chat_anthropic(
                     messages, cfg, mcp_tools, raw_token, sutui_token=sutui_token,
+                    attachment_urls=attachment_urls,
                     db=db, user_id=current_user.id,
                 )
             else:
                 reply = await _chat_openai(
                     messages, cfg, mcp_tools, raw_token, sutui_token=sutui_token,
+                    attachment_urls=attachment_urls,
                     db=db, user_id=current_user.id,
                 )
 
@@ -1839,54 +1884,68 @@ async def _chat_stream_events(
                 messages.append({"role": m.role, "content": content})
         if len(messages) > MAX_HISTORY + 1:
             messages = [messages[0]] + messages[-MAX_HISTORY:]
-        messages.append({"role": "user", "content": _build_user_content_with_attachments(payload, _request_for_assets, db=db, user_id=current_user.id)})
-        attachment_urls = _get_attachment_public_urls(payload, _request_for_assets, db=db, user_id=current_user.id)
-
-        cfg = _resolve_config(resolve_model) if resolve_model else None
+        stream_attachment_urls: List[str] = []
         try:
-            if cfg:
-                if cfg["provider"] == "anthropic":
-                    reply = await _chat_anthropic(
-                        messages, cfg, mcp_tools, raw_token,
-                        sutui_token=sutui_token,
-                        progress_cb=progress_cb,
-                        attachment_urls=attachment_urls,
-                        db=db, user_id=current_user.id,
-                    )
-                else:
-                    reply = await _chat_openai(
-                        messages, cfg, mcp_tools, raw_token,
-                        sutui_token=sutui_token,
-                        progress_cb=progress_cb,
-                        attachment_urls=attachment_urls,
-                        db=db, user_id=current_user.id,
-                    )
-                reply_holder.append(reply)
-                _flush_tool_logs(db, current_user.id, payload.session_id, model)
-                _log_turn(
-                    db, current_user.id, payload.message, _reply_for_user(reply),
-                    payload.session_id, payload.context_id,
-                    {"model": model, "mode": "direct", "tools": len(mcp_tools)},
-                )
-                db.commit()
-            else:
-                oc_reply = await _try_openclaw(messages, model, raw_token)
-                if oc_reply:
-                    reply_holder.append(oc_reply)
+            messages.append(
+                {
+                    "role": "user",
+                    "content": _build_user_content_with_attachments(
+                        payload, _request_for_assets, db=db, user_id=current_user.id
+                    ),
+                }
+            )
+            stream_attachment_urls = _get_attachment_public_urls(
+                payload, _request_for_assets, db=db, user_id=current_user.id
+            )
+        except HTTPException as e:
+            det = e.detail
+            error_holder.append(det if isinstance(det, str) else str(det))
+        cfg = _resolve_config(resolve_model) if resolve_model else None
+        if not error_holder:
+            try:
+                if cfg:
+                    if cfg["provider"] == "anthropic":
+                        reply = await _chat_anthropic(
+                            messages, cfg, mcp_tools, raw_token,
+                            sutui_token=sutui_token,
+                            progress_cb=progress_cb,
+                            attachment_urls=stream_attachment_urls,
+                            db=db, user_id=current_user.id,
+                        )
+                    else:
+                        reply = await _chat_openai(
+                            messages, cfg, mcp_tools, raw_token,
+                            sutui_token=sutui_token,
+                            progress_cb=progress_cb,
+                            attachment_urls=stream_attachment_urls,
+                            db=db, user_id=current_user.id,
+                        )
+                    reply_holder.append(reply)
                     _flush_tool_logs(db, current_user.id, payload.session_id, model)
                     _log_turn(
-                        db, current_user.id, payload.message, _reply_for_user(oc_reply),
+                        db, current_user.id, payload.message, _reply_for_user(reply),
                         payload.session_id, payload.context_id,
-                        {"model": model, "mode": "openclaw"},
+                        {"model": model, "mode": "direct", "tools": len(mcp_tools)},
                     )
                     db.commit()
                 else:
-                    error_holder.append("LLM 服务暂时不可用")
-        except HTTPException as e:
-            error_holder.append(e.detail or str(e))
-        except Exception as e:
-            logger.exception("chat/stream run_chat error")
-            error_holder.append(str(e))
+                    oc_reply = await _try_openclaw(messages, model, raw_token)
+                    if oc_reply:
+                        reply_holder.append(oc_reply)
+                        _flush_tool_logs(db, current_user.id, payload.session_id, model)
+                        _log_turn(
+                            db, current_user.id, payload.message, _reply_for_user(oc_reply),
+                            payload.session_id, payload.context_id,
+                            {"model": model, "mode": "openclaw"},
+                        )
+                        db.commit()
+                    else:
+                        error_holder.append("LLM 服务暂时不可用")
+            except HTTPException as e:
+                error_holder.append(e.detail if isinstance(e.detail, str) else str(e.detail))
+            except Exception as e:
+                logger.exception("chat/stream run_chat error")
+                error_holder.append(str(e))
         final_reply = reply_holder[0] if reply_holder else ""
         final_error = error_holder[0] if error_holder else None
         if final_error:
