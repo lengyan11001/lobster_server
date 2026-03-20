@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import uuid
 from collections import OrderedDict
 from pathlib import Path
 import re
@@ -1153,6 +1154,216 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             normalized_model = payload.get("model") if isinstance(payload, dict) else None
             if original_model != normalized_model:
                 logger.info("[MCP] 模型名称映射: %s -> %s", original_model, normalized_model)
+            
+            # 检测并转存内部图片 URL 到公开 CDN（图生视频/图生图需要）
+            if capability_id in ("image.generate", "video.generate") and isinstance(payload, dict):
+                # 收集所有可能的图片 URL（从 image_url、filePaths、media_files）
+                urls_to_check = []
+                image_url = payload.get("image_url") or ""
+                if image_url and isinstance(image_url, str):
+                    urls_to_check.append(("image_url", image_url.strip()))
+                
+                file_paths = payload.get("filePaths") or []
+                if isinstance(file_paths, list):
+                    for idx, fp in enumerate(file_paths):
+                        if isinstance(fp, str) and fp.strip():
+                            urls_to_check.append((f"filePaths[{idx}]", fp.strip()))
+                
+                media_files = payload.get("media_files") or []
+                if isinstance(media_files, list):
+                    for idx, mf in enumerate(media_files):
+                        if isinstance(mf, str) and mf.strip():
+                            urls_to_check.append((f"media_files[{idx}]", mf.strip()))
+                
+                # 对每个 URL 进行检测和转存
+                for url_key, url_value in urls_to_check:
+                    if not url_value:
+                        continue
+                    
+                    # 检测是否是内部地址（需要转存）
+                    is_internal = False
+                    try:
+                        from urllib.parse import urlparse
+                        import ipaddress
+                        parsed = urlparse(url_value)
+                        hostname = (parsed.hostname or "").lower()
+                        # 内部地址检测：localhost、127.0.0.1、内网 IP、api.51ins.com 等
+                        if not hostname:
+                            is_internal = True
+                        elif hostname in ("localhost", "127.0.0.1", "0.0.0.0"):
+                            is_internal = True
+                        elif "api.51ins.com" in hostname:
+                            is_internal = True
+                        else:
+                            # 尝试解析为 IP 地址，判断是否为内网 IP
+                            try:
+                                ip = ipaddress.ip_address(hostname)
+                                if ip.is_private or ip.is_loopback:
+                                    is_internal = True
+                            except ValueError:
+                                # 不是 IP 地址，检查是否是已知的公开 CDN
+                                # 公开 CDN 通常包含这些关键词，认为是公开的
+                                cdn_keywords = ("cdn.", "oss.", "cos.", "tos.", "s3.", "cloudfront.", "fastly.", "cloudflare.", "img.", "static.", "media.", "assets.", "qiniucdn.", "upyun.", "aliyuncs.")
+                                if not any(cdn_keyword in hostname for cdn_keyword in cdn_keywords):
+                                    # 如果包含 token 参数，可能是内部 API，需要转存
+                                    if "token=" in url_value or "?token" in url_value:
+                                        is_internal = True
+                    except Exception:
+                        pass
+                    
+                    # 如果是内部地址，自动转存到公开 CDN
+                    if is_internal and upstream_name == "sutui" and upstream_url:
+                        cdn_url = None
+                        cdn_url = None
+                        # 方法1：尝试使用 TOS 转存（如果配置了 TOS）
+                        try:
+                            from backend.app.api.assets import _get_tos_config, _upload_to_tos
+                            import httpx
+                            tos_cfg = _get_tos_config()
+                            if tos_cfg:
+                                logger.info("[MCP] 尝试使用 TOS 转存内部图片 URL (%s): %s", url_key, url_value[:100])
+                                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                                    resp = await client.get(url_value)
+                                    resp.raise_for_status()
+                                    data = resp.content
+                                    content_type = resp.headers.get("content-type", "image/jpeg")
+                                    # 从 URL 推断扩展名
+                                    from urllib.parse import urlparse
+                                    from pathlib import Path
+                                    parsed = urlparse(url_value)
+                                    path = Path(parsed.path)
+                                    ext = path.suffix.lower() if path.suffix else ".jpg"
+                                    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+                                        ext = ".jpg"
+                                    object_key = f"mcp-transfer/{uuid.uuid4().hex[:12]}{ext}"
+                                    cdn_url = _upload_to_tos(data, object_key, content_type)
+                                    if cdn_url:
+                                        # 更新对应的字段
+                                        if url_key == "image_url":
+                                            payload["image_url"] = cdn_url
+                                        elif url_key.startswith("filePaths["):
+                                            idx = int(url_key.split("[")[1].split("]")[0])
+                                            if isinstance(payload.get("filePaths"), list):
+                                                payload["filePaths"][idx] = cdn_url
+                                        elif url_key.startswith("media_files["):
+                                            idx = int(url_key.split("[")[1].split("]")[0])
+                                            if isinstance(payload.get("media_files"), list):
+                                                payload["media_files"][idx] = cdn_url
+                                        logger.info("[MCP] 图片已通过 TOS 转存到 CDN (%s): %s -> %s", url_key, url_value[:80], cdn_url[:80])
+                        except Exception as e:
+                            logger.debug("[MCP] TOS 转存失败，尝试使用 sutui.transfer_url: %s", e)
+                        
+                        # 方法2：如果 TOS 转存失败，使用 sutui.transfer_url
+                        if not cdn_url:
+                            try:
+                                logger.info("[MCP] 使用 sutui.transfer_url 转存内部图片 URL (%s): %s", url_key, url_value[:100])
+                                transfer_resp = await _call_upstream_mcp_tool(
+                                    upstream_url,
+                                    "transfer_url",
+                                    {"url": url_value, "type": "image"},
+                                    upstream_name=upstream_name,
+                                    sutui_token=sutui_token,
+                                    lobster_capability_id=capability_id,
+                                )
+                                if isinstance(transfer_resp, dict):
+                                    err_obj = transfer_resp.get("error")
+                                    if not err_obj:
+                                        # 解析转存后的 URL
+                                        # 记录完整响应以便调试（info 级别，方便排查问题）
+                                        logger.info("[MCP] sutui.transfer_url 完整响应 (%s): %s", url_key, json.dumps(transfer_resp, ensure_ascii=False, indent=2)[:800])
+                                        
+                                        # 尝试多种解析方式
+                                        cdn_url = None
+                                        
+                                        # 方式1：从 result.content[].text 解析 JSON
+                                        content = transfer_resp.get("result", {}).get("content", [])
+                                        if isinstance(content, list):
+                                            for item in content:
+                                                if isinstance(item, dict) and item.get("type") == "text":
+                                                    text = item.get("text", "")
+                                                    try:
+                                                        transfer_data = json.loads(text) if text else {}
+                                                        # 尝试多种可能的字段名
+                                                        cdn_url = (
+                                                            transfer_data.get("url") or 
+                                                            transfer_data.get("cdn_url") or 
+                                                            transfer_data.get("transfer_url") or
+                                                            transfer_data.get("public_url") or
+                                                            transfer_data.get("data", {}).get("url") if isinstance(transfer_data.get("data"), dict) else None
+                                                        )
+                                                        if cdn_url and isinstance(cdn_url, str) and cdn_url.startswith("http"):
+                                                            # 更新对应的字段
+                                                            if url_key == "image_url":
+                                                                payload["image_url"] = cdn_url
+                                                            elif url_key.startswith("filePaths["):
+                                                                idx = int(url_key.split("[")[1].split("]")[0])
+                                                                if isinstance(payload.get("filePaths"), list):
+                                                                    payload["filePaths"][idx] = cdn_url
+                                                            elif url_key.startswith("media_files["):
+                                                                idx = int(url_key.split("[")[1].split("]")[0])
+                                                                if isinstance(payload.get("media_files"), list):
+                                                                    payload["media_files"][idx] = cdn_url
+                                                            logger.info("[MCP] 图片已通过 sutui.transfer_url 转存到 CDN (%s): %s -> %s", url_key, url_value[:80], cdn_url[:80])
+                                                            break
+                                                    except json.JSONDecodeError:
+                                                        # 如果不是 JSON，可能是直接的 URL 字符串
+                                                        if text.strip().startswith("http"):
+                                                            cdn_url = text.strip()
+                                                            # 更新对应的字段
+                                                            if url_key == "image_url":
+                                                                payload["image_url"] = cdn_url
+                                                            elif url_key.startswith("filePaths["):
+                                                                idx = int(url_key.split("[")[1].split("]")[0])
+                                                                if isinstance(payload.get("filePaths"), list):
+                                                                    payload["filePaths"][idx] = cdn_url
+                                                            elif url_key.startswith("media_files["):
+                                                                idx = int(url_key.split("[")[1].split("]")[0])
+                                                                if isinstance(payload.get("media_files"), list):
+                                                                    payload["media_files"][idx] = cdn_url
+                                                            logger.info("[MCP] 图片已通过 sutui.transfer_url 转存到 CDN（直接 URL）(%s): %s -> %s", url_key, url_value[:80], cdn_url[:80])
+                                                            break
+                                                    except Exception as e:
+                                                        logger.debug("[MCP] 解析 transfer_url 响应项失败: %s", e)
+                                        
+                                        # 方式2：直接从 result 中取 URL（某些 MCP 可能直接返回）
+                                        if not cdn_url:
+                                            result = transfer_resp.get("result", {})
+                                            if isinstance(result, dict):
+                                                cdn_url = (
+                                                    result.get("url") or 
+                                                    result.get("cdn_url") or 
+                                                    result.get("transfer_url") or
+                                                    result.get("data", {}).get("url") if isinstance(result.get("data"), dict) else None
+                                                )
+                                                if cdn_url and isinstance(cdn_url, str) and cdn_url.startswith("http"):
+                                                    # 更新对应的字段
+                                                    if url_key == "image_url":
+                                                        payload["image_url"] = cdn_url
+                                                    elif url_key.startswith("filePaths["):
+                                                        idx = int(url_key.split("[")[1].split("]")[0])
+                                                        if isinstance(payload.get("filePaths"), list):
+                                                            payload["filePaths"][idx] = cdn_url
+                                                    elif url_key.startswith("media_files["):
+                                                        idx = int(url_key.split("[")[1].split("]")[0])
+                                                        if isinstance(payload.get("media_files"), list):
+                                                            payload["media_files"][idx] = cdn_url
+                                                    logger.info("[MCP] 图片已通过 sutui.transfer_url 转存到 CDN（从 result）(%s): %s -> %s", url_key, url_value[:80], cdn_url[:80])
+                                        
+                                        if not cdn_url:
+                                            logger.warning("[MCP] sutui.transfer_url 返回成功但无法解析 CDN URL (%s)，完整响应: %s", url_key, json.dumps(transfer_resp, ensure_ascii=False, indent=2)[:800])
+                                        else:
+                                            # 验证转存后的 URL 是否可访问（简单检查格式）
+                                            if not (cdn_url.startswith("http://") or cdn_url.startswith("https://")):
+                                                logger.warning("[MCP] sutui.transfer_url 返回的 URL 格式异常（非 http/https）(%s): %s", url_key, cdn_url[:200])
+                                                cdn_url = None  # 重置，让 TOS 或其他方式处理
+                                    else:
+                                        logger.warning("[MCP] sutui.transfer_url 返回错误 (%s): %s", url_key, err_obj.get("message", ""))
+                            except Exception as e:
+                                logger.warning("[MCP] 自动转存图片 URL 失败 (%s)，将使用原 URL（可能无法访问）: %s", url_key, e)
+                        
+                        if not cdn_url:
+                            logger.warning("[MCP] 无法转存内部图片 URL 到公开 CDN (%s)，上游服务可能无法访问: %s", url_key, url_value[:100])
+            
             t0 = time.perf_counter()
             logger.info("[MCP] invoke_capability capability_id=%s upstream=%s model=%s", capability_id, upstream_name, normalized_model or original_model or "(无)")
             upstream_resp = await _call_upstream_mcp_tool(
