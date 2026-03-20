@@ -93,8 +93,9 @@ def _auto_start_openclaw():
         # 在线版 API 服务器通常不部署 OpenClaw/Node，不应打 WARNING
         if not _find_openclaw_entry():
             logger.info(
-                "OpenClaw 未随本服务部署（无 node 或可执行的 openclaw.mjs），跳过自动启动；"
-                "对话走直连 LLM，工具与生成能力走 MCP（如 8001）。"
+                "【本机 API 服务器】未带 OpenClaw（无 node/openclaw.mjs），此处不启动 — 属正常。"
+                "在线版 OpenClaw 必须在用户本机 lobster_online 完整包内运行（见文档「对话走本机」）；"
+                "本服务仅提供鉴权/积分等，对话若打到本机则走直连 LLM + MCP(8001)。"
             )
             return
         if not _find_openclaw_pid():
