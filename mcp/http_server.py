@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import uuid
+from decimal import Decimal
 from collections import OrderedDict
 from pathlib import Path
 import re
@@ -17,6 +18,25 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_for_json(obj: Any) -> Any:
+    """速推/API 响应或计费字段中可能含 Decimal，json.dumps 无法直接序列化。"""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(x) for x in obj]
+    if isinstance(obj, tuple):
+        return tuple(_sanitize_for_json(x) for x in obj)
+    return obj
+
+
+def _json_dumps_mcp_payload(obj: Any) -> str:
+    return json.dumps(_sanitize_for_json(obj), ensure_ascii=False, indent=2)
+
+
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -637,7 +657,7 @@ def _is_task_still_in_progress(upstream_resp: Any) -> bool:
         return False
     if upstream_resp.get("error"):
         return False
-    raw = json.dumps(upstream_resp, ensure_ascii=False)
+    raw = json.dumps(_sanitize_for_json(upstream_resp), ensure_ascii=False)
     raw_lower = raw.lower()
     for s in _TASK_IN_PROGRESS:
         if s in raw_lower or s in raw or f'"status":"{s}"' in raw_lower:
@@ -673,7 +693,11 @@ async def _record_call(token: Optional[str], capability_id: str, success: bool, 
         body["credits_charged"] = credits_charged
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            await client.post(f"{BASE_URL}/capabilities/record-call", json=body, headers=_backend_headers(token))
+            await client.post(
+                f"{BASE_URL}/capabilities/record-call",
+                json=_sanitize_for_json(body),
+                headers=_backend_headers(token),
+            )
     except Exception:
         pass
 
@@ -1052,7 +1076,11 @@ async def _auto_save_generated_assets(
     """Extract media URLs from upstream result and auto-save as local assets."""
     if not token:
         return []
-    raw = json.dumps(upstream_resp, ensure_ascii=False) if isinstance(upstream_resp, dict) else str(upstream_resp)
+    raw = (
+        json.dumps(_sanitize_for_json(upstream_resp), ensure_ascii=False)
+        if isinstance(upstream_resp, dict)
+        else str(upstream_resp)
+    )
     urls = list(dict.fromkeys(_MEDIA_URL_RE.findall(raw)))
     if not urls:
         return []
@@ -1343,7 +1371,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                     if not err_obj:
                                         # 解析转存后的 URL
                                         # 记录完整响应以便调试（info 级别，方便排查问题）
-                                        logger.info("[服务器端MCP-步骤C.6.3] sutui.transfer_url 完整响应 url_key=%s response=%s", url_key, json.dumps(transfer_resp, ensure_ascii=False, indent=2)[:800])
+                                        logger.info("[服务器端MCP-步骤C.6.3] sutui.transfer_url 完整响应 url_key=%s response=%s", url_key, json.dumps(_sanitize_for_json(transfer_resp), ensure_ascii=False, indent=2)[:800])
                                         
                                         # 尝试多种解析方式
                                         cdn_url = None
@@ -1428,7 +1456,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                                     logger.info("[服务器端MCP-步骤C.6.3] sutui.transfer_url 转存成功（方式2：从result解析）url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
                                         
                                         if not cdn_url:
-                                            logger.error("[服务器端MCP-步骤C.6.4] sutui.transfer_url 返回成功但无法解析 CDN URL url_key=%s 完整响应=%s", url_key, json.dumps(transfer_resp, ensure_ascii=False, indent=2)[:800])
+                                            logger.error("[服务器端MCP-步骤C.6.4] sutui.transfer_url 返回成功但无法解析 CDN URL url_key=%s 完整响应=%s", url_key, json.dumps(_sanitize_for_json(transfer_resp), ensure_ascii=False, indent=2)[:800])
                                         else:
                                             # 验证转存后的 URL 是否可访问（简单检查格式）
                                             if not (cdn_url.startswith("http://") or cdn_url.startswith("https://")):
@@ -1580,7 +1608,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 if saved:
                     data["saved_assets"] = saved
 
-            text = json.dumps(data, ensure_ascii=False, indent=2)
+            text = _json_dumps_mcp_payload(data)
             return [{"type": "text", "text": text}], bool(upstream_error)
 
         if name == "save_asset":
