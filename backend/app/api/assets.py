@@ -126,31 +126,46 @@ def get_asset_public_url(
             # 检测是否是内部地址（需要转存）
             from urllib.parse import urlparse
             import ipaddress
+            is_internal = False
             try:
                 parsed = urlparse(url)
                 hostname = (parsed.hostname or "").lower()
-                is_internal = (
-                    not hostname or
-                    hostname in ("localhost", "127.0.0.1", "0.0.0.0") or
-                    "api.51ins.com" in hostname or
-                    (hostname and ("token=" in url or "?token" in url))
-                )
-                if not is_internal:
+                # 首先检查明显的内部地址标识
+                if not hostname:
+                    is_internal = True
+                elif hostname in ("localhost", "127.0.0.1", "0.0.0.0"):
+                    is_internal = True
+                elif "api.51ins.com" in hostname:
+                    is_internal = True
+                elif "token=" in url or "?token" in url:
+                    # 包含 token 参数，很可能是内部 API
+                    is_internal = True
+                else:
+                    # 尝试解析为 IP 地址，判断是否为内网 IP
                     try:
                         ip = ipaddress.ip_address(hostname)
-                        is_internal = ip.is_private or ip.is_loopback
+                        if ip.is_private or ip.is_loopback:
+                            is_internal = True
                     except ValueError:
                         # 不是 IP 地址，检查是否是已知的公开 CDN
                         cdn_keywords = ("cdn.", "oss.", "cos.", "tos.", "s3.", "cloudfront.", "fastly.", "cloudflare.", "img.", "static.", "media.", "assets.", "qiniucdn.", "upyun.", "aliyuncs.", "cdn-video.51sux.com")
                         if any(cdn_keyword in hostname for cdn_keyword in cdn_keywords):
                             is_internal = False
+                        # 如果不在已知 CDN 列表中，且包含 token，认为是内部地址
+                        elif "token=" in url or "?token" in url:
+                            is_internal = True
                 
                 if is_internal:
                     # 内部地址，返回 None，让调用方使用 build_asset_file_url 构建临时 URL，然后由服务器端转存
                     logger.warning("[素材] get_asset_public_url 检测到内部地址，将返回 None 以触发服务器端转存: %s", url[:100])
                     return None
             except Exception as e:
+                # 检测失败时，如果 URL 包含明显的内网标识，也认为是内部地址
                 logger.debug("[素材] get_asset_public_url 检测内部地址失败: %s", e)
+                if "api.51ins.com" in url or "token=" in url or "?token" in url:
+                    logger.warning("[素材] get_asset_public_url 检测异常但包含内网标识，返回 None: %s", url[:100])
+                    return None
+            # 只有确认不是内部地址时才返回原始 URL
             return url
     return build_asset_file_url(request, asset_id)
 

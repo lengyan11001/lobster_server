@@ -1511,7 +1511,13 @@ def _get_attachment_public_urls(
                         # get_asset_public_url 返回 None 表示是内部地址，使用 build_asset_file_url 构建临时 URL
                         # 服务器端会检测并转存这个 URL
                         u = build_asset_file_url(request, aid)
-                        logger.debug("[CHAT] 附图使用临时 URL（将由服务器端转存）: asset_id=%s", aid)
+                        logger.info("[CHAT] 附图检测到内部地址，使用临时 URL（将由服务器端转存）: asset_id=%s url=%s", aid, (u[:80] + "…") if u and len(u) > 80 else u)
+                    else:
+                        # 检查返回的 URL 是否仍然是内部地址（双重检查）
+                        if u and ("api.51ins.com" in u or "token=" in u or "?token" in u):
+                            logger.warning("[CHAT] get_asset_public_url 返回的 URL 仍然是内部地址，强制使用临时 URL: asset_id=%s url=%s", aid, u[:100])
+                            u = build_asset_file_url(request, aid)
+                            logger.info("[CHAT] 附图强制使用临时 URL（将由服务器端转存）: asset_id=%s url=%s", aid, (u[:80] + "…") if u and len(u) > 80 else u)
                 else:
                     u = build_asset_file_url(request, aid)
                 if u and u not in out:
