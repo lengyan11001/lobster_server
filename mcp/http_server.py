@@ -1283,6 +1283,11 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                                     text = item.get("text", "")
                                                     try:
                                                         transfer_data = json.loads(text) if text else {}
+                                                        # 检查是否转存失败
+                                                        if transfer_data.get("success") is False:
+                                                            error_msg = transfer_data.get("error", "未知错误")
+                                                            logger.warning("[MCP] sutui.transfer_url 转存失败 (%s): %s，URL: %s", url_key, error_msg, url_value[:80])
+                                                            break
                                                         # 尝试多种可能的字段名
                                                         cdn_url = (
                                                             transfer_data.get("url") or 

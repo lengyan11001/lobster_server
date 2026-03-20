@@ -1499,6 +1499,11 @@ def _get_attachment_public_urls(
                 aid = aid.strip()
                 if db is not None and user_id is not None:
                     u = get_asset_public_url(aid, user_id, request, db)
+                    if not u:
+                        # get_asset_public_url 返回 None 表示是内部地址，使用 build_asset_file_url 构建临时 URL
+                        # 服务器端会检测并转存这个 URL
+                        u = build_asset_file_url(request, aid)
+                        logger.debug("[CHAT] 附图使用临时 URL（将由服务器端转存）: asset_id=%s", aid)
                 else:
                     u = build_asset_file_url(request, aid)
                 if u and u not in out:

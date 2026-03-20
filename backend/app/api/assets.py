@@ -112,11 +112,40 @@ def build_asset_file_url(request: Request, asset_id: str) -> Optional[str]:
 def get_asset_public_url(
     asset_id: str, user_id: int, request: Request, db: Session
 ) -> Optional[str]:
-    """供速推使用的素材 URL：若 asset 有公网 source_url 则直接返回，否则返回带签名的本地 file URL。"""
+    """供速推使用的素材 URL：若 asset 有公网 source_url 则直接返回，否则返回带签名的本地 file URL。
+    如果 source_url 是内部地址（如 api.51ins.com），则返回 None，让调用方使用 build_asset_file_url 构建临时 URL，然后由服务器端转存。"""
     row = db.query(Asset).filter(Asset.id == asset_id, Asset.user_id == user_id).first()
     if row and getattr(row, "source_url", None):
         url = (row.source_url or "").strip()
         if url.startswith("http://") or url.startswith("https://"):
+            # 检测是否是内部地址（需要转存）
+            from urllib.parse import urlparse
+            import ipaddress
+            try:
+                parsed = urlparse(url)
+                hostname = (parsed.hostname or "").lower()
+                is_internal = (
+                    not hostname or
+                    hostname in ("localhost", "127.0.0.1", "0.0.0.0") or
+                    "api.51ins.com" in hostname or
+                    (hostname and ("token=" in url or "?token" in url))
+                )
+                if not is_internal:
+                    try:
+                        ip = ipaddress.ip_address(hostname)
+                        is_internal = ip.is_private or ip.is_loopback
+                    except ValueError:
+                        # 不是 IP 地址，检查是否是已知的公开 CDN
+                        cdn_keywords = ("cdn.", "oss.", "cos.", "tos.", "s3.", "cloudfront.", "fastly.", "cloudflare.", "img.", "static.", "media.", "assets.", "qiniucdn.", "upyun.", "aliyuncs.", "cdn-video.51sux.com")
+                        if any(cdn_keyword in hostname for cdn_keyword in cdn_keywords):
+                            is_internal = False
+                
+                if is_internal:
+                    # 内部地址，返回 None，让调用方使用 build_asset_file_url 构建临时 URL，然后由服务器端转存
+                    logger.warning("[素材] get_asset_public_url 检测到内部地址，将返回 None 以触发服务器端转存: %s", url[:100])
+                    return None
+            except Exception as e:
+                logger.debug("[素材] get_asset_public_url 检测内部地址失败: %s", e)
             return url
     return build_asset_file_url(request, asset_id)
 
