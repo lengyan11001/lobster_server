@@ -81,6 +81,15 @@ class ModelAuditResult:
     missing_params: Set[str] = field(default_factory=set)
 
 
+def _xskill_http_headers() -> Dict[str, str]:
+    """与官方 CLI 一致：有 Key 时带 Bearer，便于拉 /docs。"""
+    h = {"Accept": "application/json"}
+    token = (os.environ.get("XSKILL_API_KEY") or os.environ.get("SUTUI_SERVER_TOKEN") or "").strip()
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+
 class ModelParamAuditor:
     """模型参数审计器"""
     
@@ -92,7 +101,10 @@ class ModelParamAuditor:
         """从 xskill API 获取所有模型列表"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(f"{self.xskill_base_url}/api/v3/mcp/models")
+                resp = await client.get(
+                    f"{self.xskill_base_url}/api/v3/mcp/models",
+                    headers=_xskill_http_headers(),
+                )
                 resp.raise_for_status()
                 data = resp.json()
                 return data.get("data", {}).get("models", [])
@@ -109,6 +121,7 @@ class ModelParamAuditor:
             resp = await client.get(
                 f"{self.xskill_base_url}/api/v3/models/{encoded_id}/docs",
                 params={"lang": "zh"},
+                headers=_xskill_http_headers(),
             )
             resp.raise_for_status()
             data = resp.json()
