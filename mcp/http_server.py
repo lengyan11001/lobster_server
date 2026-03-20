@@ -1464,14 +1464,14 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             ):
                 dropped = _pop_task_billed_credits(poll_task_id)
                 if dropped > 0:
-                            logger.info("[MCP] 任务成功，清除创建扣费缓存 task_id=%s billed_was=%s", poll_task_id, dropped)
-                    # 任务完成，清理临时文件
-                    if poll_task_id:
-                        try:
-                            from backend.app.api.assets import cleanup_temp_files_for_task
-                            cleanup_temp_files_for_task(poll_task_id)
-                        except Exception as e:
-                            logger.debug("[临时文件] 清理失败 task_id=%s error=%s", poll_task_id, e)
+                    logger.info("[MCP] 任务成功，清除创建扣费缓存 task_id=%s billed_was=%s", poll_task_id, dropped)
+                # 任务完成，清理临时文件
+                if poll_task_id:
+                    try:
+                        from backend.app.api.assets import cleanup_temp_files_for_task
+                        cleanup_temp_files_for_task(poll_task_id)
+                    except Exception as e:
+                        logger.debug("[临时文件] 清理失败 task_id=%s error=%s", poll_task_id, e)
 
             actual_used = 0
             if isinstance(upstream_resp, dict) and not upstream_error:
