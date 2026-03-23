@@ -27,6 +27,45 @@
       "capabilities": {},
       "tags": ["wecom", "chat", "reply"]
     },
+    "media_edit_skill": {
+      "name": "素材剪辑",
+      "description": "对素材库视频/图片做叠字、裁剪、画幅、静音、配乐、静图转视频、抽帧；需本机已安装 ffmpeg。1000 积分解锁后可在对话中用自然语言描述剪辑意图（须给出可解析参数）。",
+      "type": "builtin",
+      "unlock_price_credits": 1000,
+      "status": "available",
+      "capabilities": {
+        "media.edit": {
+          "description": "本地素材剪辑（invoke_capability capability_id=media.edit）",
+          "upstream": "local",
+          "upstream_tool": "invoke",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "operation": {
+                "type": "string",
+                "enum": ["overlay_text", "trim", "scale_pad", "mute", "mux_audio", "image_to_video", "extract_frame"]
+              },
+              "asset_id": { "type": "string" },
+              "text": { "type": "string" },
+              "position": { "type": "string", "enum": ["top", "center", "bottom"] },
+              "font_size": { "type": "integer" },
+              "start_sec": { "type": "number" },
+              "end_sec": { "type": "number" },
+              "aspect_ratio": { "type": "string", "enum": ["9:16", "16:9", "1:1", "4:3", "3:4"] },
+              "fit_mode": { "type": "string", "enum": ["contain", "cover"] },
+              "audio_asset_id": { "type": "string" },
+              "duration_sec": { "type": "number" },
+              "timestamp_sec": { "type": "number" }
+            },
+            "required": ["operation", "asset_id"]
+          }
+        }
+      },
+      "tags": ["video", "image", "edit", "ffmpeg"]
+    },
     "add_more_publish_accounts": {
       "name": "添加更多发布账号",
       "description": "解锁后可添加多个抖音/小红书等发布账号（未解锁时仅可添加 1 个）。",

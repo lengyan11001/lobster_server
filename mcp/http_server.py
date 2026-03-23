@@ -1371,8 +1371,6 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 return [{"type": "text", "text": f"能力配置缺失 upstream_tool: {capability_id}"}], True
             upstream_name = str(cfg.get("upstream") or "sutui").strip()
             upstream_url = upstream_urls.get(upstream_name, "").strip()
-            if not upstream_url:
-                return [{"type": "text", "text": f"未配置上游网关: {upstream_name}，请在 .env 或技能商店中配置"}], True
             pre_deduct_amount = 0
             if token:
                 try:
@@ -1389,6 +1387,9 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         pre_deduct_amount = (pre_r.json() or {}).get("credits_charged") or 0
                 except Exception:
                     pass
+
+            if not upstream_url:
+                return [{"type": "text", "text": f"未配置上游网关: {upstream_name}，请在 .env 或技能商店中配置"}], True
             sutui_token = (request.headers.get("X-Sutui-Token") or "").strip() or None if request else None
             # 规范化 payload：根据 capability_id 调用相应的规范化函数
             original_model = payload.get("model") if isinstance(payload, dict) else None
