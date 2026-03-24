@@ -145,6 +145,23 @@ class WecomConfig(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class MessengerConfig(Base):
+    """Facebook Messenger：多应用配置，每应用独立 callback_path、Verify Token、App Secret、Page Token。"""
+
+    __tablename__ = "messenger_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, default="Messenger")
+    callback_path: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    verify_token: Mapped[str] = mapped_column(String(255), nullable=False)
+    app_secret: Mapped[str] = mapped_column(String(255), nullable=False)
+    page_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    page_access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    product_knowledge: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class WecomPendingMessage(Base):
     """待处理消息队列：回调解密后入队，本地轮询拉取并提交回复后由云端调用企微发送接口推送。"""
     __tablename__ = "wecom_pending_messages"

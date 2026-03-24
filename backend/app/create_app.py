@@ -26,6 +26,7 @@ from .api.assets import router as assets_router
 # from .api.publish import router as publish_router
 from .api.logs_api import router as logs_router
 from .api.wechat_oa import router as wechat_oa_router
+from .api.messenger import router as messenger_router
 try:
     from .api.wecom import router as wecom_router
 except Exception as e:
@@ -261,6 +262,7 @@ def create_app() -> FastAPI:
     # app.include_router(publish_router, prefix="")
     app.include_router(logs_router, prefix="")
     app.include_router(wechat_oa_router, prefix="")
+    app.include_router(messenger_router, prefix="")
     if wecom_router is not None:
         app.include_router(wecom_router, prefix="")
     else:
