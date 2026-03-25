@@ -9,6 +9,6 @@
 
 本地执行：`git push` 后 `bash scripts/deploy_from_local.sh`。若 `.env.deploy` 含 `LOBSTER_DEPLOY_HOST_OVERSEAS`，会再拉取并重启海外机。
 
-**海外 SSH**：须与大陆一样，把本机 `LOBSTER_DEPLOY_SSH_KEY` 对应**公钥**写入海外机 `root` 的 `~/.ssh/authorized_keys`；若海外只用另一把私钥，在 `.env.deploy` 设 `LOBSTER_DEPLOY_SSH_KEY_OVERSEAS`。
+**海外 SSH**：与 **`docs/云服务器部署说明.md`** 一致——本机 **`deploy_from_local.sh`**，密钥见 `.env.deploy`；海外示例 **`ubuntu@43.162.93.196`**、`/home/ubuntu/lobster_server`（勿提交密码到 git）。
 
 详见 `docs/Messenger配置说明.md`。

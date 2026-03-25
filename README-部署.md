@@ -24,6 +24,8 @@ bash scripts/deploy_server.sh
 
 `cp .env.deploy.example .env.deploy`，填写 `LOBSTER_DEPLOY_HOST`、`LOBSTER_DEPLOY_SSH_KEY`、`LOBSTER_DEPLOY_REMOTE_DIR`（如 `/root/lobster_server`）。
 
+**海外第二台**（与 `lobster-server.icu` / Messenger·Twilio 同机）：在 `.env.deploy` 增加 `LOBSTER_DEPLOY_HOST_OVERSEAS`、`LOBSTER_DEPLOY_REMOTE_DIR_OVERSEAS`；SSH 与大陆相同（默认复用 `LOBSTER_DEPLOY_SSH_KEY`，海外用户 `~/.ssh/authorized_keys` 须含对应公钥）。流程同 `docs/云服务器部署说明.md` §「日常更新代码并重启」。
+
 ## 与 lobster_online
 
 **不**把 `lobster_online` 部署到 ECS；用户本机解压代码包运行。Server 提供账号、鉴权、积分、速推、`upload-temp` 等。
