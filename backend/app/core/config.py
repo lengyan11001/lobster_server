@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     messenger_upstream_url: Optional[str] = None
     # 海外实例：与大陆共用 SECRET_KEY 时，库中无 users 行仍信任 JWT sub 作为 messenger_configs.user_id
     messenger_trust_jwt_without_user: bool = False
+    twilio_account_sid: Optional[str] = None
+    twilio_auth_token: Optional[str] = None
+    twilio_whatsapp_webhook_full_url: Optional[str] = None
 
     class Config:
         env_file = ".env"

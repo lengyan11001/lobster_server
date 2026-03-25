@@ -27,6 +27,7 @@ from .api.assets import router as assets_router
 from .api.logs_api import router as logs_router
 from .api.wechat_oa import router as wechat_oa_router
 from .api.messenger import router as messenger_router
+from .api.twilio_whatsapp import router as twilio_whatsapp_router
 from .api.privacy_policy import router as privacy_policy_router
 try:
     from .api.wecom import router as wecom_router
@@ -265,6 +266,7 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, prefix="")
     app.include_router(wechat_oa_router, prefix="")
     app.include_router(messenger_router, prefix="")
+    app.include_router(twilio_whatsapp_router, prefix="")
     if wecom_router is not None:
         app.include_router(wecom_router, prefix="")
     else:
