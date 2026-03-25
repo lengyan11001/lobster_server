@@ -109,7 +109,12 @@ def _form_to_str_dict(form: Any) -> Dict[str, str]:
     for key in form.keys():
         v = form.get(key)
         if v is not None:
-            out[str(key)] = v if isinstance(v, str) else str(v)
+            if isinstance(v, str):
+                out[str(key)] = v
+            elif isinstance(v, bytes):
+                out[str(key)] = v.decode("utf-8", errors="replace")
+            else:
+                out[str(key)] = str(v)
     return out
 
 
@@ -355,12 +360,14 @@ async def twilio_whatsapp_inbound(request: Request, db: Session = Depends(get_db
     msg_sid = (params.get("MessageSid") or params.get("SmsSid") or "").strip()
 
     logger.info(
-        "[Twilio WA] inbound sid=%s From=%s To=%s NumMedia=%s Body=%s",
+        "[Twilio WA] inbound sid=%s From=%s To=%s NumMedia=%s Body_len=%s Body=%s keys=%s",
         msg_sid,
         frm,
         to,
         num_media,
+        len(body),
         body[:200] if body else "",
+        sorted(params.keys()),
     )
 
     if msg_sid:
