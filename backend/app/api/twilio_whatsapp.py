@@ -5,6 +5,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import Response
@@ -23,6 +24,9 @@ logger = logging.getLogger(__name__)
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 _TWILIO_CONFIG_PATH = _BASE_DIR / "twilio_whatsapp_config.json"
 _INBOUND_PATH = "/api/twilio/whatsapp/inbound"
+_STATUS_PATH = "/api/twilio/whatsapp/status"
+# Twilio Sandbox 官方测试号（WhatsApp），代发 From 必须是已注册 Channel，Sandbox 下常在 From 或 To 中出现
+_TWILIO_WHATSAPP_SANDBOX_DIGITS = "14155238886"
 
 
 def _read_twilio_file() -> dict:
@@ -68,22 +72,60 @@ def effective_account_sid() -> str:
 
 
 def effective_signature_url(request: Request) -> str:
-    """签名校验 URL：以服务器 .env 为准（TWILIO_WHATSAPP_WEBHOOK_FULL_URL / PUBLIC_BASE_URL），其次为旧版 JSON。"""
+    """Twilio 验签用 URL 须与控制台填写的 Webhook 完全一致。入站可配完整 inbound URL；状态回调为同 host 的 /status。"""
     path = request.url.path
     explicit = (getattr(settings, "twilio_whatsapp_webhook_full_url", None) or "").strip()
-    if explicit:
+    if explicit and path == _INBOUND_PATH:
         return explicit
+    if explicit and path == _STATUS_PATH:
+        o = _origin_from_url(explicit)
+        return (o + _STATUS_PATH) if o else str(request.url)
     public = (getattr(settings, "public_base_url", None) or "").strip().rstrip("/")
     if public:
         return public + path
     f = _read_twilio_file()
     explicit = (f.get("webhook_full_url") or "").strip()
+    if explicit and path == _INBOUND_PATH:
+        return explicit
+    if explicit and path == _STATUS_PATH:
+        o = _origin_from_url(explicit)
+        return (o + _STATUS_PATH) if o else str(request.url)
     if explicit:
         return explicit
     pub = (f.get("public_base") or "").strip().rstrip("/")
     if pub:
         return pub + path
     return str(request.url)
+
+
+def _origin_from_url(url: str) -> str:
+    u = (url or "").strip()
+    if not u:
+        return ""
+    p = urlparse(u)
+    if p.scheme and p.netloc:
+        return f"{p.scheme}://{p.netloc}".rstrip("/")
+    return u.rstrip("/")
+
+
+def _status_webhook_suggested() -> str:
+    """供 Twilio「Status callback URL」单独填写，勿与收消息 URL 相同。"""
+    wh_full = (getattr(settings, "twilio_whatsapp_webhook_full_url", None) or "").strip()
+    if wh_full:
+        o = _origin_from_url(wh_full)
+        return (o + _STATUS_PATH) if o else ""
+    env_pub = (getattr(settings, "public_base_url", None) or "").strip().rstrip("/")
+    if env_pub:
+        return env_pub + _STATUS_PATH
+    f = _read_twilio_file()
+    wh_full = (f.get("webhook_full_url") or "").strip()
+    if wh_full:
+        o = _origin_from_url(wh_full)
+        return (o + _STATUS_PATH) if o else ""
+    pub = (f.get("public_base") or "").strip().rstrip("/")
+    if pub:
+        return pub + _STATUS_PATH
+    return ""
 
 
 def _twilio_webhook_suggested() -> str:
@@ -116,6 +158,90 @@ def _form_to_str_dict(form: Any) -> Dict[str, str]:
             else:
                 out[str(key)] = str(v)
     return out
+
+
+def _digits_only(s: str) -> str:
+    return "".join(c for c in (s or "") if c.isdigit())
+
+
+def _is_twilio_whatsapp_sandbox_address(s: str) -> bool:
+    return _TWILIO_WHATSAPP_SANDBOX_DIGITS in _digits_only(s)
+
+
+def _resolve_whatsapp_reply_from_to(frm: str, to: str) -> tuple[str, str]:
+    """代发：From 必须是 Twilio 侧已开通的 WhatsApp Sender；Sandbox 号可能在入站 From 或 To。"""
+    f, t = (frm or "").strip(), (to or "").strip()
+    if _is_twilio_whatsapp_sandbox_address(f) and not _is_twilio_whatsapp_sandbox_address(t):
+        return f, t
+    if _is_twilio_whatsapp_sandbox_address(t) and not _is_twilio_whatsapp_sandbox_address(f):
+        return t, f
+    return t, f
+
+
+def _is_status_callback_only(params: Dict[str, str], body_text: str) -> bool:
+    """无正文且无媒体且为送达类状态 → 勿入队（避免与 Status callback 同 URL 时污染 pending）。"""
+    num_media = (params.get("NumMedia") or "0") or "0"
+    if body_text or num_media not in ("0", ""):
+        return False
+    ms = (params.get("MessageStatus") or "").strip().lower()
+    ss = (params.get("SmsStatus") or "").strip().lower()
+    delivery = {"sent", "delivered", "read", "queued", "sending", "failed", "undelivered"}
+    if ms and ms in delivery:
+        return True
+    if ss and ss in delivery:
+        return True
+    return False
+
+
+def _extract_user_text(params: Dict[str, str]) -> str:
+    body = (params.get("Body") or "").strip()
+    if body:
+        return body
+    sm = (params.get("StructuredMessage") or "").strip()
+    if not sm:
+        return ""
+    try:
+        j = json.loads(sm)
+        if isinstance(j, dict):
+            for k in ("body", "text", "title", "message"):
+                v = j.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+            b = j.get("button")
+            if isinstance(b, dict):
+                t = b.get("text") or b.get("payload")
+                if isinstance(t, str) and t.strip():
+                    return t.strip()
+    except Exception:
+        pass
+    return ""
+
+
+async def _twilio_validate_signed_form(request: Request) -> Dict[str, str]:
+    token = effective_auth_token()
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="未配置 Auth Token（twilio_whatsapp_config.json 或 TWILIO_AUTH_TOKEN）",
+        )
+    try:
+        form = await request.form()
+    except Exception as e:
+        logger.warning("[Twilio WA] 解析表单失败: %s", e)
+        raise HTTPException(status_code=400, detail="invalid form body") from e
+
+    params = _form_to_str_dict(form)
+    sig = (request.headers.get("X-Twilio-Signature") or "").strip()
+    if not sig:
+        raise HTTPException(status_code=403, detail="missing X-Twilio-Signature")
+
+    from twilio.request_validator import RequestValidator
+
+    url = effective_signature_url(request)
+    if not RequestValidator(token).validate(url, params, sig):
+        logger.warning("[Twilio WA] 签名校验失败 url=%s", url)
+        raise HTTPException(status_code=403, detail="invalid Twilio signature")
+    return params
 
 
 class TwilioTestSendBody(BaseModel):
@@ -162,7 +288,9 @@ def get_twilio_whatsapp_config(_: int = Depends(get_messenger_user_id)):
         "has_auth_token": _mask_token_set(),
         "public_base_effective": env_pub,
         "webhook_suggested": suggested,
+        "status_webhook_suggested": _status_webhook_suggested(),
         "inbound_path": path,
+        "status_callback_path": _STATUS_PATH,
         "env_fallback_note": "公网与 Webhook 由服务器 .env 决定：PUBLIC_BASE_URL、TWILIO_WHATSAPP_WEBHOOK_FULL_URL、TWILIO_AUTH_TOKEN；盒内 JSON 仅保存 SID/Token",
         "twilio_kb_enterprise_id": f.get("twilio_kb_enterprise_id"),
         "twilio_kb_product_id": f.get("twilio_kb_product_id"),
@@ -310,9 +438,10 @@ def twilio_whatsapp_submit_reply(
         from twilio.rest import Client
 
         client = Client(sid, token)
+        from_w, to_w = _resolve_whatsapp_reply_from_to(row.from_user, row.to_user)
         client.messages.create(
-            from_=row.to_user,
-            to=row.from_user,
+            from_=from_w,
+            to=to_w,
             body=text[:1600],
         )
     except Exception as e:
@@ -327,35 +456,28 @@ def twilio_whatsapp_submit_reply(
     return {"ok": True}
 
 
+@router.post(_STATUS_PATH, summary="Twilio WhatsApp 状态回调（勿与入站同 URL；仅验签并 200）")
+async def twilio_whatsapp_status(request: Request):
+    params = await _twilio_validate_signed_form(request)
+    logger.info(
+        "[Twilio WA] status_callback keys=%s MessageStatus=%s SmsStatus=%s",
+        sorted(params.keys()),
+        (params.get("MessageStatus") or "")[:80],
+        (params.get("SmsStatus") or "")[:80],
+    )
+    return Response(
+        content=_EMPTY_TWIML,
+        media_type="application/xml; charset=utf-8",
+    )
+
+
 @router.post(_INBOUND_PATH, summary="Twilio WhatsApp 入站 Webhook")
 async def twilio_whatsapp_inbound(request: Request, db: Session = Depends(get_db)):
-    token = effective_auth_token()
-    if not token:
-        raise HTTPException(
-            status_code=503,
-            detail="未配置 Auth Token（twilio_whatsapp_config.json 或 TWILIO_AUTH_TOKEN）",
-        )
-    try:
-        form = await request.form()
-    except Exception as e:
-        logger.warning("[Twilio WA] 解析表单失败: %s", e)
-        raise HTTPException(status_code=400, detail="invalid form body") from e
-
-    params = _form_to_str_dict(form)
-    sig = (request.headers.get("X-Twilio-Signature") or "").strip()
-    if not sig:
-        raise HTTPException(status_code=403, detail="missing X-Twilio-Signature")
-
-    from twilio.request_validator import RequestValidator
-
-    url = effective_signature_url(request)
-    if not RequestValidator(token).validate(url, params, sig):
-        logger.warning("[Twilio WA] 签名校验失败 url=%s", url)
-        raise HTTPException(status_code=403, detail="invalid Twilio signature")
+    params = await _twilio_validate_signed_form(request)
 
     frm = params.get("From", "")
     to = params.get("To", "")
-    body = (params.get("Body") or "").strip()
+    body = _extract_user_text(params)
     num_media = params.get("NumMedia", "0") or "0"
     msg_sid = (params.get("MessageSid") or params.get("SmsSid") or "").strip()
 
@@ -369,6 +491,13 @@ async def twilio_whatsapp_inbound(request: Request, db: Session = Depends(get_db
         body[:200] if body else "",
         sorted(params.keys()),
     )
+
+    if _is_status_callback_only(params, body):
+        logger.info("[Twilio WA] 跳过入队（纯状态回调，无正文） sid=%s", msg_sid)
+        return Response(
+            content=_EMPTY_TWIML,
+            media_type="application/xml; charset=utf-8",
+        )
 
     if msg_sid:
         try:
