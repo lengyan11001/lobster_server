@@ -13,8 +13,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from ..core.config import settings
-from ..models import User
-from .auth import get_current_user
+from .auth import get_messenger_user_id
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -106,7 +105,7 @@ class TwilioWhatsappConfigUpdate(BaseModel):
 
 
 @router.get("/api/twilio-whatsapp/config", summary="读取 Twilio WhatsApp 配置（脱敏）")
-def get_twilio_whatsapp_config(_: User = Depends(get_current_user)):
+def get_twilio_whatsapp_config(_: int = Depends(get_messenger_user_id)):
     f = _read_twilio_file()
     sid = (f.get("account_sid") or "").strip()
     pub = (f.get("public_base") or "").strip().rstrip("/")
@@ -134,7 +133,7 @@ def get_twilio_whatsapp_config(_: User = Depends(get_current_user)):
 @router.post("/api/twilio-whatsapp/config", summary="保存 Twilio WhatsApp 配置（JSON，立即生效）")
 def post_twilio_whatsapp_config(
     body: TwilioWhatsappConfigUpdate,
-    _: User = Depends(get_current_user),
+    _: int = Depends(get_messenger_user_id),
 ):
     f = _read_twilio_file()
     patch = body.model_dump(exclude_unset=True)
@@ -175,7 +174,7 @@ def post_twilio_whatsapp_config(
 @router.post("/api/twilio-whatsapp/test-send", summary="Twilio 出站 WhatsApp 测试")
 def twilio_whatsapp_test_send(
     body: TwilioTestSendBody,
-    _: User = Depends(get_current_user),
+    _: int = Depends(get_messenger_user_id),
 ):
     sid = effective_account_sid()
     token = effective_auth_token()
