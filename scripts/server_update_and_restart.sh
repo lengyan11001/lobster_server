@@ -8,6 +8,14 @@ echo "[更新] 拉取 origin main ..."
 git fetch origin main
 git pull origin main
 
+if [ -x "$ROOT/.venv/bin/pip" ]; then
+  echo "[依赖] .venv pip install -r requirements.txt ..."
+  "$ROOT/.venv/bin/pip" install -r "$ROOT/requirements.txt"
+else
+  echo "[ERR] 未找到 $ROOT/.venv/bin/pip，请先在本机创建虚拟环境并安装依赖后再部署。"
+  exit 1
+fi
+
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service 2>/dev/null | grep -q lobster-backend; then
   echo "[重启] systemctl restart lobster-backend lobster-mcp ..."
   sudo systemctl restart lobster-backend lobster-mcp
