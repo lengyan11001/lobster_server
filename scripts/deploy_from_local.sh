@@ -22,20 +22,29 @@ fi
 
 REMOTE_DIR="${LOBSTER_DEPLOY_REMOTE_DIR:-/opt/lobster-server}"
 REMOTE_DIR_OS="${LOBSTER_DEPLOY_REMOTE_DIR_OVERSEAS:-$REMOTE_DIR}"
-SSH_OPTS="-o StrictHostKeyChecking=accept-new"
-[ -n "$LOBSTER_DEPLOY_SSH_KEY" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY" ] && SSH_OPTS="-i $LOBSTER_DEPLOY_SSH_KEY $SSH_OPTS"
+SSH_BASE="-o StrictHostKeyChecking=accept-new"
+SSH_OPTS_MAIN="$SSH_BASE"
+[ -n "$LOBSTER_DEPLOY_SSH_KEY" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY" ] && SSH_OPTS_MAIN="-i $LOBSTER_DEPLOY_SSH_KEY $SSH_BASE"
+# 海外机若未授权大陆同一把 key，可单独配 LOBSTER_DEPLOY_SSH_KEY_OVERSEAS
+SSH_OPTS_OS="$SSH_BASE"
+if [ -n "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" ]; then
+  SSH_OPTS_OS="-i $LOBSTER_DEPLOY_SSH_KEY_OVERSEAS $SSH_BASE"
+elif [ -n "$LOBSTER_DEPLOY_SSH_KEY" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY" ]; then
+  SSH_OPTS_OS="-i $LOBSTER_DEPLOY_SSH_KEY $SSH_BASE"
+fi
 
 _run_remote() {
   local host="$1"
   local dir="$2"
+  local sshopts="$3"
   echo "[部署] SSH $host → cd $dir && git pull origin main && bash scripts/server_update_and_restart.sh"
-  ssh $SSH_OPTS "$host" "cd $dir && git fetch origin main && git pull origin main && bash scripts/server_update_and_restart.sh"
+  ssh $sshopts "$host" "cd $dir && git fetch origin main && git pull origin main && bash scripts/server_update_and_restart.sh"
 }
 
-_run_remote "$LOBSTER_DEPLOY_HOST" "$REMOTE_DIR"
+_run_remote "$LOBSTER_DEPLOY_HOST" "$REMOTE_DIR" "$SSH_OPTS_MAIN"
 echo "[完成] 大陆/主服务器已更新并重启"
 
 if [ -n "$LOBSTER_DEPLOY_HOST_OVERSEAS" ]; then
-  _run_remote "$LOBSTER_DEPLOY_HOST_OVERSEAS" "$REMOTE_DIR_OS"
+  _run_remote "$LOBSTER_DEPLOY_HOST_OVERSEAS" "$REMOTE_DIR_OS" "$SSH_OPTS_OS"
   echo "[完成] 海外服务器已更新并重启"
 fi
