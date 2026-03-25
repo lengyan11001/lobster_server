@@ -183,15 +183,18 @@ def twilio_whatsapp_test_send(
             status_code=400,
             detail="From / To 须为 whatsapp:+E164 格式",
         )
-    from twilio.rest import Client
-
-    client = Client(sid, token)
     try:
+        from twilio.rest import Client
+
+        client = Client(sid, token)
         msg = client.messages.create(from_=from_w, to=to, body=text)
+        out_sid = (getattr(msg, "sid", "") or "") if msg is not None else ""
+        return {"ok": True, "message_sid": out_sid}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning("[Twilio WA] test-send 失败: %s", e)
         raise HTTPException(status_code=502, detail=str(e)) from e
-    return {"ok": True, "message_sid": msg.sid if msg else ""}
 
 
 @router.post(_INBOUND_PATH, summary="Twilio WhatsApp 入站 Webhook")
