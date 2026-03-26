@@ -1280,6 +1280,53 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
     return out
 
 
+def _norm_json_key(k: Any) -> str:
+    return str(k).replace("_", "").lower()
+
+
+def _extract_media_urls_for_auto_save(upstream_resp: Any) -> List[str]:
+    """从上游 JSON 提取媒体 URL：带扩展名正则 + 常见字段递归（无扩展名 CDN 直链）。"""
+    order: List[str] = []
+    seen: set = set()
+    blob = (
+        json.dumps(_sanitize_for_json(upstream_resp), ensure_ascii=False)
+        if isinstance(upstream_resp, (dict, list))
+        else str(upstream_resp)
+    )
+    for m in _MEDIA_URL_RE.findall(blob):
+        if m not in seen:
+            seen.add(m)
+            order.append(m)
+
+    def maybe_add(u: str) -> None:
+        u = (u or "").strip()
+        if len(u) < 16 or not u.startswith(("http://", "https://")):
+            return
+        if u not in seen:
+            seen.add(u)
+            order.append(u)
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                nk = _norm_json_key(k)
+                if isinstance(v, str):
+                    if nk in (
+                        "imageurl", "videourl", "mediaurl", "outputurl", "fileurl", "resulturl",
+                        "thumbnailurl", "coverurl", "downloadurl", "previewurl", "publicurl", "persistenturl",
+                        "src", "href", "image",
+                    ) or nk.endswith("url"):
+                        maybe_add(v)
+                walk(v)
+        elif isinstance(obj, list):
+            for x in obj:
+                walk(x)
+
+    if isinstance(upstream_resp, (dict, list)):
+        walk(upstream_resp)
+    return order[:12]
+
+
 async def _auto_save_generated_assets(
     upstream_resp: Any, capability_id: str, payload: Dict, token: Optional[str],
     request: Optional[Request] = None,
@@ -1287,26 +1334,30 @@ async def _auto_save_generated_assets(
     """Extract media URLs from upstream result and auto-save as local assets."""
     if not token:
         return []
-    raw = (
-        json.dumps(_sanitize_for_json(upstream_resp), ensure_ascii=False)
-        if isinstance(upstream_resp, dict)
-        else str(upstream_resp)
-    )
-    urls = list(dict.fromkeys(_MEDIA_URL_RE.findall(raw)))
+    urls = _extract_media_urls_for_auto_save(upstream_resp)
     if not urls:
         return []
 
     prompt_text = payload.get("prompt", "") or capability_id
-    media_type = "video" if capability_id.startswith("video") else "image"
+
+    def _mt_for_url(u: str) -> str:
+        low = u.lower()
+        if low.endswith((".mp4", ".webm", ".mov")):
+            return "video"
+        if capability_id.startswith("video") or "video" in capability_id:
+            return "video"
+        if capability_id == "task.get_result" and payload.get("capability_id"):
+            cid = str(payload.get("capability_id") or "")
+            if cid.startswith("video"):
+                return "video"
+        return "image"
+
     saved: List[Dict[str, str]] = []
-    for url in urls[:5]:
-        if url.lower().endswith((".mp4", ".webm", ".mov")):
-            mt = "video"
-        else:
-            mt = "image"
+    for url in urls[:8]:
+        mt = _mt_for_url(url)
         body = {
             "url": url,
-            "media_type": mt or media_type,
+            "media_type": mt,
             "prompt": prompt_text[:500],
             "tags": f"auto,{capability_id}",
         }
@@ -1315,9 +1366,16 @@ async def _auto_save_generated_assets(
                 r = await client.post(f"{BASE_URL}/api/assets/save-url", json=body, headers=_backend_headers(token, request))
             if r.status_code < 400:
                 d = r.json()
-                saved.append({"asset_id": d.get("asset_id", ""), "filename": d.get("filename", ""), "media_type": mt or media_type})
-        except Exception:
-            pass
+                saved.append({"asset_id": d.get("asset_id", ""), "filename": d.get("filename", ""), "media_type": mt})
+            else:
+                logger.warning(
+                    "[MCP auto_save] save-url HTTP %s url_prefix=%s body_prefix=%s",
+                    r.status_code,
+                    (url[:96] + "…") if len(url) > 96 else url,
+                    (r.text or "")[:240],
+                )
+        except Exception as e:
+            logger.warning("[MCP auto_save] save-url 异常: %s url_prefix=%s", e, (url[:96] + "…") if len(url) > 96 else url)
     return saved
 
 
