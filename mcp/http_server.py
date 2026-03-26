@@ -1568,7 +1568,6 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         # 【服务器端MCP-步骤C.5】方法1：尝试使用 TOS 转存（如果配置了 TOS）
                         try:
                             from backend.app.api.assets import _get_tos_config, _upload_to_tos
-                            import httpx
                             logger.info("[服务器端MCP-步骤C.5] 检查服务器端TOS配置 url_key=%s", url_key)
                             tos_cfg = _get_tos_config()
                             if tos_cfg:
