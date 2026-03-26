@@ -1440,13 +1440,21 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         return [{"type": "text", "text": str(detail)}], True
                     if pre_r.status_code == 402:
                         detail = (pre_r.json() or {}).get("detail", "积分不足")
-                        return [{"type": "text", "text": f"积分不足，无法调用能力。{detail}"}], True
+                        d = str(detail or "").strip()
+                        base = "当前账户积分不足，无法调用该能力。请前往「充值」或积分页购买/充值后再试。"
+                        msg = base if (not d or d in ("积分不足", "余额不足")) else f"{base}（{d}）"
+                        return [{"type": "text", "text": msg}], True
                     if pre_r.status_code == 200:
                         pre_deduct_amount = (pre_r.json() or {}).get("credits_charged") or 0
-                except Exception as e:
+                except Exception:
                     if upstream_name == "sutui" and upstream_tool == "generate":
                         logger.exception("[MCP] pre-deduct 请求失败 capability_id=%s", capability_id)
-                        return [{"type": "text", "text": f"预扣积分失败，无法调用能力：{e}"}], True
+                        return [
+                            {
+                                "type": "text",
+                                "text": "无法连接认证中心完成预扣积分（网络或超时）。请稍后重试。",
+                            }
+                        ], True
 
             if not upstream_url:
                 return [{"type": "text", "text": f"未配置上游网关: {upstream_name}，请在 .env 或技能商店中配置"}], True
