@@ -18,6 +18,11 @@ def _api_base() -> str:
     return (getattr(settings, "sutui_api_base", None) or "https://api.xskill.ai").rstrip("/")
 
 
+def _quantize_credits(value: float) -> int:
+    """与速推侧金额习惯一致：先保留两位小数再取整为积分（避免浮点误差）。"""
+    return int(round(float(value) + 1e-9, 2))
+
+
 def _duration_seconds_from_params(params: Dict[str, Any]) -> float:
     for key in ("duration", "duration_seconds", "length", "video_length", "audio_length"):
         v = params.get(key)
@@ -100,21 +105,29 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
         d = _duration_seconds_from_params(params)
         if d <= 0:
             d = 5.0
-        return int(math.ceil(float(d) * float(base)))
+        return _quantize_credits(float(math.ceil(float(d) * float(base))))
 
     if price_type == "fixed":
         return base
 
     if price_type == "token_based":
-        return base
+        pt = int(params.get("prompt_tokens", 0) or 0)
+        ct = int(params.get("completion_tokens", 0) or 0)
+        total = pt + ct
+        if total > 0:
+            # base_price 按「每千 token」计（与速推 docs 常见约定一致）
+            units = math.ceil(total / 1000.0)
+            raw = units * float(base)
+            return _quantize_credits(raw)
+        return _quantize_credits(float(base))
 
     if price_type == "audio_duration_based":
         d = _duration_seconds_from_params(params)
         if d <= 0:
-            return base
-        return int(math.ceil(d * float(base)))
+            return _quantize_credits(float(base))
+        return _quantize_credits(float(math.ceil(d * float(base))))
 
-    return base
+    return _quantize_credits(float(base))
 
 
 def estimate_pre_deduct_credits(model_id: str, params: Optional[dict]) -> Tuple[int, Optional[str]]:

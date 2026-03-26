@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy.orm import Session
 
 from mcp.sutui_tokens import next_sutui_server_token
 
 from ..core.config import settings
+from ..db import get_db
 from ..models import User
+from ..services.sutui_pricing import estimate_credits_from_pricing, estimate_pre_deduct_credits, fetch_model_pricing
 from .auth import get_current_user
 from .skills import _skill_store_admin
 
@@ -25,10 +28,60 @@ def _api_base() -> str:
     return (getattr(settings, "sutui_api_base", None) or "https://api.xskill.ai").rstrip("/")
 
 
+def _should_deduct_credits() -> bool:
+    edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
+    return edition == "online" and getattr(settings, "lobster_independent_auth", True)
+
+
+def _credits_for_sutui_chat(model: str, usage: Optional[dict]) -> int:
+    """按速推 docs 定价 + usage 计算本次对话扣分数。"""
+    pricing = fetch_model_pricing(model)
+    if not pricing:
+        est, err = estimate_pre_deduct_credits(model, None)
+        if err:
+            logger.warning("[sutui-chat] 无定价 model=%s err=%s", model, err)
+            return 0
+        return est
+    params: Dict[str, Any] = {}
+    if usage and isinstance(usage, dict):
+        params["prompt_tokens"] = usage.get("prompt_tokens", 0)
+        params["completion_tokens"] = usage.get("completion_tokens", 0)
+    est = estimate_credits_from_pricing(pricing, params)
+    if est <= 0:
+        est2, err = estimate_pre_deduct_credits(model, None)
+        if err:
+            return 0
+        return est2
+    return est
+
+
+def _apply_chat_deduct(db: Session, current_user: User, model: str, usage: Optional[dict]) -> None:
+    if not _should_deduct_credits():
+        return
+    credits = _credits_for_sutui_chat(model, usage)
+    if credits <= 0:
+        return
+    db.refresh(current_user)
+    bal = current_user.credits or 0
+    if bal < credits:
+        logger.error(
+            "[sutui-chat] 扣积分失败（余额不足） user_id=%s model=%s need=%s have=%s",
+            current_user.id,
+            model,
+            credits,
+            bal,
+        )
+        return
+    current_user.credits = bal - credits
+    db.commit()
+    logger.info("[sutui-chat] 已扣积分 user_id=%s model=%s credits=%s", current_user.id, model, credits)
+
+
 @router.post("/api/sutui-chat/completions", summary="速推 LLM 对话代理（需登录）")
 async def sutui_chat_completions(
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     try:
         body: Dict[str, Any] = await request.json()
@@ -51,6 +104,8 @@ async def sutui_chat_completions(
         "Accept": "application/json, text/event-stream",
     }
 
+    model_id = (body.get("model") or "").strip()
+
     if not stream:
         async with httpx.AsyncClient(timeout=120.0) as client:
             r = await client.post(url, json=body, headers=headers)
@@ -59,7 +114,13 @@ async def sutui_chat_completions(
         except Exception:
             raise HTTPException(status_code=502, detail=(r.text or "")[:2000])
 
+        if r.status_code == 200 and model_id:
+            usage = data.get("usage") if isinstance(data, dict) else None
+            _apply_chat_deduct(db, current_user, model_id, usage if isinstance(usage, dict) else None)
+
         return JSONResponse(content=data, status_code=r.status_code)
+
+    # 流式：上游不在此返回完整 usage，扣费与「非流式」一致请用 stream=false；此处暂不扣积分以免失败无法回退
 
     async def gen() -> AsyncIterator[bytes]:
         async with httpx.AsyncClient(timeout=300.0) as client:
