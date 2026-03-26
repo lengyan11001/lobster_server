@@ -4,10 +4,16 @@ import socket
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """MCP/脚本会单独读 os.environ（如 SUTUI_SERVER_TOKENS_*）；此处 extra=ignore 避免 .env 多出的键导致启动失败。"""
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
     app_name: str = "龙虾 (Lobster)"
     debug: bool = True
     secret_key: str = "lobster-secret-change-me"
@@ -89,10 +95,6 @@ class Settings(BaseSettings):
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
     twilio_whatsapp_webhook_full_url: Optional[str] = None
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
     def cors_origins_list(self) -> List[str]:
         if self.cors_origins.strip() == "*":
