@@ -252,10 +252,12 @@ def create_app() -> FastAPI:
         lifespan=_app_lifespan,
     )
 
+    # 规范禁止 ACAO=* 与 Access-Control-Allow-Credentials:true 同时出现；浏览器会拒收响应。
+    # 本服务鉴权为 Bearer JWT（非跨站 Cookie），无需 credentials=True；否则与 allow_origins=["*"] 组合会踩坑。
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list(),
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
