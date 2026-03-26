@@ -29,6 +29,7 @@ from .api.wechat_oa import router as wechat_oa_router
 from .api.messenger import router as messenger_router
 from .api.twilio_whatsapp import router as twilio_whatsapp_router
 from .api.privacy_policy import router as privacy_policy_router
+from .api.oauth_public_pages import router as oauth_public_pages_router
 try:
     from .api.wecom import router as wecom_router
 except Exception as e:
@@ -249,6 +250,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router, prefix="")
     app.include_router(privacy_policy_router, prefix="")
+    app.include_router(oauth_public_pages_router, prefix="")
     app.include_router(auth_router, prefix="/auth")
     app.include_router(capabilities_router, prefix="")
     app.include_router(skills_router, prefix="")
