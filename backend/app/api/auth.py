@@ -25,6 +25,8 @@ from ..models import SkillUnlock, User
 router = APIRouter()
 logger = logging.getLogger(__name__)
 ONLINE_USER_EMAIL = "online@sutui.lobster.local"
+# 新注册用户初始积分（自主注册、微信首次建号）
+REGISTER_INITIAL_CREDITS = 100
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -184,7 +186,7 @@ def register(body: RegisterBody, db: Session = Depends(get_db)):
     user = User(
         email=email,
         hashed_password=get_password_hash(body.password),
-        credits=0,
+        credits=REGISTER_INITIAL_CREDITS,
         role="admin" if email == "test01" else "user",
         preferred_model="sutui",
     )
@@ -516,7 +518,7 @@ def wechat_miniprogram_login(body: WechatMiniprogramLoginBody, db: Session = Dep
         user = User(
             email=email,
             hashed_password=get_password_hash(f"wechat-{openid}"),
-            credits=0,
+            credits=REGISTER_INITIAL_CREDITS,
             role="user",
             preferred_model="sutui",
             wechat_openid=openid,
@@ -588,7 +590,7 @@ def wechat_callback(
         user = User(
             email=email,
             hashed_password=get_password_hash(f"wechat-{openid}"),
-            credits=0,
+            credits=REGISTER_INITIAL_CREDITS,
             role="user",
             preferred_model="sutui",
             wechat_openid=openid,

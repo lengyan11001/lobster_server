@@ -30,6 +30,26 @@
       "capabilities": {},
       "tags": ["publish", "toutiao", "video", "image"]
     },
+    "youtube_publish": {
+      "name": "YouTube 上传",
+      "description": "多账号管理：每个账号独立 OAuth 与代理；授权成功后可在对话中指定素材与 YouTube 账号 ID（yt_ 开头）。在线版入口，配置走本机 API。",
+      "type": "builtin",
+      "store_visibility": "debug",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["YouTube", "OAuth", "publish"]
+    },
+    "twilio_whatsapp": {
+      "name": "Twilio WhatsApp",
+      "description": "云端入站 + 本机轮询 AI 回复；点卡片查看消息与公司列表，点「配置」填写 Twilio。",
+      "type": "builtin",
+      "store_visibility": "debug",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["WhatsApp", "Twilio", "chat"]
+    },
     "wecom_reply": {
       "name": "企业微信自动回复",
       "description": "接收企业微信消息，由 AI 自动生成回复。需 1000 积分解锁后进入配置页并使用。",

@@ -183,6 +183,11 @@ def list_store(current_user: User = Depends(get_current_user), db: Session = Dep
     return {"packages": out, "is_skill_store_admin": is_admin}
 
 
+@router.get("/skills/skill-store-admin", summary="当前用户是否为技能商店管理员（可见调试包与调试能力）")
+def skill_store_admin_flag(current_user: User = Depends(get_current_user)):
+    return {"is_skill_store_admin": _skill_store_admin(current_user)}
+
+
 @router.get("/skills/unlocked-packages", summary="当前用户已解锁的技能包 ID 列表（MCP 校验用）")
 def unlocked_packages(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ids = list(_user_unlocked_package_ids(db, current_user.id))

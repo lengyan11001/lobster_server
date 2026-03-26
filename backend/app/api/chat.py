@@ -152,14 +152,19 @@ def _pick_default_model() -> str:
 
 # ── MCP tool helpers ──────────────────────────────────────────────
 
-async def _fetch_mcp_tools() -> List[Dict]:
-    """Fetch available tools from the local MCP server (port 8001)."""
+async def _fetch_mcp_tools(raw_token: Optional[str] = None) -> List[Dict]:
+    """Fetch available tools from the local MCP server (port 8001)。传入用户 JWT 以便 MCP 过滤调试中技能。"""
     try:
+        headers = {}
+        t = (raw_token or "").strip()
+        if t:
+            headers["Authorization"] = f"Bearer {t}" if not t.lower().startswith("bearer ") else t
         async with httpx.AsyncClient(timeout=10.0) as c:
-            r = await c.post(MCP_URL, json={
-                "jsonrpc": "2.0", "id": "lt",
-                "method": "tools/list", "params": {},
-            })
+            r = await c.post(
+                MCP_URL,
+                json={"jsonrpc": "2.0", "id": "lt", "method": "tools/list", "params": {}},
+                headers=headers,
+            )
         tools = r.json().get("result", {}).get("tools", [])
         logger.info("[对话] MCP tools/list 成功 tools_count=%s", len(tools))
         return tools
@@ -1581,7 +1586,7 @@ async def chat_endpoint(
         if not model or model == "openclaw":
             model = _pick_default_model()
 
-    mcp_tools = await _fetch_mcp_tools()
+    mcp_tools = await _fetch_mcp_tools(raw_token)
     has_tools = bool(mcp_tools)
     if not has_tools:
         logger.info(
@@ -1770,7 +1775,7 @@ async def _chat_stream_events(
             model = payload.model or getattr(current_user, "preferred_model", None) or ""
             if not model or model == "openclaw":
                 model = _pick_default_model()
-        mcp_tools = await _fetch_mcp_tools()
+        mcp_tools = await _fetch_mcp_tools(raw_token)
         has_tools = bool(mcp_tools)
         if not has_tools:
             logger.info("MCP tools empty (stream path), chat has no capabilities")

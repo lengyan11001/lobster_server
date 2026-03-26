@@ -85,6 +85,63 @@ def _load_capability_catalog() -> Dict[str, Dict[str, Any]]:
     return {}
 
 
+_SKILL_REGISTRY_PATH = Path(__file__).resolve().parent.parent / "skill_registry.json"
+_DEBUG_ONLY_MCP_TOOL_NAMES = frozenset()
+
+
+def _load_skill_registry() -> Dict[str, Any]:
+    try:
+        if _SKILL_REGISTRY_PATH.exists():
+            return json.loads(_SKILL_REGISTRY_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("[MCP] skill_registry 读取失败: %s", e)
+    return {"packages": {}}
+
+
+def _capability_id_is_debug_only_in_registry(cap_id: str) -> bool:
+    """能力仅出现在 store_visibility=debug 的包中、且未出现在 online 或未标注包时，对非管理员隐藏。"""
+    registry = _load_skill_registry()
+    found_online = False
+    found_debug = False
+    for pkg in (registry.get("packages") or {}).values():
+        if not isinstance(pkg, dict):
+            continue
+        caps = pkg.get("capabilities") or {}
+        if cap_id not in caps:
+            continue
+        vis = (pkg.get("store_visibility") or "").strip().lower()
+        if vis == "debug":
+            found_debug = True
+        else:
+            found_online = True
+    if found_online:
+        return False
+    return found_debug
+
+
+async def _fetch_is_skill_store_admin(token: Optional[str]) -> bool:
+    if not (token or "").strip():
+        return False
+    auth = (token or "").strip()
+    if not auth.lower().startswith("bearer "):
+        auth = f"Bearer {auth}"
+    auth_base = (os.environ.get("AUTH_SERVER_BASE") or "").strip().rstrip("/")
+    if not auth_base:
+        auth_base = BASE_URL
+    url = f"{auth_base.rstrip('/')}/skills/skill-store-admin"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(url, headers={"Authorization": auth})
+        if r.status_code != 200:
+            logger.warning("[MCP] skill-store-admin HTTP %s", r.status_code)
+            return False
+        data = r.json()
+        return bool(data.get("is_skill_store_admin"))
+    except Exception as e:
+        logger.warning("[MCP] skill-store-admin 请求失败: %s", e)
+        return False
+
+
 def _load_upstream_urls() -> Dict[str, str]:
     urls: Dict[str, str] = {}
     try:
@@ -149,8 +206,12 @@ async def _find_account_id_by_nickname(nickname: str, token: Optional[str]) -> O
     return None
 
 
-def _tool_definitions(catalog: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
-    capability_list = sorted(catalog.keys())
+def _tool_definitions(catalog: Dict[str, Dict[str, Any]], *, is_skill_store_admin: bool = True) -> List[Dict[str, Any]]:
+    capability_list = sorted(
+        cid
+        for cid in catalog.keys()
+        if not (_capability_id_is_debug_only_in_registry(cid) and not is_skill_store_admin)
+    )
     tools = [
         {
             "name": "list_capabilities",
@@ -296,6 +357,8 @@ def _tool_definitions(catalog: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]
             },
         },
     ]
+    if not is_skill_store_admin and _DEBUG_ONLY_MCP_TOOL_NAMES:
+        tools = [t for t in tools if (t.get("name") or "") not in _DEBUG_ONLY_MCP_TOOL_NAMES]
     return tools
 
 
@@ -1291,7 +1354,15 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
         upstream_urls = _load_upstream_urls()
 
         if name == "list_capabilities":
-            data = {"capabilities": [{"capability_id": cid, "description": catalog[cid].get("description") or cid} for cid in sorted(catalog.keys()) if catalog[cid].get("enabled") is not False]}
+            is_admin = await _fetch_is_skill_store_admin(token)
+            caps_out = []
+            for cid in sorted(catalog.keys()):
+                if catalog[cid].get("enabled") is False:
+                    continue
+                if _capability_id_is_debug_only_in_registry(cid) and not is_admin:
+                    continue
+                caps_out.append({"capability_id": cid, "description": catalog[cid].get("description") or cid})
+            data = {"capabilities": caps_out}
             return [{"type": "text", "text": json.dumps(data, ensure_ascii=False, indent=2)}], False
 
         if name == "manage_skills":
@@ -1370,6 +1441,8 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 payload = {}
             if not capability_id or capability_id not in catalog:
                 return [{"type": "text", "text": f"能力未找到: {capability_id}"}], True
+            if _capability_id_is_debug_only_in_registry(capability_id) and not await _fetch_is_skill_store_admin(token):
+                return [{"type": "text", "text": "该能力为调试中技能，当前账号不可用。"}], True
             cfg = catalog[capability_id]
             upstream_tool = str(cfg.get("upstream_tool") or "").strip()
             if not upstream_tool:
@@ -1930,7 +2003,9 @@ async def _handle_single_message(msg: Dict[str, Any], request: Request) -> Optio
         }}
     if method == "tools/list":
         catalog = _load_capability_catalog()
-        tools = _tool_definitions(catalog)
+        token = _get_token_from_request(request)
+        is_admin = await _fetch_is_skill_store_admin(token)
+        tools = _tool_definitions(catalog, is_skill_store_admin=is_admin)
         logger.info("[MCP] tools/list -> %s tools", len(tools))
         return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": tools}}
     if method == "tools/call":
