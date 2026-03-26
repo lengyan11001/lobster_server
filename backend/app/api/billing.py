@@ -6,8 +6,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from io import BytesIO
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -148,6 +150,18 @@ def get_billing_pricing(current_user: User = Depends(get_current_user)):
 def _use_independent_recharge() -> bool:
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     return edition == "online" and getattr(settings, "lobster_independent_auth", True)
+
+
+@router.get("/api/recharge/qr-png", summary="将字符串转为 PNG 二维码（供微信 Native 支付链接展示，无需外链图床）")
+def recharge_qr_png(data: str = Query(..., min_length=1, max_length=4096)):
+    """无 JWT：仅用于展示 weixin:// 支付链接，便于 <img src> 跨域加载。"""
+    try:
+        import segno
+    except ImportError as e:
+        raise HTTPException(status_code=503, detail="未安装 segno，无法生成二维码") from e
+    buf = BytesIO()
+    segno.make(data, error="m").save(buf, kind="png", scale=6, border=4)
+    return Response(content=buf.getvalue(), media_type="image/png")
 
 
 @router.get("/api/recharge/packages", summary="充值套餐列表（自有）")

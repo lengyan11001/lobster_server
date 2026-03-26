@@ -21,10 +21,9 @@ def _use_own_wechat_login() -> bool:
 
 
 def _use_own_wechat_pay() -> bool:
-    return bool(
-        (getattr(settings, "wechat_mch_id", None) or "").strip()
-        and (getattr(settings, "wechat_pay_apiv3_key", None) or "").strip()
-    )
+    from .billing import _wechat_pay_configured
+
+    return _wechat_pay_configured()
 
 
 @router.get("/api/edition", summary="当前版本（本构建仅在线版）")

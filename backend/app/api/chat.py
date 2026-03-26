@@ -334,17 +334,41 @@ async def _exec_tool(
                 "method": "tools/call",
                 "params": {"name": name, "arguments": args},
             }, headers=hdrs)
-        res = r.json().get("result", {})
-        content = res.get("content", [])
-        if isinstance(content, list) and content:
-            texts = [
-                x.get("text", "")
-                for x in content
-                if isinstance(x, dict) and x.get("type") == "text"
-            ]
-            result_text = "\n".join(t for t in texts if t) or json.dumps(content, ensure_ascii=False)
+        try:
+            body = r.json()
+        except Exception:
+            result_text = (r.text or "")[:2000] or f"MCP 响应非 JSON（HTTP {r.status_code}）"
+            success = False
         else:
-            result_text = json.dumps(res, ensure_ascii=False)
+            if r.status_code >= 400:
+                err = body.get("error") if isinstance(body, dict) else None
+                if isinstance(err, dict):
+                    result_text = str(err.get("message") or err)[:2000]
+                else:
+                    result_text = str(body)[:2000]
+                success = False
+            elif isinstance(body, dict) and body.get("error"):
+                err = body.get("error")
+                result_text = (
+                    str(err.get("message")) if isinstance(err, dict) else str(err)
+                )[:2000]
+                success = False
+            else:
+                res = body.get("result") if isinstance(body, dict) else None
+                if not isinstance(res, dict):
+                    res = {}
+                content = res.get("content", [])
+                if isinstance(content, list) and content:
+                    texts = [
+                        x.get("text", "")
+                        for x in content
+                        if isinstance(x, dict) and x.get("type") == "text"
+                    ]
+                    result_text = "\n".join(t for t in texts if t) or json.dumps(content, ensure_ascii=False)
+                else:
+                    result_text = json.dumps(res, ensure_ascii=False)
+                if res.get("isError"):
+                    success = False
     except Exception as e:
         result_text = _friendly_tool_error(e)
         success = False
@@ -373,7 +397,12 @@ async def _exec_tool(
         "success": success,
         "latency_ms": ms,
     })
-    ev_end = {"type": "tool_end", "name": name, "preview": (result_text or "")[:200]}
+    ev_end = {
+        "type": "tool_end",
+        "name": name,
+        "preview": (result_text or "")[:200],
+        "success": success,
+    }
     if capability_id is not None:
         ev_end["capability_id"] = capability_id
     if phase:
