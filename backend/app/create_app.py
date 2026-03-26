@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -13,6 +15,8 @@ from .api.chat import router as chat_router
 from .api.capabilities import router as capabilities_router
 from .api.skills import router as skills_router
 from .api.settings_api import router as settings_router
+from .api.sutui_llm import router as sutui_llm_router
+from .api.sutui_chat_proxy import router as sutui_chat_proxy_router
 from .api.mcp_gateway import router as mcp_gateway_router
 # 自定义配置已迁至客户端；openclaw_config 保留（含 sutui/balance、recharge 等支付）
 # from .api.custom_config import router as custom_config_router
@@ -40,6 +44,7 @@ except Exception as e:
 from .core.config import settings
 from .db import Base, engine, SessionLocal
 from . import models  # noqa: F401
+from .services.sutui_llm_probe import is_sutui_llm_probe_enabled_for_this_instance, sutui_llm_probe_loop_forever
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +216,22 @@ def _migrate_recharge_callback_audit():
         logger.warning("Migration recharge_orders callback_audit skipped: %s", e)
 
 
+@asynccontextmanager
+async def _app_lifespan(app: FastAPI):
+    probe_task = None
+    if is_sutui_llm_probe_enabled_for_this_instance():
+        probe_task = asyncio.create_task(sutui_llm_probe_loop_forever(3600.0))
+    else:
+        logger.info("[启动] 速推 LLM 定时探测已关闭（海外实例：LOBSTER_SERVER_REGION=overseas）")
+    yield
+    if probe_task is not None:
+        probe_task.cancel()
+        try:
+            await probe_task
+        except asyncio.CancelledError:
+            pass
+
+
 def create_app() -> FastAPI:
     logger.info("[启动] create_app 开始")
     Base.metadata.create_all(bind=engine)
@@ -228,6 +249,7 @@ def create_app() -> FastAPI:
         title="龙虾 (Lobster) API",
         version="0.1.0",
         description="龙虾 - 你的私人 AI 助手",
+        lifespan=_app_lifespan,
     )
 
     app.add_middleware(
@@ -255,6 +277,8 @@ def create_app() -> FastAPI:
     app.include_router(capabilities_router, prefix="")
     app.include_router(skills_router, prefix="")
     app.include_router(settings_router, prefix="")
+    app.include_router(sutui_llm_router, prefix="")
+    app.include_router(sutui_chat_proxy_router, prefix="")
     app.include_router(chat_router, prefix="")
     app.include_router(mcp_gateway_router, prefix="")
     app.include_router(openclaw_config_router, prefix="")

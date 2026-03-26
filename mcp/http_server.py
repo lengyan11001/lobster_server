@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from mcp.sutui_tokens import next_sutui_server_token
+
 logger = logging.getLogger(__name__)
 
 
@@ -379,52 +381,6 @@ def _redact_sensitive(value: Any) -> Any:
     return value
 
 
-def _load_sutui_token() -> str:
-    """Read the 速推 token from sutui_config.json."""
-    try:
-        p = Path(__file__).resolve().parent.parent / "sutui_config.json"
-        if p.exists():
-            data = json.loads(p.read_text(encoding="utf-8"))
-            return (data.get("token") or "").strip()
-    except Exception:
-        pass
-    return ""
-
-
-def _get_sutui_tokens_list() -> List[str]:
-    """服务器配置的速推算力 Token 列表：SUTUI_SERVER_TOKENS（逗号分隔）或 SUTUI_SERVER_TOKEN 单条，或 sutui_config.json。"""
-    raw = os.environ.get("SUTUI_SERVER_TOKENS", "").strip()
-    if raw:
-        tokens = [t.strip() for t in raw.split(",") if t.strip()]
-        if tokens:
-            return tokens
-    single = os.environ.get("SUTUI_SERVER_TOKEN", "").strip()
-    if single:
-        return [single]
-    from_file = _load_sutui_token()
-    if from_file:
-        return [from_file]
-    return []
-
-
-_sutui_tokens_list: List[str] = []
-_sutui_token_index = 0
-_sutui_token_lock = asyncio.Lock()
-
-
-async def _next_sutui_token() -> Optional[str]:
-    """从配置的多个速推 Token 中轮询取下一个（负载均衡）。"""
-    global _sutui_tokens_list, _sutui_token_index
-    if not _sutui_tokens_list:
-        _sutui_tokens_list = _get_sutui_tokens_list()
-    if not _sutui_tokens_list:
-        return None
-    async with _sutui_token_lock:
-        idx = _sutui_token_index % len(_sutui_tokens_list)
-        _sutui_token_index += 1
-        return _sutui_tokens_list[idx]
-
-
 def _parse_sse_or_json(resp: httpx.Response) -> Dict[str, Any]:
     """Parse response that may be JSON or SSE (text/event-stream)."""
     ct = (resp.headers.get("content-type") or "").lower()
@@ -663,6 +619,7 @@ async def _call_upstream_mcp_tool(
     upstream_name: str = "",
     sutui_token: Optional[str] = None,
     lobster_capability_id: str = "",
+    sutui_pool_is_admin: bool = False,
 ) -> Dict[str, Any]:
     auth_headers: Dict[str, str] = {
         "Accept": "application/json, text/event-stream",
@@ -670,9 +627,9 @@ async def _call_upstream_mcp_tool(
     if upstream_name == "sutui":
         token = (sutui_token or "").strip()
         if not token:
-            token = await _next_sutui_token()
+            token = await next_sutui_server_token(is_admin=sutui_pool_is_admin)
         if not token:
-            return {"error": {"message": "xskill/速推 Token 未配置。请在服务器配置 SUTUI_SERVER_TOKEN 或 SUTUI_SERVER_TOKENS（逗号分隔多个，负载均衡）。"}}
+            return {"error": {"message": "xskill/速推 Token 未配置。请在服务器配置 SUTUI_SERVER_TOKEN(S) 或 SUTUI_SERVER_TOKENS_USER / SUTUI_SERVER_TOKENS_ADMIN（逗号分隔多个，负载均衡）。"}}
         auth_headers["Authorization"] = f"Bearer {token}"
         # 实测 xskill MCP HTTP 在 generate 返回体序列化时抛 Decimal 错误；create/query 走 REST 稳定
         if tool_name in ("generate", "get_result"):
@@ -1494,6 +1451,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             if not upstream_url:
                 return [{"type": "text", "text": f"未配置上游网关: {upstream_name}，请在 .env 或技能商店中配置"}], True
             sutui_token = (request.headers.get("X-Sutui-Token") or "").strip() or None if request else None
+            is_admin_for_pool = await _fetch_is_skill_store_admin(token)
 
             # 检测并转存内部图片 URL 到公开 CDN（图生视频/图生图需要）
             temp_ids_to_register = []  # 在外部作用域定义，用于后续注册
@@ -1629,6 +1587,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                     upstream_name=upstream_name,
                                     sutui_token=sutui_token,
                                     lobster_capability_id=capability_id,
+                                    sutui_pool_is_admin=is_admin_for_pool,
                                 )
                                 logger.info("[服务器端MCP-步骤C.6.2] sutui.transfer_url 调用完成 url_key=%s", url_key)
                                 if isinstance(transfer_resp, dict):
@@ -1746,6 +1705,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 upstream_name=upstream_name,
                 sutui_token=sutui_token,
                 lobster_capability_id=capability_id,
+                sutui_pool_is_admin=is_admin_for_pool,
             )
             # task.get_result: 不再在此处轮询，由 backend chat 每 15s 轮询并写回对话
             latency_ms = int((time.perf_counter() - t0) * 1000)

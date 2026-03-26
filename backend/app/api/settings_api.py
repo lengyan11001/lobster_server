@@ -85,7 +85,15 @@ def update_settings(
 def list_models(current_user: User = Depends(get_current_user)):
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     if edition == "online":
-        return {"models": [{"id": "sutui", "name": "速推统一", "description": "由速推提供，无需配置"}]}
+        return {
+            "models": [
+                {
+                    "id": "sutui_aggregate",
+                    "name": "速推聚合",
+                    "description": "速推多模型；进入智能会话后在子下拉选择具体模型",
+                }
+            ]
+        }
 
     base_dir = Path(__file__).resolve().parent.parent.parent.parent
     models = []
