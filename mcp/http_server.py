@@ -1354,6 +1354,26 @@ def _collect_xskill_result_primary_urls(obj: Any, out: List[str], seen: set) -> 
             _collect_xskill_result_primary_urls(x, out, seen)
 
 
+def _reorder_cdn_urls_for_autosave(urls: List[str]) -> List[str]:
+    """速推返回里常同时出现 TOS 长期链（…/assets/…）与任务直链（…/v3-tasks/…）。前者可稳定拉取，后者易不可访问；同列表内置后。"""
+    assets: List[str] = []
+    rest: List[str] = []
+    v3tasks: List[str] = []
+    seen: set = set()
+    for u in urls:
+        if u in seen:
+            continue
+        seen.add(u)
+        lu = u.lower()
+        if "v3-tasks" in lu:
+            v3tasks.append(u)
+        elif "/assets/" in lu:
+            assets.append(u)
+        else:
+            rest.append(u)
+    return assets + rest + v3tasks
+
+
 def _extract_media_urls_for_auto_save(upstream_resp: Any) -> List[str]:
     """从上游 JSON 提取媒体 URL：带扩展名正则 + 常见字段递归（无扩展名 CDN 直链）。"""
     order: List[str] = []
@@ -1397,7 +1417,7 @@ def _extract_media_urls_for_auto_save(upstream_resp: Any) -> List[str]:
 
     if isinstance(upstream_resp, (dict, list)):
         walk(upstream_resp)
-    return order[:12]
+    return _reorder_cdn_urls_for_autosave(order)[:12]
 
 
 async def _auto_save_generated_assets(
