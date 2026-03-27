@@ -51,6 +51,9 @@ from starlette.routing import Route
 BASE_URL = os.environ.get("AI_TEST_PLATFORM_BASE_URL", "http://localhost:8000").rstrip("/")
 CAPABILITY_SUTUI_MCP_URL = os.environ.get("CAPABILITY_SUTUI_MCP_URL", "").strip()
 CAPABILITY_UPSTREAM_URLS_JSON = os.environ.get("CAPABILITY_UPSTREAM_URLS_JSON", "").strip()
+# 在线版素材应在用户本机（lobster_online）；云端 ECS 上 MCP 若开启自动入库，会写 ECS 的素材库。设为 0/false/off 则关闭 invoke_capability 后的自动 save-url（显式 save_asset 工具不受影响）。
+_MCP_AUTOSAVE_FLAG = os.environ.get("MCP_AUTOSAVE_ASSETS", "0").strip().lower()
+MCP_AUTOSAVE_ASSETS_ENABLED = _MCP_AUTOSAVE_FLAG in ("1", "true", "yes", "on")
 
 
 def _load_catalog_from_file(path: Path) -> Dict[str, Dict[str, Any]]:
@@ -2128,7 +2131,8 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 data["credits_used"] = settle_final
 
             # 自动入库：一次生成任务只入库一轮；该轮可含多个资源（多 URL）。异步 generate 不入库；get_result 仅终态且同一 task_id 只入库一次（轮询会多次终态成功）。
-            if not upstream_error:
+            # 云端 API 场景可设 MCP_AUTOSAVE_ASSETS=0，避免与「素材仅本机」冲突，由本机 lobster_online 保存。
+            if not upstream_error and MCP_AUTOSAVE_ASSETS_ENABLED:
                 should_autosave = False
                 if upstream_tool == "get_result":
                     if _sutui_get_result_is_terminal_success(upstream_resp):

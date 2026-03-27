@@ -266,12 +266,50 @@ _SAVE_URL_DOWNLOADER_HEADERS = {
 }
 
 
+def _save_url_dedupe_key(url: str) -> str:
+    """同一用户、同一规范化 URL 只入库一次（防 MCP+前端重复 save-url）。"""
+    return hashlib.sha256(
+        (url or "").strip().split("?")[0].split("#")[0].lower().encode("utf-8")
+    ).hexdigest()
+
+
+def _find_existing_asset_by_save_url_dedupe(db: Session, user_id: int, dedupe_key: str) -> Optional[Asset]:
+    rows = (
+        db.query(Asset)
+        .filter(Asset.user_id == user_id)
+        .order_by(Asset.id.desc())
+        .limit(800)
+        .all()
+    )
+    for a in rows:
+        if (a.meta or {}).get("save_url_dedupe") == dedupe_key:
+            return a
+        if a.source_url and _save_url_dedupe_key(a.source_url) == dedupe_key:
+            return a
+    return None
+
+
 @router.post("/api/assets/save-url", summary="从 URL 保存素材")
 async def save_asset_from_url(
     body: SaveAssetReq,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    dk = _save_url_dedupe_key(body.url)
+    existing = _find_existing_asset_by_save_url_dedupe(db, current_user.id, dk)
+    if existing:
+        logger.info(
+            "[素材] save-url 去重 命中已有 asset_id=%s",
+            existing.asset_id,
+        )
+        return {
+            "asset_id": existing.asset_id,
+            "filename": existing.filename,
+            "media_type": existing.media_type,
+            "file_size": existing.file_size or 0,
+            "source_url": existing.source_url or "",
+        }
+
     try:
         async with httpx.AsyncClient(
             timeout=120.0,
@@ -348,6 +386,7 @@ async def save_asset_from_url(
         prompt=body.prompt,
         model=body.model,
         tags=body.tags,
+        meta={"save_url_dedupe": dk},
     )
     db.add(asset)
     db.commit()
