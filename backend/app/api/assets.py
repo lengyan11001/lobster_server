@@ -103,6 +103,13 @@ def build_asset_file_url(request: Request, asset_id: str) -> Optional[str]:
             base = ""
     if not base:
         base = f"http://127.0.0.1:{getattr(settings, 'port', 8000)}"
+    if "0.0.0.0" in base:
+        host = (request.headers.get("host") or "").strip()
+        if host:
+            sch = getattr(request.url, "scheme", None) or "http"
+            base = f"{sch}://{host}"
+        else:
+            base = base.replace("0.0.0.0", "127.0.0.1")
     # 强制纯 ASCII，避免速推拉图时出现编码问题
     try:
         base.encode("ascii")
@@ -209,6 +216,19 @@ class SaveAssetReq(BaseModel):
     model: Optional[str] = None
 
 
+def _autosave_tags_require_tos(tags: Optional[str]) -> bool:
+    """MCP 对话生成后自动入库使用 tags=auto,<capability_id>，此类必须走 TOS，source_url 才稳定可预览。"""
+    return (tags or "").strip().startswith("auto,")
+
+
+def _unlink_safe_asset_file(path: Path) -> None:
+    try:
+        if path.is_file():
+            path.unlink()
+    except OSError:
+        pass
+
+
 _SAVE_URL_DOWNLOADER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -269,8 +289,27 @@ async def save_asset_from_url(
         ext = ".png"
 
     ct = resp.headers.get("content-type", "") or ""
-    aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(data, ext, ct)
-    source_url = tos_public_url if tos_public_url else body.url
+    ct_use = ct if ct else "application/octet-stream"
+
+    if _autosave_tags_require_tos(body.tags):
+        if _get_tos_config() is None:
+            raise HTTPException(
+                status_code=503,
+                detail="对话生成素材入库需配置 TOS_CONFIG（custom_configs.json，含 access_key/secret_key/endpoint/region/bucket_name/public_domain），未配置无法保存可预览的公网地址。",
+            )
+        aid, fname, fsize = _save_bytes(data, ext)
+        tos_public_url = _upload_to_tos(data, f"assets/{fname}", ct_use)
+        if not tos_public_url:
+            _unlink_safe_asset_file(ASSETS_DIR / fname)
+            raise HTTPException(
+                status_code=503,
+                detail="对话生成素材已下载但火山 TOS 上传失败，无法入库。请检查 TOS 配置与网络后重试。",
+            )
+        source_url = tos_public_url
+        fname_or_key = fname
+    else:
+        aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(data, ext, ct)
+        source_url = tos_public_url if tos_public_url else body.url
     asset = Asset(
         asset_id=aid,
         user_id=current_user.id,
