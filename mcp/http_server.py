@@ -4,6 +4,7 @@ Simplified from ai_test_platform: no admin checks, dynamic catalog reload.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -1412,6 +1413,42 @@ def _reorder_cdn_urls_for_autosave(urls: List[str]) -> List[str]:
     return assets + rest + v3tasks
 
 
+_TASK_AUTOSAVE_ONCE: Dict[str, float] = {}
+_TASK_AUTOSAVE_TTL_SEC = 86400 * 2
+_TASK_AUTOSAVE_MAX_KEYS = 50000
+
+
+def _consume_task_autosave_once(task_id: str) -> bool:
+    """同一 task_id 仅自动入库一次。get_result 在终态后仍会多次轮询，每次都会「终态成功」，否则会重复入库。"""
+    tid = (task_id or "").strip()
+    if not tid:
+        return True
+    now = time.time()
+    dead = [k for k, t in _TASK_AUTOSAVE_ONCE.items() if now - t > _TASK_AUTOSAVE_TTL_SEC]
+    for k in dead:
+        del _TASK_AUTOSAVE_ONCE[k]
+    if len(_TASK_AUTOSAVE_ONCE) > _TASK_AUTOSAVE_MAX_KEYS:
+        _TASK_AUTOSAVE_ONCE.clear()
+    if tid in _TASK_AUTOSAVE_ONCE:
+        return False
+    _TASK_AUTOSAVE_ONCE[tid] = now
+    return True
+
+
+def _prefer_stable_urls_for_autosave(urls: List[str]) -> List[str]:
+    """同一结果里若同时有 mcp-images 临时链与 v3-tasks/assets 链，只保留后者，避免同一张图入两条素材。"""
+    if not urls:
+        return []
+    has_stable = any(
+        ("v3-tasks" in u.lower()) or ("/assets/" in u)
+        for u in urls
+    )
+    if not has_stable:
+        return urls
+    out = [u for u in urls if "mcp-images" not in u.lower()]
+    return out if out else urls
+
+
 def _extract_media_urls_for_auto_save(upstream_resp: Any) -> List[str]:
     """从上游 JSON 提取媒体 URL：带扩展名正则 + 常见字段递归（无扩展名 CDN 直链）。"""
     order: List[str] = []
@@ -1468,7 +1505,7 @@ async def _auto_save_generated_assets(
     # 转存能力：响应里常同时含临时 mcp-images 与任务直链；对话/轮询会多次调用，每次自动入库会刷出大量重复素材。
     if capability_id == "sutui.transfer_url":
         return []
-    urls = _extract_media_urls_for_auto_save(upstream_resp)
+    urls = _prefer_stable_urls_for_autosave(_extract_media_urls_for_auto_save(upstream_resp))
     if not urls:
         return []
 
@@ -2090,11 +2127,26 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             if settle_final > 0:
                 data["credits_used"] = settle_final
 
-            # 自动入库：一次生成任务只入库一轮；该轮可含多个资源（多 URL）。异步任务仅在 get_result 终态成功时入库；generate 若已返回 task_id 则不在此步入库，避免与轮询重复。
+            # 自动入库：一次生成任务只入库一轮；该轮可含多个资源（多 URL）。异步 generate 不入库；get_result 仅终态且同一 task_id 只入库一次（轮询会多次终态成功）。
             if not upstream_error:
                 should_autosave = False
                 if upstream_tool == "get_result":
-                    should_autosave = _sutui_get_result_is_terminal_success(upstream_resp)
+                    if _sutui_get_result_is_terminal_success(upstream_resp):
+                        tid_for_save = poll_task_id or _extract_task_id_from_sutui_response(upstream_resp)
+                        if not tid_for_save:
+                            stable_urls = _prefer_stable_urls_for_autosave(
+                                _extract_media_urls_for_auto_save(upstream_resp)
+                            )
+                            if stable_urls:
+                                tid_for_save = "fp:" + hashlib.sha256(
+                                    stable_urls[0].strip().lower().encode("utf-8")
+                                ).hexdigest()[:32]
+                        should_autosave = _consume_task_autosave_once(tid_for_save)
+                        if not should_autosave:
+                            logger.info(
+                                "[MCP auto_save] skip duplicate autosave for task_id=%s",
+                                (tid_for_save[:20] + "…") if tid_for_save and len(tid_for_save) > 20 else (tid_for_save or "(empty)"),
+                            )
                 elif upstream_tool == "generate":
                     created_async = _extract_task_id_from_sutui_response(upstream_resp)
                     should_autosave = not bool(created_async)
