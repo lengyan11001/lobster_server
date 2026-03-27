@@ -440,7 +440,7 @@ async def wecom_submit_reply(
         db.commit()
         raise HTTPException(status_code=400, detail="该应用未配置 corp_id 或 secret，无法发送应用消息")
     # 获取 access_token
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         token_url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken"
         r = await client.get(token_url, params={"corpid": cfg.corp_id, "corpsecret": cfg.secret})
         r.raise_for_status()
@@ -472,7 +472,7 @@ async def wecom_submit_reply(
         "agentid": int(agentid) if not isinstance(agentid, int) else agentid,
         "text": {"content": (body.reply_text or "").strip() or "收到。"},
     }
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         r = await client.post(send_url, json=payload)
         r.raise_for_status()
         data = r.json()
