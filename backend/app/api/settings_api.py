@@ -2,9 +2,9 @@
 import json
 import socket
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,26 @@ from .auth import get_current_user
 from ..models import User
 
 router = APIRouter()
+
+_CUSTOM_CONFIGS_FILE = Path(__file__).resolve().parent.parent.parent.parent / "custom_configs.json"
+
+
+def _read_server_tos_config_dict() -> Optional[Dict[str, Any]]:
+    """服务器 custom_configs.json 中的 TOS_CONFIG；含 AK/SK 时返回，供在线客户端下发。"""
+    if not _CUSTOM_CONFIGS_FILE.exists():
+        return None
+    try:
+        data = json.loads(_CUSTOM_CONFIGS_FILE.read_text(encoding="utf-8"))
+        cfg = (data.get("configs") or {}).get("TOS_CONFIG")
+        if not isinstance(cfg, dict):
+            return None
+        ak = str(cfg.get("access_key", "")).strip()
+        sk = str(cfg.get("secret_key", "")).strip()
+        if not ak or not sk:
+            return None
+        return cfg
+    except Exception:
+        return None
 
 
 def _use_own_wechat_login() -> bool:
@@ -132,6 +152,21 @@ def list_models(current_user: User = Depends(get_current_user)):
             pass
 
     return {"models": models}
+
+
+@router.get(
+    "/api/settings/tos-config",
+    summary="下发 TOS 配置供 lobster_online 写入本机（需登录）",
+)
+def get_tos_config_for_online_client(current_user: User = Depends(get_current_user)):
+    """在线版本机未配置火山 TOS 时，由认证中心将服务器上的 TOS_CONFIG 同步到用户本机。"""
+    cfg = _read_server_tos_config_dict()
+    if not cfg:
+        raise HTTPException(
+            status_code=404,
+            detail="服务器未在 custom_configs.json 中配置有效 TOS_CONFIG（需 access_key/secret_key 等）",
+        )
+    return {"TOS_CONFIG": cfg}
 
 
 @router.get("/api/settings/lan-info", summary="获取局域网访问信息（需登录）")
