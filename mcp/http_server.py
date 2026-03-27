@@ -1465,6 +1465,9 @@ async def _auto_save_generated_assets(
     """Extract media URLs from upstream result and auto-save as local assets."""
     if not token:
         return []
+    # 转存能力：响应里常同时含临时 mcp-images 与任务直链；对话/轮询会多次调用，每次自动入库会刷出大量重复素材。
+    if capability_id == "sutui.transfer_url":
+        return []
     urls = _extract_media_urls_for_auto_save(upstream_resp)
     if not urls:
         return []
@@ -2087,10 +2090,20 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             if settle_final > 0:
                 data["credits_used"] = settle_final
 
+            # 自动入库：一次生成任务只入库一轮；该轮可含多个资源（多 URL）。异步任务仅在 get_result 终态成功时入库；generate 若已返回 task_id 则不在此步入库，避免与轮询重复。
             if not upstream_error:
-                saved = await _auto_save_generated_assets(upstream_resp, capability_id, payload, token, request=request)
-                if saved:
-                    data["saved_assets"] = saved
+                should_autosave = False
+                if upstream_tool == "get_result":
+                    should_autosave = _sutui_get_result_is_terminal_success(upstream_resp)
+                elif upstream_tool == "generate":
+                    created_async = _extract_task_id_from_sutui_response(upstream_resp)
+                    should_autosave = not bool(created_async)
+                else:
+                    should_autosave = True
+                if should_autosave:
+                    saved = await _auto_save_generated_assets(upstream_resp, capability_id, payload, token, request=request)
+                    if saved:
+                        data["saved_assets"] = saved
 
             text = _json_dumps_mcp_payload(data)
             return [{"type": "text", "text": text}], bool(upstream_error)
