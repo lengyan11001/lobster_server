@@ -1043,10 +1043,12 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
             else:
                 model = "wan/v2.6/image-to-video" if has_image else "wan/v2.6/text-to-video"
         elif "veo" in model_lower:
+            # 与速推/xskill 当前可用 ID 一致：fal-ai/veo3.1/*（勿用 google/veo-3.1/*，易 403/等候名单）
+            # 文生视频官方 ID 为 fal-ai/veo3.1（无 /text-to-video 后缀）
             if "3.1" in model:
-                model = "google/veo-3.1/image-to-video" if has_image else "google/veo-3.1/text-to-video"
+                model = "fal-ai/veo3.1/image-to-video" if has_image else "fal-ai/veo3.1"
             else:
-                model = "google/veo-3.1/image-to-video" if has_image else "google/veo-3.1/text-to-video"
+                model = "fal-ai/veo3.1/image-to-video" if has_image else "fal-ai/veo3.1"
         elif "grok" in model_lower:
             model = "xai/grok-imagine-video/image-to-video" if has_image else "xai/grok-imagine-video/text-to-video"
         # 注意：即梦主要是图片模型，视频模型较少，这里先不处理
