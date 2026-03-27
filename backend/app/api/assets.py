@@ -290,6 +290,7 @@ async def save_asset_from_url(
         "filename": fname_or_key,
         "media_type": body.media_type,
         "file_size": fsize,
+        "source_url": source_url,
     }
 
 

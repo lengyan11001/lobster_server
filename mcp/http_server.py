@@ -1497,7 +1497,15 @@ async def _auto_save_generated_assets(
                 r = await client.post(f"{BASE_URL}/api/assets/save-url", json=body, headers=_backend_headers(token, request))
             if r.status_code < 400:
                 d = r.json()
-                saved.append({"asset_id": d.get("asset_id", ""), "filename": d.get("filename", ""), "media_type": mt})
+                item: Dict[str, str] = {
+                    "asset_id": d.get("asset_id", ""),
+                    "filename": d.get("filename", ""),
+                    "media_type": mt,
+                }
+                su = d.get("source_url")
+                if su:
+                    item["source_url"] = str(su)
+                saved.append(item)
             else:
                 logger.warning(
                     "[MCP auto_save] save-url HTTP %s url_prefix=%s body_prefix=%s",
