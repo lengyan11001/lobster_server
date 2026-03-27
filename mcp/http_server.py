@@ -199,6 +199,9 @@ def _backend_headers(token: Optional[str], request: Optional[Request] = None) ->
         xi = (request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or "").strip()
         if xi:
             h["X-Installation-Id"] = xi
+    bk = (os.environ.get("LOBSTER_MCP_BILLING_INTERNAL_KEY") or "").strip()
+    if bk:
+        h["X-Lobster-Mcp-Billing"] = bk
     return h
 
 

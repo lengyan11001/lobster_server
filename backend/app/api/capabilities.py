@@ -1,7 +1,7 @@
 """Capabilities: list available capabilities and call logs；调用时按 unit_credits 扣积分（与速推同扣）。付费技能仅已解锁用户可用。"""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,20 @@ def _should_deduct_credits() -> bool:
     """是否启用「调用能力时扣积分」（在线版 + 独立认证时）。"""
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     return edition == "online" and getattr(settings, "lobster_independent_auth", True)
+
+
+def _billing_request_may_mutate_balance(request: Request) -> bool:
+    """
+    仅本机 MCP（直连 Backend 的 127.0.0.1/::1）或携带 X-Lobster-Mcp-Billing 与 LOBSTER_MCP_BILLING_INTERNAL_KEY 一致时，
+    对 pre-deduct / record-call / refund 做实质积分变更；其它来源（公网直连、本机代理转发）返回 billing_skipped，避免与 MCP 重复扣费。
+    """
+    k = (getattr(settings, "lobster_mcp_billing_internal_key", None) or "").strip()
+    h = (request.headers.get("X-Lobster-Mcp-Billing") or "").strip()
+    ch = getattr(request.client, "host", None) or ""
+    loopback = ch in ("127.0.0.1", "::1", "localhost")
+    if k:
+        return h == k or loopback
+    return loopback
 
 
 @router.get("/capabilities/available", summary="当前可用能力列表（含付费技能限制：未解锁的付费技能不会出现在列表中）")
@@ -101,6 +115,7 @@ class PreDeductIn(BaseModel):
 @router.post("/capabilities/pre-deduct", summary="调用能力前预扣积分（不足返回 402）")
 def pre_deduct(
     body: PreDeductIn,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     x_installation_id: Optional[str] = Header(None, alias="X-Installation-Id"),
@@ -113,6 +128,8 @@ def pre_deduct(
         )
     if not _should_deduct_credits():
         return {"credits_charged": 0, "message": "未启用积分扣减"}
+    if not _billing_request_may_mutate_balance(request):
+        return {"credits_charged": 0, "billing_skipped": True}
     cap = db.query(CapabilityConfig).filter(CapabilityConfig.capability_id == body.capability_id).first()
     upstream = (cap.upstream or "").strip() if cap else ""
     upstream_tool = (cap.upstream_tool or "").strip() if cap else ""
@@ -187,11 +204,14 @@ class RefundIn(BaseModel):
 @router.post("/capabilities/refund", summary="调用失败时退还预扣积分")
 def refund_credits(
     body: RefundIn,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     if not _should_deduct_credits() or body.credits <= 0:
         return {"ok": True}
+    if not _billing_request_may_mutate_balance(request):
+        return {"ok": True, "billing_skipped": True, "refunded": 0}
     db.refresh(current_user)
     refund_amt = int(body.credits)
     current_user.credits = (current_user.credits or 0) + refund_amt
@@ -213,6 +233,7 @@ def refund_credits(
 @router.post("/capabilities/record-call", summary="记录能力调用（独立认证时按 unit_credits 扣积分，或使用 pre-deduct 已扣数量）")
 def record_call(
     body: RecordCallIn,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     x_installation_id: Optional[str] = Header(None, alias="X-Installation-Id"),
@@ -223,6 +244,14 @@ def record_call(
             status_code=403,
             detail="该能力属于付费技能，请先在技能商店付费解锁后再使用。",
         )
+    if _should_deduct_credits() and not _billing_request_may_mutate_balance(request):
+        return {
+            "id": 0,
+            "capability_id": body.capability_id,
+            "success": body.success,
+            "credits_charged": 0,
+            "billing_skipped": True,
+        }
     cap = db.query(CapabilityConfig).filter(CapabilityConfig.capability_id == body.capability_id).first()
     unit_credits = int(cap.unit_credits or 0) if cap else 0
     credits_charged_body = body.credits_charged if body.credits_charged is not None else 0

@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
     twilio_whatsapp_webhook_full_url: Optional[str] = None
+    """MCP 调用 /capabilities/* 计费接口时携带请求头 X-Lobster-Mcp-Billing 与此值一致；与来源为 127.0.0.1/::1 二选一即可改余额。未设时仅允许本机回环，避免公网与本机 MCP 重复扣费。"""
+    lobster_mcp_billing_internal_key: Optional[str] = None
 
     def cors_origins_list(self) -> List[str]:
         if self.cors_origins.strip() == "*":
