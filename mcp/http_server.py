@@ -625,6 +625,16 @@ async def _call_upstream_sutui_tasks_rest(
                 model,
                 sorted(params.keys()),
             )
+            try:
+                psum = dict(_sanitize_for_json(params)) if isinstance(params, dict) else params
+                if isinstance(psum, dict) and isinstance(psum.get("prompt"), str) and len(psum["prompt"]) > 240:
+                    psum["prompt"] = psum["prompt"][:240] + "…"
+                logger.info(
+                    "[速推REST请求] params 摘要 %s",
+                    json.dumps(psum, ensure_ascii=False, default=str),
+                )
+            except Exception as ex:
+                logger.warning("[速推REST请求] params 摘要失败: %s", ex)
         elif tool_name == "get_result":
             task_id = (arguments.get("task_id") or "").strip()
             if not task_id:
@@ -947,6 +957,60 @@ def _coerce_video_aspect_ratio_for_upstream(raw: Any) -> str:
     return "16:9"
 
 
+# fal-ai/nano-banana-2 / nano-banana-pro 公开 schema 中的 aspect_ratio 枚举（勿与视频归一化混用）。
+_NANO_BANANA_ASPECT_RATIOS = frozenset(
+    {
+        "auto",
+        "21:9",
+        "16:9",
+        "3:2",
+        "4:3",
+        "5:4",
+        "1:1",
+        "4:5",
+        "3:4",
+        "2:3",
+        "9:16",
+        "4:1",
+        "1:4",
+        "8:1",
+        "1:8",
+    }
+)
+
+
+def _coerce_aspect_ratio_nano_banana(raw: Any) -> str:
+    """
+    nano-banana 文生图使用 fal 枚举；「auto」必须保持为 auto，不能用 _coerce_video_aspect_ratio_for_upstream（会把 auto 变成 16:9）。
+    """
+    if raw is None or raw == "":
+        return "1:1"
+    ar = str(raw).strip()
+    low = ar.lower().replace(" ", "")
+    if low in ("auto", "automatic", "default", "original", "adapt"):
+        return "auto"
+    if low in ("landscape", "横屏", "horizontal", "wide"):
+        return "16:9"
+    if low in ("portrait", "竖屏", "vertical", "tall"):
+        return "9:16"
+    if low in ("square", "1x1"):
+        return "1:1"
+    if "x" in ar and ":" not in ar:
+        parts = ar.lower().replace(" ", "").split("x", 1)
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            ar = f"{parts[0]}:{parts[1]}"
+    ar = ar.replace("：", ":").strip()
+    if ar in _NANO_BANANA_ASPECT_RATIOS:
+        return ar
+    ar2 = ar.replace(" ", "")
+    if ar2 in _NANO_BANANA_ASPECT_RATIOS:
+        return ar2
+    coerced = _coerce_video_aspect_ratio_for_upstream(raw)
+    if coerced in _NANO_BANANA_ASPECT_RATIOS:
+        return coerced
+    return "1:1"
+
+
 def _parse_video_duration_seconds(raw: Any, *, default: int = 5) -> int:
     """解析 5、6s、\"10\" 等为整数秒；无法解析时用 default，避免抛错。"""
     if raw is None or raw == "":
@@ -1045,7 +1109,7 @@ def _normalize_image_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         out = {
             "model": model,
             "prompt": prompt,
-            "aspect_ratio": _coerce_video_aspect_ratio_for_upstream(_ar) if _ar else "1:1",
+            "aspect_ratio": _coerce_aspect_ratio_nano_banana(_ar) if _ar else "1:1",
             "num_images": num_images,
         }
         if image_url:
