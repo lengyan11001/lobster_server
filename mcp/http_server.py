@@ -20,6 +20,8 @@ import httpx
 
 from mcp.sutui_tokens import next_sutui_server_token
 
+from backend.app.services.sutui_pricing import upstream_numeric_credits_to_int
+
 logger = logging.getLogger(__name__)
 
 
@@ -446,9 +448,9 @@ def _extract_sutui_credits_used(obj: Any, _depth: int = 0) -> int:
                 "price",
             ):
                 if isinstance(v, (int, float)) and v > 0:
-                    best = max(best, int(v))
+                    best = max(best, upstream_numeric_credits_to_int(v))
             elif lk == "credits" and isinstance(v, (int, float)) and v > 0 and not balance_shape:
-                best = max(best, int(v))
+                best = max(best, upstream_numeric_credits_to_int(v))
             elif isinstance(v, (dict, list)):
                 best = max(best, _extract_sutui_credits_used(v, _depth + 1))
             elif isinstance(v, str):

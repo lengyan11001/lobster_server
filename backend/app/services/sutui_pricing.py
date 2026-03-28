@@ -150,6 +150,20 @@ def _dict_looks_like_account_balance(d: dict) -> bool:
     return bool(kl & {"balance", "remaining", "remaining_credits", "total_balance", "available", "points"})
 
 
+def upstream_numeric_credits_to_int(v: Any) -> int:
+    """速推常在 x_billing 等字段返回小数积分（如 0.9558）；禁止 int() 截断成 0。"""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return 0
+    if x <= 0:
+        return 0
+    iv = int(round(x))
+    if iv == 0 and x > 0:
+        return 1
+    return iv
+
+
 def extract_upstream_reported_credits(obj: Any, _depth: int = 0) -> int:
     """
     从速推 chat/completions 或任务类完整 JSON 中解析「本次消耗积分」。
@@ -172,9 +186,9 @@ def extract_upstream_reported_credits(obj: Any, _depth: int = 0) -> int:
                 "price",
             ):
                 if isinstance(v, (int, float)) and v > 0:
-                    best = max(best, int(v))
+                    best = max(best, upstream_numeric_credits_to_int(v))
             elif lk == "credits" and isinstance(v, (int, float)) and v > 0 and not balance_shape:
-                best = max(best, int(v))
+                best = max(best, upstream_numeric_credits_to_int(v))
             elif isinstance(v, (dict, list)):
                 best = max(best, extract_upstream_reported_credits(v, _depth + 1))
             elif isinstance(v, str):
