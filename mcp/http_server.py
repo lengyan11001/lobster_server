@@ -547,6 +547,43 @@ def _log_sutui_upstream_full_response(
         logger.warning("[速推完整响应] 序列化失败 tool=%s: %s", tool_name, ex)
 
 
+def _log_sutui_task_terminal_failure_for_ops(data: Any, *, tool_name: str, lobster_capability_id: str) -> None:
+    """tasks/query/create 的 data 终态失败时 WARNING，grep「速推任务失败」即可对齐 task_id / model / output。"""
+    if not isinstance(data, dict):
+        return
+    st = str(data.get("status") or "").lower()
+    out = data.get("output")
+    has_err_obj = isinstance(out, dict) and bool(
+        out.get("error") or out.get("raw_error") or out.get("error_code") or out.get("detail")
+    )
+    if st not in ("failed", "error", "cancelled", "canceled") and not has_err_obj:
+        return
+    tid = data.get("task_id") or data.get("request_id") or "(无)"
+    model = data.get("model") or "(无)"
+    parts: List[str] = []
+    if isinstance(out, dict):
+        for k in ("error", "error_code", "error_type", "raw_error", "detail", "message", "body"):
+            if k in out and out[k] is not None:
+                parts.append(f"{k}={out[k]!r}")
+    logger.warning(
+        "[速推任务失败] tool=%s capability=%s task_id=%s model=%s status=%s channel=%s | %s",
+        tool_name,
+        lobster_capability_id or "(无)",
+        tid,
+        model,
+        st or "(空)",
+        data.get("channel") or "(无)",
+        " ".join(parts) if parts else f"output={out!r}",
+    )
+    try:
+        full = json.dumps(_sanitize_for_json(data), ensure_ascii=False, default=str)
+        if len(full) > _SUTUI_UPSTREAM_LOG_MAX:
+            full = full[:_SUTUI_UPSTREAM_LOG_MAX] + "\n... [截断，可调 _SUTUI_UPSTREAM_LOG_MAX]"
+        logger.warning("[速推任务失败] 完整 data（与速推 tasks 返回一致）:\n%s", full)
+    except Exception as ex:
+        logger.warning("[速推任务失败] data 序列化失败: %s", ex)
+
+
 async def _call_upstream_sutui_tasks_rest(
     api_base: str,
     tool_name: str,
@@ -582,12 +619,23 @@ async def _call_upstream_sutui_tasks_rest(
             params = {k: v for k, v in arguments.items() if k not in ("model", "model_id")}
             body = {"model": model, "params": params, "channel": None}
             url = f"{api_base}/api/v3/tasks/create"
+            logger.info(
+                "[速推REST请求] POST tasks/create capability=%s model=%s params_keys=%s",
+                lobster_capability_id or "(无)",
+                model,
+                sorted(params.keys()),
+            )
         elif tool_name == "get_result":
             task_id = (arguments.get("task_id") or "").strip()
             if not task_id:
                 return {"error": {"message": "get_result 缺少 task_id"}}
             body = {"task_id": task_id}
             url = f"{api_base}/api/v3/tasks/query"
+            logger.info(
+                "[速推REST请求] POST tasks/query capability=%s task_id=%s",
+                lobster_capability_id or "(无)",
+                task_id,
+            )
         else:
             return {"error": {"message": f"REST 上游未实现工具: {tool_name}"}}
 
@@ -674,6 +722,7 @@ async def _call_upstream_sutui_tasks_rest(
         _log_sutui_upstream_full_response(
             "sutui", tool_name, lobster_capability_id, _sanitize_for_json(payload)
         )
+        _log_sutui_task_terminal_failure_for_ops(data, tool_name=tool_name, lobster_capability_id=lobster_capability_id)
         return _sanitize_for_json(data)
 
 
