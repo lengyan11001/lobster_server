@@ -56,6 +56,10 @@ def ledger_display_delta(row: Any) -> Decimal:
     if not isinstance(meta, dict):
         return d
     dc = meta.get("deduct_credits")
-    if dc is None:
-        return d
-    return quantize_credits_signed(-to_decimal(dc))
+    if dc is not None:
+        return quantize_credits_signed(-to_decimal(dc))
+    # 历史行 delta 曾被 quantize_credits 写成 0；pre_deduct 只写了 pre_estimated
+    pe = meta.get("pre_estimated")
+    if pe is not None:
+        return quantize_credits_signed(-to_decimal(pe))
+    return d

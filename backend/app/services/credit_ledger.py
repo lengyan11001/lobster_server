@@ -8,7 +8,7 @@ from typing import Any, Optional, Union
 from sqlalchemy.orm import Session
 
 from ..models import CreditLedger
-from .credits_amount import quantize_credits
+from .credits_amount import quantize_credits, quantize_credits_signed
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,8 @@ def append_credit_ledger(
     ref_id: Optional[str] = None,
     meta: Optional[dict[str, Any]] = None,
 ) -> CreditLedger:
-    """delta：正数为入账，负数为出账；balance_after 为变动后 users.credits 快照（最多 4 位小数）。"""
-    d = quantize_credits(delta)
+    """delta：正数为入账，负数为出账；balance_after 为变动后 users.credits 快照（最多 4 位小数，非负）。"""
+    d = quantize_credits_signed(delta)
     bal = quantize_credits(balance_after)
     row = CreditLedger(
         user_id=user_id,
