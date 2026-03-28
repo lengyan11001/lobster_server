@@ -163,6 +163,28 @@ def upstream_numeric_credits_to_decimal(v: Any) -> Decimal:
     return quantize_credits(x)
 
 
+def _coerce_positive_credit_number(v: Any) -> Optional[Decimal]:
+    """上游可能返回 float / int / 数字字符串；仅接受正数。"""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        if v <= 0:
+            return None
+        return upstream_numeric_credits_to_decimal(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        try:
+            x = float(s)
+        except ValueError:
+            return None
+        if x <= 0:
+            return None
+        return upstream_numeric_credits_to_decimal(x)
+    return None
+
+
 def extract_upstream_billing_snapshot(data: Optional[dict]) -> dict[str, Any]:
     """
     从 chat/completions 等响应中抽出与计费相关的字段，便于日志对照（含 x_billing、usage 等）。
@@ -216,10 +238,13 @@ def extract_upstream_reported_credits(obj: Any, _depth: int = 0) -> Decimal:
                 "cost",
                 "price",
             ):
-                if isinstance(v, (int, float)) and v > 0:
-                    best = max(best, upstream_numeric_credits_to_decimal(v))
-            elif lk == "credits" and isinstance(v, (int, float)) and v > 0 and not balance_shape:
-                best = max(best, upstream_numeric_credits_to_decimal(v))
+                parsed = _coerce_positive_credit_number(v)
+                if parsed is not None:
+                    best = max(best, parsed)
+            elif lk == "credits" and not balance_shape:
+                parsed = _coerce_positive_credit_number(v)
+                if parsed is not None:
+                    best = max(best, parsed)
             elif isinstance(v, (dict, list)):
                 best = max(best, extract_upstream_reported_credits(v, _depth + 1))
             elif isinstance(v, str):

@@ -18,7 +18,7 @@ from ..db import get_db
 from .auth import get_current_user
 from ..models import CapabilityCallLog, CreditLedger, RechargeOrder, User
 from ..services.credit_ledger import append_credit_ledger
-from ..services.credits_amount import credits_json_float, quantize_credits
+from ..services.credits_amount import credits_json_float, ledger_display_delta, quantize_credits
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +244,7 @@ def get_credit_history(
     out = []
     for r in rows:
         et = (r.entry_type or "").strip().lower()
-        delta = quantize_credits(r.delta or 0)
+        delta = ledger_display_delta(r)
         if delta > 0:
             type_label = "recharge" if et == "recharge" else "increase"
         else:
@@ -284,8 +284,8 @@ def get_credit_ledger(
         "items": [
             {
                 "id": r.id,
-                "delta": credits_json_float(r.delta),
-                "balance_after": credits_json_float(r.balance_after),
+                "delta": credits_json_float(ledger_display_delta(r)),
+                "balance_after": credits_json_float(r.balance_after or 0),
                 "entry_type": r.entry_type,
                 "description": r.description or "",
                 "ref_type": r.ref_type or "",

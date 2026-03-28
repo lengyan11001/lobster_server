@@ -17,7 +17,7 @@ from ..core.config import settings
 from ..db import get_db
 from ..models import User
 from ..services.credit_ledger import append_credit_ledger
-from ..services.credits_amount import quantize_credits, user_balance_decimal
+from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.sutui_pricing import (
     estimate_credits_from_pricing,
     estimate_pre_deduct_credits,
@@ -181,7 +181,11 @@ def _apply_chat_deduct(
         bal_after,
         description=f"速推 LLM 对话扣费 model={model}",
         ref_type="sutui_chat",
-        meta={"model": model, "usage": usage},
+        meta={
+            "model": model,
+            "usage": usage,
+            "deduct_credits": credits_json_float(credits),
+        },
     )
     db.commit()
     logger.info("[sutui-chat] 已扣积分 user_id=%s model=%s credits=%s", current_user.id, model, credits)

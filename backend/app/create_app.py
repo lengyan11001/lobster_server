@@ -217,7 +217,13 @@ def _migrate_recharge_callback_audit():
 
 
 def _migrate_credits_decimal_sqlite():
-    """INTEGER 积分列改为 NUMERIC(20,4)（存量库升级；新库由 create_all 已为小数）。"""
+    """
+    INTEGER 积分列改为 NUMERIC(20,4)。
+    SQLite < 3.35 不支持 DROP COLUMN，此前若已执行过「ADD 新列 + DROP 旧列」会失败，
+    会出现 users 同时存在 credits 与 credits_d 等半迁移状态；此处统一用表重建修复。
+    """
+    import sqlite3
+
     from sqlalchemy import text
 
     if "sqlite" not in (settings.database_url or "").lower():
@@ -232,34 +238,211 @@ def _migrate_credits_decimal_sqlite():
             def is_int_col(t: str) -> bool:
                 return "INT" in (t or "").upper()
 
-            ucols = coltypes("users")
-            if "credits" in ucols and is_int_col(ucols["credits"]):
-                conn.execute(text("ALTER TABLE users ADD COLUMN credits_d NUMERIC(20,4)"))
-                conn.execute(text("UPDATE users SET credits_d = credits"))
-                conn.execute(text("ALTER TABLE users DROP COLUMN credits"))
-                conn.execute(text("ALTER TABLE users RENAME COLUMN credits_d TO credits"))
+            def table_exists(name: str) -> bool:
+                r = conn.execute(
+                    text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n"),
+                    {"n": name},
+                )
+                return r.fetchone() is not None
 
-            lcols = coltypes("credit_ledger")
-            if "delta" in lcols and is_int_col(lcols["delta"]):
-                conn.execute(text("ALTER TABLE credit_ledger ADD COLUMN delta_d NUMERIC(20,4)"))
-                conn.execute(text("UPDATE credit_ledger SET delta_d = delta"))
-                conn.execute(text("ALTER TABLE credit_ledger DROP COLUMN delta"))
-                conn.execute(text("ALTER TABLE credit_ledger RENAME COLUMN delta_d TO delta"))
-            lcols = coltypes("credit_ledger")
-            if "balance_after" in lcols and is_int_col(lcols["balance_after"]):
-                conn.execute(text("ALTER TABLE credit_ledger ADD COLUMN balance_after_d NUMERIC(20,4)"))
-                conn.execute(text("UPDATE credit_ledger SET balance_after_d = balance_after"))
-                conn.execute(text("ALTER TABLE credit_ledger DROP COLUMN balance_after"))
-                conn.execute(text("ALTER TABLE credit_ledger RENAME COLUMN balance_after_d TO balance_after"))
-
-            ccols = coltypes("capability_call_logs")
-            if "credits_charged" in ccols and is_int_col(ccols["credits_charged"]):
-                conn.execute(text("ALTER TABLE capability_call_logs ADD COLUMN credits_charged_d NUMERIC(20,4) DEFAULT 0"))
-                conn.execute(text("UPDATE capability_call_logs SET credits_charged_d = credits_charged"))
-                conn.execute(text("ALTER TABLE capability_call_logs DROP COLUMN credits_charged"))
-                conn.execute(text("ALTER TABLE capability_call_logs RENAME COLUMN credits_charged_d TO credits_charged"))
+            ver = sqlite3.sqlite_version_info
+            if ver >= (3, 35, 0):
+                _migrate_credits_decimal_sqlite_drop_column(conn, coltypes, is_int_col, table_exists)
+            else:
+                logger.info(
+                    "SQLite %s：不支持 ALTER DROP COLUMN（需 3.35+），使用表重建迁移积分小数列",
+                    sqlite3.sqlite_version,
+                )
+                _migrate_credits_decimal_sqlite_rebuild(conn, coltypes, is_int_col, table_exists)
     except Exception as e:
         logger.warning("Migration credits decimal (sqlite) skipped: %s", e)
+
+
+def _migrate_credits_decimal_sqlite_drop_column(conn, coltypes, is_int_col, table_exists):
+    """SQLite 3.35+：原地改列类型。"""
+    from sqlalchemy import text
+
+    ucols = coltypes("users")
+    if "credits" in ucols and is_int_col(ucols["credits"]):
+        if "credits_d" not in ucols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN credits_d NUMERIC(20,4)"))
+            conn.execute(text("UPDATE users SET credits_d = CAST(credits AS REAL)"))
+        else:
+            conn.execute(text("UPDATE users SET credits_d = COALESCE(credits_d, CAST(credits AS REAL))"))
+        conn.execute(text("ALTER TABLE users DROP COLUMN credits"))
+        conn.execute(text("ALTER TABLE users RENAME COLUMN credits_d TO credits"))
+
+    lcols = coltypes("credit_ledger")
+    if "delta" in lcols and is_int_col(lcols["delta"]):
+        conn.execute(text("ALTER TABLE credit_ledger ADD COLUMN delta_d NUMERIC(20,4)"))
+        conn.execute(text("UPDATE credit_ledger SET delta_d = delta"))
+        conn.execute(text("ALTER TABLE credit_ledger DROP COLUMN delta"))
+        conn.execute(text("ALTER TABLE credit_ledger RENAME COLUMN delta_d TO delta"))
+    lcols = coltypes("credit_ledger")
+    if "balance_after" in lcols and is_int_col(lcols["balance_after"]):
+        conn.execute(text("ALTER TABLE credit_ledger ADD COLUMN balance_after_d NUMERIC(20,4)"))
+        conn.execute(text("UPDATE credit_ledger SET balance_after_d = balance_after"))
+        conn.execute(text("ALTER TABLE credit_ledger DROP COLUMN balance_after"))
+        conn.execute(text("ALTER TABLE credit_ledger RENAME COLUMN balance_after_d TO balance_after"))
+
+    if table_exists("capability_call_logs"):
+        ccols = coltypes("capability_call_logs")
+        if "credits_charged" in ccols and is_int_col(ccols["credits_charged"]):
+            conn.execute(text("ALTER TABLE capability_call_logs ADD COLUMN credits_charged_d NUMERIC(20,4) DEFAULT 0"))
+            conn.execute(text("UPDATE capability_call_logs SET credits_charged_d = credits_charged"))
+            conn.execute(text("ALTER TABLE capability_call_logs DROP COLUMN credits_charged"))
+            conn.execute(text("ALTER TABLE capability_call_logs RENAME COLUMN credits_charged_d TO credits_charged"))
+
+
+def _migrate_credits_decimal_sqlite_rebuild(conn, coltypes, is_int_col, table_exists):
+    """SQLite 3.34 及以下：表重建；合并 users.credits + users.credits_d（半迁移残留）。"""
+    from sqlalchemy import text
+
+    if table_exists("users"):
+        ucols = coltypes("users")
+        needs_users = ("credits" in ucols and is_int_col(ucols["credits"])) or "credits_d" in ucols
+        if needs_users:
+            has_cd = "credits_d" in ucols
+            has_int_credits = "credits" in ucols and is_int_col(ucols["credits"])
+            if has_cd and has_int_credits:
+                cred_sql = "COALESCE(CAST(credits_d AS REAL), CAST(credits AS REAL))"
+            elif has_cd:
+                cred_sql = "CAST(credits_d AS REAL)"
+            else:
+                cred_sql = "CAST(credits AS REAL)"
+            conn.execute(
+                text(
+                    f"""
+                    CREATE TABLE users_mig (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        email VARCHAR(255) NOT NULL,
+                        hashed_password VARCHAR(255) NOT NULL,
+                        credits NUMERIC(20,4) NOT NULL DEFAULT 99999.0000,
+                        role VARCHAR(32) NOT NULL,
+                        preferred_model VARCHAR(128) NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        sutui_token TEXT,
+                        wechat_openid VARCHAR(64)
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    f"""
+                    INSERT INTO users_mig
+                    SELECT id, email, hashed_password, {cred_sql}, role, preferred_model, created_at, sutui_token, wechat_openid
+                    FROM users
+                    """
+                )
+            )
+            conn.execute(text("DROP TABLE users"))
+            conn.execute(text("ALTER TABLE users_mig RENAME TO users"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_wechat_openid ON users (wechat_openid)"))
+
+    if table_exists("credit_ledger"):
+        lcols = coltypes("credit_ledger")
+        if "delta" in lcols and is_int_col(lcols["delta"]):
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE credit_ledger_mig (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        delta NUMERIC(20,4) NOT NULL,
+                        balance_after NUMERIC(20,4) NOT NULL,
+                        entry_type VARCHAR(32) NOT NULL,
+                        description VARCHAR(512),
+                        ref_type VARCHAR(32),
+                        ref_id VARCHAR(128),
+                        meta JSON,
+                        created_at DATETIME NOT NULL
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO credit_ledger_mig
+                    SELECT id, user_id, CAST(delta AS REAL), CAST(balance_after AS REAL),
+                           entry_type, description, ref_type, ref_id, meta, created_at
+                    FROM credit_ledger
+                    """
+                )
+            )
+            conn.execute(text("DROP TABLE credit_ledger"))
+            conn.execute(text("ALTER TABLE credit_ledger_mig RENAME TO credit_ledger"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_credit_ledger_user_created ON credit_ledger (user_id, created_at)"
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_credit_ledger_entry_type ON credit_ledger (entry_type)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_credit_ledger_user_id ON credit_ledger (user_id)"))
+
+    if table_exists("capability_call_logs"):
+        ccols = coltypes("capability_call_logs")
+        if "credits_charged" in ccols and is_int_col(ccols["credits_charged"]):
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE capability_call_logs_mig (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        capability_id VARCHAR(128) NOT NULL,
+                        upstream VARCHAR(64),
+                        upstream_tool VARCHAR(128),
+                        success BOOLEAN NOT NULL,
+                        credits_charged NUMERIC(20,4) NOT NULL DEFAULT 0,
+                        latency_ms INTEGER,
+                        request_payload JSON,
+                        response_payload JSON,
+                        error_message TEXT,
+                        source VARCHAR(64),
+                        chat_session_id VARCHAR(128),
+                        chat_context_id VARCHAR(128),
+                        created_at DATETIME NOT NULL,
+                        status VARCHAR(32)
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO capability_call_logs_mig
+                    SELECT id, user_id, capability_id, upstream, upstream_tool, success,
+                           CAST(credits_charged AS REAL), latency_ms, request_payload, response_payload,
+                           error_message, source, chat_session_id, chat_context_id, created_at, status
+                    FROM capability_call_logs
+                    """
+                )
+            )
+            conn.execute(text("DROP TABLE capability_call_logs"))
+            conn.execute(text("ALTER TABLE capability_call_logs_mig RENAME TO capability_call_logs"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_capability_call_logs_capability_id ON capability_call_logs (capability_id)"
+                )
+            )
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_capability_call_logs_user_id ON capability_call_logs (user_id)")
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_capability_call_logs_chat_session_id ON capability_call_logs (chat_session_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_capability_call_logs_chat_context_id ON capability_call_logs (chat_context_id)"
+                )
+            )
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_capability_call_logs_status ON capability_call_logs (status)")
+            )
 
 
 def _migrate_credits_decimal_mysql():
