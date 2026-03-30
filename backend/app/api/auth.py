@@ -24,6 +24,7 @@ from ..captcha_util import create_captcha, verify_captcha
 from ..db import get_db
 from ..models import SkillUnlock, User
 from ..services.credits_amount import credits_json_float
+from .installation_slots import ensure_installation_slot, optional_installation_id_from_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -186,11 +187,14 @@ async def login(request: Request, db: Session = Depends(get_db)):
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="账号或密码错误")
     access_token = create_access_token(data={"sub": str(user.id)})
+    iid = optional_installation_id_from_request(request)
+    if iid:
+        ensure_installation_slot(db, user.id, iid)
     return Token(access_token=access_token)
 
 
 @router.post("/register", response_model=Token, summary="注册（独立认证时使用，请求体含验证码，传输请使用 HTTPS）")
-def register(body: RegisterBody, db: Session = Depends(get_db)):
+def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)):
     from ..core.config import settings
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     use_independent = getattr(settings, "lobster_independent_auth", True)
@@ -224,11 +228,21 @@ def register(body: RegisterBody, db: Session = Depends(get_db)):
         db.add(SkillUnlock(user_id=user.id, package_id=pkg_id))
     db.commit()
     access_token = create_access_token(data={"sub": str(user.id)})
+    iid = optional_installation_id_from_request(request)
+    if iid:
+        ensure_installation_slot(db, user.id, iid)
     return Token(access_token=access_token)
 
 
 @router.get("/me", response_model=UserOut, summary="当前用户信息")
-def get_me(current_user: User = Depends(get_current_user)):
+def get_me(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    iid = optional_installation_id_from_request(request)
+    if iid:
+        ensure_installation_slot(db, current_user.id, iid)
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     preferred = "sutui" if edition == "online" else (getattr(current_user, "preferred_model", "openclaw") or "openclaw")
     return UserOut(

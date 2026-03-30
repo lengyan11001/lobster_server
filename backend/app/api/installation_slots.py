@@ -7,6 +7,7 @@ from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 from ..core.config import settings
 from ..models import UserInstallation
@@ -35,6 +36,22 @@ def parse_installation_id_strict(raw: Optional[str]) -> str:
     if not re.match(r"^[a-zA-Z0-9\-_]+$", s):
         raise HTTPException(status_code=400, detail="X-Installation-Id 格式无效。")
     return s
+
+
+def optional_installation_id_from_request(request: Request) -> Optional[str]:
+    """若带合法 X-Installation-Id 则返回；未带或格式无效则返回 None（不抛错）。用于登录/注册/ /auth/me。"""
+    if not installation_slots_enabled():
+        return None
+    raw = (
+        request.headers.get(INSTALLATION_ID_HEADER) or request.headers.get("x-installation-id") or ""
+    ).strip()
+    if not raw:
+        return None
+    if len(raw) < 8 or len(raw) > 128:
+        return None
+    if not re.match(r"^[a-zA-Z0-9\-_]+$", raw):
+        return None
+    return raw
 
 
 def ensure_installation_slot(db: Session, user_id: int, installation_id: str) -> None:
