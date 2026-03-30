@@ -37,7 +37,8 @@ def _api_base() -> str:
 
 
 def _filter_models_by_category(raw_models: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """默认仅 category=llm；设 SUTUI_LLM_PROBE_CATEGORY=all 或 * 表示不按分类过滤。"""
+    """默认仅对话类：category=llm 或 text（速推 mcp/models 常将对话模型标为 text，无 llm 标签）。
+    设 SUTUI_LLM_PROBE_CATEGORY=all 或 * 表示不按分类过滤。"""
     cat_raw = (os.environ.get("SUTUI_LLM_PROBE_CATEGORY") or "llm").strip().lower()
     out: List[Dict[str, Any]] = []
     for m in raw_models:
@@ -51,6 +52,10 @@ def _filter_models_by_category(raw_models: List[Dict[str, Any]]) -> List[Dict[st
             continue
         c = str(m.get("category", "")).strip().lower()
         if c == cat_raw:
+            out.append(dict(m))
+            continue
+        # 默认筛「llm」时同步纳入 text，否则仅设默认 llm、未设 SUTUI_LLM_PROBE_CATEGORY 的实例会得到空列表
+        if cat_raw == "llm" and c == "text":
             out.append(dict(m))
     return out
 
