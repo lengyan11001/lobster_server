@@ -89,6 +89,49 @@ def _api_base() -> str:
     return (getattr(settings, "sutui_api_base", None) or "https://api.xskill.ai").rstrip("/")
 
 
+def _upstream_chat_error_dict(data: Any) -> Optional[Dict[str, Any]]:
+    """从速推 chat/completions 错误 JSON 中取出 error 对象（兼容 detail.error）。"""
+    if not isinstance(data, dict):
+        return None
+    e = data.get("error")
+    if isinstance(e, dict):
+        return e
+    d = data.get("detail")
+    if isinstance(d, dict):
+        e2 = d.get("error")
+        if isinstance(e2, dict):
+            return e2
+    return None
+
+
+def _normalize_upstream_402_for_client(data: Any) -> Any:
+    """
+    上游 402 + insufficient_balance 表示「管理端速推 Token 在 xskill 侧余额不足」，
+    与龙虾用户积分无关；替换为明确中文，避免用户误以为个人积分问题。
+    """
+    if not isinstance(data, dict):
+        return data
+    err = _upstream_chat_error_dict(data)
+    if not isinstance(err, dict):
+        return data
+    code = str(err.get("code") or "").strip().lower()
+    typ = str(err.get("type") or "").strip().lower()
+    msg = str(err.get("message") or "").strip().lower()
+    if code == "insufficient_balance" or typ == "billing_error" or "insufficient" in msg:
+        return {
+            "error": {
+                "message": (
+                    "速推服务端账户余额不足：当前对话使用服务器托管的速推（xskill）Token 池，"
+                    "该池在速推侧余额不足，需管理员在速推控制台为对应账户充值或更换有效 Token。"
+                    "若你个人龙虾积分仍充足，属于平台侧速推账户问题，而非你账号。"
+                ),
+                "type": "billing_error",
+                "code": "upstream_insufficient_balance",
+            }
+        }
+    return data
+
+
 def _should_deduct_credits() -> bool:
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     return edition == "online" and getattr(settings, "lobster_independent_auth", True)
@@ -327,7 +370,8 @@ async def sutui_chat_completions(
                 data if isinstance(data, dict) else None,
             )
 
-        return JSONResponse(content=data, status_code=r.status_code)
+        out = _normalize_upstream_402_for_client(data) if r.status_code == 402 else data
+        return JSONResponse(content=out, status_code=r.status_code)
 
     # 流式：边下边解析 SSE 行，取最后一个含 usage 的 data JSON；若无则按与预检一致的保守 usage 估算扣费。
 
@@ -340,7 +384,30 @@ async def sutui_chat_completions(
                 async with client.stream("POST", url, json=body, headers=headers) as resp:
                     if resp.status_code >= 400:
                         txt = (await resp.aread()).decode("utf-8", errors="replace")
-                        err = json.dumps({"error": {"message": txt[:2000], "status": resp.status_code}}, ensure_ascii=False)
+                        if resp.status_code == 402:
+                            try:
+                                parsed = json.loads(txt) if txt.strip().startswith("{") else {}
+                            except Exception:
+                                parsed = {}
+                            norm = _normalize_upstream_402_for_client(parsed if isinstance(parsed, dict) else {})
+                            if isinstance(norm, dict) and norm.get("error"):
+                                err = json.dumps(norm, ensure_ascii=False)
+                            else:
+                                err = json.dumps(
+                                    {
+                                        "error": {
+                                            "message": (
+                                                "速推服务端账户余额不足（流式上游返回 402）。"
+                                                "需管理员在速推控制台为服务器 Token 池对应账户充值。"
+                                            ),
+                                            "type": "billing_error",
+                                            "code": "upstream_insufficient_balance",
+                                        }
+                                    },
+                                    ensure_ascii=False,
+                                )
+                        else:
+                            err = json.dumps({"error": {"message": txt[:2000], "status": resp.status_code}}, ensure_ascii=False)
                         yield f"data: {err}\n\n".encode("utf-8")
                         return
                     stream_completed_ok = True
