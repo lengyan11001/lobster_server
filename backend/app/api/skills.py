@@ -24,11 +24,14 @@ _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 
 def _skill_store_admin(user: User) -> bool:
-    """技能商店：管理员可见「调试中」包；role=admin 或账号 test01。"""
+    """技能商店：管理员可见「调试中」包；role=admin 或登录账号为 test01。
+
+    注：独立认证注册接口字段为 account，规范化后写入 ORM 的 User.email 列（历史列名），
+    存的是登录账号（如 test01），不是传统意义上的电子邮箱。"""
     if (getattr(user, "role", None) or "").strip() == "admin":
         return True
-    email = (getattr(user, "email", None) or "").strip().lower()
-    return email == "test01"
+    login_account = (getattr(user, "email", None) or "").strip().lower()
+    return login_account == "test01"
 
 
 def _pkg_store_visibility(pkg: dict) -> str:
