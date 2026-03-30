@@ -60,6 +60,21 @@ def _filter_models_by_category(raw_models: List[Dict[str, Any]]) -> List[Dict[st
     return out
 
 
+def filter_chat_models_for_api(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """会话「速推 LLM」下拉：仅 category 为 llm 或 text，排除 image/video/audio 等生成类。"""
+    out: List[Dict[str, Any]] = []
+    for m in entries:
+        if not isinstance(m, dict):
+            continue
+        mid = (m.get("id") or "").strip()
+        if not mid:
+            continue
+        c = str(m.get("category", "")).strip().lower()
+        if c in ("llm", "text"):
+            out.append(m)
+    return out
+
+
 async def _fetch_mcp_models(token: str) -> List[Dict[str, Any]]:
     base = _api_base()
     headers = {
