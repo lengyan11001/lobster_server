@@ -23,14 +23,22 @@ fi
 REMOTE_DIR="${LOBSTER_DEPLOY_REMOTE_DIR:-/opt/lobster-server}"
 REMOTE_DIR_OS="${LOBSTER_DEPLOY_REMOTE_DIR_OVERSEAS:-$REMOTE_DIR}"
 SSH_BASE="-o StrictHostKeyChecking=accept-new"
+# 若本机已 ssh-add 解锁密钥，不要用 -i（否则会再次读盘加密私钥、非交互易失败）
+_ssh_agent_has_keys() {
+  [ -n "${SSH_AUTH_SOCK:-}" ] && ssh-add -l >/dev/null 2>&1
+}
 SSH_OPTS_MAIN="$SSH_BASE"
-[ -n "$LOBSTER_DEPLOY_SSH_KEY" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY" ] && SSH_OPTS_MAIN="-i $LOBSTER_DEPLOY_SSH_KEY $SSH_BASE"
+if ! _ssh_agent_has_keys; then
+  [ -n "$LOBSTER_DEPLOY_SSH_KEY" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY" ] && SSH_OPTS_MAIN="-i $LOBSTER_DEPLOY_SSH_KEY $SSH_BASE"
+fi
 # 海外机若未授权大陆同一把 key，可单独配 LOBSTER_DEPLOY_SSH_KEY_OVERSEAS
 SSH_OPTS_OS="$SSH_BASE"
-if [ -n "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" ]; then
-  SSH_OPTS_OS="-i $LOBSTER_DEPLOY_SSH_KEY_OVERSEAS $SSH_BASE"
-elif [ -n "$LOBSTER_DEPLOY_SSH_KEY" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY" ]; then
-  SSH_OPTS_OS="-i $LOBSTER_DEPLOY_SSH_KEY $SSH_BASE"
+if ! _ssh_agent_has_keys; then
+  if [ -n "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" ]; then
+    SSH_OPTS_OS="-i $LOBSTER_DEPLOY_SSH_KEY_OVERSEAS $SSH_BASE"
+  elif [ -n "$LOBSTER_DEPLOY_SSH_KEY" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY" ]; then
+    SSH_OPTS_OS="-i $LOBSTER_DEPLOY_SSH_KEY $SSH_BASE"
+  fi
 fi
 
 _run_remote() {
