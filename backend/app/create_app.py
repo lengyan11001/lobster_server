@@ -485,6 +485,53 @@ def _migrate_credits_decimal_mysql():
         logger.warning("Migration credits decimal (mysql) skipped: %s", e)
 
 
+def _backfill_installation_signup_bonus_claims():
+    """已有 user_installations 的设备视为已占用新人礼包，避免上线后同机多号再领满额分。"""
+    from sqlalchemy import inspect
+
+    from . import models
+    from .db import SessionLocal
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("installation_signup_bonus_claims") or not insp.has_table("user_installations"):
+            return
+        db = SessionLocal()
+        try:
+            if db.query(models.InstallationSignupBonusClaim).count() > 0:
+                return
+            distinct_iids = [r[0] for r in db.query(models.UserInstallation.installation_id).distinct().all()]
+            if not distinct_iids:
+                return
+            for iid in distinct_iids:
+                first = (
+                    db.query(models.UserInstallation)
+                    .filter(models.UserInstallation.installation_id == iid)
+                    .order_by(models.UserInstallation.created_at.asc(), models.UserInstallation.user_id.asc())
+                    .first()
+                )
+                if first is not None:
+                    db.add(
+                        models.InstallationSignupBonusClaim(
+                            installation_id=first.installation_id,
+                            user_id=first.user_id,
+                            created_at=first.created_at,
+                        )
+                    )
+            db.commit()
+            logger.info(
+                "[启动] installation_signup_bonus_claims 已从 user_installations 回填 %s 条",
+                len(distinct_iids),
+            )
+        except Exception as e:
+            db.rollback()
+            logger.warning("Backfill installation_signup_bonus_claims failed: %s", e)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Backfill installation_signup_bonus_claims skipped: %s", e)
+
+
 @asynccontextmanager
 async def _app_lifespan(app: FastAPI):
     probe_task = None
@@ -513,6 +560,7 @@ def create_app() -> FastAPI:
     _migrate_recharge_callback_audit()
     _migrate_credits_decimal_sqlite()
     _migrate_credits_decimal_mysql()
+    _backfill_installation_signup_bonus_claims()
     _ensure_default_user()
     _seed_capability_catalog()
     _auto_start_openclaw()
@@ -575,6 +623,16 @@ def create_app() -> FastAPI:
     assets_dir = Path(__file__).resolve().parent.parent.parent / "assets"
     assets_dir.mkdir(exist_ok=True)
     app.mount("/media", StaticFiles(directory=str(assets_dir)), name="media")
+
+    # 在线版客户端技能包 manifest / zip（HTTPS 直链，无需登录；与 lobster_online SKILL_BUNDLE_MANIFEST_URL 对应）
+    _skill_bundle_dir = Path(__file__).resolve().parent.parent.parent / "client_static" / "skill_bundle"
+    _skill_bundle_dir.mkdir(parents=True, exist_ok=True)
+    (_skill_bundle_dir / "bundles").mkdir(exist_ok=True)
+    app.mount(
+        "/client/skill-bundle",
+        StaticFiles(directory=str(_skill_bundle_dir)),
+        name="client_skill_bundle",
+    )
 
     # 前端由 lobster_online 提供，本服务仅 API；根路径返回说明
     @app.get("/", include_in_schema=False)

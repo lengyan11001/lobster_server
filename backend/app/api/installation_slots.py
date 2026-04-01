@@ -9,8 +9,10 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
+from sqlalchemy.exc import IntegrityError
+
 from ..core.config import settings
-from ..models import UserInstallation
+from ..models import InstallationSignupBonusClaim, UserInstallation
 
 INSTALLATION_ID_HEADER = "X-Installation-Id"
 MAX_USER_INSTALLATIONS = 3
@@ -91,3 +93,27 @@ def ensure_installation_slot(db: Session, user_id: int, installation_id: str) ->
         )
     )
     db.commit()
+
+
+def apply_installation_signup_bonus_for_new_user(db: Session, user, installation_id: Optional[str]) -> None:
+    """在线独立认证：user 已 flush 有 id、credits 预置为满额新人分。按 installation_id 写入领取记录；缺 id 或该设备已领过则积分为 0。"""
+    from decimal import Decimal
+
+    if not installation_slots_enabled():
+        return
+    raw = (installation_id or "").strip()
+    if not raw:
+        user.credits = Decimal("0")
+        return
+    try:
+        with db.begin_nested():
+            db.add(
+                InstallationSignupBonusClaim(
+                    installation_id=raw,
+                    user_id=user.id,
+                    created_at=datetime.utcnow(),
+                )
+            )
+            db.flush()
+    except IntegrityError:
+        user.credits = Decimal("0")

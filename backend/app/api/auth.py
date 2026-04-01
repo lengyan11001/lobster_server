@@ -24,12 +24,19 @@ from ..captcha_util import create_captcha, verify_captcha
 from ..db import get_db
 from ..models import SkillUnlock, User
 from ..services.credits_amount import credits_json_float
-from .installation_slots import ensure_installation_slot, optional_installation_id_from_request
+from .installation_slots import (
+    INSTALLATION_ID_HEADER,
+    apply_installation_signup_bonus_for_new_user,
+    ensure_installation_slot,
+    installation_slots_enabled,
+    optional_installation_id_from_request,
+    parse_installation_id_strict,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 ONLINE_USER_EMAIL = "online@sutui.lobster.local"
-# 新注册用户初始积分（自主注册、微信首次建号），最多 4 位小数
+# 新注册用户满额新人分（在线独立认证下按 installation_id 仅首注发放，同机再注册为 0），最多 4 位小数
 REGISTER_INITIAL_CREDITS = Decimal("1000.0000")
 DEFAULT_ONLINE_USER_CREDITS = Decimal("99999.0000")
 
@@ -208,6 +215,12 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
     existing = db.query(User).filter(User.email == email).first()
     if existing:
         raise HTTPException(status_code=400, detail="该账号已注册")
+    slots = installation_slots_enabled()
+    if slots:
+        hdr = request.headers.get(INSTALLATION_ID_HEADER) or request.headers.get("x-installation-id")
+        reg_iid = parse_installation_id_strict(hdr)
+    else:
+        reg_iid = optional_installation_id_from_request(request)
     user = User(
         email=email,
         hashed_password=get_password_hash(body.password),
@@ -217,6 +230,8 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
         brand_mark=_normalize_brand_mark(body.brand_mark),
     )
     db.add(user)
+    db.flush()
+    apply_installation_signup_bonus_for_new_user(db, user, reg_iid if slots else None)
     db.commit()
     db.refresh(user)
     for pkg_id in (
@@ -228,9 +243,8 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
         db.add(SkillUnlock(user_id=user.id, package_id=pkg_id))
     db.commit()
     access_token = create_access_token(data={"sub": str(user.id)})
-    iid = optional_installation_id_from_request(request)
-    if iid:
-        ensure_installation_slot(db, user.id, iid)
+    if reg_iid:
+        ensure_installation_slot(db, user.id, reg_iid)
     return Token(access_token=access_token)
 
 
@@ -517,7 +531,11 @@ class WechatMiniprogramLoginBody(BaseModel):
 
 
 @router.post("/wechat-miniprogram-login", summary="小程序内调用：code + scene_id 换 openid，绑定 scene 并返回 Token")
-def wechat_miniprogram_login(body: WechatMiniprogramLoginBody, db: Session = Depends(get_db)):
+def wechat_miniprogram_login(
+    body: WechatMiniprogramLoginBody,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     """用户扫码进入小程序后，小程序带 scene，调 wx.login 得 code，再调此接口。后端用 code 换 openid，查/建用户，把 token 绑定到 scene_id，网页轮询即可拿到 token 完成登录。"""
     if not _use_own_wechat_login():
         raise HTTPException(status_code=400, detail="未配置小程序（wechat_app_id/wechat_app_secret）")
@@ -549,6 +567,12 @@ def wechat_miniprogram_login(body: WechatMiniprogramLoginBody, db: Session = Dep
         raise HTTPException(status_code=400, detail="未获取到 openid")
     user = db.query(User).filter(User.wechat_openid == openid).first()
     if not user:
+        slots = installation_slots_enabled()
+        if slots:
+            hdr = request.headers.get(INSTALLATION_ID_HEADER) or request.headers.get("x-installation-id")
+            wx_iid = parse_installation_id_strict(hdr)
+        else:
+            wx_iid = None
         email = f"wx_{openid[:16]}@wechat.lobster.local"
         if db.query(User).filter(User.email == email).first():
             email = f"wx_{openid}@wechat.lobster.local"
@@ -561,6 +585,8 @@ def wechat_miniprogram_login(body: WechatMiniprogramLoginBody, db: Session = Dep
             wechat_openid=openid,
         )
         db.add(user)
+        db.flush()
+        apply_installation_signup_bonus_for_new_user(db, user, wx_iid if slots else None)
         db.commit()
         db.refresh(user)
     access_token = create_access_token(data={"sub": str(user.id)})
@@ -621,6 +647,8 @@ def wechat_callback(
         raise HTTPException(status_code=400, detail=detail)
     user = db.query(User).filter(User.wechat_openid == openid).first()
     if not user:
+        slots = installation_slots_enabled()
+        wx_iid = optional_installation_id_from_request(request)
         email = f"wx_{openid[:16]}@wechat.lobster.local"
         if db.query(User).filter(User.email == email).first():
             email = f"wx_{openid}@wechat.lobster.local"
@@ -633,6 +661,8 @@ def wechat_callback(
             wechat_openid=openid,
         )
         db.add(user)
+        db.flush()
+        apply_installation_signup_bonus_for_new_user(db, user, wx_iid if slots else None)
         db.commit()
         db.refresh(user)
     access_token = create_access_token(data={"sub": str(user.id)})

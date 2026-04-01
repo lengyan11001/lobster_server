@@ -262,6 +262,16 @@ class UserInstallation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class InstallationSignupBonusClaim(Base):
+    """在线独立认证：每个 installation_id 仅首名注册用户可获得新人积分（防同机多号刷分）。"""
+
+    __tablename__ = "installation_signup_bonus_claims"
+
+    installation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class SkillUnlock(Base):
     """用户已付费解锁的技能包。"""
     __tablename__ = "skill_unlocks"
