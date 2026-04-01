@@ -215,12 +215,8 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
     existing = db.query(User).filter(User.email == email).first()
     if existing:
         raise HTTPException(status_code=400, detail="该账号已注册")
-    slots = installation_slots_enabled()
-    if slots:
-        hdr = request.headers.get(INSTALLATION_ID_HEADER) or request.headers.get("x-installation-id")
-        reg_iid = parse_installation_id_strict(hdr)
-    else:
-        reg_iid = optional_installation_id_from_request(request)
+    # 兼容旧客户端：可无 X-Installation-Id 完成注册，但不送新人积分（由 apply_installation_signup_bonus_for_new_user 置 0）
+    reg_iid = optional_installation_id_from_request(request)
     user = User(
         email=email,
         hashed_password=get_password_hash(body.password),
@@ -231,7 +227,7 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
     )
     db.add(user)
     db.flush()
-    apply_installation_signup_bonus_for_new_user(db, user, reg_iid if slots else None)
+    apply_installation_signup_bonus_for_new_user(db, user, reg_iid)
     db.commit()
     db.refresh(user)
     for pkg_id in (
