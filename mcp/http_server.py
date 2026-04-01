@@ -1031,6 +1031,30 @@ def _parse_video_duration_seconds(raw: Any, *, default: int = 5) -> int:
         return default
 
 
+def _sanitize_video_resolution_value(raw: Any) -> Optional[str]:
+    """UI 常见 resolution=auto 等占位：返回 None 表示不要传该字段，避免上游枚举校验 422。"""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    low = s.lower().replace(" ", "")
+    if low in ("auto", "automatic", "default", "original"):
+        return None
+    return s
+
+
+def _sanitize_options_dict_resolution(options: Dict[str, Any]) -> None:
+    """Seedance 等 options.resolution 合并后去掉 auto 占位。"""
+    if not isinstance(options, dict) or "resolution" not in options:
+        return
+    sr = _sanitize_video_resolution_value(options.get("resolution"))
+    if sr is None:
+        options.pop("resolution", None)
+    else:
+        options["resolution"] = sr
+
+
 def _merge_common_video_ui_fields(out: Dict[str, Any], payload: Dict[str, Any]) -> None:
     """合并速推 / xskill UI 常见顶层字段（不覆盖已写入的 model/prompt/image_url 等核心键）。"""
     for k in (
@@ -1049,6 +1073,14 @@ def _merge_common_video_ui_fields(out: Dict[str, Any], payload: Dict[str, Any]) 
         "motion_bucket_id",
         "consistency_with_text",
     ):
+        if k == "resolution":
+            if k in out:
+                continue
+            if k in payload and payload[k] is not None:
+                sr = _sanitize_video_resolution_value(payload[k])
+                if sr is not None:
+                    out[k] = sr
+            continue
         if k in payload and payload[k] is not None and k not in out:
             out[k] = payload[k]
 
@@ -1233,8 +1265,9 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
             out["image_url"] = first_url
         if "text-to-video" in model or not first_url:
             out["aspect_ratio"] = aspect_ratio if ratio_ok else "16:9"
-        if payload.get("resolution"):
-            out["resolution"] = str(payload.get("resolution", "1080p"))
+        _wr = _sanitize_video_resolution_value(payload.get("resolution"))
+        if _wr is not None:
+            out["resolution"] = _wr
         _merge_common_video_ui_fields(out, payload)
         return out
 
@@ -1251,8 +1284,9 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         out = {"model": model, "prompt": prompt or "", "duration": duration_sec}
         if "image-to-video" in model and first_url:
             out["image_url"] = first_url
-        if payload.get("resolution"):
-            out["resolution"] = str(payload.get("resolution", "720p"))
+        _vr = _sanitize_video_resolution_value(payload.get("resolution"))
+        if _vr is not None:
+            out["resolution"] = _vr
         _merge_common_video_ui_fields(out, payload)
         return out
 
@@ -1272,8 +1306,9 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
             out["image_url"] = first_url
         # 额外参数放入 options 对象（根据 xskill 文档）
         options: Dict[str, Any] = {}
-        if payload.get("resolution"):
-            options["resolution"] = str(payload.get("resolution", "720p"))
+        _sd_res = _sanitize_video_resolution_value(payload.get("resolution"))
+        if _sd_res is not None:
+            options["resolution"] = _sd_res
         if payload.get("generate_audio") is not None:
             options["generate_audio"] = bool(payload.get("generate_audio"))
         if payload.get("camera_fixed") is not None:
@@ -1295,6 +1330,7 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         # 如果用户直接传了 options 对象，合并进去
         if payload.get("options") and isinstance(payload.get("options"), dict):
             options.update(payload.get("options"))
+        _sanitize_options_dict_resolution(options)
         # 只有 options 不为空时才添加
         if options:
             out["options"] = options
@@ -1302,15 +1338,14 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         return out
 
     # Sora 2 系列（sora-2/pub, sora-2/vip, sora-2/pro）：通用格式，i2v 用 image_url，t2v 用 aspect_ratio
+    # resolution 由 _merge_common_video_ui_fields 统一净化（去掉 auto）。
     if "sora-2" in model.lower() or "sora" in model.lower():
         out = {"model": model, "prompt": prompt}
         if first_url:
             out["image_url"] = first_url
-        if not first_url and aspect_ratio:
-            out["aspect_ratio"] = aspect_ratio if ratio_ok else "16:9"
+        out["aspect_ratio"] = aspect_ratio if ratio_ok else "16:9"
         out["duration"] = duration_sec
-        # 保留用户传入的其他参数（如 resolution 等）
-        for k in ["resolution", "audio", "seed", "negative_prompt"]:
+        for k in ["audio", "seed", "negative_prompt"]:
             if k in payload:
                 out[k] = payload[k]
         _merge_common_video_ui_fields(out, payload)
@@ -1321,14 +1356,14 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         out = {"model": model, "prompt": prompt}
         if first_url:
             out["image_url"] = first_url
-        # 文生视频时，如果没有 aspect_ratio，添加默认值
-        if not first_url and "aspect_ratio" not in payload and aspect_ratio:
+        _has_ar = _payload_get_aspect_ratio(payload) is not None
+        if not first_url or _has_ar:
             out["aspect_ratio"] = aspect_ratio if ratio_ok else "16:9"
         out["duration"] = duration_sec
-        if payload.get("resolution"):
-            out["resolution"] = str(payload.get("resolution", "1080p"))
-        # 保留其他参数
-        for k in ["audio", "seed", "negative_prompt", "aspect_ratio"]:
+        _kr = _sanitize_video_resolution_value(payload.get("resolution"))
+        if _kr is not None:
+            out["resolution"] = _kr
+        for k in ["audio", "seed", "negative_prompt"]:
             if k in payload:
                 out[k] = payload[k]
         _merge_common_video_ui_fields(out, payload)
@@ -1340,8 +1375,8 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         out = {"model": model, "prompt": prompt}
         if first_url:
             out["image_url"] = first_url
-        # 文生视频时，如果没有 aspect_ratio，添加默认值
-        if not first_url and "aspect_ratio" not in payload and aspect_ratio:
+        _has_ar = _payload_get_aspect_ratio(payload) is not None
+        if not first_url or _has_ar:
             out["aspect_ratio"] = aspect_ratio if ratio_ok else "16:9"
         # Veo 3.1 的 duration 必须是 '4s', '6s' 或 '8s' 格式（与 _parse_video_duration_seconds 已解析的秒数对齐）
         raw_d = _payload_get_duration_raw(payload)
@@ -1361,10 +1396,10 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
                     out["duration"] = "8s"
         else:
             out["duration"] = "6s"
-        if payload.get("resolution"):
-            out["resolution"] = str(payload.get("resolution", "1080p"))
-        # 保留其他参数
-        for k in ["audio", "seed", "negative_prompt", "aspect_ratio"]:
+        _ver = _sanitize_video_resolution_value(payload.get("resolution"))
+        if _ver is not None:
+            out["resolution"] = _ver
+        for k in ["audio", "seed", "negative_prompt"]:
             if k in payload:
                 out[k] = payload[k]
         _merge_common_video_ui_fields(out, payload)
@@ -1375,12 +1410,14 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         out = {"model": model, "prompt": prompt}
         if first_url:
             out["image_url"] = first_url
-        # 文生视频时，如果没有 aspect_ratio，添加默认值
-        if not first_url and "aspect_ratio" not in payload and aspect_ratio:
+        _has_ar = _payload_get_aspect_ratio(payload) is not None
+        if not first_url or _has_ar:
             out["aspect_ratio"] = aspect_ratio if ratio_ok else "16:9"
         out["duration"] = duration_sec
-        # 保留其他参数
-        for k in ["audio", "seed", "negative_prompt", "aspect_ratio", "resolution"]:
+        _ger = _sanitize_video_resolution_value(payload.get("resolution"))
+        if _ger is not None:
+            out["resolution"] = _ger
+        for k in ["audio", "seed", "negative_prompt"]:
             if k in payload:
                 out[k] = payload[k]
         _merge_common_video_ui_fields(out, payload)
@@ -1391,14 +1428,14 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         out = {"model": model, "prompt": prompt}
         if first_url:
             out["image_url"] = first_url
-        # 文生视频时，如果没有 aspect_ratio，添加默认值
-        if not first_url and "aspect_ratio" not in payload and aspect_ratio:
+        _has_ar = _payload_get_aspect_ratio(payload) is not None
+        if not first_url or _has_ar:
             out["aspect_ratio"] = aspect_ratio if ratio_ok else "16:9"
         out["duration"] = duration_sec
-        # 保留用户传入的 aspect_ratio 或其他参数
-        if aspect_ratio and ratio_ok and "aspect_ratio" not in out:
-            out["aspect_ratio"] = aspect_ratio
-        for k in ["resolution", "audio", "seed", "negative_prompt", "aspect_ratio"]:
+        _jer = _sanitize_video_resolution_value(payload.get("resolution"))
+        if _jer is not None:
+            out["resolution"] = _jer
+        for k in ["audio", "seed", "negative_prompt"]:
             if k in payload:
                 out[k] = payload[k]
         _merge_common_video_ui_fields(out, payload)
@@ -1417,8 +1454,9 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
             out["image_url"] = first_url
         # 尝试使用 options 对象（如果模型支持）
         options: Dict[str, Any] = {}
-        if payload.get("resolution"):
-            options["resolution"] = str(payload.get("resolution", "720p"))
+        _sd2_res = _sanitize_video_resolution_value(payload.get("resolution"))
+        if _sd2_res is not None:
+            options["resolution"] = _sd2_res
         if payload.get("generate_audio") is not None:
             options["generate_audio"] = bool(payload.get("generate_audio"))
         if payload.get("camera_fixed") is not None:
@@ -1434,6 +1472,7 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
             options["reference_image_urls"] = payload.get("reference_image_urls")
         if payload.get("options") and isinstance(payload.get("options"), dict):
             options.update(payload.get("options"))
+        _sanitize_options_dict_resolution(options)
         if options:
             out["options"] = options
         # 保留其他顶层参数（向后兼容）
@@ -1465,6 +1504,12 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
     # 文生视频时，如果没有 aspect_ratio，添加默认值
     if not first_url and "aspect_ratio" not in out and aspect_ratio:
         out["aspect_ratio"] = aspect_ratio if ratio_ok else "16:9"
+
+    _fr = _sanitize_video_resolution_value(out.get("resolution"))
+    if _fr is None:
+        out.pop("resolution", None)
+    else:
+        out["resolution"] = _fr
 
     _merge_common_video_ui_fields(out, payload)
     return out
