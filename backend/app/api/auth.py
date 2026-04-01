@@ -30,7 +30,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 ONLINE_USER_EMAIL = "online@sutui.lobster.local"
 # 新注册用户初始积分（自主注册、微信首次建号），最多 4 位小数
-REGISTER_INITIAL_CREDITS = Decimal("100.0000")
+REGISTER_INITIAL_CREDITS = Decimal("1000.0000")
 DEFAULT_ONLINE_USER_CREDITS = Decimal("99999.0000")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
