@@ -22,7 +22,6 @@ from ..models import User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.sutui_api_audit import log_xskill_http
-from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
 from ..services.sutui_pricing import (
     credits_from_chat_usage_when_no_docs_pricing,
     estimate_credits_from_pricing,
@@ -163,7 +162,7 @@ def _xskill_upstream_pool_quota_error(data: Any) -> bool:
 def _normalize_upstream_xskill_pool_errors_for_client(data: Any) -> Any:
     """
     将 xskill Token 池侧余额/预扣美元失败，替换为明确中文。
-    「能否发起对话」仅以龙虾积分预检为准；此处仅为上游池子故障时的对外说明。
+    LLM 对话事前不按 docs 定价表拦截；此处仅为上游 Token 池故障时的对外说明。
     """
     if not isinstance(data, dict) or not _xskill_upstream_pool_quota_error(data):
         return data
@@ -267,26 +266,18 @@ def _require_balance_before_upstream_chat(
     body: Dict[str, Any],
 ) -> None:
     """
-    上游调用前：与素材生成一致——**仅**按速推 docs 定价表 + 本次粗估 token 参算预扣；
-    无定价表或估不出则 400，不调速推；积分不足则 402。实扣仍看上游返回（_apply_chat_deduct）。
+    LLM 对话：**不按**速推 docs 定价表预拦（与素材生成不同）；放行后按上游返回的 usage/价字段扣费。
+    仅当开启用户扣费且余额≤0 时 402，避免无意义打速推。
     """
-    if not _should_deduct_credits() or not (model_id or "").strip():
+    if not _should_deduct_credits():
         return
-    params = _chat_balance_precheck_params(body)
-    need = assert_pricing_pre_deduct_allows_upstream_or_http(
-        db,
-        current_user,
-        model_id,
-        params,
-        action_label="智能对话",
-    )
-    logger.info(
-        "[sutui-chat] 定价表预检通过 model=%s need=%s pt=%s ct=%s",
-        model_id,
-        need,
-        params.get("prompt_tokens"),
-        params.get("completion_tokens"),
-    )
+    db.refresh(current_user)
+    bal = user_balance_decimal(current_user)
+    if bal <= 0:
+        raise HTTPException(
+            status_code=402,
+            detail="积分不足：当前余额为 0，请充值后再使用智能对话。",
+        )
 
 
 def _credits_for_sutui_chat(
@@ -294,11 +285,17 @@ def _credits_for_sutui_chat(
     usage: Optional[dict],
     response_body: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Decimal, str]:
-    """按上游价字段 → docs 定价+usage → usage 兜底（无 docs 定价）顺序计算本次扣费。返回 (积分, 计费来源说明)。"""
+    """LLM 实扣：上游显式价字段 → 速推返回的 usage 折算 → docs 定价+usage → 其余兜底。"""
     if response_body and isinstance(response_body, dict):
         reported = extract_upstream_reported_credits(response_body)
         if reported > 0:
             return quantize_credits(reported), "upstream价字段优先"
+
+    if usage and isinstance(usage, dict) and _total_tokens_in_usage(usage) > 0:
+        fb_usage = credits_from_chat_usage_when_no_docs_pricing(usage)
+        if fb_usage > 0:
+            return fb_usage, "速推usage折算"
+
     pricing = fetch_model_pricing(model)
     params: Dict[str, Any] = {}
     if usage and isinstance(usage, dict):
@@ -311,15 +308,15 @@ def _credits_for_sutui_chat(
         est2, err = estimate_pre_deduct_credits(model, None)
         if not err and est2 > 0:
             return quantize_credits(est2), "docs定价(默认参)"
-        fb = credits_from_chat_usage_when_no_docs_pricing(usage)
-        if fb > 0:
-            return fb, "usage折算(docs未算出)"
+        fb2 = credits_from_chat_usage_when_no_docs_pricing(usage)
+        if fb2 > 0:
+            return fb2, "usage折算(docs未算出)"
         logger.warning("[sutui-chat] 有 pricing 结构但仍无法扣费 model=%s usage=%s", model, usage)
         return Decimal(0), "未扣费"
-    # 无 docs 定价：事前可不预扣；事后必须能按 usage 兜底则扣（见 settings.sutui_chat_fallback_credits_per_1k）
-    fb = credits_from_chat_usage_when_no_docs_pricing(usage)
-    if fb > 0:
-        return fb, "usage折算(无docs定价)"
+
+    fb3 = credits_from_chat_usage_when_no_docs_pricing(usage)
+    if fb3 > 0:
+        return fb3, "usage折算(无docs定价)"
     logger.warning(
         "[sutui-chat] 无定价且 usage 无法折算（可调高 SUTUI_CHAT_FALLBACK_CREDITS_PER_1K 或配置 SUTUI_CHAT_MODEL_MAP） model=%s usage=%s",
         model,

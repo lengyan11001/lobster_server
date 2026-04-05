@@ -408,4 +408,8 @@ show_model_detail("jimeng-5.0")
 
 ---
 
-**说明（龙虾仓库）**：预扣与事后结算以本文所述 `GET .../docs` 中的 `pricing` 为准，实现见 `backend/app/services/sutui_pricing.py`、`sutui_billing_gate.py`；`lang` 参数代码中默认 `zh`。
+**说明（龙虾仓库）**：
+
+- **素材生成**（tasks/create 等）：调用前按本文 `pricing` 预扣（`sutui_billing_gate` + `/capabilities/pre-deduct`）；结算仍以速推任务返回为准。
+- **LLM 对话**（chat/completions）：**不在此按 docs 定价表预拦**；放行后按上游返回的 `usage` / 价字段扣费（`sutui_chat_proxy` + `sutui_pricing`）。
+- 公共定价解析实现见 `backend/app/services/sutui_pricing.py`；`lang` 默认 `zh`。

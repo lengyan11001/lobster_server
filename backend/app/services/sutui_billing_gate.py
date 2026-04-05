@@ -1,7 +1,9 @@
-"""速推调用前统一预检：只认官方 docs 定价表（见 docs/model-pricing-guide.md）估算龙虾积分；无表/估不出则禁止调用上游。
+"""速推「生成类」调用前预检：只认官方 docs 定价表（见 docs/model-pricing-guide.md）；无表/估不出则禁止调用上游。
 
-素材生成走 /capabilities/pre-deduct；LLM chat 复用同一定价逻辑。
-实际扣费仍以速推响应为准，由 sutui_chat 与 record_call 等路径记流水。"""
+- **图片/视频等素材生成**：经 /capabilities/pre-deduct 走本模块。
+- **LLM 对话**：不在此预检；直接请求速推，事后按返回 usage/价字段扣费（见 sutui_chat_proxy）。
+
+实际消耗仍以速推响应为准，由 record_call / sutui_chat 记流水。"""
 from __future__ import annotations
 
 from decimal import Decimal
