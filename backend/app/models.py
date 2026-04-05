@@ -26,6 +26,8 @@ class User(Base):
     wechat_openid: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     """注册时客户端所在安装包的品牌标记（与 LOBSTER_BRAND_MARK / brands.json 的 marks 键一致，如 bihuo、yingshi）。"""
     brand_mark: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    """企业微信消息回调 FromUserName（成员 userid 等），与站内账号绑定后用于渠道侧扣费。"""
+    wecom_userid: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 

@@ -27,8 +27,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..db import get_db
-from .auth import get_current_user, oauth2_scheme
+from ..db import SessionLocal, get_db
+from .auth import access_token_claims, create_access_token, get_current_user, oauth2_scheme
 # 算力账号已去掉，速推统一走服务器配置 Token（MCP 侧负载均衡）
 # from .consumption_accounts import get_effective_sutui_token
 from ..models import CapabilityCallLog, ChatTurnLog, ToolCallLog, User
@@ -1661,41 +1661,103 @@ async def _try_openclaw(
     return None
 
 
+_CHANNELS_REQUIRE_BINDING = frozenset({"wecom", "wechat_oa"})
+
+
+def resolve_billing_user_for_channel(db: Session, *, channel: str, from_user: str) -> Optional[User]:
+    """微信/企微渠道：按回调身份解析已绑定的站内用户（用于 JWT、MCP 扣费与 x-user-authorization）。"""
+    fu = (from_user or "").strip()
+    ch = (channel or "").strip().lower()
+    if not fu or not ch:
+        return None
+    if ch == "wecom":
+        return db.query(User).filter(User.wecom_userid == fu).first()
+    if ch == "wechat_oa":
+        return db.query(User).filter(User.wechat_openid == fu).first()
+    return None
+
+
+_CHANNEL_UNBOUND_MSG = (
+    "该微信渠道账号未绑定本系统用户，无法使用 AI 能力与算力扣费。"
+    "企业微信：请登录本系统后在「账号」中绑定企业微信 UserID（与回调中的发送者 ID 一致）；"
+    "微信服务号：请使用微信扫码登录，使服务号 openid 与账号关联。"
+)
+
+
 async def get_reply_for_channel(
     user_message: str,
     session_id: str = "",
     system_prompt_extra: str = "",
     *,
     channel_system: str = "",
+    channel: str = "",
+    from_user: str = "",
 ) -> str:
-    """供企业微信/Messenger 等渠道回调使用：仅文本入、文本出。优先直连 LLM，无配置时走 OpenClaw，保证本地盒子仅配 OpenClaw 也能回复。"""
+    """供企业微信/Messenger/服务号等渠道回调使用：仅文本入、文本出。
+    企业微信(wecom)、服务号(wechat_oa)须已绑定本站用户，才会携带用户 JWT 拉 MCP 工具并走预扣/结算；否则返回绑定提示。
+    未传 channel/from_user 时（如 Messenger 旧逻辑）保持匿名，不向 MCP 传用户凭证（与历史行为一致）。"""
     if not (user_message or "").strip():
         return "收到。"
-    model = ""
+    ch = (channel or "").strip().lower()
+    fu = (from_user or "").strip()
+    need_binding = ch in _CHANNELS_REQUIRE_BINDING
+
+    db = SessionLocal()
     try:
-        model = _pick_default_model()
-    except HTTPException:
-        model = "openclaw"
-    cfg = _resolve_config(model) if model else None
-    base_role = (channel_system or "").strip() or "你是企业微信客服助手。根据用户消息简短、友好地回复。使用中文。"
-    sys = base_role + (("\n" + system_prompt_extra.strip()) if system_prompt_extra else "")
-    messages: List[Dict[str, str]] = [
-        {"role": "system", "content": sys},
-        {"role": "user", "content": (user_message or "").strip()},
-    ]
-    if cfg:
+        user: Optional[User] = None
+        if ch and fu:
+            user = resolve_billing_user_for_channel(db, channel=ch, from_user=fu)
+        if need_binding and not user:
+            return _CHANNEL_UNBOUND_MSG
+
+        raw_token = ""
+        sutui_token: Optional[str] = None
+        uid: Optional[int] = None
+        if user is not None:
+            raw_token = create_access_token(data=access_token_claims(user))
+            sutui_token = (getattr(user, "sutui_token", None) or "").strip() or None
+            uid = user.id
+
+        mcp_tools = await _fetch_mcp_tools(raw_token)
+
+        model = ""
         try:
-            reply = await _chat_openai(messages, cfg, [], "", sutui_token=None)
-            return (reply or "").strip() or "收到。"
+            model = _pick_default_model()
         except HTTPException:
-            return "服务暂时不可用，请稍后再试。"
-        except Exception as e:
-            logger.exception("[渠道回复] chat 异常: %s", e)
-            return "处理时遇到问题，请稍后再试。"
-    oc_reply = await _try_openclaw(messages, model or "openclaw", "")
-    if oc_reply:
-        return (oc_reply or "").strip() or "收到。"
-    return "抱歉，当前未配置对话模型或 OpenClaw，无法回复。"
+            model = "openclaw"
+        cfg = _resolve_config(model) if model else None
+        base_role = (channel_system or "").strip() or "你是企业微信客服助手。根据用户消息简短、友好地回复。使用中文。"
+        sys = base_role + (("\n" + system_prompt_extra.strip()) if system_prompt_extra else "")
+        messages = [
+            {"role": "system", "content": sys},
+            {"role": "user", "content": (user_message or "").strip()},
+        ]
+        if cfg:
+            try:
+                if cfg.get("provider") == "anthropic":
+                    reply = await _chat_anthropic(
+                        messages, cfg, mcp_tools, raw_token,
+                        sutui_token=sutui_token,
+                        db=db, user_id=uid,
+                    )
+                else:
+                    reply = await _chat_openai(
+                        messages, cfg, mcp_tools, raw_token,
+                        sutui_token=sutui_token,
+                        db=db, user_id=uid,
+                    )
+                return (reply or "").strip() or "收到。"
+            except HTTPException:
+                return "服务暂时不可用，请稍后再试。"
+            except Exception as e:
+                logger.exception("[渠道回复] chat 异常: %s", e)
+                return "处理时遇到问题，请稍后再试。"
+        oc_reply = await _try_openclaw(messages, model or "openclaw", raw_token)
+        if oc_reply:
+            return (oc_reply or "").strip() or "收到。"
+        return "抱歉，当前未配置对话模型或 OpenClaw，无法回复。"
+    finally:
+        db.close()
 
 
 # ── Chat turn logging ─────────────────────────────────────────────

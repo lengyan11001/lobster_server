@@ -226,7 +226,11 @@ async def wecom_callback_post(request: Request):
                 product_extra = "\n【产品信息】\n" + product_extra
             get_reply_for_channel = _get_reply_for_channel()
             reply_text = await get_reply_for_channel(
-                content, session_id=session_id, system_prompt_extra=product_extra
+                content,
+                session_id=session_id,
+                system_prompt_extra=product_extra,
+                channel="wecom",
+                from_user=from_user,
             )
         reply_xml = _build_reply_xml(from_user, to_user, reply_text)
         reply_encrypt = crypt.encrypt(reply_xml)

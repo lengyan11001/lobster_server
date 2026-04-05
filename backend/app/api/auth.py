@@ -66,6 +66,7 @@ class UserOut(BaseModel):
     preferred_model: str
     credits: Optional[float] = None
     brand_mark: Optional[str] = None
+    wecom_userid: Optional[str] = None
 
 
 class Token(BaseModel):
@@ -410,7 +411,38 @@ def get_me(
         preferred_model=preferred,
         credits=credits_json_float(getattr(current_user, "credits", None) or 0),
         brand_mark=getattr(current_user, "brand_mark", None),
+        wecom_userid=getattr(current_user, "wecom_userid", None),
     )
+
+
+class WecomUserIdPatch(BaseModel):
+    """企业微信回调中的发送者 ID（FromUserName），与当前登录账号绑定后，企微内发消息将按该账号扣费。"""
+    wecom_userid: Optional[str] = None
+
+
+@router.patch("/me/wecom-userid", summary="绑定/解绑企业微信 UserID（用于企微消息渠道扣费）")
+def patch_me_wecom_userid(
+    body: WecomUserIdPatch,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    raw = (body.wecom_userid or "").strip()
+    if raw:
+        raw = raw[:128]
+        other = (
+            db.query(User)
+            .filter(User.wecom_userid == raw, User.id != current_user.id)
+            .first()
+        )
+        if other:
+            raise HTTPException(status_code=400, detail="该企业微信 UserID 已被其他账号绑定")
+        current_user.wecom_userid = raw
+    else:
+        current_user.wecom_userid = None
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+    return {"ok": True, "wecom_userid": current_user.wecom_userid}
 
 
 # 未配置时使用的默认 xskill 授权页。redirect_uri 放 query 便于读取。

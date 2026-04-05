@@ -189,6 +189,28 @@ def _migrate_user_brand_mark():
         logger.warning("Migration user brand_mark skipped: %s", e)
 
 
+def _migrate_user_wecom_userid():
+    """Add wecom_userid to users（企业微信 FromUserName 绑定，渠道消息按该用户扣费）。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = [c["name"] for c in insp.get_columns("users")]
+        if "wecom_userid" in cols:
+            return
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN wecom_userid VARCHAR(128) NULL"))
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_wecom_userid ON users (wecom_userid)"))
+        except Exception as e:
+            logger.debug("ix_users_wecom_userid: %s", e)
+    except Exception as e:
+        logger.warning("Migration user wecom_userid skipped: %s", e)
+
+
 def _migrate_wecom_config_secret():
     """Add secret column to wecom_configs if missing (用于轮询模式下发送应用消息)."""
     from sqlalchemy import text
@@ -606,6 +628,7 @@ def create_app() -> FastAPI:
     _migrate_user_sutui_token()
     _migrate_user_wechat_openid()
     _migrate_user_brand_mark()
+    _migrate_user_wecom_userid()
     _migrate_wecom_config_secret()
     _migrate_wecom_agent_id()
     _migrate_recharge_amount_fen()
