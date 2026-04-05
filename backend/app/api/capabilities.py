@@ -14,6 +14,7 @@ from .auth import get_current_user, brand_mark_for_jwt_claim
 from ..models import BillingIdempotency, CapabilityCallLog, CapabilityConfig, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
+from ..services.sutui_api_audit import log_capability_call_log_persisted
 from .installation_slots import installation_slots_enabled, parse_installation_id_strict
 from .skills import user_can_use_capability
 
@@ -493,6 +494,22 @@ def record_call(
         )
     db.commit()
     db.refresh(log)
+    try:
+        req_sum = body.request_payload
+        if isinstance(req_sum, dict) and len(json.dumps(req_sum, default=str)) > 8000:
+            req_sum = {k: req_sum.get(k) for k in ("capability_id", "model", "task_id", "payload") if k in req_sum}
+        log_capability_call_log_persisted(
+            log_id=log.id,
+            user_id=current_user.id,
+            capability_id=log.capability_id or "",
+            credits_charged=credits_charged,
+            success=bool(body.success),
+            source=(body.source or "")[:64],
+            request_summary=req_sum,
+            error_message=log.error_message,
+        )
+    except Exception:
+        pass
     return {
         "id": log.id,
         "capability_id": log.capability_id,

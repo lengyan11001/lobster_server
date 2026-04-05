@@ -75,6 +75,24 @@ def fetch_sutui_balance_server_token_sync(token: str) -> Tuple[Optional[Decimal]
             bal = quantize_credits(raw)
         except Exception:
             bal = quantize_credits(0)
+        try:
+            from .sutui_api_audit import log_xskill_http
+
+            log_xskill_http(
+                phase="balance_query",
+                method="GET",
+                url=url,
+                http_status=r.status_code,
+                capability_or_model="-",
+                billing_snapshot={
+                    "balance": float(bal),
+                    "raw_balance": raw,
+                    "data_keys": list(d.keys()) if isinstance(d, dict) else [],
+                },
+                error_message="",
+            )
+        except Exception:
+            pass
         return bal, ""
     except Exception as e:
         logger.warning("[sutui-reconcile] balance 请求失败: %s", e)

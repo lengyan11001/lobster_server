@@ -13,6 +13,8 @@ import httpx
 
 from mcp.sutui_tokens import next_sutui_server_token_internal
 
+from backend.app.services.sutui_api_audit import log_xskill_http
+
 logger = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -84,6 +86,18 @@ async def _fetch_mcp_models(token: str) -> List[Dict[str, Any]]:
     }
     async with httpx.AsyncClient(timeout=120.0) as client:
         r = await client.get(f"{base}/api/v3/mcp/models", headers=headers)
+    try:
+        log_xskill_http(
+            phase="mcp_models_list",
+            method="GET",
+            url=f"{base}/api/v3/mcp/models",
+            http_status=r.status_code,
+            capability_or_model="-",
+            billing_snapshot={"models_count": None},
+            error_message=(r.text or "")[:1500] if r.status_code >= 400 else "",
+        )
+    except Exception:
+        pass
     r.raise_for_status()
     body = r.json()
     if not isinstance(body, dict):
@@ -115,6 +129,33 @@ async def _probe_one_chat(token: str, model_id: str) -> tuple[bool, int]:
     try:
         async with httpx.AsyncClient(timeout=45.0) as client:
             r = await client.post(url, json=body, headers=headers)
+        try:
+            preview: Dict[str, Any] = {}
+            if r.content:
+                try:
+                    j = r.json()
+                    if isinstance(j, dict):
+                        preview["detail"] = j.get("detail")
+                        err = j.get("error")
+                        if isinstance(err, dict):
+                            preview["error"] = {
+                                k: err.get(k)
+                                for k in ("message", "type", "code")
+                                if err.get(k) is not None
+                            }
+                except Exception:
+                    preview["text_prefix"] = (r.text or "")[:800]
+            log_xskill_http(
+                phase="llm_probe",
+                method="POST",
+                url=url,
+                http_status=r.status_code,
+                capability_or_model=model_id,
+                billing_snapshot=preview if preview else None,
+                error_message=(r.text or "")[:2000] if r.status_code != 200 else "",
+            )
+        except Exception:
+            pass
         if r.status_code == 200:
             return True, r.status_code
         if r.status_code == 402:

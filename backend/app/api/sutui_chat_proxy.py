@@ -13,11 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
-from mcp.sutui_tokens import (
-    next_sutui_server_token_with_pool,
-    sutui_token_recon_meta,
-    sutui_token_ref_from_secret,
-)
+from mcp.sutui_tokens import next_sutui_server_token_with_pool, sutui_token_recon_meta
 
 from .auth import brand_mark_for_jwt_claim
 from ..core.config import settings
@@ -25,6 +21,7 @@ from ..db import get_db
 from ..models import User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
+from ..services.sutui_api_audit import log_xskill_http
 from ..services.sutui_pricing import (
     credits_from_chat_usage_when_no_docs_pricing,
     estimate_credits_from_pricing,
@@ -477,15 +474,14 @@ async def sutui_chat_completions(
     }
 
     model_id = (body.get("model") or "").strip()
-    _sk_ref = sutui_token_ref_from_secret(token)
     logger.info(
         "[sutui-chat] 转发速推请求：POST %s | user_id=%s brand_mark=%s sutui_pool=%s | "
-        "Authorization 头=Bearer <服务器 sk，完整值不记录> sutui_token_ref=%s | model=%s stream=%s trace_id=%s",
+        "sutui_server_sk=%s | model=%s stream=%s trace_id=%s",
         url,
         current_user.id,
         bm,
         sutui_pool or "-",
-        _sk_ref or "(空)",
+        token,
         model_id or "-",
         stream,
         trace_id,
@@ -529,6 +525,22 @@ async def sutui_chat_completions(
             r.status_code,
             model_id or "-",
             _sutui_chat_upstream_body_for_log(data if isinstance(data, dict) else None),
+        )
+        _audit_snap = extract_upstream_billing_snapshot(data if isinstance(data, dict) else None)
+        _audit_err = ""
+        if isinstance(data, dict):
+            _e = _upstream_chat_error_dict(data)
+            if isinstance(_e, dict) and _e.get("message"):
+                _audit_err = str(_e.get("message"))[:3000]
+        log_xskill_http(
+            phase="sutui_chat_completions",
+            method="POST",
+            url=url,
+            http_status=r.status_code,
+            capability_or_model=model_id or "-",
+            billing_snapshot=_audit_snap if _audit_snap else None,
+            error_message=_audit_err,
+            extra={"trace_id": trace_id, "user_id": current_user.id, "stream": False},
         )
 
         if r.status_code == 200 and model_id:
@@ -579,6 +591,16 @@ async def sutui_chat_completions(
                             resp.status_code,
                             txt[:500].replace("\n", " "),
                         )
+                        log_xskill_http(
+                            phase="sutui_chat_completions_stream",
+                            method="POST",
+                            url=url,
+                            http_status=resp.status_code,
+                            capability_or_model=model_id or "-",
+                            billing_snapshot=None,
+                            error_message=txt[:3000],
+                            extra={"trace_id": trace_id, "user_id": current_user.id, "stream": True},
+                        )
                         if resp.status_code == 402:
                             try:
                                 parsed = json.loads(txt) if txt.strip().startswith("{") else {}
@@ -610,6 +632,16 @@ async def sutui_chat_completions(
                         "[chat_trace] trace_id=%s path=sutui_chat upstream_xskill stream_started http=200 model=%s",
                         trace_id,
                         model_id or "-",
+                    )
+                    log_xskill_http(
+                        phase="sutui_chat_completions_stream",
+                        method="POST",
+                        url=url,
+                        http_status=200,
+                        capability_or_model=model_id or "-",
+                        billing_snapshot={"note": "stream started; usage/x_billing 在流结束后扣费日志中"},
+                        error_message="",
+                        extra={"trace_id": trace_id, "user_id": current_user.id, "stream": True},
                     )
                     async for chunk in resp.aiter_bytes():
                         yield chunk

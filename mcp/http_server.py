@@ -31,6 +31,7 @@ from mcp.sutui_tokens import (
 )
 
 from backend.app.services.credits_amount import quantize_credits
+from backend.app.services.sutui_api_audit import log_xskill_http
 from backend.app.services.sutui_pricing import extract_upstream_reported_credits
 
 logger = logging.getLogger(__name__)
@@ -727,6 +728,15 @@ async def _call_upstream_sutui_tasks_rest(
 
         if r.status_code >= 400:
             err_body = (r.text or "")[:_SUTUI_UPSTREAM_LOG_MAX]
+            log_xskill_http(
+                phase=f"tasks_rest.{tool_name}",
+                method="POST",
+                url=url,
+                http_status=r.status_code,
+                capability_or_model=lobster_capability_id or model_for_hint or "-",
+                billing_snapshot=None,
+                error_message=err_body[:2500],
+            )
             logger.warning(
                 "[速推完整响应] %s | tool=%s | lobster_capability=%s | REST HTTP=%s\n%s",
                 _sutui_phase_label(tool_name),
@@ -767,6 +777,15 @@ async def _call_upstream_sutui_tasks_rest(
         code = payload.get("code")
         if code is not None and int(code) != 200:
             msg = payload.get("message") or payload.get("msg") or str(payload)
+            log_xskill_http(
+                phase=f"tasks_rest.{tool_name}",
+                method="POST",
+                url=url,
+                http_status=200,
+                capability_or_model=lobster_capability_id or model_for_hint or "-",
+                billing_snapshot={"code": code, "message": str(msg)[:1500]},
+                error_message=str(msg)[:2500],
+            )
             _log_sutui_upstream_full_response(
                 "sutui", tool_name, lobster_capability_id, _sanitize_for_json(payload)
             )
@@ -778,6 +797,15 @@ async def _call_upstream_sutui_tasks_rest(
             return {"error": {"message": em}}
         data = payload.get("data")
         if not isinstance(data, dict):
+            log_xskill_http(
+                phase=f"tasks_rest.{tool_name}",
+                method="POST",
+                url=url,
+                http_status=200,
+                capability_or_model=lobster_capability_id or "-",
+                billing_snapshot=None,
+                error_message=f"无 data 对象: {str(payload)[:800]}",
+            )
             _log_sutui_upstream_full_response(
                 "sutui", tool_name, lobster_capability_id, _sanitize_for_json(payload)
             )
@@ -786,6 +814,20 @@ async def _call_upstream_sutui_tasks_rest(
             "sutui", tool_name, lobster_capability_id, _sanitize_for_json(payload)
         )
         _log_sutui_task_terminal_failure_for_ops(data, tool_name=tool_name, lobster_capability_id=lobster_capability_id)
+        log_xskill_http(
+            phase=f"tasks_rest.{tool_name}",
+            method="POST",
+            url=url,
+            http_status=200,
+            capability_or_model=lobster_capability_id or model_for_hint or "-",
+            billing_snapshot={
+                "price": data.get("price"),
+                "task_id": data.get("task_id"),
+                "status": data.get("status"),
+                "model": data.get("model"),
+            },
+            error_message="",
+        )
         return _sanitize_for_json(data)
 
 

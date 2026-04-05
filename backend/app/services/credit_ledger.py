@@ -50,4 +50,19 @@ def append_credit_ledger(
         meta=meta,
     )
     db.add(row)
+    try:
+        from .sutui_api_audit import maybe_log_credit_ledger_append
+
+        maybe_log_credit_ledger_append(
+            user_id=user_id,
+            entry_type=row.entry_type or "",
+            delta=d,
+            balance_after=bal,
+            ref_type=ref_type,
+            ref_id=ref_id,
+            description=description or "",
+            meta=meta,
+        )
+    except Exception:
+        pass
     return row
