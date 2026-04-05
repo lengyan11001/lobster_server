@@ -2072,7 +2072,9 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 if _emb in ("video.generate", "image.generate"):
                     record_capability_id = _emb
 
-            # 速推类计费仅在本 MCP invoke_capability 内编排：pre-deduct → 上游 → record-call/refund。chat 等不重复扣费。
+            # ━━━ 速推用户积分：唯一业务入口（调用速推上游之前只在此处处理） ━━━
+            # upstream=sutui 时：必须先完成认证中心 POST /capabilities/pre-deduct，再调速推；结束后 record-call 或 refund。
+            # lobster_online（本机 MCP）、chat、其它后端路由不得再编排第二套预扣/结算；客户端仅转发 mcp-gateway。
             pre_deduct_amount = quantize_credits(0)
             billing_idem = str(uuid.uuid4())
             if token:
