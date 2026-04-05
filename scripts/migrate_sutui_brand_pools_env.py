@@ -5,9 +5,8 @@
   SUTUI_SERVER_TOKENS_USER（或 TOKEN_USER）   → SUTUI_SERVER_TOKENS_BIHUO
 并注释上述 ADMIN/USER 键；注释裸 SUTUI_SERVER_TOKEN，避免与品牌池并存混淆。
 在项目根目录执行：python3 scripts/migrate_sutui_brand_pools_env.py
+（服务器可用 .venv/bin/python 若系统 Python 过旧）
 """
-from __future__ import annotations
-
 import re
 import sys
 from pathlib import Path
