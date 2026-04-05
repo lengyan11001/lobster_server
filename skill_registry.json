@@ -50,6 +50,16 @@
       "capabilities": {},
       "tags": ["WhatsApp", "Twilio", "chat"]
     },
+    "openclaw_weixin_channel": {
+      "name": "微信助手 (OpenClaw)",
+      "description": "技能商店入口可见性由服务器配置；点「扫码授权」由本机 lobster_online 调 OpenClaw 微信插件登录，与认证中心无关。授权后 JWT 绑定沿用既有逻辑。",
+      "type": "builtin",
+      "store_visibility": "debug",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["微信", "OpenClaw", "chat", "channel"]
+    },
     "wecom_reply": {
       "name": "企业微信自动回复",
       "description": "接收企业微信消息，由 AI 自动生成回复。需 1000 积分解锁后进入配置页并使用。",
