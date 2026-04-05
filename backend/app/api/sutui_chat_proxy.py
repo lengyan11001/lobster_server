@@ -22,6 +22,7 @@ from ..models import User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.sutui_api_audit import log_xskill_http
+from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
 from ..services.sutui_pricing import (
     credits_from_chat_usage_when_no_docs_pricing,
     estimate_credits_from_pricing,
@@ -266,39 +267,26 @@ def _require_balance_before_upstream_chat(
     body: Dict[str, Any],
 ) -> None:
     """
-    上游调用前预检：只根据龙虾用户积分是否覆盖本次「保守估计」消耗；
-    与 xskill 侧美元余额无关。有 docs 定价优先用定价；否则用 fallback 按粗估 token 折算；再不行至少 1 积分门槛。
+    上游调用前：与素材生成一致——**仅**按速推 docs 定价表 + 本次粗估 token 参算预扣；
+    无定价表或估不出则 400，不调速推；积分不足则 402。实扣仍看上游返回（_apply_chat_deduct）。
     """
     if not _should_deduct_credits() or not (model_id or "").strip():
         return
     params = _chat_balance_precheck_params(body)
-    need: Decimal = Decimal(0)
-    pricing = fetch_model_pricing(model_id)
-    if pricing:
-        est = estimate_credits_from_pricing(pricing, params)
-        if est > 0:
-            need = quantize_credits(est)
-    if need <= 0:
-        synth_usage = {
-            "prompt_tokens": params["prompt_tokens"],
-            "completion_tokens": params["completion_tokens"],
-        }
-        fb = credits_from_chat_usage_when_no_docs_pricing(synth_usage)
-        if fb > 0:
-            need = fb
-    if need <= 0:
-        need = quantize_credits(1)
-
-    db.refresh(current_user)
-    bal = user_balance_decimal(current_user)
-    if bal < need:
-        raise HTTPException(
-            status_code=402,
-            detail=(
-                f"积分不足：按本次请求预估至少需 {need} 龙虾积分，当前余额 {bal}。"
-                "请充值或缩短上下文/降低 max_tokens 后重试。"
-            ),
-        )
+    need = assert_pricing_pre_deduct_allows_upstream_or_http(
+        db,
+        current_user,
+        model_id,
+        params,
+        action_label="智能对话",
+    )
+    logger.info(
+        "[sutui-chat] 定价表预检通过 model=%s need=%s pt=%s ct=%s",
+        model_id,
+        need,
+        params.get("prompt_tokens"),
+        params.get("completion_tokens"),
+    )
 
 
 def _credits_for_sutui_chat(

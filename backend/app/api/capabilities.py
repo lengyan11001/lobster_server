@@ -239,7 +239,7 @@ def pre_deduct(
     _require_sutui_brand_for_billing(current_user, upstream=upstream)
 
     if upstream == "sutui" and upstream_tool == "generate":
-        from ..services.sutui_pricing import estimate_pre_deduct_credits
+        from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
 
         model = (body.model or "").strip()
         if not model:
@@ -247,16 +247,14 @@ def pre_deduct(
                 status_code=400,
                 detail="调用生成能力时必须提供 model 以按速推定价预扣积分。",
             )
-        est, err = estimate_pre_deduct_credits(model, body.params if isinstance(body.params, dict) else None)
-        if err:
-            raise HTTPException(status_code=400, detail=err)
-        db.refresh(current_user)
-        est_d = quantize_credits(est)
-        if user_balance_decimal(current_user) < est_d:
-            raise HTTPException(
-                status_code=402,
-                detail=f"积分不足：本次预估需 {est} 积分（按速推模型定价），当前余额 {user_balance_decimal(current_user)}。请先充值。",
-            )
+        params = body.params if isinstance(body.params, dict) else None
+        est_d = assert_pricing_pre_deduct_allows_upstream_or_http(
+            db,
+            current_user,
+            model,
+            params,
+            action_label="素材生成",
+        )
         current_user.credits = user_balance_decimal(current_user) - est_d
         bal = quantize_credits(current_user.credits)
         _recon = _sutui_recon_for_ledger(
@@ -277,11 +275,11 @@ def pre_deduct(
                 **(_recon or {}),
                 "capability_id": body.capability_id,
                 "model": model,
-                "pre_estimated": est,
+                "pre_estimated": credits_json_float(est_d),
             },
         )
         db.commit()
-        out = {"credits_charged": est}
+        out = {"credits_charged": credits_json_float(est_d)}
         _pre_deduct_idempotent_store(db, current_user.id, idem_key, out)
         return out
 
