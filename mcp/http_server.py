@@ -433,7 +433,7 @@ def _parse_sse_or_json(resp: httpx.Response) -> Dict[str, Any]:
 _SUTUI_UPSTREAM_LOG_MAX = 500_000
 
 
-# 速推：在 create/generate 时扣费（与 xskill REST tasks/create 的 price 一致）；get_result 仅轮询，不再扣费。
+# 速推：create/generate 响应里若带 price/credits_used 会立即记费；异步任务常见「创建时 0、完成时 get_result 才带消耗」——终态成功时须按 get_result 解析扣费（与速推实际扣费对齐）。
 # 若任务终态失败，按此处记录的 task_id 向龙虾用户退款（与速推侧失败退款语义对齐）。
 _MAX_TASK_BILLED_TRACK = 3000
 _task_billed_on_create: "OrderedDict[str, Decimal]" = OrderedDict()
@@ -1682,6 +1682,28 @@ def _consume_task_autosave_once(task_id: str) -> bool:
     return True
 
 
+_TASK_RESULT_BILL_ONCE: Dict[str, float] = {}
+_TASK_RESULT_BILL_TTL_SEC = 86400 * 7
+_TASK_RESULT_BILL_MAX_KEYS = 50000
+
+
+def _consume_task_result_bill_once(task_id: str) -> bool:
+    """同一 task_id 的 get_result 终态成功会多次轮询：消耗结算只执行一次，避免重复扣 lobster 用户积分。"""
+    tid = (task_id or "").strip()
+    if not tid:
+        return True
+    now = time.time()
+    dead = [k for k, t in _TASK_RESULT_BILL_ONCE.items() if now - t > _TASK_RESULT_BILL_TTL_SEC]
+    for k in dead:
+        del _TASK_RESULT_BILL_ONCE[k]
+    if len(_TASK_RESULT_BILL_ONCE) > _TASK_RESULT_BILL_MAX_KEYS:
+        _TASK_RESULT_BILL_ONCE.clear()
+    if tid in _TASK_RESULT_BILL_ONCE:
+        return False
+    _TASK_RESULT_BILL_ONCE[tid] = now
+    return True
+
+
 def _prefer_stable_urls_for_autosave(urls: List[str]) -> List[str]:
     """同一结果里若同时有 mcp-images 临时链与 v3-tasks/assets 链，只保留后者，避免同一张图入两条素材。"""
     if not urls:
@@ -1971,6 +1993,12 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             normalized_model = payload.get("model") if isinstance(payload, dict) else None
             if original_model != normalized_model:
                 logger.info("[MCP] 模型名称映射: %s -> %s", original_model, normalized_model)
+
+            record_capability_id = capability_id
+            if capability_id == "task.get_result" and isinstance(payload, dict):
+                _emb = (payload.get("capability_id") or "").strip()
+                if _emb in ("video.generate", "image.generate"):
+                    record_capability_id = _emb
 
             pre_deduct_amount = quantize_credits(0)
             billing_idem = str(uuid.uuid4())
@@ -2299,7 +2327,10 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 if isinstance(err_obj, dict):
                     upstream_error = str(err_obj.get("message") or "")[:500]
             poll_task_id = (payload.get("task_id") or payload.get("taskId") or "").strip()
-            
+            create_billed_amount_peek = quantize_credits(0)
+            if upstream_tool == "get_result" and poll_task_id:
+                create_billed_amount_peek = _peek_task_billed_credits(poll_task_id)
+
             # 如果是video.generate调用，从响应中提取task_id并注册临时文件
             if capability_id == "video.generate" and isinstance(upstream_resp, dict):
                 # 从响应中提取task_id
@@ -2367,11 +2398,20 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
 
             actual_used = quantize_credits(0)
             if isinstance(upstream_resp, dict) and not upstream_error:
-                # 仅 generate（创建任务）按速推返回扣费；get_result 只轮询不重复扣
                 if upstream_tool == "generate":
                     actual_used = extract_upstream_reported_credits(upstream_resp)
                 elif upstream_tool == "get_result":
-                    actual_used = quantize_credits(0)
+                    if _sutui_get_result_is_terminal_success(upstream_resp):
+                        poll_credits = quantize_credits(extract_upstream_reported_credits(upstream_resp))
+                        already = quantize_credits(create_billed_amount_peek)
+                        extra = (
+                            quantize_credits(poll_credits - already)
+                            if poll_credits > already
+                            else quantize_credits(0)
+                        )
+                        if extra > 0 and poll_task_id and not _consume_task_result_bill_once(poll_task_id):
+                            extra = quantize_credits(0)
+                        actual_used = extra
                 else:
                     actual_used = extract_upstream_reported_credits(upstream_resp)
 
@@ -2401,7 +2441,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     capability_id, pre_deduct_amount, actual_used, settle_final, cf_out,
                 )
                 await _record_call(
-                    token, capability_id, not bool(upstream_error), latency_ms, payload,
+                    token, record_capability_id, not bool(upstream_error), latency_ms, payload,
                     upstream_resp if isinstance(upstream_resp, dict) else {}, upstream_error or None,
                     credits_charged=(bill_credits if bill_credits > 0 else None),
                     pre_deduct_applied=pre_applied_flag,
@@ -2419,7 +2459,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     capability_id, pre_deduct_amount, actual_used, bill_credits, pre_applied_flag,
                 )
                 await _record_call(
-                    token, capability_id, not bool(upstream_error), latency_ms, payload,
+                    token, record_capability_id, not bool(upstream_error), latency_ms, payload,
                     upstream_resp if isinstance(upstream_resp, dict) else {}, upstream_error or None,
                     credits_charged=(bill_credits if bill_credits > 0 else None),
                     pre_deduct_applied=pre_applied_flag,
