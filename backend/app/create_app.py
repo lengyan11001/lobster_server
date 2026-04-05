@@ -108,6 +108,49 @@ def _seed_capability_catalog():
         db.close()
 
 
+def _upsert_missing_capabilities_from_catalog():
+    """库若在早期只种了部分能力（如仅有 image.generate），补全 catalog 里缺行，避免 pre-deduct 判 cap 为空走 unit_credits=0。"""
+    catalog_path = Path(__file__).resolve().parent.parent.parent / "mcp" / "capability_catalog.json"
+    if not catalog_path.exists():
+        return
+    db = SessionLocal()
+    try:
+        raw = json.loads(catalog_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return
+        added = 0
+        for capability_id, cfg in raw.items():
+            if not isinstance(capability_id, str) or not isinstance(cfg, dict):
+                continue
+            cid = capability_id.strip()
+            if db.query(models.CapabilityConfig).filter(models.CapabilityConfig.capability_id == cid).first():
+                continue
+            db.add(
+                models.CapabilityConfig(
+                    capability_id=cid,
+                    description=str(cfg.get("description") or capability_id),
+                    upstream=str(cfg.get("upstream") or "sutui"),
+                    upstream_tool=str(cfg.get("upstream_tool") or "").strip(),
+                    arg_schema=cfg.get("arg_schema") if isinstance(cfg.get("arg_schema"), dict) else None,
+                    extra_config=None,
+                    enabled=bool(cfg.get("enabled", True)),
+                    is_default=bool(cfg.get("is_default", False)),
+                    unit_credits=int(cfg.get("unit_credits") or 0),
+                )
+            )
+            added += 1
+        if added:
+            db.commit()
+            logger.info("Capability catalog: inserted %d missing row(s) from mcp/capability_catalog.json", added)
+        else:
+            db.rollback()
+    except Exception as e:
+        db.rollback()
+        logger.warning("upsert_missing_capabilities_from_catalog skipped: %s", e)
+    finally:
+        db.close()
+
+
 def _auto_start_openclaw():
     """Start OpenClaw Gateway if it's not already running (仅当本机存在 node + openclaw.mjs，与 lobster_online 完整包一致)。"""
     try:
@@ -640,6 +683,7 @@ def create_app() -> FastAPI:
     _migrate_capability_configs_extra_config()
     _ensure_default_user()
     _seed_capability_catalog()
+    _upsert_missing_capabilities_from_catalog()
     _auto_start_openclaw()
 
     app = FastAPI(
