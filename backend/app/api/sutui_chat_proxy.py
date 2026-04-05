@@ -13,7 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
-from mcp.sutui_tokens import next_sutui_server_token_with_pool, sutui_token_recon_meta
+from mcp.sutui_tokens import (
+    next_sutui_server_token_with_pool,
+    sutui_token_recon_meta,
+    sutui_token_ref_from_secret,
+)
 
 from .auth import brand_mark_for_jwt_claim
 from ..core.config import settings
@@ -149,8 +153,16 @@ def _normalize_upstream_402_for_client(data: Any) -> Any:
         return data
     code = str(err.get("code") or "").strip().lower()
     typ = str(err.get("type") or "").strip().lower()
-    msg = str(err.get("message") or "").strip().lower()
-    if code == "insufficient_balance" or typ == "billing_error" or "insufficient" in msg:
+    raw_msg = str(err.get("message") or "")
+    msg = raw_msg.strip().lower()
+    # xskill：insufficient_balance；另见 rix_api_error + insufficient_user_quota（预扣美元额度，与龙虾「积分」不是同一套账）
+    xskill_quota_fail = (
+        code in ("insufficient_balance", "insufficient_user_quota")
+        or typ == "billing_error"
+        or (typ == "rix_api_error" and ("insufficient" in code or "预扣费" in raw_msg))
+        or "insufficient" in msg
+    )
+    if xskill_quota_fail:
         return {
             "error": {
                 "message": (
@@ -465,6 +477,19 @@ async def sutui_chat_completions(
     }
 
     model_id = (body.get("model") or "").strip()
+    _sk_ref = sutui_token_ref_from_secret(token)
+    logger.info(
+        "[sutui-chat] 转发速推请求：POST %s | user_id=%s brand_mark=%s sutui_pool=%s | "
+        "Authorization 头=Bearer <服务器 sk，完整值不记录> sutui_token_ref=%s | model=%s stream=%s trace_id=%s",
+        url,
+        current_user.id,
+        bm,
+        sutui_pool or "-",
+        _sk_ref or "(空)",
+        model_id or "-",
+        stream,
+        trace_id,
+    )
     logger.info(
         "[chat_trace] trace_id=%s path=sutui_chat_completions forward brand=%s model_after_remap=%s sutui_pool=%s",
         trace_id,
