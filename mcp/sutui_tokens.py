@@ -1,10 +1,11 @@
-"""服务器侧速推 Token 池：按品牌（bihuo / yingshi）分流，无管理员单独池。
+"""服务器侧速推 Token：仅 bihuo / yingshi 两池；无品牌或非这两类不提供 Token（无 USER 兜底）。
 
-环境变量（显式池优先，否则回退到既有 SUTUI_SERVER_TOKENS / SUTUI_SERVER_TOKEN / sutui_config.json）：
-- 北极火：SUTUI_SERVER_TOKENS_BIHUO、SUTUI_SERVER_TOKEN_BIHUO
+环境变量：
+- 必火：SUTUI_SERVER_TOKENS_BIHUO、SUTUI_SERVER_TOKEN_BIHUO
 - 影视：SUTUI_SERVER_TOKENS_YINGSHI、SUTUI_SERVER_TOKEN_YINGSHI
-- 默认池（无品牌、其它品牌、或品牌池未配置时的兜底）：SUTUI_SERVER_TOKENS_USER、SUTUI_SERVER_TOKEN_USER
-- 兼容：SUTUI_SERVER_TOKENS、SUTUI_SERVER_TOKEN、sutui_config.json
+- 兼容（仅站内 LLM 探测等 internal 路径）：SUTUI_SERVER_TOKENS、SUTUI_SERVER_TOKEN、sutui_config.json
+
+不再读取 SUTUI_SERVER_TOKENS_USER（无品牌用户不允许走速推）。
 """
 from __future__ import annotations
 
@@ -15,7 +16,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 _sutui_token_lock = asyncio.Lock()
-# 轮询游标：按池键区分（bihuo / yingshi / user）
 _sutui_pool_index: dict[str, int] = {}
 
 
@@ -57,13 +57,6 @@ def _parse_pool(comma_key: str, single_key: str) -> List[str]:
     return []
 
 
-def get_sutui_tokens_list_user() -> List[str]:
-    u = _parse_pool("SUTUI_SERVER_TOKENS_USER", "SUTUI_SERVER_TOKEN_USER")
-    if u:
-        return u
-    return _legacy_sutui_tokens_list()
-
-
 def get_sutui_tokens_list_bihuo() -> List[str]:
     return _parse_pool("SUTUI_SERVER_TOKENS_BIHUO", "SUTUI_SERVER_TOKEN_BIHUO")
 
@@ -72,33 +65,41 @@ def get_sutui_tokens_list_yingshi() -> List[str]:
     return _parse_pool("SUTUI_SERVER_TOKENS_YINGSHI", "SUTUI_SERVER_TOKEN_YINGSHI")
 
 
-def _user_fallback_tokens() -> List[str]:
-    u = get_sutui_tokens_list_user()
-    if u:
-        return u
-    return _legacy_sutui_tokens_list()
-
-
-def _tokens_and_pool_key(*, brand_mark: Optional[str]) -> Tuple[str, List[str]]:
+def _tokens_and_pool_key_user(*, brand_mark: Optional[str]) -> Tuple[str, List[str]]:
+    """终端用户：仅 bihuo / yingshi；池为空则无 Token，不使用 USER/legacy 兜底。"""
     b = (brand_mark or "").strip().lower()
     if b == "bihuo":
-        lst = get_sutui_tokens_list_bihuo()
-        if lst:
-            return "bihuo", lst
-        return "user", _user_fallback_tokens()
+        return "bihuo", get_sutui_tokens_list_bihuo()
     if b == "yingshi":
-        lst = get_sutui_tokens_list_yingshi()
+        return "yingshi", get_sutui_tokens_list_yingshi()
+    return "none", []
+
+
+def _internal_probe_token_list() -> List[str]:
+    """站内探测 mcp/models 等：优先 bihuo → yingshi → 兼容 legacy，不用 USER 池。"""
+    for lst in (get_sutui_tokens_list_bihuo(), get_sutui_tokens_list_yingshi(), _legacy_sutui_tokens_list()):
         if lst:
-            return "yingshi", lst
-        return "user", _user_fallback_tokens()
-    return "user", _user_fallback_tokens()
+            return lst
+    return []
 
 
 async def next_sutui_server_token(*, brand_mark: Optional[str] = None) -> Optional[str]:
-    """从对应池中轮询取下一条 Token。传 brand_mark 与 JWT / users.brand_mark 一致；不传则走默认用户池。"""
-    pool_key, lst = _tokens_and_pool_key(brand_mark=brand_mark)
+    """终端请求：brand_mark 必须为 bihuo/yingshi 且对应池已配置。"""
+    pool_key, lst = _tokens_and_pool_key_user(brand_mark=brand_mark)
     if not lst:
         return None
+    async with _sutui_token_lock:
+        idx = _sutui_pool_index.get(pool_key, 0) % len(lst)
+        _sutui_pool_index[pool_key] = idx + 1
+        return lst[idx]
+
+
+async def next_sutui_server_token_internal() -> Optional[str]:
+    """站内 LLM 列表/探测：不绑定终端用户品牌，仅从已配置的品牌池或 legacy 取 Token。"""
+    lst = _internal_probe_token_list()
+    if not lst:
+        return None
+    pool_key = "internal"
     async with _sutui_token_lock:
         idx = _sutui_pool_index.get(pool_key, 0) % len(lst)
         _sutui_pool_index[pool_key] = idx + 1

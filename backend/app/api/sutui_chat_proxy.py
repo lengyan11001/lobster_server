@@ -350,11 +350,16 @@ async def sutui_chat_completions(
     _remap_sutui_chat_model(body)
 
     bm = brand_mark_for_jwt_claim(getattr(current_user, "brand_mark", None))
+    if bm not in ("bihuo", "yingshi"):
+        raise HTTPException(
+            status_code=403,
+            detail="当前账号未绑定必火/影视品牌，无法使用速推对话；无通用兜底。请使用对应品牌客户端注册或联系管理员补全品牌后重新登录。",
+        )
     token = await next_sutui_server_token(brand_mark=bm)
     if not token:
         raise HTTPException(
             status_code=503,
-            detail="服务器未配置速推 Token 池（请按品牌配置 SUTUI_SERVER_TOKENS_BIHUO / SUTUI_SERVER_TOKENS_YINGSHI 或兜底 SUTUI_SERVER_TOKENS_USER / SUTUI_SERVER_TOKEN）",
+            detail="服务器未配置当前品牌对应的速推 Token（SUTUI_SERVER_TOKENS_BIHUO 或 SUTUI_SERVER_TOKENS_YINGSHI）",
         )
 
     stream = bool(body.get("stream"))

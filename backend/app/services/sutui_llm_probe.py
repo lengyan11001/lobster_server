@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from mcp.sutui_tokens import next_sutui_server_token
+from mcp.sutui_tokens import next_sutui_server_token_internal
 
 logger = logging.getLogger(__name__)
 
@@ -145,11 +145,11 @@ async def run_sutui_llm_probe_once() -> Dict[str, Any]:
     if not is_sutui_llm_probe_enabled_for_this_instance():
         raise RuntimeError("本实例未启用速推 LLM 探测（海外机请设 LOBSTER_SERVER_REGION=overseas，且不应执行探测）")
 
-    token = await next_sutui_server_token()
+    token = await next_sutui_server_token_internal()
     if not token:
         raise RuntimeError(
-            "速推 Token 未配置，无法探测 LLM（需 SUTUI_SERVER_TOKENS_USER / SUTUI_SERVER_TOKEN 或兼容项 "
-            "SUTUI_SERVER_TOKEN / SUTUI_SERVER_TOKENS）"
+            "速推 Token 未配置，无法探测 LLM（需已配置 SUTUI_SERVER_TOKENS_BIHUO / YINGSHI 之一，"
+            "或兼容项 SUTUI_SERVER_TOKEN / SUTUI_SERVER_TOKENS）"
         )
 
     raw_models = await _fetch_mcp_models(token)

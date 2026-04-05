@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 
-from mcp.sutui_tokens import next_sutui_server_token
+from mcp.sutui_tokens import next_sutui_server_token_internal
 
 from ..models import User
 from ..services.sutui_llm_probe import (
@@ -48,7 +48,7 @@ async def get_sutui_llm_models(current_user: User = Depends(get_current_user)):
 
     if not models:
         try:
-            token = await next_sutui_server_token()
+            token = await next_sutui_server_token_internal()
             if not token:
                 raise RuntimeError("速推 Token 未配置，无法拉取 LLM 列表")
             raw = await _fetch_mcp_models(token)

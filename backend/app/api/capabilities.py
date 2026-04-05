@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from .auth import get_current_user
+from .auth import get_current_user, brand_mark_for_jwt_claim
 from ..models import BillingIdempotency, CapabilityCallLog, CapabilityConfig, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
@@ -31,6 +31,23 @@ def _should_deduct_credits() -> bool:
     """是否启用「调用能力时扣积分」（在线版 + 独立认证时）。"""
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     return edition == "online" and getattr(settings, "lobster_independent_auth", True)
+
+
+def _require_sutui_brand_for_billing(user: User, *, upstream: str) -> None:
+    """速推上游计费时 JWT 须为 bihuo/yingshi；无品牌或非两池不允许预扣/按次扣费。"""
+    if not _should_deduct_credits():
+        return
+    if (upstream or "").strip() != "sutui":
+        return
+    bm = brand_mark_for_jwt_claim(getattr(user, "brand_mark", None))
+    if bm not in ("bihuo", "yingshi"):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "账号未绑定必火/影视品牌，无法使用速推算力；无通用兜底。"
+                "请使用对应品牌客户端注册或联系管理员补全品牌后重新登录。"
+            ),
+        )
 
 
 def _billing_request_may_mutate_balance(request: Request) -> bool:
@@ -194,6 +211,7 @@ def pre_deduct(
     cap = db.query(CapabilityConfig).filter(CapabilityConfig.capability_id == body.capability_id).first()
     upstream = (cap.upstream or "").strip() if cap else ""
     upstream_tool = (cap.upstream_tool or "").strip() if cap else ""
+    _require_sutui_brand_for_billing(current_user, upstream=upstream)
 
     if upstream == "sutui" and upstream_tool == "generate":
         from ..services.sutui_pricing import estimate_pre_deduct_credits
@@ -320,6 +338,8 @@ def record_call(
             "billing_skipped": True,
         }
     cap = db.query(CapabilityConfig).filter(CapabilityConfig.capability_id == body.capability_id).first()
+    upstream_rc = (getattr(cap, "upstream", None) or "").strip() if cap else ""
+    _require_sutui_brand_for_billing(current_user, upstream=upstream_rc)
     unit_credits = int(cap.unit_credits or 0) if cap else 0
     credits_charged_body = quantize_credits(body.credits_charged if body.credits_charged is not None else 0)
     pre_applied = bool(getattr(body, "pre_deduct_applied", False))

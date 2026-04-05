@@ -797,7 +797,7 @@ async def _call_upstream_mcp_tool(
         if not token:
             token = await next_sutui_server_token(brand_mark=brand_mark)
         if not token:
-            return {"error": {"message": "xskill/速推 Token 未配置。请在服务器配置 SUTUI_SERVER_TOKEN(S) 或品牌池 SUTUI_SERVER_TOKENS_BIHUO / SUTUI_SERVER_TOKENS_YINGSHI，及兜底 SUTUI_SERVER_TOKENS_USER（逗号分隔多个，负载均衡）。MCP 需与 Backend 共用 SECRET_KEY 以解析 JWT 中的 brand_mark。"}}
+            return {"error": {"message": "xskill/速推 Token 未配置或当前品牌池为空。请配置 SUTUI_SERVER_TOKENS_BIHUO / SUTUI_SERVER_TOKENS_YINGSHI（及站内探测可选 SUTUI_SERVER_TOKEN）。终端用户须为 bihuo/yingshi，无 USER 兜底。MCP 需与 Backend 共用 SECRET_KEY 以解析 JWT brand_mark。"}}
         auth_headers["Authorization"] = f"Bearer {token}"
         # 实测 xskill MCP HTTP 在 generate 返回体序列化时抛 Decimal 错误；create/query 走 REST 稳定
         if tool_name in ("generate", "get_result"):
@@ -1909,6 +1909,18 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 return [{"type": "text", "text": f"能力配置缺失 upstream_tool: {capability_id}"}], True
             upstream_name = str(cfg.get("upstream") or "sutui").strip()
             upstream_url = upstream_urls.get(upstream_name, "").strip()
+            if upstream_name == "sutui":
+                _bm = (user_brand_mark or "").strip().lower()
+                if _bm not in ("bihuo", "yingshi"):
+                    return [
+                        {
+                            "type": "text",
+                            "text": (
+                                "当前账号未绑定必火(bihuo)或影视(yingshi)品牌，无法使用速推算力；"
+                                "无通用兜底。请使用对应品牌安装包注册/登录，或联系管理员写入 brand_mark 后重新登录。"
+                            ),
+                        }
+                    ], True
             # 先规范化 payload（与上游一致），再按速推官方 docs 定价预扣积分
             original_model = payload.get("model") if isinstance(payload, dict) else None
             if capability_id == "image.generate":
