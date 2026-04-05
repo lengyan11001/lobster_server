@@ -598,13 +598,15 @@ async def sutui_chat_completions(
             headers={TRACE_HEADER: trace_id},
         )
 
-    # 流式：边下边解析 SSE 行，取最后一个含 usage 的 data JSON；若无则按与预检一致的保守 usage 估算扣费。
+    # 流式：边下边解析 SSE，取最后一个含 usage 的 data；并保留上游出现的 x_billing/X-Billing（与非流式一致，优先按 credits_used 扣）。
     # StreamingResponse 返回后，Depends(get_db) 可能在生成器尚未结束时即关闭会话，finally 内禁止再用注入的 db 扣费。
     billing_user_id = int(current_user.id)
 
     async def gen() -> AsyncIterator[bytes]:
         line_buf = bytearray()
         last_usage: Optional[Dict[str, Any]] = None
+        # 流内任一事例带计费扩展则记录；同名字段以后出现的 chunk 覆盖（通常最后一帧最全）
+        stream_upstream_billing: Dict[str, Any] = {}
         stream_completed_ok = False
         try:
             async with httpx.AsyncClient(timeout=300.0, trust_env=True) as client:
@@ -730,6 +732,9 @@ async def sutui_chat_completions(
                                 continue
                             if not isinstance(obj, dict):
                                 continue
+                            for _bk in ("x_billing", "X-Billing"):
+                                if _bk in obj and obj[_bk] is not None:
+                                    stream_upstream_billing[_bk] = obj[_bk]
                             u = obj.get("usage")
                             if isinstance(u, dict) and (
                                 u.get("prompt_tokens") is not None
@@ -763,16 +768,17 @@ async def sutui_chat_completions(
             if not stream_completed_ok or not model_id or not _should_deduct_credits():
                 logger.info(
                     "[chat_trace] trace_id=%s path=sutui_chat stream_deduct=skipped stream_ok=%s model_id=%r "
-                    "should_deduct=%s had_usage_chunk=%s",
+                    "should_deduct=%s had_usage_chunk=%s had_upstream_billing_chunk=%s",
                     trace_id,
                     stream_completed_ok,
                     model_id,
                     _should_deduct_credits(),
                     last_usage is not None,
+                    bool(stream_upstream_billing),
                 )
                 return
             usage_for_deduct = _ensure_chat_usage_for_billing(body, last_usage)
-            resp_for_bill: Dict[str, Any] = {"usage": usage_for_deduct}
+            resp_for_bill: Dict[str, Any] = {"usage": usage_for_deduct, **stream_upstream_billing}
             db_bill = SessionLocal()
             try:
                 u2 = db_bill.query(User).filter(User.id == billing_user_id).first()
