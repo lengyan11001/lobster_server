@@ -12,6 +12,9 @@ if [ -f "$ROOT/.env.deploy" ]; then
   set +a
 fi
 
+# 避免 Git/部分工具弹 TTY 索要口令；SSH 加密私钥须配 LOBSTER_SSH_KEY_PASSPHRASE 走下面 SSH_ASKPASS
+export GIT_TERMINAL_PROMPT=0
+
 if [ -z "$LOBSTER_DEPLOY_HOST" ]; then
   echo "未设置 LOBSTER_DEPLOY_HOST，无法远程执行。"
   echo "可创建 .env.deploy 写入 LOBSTER_DEPLOY_HOST=user@IP、LOBSTER_DEPLOY_SSH_KEY=密钥路径、LOBSTER_DEPLOY_REMOTE_DIR=服务器目录"
@@ -35,6 +38,26 @@ _deploy_cleanup_ssh_agent() {
     _DEPLOY_SSH_AGENT_STARTED=0
   fi
 }
+
+# 加密私钥但未配口令、且 agent 里无密钥时，禁止继续（否则会交互式索要密码）
+_ssh_private_key_seems_encrypted() {
+  local k="$1"
+  [ ! -r "$k" ] && return 1
+  grep -q "ENCRYPTED" "$k" 2>/dev/null && return 0
+  if ssh-keygen -y -f "$k" -P "" >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
+if ! _ssh_agent_has_keys; then
+  if [ -n "${LOBSTER_DEPLOY_SSH_KEY:-}" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY" ]; then
+    if _ssh_private_key_seems_encrypted "$LOBSTER_DEPLOY_SSH_KEY" && [ -z "${LOBSTER_SSH_KEY_PASSPHRASE:-}" ]; then
+      echo "[ERR] 部署私钥已加密：请在 lobster-server/.env.deploy 配置 LOBSTER_SSH_KEY_PASSPHRASE（脚本用 SSH_ASKPASS 非交互解锁），或在本机先 ssh-add 再部署。不要依赖终端弹窗输入。" >&2
+      exit 1
+    fi
+  fi
+fi
 
 # 加密私钥：若 .env.deploy 中有 LOBSTER_SSH_KEY_PASSPHRASE，用 SSH_ASKPASS 非交互 ssh-add，避免 GUI/终端弹窗
 if ! _ssh_agent_has_keys; then
