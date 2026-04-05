@@ -13,15 +13,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
-from mcp.sutui_tokens import next_sutui_server_token_with_pool, sutui_token_recon_meta
+from mcp.sutui_tokens import next_sutui_server_token_with_pool, sutui_token_recon_meta, sutui_token_ref_from_secret
 
 from .auth import brand_mark_for_jwt_claim
 from ..core.config import settings
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models import User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
-from ..services.sutui_api_audit import log_xskill_http
+from ..services.sutui_api_audit import clip_openai_chat_completions_json_for_audit, log_xskill_http
 from ..services.sutui_pricing import (
     credits_from_chat_usage_when_no_docs_pricing,
     estimate_credits_from_pricing,
@@ -474,14 +474,18 @@ async def sutui_chat_completions(
     }
 
     model_id = (body.get("model") or "").strip()
+    _tok = (token or "").strip()
+    _tok_ref = sutui_token_ref_from_secret(_tok) or "-"
+    _tok_tail = _tok[-6:] if len(_tok) > 6 else "***"
     logger.info(
         "[sutui-chat] 转发速推请求：POST %s | user_id=%s brand_mark=%s sutui_pool=%s | "
-        "sutui_server_sk=%s | model=%s stream=%s trace_id=%s",
+        "sutui_token_ref=%s sutui_token_tail=%s | model=%s stream=%s trace_id=%s",
         url,
         current_user.id,
         bm,
         sutui_pool or "-",
-        token,
+        _tok_ref,
+        _tok_tail,
         model_id or "-",
         stream,
         trace_id,
@@ -495,6 +499,12 @@ async def sutui_chat_completions(
     )
 
     _require_balance_before_upstream_chat(db, current_user, model_id, body)
+
+    user_bal_str = "-"
+    if _should_deduct_credits():
+        db.refresh(current_user)
+        user_bal_str = str(user_balance_decimal(current_user))
+    out_req_for_audit = clip_openai_chat_completions_json_for_audit(body)
 
     if not stream:
         try:
@@ -540,10 +550,16 @@ async def sutui_chat_completions(
             capability_or_model=model_id or "-",
             billing_snapshot=_audit_snap if _audit_snap else None,
             error_message=_audit_err,
-            extra={"trace_id": trace_id, "user_id": current_user.id, "stream": False},
+            extra={
+                "trace_id": trace_id,
+                "user_id": current_user.id,
+                "stream": False,
+                "user_lobster_credits": user_bal_str,
+            },
             bearer_token=token,
             sutui_pool=sutui_pool or "",
             upstream_response=data if isinstance(data, dict) else (r.text or None),
+            outbound_request_json=out_req_for_audit,
         )
 
         if r.status_code == 200 and model_id:
@@ -583,6 +599,8 @@ async def sutui_chat_completions(
         )
 
     # 流式：边下边解析 SSE 行，取最后一个含 usage 的 data JSON；若无则按与预检一致的保守 usage 估算扣费。
+    # StreamingResponse 返回后，Depends(get_db) 可能在生成器尚未结束时即关闭会话，finally 内禁止再用注入的 db 扣费。
+    billing_user_id = int(current_user.id)
 
     async def gen() -> AsyncIterator[bytes]:
         line_buf = bytearray()
@@ -607,10 +625,16 @@ async def sutui_chat_completions(
                             capability_or_model=model_id or "-",
                             billing_snapshot=None,
                             error_message=txt[:8000],
-                            extra={"trace_id": trace_id, "user_id": current_user.id, "stream": True},
+                            extra={
+                                "trace_id": trace_id,
+                                "user_id": current_user.id,
+                                "stream": True,
+                                "user_lobster_credits": user_bal_str,
+                            },
                             bearer_token=token,
                             sutui_pool=sutui_pool or "",
                             upstream_response=txt,
+                            outbound_request_json=out_req_for_audit,
                         )
                         if resp.status_code == 402:
                             try:
@@ -671,13 +695,19 @@ async def sutui_chat_completions(
                         capability_or_model=model_id or "-",
                         billing_snapshot={"note": "stream started; usage/x_billing 在流结束后扣费日志中"},
                         error_message="",
-                        extra={"trace_id": trace_id, "user_id": current_user.id, "stream": True},
+                        extra={
+                            "trace_id": trace_id,
+                            "user_id": current_user.id,
+                            "stream": True,
+                            "user_lobster_credits": user_bal_str,
+                        },
                         bearer_token=token,
                         sutui_pool=sutui_pool or "",
                         upstream_response={
                             "note": "SSE 流已开始，完整 chunks 不在此条；请用 trace_id 对齐后续扣费流水",
                             "trace_id": trace_id,
                         },
+                        outbound_request_json=out_req_for_audit,
                     )
                     async for chunk in resp.aiter_bytes():
                         yield chunk
@@ -743,29 +773,38 @@ async def sutui_chat_completions(
                 return
             usage_for_deduct = _ensure_chat_usage_for_billing(body, last_usage)
             resp_for_bill: Dict[str, Any] = {"usage": usage_for_deduct}
+            db_bill = SessionLocal()
             try:
-                _apply_chat_deduct(
-                    db,
-                    current_user,
-                    model_id,
-                    usage_for_deduct if isinstance(usage_for_deduct, dict) else None,
-                    resp_for_bill,
-                    billing_recon=chat_billing_recon,
-                    trace_id=trace_id,
-                )
+                u2 = db_bill.query(User).filter(User.id == billing_user_id).first()
+                if not u2:
+                    logger.error(
+                        "[sutui-chat] 流式结束后扣费跳过：用户不存在 trace_id=%s user_id=%s",
+                        trace_id,
+                        billing_user_id,
+                    )
+                else:
+                    _apply_chat_deduct(
+                        db_bill,
+                        u2,
+                        model_id,
+                        usage_for_deduct if isinstance(usage_for_deduct, dict) else None,
+                        resp_for_bill,
+                        billing_recon=chat_billing_recon,
+                        trace_id=trace_id,
+                    )
             except HTTPException as exc:
                 if exc.status_code == 402:
                     logger.error(
                         "[chat_trace] trace_id=%s path=sutui_chat stream_deduct=failed_insufficient user_id=%s model=%s detail=%s",
                         trace_id,
-                        current_user.id,
+                        billing_user_id,
                         model_id,
                         exc.detail,
                     )
                     logger.error(
                         "[sutui-chat] 流式结束后扣费失败 trace_id=%s user_id=%s model=%s detail=%s",
                         trace_id,
-                        current_user.id,
+                        billing_user_id,
                         model_id,
                         exc.detail,
                     )
@@ -773,9 +812,18 @@ async def sutui_chat_completions(
                     logger.exception(
                         "[sutui-chat] 流式结束后扣费异常 trace_id=%s user_id=%s model=%s",
                         trace_id,
-                        current_user.id,
+                        billing_user_id,
                         model_id,
                     )
+            except Exception:
+                logger.exception(
+                    "[sutui-chat] 流式结束后扣费异常 trace_id=%s user_id=%s model=%s",
+                    trace_id,
+                    billing_user_id,
+                    model_id,
+                )
+            finally:
+                db_bill.close()
 
     return StreamingResponse(
         gen(),
