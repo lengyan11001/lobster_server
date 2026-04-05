@@ -138,40 +138,44 @@ def _upstream_chat_error_dict(data: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _normalize_upstream_402_for_client(data: Any) -> Any:
+def _xskill_upstream_pool_quota_error(data: Any) -> bool:
     """
-    上游 402 + insufficient_balance 表示「管理端速推 Token 在 xskill 侧余额不足」，
-    与龙虾用户积分无关；替换为明确中文，避免用户误以为个人积分问题。
+    速推返回的「Token 池美元预扣/余额」类错误：与龙虾用户积分无关，不应让用户以为是自己积分不够。
     """
     if not isinstance(data, dict):
-        return data
+        return False
     err = _upstream_chat_error_dict(data)
     if not isinstance(err, dict):
-        return data
+        return False
     code = str(err.get("code") or "").strip().lower()
     typ = str(err.get("type") or "").strip().lower()
     raw_msg = str(err.get("message") or "")
     msg = raw_msg.strip().lower()
-    # xskill：insufficient_balance；另见 rix_api_error + insufficient_user_quota（预扣美元额度，与龙虾「积分」不是同一套账）
-    xskill_quota_fail = (
+    return (
         code in ("insufficient_balance", "insufficient_user_quota")
         or typ == "billing_error"
         or (typ == "rix_api_error" and ("insufficient" in code or "预扣费" in raw_msg))
         or "insufficient" in msg
     )
-    if xskill_quota_fail:
-        return {
-            "error": {
-                "message": (
-                    "速推服务端账户余额不足：当前对话使用服务器托管的速推（xskill）Token 池，"
-                    "该池在速推侧余额不足，需管理员在速推控制台为对应账户充值或更换有效 Token。"
-                    "若你个人龙虾积分仍充足，属于平台侧速推账户问题，而非你账号。"
-                ),
-                "type": "billing_error",
-                "code": "upstream_insufficient_balance",
-            }
+
+
+def _normalize_upstream_xskill_pool_errors_for_client(data: Any) -> Any:
+    """
+    将 xskill Token 池侧余额/预扣美元失败，替换为明确中文。
+    「能否发起对话」仅以龙虾积分预检为准；此处仅为上游池子故障时的对外说明。
+    """
+    if not isinstance(data, dict) or not _xskill_upstream_pool_quota_error(data):
+        return data
+    return {
+        "error": {
+            "message": (
+                "线路暂时不可用：速推（xskill）托管 Token 池在对方侧额度异常，需管理员在速推控制台"
+                "为该池充值或更换密钥。你在龙虾的积分若仍充足，并非你个人欠费；请稍后重试或联系客服。"
+            ),
+            "type": "billing_error",
+            "code": "upstream_insufficient_balance",
         }
-    return data
+    }
 
 
 def _should_deduct_credits() -> bool:
@@ -262,25 +266,36 @@ def _require_balance_before_upstream_chat(
     body: Dict[str, Any],
 ) -> None:
     """
-    在上游调用前校验余额：仅当 docs 能取到 pricing 时按本次请求做保守预估。
-    无定价时不拦截（与原先「仍转发、事后按返回计费」一致），避免误杀。
+    上游调用前预检：只根据龙虾用户积分是否覆盖本次「保守估计」消耗；
+    与 xskill 侧美元余额无关。有 docs 定价优先用定价；否则用 fallback 按粗估 token 折算；再不行至少 1 积分门槛。
     """
     if not _should_deduct_credits() or not (model_id or "").strip():
         return
-    pricing = fetch_model_pricing(model_id)
-    if not pricing:
-        return
     params = _chat_balance_precheck_params(body)
-    need = estimate_credits_from_pricing(pricing, params)
+    need: Decimal = Decimal(0)
+    pricing = fetch_model_pricing(model_id)
+    if pricing:
+        est = estimate_credits_from_pricing(pricing, params)
+        if est > 0:
+            need = quantize_credits(est)
     if need <= 0:
-        return
+        synth_usage = {
+            "prompt_tokens": params["prompt_tokens"],
+            "completion_tokens": params["completion_tokens"],
+        }
+        fb = credits_from_chat_usage_when_no_docs_pricing(synth_usage)
+        if fb > 0:
+            need = fb
+    if need <= 0:
+        need = quantize_credits(1)
+
     db.refresh(current_user)
     bal = user_balance_decimal(current_user)
     if bal < need:
         raise HTTPException(
             status_code=402,
             detail=(
-                f"积分不足：按本次请求参数预估至少需 {need} 积分，当前余额 {bal}。"
+                f"积分不足：按本次请求预估至少需 {need} 龙虾积分，当前余额 {bal}。"
                 "请充值或缩短上下文/降低 max_tokens 后重试。"
             ),
         )
@@ -570,10 +585,15 @@ async def sutui_chat_completions(
                 model_id,
             )
 
-        out = _normalize_upstream_402_for_client(data) if r.status_code == 402 else data
+        out = data
+        resp_status = r.status_code
+        if r.status_code in (402, 403):
+            out = _normalize_upstream_xskill_pool_errors_for_client(data)
+            if r.status_code == 403 and _xskill_upstream_pool_quota_error(data):
+                resp_status = 503
         return JSONResponse(
             content=out,
-            status_code=r.status_code,
+            status_code=resp_status,
             headers={TRACE_HEADER: trace_id},
         )
 
@@ -612,7 +632,9 @@ async def sutui_chat_completions(
                                 parsed = json.loads(txt) if txt.strip().startswith("{") else {}
                             except Exception:
                                 parsed = {}
-                            norm = _normalize_upstream_402_for_client(parsed if isinstance(parsed, dict) else {})
+                            norm = _normalize_upstream_xskill_pool_errors_for_client(
+                                parsed if isinstance(parsed, dict) else {}
+                            )
                             if isinstance(norm, dict) and norm.get("error"):
                                 err = json.dumps(norm, ensure_ascii=False)
                             else:
@@ -621,12 +643,29 @@ async def sutui_chat_completions(
                                         "error": {
                                             "message": (
                                                 "速推服务端账户余额不足（流式上游返回 402）。"
-                                                "需管理员在速推控制台为服务器 Token 池对应账户充值。"
+                                                "需管理员在速推控制台为服务器 Token 池对应账户充值而你个人龙虾积分若充足则非你欠费。"
                                             ),
                                             "type": "billing_error",
                                             "code": "upstream_insufficient_balance",
                                         }
                                     },
+                                    ensure_ascii=False,
+                                )
+                        elif resp.status_code == 403:
+                            try:
+                                parsed403 = json.loads(txt) if txt.strip().startswith("{") else {}
+                            except Exception:
+                                parsed403 = {}
+                            pd = parsed403 if isinstance(parsed403, dict) else {}
+                            if _xskill_upstream_pool_quota_error(pd):
+                                norm403 = _normalize_upstream_xskill_pool_errors_for_client(pd)
+                                err = json.dumps(
+                                    norm403 if isinstance(norm403, dict) else {"error": norm403},
+                                    ensure_ascii=False,
+                                )
+                            else:
+                                err = json.dumps(
+                                    {"error": {"message": txt[:2000], "status": 403}},
                                     ensure_ascii=False,
                                 )
                         else:
