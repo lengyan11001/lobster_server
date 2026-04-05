@@ -2072,6 +2072,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 if _emb in ("video.generate", "image.generate"):
                     record_capability_id = _emb
 
+            # 速推类计费仅在本 MCP invoke_capability 内编排：pre-deduct → 上游 → record-call/refund。chat 等不重复扣费。
             pre_deduct_amount = quantize_credits(0)
             billing_idem = str(uuid.uuid4())
             if token:

@@ -1,4 +1,8 @@
-"""Capabilities: list available capabilities and call logs；调用时按 unit_credits 扣积分（与速推同扣）。付费技能仅已解锁用户可用。"""
+"""能力注册、调用日志与用户积分变更（与速推同扣）。
+
+动账接口 /capabilities/pre-deduct、record-call、refund 的**唯一实现**在本模块；应由 **实际调用速推的 MCP**
+invoke_capability 顺序触发，不在此之外再实现第二套扣费。
+"""
 import json
 from datetime import datetime, timedelta
 from typing import Optional
@@ -54,7 +58,8 @@ def _require_sutui_brand_for_billing(user: User, *, upstream: str) -> None:
 def _billing_request_may_mutate_balance(request: Request) -> bool:
     """
     仅本机 MCP（直连 Backend 的 127.0.0.1/::1）或携带 X-Lobster-Mcp-Billing 与 LOBSTER_MCP_BILLING_INTERNAL_KEY 一致时，
-    对 pre-deduct / record-call / refund 做实质积分变更；其它来源（公网直连、本机代理转发）返回 billing_skipped，避免与 MCP 重复扣费。
+    对 pre-deduct / record-call / refund 做实质积分变更。
+    在线独立认证且需扣费时：不满足上述条件则返回 403，禁止「未扣费即生成」。
     """
     k = (getattr(settings, "lobster_mcp_billing_internal_key", None) or "").strip()
     h = (request.headers.get("X-Lobster-Mcp-Billing") or "").strip()
@@ -228,7 +233,14 @@ def pre_deduct(
     if not _should_deduct_credits():
         return {"credits_charged": 0, "message": "未启用积分扣减"}
     if not _billing_request_may_mutate_balance(request):
-        return {"credits_charged": 0, "billing_skipped": True}
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "计费请求来源未受信任（非本机回环且未携带有效 X-Lobster-Mcp-Billing），"
+                "拒绝预扣以免未扣费即调用上游。请为 MCP/网关配置与认证中心一致的 LOBSTER_MCP_BILLING_INTERNAL_KEY，"
+                "并在请求认证中心 /capabilities/pre-deduct（及 record-call、refund）时带上请求头 X-Lobster-Mcp-Billing。"
+            ),
+        )
     if idem_key:
         cached = _pre_deduct_idempotent_cached(db, current_user.id, idem_key)
         if cached is not None:
@@ -338,7 +350,13 @@ def refund_credits(
     if not _should_deduct_credits() or body.credits <= 0:
         return {"ok": True}
     if not _billing_request_may_mutate_balance(request):
-        return {"ok": True, "billing_skipped": True, "refunded": 0}
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "退费请求来源未受信任，拒绝执行以免账务不一致。"
+                "请配置 LOBSTER_MCP_BILLING_INTERNAL_KEY 并转发 X-Lobster-Mcp-Billing。"
+            ),
+        )
     db.refresh(current_user)
     refund_amt = quantize_credits(body.credits)
     current_user.credits = user_balance_decimal(current_user) + refund_amt
@@ -382,13 +400,13 @@ def record_call(
             detail="该能力属于付费技能，请先在技能商店付费解锁后再使用。",
         )
     if _should_deduct_credits() and not _billing_request_may_mutate_balance(request):
-        return {
-            "id": 0,
-            "capability_id": body.capability_id,
-            "success": body.success,
-            "credits_charged": 0,
-            "billing_skipped": True,
-        }
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "结算请求来源未受信任（非本机回环且未携带有效 X-Lobster-Mcp-Billing），"
+                "拒绝记录调用/扣费以免未记账即完成生成。请配置 LOBSTER_MCP_BILLING_INTERNAL_KEY 并转发 X-Lobster-Mcp-Billing。"
+            ),
+        )
     cap = db.query(CapabilityConfig).filter(CapabilityConfig.capability_id == body.capability_id).first()
     upstream_rc = (getattr(cap, "upstream", None) or "").strip() if cap else ""
     _require_sutui_brand_for_billing(current_user, upstream=upstream_rc)

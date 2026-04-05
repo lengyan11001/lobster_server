@@ -70,10 +70,14 @@ def _start_mcp_if_needed():
             "import sys; sys.path.insert(0, %s); sys.argv = ['mcp', '--port', '%s']; "
             "import runpy; runpy.run_module('mcp', run_name='__main__', alter_sys=True)"
         ) % (repr(mcp_root), mcp_port)
+        _mcp_env = os.environ.copy()
+        _mbk = (getattr(settings, "lobster_mcp_billing_internal_key", None) or "").strip()
+        if _mbk:
+            _mcp_env["LOBSTER_MCP_BILLING_INTERNAL_KEY"] = _mbk
         subprocess.Popen(
             [sys.executable, "-c", _cmd],
             cwd=mcp_root,
-            env=os.environ.copy(),
+            env=_mcp_env,
             stdout=_mcp_log,
             stderr=subprocess.STDOUT if _mcp_log != subprocess.DEVNULL else subprocess.DEVNULL,
             start_new_session=True,
