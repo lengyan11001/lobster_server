@@ -332,7 +332,15 @@ class CreditLedger(Base):
 
 
 class SutuiReconciliationRun(Base):
-    """定时对账：每把速推 server token 的远端余额变动 vs 本地带 _recon 的积分流水（运营用，不对用户展示）。"""
+    """定时对账：每把速推 server token 的远端余额变动 vs 本地带 _recon 的积分流水（运营用，不对用户展示）。
+
+    字段含义（同一 sutui_token_ref 按 id 链式相邻两行对比）：
+    - balance_remote_prev：上一轮入库的速推余额（「上次余额」）；基线行无
+    - balance_remote：本轮拉取的速推余额（「本次余额」）
+    - remote_delta：.prev − .current = 速推侧消耗（正数表示余额减少）
+    - local_net_credits：自上一轮 created_at 起，本地 credit_ledger 中带 _recon 且 ref 匹配的净消耗（与用户侧扣费口径一致）
+    - diff：remote_delta − local_net_credits（误差；|diff| 大需排查）
+    """
 
     __tablename__ = "sutui_reconciliation_runs"
     __table_args__ = (Index("ix_sutui_recon_ref_created", "sutui_token_ref", "created_at"),)
@@ -341,6 +349,7 @@ class SutuiReconciliationRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     pool: Mapped[str] = mapped_column(String(32), nullable=False)
     sutui_token_ref: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    balance_remote_prev: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
     balance_remote: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
     remote_delta: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
     local_net_credits: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)

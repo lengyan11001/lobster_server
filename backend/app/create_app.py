@@ -505,6 +505,34 @@ def _migrate_credits_decimal_mysql():
         logger.warning("Migration credits decimal (mysql) skipped: %s", e)
 
 
+def _migrate_sutui_recon_balance_remote_prev():
+    """为 sutui_reconciliation_runs 增加 balance_remote_prev（上次速推余额），便于 SQL 直接对账。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("sutui_reconciliation_runs"):
+            return
+        cols = [c["name"] for c in insp.get_columns("sutui_reconciliation_runs")]
+        if "balance_remote_prev" in cols:
+            return
+        with engine.begin() as conn:
+            dname = (conn.dialect.name or "").lower()
+            if dname == "sqlite":
+                conn.execute(
+                    text("ALTER TABLE sutui_reconciliation_runs ADD COLUMN balance_remote_prev NUMERIC(20, 4)")
+                )
+            else:
+                conn.execute(
+                    text(
+                        "ALTER TABLE sutui_reconciliation_runs ADD COLUMN balance_remote_prev DECIMAL(20,4) NULL"
+                    )
+                )
+        logger.info("[启动] sutui_reconciliation_runs 已增加列 balance_remote_prev")
+    except Exception as e:
+        logger.warning("Migration sutui_recon balance_remote_prev skipped: %s", e)
+
+
 def _backfill_installation_signup_bonus_claims():
     """已有 user_installations 的设备视为已占用新人礼包，避免上线后同机多号再领满额分。"""
     from sqlalchemy import inspect
@@ -585,6 +613,7 @@ def create_app() -> FastAPI:
     _migrate_credits_decimal_sqlite()
     _migrate_credits_decimal_mysql()
     _backfill_installation_signup_bonus_claims()
+    _migrate_sutui_recon_balance_remote_prev()
     _migrate_capability_configs_extra_config()
     _ensure_default_user()
     _seed_capability_catalog()

@@ -178,6 +178,7 @@ def seed_sutui_reconciliation_baseline() -> Dict[str, Any]:
             row = SutuiReconciliationRun(
                 pool=pool,
                 sutui_token_ref=ref,
+                balance_remote_prev=None,
                 balance_remote=bal,
                 remote_delta=None,
                 local_net_credits=quantize_credits(0),
@@ -264,6 +265,7 @@ def run_sutui_reconcile_sync() -> Dict[str, Any]:
             row = SutuiReconciliationRun(
                 pool=pool,
                 sutui_token_ref=ref,
+                balance_remote_prev=prev_bal,
                 balance_remote=bal,
                 remote_delta=remote_used,
                 local_net_credits=local_net,
@@ -277,6 +279,7 @@ def run_sutui_reconcile_sync() -> Dict[str, Any]:
                 {
                     "pool": pool,
                     "sutui_token_ref": ref,
+                    "balance_remote_prev": float(prev_bal) if prev_bal is not None else None,
                     "balance_remote": float(bal) if bal is not None else None,
                     "remote_delta": float(remote_used) if remote_used is not None else None,
                     "local_net": float(local_net),
