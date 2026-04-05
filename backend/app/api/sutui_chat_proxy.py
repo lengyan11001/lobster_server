@@ -306,14 +306,14 @@ def _credits_for_sutui_chat(
         if not err and est2 > 0:
             return quantize_credits(est2), "docs定价(默认参)"
         if usage and isinstance(usage, dict) and _total_tokens_in_usage(usage) > 0:
-            fb2 = credits_from_chat_usage_when_no_docs_pricing(usage)
+            fb2 = credits_from_chat_usage_when_no_docs_pricing(usage, model)
             if fb2 > 0:
                 return fb2, "usage折算(docs未算出)"
         logger.warning("[sutui-chat] 有 pricing 结构但仍无法扣费 model=%s usage=%s", model, usage)
         return Decimal(0), "未扣费"
 
     if usage and isinstance(usage, dict) and _total_tokens_in_usage(usage) > 0:
-        fb3 = credits_from_chat_usage_when_no_docs_pricing(usage)
+        fb3 = credits_from_chat_usage_when_no_docs_pricing(usage, model)
         if fb3 > 0:
             return fb3, "usage折算(无docs定价)"
     logger.warning(

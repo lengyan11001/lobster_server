@@ -20,6 +20,41 @@ from .credits_amount import quantize_credits
 _DOCS_CACHE: Dict[str, Tuple[float, Optional[dict]]] = {}
 _CACHE_TTL_SEC = 3600
 
+# 公开 docs 无条目的对话模型：流式常无 x_billing，仅能按 usage×费率估算；费率按与非流式 x_billing 同量级校准，可用 env JSON 覆盖。
+_BUILTIN_CHAT_USAGE_CREDITS_PER_1K_BY_MODEL: Dict[str, float] = {
+    "deepseek-chat": 0.062,
+}
+
+
+def _usage_credits_per_1k_for_model(model_id: str) -> float:
+    """无 docs、无上游价字段时：先查内置/配置的按模型费率，否则 sutui_chat_fallback_credits_per_1k。"""
+    mid = (model_id or "").strip()
+    try:
+        default_rate = float(getattr(settings, "sutui_chat_fallback_credits_per_1k", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        default_rate = 0.0
+    merged: Dict[str, float] = dict(_BUILTIN_CHAT_USAGE_CREDITS_PER_1K_BY_MODEL)
+    raw = (getattr(settings, "sutui_chat_usage_credits_per_1k_by_model_json", None) or "").strip()
+    if raw:
+        try:
+            extra = json.loads(raw)
+        except json.JSONDecodeError:
+            extra = None
+        if isinstance(extra, dict):
+            for k, v in extra.items():
+                ks = str(k).strip()
+                if not ks:
+                    continue
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if fv > 0:
+                    merged[ks] = fv
+    if mid and mid in merged:
+        return merged[mid]
+    return default_rate
+
 
 def _api_base() -> str:
     return (getattr(settings, "sutui_api_base", None) or "https://api.xskill.ai").rstrip("/")
@@ -137,15 +172,14 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
     return _quantize_credits(float(base))
 
 
-def credits_from_chat_usage_when_no_docs_pricing(usage: Optional[dict]) -> Decimal:
+def credits_from_chat_usage_when_no_docs_pricing(
+    usage: Optional[dict], model_id: Optional[str] = None
+) -> Decimal:
     """
     docs 无定价或定价无法用于本次扣费时：按上游 chat/completions 返回的 usage 事后折算积分。
-    与 SUTUI_CHAT_MODEL_MAP 等无关，只看 token 计数；预检阶段仍可不拦截（无 pricing 时 _require_balance_before_upstream_chat 直接 return）。
+    model_id 用于按模型费率（内置表或 SUTUI_CHAT_USAGE_CREDITS_PER_1K_BY_MODEL_JSON）；预检阶段仍可不拦截。
     """
-    try:
-        rate = float(getattr(settings, "sutui_chat_fallback_credits_per_1k", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        rate = 0.0
+    rate = _usage_credits_per_1k_for_model(model_id or "")
     if rate <= 0:
         return Decimal(0)
     if not usage or not isinstance(usage, dict):

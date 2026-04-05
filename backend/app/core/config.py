@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     sutui_api_base: str = "https://api.xskill.ai"
     # sutui-chat：docs 无定价时按上游 usage 每千 token 事后扣费（ceil）；0=禁用兜底
     sutui_chat_fallback_credits_per_1k: float = 1.0
+    """可选，JSON 对象：按 model id 覆盖「无 docs、无 x_billing」时的每千 token 积分单价，与内置表合并（同名键以此为准）。例：{"deepseek-chat":0.055}。速推 /v3/models/{id}/docs 公开列表常不含 LLM，流式又无 x_billing 时依赖此项或内置。"""
+    sutui_chat_usage_credits_per_1k_by_model_json: Optional[str] = None
     """服务器侧速推 Token：能力由服务器转发时使用，用户不直接走速推。MCP 从环境变量 SUTUI_SERVER_TOKEN 读取。"""
     sutui_server_token: Optional[str] = None
     """我方标识，登录时带在 URL 上供速推统计（仅 online 使用）"""
