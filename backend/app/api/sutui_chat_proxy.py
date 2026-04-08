@@ -175,9 +175,9 @@ def _xskill_upstream_pool_quota_error(data: Any) -> bool:
 
 
 def _parse_sutui_chat_fallback_chain_env() -> List[str]:
-    """主→备模型顺序：默认 deepseek-chat → claude-opus-4-6；可用 SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON 覆盖。"""
+    """主→备模型顺序：默认 deepseek-chat → gpt-4o；可用 SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON 覆盖。"""
     raw = (os.environ.get("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON") or "").strip()
-    default = ["deepseek-chat", "claude-opus-4-6"]
+    default = ["deepseek-chat", "gpt-4o"]
     if not raw:
         return default
     try:
@@ -202,24 +202,12 @@ def _remap_model_id_for_sutui(mid: str) -> str:
 
 def _sutui_chat_model_candidates(initial_model: str, *, has_tools: bool = False) -> List[str]:
     """
-    对话编排：优先用入站（已 remap）的 model，再按固定链尝试其它通道，去重。
-    has_tools=True 且首选模型 tool_calls 遵从率低时，将高遵从模型提到最前（避免白等一轮）。
+    对话编排：优先用入站（已 remap）的 model，再按 fallback chain 尝试其它通道，去重。
+    不再对 deepseek-chat 做"tool-weak"跳过 — 实测其 tool_calls 遵从率正常。
     """
-    _TOOL_WEAK_MODELS = {"deepseek-chat", "deepseek-v3", "deepseek-v3.1", "deepseek-reasoner"}
-    chain = _parse_sutui_chat_fallback_chain_env()
-
     seen: set[str] = set()
     out: List[str] = []
     init = (initial_model or "").strip()
-
-    if has_tools and init in _TOOL_WEAK_MODELS and len(chain) > 1:
-        better = [_remap_model_id_for_sutui(m) for m in chain if _remap_model_id_for_sutui(m) not in _TOOL_WEAK_MODELS]
-        if better:
-            for b in better:
-                if b and b not in seen:
-                    seen.add(b)
-                    out.append(b)
-            logger.info("[sutui-chat] tools 请求：跳过 tool_calls 弱模型 %s，首选 %s", init, out[0] if out else "?")
 
     if init and init not in seen:
         seen.add(init)
@@ -688,7 +676,7 @@ async def sutui_chat_completions(
         for attempt_idx, mid_try in enumerate(model_candidates):
             body["model"] = mid_try
             try:
-                async with httpx.AsyncClient(timeout=120.0, trust_env=True) as client:
+                async with httpx.AsyncClient(timeout=60.0, trust_env=True) as client:
                     r = await client.post(url, json=body, headers=headers)
             except httpx.ConnectError as e:
                 last_connect_error = e
