@@ -200,15 +200,28 @@ def _remap_model_id_for_sutui(mid: str) -> str:
     return (b.get("model") or "").strip()
 
 
-def _sutui_chat_model_candidates(initial_model: str) -> List[str]:
+def _sutui_chat_model_candidates(initial_model: str, *, has_tools: bool = False) -> List[str]:
     """
     对话编排：优先用入站（已 remap）的 model，再按固定链尝试其它通道，去重。
-    备链中每项会先过 model map，避免名称与分销商真实 id 不一致。
+    has_tools=True 且首选模型 tool_calls 遵从率低时，将高遵从模型提到最前（避免白等一轮）。
     """
+    _TOOL_WEAK_MODELS = {"deepseek-chat", "deepseek-v3", "deepseek-v3.1", "deepseek-reasoner"}
+    chain = _parse_sutui_chat_fallback_chain_env()
+
     seen: set[str] = set()
     out: List[str] = []
     init = (initial_model or "").strip()
-    if init:
+
+    if has_tools and init in _TOOL_WEAK_MODELS and len(chain) > 1:
+        better = [_remap_model_id_for_sutui(m) for m in chain if _remap_model_id_for_sutui(m) not in _TOOL_WEAK_MODELS]
+        if better:
+            for b in better:
+                if b and b not in seen:
+                    seen.add(b)
+                    out.append(b)
+            logger.info("[sutui-chat] tools 请求：跳过 tool_calls 弱模型 %s，首选 %s", init, out[0] if out else "?")
+
+    if init and init not in seen:
         seen.add(init)
         out.append(init)
     for fb in _parse_sutui_chat_fallback_chain_env():
@@ -629,7 +642,8 @@ async def sutui_chat_completions(
     }
 
     model_id = (body.get("model") or "").strip()
-    model_candidates = _sutui_chat_model_candidates(model_id)
+    _req_has_tools = bool(body.get("tools")) and body.get("tool_choice") != "none"
+    model_candidates = _sutui_chat_model_candidates(model_id, has_tools=_req_has_tools)
     _tok = (token or "").strip()
     _tok_ref = sutui_token_ref_from_secret(_tok) or "-"
     _tok_tail = _tok[-6:] if len(_tok) > 6 else "***"
