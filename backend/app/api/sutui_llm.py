@@ -1,6 +1,7 @@
 """速推 LLM 探测结果只读接口。"""
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
@@ -11,6 +12,7 @@ from ..models import User
 from ..services.sutui_llm_probe import (
     _fetch_mcp_models,
     filter_chat_models_for_api,
+    pick_default_sutui_llm_id,
     read_sutui_llm_snapshot,
 )
 from .auth import get_current_user
@@ -19,10 +21,16 @@ router = APIRouter()
 
 
 def _pick_recommended_chat(models: List[Dict[str, Any]], previous: object) -> Optional[str]:
-    """在仅含对话类的列表中选推荐：优先沿用快照推荐（若仍在列表内），否则优先 available，再取首项。"""
+    """在仅含对话类的列表中选推荐：环境变量 SUTUI_LLM_RECOMMENDED_ID > 默认 DeepSeek Chat > 沿用快照 > 首个 available。"""
     ids = [str(m.get("id") or "").strip() for m in models if m.get("id")]
     if not ids:
         return None
+    env_pref = (os.environ.get("SUTUI_LLM_RECOMMENDED_ID") or "").strip()
+    if env_pref and env_pref in ids:
+        return env_pref
+    preferred = pick_default_sutui_llm_id(ids)
+    if preferred:
+        return preferred
     prev = str(previous or "").strip()
     if prev and prev in ids:
         return prev

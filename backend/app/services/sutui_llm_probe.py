@@ -21,6 +21,17 @@ _ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _DATA_DIR = _ROOT / "data"
 _SNAPSHOT_PATH = _DATA_DIR / "sutui_llm_snapshot.json"
 
+# 与 lobster_online Settings.lobster_default_sutui_chat_model 对齐；整条推荐链可被 SUTUI_LLM_RECOMMENDED_ID 覆盖
+_DEFAULT_SUTUI_LLM_FALLBACK_IDS: tuple[str, ...] = ("deepseek-chat", "deepseek/deepseek-chat")
+
+
+def pick_default_sutui_llm_id(candidate_ids: List[str]) -> Optional[str]:
+    """在候选 id 中优先选 DeepSeek Chat（分销商 mcp/models 里存在时）。"""
+    for prefer in _DEFAULT_SUTUI_LLM_FALLBACK_IDS:
+        if prefer in candidate_ids:
+            return prefer
+    return None
+
 
 def snapshot_path() -> Path:
     return _SNAPSHOT_PATH
@@ -199,6 +210,9 @@ def _pick_recommended(candidates: List[Dict[str, Any]]) -> Optional[str]:
         return None
     if env_pref and env_pref in ids:
         return env_pref
+    preferred = pick_default_sutui_llm_id(ids)
+    if preferred:
+        return preferred
     return ids[0]
 
 
