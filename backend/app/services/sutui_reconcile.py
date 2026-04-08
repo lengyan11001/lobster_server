@@ -24,7 +24,7 @@ from ..core.config import settings
 from ..db import SessionLocal
 from ..models import CreditLedger, SutuiReconciliationRun
 from ..services.credits_amount import quantize_credits
-from ..services.sutui_llm_probe import is_sutui_llm_probe_enabled_for_this_instance
+from ..services.sutui_llm_probe import is_lobster_server_domestic_instance
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ _DEFAULT_INTERVAL = 3600.0
 
 
 def is_sutui_reconcile_enabled() -> bool:
-    if not is_sutui_llm_probe_enabled_for_this_instance():
+    if not is_lobster_server_domestic_instance():
         return False
     v = (os.environ.get("LOBSTER_SUTUI_RECONCILE_ENABLED") or "true").strip().lower()
     return v not in ("0", "false", "no", "off")

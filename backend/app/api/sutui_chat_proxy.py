@@ -6,7 +6,7 @@ import logging
 import os
 import uuid
 from decimal import Decimal
-from typing import Any, AsyncIterator, Dict, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -157,6 +157,147 @@ def _xskill_upstream_pool_quota_error(data: Any) -> bool:
         or (typ == "rix_api_error" and ("insufficient" in code or "预扣费" in raw_msg))
         or "insufficient" in msg
     )
+
+
+def _parse_sutui_chat_fallback_chain_env() -> List[str]:
+    """主→备模型顺序：默认同 deepseek-chat → Opus 4；可用 SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON 覆盖。"""
+    raw = (os.environ.get("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON") or "").strip()
+    default = ["deepseek-chat", "anthropic/claude-opus-4-6"]
+    if not raw:
+        return default
+    try:
+        arr = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("[sutui-chat] SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON 不是合法 JSON，已用默认链")
+        return default
+    if not isinstance(arr, list) or not arr:
+        return default
+    out = [str(x).strip() for x in arr if str(x).strip()]
+    return out if out else default
+
+
+def _remap_model_id_for_sutui(mid: str) -> str:
+    """对单个 model id 应用 SUTUI_CHAT_MODEL_MAP_JSON（与 body 一致）。"""
+    b: Dict[str, Any] = {"model": (mid or "").strip()}
+    if not b["model"]:
+        return ""
+    _remap_sutui_chat_model(b)
+    return (b.get("model") or "").strip()
+
+
+def _sutui_chat_model_candidates(initial_model: str) -> List[str]:
+    """
+    对话编排：优先用入站（已 remap）的 model，再按固定链尝试其它通道，去重。
+    备链中每项会先过 model map，避免名称与分销商真实 id 不一致。
+    """
+    seen: set[str] = set()
+    out: List[str] = []
+    init = (initial_model or "").strip()
+    if init:
+        seen.add(init)
+        out.append(init)
+    for fb in _parse_sutui_chat_fallback_chain_env():
+        m = _remap_model_id_for_sutui(fb)
+        if m and m not in seen:
+            seen.add(m)
+            out.append(m)
+    return out if out else ([init] if init else [])
+
+
+def _openai_nonstream_completion_usable(data: Any, http_status: int) -> bool:
+    """非流式：须为 200 且含非空 choices，且不应为上游业务/池错误 JSON。"""
+    if http_status != 200:
+        return False
+    if not isinstance(data, dict):
+        return False
+    top_err = data.get("error")
+    if isinstance(top_err, dict) and top_err.get("message"):
+        return False
+    if isinstance(top_err, str) and top_err.strip():
+        return False
+    e = _upstream_chat_error_dict(data)
+    if isinstance(e, dict) and e.get("message"):
+        return False
+    choices = data.get("choices")
+    if not isinstance(choices, list) or len(choices) < 1:
+        return False
+    return True
+
+
+def _openai_completion_missing_tool_calls(data: Any, request_body: Dict[str, Any]) -> bool:
+    """请求中传了 tools 且 tool_choice 非 none，但响应不含 tool_calls——模型未遵从 tool 指令，值得换模型重试。"""
+    if not isinstance(request_body, dict):
+        return False
+    tools = request_body.get("tools")
+    if not isinstance(tools, list) or not tools:
+        return False
+    tc = (request_body.get("tool_choice") or "auto")
+    if isinstance(tc, str) and tc.strip().lower() == "none":
+        return False
+    if not isinstance(data, dict):
+        return False
+    choices = data.get("choices")
+    if not isinstance(choices, list) or len(choices) < 1:
+        return False
+    msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(msg, dict):
+        return False
+    tcs = msg.get("tool_calls")
+    if isinstance(tcs, list) and len(tcs) > 0:
+        return False
+    return True
+
+
+def _sutui_chat_abort_model_fallback(http_status: int, data: Any) -> bool:
+    """此类结果换模型无意义，直接结束尝试。"""
+    if http_status == 401:
+        return True
+    # xskill chat 上游 402 多为托管池预扣/余额问题，换模型通常仍走同一 Token
+    if http_status == 402:
+        return True
+    if isinstance(data, dict) and _xskill_upstream_pool_quota_error(data):
+        return True
+    return False
+
+
+def _stream_upstream_error_sse_bytes(resp_status: int, txt: str) -> bytes:
+    """流式连接在收到 HTTP>=400 且无 body 流时，向下游补一条 SSE error（与非流式语义对齐）。"""
+    if resp_status == 402:
+        try:
+            parsed = json.loads(txt) if txt.strip().startswith("{") else {}
+        except Exception:
+            parsed = {}
+        norm = _normalize_upstream_xskill_pool_errors_for_client(parsed if isinstance(parsed, dict) else {})
+        if isinstance(norm, dict) and norm.get("error"):
+            err = json.dumps(norm, ensure_ascii=False)
+        else:
+            err = json.dumps(
+                {
+                    "error": {
+                        "message": (
+                            "速推服务端账户余额不足（流式上游返回 402）。"
+                            "需管理员在速推控制台为服务器 Token 池对应账户充值而你个人龙虾积分若充足则非你欠费。"
+                        ),
+                        "type": "billing_error",
+                        "code": "upstream_insufficient_balance",
+                    }
+                },
+                ensure_ascii=False,
+            )
+    elif resp_status == 403:
+        try:
+            parsed403 = json.loads(txt) if txt.strip().startswith("{") else {}
+        except Exception:
+            parsed403 = {}
+        pd = parsed403 if isinstance(parsed403, dict) else {}
+        if _xskill_upstream_pool_quota_error(pd):
+            norm403 = _normalize_upstream_xskill_pool_errors_for_client(pd)
+            err = json.dumps(norm403 if isinstance(norm403, dict) else {"error": norm403}, ensure_ascii=False)
+        else:
+            err = json.dumps({"error": {"message": txt[:2000], "status": 403}}, ensure_ascii=False)
+    else:
+        err = json.dumps({"error": {"message": txt[:2000], "status": resp_status}}, ensure_ascii=False)
+    return f"data: {err}\n\n".encode("utf-8")
 
 
 def _normalize_upstream_xskill_pool_errors_for_client(data: Any) -> Any:
@@ -473,12 +614,13 @@ async def sutui_chat_completions(
     }
 
     model_id = (body.get("model") or "").strip()
+    model_candidates = _sutui_chat_model_candidates(model_id)
     _tok = (token or "").strip()
     _tok_ref = sutui_token_ref_from_secret(_tok) or "-"
     _tok_tail = _tok[-6:] if len(_tok) > 6 else "***"
     logger.info(
         "[sutui-chat] 转发速推请求：POST %s | user_id=%s brand_mark=%s sutui_pool=%s | "
-        "sutui_token_ref=%s sutui_token_tail=%s | model=%s stream=%s trace_id=%s",
+        "sutui_token_ref=%s sutui_token_tail=%s | model=%s stream=%s trace_id=%s candidates=%s",
         url,
         current_user.id,
         bm,
@@ -488,13 +630,15 @@ async def sutui_chat_completions(
         model_id or "-",
         stream,
         trace_id,
+        model_candidates,
     )
     logger.info(
-        "[chat_trace] trace_id=%s path=sutui_chat_completions forward brand=%s model_after_remap=%s sutui_pool=%s",
+        "[chat_trace] trace_id=%s path=sutui_chat_completions forward brand=%s model_after_remap=%s sutui_pool=%s model_candidates=%s",
         trace_id,
         bm,
         model_id or "-",
         sutui_pool or "-",
+        model_candidates,
     )
 
     _require_balance_before_upstream_chat(db, current_user, model_id, body)
@@ -506,33 +650,111 @@ async def sutui_chat_completions(
     out_req_for_audit = clip_openai_chat_completions_json_for_audit(body)
 
     if not stream:
-        try:
-            async with httpx.AsyncClient(timeout=120.0, trust_env=True) as client:
-                r = await client.post(url, json=body, headers=headers)
-        except httpx.ConnectError as e:
-            logger.exception("[sutui-chat] 上游连接失败（出网/DNS/防火墙/上游不可达） url=%s", url)
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    f"无法连接速推 LLM 上游 {_api_base()}（chat/completions）。"
-                    f"请在服务器上检查：安全组/防火墙是否放行 HTTPS 出站、DNS 能否解析该域名、"
-                    f"是否需要 HTTP_PROXY；也可在本机执行 curl -I {_api_base()} 验证。"
-                    f" 原始错误: {e!s}"
-                )[:2000],
-            )
-        except httpx.TimeoutException as e:
-            logger.exception("[sutui-chat] 上游请求超时 url=%s", url)
-            raise HTTPException(status_code=504, detail=f"速推 LLM 上游响应超时: {e!s}"[:2000])
-        try:
-            data = r.json()
-        except Exception:
+        r: Optional[httpx.Response] = None
+        data: Any = None
+        winning_model = model_id
+        last_connect_error: Optional[Exception] = None
+        last_timeout_error: Optional[Exception] = None
+
+        for attempt_idx, mid_try in enumerate(model_candidates):
+            body["model"] = mid_try
+            try:
+                async with httpx.AsyncClient(timeout=120.0, trust_env=True) as client:
+                    r = await client.post(url, json=body, headers=headers)
+            except httpx.ConnectError as e:
+                last_connect_error = e
+                logger.warning(
+                    "[sutui-chat] 上游连接失败 attempt=%s model=%s trace_id=%s err=%s",
+                    attempt_idx,
+                    mid_try,
+                    trace_id,
+                    e,
+                )
+                if attempt_idx < len(model_candidates) - 1:
+                    continue
+                logger.exception("[sutui-chat] 上游连接失败（出网/DNS/防火墙/上游不可达） url=%s", url)
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"无法连接速推 LLM 上游 {_api_base()}（chat/completions）。"
+                        f"请在服务器上检查：安全组/防火墙是否放行 HTTPS 出站、DNS 能否解析该域名、"
+                        f"是否需要 HTTP_PROXY；也可在本机执行 curl -I {_api_base()} 验证。"
+                        f" 原始错误: {e!s}"
+                    )[:2000],
+                )
+            except httpx.TimeoutException as e:
+                last_timeout_error = e
+                logger.warning(
+                    "[sutui-chat] 上游超时 attempt=%s model=%s trace_id=%s err=%s",
+                    attempt_idx,
+                    mid_try,
+                    trace_id,
+                    e,
+                )
+                if attempt_idx < len(model_candidates) - 1:
+                    continue
+                logger.exception("[sutui-chat] 上游请求超时 url=%s", url)
+                raise HTTPException(status_code=504, detail=f"速推 LLM 上游响应超时: {e!s}"[:2000])
+
+            try:
+                data = r.json()
+            except Exception:
+                data = None
+
+            if _sutui_chat_abort_model_fallback(r.status_code, data if isinstance(data, dict) else {}):
+                winning_model = mid_try
+                break
+
+            if _openai_nonstream_completion_usable(data, r.status_code):
+                if (
+                    _openai_completion_missing_tool_calls(data, body)
+                    and attempt_idx < len(model_candidates) - 1
+                ):
+                    logger.warning(
+                        "[chat_trace] trace_id=%s path=sutui_chat tool_calls_missing model=%s "
+                        "fallback_to=%s (request had tools but response had no tool_calls)",
+                        trace_id,
+                        mid_try,
+                        model_candidates[attempt_idx + 1],
+                    )
+                    continue
+                winning_model = mid_try
+                model_id = mid_try
+                break
+
+            if attempt_idx < len(model_candidates) - 1:
+                _prev = ""
+                if isinstance(data, dict):
+                    _prev = json.dumps(data, ensure_ascii=False)[:400]
+                else:
+                    _prev = (r.text or "")[:400]
+                logger.warning(
+                    "[chat_trace] trace_id=%s path=sutui_chat fallback_model http=%s from=%s to=%s preview=%s",
+                    trace_id,
+                    r.status_code,
+                    mid_try,
+                    model_candidates[attempt_idx + 1],
+                    _prev,
+                )
+                continue
+            winning_model = mid_try
+            break
+
+        if r is None:
+            if last_connect_error:
+                raise HTTPException(status_code=502, detail=f"无法连接速推 LLM 上游: {last_connect_error!s}"[:2000])
+            if last_timeout_error:
+                raise HTTPException(status_code=504, detail=f"速推 LLM 上游响应超时: {last_timeout_error!s}"[:2000])
+            raise HTTPException(status_code=502, detail="速推 LLM 上游无响应")
+
+        if data is None:
             raise HTTPException(status_code=502, detail=(r.text or "")[:2000])
 
         logger.info(
             "[chat_trace] trace_id=%s path=sutui_chat upstream_xskill roundtrip http=%s model=%s summary=%s",
             trace_id,
             r.status_code,
-            model_id or "-",
+            winning_model or "-",
             _sutui_chat_upstream_body_for_log(data if isinstance(data, dict) else None),
         )
         _audit_snap = extract_upstream_billing_snapshot(data if isinstance(data, dict) else None)
@@ -546,7 +768,7 @@ async def sutui_chat_completions(
             method="POST",
             url=url,
             http_status=r.status_code,
-            capability_or_model=model_id or "-",
+            capability_or_model=winning_model or "-",
             billing_snapshot=_audit_snap if _audit_snap else None,
             error_message=_audit_err,
             extra={
@@ -554,6 +776,7 @@ async def sutui_chat_completions(
                 "user_id": current_user.id,
                 "stream": False,
                 "user_lobster_credits": user_bal_str,
+                "model_candidates_tried": model_candidates,
             },
             bearer_token=token,
             sutui_pool=sutui_pool or "",
@@ -561,7 +784,7 @@ async def sutui_chat_completions(
             outbound_request_json=out_req_for_audit,
         )
 
-        if r.status_code == 200 and model_id:
+        if r.status_code == 200 and winning_model and _openai_nonstream_completion_usable(data, r.status_code):
             usage_raw = data.get("usage") if isinstance(data, dict) else None
             usage_bill = _ensure_chat_usage_for_billing(
                 body,
@@ -570,7 +793,7 @@ async def sutui_chat_completions(
             _apply_chat_deduct(
                 db,
                 current_user,
-                model_id,
+                winning_model,
                 usage_bill,
                 data if isinstance(data, dict) else None,
                 billing_recon=chat_billing_recon,
@@ -578,11 +801,12 @@ async def sutui_chat_completions(
             )
         else:
             logger.info(
-                "[chat_trace] trace_id=%s path=sutui_chat deduct=skipped_nonstream reason=%s http=%s model_id=%r",
+                "[chat_trace] trace_id=%s path=sutui_chat deduct=skipped_nonstream reason=%s http=%s model_id=%r usable=%s",
                 trace_id,
-                "upstream_not_200" if r.status_code != 200 else "empty_model_id",
+                "upstream_not_200" if r.status_code != 200 else "not_usable_or_empty_model",
                 r.status_code,
-                model_id,
+                winning_model,
+                _openai_nonstream_completion_usable(data, r.status_code) if r.status_code == 200 else False,
             )
 
         out = data
@@ -591,6 +815,8 @@ async def sutui_chat_completions(
             out = _normalize_upstream_xskill_pool_errors_for_client(data)
             if r.status_code == 403 and _xskill_upstream_pool_quota_error(data):
                 resp_status = 503
+        elif resp_status >= 400:
+            out = _normalize_upstream_xskill_pool_errors_for_client(data)
         return JSONResponse(
             content=out,
             status_code=resp_status,
@@ -600,6 +826,7 @@ async def sutui_chat_completions(
     # 流式：边下边解析 SSE，取最后一个含 usage 的 data；并保留上游出现的 x_billing/X-Billing（与非流式一致，优先按 credits_used 扣）。
     # StreamingResponse 返回后，Depends(get_db) 可能在生成器尚未结束时即关闭会话，finally 内禁止再用注入的 db 扣费。
     billing_user_id = int(current_user.id)
+    billing_model_holder: List[str] = [model_id]
 
     async def gen() -> AsyncIterator[bytes]:
         line_buf = bytearray()
@@ -608,169 +835,170 @@ async def sutui_chat_completions(
         stream_upstream_billing: Dict[str, Any] = {}
         stream_completed_ok = False
         try:
-            async with httpx.AsyncClient(timeout=300.0, trust_env=True) as client:
-                async with client.stream("POST", url, json=body, headers=headers) as resp:
-                    if resp.status_code >= 400:
-                        txt = (await resp.aread()).decode("utf-8", errors="replace")
-                        logger.info(
-                            "[chat_trace] trace_id=%s path=sutui_chat upstream_xskill stream_fail http=%s preview=%s",
-                            trace_id,
-                            resp.status_code,
-                            txt[:500].replace("\n", " "),
-                        )
-                        log_xskill_http(
-                            phase="sutui_chat_completions_stream",
-                            method="POST",
-                            url=url,
-                            http_status=resp.status_code,
-                            capability_or_model=model_id or "-",
-                            billing_snapshot=None,
-                            error_message=txt[:8000],
-                            extra={
-                                "trace_id": trace_id,
-                                "user_id": current_user.id,
-                                "stream": True,
-                                "user_lobster_credits": user_bal_str,
-                            },
-                            bearer_token=token,
-                            sutui_pool=sutui_pool or "",
-                            upstream_response=txt,
-                            outbound_request_json=out_req_for_audit,
-                        )
-                        if resp.status_code == 402:
-                            try:
-                                parsed = json.loads(txt) if txt.strip().startswith("{") else {}
-                            except Exception:
-                                parsed = {}
-                            norm = _normalize_upstream_xskill_pool_errors_for_client(
-                                parsed if isinstance(parsed, dict) else {}
-                            )
-                            if isinstance(norm, dict) and norm.get("error"):
-                                err = json.dumps(norm, ensure_ascii=False)
-                            else:
-                                err = json.dumps(
-                                    {
-                                        "error": {
-                                            "message": (
-                                                "速推服务端账户余额不足（流式上游返回 402）。"
-                                                "需管理员在速推控制台为服务器 Token 池对应账户充值而你个人龙虾积分若充足则非你欠费。"
-                                            ),
-                                            "type": "billing_error",
-                                            "code": "upstream_insufficient_balance",
-                                        }
+            for cand_idx, mid_try in enumerate(model_candidates):
+                body["model"] = mid_try
+                try:
+                    async with httpx.AsyncClient(timeout=300.0, trust_env=True) as client:
+                        async with client.stream("POST", url, json=body, headers=headers) as resp:
+                            if resp.status_code >= 400:
+                                txt = (await resp.aread()).decode("utf-8", errors="replace")
+                                logger.info(
+                                    "[chat_trace] trace_id=%s path=sutui_chat upstream_xskill stream_fail http=%s model=%s preview=%s",
+                                    trace_id,
+                                    resp.status_code,
+                                    mid_try,
+                                    txt[:500].replace("\n", " "),
+                                )
+                                try:
+                                    parsed_j = json.loads(txt) if txt.strip().startswith("{") else {}
+                                except Exception:
+                                    parsed_j = {}
+                                pj = parsed_j if isinstance(parsed_j, dict) else {}
+                                log_xskill_http(
+                                    phase="sutui_chat_completions_stream",
+                                    method="POST",
+                                    url=url,
+                                    http_status=resp.status_code,
+                                    capability_or_model=mid_try or "-",
+                                    billing_snapshot=None,
+                                    error_message=txt[:8000],
+                                    extra={
+                                        "trace_id": trace_id,
+                                        "user_id": current_user.id,
+                                        "stream": True,
+                                        "user_lobster_credits": user_bal_str,
+                                        "model_candidates_tried": model_candidates,
+                                        "stream_attempt": cand_idx,
                                     },
-                                    ensure_ascii=False,
+                                    bearer_token=token,
+                                    sutui_pool=sutui_pool or "",
+                                    upstream_response=txt,
+                                    outbound_request_json=out_req_for_audit,
                                 )
-                        elif resp.status_code == 403:
-                            try:
-                                parsed403 = json.loads(txt) if txt.strip().startswith("{") else {}
-                            except Exception:
-                                parsed403 = {}
-                            pd = parsed403 if isinstance(parsed403, dict) else {}
-                            if _xskill_upstream_pool_quota_error(pd):
-                                norm403 = _normalize_upstream_xskill_pool_errors_for_client(pd)
-                                err = json.dumps(
-                                    norm403 if isinstance(norm403, dict) else {"error": norm403},
-                                    ensure_ascii=False,
-                                )
-                            else:
-                                err = json.dumps(
-                                    {"error": {"message": txt[:2000], "status": 403}},
-                                    ensure_ascii=False,
-                                )
-                        else:
-                            err = json.dumps({"error": {"message": txt[:2000], "status": resp.status_code}}, ensure_ascii=False)
-                        yield f"data: {err}\n\n".encode("utf-8")
-                        return
-                    stream_completed_ok = True
-                    logger.info(
-                        "[chat_trace] trace_id=%s path=sutui_chat upstream_xskill stream_started http=200 model=%s",
-                        trace_id,
-                        model_id or "-",
-                    )
-                    log_xskill_http(
-                        phase="sutui_chat_completions_stream",
-                        method="POST",
-                        url=url,
-                        http_status=200,
-                        capability_or_model=model_id or "-",
-                        billing_snapshot={"note": "stream started; usage/x_billing 在流结束后扣费日志中"},
-                        error_message="",
-                        extra={
-                            "trace_id": trace_id,
-                            "user_id": current_user.id,
-                            "stream": True,
-                            "user_lobster_credits": user_bal_str,
+                                if _sutui_chat_abort_model_fallback(resp.status_code, pj):
+                                    yield _stream_upstream_error_sse_bytes(resp.status_code, txt)
+                                    return
+                                if cand_idx < len(model_candidates) - 1:
+                                    logger.warning(
+                                        "[chat_trace] trace_id=%s path=sutui_chat stream_fallback http=%s from=%s to=%s",
+                                        trace_id,
+                                        resp.status_code,
+                                        mid_try,
+                                        model_candidates[cand_idx + 1],
+                                    )
+                                    continue
+                                yield _stream_upstream_error_sse_bytes(resp.status_code, txt)
+                                return
+
+                            billing_model_holder[0] = mid_try
+                            stream_completed_ok = True
+                            logger.info(
+                                "[chat_trace] trace_id=%s path=sutui_chat upstream_xskill stream_started http=200 model=%s",
+                                trace_id,
+                                mid_try or "-",
+                            )
+                            log_xskill_http(
+                                phase="sutui_chat_completions_stream",
+                                method="POST",
+                                url=url,
+                                http_status=200,
+                                capability_or_model=mid_try or "-",
+                                billing_snapshot={"note": "stream started; usage/x_billing 在流结束后扣费日志中"},
+                                error_message="",
+                                extra={
+                                    "trace_id": trace_id,
+                                    "user_id": current_user.id,
+                                    "stream": True,
+                                    "user_lobster_credits": user_bal_str,
+                                    "model_candidates_tried": model_candidates,
+                                },
+                                bearer_token=token,
+                                sutui_pool=sutui_pool or "",
+                                upstream_response={
+                                    "note": "SSE 流已开始，完整 chunks 不在此条；请用 trace_id 对齐后续扣费流水",
+                                    "trace_id": trace_id,
+                                },
+                                outbound_request_json=out_req_for_audit,
+                            )
+                            async for chunk in resp.aiter_bytes():
+                                yield chunk
+                                line_buf.extend(chunk)
+                                while True:
+                                    nl = line_buf.find(b"\n")
+                                    if nl < 0:
+                                        break
+                                    line_bytes = line_buf[:nl].rstrip(b"\r")
+                                    del line_buf[: nl + 1]
+                                    line = line_bytes.decode("utf-8", errors="replace").strip()
+                                    if not line.startswith("data:"):
+                                        continue
+                                    payload = line[5:].strip()
+                                    if not payload or payload == "[DONE]":
+                                        continue
+                                    try:
+                                        obj = json.loads(payload)
+                                    except json.JSONDecodeError:
+                                        continue
+                                    if not isinstance(obj, dict):
+                                        continue
+                                    for _bk in ("x_billing", "X-Billing"):
+                                        if _bk in obj and obj[_bk] is not None:
+                                            stream_upstream_billing[_bk] = obj[_bk]
+                                    u = obj.get("usage")
+                                    if isinstance(u, dict) and (
+                                        u.get("prompt_tokens") is not None
+                                        or u.get("completion_tokens") is not None
+                                        or u.get("total_tokens") is not None
+                                    ):
+                                        last_usage = u
+                            break
+                except httpx.ConnectError as e:
+                    if cand_idx < len(model_candidates) - 1:
+                        logger.warning(
+                            "[sutui-chat] 流式连接失败将换模型 trace_id=%s model=%s err=%s",
+                            trace_id,
+                            mid_try,
+                            e,
+                        )
+                        continue
+                    logger.exception("[sutui-chat] 流式上游连接失败 url=%s", url)
+                    err = json.dumps(
+                        {
+                            "error": {
+                                "message": (
+                                    f"无法连接速推 LLM 上游 {_api_base()}。请检查服务器 HTTPS 出站与 DNS。"
+                                    f" 原始错误: {e!s}"
+                                )[:2000],
+                                "status": 502,
+                            }
                         },
-                        bearer_token=token,
-                        sutui_pool=sutui_pool or "",
-                        upstream_response={
-                            "note": "SSE 流已开始，完整 chunks 不在此条；请用 trace_id 对齐后续扣费流水",
-                            "trace_id": trace_id,
-                        },
-                        outbound_request_json=out_req_for_audit,
+                        ensure_ascii=False,
                     )
-                    async for chunk in resp.aiter_bytes():
-                        yield chunk
-                        line_buf.extend(chunk)
-                        while True:
-                            nl = line_buf.find(b"\n")
-                            if nl < 0:
-                                break
-                            line_bytes = line_buf[:nl].rstrip(b"\r")
-                            del line_buf[: nl + 1]
-                            line = line_bytes.decode("utf-8", errors="replace").strip()
-                            if not line.startswith("data:"):
-                                continue
-                            payload = line[5:].strip()
-                            if not payload or payload == "[DONE]":
-                                continue
-                            try:
-                                obj = json.loads(payload)
-                            except json.JSONDecodeError:
-                                continue
-                            if not isinstance(obj, dict):
-                                continue
-                            for _bk in ("x_billing", "X-Billing"):
-                                if _bk in obj and obj[_bk] is not None:
-                                    stream_upstream_billing[_bk] = obj[_bk]
-                            u = obj.get("usage")
-                            if isinstance(u, dict) and (
-                                u.get("prompt_tokens") is not None
-                                or u.get("completion_tokens") is not None
-                                or u.get("total_tokens") is not None
-                            ):
-                                last_usage = u
-        except httpx.ConnectError as e:
-            logger.exception("[sutui-chat] 流式上游连接失败 url=%s", url)
-            err = json.dumps(
-                {
-                    "error": {
-                        "message": (
-                            f"无法连接速推 LLM 上游 {_api_base()}。请检查服务器 HTTPS 出站与 DNS。"
-                            f" 原始错误: {e!s}"
-                        )[:2000],
-                        "status": 502,
-                    }
-                },
-                ensure_ascii=False,
-            )
-            yield f"data: {err}\n\n".encode("utf-8")
-        except httpx.TimeoutException as e:
-            logger.exception("[sutui-chat] 流式上游超时 url=%s", url)
-            err = json.dumps(
-                {"error": {"message": f"速推 LLM 上游超时: {e!s}"[:2000], "status": 504}},
-                ensure_ascii=False,
-            )
-            yield f"data: {err}\n\n".encode("utf-8")
+                    yield f"data: {err}\n\n".encode("utf-8")
+                except httpx.TimeoutException as e:
+                    if cand_idx < len(model_candidates) - 1:
+                        logger.warning(
+                            "[sutui-chat] 流式超时将换模型 trace_id=%s model=%s err=%s",
+                            trace_id,
+                            mid_try,
+                            e,
+                        )
+                        continue
+                    logger.exception("[sutui-chat] 流式上游超时 url=%s", url)
+                    err = json.dumps(
+                        {"error": {"message": f"速推 LLM 上游超时: {e!s}"[:2000], "status": 504}},
+                        ensure_ascii=False,
+                    )
+                    yield f"data: {err}\n\n".encode("utf-8")
         finally:
-            if not stream_completed_ok or not model_id or not _should_deduct_credits():
+            bill_model = billing_model_holder[0]
+            if not stream_completed_ok or not bill_model or not _should_deduct_credits():
                 logger.info(
                     "[chat_trace] trace_id=%s path=sutui_chat stream_deduct=skipped stream_ok=%s model_id=%r "
                     "should_deduct=%s had_usage_chunk=%s had_upstream_billing_chunk=%s",
                     trace_id,
                     stream_completed_ok,
-                    model_id,
+                    bill_model,
                     _should_deduct_credits(),
                     last_usage is not None,
                     bool(stream_upstream_billing),
@@ -791,7 +1019,7 @@ async def sutui_chat_completions(
                     _apply_chat_deduct(
                         db_bill,
                         u2,
-                        model_id,
+                        bill_model,
                         usage_for_deduct if isinstance(usage_for_deduct, dict) else None,
                         resp_for_bill,
                         billing_recon=chat_billing_recon,
@@ -803,14 +1031,14 @@ async def sutui_chat_completions(
                         "[chat_trace] trace_id=%s path=sutui_chat stream_deduct=failed_insufficient user_id=%s model=%s detail=%s",
                         trace_id,
                         billing_user_id,
-                        model_id,
+                        bill_model,
                         exc.detail,
                     )
                     logger.error(
                         "[sutui-chat] 流式结束后扣费失败 trace_id=%s user_id=%s model=%s detail=%s",
                         trace_id,
                         billing_user_id,
-                        model_id,
+                        bill_model,
                         exc.detail,
                     )
                 else:
@@ -818,14 +1046,14 @@ async def sutui_chat_completions(
                         "[sutui-chat] 流式结束后扣费异常 trace_id=%s user_id=%s model=%s",
                         trace_id,
                         billing_user_id,
-                        model_id,
+                        bill_model,
                     )
             except Exception:
                 logger.exception(
                     "[sutui-chat] 流式结束后扣费异常 trace_id=%s user_id=%s model=%s",
                     trace_id,
                     billing_user_id,
-                    model_id,
+                    bill_model,
                 )
             finally:
                 db_bill.close()

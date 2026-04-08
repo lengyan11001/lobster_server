@@ -651,7 +651,10 @@ async def _app_lifespan(app: FastAPI):
     if is_sutui_llm_probe_enabled_for_this_instance():
         bg_tasks.append(asyncio.create_task(sutui_llm_probe_loop_forever(3600.0)))
     else:
-        logger.info("[启动] 速推 LLM 定时探测已关闭（海外实例：LOBSTER_SERVER_REGION=overseas）")
+        logger.info(
+            "[启动] 速推 LLM 定时探测已关闭（海外实例：LOBSTER_SERVER_REGION=overseas，"
+            "或已设置 LOBSTER_SUTUI_LLM_PROBE_ENABLED=0）"
+        )
     if is_sutui_reconcile_enabled():
         bg_tasks.append(asyncio.create_task(sutui_reconcile_loop_forever(3600.0)))
     else:

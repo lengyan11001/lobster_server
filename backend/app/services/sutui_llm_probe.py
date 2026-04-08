@@ -37,12 +37,18 @@ def snapshot_path() -> Path:
     return _SNAPSHOT_PATH
 
 
-def is_sutui_llm_probe_enabled_for_this_instance() -> bool:
-    """仅国内主实例执行定时探测。海外 lobster_server 请在环境变量中设置 LOBSTER_SERVER_REGION=overseas。"""
+def is_lobster_server_domestic_instance() -> bool:
+    """海外机在环境变量中设置 LOBSTER_SERVER_REGION=overseas，不参与国内定时任务。"""
     region = (os.environ.get("LOBSTER_SERVER_REGION") or "").strip().lower()
-    if region == "overseas":
+    return region != "overseas"
+
+
+def is_sutui_llm_probe_enabled_for_this_instance() -> bool:
+    """仅国内实例且未显式关闭时执行定时探测。关闭：LOBSTER_SUTUI_LLM_PROBE_ENABLED=0（或 false/off/no）。"""
+    if not is_lobster_server_domestic_instance():
         return False
-    return True
+    v = (os.environ.get("LOBSTER_SUTUI_LLM_PROBE_ENABLED") or "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
 
 
 def _api_base() -> str:
