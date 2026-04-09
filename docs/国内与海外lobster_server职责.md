@@ -4,7 +4,7 @@
 
 | 变量 | 典型地址 | 职责 |
 |------|----------|------|
-| `API_BASE` | 国内 `https://bhzn.top`（42.194.209.150） | 登录、积分、支付、鉴权、技能商店等 |
+| `API_BASE` | 国内 `http://42.194.209.150`（备案后切 `https://bhzn.top`） | 登录、积分、支付、鉴权、技能商店等 |
 | `MESSENGER_API_BASE` / `TWILIO_API_BASE` | 海外 `http://43.162.111.36`（43.162.111.36） | Messenger、Twilio；Webhook 须公网可达 Meta/Twilio |
 
 本地执行：`git push` 后 `bash scripts/deploy_from_local.sh`。若 `.env.deploy` 含 `LOBSTER_DEPLOY_HOST_OVERSEAS`，会再拉取并重启海外机。

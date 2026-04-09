@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# [已废弃] 旧 api.51ins.com 宝塔面板用；新服务器（bhzn.top）nginx 配置在 /etc/nginx/sites-available/lobster
+# [已废弃] 旧宝塔面板用；新服务器（42.194.209.150）nginx 配置在 /etc/nginx/sites-available/lobster
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/scripts/nginx_extension_api_51ins_client.conf"
