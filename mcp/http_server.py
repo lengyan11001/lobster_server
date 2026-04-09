@@ -2282,12 +2282,12 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         import ipaddress
                         parsed = urlparse(url_value)
                         hostname = (parsed.hostname or "").lower()
-                        # 内部地址检测：localhost、127.0.0.1、内网 IP、api.51ins.com 等
+                        # 内部地址检测：localhost、127.0.0.1、内网 IP、bhzn.top 等
                         if not hostname:
                             is_internal = True
                         elif hostname in ("localhost", "127.0.0.1", "0.0.0.0"):
                             is_internal = True
-                        elif "api.51ins.com" in hostname:
+                        elif "bhzn.top" in hostname:
                             is_internal = True
                         else:
                             # 尝试解析为 IP 地址，判断是否为内网 IP
