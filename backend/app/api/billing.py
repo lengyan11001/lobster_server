@@ -470,8 +470,15 @@ async def create_fubei_recharge_order(
     ).strip()
     fubei_order_sn = (data.get("order_sn") or data.get("sn") or "").strip()
     if not qr_code:
-        logger.warning("[fubei] precreate no qr_code in data=%s", list(data.keys()))
-        raise HTTPException(status_code=502, detail="付呗下单成功但未返回收款码，请稍后重试")
+        logger.warning(
+            "[fubei] precreate no qr_code in data=%s values=%s",
+            list(data.keys()),
+            {k: (v[:60] if isinstance(v, str) else v) for k, v in data.items()} if isinstance(data, dict) else data,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="付呗下单成功但未返回收款码（prepay_url 为空），请检查付呗商户后台是否已开通聚合收款码功能",
+        )
     return {
         "order_id": order.id,
         "out_trade_no": order.out_trade_no,
