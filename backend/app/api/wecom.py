@@ -534,11 +534,11 @@ def _find_config_by_callback(db: Session, callback_path: str) -> WecomConfig:
 # 通讯录：部门列表
 # ---------------------------------------------------------------------------
 def _get_contacts_secret(cfg: WecomConfig) -> str:
-    """通讯录 API 优先使用 contacts_secret，回退到 secret。"""
-    cs = (getattr(cfg, 'contacts_secret', None) or "").strip()
-    if cs:
-        return cs
-    return (cfg.secret or "").strip()
+    """通讯录 API 优先使用应用 secret（已授权通讯录权限），回退到 contacts_secret。"""
+    s = (cfg.secret or "").strip()
+    if s:
+        return s
+    return (getattr(cfg, 'contacts_secret', None) or "").strip()
 
 
 @router.get("/api/wecom/contacts/departments", summary="获取企微通讯录-部门列表")
