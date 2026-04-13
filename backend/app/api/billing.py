@@ -438,12 +438,14 @@ async def create_fubei_recharge_order(
     total_yuan = (order.amount_fen / 100) if (order.amount_fen or 0) else float(order.amount_yuan)
     base_url = _get_public_base_url()
     notify_url = f"{base_url}/api/recharge/fubei-notify"
+    success_url = base_url.rstrip("/") + "/"
     try:
         result = await fubei_precreate(
             merchant_order_sn=out_trade_no,
             total_amount=total_yuan,
             body=f"龙虾积分充值-{credits}积分",
             notify_url=notify_url,
+            success_url=success_url,
             attach=str(order.id),
         )
     except Exception as e:

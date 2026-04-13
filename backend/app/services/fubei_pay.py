@@ -87,6 +87,7 @@ async def fubei_precreate(
     total_amount: float,
     body: str = "",
     notify_url: str = "",
+    success_url: str = "",
     timeout_express: str = "",
     attach: str = "",
 ) -> dict[str, Any]:
@@ -105,6 +106,8 @@ async def fubei_precreate(
         biz["body"] = body[:128]
     if notify_url:
         biz["notify_url"] = notify_url[:255]
+    if success_url:
+        biz["success_url"] = success_url[:255]
     if timeout_express:
         biz["timeout_express"] = timeout_express
     if attach:
