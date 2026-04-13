@@ -88,6 +88,8 @@ async def fubei_precreate(
     body: str = "",
     notify_url: str = "",
     success_url: str = "",
+    fail_url: str = "",
+    cancel_url: str = "",
     timeout_express: str = "",
     attach: str = "",
 ) -> dict[str, Any]:
@@ -108,6 +110,10 @@ async def fubei_precreate(
         biz["notify_url"] = notify_url[:255]
     if success_url:
         biz["success_url"] = success_url[:255]
+    if fail_url:
+        biz["fail_url"] = fail_url[:255]
+    if cancel_url:
+        biz["cancel_url"] = cancel_url[:255]
     if timeout_express:
         biz["timeout_express"] = timeout_express
     if attach:
