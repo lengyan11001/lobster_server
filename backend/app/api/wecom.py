@@ -957,6 +957,7 @@ class SyncConfigBody(BaseModel):
     secret: Optional[str] = None
     contacts_secret: Optional[str] = None
     agent_id: Optional[int] = None
+    user_id: Optional[int] = None
 
 
 @router.post("/api/wecom/proxy/sync-config", summary="[代理] 同步/创建配置")
@@ -980,13 +981,15 @@ def proxy_sync_config(
             existing.contacts_secret = body.contacts_secret.strip()
         if body.agent_id is not None:
             existing.agent_id = body.agent_id
+        if body.user_id is not None:
+            existing.user_id = body.user_id
         db.commit()
         return {"ok": True, "action": "updated", "config_id": existing.id}
     key = (body.encoding_aes_key or "").strip()
     if not key.endswith("="):
         key = key + "="
     row = WecomConfig(
-        user_id=1,
+        user_id=body.user_id or 1,
         name=(body.name or "默认应用").strip() or "默认应用",
         callback_path=body.callback_path,
         token=body.token.strip(),
