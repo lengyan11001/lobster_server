@@ -301,6 +301,8 @@ async def wecom_callback_post(
         from_user = (parsed.get("FromUserName") or "").strip()
         to_user = (parsed.get("ToUserName") or "").strip()
         content = (parsed.get("Content") or "").strip()
+        if not content and msg_type == "image":
+            content = (parsed.get("PicUrl") or "").strip()
         agent_id_raw = (parsed.get("AgentID") or parsed.get("AgentId") or "").strip()
         try:
             agent_id = int(agent_id_raw) if agent_id_raw else None
