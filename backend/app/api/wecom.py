@@ -424,9 +424,11 @@ async def wecom_submit_reply(
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="消息不存在或已处理")
+    cfg = db.query(WecomConfig).filter(WecomConfig.id == row.wecom_config_id).first()
+    owner_user_id = cfg.user_id if cfg else None
     # 企微自动回复：未解锁不可使用
-    if db.query(SkillUnlock).filter(
-        SkillUnlock.user_id == row.user_id,
+    if owner_user_id is None or db.query(SkillUnlock).filter(
+        SkillUnlock.user_id == owner_user_id,
         SkillUnlock.package_id == WECOM_REPLY_PACKAGE_ID,
     ).first() is None:
         raise HTTPException(
@@ -438,7 +440,6 @@ async def wecom_submit_reply(
         row.reply_text = (body.reply_text or "").strip()[:2000]
         db.commit()
         return {"ok": True}
-    cfg = db.query(WecomConfig).filter(WecomConfig.id == row.wecom_config_id).first()
     if not cfg or not (cfg.corp_id or "").strip() or not (cfg.secret or "").strip():
         row.status = "failed"
         row.reply_text = (body.reply_text or "")[:500]
