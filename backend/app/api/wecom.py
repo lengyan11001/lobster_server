@@ -10,7 +10,7 @@ from typing import Optional
 from urllib.parse import unquote
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -611,6 +611,39 @@ async def wecom_contact_users(
 
 
 # ---------------------------------------------------------------------------
+# 素材上传：上传临时素材到企微，返回 media_id
+# ---------------------------------------------------------------------------
+MEDIA_TYPE_MAP = {"image": ["jpg", "jpeg", "png", "gif", "bmp"], "video": ["mp4", "avi", "wmv"], "voice": ["amr", "mp3"], "file": []}
+MAX_MEDIA_SIZE = 20 * 1024 * 1024  # 20MB
+
+@router.post("/api/wecom/media/upload", summary="上传临时素材到企微（图片/视频/文件）")
+async def wecom_media_upload(
+    config_id: int = Query(...),
+    media_type: str = Query("image"),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    x_installation_id: Optional[str] = Header(None, alias="X-Installation-Id"),
+):
+    _require_wecom_unlock(db, current_user.id, x_installation_id)
+    cfg = _require_config_with_secret(db, config_id, current_user.id)
+    if media_type not in ("image", "video", "voice", "file"):
+        raise HTTPException(status_code=400, detail="media_type 须为 image/video/voice/file")
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_MEDIA_SIZE:
+        raise HTTPException(status_code=400, detail=f"文件过大，最大 {MAX_MEDIA_SIZE // 1024 // 1024}MB")
+    token = await _get_access_token(cfg.corp_id, cfg.secret)
+    upload_url = f"https://qyapi.weixin.qq.com/cgi-bin/media/upload?access_token={token}&type={media_type}"
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.post(upload_url, files={"media": (file.filename or "file", file_bytes, file.content_type or "application/octet-stream")})
+        r.raise_for_status()
+        data = r.json()
+    if data.get("errcode") and data["errcode"] != 0:
+        raise HTTPException(status_code=502, detail=f"企微素材上传失败: {data.get('errmsg', '')}")
+    return {"media_id": data.get("media_id", ""), "type": data.get("type", media_type), "created_at": data.get("created_at", "")}
+
+
+# ---------------------------------------------------------------------------
 # 主动发消息：给指定用户发送应用消息
 # ---------------------------------------------------------------------------
 class SendMessageBody(BaseModel):
@@ -774,6 +807,31 @@ async def wecom_get_group_chat(
 # 使用 callback_path 定位配置，无需 JWT 登录
 # ---------------------------------------------------------------------------
 
+@router.post("/api/wecom/proxy/media/upload", summary="[代理] 上传临时素材")
+async def proxy_media_upload(
+    callback_path: str = Query(...),
+    media_type: str = Query("image"),
+    file: UploadFile = File(...),
+    _auth: bool = Depends(_check_forward_secret),
+    db: Session = Depends(get_db),
+):
+    cfg = _find_config_by_callback(db, callback_path)
+    if media_type not in ("image", "video", "voice", "file"):
+        raise HTTPException(status_code=400, detail="media_type 须为 image/video/voice/file")
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_MEDIA_SIZE:
+        raise HTTPException(status_code=400, detail=f"文件过大，最大 {MAX_MEDIA_SIZE // 1024 // 1024}MB")
+    token = await _get_access_token(cfg.corp_id, cfg.secret)
+    upload_url = f"https://qyapi.weixin.qq.com/cgi-bin/media/upload?access_token={token}&type={media_type}"
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.post(upload_url, files={"media": (file.filename or "file", file_bytes, file.content_type or "application/octet-stream")})
+        r.raise_for_status()
+        data = r.json()
+    if data.get("errcode") and data["errcode"] != 0:
+        raise HTTPException(status_code=502, detail=f"企微素材上传失败: {data.get('errmsg', '')}")
+    return {"media_id": data.get("media_id", ""), "type": data.get("type", media_type), "created_at": data.get("created_at", "")}
+
+
 @router.get("/api/wecom/proxy/contacts/departments", summary="[代理] 通讯录-部门列表")
 async def proxy_contact_departments(
     callback_path: str,
@@ -843,6 +901,7 @@ class ProxySendMessageBody(BaseModel):
     to_tag: Optional[str] = None
     msg_type: str = "text"
     content: str = ""
+    media_id: Optional[str] = None
 
 
 @router.post("/api/wecom/proxy/send-message", summary="[代理] 发送应用消息")
@@ -867,6 +926,8 @@ async def proxy_send_message(
         payload["totag"] = body.to_tag
     if body.msg_type in ("text", "markdown"):
         payload[body.msg_type] = {"content": body.content or ""}
+    elif body.msg_type in ("image", "video", "voice", "file") and body.media_id:
+        payload[body.msg_type] = {"media_id": body.media_id}
     else:
         payload["text"] = {"content": body.content or ""}
     async with httpx.AsyncClient(timeout=15.0) as client:
