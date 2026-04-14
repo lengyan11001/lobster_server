@@ -188,6 +188,51 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
         base = int(pricing.get("base_price") or 0)
     except (TypeError, ValueError):
         base = 0
+
+    # per_second / dynamic_per_second: base_price 可能为 None，用 per_second 字段
+    if price_type in ("per_second", "dynamic_per_second"):
+        try:
+            rate = float(pricing.get("per_second") or 0)
+        except (TypeError, ValueError):
+            rate = 0.0
+        if rate <= 0 and base > 0:
+            rate = float(base)
+        if rate <= 0:
+            return 0
+        d = _duration_seconds_from_params(params)
+        if d <= 0:
+            d = 5.0
+        return _quantize_credits(math.ceil(d * rate))
+
+    # duration_map: base_price 是最短时长的价格，按时长比例估算
+    if price_type == "duration_map":
+        if base <= 0:
+            return 0
+        d = _duration_seconds_from_params(params)
+        if d <= 0:
+            return base
+        examples = pricing.get("examples") or []
+        for ex in examples:
+            desc = str(ex.get("description") or "")
+            try:
+                ex_dur = float("".join(c for c in desc if c.isdigit() or c == "."))
+            except (ValueError, TypeError):
+                continue
+            if ex_dur > 0 and d <= ex_dur:
+                return int(ex.get("price", base))
+        if examples:
+            return int(examples[-1].get("price", base))
+        return base
+
+    # token_postcharge: 后付费，预扣用 examples 中最低价作保守估计
+    if price_type == "token_postcharge":
+        examples = pricing.get("examples") or []
+        if examples:
+            prices = [int(ex.get("price", 0)) for ex in examples if ex.get("price")]
+            if prices:
+                return min(prices)
+        return max(base, 100)
+
     if base <= 0:
         return 0
 
@@ -201,7 +246,7 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
             n_int = 1
         return base * n_int
 
-    if price_type == "duration_based":
+    if price_type in ("duration_based", "duration_price"):
         d = _duration_seconds_from_params(params)
         if d <= 0:
             d = 5.0
@@ -210,12 +255,17 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
     if price_type == "fixed":
         return base
 
+    if price_type == "matrix":
+        d = _duration_seconds_from_params(params)
+        if d > 0:
+            return _quantize_credits(float(math.ceil(d * float(base))))
+        return base
+
     if price_type == "token_based":
         pt = int(params.get("prompt_tokens", 0) or 0)
         ct = int(params.get("completion_tokens", 0) or 0)
         total = pt + ct
         if total > 0:
-            # base_price 按「每千 token」计（与速推 docs 常见约定一致）
             units = math.ceil(total / 1000.0)
             raw = units * float(base)
             return _quantize_credits(raw)
