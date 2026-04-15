@@ -162,6 +162,23 @@
       "required": ["url"]
     }
   },
+  "comfly.chat": {
+    "description": "Comfly 对话补全（OpenAI 兼容）。可用于前端技能调用 Comfly 的 LLM 能力，如商品详情图文案等。",
+    "upstream": "comfly",
+    "upstream_tool": "chat_completions",
+    "enabled": true,
+    "is_default": false,
+    "arg_schema": {
+      "type": "object",
+      "properties": {
+        "model": { "type": "string", "description": "Comfly 模型名，如 veo3.1-fast" },
+        "messages": { "type": "array", "description": "OpenAI 格式的 messages 数组" },
+        "temperature": { "type": "number", "description": "采样温度，默认 0.7" },
+        "max_tokens": { "type": "integer", "description": "最大生成 token 数" }
+      },
+      "required": ["model", "messages"]
+    }
+  },
   "sutui.speak": {
     "description": "语音合成和音色管理",
     "upstream": "sutui",

@@ -2111,16 +2111,46 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 if _emb in ("video.generate", "image.generate"):
                     record_capability_id = _emb
 
-            # ━━━ 速推用户积分：唯一业务入口（调用速推上游之前只在此处处理） ━━━
-            # upstream=sutui 时：必须先完成认证中心 POST /capabilities/pre-deduct，再调速推；结束后 record-call 或 refund。
-            # lobster_online（本机 MCP）、chat、其它后端路由不得再编排第二套预扣/结算；客户端仅转发 mcp-gateway。
+            # ━━━ Comfly 路由预判（在预扣之前决定，以便正确计价） ━━━
+            _early_use_comfly = False
+            _early_comfly_task_query = False
+            _comfly_model_id = (normalized_model or original_model or "").strip()
+            _payload_prefer_comfly = bool(payload.get("_prefer_comfly")) if isinstance(payload, dict) else False
+            _comfly_user_credits: Optional[int] = None
+            try:
+                from comfly_upstream import (
+                    should_route_to_comfly as _early_should_cf,
+                    is_comfly_task as _early_is_cf_task,
+                    is_comfly_configured as _early_cf_ok,
+                    estimate_comfly_credits as _early_est_cf,
+                )
+                if capability_id == "comfly.chat":
+                    _early_use_comfly = _early_cf_ok()
+                elif capability_id == "task.get_result":
+                    _poll_tid_early = str(payload.get("task_id") or "").strip()
+                    if _poll_tid_early and _early_is_cf_task(_poll_tid_early):
+                        _early_comfly_task_query = True
+                        _early_use_comfly = True
+                elif _payload_prefer_comfly and _early_cf_ok() and capability_id in ("image.generate", "video.generate"):
+                    _early_use_comfly = True
+                else:
+                    _early_use_comfly = _early_should_cf(capability_id, _comfly_model_id)
+                if _early_use_comfly and not _early_comfly_task_query:
+                    _comfly_user_credits = _early_est_cf(_comfly_model_id, payload if isinstance(payload, dict) else {}, for_user=True)
+            except Exception as _cf_early_err:
+                logger.debug("[MCP] Comfly 路由预判跳过: %s", _cf_early_err)
+
+            # ━━━ 用户积分：唯一业务入口（调用上游之前只在此处处理） ━━━
             pre_deduct_amount = quantize_credits(0)
             billing_idem = str(uuid.uuid4())
             if token:
                 try:
                     pre_body: Dict[str, Any] = {"capability_id": capability_id}
                     _UNDERSTAND_CAPS = ("image.understand", "video.understand")
-                    if upstream_name == "sutui" and upstream_tool == "generate" and capability_id not in _UNDERSTAND_CAPS:
+                    if _early_use_comfly and _comfly_user_credits and _comfly_user_credits > 0:
+                        pre_body["force_credits"] = _comfly_user_credits
+                        pre_body["model"] = _comfly_model_id
+                    elif upstream_name == "sutui" and upstream_tool == "generate" and capability_id not in _UNDERSTAND_CAPS:
                         pre_body["model"] = (payload.get("model") or "").strip()
                         pre_body["params"] = payload
                     if upstream_name == "sutui" and sutui_pool_for_billing and sutui_token_ref_for_billing:
@@ -2423,24 +2453,9 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         else:
                             logger.info("[服务器端MCP-步骤C.7] 转存成功 url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
             
-            # ━━━ Comfly 路由判断：模型在 comfly_pricing.json 中则走 Comfly；payload._prefer_comfly 可强制 ━━━
-            _use_comfly = False
-            _comfly_task_query = False
-            _comfly_model_id = (normalized_model or original_model or "").strip()
-            _payload_prefer_comfly = bool(payload.get("_prefer_comfly")) if isinstance(payload, dict) else False
-            try:
-                from comfly_upstream import should_route_to_comfly, is_comfly_task as _is_cf_task, is_comfly_configured as _cf_ok
-                if capability_id == "task.get_result":
-                    _poll_tid = str(payload.get("task_id") or "").strip()
-                    if _poll_tid and _is_cf_task(_poll_tid):
-                        _comfly_task_query = True
-                        _use_comfly = True
-                elif _payload_prefer_comfly and _cf_ok() and capability_id in ("image.generate", "video.generate"):
-                    _use_comfly = True
-                else:
-                    _use_comfly = should_route_to_comfly(capability_id, _comfly_model_id)
-            except Exception as _cf_err:
-                logger.debug("[MCP] Comfly 路由检查跳过: %s", _cf_err)
+            # ━━━ Comfly 路由：使用预判结果 ━━━
+            _use_comfly = _early_use_comfly
+            _comfly_task_query = _early_comfly_task_query
 
             t0 = time.perf_counter()
             if _use_comfly:
@@ -2450,6 +2465,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         call_comfly_image_generate,
                         call_comfly_video_generate,
                         call_comfly_task_query,
+                        call_comfly_chat_completions,
                         format_comfly_image_response_as_sutui,
                         format_comfly_video_response_as_sutui,
                         register_comfly_task,
@@ -2458,6 +2474,28 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         _poll_tid = str(payload.get("task_id") or "").strip()
                         _cf_resp = await call_comfly_task_query(_poll_tid)
                         upstream_resp = format_comfly_video_response_as_sutui(_cf_resp)
+                    elif capability_id == "comfly.chat":
+                        _cf_model = (payload.get("model") or "").strip()
+                        _cf_messages = payload.get("messages") or []
+                        _cf_resp = await call_comfly_chat_completions(
+                            _cf_model,
+                            _cf_messages,
+                            temperature=float(payload.get("temperature", 0.7)),
+                            max_tokens=payload.get("max_tokens"),
+                        )
+                        if _cf_resp.get("error"):
+                            upstream_resp = _cf_resp
+                        else:
+                            _choices = _cf_resp.get("choices") or []
+                            _reply = ""
+                            if _choices:
+                                _msg = _choices[0].get("message") or {}
+                                _reply = _msg.get("content") or ""
+                            upstream_resp = {
+                                "result": _reply,
+                                "usage": _cf_resp.get("usage"),
+                                "_comfly": True,
+                            }
                     elif capability_id == "image.generate":
                         _cf_resp = await call_comfly_image_generate(_comfly_model_id, payload)
                         upstream_resp = format_comfly_image_response_as_sutui(_cf_resp)

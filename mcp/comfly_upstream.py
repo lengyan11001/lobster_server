@@ -100,8 +100,14 @@ def should_route_to_comfly(capability_id: str, model_id: str) -> bool:
     return lookup_comfly_model(model_id) is not None
 
 
-def estimate_comfly_credits(model_id: str, params: Dict[str, Any]) -> Optional[int]:
-    """按 Comfly 定价表估算算力消耗。"""
+def _user_price_multiplier() -> float:
+    """用户实际消耗 = 采购价 × 倍率。"""
+    pricing = _load_pricing()
+    return float(pricing.get("user_price_multiplier_default", 3))
+
+
+def estimate_comfly_credits(model_id: str, params: Dict[str, Any], *, for_user: bool = False) -> Optional[int]:
+    """按 Comfly 定价表估算算力消耗。for_user=True 时返回用户价（采购价 × 倍率）。"""
     entry = lookup_comfly_model(model_id)
     if not entry:
         return None
@@ -109,15 +115,18 @@ def estimate_comfly_credits(model_id: str, params: Dict[str, Any]) -> Optional[i
     unit_price = entry.get("price_per_unit")
     if unit_price is None:
         return None
-    unit_price = int(unit_price)
+    unit_price = float(unit_price)
     if price_type == "per_second":
         duration = params.get("duration") or params.get("seconds") or 5
         try:
             duration = float(duration)
         except (TypeError, ValueError):
             duration = 5
-        return int(round(unit_price * duration))
-    return unit_price
+        base = unit_price * duration
+    else:
+        base = unit_price
+    multiplier = float(entry.get("user_price_multiplier", _user_price_multiplier())) if for_user else 1.0
+    return int(round(base * multiplier))
 
 
 def get_all_comfly_pricing() -> Dict[str, Any]:
@@ -298,6 +307,49 @@ def format_comfly_image_response_as_sutui(resp: Dict[str, Any]) -> Dict[str, Any
         "url": urls[0],
         "_comfly": True,
     }
+
+
+async def call_comfly_chat_completions(
+    model_id: str,
+    messages: List[Dict[str, Any]],
+    *,
+    temperature: float = 0.7,
+    max_tokens: Optional[int] = None,
+    stream: bool = False,
+) -> Dict[str, Any]:
+    """调用 Comfly /v1/chat/completions (OpenAI 兼容格式)。"""
+    base, key = get_comfly_config()
+    if not base or not key:
+        return {"error": {"message": "Comfly 未配置 (COMFLY_API_BASE / COMFLY_API_KEY)"}}
+
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    body: Dict[str, Any] = {
+        "model": model_id,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    if max_tokens:
+        body["max_tokens"] = max_tokens
+    if stream:
+        body["stream"] = True
+
+    url = f"{base}/v1/chat/completions"
+    logger.info("[Comfly] chat/completions 请求 model=%s url=%s", model_id, url)
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            r = await client.post(url, json=body, headers=headers)
+        resp = r.json() if r.content else {}
+        if r.status_code >= 400:
+            err = resp.get("error", {})
+            msg = err.get("message", str(resp)) if isinstance(err, dict) else str(err)
+            return {"error": {"message": f"Comfly chat 返回 HTTP {r.status_code}: {msg}"}}
+        return resp
+    except Exception as e:
+        logger.exception("[Comfly] chat/completions 请求异常")
+        return {"error": {"message": f"Comfly chat 请求失败: {e}"}}
 
 
 def format_comfly_video_response_as_sutui(resp: Dict[str, Any]) -> Dict[str, Any]:

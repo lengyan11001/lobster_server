@@ -144,6 +144,7 @@ class PreDeductIn(BaseModel):
     params: Optional[dict] = None
     sutui_pool: Optional[str] = None
     sutui_token_ref: Optional[str] = None
+    force_credits: Optional[float] = None
 
 
 def _sutui_recon_for_ledger(
@@ -249,6 +250,44 @@ def pre_deduct(
     upstream = (cap.upstream or "").strip() if cap else ""
     upstream_tool = (cap.upstream_tool or "").strip() if cap else ""
     _require_sutui_brand_for_billing(current_user, upstream=upstream)
+
+    # ── force_credits: MCP 已算好金额（Comfly 路由等场景）──
+    if body.force_credits is not None and body.force_credits > 0:
+        fc = quantize_credits(body.force_credits)
+        db.refresh(current_user)
+        if user_balance_decimal(current_user) < fc:
+            raise HTTPException(
+                status_code=402,
+                detail=f"积分不足：本次需 {float(fc)} 积分，当前余额 {float(user_balance_decimal(current_user))}。请先充值。",
+            )
+        current_user.credits = user_balance_decimal(current_user) - fc
+        bal = quantize_credits(current_user.credits)
+        _recon_fc = _sutui_recon_for_ledger(
+            request,
+            upstream="comfly",
+            sutui_pool=body.sutui_pool,
+            sutui_token_ref=body.sutui_token_ref,
+        )
+        append_credit_ledger(
+            db,
+            current_user.id,
+            -fc,
+            "pre_deduct",
+            bal,
+            description="能力预扣（Comfly 固定价）",
+            ref_type="capability",
+            meta={
+                **(_recon_fc or {}),
+                "capability_id": body.capability_id,
+                "model": body.model or "",
+                "pre_estimated": credits_json_float(fc),
+                "upstream": "comfly",
+            },
+        )
+        db.commit()
+        out = {"credits_charged": credits_json_float(fc)}
+        _pre_deduct_idempotent_store(db, current_user.id, idem_key, out)
+        return out
 
     _UNDERSTAND_CAPS = ("image.understand", "video.understand")
     if upstream == "sutui" and upstream_tool == "generate" and body.capability_id not in _UNDERSTAND_CAPS:
