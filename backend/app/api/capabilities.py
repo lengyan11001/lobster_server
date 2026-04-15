@@ -327,13 +327,26 @@ def pre_deduct(
                 detail="调用生成能力时必须提供 model 以按速推定价预扣积分。",
             )
         params = body.params if isinstance(body.params, dict) else None
-        est_d = assert_pricing_pre_deduct_allows_upstream_or_http(
-            db,
-            current_user,
-            model,
-            params,
-            action_label="素材生成",
-        )
+        try:
+            est_d = assert_pricing_pre_deduct_allows_upstream_or_http(
+                db,
+                current_user,
+                model,
+                params,
+                action_label="素材生成",
+            )
+        except HTTPException:
+            if body.dry_run:
+                try:
+                    from mcp.comfly_upstream import lookup_comfly_model
+                    _cm = lookup_comfly_model(model)
+                    if _cm and isinstance(_cm, dict) and _cm.get("price_per_unit") is not None:
+                        _multiplier = _get_user_price_multiplier()
+                        _cm_est = quantize_credits(float(_cm["price_per_unit"]) * _multiplier)
+                        return {"credits_charged": credits_json_float(_cm_est), "dry_run": True, "model": model}
+                except Exception:
+                    pass
+            raise
         _multiplier = _get_user_price_multiplier()
         est_d = quantize_credits(float(est_d) * _multiplier)
         if body.dry_run:
