@@ -255,7 +255,7 @@ def pre_deduct(
         )
     if not _should_deduct_credits():
         return {"credits_charged": 0, "message": "未启用积分扣减"}
-    if not _billing_request_may_mutate_balance(request):
+    if not body.dry_run and not _billing_request_may_mutate_balance(request):
         raise HTTPException(
             status_code=403,
             detail=(
