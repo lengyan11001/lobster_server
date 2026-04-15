@@ -2119,7 +2119,8 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             if token:
                 try:
                     pre_body: Dict[str, Any] = {"capability_id": capability_id}
-                    if upstream_name == "sutui" and upstream_tool == "generate":
+                    _UNDERSTAND_CAPS = ("image.understand", "video.understand")
+                    if upstream_name == "sutui" and upstream_tool == "generate" and capability_id not in _UNDERSTAND_CAPS:
                         pre_body["model"] = (payload.get("model") or "").strip()
                         pre_body["params"] = payload
                     if upstream_name == "sutui" and sutui_pool_for_billing and sutui_token_ref_for_billing:
@@ -2422,17 +2423,66 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         else:
                             logger.info("[服务器端MCP-步骤C.7] 转存成功 url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
             
+            # ━━━ Comfly 路由判断：模型在 comfly_pricing.json 中则走 Comfly；payload._prefer_comfly 可强制 ━━━
+            _use_comfly = False
+            _comfly_task_query = False
+            _comfly_model_id = (normalized_model or original_model or "").strip()
+            _payload_prefer_comfly = bool(payload.get("_prefer_comfly")) if isinstance(payload, dict) else False
+            try:
+                from comfly_upstream import should_route_to_comfly, is_comfly_task as _is_cf_task, is_comfly_configured as _cf_ok
+                if capability_id == "task.get_result":
+                    _poll_tid = str(payload.get("task_id") or "").strip()
+                    if _poll_tid and _is_cf_task(_poll_tid):
+                        _comfly_task_query = True
+                        _use_comfly = True
+                elif _payload_prefer_comfly and _cf_ok() and capability_id in ("image.generate", "video.generate"):
+                    _use_comfly = True
+                else:
+                    _use_comfly = should_route_to_comfly(capability_id, _comfly_model_id)
+            except Exception as _cf_err:
+                logger.debug("[MCP] Comfly 路由检查跳过: %s", _cf_err)
+
             t0 = time.perf_counter()
-            logger.info("[MCP] invoke_capability capability_id=%s upstream=%s model=%s", capability_id, upstream_name, normalized_model or original_model or "(无)")
-            upstream_resp = await _call_upstream_mcp_tool(
-                upstream_url,
-                upstream_tool,
-                payload,
-                upstream_name=upstream_name,
-                sutui_token=sutui_token,
-                lobster_capability_id=capability_id,
-                brand_mark=user_brand_mark,
-            )
+            if _use_comfly:
+                logger.info("[MCP] invoke_capability capability_id=%s upstream=comfly model=%s task_query=%s", capability_id, _comfly_model_id, _comfly_task_query)
+                try:
+                    from comfly_upstream import (
+                        call_comfly_image_generate,
+                        call_comfly_video_generate,
+                        call_comfly_task_query,
+                        format_comfly_image_response_as_sutui,
+                        format_comfly_video_response_as_sutui,
+                        register_comfly_task,
+                    )
+                    if _comfly_task_query:
+                        _poll_tid = str(payload.get("task_id") or "").strip()
+                        _cf_resp = await call_comfly_task_query(_poll_tid)
+                        upstream_resp = format_comfly_video_response_as_sutui(_cf_resp)
+                    elif capability_id == "image.generate":
+                        _cf_resp = await call_comfly_image_generate(_comfly_model_id, payload)
+                        upstream_resp = format_comfly_image_response_as_sutui(_cf_resp)
+                    elif capability_id == "video.generate":
+                        _cf_resp = await call_comfly_video_generate(_comfly_model_id, payload)
+                        upstream_resp = format_comfly_video_response_as_sutui(_cf_resp)
+                        _cf_tid = (upstream_resp.get("task_id") or "") if isinstance(upstream_resp, dict) else ""
+                        if _cf_tid:
+                            register_comfly_task(_cf_tid)
+                    else:
+                        upstream_resp = {"error": {"message": f"Comfly 不支持 {capability_id}"}}
+                except Exception as _cf_call_err:
+                    logger.exception("[MCP] Comfly 调用异常 capability_id=%s", capability_id)
+                    upstream_resp = {"error": {"message": f"Comfly 调用失败: {_cf_call_err}"}}
+            else:
+                logger.info("[MCP] invoke_capability capability_id=%s upstream=%s model=%s", capability_id, upstream_name, normalized_model or original_model or "(无)")
+                upstream_resp = await _call_upstream_mcp_tool(
+                    upstream_url,
+                    upstream_tool,
+                    payload,
+                    upstream_name=upstream_name,
+                    sutui_token=sutui_token,
+                    lobster_capability_id=capability_id,
+                    brand_mark=user_brand_mark,
+                )
             # task.get_result: 不再在此处轮询，由 backend chat 每 15s 轮询并写回对话
             latency_ms = int((time.perf_counter() - t0) * 1000)
             upstream_error = ""
