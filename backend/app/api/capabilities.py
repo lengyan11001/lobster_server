@@ -373,6 +373,20 @@ def pre_deduct(
         _pre_deduct_idempotent_store(db, current_user.id, idem_key, out)
         return out
 
+    # ── Comfly 定价查找（dry_run 兜底：MCP 尚未介入时用 comfly_pricing.json 估价）──
+    if body.dry_run and (body.model or "").strip():
+        try:
+            from mcp.comfly_upstream import lookup_comfly_model
+            _cm_entry = lookup_comfly_model((body.model or "").strip())
+            if _cm_entry and isinstance(_cm_entry, dict):
+                _cm_price = _cm_entry.get("price_per_unit")
+                if _cm_price is not None and float(_cm_price) > 0:
+                    _multiplier = _get_user_price_multiplier()
+                    _cm_est = quantize_credits(float(_cm_price) * _multiplier)
+                    return {"credits_charged": credits_json_float(_cm_est), "dry_run": True, "model": body.model}
+        except Exception:
+            pass
+
     unit_credits = int(cap.unit_credits or 0) if cap else 0
     if unit_credits <= 0:
         return {"credits_charged": 0}
