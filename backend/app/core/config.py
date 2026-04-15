@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     openclaw_autostart: bool = True
     """本地轮询拉取/提交回复时的鉴权：请求头 X-Forward-Secret 需与此一致。不设则不做校验（仅内网或隧道时建议设置）。"""
     wecom_forward_secret: Optional[str] = None
+    # ── Comfly 中转平台（与速推并行的生成能力上游）──
+    comfly_api_base: Optional[str] = None
+    comfly_api_key: Optional[str] = None
     capability_sutui_mcp_url: Optional[str] = None
     capability_upstream_urls_json: Optional[str] = None
     reddit_comment2video_backend_url: Optional[str] = None

@@ -1,0 +1,4 @@
+{
+  "_doc": "Comfly 定价表：只有出现在此表中的模型才会走 Comfly 中转（否则走速推）。price_type: per_call=每次固定价 / per_second=按时长。api_format: dalle(图片DALL-E格式) / unified_video(统一视频格式) / kling(可灵官方格式)。price_per_unit: 每次或每秒的算力单价。comfly_model: Comfly 侧对应的模型名（不填则用 model_id 原值）。",
+  "models": {}
+}

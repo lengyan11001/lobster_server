@@ -250,7 +250,8 @@ def pre_deduct(
     upstream_tool = (cap.upstream_tool or "").strip() if cap else ""
     _require_sutui_brand_for_billing(current_user, upstream=upstream)
 
-    if upstream == "sutui" and upstream_tool == "generate":
+    _UNDERSTAND_CAPS = ("image.understand", "video.understand")
+    if upstream == "sutui" and upstream_tool == "generate" and body.capability_id not in _UNDERSTAND_CAPS:
         from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
 
         model = (body.model or "").strip()
@@ -564,3 +565,15 @@ def my_call_logs(
     ]
 
 
+@router.get("/capabilities/comfly-pricing", summary="Comfly 定价表（供 lobster_online 算力确认使用）")
+def comfly_pricing():
+    """返回 comfly_pricing.json 内容，前端可据此判断哪些模型走 Comfly 并展示预估算力。"""
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent.parent.parent.parent / "comfly_pricing.json"
+    if not p.exists():
+        return {"models": {}}
+    try:
+        return _json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {"models": {}}
