@@ -327,30 +327,41 @@ def pre_deduct(
                 detail="调用生成能力时必须提供 model 以按速推定价预扣积分。",
             )
         params = body.params if isinstance(body.params, dict) else None
-        try:
-            est_d = assert_pricing_pre_deduct_allows_upstream_or_http(
-                db,
-                current_user,
-                model,
-                params,
-                action_label="素材生成",
-            )
-        except HTTPException:
-            if body.dry_run:
-                try:
-                    from mcp.comfly_upstream import lookup_comfly_model
-                    _cm = lookup_comfly_model(model)
-                    if _cm and isinstance(_cm, dict) and _cm.get("price_per_unit") is not None:
-                        _multiplier = _get_user_price_multiplier()
-                        _cm_est = quantize_credits(float(_cm["price_per_unit"]) * _multiplier)
-                        return {"credits_charged": credits_json_float(_cm_est), "dry_run": True, "model": model}
-                except Exception:
-                    pass
-            raise
+
+        if body.dry_run:
+            _multiplier = _get_user_price_multiplier()
+            sutui_price = None
+            try:
+                _s = assert_pricing_pre_deduct_allows_upstream_or_http(
+                    db, current_user, model, params, action_label="素材生成",
+                )
+                sutui_price = float(_s)
+            except Exception:
+                pass
+            comfly_price = None
+            try:
+                from mcp.comfly_upstream import lookup_comfly_model
+                _cm = lookup_comfly_model(model)
+                if _cm and isinstance(_cm, dict) and _cm.get("price_per_unit") is not None:
+                    comfly_price = float(_cm["price_per_unit"])
+            except Exception:
+                pass
+            candidates = [p for p in (sutui_price, comfly_price) if p is not None and p > 0]
+            if candidates:
+                best = min(candidates)
+                est_final = quantize_credits(best * _multiplier)
+                return {"credits_charged": credits_json_float(est_final), "dry_run": True, "model": model}
+            return {"credits_charged": 0, "dry_run": True, "model": model}
+
+        est_d = assert_pricing_pre_deduct_allows_upstream_or_http(
+            db,
+            current_user,
+            model,
+            params,
+            action_label="素材生成",
+        )
         _multiplier = _get_user_price_multiplier()
         est_d = quantize_credits(float(est_d) * _multiplier)
-        if body.dry_run:
-            return {"credits_charged": credits_json_float(est_d), "dry_run": True, "model": model}
         db.refresh(current_user)
         if user_balance_decimal(current_user) < est_d:
             raise HTTPException(
