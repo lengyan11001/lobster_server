@@ -204,6 +204,14 @@ def _slim_messages(messages: list) -> list:
         return messages
     sys_msgs = [m for m in messages if isinstance(m, dict) and m.get("role") == "system"]
     non_sys = [m for m in messages if isinstance(m, dict) and m.get("role") != "system"]
+    non_sys = [
+        m for m in non_sys
+        if not (
+            m.get("role") == "assistant"
+            and isinstance(m.get("content"), str)
+            and m["content"].startswith("错误：")
+        )
+    ]
     if len(non_sys) > _SLIM_MSG_MAX_TURNS:
         non_sys = non_sys[-_SLIM_MSG_MAX_TURNS:]
     result = []

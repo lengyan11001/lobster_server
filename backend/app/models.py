@@ -28,6 +28,8 @@ class User(Base):
     brand_mark: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     """企业微信消息回调 FromUserName（成员 userid 等），与站内账号绑定后用于渠道侧扣费。"""
     wecom_userid: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    is_agent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    parent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
