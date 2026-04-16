@@ -2161,10 +2161,14 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     _early_use_comfly = True
                 else:
                     _early_use_comfly = _early_should_cf(capability_id, _comfly_model_id)
+                logger.info(
+                    "[MCP] Comfly路由预判 capability=%s model=%s use_comfly=%s configured=%s prefer=%s",
+                    capability_id, _comfly_model_id, _early_use_comfly, _early_cf_ok(), _payload_prefer_comfly,
+                )
                 if _early_use_comfly and not _early_comfly_task_query:
                     _comfly_user_credits = _early_est_cf(_comfly_model_id, payload if isinstance(payload, dict) else {}, for_user=True)
             except Exception as _cf_early_err:
-                logger.debug("[MCP] Comfly 路由预判跳过: %s", _cf_early_err)
+                logger.warning("[MCP] Comfly 路由预判跳过: %s", _cf_early_err)
 
             # ━━━ 用户积分：唯一业务入口（调用上游之前只在此处处理） ━━━
             pre_deduct_amount = quantize_credits(0)
