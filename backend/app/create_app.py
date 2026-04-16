@@ -36,6 +36,7 @@ from .api.twilio_whatsapp import router as twilio_whatsapp_router
 from .api.privacy_policy import router as privacy_policy_router
 from .api.oauth_public_pages import router as oauth_public_pages_router
 from .api.meta_social_publish import router as meta_social_publish_router
+from .api.admin import router as admin_router
 try:
     from .api.wecom import router as wecom_router
 except Exception as e:
@@ -748,6 +749,7 @@ def create_app() -> FastAPI:
     app.include_router(messenger_router, prefix="")
     app.include_router(twilio_whatsapp_router, prefix="")
     app.include_router(meta_social_publish_router, prefix="")
+    app.include_router(admin_router, prefix="")
     if wecom_router is not None:
         app.include_router(wecom_router, prefix="")
     else:

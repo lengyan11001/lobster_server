@@ -109,6 +109,10 @@ class Settings(BaseSettings):
     twilio_whatsapp_webhook_full_url: Optional[str] = None
     """MCP 调用 /capabilities/* 计费接口时携带请求头 X-Lobster-Mcp-Billing 与此值一致；与来源为 127.0.0.1/::1 二选一即可改余额。未设时仅允许本机回环，避免公网与本机 MCP 重复扣费。"""
     lobster_mcp_billing_internal_key: Optional[str] = None
+    """管理后台登录账号（不配置则管理后台不可用）。"""
+    lobster_admin_username: Optional[str] = None
+    """管理后台登录密码。"""
+    lobster_admin_password: Optional[str] = None
     """互亿无线短信 APIID（用户中心-文本短信-产品总览）"""
     ihuyi_sms_account: Optional[str] = None
     """互亿无线 APIKEY，对应 Submit.json 请求参数 password"""
