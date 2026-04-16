@@ -73,8 +73,11 @@ def get_comfly_config(token_group: str = "") -> Tuple[str, str]:
 
     token_group 对应环境变量 COMFLY_API_KEY_<GROUP>（大写），
     未设置时回退到默认 COMFLY_API_KEY。
+    base_url 会去除尾部 /v1 以避免与端点路径拼接时出现 /v1/v1 重复。
     """
     base = (os.environ.get("COMFLY_API_BASE") or "").strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
     key = ""
     if token_group:
         env_name = f"COMFLY_API_KEY_{token_group.upper()}"

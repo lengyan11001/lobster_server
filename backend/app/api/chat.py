@@ -316,6 +316,8 @@ async def _exec_tool(
     timeout = 120.0
     if name == "invoke_capability" and (args.get("capability_id") or "").strip() == "task.get_result":
         timeout = 65 * 60.0  # 单次 get_result 调用超时，须大于 _POLL_MAX_WAIT_VIDEO
+    elif name in ("publish_content", "publish_youtube_video"):
+        timeout = 300.0  # Playwright 浏览器自动化发布可能超过 120s
 
     def _friendly_tool_error(err: Exception) -> str:
         raw = str(err or "")
