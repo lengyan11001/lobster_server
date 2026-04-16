@@ -1922,13 +1922,34 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
 
         if name == "list_capabilities":
             is_admin = await _fetch_is_skill_store_admin(token)
+            # Collect Comfly model names per capability type for dynamic hints
+            _comfly_image_models: list[str] = []
+            _comfly_video_models: list[str] = []
+            try:
+                from comfly_upstream import _load_pricing as _lp
+                _cp = _lp()
+                for _mk, _mv in (_cp.get("models") or {}).items():
+                    if not isinstance(_mv, dict):
+                        continue
+                    _fmt = _mv.get("api_format", "")
+                    if _fmt == "dalle":
+                        _comfly_image_models.append(_mk)
+                    elif _fmt in ("unified_video",):
+                        _comfly_video_models.append(_mk)
+            except Exception:
+                pass
             caps_out = []
             for cid in sorted(catalog.keys()):
                 if catalog[cid].get("enabled") is False:
                     continue
                 if _capability_id_is_debug_only_in_registry(cid) and not is_admin:
                     continue
-                caps_out.append({"capability_id": cid, "description": catalog[cid].get("description") or cid})
+                desc = catalog[cid].get("description") or cid
+                if cid == "image.generate" and _comfly_image_models:
+                    desc += f"  可用模型包括: {', '.join(_comfly_image_models)}（用户指定模型时必须原样传入 model 字段）"
+                elif cid == "video.generate" and _comfly_video_models:
+                    desc += f"  可用模型包括: {', '.join(_comfly_video_models)}（用户指定模型时必须原样传入 model 字段）"
+                caps_out.append({"capability_id": cid, "description": desc})
             data = {"capabilities": caps_out}
             return [{"type": "text", "text": json.dumps(data, ensure_ascii=False, indent=2)}], False
 

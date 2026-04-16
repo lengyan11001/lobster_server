@@ -34,11 +34,22 @@ from .auth import access_token_claims, create_access_token, get_current_user, oa
 from ..models import CapabilityCallLog, ChatTurnLog, ToolCallLog, User
 
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+_COMFLY_PRICING_PATH = _BASE_DIR / "comfly_pricing.json"
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_HISTORY = 20
+
+
+def _get_comfly_image_models() -> list[str]:
+    """Return Comfly image model IDs from comfly_pricing.json (cached per process)."""
+    try:
+        data = json.loads(_COMFLY_PRICING_PATH.read_text(encoding="utf-8"))
+        models = data.get("models") or {}
+        return [k for k, v in models.items() if isinstance(v, dict) and v.get("api_format") == "dalle"]
+    except Exception:
+        return []
 MAX_TOOL_ROUNDS = 8
 # 单条历史消息最大字符数，避免长回复再次送入模型导致重复/延续上一条
 MAX_HISTORY_MESSAGE_CHARS = 1200
@@ -2108,6 +2119,9 @@ async def chat_endpoint(
             "【禁止】伪造工具结果、编造URL/asset_id、假装完成操作、用文字代替工具调用。所有操作必须通过调用工具完成。\n\n"
             "【工具调用】\n"
             "生成图片: invoke_capability(\"image.generate\", {prompt, model:\"jimeng-4.0\"}) → task.get_result(task_id) → saved_assets[0].asset_id\n"
+            "【图片模型】用户指定模型时必须原样传入payload.model。可用图片模型: jimeng-4.0, jimeng-4.5, fal-ai/flux-2/flash"
+            + (", " + ", ".join(_get_comfly_image_models()) if _get_comfly_image_models() else "")
+            + "。用户说用某模型就传该模型名，禁止替换为default。\n"
             "生成视频: invoke_capability(\"video.generate\", {model:\"sora2\", prompt, duration:5}) → task.get_result 轮询(30-120s)\n"
             "【视频模型】用户不指定模型时默认用 sora2。可用模型仅限: sora2, seedance2, hailuo, vidu, wan, veo, kling, grok, jimeng-video。严禁使用这些之外的模型名（如stable-video-diffusion等不存在的模型）。\n"
             "图生视频: 用户附图时只填prompt/model/duration，禁止填image_url（系统自动注入）\n"
@@ -2282,6 +2296,9 @@ async def _chat_stream_events(
                 "【禁止】伪造工具结果、编造URL/asset_id、假装完成操作、用文字代替工具调用。所有操作必须通过调用工具完成。\n\n"
                 "【工具调用】\n"
                 "生成图片: invoke_capability(\"image.generate\", {prompt, model:\"jimeng-4.0\"}) → task.get_result(task_id) → saved_assets[0].asset_id\n"
+                "【图片模型】用户指定模型时必须原样传入payload.model。可用图片模型: jimeng-4.0, jimeng-4.5, fal-ai/flux-2/flash"
+                + (", " + ", ".join(_get_comfly_image_models()) if _get_comfly_image_models() else "")
+                + "。用户说用某模型就传该模型名，禁止替换为default。\n"
                 "生成视频: invoke_capability(\"video.generate\", {model:\"sora2\", prompt, duration:5}) → task.get_result 轮询(30-120s)\n"
                 "【视频模型】用户不指定模型时默认用 sora2。可用模型仅限: sora2, seedance2, hailuo, vidu, wan, veo, kling, grok, jimeng-video。严禁使用这些之外的模型名。\n"
                 "图生视频: 用户附图时只填prompt/model/duration，禁止填image_url（系统自动注入）\n"
