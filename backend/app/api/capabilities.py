@@ -557,9 +557,9 @@ def record_call(
         ledger_kind = "settle"
         ledger_meta = {
             "capability_id": body.capability_id,
-            "pre_deducted": pre,
-            "final": final,
-            "delta_settle": -delta,
+            "pre_deducted": credits_json_float(pre),
+            "final": credits_json_float(final),
+            "delta_settle": credits_json_float(-delta),
         }
     elif credits_charged_body > 0 and _should_deduct_credits() and not pre_applied:
         if user_balance_decimal(current_user) < credits_charged_body:
@@ -570,7 +570,7 @@ def record_call(
         current_user.credits = user_balance_decimal(current_user) - credits_charged_body
         credits_charged = credits_charged_body
         ledger_kind = "direct_charge"
-        ledger_meta = {"capability_id": body.capability_id, "credits_charged": credits_charged_body}
+        ledger_meta = {"capability_id": body.capability_id, "credits_charged": credits_json_float(credits_charged_body)}
     elif credits_charged_body == 0 and _should_deduct_credits() and not pre_applied and unit_credits > 0:
         uc = quantize_credits(unit_credits)
         if user_balance_decimal(current_user) < uc:
