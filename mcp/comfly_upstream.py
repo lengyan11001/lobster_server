@@ -23,15 +23,15 @@ _pricing_cache: Optional[Dict[str, Any]] = None
 _pricing_mtime: float = 0
 
 _MAX_COMFLY_TASK_TRACK = 5000
-_comfly_task_ids: "OrderedDict[str, bool]" = OrderedDict()
+_comfly_task_ids: "OrderedDict[str, str]" = OrderedDict()
 
 
-def register_comfly_task(task_id: str) -> None:
-    """记录由 Comfly 创建的 task_id，用于 task.get_result 路由。"""
+def register_comfly_task(task_id: str, token_group: str = "") -> None:
+    """记录由 Comfly 创建的 task_id 及其 token_group，用于 task.get_result 路由。"""
     tid = (task_id or "").strip()
     if not tid:
         return
-    _comfly_task_ids[tid] = True
+    _comfly_task_ids[tid] = token_group or ""
     while len(_comfly_task_ids) > _MAX_COMFLY_TASK_TRACK:
         _comfly_task_ids.popitem(last=False)
 
@@ -39,6 +39,11 @@ def register_comfly_task(task_id: str) -> None:
 def is_comfly_task(task_id: str) -> bool:
     """判断 task_id 是否属于 Comfly。"""
     return (task_id or "").strip() in _comfly_task_ids
+
+
+def get_comfly_task_token_group(task_id: str) -> str:
+    """获取 Comfly task 对应的 token_group。"""
+    return _comfly_task_ids.get((task_id or "").strip(), "")
 
 
 def _load_pricing() -> Dict[str, Any]:
@@ -63,11 +68,30 @@ def _load_pricing() -> Dict[str, Any]:
     return _pricing_cache
 
 
-def get_comfly_config() -> Tuple[str, str]:
-    """返回 (base_url, api_key)。"""
+def get_comfly_config(token_group: str = "") -> Tuple[str, str]:
+    """返回 (base_url, api_key)。
+
+    token_group 对应环境变量 COMFLY_API_KEY_<GROUP>（大写），
+    未设置时回退到默认 COMFLY_API_KEY。
+    """
     base = (os.environ.get("COMFLY_API_BASE") or "").strip().rstrip("/")
-    key = (os.environ.get("COMFLY_API_KEY") or "").strip()
+    key = ""
+    if token_group:
+        env_name = f"COMFLY_API_KEY_{token_group.upper()}"
+        key = (os.environ.get(env_name) or "").strip()
+        if key:
+            logger.debug("[Comfly] 使用 token_group=%s env=%s", token_group, env_name)
+    if not key:
+        key = (os.environ.get("COMFLY_API_KEY") or "").strip()
     return base, key
+
+
+def _get_model_token_group(model_id: str) -> str:
+    """从 comfly_pricing.json 中查找模型的 token_group。"""
+    entry = lookup_comfly_model(model_id)
+    if entry and isinstance(entry, dict):
+        return (entry.get("token_group") or "").strip()
+    return ""
 
 
 def is_comfly_configured() -> bool:
@@ -177,7 +201,8 @@ async def call_comfly_image_generate(
     payload: Dict[str, Any],
 ) -> Dict[str, Any]:
     """调用 Comfly 图片生成 API (DALL-E 格式)。"""
-    base, key = get_comfly_config()
+    tg = _get_model_token_group(model_id)
+    base, key = get_comfly_config(tg)
     entry = lookup_comfly_model(model_id) or {}
     comfly_model = entry.get("comfly_model") or model_id
 
@@ -232,7 +257,8 @@ async def call_comfly_video_generate(
     payload: Dict[str, Any],
 ) -> Dict[str, Any]:
     """调用 Comfly 视频生成 API (统一格式)。"""
-    base, key = get_comfly_config()
+    tg = _get_model_token_group(model_id)
+    base, key = get_comfly_config(tg)
     entry = lookup_comfly_model(model_id) or {}
     comfly_model = entry.get("comfly_model") or model_id
     api_format = (entry.get("api_format") or "unified_video").strip()
@@ -307,9 +333,9 @@ async def call_comfly_video_generate(
         return {"error": {"message": f"Comfly 请求失败: {e}"}}
 
 
-async def call_comfly_task_query(task_id: str) -> Dict[str, Any]:
+async def call_comfly_task_query(task_id: str, token_group: str = "") -> Dict[str, Any]:
     """查询 Comfly 任务状态。"""
-    base, key = get_comfly_config()
+    base, key = get_comfly_config(token_group)
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
@@ -359,7 +385,8 @@ async def call_comfly_chat_completions(
     stream: bool = False,
 ) -> Dict[str, Any]:
     """调用 Comfly /v1/chat/completions (OpenAI 兼容格式)。"""
-    base, key = get_comfly_config()
+    tg = _get_model_token_group(model_id)
+    base, key = get_comfly_config(tg)
     if not base or not key:
         return {"error": {"message": "Comfly 未配置 (COMFLY_API_BASE / COMFLY_API_KEY)"}}
 

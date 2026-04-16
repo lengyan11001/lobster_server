@@ -2474,10 +2474,12 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         format_comfly_image_response_as_sutui,
                         format_comfly_video_response_as_sutui,
                         register_comfly_task,
+                        get_comfly_task_token_group,
+                        _get_model_token_group,
                     )
                     if _comfly_task_query:
                         _poll_tid = str(payload.get("task_id") or "").strip()
-                        _cf_resp = await call_comfly_task_query(_poll_tid)
+                        _cf_resp = await call_comfly_task_query(_poll_tid, get_comfly_task_token_group(_poll_tid))
                         upstream_resp = format_comfly_video_response_as_sutui(_cf_resp)
                     elif capability_id == "comfly.chat":
                         _cf_model = (payload.get("model") or "").strip()
@@ -2509,7 +2511,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         upstream_resp = format_comfly_video_response_as_sutui(_cf_resp)
                         _cf_tid = (upstream_resp.get("task_id") or "") if isinstance(upstream_resp, dict) else ""
                         if _cf_tid:
-                            register_comfly_task(_cf_tid)
+                            register_comfly_task(_cf_tid, _get_model_token_group(_comfly_model_id))
                     else:
                         upstream_resp = {"error": {"message": f"Comfly 不支持 {capability_id}"}}
                 except Exception as _cf_call_err:
