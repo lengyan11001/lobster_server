@@ -317,8 +317,9 @@ async def proxy_kf_send_msg(
         r = await client.post(f"{QYAPI_BASE}/kf/send_msg?access_token={access_token}", json=payload)
         r.raise_for_status()
         data = r.json()
+    logger.info("[KF] send_msg touser=%s msgtype=%s errcode=%s errmsg=%s", body.touser, body.msgtype, data.get("errcode"), data.get("errmsg"))
     if data.get("errcode") != 0:
-        raise HTTPException(status_code=502, detail=f"发送客服消息失败: {data.get('errmsg', '')}")
+        raise HTTPException(status_code=502, detail=f"发送客服消息失败: {data.get('errmsg', '')} (errcode={data.get('errcode')})")
     return data
 
 
