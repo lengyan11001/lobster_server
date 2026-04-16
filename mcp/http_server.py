@@ -267,7 +267,7 @@ def _tool_definitions(catalog: Dict[str, Dict[str, Any]], *, is_skill_store_admi
             "description": (
                 "调用能力(图片生成/视频/语音等)。"
                 "【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"fal-ai/flux-2/flash\"，禁止自行选择 jimeng。"
-                "video.generate 用户未指定模型时 payload.model 填 \"sora2\"。"
+                "video.generate 用户未指定模型时 payload.model 填 \"sora2\"，用户未指定时长时 duration 必须填 4（即 4 秒）。"
                 "【爆款TVC】用户说TVC/带货视频时不走video.generate，改用 capability_id=\"comfly.veo.daihuo_pipeline\"。"
             ),
             "inputSchema": {
@@ -1920,6 +1920,8 @@ async def _auto_save_generated_assets(
     return saved
 
 
+
+
 async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], request: Optional[Request] = None) -> Tuple[List[Dict[str, Any]], bool]:
     try:
         catalog = _load_capability_catalog()
@@ -2058,6 +2060,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 return await _call_tool("publish_content", pub_args, token, request)
             if not capability_id or capability_id not in catalog:
                 return [{"type": "text", "text": f"能力未找到: {capability_id}"}], True
+
             if not (token or "").strip():
                 return [
                     {
