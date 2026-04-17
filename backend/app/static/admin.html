@@ -135,6 +135,12 @@ tr:hover{background:var(--bg)}
         </div>
       </div>
       <div class="card">
+        <h3>可见技能</h3>
+        <div id="skillVisibilitySection">
+          <div class="empty">加载中…</div>
+        </div>
+      </div>
+      <div class="card">
         <h3>积分流水（最近50条）</h3>
         <div id="ledgerTable"></div>
       </div>
@@ -306,6 +312,7 @@ async function showUserDetail(userId) {
     }
 
     document.getElementById('rechargeAmount').value = '';
+    loadSkillVisibility(userId);
   } catch(e) { toast(e.message, 'error'); }
 }
 
@@ -329,6 +336,41 @@ async function doAddCredits() {
     toast(`充值成功：${data.email} ${data.delta > 0 ? '+' : ''}${data.delta} 积分，当前余额 ${data.new_credits.toFixed(2)}`);
     showUserDetail(currentUserId);
   } catch(e) { toast(e.message, 'error'); }
+}
+
+async function loadSkillVisibility(userId) {
+  const section = document.getElementById('skillVisibilitySection');
+  try {
+    const visData = await api('/admin/api/user-skill-visibility/' + userId);
+    const visibleIds = new Set(visData.visible_ids || []);
+    const allPackages = visData.all_packages || [];
+    if (visData.is_admin) {
+      section.innerHTML = '<div style="color:var(--text-secondary);font-size:13px">该用户是管理员，默认可见所有技能。</div>';
+      return;
+    }
+    let html = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">';
+    for (const pkg of allPackages) {
+      const active = visibleIds.has(pkg.id);
+      html += `<label style="display:flex;align-items:center;gap:4px;padding:6px 10px;background:${active?'#dcfce7':'var(--bg)'};border:1px solid ${active?'#86efac':'var(--border)'};border-radius:6px;font-size:12px;cursor:pointer">
+        <input type="checkbox" data-pkg="${pkg.id}" ${active?'checked':''} onchange="toggleSkillVisibility(${userId},'${pkg.id}',this.checked)">
+        ${pkg.name}
+        <span style="color:var(--text-secondary);font-size:11px">(${pkg.store_visibility})</span>
+      </label>`;
+    }
+    html += '</div>';
+    section.innerHTML = html;
+  } catch(e) {
+    section.innerHTML = '<div class="empty" style="color:var(--danger)">' + e.message + '</div>';
+  }
+}
+
+async function toggleSkillVisibility(userId, pkgId, checked) {
+  try {
+    const body = {};
+    if (checked) body.add = [pkgId]; else body.remove = [pkgId];
+    await api('/admin/api/user-skill-visibility/' + userId, { method: 'POST', body: JSON.stringify(body) });
+    toast(checked ? '已添加: ' + pkgId : '已移除: ' + pkgId);
+  } catch(e) { toast(e.message, 'error'); loadSkillVisibility(userId); }
 }
 
 document.getElementById('loginPass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });

@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import CreditLedger, User
+from ..models import CreditLedger, User, UserSkillVisibility
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits
 
@@ -216,3 +216,75 @@ def admin_list_users(
             for u in users
         ],
     }
+
+
+# ── 技能可见性管理 ──
+
+
+@router.get("/admin/api/user-skill-visibility/{user_id}")
+def admin_get_user_skill_visibility(
+    user_id: int,
+    _auth: bool = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    from .skills import _user_visible_package_ids, _load_registry, _pkg_store_visibility, _skill_store_admin
+    visible = _user_visible_package_ids(db, user_id)
+    registry = _load_registry()
+    packages = registry.get("packages", {})
+    all_pkgs = [
+        {"id": k, "name": v.get("name", k), "store_visibility": _pkg_store_visibility(v)}
+        for k, v in packages.items()
+    ]
+    return {
+        "user_id": user_id,
+        "is_admin": _skill_store_admin(user),
+        "visible_ids": sorted(visible),
+        "all_packages": all_pkgs,
+    }
+
+
+class AdminSkillVisUpdate(BaseModel):
+    add: list[str] = []
+    remove: list[str] = []
+
+
+@router.post("/admin/api/user-skill-visibility/{user_id}")
+def admin_update_user_skill_visibility(
+    user_id: int,
+    body: AdminSkillVisUpdate,
+    _auth: bool = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    from .skills import _ensure_user_visibility_seeded
+    _ensure_user_visibility_seeded(db, user_id)
+    added, removed = [], []
+    for pkg_id in body.add:
+        pkg_id = pkg_id.strip()
+        if not pkg_id:
+            continue
+        exists = db.query(UserSkillVisibility).filter(
+            UserSkillVisibility.user_id == user_id,
+            UserSkillVisibility.package_id == pkg_id,
+        ).first()
+        if not exists:
+            db.add(UserSkillVisibility(user_id=user_id, package_id=pkg_id))
+            added.append(pkg_id)
+    for pkg_id in body.remove:
+        pkg_id = pkg_id.strip()
+        if not pkg_id:
+            continue
+        row = db.query(UserSkillVisibility).filter(
+            UserSkillVisibility.user_id == user_id,
+            UserSkillVisibility.package_id == pkg_id,
+        ).first()
+        if row:
+            db.delete(row)
+            removed.append(pkg_id)
+    db.commit()
+    return {"ok": True, "added": added, "removed": removed}
