@@ -116,8 +116,8 @@ tr:hover{background:var(--bg)}
     <div style="display:flex;align-items:center">
       <h2>Lobster 管理后台</h2>
       <div class="nav-tabs">
-        <div class="nav-tab active" data-nav="users" onclick="switchNav('users')">用户信息</div>
-        <div class="nav-tab" data-nav="stats" onclick="switchNav('stats')">统计</div>
+        <div class="nav-tab active" data-nav="stats" onclick="switchNav('stats')">统计</div>
+        <div class="nav-tab" data-nav="users" onclick="switchNav('users')">用户信息</div>
       </div>
     </div>
     <div class="user-info">
@@ -127,7 +127,7 @@ tr:hover{background:var(--bg)}
   </div>
 
   <!-- Page: Users -->
-  <div class="container" id="pageUsers">
+  <div class="container" id="pageUsers" style="display:none">
     <div class="search-bar">
       <input type="text" id="searchInput" placeholder="搜索用户：输入手机号、账号、邮箱或用户ID…" onkeydown="if(event.key==='Enter')doSearch()">
       <button class="btn btn-primary btn-sm" onclick="doSearch()">搜索</button>
@@ -177,7 +177,7 @@ tr:hover{background:var(--bg)}
   </div>
 
   <!-- Page: Stats -->
-  <div class="container" id="pageStats" style="display:none">
+  <div class="container" id="pageStats">
     <div id="statsOverview" class="stats-grid"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
       <div class="chart-card"><h3>每日新增用户</h3><div id="chartDailyUsers"></div></div>
@@ -242,9 +242,10 @@ function showDashboard() {
   document.getElementById('loginView').style.display = 'none';
   document.getElementById('dashboardView').style.display = 'block';
   document.getElementById('adminName').textContent = '管理员';
+  loadStats();
 }
 
-let currentNav = 'users';
+let currentNav = 'stats';
 function switchNav(nav) {
   currentNav = nav;
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.nav === nav));
