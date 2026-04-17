@@ -542,7 +542,8 @@ def _xskill_upstream_pool_quota_error(data: Any) -> bool:
     return (
         code in ("insufficient_balance", "insufficient_user_quota")
         or typ == "billing_error"
-        or (typ == "rix_api_error" and ("insufficient" in code or "预扣费" in raw_msg))
+        or (typ.replace("_", "") == "rixapierror" and ("insufficient" in code or "预扣费" in raw_msg))
+        or "预扣费" in raw_msg
         or "insufficient" in msg
     )
 
