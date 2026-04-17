@@ -511,6 +511,32 @@ def _api_base() -> str:
     return (getattr(settings, "sutui_api_base", None) or "https://api.xskill.ai").rstrip("/")
 
 
+# ---------------------------------------------------------------------------
+# xskill v3 (OpenRouter) — new endpoint with provider-prefixed model IDs
+# ---------------------------------------------------------------------------
+_XSKILL_V3_MODEL_MAP: Dict[str, str] = {
+    "deepseek-chat": "deepseek/deepseek-v3.2",
+    "deepseek-reasoner": "deepseek/deepseek-v3.2-speciale",
+}
+_XSKILL_V3_CREDITS_PER_USD = 400
+
+
+def _get_v3_route(model: str, token: str) -> Optional[Dict[str, Any]]:
+    """Return v3 attempt dict if model has a v3 mapping, else None."""
+    v3_model = _XSKILL_V3_MODEL_MAP.get(model)
+    if not v3_model:
+        return None
+    return {
+        "model": v3_model,
+        "api_base": _api_base(),
+        "api_key": token,
+        "provider": "xskill-v3",
+        "endpoint_prefix": "/v3",
+        "is_direct": False,
+        "v1_model": model,
+    }
+
+
 def _upstream_chat_error_dict(data: Any) -> Optional[Dict[str, Any]]:
     """从速推 chat/completions 错误 JSON 中取出 error 对象（兼容 detail.error）。"""
     if not isinstance(data, dict):
@@ -849,7 +875,14 @@ def _credits_for_sutui_chat(
     *,
     is_direct_api: bool = False,
 ) -> Tuple[Decimal, str]:
-    """LLM 实扣：直连官方定价 → 上游显式价字段 → docs 定价+usage → usage×fallback。"""
+    """LLM 实扣：v3 cost → 直连官方定价 → 上游显式价字段 → docs 定价+usage → usage×fallback。"""
+    if usage and isinstance(usage, dict):
+        v3_cost = usage.get("cost")
+        if isinstance(v3_cost, (int, float)) and v3_cost > 0:
+            v3_credits = quantize_credits(Decimal(str(v3_cost)) * _XSKILL_V3_CREDITS_PER_USD)
+            if v3_credits > 0:
+                return v3_credits, "v3_cost_field"
+
     if is_direct_api and usage and isinstance(usage, dict):
         direct_credits = credits_from_direct_api_usage(model, usage)
         if direct_credits > 0:
@@ -1081,7 +1114,7 @@ async def sutui_chat_completions(
         user_bal_str = str(user_balance_decimal(current_user))
     out_req_for_audit = clip_openai_chat_completions_json_for_audit(body)
 
-    # ── Build attempts list: direct API first, then xskill fallback ──
+    # ── Build attempts list: direct → xskill-v3 → xskill-v1 ──
     _DIRECT_TIMEOUT = 180.0
     _XSKILL_TIMEOUT = 180.0
     attempts: List[Dict[str, Any]] = []
@@ -1091,6 +1124,13 @@ async def sutui_chat_completions(
             attempts.append({
                 "model": mid, "api_base": dr["api_base"], "api_key": dr["api_key"],
                 "provider": "direct:" + dr["provider"], "timeout": _DIRECT_TIMEOUT, "is_direct": True,
+            })
+        v3 = _get_v3_route(mid, token)
+        if v3:
+            attempts.append({
+                "model": v3["model"], "api_base": v3["api_base"], "api_key": v3["api_key"],
+                "provider": v3["provider"], "timeout": _XSKILL_TIMEOUT, "is_direct": False,
+                "endpoint_prefix": v3["endpoint_prefix"], "v1_model": mid,
             })
         attempts.append({
             "model": mid, "api_base": _api_base(), "api_key": token,
@@ -1107,18 +1147,21 @@ async def sutui_chat_completions(
         data: Any = None
         winning_model = model_id
         winning_is_direct = False
+        winning_provider = ""
         last_connect_error: Optional[Exception] = None
         last_timeout_error: Optional[Exception] = None
 
         for attempt_idx, att in enumerate(attempts):
             mid_try = att["model"]
-            att_url = f"{att['api_base']}/v1/chat/completions"
+            _epfx = att.get("endpoint_prefix", "/v1")
+            att_url = f"{att['api_base']}{_epfx}/chat/completions"
             att_headers = {
                 "Authorization": f"Bearer {att['api_key']}",
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
             }
             att_is_direct = att["is_direct"]
+            _saved_model = body.get("model")
             body["model"] = mid_try
 
             if att_is_direct:
@@ -1161,6 +1204,7 @@ async def sutui_chat_completions(
             if not att_is_direct and _sutui_chat_abort_model_fallback(r.status_code, data if isinstance(data, dict) else {}):
                 winning_model = mid_try
                 winning_is_direct = att_is_direct
+                winning_provider = att["provider"]
                 break
 
             if _openai_nonstream_completion_usable(data, r.status_code):
@@ -1202,6 +1246,7 @@ async def sutui_chat_completions(
                             continue
                 winning_model = mid_try
                 winning_is_direct = att_is_direct
+                winning_provider = att["provider"]
                 model_id = mid_try
                 break
 
@@ -1221,6 +1266,7 @@ async def sutui_chat_completions(
                 continue
             winning_model = mid_try
             winning_is_direct = att_is_direct
+            winning_provider = att["provider"]
             break
 
         if r is None:
@@ -1233,7 +1279,7 @@ async def sutui_chat_completions(
         if data is None:
             raise HTTPException(status_code=502, detail=(r.text or "")[:2000])
 
-        _route_label = "direct" if winning_is_direct else "xskill"
+        _route_label = "direct" if winning_is_direct else (winning_provider or "xskill")
         logger.info(
             "[chat_trace] trace_id=%s path=sutui_chat upstream roundtrip http=%s model=%s route=%s summary=%s",
             trace_id, r.status_code, winning_model or "-", _route_label,
@@ -1317,7 +1363,8 @@ async def sutui_chat_completions(
         try:
             for cand_idx, att in enumerate(attempts):
                 mid_try = att["model"]
-                att_url = f"{att['api_base']}/v1/chat/completions"
+                _epfx = att.get("endpoint_prefix", "/v1")
+                att_url = f"{att['api_base']}{_epfx}/chat/completions"
                 att_headers = {
                     "Authorization": f"Bearer {att['api_key']}",
                     "Content-Type": "application/json",
