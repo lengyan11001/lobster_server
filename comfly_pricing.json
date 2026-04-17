@@ -21,8 +21,7 @@
       "price_per_unit": 42,
       "api_format": "dalle",
       "comfly_model": "nano-banana-2",
-      "token_group": "premium",
-      "sutui_equivalent": ["fal-ai/nano-banana-2", "fal-ai/nano-banana-pro"]
+      "token_group": "premium"
     }
   }
 }
