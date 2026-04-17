@@ -324,15 +324,38 @@ def _enforce_single_search_models_tool_call(body: Dict[str, Any], trace_id: str)
     msgs = body.get("messages")
     if not _messages_already_ran_search_models(msgs):
         return
-    # 已经查过一次：不再允许再次 tool_call，让模型直接总结已有 tool_result。
-    prev = body.get("tool_choice")
-    body["tool_choice"] = "none"
-    body.pop("tools", None)
-    logger.info(
-        "[chat_trace] trace_id=%s enforce_single_search_models tool_choice %r -> none (tools stripped)",
-        trace_id,
-        prev,
-    )
+    # 已查过 search_models：从工具的 capability_id enum 中移除 search_models，保留其他工具。
+    _search_needles = {"sutui.search_models"}
+    modified = False
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        fn = tool.get("function")
+        if not isinstance(fn, dict):
+            continue
+        params = fn.get("parameters")
+        if not isinstance(params, dict):
+            continue
+        props = params.get("properties")
+        if not isinstance(props, dict):
+            continue
+        cap_prop = props.get("capability_id")
+        if isinstance(cap_prop, dict) and isinstance(cap_prop.get("enum"), list):
+            original = cap_prop["enum"]
+            filtered = [e for e in original if e not in _search_needles]
+            if len(filtered) < len(original):
+                cap_prop["enum"] = filtered
+                modified = True
+    if modified:
+        logger.info(
+            "[chat_trace] trace_id=%s enforce_single_search_models: removed search_models from capability enum (tools preserved)",
+            trace_id,
+        )
+    else:
+        logger.info(
+            "[chat_trace] trace_id=%s enforce_single_search_models: no enum to filter, keeping tools as-is",
+            trace_id,
+        )
 
 
 def _strip_provider_prefix(mid: str) -> str:
