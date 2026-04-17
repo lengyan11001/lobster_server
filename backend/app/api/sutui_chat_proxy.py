@@ -145,6 +145,22 @@ _SLIM_PROP_DESC_MAX = 40          # max chars for property-level description; 0 
 _BASE64_RE = __import__("re").compile(r"data:[^;]{0,60};base64,[A-Za-z0-9+/=]{200,}")
 
 
+_TOOLS_BLACKLIST = frozenset({
+    "browser", "canvas", "exec", "process",
+})
+
+
+def _filter_local_tools(tools: list) -> list:
+    """Remove OpenClaw-local tools that the server-side LLM should not control."""
+    if not isinstance(tools, list):
+        return tools
+    return [
+        t for t in tools
+        if not isinstance(t, dict)
+        or (t.get("function", t) or {}).get("name", "") not in _TOOLS_BLACKLIST
+    ]
+
+
 def _slim_tools(tools: list) -> list:
     """Shorten tool definitions: truncate descriptions, strip verbose property docs."""
     if not isinstance(tools, list):
@@ -253,6 +269,7 @@ def _optimize_request_body(body: dict) -> int:
 
     tools = body.get("tools")
     if isinstance(tools, list) and tools:
+        tools = _filter_local_tools(tools)
         body["tools"] = _slim_tools(tools)
 
     msgs = body.get("messages")
