@@ -233,12 +233,59 @@ def _slim_messages(messages: list) -> list:
     ]
     if len(non_sys) > _SLIM_MSG_MAX_TURNS:
         non_sys = non_sys[-_SLIM_MSG_MAX_TURNS:]
+    non_sys = _repair_orphan_tool_messages(non_sys)
     result = []
     for m in sys_msgs:
         result.append(_truncate_msg(m))
     for m in non_sys:
         result.append(_truncate_msg(m))
     return result
+
+
+def _repair_orphan_tool_messages(messages: list) -> list:
+    """Remove orphaned tool messages whose preceding tool_calls assistant message was truncated.
+
+    DeepSeek (and OpenAI) require every message with role='tool' to follow
+    an assistant message that contains a matching tool_calls entry.  After
+    truncation this invariant can break.  We also strip assistant messages
+    whose tool_calls all lost their tool responses (to avoid dangling calls).
+    """
+    if not messages:
+        return messages
+
+    tool_call_ids_from_assistants: set = set()
+    tool_call_id_to_tool_idx: dict = {}
+
+    for i, m in enumerate(messages):
+        if not isinstance(m, dict):
+            continue
+        role = (m.get("role") or "").strip().lower()
+        if role == "assistant":
+            tcs = m.get("tool_calls")
+            if isinstance(tcs, list):
+                for tc in tcs:
+                    tc_id = (tc.get("id") or "") if isinstance(tc, dict) else ""
+                    if tc_id:
+                        tool_call_ids_from_assistants.add(tc_id)
+        elif role == "tool":
+            tc_id = (m.get("tool_call_id") or "").strip()
+            if tc_id:
+                tool_call_id_to_tool_idx[tc_id] = i
+
+    orphan_indices: set = set()
+    for tc_id, idx in tool_call_id_to_tool_idx.items():
+        if tc_id not in tool_call_ids_from_assistants:
+            orphan_indices.add(idx)
+
+    if not orphan_indices:
+        return messages
+
+    repaired = [m for i, m in enumerate(messages) if i not in orphan_indices]
+    logger.info(
+        "[body-slim] removed %d orphan tool message(s) to fix conversation structure",
+        len(orphan_indices),
+    )
+    return repaired
 
 
 def _truncate_msg(m: dict) -> dict:
