@@ -23,15 +23,15 @@ _pricing_cache: Optional[Dict[str, Any]] = None
 _pricing_mtime: float = 0
 
 _MAX_COMFLY_TASK_TRACK = 5000
-_comfly_task_ids: "OrderedDict[str, str]" = OrderedDict()
+_comfly_task_ids: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 
 
-def register_comfly_task(task_id: str, token_group: str = "") -> None:
-    """记录由 Comfly 创建的 task_id 及其 token_group，用于 task.get_result 路由。"""
+def register_comfly_task(task_id: str, token_group: str = "", api_format: str = "") -> None:
+    """记录由 Comfly 创建的 task_id 及其 token_group 和 api_format，用于 task.get_result 路由。"""
     tid = (task_id or "").strip()
     if not tid:
         return
-    _comfly_task_ids[tid] = token_group or ""
+    _comfly_task_ids[tid] = (token_group or "", api_format or "")
     while len(_comfly_task_ids) > _MAX_COMFLY_TASK_TRACK:
         _comfly_task_ids.popitem(last=False)
 
@@ -43,7 +43,18 @@ def is_comfly_task(task_id: str) -> bool:
 
 def get_comfly_task_token_group(task_id: str) -> str:
     """获取 Comfly task 对应的 token_group。"""
-    return _comfly_task_ids.get((task_id or "").strip(), "")
+    entry = _comfly_task_ids.get((task_id or "").strip())
+    if entry is None:
+        return ""
+    return entry[0] if isinstance(entry, tuple) else entry
+
+
+def get_comfly_task_api_format(task_id: str) -> str:
+    """获取 Comfly task 对应的 api_format。"""
+    entry = _comfly_task_ids.get((task_id or "").strip())
+    if entry is None:
+        return ""
+    return entry[1] if isinstance(entry, tuple) else ""
 
 
 def _load_pricing() -> Dict[str, Any]:
@@ -302,10 +313,21 @@ async def call_comfly_video_generate(
     media_files = payload.get("media_files") or []
     first_image = image_url or (file_paths[0] if file_paths else "") or (media_files[0] if media_files else "")
 
-    if api_format == "unified_video":
+    if api_format == "veo":
+        url = f"{base}/v2/videos/generations"
+        body: Dict[str, Any] = {
+            "model": comfly_model,
+            "prompt": prompt,
+            "enhance_prompt": True,
+        }
+        aspect_ratio = payload.get("aspect_ratio") or "16:9"
+        body["aspect_ratio"] = aspect_ratio
+        if first_image:
+            body["image_url"] = first_image
+    elif api_format == "unified_video":
         if first_image:
             url = f"{base}/task/submit/i2v"
-            body: Dict[str, Any] = {
+            body = {
                 "model": comfly_model,
                 "prompt": prompt,
                 "image_url": first_image,
@@ -337,7 +359,7 @@ async def call_comfly_video_generate(
         if first_image:
             body["image_url"] = first_image
 
-    logger.info("[Comfly] 视频生成请求 model=%s url=%s body=%s", comfly_model, url, json.dumps(body, ensure_ascii=False)[:300])
+    logger.info("[Comfly] 视频生成请求 model=%s url=%s api_format=%s body=%s", comfly_model, url, api_format, json.dumps(body, ensure_ascii=False)[:300])
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             r = await client.post(url, json=body, headers=headers)
@@ -352,24 +374,37 @@ async def call_comfly_video_generate(
             err = resp.get("error", {})
             msg = err.get("message", str(resp)) if isinstance(err, dict) else str(err)
             return {"error": {"message": f"Comfly 返回 HTTP {r.status_code}: {msg}"}}
+        if isinstance(resp, dict):
+            resp["_api_format"] = api_format
         return resp
     except Exception as e:
         logger.exception("[Comfly] 视频生成请求异常")
         return {"error": {"message": f"Comfly 请求失败: {e}"}}
 
 
-async def call_comfly_task_query(task_id: str, token_group: str = "") -> Dict[str, Any]:
-    """查询 Comfly 任务状态。"""
+async def call_comfly_task_query(task_id: str, token_group: str = "", api_format: str = "") -> Dict[str, Any]:
+    """查询 Comfly 任务状态。api_format=veo 时用 /v2/videos/generations/{task_id}。"""
     base, key = get_comfly_config(token_group)
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
-    url = f"{base}/task/query/{task_id}"
+    if api_format == "veo":
+        url = f"{base}/v2/videos/generations/{task_id}"
+    else:
+        url = f"{base}/task/query/{task_id}"
+    logger.info("[Comfly] 任务查询 task_id=%s url=%s api_format=%s", task_id, url, api_format or "(default)")
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.get(url, headers=headers)
-        return r.json() if r.content else {}
+        resp = r.json() if r.content else {}
+        logger.info(
+            "[Comfly] 任务查询响应 HTTP=%s keys=%s preview=%s",
+            r.status_code,
+            list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__,
+            str(resp)[:500],
+        )
+        return resp
     except Exception as e:
         logger.exception("[Comfly] 任务查询异常 task_id=%s", task_id)
         return {"error": {"message": f"Comfly 查询失败: {e}"}}
@@ -462,7 +497,14 @@ def format_comfly_video_response_as_sutui(resp: Dict[str, Any]) -> Dict[str, Any
         or (data.get("id") if isinstance(data, dict) else "")
         or ""
     )
-    status = resp.get("status") or (data.get("status") if isinstance(data, dict) else "") or "pending"
+    raw_status = resp.get("status") or (data.get("status") if isinstance(data, dict) else "") or "pending"
+    _VEO_STATUS_MAP = {
+        "NOT_START": "pending",
+        "IN_PROGRESS": "pending",
+        "SUCCESS": "completed",
+        "FAILURE": "failed",
+    }
+    status = _VEO_STATUS_MAP.get(raw_status, raw_status)
 
     if not task_id:
         logger.warning(
@@ -480,13 +522,19 @@ def format_comfly_video_response_as_sutui(resp: Dict[str, Any]) -> Dict[str, Any
 
     video_url = resp.get("video_url") or resp.get("url") or ""
     if not video_url:
-        data = resp.get("data") or resp.get("output") or {}
-        if isinstance(data, dict):
-            video_url = data.get("video_url") or data.get("url") or ""
+        out = resp.get("data") or resp.get("output") or {}
+        if isinstance(out, dict):
+            video_url = out.get("output") or out.get("video_url") or out.get("url") or ""
 
     if video_url:
         result["output"] = {"video_url": video_url}
         result["url"] = video_url
         result["status"] = "completed"
+
+    if raw_status == "FAILURE":
+        result["status"] = "failed"
+        fail_reason = resp.get("fail_reason") or ""
+        if fail_reason:
+            result["output"] = {"error": fail_reason}
 
     return result
