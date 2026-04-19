@@ -302,8 +302,11 @@ def _tool_definitions(
                 "调用能力(图片生成/视频/语音等)。"
                 "【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"fal-ai/flux-2/flash\"（不要自动选 jimeng）；用户明确指定 jimeng-4.0/jimeng-4.5 等时正常使用。"
                 "video.generate 用户未指定模型时 payload.model 填 \"sora2\"，用户未指定时长时 duration 必须填 4（即 4 秒）。"
-                "【重要】用户指定 veo3.1/veo3.1-fast 等模型生成视频时，使用 capability_id=\"video.generate\"，payload.model 填用户指定的模型名（如 veo3.1）。系统会自动路由到最优上游。"
-                "【爆款TVC】仅当用户明确说「TVC」「带货视频」时才用 capability_id=\"comfly.veo.daihuo_pipeline\"，不要仅因模型名含 veo 就选 comfly.veo。"
+                "【普通视频生成】**必须**用 capability_id=\"video.generate\"。"
+                "【重要-视频模型】用户指定 veo3.1/veo3.1-fast/veo 等模型名生成视频时，**必须**使用 capability_id=\"video.generate\"，payload.model 填用户指定的模型名（如 veo3.1）。**严禁**将 veo 模型请求路由到 comfly.veo 或 comfly.veo.daihuo_pipeline。系统会自动路由到最优上游。"
+                "【爆款TVC — 严格条件】**仅当**用户原话中**明确出现**「TVC」「带货视频」「爆款TVC」这些字样时才用 capability_id=\"comfly.veo.daihuo_pipeline\"。"
+                "**严禁**因为用户文案像广告/口播/带货话术（例如出现品牌名、slogan、押韵口号、产品介绍等）就主观联想路由到 comfly.veo 或 comfly.veo.daihuo_pipeline——这些场景**必须**用 video.generate。"
+                "用户只说模型名（如 veo3.1）而不提 TVC/带货时**严禁**选 comfly.veo 或 comfly.veo.daihuo_pipeline。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -2087,6 +2090,23 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             payload = args.get("payload") or {}
             if not isinstance(payload, dict):
                 payload = {}
+            # ── 兜底拦截：AI 误把 capability_id=comfly.veo / daihuo_pipeline 但 payload.action 不是 start/poll_pipeline，
+            #     说明 AI 是把"普通图生视频/文生视频"的请求误路由过来了，自动重定向到 video.generate。
+            #     原 commit cd015f0 / 38cb925 在 demo 前被 5360340 回退，此处 reapply。
+            if capability_id in ("comfly.veo", "comfly.veo.daihuo_pipeline"):
+                _action = str(payload.get("action") or "").strip().lower()
+                if _action not in ("start_pipeline", "poll_pipeline"):
+                    logger.warning(
+                        "[MCP] AI 误将视频生成路由到 %s（payload.action=%r 不是 start/poll_pipeline），"
+                        "自动重定向到 video.generate",
+                        capability_id,
+                        _action,
+                    )
+                    capability_id = "video.generate"
+                    if not payload.get("model"):
+                        payload["model"] = "veo3.1"
+                    args["capability_id"] = capability_id
+                    args["payload"] = payload
             if capability_id == "publish_content":
                 logger.warning(
                     "[MCP] invoke_capability 误用 capability_id=publish_content，已转发为 publish_content"
