@@ -195,11 +195,39 @@ def _user_price_multiplier() -> float:
 
 
 def estimate_comfly_credits(model_id: str, params: Dict[str, Any], *, for_user: bool = False) -> Optional[int]:
-    """按 Comfly 定价表估算算力消耗。for_user=True 时返回用户价（采购价 × 倍率）。"""
+    """按 Comfly 定价表估算算力消耗。for_user=True 时返回用户价（采购价 × 倍率）。
+
+    支持的 price_type：
+    - per_call：base = price_per_unit
+    - per_second：base = price_per_unit × duration
+    - per_token：base = (input_tokens/1000 × input_price + output_tokens/1000 × output_price)
+                 estimate 时若 params 未提供实际 token，则按 prompt_tokens=5000, completion_tokens=1000 粗估。
+    """
     entry = lookup_comfly_model(model_id)
     if not entry:
         return None
     price_type = (entry.get("price_type") or "per_call").strip()
+    multiplier = float(entry.get("user_price_multiplier", _user_price_multiplier())) if for_user else 1.0
+
+    if price_type == "per_token":
+        input_unit = entry.get("input_price_per_1k_tokens")
+        output_unit = entry.get("output_price_per_1k_tokens")
+        if input_unit is None and output_unit is None:
+            return None
+        input_unit = float(input_unit or 0)
+        output_unit = float(output_unit or 0)
+        # 实际计费传 usage 时优先用真实 token 数；估算时给典型值
+        usage = params.get("usage") if isinstance(params.get("usage"), dict) else None
+        if usage:
+            in_tok = float(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+            out_tok = float(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+        else:
+            in_tok = float(params.get("estimate_prompt_tokens") or 5000)
+            out_tok = float(params.get("estimate_completion_tokens") or 1000)
+        base = (in_tok / 1000.0) * input_unit + (out_tok / 1000.0) * output_unit
+        # per_token 价格非常小，避免 round 后变成 0；至少计 1 积分（按 multiplier 后）
+        return max(1, int(round(base * multiplier))) if base > 0 else 0
+
     unit_price = entry.get("price_per_unit")
     if unit_price is None:
         return None
@@ -213,7 +241,6 @@ def estimate_comfly_credits(model_id: str, params: Dict[str, Any], *, for_user: 
         base = unit_price * duration
     else:
         base = unit_price
-    multiplier = float(entry.get("user_price_multiplier", _user_price_multiplier())) if for_user else 1.0
     return int(round(base * multiplier))
 
 
