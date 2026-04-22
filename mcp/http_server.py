@@ -282,7 +282,12 @@ def _tool_definitions(
     is_skill_store_admin: bool = True,
     allowed_capability_ids: Optional[set] = None,
 ) -> List[Dict[str, Any]]:
-    _HIDDEN_FROM_AI = {"comfly.veo", "comfly.veo.daihuo_pipeline"}
+    # 同时隐藏新名（comfly.daihuo*）与老名（comfly.veo*）—— 避免 LLM 直接选这两个能力，
+    # 应该走 video.generate；TVC 整包能力通过 prompt 引导用户说 TVC/带货时由 chat 注入触发
+    _HIDDEN_FROM_AI = {
+        "comfly.daihuo", "comfly.daihuo.pipeline",
+        "comfly.veo", "comfly.veo.daihuo_pipeline",
+    }
     capability_list = sorted(
         cid
         for cid in catalog.keys()
@@ -303,7 +308,7 @@ def _tool_definitions(
                 "【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"fal-ai/flux-2/flash\"（不要自动选 jimeng）；用户明确指定 jimeng-4.0/jimeng-4.5 等时正常使用。"
                 "video.generate 用户未指定模型时 payload.model 填 \"sora2\"，用户未指定时长时 duration 必须填 4（即 4 秒）。"
                 "【重要】用户指定 veo3.1/veo3.1-fast 等模型生成视频时，使用 capability_id=\"video.generate\"，payload.model 填用户指定的模型名（如 veo3.1）。系统会自动路由到最优上游。"
-                "【爆款TVC】仅当用户明确说「TVC」「带货视频」时才用 capability_id=\"comfly.veo.daihuo_pipeline\"，不要仅因模型名含 veo 就选 comfly.veo。"
+                "【爆款TVC】仅当用户明确说「TVC」「带货视频」时才用 capability_id=\"comfly.daihuo.pipeline\"，不要仅因模型名含 veo 就选 comfly.daihuo。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -703,220 +708,106 @@ async def _call_upstream_sutui_tasks_rest(
     token: str,
     lobster_capability_id: str = "",
 ) -> Dict[str, Any]:
-    """经 xskill 官方 REST `/api/v3/tasks/create` 与 `/api/v3/tasks/query` 调用，避免 MCP HTTP 在部分模型上返回 Decimal 序列化错误（-32603）。"""
+    """经 apiz SDK 调用 `/api/v3/tasks/create` 与 `/api/v3/tasks/query`。"""
+    from apiz import AsyncApiz, ApizError, ApizConnectionError, ApizTimeoutError
+
     if not isinstance(arguments, dict):
         arguments = {}
     arguments = _sanitize_for_json(arguments)
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    # 与 save-url 一致：禁用系统代理，避免 HTTPS_PROXY 干扰访问 api.xskill.ai / 自建网关
-    _SUTUI_NET_RETRY = 3
-    _SUTUI_NET_EXC = (
-        httpx.ConnectError,
-        httpx.TimeoutException,
-        httpx.ReadTimeout,
-        httpx.ConnectTimeout,
-        httpx.WriteTimeout,
-    )
     model_for_hint = ""
-    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-        if tool_name == "generate":
-            model = (arguments.get("model") or arguments.get("model_id") or "").strip()
-            if not model:
-                return {"error": {"message": "generate 缺少 model（或 model_id）"}}
-            model_for_hint = model
-            params = {k: v for k, v in arguments.items() if k not in ("model", "model_id")}
-            body = {"model": model, "params": params, "channel": None}
-            url = f"{api_base}/api/v3/tasks/create"
-            logger.info(
-                "[速推REST请求] POST tasks/create capability=%s model=%s params_keys=%s",
-                lobster_capability_id or "(无)",
-                model,
-                sorted(params.keys()),
-            )
-            try:
-                psum = dict(_sanitize_for_json(params)) if isinstance(params, dict) else params
-                if isinstance(psum, dict) and isinstance(psum.get("prompt"), str) and len(psum["prompt"]) > 240:
-                    psum["prompt"] = psum["prompt"][:240] + "…"
-                logger.info(
-                    "[速推REST请求] params 摘要 %s",
-                    json.dumps(psum, ensure_ascii=False, default=str),
-                )
-            except Exception as ex:
-                logger.warning("[速推REST请求] params 摘要失败: %s", ex)
-        elif tool_name == "get_result":
-            task_id = str(arguments.get("task_id") or "").strip()
-            if not task_id:
-                return {"error": {"message": "get_result 缺少 task_id"}}
-            body = {"task_id": task_id}
-            url = f"{api_base}/api/v3/tasks/query"
-            logger.info(
-                "[速推REST请求] POST tasks/query capability=%s task_id=%s",
-                lobster_capability_id or "(无)",
-                task_id,
-            )
-        else:
-            return {"error": {"message": f"REST 上游未实现工具: {tool_name}"}}
 
-        r: Optional[httpx.Response] = None
-        last_net: Optional[BaseException] = None
-        for attempt in range(_SUTUI_NET_RETRY):
-            try:
-                r = await client.post(url, json=body, headers=headers)
-                last_net = None
-                break
-            except _SUTUI_NET_EXC as e:
-                last_net = e
-                logger.warning(
-                    "[速推REST] 网络异常 tool=%s attempt=%s/%s lobster_capability=%s err=%s",
-                    tool_name,
-                    attempt + 1,
-                    _SUTUI_NET_RETRY,
-                    lobster_capability_id or "(无)",
-                    e,
-                )
-                if attempt + 1 < _SUTUI_NET_RETRY:
-                    await asyncio.sleep(1.0 * (attempt + 1))
-        if last_net is not None:
-            return {"error": {"message": f"上游网络不可达: {last_net}"}}
-        assert r is not None
-
-        if r.status_code >= 400:
-            err_body = (r.text or "")[:_SUTUI_UPSTREAM_LOG_MAX]
-            log_xskill_http(
-                phase=f"tasks_rest.{tool_name}",
-                method="POST",
-                url=url,
-                http_status=r.status_code,
-                capability_or_model=lobster_capability_id or model_for_hint or "-",
-                billing_snapshot=None,
-                error_message=err_body[:8000],
-                bearer_token=token,
-                upstream_response=err_body,
-            )
-            logger.warning(
-                "[速推完整响应] %s | tool=%s | lobster_capability=%s | REST HTTP=%s\n%s",
-                _sutui_phase_label(tool_name),
-                tool_name,
-                lobster_capability_id or "(无)",
-                r.status_code,
-                err_body,
-            )
-            em = enhance_upstream_rest_error(
-                http_status=r.status_code,
-                err_body=(r.text or ""),
-                capability_id=lobster_capability_id or "",
-                model=model_for_hint,
-            )
-            return {"error": {"message": em}}
+    if tool_name == "generate":
+        model = (arguments.get("model") or arguments.get("model_id") or "").strip()
+        if not model:
+            return {"error": {"message": "generate 缺少 model（或 model_id）"}}
+        model_for_hint = model
+        params = {k: v for k, v in arguments.items() if k not in ("model", "model_id")}
+        logger.info(
+            "[apiz-sdk] tasks.create capability=%s model=%s params_keys=%s",
+            lobster_capability_id or "(无)", model, sorted(params.keys()),
+        )
         try:
-            payload = r.json()
-        except Exception as e:
-            raw = (r.text or "")[:_SUTUI_UPSTREAM_LOG_MAX]
-            logger.warning(
-                "[速推完整响应] %s | tool=%s | lobster_capability=%s | REST 非JSON err=%s\n%s",
-                _sutui_phase_label(tool_name),
-                tool_name,
-                lobster_capability_id or "(无)",
-                e,
-                raw,
-            )
-            log_xskill_http(
-                phase=f"tasks_rest.{tool_name}",
-                method="POST",
-                url=url,
-                http_status=r.status_code,
-                capability_or_model=lobster_capability_id or model_for_hint or "-",
-                billing_snapshot=None,
-                error_message=f"非JSON: {e}",
-                bearer_token=token,
-                upstream_response=raw,
-            )
-            return {"error": {"message": f"上游 REST 非 JSON: {e}"}}
-        if not isinstance(payload, dict):
-            logger.warning(
-                "[速推完整响应] %s | tool=%s | lobster_capability=%s | REST 顶层非对象 body_prefix=%s",
-                _sutui_phase_label(tool_name),
-                tool_name,
-                lobster_capability_id or "(无)",
-                (r.text or "")[:800],
-            )
-            log_xskill_http(
-                phase=f"tasks_rest.{tool_name}",
-                method="POST",
-                url=url,
-                http_status=r.status_code,
-                capability_or_model=lobster_capability_id or model_for_hint or "-",
-                billing_snapshot=None,
-                error_message="上游 REST 返回非对象",
-                bearer_token=token,
-                upstream_response=(r.text or "")[:_SUTUI_UPSTREAM_LOG_MAX],
-            )
-            return {"error": {"message": "上游 REST 返回非对象"}}
-        code = payload.get("code")
-        if code is not None and int(code) != 200:
-            msg = payload.get("message") or payload.get("msg") or str(payload)
-            log_xskill_http(
-                phase=f"tasks_rest.{tool_name}",
-                method="POST",
-                url=url,
-                http_status=200,
-                capability_or_model=lobster_capability_id or model_for_hint or "-",
-                billing_snapshot={"code": code, "message": str(msg)[:1500]},
-                error_message=str(msg)[:8000],
-                bearer_token=token,
-                upstream_response=_sanitize_for_json(payload),
-            )
-            _log_sutui_upstream_full_response(
-                "sutui", tool_name, lobster_capability_id, _sanitize_for_json(payload)
-            )
-            em = append_capability_model_hint(
-                f"上游业务错误: {msg}",
-                lobster_capability_id or "",
-                model_for_hint,
-            )
-            return {"error": {"message": em}}
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            log_xskill_http(
-                phase=f"tasks_rest.{tool_name}",
-                method="POST",
-                url=url,
-                http_status=200,
-                capability_or_model=lobster_capability_id or "-",
-                billing_snapshot=None,
-                error_message=f"无 data 对象: {str(payload)[:800]}",
-                bearer_token=token,
-                upstream_response=_sanitize_for_json(payload),
-            )
-            _log_sutui_upstream_full_response(
-                "sutui", tool_name, lobster_capability_id, _sanitize_for_json(payload)
-            )
-            return {"error": {"message": f"上游 REST 无 data 对象: {str(payload)[:500]}"}}
-        _log_sutui_upstream_full_response(
-            "sutui", tool_name, lobster_capability_id, _sanitize_for_json(payload)
+            psum = dict(_sanitize_for_json(params)) if isinstance(params, dict) else params
+            if isinstance(psum, dict) and isinstance(psum.get("prompt"), str) and len(psum["prompt"]) > 240:
+                psum["prompt"] = psum["prompt"][:240] + "…"
+            logger.info("[apiz-sdk] params 摘要 %s", json.dumps(psum, ensure_ascii=False, default=str))
+        except Exception as ex:
+            logger.warning("[apiz-sdk] params 摘要失败: %s", ex)
+    elif tool_name == "get_result":
+        task_id = str(arguments.get("task_id") or "").strip()
+        if not task_id:
+            return {"error": {"message": "get_result 缺少 task_id"}}
+        logger.info(
+            "[apiz-sdk] tasks.query capability=%s task_id=%s",
+            lobster_capability_id or "(无)", task_id,
         )
-        _log_sutui_task_terminal_failure_for_ops(data, tool_name=tool_name, lobster_capability_id=lobster_capability_id)
-        log_xskill_http(
-            phase=f"tasks_rest.{tool_name}",
-            method="POST",
-            url=url,
-            http_status=200,
-            capability_or_model=lobster_capability_id or model_for_hint or "-",
-            billing_snapshot={
-                "price": data.get("price"),
-                "task_id": data.get("task_id"),
-                "status": data.get("status"),
-                "model": data.get("model"),
-            },
-            error_message="",
-            bearer_token=token,
-            upstream_response=_sanitize_for_json(payload),
-        )
-        return _sanitize_for_json(data)
+    else:
+        return {"error": {"message": f"REST 上游未实现工具: {tool_name}"}}
+
+    _apiz_url = f"{api_base}/api/v3"
+    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as hc:
+        async with AsyncApiz(
+            api_key=token,
+            base_url=api_base,
+            timeout=120.0,
+            max_retries=2,
+            http_client=hc,
+        ) as sdk:
+            try:
+                if tool_name == "generate":
+                    resp = await sdk.tasks.create(model=model, params=params)
+                else:
+                    resp = await sdk.tasks.query(task_id)
+                data = resp.model_dump(exclude_none=False)
+                data = _sanitize_for_json(data)
+                _log_sutui_upstream_full_response("sutui", tool_name, lobster_capability_id, data)
+                _log_sutui_task_terminal_failure_for_ops(data, tool_name=tool_name, lobster_capability_id=lobster_capability_id)
+                log_xskill_http(
+                    phase=f"tasks_rest.{tool_name}",
+                    method="POST",
+                    url=_apiz_url,
+                    http_status=200,
+                    capability_or_model=lobster_capability_id or model_for_hint or "-",
+                    billing_snapshot={
+                        "price": data.get("price"),
+                        "task_id": data.get("task_id"),
+                        "status": data.get("status"),
+                        "model": data.get("model"),
+                    },
+                    error_message="",
+                    bearer_token=token,
+                    upstream_response=data,
+                )
+                return data
+            except (ApizConnectionError, ApizTimeoutError) as e:
+                logger.warning("[apiz-sdk] 网络异常 tool=%s capability=%s err=%s", tool_name, lobster_capability_id or "(无)", e)
+                return {"error": {"message": f"上游网络不可达: {e}"}}
+            except ApizError as e:
+                err_msg = str(e)
+                err_detail = getattr(e, "detail", None)
+                log_xskill_http(
+                    phase=f"tasks_rest.{tool_name}",
+                    method="POST",
+                    url=_apiz_url,
+                    http_status=getattr(e, "status", 0) or 0,
+                    capability_or_model=lobster_capability_id or model_for_hint or "-",
+                    billing_snapshot=None,
+                    error_message=err_msg[:8000],
+                    bearer_token=token,
+                    upstream_response=err_detail if isinstance(err_detail, dict) else {"raw": str(err_detail)[:2000]},
+                )
+                logger.warning(
+                    "[apiz-sdk] 业务错误 tool=%s capability=%s err=%s",
+                    tool_name, lobster_capability_id or "(无)", err_msg[:500],
+                )
+                em = enhance_upstream_rest_error(
+                    http_status=getattr(e, "status", 0) or 500,
+                    err_body=err_msg,
+                    capability_id=lobster_capability_id or "",
+                    model=model_for_hint,
+                )
+                em = append_capability_model_hint(em, lobster_capability_id or "", model_for_hint)
+                return {"error": {"message": em}}
 
 
 async def _call_upstream_mcp_tool(
@@ -940,7 +831,7 @@ async def _call_upstream_mcp_tool(
         auth_headers["Authorization"] = f"Bearer {token}"
         # 实测 xskill MCP HTTP 在 generate 返回体序列化时抛 Decimal 错误；create/query 走 REST 稳定
         if tool_name in ("generate", "get_result"):
-            api_base = os.environ.get("SUTUI_API_BASE", "https://api.xskill.ai").rstrip("/")
+            api_base = (os.environ.get("APIZ_BASE_URL") or os.environ.get("SUTUI_API_BASE") or "https://api.apiz.ai").rstrip("/")
             return await _call_upstream_sutui_tasks_rest(
                 api_base, tool_name, arguments, token, lobster_capability_id
             )
@@ -2084,6 +1975,19 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
 
         if name == "invoke_capability":
             capability_id = str(args.get("capability_id") or "").strip()
+            # ── 老 capability_id 兼容：comfly.veo* → comfly.daihuo*（在所有后续逻辑生效之前规范化）──
+            _LEGACY_CAPABILITY_ALIAS = {
+                "comfly.veo": "comfly.daihuo",
+                "comfly.veo.daihuo_pipeline": "comfly.daihuo.pipeline",
+            }
+            _new_cid = _LEGACY_CAPABILITY_ALIAS.get(capability_id)
+            if _new_cid:
+                logger.info(
+                    "[MCP] capability_id 老名映射 %s → %s（请客户端尽快升级到新名）",
+                    capability_id, _new_cid,
+                )
+                capability_id = _new_cid
+                args["capability_id"] = capability_id
             payload = args.get("payload") or {}
             if not isinstance(payload, dict):
                 payload = {}
