@@ -78,15 +78,26 @@ class Settings(BaseSettings):
     wechat_oa_token: Optional[str] = None
     """服务号消息推送：EncodingAESKey（明文模式可不参与解密）"""
     wechat_oa_encoding_aes_key: Optional[str] = None
-    # ── 付呗聚合支付（替代自建微信支付）──
-    """付呗商户开放平台 API ID"""
-    fubei_app_id: Optional[str] = None
-    """付呗商户开放平台 AppSecret（签名用）"""
-    fubei_app_secret: Optional[str] = None
-    """付呗门店 ID（多门店时必填）"""
-    fubei_store_id: Optional[int] = None
-    """付呗网关地址（默认正式环境；测试环境用 https://shq-api-test.51fubei.com/gateway/agent）"""
-    fubei_gateway_url: str = "https://shq-api.51fubei.com/gateway/agent"
+    # ── 富友互联网扫码支付（PC 主扫；FAPPLET 聚合码默认）──
+    # 文档: http://47.96.154.194/fuiouWposApipay/
+    """富友商户号 mchnt_cd（富友入网得到，长度 ≤15）"""
+    fuiou_mchnt_cd: Optional[str] = None
+    """富友支付订单接口 URL（生产/测试由富友对接群提供）"""
+    fuiou_gateway_pay_url: Optional[str] = None
+    """富友支付查询接口 URL"""
+    fuiou_gateway_query_url: Optional[str] = None
+    """富友支付订单关闭接口 URL"""
+    fuiou_gateway_close_url: Optional[str] = None
+    """商户私钥 PEM 路径（解密富友返回 + 自签名；相对工程根或绝对路径）"""
+    fuiou_merchant_private_key_path: Optional[str] = None
+    """富友公钥 PEM 路径（加密发送报文 + 验签富友异步通知）"""
+    fuiou_fuiou_public_key_path: Optional[str] = None
+    """终端号 term_id（可选，每台 PC 一个，便于对账）"""
+    fuiou_term_id: Optional[str] = None
+    """默认支付方式：FAPPLET 聚合码 / WECHAT 微信主扫 / ALIPAY 支付宝主扫"""
+    fuiou_order_pay_type: str = "FAPPLET"
+    """协议版本号"""
+    fuiou_ver: str = "1.0.0"
     openclaw_gateway_url: Optional[str] = None
     openclaw_gateway_token: Optional[str] = None
     openclaw_agent_id: str = "main"

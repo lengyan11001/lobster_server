@@ -4,6 +4,16 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+if [ -f "$ROOT/.env.deploy" ]; then
+  set -a
+  # shellcheck source=../.env.deploy
+  . "$ROOT/.env.deploy"
+  set +a
+fi
+# shellcheck source=_deploy_guard_production.sh
+. "$ROOT/scripts/_deploy_guard_production.sh"
+lobster_deploy_refuse_if_only_test_mode
+
 echo "[deploy_server] git push origin main ..."
 git push origin main
 echo "[deploy_server] SSH 拉取并重启 ..."

@@ -55,6 +55,66 @@ MAX_TOOL_ROUNDS = 8
 MAX_HISTORY_MESSAGE_CHARS = 1200
 MCP_URL = "http://127.0.0.1:8001/mcp"
 
+# ── System prompt from files (like lobster_online) ──
+_LOBSTER_CHAT_POLICY_DIR = _BASE_DIR / "openclaw" / "workspace"
+_LOBSTER_CHAT_POLICY_INTRO_PATH = _LOBSTER_CHAT_POLICY_DIR / "LOBSTER_CHAT_POLICY_INTRO.md"
+_LOBSTER_CHAT_POLICY_TOOLS_PATH = _LOBSTER_CHAT_POLICY_DIR / "LOBSTER_CHAT_POLICY_TOOLS.md"
+_LOBSTER_CHAT_POLICY_CLOSING = (
+    "回答使用中文，简洁友好。"
+    " 当用户发送新的短消息（如问候、新问题）时，请直接针对该新消息简短回复，不要重复或延续上一条长回复的内容。"
+)
+
+_ONLINE_SYS_PREFIX = (
+    "你运行在「在线版」模式：用户已认证登录。\n"
+)
+
+_NO_TOOLS_HINT = (
+    "\n【当前无可用工具】MCP端口8001未就绪。请确认start.bat已启动且SUTUI_SERVER_TOKEN已配置。\n\n"
+)
+
+
+def _load_lobster_chat_policy_intro(edition: str) -> str:
+    try:
+        raw = _LOBSTER_CHAT_POLICY_INTRO_PATH.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        logger.warning("读取龙虾策略 INTRO 失败 %s: %s", _LOBSTER_CHAT_POLICY_INTRO_PATH, exc)
+        return (
+            "你是「龙虾」(Lobster)，用户的私人 AI 助手。\n\n"
+            + (_ONLINE_SYS_PREFIX if edition == "online" else "")
+            + "龙虾内置了「速推 MCP」能力：文生图、图生视频、语音合成、视频解析等，具体以 list_capabilities 返回为准。\n\n"
+        )
+    if "\n\n" in raw:
+        head, tail = raw.split("\n\n", 1)
+        return head.strip() + "\n\n" + (_ONLINE_SYS_PREFIX if edition == "online" else "") + tail.strip() + "\n\n"
+    return raw + "\n\n"
+
+
+def _load_lobster_chat_policy_tools_body() -> str:
+    try:
+        return _LOBSTER_CHAT_POLICY_TOOLS_PATH.read_text(encoding="utf-8").strip() + "\n\n"
+    except OSError as exc:
+        logger.error("读取龙虾策略 TOOLS 失败 %s: %s", _LOBSTER_CHAT_POLICY_TOOLS_PATH, exc)
+        return ""
+
+
+def _build_lobster_main_system_prompt(edition: str, has_tools: bool) -> str:
+    intro = _load_lobster_chat_policy_intro(edition)
+    if has_tools:
+        body = _load_lobster_chat_policy_tools_body()
+        if not body.strip():
+            logger.warning("LOBSTER_CHAT_POLICY_TOOLS.md 为空，降级为无工具提示")
+            body = _NO_TOOLS_HINT
+        comfly_models = _get_comfly_image_models()
+        if comfly_models:
+            body += (
+                "【图片模型补充】可用图片模型: fal-ai/flux-2/flash, " + ", ".join(comfly_models)
+                + "。用户说用某模型就传该模型名，禁止替换为 default。\n"
+            )
+    else:
+        body = _NO_TOOLS_HINT
+    return intro + body + _LOBSTER_CHAT_POLICY_CLOSING
+
+
 _URL_RE = re.compile(r'https?://[^\s"\'<>\)\]]+', re.IGNORECASE)
 _pending_tool_logs: contextvars.ContextVar[List[Dict]] = contextvars.ContextVar("_pending_tool_logs", default=[])
 # 供 task.get_result 轮询遇 504 时自动重提 video.generate（同请求内最近一次成功提交的参数）
@@ -2126,36 +2186,7 @@ async def chat_endpoint(
     else:
         resolve_model = model
 
-    sys_prompt = (
-        "你是「龙虾」(Lobster)，用户的私人AI助手，内置速推MCP能力（文生图/视频/语音等，调 list_capabilities 查询）。\n\n"
-        + (
-            "【禁止】伪造工具结果、编造URL/asset_id、假装完成操作、用文字代替工具调用。所有操作必须通过调用工具完成。\n\n"
-            "【工具调用】\n"
-            "生成图片: invoke_capability(\"image.generate\", {prompt, model:\"fal-ai/flux-2/flash\"}) → task.get_result(task_id) → saved_assets[0].asset_id\n"
-            "【图片模型】用户未指定模型时默认使用 fal-ai/flux-2/flash。用户指定模型时必须原样传入payload.model。可用图片模型: fal-ai/flux-2/flash, jimeng-4.0, jimeng-4.5"
-            + (", " + ", ".join(_get_comfly_image_models()) if _get_comfly_image_models() else "")
-            + "。用户说用某模型就传该模型名，禁止替换为default。\n"
-            "生成视频: invoke_capability(\"video.generate\", {model:\"sora2\", prompt, duration:5}) → task.get_result 轮询(30-120s)\n"
-            "【视频模型】用户不指定模型时默认用 sora2。可用模型仅限: sora2, seedance2, hailuo, vidu, wan, veo, kling, grok, jimeng-video。严禁使用这些之外的模型名（如stable-video-diffusion等不存在的模型）。\n"
-            "【爆款TVC/带货视频】用户说「TVC」「爆款TVC」「带货视频」「做TVC」时，不走video.generate，改用 invoke_capability(\"comfly.veo.daihuo_pipeline\", {action:\"start_pipeline\", asset_id:\"素材ID\", auto_save:true})。Comfly Veo的task_id(video_开头)禁止调task.get_result，MCP会自动轮询。\n"
-            "图生视频: 用户附图时只填prompt/model/duration，禁止填image_url（系统自动注入）\n"
-            "图片编辑: image.generate + image_url=附件URL，model用edit系列(wan/v2.7/edit等)，prompt中用 image 1 引用\n"
-            "理解图片: invoke_capability(\"image.understand\", {image_url, prompt})\n"
-            "理解视频: invoke_capability(\"video.understand\", {video_url, prompt})\n"
-            "发布: publish_content(asset_id, account_nickname, title, description, tags) — 全自动，禁止要求用户手动操作\n"
-            "IG/FB: list_meta_social_accounts → publish_meta_social(account_id, platform, content_type, ...)\n"
-            "IG/FB数据: sync_meta_social_data → get_meta_social_data\n\n"
-            "【prompt规则】用用户原话去掉指令(发布到/用某模型等)后的内容作prompt，不改写不臆造。模型名填payload.model。\n"
-            "【发布规则】有素材(图/视频)时asset_id用saved_assets中的ID发布。纯文字文章(笔记/头条文章等)不需要先生成图片，直接publish_content即可(asset_id留空或用已有素材)。用户说「不需要配图」时严禁调image.generate。「用生成的」指上轮结果，直接publish。\n"
-            "【查询vs生成】task.get_result只查状态不新建任务，回复中禁止说「重新提交」。失败如实告知，禁止自行重试。\n"
-            "【素材指代】不确定用户指哪个素材时，先list_assets列出候选让用户确认，禁止猜测。\n"
-            if has_tools
-            else (
-                "\n【当前无可用工具】MCP端口8001未就绪。请确认start.bat已启动且SUTUI_SERVER_TOKEN已配置。\n\n"
-            )
-        )
-        + "中文简洁回答。短消息直接回复，不延续上条长回复。"
-    )
+    sys_prompt = _build_lobster_main_system_prompt(edition, has_tools)
 
     messages: List[Dict[str, str]] = [{"role": "system", "content": sys_prompt}]
     for m in (payload.history or []):
@@ -2304,33 +2335,7 @@ async def _chat_stream_events(
                 resolve_model = None
         else:
             resolve_model = model
-        sys_prompt = (
-            "你是「龙虾」(Lobster)，用户的私人AI助手，内置速推MCP能力（文生图/视频/语音等，调 list_capabilities 查询）。\n\n"
-            + (
-                "【禁止】伪造工具结果、编造URL/asset_id、假装完成操作、用文字代替工具调用。所有操作必须通过调用工具完成。\n\n"
-                "【工具调用】\n"
-                "生成图片: invoke_capability(\"image.generate\", {prompt, model:\"fal-ai/flux-2/flash\"}) → task.get_result(task_id) → saved_assets[0].asset_id\n"
-                "【图片模型】用户未指定模型时默认使用 fal-ai/flux-2/flash。用户指定模型时必须原样传入payload.model。可用图片模型: fal-ai/flux-2/flash, jimeng-4.0, jimeng-4.5"
-                + (", " + ", ".join(_get_comfly_image_models()) if _get_comfly_image_models() else "")
-                + "。用户说用某模型就传该模型名，禁止替换为default。\n"
-                "生成视频: invoke_capability(\"video.generate\", {model:\"sora2\", prompt, duration:5}) → task.get_result 轮询(30-120s)\n"
-                "【视频模型】用户不指定模型时默认用 sora2。可用模型仅限: sora2, seedance2, hailuo, vidu, wan, veo, kling, grok, jimeng-video。严禁使用这些之外的模型名。\n"
-                "【爆款TVC/带货视频】用户说「TVC」「爆款TVC」「带货视频」「做TVC」时，不走video.generate，改用 invoke_capability(\"comfly.veo.daihuo_pipeline\", {action:\"start_pipeline\", asset_id:\"素材ID\", auto_save:true})。Comfly Veo的task_id(video_开头)禁止调task.get_result。\n"
-                "图生视频: 用户附图时只填prompt/model/duration，禁止填image_url（系统自动注入）\n"
-                "图片编辑: image.generate + image_url=附件URL，model用edit系列(wan/v2.7/edit等)\n"
-                "理解图片/视频: image.understand / video.understand\n"
-                "发布: publish_content(asset_id, account_nickname, title, description, tags) — 全自动，禁止要求用户手动操作\n\n"
-                "【prompt规则】用用户原话去掉指令后的内容作prompt，不改写不臆造。模型名填payload.model。\n"
-                "【发布规则】有素材(图/视频)时asset_id用saved_assets中的ID发布。纯文字文章不需要先生成图片，直接publish_content即可。用户说「不需要配图」时严禁调image.generate。\n"
-                "【查询vs生成】task.get_result只查状态不新建任务，禁止说「重新提交」。失败如实告知。\n"
-                "【素材指代】不确定时先list_assets列出候选让用户确认，禁止猜测。\n"
-                if has_tools
-                else (
-                    "\n【当前无可用工具】MCP端口8001未就绪。请确认start.bat已启动且SUTUI_SERVER_TOKEN已配置。\n\n"
-                )
-            )
-            + "中文简洁回答。短消息直接回复，不延续上条长回复。"
-        )
+        sys_prompt = _build_lobster_main_system_prompt(edition, has_tools)
         messages = [{"role": "system", "content": sys_prompt}]
         for m in (payload.history or []):
             if m.role in ("user", "assistant") and (m.content or "").strip():

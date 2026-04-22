@@ -12,6 +12,10 @@ if [ -f "$ROOT/.env.deploy" ]; then
   set +a
 fi
 
+# shellcheck source=_deploy_guard_production.sh
+. "$ROOT/scripts/_deploy_guard_production.sh"
+lobster_deploy_refuse_if_only_test_mode
+
 # 避免 Git/部分工具弹 TTY 索要口令；SSH 加密私钥须配 LOBSTER_SSH_KEY_PASSPHRASE 走下面 SSH_ASKPASS
 export GIT_TERMINAL_PROMPT=0
 

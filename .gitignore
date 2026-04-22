@@ -38,6 +38,11 @@ mcp/capability_catalog.local.json
 # 部署回滚
 .deploy_rollback_commit
 
+# 富友 / 第三方密钥：所有 .pem 都不入库；只放说明 README
+certs/**/*.pem
+certs/**/*.key
+certs/**/*.crt
+
 # 系统/编辑器
 .DS_Store
 Thumbs.db

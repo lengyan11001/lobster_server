@@ -1,0 +1,562 @@
+[
+  {
+    "model_id": "fal-ai/flux/schnell",
+    "docs": "NO_DOCS",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "NOT_FOUND"
+  },
+  {
+    "model_id": "fal-ai/flux/dev",
+    "docs": "NO_DOCS",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "NOT_FOUND"
+  },
+  {
+    "model_id": "fal-ai/flux-lora",
+    "docs": "NO_DOCS",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "NOT_FOUND"
+  },
+  {
+    "model_id": "fal-ai/flux-realism",
+    "docs": "NO_DOCS",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "NOT_FOUND"
+  },
+  {
+    "model_id": "fal-ai/flux-2/flash",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "2",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/flux-2/flash/edit",
+    "docs": "NO_DOCS",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "NOT_FOUND"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedream/v4.5/text-to-image",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "16",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedream/v4.5/edit",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "16",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedream/v5/lite/text-to-image",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "14",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedream/v5/lite/edit",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "14",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/nano-banana-pro",
+    "docs": "HAS_PRICING",
+    "pricing_type": "resolution_quantity",
+    "base_price": "60",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/nano-banana-pro/edit",
+    "docs": "NO_DOCS",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "NOT_FOUND"
+  },
+  {
+    "model_id": "fal-ai/nano-banana-2",
+    "docs": "HAS_PRICING",
+    "pricing_type": "resolution_quantity",
+    "base_price": "32",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/nano-banana-2/edit",
+    "docs": "NO_DOCS",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "NOT_FOUND"
+  },
+  {
+    "model_id": "kapon/gemini-3-pro-image-preview",
+    "docs": "HAS_PRICING",
+    "pricing_type": "size_based",
+    "base_price": "25",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/qwen-image-edit-2511-multiple-angles",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "14",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.7/text-to-image",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "12",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.7/edit",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "12",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.7/pro/text-to-image",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "30",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.7/pro/edit",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "30",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "jimeng-5.0",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "2",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "jimeng-4.6",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "2",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "jimeng-4.0",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "2",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "jimeng-4.5",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "2",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "jimeng-4.1",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "2",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "jimeng-4.0",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "2",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "jimeng-agent",
+    "docs": "HAS_PRICING",
+    "pricing_type": "quantity_based",
+    "base_price": "3",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "jimeng-video-3.5-pro",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "10",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "jimeng-video-3.5-pro-10s",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "20",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "jimeng-video-3.5-pro-12s",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "30",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/sora-2/characters",
+    "docs": "HAS_PRICING",
+    "pricing_type": "fixed",
+    "base_price": "1",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.7/text-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "per_second",
+    "base_price": "None",
+    "per_second": "40",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.7/image-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "per_second",
+    "base_price": "None",
+    "per_second": "40",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.7/reference-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "per_second",
+    "base_price": "None",
+    "per_second": "40",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.7/edit-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "per_second",
+    "base_price": "None",
+    "per_second": "40",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.6/text-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "300",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.6/image-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "300",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.6/image-to-video/flash",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "150",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "wan/v2.6/reference-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "300",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedance/v1/lite/text-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "matrix",
+    "base_price": "26",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedance/v1/lite/image-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "matrix",
+    "base_price": "40",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedance/v1/lite/reference-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "75",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "100",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedance/v1/pro/fast/text-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "100",
+    "per_second": "",
+    "llms_txt": "HTTP_502"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedance/v1.5/pro/image-to-video",
+    "docs": "EXCEPTION",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "HTTP_502"
+  },
+  {
+    "model_id": "fal-ai/bytedance/seedance/v1.5/pro/text-to-video",
+    "docs": "EXCEPTION",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "HTTP_502"
+  },
+  {
+    "model_id": "fal-ai/bytedance/omnihuman/v1.5",
+    "docs": "EXCEPTION",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/bytedance/dreamactor/v2",
+    "docs": "HAS_PRICING",
+    "pricing_type": "per_second",
+    "base_price": "None",
+    "per_second": "20",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/vidu/q3/text-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "matrix",
+    "base_price": "28",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/vidu/q3/image-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "matrix",
+    "base_price": "28",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/vidu/q3/reference-to-video/mix",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "310",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/minimax/hailuo-2.3-fast/pro/image-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "fixed",
+    "base_price": "132",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_map",
+    "base_price": "76",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/minimax/hailuo-2.3/pro/image-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "fixed",
+    "base_price": "196",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/minimax/hailuo-2.3/pro/text-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "fixed",
+    "base_price": "196",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/minimax/hailuo-2.3/standard/image-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_map",
+    "base_price": "112",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/minimax/hailuo-2.3/standard/text-to-video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_map",
+    "base_price": "112",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "sprcra/sora-2-character",
+    "docs": "HAS_PRICING",
+    "pricing_type": "fixed",
+    "base_price": "1",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/veo3.1",
+    "docs": "HAS_PRICING",
+    "pricing_type": "per_second",
+    "base_price": "None",
+    "per_second": "80",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "st-ai/super-seed2-lite",
+    "docs": "HAS_PRICING",
+    "pricing_type": "dynamic_per_second",
+    "base_price": "250",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "st-ai/super-seed2",
+    "docs": "HAS_PRICING",
+    "pricing_type": "dynamic_per_second",
+    "base_price": "200",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "ark/seedance-2.0",
+    "docs": "HAS_PRICING",
+    "pricing_type": "token_postcharge",
+    "base_price": "0",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/topaz/upscale/video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "per_second",
+    "base_price": "None",
+    "per_second": "8",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "minimax/t2a",
+    "docs": "EXCEPTION",
+    "pricing_type": "",
+    "base_price": "",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "minimax/voice-design",
+    "docs": "HAS_PRICING",
+    "pricing_type": "fixed",
+    "base_price": "400",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "minimax/voice-clone",
+    "docs": "HAS_PRICING",
+    "pricing_type": "fixed",
+    "base_price": "400",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "minimax/music-gen",
+    "docs": "HAS_PRICING",
+    "pricing_type": "fixed",
+    "base_price": "25",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "fal-ai/elevenlabs/speech-to-text/scribe-v2",
+    "docs": "HAS_PRICING",
+    "pricing_type": "audio_duration",
+    "base_price": "10",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "openrouter/router/vision",
+    "docs": "HAS_PRICING",
+    "pricing_type": "fixed",
+    "base_price": "0",
+    "per_second": "",
+    "llms_txt": "OK"
+  },
+  {
+    "model_id": "openrouter/router/video",
+    "docs": "HAS_PRICING",
+    "pricing_type": "duration_price",
+    "base_price": "0",
+    "per_second": "",
+    "llms_txt": "OK"
+  }
+]

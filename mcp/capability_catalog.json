@@ -199,5 +199,161 @@
         "speed": { "type": "number", "default": 1 }
       }
     }
+  },
+  "media.edit": {
+    "description": "素材剪辑：叠字、时间段裁剪、画幅比例、静音、视频配新音轨、静图转视频、视频抽帧；输出新 asset。需 ffmpeg。",
+    "upstream": "local",
+    "upstream_tool": "invoke",
+    "enabled": true,
+    "is_default": false,
+    "unit_credits": 0,
+    "arg_schema": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": ["overlay_text", "trim", "scale_pad", "mute", "mux_audio", "image_to_video", "extract_frame"],
+          "description": "操作类型"
+        },
+        "asset_id": { "type": "string", "description": "主素材 ID" },
+        "text": { "type": "string", "description": "overlay_text 文案（必填）" },
+        "position": { "type": "string", "enum": ["top", "center", "bottom"], "description": "overlay_text 垂直位置" },
+        "vertical_align": { "type": "string", "enum": ["top", "center", "bottom"], "description": "overlay_text 垂直对齐，默认 top" },
+        "horizontal_align": { "type": "string", "enum": ["left", "center", "right"], "description": "overlay_text 水平对齐，默认 center" },
+        "margin_x": { "type": "integer", "description": "overlay_text 左右边距，默认 40" },
+        "margin_y": { "type": "integer", "description": "overlay_text 上下边距，默认 40" },
+        "offset_x": { "type": "integer", "description": "overlay_text 额外偏移 X" },
+        "offset_y": { "type": "integer", "description": "overlay_text 额外偏移 Y" },
+        "font_size": { "type": "integer", "description": "overlay_text 字号，默认 48" },
+        "font_color": { "type": "string", "description": "overlay_text 字色" },
+        "font_alpha": { "type": "number", "description": "overlay_text 字透明度 0–1" },
+        "font_file": { "type": "string", "description": "overlay_text 字体路径" },
+        "x_expr": { "type": "string", "description": "overlay_text 自定义 ffmpeg x 表达式" },
+        "y_expr": { "type": "string", "description": "overlay_text 自定义 ffmpeg y 表达式" },
+        "box": { "type": "boolean", "description": "overlay_text 是否绘制文字背景框" },
+        "box_color": { "type": "string", "description": "overlay_text 背景色" },
+        "box_alpha": { "type": "number", "description": "overlay_text 背景透明度 0–1" },
+        "box_border_width": { "type": "integer", "description": "overlay_text 背景框边宽" },
+        "border_width": { "type": "integer", "description": "overlay_text 文字描边宽度" },
+        "border_color": { "type": "string", "description": "overlay_text 描边颜色" },
+        "shadow_x": { "type": "integer", "description": "overlay_text 阴影 X 偏移" },
+        "shadow_y": { "type": "integer", "description": "overlay_text 阴影 Y 偏移" },
+        "shadow_color": { "type": "string", "description": "overlay_text 阴影颜色" },
+        "shadow_alpha": { "type": "number", "description": "overlay_text 阴影透明度 0–1" },
+        "line_spacing": { "type": "integer", "description": "overlay_text 多行行距" },
+        "text_align": { "type": "string", "enum": ["left", "center", "right"], "description": "overlay_text 多行水平对齐" },
+        "fix_bounds": { "type": "boolean", "description": "overlay_text 是否限制在画面内" },
+        "start_sec": { "type": "number", "description": "trim 起始秒" },
+        "end_sec": { "type": "number", "description": "trim 结束秒" },
+        "aspect_ratio": { "type": "string", "enum": ["9:16", "16:9", "1:1", "4:3", "3:4"], "description": "scale_pad 目标比例" },
+        "fit_mode": { "type": "string", "enum": ["contain", "cover"], "description": "scale_pad 留边或裁切" },
+        "audio_asset_id": { "type": "string", "description": "mux_audio 音频素材 ID" },
+        "duration_sec": { "type": "number", "description": "image_to_video 时长（秒），最大 600" },
+        "timestamp_sec": { "type": "number", "description": "extract_frame 截取时刻（秒）" }
+      },
+      "required": ["operation", "asset_id"]
+    }
+  },
+  "comfly.daihuo": {
+    "description": "（技能「爆款TVC」内的单段/分步能力）Comfly + Veo 图生视频。upload|generate_prompts|submit_video|poll_video。",
+    "upstream": "local",
+    "upstream_tool": "invoke",
+    "enabled": true,
+    "is_default": false,
+    "unit_credits": 0,
+    "arg_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["upload", "generate_prompts", "submit_video", "poll_video"] },
+        "asset_id": { "type": "string" },
+        "image_url": { "type": "string" },
+        "images": { "type": "array", "items": { "type": "string" } },
+        "prompt": { "type": "string" },
+        "prompts": { "type": "array", "items": { "type": "string" } },
+        "enhance_prompt": { "type": "boolean" },
+        "task_id": { "type": "string" },
+        "video_model": { "type": "string" },
+        "analysis_model": { "type": "string" },
+        "aspect_ratio": { "type": "string" }
+      },
+      "required": ["action"]
+    }
+  },
+  "comfly.daihuo.pipeline": {
+    "description": "技能「爆款TVC」整包成片：一次跑完分镜→多段 Veo→可选 FFmpeg 拼接。action：start_pipeline/run_pipeline/poll_pipeline。",
+    "upstream": "local",
+    "upstream_tool": "invoke",
+    "enabled": true,
+    "is_default": false,
+    "unit_credits": 0,
+    "arg_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["run_pipeline", "start_pipeline", "poll_pipeline"] },
+        "job_id": { "type": "string" },
+        "asset_id": { "type": "string" },
+        "image_url": { "type": "string" },
+        "merge_clips": { "type": "boolean" },
+        "storyboard_count": { "type": "integer" },
+        "auto_save": { "type": "boolean" },
+        "task_text": { "type": "string" },
+        "isolate_job_dir": { "type": "boolean" },
+        "platform": { "type": "string" },
+        "country": { "type": "string" },
+        "language": { "type": "string" },
+        "output_dir": { "type": "string" }
+      }
+    }
+  },
+  "comfly.ecommerce.detail_pipeline": {
+    "description": "电商详情页生成流水线：商品主图自动分析卖点、生成多张竖版详情页、拼接长图、素材入库。",
+    "upstream": "local",
+    "upstream_tool": "invoke",
+    "enabled": true,
+    "is_default": false,
+    "unit_credits": 0,
+    "arg_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["run_pipeline", "start_pipeline", "poll_pipeline"] },
+        "job_id": { "type": "string" },
+        "asset_id": { "type": "string" },
+        "image_url": { "type": "string" },
+        "product_name_hint": { "type": "string" },
+        "product_direction_hint": { "type": "string" },
+        "reference_asset_ids": { "type": "array", "items": { "type": "string" } },
+        "reference_image_urls": { "type": "array", "items": { "type": "string" } },
+        "page_count": { "type": "integer", "minimum": 10, "maximum": 16 },
+        "auto_save": { "type": "boolean" },
+        "platform": { "type": "string" },
+        "country": { "type": "string" },
+        "language": { "type": "string" },
+        "analysis_model": { "type": "string" },
+        "image_model": { "type": "string" },
+        "output_dir": { "type": "string" },
+        "isolate_job_dir": { "type": "boolean" }
+      }
+    }
+  },
+  "ecommerce.publish": {
+    "description": "电商商品发布：打开对应平台的商品创建页面，自动填写商品标题、价格，并上传主图/详情图，但不提交。",
+    "upstream": "local",
+    "upstream_tool": "invoke",
+    "enabled": true,
+    "is_default": false,
+    "unit_credits": 0,
+    "arg_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["open_product_form", "list_shop_accounts"] },
+        "platform": { "type": "string", "enum": ["douyin_shop", "xiaohongshu_shop", "alibaba1688", "taobao", "pinduoduo"] },
+        "account_nickname": { "type": "string" },
+        "title": { "type": "string" },
+        "main_image_asset_ids": { "type": "array", "items": { "type": "string" } },
+        "detail_image_asset_ids": { "type": "array", "items": { "type": "string" } },
+        "price": { "type": "string" },
+        "category": { "type": "string" }
+      }
+    }
   }
 }

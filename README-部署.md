@@ -11,6 +11,21 @@ chmod +x scripts/deploy_publish.sh scripts/deploy_server.sh scripts/deploy_from_
 bash scripts/deploy_publish.sh
 ```
 
+### 仅发布测试环境 server（推荐单独配置）
+
+避免误执行生产链路：`.env.deploy` 中填写 **`LOBSTER_DEPLOY_HOST_TEST`**（以及可选 **`LOBSTER_DEPLOY_REMOTE_DIR_TEST`**），**勿**把测试机写入 `LOBSTER_DEPLOY_HOST`。
+
+```bash
+chmod +x scripts/deploy_publish_test.sh scripts/deploy_server_test.sh scripts/deploy_from_local_test.sh
+bash scripts/deploy_publish_test.sh
+```
+
+脚本只会 SSH **测试机**，不会在未改配置的情况下打到 `LOBSTER_DEPLOY_HOST`。若 `LOBSTER_DEPLOY_HOST_TEST` 与 `LOBSTER_DEPLOY_HOST` 完全相同，会直接拒绝执行。
+
+### 防误发正式（推荐日常打开）
+
+在 `.env.deploy` 中设置 **`LOBSTER_DEPLOY_ONLY_TEST=true`**（或 **`LOBSTER_DEPLOY_TEST_MODE=true`**）后，**正式**脚本 `deploy_publish.sh` / `deploy_server.sh` / `deploy_from_local.sh` 会直接退出；仅可使用带 `_test` 的部署脚本。需要发正式时再改回 `false` 或注释掉。
+
 - 若有未提交改动：自动 `git commit` → `git push origin main` → SSH 远端 `git pull` 并重启 Backend+MCP。  
 - 若无改动：直接 `push`（若已是最新则无推送）→ 仍执行远端更新脚本。
 

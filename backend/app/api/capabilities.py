@@ -94,6 +94,49 @@ def _billing_request_may_mutate_balance(request: Request) -> bool:
     return loopback
 
 
+_CAPABILITY_CATALOG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "mcp" / "capability_catalog.json"
+_CAPABILITY_CATALOG_LOCAL_PATH = Path(__file__).resolve().parent.parent.parent.parent / "mcp" / "capability_catalog.local.json"
+
+
+def _read_capability_catalog_json() -> dict:
+    """Read mcp/capability_catalog.json (+ optional .local overlay), same merge logic as MCP."""
+    catalog = {}
+    try:
+        if _CAPABILITY_CATALOG_PATH.exists():
+            catalog = json.loads(_CAPABILITY_CATALOG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    if _CAPABILITY_CATALOG_LOCAL_PATH.exists():
+        try:
+            local = json.loads(_CAPABILITY_CATALOG_LOCAL_PATH.read_text(encoding="utf-8"))
+            catalog.update(local)
+        except Exception:
+            pass
+    return catalog
+
+
+@router.get("/api/capability-catalog", summary="完整能力目录（供客户端 MCP 动态拉取，取代本地 capability_catalog.json）")
+def get_capability_catalog(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    x_installation_id: Optional[str] = Header(None, alias="X-Installation-Id"),
+):
+    """Return the full capability catalog from mcp/capability_catalog.json,
+    filtered by user permissions (skill visibility + paid unlock).
+    Client MCP should call this endpoint to load capabilities instead of
+    reading a local JSON file. Falls back gracefully if the file is missing."""
+    iid = _installation_id_for_capability_checks(x_installation_id)
+    catalog = _read_capability_catalog_json()
+    filtered = {}
+    for cap_id, cap_def in catalog.items():
+        if not cap_def.get("enabled", True):
+            continue
+        if not user_can_use_capability(db, current_user.id, cap_id, iid):
+            continue
+        filtered[cap_id] = cap_def
+    return {"capabilities": filtered, "source": "server"}
+
+
 @router.get("/capabilities/available", summary="当前可用能力列表（含付费技能限制：未解锁的付费技能不会出现在列表中）")
 def list_available(
     current_user: User = Depends(get_current_user),
@@ -401,9 +444,10 @@ def pre_deduct(
         return out
 
     # ── 爆款TVC 整包流水线 dry_run 总价估算（chat 算力提醒用）──
-    # 客户端 chat 在调 invoke_capability(comfly.veo.daihuo_pipeline) 前会先做 dry_run，
+    # 客户端 chat 在调 invoke_capability(comfly.daihuo.pipeline) 前会先做 dry_run，
     # 这里按 N×image_model + N×video_model + 1×chat_model 累加，与实际 pipeline 调用次数一致。
-    if body.dry_run and body.capability_id == "comfly.veo.daihuo_pipeline":
+    # 兼容老 capability_id "comfly.veo.daihuo_pipeline" → "comfly.daihuo.pipeline"
+    if body.dry_run and body.capability_id in ("comfly.daihuo.pipeline", "comfly.veo.daihuo_pipeline"):
         try:
             from mcp.comfly_upstream import estimate_comfly_credits as _est
             params = body.params if isinstance(body.params, dict) else {}
