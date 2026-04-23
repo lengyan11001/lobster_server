@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel
 from sqlalchemy import func, or_
@@ -99,6 +99,14 @@ def admin_page():
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="管理后台页面未找到")
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+@router.get("/admin/static/{filename}", include_in_schema=False)
+def admin_static(filename: str):
+    static_dir = Path(__file__).resolve().parent.parent / "static"
+    fp = static_dir / filename
+    if not fp.exists() or not fp.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(fp)
 
 
 # ── API ──
