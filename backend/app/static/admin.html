@@ -108,6 +108,51 @@ tr:hover{background:var(--bg)}
 .claim-bar input{flex:1;padding:10px 16px;border:1px solid var(--border);border-radius:8px;font-size:14px}
 .claim-bar input:focus{outline:none;border-color:var(--agent-color)}
 .agent-banner{padding:12px 24px;background:var(--agent-bg);border-bottom:1px solid #fde68a;font-size:13px;color:#92400e;text-align:center}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+/* Mobile responsive */
+@media(max-width:768px){
+  .topbar{padding:10px 12px;flex-wrap:wrap;gap:8px}
+  .topbar h2{font-size:15px}
+  .nav-tabs{margin-left:0;width:100%;order:3}
+  .nav-tab{padding:6px 14px;font-size:13px;flex:1;text-align:center}
+  .topbar .user-info{gap:8px}
+  .topbar .user-info #adminName{display:none}
+  .container{padding:12px}
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}
+  .stats-card{padding:14px}
+  .stats-card .sc-value{font-size:22px}
+  .stats{grid-template-columns:repeat(2,1fr);gap:8px}
+  .stat-item .value{font-size:16px}
+  .chart-card{padding:14px}
+  .search-bar{flex-direction:column;gap:8px}
+  .search-bar input{width:100%}
+  .search-bar .btn{width:100%}
+  .claim-bar{flex-direction:column;gap:8px;padding:12px}
+  .claim-bar input{width:100%}
+  .claim-bar .btn{width:100%}
+  .recharge-row{flex-direction:column;gap:8px}
+  .recharge-row input{width:100%}
+  .recharge-row .btn{width:100%}
+  .card{padding:14px}
+  .card h3{font-size:15px;margin-bottom:12px}
+  th,td{padding:8px 6px;font-size:12px}
+  .chart-bar-label{width:50px;font-size:11px}
+  .chart-bar-value{font-size:11px;min-width:36px}
+  .login-card{padding:24px}
+  .login-card h1{font-size:18px}
+  .modal-card{padding:20px;margin:12px}
+  .toast{right:12px;left:12px;text-align:center}
+  .badge{font-size:10px;padding:2px 6px}
+  div[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr!important}
+}
+@media(max-width:480px){
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+  .stats{grid-template-columns:1fr 1fr}
+  .stat-item .value{font-size:14px}
+  .topbar h2{font-size:14px}
+  .nav-tab{font-size:12px;padding:5px 10px}
+}
 </style>
 </head>
 <body>
@@ -197,7 +242,7 @@ tr:hover{background:var(--bg)}
         <h3>充值积分</h3>
         <div class="recharge-row">
           <input type="number" id="rechargeAmount" placeholder="积分数量" step="1">
-          <input type="text" id="rechargeDesc" placeholder="备注（可选）" value="管理员手动加积分" style="width:200px">
+          <input type="text" id="rechargeDesc" placeholder="备注（可选）" value="管理员手动加积分" style="flex:1;min-width:0">
           <button class="btn btn-success btn-sm" onclick="doAddCredits()">充值</button>
           <button class="btn btn-outline btn-sm" id="resetPwdBtn" onclick="openResetPassword()" style="margin-left:8px">重置密码</button>
         </div>
@@ -399,24 +444,24 @@ function renderUserTable(users, containerId, title) {
     return;
   }
   let html = title ? `<h3>${title}（${users.length} 条）</h3>` : '';
-  html += `<table><thead><tr><th>ID</th><th>账号</th><th>积分余额</th><th>角色</th>`;
-  if (isAdmin()) html += `<th>代理商</th>`;
-  html += `<th>注册时间</th><th>操作</th></tr></thead><tbody>`;
+  html += `<div class="table-wrap"><table><thead><tr><th>ID</th><th>账号</th><th>积分</th><th>角色</th>`;
+  if (isAdmin()) html += `<th>代理</th>`;
+  html += `<th>注册时间</th><th></th></tr></thead><tbody>`;
   for (const u of users) {
-    const email = u.email.replace(/@sms\.lobster\.local$/, ' <span style="color:#94a3b8;font-size:11px">(手机)</span>');
+    const email = u.email.replace(/@sms\.lobster\.local$/, '');
     html += `<tr>
       <td>${u.id}</td>
       <td>${email}</td>
-      <td class="credits-value">${u.credits.toFixed(2)}</td>
+      <td class="credits-value">${u.credits.toFixed(0)}</td>
       <td><span class="badge ${u.role==='admin'?'badge-red':'badge-blue'}">${u.role}</span></td>`;
     if (isAdmin()) {
-      html += `<td>${u.is_agent ? '<span class="badge badge-yellow">代理商</span>' : '-'}</td>`;
+      html += `<td>${u.is_agent ? '<span class="badge badge-yellow">代理</span>' : '-'}</td>`;
     }
-    html += `<td style="font-size:12px;color:var(--text-secondary)">${u.created_at ? new Date(u.created_at).toLocaleString('zh-CN') : '-'}</td>
+    html += `<td style="font-size:11px;color:var(--text-secondary)">${u.created_at ? new Date(u.created_at).toLocaleDateString('zh-CN') : '-'}</td>
       <td><button class="btn btn-outline btn-sm" onclick="showUserDetail(${u.id})">详情</button></td>
     </tr>`;
   }
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   el.innerHTML = html;
 }
 
@@ -478,7 +523,7 @@ async function showUserDetail(userId) {
     if (!ledger.length) {
       document.getElementById('ledgerTable').innerHTML = '<div class="empty">暂无流水记录</div>';
     } else {
-      let html = `<table><thead><tr><th>时间</th><th>类型</th><th>变动</th><th>余额</th><th>描述</th></tr></thead><tbody>`;
+      let html = `<div class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>变动</th><th>余额</th><th>描述</th></tr></thead><tbody>`;
       for (const e of ledger) {
         const isPositive = e.delta > 0;
         const typeBadge = {
@@ -487,14 +532,14 @@ async function showUserDetail(userId) {
           'sutui_chat': 'badge-red', 'skill_unlock': 'badge-red', 'unit_deduct': 'badge-red',
         }[e.entry_type] || 'badge-blue';
         html += `<tr>
-          <td style="font-size:12px">${e.created_at?new Date(e.created_at).toLocaleString('zh-CN'):'-'}</td>
+          <td style="font-size:11px;white-space:nowrap">${e.created_at?new Date(e.created_at).toLocaleDateString('zh-CN'):'-'}</td>
           <td><span class="badge ${typeBadge}">${e.entry_type}</span></td>
-          <td style="color:${isPositive?'var(--success)':'var(--danger)'};font-weight:600">${isPositive?'+':''}${e.delta.toFixed(4)}</td>
-          <td style="font-weight:500">${e.balance_after.toFixed(2)}</td>
-          <td style="font-size:12px;color:var(--text-secondary)">${e.description||'-'}</td>
+          <td style="color:${isPositive?'var(--success)':'var(--danger)'};font-weight:600;white-space:nowrap">${isPositive?'+':''}${e.delta.toFixed(2)}</td>
+          <td style="font-weight:500">${e.balance_after.toFixed(0)}</td>
+          <td style="font-size:11px;color:var(--text-secondary)">${e.description||'-'}</td>
         </tr>`;
       }
-      html += '</tbody></table>';
+      html += '</tbody></table></div>';
       document.getElementById('ledgerTable').innerHTML = html;
     }
 
