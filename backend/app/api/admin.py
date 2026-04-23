@@ -658,7 +658,9 @@ def agent_claim_sub(
     if target_user.parent_user_id is not None:
         if target_user.parent_user_id == agent_user_id:
             raise HTTPException(status_code=400, detail="该用户已经是你的下级")
-        raise HTTPException(status_code=409, detail="该用户已被其他代理商认领，无法添加")
+        current_parent = db.query(User).filter(User.id == target_user.parent_user_id).first()
+        if current_parent and current_parent.is_agent:
+            raise HTTPException(status_code=409, detail="该用户已被其他代理商认领，无法添加")
 
     target_user.parent_user_id = agent_user_id
     db.add(target_user)
