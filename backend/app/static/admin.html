@@ -386,8 +386,10 @@ function showDashboard() {
     document.getElementById('claimBar').style.display = 'none';
   }
 
-  statsCache = null;
-  requestAnimationFrame(() => loadStats());
+  requestAnimationFrame(() => {
+    statsCache = null;
+    loadStats();
+  });
 }
 
 let currentNav = 'stats';
