@@ -6,11 +6,12 @@
 <title>Lobster 管理后台</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#f5f7fa;--card:#fff;--primary:#4f46e5;--primary-hover:#4338ca;--danger:#ef4444;--success:#22c55e;--text:#1e293b;--text-secondary:#64748b;--border:#e2e8f0;--radius:10px;--shadow:0 1px 3px rgba(0,0,0,.08)}
+:root{--bg:#f5f7fa;--card:#fff;--primary:#4f46e5;--primary-hover:#4338ca;--danger:#ef4444;--success:#22c55e;--text:#1e293b;--text-secondary:#64748b;--border:#e2e8f0;--radius:10px;--shadow:0 1px 3px rgba(0,0,0,.08);--agent-color:#f59e0b;--agent-bg:#fffbeb}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 .login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
 .login-card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:40px;width:100%;max-width:380px}
-.login-card h1{text-align:center;margin-bottom:24px;font-size:22px;color:var(--primary)}
+.login-card h1{text-align:center;margin-bottom:8px;font-size:22px;color:var(--primary)}
+.login-card .login-hint{text-align:center;font-size:12px;color:var(--text-secondary);margin-bottom:20px}
 .form-group{margin-bottom:16px}
 .form-group label{display:block;margin-bottom:6px;font-size:13px;font-weight:600;color:var(--text-secondary)}
 .form-group input{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;transition:border-color .2s}
@@ -23,12 +24,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica N
 .btn-danger{background:var(--danger);color:#fff}
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
 .btn-outline:hover{background:var(--bg)}
+.btn-agent{background:var(--agent-color);color:#fff}
+.btn-agent:hover{background:#d97706}
 .error-msg{color:var(--danger);font-size:13px;margin-top:8px;text-align:center}
 
 /* Dashboard */
 .dashboard{display:none}
 .topbar{background:var(--card);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
 .topbar h2{font-size:18px;color:var(--primary)}
+.topbar.agent-topbar h2{color:var(--agent-color)}
 .topbar .user-info{display:flex;align-items:center;gap:12px}
 .nav-tabs{display:flex;gap:2px;margin-left:32px}
 .nav-tab{padding:8px 20px;border-radius:6px 6px 0 0;cursor:pointer;font-size:14px;font-weight:500;color:var(--text-secondary);transition:all .15s;border-bottom:2px solid transparent}
@@ -73,8 +77,9 @@ tr:hover{background:var(--bg)}
 .badge-blue{background:#dbeafe;color:#1e40af}
 .badge-red{background:#fee2e2;color:#991b1b}
 .badge-yellow{background:#fef9c3;color:#854d0e}
+.badge-purple{background:#f3e8ff;color:#6b21a8}
 .credits-value{font-weight:700;color:var(--primary)}
-.recharge-row{display:flex;gap:8px;align-items:center;margin-top:12px}
+.recharge-row{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
 .recharge-row input{width:120px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px}
 .recharge-row input:focus{outline:none;border-color:var(--primary)}
 .pagination{display:flex;justify-content:center;gap:8px;margin-top:16px}
@@ -97,6 +102,11 @@ tr:hover{background:var(--bg)}
 .modal-card .modal-sub{font-size:12px;color:var(--text-secondary);margin-bottom:16px}
 .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .modal-card .form-group input[type="password"]{width:100%}
+/* Agent claim bar */
+.claim-bar{display:flex;gap:10px;margin-bottom:20px;align-items:center;padding:16px;background:var(--agent-bg);border:1px solid #fde68a;border-radius:var(--radius)}
+.claim-bar input{flex:1;padding:10px 16px;border:1px solid var(--border);border-radius:8px;font-size:14px}
+.claim-bar input:focus{outline:none;border-color:var(--agent-color)}
+.agent-banner{padding:12px 24px;background:var(--agent-bg);border-bottom:1px solid #fde68a;font-size:13px;color:#92400e;text-align:center}
 </style>
 </head>
 <body>
@@ -105,13 +115,14 @@ tr:hover{background:var(--bg)}
 <div class="login-wrap" id="loginView">
   <div class="login-card">
     <h1>Lobster 管理后台</h1>
+    <div class="login-hint">管理员或代理商均可登录</div>
     <div class="form-group">
-      <label>用户名</label>
-      <input type="text" id="loginUser" autocomplete="username" placeholder="管理员用户名">
+      <label>账号</label>
+      <input type="text" id="loginUser" autocomplete="username" placeholder="管理员用户名 / 代理商手机号">
     </div>
     <div class="form-group">
       <label>密码</label>
-      <input type="password" id="loginPass" autocomplete="current-password" placeholder="管理员密码">
+      <input type="password" id="loginPass" autocomplete="current-password" placeholder="密码">
     </div>
     <button class="btn btn-primary" onclick="doLogin()">登录</button>
     <div class="error-msg" id="loginError"></div>
@@ -120,22 +131,35 @@ tr:hover{background:var(--bg)}
 
 <!-- Dashboard -->
 <div class="dashboard" id="dashboardView">
-  <div class="topbar">
+  <div class="topbar" id="topbar">
     <div style="display:flex;align-items:center">
-      <h2>Lobster 管理后台</h2>
-      <div class="nav-tabs">
+      <h2 id="topbarTitle">Lobster 管理后台</h2>
+      <div class="nav-tabs" id="navTabs">
         <div class="nav-tab active" data-nav="stats" onclick="switchNav('stats')">统计</div>
         <div class="nav-tab" data-nav="users" onclick="switchNav('users')">用户信息</div>
       </div>
     </div>
     <div class="user-info">
       <span id="adminName" style="font-size:13px;color:var(--text-secondary)"></span>
+      <span id="roleBadge" class="badge" style="display:none"></span>
       <button class="btn btn-outline btn-sm" onclick="doLogout()">退出</button>
     </div>
   </div>
 
+  <!-- Agent banner -->
+  <div class="agent-banner" id="agentBanner" style="display:none">
+    代理商模式 — 仅显示您的下级用户数据
+  </div>
+
   <!-- Page: Users -->
   <div class="container" id="pageUsers" style="display:none">
+    <!-- Agent: 认领下级 -->
+    <div class="claim-bar" id="claimBar" style="display:none">
+      <span style="font-weight:600;color:#92400e;white-space:nowrap">添加下级：</span>
+      <input type="text" id="claimAccount" placeholder="输入用户手机号或账号…" onkeydown="if(event.key==='Enter')doClaimSub()">
+      <button class="btn btn-agent btn-sm" onclick="doClaimSub()">认领</button>
+    </div>
+
     <div class="search-bar">
       <input type="text" id="searchInput" placeholder="搜索用户：输入手机号、账号、邮箱或用户ID…" onkeydown="if(event.key==='Enter')doSearch()">
       <button class="btn btn-primary btn-sm" onclick="doSearch()">搜索</button>
@@ -163,16 +187,22 @@ tr:hover{background:var(--bg)}
     <div id="userDetailView" style="display:none">
       <div class="detail-back" onclick="hideDetail()">&larr; 返回列表</div>
       <div class="card" id="userDetailCard"></div>
+      <!-- admin-only: agent toggle -->
+      <div class="card" id="agentToggleCard" style="display:none">
+        <h3>代理商管理</h3>
+        <div id="agentToggleSection"></div>
+      </div>
       <div class="card">
         <h3>充值积分</h3>
         <div class="recharge-row">
           <input type="number" id="rechargeAmount" placeholder="积分数量" step="1">
           <input type="text" id="rechargeDesc" placeholder="备注（可选）" value="管理员手动加积分" style="width:200px">
           <button class="btn btn-success btn-sm" onclick="doAddCredits()">充值</button>
-          <button class="btn btn-outline btn-sm" onclick="openResetPassword()" style="margin-left:8px">重置密码</button>
+          <button class="btn btn-outline btn-sm" id="resetPwdBtn" onclick="openResetPassword()" style="margin-left:8px">重置密码</button>
         </div>
       </div>
-      <div class="card">
+      <!-- admin-only: skill visibility -->
+      <div class="card" id="skillVisCard" style="display:none">
         <h3>可见技能</h3>
         <div id="skillVisibilitySection">
           <div class="empty">加载中…</div>
@@ -181,6 +211,11 @@ tr:hover{background:var(--bg)}
       <div class="card">
         <h3>积分流水（最近50条）</h3>
         <div id="ledgerTable"></div>
+      </div>
+      <!-- agent: remove sub -->
+      <div class="card" id="removeSubCard" style="display:none">
+        <h3>下级管理</h3>
+        <div id="removeSubSection"></div>
       </div>
     </div>
   </div>
@@ -224,6 +259,8 @@ tr:hover{background:var(--bg)}
 <script>
 const API = location.origin;
 let TOKEN = localStorage.getItem('admin_token') || '';
+let ROLE = localStorage.getItem('admin_role') || '';
+let DISPLAY_NAME = localStorage.getItem('admin_display_name') || '';
 
 if (TOKEN) { showDashboard(); }
 
@@ -252,26 +289,57 @@ async function doLogin() {
   const p = document.getElementById('loginPass').value.trim();
   const err = document.getElementById('loginError');
   err.textContent = '';
-  if (!u || !p) { err.textContent = '请输入用户名和密码'; return; }
+  if (!u || !p) { err.textContent = '请输入账号和密码'; return; }
   try {
     const data = await api('/admin/api/login', {method:'POST', body: JSON.stringify({username:u,password:p})});
     TOKEN = data.token;
+    ROLE = data.role || 'admin';
+    DISPLAY_NAME = data.display_name || '管理员';
     localStorage.setItem('admin_token', TOKEN);
+    localStorage.setItem('admin_role', ROLE);
+    localStorage.setItem('admin_display_name', DISPLAY_NAME);
     showDashboard();
   } catch(e) { err.textContent = e.message; }
 }
 
 function doLogout() {
   TOKEN = '';
+  ROLE = '';
+  DISPLAY_NAME = '';
   localStorage.removeItem('admin_token');
+  localStorage.removeItem('admin_role');
+  localStorage.removeItem('admin_display_name');
   document.getElementById('loginView').style.display = 'flex';
   document.getElementById('dashboardView').style.display = 'none';
 }
 
+function isAdmin() { return ROLE === 'admin'; }
+function isAgent() { return ROLE === 'agent'; }
+
 function showDashboard() {
   document.getElementById('loginView').style.display = 'none';
   document.getElementById('dashboardView').style.display = 'block';
-  document.getElementById('adminName').textContent = '管理员';
+  document.getElementById('adminName').textContent = DISPLAY_NAME || '管理员';
+
+  const badge = document.getElementById('roleBadge');
+  if (isAgent()) {
+    badge.style.display = '';
+    badge.className = 'badge badge-yellow';
+    badge.textContent = '代理商';
+    document.getElementById('topbar').classList.add('agent-topbar');
+    document.getElementById('topbarTitle').textContent = '代理商后台';
+    document.getElementById('agentBanner').style.display = '';
+    document.getElementById('claimBar').style.display = 'flex';
+  } else {
+    badge.style.display = '';
+    badge.className = 'badge badge-purple';
+    badge.textContent = '管理员';
+    document.getElementById('topbar').classList.remove('agent-topbar');
+    document.getElementById('topbarTitle').textContent = 'Lobster 管理后台';
+    document.getElementById('agentBanner').style.display = 'none';
+    document.getElementById('claimBar').style.display = 'none';
+  }
+
   loadStats();
 }
 
@@ -306,7 +374,8 @@ async function loadAllUsers(page) {
   currentPage = page;
   try {
     const data = await api('/admin/api/users?page=' + page + '&page_size=20');
-    renderUserTable(data.users, 'allUsersTable', null);
+    const title = isAgent() ? '我的下级用户' : null;
+    renderUserTable(data.users, 'allUsersTable', title);
     renderPagination(data.total, data.page, data.page_size);
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -329,15 +398,20 @@ function renderUserTable(users, containerId, title) {
     return;
   }
   let html = title ? `<h3>${title}（${users.length} 条）</h3>` : '';
-  html += `<table><thead><tr><th>ID</th><th>账号</th><th>积分余额</th><th>角色</th><th>注册时间</th><th>操作</th></tr></thead><tbody>`;
+  html += `<table><thead><tr><th>ID</th><th>账号</th><th>积分余额</th><th>角色</th>`;
+  if (isAdmin()) html += `<th>代理商</th>`;
+  html += `<th>注册时间</th><th>操作</th></tr></thead><tbody>`;
   for (const u of users) {
     const email = u.email.replace(/@sms\.lobster\.local$/, ' <span style="color:#94a3b8;font-size:11px">(手机)</span>');
     html += `<tr>
       <td>${u.id}</td>
       <td>${email}</td>
       <td class="credits-value">${u.credits.toFixed(2)}</td>
-      <td><span class="badge ${u.role==='admin'?'badge-red':'badge-blue'}">${u.role}</span></td>
-      <td style="font-size:12px;color:var(--text-secondary)">${u.created_at ? new Date(u.created_at).toLocaleString('zh-CN') : '-'}</td>
+      <td><span class="badge ${u.role==='admin'?'badge-red':'badge-blue'}">${u.role}</span></td>`;
+    if (isAdmin()) {
+      html += `<td>${u.is_agent ? '<span class="badge badge-yellow">代理商</span>' : '-'}</td>`;
+    }
+    html += `<td style="font-size:12px;color:var(--text-secondary)">${u.created_at ? new Date(u.created_at).toLocaleString('zh-CN') : '-'}</td>
       <td><button class="btn btn-outline btn-sm" onclick="showUserDetail(${u.id})">详情</button></td>
     </tr>`;
   }
@@ -346,10 +420,12 @@ function renderUserTable(users, containerId, title) {
 }
 
 let currentUserId = null;
+let currentUserData = null;
 async function showUserDetail(userId) {
   currentUserId = userId;
   try {
     const data = await api('/admin/api/user/' + userId);
+    currentUserData = data.user;
     document.getElementById('tabSearch').style.display = 'none';
     document.getElementById('tabAll').style.display = 'none';
     document.getElementById('userDetailView').style.display = '';
@@ -357,18 +433,45 @@ async function showUserDetail(userId) {
     const u = data.user;
     const email = u.email.replace(/@sms\.lobster\.local$/, '');
     const isSms = u.email.endsWith('@sms.lobster.local');
-    document.getElementById('userDetailCard').innerHTML = `
+    let detailHtml = `
       <h3>用户详情</h3>
       <div class="stats">
         <div class="stat-item"><div class="label">用户ID</div><div class="value">${u.id}</div></div>
         <div class="stat-item"><div class="label">账号</div><div class="value" style="font-size:15px">${email}${isSms?' <span style="font-size:11px;color:#94a3b8">(手机)</span>':''}</div></div>
         <div class="stat-item"><div class="label">积分余额</div><div class="value">${u.credits.toFixed(2)}</div></div>
         <div class="stat-item"><div class="label">角色</div><div class="value" style="font-size:14px">${u.role}</div></div>
-        <div class="stat-item"><div class="label">代理</div><div class="value" style="font-size:14px">${u.is_agent?'是':'否'}</div></div>
+        <div class="stat-item"><div class="label">代理商</div><div class="value" style="font-size:14px;${u.is_agent?'color:var(--agent-color)':''}">${u.is_agent?'是':'否'}</div></div>
         <div class="stat-item"><div class="label">品牌</div><div class="value" style="font-size:14px">${u.brand_mark||'-'}</div></div>
+        <div class="stat-item"><div class="label">上级ID</div><div class="value" style="font-size:14px">${u.parent_user_id||'无'}</div></div>
         <div class="stat-item"><div class="label">注册时间</div><div class="value" style="font-size:13px">${u.created_at?new Date(u.created_at).toLocaleString('zh-CN'):'-'}</div></div>
       </div>
     `;
+    document.getElementById('userDetailCard').innerHTML = detailHtml;
+
+    // admin-only: agent toggle
+    const agentCard = document.getElementById('agentToggleCard');
+    if (isAdmin()) {
+      agentCard.style.display = '';
+      renderAgentToggle(u);
+    } else {
+      agentCard.style.display = 'none';
+    }
+
+    // admin-only: skill visibility & reset password
+    document.getElementById('skillVisCard').style.display = isAdmin() ? '' : 'none';
+    document.getElementById('resetPwdBtn').style.display = isAdmin() ? '' : 'none';
+
+    // agent: remove sub
+    const removeCard = document.getElementById('removeSubCard');
+    if (isAgent()) {
+      removeCard.style.display = '';
+      document.getElementById('removeSubSection').innerHTML = `
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">此用户是你的下级。如需解除关系，点击下方按钮。</p>
+        <button class="btn btn-danger btn-sm" onclick="doRemoveSub(${u.id})">移除此下级</button>
+      `;
+    } else {
+      removeCard.style.display = 'none';
+    }
 
     const ledger = data.ledger;
     if (!ledger.length) {
@@ -395,7 +498,33 @@ async function showUserDetail(userId) {
     }
 
     document.getElementById('rechargeAmount').value = '';
-    loadSkillVisibility(userId);
+    if (isAdmin()) loadSkillVisibility(userId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function renderAgentToggle(u) {
+  const section = document.getElementById('agentToggleSection');
+  if (u.is_agent) {
+    section.innerHTML = `
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">该用户当前 <strong style="color:var(--agent-color)">是代理商</strong>。取消后，其下级用户的上级关系不会自动清除。</p>
+      <button class="btn btn-outline btn-sm" onclick="toggleAgent(${u.id}, false)">取消代理商</button>
+    `;
+  } else {
+    section.innerHTML = `
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">该用户当前不是代理商。设为代理商后，该用户可用自己的账号密码登录管理后台，并管理自己的下级。</p>
+      <button class="btn btn-agent btn-sm" onclick="toggleAgent(${u.id}, true)">设为代理商</button>
+    `;
+  }
+}
+
+async function toggleAgent(userId, makeAgent) {
+  try {
+    const data = await api('/admin/api/set-agent', {
+      method: 'POST',
+      body: JSON.stringify({user_id: userId, is_agent: makeAgent})
+    });
+    toast(makeAgent ? `已将 ${data.email} 设为代理商` : `已取消 ${data.email} 的代理商资格`);
+    showUserDetail(userId);
   } catch(e) { toast(e.message, 'error'); }
 }
 
@@ -445,6 +574,39 @@ async function loadSkillVisibility(userId) {
   } catch(e) {
     section.innerHTML = '<div class="empty" style="color:var(--danger)">' + e.message + '</div>';
   }
+}
+
+// ── 代理商：认领下级 ──
+
+async function doClaimSub() {
+  const account = document.getElementById('claimAccount').value.trim();
+  if (!account) { toast('请输入用户手机号或账号', 'error'); return; }
+  try {
+    const data = await api('/admin/api/agent/claim-sub', {
+      method: 'POST',
+      body: JSON.stringify({account})
+    });
+    toast(`已成功认领下级：${data.email}`);
+    document.getElementById('claimAccount').value = '';
+    if (currentNav === 'users') {
+      const activeTab = document.querySelector('.tab.active')?.dataset.tab;
+      if (activeTab === 'all') loadAllUsers(currentPage);
+    }
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function doRemoveSub(userId) {
+  if (!confirm('确定移除此下级用户？移除后该用户将不再归属于你。')) return;
+  try {
+    await api('/admin/api/agent/remove-sub', {
+      method: 'POST',
+      body: JSON.stringify({user_id: userId})
+    });
+    toast('已移除下级');
+    hideDetail();
+    const activeTab = document.querySelector('.tab.active')?.dataset.tab;
+    if (activeTab === 'all') loadAllUsers(currentPage);
+  } catch(e) { toast(e.message, 'error'); }
 }
 
 function openResetPassword() {
@@ -521,8 +683,9 @@ async function loadStats() {
 
 function renderStats(data) {
   const o = data.overview;
+  const prefix = isAgent() ? '下级' : '';
   document.getElementById('statsOverview').innerHTML = `
-    ${statCard('总用户数', o.total_users, '')}
+    ${statCard(prefix+'总用户数', o.total_users, '')}
     ${statCard('今日新增', o.today_new_users, '用户')}
     ${statCard('今日充值', o.today_recharge_paid.toFixed(1), '付费积分')}
     ${statCard('管理员加积分', o.today_recharge_admin.toFixed(1), '今日')}
