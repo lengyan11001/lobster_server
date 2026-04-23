@@ -386,7 +386,8 @@ function showDashboard() {
     document.getElementById('claimBar').style.display = 'none';
   }
 
-  loadStats();
+  statsCache = null;
+  requestAnimationFrame(() => loadStats());
 }
 
 let currentNav = 'stats';
@@ -717,14 +718,23 @@ document.addEventListener('keydown', e => {
 });
 
 let statsCache = null;
+let _statsLoading = false;
 async function loadStats() {
   if (statsCache && Date.now() - statsCache._ts < 30000) { renderStats(statsCache); return; }
+  if (_statsLoading) return;
+  _statsLoading = true;
+  document.getElementById('statsOverview').innerHTML = '<div class="empty">加载中…</div>';
   try {
     const data = await api('/admin/api/stats?days=30');
     data._ts = Date.now();
     statsCache = data;
     renderStats(data);
-  } catch(e) { toast(e.message, 'error'); }
+  } catch(e) {
+    toast(e.message, 'error');
+    document.getElementById('statsOverview').innerHTML = '<div class="empty" style="cursor:pointer" onclick="statsCache=null;loadStats()">加载失败，点击重试</div>';
+  } finally {
+    _statsLoading = false;
+  }
 }
 
 function renderStats(data) {
