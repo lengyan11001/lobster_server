@@ -2208,9 +2208,42 @@ async def chat_endpoint(
 
     t0 = time.perf_counter()
 
+    # ── OpenClaw routing: prefix gate + primary/only ──
+    _force_oc = False
+    if settings.lobster_openclaw_chat_prefix_gate:
+        _raw_msg = (payload.message or "").strip()
+        if _raw_msg.lower().startswith("/openclaw"):
+            _body = _raw_msg[len("/openclaw"):].strip()
+            if _body:
+                _force_oc = True
+                if messages and messages[-1]["role"] == "user":
+                    messages[-1]["content"] = _body
+
+    _oc_first = _force_oc or settings.lobster_openclaw_primary_chat or settings.lobster_openclaw_only_chat
+
+    if _oc_first:
+        oc_reply = await _try_openclaw(messages, model, raw_token)
+        if oc_reply:
+            ms = round((time.perf_counter() - t0) * 1000)
+            _flush_tool_logs(db, current_user.id, payload.session_id, model)
+            _log_turn(
+                db, current_user.id, payload.message, _reply_for_user(oc_reply),
+                payload.session_id, payload.context_id,
+                {"model": model, "mode": "openclaw", "duration_ms": ms},
+            )
+            db.commit()
+            final_reply = _reply_for_user(oc_reply)
+            logger.info("[素材] 对话结束(POST /chat) session_id=%s reply_len=%d mode=openclaw-primary", payload.session_id or "", len(final_reply))
+            return JSONResponse(
+                content=ChatResponse(reply=final_reply).model_dump(),
+                headers={"X-Duration-Ms": str(ms)},
+            )
+        if settings.lobster_openclaw_only_chat or _force_oc:
+            raise HTTPException(status_code=503, detail="OpenClaw Gateway 不可用，请检查 OPENCLAW_GATEWAY_URL 和 OPENCLAW_GATEWAY_TOKEN 配置。")
+        logger.info("[对话] OpenClaw primary 失败，fallback 到直连 LLM")
+
     # ── Primary path: direct LLM API with MCP tools ──
     cfg = None
-    # Online edition: prefer server-side sutui-chat proxy (direct DeepSeek if configured, else xskill fallback).
     if edition == "online":
         try:
             base_self = str(request.base_url).rstrip("/")
@@ -2261,23 +2294,24 @@ async def chat_endpoint(
         except Exception as e:
             logger.exception("Direct LLM call failed, trying OpenClaw fallback: %s", e)
 
-    # ── Fallback: OpenClaw Gateway (no MCP tools) ──
-    oc_reply = await _try_openclaw(messages, model, raw_token)
-    if oc_reply:
-        ms = round((time.perf_counter() - t0) * 1000)
-        _flush_tool_logs(db, current_user.id, payload.session_id, model)
-        _log_turn(
-            db, current_user.id, payload.message, _reply_for_user(oc_reply),
-            payload.session_id, payload.context_id,
-            {"model": model, "mode": "openclaw", "duration_ms": ms},
-        )
-        db.commit()
-        final_reply = _reply_for_user(oc_reply)
-        logger.info("[素材] 对话结束(POST /chat) session_id=%s reply_len=%d", payload.session_id or "", len(final_reply))
-        return JSONResponse(
-            content=ChatResponse(reply=final_reply).model_dump(),
-            headers={"X-Duration-Ms": str(ms)},
-        )
+    # ── Fallback: OpenClaw Gateway (skip if already tried above) ──
+    if not _oc_first:
+        oc_reply = await _try_openclaw(messages, model, raw_token)
+        if oc_reply:
+            ms = round((time.perf_counter() - t0) * 1000)
+            _flush_tool_logs(db, current_user.id, payload.session_id, model)
+            _log_turn(
+                db, current_user.id, payload.message, _reply_for_user(oc_reply),
+                payload.session_id, payload.context_id,
+                {"model": model, "mode": "openclaw", "duration_ms": ms},
+            )
+            db.commit()
+            final_reply = _reply_for_user(oc_reply)
+            logger.info("[素材] 对话结束(POST /chat) session_id=%s reply_len=%d", payload.session_id or "", len(final_reply))
+            return JSONResponse(
+                content=ChatResponse(reply=final_reply).model_dump(),
+                headers={"X-Duration-Ms": str(ms)},
+            )
 
     # ── No LLM path available ──
     if not cfg:
@@ -2366,8 +2400,40 @@ async def _chat_stream_events(
         except HTTPException as e:
             det = e.detail
             error_holder.append(det if isinstance(det, str) else str(det))
+
+        # ── OpenClaw routing (stream) ──
+        _s_force_oc = False
+        if settings.lobster_openclaw_chat_prefix_gate:
+            _s_raw = (payload.message or "").strip()
+            if _s_raw.lower().startswith("/openclaw"):
+                _s_body = _s_raw[len("/openclaw"):].strip()
+                if _s_body:
+                    _s_force_oc = True
+                    if messages and messages[-1]["role"] == "user":
+                        messages[-1]["content"] = _s_body
+        _s_oc_first = _s_force_oc or settings.lobster_openclaw_primary_chat or settings.lobster_openclaw_only_chat
+        _s_oc_done = False
+
+        if not error_holder and _s_oc_first:
+            oc_reply = await _try_openclaw(messages, model, raw_token)
+            if oc_reply:
+                reply_holder.append(oc_reply)
+                _flush_tool_logs(db, current_user.id, payload.session_id, model)
+                _log_turn(
+                    db, current_user.id, payload.message, _reply_for_user(oc_reply),
+                    payload.session_id, payload.context_id,
+                    {"model": model, "mode": "openclaw"},
+                )
+                db.commit()
+                _s_oc_done = True
+            elif settings.lobster_openclaw_only_chat or _s_force_oc:
+                error_holder.append("OpenClaw Gateway 不可用，请检查配置。")
+                _s_oc_done = True
+            else:
+                logger.info("[对话-stream] OpenClaw primary 失败，fallback 到直连 LLM")
+
         cfg = _resolve_config(resolve_model) if resolve_model else None
-        if not error_holder:
+        if not error_holder and not _s_oc_done:
             try:
                 if cfg:
                     if cfg["provider"] == "anthropic":
@@ -2394,7 +2460,7 @@ async def _chat_stream_events(
                         {"model": model, "mode": "direct", "tools": len(mcp_tools)},
                     )
                     db.commit()
-                else:
+                elif not _s_oc_first:
                     oc_reply = await _try_openclaw(messages, model, raw_token)
                     if oc_reply:
                         reply_holder.append(oc_reply)
@@ -2407,6 +2473,8 @@ async def _chat_stream_events(
                         db.commit()
                     else:
                         error_holder.append("LLM 服务暂时不可用")
+                else:
+                    error_holder.append("LLM 服务暂时不可用")
             except HTTPException as e:
                 error_holder.append(e.detail if isinstance(e.detail, str) else str(e.detail))
             except Exception as e:

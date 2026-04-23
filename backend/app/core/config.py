@@ -103,6 +103,12 @@ class Settings(BaseSettings):
     openclaw_agent_id: str = "main"
     """启动时是否尝试在本机拉起 OpenClaw Gateway（需 node + openclaw.mjs）。纯 API 的 Linux 服务器无此文件时可设 false，避免无意义日志。"""
     openclaw_autostart: bool = True
+    """true=对话默认先走 OpenClaw Gateway，直连 LLM+MCP 作为兜底。"""
+    lobster_openclaw_primary_chat: bool = False
+    """true=对话只走 OpenClaw Gateway，不 fallback 到直连 LLM。"""
+    lobster_openclaw_only_chat: bool = False
+    """true=用户消息以 /openclaw 开头时该轮强制走 OpenClaw Gateway。"""
+    lobster_openclaw_chat_prefix_gate: bool = True
     """本地轮询拉取/提交回复时的鉴权：请求头 X-Forward-Secret 需与此一致。不设则不做校验（仅内网或隧道时建议设置）。"""
     wecom_forward_secret: Optional[str] = None
     # ── Comfly 中转平台（与速推并行的生成能力上游）──
