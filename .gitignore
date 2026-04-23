@@ -38,6 +38,10 @@ mcp/capability_catalog.local.json
 # 部署回滚
 .deploy_rollback_commit
 
+# 客户端 OTA：manifest 与 bundle 均由 publish 脚本 SFTP 写入服务器，不跟 git 避免 deploy 覆盖
+client_static/client_code/manifest.json
+client_static/client_code/bundles/
+
 # 富友 / 第三方密钥：所有 .pem 都不入库；只放说明 README
 certs/**/*.pem
 certs/**/*.key

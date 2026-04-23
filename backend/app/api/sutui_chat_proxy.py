@@ -140,6 +140,7 @@ _SUTUI_PROVIDER_PREFIXES = ("anthropic/", "openai/", "google/", "deepseek/", "me
 # ---------------------------------------------------------------------------
 _SLIM_MSG_MAX_TURNS = 12          # keep system + last N user/assistant turns
 _SLIM_MSG_MAX_CHARS = 800         # per-message content truncation
+_SLIM_SYS_MSG_MAX_CHARS = 16000   # system messages get a much higher limit to preserve agent instructions
 _SLIM_TOOL_DESC_MAX = 120         # max chars for tool-level description
 _SLIM_PROP_DESC_MAX = 40          # max chars for property-level description; 0 to strip all
 _BASE64_RE = __import__("re").compile(r"data:[^;]{0,60};base64,[A-Za-z0-9+/=]{200,}")
@@ -236,7 +237,7 @@ def _slim_messages(messages: list) -> list:
     non_sys = _repair_orphan_tool_messages(non_sys)
     result = []
     for m in sys_msgs:
-        result.append(_truncate_msg(m))
+        result.append(_truncate_msg(m, max_chars=_SLIM_SYS_MSG_MAX_CHARS))
     for m in non_sys:
         result.append(_truncate_msg(m))
     return result
@@ -288,14 +289,14 @@ def _repair_orphan_tool_messages(messages: list) -> list:
     return repaired
 
 
-def _truncate_msg(m: dict) -> dict:
+def _truncate_msg(m: dict, *, max_chars: int = _SLIM_MSG_MAX_CHARS) -> dict:
     if not isinstance(m, dict):
         return m
     c = m.get("content")
     if isinstance(c, str):
         c = _BASE64_RE.sub("[image]", c)
-        if len(c) > _SLIM_MSG_MAX_CHARS:
-            c = c[:_SLIM_MSG_MAX_CHARS] + "…(truncated)"
+        if len(c) > max_chars:
+            c = c[:max_chars] + "…(truncated)"
         if c != m.get("content"):
             return {**m, "content": c}
     elif isinstance(c, list):
