@@ -26,7 +26,8 @@ from ..captcha_util import create_captcha, verify_captcha
 from ..db import get_db
 from ..models import SkillUnlock, User
 from ..services.credits_amount import credits_json_float
-from ..services.sms_ihuyi import send_verify_code_sms
+from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
+from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
 from .installation_slots import (
     INSTALLATION_ID_HEADER,
     apply_installation_signup_bonus_for_new_user,
@@ -294,10 +295,13 @@ def send_register_sms(body: SmsSendBody, request: Request):
     use_independent = getattr(settings, "lobster_independent_auth", True)
     if edition != "online" or not use_independent:
         raise HTTPException(status_code=400, detail="当前版本不支持")
-    acc = (getattr(settings, "ihuyi_sms_account", None) or "").strip()
-    pwd = (getattr(settings, "ihuyi_sms_password", None) or "").strip()
-    if not acc or not pwd:
-        raise HTTPException(status_code=503, detail="未配置短信通道（IHUYI_SMS_ACCOUNT / IHUYI_SMS_PASSWORD）")
+    aliyun_ak = (getattr(settings, "aliyun_sms_access_key_id", None) or "").strip()
+    aliyun_sk = (getattr(settings, "aliyun_sms_access_key_secret", None) or "").strip()
+    ihuyi_acc = (getattr(settings, "ihuyi_sms_account", None) or "").strip()
+    ihuyi_pwd = (getattr(settings, "ihuyi_sms_password", None) or "").strip()
+    use_aliyun = bool(aliyun_ak and aliyun_sk)
+    if not use_aliyun and not (ihuyi_acc and ihuyi_pwd):
+        raise HTTPException(status_code=503, detail="未配置短信通道")
     if not verify_captcha(body.captcha_id or "", body.captcha_answer or ""):
         raise HTTPException(status_code=400, detail="图形验证码错误或已过期，请刷新后重试")
     mobile = _normalize_cn_mobile(body.phone)
@@ -322,7 +326,17 @@ def send_register_sms(body: SmsSendBody, request: Request):
         _SMS_CODE_STORE[mobile] = (code, now_m + SMS_CODE_TTL_SEC)
         _SMS_SEND_AT[mobile] = now_m
     try:
-        send_verify_code_sms(account=acc, api_key=pwd, mobile=mobile, code=code)
+        if use_aliyun:
+            _aliyun_send(
+                access_key_id=aliyun_ak,
+                access_key_secret=aliyun_sk,
+                sign_name=getattr(settings, "aliyun_sms_sign_name", "深圳市必火智能信息技术"),
+                template_code=getattr(settings, "aliyun_sms_template_code", "SMS_333406023"),
+                mobile=mobile,
+                code=code,
+            )
+        else:
+            _ihuyi_send(account=ihuyi_acc, api_key=ihuyi_pwd, mobile=mobile, code=code)
     except RuntimeError as e:
         with _SMS_LOCK:
             _SMS_CODE_STORE.pop(mobile, None)

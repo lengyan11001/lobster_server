@@ -16,3 +16,4 @@ tos>=2.9.0
 twilio>=9.0.0,<10
 segno>=1.6.0
 apiz>=0.2.0
+alibabacloud_dysmsapi20170525>=4.5.0

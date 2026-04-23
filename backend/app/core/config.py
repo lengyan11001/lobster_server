@@ -128,6 +128,14 @@ class Settings(BaseSettings):
     ihuyi_sms_account: Optional[str] = None
     """互亿无线 APIKEY，对应 Submit.json 请求参数 password"""
     ihuyi_sms_password: Optional[str] = None
+    """阿里云短信 AccessKey ID"""
+    aliyun_sms_access_key_id: Optional[str] = None
+    """阿里云短信 AccessKey Secret"""
+    aliyun_sms_access_key_secret: Optional[str] = None
+    """阿里云短信签名名称"""
+    aliyun_sms_sign_name: str = "深圳市必火智能信息技术"
+    """阿里云短信模板Code"""
+    aliyun_sms_template_code: str = "SMS_333406023"
 
     # ── 直连 LLM API（优先于 xskill.ai 中转）──
     deepseek_api_key: Optional[str] = None
