@@ -2527,6 +2527,33 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     lobster_capability_id=capability_id,
                     brand_mark=user_brand_mark,
                 )
+            # get_result HTTP 层错误自动重试一次（502/503 等瞬时故障）
+            if (
+                upstream_tool == "get_result"
+                and isinstance(upstream_resp, dict)
+                and upstream_resp.get("error")
+                and isinstance(upstream_resp["error"], dict)
+            ):
+                _err_msg = str(upstream_resp["error"].get("message") or "")
+                if any(k in _err_msg for k in ("HTTP 502", "HTTP 503", "HTTP 504", "网络不可达", "连接超时")):
+                    logger.warning(
+                        "[MCP] get_result 遇到瞬时错误，3s 后自动重试一次: %s", _err_msg[:200],
+                    )
+                    await asyncio.sleep(3)
+                    upstream_resp = await _call_upstream_mcp_tool(
+                        upstream_url,
+                        upstream_tool,
+                        payload,
+                        upstream_name=upstream_name,
+                        sutui_token=sutui_token,
+                        lobster_capability_id=capability_id,
+                        brand_mark=user_brand_mark,
+                    )
+                    if isinstance(upstream_resp, dict) and not upstream_resp.get("error"):
+                        logger.info("[MCP] get_result 重试成功")
+                    else:
+                        logger.warning("[MCP] get_result 重试仍失败，返回错误给用户")
+
             # task.get_result: 不再在此处轮询，由 backend chat 每 15s 轮询并写回对话
             latency_ms = int((time.perf_counter() - t0) * 1000)
             upstream_error = ""
@@ -2554,13 +2581,17 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 # 清空临时ID列表，避免重复注册
                 temp_ids_to_register.clear()
             # get_result 终态失败：创建任务时已扣的积分退回龙虾用户（速推侧失败退款时与本机余额对齐）
+            # 同时覆盖 HTTP 层错误（如 502/503）：上游不可达时用户拿不到结果，应退款
+            _is_terminal_fail = (
+                not upstream_error and _sutui_get_result_is_terminal_failure(upstream_resp)
+            )
+            _is_http_level_error = bool(upstream_error) and isinstance(upstream_resp, dict) and bool(upstream_resp.get("error"))
             if (
                 token
                 and upstream_tool == "get_result"
                 and poll_task_id
                 and isinstance(upstream_resp, dict)
-                and not upstream_error
-                and _sutui_get_result_is_terminal_failure(upstream_resp)
+                and (_is_terminal_fail or _is_http_level_error)
             ):
                 refund_amt = _peek_task_billed_credits(poll_task_id)
                 if refund_amt > 0:
@@ -2573,16 +2604,19 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         sutui_pool=sutui_pool_for_billing if upstream_name == "sutui" else None,
                         sutui_token_ref=sutui_token_ref_for_billing if upstream_name == "sutui" else None,
                     )
+                    _refund_reason = "HTTP层错误" if _is_http_level_error else "终态失败"
                     if ok_refund:
                         _pop_task_billed_credits(poll_task_id)
                         logger.info(
-                            "[MCP] 任务终态失败退款 task_id=%s credits=%s（与速推创建任务扣费对应）",
+                            "[MCP] 任务%s退款 task_id=%s credits=%s（与速推创建任务扣费对应）",
+                            _refund_reason,
                             poll_task_id,
                             refund_amt,
                         )
                     else:
                         logger.error(
-                            "[MCP] 任务失败退款多次重试仍失败，已保留 task_id=%s 扣费缓存 credits=%s，避免未到账即丢弃记录",
+                            "[MCP] 任务%s退款多次重试仍失败，已保留 task_id=%s 扣费缓存 credits=%s，避免未到账即丢弃记录",
+                            _refund_reason,
                             poll_task_id,
                             refund_amt,
                         )
