@@ -78,26 +78,28 @@ class Settings(BaseSettings):
     wechat_oa_token: Optional[str] = None
     """服务号消息推送：EncodingAESKey（明文模式可不参与解密）"""
     wechat_oa_encoding_aes_key: Optional[str] = None
-    # ── 富友互联网扫码支付（PC 主扫；FAPPLET 聚合码默认）──
-    # 文档: http://47.96.154.194/fuiouWposApipay/
+    # ── 富友聚合支付（MD5 签名；主扫 preCreate / 查询 commonQuery）──
+    # 文档: https://fundwx.fuiou.com/doc/#/aggregatePay/api
     """富友商户号 mchnt_cd（富友入网得到，长度 ≤15）"""
     fuiou_mchnt_cd: Optional[str] = None
-    """富友支付订单接口 URL（生产/测试由富友对接群提供）"""
-    fuiou_gateway_pay_url: Optional[str] = None
-    """富友支付查询接口 URL"""
-    fuiou_gateway_query_url: Optional[str] = None
-    """富友支付订单关闭接口 URL"""
-    fuiou_gateway_close_url: Optional[str] = None
-    """商户私钥 PEM 路径（解密富友返回 + 自签名；相对工程根或绝对路径）"""
-    fuiou_merchant_private_key_path: Optional[str] = None
-    """富友公钥 PEM 路径（加密发送报文 + 验签富友异步通知）"""
-    fuiou_fuiou_public_key_path: Optional[str] = None
-    """终端号 term_id（可选，每台 PC 一个，便于对账）"""
+    """富友商户密钥 mchnt_key（MD5 签名用，系统分配）"""
+    fuiou_mchnt_key: Optional[str] = None
+    """统一下单（主扫）接口 URL"""
+    fuiou_precreate_url: Optional[str] = None
+    """订单查询接口 URL"""
+    fuiou_query_url: Optional[str] = None
+    """退款接口 URL（可选）"""
+    fuiou_refund_url: Optional[str] = None
+    """终端号 term_id（可选，默认 88888888）"""
     fuiou_term_id: Optional[str] = None
-    """默认支付方式：FAPPLET 聚合码 / WECHAT 微信主扫 / ALIPAY 支付宝主扫"""
-    fuiou_order_pay_type: str = "FAPPLET"
-    """协议版本号"""
-    fuiou_ver: str = "1.0.0"
+    """默认订单类型：WECHAT / ALIPAY / UNIONPAY"""
+    fuiou_default_order_type: str = "WECHAT"
+    """订单前缀（5位，富友分配）"""
+    fuiou_order_prefix: Optional[str] = None
+    """机构号 ins_cd（可选，富友分配）"""
+    fuiou_ins_cd: Optional[str] = None
+    """是否启用幂等重复下单（Reserved_repeat_order=1）"""
+    fuiou_repeat_order: Optional[str] = None
     openclaw_gateway_url: Optional[str] = None
     openclaw_gateway_token: Optional[str] = None
     openclaw_agent_id: str = "main"

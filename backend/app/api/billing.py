@@ -30,8 +30,8 @@ from ..services.fuiou_pay import (
     fuiou_configured,
     fuiou_order_pay,
     fuiou_order_query,
+    gen_order_no as fuiou_gen_order_no,
     parse_notify as fuiou_parse_notify,
-    today_order_date as fuiou_today_order_date,
 )
 
 logger = logging.getLogger(__name__)
@@ -409,7 +409,7 @@ def _calc_amount_from_body(body: "RechargeCreateBody", pricing: dict[str, Any]) 
     raise HTTPException(status_code=400, detail="请选择套餐或指定 price_yuan + credits")
 
 
-@router.post("/api/recharge/fuiou-create", summary="创建充值订单并调富友订单支付接口，返回扫码 URL")
+@router.post("/api/recharge/fuiou-create", summary="创建充值订单并调富友聚合支付下单接口，返回扫码 URL")
 async def create_fuiou_recharge_order(
     body: RechargeCreateBody,
     request: Request,
@@ -419,18 +419,18 @@ async def create_fuiou_recharge_order(
     if not _use_independent_recharge():
         raise HTTPException(status_code=400, detail="当前未启用自有充值")
     if not fuiou_configured():
-        raise HTTPException(status_code=400, detail="未配置富友支付（FUIOU_MCHNT_CD / 商户私钥 / 富友公钥 / 网关 URL）")
+        raise HTTPException(status_code=400, detail="未配置富友支付（FUIOU_MCHNT_CD / FUIOU_MCHNT_KEY / FUIOU_PRECREATE_URL）")
     pricing = _get_billing_pricing()
     amount_yuan, amount_fen, credits = _calc_amount_from_body(body, pricing)
     total_fen = amount_fen if amount_fen else amount_yuan * 100
-    out_trade_no = f"R{current_user.id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+    mchnt_order_no = fuiou_gen_order_no()
     order = RechargeOrder(
         user_id=current_user.id,
         amount_yuan=amount_yuan,
         amount_fen=amount_fen,
         credits=credits,
         status="pending",
-        out_trade_no=out_trade_no,
+        out_trade_no=mchnt_order_no,
         payment_method="fuiou",
     )
     db.add(order)
@@ -438,26 +438,23 @@ async def create_fuiou_recharge_order(
     db.refresh(order)
     base_url = _get_public_base_url()
     notify_url = f"{base_url.rstrip('/')}/api/recharge/fuiou-notify"
-    order_date = fuiou_today_order_date()
     try:
         result = await fuiou_order_pay(
-            order_id=out_trade_no[:30],
-            order_date=order_date,
+            mchnt_order_no=mchnt_order_no,
             order_amt_fen=total_fen,
             notify_url=notify_url,
-            goods_name=f"龙虾积分充值-{credits}积分",
-            goods_detail=f"购买 {credits} 积分（订单 {out_trade_no}）",
+            goods_des=f"recharge {credits} credits",
         )
     except Exception as e:
         logger.exception("[fuiou] order pay failed: %s", e)
         raise HTTPException(status_code=502, detail="富友下单失败，请稍后重试")
     if not result.get("ok"):
-        detail = result.get("resp_desc") or "富友下单返回异常"
-        logger.warning("[fuiou] order pay error: code=%s msg=%s", result.get("resp_code"), detail)
+        detail = result.get("result_msg") or "富友下单返回异常"
+        logger.warning("[fuiou] order pay error: code=%s msg=%s", result.get("result_code"), detail)
         raise HTTPException(status_code=502, detail=detail)
-    qr_code = result.get("qr_url") or ""
+    qr_code = result.get("qr_code") or ""
     if not qr_code:
-        logger.warning("[fuiou] order pay no qr_url raw=%s", result.get("raw"))
+        logger.warning("[fuiou] order pay no qr_code raw=%s", result.get("raw"))
         raise HTTPException(status_code=502, detail="富友下单成功但未返回二维码 URL")
     return {
         "order_id": order.id,
@@ -465,64 +462,58 @@ async def create_fuiou_recharge_order(
         "amount_yuan": (total_fen / 100),
         "credits": order.credits,
         "qr_code": qr_code,
-        "order_date": order_date,
         "status": order.status,
     }
 
 
 @router.post(
     "/api/recharge/fuiou-notify",
-    summary="富友支付异步回调（RSA 验签 + 解密后完成订单加积分）",
+    summary="富友聚合支付异步回调（MD5 验签后完成订单加积分）",
 )
 async def fuiou_pay_notify(request: Request, db: Session = Depends(get_db)):
     """
-    安全策略：① RSA 解密 + 可选签名校验；② 回调金额与订单金额一致才加积分；
-    ③ 已支付订单再次回调返回 success 不重复加积分（防重放）。
+    安全策略：① MD5 签名校验；② 回调金额与订单金额一致才加积分；
+    ③ 已支付订单再次回调返回 "1" 不重复加积分（防重放）。
+    富友要求：成功处理后返回字符串 "1"，最多回调 5 次，间隔 30 秒。
     """
     if not fuiou_configured():
         logger.warning("[fuiou] notify: not configured")
-        return PlainTextResponse("fail", status_code=500)
+        return PlainTextResponse("0", status_code=500)
     raw = await request.body()
     logger.info("[fuiou] notify received content_length=%s", len(raw))
     try:
-        envelope = json.loads(raw)
+        data = json.loads(raw)
     except Exception:
         logger.warning("[fuiou] notify: invalid JSON")
-        return PlainTextResponse("fail", status_code=400)
-    ok, plain = fuiou_parse_notify(envelope)
+        return PlainTextResponse("0", status_code=400)
+    ok, data = fuiou_parse_notify(data)
     if not ok:
-        return PlainTextResponse("fail", status_code=400)
-    order_st = (plain.get("order_st") or "").strip()
-    # 富友订单状态：1=已支付（详见应答代码-订单状态列表）；非已支付直接 ack
-    if order_st and order_st != "1":
-        logger.info("[fuiou] notify skip non-paid order_st=%s", order_st)
-        return PlainTextResponse("SUCCESS")
-    out_trade_no = (plain.get("order_id") or "").strip()
+        return PlainTextResponse("0", status_code=400)
+    out_trade_no = (data.get("mchnt_order_no") or "").strip()
     if not out_trade_no:
-        logger.warning("[fuiou] notify: missing order_id")
-        return PlainTextResponse("SUCCESS")
+        logger.warning("[fuiou] notify: missing mchnt_order_no")
+        return PlainTextResponse("1")
     order = db.query(RechargeOrder).filter(RechargeOrder.out_trade_no == out_trade_no).first()
     if not order:
-        logger.warning("[fuiou] notify: order not found out_trade_no=%s", out_trade_no)
-        return PlainTextResponse("SUCCESS")
+        logger.warning("[fuiou] notify: order not found mchnt_order_no=%s", out_trade_no)
+        return PlainTextResponse("1")
     if order.status == "paid":
-        return PlainTextResponse("SUCCESS")
-    raw_amt = plain.get("order_amt")
+        return PlainTextResponse("1")
+    raw_amt = data.get("order_amt")
     if raw_amt is None or not str(raw_amt).strip().isdigit():
-        logger.error("[fuiou] notify: amount missing/invalid out_trade_no=%s amt=%r", out_trade_no, raw_amt)
-        return PlainTextResponse("fail", status_code=400)
+        logger.error("[fuiou] notify: amount missing/invalid mchnt_order_no=%s amt=%r", out_trade_no, raw_amt)
+        return PlainTextResponse("0", status_code=400)
     callback_fen = int(str(raw_amt).strip())
-    channel_no = (plain.get("channel_order_no") or plain.get("third_order_id") or "").strip() or None
-    if not _apply_paid_to_order(order, callback_fen, channel_no, db, channel_label="富友扫码支付"):
-        return PlainTextResponse("fail", status_code=400)
-    logger.info("[fuiou] notify success order_id=%s out_trade_no=%s credits=%s", order.id, out_trade_no, order.credits)
-    return PlainTextResponse("SUCCESS")
+    channel_no = (data.get("transaction_id") or data.get("reserved_channel_order_id") or "").strip() or None
+    if not _apply_paid_to_order(order, callback_fen, channel_no, db, channel_label="富友聚合支付"):
+        return PlainTextResponse("0", status_code=400)
+    logger.info("[fuiou] notify success order_id=%s mchnt_order_no=%s credits=%s", order.id, out_trade_no, order.credits)
+    return PlainTextResponse("1")
 
 
 @router.get("/api/recharge/fuiou-query", summary="主动查询富友订单状态，已支付则入账")
 async def fuiou_query_recharge_order(
     out_trade_no: str,
-    order_date: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -539,28 +530,20 @@ async def fuiou_query_recharge_order(
         raise HTTPException(status_code=404, detail="订单不存在或无权查询")
     if order.status == "paid":
         return {"status": "paid", "credits": order.credits, "order_id": order.id}
-    od = (order_date or "").strip()
-    if not od:
-        # 兜底：用订单创建时刻的北京日期（库内为 UTC naive）
-        if order.created_at:
-            aware_utc = order.created_at.replace(tzinfo=timezone.utc)
-            od = aware_utc.astimezone(_BJ).strftime("%Y%m%d")
-        else:
-            od = fuiou_today_order_date()
     try:
-        result = await fuiou_order_query(order_id=out_trade_no[:30], order_date=od)
+        result = await fuiou_order_query(mchnt_order_no=out_trade_no[:30])
     except Exception as e:
         logger.warning("[fuiou] query order failed: %s", e)
         return {"status": "pending", "message": "查单失败，请稍后再试"}
     if not result.get("ok"):
-        return {"status": "pending", "message": result.get("resp_desc") or ""}
-    if (result.get("order_st") or "") != "1":
-        return {"status": "pending"}
+        return {"status": "pending", "message": result.get("result_msg") or ""}
+    if (result.get("trans_stat") or "") != "SUCCESS":
+        return {"status": "pending", "trans_stat": result.get("trans_stat")}
     paid_fen = result.get("order_amt_fen")
     if not paid_fen:
         return {"status": "pending", "message": "查单结果无金额"}
-    channel_no = result.get("channel_order_no") or None
-    if not _apply_paid_to_order(order, int(paid_fen), channel_no, db, channel_label="富友扫码支付"):
+    channel_no = result.get("transaction_id") or None
+    if not _apply_paid_to_order(order, int(paid_fen), channel_no, db, channel_label="富友聚合支付"):
         return {"status": "pending", "message": "金额校验未通过"}
     db.refresh(order)
     return {"status": "paid", "credits": order.credits, "order_id": order.id}
