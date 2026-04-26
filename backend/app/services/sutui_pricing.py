@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 from decimal import Decimal
 from typing import Any, Dict, Optional, Tuple
@@ -18,6 +19,7 @@ from ..core.config import settings
 from .credits_amount import quantize_credits
 
 _DOCS_CACHE: Dict[str, Tuple[float, Optional[dict]]] = {}
+_MCP_MODELS_PRICING_CACHE: Dict[str, Tuple[float, Dict[str, dict]]] = {}
 _CACHE_TTL_SEC = 3600
 
 # 公开 docs 无条目的对话模型：流式常无 x_billing，仅能按 usage×费率估算；费率按与非流式 x_billing 同量级校准，可用 env JSON 覆盖。
@@ -123,8 +125,47 @@ def _quantize_credits(value: float) -> int:
     return int(round(float(value) + 1e-9, 2))
 
 
+def _pricing_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(x) or math.isinf(x):
+        return None
+    return x
+
+
+def _pricing_base_amount(pricing: dict) -> Optional[float]:
+    for key in ("base_price", "amount", "price", "credits", "credit_cost"):
+        if key not in pricing:
+            continue
+        x = _pricing_number(pricing.get(key))
+        if x is not None:
+            return x
+    return None
+
+
+def _num_outputs_from_params(params: Dict[str, Any]) -> int:
+    n = params.get("num_images") or params.get("n") or params.get("batch_size") or params.get("num_outputs") or 1
+    try:
+        n_int = int(n)
+    except (TypeError, ValueError):
+        n_int = 1
+    return max(1, n_int)
+
+
 def _duration_seconds_from_params(params: Dict[str, Any]) -> float:
-    for key in ("duration", "duration_seconds", "length", "video_length", "audio_length"):
+    for key in (
+        "duration",
+        "duration_sec",
+        "duration_seconds",
+        "seconds",
+        "length",
+        "video_length",
+        "audio_length",
+    ):
         v = params.get(key)
         if v is None:
             continue
@@ -135,6 +176,99 @@ def _duration_seconds_from_params(params: Dict[str, Any]) -> float:
         except (TypeError, ValueError):
             continue
     return 0.0
+
+
+def _duration_from_example(ex: dict) -> float:
+    for key in ("duration", "duration_sec", "duration_seconds", "seconds", "length"):
+        x = _pricing_number(ex.get(key))
+        if x and x > 0:
+            return x
+    desc = str(ex.get("description") or ex.get("label") or ex.get("name") or "")
+    digits = "".join(c for c in desc if c.isdigit() or c == ".")
+    x = _pricing_number(digits)
+    return x if x and x > 0 else 0.0
+
+
+def _example_prices(pricing: dict) -> list[tuple[float, float]]:
+    out: list[tuple[float, float]] = []
+    examples = pricing.get("examples") or pricing.get("duration_prices") or pricing.get("prices") or []
+    if not isinstance(examples, list):
+        return out
+    for ex in examples:
+        if not isinstance(ex, dict):
+            continue
+        price = _pricing_base_amount(ex)
+        if price is None:
+            continue
+        out.append((_duration_from_example(ex), price))
+    return out
+
+
+def _price_from_duration_examples(pricing: dict, params: Dict[str, Any]) -> Optional[float]:
+    prices = _example_prices(pricing)
+    if not prices:
+        return None
+    d = _duration_seconds_from_params(params)
+    if d > 0:
+        with_duration = sorted((dur, price) for dur, price in prices if dur > 0)
+        for dur, price in with_duration:
+            if d <= dur:
+                return price
+        if with_duration:
+            return with_duration[-1][1]
+    # 无 duration 时取最大价，避免预扣低估；没有 duration 档位则取首个有效价。
+    return max(price for _, price in prices)
+
+
+def _matrix_price_candidates(node: Any) -> list[float]:
+    price = _pricing_number(node)
+    if price is not None:
+        return [price]
+    if isinstance(node, dict):
+        direct = _pricing_base_amount(node)
+        out = [direct] if direct is not None else []
+        for v in node.values():
+            out.extend(_matrix_price_candidates(v))
+        return out
+    if isinstance(node, list):
+        out: list[float] = []
+        for v in node:
+            out.extend(_matrix_price_candidates(v))
+        return out
+    return []
+
+
+def _price_from_quality_size_matrix(pricing: dict, params: Dict[str, Any]) -> Optional[float]:
+    matrix = pricing.get("quality_size_matrix") or pricing.get("matrix") or pricing.get("size_quality_matrix")
+    if not isinstance(matrix, dict):
+        return None
+    qualities = [
+        str(params.get(k) or "").strip()
+        for k in ("quality", "image_quality", "resolution_quality", "mode")
+        if str(params.get(k) or "").strip()
+    ]
+    sizes = [
+        str(params.get(k) or "").strip()
+        for k in ("size", "image_size", "resolution", "aspect_ratio", "ratio")
+        if str(params.get(k) or "").strip()
+    ]
+    for q in qualities:
+        sub = matrix.get(q)
+        if isinstance(sub, dict):
+            for s in sizes:
+                values = _matrix_price_candidates(sub.get(s))
+                if values:
+                    return max(values)
+            values = _matrix_price_candidates(sub)
+            if values:
+                return max(values)
+    for s in sizes:
+        sub = matrix.get(s)
+        values = _matrix_price_candidates(sub)
+        if values:
+            return max(values)
+    values = _matrix_price_candidates(matrix)
+    return max(values) if values else None
 
 
 _MODEL_SHORT_TO_FULL: Dict[str, str] = {
@@ -204,12 +338,84 @@ def fetch_model_docs_data(model_id: str) -> Optional[dict]:
         return None
 
 
+def _sutui_auth_headers() -> Dict[str, str]:
+    token = (
+        getattr(settings, "sutui_server_token", None)
+        or os.environ.get("SUTUI_SERVER_TOKEN")
+        or os.environ.get("APIZ_API_KEY")
+        or os.environ.get("XSKILL_API_KEY")
+        or ""
+    ).strip()
+    if not token:
+        return {}
+    if token.lower().startswith("bearer "):
+        return {"Authorization": token}
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _mcp_models_urls() -> list[str]:
+    base = _api_base().rstrip("/")
+    urls = [f"{base}/api/v3/mcp/models?lang=zh-CN"]
+    if "api.apiz.ai" not in base:
+        urls.append("https://api.apiz.ai/api/v3/mcp/models?lang=zh-CN")
+    return urls
+
+
+def _fetch_mcp_models_pricing_map() -> Dict[str, dict]:
+    now = time.time()
+    cache_key = "models"
+    ent = _MCP_MODELS_PRICING_CACHE.get(cache_key)
+    if ent and now - ent[0] < _CACHE_TTL_SEC:
+        return ent[1]
+    headers = _sutui_auth_headers()
+    pricing_map: Dict[str, dict] = {}
+    for url in _mcp_models_urls():
+        try:
+            r = httpx.get(url, headers=headers, timeout=20.0)
+            if r.status_code >= 400:
+                continue
+            j = r.json()
+            models = j.get("data", {}).get("models", []) if isinstance(j, dict) else []
+            if not isinstance(models, list):
+                continue
+            for m in models:
+                if not isinstance(m, dict):
+                    continue
+                mid = str(m.get("id") or "").strip()
+                p = m.get("pricing")
+                if mid and isinstance(p, dict):
+                    pricing_map[mid] = p
+            if pricing_map:
+                break
+        except Exception:
+            continue
+    _MCP_MODELS_PRICING_CACHE[cache_key] = (now, pricing_map)
+    return pricing_map
+
+
+def fetch_mcp_models_pricing(model_id: str) -> Optional[dict]:
+    mid = _resolve_model_alias((model_id or "").strip())
+    if not mid:
+        return None
+    pricing = _fetch_mcp_models_pricing_map().get(mid)
+    return pricing if isinstance(pricing, dict) else None
+
+
 def fetch_model_pricing(model_id: str) -> Optional[dict]:
     data = fetch_model_docs_data(model_id)
-    if not data:
-        return None
-    p = data.get("pricing")
-    return p if isinstance(p, dict) else None
+    if data:
+        p = data.get("pricing")
+        if isinstance(p, dict):
+            return p
+    return fetch_mcp_models_pricing(model_id)
+
+
+def pricing_is_free_fixed(pricing: dict) -> bool:
+    if not pricing:
+        return False
+    price_type = (pricing.get("price_type") or "").strip().lower()
+    amount = _pricing_base_amount(pricing)
+    return price_type == "fixed" and amount == 0
 
 
 def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
@@ -218,10 +424,10 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
     if not pricing:
         return 0
     price_type = (pricing.get("price_type") or "").strip().lower()
-    try:
-        base = int(pricing.get("base_price") or 0)
-    except (TypeError, ValueError):
-        base = 0
+    base_amount = _pricing_base_amount(pricing)
+    base = int(base_amount or 0)
+    if price_type == "fixed" and base_amount == 0:
+        return 0
 
     # per_second / dynamic_per_second: base_price 可能为 None，用 per_second 字段
     if price_type in ("per_second", "dynamic_per_second"):
@@ -238,15 +444,26 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
             d = 5.0
         return _quantize_credits(math.ceil(d * rate))
 
-    # duration_map: base_price 是最短时长的价格，按时长比例估算
-    if price_type == "duration_map":
-        if base <= 0:
+    if price_type == "per_minute":
+        rate = _pricing_number(pricing.get("per_minute"))
+        if rate is None or rate <= 0:
+            rate = base_amount or 0
+        if rate <= 0:
             return 0
         d = _duration_seconds_from_params(params)
+        minutes = max(1, math.ceil((d if d > 0 else 60.0) / 60.0))
+        return _quantize_credits(minutes * rate)
+
+    # duration_map: base_price 是最短时长的价格，按时长比例估算
+    if price_type == "duration_map":
+        d = _duration_seconds_from_params(params)
         if d <= 0:
-            return base
+            ex_price = _price_from_duration_examples(pricing, params)
+            return _quantize_credits(ex_price if ex_price is not None else base)
         examples = pricing.get("examples") or []
         for ex in examples:
+            if not isinstance(ex, dict):
+                continue
             desc = str(ex.get("description") or "")
             try:
                 ex_dur = float("".join(c for c in desc if c.isdigit() or c == "."))
@@ -267,10 +484,9 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
                 return min(prices)
         return max(base, 100)
 
-    if base <= 0:
-        return 0
-
     if price_type == "quantity_based":
+        if base <= 0:
+            return 0
         n = params.get("num_images") or params.get("n") or params.get("batch_size") or 1
         try:
             n_int = int(n)
@@ -281,6 +497,12 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
         return base * n_int
 
     if price_type in ("duration_based", "duration_price"):
+        if price_type == "duration_price" and base <= 0:
+            ex_price = _price_from_duration_examples(pricing, params)
+            if ex_price is not None:
+                return _quantize_credits(ex_price)
+        if base <= 0:
+            return 0
         d = _duration_seconds_from_params(params)
         if d <= 0:
             d = 5.0
@@ -289,13 +511,28 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
     if price_type == "fixed":
         return base
 
+    if price_type == "quality_size_matrix":
+        price = _price_from_quality_size_matrix(pricing, params)
+        if price is None:
+            price = base_amount
+        if price is None:
+            return 0
+        return _quantize_credits(price * _num_outputs_from_params(params))
+
     if price_type == "matrix":
+        matrix_price = _price_from_quality_size_matrix(pricing, params)
+        if matrix_price is not None:
+            return _quantize_credits(matrix_price * _num_outputs_from_params(params))
+        if base <= 0:
+            return 0
         d = _duration_seconds_from_params(params)
         if d > 0:
             return _quantize_credits(float(math.ceil(d * float(base))))
         return base
 
     if price_type == "token_based":
+        if base <= 0:
+            return 0
         pt = int(params.get("prompt_tokens", 0) or 0)
         ct = int(params.get("completion_tokens", 0) or 0)
         total = pt + ct
@@ -306,12 +543,16 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
         return _quantize_credits(float(base))
 
     if price_type in ("audio_duration_based", "audio_duration"):
+        if base <= 0:
+            return 0
         d = _duration_seconds_from_params(params)
         if d <= 0:
             return _quantize_credits(float(base))
         return _quantize_credits(float(math.ceil(d * float(base))))
 
     if price_type == "char_based":
+        if base <= 0:
+            return 0
         char_count = 0
         prompt = params.get("prompt") or params.get("text") or ""
         if isinstance(prompt, str):
@@ -322,15 +563,12 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
         return _quantize_credits(float(units * base))
 
     if price_type in ("resolution_quantity", "size_based"):
-        n = params.get("num_images") or params.get("n") or params.get("batch_size") or 1
-        try:
-            n_int = int(n)
-        except (TypeError, ValueError):
-            n_int = 1
-        if n_int < 1:
-            n_int = 1
-        return base * n_int
+        if base <= 0:
+            return 0
+        return base * _num_outputs_from_params(params)
 
+    if base <= 0:
+        return 0
     return _quantize_credits(float(base))
 
 
@@ -375,6 +613,8 @@ def estimate_pre_deduct_credits(model_id: str, params: Optional[dict]) -> Tuple[
         return 0, "该模型无法在速推获取定价（docs 无 pricing 或未开放），请联系管理员配置。"
     est = estimate_credits_from_pricing(pricing, params)
     if est <= 0:
+        if pricing_is_free_fixed(pricing):
+            return 0, None
         return 0, "该模型定价无效，请联系管理员配置。"
     return est, None
 

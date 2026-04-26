@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..models import User
 from .credits_amount import quantize_credits, user_balance_decimal
-from .sutui_pricing import estimate_credits_from_pricing, fetch_model_pricing
+from .sutui_pricing import estimate_credits_from_pricing, fetch_model_pricing, pricing_is_free_fixed
 
 
 def assert_pricing_pre_deduct_allows_upstream_or_http(
@@ -45,6 +45,8 @@ def assert_pricing_pre_deduct_allows_upstream_or_http(
 
     est = estimate_credits_from_pricing(pricing, params or {})
     if est <= 0:
+        if pricing_is_free_fixed(pricing):
+            return quantize_credits(0)
         raise HTTPException(
             status_code=400,
             detail=(

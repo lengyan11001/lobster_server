@@ -106,8 +106,13 @@ def _build_lobster_main_system_prompt(edition: str, has_tools: bool) -> str:
             body = _NO_TOOLS_HINT
         comfly_models = _get_comfly_image_models()
         if comfly_models:
+            default_image_model = (
+                getattr(settings, "lobster_default_image_generate_model", None) or "gpt-image2"
+            ).strip() or "gpt-image2"
             body += (
-                "【图片模型补充】可用图片模型: fal-ai/flux-2/flash, " + ", ".join(comfly_models)
+                f"【图片模型补充】用户未指定模型时默认使用 {default_image_model}。"
+                "可用图片模型: "
+                + ", ".join(dict.fromkeys([default_image_model, "fal-ai/flux-2/flash", *comfly_models]))
                 + "。用户说用某模型就传该模型名，禁止替换为 default。\n"
             )
     else:

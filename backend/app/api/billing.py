@@ -324,6 +324,8 @@ class RechargeCreateBody(BaseModel):
     package_index: Optional[int] = None
     price_yuan: Optional[int] = None
     credits: Optional[int] = None
+    payment_type: Optional[str] = None
+    order_type: Optional[str] = None
 
 
 @router.post("/api/recharge/create", summary="创建充值订单（自有）")
@@ -409,6 +411,38 @@ def _calc_amount_from_body(body: "RechargeCreateBody", pricing: dict[str, Any]) 
     raise HTTPException(status_code=400, detail="请选择套餐或指定 price_yuan + credits")
 
 
+_FUIOU_ORDER_TYPE_ALIASES = {
+    "WX": "WECHAT",
+    "WXPAY": "WECHAT",
+    "WEIXIN": "WECHAT",
+    "WECHATPAY": "WECHAT",
+    "ALI": "ALIPAY",
+    "ALIPAYPAY": "ALIPAY",
+    "ZFB": "ALIPAY",
+}
+_FUIOU_ALLOWED_ORDER_TYPES = {"WECHAT", "ALIPAY", "UNIONPAY"}
+
+
+def _normalize_fuiou_order_type(body: "RechargeCreateBody") -> str:
+    raw = (body.payment_type or body.order_type or getattr(settings, "fuiou_default_order_type", None) or "WECHAT").strip().upper()
+    order_type = _FUIOU_ORDER_TYPE_ALIASES.get(raw, raw)
+    if order_type not in _FUIOU_ALLOWED_ORDER_TYPES:
+        raise HTTPException(status_code=400, detail="不支持的富友支付方式")
+    return order_type
+
+
+def _fuiou_payment_method(order_type: str) -> str:
+    return f"fuiou_{order_type.lower()}"
+
+
+def _fuiou_order_type_from_order(order: RechargeOrder) -> str:
+    payment_method = (order.payment_method or "").strip().lower()
+    if payment_method.startswith("fuiou_"):
+        saved_type = payment_method.split("_", 1)[1].strip().upper()
+        return _FUIOU_ORDER_TYPE_ALIASES.get(saved_type, saved_type) or "WECHAT"
+    return "WECHAT"
+
+
 @router.post("/api/recharge/fuiou-create", summary="创建充值订单并调富友聚合支付下单接口，返回扫码 URL")
 async def create_fuiou_recharge_order(
     body: RechargeCreateBody,
@@ -423,6 +457,7 @@ async def create_fuiou_recharge_order(
     pricing = _get_billing_pricing()
     amount_yuan, amount_fen, credits = _calc_amount_from_body(body, pricing)
     total_fen = amount_fen if amount_fen else amount_yuan * 100
+    order_type = _normalize_fuiou_order_type(body)
     mchnt_order_no = fuiou_gen_order_no()
     order = RechargeOrder(
         user_id=current_user.id,
@@ -431,7 +466,7 @@ async def create_fuiou_recharge_order(
         credits=credits,
         status="pending",
         out_trade_no=mchnt_order_no,
-        payment_method="fuiou",
+        payment_method=_fuiou_payment_method(order_type),
     )
     db.add(order)
     db.commit()
@@ -444,6 +479,7 @@ async def create_fuiou_recharge_order(
             order_amt_fen=total_fen,
             notify_url=notify_url,
             goods_des=f"recharge {credits} credits",
+            order_type=order_type,
         )
     except Exception as e:
         logger.exception("[fuiou] order pay failed: %s", e)
@@ -462,6 +498,7 @@ async def create_fuiou_recharge_order(
         "amount_yuan": (total_fen / 100),
         "credits": order.credits,
         "qr_code": qr_code,
+        "payment_type": order_type,
         "status": order.status,
     }
 
@@ -531,7 +568,10 @@ async def fuiou_query_recharge_order(
     if order.status == "paid":
         return {"status": "paid", "credits": order.credits, "order_id": order.id}
     try:
-        result = await fuiou_order_query(mchnt_order_no=out_trade_no[:30])
+        result = await fuiou_order_query(
+            mchnt_order_no=out_trade_no[:30],
+            order_type=_fuiou_order_type_from_order(order),
+        )
     except Exception as e:
         logger.warning("[fuiou] query order failed: %s", e)
         return {"status": "pending", "message": "查单失败，请稍后再试"}

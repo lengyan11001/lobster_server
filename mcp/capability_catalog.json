@@ -9,7 +9,7 @@
       "type": "object",
       "properties": {
         "prompt": { "type": "string", "description": "生成提示词" },
-        "model": { "type": "string", "description": "可选（省略时默认 fal-ai/flux-2/flash）" },
+        "model": { "type": "string", "description": "可选（省略时默认 gpt-image2）" },
         "image_url": { "type": "string", "description": "图生图时传入图片 URL" },
         "image_size": { "type": "string", "description": "可选，如 square_hd, landscape_16_9" }
       },

@@ -305,7 +305,7 @@ def _tool_definitions(
             "name": "invoke_capability",
             "description": (
                 "调用能力(图片生成/视频/语音等)。"
-                "【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"fal-ai/flux-2/flash\"（不要自动选 jimeng）；用户明确指定 jimeng-4.0/jimeng-4.5 等时正常使用。"
+                "【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"gpt-image2\"（不要自动选 jimeng 或 flux）；用户明确指定 jimeng-4.0/jimeng-4.5/flux-2/flash 等时正常使用。"
                 "video.generate 用户未指定模型时 payload.model 填 \"sora2\"，用户未指定时长时 duration 必须填 4（即 4 秒）。"
                 "【重要】用户指定 veo3.1/veo3.1-fast 等模型生成视频时，使用 capability_id=\"video.generate\"，payload.model 填用户指定的模型名（如 veo3.1）。系统会自动路由到最优上游。"
                 "【爆款TVC】仅当用户明确说「TVC」「带货视频」时才用 capability_id=\"comfly.daihuo.pipeline\"，不要仅因模型名含 veo 就选 comfly.daihuo。"
@@ -1204,6 +1204,9 @@ def _clamp_num_images_for_image_model(num: int, model: str) -> int:
 
 
 _IMAGE_MODEL_ALIASES: Dict[str, str] = {
+    "gpt-image": "gpt-image-2",
+    "gpt-image2": "gpt-image-2",
+    "gptimage2": "gpt-image-2",
     "flux-2/flash": "fal-ai/flux-2/flash",
     "flux2/flash": "fal-ai/flux-2/flash",
     "flux2-flash": "fal-ai/flux-2/flash",
@@ -1212,7 +1215,7 @@ _IMAGE_MODEL_ALIASES: Dict[str, str] = {
     "flux-2": "fal-ai/flux-2/flash",
 }
 
-_DEFAULT_IMAGE_MODEL = "fal-ai/flux-2/flash"
+_DEFAULT_IMAGE_MODEL = (os.getenv("LOBSTER_DEFAULT_IMAGE_GENERATE_MODEL") or "gpt-image2").strip() or "gpt-image2"
 
 
 def _normalize_image_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]:

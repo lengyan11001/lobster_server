@@ -775,13 +775,24 @@ def comfly_pricing():
     """返回 comfly_pricing.json 内容，前端可据此判断哪些模型走 Comfly 并展示预估算力。"""
     import json as _json
     from pathlib import Path as _Path
+    defaults = {
+        "image_generate_model": (
+            getattr(settings, "lobster_default_image_generate_model", None) or "gpt-image2"
+        ).strip() or "gpt-image2",
+    }
     p = _Path(__file__).resolve().parent.parent.parent.parent / "comfly_pricing.json"
     if not p.exists():
-        return {"models": {}}
+        return {"models": {}, "defaults": defaults}
     try:
-        return _json.loads(p.read_text(encoding="utf-8"))
+        data = _json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            if not isinstance(data.get("defaults"), dict):
+                data["defaults"] = {}
+            data["defaults"].update(defaults)
+            return data
+        return {"models": {}, "defaults": defaults}
     except Exception:
-        return {"models": {}}
+        return {"models": {}, "defaults": defaults}
 
 
 # --------------- 速推模型与定价列表（用户展示用，乘以 user_price_multiplier） ---------------

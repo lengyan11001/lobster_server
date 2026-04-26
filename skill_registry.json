@@ -60,6 +60,16 @@
       "capabilities": {},
       "tags": ["微信", "OpenClaw", "chat", "channel"]
     },
+    "openclaw_memory_skill": {
+      "name": "OpenClaw 资料记忆",
+      "description": "调试入口：管理员可在技能商店上传本机资料文件，让 OpenClaw 在对话时参考用户自己的知识与业务资料。资料保存在本机 user_memory，不随 OTA 打包发布。",
+      "type": "builtin",
+      "store_visibility": "debug",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["OpenClaw", "记忆", "知识库", "本机资料"]
+    },
     "wecom_reply": {
       "name": "企业微信自动回复",
       "description": "接收企业微信消息，由 AI 自动生成回复。需 1000 积分解锁后进入配置页并使用。",

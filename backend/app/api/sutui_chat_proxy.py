@@ -39,6 +39,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 TRACE_HEADER = "X-Lobster-Chat-Trace-Id"
+_DEFAULT_IMAGE_GENERATE_MODEL_HINT = (
+    getattr(settings, "lobster_default_image_generate_model", None) or "gpt-image2"
+).strip() or "gpt-image2"
 
 # ---------------------------------------------------------------------------
 # Global connection pool — reuses TCP+TLS connections across requests
@@ -316,7 +319,7 @@ def _truncate_msg(m: dict, *, max_chars: int = _SLIM_MSG_MAX_CHARS) -> dict:
 _LOBSTER_SYSTEM_HINT = (
     "【龙虾工具使用规则】"
     "1. 生成图片：用 lobster__invoke_capability，capability_id=\"image.generate\"，"
-    "用户未指定模型时 payload.model 填 \"fal-ai/flux-2/flash\"。"
+    f"用户未指定模型时 payload.model 填 \"{_DEFAULT_IMAGE_GENERATE_MODEL_HINT}\"。"
     "2. 生成视频：用 lobster__invoke_capability，capability_id=\"video.generate\"，"
     "用户未指定模型时 payload.model 填 \"sora2\"，未指定时长时 duration=4。"
     "3. 如果调用失败（积分不足、模型错误等），直接将错误信息告知用户，不要尝试用其他方式（搜索、网页等）来替代。"
