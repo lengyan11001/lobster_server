@@ -153,6 +153,10 @@ def _server_scheduled_openclaw_skill_model() -> str:
         or "deepseek-chat"
     )
 
+
+def _is_openclaw_skill_model_alias(model: str) -> bool:
+    return (model or "").strip() in _OPENCLAW_SKILL_MODEL_ALIASES
+
 # ---------------------------------------------------------------------------
 # Request body optimiser — reduce prompt tokens sent to upstream LLM
 # ---------------------------------------------------------------------------
@@ -375,14 +379,15 @@ def _inject_lobster_system_hint(body: dict) -> None:
     msgs.insert(0, {"role": "system", "content": _LOBSTER_SYSTEM_HINT})
 
 
-def _optimize_request_body(body: dict) -> int:
+def _optimize_request_body(body: dict, *, preserve_local_tools: bool = False) -> int:
     """Optimise body in-place before forwarding. Returns estimated token savings."""
     import copy
     orig_len = len(json.dumps(body, ensure_ascii=False, default=str))
 
     tools = body.get("tools")
     if isinstance(tools, list) and tools:
-        tools = _filter_local_tools(tools)
+        if not preserve_local_tools:
+            tools = _filter_local_tools(tools)
         body["tools"] = _slim_tools(tools)
 
     _inject_lobster_system_hint(body)
@@ -1190,8 +1195,9 @@ async def sutui_chat_completions(
         (body.get("model") or "-"),
     )
 
+    openclaw_skill_request = _is_openclaw_skill_model_alias((body.get("model") or "").strip())
     _remap_sutui_chat_model(body)
-    _optimize_request_body(body)
+    _optimize_request_body(body, preserve_local_tools=openclaw_skill_request)
     _enforce_single_search_models_tool_call(body, trace_id)
     _enforce_max_tool_call_rounds(body, trace_id)
 
