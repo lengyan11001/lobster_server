@@ -406,7 +406,22 @@ def fetch_model_pricing(model_id: str) -> Optional[dict]:
     if data:
         p = data.get("pricing")
         if isinstance(p, dict):
-            return p
+            out = dict(p)
+            schema = data.get("params_schema") if isinstance(data, dict) else None
+            props = schema.get("properties") if isinstance(schema, dict) else None
+            duration_schema = props.get("duration") if isinstance(props, dict) else None
+            if isinstance(duration_schema, dict):
+                default_duration = _pricing_number(duration_schema.get("default"))
+                if not default_duration:
+                    enum_values = duration_schema.get("enum")
+                    if isinstance(enum_values, list):
+                        candidates = [_pricing_number(v) for v in enum_values]
+                        candidates = [v for v in candidates if v and v > 0]
+                        if candidates:
+                            default_duration = min(candidates)
+                if default_duration and default_duration > 0:
+                    out["_default_duration_seconds"] = default_duration
+            return out
     return fetch_mcp_models_pricing(model_id)
 
 
@@ -436,7 +451,11 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
         except (TypeError, ValueError):
             rate = 0.0
         if rate <= 0 and base > 0:
-            rate = float(base)
+            default_duration = _pricing_number(pricing.get("_default_duration_seconds"))
+            if price_type == "dynamic_per_second" and default_duration and default_duration > 0:
+                rate = float(base) / float(default_duration)
+            else:
+                rate = float(base)
         if rate <= 0:
             return 0
         d = _duration_seconds_from_params(params)
