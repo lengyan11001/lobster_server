@@ -150,7 +150,7 @@ _OPENCLAW_SKILL_MODEL_ALIASES = frozenset({
 def _server_scheduled_openclaw_skill_model() -> str:
     return (
         (getattr(settings, "lobster_openclaw_skill_sutui_chat_model", None) or "").strip()
-        or "openai/gpt-5.5-pro"
+        or "gpt-5.4-pro"
     )
 
 
@@ -660,9 +660,9 @@ def _xskill_upstream_pool_quota_error(data: Any) -> bool:
 
 
 def _parse_sutui_chat_fallback_chain_env() -> List[str]:
-    """主→备模型顺序：默认 deepseek-chat → claude-opus-4-6；可用 SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON 覆盖。"""
+    """主→备模型顺序：默认主模型 → claude-sonnet-4-6 → deepseek-chat；可用 SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON 覆盖。"""
     raw = (os.environ.get("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON") or "").strip()
-    default = ["deepseek-chat", "claude-opus-4-6"]
+    default = ["claude-sonnet-4-6", "deepseek-chat"]
     if not raw:
         return default
     try:
@@ -731,6 +731,16 @@ def _openai_nonstream_completion_usable(data: Any, http_status: int) -> bool:
     choices = data.get("choices")
     if not isinstance(choices, list) or len(choices) < 1:
         return False
+    msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if isinstance(content, str):
+        lower_content = content.lower()
+        if (
+            "new_api_error" in lower_content
+            or "no available channel" in lower_content
+            or "no available channels" in lower_content
+        ):
+            return False
     return True
 
 
