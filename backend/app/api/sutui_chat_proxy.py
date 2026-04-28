@@ -140,6 +140,18 @@ def _is_model_tripped(model: str) -> bool:
 
 
 _SUTUI_PROVIDER_PREFIXES = ("anthropic/", "openai/", "google/", "deepseek/", "meta/", "mistral/", "cohere/")
+_OPENCLAW_SKILL_MODEL_ALIASES = frozenset({
+    "openclaw-skill-chat",
+    "openclaw-skill-browser",
+    "openclaw-skill-computer",
+})
+
+
+def _server_scheduled_openclaw_skill_model() -> str:
+    return (
+        (getattr(settings, "lobster_openclaw_skill_sutui_chat_model", None) or "").strip()
+        or "deepseek-chat"
+    )
 
 # ---------------------------------------------------------------------------
 # Request body optimiser — reduce prompt tokens sent to upstream LLM
@@ -500,6 +512,11 @@ def _remap_sutui_chat_model(body: Dict[str, Any]) -> None:
         logger.info("[sutui-chat] 自动剥离 provider 前缀: %s -> %s", mid, stripped)
         body["model"] = stripped
         mid = stripped
+    if mid in _OPENCLAW_SKILL_MODEL_ALIASES:
+        scheduled = _server_scheduled_openclaw_skill_model()
+        logger.info("[sutui-chat] server-scheduled OpenClaw skill model: %s -> %s", mid, scheduled)
+        body["model"] = scheduled
+        mid = scheduled
     raw = (os.environ.get("SUTUI_CHAT_MODEL_MAP_JSON") or "").strip()
     if not raw:
         return
