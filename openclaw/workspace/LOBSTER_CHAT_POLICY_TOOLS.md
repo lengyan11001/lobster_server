@@ -12,7 +12,7 @@
 
 【工具速查】
 - 生成图片：invoke_capability(capability_id="image.generate", payload={prompt, model})。**用户未指定模型时默认使用 `gpt-image2`**。
-- 生成视频：invoke_capability(capability_id="video.generate", payload={prompt, model, duration, image_url})。**用户未指定时长时 duration 必须填 4（即 4 秒），禁止自行选择更长时长**。**普通视频生成（含图生视频、文生视频）必须用 video.generate，禁止用 comfly.daihuo 或 comfly.daihuo.pipeline 替代**。**严禁因为用户文案像广告/口播/带货话术（出现品牌名、slogan、押韵口号、产品介绍等）就主观联想路由到 comfly.daihuo***，这些场景必须用 video.generate。**用户只说 veo3.1/veo 等模型名时**走 video.generate 并把 model 填该模型名，禁止用 comfly.daihuo*。
+- 生成视频：invoke_capability(capability_id="video.generate", payload={prompt, model, duration, image_url})。**用户未指定时长时不要强行填 duration，由后端按模型默认值处理；只有用户明确指定时长才传 duration**。**普通视频生成（含图生视频、文生视频）必须用 video.generate，禁止用 comfly.daihuo 或 comfly.daihuo.pipeline 替代**。**严禁因为用户文案像广告/口播/带货话术（出现品牌名、slogan、押韵口号、产品介绍等）就主观联想路由到 comfly.daihuo***，这些场景必须用 video.generate。**用户只说 veo3.1/veo 等模型名时**走 video.generate 并把 model 填该模型名，禁止用 comfly.daihuo*。
 - 任务轮询：invoke_capability(capability_id="task.get_result", payload={task_id})。后端会自动轮询，无需用户催促。
 - 素材剪辑：invoke_capability(capability_id="media.edit", payload={operation, asset_id, ...})，operation 见工具 payload 描述。当用户提到素材 ID 并要求改画幅/裁剪/叠字/静音/配乐/抽帧/静图转视频等操作时，必须用 media.edit，禁止用 image.generate 代替。「画幅改成 9:16」= media.edit + operation:"scale_pad" + aspect_ratio:"9:16"。
 - 查素材：list_assets　查账号：list_publish_accounts

@@ -318,7 +318,7 @@ def _tool_definitions(
             "description": (
                 "调用能力(图片生成/视频/语音等)。"
                 f"【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"{_DEFAULT_IMAGE_MODEL}\"（不要自动选 jimeng 或 flux）；用户明确指定 jimeng-4.0/jimeng-4.5/flux-2/flash 等时正常使用。"
-                f"video.generate 用户未指定模型时 payload.model 填 \"{_DEFAULT_VIDEO_MODEL}\"，用户未指定时长时 duration 必须填 4（即 4 秒）。"
+                f"video.generate 用户未指定模型时 payload.model 填 \"{_DEFAULT_VIDEO_MODEL}\"；用户未指定时长时不要强行填 duration，由后端按模型默认值处理。"
                 "【重要】用户指定 veo3.1/veo3.1-fast 等模型生成视频时，使用 capability_id=\"video.generate\"，payload.model 填用户指定的模型名（如 veo3.1）。系统会自动路由到最优上游。"
                 "【爆款TVC】仅当用户明确说「TVC」「带货视频」时才用 capability_id=\"comfly.daihuo.pipeline\"，不要仅因模型名含 veo 就选 comfly.daihuo。"
             ),
@@ -1251,6 +1251,23 @@ def _parse_video_duration_seconds(raw: Any, *, default: int = 5) -> int:
         return default
 
 
+_SUPER_SEED2_DURATION_SECONDS = (5, 10, 15)
+
+
+def _coerce_super_seed2_duration_seconds(sec: int) -> int:
+    """Super Seed2 Lite 上游只接受 5/10/15 秒；非法值按向上取整并封顶。"""
+    try:
+        s = max(1, int(sec))
+    except (ValueError, TypeError, OverflowError):
+        return _SUPER_SEED2_DURATION_SECONDS[0]
+    if s in _SUPER_SEED2_DURATION_SECONDS:
+        return s
+    for allowed in _SUPER_SEED2_DURATION_SECONDS:
+        if s <= allowed:
+            return allowed
+    return _SUPER_SEED2_DURATION_SECONDS[-1]
+
+
 # fal-ai/sora-2/*（含 text-to-video / image-to-video）上游 duration 枚举，非列表值易 422
 _SORA_FAL_DURATION_SECONDS = (4, 8, 12, 16, 20)
 
@@ -1582,12 +1599,22 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
 
     # st-ai/super-seed2：ratio, filePaths, functionMode（保留 backend 注入的多图 filePaths）
     if "super-seed2" in model or "st-ai/super-seed2" == model:
+        duration_raw = _payload_get_duration_raw(payload)
+        parsed_duration = _parse_video_duration_seconds(duration_raw, default=5)
+        seed2_duration = _coerce_super_seed2_duration_seconds(parsed_duration)
+        if seed2_duration != parsed_duration:
+            logger.info(
+                "[MCP] Super Seed2 duration 已收敛为上游枚举: raw=%r parsed=%s -> %s",
+                duration_raw,
+                parsed_duration,
+                seed2_duration,
+            )
         out: Dict[str, Any] = {
             "model": model,
             "prompt": prompt,
             "functionMode": "first_last_frames",
             "ratio": aspect_ratio if ratio_ok else "16:9",
-            "duration": duration_sec,
+            "duration": seed2_duration,
         }
         out["filePaths"] = list(fp) if fp else ([first_url] if first_url else [])
         _merge_common_video_ui_fields(out, payload)
