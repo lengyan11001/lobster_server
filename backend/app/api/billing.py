@@ -1,4 +1,4 @@
-"""软件收费模式配置与展示：技能解锁价格、算力套餐（积分兑换比例）；自有充值订单；富友 PC 主扫支付。"""
+"""软件收费模式配置与展示：技能解锁价格、算力套餐（算力兑换比例）；自有充值订单；富友 PC 主扫支付。"""
 import json
 import logging
 import time
@@ -111,9 +111,10 @@ _CUSTOM_CONFIGS_FILE = _BASE_DIR / "custom_configs.json"
 # 默认收费模式（可被 custom_configs.json 中 BILLING_PRICING 覆盖）
 _DEFAULT_SKILL_UNLOCK = {"min_yuan": 98, "max_yuan": 198}
 _DEFAULT_CREDIT_PACKAGES = [
-    {"price_yuan": 198, "credits": 20000, "label": "198元 - 20000积分"},
-    {"price_yuan": 498, "credits": 50000, "label": "498元 - 50000积分"},
-    {"price_yuan": 998, "credits": 120000, "label": "998元 - 120000积分"},
+    {"price_yuan": 98, "credits": 10000, "label": "98元 - 10000算力"},
+    {"price_yuan": 198, "credits": 20000, "label": "198元 - 20000算力"},
+    {"price_yuan": 498, "credits": 50000, "label": "498元 - 50000算力"},
+    {"price_yuan": 998, "credits": 120000, "label": "998元 - 120000算力"},
 ]
 
 
@@ -155,10 +156,10 @@ def _get_billing_pricing() -> dict[str, Any]:
                 price_fen = p.get("price_fen")
                 price = p.get("price_yuan") or p.get("price")
                 if price_fen is not None:
-                    label = (p.get("label") or "").strip() or f"{price_fen / 100:.2f}元 - {int(credits)}积分"
+                    label = (p.get("label") or "").strip() or f"{price_fen / 100:.2f}元 - {int(credits)}算力"
                     out.append({"price_fen": int(price_fen), "credits": int(credits), "label": label})
                 elif price is not None:
-                    label = (p.get("label") or "").strip() or f"{int(price)}元 - {int(credits)}积分"
+                    label = (p.get("label") or "").strip() or f"{int(price)}元 - {int(credits)}算力"
                     out.append({"price_yuan": int(price), "credits": int(credits), "label": label})
             if out:
                 credit_packages = out
