@@ -40,6 +40,8 @@ _COMFLY_UPLOAD_ID_KEYS = (
 )
 _COMFLY_UPLOAD_URL_KEYS = ("url", "image_url", "imageUrl", "file_url", "fileUrl", "download_url", "downloadUrl")
 _COMFLY_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+_COMFLY_HTTP_RETRY_ATTEMPTS = 3
+_COMFLY_HTTP_RETRY_DELAY_SECONDS = 3.0
 
 
 class _ComflyRetryableError(RuntimeError):
@@ -134,19 +136,11 @@ def is_comfly_configured() -> bool:
 
 
 def _comfly_retry_attempts() -> int:
-    try:
-        raw = int(os.environ.get("COMFLY_HTTP_RETRY_ATTEMPTS") or "2")
-    except (TypeError, ValueError):
-        raw = 2
-    return max(1, min(raw, 5))
+    return _COMFLY_HTTP_RETRY_ATTEMPTS
 
 
 def _comfly_retry_delay_seconds() -> float:
-    try:
-        raw = float(os.environ.get("COMFLY_HTTP_RETRY_DELAY_SECONDS") or "3")
-    except (TypeError, ValueError):
-        raw = 3.0
-    return max(0.0, min(raw, 30.0))
+    return _COMFLY_HTTP_RETRY_DELAY_SECONDS
 
 
 def _is_retryable_comfly_exception(exc: Exception) -> bool:

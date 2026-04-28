@@ -122,11 +122,11 @@ def _build_lobster_main_system_prompt(edition: str, has_tools: bool) -> str:
 
 _URL_RE = re.compile(r'https?://[^\s"\'<>\)\]]+', re.IGNORECASE)
 _pending_tool_logs: contextvars.ContextVar[List[Dict]] = contextvars.ContextVar("_pending_tool_logs", default=[])
-# 供 task.get_result 轮询遇 504 时自动重提 video.generate（同请求内最近一次成功提交的参数）
+# 供 task.get_result 轮询遇可恢复失败时自动重提 video.generate（同请求内最近一次成功提交的参数）
 _last_video_generate_invoke: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
     "_last_video_generate_invoke", default=None
 )
-# 上游 fal/网关以 JSON 返回 Unexpected status code: 504 时，自动重新提交视频任务的最多次数
+# 上游以 JSON 返回“请重新提交/重新发起请求”等可恢复失败时，自动重新提交视频任务的最多次数
 _UPSTREAM_504_VIDEO_RESUBMIT_MAX = 3
 
 _POLL_MAX_WAIT_IMAGE = 30 * 60   # 图片生成轮询上限 30 分钟
@@ -1001,6 +1001,47 @@ def _is_sutui_task_upstream_504_failure(result_text: str) -> bool:
     return "unexpected status code: 504" in low
 
 
+def _is_retryable_video_terminal_failure(result_text: str) -> bool:
+    """终态失败但上游明确提示重新提交/重试时，允许重建 video.generate 任务。"""
+    if not result_text or not result_text.strip():
+        return False
+    if _is_sutui_task_upstream_504_failure(result_text):
+        return True
+    if _is_task_result_in_progress(result_text):
+        return False
+    low = result_text.lower()
+    failure_markers = (
+        '"status":"failed"',
+        '"status": "failed"',
+        '"status":"failure"',
+        '"status": "failure"',
+        '"status":"error"',
+        '"status": "error"',
+        "fail_reason",
+        "failed",
+        "failure",
+        "error",
+        "失败",
+        "异常",
+    )
+    retry_markers = (
+        "重新提交",
+        "重新发起",
+        "重新创建",
+        "重新生成",
+        "请重新",
+        "请重试",
+        "再试",
+        "retry",
+        "resubmit",
+        "submit again",
+        "try again",
+        "please try again",
+        "please retry",
+    )
+    return any(k in low for k in failure_markers) and any(k in low for k in retry_markers)
+
+
 def _task_result_looks_like_video_task(result_text: str) -> bool:
     """query 回包 JSON 中含视频模型 id 时才允许用 ContextVar 做 504 重提，避免图片任务误用视频参数。"""
     if not result_text:
@@ -1021,6 +1062,10 @@ def _task_result_looks_like_video_task(result_text: str) -> bool:
             "vidu",
             "grok-imagine-video",
             "jimeng",
+            "_comfly",
+            "google-videos",
+            "video_url",
+            ".mp4",
         )
     )
 
@@ -1043,8 +1088,9 @@ async def _poll_task_until_terminal_then_retry_video_on_504(
 ) -> str:
     """
     与 image/video 生成一致：先按间隔轮询 task.get_result 至终态。
-    若启用 enable_504_video_retry 且终态为上游 504，则用 video_resubmit_args 或 ContextVar 中最近一次
-    video.generate 参数重新提交，最多 _UPSTREAM_504_VIDEO_RESUBMIT_MAX 次。
+    若启用 enable_504_video_retry 且终态为可恢复失败（504/请重新提交/请重新发起请求），
+    则用 video_resubmit_args 或 ContextVar 中最近一次 video.generate 参数重新提交，
+    最多 _UPSTREAM_504_VIDEO_RESUBMIT_MAX 次。
     """
     res = initial_res
     retries_left = _UPSTREAM_504_VIDEO_RESUBMIT_MAX
@@ -1104,7 +1150,7 @@ async def _poll_task_until_terminal_then_retry_video_on_504(
         can_retry = (
             enable_504_video_retry
             and retries_left > 0
-            and _is_sutui_task_upstream_504_failure(res)
+            and _is_retryable_video_terminal_failure(res)
             and model_ok
             and isinstance(src, dict)
             and (src.get("capability_id") or "").strip() == "video.generate"
@@ -1117,13 +1163,13 @@ async def _poll_task_until_terminal_then_retry_video_on_504(
         # 让退款入账后再走 video.generate 的预扣，避免短时余额与账本不一致。
         await asyncio.sleep(2.0)
         logger.warning(
-            "[%s] 上游返回 504，已等待 2s 后自动重新提交 video.generate（本轮后剩余重试 %d 次）",
+            "[%s] 上游返回可恢复失败，已等待 2s 后自动重新提交 video.generate（本轮后剩余重试 %d 次）",
             log_label,
             retries_left,
         )
         if progress_cb:
             try:
-                await progress_cb({"type": "status", "message": "视频生成上游超时(504)，正在自动重试…"})
+                await progress_cb({"type": "status", "message": "视频生成上游返回可恢复失败，正在自动重新提交…"})
             except Exception:
                 pass
 
@@ -1146,7 +1192,7 @@ async def _poll_task_until_terminal_then_retry_video_on_504(
             return res
         gr_args = {"capability_id": "task.get_result", "payload": {"task_id": new_tid}}
         if not _is_task_result_in_progress(res):
-            if _is_sutui_task_upstream_504_failure(res) and retries_left > 0:
+            if _is_retryable_video_terminal_failure(res) and retries_left > 0:
                 continue
             return res
 
