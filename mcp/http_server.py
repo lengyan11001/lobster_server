@@ -734,6 +734,9 @@ async def _call_upstream_sutui_tasks_rest(
             return {"error": {"message": "generate 缺少 model（或 model_id）"}}
         model_for_hint = model
         params = {k: v for k, v in arguments.items() if k not in ("model", "model_id")}
+        understand_model = params.pop("__understand_model", None)
+        if model in ("openrouter/router/vision", "openrouter/router/video") and understand_model:
+            params["model"] = str(understand_model).strip()
         logger.info(
             "[apiz-sdk] tasks.create capability=%s model=%s params_keys=%s",
             lobster_capability_id or "(无)", model, sorted(params.keys()),
@@ -1386,7 +1389,34 @@ def _normalize_understand_payload(
         payload = {}
     payload = dict(payload)
     prompt = (payload.get("prompt") or "").strip() or "请详细描述内容。"
-    model = (payload.get("model") or "").strip() or default_model
+    capability_model = (default_model or "").strip() or "openrouter/router/vision"
+    raw_model = (payload.get("model") or "").strip()
+    raw_understand_model = (
+        payload.get("understand_model")
+        or payload.get("llm_model")
+        or payload.get("analysis_model")
+        or ""
+    )
+    raw_understand_model = str(raw_understand_model).strip()
+    # APIZ 理解能力需要两层 model：外层任务模型 openrouter/router/vision，
+    # params.model 才是实际多模态 LLM。这里用内部字段带到 tasks.create 前再落到 params.model。
+    if raw_model.startswith("openrouter/router/"):
+        capability_model = raw_model
+        understand_model = raw_understand_model
+    else:
+        understand_model = raw_model or raw_understand_model
+    if not understand_model and media_key == "image_urls":
+        understand_model = (
+            os.environ.get("LOBSTER_IMAGE_UNDERSTAND_LLM_MODEL")
+            or os.environ.get("SUTUI_IMAGE_UNDERSTAND_LLM_MODEL")
+            or "google/gemini-2.5-flash"
+        ).strip()
+    elif not understand_model and media_key == "video_urls":
+        understand_model = (
+            os.environ.get("LOBSTER_VIDEO_UNDERSTAND_LLM_MODEL")
+            or os.environ.get("SUTUI_VIDEO_UNDERSTAND_LLM_MODEL")
+            or "google/gemini-2.5-flash"
+        ).strip()
 
     urls = payload.get(media_key)
     if not urls:
@@ -1396,7 +1426,9 @@ def _normalize_understand_payload(
             urls = [single]
     if isinstance(urls, str):
         urls = [urls]
-    out: Dict[str, Any] = {"model": model, "prompt": prompt}
+    out: Dict[str, Any] = {"model": capability_model, "prompt": prompt}
+    if understand_model:
+        out["__understand_model"] = understand_model
     if urls:
         out[media_key] = urls
     for k in ("system_prompt", "max_tokens", "temperature", "reasoning"):
