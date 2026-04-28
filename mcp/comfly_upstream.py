@@ -12,6 +12,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import unquote, urlparse
 
 import httpx
 
@@ -25,6 +26,18 @@ _pricing_mtime: float = 0
 
 _MAX_COMFLY_TASK_TRACK = 5000
 _comfly_task_ids: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
+_COMFLY_UPLOAD_ID_KEYS = (
+    "file_id",
+    "fileId",
+    "asset_id",
+    "assetId",
+    "material_id",
+    "materialId",
+    "media_id",
+    "mediaId",
+    "id",
+)
+_COMFLY_UPLOAD_URL_KEYS = ("url", "image_url", "imageUrl", "file_url", "fileUrl", "download_url", "downloadUrl")
 
 
 def register_comfly_task(task_id: str, token_group: str = "", api_format: str = "") -> None:
@@ -122,7 +135,7 @@ def _as_media_ref(value: Any) -> str:
     if isinstance(value, str):
         return value.strip()
     if isinstance(value, dict):
-        for key in ("url", "image_url", "path", "file_path", "filePath", "local_path"):
+        for key in ("url", "image_url", "path", "file_path", "filePath", "local_path", *_COMFLY_UPLOAD_ID_KEYS):
             ref = value.get(key)
             if isinstance(ref, str) and ref.strip():
                 return ref.strip()
@@ -141,6 +154,89 @@ def _first_media_ref(*values: Any) -> str:
         if ref:
             return ref
     return ""
+
+
+def _find_nested_string(value: Any, keys: Tuple[str, ...]) -> str:
+    if isinstance(value, dict):
+        for key in keys:
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+        for child_key in ("data", "file", "payload", "result"):
+            found = _find_nested_string(value.get(child_key), keys)
+            if found:
+                return found
+    if isinstance(value, list):
+        for item in value:
+            found = _find_nested_string(item, keys)
+            if found:
+                return found
+    return ""
+
+
+def _filename_from_media_ref(ref: str) -> str:
+    raw = (ref or "").strip()
+    if raw.startswith(("http://", "https://")):
+        parsed = urlparse(raw)
+        name = unquote(Path(parsed.path).name or "")
+        return name or "image.bin"
+    try:
+        name = Path(raw).name
+    except Exception:
+        name = ""
+    return name or "image.bin"
+
+
+async def _upload_image_to_comfly_for_veo(
+    client: httpx.AsyncClient,
+    base: str,
+    auth_headers: Dict[str, str],
+    image_ref: str,
+) -> str:
+    ref = (image_ref or "").strip()
+    if not ref:
+        return ""
+
+    content_type = ""
+    filename = _filename_from_media_ref(ref)
+    if ref.startswith(("http://", "https://")):
+        download = await client.get(ref, timeout=120.0)
+        download.raise_for_status()
+        content = download.content
+        content_type = (download.headers.get("content-type") or "").split(";")[0].strip()
+    else:
+        path = Path(ref)
+        if not path.exists():
+            # A non-path, non-URL value is assumed to already be a Comfly file/material id.
+            return ref
+        content = path.read_bytes()
+
+    guessed_type = mimetypes.guess_type(filename)[0]
+    media_type = content_type or guessed_type or "application/octet-stream"
+    upload_url = f"{base}/v1/files"
+    files = {"file": (filename, content, media_type)}
+    response = await client.post(upload_url, files=files, headers=auth_headers, timeout=120.0)
+    try:
+        payload = response.json() if response.content else {}
+    except Exception:
+        payload = {"raw_text": response.text}
+    if response.status_code >= 400:
+        raise RuntimeError(f"Comfly file upload HTTP {response.status_code}: {str(payload)[:500]}")
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Comfly file upload returned invalid payload: {payload}")
+
+    file_id = _find_nested_string(payload, _COMFLY_UPLOAD_ID_KEYS)
+    file_url = _find_nested_string(payload, _COMFLY_UPLOAD_URL_KEYS)
+    upload_ref = file_id or file_url
+    if not upload_ref:
+        raise RuntimeError(f"Comfly file upload returned no id/url: {payload}")
+    logger.info(
+        "[Comfly] Veo image uploaded for images[] source_type=%s has_file_id=%s upload_ref=%s",
+        "url" if ref.startswith(("http://", "https://")) else "file",
+        bool(file_id),
+        upload_ref,
+    )
+    return upload_ref
 
 
 def _coerce_sora2_size(payload: Dict[str, Any], model_id: str) -> str:
@@ -489,8 +585,6 @@ async def call_comfly_video_generate(
         }
         aspect_ratio = payload.get("aspect_ratio") or "16:9"
         body["aspect_ratio"] = aspect_ratio
-        if first_image:
-            body["image_url"] = first_image
     elif api_format == "unified_video":
         if first_image:
             url = f"{base}/task/submit/i2v"
@@ -526,9 +620,13 @@ async def call_comfly_video_generate(
         if first_image:
             body["image_url"] = first_image
 
-    logger.info("[Comfly] 视频生成请求 model=%s url=%s api_format=%s body=%s", comfly_model, url, api_format, json.dumps(body, ensure_ascii=False)[:300])
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
+            if api_format == "veo" and first_image:
+                uploaded_image_ref = await _upload_image_to_comfly_for_veo(client, base, auth_headers, first_image)
+                if uploaded_image_ref:
+                    body["images"] = [uploaded_image_ref]
+            logger.info("[Comfly] 视频生成请求 model=%s url=%s api_format=%s body=%s", comfly_model, url, api_format, json.dumps(body, ensure_ascii=False)[:500])
             if request_mode == "multipart":
                 r = await client.post(url, files=multipart_files or {}, headers=auth_headers)
             else:
