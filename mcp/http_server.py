@@ -760,6 +760,107 @@ async def _call_upstream_sutui_tasks_rest(
         return {"error": {"message": f"REST 上游未实现工具: {tool_name}"}}
 
     _apiz_url = f"{api_base}/api/v3"
+
+    async def _raw_rest_fallback(reason: str) -> Dict[str, Any]:
+        """apiz-sdk 响应模型偶尔滞后上游字段；失败时直接按 REST data 透传。"""
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+                if tool_name == "generate":
+                    raw_model = (arguments.get("model") or arguments.get("model_id") or "").strip()
+                    raw_params = {
+                        k: v
+                        for k, v in arguments.items()
+                        if k not in ("model", "model_id")
+                    }
+                    understand_model = raw_params.pop("__understand_model", None)
+                    if raw_model in ("openrouter/router/vision", "openrouter/router/video") and understand_model:
+                        raw_params["model"] = str(understand_model).strip()
+                    raw_body = {"model": raw_model, "params": raw_params, "channel": None}
+                    r = await client.post(f"{api_base}/api/v3/tasks/create", json=raw_body, headers=headers)
+                elif tool_name == "get_result":
+                    raw_body = {"task_id": str(arguments.get("task_id") or "").strip()}
+                    r = await client.post(f"{api_base}/api/v3/tasks/query", json=raw_body, headers=headers)
+                else:
+                    return {"error": {"message": f"REST 上游未实现工具: {tool_name}"}}
+        except httpx.HTTPError as e:
+            logger.warning(
+                "[apiz-sdk] raw REST fallback 网络异常 tool=%s capability=%s reason=%s err=%s",
+                tool_name,
+                lobster_capability_id or "(无)",
+                reason[:240],
+                e,
+            )
+            return {"error": {"message": f"上游网络不可达: {e}"}}
+
+        if r.status_code >= 400:
+            err_body = (r.text or "")[:_SUTUI_UPSTREAM_LOG_MAX]
+            logger.warning(
+                "[apiz-sdk] raw REST fallback HTTP错误 tool=%s capability=%s reason=%s status=%s body=\n%s",
+                tool_name,
+                lobster_capability_id or "(无)",
+                reason[:240],
+                r.status_code,
+                err_body,
+            )
+            return {"error": {"message": f"上游 REST HTTP {r.status_code}: {(r.text or '')[:800]}"}}
+        try:
+            payload = r.json() if r.content else {}
+        except Exception as e:
+            logger.warning(
+                "[apiz-sdk] raw REST fallback 非JSON tool=%s capability=%s err=%s body=%s",
+                tool_name,
+                lobster_capability_id or "(无)",
+                e,
+                (r.text or "")[:_SUTUI_UPSTREAM_LOG_MAX],
+            )
+            return {"error": {"message": f"上游 REST 非 JSON: {e}"}}
+        if not isinstance(payload, dict):
+            return {"error": {"message": f"上游 REST 返回非对象: {str(payload)[:500]}"}}
+        code = payload.get("code")
+        try:
+            code_ok = code is None or int(code) == 200
+        except Exception:
+            code_ok = str(code).strip() in ("", "200")
+        if not code_ok:
+            msg = payload.get("message") or payload.get("msg") or str(payload)
+            _log_sutui_upstream_full_response("sutui", tool_name, lobster_capability_id, _sanitize_for_json(payload))
+            return {"error": {"message": f"上游业务错误: {msg}"}}
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            _log_sutui_upstream_full_response("sutui", tool_name, lobster_capability_id, _sanitize_for_json(payload))
+            return {"error": {"message": f"上游 REST 无 data 对象: {str(payload)[:500]}"}}
+        data = _sanitize_for_json(data)
+        logger.warning(
+            "[apiz-sdk] raw REST fallback 生效 tool=%s capability=%s reason=%s",
+            tool_name,
+            lobster_capability_id or "(无)",
+            reason[:240],
+        )
+        _log_sutui_upstream_full_response("sutui", tool_name, lobster_capability_id, data)
+        _log_sutui_task_terminal_failure_for_ops(data, tool_name=tool_name, lobster_capability_id=lobster_capability_id)
+        log_xskill_http(
+            phase=f"tasks_rest.{tool_name}.raw_fallback",
+            method="POST",
+            url=_apiz_url,
+            http_status=r.status_code,
+            capability_or_model=lobster_capability_id or model_for_hint or "-",
+            billing_snapshot={
+                "price": data.get("price"),
+                "task_id": data.get("task_id"),
+                "status": data.get("status"),
+                "model": data.get("model"),
+            },
+            error_message="",
+            bearer_token=token,
+            upstream_response=data,
+        )
+        return data
+
     async with httpx.AsyncClient(timeout=120.0, trust_env=False) as hc:
         async with AsyncApiz(
             api_key=token,
@@ -823,6 +924,24 @@ async def _call_upstream_sutui_tasks_rest(
                 )
                 em = append_capability_model_hint(em, lobster_capability_id or "", model_for_hint)
                 return {"error": {"message": em}}
+            except Exception as e:
+                err_msg = str(e)
+                if tool_name == "get_result" and (
+                    "TaskQueryResponse" in err_msg
+                    or "validation error" in err_msg.lower()
+                    or "progress" in err_msg.lower()
+                ):
+                    logger.warning(
+                        "[apiz-sdk] tasks.query 响应模型校验失败，改走 raw REST fallback: %s",
+                        err_msg[:800],
+                    )
+                    return await _raw_rest_fallback(err_msg)
+                logger.exception(
+                    "[apiz-sdk] 未预期异常 tool=%s capability=%s",
+                    tool_name,
+                    lobster_capability_id or "(无)",
+                )
+                return {"error": {"message": f"调用出错: {err_msg[:800]}"}}
 
 
 async def _call_upstream_mcp_tool(
