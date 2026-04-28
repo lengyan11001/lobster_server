@@ -779,6 +779,9 @@ def comfly_pricing():
         "image_generate_model": (
             getattr(settings, "lobster_default_image_generate_model", None) or "gpt-image2"
         ).strip() or "gpt-image2",
+        "video_generate_model": (
+            getattr(settings, "lobster_default_video_generate_model", None) or "veo3.1-fast"
+        ).strip() or "veo3.1-fast",
     }
     p = _Path(__file__).resolve().parent.parent.parent.parent / "comfly_pricing.json"
     if not p.exists():

@@ -21,7 +21,29 @@
       "price_per_unit": 20,
       "api_format": "veo",
       "comfly_model": "veo3.1-fast",
-      "sutui_equivalent": ["fal-ai/veo3.1/lite"]
+      "sutui_equivalent": [
+        "fal-ai/veo3.1/lite",
+        "fal-ai/veo3.1/lite/text-to-video",
+        "fal-ai/veo3.1/lite/image-to-video",
+        "fal-ai/veo3.1/fast",
+        "fal-ai/veo3.1/fast/text-to-video",
+        "fal-ai/veo3.1/fast/image-to-video"
+      ]
+    },
+    "sora2": {
+      "enabled": false,
+      "note": "Comfly Sora2 submit tested 2026-04-28: /v1/videos and /sora/v1/videos both failed on current server key. Keep priced but do not route until Comfly channel is available.",
+      "price_type": "per_call",
+      "price_per_unit": 10,
+      "api_format": "sora2",
+      "comfly_model": "sora-2",
+      "sutui_equivalent": [
+        "sora2",
+        "sora-2",
+        "sora_video2",
+        "fal-ai/sora-2/text-to-video",
+        "fal-ai/sora-2/image-to-video"
+      ]
     },
     "nano-banana-2": {
       "price_type": "per_call",

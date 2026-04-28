@@ -238,6 +238,12 @@ tr:hover{background:var(--bg)}
         <h3>代理商管理</h3>
         <div id="agentToggleSection"></div>
       </div>
+      <div class="card" id="openclawMemoryAdminCard" style="display:none">
+        <h3>OpenClaw 资料记忆</h3>
+        <div id="openclawMemoryAdminSection">
+          <div class="empty">请选择用户后加载</div>
+        </div>
+      </div>
       <div class="card">
         <h3>充值积分</h3>
         <div class="recharge-row">
@@ -328,6 +334,24 @@ async function api(path, opts={}) {
     throw new Error(data.detail || '请求失败');
   }
   return data;
+}
+
+async function apiForm(path, formData) {
+  const headers = {};
+  if (TOKEN) headers['X-Admin-Token'] = TOKEN;
+  const res = await fetch(API + path, { method: 'POST', headers, body: formData });
+  const data = await res.json();
+  if (!res.ok) {
+    if (res.status === 401) { doLogout(); }
+    throw new Error(data.detail || '请求失败');
+  }
+  return data;
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, function(c) {
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
 }
 
 async function doLogin() {
@@ -490,6 +514,7 @@ async function showUserDetail(userId) {
         <div class="stat-item"><div class="label">积分余额</div><div class="value">${u.credits.toFixed(2)}</div></div>
         <div class="stat-item"><div class="label">角色</div><div class="value" style="font-size:14px">${u.role}</div></div>
         <div class="stat-item"><div class="label">代理商</div><div class="value" style="font-size:14px;${u.is_agent?'color:var(--agent-color)':''}">${u.is_agent?'是':'否'}</div></div>
+        <div class="stat-item"><div class="label">资料下发</div><div class="value" style="font-size:14px">${u.agent_openclaw_memory_enabled?'已开通':'未开通'}</div></div>
         <div class="stat-item"><div class="label">品牌</div><div class="value" style="font-size:14px">${u.brand_mark||'-'}</div></div>
         <div class="stat-item"><div class="label">上级ID</div><div class="value" style="font-size:14px">${u.parent_user_id||'无'}</div></div>
         <div class="stat-item"><div class="label">注册时间</div><div class="value" style="font-size:13px">${u.created_at?new Date(u.created_at).toLocaleString('zh-CN'):'-'}</div></div>
@@ -521,6 +546,9 @@ async function showUserDetail(userId) {
     } else {
       removeCard.style.display = 'none';
     }
+
+    document.getElementById('openclawMemoryAdminCard').style.display = '';
+    loadOpenclawMemoryAdmin(userId);
 
     const ledger = data.ledger;
     if (!ledger.length) {
@@ -554,9 +582,16 @@ async function showUserDetail(userId) {
 function renderAgentToggle(u) {
   const section = document.getElementById('agentToggleSection');
   if (u.is_agent) {
+    const memEnabled = !!u.agent_openclaw_memory_enabled;
     section.innerHTML = `
       <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">该用户当前 <strong style="color:var(--agent-color)">是代理商</strong>。取消后，其下级用户的上级关系不会自动清除。</p>
-      <button class="btn btn-outline btn-sm" onclick="toggleAgent(${u.id}, false)">取消代理商</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-outline btn-sm" onclick="toggleAgent(${u.id}, false)">取消代理商</button>
+        <button class="btn ${memEnabled ? 'btn-outline' : 'btn-agent'} btn-sm" onclick="toggleAgentOpenclawMemory(${u.id}, ${memEnabled ? 'false' : 'true'})">
+          ${memEnabled ? '关闭资料下发权限' : '开通资料下发权限'}
+        </button>
+        <span style="font-size:12px;color:var(--text-secondary)">当前：${memEnabled ? '已开通 OpenClaw 资料下发' : '未开通 OpenClaw 资料下发'}</span>
+      </div>
     `;
   } else {
     section.innerHTML = `
@@ -573,6 +608,17 @@ async function toggleAgent(userId, makeAgent) {
       body: JSON.stringify({user_id: userId, is_agent: makeAgent})
     });
     toast(makeAgent ? `已将 ${data.email} 设为代理商` : `已取消 ${data.email} 的代理商资格`);
+    showUserDetail(userId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function toggleAgentOpenclawMemory(userId, enabled) {
+  try {
+    await api('/admin/api/set-agent-openclaw-memory', {
+      method: 'POST',
+      body: JSON.stringify({user_id: userId, enabled: !!enabled})
+    });
+    toast(enabled ? '已开通 OpenClaw 资料下发权限' : '已关闭 OpenClaw 资料下发权限');
     showUserDetail(userId);
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -711,6 +757,140 @@ async function toggleSkillVisibility(userId, pkgId, checked) {
     await api('/admin/api/user-skill-visibility/' + userId, { method: 'POST', body: JSON.stringify(body) });
     toast(checked ? '已添加: ' + pkgId : '已移除: ' + pkgId);
   } catch(e) { toast(e.message, 'error'); loadSkillVisibility(userId); }
+}
+
+async function loadOpenclawMemoryAdmin(userId) {
+  const section = document.getElementById('openclawMemoryAdminSection');
+  section.innerHTML = '<div class="empty">加载设备资料中…</div>';
+  try {
+    const data = await api('/admin/api/openclaw-memory/installations/' + userId);
+    const installs = data.installations || [];
+    if (!installs.length) {
+      section.innerHTML = '<div class="empty">该用户还没有可下发的设备记录。用户在客户端登录一次后会生成设备 ID。</div>';
+      return;
+    }
+    const options = installs.map(function(i) {
+      const last = i.last_seen_at ? new Date(i.last_seen_at).toLocaleString('zh-CN') : '-';
+      return '<option value="' + escapeHtml(i.installation_id) + '">' + escapeHtml(i.installation_id) + '（最近：' + last + '，资料 ' + (i.active_documents || 0) + '）</option>';
+    }).join('');
+    section.innerHTML = `
+      <div style="display:grid;gap:12px">
+        <div class="form-group" style="margin-bottom:0">
+          <label>目标设备</label>
+          <select id="ocMemoryInstallSelect" style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px">${options}</select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-group" style="margin-bottom:0">
+            <label>资料标题（可选）</label>
+            <input type="text" id="ocMemoryTitle" placeholder="例如：门店话术/产品资料">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label>选择文件</label>
+            <input type="file" id="ocMemoryFile" accept=".txt,.md,.csv,.json,.yaml,.yml,.html,.pdf,.doc,.docx,.xlsx,.xlsm,.xls,.pptx">
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label>备注（可选）</label>
+          <input type="text" id="ocMemoryNotes" placeholder="这份资料适用的业务场景">
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" id="ocMemoryUploadBtn">上传并下发到该设备</button>
+          <button class="btn btn-outline btn-sm" id="ocMemoryReloadBtn">刷新资料列表</button>
+        </div>
+        <div id="ocMemoryDocsList"><div class="empty">加载资料列表中…</div></div>
+      </div>
+    `;
+    document.getElementById('ocMemoryInstallSelect').addEventListener('change', function() {
+      loadOpenclawMemoryDocs(userId);
+    });
+    document.getElementById('ocMemoryReloadBtn').addEventListener('click', function() {
+      loadOpenclawMemoryDocs(userId);
+    });
+    document.getElementById('ocMemoryUploadBtn').addEventListener('click', function() {
+      uploadOpenclawMemoryDoc(userId);
+    });
+    loadOpenclawMemoryDocs(userId);
+  } catch(e) {
+    section.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function loadOpenclawMemoryDocs(userId) {
+  const list = document.getElementById('ocMemoryDocsList');
+  const select = document.getElementById('ocMemoryInstallSelect');
+  if (!list || !select) return;
+  const iid = select.value || '';
+  list.innerHTML = '<div class="empty">加载资料列表中…</div>';
+  try {
+    const data = await api('/admin/api/openclaw-memory/documents?target_user_id=' + userId + '&installation_id=' + encodeURIComponent(iid));
+    const docs = data.documents || [];
+    if (!docs.length) {
+      list.innerHTML = '<div class="empty">该设备暂无 OpenClaw 资料。</div>';
+      return;
+    }
+    let html = '<div class="table-wrap"><table><thead><tr><th>来源</th><th>标题</th><th>文件</th><th>时间</th><th></th></tr></thead><tbody>';
+    docs.forEach(function(d) {
+      const originMap = { admin: '管理员下发', agent: '代理商下发', user: '用户本机上传' };
+      const origin = originMap[d.origin] || d.origin || '-';
+      const canDelete = d.origin !== 'user';
+      const docId = escapeHtml(d.doc_id || '');
+      html += `<tr>
+        <td><span class="badge ${d.origin === 'user' ? 'badge-blue' : 'badge-yellow'}">${escapeHtml(origin)}</span></td>
+        <td>${escapeHtml(d.title || d.doc_id)}</td>
+        <td style="font-size:12px;color:var(--text-secondary)">${escapeHtml(d.filename || '-')}</td>
+        <td style="font-size:11px;color:var(--text-secondary)">${d.updated_at ? new Date(d.updated_at).toLocaleString('zh-CN') : '-'}</td>
+        <td>${canDelete ? '<button class="btn btn-outline btn-sm oc-memory-delete-doc" data-doc-id="' + docId + '">删除下发</button>' : '<span style="font-size:12px;color:var(--text-secondary)">用户资料</span>'}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    list.innerHTML = html;
+    list.querySelectorAll('.oc-memory-delete-doc').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        deleteOpenclawMemoryDoc(btn.getAttribute('data-doc-id') || '', userId);
+      });
+    });
+  } catch(e) {
+    list.innerHTML = '<div class="empty" style="color:var(--danger)">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function uploadOpenclawMemoryDoc(userId) {
+  const select = document.getElementById('ocMemoryInstallSelect');
+  const fileInput = document.getElementById('ocMemoryFile');
+  const titleInput = document.getElementById('ocMemoryTitle');
+  const notesInput = document.getElementById('ocMemoryNotes');
+  if (!select || !select.value) { toast('请先选择目标设备', 'error'); return; }
+  if (!fileInput || !fileInput.files || !fileInput.files[0]) { toast('请选择资料文件', 'error'); return; }
+  const fd = new FormData();
+  fd.append('target_user_id', String(userId));
+  fd.append('installation_id', select.value);
+  fd.append('title', titleInput ? titleInput.value : '');
+  fd.append('notes', notesInput ? notesInput.value : '');
+  fd.append('file', fileInput.files[0]);
+  const btn = document.getElementById('ocMemoryUploadBtn');
+  const oldText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '上传中…'; }
+  try {
+    await apiForm('/admin/api/openclaw-memory/upload', fd);
+    toast('已上传并下发，客户端同步后会写入 OpenClaw 记忆');
+    if (fileInput) fileInput.value = '';
+    if (titleInput) titleInput.value = '';
+    if (notesInput) notesInput.value = '';
+    loadOpenclawMemoryDocs(userId);
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = oldText; }
+  }
+}
+
+async function deleteOpenclawMemoryDoc(docId, userId) {
+  if (!confirm('确定删除这份云端下发资料？客户端下次同步后会从 OpenClaw 记忆中移除。')) return;
+  try {
+    await api('/admin/api/openclaw-memory/documents/' + encodeURIComponent(docId), { method: 'DELETE' });
+    toast('已删除下发资料');
+    loadOpenclawMemoryDocs(userId);
+  } catch(e) { toast(e.message, 'error'); }
 }
 
 document.getElementById('loginPass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });

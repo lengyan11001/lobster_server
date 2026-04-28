@@ -29,6 +29,7 @@ class User(Base):
     """企业微信消息回调 FromUserName（成员 userid 等），与站内账号绑定后用于渠道侧扣费。"""
     wecom_userid: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, unique=True, index=True)
     is_agent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    agent_openclaw_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     parent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -277,6 +278,35 @@ class InstallationSignupBonusClaim(Base):
     installation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class OpenClawMemoryDocument(Base):
+    """Cloud-side OpenClaw memory docs scoped to one user installation."""
+
+    __tablename__ = "openclaw_memory_documents"
+    __table_args__ = (
+        Index("ix_openclaw_memory_target_install", "target_user_id", "installation_id", "status"),
+        Index("ix_openclaw_memory_updated", "target_user_id", "installation_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    doc_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    target_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    origin: Mapped[str] = mapped_column(String(32), default="agent", nullable=False, index=True)
+    uploader_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    uploader_role: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class SkillUnlock(Base):

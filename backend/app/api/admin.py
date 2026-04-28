@@ -143,7 +143,14 @@ def admin_login(body: LoginBody, db: Session = Depends(get_db)):
             )
             token = AGENT_TOKEN_PREFIX + agent_jwt
             display = user.email.replace("@sms.lobster.local", "")
-            return {"ok": True, "token": token, "role": "agent", "user_id": user.id, "display_name": display}
+            return {
+                "ok": True,
+                "token": token,
+                "role": "agent",
+                "user_id": user.id,
+                "display_name": display,
+                "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
+            }
 
     raise HTTPException(status_code=401, detail="用户名或密码错误")
 
@@ -175,6 +182,7 @@ def admin_search_user(
             "credits": float(u.credits or 0),
             "role": u.role,
             "is_agent": u.is_agent,
+            "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
             "parent_user_id": u.parent_user_id,
             "created_at": u.created_at.isoformat() if u.created_at else None,
         })
@@ -218,6 +226,7 @@ def admin_user_detail(
             "credits": float(user.credits or 0),
             "role": user.role,
             "is_agent": user.is_agent,
+            "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
             "parent_user_id": user.parent_user_id,
             "brand_mark": user.brand_mark,
             "created_at": user.created_at.isoformat() if user.created_at else None,
@@ -332,6 +341,7 @@ def admin_list_users(
                 "credits": float(u.credits or 0),
                 "role": u.role,
                 "is_agent": u.is_agent,
+                "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
                 "parent_user_id": u.parent_user_id,
                 "created_at": u.created_at.isoformat() if u.created_at else None,
             }
@@ -626,12 +636,20 @@ def admin_set_agent(
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     user.is_agent = body.is_agent
+    if not body.is_agent:
+        user.agent_openclaw_memory_enabled = False
     db.add(user)
     db.commit()
     db.refresh(user)
     action = "设为代理商" if body.is_agent else "取消代理商"
     logger.info("[admin/set-agent] user_id=%s email=%s action=%s", user.id, user.email, action)
-    return {"ok": True, "user_id": user.id, "email": user.email, "is_agent": user.is_agent}
+    return {
+        "ok": True,
+        "user_id": user.id,
+        "email": user.email,
+        "is_agent": user.is_agent,
+        "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
+    }
 
 
 # ── 代理商：认领/移除下级 ──
@@ -726,4 +744,5 @@ def agent_my_info(
         "email": user.email,
         "display_name": user.email.replace("@sms.lobster.local", ""),
         "sub_count": sub_count,
+        "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
     }

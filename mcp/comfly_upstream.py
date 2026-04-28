@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import time
 from pathlib import Path
@@ -113,6 +114,107 @@ def is_comfly_configured() -> bool:
     return bool(base and key)
 
 
+def _pricing_entry_enabled(entry: Dict[str, Any]) -> bool:
+    return entry.get("enabled") is not False and entry.get("disabled") is not True
+
+
+def _as_media_ref(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for key in ("url", "image_url", "path", "file_path", "filePath", "local_path"):
+            ref = value.get(key)
+            if isinstance(ref, str) and ref.strip():
+                return ref.strip()
+    return ""
+
+
+def _first_media_ref(*values: Any) -> str:
+    for value in values:
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                ref = _as_media_ref(item)
+                if ref:
+                    return ref
+            continue
+        ref = _as_media_ref(value)
+        if ref:
+            return ref
+    return ""
+
+
+def _coerce_sora2_size(payload: Dict[str, Any], model_id: str) -> str:
+    allowed = {"1280x720", "720x1280"}
+    if model_id == "sora-2-pro":
+        allowed.update({"1792x1024", "1024x1792"})
+
+    raw_size = str(payload.get("size") or payload.get("image_size") or "").strip().lower()
+    raw_size = raw_size.replace("×", "x").replace("*", "x")
+    if raw_size in allowed:
+        return raw_size
+
+    width = payload.get("width")
+    height = payload.get("height")
+    try:
+        if width and height:
+            wh = f"{int(width)}x{int(height)}"
+            if wh in allowed:
+                return wh
+    except (TypeError, ValueError):
+        pass
+
+    aspect_ratio = str(payload.get("aspect_ratio") or payload.get("ratio") or "").strip().lower()
+    resolution = str(payload.get("resolution") or payload.get("quality") or "").strip().lower()
+    wants_1080p = "1080" in resolution or "1792" in raw_size or "1024" in raw_size
+    if model_id == "sora-2-pro" and wants_1080p:
+        return "1792x1024" if aspect_ratio in ("16:9", "landscape", "horizontal") else "1024x1792"
+    if aspect_ratio in ("16:9", "landscape", "horizontal"):
+        return "1280x720"
+    return "720x1280"
+
+
+def _coerce_sora2_seconds(duration: Any) -> str:
+    try:
+        raw = str(duration).strip().lower()
+        if raw.endswith("s"):
+            raw = raw[:-1]
+        seconds = int(float(raw))
+    except (TypeError, ValueError):
+        seconds = 5
+    if seconds < 4:
+        seconds = 4
+    return str(seconds)
+
+
+def _build_sora2_multipart(
+    payload: Dict[str, Any],
+    *,
+    model_id: str,
+    prompt: str,
+    duration: Any,
+    first_image: str,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    data: Dict[str, Any] = {
+        "model": model_id,
+        "prompt": prompt,
+        "size": _coerce_sora2_size(payload, model_id),
+        "seconds": _coerce_sora2_seconds(duration),
+        "watermark": "true" if payload.get("watermark") else "false",
+    }
+    files: Dict[str, Any] = {k: (None, str(v)) for k, v in data.items() if v is not None}
+
+    if first_image:
+        path = Path(first_image)
+        if path.exists() and path.is_file():
+            content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            files["input_reference"] = (path.name, path.read_bytes(), content_type)
+        else:
+            data["input_reference"] = first_image
+            files["input_reference"] = (None, first_image)
+
+    return data, files
+
+
 def lookup_comfly_model(model_id: str) -> Optional[Dict[str, Any]]:
     """查找模型是否在 Comfly 定价表中。返回定价条目或 None。
     支持直接按 Comfly 模型名查找，也支持通过 sutui_equivalent 反查。
@@ -123,14 +225,18 @@ def lookup_comfly_model(model_id: str) -> Optional[Dict[str, Any]]:
     pricing = _load_pricing()
     models = pricing.get("models") or {}
     entry = models.get(model_id)
-    if entry and isinstance(entry, dict):
+    if entry and isinstance(entry, dict) and _pricing_entry_enabled(entry):
         return entry
     low = model_id.lower()
     for k, v in models.items():
+        if isinstance(v, dict) and not _pricing_entry_enabled(v):
+            continue
         if k.lower() == low:
             return v
     for _k, v in models.items():
         if not isinstance(v, dict):
+            continue
+        if not _pricing_entry_enabled(v):
             continue
         eq = v.get("sutui_equivalent")
         if isinstance(eq, list) and any(e.lower() == low for e in eq if isinstance(e, str)):
@@ -142,10 +248,14 @@ def lookup_comfly_model(model_id: str) -> Optional[Dict[str, Any]]:
     while len(parts) == 2 and parts[0]:
         prefix = parts[0]
         for k, v in models.items():
+            if isinstance(v, dict) and not _pricing_entry_enabled(v):
+                continue
             if k.lower() == prefix:
                 return v
         for _k, v in models.items():
             if not isinstance(v, dict):
+                continue
+            if not _pricing_entry_enabled(v):
                 continue
             eq = v.get("sutui_equivalent")
             _eqs = eq if isinstance(eq, list) else ([eq] if isinstance(eq, str) else [])
@@ -153,6 +263,23 @@ def lookup_comfly_model(model_id: str) -> Optional[Dict[str, Any]]:
                 return v
         parts = prefix.rsplit("/", 1)
     return None
+
+
+_SUTUI_MODEL_ID_PREFIXES = (
+    "fal-ai/",
+    "st-ai/",
+    "wan/",
+    "xai/",
+    "ark/",
+    "openrouter/",
+    "sora2pub/",
+)
+
+
+def _is_sutui_model_id(model_id: str) -> bool:
+    """速推真实模型 ID 不应被 Comfly 价格表的 sutui_equivalent 自动劫持。"""
+    low = (model_id or "").strip().lower()
+    return any(low.startswith(prefix) for prefix in _SUTUI_MODEL_ID_PREFIXES) or low.startswith("jimeng-")
 
 
 def should_route_to_comfly(capability_id: str, model_id: str, *, sutui_price: Optional[float] = None) -> bool:
@@ -165,6 +292,9 @@ def should_route_to_comfly(capability_id: str, model_id: str, *, sutui_price: Op
     if capability_id not in ("image.generate", "video.generate"):
         return False
     if not is_comfly_configured():
+        return False
+    if _is_sutui_model_id(model_id):
+        logger.info("[Comfly] 跳过路由：model=%s 是速推模型 ID，保持走速推", model_id)
         return False
     entry = lookup_comfly_model(model_id)
     if not entry:
@@ -289,15 +419,18 @@ async def call_comfly_image_generate(
     else:
         url = f"{base}/v1/images/generations"
 
-    headers = {
+    auth_headers = {
         "Authorization": f"Bearer {key}",
+    }
+    json_headers = {
+        **auth_headers,
         "Content-Type": "application/json",
     }
 
     logger.info("[Comfly] 图片生成请求 model=%s url=%s", comfly_model, url)
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            r = await client.post(url, json=body, headers=headers)
+            r = await client.post(url, json=body, headers=json_headers)
         resp = r.json() if r.content else {}
         if r.status_code >= 400:
             err = resp.get("error", {})
@@ -330,15 +463,20 @@ async def call_comfly_video_generate(
     except (ValueError, TypeError):
         duration = 5
 
-    headers = {
+    auth_headers = {
         "Authorization": f"Bearer {key}",
+    }
+    json_headers = {
+        **auth_headers,
         "Content-Type": "application/json",
     }
 
     image_url = payload.get("image_url") or ""
     file_paths = payload.get("filePaths") or []
     media_files = payload.get("media_files") or []
-    first_image = image_url or (file_paths[0] if file_paths else "") or (media_files[0] if media_files else "")
+    first_image = _first_media_ref(image_url, file_paths, media_files)
+    request_mode = "json"
+    multipart_files: Optional[Dict[str, Any]] = None
 
     if api_format == "veo":
         url = f"{base}/v2/videos/generations"
@@ -368,15 +506,15 @@ async def call_comfly_video_generate(
         if duration:
             body["duration"] = str(int(duration))
     elif api_format == "sora2":
-        url = f"{base}/task/submit/t2v"
-        body = {
-            "model": comfly_model,
-            "prompt": prompt,
-        }
-        if first_image:
-            body["image_url"] = first_image
-        if duration:
-            body["duration"] = str(int(duration))
+        url = f"{base}/v1/videos"
+        request_mode = "multipart"
+        body, multipart_files = _build_sora2_multipart(
+            payload,
+            model_id=comfly_model,
+            prompt=prompt,
+            duration=duration,
+            first_image=first_image,
+        )
     else:
         url = f"{base}/task/submit/t2v"
         body = {
@@ -389,7 +527,10 @@ async def call_comfly_video_generate(
     logger.info("[Comfly] 视频生成请求 model=%s url=%s api_format=%s body=%s", comfly_model, url, api_format, json.dumps(body, ensure_ascii=False)[:300])
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            r = await client.post(url, json=body, headers=headers)
+            if request_mode == "multipart":
+                r = await client.post(url, files=multipart_files or {}, headers=auth_headers)
+            else:
+                r = await client.post(url, json=body, headers=json_headers)
         resp = r.json() if r.content else {}
         logger.info(
             "[Comfly] 视频生成响应 HTTP=%s keys=%s preview=%s",
@@ -418,6 +559,8 @@ async def call_comfly_task_query(task_id: str, token_group: str = "", api_format
     }
     if api_format == "veo":
         url = f"{base}/v2/videos/generations/{task_id}"
+    elif api_format == "sora2":
+        url = f"{base}/v1/videos/{task_id}"
     else:
         url = f"{base}/task/query/{task_id}"
     logger.info("[Comfly] 任务查询 task_id=%s url=%s api_format=%s", task_id, url, api_format or "(default)")
@@ -528,10 +671,18 @@ def format_comfly_video_response_as_sutui(resp: Dict[str, Any]) -> Dict[str, Any
     _VEO_STATUS_MAP = {
         "NOT_START": "pending",
         "IN_PROGRESS": "pending",
+        "QUEUED": "pending",
+        "SUBMITTED": "pending",
+        "PROCESSING": "pending",
         "SUCCESS": "completed",
+        "SUCCEEDED": "completed",
+        "COMPLETED": "completed",
         "FAILURE": "failed",
+        "FAILED": "failed",
+        "ERROR": "failed",
     }
-    status = _VEO_STATUS_MAP.get(raw_status, raw_status)
+    status_key = str(raw_status).upper()
+    status = _VEO_STATUS_MAP.get(status_key, raw_status)
 
     if not task_id:
         logger.warning(
@@ -558,9 +709,9 @@ def format_comfly_video_response_as_sutui(resp: Dict[str, Any]) -> Dict[str, Any
         result["url"] = video_url
         result["status"] = "completed"
 
-    if raw_status == "FAILURE":
+    if status_key in {"FAILURE", "FAILED", "ERROR"}:
         result["status"] = "failed"
-        fail_reason = resp.get("fail_reason") or ""
+        fail_reason = resp.get("fail_reason") or resp.get("error") or ""
         if fail_reason:
             result["output"] = {"error": fail_reason}
 

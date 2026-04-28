@@ -38,10 +38,22 @@ from mcp.sutui_tokens import (
 )
 
 from backend.app.services.credits_amount import quantize_credits
+from backend.app.core.config import settings
 from backend.app.services.sutui_api_audit import log_xskill_http
 from backend.app.services.sutui_pricing import extract_upstream_reported_credits
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_IMAGE_MODEL = (
+    getattr(settings, "lobster_default_image_generate_model", None)
+    or os.getenv("LOBSTER_DEFAULT_IMAGE_GENERATE_MODEL")
+    or "gpt-image2"
+).strip() or "gpt-image2"
+_DEFAULT_VIDEO_MODEL = (
+    getattr(settings, "lobster_default_video_generate_model", None)
+    or os.getenv("LOBSTER_DEFAULT_VIDEO_GENERATE_MODEL")
+    or "veo3.1-fast"
+).strip() or "veo3.1-fast"
 
 
 def _sanitize_for_json(obj: Any) -> Any:
@@ -305,8 +317,8 @@ def _tool_definitions(
             "name": "invoke_capability",
             "description": (
                 "调用能力(图片生成/视频/语音等)。"
-                "【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"gpt-image2\"（不要自动选 jimeng 或 flux）；用户明确指定 jimeng-4.0/jimeng-4.5/flux-2/flash 等时正常使用。"
-                "video.generate 用户未指定模型时 payload.model 填 \"sora2\"，用户未指定时长时 duration 必须填 4（即 4 秒）。"
+                f"【默认模型】image.generate 用户未指定模型时 payload.model 必须填 \"{_DEFAULT_IMAGE_MODEL}\"（不要自动选 jimeng 或 flux）；用户明确指定 jimeng-4.0/jimeng-4.5/flux-2/flash 等时正常使用。"
+                f"video.generate 用户未指定模型时 payload.model 填 \"{_DEFAULT_VIDEO_MODEL}\"，用户未指定时长时 duration 必须填 4（即 4 秒）。"
                 "【重要】用户指定 veo3.1/veo3.1-fast 等模型生成视频时，使用 capability_id=\"video.generate\"，payload.model 填用户指定的模型名（如 veo3.1）。系统会自动路由到最优上游。"
                 "【爆款TVC】仅当用户明确说「TVC」「带货视频」时才用 capability_id=\"comfly.daihuo.pipeline\"，不要仅因模型名含 veo 就选 comfly.daihuo。"
             ),
@@ -1215,12 +1227,68 @@ _IMAGE_MODEL_ALIASES: Dict[str, str] = {
     "flux-2": "fal-ai/flux-2/flash",
 }
 
-_DEFAULT_IMAGE_MODEL = (os.getenv("LOBSTER_DEFAULT_IMAGE_GENERATE_MODEL") or "gpt-image2").strip() or "gpt-image2"
+_IMAGE_SOCIAL_PLATFORM_PATTERN = r"(?:抖音|小红书|今日头条|头条|快手|B站|b站|视频号|微博|TikTok|tiktok|YouTube|youtube|Instagram|instagram)"
+_IMAGE_PUBLISH_CONTEXT_RE = re.compile(
+    rf"(?:发布|投稿|上传|发到|发至|发送到|同步到|{_IMAGE_SOCIAL_PLATFORM_PATTERN}.{{0,12}}(?:账号|帐号|账户|昵称|发布|文案|配文|话题))",
+    re.IGNORECASE,
+)
+_IMAGE_PUBLISH_ACTION_RE = re.compile(
+    rf"(?:帮我)?(?:(?:发布|投稿|上传|发送|同步)\s*(?:到|至)?|发到|发至)\s*(?:{_IMAGE_SOCIAL_PLATFORM_PATTERN})[^，。；;,.!！?？\n]*",
+    re.IGNORECASE,
+)
+_IMAGE_SOCIAL_ACCOUNT_RE = re.compile(
+    rf"(?:{_IMAGE_SOCIAL_PLATFORM_PATTERN})\s*(?:账号|帐号|账户|号|昵称)?\s*[:：]?\s*[\w\u4e00-\u9fff-]{{1,32}}",
+    re.IGNORECASE,
+)
+_IMAGE_COPY_TAIL_RE = re.compile(
+    r"(?:发布文案|抖音文案|小红书文案|平台文案|文案|配文|正文|描述|标题|caption|copy)\s*[:：]\s*(.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+_IMAGE_TEXT_OVERLAY_REQUEST_RE = re.compile(
+    r"((?:图中|图片上|画面中|海报上|封面上).{0,16}(?:写|加|放|显示|包含|印|打上)|"
+    r"(?:写上|加上|打上|印上).{0,24}(?:字|文字|标题|logo|LOGO|标语|水印|文案)|"
+    r"(?:文字海报|logo设计|设计logo|设计LOGO))",
+    re.IGNORECASE,
+)
+_IMAGE_NO_TEXT_GUARD = "画面中不要出现任何文字、LOGO、水印、账号名、社交平台界面、点赞评论按钮、字幕或发布文案。"
+
+
+def _compact_image_prompt_text(text: str) -> str:
+    return re.sub(r"[\s,，。.!！?？:：;；、_\-\\/|（）()【】\[\]\"'“”‘’#]+", "", text or "")
+
+
+def _sanitize_image_generate_prompt_for_publish_copy(prompt: str) -> str:
+    raw = str(prompt or "").strip()
+    if not raw:
+        return raw
+    if _IMAGE_TEXT_OVERLAY_REQUEST_RE.search(raw) or not _IMAGE_PUBLISH_CONTEXT_RE.search(raw):
+        return raw
+
+    cleaned = raw
+    copy_match = _IMAGE_COPY_TAIL_RE.search(cleaned)
+    if copy_match:
+        before = cleaned[: copy_match.start()].strip(" \t\r\n，,。.;；:：")
+        copy_text = copy_match.group(1).strip()
+        if len(_compact_image_prompt_text(before)) >= 6:
+            cleaned = before
+        elif copy_text:
+            cleaned = f"根据这段内容生成配图画面：{copy_text}"
+
+    cleaned = _IMAGE_PUBLISH_ACTION_RE.sub("", cleaned)
+    cleaned = _IMAGE_SOCIAL_ACCOUNT_RE.sub("", cleaned)
+    cleaned = re.sub(r"#[^\s#，,。；;]+", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned.strip(" \t\r\n，,。.;；:：-_/|")
+    if len(_compact_image_prompt_text(cleaned)) < 4:
+        cleaned = raw
+    if _IMAGE_NO_TEXT_GUARD not in cleaned:
+        cleaned = f"{cleaned}\n{_IMAGE_NO_TEXT_GUARD}".strip()
+    return cleaned
 
 
 def _normalize_image_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    按图片模型把「统一 payload」转成该模型 API 需要的参数，并保证用户输入的 prompt 原样传入。
+    按图片模型把「统一 payload」转成该模型 API 需要的参数；发布账号/文案类信息会先从生图 prompt 中剥离。
     """
     if not payload or not isinstance(payload, dict):
         return payload
@@ -1230,7 +1298,15 @@ def _normalize_image_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         model = _DEFAULT_IMAGE_MODEL
     model = _IMAGE_MODEL_ALIASES.get(model, model)
     payload["model"] = model
-    prompt = (payload.get("prompt") or "").strip()
+    prompt_raw = (payload.get("prompt") or "").strip()
+    prompt = _sanitize_image_generate_prompt_for_publish_copy(prompt_raw)
+    if prompt != prompt_raw:
+        logger.warning(
+            "[MCP image.generate] prompt 含发布/账号/文案信息，已清洗 old=%s new=%s",
+            prompt_raw[:160],
+            prompt[:160],
+        )
+        payload["prompt"] = prompt
     image_url = (payload.get("image_url") or "").strip()
     image_size = (payload.get("image_size") or "").strip()
     num_images = payload.get("num_images", payload.get("n", 1))
@@ -1327,10 +1403,6 @@ def _normalize_understand_payload(
         if k in payload:
             out[k] = payload[k]
     return out
-
-
-_DEFAULT_VIDEO_MODEL = "sora2"
-
 
 def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
