@@ -70,6 +70,26 @@
       "capabilities": {},
       "tags": ["OpenClaw", "记忆", "知识库", "本机资料"]
     },
+    "browser_use_skill": {
+      "name": "Browser Use",
+      "description": "管理员调试入口：在独立二级工作台中直接向 OpenClaw 发送浏览器操作消息，不进入龙虾主聊天链路。",
+      "type": "builtin",
+      "store_visibility": "debug",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["OpenClaw", "Browser", "automation"]
+    },
+    "computer_use_skill": {
+      "name": "Computer Use",
+      "description": "管理员调试入口：在独立二级工作台中直接向 OpenClaw 发送电脑操作消息，不进入龙虾主聊天链路。",
+      "type": "builtin",
+      "store_visibility": "debug",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["OpenClaw", "Computer", "automation"]
+    },
     "wecom_reply": {
       "name": "企业微信自动回复",
       "description": "接收企业微信消息，由 AI 自动生成回复。需 1000 积分解锁后进入配置页并使用。",
