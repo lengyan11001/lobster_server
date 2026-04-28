@@ -227,12 +227,13 @@ async def _upload_image_to_comfly_for_veo(
 
     file_id = _find_nested_string(payload, _COMFLY_UPLOAD_ID_KEYS)
     file_url = _find_nested_string(payload, _COMFLY_UPLOAD_URL_KEYS)
-    upload_ref = file_id or file_url
+    upload_ref = file_url or file_id
     if not upload_ref:
         raise RuntimeError(f"Comfly file upload returned no id/url: {payload}")
     logger.info(
-        "[Comfly] Veo image uploaded for images[] source_type=%s has_file_id=%s upload_ref=%s",
+        "[Comfly] Veo image uploaded for images[] source_type=%s has_file_url=%s has_file_id=%s upload_ref=%s",
         "url" if ref.startswith(("http://", "https://")) else "file",
+        bool(file_url),
         bool(file_id),
         upload_ref,
     )
