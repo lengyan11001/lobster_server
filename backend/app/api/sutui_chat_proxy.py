@@ -150,7 +150,7 @@ _OPENCLAW_SKILL_MODEL_ALIASES = frozenset({
 def _server_scheduled_openclaw_skill_model() -> str:
     return (
         (getattr(settings, "lobster_openclaw_skill_sutui_chat_model", None) or "").strip()
-        or "deepseek-chat"
+        or "openai/gpt-5.5-pro"
     )
 
 
