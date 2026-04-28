@@ -5,6 +5,7 @@ invoke_capability 将路由到 Comfly 而非速推。
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import mimetypes
@@ -38,6 +39,11 @@ _COMFLY_UPLOAD_ID_KEYS = (
     "id",
 )
 _COMFLY_UPLOAD_URL_KEYS = ("url", "image_url", "imageUrl", "file_url", "fileUrl", "download_url", "downloadUrl")
+_COMFLY_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+
+
+class _ComflyRetryableError(RuntimeError):
+    pass
 
 
 def register_comfly_task(task_id: str, token_group: str = "", api_format: str = "") -> None:
@@ -125,6 +131,75 @@ def _get_model_token_group(model_id: str) -> str:
 def is_comfly_configured() -> bool:
     base, key = get_comfly_config()
     return bool(base and key)
+
+
+def _comfly_retry_attempts() -> int:
+    try:
+        raw = int(os.environ.get("COMFLY_HTTP_RETRY_ATTEMPTS") or "2")
+    except (TypeError, ValueError):
+        raw = 2
+    return max(1, min(raw, 5))
+
+
+def _comfly_retry_delay_seconds() -> float:
+    try:
+        raw = float(os.environ.get("COMFLY_HTTP_RETRY_DELAY_SECONDS") or "3")
+    except (TypeError, ValueError):
+        raw = 3.0
+    return max(0.0, min(raw, 30.0))
+
+
+def _is_retryable_comfly_exception(exc: Exception) -> bool:
+    return isinstance(exc, (_ComflyRetryableError, httpx.TimeoutException, httpx.TransportError))
+
+
+async def _request_comfly_json(
+    client: httpx.AsyncClient,
+    action: str,
+    method: str,
+    url: str,
+    **kwargs: Any,
+) -> Tuple[int, Dict[str, Any], int]:
+    attempts = _comfly_retry_attempts()
+    delay = _comfly_retry_delay_seconds()
+    last: Optional[Exception] = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = await client.request(method, url, **kwargs)
+            retryable_status = response.status_code in _COMFLY_RETRYABLE_STATUS_CODES
+            try:
+                payload = response.json() if response.content else {}
+            except Exception as exc:
+                if response.status_code >= 400 and not retryable_status:
+                    payload = {"raw_text": response.text}
+                else:
+                    raise _ComflyRetryableError(f"invalid JSON response: {exc}") from exc
+            if not response.content and (response.status_code < 400 or retryable_status):
+                raise _ComflyRetryableError("empty response")
+            if retryable_status:
+                raise _ComflyRetryableError(f"HTTP {response.status_code}: {str(payload)[:500]}")
+            if not isinstance(payload, dict):
+                if response.status_code >= 400:
+                    payload = {"raw": payload}
+                else:
+                    raise _ComflyRetryableError(f"non-object JSON response: {payload}")
+            if attempt > 1:
+                payload["_comfly_request_attempts"] = attempt
+            return response.status_code, payload, attempt
+        except Exception as exc:
+            last = exc
+            if attempt >= attempts or not _is_retryable_comfly_exception(exc):
+                raise
+            logger.warning(
+                "[Comfly] request retry action=%s attempt=%s/%s error=%s",
+                action,
+                attempt,
+                attempts,
+                exc,
+            )
+            if delay > 0:
+                await asyncio.sleep(delay * attempt)
+    raise _ComflyRetryableError(f"{action} failed after {attempts} attempt(s): {last}")
 
 
 def _pricing_entry_enabled(entry: Dict[str, Any]) -> bool:
@@ -215,13 +290,17 @@ async def _upload_image_to_comfly_for_veo(
     media_type = content_type or guessed_type or "application/octet-stream"
     upload_url = f"{base}/v1/files"
     files = {"file": (filename, content, media_type)}
-    response = await client.post(upload_url, files=files, headers=auth_headers, timeout=120.0)
-    try:
-        payload = response.json() if response.content else {}
-    except Exception:
-        payload = {"raw_text": response.text}
-    if response.status_code >= 400:
-        raise RuntimeError(f"Comfly file upload HTTP {response.status_code}: {str(payload)[:500]}")
+    status_code, payload, upload_attempts = await _request_comfly_json(
+        client,
+        "veo_file_upload",
+        "POST",
+        upload_url,
+        files=files,
+        headers=auth_headers,
+        timeout=120.0,
+    )
+    if status_code >= 400:
+        raise RuntimeError(f"Comfly file upload HTTP {status_code}: {str(payload)[:500]}")
     if not isinstance(payload, dict):
         raise RuntimeError(f"Comfly file upload returned invalid payload: {payload}")
 
@@ -231,11 +310,12 @@ async def _upload_image_to_comfly_for_veo(
     if not upload_ref:
         raise RuntimeError(f"Comfly file upload returned no id/url: {payload}")
     logger.info(
-        "[Comfly] Veo image uploaded for images[] source_type=%s has_file_url=%s has_file_id=%s upload_ref=%s",
+        "[Comfly] Veo image uploaded for images[] source_type=%s has_file_url=%s has_file_id=%s upload_ref=%s attempts=%s",
         "url" if ref.startswith(("http://", "https://")) else "file",
         bool(file_url),
         bool(file_id),
         upload_ref,
+        upload_attempts,
     )
     return upload_ref
 
@@ -527,12 +607,19 @@ async def call_comfly_image_generate(
     logger.info("[Comfly] 图片生成请求 model=%s url=%s", comfly_model, url)
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            r = await client.post(url, json=body, headers=json_headers)
-        resp = r.json() if r.content else {}
-        if r.status_code >= 400:
+            status_code, resp, attempts = await _request_comfly_json(
+                client,
+                "image_generate",
+                "POST",
+                url,
+                json=body,
+                headers=json_headers,
+            )
+        if status_code >= 400:
             err = resp.get("error", {})
             msg = err.get("message", str(resp)) if isinstance(err, dict) else str(err)
-            return {"error": {"message": f"Comfly 返回 HTTP {r.status_code}: {msg}"}}
+            return {"error": {"message": f"Comfly 返回 HTTP {status_code}: {msg}"}}
+        logger.info("[Comfly] 图片生成响应 HTTP=%s attempts=%s", status_code, attempts)
         return resp
     except Exception as e:
         logger.exception("[Comfly] 图片生成请求异常")
@@ -629,22 +716,36 @@ async def call_comfly_video_generate(
                     body["images"] = [uploaded_image_ref]
             logger.info("[Comfly] 视频生成请求 model=%s url=%s api_format=%s body=%s", comfly_model, url, api_format, json.dumps(body, ensure_ascii=False)[:500])
             if request_mode == "multipart":
-                r = await client.post(url, files=multipart_files or {}, headers=auth_headers)
+                status_code, resp, attempts = await _request_comfly_json(
+                    client,
+                    "video_generate",
+                    "POST",
+                    url,
+                    files=multipart_files or {},
+                    headers=auth_headers,
+                )
             else:
-                r = await client.post(url, json=body, headers=json_headers)
-        resp = r.json() if r.content else {}
+                status_code, resp, attempts = await _request_comfly_json(
+                    client,
+                    "video_generate",
+                    "POST",
+                    url,
+                    json=body,
+                    headers=json_headers,
+                )
         logger.info(
             "[Comfly] 视频生成响应 HTTP=%s keys=%s preview=%s",
-            r.status_code,
+            status_code,
             list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__,
             str(resp)[:500],
         )
-        if r.status_code >= 400:
+        if status_code >= 400:
             err = resp.get("error", {})
             msg = err.get("message", str(resp)) if isinstance(err, dict) else str(err)
-            return {"error": {"message": f"Comfly 返回 HTTP {r.status_code}: {msg}"}}
+            return {"error": {"message": f"Comfly 返回 HTTP {status_code}: {msg}"}}
         if isinstance(resp, dict):
             resp["_api_format"] = api_format
+            resp["_comfly_request_attempts"] = attempts
         return resp
     except Exception as e:
         logger.exception("[Comfly] 视频生成请求异常")
@@ -667,14 +768,22 @@ async def call_comfly_task_query(task_id: str, token_group: str = "", api_format
     logger.info("[Comfly] 任务查询 task_id=%s url=%s api_format=%s", task_id, url, api_format or "(default)")
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.get(url, headers=headers)
-        resp = r.json() if r.content else {}
+            status_code, resp, attempts = await _request_comfly_json(
+                client,
+                "task_query",
+                "GET",
+                url,
+                headers=headers,
+            )
         logger.info(
-            "[Comfly] 任务查询响应 HTTP=%s keys=%s preview=%s",
-            r.status_code,
+            "[Comfly] 任务查询响应 HTTP=%s attempts=%s keys=%s preview=%s",
+            status_code,
+            attempts,
             list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__,
             str(resp)[:500],
         )
+        if isinstance(resp, dict) and attempts > 1:
+            resp["_comfly_request_attempts"] = attempts
         return resp
     except Exception as e:
         logger.exception("[Comfly] 任务查询异常 task_id=%s", task_id)
@@ -739,12 +848,20 @@ async def call_comfly_chat_completions(
     logger.info("[Comfly] chat/completions 请求 model=%s url=%s", model_id, url)
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
-            r = await client.post(url, json=body, headers=headers)
-        resp = r.json() if r.content else {}
-        if r.status_code >= 400:
+            status_code, resp, attempts = await _request_comfly_json(
+                client,
+                "chat_completions",
+                "POST",
+                url,
+                json=body,
+                headers=headers,
+            )
+        if status_code >= 400:
             err = resp.get("error", {})
             msg = err.get("message", str(resp)) if isinstance(err, dict) else str(err)
-            return {"error": {"message": f"Comfly chat 返回 HTTP {r.status_code}: {msg}"}}
+            return {"error": {"message": f"Comfly chat 返回 HTTP {status_code}: {msg}"}}
+        if isinstance(resp, dict) and attempts > 1:
+            resp["_comfly_request_attempts"] = attempts
         return resp
     except Exception as e:
         logger.exception("[Comfly] chat/completions 请求异常")
