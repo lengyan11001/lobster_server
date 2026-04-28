@@ -373,7 +373,7 @@ async def _exec_tool(
                 capability_id,
                 (pl.get("model") or "").strip() or "(无)",
                 len((pl.get("prompt") or "").strip()),
-                "有" if (pl.get("image_url") or pl.get("media_files")) else "无",
+                "有" if (pl.get("image_url") or pl.get("media_files") or pl.get("filePaths") or pl.get("images") or pl.get("image_files")) else "无",
             )
     t0 = time.perf_counter()
     success = True
@@ -413,10 +413,12 @@ async def _exec_tool(
             pl = args.get("payload") or {}
             img = (pl.get("image_url") or "")
             mf = pl.get("media_files") or []
+            images = pl.get("images") or []
             logger.info(
-                "[CHAT] 发 MCP video.generate 完整 payload（将原样转速推）: image_url=%s media_files=%s",
+                "[CHAT] 发 MCP video.generate 完整 payload（将原样转速推）: image_url=%s media_files=%s images=%s",
                 (img[:100] + "…") if len(img) > 100 else (img or "(无)"),
                 mf,
+                images,
             )
         async with httpx.AsyncClient(timeout=timeout) as c:
             r = await c.post(MCP_URL, json={
@@ -2136,9 +2138,11 @@ def _inject_video_media_urls(args: Dict[str, Any], attachment_urls: List[str]) -
         inner["filePaths"] = urls
         inner["functionMode"] = "first_last_frames"
         inner["media_files"] = urls
+        inner["images"] = urls
+        inner["image_files"] = urls
         inner["image_url"] = urls[0]
-        logger.info("[CHAT] 图生视频注入 filePaths（%d 张）functionMode=first_last_frames 首图=%s", len(urls), (urls[0][:80] + "…") if len(urls[0]) > 80 else urls[0])
-    elif not inner.get("media_files") and not inner.get("image_url") and not inner.get("filePaths"):
+        logger.info("[CHAT] 图生视频注入 filePaths/images（%d 张）functionMode=first_last_frames 首图=%s", len(urls), (urls[0][:80] + "…") if len(urls[0]) > 80 else urls[0])
+    elif not inner.get("media_files") and not inner.get("image_url") and not inner.get("filePaths") and not inner.get("images") and not inner.get("image_files"):
         logger.warning(
             "[CHAT] 图生视频未注入链接：附图为 0 个公网 URL；若用户已附图应已在对话入口被 400 拦截，此处多为文生视频"
         )

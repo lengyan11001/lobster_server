@@ -1138,10 +1138,39 @@ def _payload_get_aspect_ratio(payload: Dict[str, Any]) -> Any:
 
 def _payload_get_duration_raw(payload: Dict[str, Any]) -> Any:
     """duration / duration_seconds / length 等别名。"""
-    for key in ("duration", "duration_seconds", "length", "video_length"):
+    for key in ("duration", "duration_sec", "duration_seconds", "length", "video_length"):
         if payload.get(key) is not None:
             return payload.get(key)
     return None
+
+
+def _collect_video_image_refs(payload: Dict[str, Any]) -> List[str]:
+    refs: List[str] = []
+    seen: set[str] = set()
+
+    def add(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, str):
+            item = value.strip()
+            if item and item not in seen:
+                seen.add(item)
+                refs.append(item)
+            return
+        if isinstance(value, dict):
+            for k in ("url", "image_url", "file_url", "source_url", "path"):
+                if value.get(k):
+                    add(value.get(k))
+                    return
+            return
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                add(item)
+
+    # Keep filePaths first: after internal URL transfer it is the canonical public URL list.
+    for key in ("filePaths", "image_url", "media_files", "images", "image_files", "image_urls"):
+        add(payload.get(key))
+    return refs
 
 
 def _coerce_video_aspect_ratio_for_upstream(raw: Any) -> str:
@@ -1582,16 +1611,12 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
     if not model:
         model = _DEFAULT_VIDEO_MODEL
     prompt = (payload.get("prompt") or "").strip()
-    fp = payload.get("filePaths") or []
-    image_url = (payload.get("image_url") or "").strip()
-    mf = payload.get("media_files") or []
-    has_image = bool(fp) or bool(image_url) or bool(mf)
+    image_refs = _collect_video_image_refs(payload)
+    has_image = bool(image_refs)
 
     model = resolve_video_model_id(model, has_image)
     model_lower = model.lower()
-    first_url = (str(fp[0]) if fp else "") or image_url or (str(mf[0]) if mf else "")
-    if not first_url and image_url:
-        first_url = image_url
+    first_url = image_refs[0] if image_refs else ""
     aspect_ratio = _coerce_video_aspect_ratio_for_upstream(_payload_get_aspect_ratio(payload))
     valid_ratios = _VIDEO_ASPECT_RATIOS
     ratio_ok = aspect_ratio in valid_ratios
@@ -1616,7 +1641,9 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
             "ratio": aspect_ratio if ratio_ok else "16:9",
             "duration": seed2_duration,
         }
-        out["filePaths"] = list(fp) if fp else ([first_url] if first_url else [])
+        out["filePaths"] = list(image_refs)
+        out["images"] = list(image_refs)
+        out["image_files"] = list(image_refs)
         _merge_common_video_ui_fields(out, payload)
         return out
 
@@ -2465,23 +2492,18 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             # 检测并转存内部图片 URL 到公开 CDN（图生视频/图生图需要）
             temp_ids_to_register = []  # 在外部作用域定义，用于后续注册
             if capability_id in ("image.generate", "video.generate") and isinstance(payload, dict):
-                # 收集所有可能的图片 URL（从 image_url、filePaths、media_files）
+                # 收集所有可能的图片 URL（从 image_url、filePaths、media_files、images、image_files）
                 urls_to_check = []
                 image_url = payload.get("image_url") or ""
                 if image_url and isinstance(image_url, str):
                     urls_to_check.append(("image_url", image_url.strip()))
                 
-                file_paths = payload.get("filePaths") or []
-                if isinstance(file_paths, list):
-                    for idx, fp in enumerate(file_paths):
-                        if isinstance(fp, str) and fp.strip():
-                            urls_to_check.append((f"filePaths[{idx}]", fp.strip()))
-                
-                media_files = payload.get("media_files") or []
-                if isinstance(media_files, list):
-                    for idx, mf in enumerate(media_files):
-                        if isinstance(mf, str) and mf.strip():
-                            urls_to_check.append((f"media_files[{idx}]", mf.strip()))
+                for image_key in ("filePaths", "media_files", "images", "image_files"):
+                    image_values = payload.get(image_key) or []
+                    if isinstance(image_values, list):
+                        for idx, image_value in enumerate(image_values):
+                            if isinstance(image_value, str) and image_value.strip():
+                                urls_to_check.append((f"{image_key}[{idx}]", image_value.strip()))
                 
                 # 提取临时文件ID并注册（用于任务完成后清理）
                 for url_key, url_value in urls_to_check:
@@ -2575,6 +2597,14 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                             idx = int(url_key.split("[")[1].split("]")[0])
                                             if isinstance(payload.get("media_files"), list):
                                                 payload["media_files"][idx] = cdn_url
+                                        elif url_key.startswith("images["):
+                                            idx = int(url_key.split("[")[1].split("]")[0])
+                                            if isinstance(payload.get("images"), list):
+                                                payload["images"][idx] = cdn_url
+                                        elif url_key.startswith("image_files["):
+                                            idx = int(url_key.split("[")[1].split("]")[0])
+                                            if isinstance(payload.get("image_files"), list):
+                                                payload["image_files"][idx] = cdn_url
                                         logger.info("[服务器端MCP-步骤C.5.5] TOS转存成功 url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
                                     else:
                                         logger.warning("[服务器端MCP-步骤C.5.5] TOS转存失败 url_key=%s", url_key)
@@ -2641,6 +2671,14 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                                                 idx = int(url_key.split("[")[1].split("]")[0])
                                                                 if isinstance(payload.get("media_files"), list):
                                                                     payload["media_files"][idx] = cdn_url
+                                                            elif url_key.startswith("images["):
+                                                                idx = int(url_key.split("[")[1].split("]")[0])
+                                                                if isinstance(payload.get("images"), list):
+                                                                    payload["images"][idx] = cdn_url
+                                                            elif url_key.startswith("image_files["):
+                                                                idx = int(url_key.split("[")[1].split("]")[0])
+                                                                if isinstance(payload.get("image_files"), list):
+                                                                    payload["image_files"][idx] = cdn_url
                                                             logger.info("[服务器端MCP-步骤C.6.3] sutui.transfer_url 转存成功（方式1：从content解析）url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
                                                             break
                                                     except json.JSONDecodeError:
@@ -2658,6 +2696,14 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                                                 idx = int(url_key.split("[")[1].split("]")[0])
                                                                 if isinstance(payload.get("media_files"), list):
                                                                     payload["media_files"][idx] = cdn_url
+                                                            elif url_key.startswith("images["):
+                                                                idx = int(url_key.split("[")[1].split("]")[0])
+                                                                if isinstance(payload.get("images"), list):
+                                                                    payload["images"][idx] = cdn_url
+                                                            elif url_key.startswith("image_files["):
+                                                                idx = int(url_key.split("[")[1].split("]")[0])
+                                                                if isinstance(payload.get("image_files"), list):
+                                                                    payload["image_files"][idx] = cdn_url
                                                             logger.info("[服务器端MCP-步骤C.6.3] sutui.transfer_url 转存成功（方式1：直接URL字符串）url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
                                                             break
                                                     except Exception as e:
@@ -2685,6 +2731,14 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                                         idx = int(url_key.split("[")[1].split("]")[0])
                                                         if isinstance(payload.get("media_files"), list):
                                                             payload["media_files"][idx] = cdn_url
+                                                    elif url_key.startswith("images["):
+                                                        idx = int(url_key.split("[")[1].split("]")[0])
+                                                        if isinstance(payload.get("images"), list):
+                                                            payload["images"][idx] = cdn_url
+                                                    elif url_key.startswith("image_files["):
+                                                        idx = int(url_key.split("[")[1].split("]")[0])
+                                                        if isinstance(payload.get("image_files"), list):
+                                                            payload["image_files"][idx] = cdn_url
                                                     logger.info("[服务器端MCP-步骤C.6.3] sutui.transfer_url 转存成功（方式2：从result解析）url_key=%s 原URL=%s CDN_URL=%s", url_key, url_value[:80], cdn_url[:80])
                                         
                                         if not cdn_url:
