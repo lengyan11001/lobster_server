@@ -150,7 +150,7 @@ _OPENCLAW_SKILL_MODEL_ALIASES = frozenset({
 def _server_scheduled_openclaw_skill_model() -> str:
     return (
         (getattr(settings, "lobster_openclaw_skill_sutui_chat_model", None) or "").strip()
-        or "gpt-5.4-pro"
+        or "claude-sonnet-4-6"
     )
 
 
@@ -660,9 +660,9 @@ def _xskill_upstream_pool_quota_error(data: Any) -> bool:
 
 
 def _parse_sutui_chat_fallback_chain_env() -> List[str]:
-    """主→备模型顺序：默认主模型 → claude-sonnet-4-6 → deepseek-chat；可用 SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON 覆盖。"""
+    """主→备模型顺序：默认主模型 → gpt-5.4-pro → deepseek-chat；可用 SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON 覆盖。"""
     raw = (os.environ.get("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON") or "").strip()
-    default = ["claude-sonnet-4-6", "deepseek-chat"]
+    default = ["gpt-5.4-pro", "deepseek-chat"]
     if not raw:
         return default
     try:

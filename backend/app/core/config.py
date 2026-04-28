@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     """下发给 lobster_online 的默认视频生成模型；客户端拉取失败时才使用本地兜底。"""
     lobster_default_video_generate_model: str = "veo3.1-fast"
     """Server-side Sutui chat model used by the isolated OpenClaw Browser/Computer workspace alias."""
-    lobster_openclaw_skill_sutui_chat_model: str = "gpt-5.4-pro"
+    lobster_openclaw_skill_sutui_chat_model: str = "claude-sonnet-4-6"
     """已废弃：前端由 lobster_online 提供，本服务仅 API，不再挂载 /static 与前端页。保留项以免旧 .env 报错。"""
     serve_frontend: bool = False
     # 自建微信登录（不用速推）：小程序 appid/secret，配置后登录页展示小程序码扫码
