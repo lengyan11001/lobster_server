@@ -14,6 +14,7 @@
       "price_per_unit": 30,
       "api_format": "veo",
       "comfly_model": "veo3.1",
+      "token_group": "premium",
       "sutui_equivalent": ["fal-ai/veo3.1"]
     },
     "veo3.1-fast": {
@@ -21,6 +22,7 @@
       "price_per_unit": 20,
       "api_format": "veo",
       "comfly_model": "veo3.1-fast",
+      "token_group": "premium",
       "sutui_equivalent": [
         "fal-ai/veo3.1/lite",
         "fal-ai/veo3.1/lite/text-to-video",
