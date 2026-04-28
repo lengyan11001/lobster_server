@@ -122,12 +122,12 @@ def _build_lobster_main_system_prompt(edition: str, has_tools: bool) -> str:
 
 _URL_RE = re.compile(r'https?://[^\s"\'<>\)\]]+', re.IGNORECASE)
 _pending_tool_logs: contextvars.ContextVar[List[Dict]] = contextvars.ContextVar("_pending_tool_logs", default=[])
-# 供 task.get_result 轮询遇可恢复失败时自动重提 video.generate（同请求内最近一次成功提交的参数）
-_last_video_generate_invoke: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
-    "_last_video_generate_invoke", default=None
+# 供 task.get_result 轮询遇可恢复失败时自动重提 image/video.generate（同请求内最近一次成功提交的参数）
+_last_generate_invoke: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
+    "_last_generate_invoke", default=None
 )
-# 上游以 JSON 返回“请重新提交/重新发起请求”等可恢复失败时，自动重新提交视频任务的最多次数
-_UPSTREAM_504_VIDEO_RESUBMIT_MAX = 3
+# 上游以 JSON 返回“请重新提交/重新发起请求”等可恢复失败时，自动重新提交生成任务的最多次数
+_UPSTREAM_504_GENERATE_RESUBMIT_MAX = 3
 
 _POLL_MAX_WAIT_IMAGE = 30 * 60   # 图片生成轮询上限 30 分钟
 _POLL_MAX_WAIT_VIDEO = 60 * 60   # 视频生成轮询上限 60 分钟（Seedance 等慢模型需要更久）
@@ -522,16 +522,16 @@ async def _exec_tool(
         except Exception:
             pass
     if (
-        capability_id == "video.generate"
+        capability_id in ("image.generate", "video.generate")
         and success
         and result_text
         and _is_task_result_in_progress(result_text)
         and _extract_task_id_from_result(result_text)
     ):
         try:
-            _last_video_generate_invoke.set(copy.deepcopy(args))
+            _last_generate_invoke.set(copy.deepcopy(args))
         except Exception:
-            logger.debug("[素材] 记录 video.generate 参数供504重试用失败", exc_info=True)
+            logger.debug("[素材] 记录 %s 参数供可恢复失败重试用失败", capability_id, exc_info=True)
     return result_text
 
 
@@ -1001,8 +1001,8 @@ def _is_sutui_task_upstream_504_failure(result_text: str) -> bool:
     return "unexpected status code: 504" in low
 
 
-def _is_retryable_video_terminal_failure(result_text: str) -> bool:
-    """终态失败但上游明确提示重新提交/重试时，允许重建 video.generate 任务。"""
+def _is_retryable_generate_terminal_failure(result_text: str) -> bool:
+    """终态失败但上游明确提示重新提交/重试时，允许重建 image/video.generate 任务。"""
     if not result_text or not result_text.strip():
         return False
     if _is_sutui_task_upstream_504_failure(result_text):
@@ -1090,10 +1090,10 @@ async def _poll_task_until_terminal_then_retry_video_on_504(
     与 image/video 生成一致：先按间隔轮询 task.get_result 至终态。
     若启用 enable_504_video_retry 且终态为可恢复失败（504/请重新提交/请重新发起请求），
     则用 video_resubmit_args 或 ContextVar 中最近一次 video.generate 参数重新提交，
-    最多 _UPSTREAM_504_VIDEO_RESUBMIT_MAX 次。
+        最多 _UPSTREAM_504_GENERATE_RESUBMIT_MAX 次。
     """
     res = initial_res
-    retries_left = _UPSTREAM_504_VIDEO_RESUBMIT_MAX
+    retries_left = _UPSTREAM_504_GENERATE_RESUBMIT_MAX
     gr_args = dict(get_result_args_base)
 
     while True:
@@ -1144,32 +1144,35 @@ async def _poll_task_until_terminal_then_retry_video_on_504(
                     )
                     break
 
-        src = video_resubmit_args if video_resubmit_args is not None else _last_video_generate_invoke.get()
+        src = video_resubmit_args if video_resubmit_args is not None else _last_generate_invoke.get()
         uses_context_only = video_resubmit_args is None
-        model_ok = (not uses_context_only) or _task_result_looks_like_video_task(res)
+        src_cap = (src.get("capability_id") or "").strip() if isinstance(src, dict) else ""
+        model_ok = (not uses_context_only) or (src_cap == "video.generate" and _task_result_looks_like_video_task(res))
         can_retry = (
             enable_504_video_retry
             and retries_left > 0
-            and _is_retryable_video_terminal_failure(res)
+            and _is_retryable_generate_terminal_failure(res)
             and model_ok
             and isinstance(src, dict)
-            and (src.get("capability_id") or "").strip() == "video.generate"
+            and src_cap in ("image.generate", "video.generate")
         )
         if not can_retry:
             return res
 
         retries_left -= 1
+        media_cn = "图片" if src_cap == "image.generate" else "视频"
         # 终态失败时 MCP 在同一次 get_result 内会调 /capabilities/refund；稍候再提交新任务，
-        # 让退款入账后再走 video.generate 的预扣，避免短时余额与账本不一致。
+        # 让退款入账后再走 generate 的预扣，避免短时余额与账本不一致。
         await asyncio.sleep(2.0)
         logger.warning(
-            "[%s] 上游返回可恢复失败，已等待 2s 后自动重新提交 video.generate（本轮后剩余重试 %d 次）",
+            "[%s] 上游返回可恢复失败，已等待 2s 后自动重新提交 %s（本轮后剩余重试 %d 次）",
             log_label,
+            src_cap,
             retries_left,
         )
         if progress_cb:
             try:
-                await progress_cb({"type": "status", "message": "视频生成上游返回可恢复失败，正在自动重新提交…"})
+                await progress_cb({"type": "status", "message": f"{media_cn}生成上游返回可恢复失败，正在自动重新提交…"})
             except Exception:
                 pass
 
@@ -1183,16 +1186,16 @@ async def _poll_task_until_terminal_then_retry_video_on_504(
             submit_args,
             token,
             sutui_token,
-            progress_cb,
+            None,
             db,
             user_id,
         )
         new_tid = _extract_task_id_from_result(res)
         if not new_tid:
             return res
-        gr_args = {"capability_id": "task.get_result", "payload": {"task_id": new_tid}}
+        gr_args = {"capability_id": "task.get_result", "payload": {"task_id": new_tid, "capability_id": src_cap}}
         if not _is_task_result_in_progress(res):
-            if _is_retryable_video_terminal_failure(res) and retries_left > 0:
+            if _is_retryable_generate_terminal_failure(res) and retries_left > 0:
                 continue
             return res
 
@@ -1296,6 +1299,7 @@ async def _chat_openai(
                         get_result_args = {"capability_id": "task.get_result", "payload": {"task_id": task_id}}
                         poll_interval = 15
                         max_wait_sec = _POLL_MAX_WAIT_IMAGE
+                        image_args = copy.deepcopy(a)
                         res = await _poll_task_until_terminal_then_retry_video_on_504(
                             initial_res=res,
                             get_result_args_base=get_result_args,
@@ -1307,8 +1311,8 @@ async def _chat_openai(
                             tool_fn_name=fn.get("name", "invoke_capability"),
                             poll_interval=poll_interval,
                             max_wait_sec=max_wait_sec,
-                            enable_504_video_retry=False,
-                            video_resubmit_args=None,
+                            enable_504_video_retry=True,
+                            video_resubmit_args=image_args,
                             log_label="素材] image.generate",
                         )
                         if progress_cb:
@@ -1469,6 +1473,7 @@ async def _chat_openai(
                         get_result_args = {"capability_id": "task.get_result", "payload": {"task_id": task_id}}
                         poll_interval = 15
                         max_wait_sec = _POLL_MAX_WAIT_IMAGE
+                        image_args = copy.deepcopy(tc_info["arguments"])
                         res = await _poll_task_until_terminal_then_retry_video_on_504(
                             initial_res=res,
                             get_result_args_base=get_result_args,
@@ -1480,8 +1485,8 @@ async def _chat_openai(
                             tool_fn_name=tc_info["name"],
                             poll_interval=poll_interval,
                             max_wait_sec=max_wait_sec,
-                            enable_504_video_retry=False,
-                            video_resubmit_args=None,
+                            enable_504_video_retry=True,
+                            video_resubmit_args=image_args,
                             log_label="素材] image.generate(text_calls)",
                         )
                         if progress_cb:
@@ -1672,6 +1677,7 @@ async def _chat_openai(
                                 get_result_args = {"capability_id": "task.get_result", "payload": {"task_id": task_id}}
                                 poll_interval = 15
                                 max_wait_sec = _POLL_MAX_WAIT_IMAGE
+                                image_args = copy.deepcopy(a)
                                 logger.info("[素材] image.generate 自动轮询开始(forced) task_id=%s", task_id)
                                 res = await _poll_task_until_terminal_then_retry_video_on_504(
                                     initial_res=res,
@@ -1684,8 +1690,8 @@ async def _chat_openai(
                                     tool_fn_name="invoke_capability",
                                     poll_interval=poll_interval,
                                     max_wait_sec=max_wait_sec,
-                                    enable_504_video_retry=False,
-                                    video_resubmit_args=None,
+                                    enable_504_video_retry=True,
+                                    video_resubmit_args=image_args,
                                     log_label="素材] image.generate(forced)",
                                 )
                                 if progress_cb:
