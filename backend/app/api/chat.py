@@ -2125,8 +2125,33 @@ def _get_attachment_public_urls(
     return out
 
 
+def _coerce_json_payload_object(args: Dict[str, Any]) -> None:
+    """Some LLMs return invoke_capability.payload as a JSON string; normalize it before orchestration."""
+    if not isinstance(args, dict):
+        return
+    top_cap = (args.get("capability_id") or "").strip()
+    raw_payload = args.get("payload")
+    if not isinstance(raw_payload, str):
+        return
+    raw_payload = raw_payload.strip()
+    if not raw_payload or (top_cap and top_cap != "video.generate"):
+        return
+    try:
+        parsed = json.loads(raw_payload)
+    except Exception:
+        logger.warning("[CHAT] invoke_capability payload is a string but not JSON; cap=%s", top_cap or "-")
+        return
+    if not isinstance(parsed, dict):
+        return
+    args["payload"] = parsed
+    if not top_cap and parsed.get("capability_id"):
+        args["capability_id"] = str(parsed.get("capability_id") or "").strip()
+    logger.info("[CHAT] normalized JSON-string invoke payload into object; cap=%s", (args.get("capability_id") or "-"))
+
+
 def _inject_video_media_urls(args: Dict[str, Any], attachment_urls: List[str]) -> None:
     """video.generate 时：注入图片 URL（filePaths/media_files/image_url）并确保 prompt 含「图生视频」文案，与 lobster 单机版一致。"""
+    _coerce_json_payload_object(args)
     if not args or (args.get("capability_id") or "").strip() != "video.generate":
         return
     inner = args.get("payload")

@@ -474,7 +474,9 @@ async def call_comfly_video_generate(
     image_url = payload.get("image_url") or ""
     file_paths = payload.get("filePaths") or []
     media_files = payload.get("media_files") or []
-    first_image = _first_media_ref(image_url, file_paths, media_files)
+    images = payload.get("images") or []
+    image_files = payload.get("image_files") or []
+    first_image = _first_media_ref(image_url, file_paths, media_files, images, image_files)
     request_mode = "json"
     multipart_files: Optional[Dict[str, Any]] = None
 

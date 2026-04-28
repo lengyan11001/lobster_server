@@ -11,6 +11,32 @@ import sys
 from pathlib import Path
 
 
+DEFAULT_CLIENT_CODE_OTA_PATHS = [
+    "CLIENT_CODE_VERSION.json",
+    "backend",
+    "mcp",
+    "static",
+    "scripts",
+    "publisher",
+    "skills",
+    "skill_registry.json",
+    "upstream_urls.json",
+    "openclaw",
+    "requirements.txt",
+    ".env.example",
+    "install.bat",
+    "start.bat",
+    "run_backend.bat",
+    "run_mcp.bat",
+    "nodejs/package.json",
+    "nodejs/package-lock.json",
+    "nodejs/ensure-npm-cli.mjs",
+    "nodejs/run-npm.mjs",
+    "nodejs/.gitignore",
+    "nodejs/node_modules/@tencent-weixin/openclaw-weixin",
+]
+
+
 def load_deploy() -> dict[str, str]:
     root = Path(__file__).resolve().parents[1]
     d: dict[str, str] = {}
@@ -69,7 +95,8 @@ def main() -> int:
         "build": args.build,
         "bundle_url": bundle_url,
         "sha256": sha,
-        "note": f"OTA {bundle_name}; paths 省略用客户端 DEFAULT_PATHS",
+        "paths": DEFAULT_CLIENT_CODE_OTA_PATHS,
+        "note": f"OTA {bundle_name}; .env excluded",
     }
     remote_base = f"{remote_root}/client_static/client_code"
     remote_bundles = f"{remote_base}/bundles"
