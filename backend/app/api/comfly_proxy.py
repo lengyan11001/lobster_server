@@ -22,7 +22,7 @@ import logging
 import sys
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -210,6 +210,23 @@ async def _comfly_request(
         return {"_raw_text": r.text}
 
 
+async def _comfly_multipart_request(
+    url: str,
+    data: Dict[str, str],
+    files: List[Tuple[str, Tuple[str, bytes, str]]],
+    headers: Dict[str, str],
+    timeout: float,
+) -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(url, headers=headers, data=data, files=files)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Comfly HTTP {r.status_code}: {(r.text or '')[:500]}")
+    try:
+        return r.json() if r.content else {}
+    except Exception:
+        return {"_raw_text": r.text}
+
+
 def _comfly_url(path: str, model: str = "") -> str:
     base, _ = get_comfly_config(_model_token_group(model))
     if not base:
@@ -218,10 +235,36 @@ def _comfly_url(path: str, model: str = "") -> str:
 
 
 def _comfly_headers(model: str = "") -> Dict[str, str]:
+    headers = _comfly_auth_headers(model)
+    headers["Content-Type"] = "application/json"
+    return headers
+
+
+def _comfly_auth_headers(model: str = "") -> Dict[str, str]:
     _, key = get_comfly_config(_model_token_group(model))
     if not key:
         raise HTTPException(503, "服务端未配置 Comfly Key：缺少环境变量 COMFLY_API_KEY")
-    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    return {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+
+
+def _require_model_entry(model: str) -> Dict[str, Any]:
+    entry = lookup_comfly_model(model)
+    if not entry:
+        raise HTTPException(400, f"模型 {model} 未在 comfly_pricing.json 注册，无法计费")
+    return entry
+
+
+def _upstream_model(model: str, entry: Dict[str, Any]) -> str:
+    return str(entry.get("comfly_model") or model).strip() or model
+
+
+def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+    upstream = _upstream_model(model, entry)
+    if upstream == model:
+        return body
+    forwarded = dict(body)
+    forwarded["model"] = upstream
+    return forwarded
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +285,8 @@ async def proxy_chat_completions(
     model = (body.get("model") or "").strip()
     if not model:
         raise HTTPException(400, "缺少 model")
-    if not lookup_comfly_model(model):
-        raise HTTPException(400, f"模型 {model} 未在 comfly_pricing.json 注册，无法计费")
+    entry = _require_model_entry(model)
+    upstream_body = _body_for_upstream_model(body, model, entry)
 
     # 预扣（按典型 token 估算）
     estimated = estimate_comfly_credits(model, {}, for_user=True) or 1
@@ -253,7 +296,7 @@ async def proxy_chat_completions(
 
     try:
         resp = await _comfly_request("POST", _comfly_url("/v1/chat/completions", model),
-                                     body, _comfly_headers(model), _TIMEOUT_CHAT)
+                                     upstream_body, _comfly_headers(model), _TIMEOUT_CHAT)
     except Exception as e:
         _do_full_refund(db, current_user, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="chat", error=str(e))
@@ -282,8 +325,8 @@ async def proxy_images_generations(
     model = (body.get("model") or "").strip()
     if not model:
         raise HTTPException(400, "缺少 model")
-    if not lookup_comfly_model(model):
-        raise HTTPException(400, f"模型 {model} 未在 comfly_pricing.json 注册，无法计费")
+    entry = _require_model_entry(model)
+    upstream_body = _body_for_upstream_model(body, model, entry)
 
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     pre = _do_pre_deduct(db, current_user, estimated,
@@ -292,7 +335,7 @@ async def proxy_images_generations(
 
     try:
         resp = await _comfly_request("POST", _comfly_url("/v1/images/generations", model),
-                                     body, _comfly_headers(model), _TIMEOUT_IMAGE)
+                                     upstream_body, _comfly_headers(model), _TIMEOUT_IMAGE)
     except Exception as e:
         _do_full_refund(db, current_user, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image", error=str(e))
@@ -301,6 +344,66 @@ async def proxy_images_generations(
 
     # per_call 估算 == 实际，无需 settle
     _audit("image_ok", user_id=current_user.id, model=model, pre=credits_json_float(pre))
+    return JSONResponse(resp)
+
+
+@router.post("/api/comfly-proxy/v1/images/edits", summary="Comfly image edits 透明 proxy（multipart，按 per_call 计费）")
+async def proxy_images_edits(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _check_request_authorized_for_billing(request)
+    form = await request.form()
+    model = str(form.get("model") or "").strip()
+    if not model:
+        raise HTTPException(400, "缺少 model")
+    entry = _require_model_entry(model)
+
+    data: Dict[str, str] = {}
+    files: List[Tuple[str, Tuple[str, bytes, str]]] = []
+    for key, value in form.multi_items():
+        if hasattr(value, "filename"):
+            raw = await value.read()
+            if not raw:
+                continue
+            files.append(
+                (
+                    key,
+                    (
+                        value.filename or "image.png",
+                        raw,
+                        (getattr(value, "content_type", None) or "application/octet-stream"),
+                    ),
+                )
+            )
+        else:
+            data[key] = str(value)
+
+    data["model"] = _upstream_model(model, entry)
+    if not files:
+        raise HTTPException(400, "缺少 image 文件")
+
+    estimated = estimate_comfly_credits(model, data, for_user=True) or 1
+    pre = _do_pre_deduct(db, current_user, estimated,
+                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit")
+    _audit("image_edit_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
+
+    try:
+        resp = await _comfly_multipart_request(
+            _comfly_url("/v1/images/edits", model),
+            data,
+            files,
+            _comfly_auth_headers(model),
+            _TIMEOUT_IMAGE,
+        )
+    except Exception as e:
+        _do_full_refund(db, current_user, pre=pre,
+                        capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit", error=str(e))
+        _audit("image_edit_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        raise HTTPException(502, f"Comfly image edits 调用失败：{e}")
+
+    _audit("image_edit_ok", user_id=current_user.id, model=model, pre=credits_json_float(pre))
     return JSONResponse(resp)
 
 
@@ -315,8 +418,8 @@ async def proxy_videos_generations_submit(
     model = (body.get("model") or "").strip()
     if not model:
         raise HTTPException(400, "缺少 model")
-    if not lookup_comfly_model(model):
-        raise HTTPException(400, f"模型 {model} 未在 comfly_pricing.json 注册，无法计费")
+    entry = _require_model_entry(model)
+    upstream_body = _body_for_upstream_model(body, model, entry)
 
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     pre = _do_pre_deduct(db, current_user, estimated,
@@ -325,7 +428,7 @@ async def proxy_videos_generations_submit(
 
     try:
         resp = await _comfly_request("POST", _comfly_url("/v2/videos/generations", model),
-                                     body, _comfly_headers(model), _TIMEOUT_VIDEO_SUBMIT)
+                                     upstream_body, _comfly_headers(model), _TIMEOUT_VIDEO_SUBMIT)
     except Exception as e:
         _do_full_refund(db, current_user, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="video_submit", error=str(e))
@@ -353,4 +456,64 @@ async def proxy_videos_generations_poll(
                                      None, _comfly_headers(), _TIMEOUT_VIDEO_POLL)
     except Exception as e:
         raise HTTPException(502, f"Comfly videos poll 调用失败：{e}")
+    return JSONResponse(resp)
+
+
+@router.post("/api/comfly-proxy/seedance/v3/contents/generations/tasks", summary="Comfly Seedance 视频提交 proxy（按 per_call 预扣）")
+async def proxy_seedance_tasks_submit(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _check_request_authorized_for_billing(request)
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(400, "缺少 model")
+    entry = _require_model_entry(model)
+    upstream_body = _body_for_upstream_model(body, model, entry)
+
+    estimated = estimate_comfly_credits(model, body, for_user=True) or 1
+    pre = _do_pre_deduct(db, current_user, estimated,
+                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="seedance_submit")
+    _audit("seedance_submit_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
+
+    try:
+        resp = await _comfly_request(
+            "POST",
+            _comfly_url("/seedance/v3/contents/generations/tasks", model),
+            upstream_body,
+            _comfly_headers(model),
+            _TIMEOUT_VIDEO_SUBMIT,
+        )
+    except Exception as e:
+        _do_full_refund(db, current_user, pre=pre,
+                        capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="seedance_submit", error=str(e))
+        _audit("seedance_submit_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        raise HTTPException(502, f"Comfly Seedance submit 调用失败：{e}")
+
+    data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
+    _audit("seedance_submit_ok", user_id=current_user.id, model=model,
+           task_id=resp.get("id") or resp.get("task_id") or data.get("task_id") or data.get("id"),
+           pre=credits_json_float(pre))
+    return JSONResponse(resp)
+
+
+@router.get("/api/comfly-proxy/seedance/v3/contents/generations/tasks/{task_id}", summary="Comfly Seedance 任务轮询 proxy（不计费）")
+async def proxy_seedance_tasks_poll(
+    task_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    _check_request_authorized_for_billing(request)
+    try:
+        resp = await _comfly_request(
+            "GET",
+            _comfly_url(f"/seedance/v3/contents/generations/tasks/{task_id}"),
+            None,
+            _comfly_headers(),
+            _TIMEOUT_VIDEO_POLL,
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Comfly Seedance poll 调用失败：{e}")
     return JSONResponse(resp)

@@ -9,6 +9,58 @@
       "comfly_model": "gpt-image-2",
       "sutui_equivalent": ["gpt-image2", "gpt-image-2", "gpt-image"]
     },
+    "gpt-4.1-mini": {
+      "price_type": "per_token",
+      "input_price_per_1k_tokens": 0.125,
+      "output_price_per_1k_tokens": 1.0,
+      "api_format": "chat",
+      "comfly_model": "gpt-4.1-mini",
+      "note": "For Comfly Seedance storyboard analysis; temporary price aligned with existing chat proxy estimate."
+    },
+    "doubao-seedance-2-0-260128": {
+      "price_type": "per_call",
+      "price_per_unit": 30,
+      "api_format": "seedance_legacy",
+      "comfly_model": "doubao-seedance-2-0-260128",
+      "sutui_equivalent": ["seedance-2-0-pro-250528", "seedance-2-0-260128"]
+    },
+    "doubao-seedance-2-0-fast-260128": {
+      "price_type": "per_call",
+      "price_per_unit": 20,
+      "api_format": "seedance_legacy",
+      "comfly_model": "doubao-seedance-2-0-fast-260128",
+      "sutui_equivalent": ["seedance-2-0-lite-250428", "seedance-2-0-fast-260128"]
+    },
+    "sdols-2.0": {
+      "price_type": "per_call",
+      "price_per_unit": 30,
+      "api_format": "seedance_legacy",
+      "comfly_model": "sdols-2.0"
+    },
+    "sdols-2.0-fast": {
+      "price_type": "per_call",
+      "price_per_unit": 20,
+      "api_format": "seedance_legacy",
+      "comfly_model": "sdols-2.0-fast"
+    },
+    "doubao-seedance-1-0-pro-250528": {
+      "price_type": "per_call",
+      "price_per_unit": 30,
+      "api_format": "seedance_legacy",
+      "comfly_model": "doubao-seedance-1-0-pro-250528"
+    },
+    "doubao-seedance-1-0-lite-t2v-250428": {
+      "price_type": "per_call",
+      "price_per_unit": 20,
+      "api_format": "seedance_legacy",
+      "comfly_model": "doubao-seedance-1-0-lite-t2v-250428"
+    },
+    "doubao-seedance-1-0-lite-i2v-250428": {
+      "price_type": "per_call",
+      "price_per_unit": 20,
+      "api_format": "seedance_legacy",
+      "comfly_model": "doubao-seedance-1-0-lite-i2v-250428"
+    },
     "veo3.1": {
       "price_type": "per_call",
       "price_per_unit": 30,
