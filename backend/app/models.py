@@ -270,6 +270,61 @@ class UserInstallation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class H5ChatMessage(Base):
+    """Remote H5 chat mailbox: browser submits, the user's local online client claims and replies."""
+
+    __tablename__ = "h5_chat_messages"
+    __table_args__ = (
+        Index("ix_h5_chat_user_status_created", "user_id", "status", "created_at"),
+        Index("ix_h5_chat_user_install_status", "user_id", "installation_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    claimed_by_installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    mode: Mapped[str] = mapped_column(String(32), default="direct", nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    reply_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class H5ChatEvent(Base):
+    """Append-only progress events for H5 chat SSE/polling."""
+
+    __tablename__ = "h5_chat_events"
+    __table_args__ = (Index("ix_h5_chat_events_message_id_id", "message_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    message_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class H5ChatDevicePresence(Base):
+    """Last heartbeat from a local online client that can process H5 chat messages."""
+
+    __tablename__ = "h5_chat_device_presence"
+    __table_args__ = (
+        UniqueConstraint("user_id", "installation_id", name="uq_h5_chat_device_presence"),
+        Index("ix_h5_chat_device_presence_user_seen", "user_id", "last_seen_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class InstallationSignupBonusClaim(Base):
     """在线独立认证：每个 installation_id 仅首名注册用户可获得新人积分（防同机多号刷分）。"""
 

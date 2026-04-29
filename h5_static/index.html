@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>必火 AI 远程会话</title>
+  <style>
+    :root {
+      --ink: #13213c;
+      --muted: #6d7890;
+      --line: #dfe6f2;
+      --card: rgba(255, 255, 255, .86);
+      --blue: #245cff;
+      --blue2: #5f8bff;
+      --green: #0f9f6e;
+      --orange: #f08b2d;
+      --danger: #d94646;
+      --shadow: 0 24px 70px rgba(35, 58, 109, .18);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at 20% 8%, rgba(255, 220, 185, .68), transparent 30rem),
+        radial-gradient(circle at 82% 12%, rgba(107, 150, 255, .32), transparent 31rem),
+        linear-gradient(135deg, #fff8ef 0%, #f5f8ff 50%, #eef4ff 100%);
+    }
+    .shell {
+      width: min(1080px, calc(100vw - 28px));
+      min-height: 100vh;
+      margin: 0 auto;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 18px;
+      padding: 18px 0;
+    }
+    .topbar, .panel {
+      border: 1px solid rgba(255, 255, 255, .72);
+      background: var(--card);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      border-radius: 26px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      gap: 14px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .logo {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: linear-gradient(145deg, #fff, #ffe5c7);
+      box-shadow: inset 0 0 0 1px rgba(255, 177, 87, .36);
+      font-size: 22px;
+    }
+    h1 { margin: 0; font-size: 19px; letter-spacing: .02em; }
+    .subtitle { margin-top: 3px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .userbox { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+    button, input {
+      font: inherit;
+    }
+    button {
+      border: 0;
+      cursor: pointer;
+      border-radius: 999px;
+      padding: 10px 15px;
+      color: white;
+      background: linear-gradient(135deg, var(--blue), var(--blue2));
+      box-shadow: 0 12px 30px rgba(36, 92, 255, .22);
+      transition: transform .16s ease, opacity .16s ease;
+    }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    button:not(:disabled):active { transform: scale(.98); }
+    .ghost {
+      color: var(--ink);
+      background: rgba(255, 255, 255, .72);
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+    .login {
+      width: min(420px, 100%);
+      margin: clamp(22px, 8vh, 86px) auto;
+      padding: 24px;
+    }
+    .login h2 { margin: 0 0 8px; font-size: 25px; }
+    .login p { margin: 0 0 22px; color: var(--muted); line-height: 1.7; }
+    .field { display: grid; gap: 7px; margin-bottom: 14px; }
+    .field label { font-size: 13px; color: #46516a; }
+    input {
+      width: 100%;
+      height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 0 13px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, .9);
+      outline: none;
+    }
+    input:focus { border-color: rgba(36, 92, 255, .55); box-shadow: 0 0 0 4px rgba(36, 92, 255, .08); }
+    .captcha-row { display: grid; grid-template-columns: 1fr 112px; gap: 10px; align-items: end; }
+    .captcha-img {
+      height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      object-fit: cover;
+      background: #fff;
+      cursor: pointer;
+    }
+    .chat {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      overflow: hidden;
+    }
+    .chat-head {
+      padding: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid rgba(223, 230, 242, .82);
+    }
+    .mode {
+      display: inline-flex;
+      gap: 6px;
+      padding: 5px;
+      border-radius: 999px;
+      background: rgba(238, 243, 255, .86);
+      box-shadow: inset 0 0 0 1px rgba(180, 197, 235, .58);
+    }
+    .mode button {
+      padding: 8px 13px;
+      color: #57627a;
+      background: transparent;
+      box-shadow: none;
+    }
+    .mode button.active {
+      color: white;
+      background: linear-gradient(135deg, var(--blue), var(--blue2));
+      box-shadow: 0 10px 22px rgba(36, 92, 255, .22);
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: right;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--orange);
+      box-shadow: 0 0 0 5px rgba(240, 139, 45, .12);
+    }
+    .dot.online { background: var(--green); box-shadow-color: rgba(15, 159, 110, .14); }
+    .messages {
+      min-height: 360px;
+      max-height: calc(100vh - 250px);
+      overflow: auto;
+      padding: 22px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .empty {
+      margin: auto;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.8;
+      max-width: 520px;
+    }
+    .bubble {
+      max-width: min(720px, 86%);
+      padding: 13px 15px;
+      border-radius: 18px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .bubble.user {
+      align-self: flex-end;
+      color: white;
+      border-bottom-right-radius: 6px;
+      background: linear-gradient(135deg, var(--blue), var(--blue2));
+      box-shadow: 0 14px 34px rgba(36, 92, 255, .22);
+    }
+    .bubble.bot {
+      align-self: flex-start;
+      border-bottom-left-radius: 6px;
+      background: rgba(255, 255, 255, .9);
+      border: 1px solid rgba(223, 230, 242, .82);
+    }
+    .bubble.err { color: #8d2b2b; border-color: rgba(217, 70, 70, .32); background: rgba(255, 244, 244, .9); }
+    .steps {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 12px;
+      color: #52607a;
+    }
+    .step {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(239, 244, 255, .92);
+    }
+    .composer {
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      border-top: 1px solid rgba(223, 230, 242, .82);
+    }
+    .composer input { height: 48px; border-radius: 18px; }
+    .hint { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .hidden { display: none !important; }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%);
+      max-width: min(520px, calc(100vw - 32px));
+      padding: 11px 14px;
+      border-radius: 999px;
+      color: white;
+      background: rgba(19, 33, 60, .9);
+      box-shadow: 0 18px 44px rgba(19, 33, 60, .28);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
+    @media (max-width: 720px) {
+      .shell { width: min(100vw - 16px, 720px); padding: 8px 0; gap: 10px; }
+      .topbar { border-radius: 20px; }
+      .topbar, .chat-head { align-items: flex-start; flex-direction: column; }
+      .userbox, .status { justify-content: flex-start; text-align: left; }
+      .panel { border-radius: 20px; }
+      .messages { max-height: calc(100vh - 286px); padding: 16px 12px; }
+      .bubble { max-width: 94%; }
+      .composer { grid-template-columns: 1fr; }
+      .composer button { height: 46px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">🦞</div>
+        <div>
+          <h1>必火 AI 远程会话</h1>
+          <div class="subtitle">通过云端排队，把消息交给你设备上的 online 处理</div>
+        </div>
+      </div>
+      <div class="userbox hidden" id="userbox">
+        <span id="userEmail"></span>
+        <button class="ghost" id="logoutBtn" type="button">退出</button>
+      </div>
+    </header>
+
+    <section class="panel login" id="loginPanel">
+      <h2>登录设备账号</h2>
+      <p>不开放注册。请使用你在 AI 员工设备端已经注册过的账号，登录后即可远程发消息。</p>
+      <form id="loginForm">
+        <div class="field">
+          <label for="account">账号 / 手机号</label>
+          <input id="account" name="username" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="password">密码</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+        </div>
+        <div class="captcha-row">
+          <div class="field" style="margin-bottom:0">
+            <label for="captcha">验证码</label>
+            <input id="captcha" name="captcha_answer" required />
+          </div>
+          <img class="captcha-img" id="captchaImg" alt="验证码" title="点击刷新" />
+        </div>
+        <input type="hidden" id="captchaId" name="captcha_id" />
+        <button id="loginBtn" type="submit" style="width:100%;margin-top:18px">登录</button>
+      </form>
+      <div class="hint">提示：本地 online 需要保持启动并登录同一个账号，否则消息会停留在“等待设备领取”。</div>
+    </section>
+
+    <section class="panel chat hidden" id="chatPanel">
+      <div class="chat-head">
+        <div class="mode" aria-label="会话链路">
+          <button type="button" id="directBtn" class="active">直连链路</button>
+          <button type="button" id="openclawBtn">OpenClaw</button>
+        </div>
+        <div class="status">
+          <span class="dot" id="onlineDot"></span>
+          <span id="deviceText">正在检查设备在线状态...</span>
+          <button class="ghost" id="refreshStatusBtn" type="button">刷新</button>
+        </div>
+      </div>
+      <div class="messages" id="messages">
+        <div class="empty" id="empty">
+          发一条消息试试。H5 会把消息放到云端队列，本地 online 领取后再把处理进度和结果推回来。
+        </div>
+      </div>
+      <form class="composer" id="sendForm">
+        <input id="messageInput" placeholder="输入消息，例如：帮我写一段产品短视频口播文案" autocomplete="off" />
+        <button id="sendBtn" type="submit">发送</button>
+      </form>
+    </section>
+  </main>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const state = {
+      token: localStorage.getItem("lobster_h5_token") || "",
+      mode: localStorage.getItem("lobster_h5_mode") || "direct",
+      user: null,
+      streams: new Map(),
+      pollers: new Map(),
+    };
+
+    function toast(text) {
+      const el = $("toast");
+      el.textContent = text;
+      el.classList.add("show");
+      setTimeout(() => el.classList.remove("show"), 2600);
+    }
+
+    function authHeaders() {
+      return state.token ? { Authorization: `Bearer ${state.token}` } : {};
+    }
+
+    async function api(path, options = {}) {
+      const headers = { ...(options.headers || {}), ...authHeaders() };
+      if (options.json) {
+        headers["Content-Type"] = "application/json";
+        options.body = JSON.stringify(options.json);
+      }
+      const resp = await fetch(path, { ...options, headers });
+      const text = await resp.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
+      if (!resp.ok) {
+        throw new Error(data.detail || data.message || `HTTP ${resp.status}`);
+      }
+      return data;
+    }
+
+    async function refreshCaptcha() {
+      const data = await fetch("/auth/captcha").then((r) => r.json());
+      $("captchaId").value = data.captcha_id || "";
+      $("captchaImg").src = data.image || "";
+      $("captcha").value = "";
+    }
+
+    async function loadMe() {
+      if (!state.token) return false;
+      try {
+        state.user = await api("/auth/me");
+        $("userEmail").textContent = state.user.email || "已登录";
+        $("loginPanel").classList.add("hidden");
+        $("chatPanel").classList.remove("hidden");
+        $("userbox").classList.remove("hidden");
+        setMode(state.mode);
+        await refreshDeviceStatus();
+        return true;
+      } catch (err) {
+        localStorage.removeItem("lobster_h5_token");
+        state.token = "";
+        return false;
+      }
+    }
+
+    function setMode(mode) {
+      state.mode = mode === "openclaw" ? "openclaw" : "direct";
+      localStorage.setItem("lobster_h5_mode", state.mode);
+      $("directBtn").classList.toggle("active", state.mode === "direct");
+      $("openclawBtn").classList.toggle("active", state.mode === "openclaw");
+    }
+
+    function clearEmpty() {
+      $("empty")?.classList.add("hidden");
+    }
+
+    function addBubble(role, text) {
+      clearEmpty();
+      const el = document.createElement("div");
+      el.className = `bubble ${role}`;
+      el.textContent = text || "";
+      if (role === "bot") {
+        const steps = document.createElement("div");
+        steps.className = "steps";
+        el.appendChild(steps);
+        el._steps = steps;
+      }
+      $("messages").appendChild(el);
+      $("messages").scrollTop = $("messages").scrollHeight;
+      return el;
+    }
+
+    function addStep(bubble, text) {
+      if (!bubble || !bubble._steps || !text) return;
+      const s = document.createElement("span");
+      s.className = "step";
+      s.textContent = text;
+      bubble._steps.appendChild(s);
+      $("messages").scrollTop = $("messages").scrollHeight;
+    }
+
+    function eventLabel(ev) {
+      const p = ev.payload || {};
+      if (ev.type === "queued") return "已进入云端队列";
+      if (ev.type === "claimed") return "本地设备已领取";
+      if (ev.type === "thinking") return p.text || "正在处理";
+      if (ev.type === "tool_start") return p.name ? `调用能力：${p.name}` : "调用能力";
+      if (ev.type === "tool_end") return p.name ? `能力完成：${p.name}` : "能力完成";
+      if (ev.type === "progress") return p.text || p.message || "处理中";
+      if (ev.type === "delta") return "";
+      return "";
+    }
+
+    function handleEvent(ev, bubble, messageId) {
+      if (!ev || !bubble) return;
+      const label = eventLabel(ev);
+      if (label) addStep(bubble, label);
+      if (ev.type === "delta" && ev.payload && ev.payload.text) {
+        bubble.firstChild ? null : null;
+        bubble.childNodes[0].nodeValue += ev.payload.text;
+      }
+      if (ev.type === "final") {
+        const reply = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || "处理完成。";
+        bubble.childNodes[0].nodeValue = reply;
+        closeStream(messageId);
+      }
+      if (ev.type === "error") {
+        bubble.classList.add("err");
+        bubble.childNodes[0].nodeValue = (ev.payload && (ev.payload.error || ev.payload.detail)) || "处理失败";
+        closeStream(messageId);
+      }
+    }
+
+    function closeStream(messageId) {
+      const es = state.streams.get(messageId);
+      if (es) es.close();
+      state.streams.delete(messageId);
+      const poll = state.pollers.get(messageId);
+      if (poll) clearInterval(poll);
+      state.pollers.delete(messageId);
+    }
+
+    function startPolling(messageId, bubble, lastEventId = 0) {
+      if (state.pollers.has(messageId)) return;
+      let last = lastEventId;
+      const timer = setInterval(async () => {
+        try {
+          const data = await api(`/api/h5-chat/messages/${messageId}?after_event_id=${last}`);
+          for (const ev of data.events || []) {
+            last = Math.max(last, ev.id || 0);
+            handleEvent(ev, bubble, messageId);
+          }
+          if (data.message && ["completed", "failed", "cancelled"].includes(data.message.status)) {
+            if (data.message.status === "completed" && data.message.reply_text) {
+              bubble.childNodes[0].nodeValue = data.message.reply_text;
+            }
+            if (data.message.status === "failed") {
+              bubble.classList.add("err");
+              bubble.childNodes[0].nodeValue = data.message.error || "处理失败";
+            }
+            closeStream(messageId);
+          }
+        } catch (err) {
+          bubble.classList.add("err");
+          bubble.childNodes[0].nodeValue = err.message || "查询失败";
+          closeStream(messageId);
+        }
+      }, 1400);
+      state.pollers.set(messageId, timer);
+    }
+
+    function startSse(messageId, bubble) {
+      if (!window.EventSource) {
+        startPolling(messageId, bubble, 0);
+        return;
+      }
+      let last = 0;
+      const url = `/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}`;
+      const es = new EventSource(url);
+      state.streams.set(messageId, es);
+      const types = ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error"];
+      types.forEach((type) => {
+        es.addEventListener(type, (evt) => {
+          try {
+            const ev = JSON.parse(evt.data || "{}");
+            last = Math.max(last, ev.id || 0);
+            handleEvent(ev, bubble, messageId);
+          } catch (err) {
+            console.warn("Bad SSE event", err);
+          }
+        });
+      });
+      es.onerror = () => {
+        es.close();
+        state.streams.delete(messageId);
+        startPolling(messageId, bubble, last);
+      };
+    }
+
+    async function refreshDeviceStatus() {
+      if (!state.token) return;
+      try {
+        const data = await api("/api/h5-chat/devices/status");
+        $("onlineDot").classList.toggle("online", !!data.online);
+        const online = (data.devices || []).filter((d) => d.online).length;
+        const total = (data.devices || []).length;
+        $("deviceText").textContent = data.online
+          ? `本地 online 在线：${online}/${total || online} 台`
+          : "未检测到本地 online，发送后会等待设备领取";
+      } catch (err) {
+        $("onlineDot").classList.remove("online");
+        $("deviceText").textContent = "设备状态获取失败";
+      }
+    }
+
+    $("captchaImg").addEventListener("click", refreshCaptcha);
+    $("directBtn").addEventListener("click", () => setMode("direct"));
+    $("openclawBtn").addEventListener("click", () => setMode("openclaw"));
+    $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
+    $("logoutBtn").addEventListener("click", () => {
+      localStorage.removeItem("lobster_h5_token");
+      state.token = "";
+      location.reload();
+    });
+
+    $("loginForm").addEventListener("submit", async (evt) => {
+      evt.preventDefault();
+      $("loginBtn").disabled = true;
+      try {
+        const form = new FormData(evt.currentTarget);
+        const resp = await fetch("/auth/login", { method: "POST", body: form });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.detail || "登录失败");
+        state.token = data.access_token;
+        localStorage.setItem("lobster_h5_token", state.token);
+        await loadMe();
+      } catch (err) {
+        toast(err.message || "登录失败");
+        await refreshCaptcha();
+      } finally {
+        $("loginBtn").disabled = false;
+      }
+    });
+
+    $("sendForm").addEventListener("submit", async (evt) => {
+      evt.preventDefault();
+      const input = $("messageInput");
+      const content = input.value.trim();
+      if (!content) return;
+      input.value = "";
+      $("sendBtn").disabled = true;
+      addBubble("user", content);
+      const bot = addBubble("bot", "已发送，等待本地设备处理...");
+      try {
+        const data = await api("/api/h5-chat/messages", {
+          method: "POST",
+          json: { content, mode: state.mode },
+        });
+        const msg = data.message || {};
+        addStep(bot, state.mode === "openclaw" ? "链路：OpenClaw" : "链路：直连");
+        if (msg.id) startSse(msg.id, bot);
+        await refreshDeviceStatus();
+      } catch (err) {
+        bot.classList.add("err");
+        bot.childNodes[0].nodeValue = err.message || "发送失败";
+      } finally {
+        $("sendBtn").disabled = false;
+        input.focus();
+      }
+    });
+
+    (async function init() {
+      setMode(state.mode);
+      const ok = await loadMe();
+      if (!ok) {
+        $("loginPanel").classList.remove("hidden");
+        $("chatPanel").classList.add("hidden");
+        $("userbox").classList.add("hidden");
+        await refreshCaptcha();
+      }
+      setInterval(refreshDeviceStatus, 7000);
+    })();
+  </script>
+</body>
+</html>

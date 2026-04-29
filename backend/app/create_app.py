@@ -32,6 +32,7 @@ from .api.mcp_registry import router as mcp_registry_router
 from .api.assets import router as assets_router
 # from .api.publish import router as publish_router
 from .api.logs_api import router as logs_router
+from .api.h5_chat import router as h5_chat_router
 from .api.wechat_oa import router as wechat_oa_router
 from .api.messenger import router as messenger_router
 from .api.twilio_whatsapp import router as twilio_whatsapp_router
@@ -778,6 +779,7 @@ def create_app() -> FastAPI:
     app.include_router(assets_router, prefix="")
     # app.include_router(publish_router, prefix="")
     app.include_router(logs_router, prefix="")
+    app.include_router(h5_chat_router, prefix="")
     app.include_router(wechat_oa_router, prefix="")
     app.include_router(messenger_router, prefix="")
     app.include_router(twilio_whatsapp_router, prefix="")
