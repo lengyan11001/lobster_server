@@ -203,6 +203,13 @@
       border: 1px solid rgba(223, 230, 242, .82);
     }
     .bubble.err { color: #8d2b2b; border-color: rgba(217, 70, 70, .32); background: rgba(255, 244, 244, .9); }
+    .bubble a {
+      color: var(--blue);
+      font-weight: 700;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+    .bubble.user a { color: #fff; }
     .steps {
       margin-top: 8px;
       display: flex;
@@ -395,11 +402,81 @@
       $("empty")?.classList.add("hidden");
     }
 
+    function escapeHtml(text) {
+      return String(text || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function normalizeMarkdownLinks(text) {
+      return String(text || "")
+        .replace(/`(https?:\/\/[^`\s]+)`/g, "$1")
+        .replace(/\[([^\]\n]{1,120})\]\s*\n\s*\((https?:\/\/[^\s)]+)\)/g, "[$1]($2)");
+    }
+
+    function linkAnchor(url, label) {
+      if (!/^https?:\/\//i.test(url || "")) return escapeHtml(label || url || "");
+      return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label || url)}</a>`;
+    }
+
+    function linkifyText(text) {
+      let value = normalizeMarkdownLinks(text);
+      const links = [];
+      function stash(anchor) {
+        const token = `LOBSTERH5LINK${links.length}TOKEN`;
+        links.push({ token, anchor });
+        return token;
+      }
+      value = value.replace(/\[([^\]\n]{1,120})\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => stash(linkAnchor(url, label)));
+      value = value.replace(/https?:\/\/[^\s<>"'`]+/g, (raw) => {
+        let url = raw;
+        let suffix = "";
+        while (/[)\].,!?，。！？、；：]$/.test(url)) {
+          suffix = url.slice(-1) + suffix;
+          url = url.slice(0, -1);
+        }
+        return stash(linkAnchor(url, url)) + suffix;
+      });
+      let html = escapeHtml(value);
+      for (const item of links) {
+        html = html.replaceAll(item.token, item.anchor);
+      }
+      return html;
+    }
+
+    function ensureBubbleTextElement(bubble) {
+      if (!bubble) return null;
+      if (bubble._textEl && bubble._textEl.isConnected) return bubble._textEl;
+      const textEl = document.createElement("span");
+      textEl.className = "bubble-text";
+      if (bubble.firstChild && bubble.firstChild.nodeType === Node.TEXT_NODE) {
+        bubble._rawText = bubble.firstChild.nodeValue || bubble._rawText || "";
+        bubble.removeChild(bubble.firstChild);
+      }
+      bubble.insertBefore(textEl, bubble.firstChild || null);
+      bubble._textEl = textEl;
+      return textEl;
+    }
+
+    function renderBubbleText(bubble) {
+      const textEl = ensureBubbleTextElement(bubble);
+      if (!textEl) return;
+      textEl.innerHTML = linkifyText(bubble._rawText || "");
+    }
+
     function addBubble(role, text) {
       clearEmpty();
       const el = document.createElement("div");
       el.className = `bubble ${role}`;
-      el.textContent = text || "";
+      el._rawText = text || "";
+      const textEl = document.createElement("span");
+      textEl.className = "bubble-text";
+      el._textEl = textEl;
+      el.appendChild(textEl);
+      renderBubbleText(el);
       if (role === "bot") {
         const steps = document.createElement("div");
         steps.className = "steps";
@@ -422,22 +499,28 @@
 
     function bubbleTextNode(bubble) {
       if (!bubble) return null;
-      if (!bubble.firstChild || bubble.firstChild.nodeType !== Node.TEXT_NODE) {
-        bubble.insertBefore(document.createTextNode(""), bubble.firstChild || null);
-      }
-      return bubble.firstChild;
+      ensureBubbleTextElement(bubble);
+      return {
+        get nodeValue() { return bubble._rawText || ""; },
+        set nodeValue(value) {
+          bubble._rawText = value || "";
+          renderBubbleText(bubble);
+        }
+      };
     }
 
     function setBubbleText(bubble, text) {
-      const node = bubbleTextNode(bubble);
-      if (node) node.nodeValue = text || "";
+      if (!bubble) return;
+      bubble._rawText = text || "";
+      renderBubbleText(bubble);
       $("messages").scrollTop = $("messages").scrollHeight;
     }
 
     function appendBubbleText(bubble, text) {
       if (!text) return;
-      const node = bubbleTextNode(bubble);
-      if (node) node.nodeValue += text;
+      if (!bubble) return;
+      bubble._rawText = (bubble._rawText || "") + text;
+      renderBubbleText(bubble);
       $("messages").scrollTop = $("messages").scrollHeight;
     }
 
