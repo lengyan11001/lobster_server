@@ -374,6 +374,7 @@
         $("chatPanel").classList.remove("hidden");
         $("userbox").classList.remove("hidden");
         setMode(state.mode);
+        await loadHistory();
         await refreshDeviceStatus();
         return true;
       } catch (err) {
@@ -419,6 +420,27 @@
       $("messages").scrollTop = $("messages").scrollHeight;
     }
 
+    function bubbleTextNode(bubble) {
+      if (!bubble) return null;
+      if (!bubble.firstChild || bubble.firstChild.nodeType !== Node.TEXT_NODE) {
+        bubble.insertBefore(document.createTextNode(""), bubble.firstChild || null);
+      }
+      return bubble.firstChild;
+    }
+
+    function setBubbleText(bubble, text) {
+      const node = bubbleTextNode(bubble);
+      if (node) node.nodeValue = text || "";
+      $("messages").scrollTop = $("messages").scrollHeight;
+    }
+
+    function appendBubbleText(bubble, text) {
+      if (!text) return;
+      const node = bubbleTextNode(bubble);
+      if (node) node.nodeValue += text;
+      $("messages").scrollTop = $("messages").scrollHeight;
+    }
+
     function eventLabel(ev) {
       const p = ev.payload || {};
       if (ev.type === "queued") return "已进入云端队列";
@@ -436,17 +458,16 @@
       const label = eventLabel(ev);
       if (label) addStep(bubble, label);
       if (ev.type === "delta" && ev.payload && ev.payload.text) {
-        bubble.firstChild ? null : null;
-        bubble.childNodes[0].nodeValue += ev.payload.text;
+        appendBubbleText(bubble, ev.payload.text);
       }
       if (ev.type === "final") {
         const reply = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || "处理完成。";
-        bubble.childNodes[0].nodeValue = reply;
+        setBubbleText(bubble, reply);
         closeStream(messageId);
       }
       if (ev.type === "error") {
         bubble.classList.add("err");
-        bubble.childNodes[0].nodeValue = (ev.payload && (ev.payload.error || ev.payload.detail)) || "处理失败";
+        setBubbleText(bubble, (ev.payload && (ev.payload.error || ev.payload.detail)) || "处理失败");
         closeStream(messageId);
       }
     }
@@ -472,17 +493,17 @@
           }
           if (data.message && ["completed", "failed", "cancelled"].includes(data.message.status)) {
             if (data.message.status === "completed" && data.message.reply_text) {
-              bubble.childNodes[0].nodeValue = data.message.reply_text;
+              setBubbleText(bubble, data.message.reply_text);
             }
             if (data.message.status === "failed") {
               bubble.classList.add("err");
-              bubble.childNodes[0].nodeValue = data.message.error || "处理失败";
+              setBubbleText(bubble, data.message.error || "处理失败");
             }
             closeStream(messageId);
           }
         } catch (err) {
           bubble.classList.add("err");
-          bubble.childNodes[0].nodeValue = err.message || "查询失败";
+          setBubbleText(bubble, err.message || "查询失败");
           closeStream(messageId);
         }
       }, 1400);
@@ -515,6 +536,54 @@
         state.streams.delete(messageId);
         startPolling(messageId, bubble, last);
       };
+    }
+
+    function clearRenderedMessages() {
+      $("messages").querySelectorAll(".bubble").forEach((el) => el.remove());
+      const empty = $("empty");
+      if (empty) empty.classList.remove("hidden");
+    }
+
+    function renderHistoryItem(item) {
+      const msg = (item && item.message) || {};
+      if (!msg.id) return;
+      const events = Array.isArray(item.events) ? item.events : [];
+      const isFinal = ["completed", "failed", "cancelled"].includes(msg.status);
+      const hasDelta = events.some((ev) => ev && ev.type === "delta");
+      addBubble("user", msg.content || "");
+      let initialText = "已恢复，等待本地设备处理...";
+      if (msg.status === "completed") initialText = msg.reply_text || "处理完成。";
+      if (msg.status === "failed") initialText = msg.error || "处理失败";
+      if (!isFinal && hasDelta) initialText = "";
+      const bot = addBubble("bot", initialText);
+      if (msg.status === "failed") bot.classList.add("err");
+      let lastEventId = 0;
+      for (const ev of events) {
+        lastEventId = Math.max(lastEventId, ev.id || 0);
+        handleEvent(ev, bot, msg.id);
+      }
+      if (msg.status === "completed" && msg.reply_text) setBubbleText(bot, msg.reply_text);
+      if (msg.status === "failed") {
+        bot.classList.add("err");
+        setBubbleText(bot, msg.error || "处理失败");
+      }
+      if (!isFinal) {
+        if (!bubbleTextNode(bot)?.nodeValue) setBubbleText(bot, "已恢复，等待本地设备处理...");
+        startSse(msg.id, bot);
+      }
+    }
+
+    async function loadHistory() {
+      if (!state.token) return;
+      try {
+        const data = await api("/api/h5-chat/messages?limit=40");
+        const items = Array.isArray(data.messages) ? data.messages : [];
+        if (!items.length) return;
+        clearRenderedMessages();
+        for (const item of items) renderHistoryItem(item);
+      } catch (err) {
+        console.warn("Load H5 history failed", err);
+      }
     }
 
     async function refreshDeviceStatus() {

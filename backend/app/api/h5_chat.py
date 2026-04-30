@@ -189,6 +189,43 @@ def create_h5_message(
     return {"ok": True, "message": _serialize_message(row), "events": []}
 
 
+@router.get("/api/h5-chat/messages", summary="H5 list recent remote chat messages")
+def list_h5_messages(
+    limit: int = Query(40, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.user_id == current_user.id)
+        .order_by(H5ChatMessage.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    rows = list(reversed(rows))
+    message_ids = [row.id for row in rows]
+    events_by_message: Dict[str, List[Dict[str, Any]]] = {message_id: [] for message_id in message_ids}
+    if message_ids:
+        events = (
+            db.query(H5ChatEvent)
+            .filter(H5ChatEvent.user_id == current_user.id, H5ChatEvent.message_id.in_(message_ids))
+            .order_by(H5ChatEvent.id.asc())
+            .all()
+        )
+        for event in events:
+            events_by_message.setdefault(event.message_id, []).append(_serialize_event(event))
+    return {
+        "ok": True,
+        "messages": [
+            {
+                "message": _serialize_message(row),
+                "events": events_by_message.get(row.id, []),
+            }
+            for row in rows
+        ],
+    }
+
+
 @router.get("/api/h5-chat/messages/{message_id}", summary="H5 查询消息状态")
 def get_h5_message(
     message_id: str,
