@@ -54,6 +54,7 @@ _PROXY_AUDIT_LOGGER = logging.getLogger("comfly_proxy_audit")
 # Comfly 上游超时（与 pipeline 默认 poll 间隔对齐，video submit 通常很快返回 task_id）
 _TIMEOUT_CHAT = 120.0
 _TIMEOUT_IMAGE = 180.0
+_TIMEOUT_FILE_UPLOAD = 120.0
 _TIMEOUT_VIDEO_SUBMIT = 60.0
 _TIMEOUT_VIDEO_POLL = 30.0
 
@@ -272,6 +273,51 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
 # ---------------------------------------------------------------------------
 
 _CAPABILITY_FOR_BILLING = "comfly.daihuo.pipeline"
+
+
+@router.post("/api/comfly-proxy/v1/files", summary="Comfly files upload transparent proxy")
+async def proxy_files_upload(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    _check_request_authorized_for_billing(request)
+    form = await request.form()
+    data: Dict[str, str] = {}
+    files: List[Tuple[str, Tuple[str, bytes, str]]] = []
+    for key, value in form.multi_items():
+        if hasattr(value, "filename"):
+            raw = await value.read()
+            if not raw:
+                continue
+            files.append(
+                (
+                    key,
+                    (
+                        value.filename or "file",
+                        raw,
+                        (getattr(value, "content_type", None) or "application/octet-stream"),
+                    ),
+                )
+            )
+        else:
+            data[key] = str(value)
+    if not files:
+        raise HTTPException(400, "缺少 file 文件")
+
+    try:
+        resp = await _comfly_multipart_request(
+            _comfly_url("/v1/files"),
+            data,
+            files,
+            _comfly_auth_headers(),
+            _TIMEOUT_FILE_UPLOAD,
+        )
+    except Exception as e:
+        _audit("file_upload_failed", user_id=current_user.id, error=str(e)[:300])
+        raise HTTPException(502, f"Comfly files 上传失败：{e}")
+
+    _audit("file_upload_ok", user_id=current_user.id, file_count=len(files))
+    return JSONResponse(resp)
 
 
 @router.post("/api/comfly-proxy/v1/chat/completions", summary="Comfly chat 透明 proxy（按 token usage 计费）")
