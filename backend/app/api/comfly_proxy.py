@@ -53,7 +53,7 @@ _PROXY_AUDIT_LOGGER = logging.getLogger("comfly_proxy_audit")
 
 # Comfly 上游超时（与 pipeline 默认 poll 间隔对齐，video submit 通常很快返回 task_id）
 _TIMEOUT_CHAT = 120.0
-_TIMEOUT_IMAGE = 180.0
+_TIMEOUT_IMAGE = 300.0
 _TIMEOUT_FILE_UPLOAD = 120.0
 _TIMEOUT_VIDEO_SUBMIT = 60.0
 _TIMEOUT_VIDEO_POLL = 30.0
