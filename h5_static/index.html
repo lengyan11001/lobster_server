@@ -50,7 +50,11 @@
       justify-content: space-between;
       padding: 14px 16px;
       gap: 14px;
+      position: relative;
+      z-index: 40;
+      overflow: visible;
     }
+    .panel { position: relative; z-index: 1; }
     .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
     .logo {
       width: 42px;
@@ -76,7 +80,7 @@
       position: absolute;
       top: calc(100% + 8px);
       right: 0;
-      z-index: 20;
+      z-index: 80;
       width: 174px;
       padding: 8px;
       border: 1px solid rgba(223, 230, 242, .95);
