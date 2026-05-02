@@ -64,7 +64,47 @@
     }
     h1 { margin: 0; font-size: 19px; letter-spacing: .02em; }
     .subtitle { margin-top: 3px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .userbox { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+    .userbox { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; position: relative; }
+    .top-menu { position: relative; }
+    .menu-toggle {
+      padding: 8px 13px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, .72);
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+    .menu-panel {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      z-index: 20;
+      width: 174px;
+      padding: 8px;
+      border: 1px solid rgba(223, 230, 242, .95);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .96);
+      box-shadow: 0 18px 44px rgba(35, 58, 109, .18);
+    }
+    .menu-section-title {
+      padding: 4px 8px 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .menu-option {
+      width: 100%;
+      margin: 0;
+      padding: 9px 10px;
+      color: var(--ink);
+      text-align: left;
+      background: transparent;
+      box-shadow: none;
+      border-radius: 12px;
+    }
+    .menu-option.active {
+      color: white;
+      background: linear-gradient(135deg, var(--blue), var(--blue2));
+      box-shadow: 0 10px 22px rgba(36, 92, 255, .18);
+    }
+    .menu-option.danger { color: var(--danger); }
     button, input {
       font: inherit;
     }
@@ -121,31 +161,12 @@
       overflow: hidden;
     }
     .chat-head {
-      padding: 18px;
+      padding: 12px 18px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: flex-end;
       gap: 12px;
       border-bottom: 1px solid rgba(223, 230, 242, .82);
-    }
-    .mode {
-      display: inline-flex;
-      gap: 6px;
-      padding: 5px;
-      border-radius: 999px;
-      background: rgba(238, 243, 255, .86);
-      box-shadow: inset 0 0 0 1px rgba(180, 197, 235, .58);
-    }
-    .mode button {
-      padding: 8px 13px;
-      color: #57627a;
-      background: transparent;
-      box-shadow: none;
-    }
-    .mode button.active {
-      color: white;
-      background: linear-gradient(135deg, var(--blue), var(--blue2));
-      box-shadow: 0 10px 22px rgba(36, 92, 255, .22);
     }
     .status {
       display: flex;
@@ -273,19 +294,22 @@
       .userbox .ghost {
         padding: 7px 11px;
       }
+      .menu-panel {
+        width: 164px;
+        right: 0;
+      }
       .chat-head {
         padding: 10px 12px;
-        align-items: flex-start;
-        flex-direction: column;
+        align-items: center;
+        flex-direction: row;
         gap: 8px;
       }
-      .mode { padding: 4px; gap: 4px; }
-      .mode button { padding: 7px 11px; }
       .status {
-        justify-content: flex-start;
-        text-align: left;
+        justify-content: flex-end;
+        text-align: right;
         gap: 6px;
         font-size: 12px;
+        width: 100%;
       }
       .status .ghost {
         padding: 7px 11px;
@@ -310,7 +334,15 @@
       </div>
       <div class="userbox hidden" id="userbox">
         <span id="userEmail"></span>
-        <button class="ghost" id="logoutBtn" type="button">退出</button>
+        <div class="top-menu">
+          <button class="menu-toggle" id="topMenuBtn" type="button" aria-haspopup="true" aria-expanded="false">设置</button>
+          <div class="menu-panel hidden" id="topMenuPanel">
+            <div class="menu-section-title">对话模式</div>
+            <button type="button" class="menu-option" data-mode-option="direct">直连</button>
+            <button type="button" class="menu-option" data-mode-option="openclaw">OpenClaw</button>
+            <button type="button" class="menu-option danger" id="logoutBtn">退出登录</button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -341,10 +373,6 @@
 
     <section class="panel chat hidden" id="chatPanel">
       <div class="chat-head">
-        <div class="mode" aria-label="会话链路">
-          <button type="button" id="directBtn" class="active">直连</button>
-          <button type="button" id="openclawBtn">OpenClaw</button>
-        </div>
         <div class="status">
           <span class="dot" id="onlineDot"></span>
           <span id="deviceText">正在检查设备在线状态...</span>
@@ -431,8 +459,25 @@
     function setMode(mode) {
       state.mode = mode === "openclaw" ? "openclaw" : "direct";
       localStorage.setItem("lobster_h5_mode", state.mode);
-      $("directBtn").classList.toggle("active", state.mode === "direct");
-      $("openclawBtn").classList.toggle("active", state.mode === "openclaw");
+      document.querySelectorAll("[data-mode-option]").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.modeOption === state.mode);
+      });
+    }
+
+    function closeTopMenu() {
+      const panel = $("topMenuPanel");
+      const btn = $("topMenuBtn");
+      if (panel) panel.classList.add("hidden");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    }
+
+    function toggleTopMenu() {
+      const panel = $("topMenuPanel");
+      const btn = $("topMenuBtn");
+      if (!panel || !btn) return;
+      const opening = panel.classList.contains("hidden");
+      panel.classList.toggle("hidden", !opening);
+      btn.setAttribute("aria-expanded", opening ? "true" : "false");
     }
 
     function clearEmpty() {
@@ -725,8 +770,23 @@
     }
 
     $("captchaImg").addEventListener("click", refreshCaptcha);
-    $("directBtn").addEventListener("click", () => setMode("direct"));
-    $("openclawBtn").addEventListener("click", () => setMode("openclaw"));
+    $("topMenuBtn").addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      toggleTopMenu();
+    });
+    document.querySelectorAll("[data-mode-option]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setMode(btn.dataset.modeOption);
+        closeTopMenu();
+      });
+    });
+    document.addEventListener("click", (evt) => {
+      const menu = $("topMenuPanel");
+      const btn = $("topMenuBtn");
+      if (!menu || !btn) return;
+      if (menu.contains(evt.target) || btn.contains(evt.target)) return;
+      closeTopMenu();
+    });
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
     $("logoutBtn").addEventListener("click", () => {
       localStorage.removeItem("lobster_h5_token");
