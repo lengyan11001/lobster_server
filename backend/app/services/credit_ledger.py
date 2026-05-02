@@ -14,13 +14,14 @@ logger = logging.getLogger(__name__)
 
 # 仅入库、供运营对账；用户侧接口应剥掉后再返回
 _LEDGER_RECON_KEY = "_recon"
+_PUBLIC_LEDGER_META_HIDDEN_KEYS = {_LEDGER_RECON_KEY, "upstream", "sutui_pool", "sutui_token_ref"}
 
 
 def public_ledger_meta(meta: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """从流水 meta 中移除站内对账字段，避免通过 API 暴露给用户。"""
-    if not meta or _LEDGER_RECON_KEY not in meta:
+    if not meta:
         return meta
-    out = {k: v for k, v in meta.items() if k != _LEDGER_RECON_KEY}
+    out = {k: v for k, v in meta.items() if k not in _PUBLIC_LEDGER_META_HIDDEN_KEYS}
     return out or None
 
 

@@ -4,7 +4,7 @@
   "models": {
     "gpt-image-2": {
       "price_type": "per_call",
-      "price_per_unit": 4,
+      "price_per_unit": 30,
       "api_format": "dalle",
       "comfly_model": "gpt-image-2",
       "sutui_equivalent": ["gpt-image2", "gpt-image-2", "gpt-image"]
@@ -63,7 +63,7 @@
     },
     "veo3.1": {
       "price_type": "per_call",
-      "price_per_unit": 30,
+      "price_per_unit": 80,
       "api_format": "veo",
       "comfly_model": "veo3.1",
       "token_group": "premium",
@@ -71,7 +71,7 @@
     },
     "veo3.1-fast": {
       "price_type": "per_call",
-      "price_per_unit": 20,
+      "price_per_unit": 80,
       "api_format": "veo",
       "comfly_model": "veo3.1-fast",
       "token_group": "premium",

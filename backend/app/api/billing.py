@@ -50,6 +50,30 @@ def _dt_utc_naive_to_beijing_str(dt: Optional[datetime]) -> str:
     return aware.astimezone(_BJ).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _public_credit_history_description(entry_type: str, delta: Any = None) -> str:
+    """用户侧消费记录只展示业务类型，不暴露内部供应商、模型或定价细节。"""
+    et = (entry_type or "").strip().lower()
+    labels = {
+        "recharge": "充值到账",
+        "pre_deduct": "预扣",
+        "settle": "结算",
+        "refund": "退款",
+        "direct_charge": "扣费",
+        "unit_charge": "扣费",
+        "unit_deduct": "扣费",
+        "sutui_chat": "对话扣费",
+        "skill_unlock": "技能解锁",
+    }
+    if et in labels:
+        return labels[et]
+    try:
+        if delta is not None and delta > 0:
+            return "到账"
+    except TypeError:
+        pass
+    return "积分变动"
+
+
 def _get_public_base_url() -> str:
     """支付回调等用。未配置 PUBLIC_BASE_URL 时用本机 IP:PORT。"""
     return get_effective_public_base_url()
@@ -84,12 +108,13 @@ def _apply_paid_to_order(
             add_c,
             "recharge",
             bal,
-            description=f"充值到账（{channel_label}）",
+            description="充值到账",
             ref_type="recharge_order",
             ref_id=(order.out_trade_no or "")[:128],
             meta={
                 "order_id": order.id,
                 "amount_fen": paid_total_fen,
+                "channel": channel_label,
                 "channel_transaction_id": channel_transaction_id,
             },
         )
@@ -111,10 +136,10 @@ _CUSTOM_CONFIGS_FILE = _BASE_DIR / "custom_configs.json"
 # 默认收费模式（可被 custom_configs.json 中 BILLING_PRICING 覆盖）
 _DEFAULT_SKILL_UNLOCK = {"min_yuan": 98, "max_yuan": 198}
 _DEFAULT_CREDIT_PACKAGES = [
-    {"price_yuan": 98, "credits": 10000, "label": "98元 - 10000算力"},
-    {"price_yuan": 198, "credits": 20000, "label": "198元 - 20000算力"},
-    {"price_yuan": 498, "credits": 50000, "label": "498元 - 50000算力"},
-    {"price_yuan": 998, "credits": 120000, "label": "998元 - 120000算力"},
+    {"price_yuan": 100, "credits": 10000, "label": "100元 - 10000算力"},
+    {"price_yuan": 200, "credits": 20000, "label": "200元 - 20000算力"},
+    {"price_yuan": 500, "credits": 50000, "label": "500元 - 50000算力"},
+    {"price_yuan": 1000, "credits": 100000, "label": "1000元 - 100000算力"},
 ]
 
 
@@ -270,7 +295,7 @@ def get_credit_history(
             type_label = "recharge" if et == "recharge" else "increase"
         else:
             type_label = "deduct"
-        desc = (r.description or "").strip() or et or "积分变动"
+        desc = _public_credit_history_description(et, delta)
         out.append({
             "time": r.created_at.isoformat() if r.created_at else "",
             "time_beijing": _dt_utc_naive_to_beijing_str(r.created_at),
@@ -309,7 +334,7 @@ def get_credit_ledger(
                 "delta": credits_json_float_signed(ledger_display_delta(r)),
                 "balance_after": credits_json_float(r.balance_after or 0),
                 "entry_type": r.entry_type,
-                "description": r.description or "",
+                "description": _public_credit_history_description(r.entry_type or "", ledger_display_delta(r)),
                 "ref_type": r.ref_type or "",
                 "ref_id": r.ref_id or "",
                 "meta": public_ledger_meta(r.meta if isinstance(r.meta, dict) else None),
@@ -621,7 +646,7 @@ def complete_recharge(
         add_credits,
         "recharge",
         bal,
-        description="充值到账（管理员 complete）",
+        description="充值到账",
         ref_type="recharge_order",
         ref_id=(order.out_trade_no or "")[:128],
         meta={"order_id": order.id, "source": "admin_complete"},

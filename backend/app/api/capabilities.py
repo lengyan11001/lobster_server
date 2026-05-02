@@ -347,7 +347,7 @@ def pre_deduct(
             -fc,
             "pre_deduct",
             bal,
-            description="能力预扣（Comfly 固定价）",
+            description="预扣",
             ref_type="capability",
             meta={
                 **(_recon_fc or {}),
@@ -428,7 +428,7 @@ def pre_deduct(
             -est_d,
             "pre_deduct",
             bal,
-            description=f"能力预扣（按模型估价×{_multiplier:.0f}）",
+            description="预扣",
             ref_type="capability",
             meta={
                 **(_recon or {}),
@@ -525,7 +525,7 @@ def pre_deduct(
         -uc,
         "pre_deduct",
         bal,
-        description="能力预扣（按 unit_credits）",
+        description="预扣",
         ref_type="capability",
         meta={
             **(_recon_u or {}),
@@ -579,7 +579,7 @@ def refund_credits(
         refund_amt,
         "refund",
         bal,
-        description="预扣/任务失败退款",
+        description="退款",
         ref_type="capability",
         meta={
             **(_recon_rf or {}),
@@ -704,7 +704,7 @@ def record_call(
             ldelta,
             ledger_kind,
             balance_after,
-            description=f"能力调用结算 {body.capability_id}",
+            description="结算" if ledger_kind == "settle" else "扣费",
             ref_type="capability_call_log",
             ref_id=str(log.id),
             meta={
