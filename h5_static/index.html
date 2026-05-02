@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>必火 AI 远程会话</title>
+  <title>必火AI员工对话</title>
   <style>
     :root {
       --ink: #13213c;
@@ -212,7 +212,7 @@
     .bubble.user a { color: #fff; }
     .steps {
       margin-top: 8px;
-      display: flex;
+      display: none;
       flex-wrap: wrap;
       gap: 6px;
       font-size: 12px;
@@ -251,11 +251,47 @@
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
     @media (max-width: 720px) {
       .shell { width: min(100vw - 16px, 720px); padding: 8px 0; gap: 10px; }
-      .topbar { border-radius: 20px; }
-      .topbar, .chat-head { align-items: flex-start; flex-direction: column; }
-      .userbox, .status { justify-content: flex-start; text-align: left; }
+      .topbar {
+        border-radius: 18px;
+        padding: 10px 12px;
+        align-items: center;
+        flex-direction: row;
+      }
+      .logo {
+        width: 34px;
+        height: 34px;
+        border-radius: 12px;
+        font-size: 18px;
+      }
+      h1 { font-size: 18px; }
+      .subtitle { display: none; }
+      .userbox {
+        gap: 6px;
+        font-size: 12px;
+        flex: 0 0 auto;
+      }
+      .userbox .ghost {
+        padding: 7px 11px;
+      }
+      .chat-head {
+        padding: 10px 12px;
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .mode { padding: 4px; gap: 4px; }
+      .mode button { padding: 7px 11px; }
+      .status {
+        justify-content: flex-start;
+        text-align: left;
+        gap: 6px;
+        font-size: 12px;
+      }
+      .status .ghost {
+        padding: 7px 11px;
+      }
       .panel { border-radius: 20px; }
-      .messages { max-height: calc(100vh - 286px); padding: 16px 12px; }
+      .messages { max-height: calc(100vh - 226px); padding: 16px 12px; }
       .bubble { max-width: 94%; }
       .composer { grid-template-columns: 1fr; }
       .composer button { height: 46px; }
@@ -268,8 +304,8 @@
       <div class="brand">
         <div class="logo">🦞</div>
         <div>
-          <h1>必火 AI 远程会话</h1>
-          <div class="subtitle">通过云端排队，把消息交给你设备上的 online 处理</div>
+          <h1>必火AI员工对话</h1>
+          <div class="subtitle">通过云端排队，把消息交给本地 AI 员工处理</div>
         </div>
       </div>
       <div class="userbox hidden" id="userbox">
@@ -306,7 +342,7 @@
     <section class="panel chat hidden" id="chatPanel">
       <div class="chat-head">
         <div class="mode" aria-label="会话链路">
-          <button type="button" id="directBtn" class="active">直连链路</button>
+          <button type="button" id="directBtn" class="active">直连</button>
           <button type="button" id="openclawBtn">OpenClaw</button>
         </div>
         <div class="status">
@@ -337,6 +373,7 @@
       streams: new Map(),
       pollers: new Map(),
     };
+    const SHOW_INTERNAL_STEPS = false;
 
     function toast(text) {
       const el = $("toast");
@@ -489,6 +526,7 @@
     }
 
     function addStep(bubble, text) {
+      if (!SHOW_INTERNAL_STEPS) return;
       if (!bubble || !bubble._steps || !text) return;
       const s = document.createElement("span");
       s.className = "step";
@@ -526,6 +564,7 @@
 
     function eventLabel(ev) {
       const p = ev.payload || {};
+      if (!SHOW_INTERNAL_STEPS) return "";
       if (ev.type === "queued") return "已进入云端队列";
       if (ev.type === "claimed") return "本地设备已领取";
       if (ev.type === "thinking") return p.text || "正在处理";
@@ -677,7 +716,7 @@
         const online = (data.devices || []).filter((d) => d.online).length;
         const total = (data.devices || []).length;
         $("deviceText").textContent = data.online
-          ? `本地 online 在线：${online}/${total || online} 台`
+          ? `本地在线：${online}/${total || online} 台`
           : "未检测到本地 online，发送后会等待设备领取";
       } catch (err) {
         $("onlineDot").classList.remove("online");
@@ -729,7 +768,6 @@
           json: { content, mode: state.mode },
         });
         const msg = data.message || {};
-        addStep(bot, state.mode === "openclaw" ? "链路：OpenClaw" : "链路：直连");
         if (msg.id) startSse(msg.id, bot);
         await refreshDeviceStatus();
       } catch (err) {
