@@ -197,7 +197,7 @@ def admin_user_detail(
 ):
     if ctx.role == "agent":
         sub_ids = _agent_sub_user_ids(db, ctx.user_id)
-        if user_id not in sub_ids:
+        if user_id != ctx.user_id and user_id not in sub_ids:
             raise HTTPException(status_code=403, detail="无权查看此用户")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:

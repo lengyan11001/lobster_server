@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 _MAX_EXTRACTED_CHARS = 500_000
+_AGENT_MEMORY_INSTALLATION_ID = "__agent_memory__"
 _ALLOWED_TEXT_SUFFIXES = {
     ".txt",
     ".md",
@@ -298,8 +299,8 @@ def _sanitize_doc_id(raw: str) -> str:
     return s
 
 
-def _doc_id_for(user_id: int, installation_id: str, filename: str, sha256: str, created_at: str) -> str:
-    raw = f"{user_id}\0{installation_id}\0{filename}\0{sha256}\0{created_at}".encode("utf-8", "ignore")
+def _doc_id_for(user_id: int, installation_id: str, filename: str, sha256: str, created_at: str, scope: str = "") -> str:
+    raw = f"{scope}\0{user_id}\0{installation_id}\0{filename}\0{sha256}\0{created_at}".encode("utf-8", "ignore")
     return hashlib.sha256(raw).hexdigest()[:24]
 
 
@@ -308,11 +309,15 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
 
 
 def _doc_summary(row: OpenClawMemoryDocument, *, include_content: bool = False) -> dict[str, Any]:
+    meta = row.meta or {}
+    memory_layer = str(meta.get("memory_layer") or ("agent" if row.origin == "agent_memory" else "personal"))
     data: dict[str, Any] = {
         "doc_id": row.doc_id,
         "target_user_id": row.target_user_id,
         "installation_id": row.installation_id,
         "origin": row.origin,
+        "memory_layer": memory_layer,
+        "scope_owner_user_id": meta.get("scope_owner_user_id"),
         "uploader_user_id": row.uploader_user_id,
         "uploader_role": row.uploader_role,
         "title": row.title,
@@ -321,7 +326,7 @@ def _doc_summary(row: OpenClawMemoryDocument, *, include_content: bool = False) 
         "size": row.size,
         "sha256": row.sha256,
         "status": row.status,
-        "meta": row.meta or {},
+        "meta": meta,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
         "deleted_at": _iso(row.deleted_at),
@@ -363,6 +368,17 @@ def _ensure_installation_for_user(db: Session, user_id: int, installation_id: st
     )
     if not row:
         raise HTTPException(status_code=404, detail="该用户设备不存在或尚未登录过")
+
+
+def _ensure_agent_memory_allowed(ctx: AdminContext, db: Session, agent_user_id: int) -> User:
+    agent = db.query(User).filter(User.id == agent_user_id).first()
+    if not agent or not agent.is_agent:
+        raise HTTPException(status_code=404, detail="代理商不存在或未开通代理商身份")
+    if ctx.role == "agent" and ctx.user_id != agent_user_id:
+        raise HTTPException(status_code=403, detail="无权操作其他代理商的记忆")
+    if ctx.role == "agent" and not bool(getattr(agent, "agent_openclaw_memory_enabled", False)):
+        raise HTTPException(status_code=403, detail="未开通 OpenClaw 资料记忆下发权限")
+    return agent
 
 
 @router.post("/admin/api/set-agent-openclaw-memory")
@@ -502,6 +518,100 @@ async def admin_openclaw_memory_upload(
     return {"ok": True, "document": _doc_summary(row)}
 
 
+@router.get("/admin/api/openclaw-memory/agent-documents")
+def admin_openclaw_agent_memory_documents(
+    agent_user_id: int,
+    include_deleted: bool = False,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_memory_operator(ctx, db)
+    _ensure_agent_memory_allowed(ctx, db, agent_user_id)
+    q = db.query(OpenClawMemoryDocument).filter(
+        OpenClawMemoryDocument.target_user_id == agent_user_id,
+        OpenClawMemoryDocument.installation_id == _AGENT_MEMORY_INSTALLATION_ID,
+        OpenClawMemoryDocument.origin == "agent_memory",
+    )
+    if not include_deleted:
+        q = q.filter(OpenClawMemoryDocument.status == "active")
+    rows = q.order_by(OpenClawMemoryDocument.updated_at.desc()).limit(200).all()
+    return {"ok": True, "documents": [_doc_summary(r) for r in rows]}
+
+
+@router.post("/admin/api/openclaw-memory/agent-upload")
+async def admin_openclaw_agent_memory_upload(
+    agent_user_id: int = Form(...),
+    title: str = Form(""),
+    notes: str = Form(""),
+    file: UploadFile = File(...),
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_memory_operator(ctx, db)
+    agent = _ensure_agent_memory_allowed(ctx, db, agent_user_id)
+    data = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="文件超过 30MB，请拆分后上传")
+    filename = (file.filename or "document.txt").strip() or "document.txt"
+    text = _decode_text_payload(data, filename)
+    sha256 = hashlib.sha256(data).hexdigest()
+    now = datetime.utcnow()
+    doc_id = _doc_id_for(agent.id, _AGENT_MEMORY_INSTALLATION_ID, filename, sha256, now.isoformat(), "agent_memory")
+    row = OpenClawMemoryDocument(
+        doc_id=doc_id,
+        target_user_id=agent.id,
+        installation_id=_AGENT_MEMORY_INSTALLATION_ID,
+        origin="agent_memory",
+        uploader_user_id=ctx.user_id,
+        uploader_role=ctx.role,
+        title=_short_title(title, filename),
+        filename=filename,
+        notes=(notes or "").strip()[:1000],
+        content_text=text,
+        size=len(data),
+        sha256=sha256,
+        status="active",
+        meta={
+            "content_type": file.content_type or "",
+            "memory_layer": "agent",
+            "scope_owner_user_id": agent.id,
+        },
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    logger.info(
+        "[openclaw-memory-cloud] agent upload operator=%s/%s agent_user_id=%s doc_id=%s",
+        ctx.role,
+        ctx.user_id,
+        agent.id,
+        doc_id,
+    )
+    return {"ok": True, "document": _doc_summary(row)}
+
+
+@router.delete("/admin/api/openclaw-memory/agent-documents/{doc_id}")
+def admin_openclaw_agent_memory_delete(
+    doc_id: str,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _require_memory_operator(ctx, db)
+    clean = _sanitize_doc_id(doc_id)
+    row = db.query(OpenClawMemoryDocument).filter(OpenClawMemoryDocument.doc_id == clean).first()
+    if not row or row.origin != "agent_memory" or row.installation_id != _AGENT_MEMORY_INSTALLATION_ID:
+        raise HTTPException(status_code=404, detail="代理商记忆不存在")
+    _ensure_agent_memory_allowed(ctx, db, row.target_user_id)
+    row.status = "deleted"
+    row.deleted_at = datetime.utcnow()
+    row.updated_at = row.deleted_at
+    db.add(row)
+    db.commit()
+    return {"ok": True, "deleted": row.doc_id}
+
+
 @router.delete("/admin/api/openclaw-memory/documents/{doc_id}")
 def admin_openclaw_memory_delete(
     doc_id: str,
@@ -547,10 +657,36 @@ def sync_openclaw_memory_for_installation(
         .limit(500)
         .all()
     )
+    agent_rows: list[OpenClawMemoryDocument] = []
+    parent_id = int(getattr(current_user, "parent_user_id", 0) or 0)
+    if parent_id:
+        parent = (
+            db.query(User)
+            .filter(
+                User.id == parent_id,
+                User.is_agent == True,  # noqa: E712
+                User.agent_openclaw_memory_enabled == True,  # noqa: E712
+            )
+            .first()
+        )
+        if parent:
+            agent_rows = (
+                db.query(OpenClawMemoryDocument)
+                .filter(
+                    OpenClawMemoryDocument.target_user_id == parent.id,
+                    OpenClawMemoryDocument.installation_id == _AGENT_MEMORY_INSTALLATION_ID,
+                    OpenClawMemoryDocument.origin == "agent_memory",
+                )
+                .order_by(OpenClawMemoryDocument.updated_at.desc())
+                .limit(200)
+                .all()
+            )
+    docs = sorted([*rows, *agent_rows], key=lambda r: r.updated_at or r.created_at, reverse=True)
     return {
         "ok": True,
         "installation_id": iid,
-        "documents": [_doc_summary(r, include_content=True) for r in rows],
+        "agent_memory_synced": True,
+        "documents": [_doc_summary(r, include_content=True) for r in docs],
     }
 
 
