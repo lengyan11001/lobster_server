@@ -404,6 +404,7 @@ def h5_pending_messages(
     q = (
         db.query(H5ChatMessage)
         .filter(H5ChatMessage.user_id == current_user.id, H5ChatMessage.status == "pending")
+        .filter(H5ChatMessage.mode != "scheduled_task")
         .filter(or_(H5ChatMessage.installation_id.is_(None), H5ChatMessage.installation_id == xi))
         .order_by(H5ChatMessage.created_at.asc())
     )

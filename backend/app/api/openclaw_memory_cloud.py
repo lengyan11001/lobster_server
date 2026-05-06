@@ -61,6 +61,11 @@ class SetAgentOpenClawMemoryBody(BaseModel):
     enabled: bool
 
 
+class SetAgentTaskDispatchBody(BaseModel):
+    user_id: int
+    enabled: bool
+
+
 class UserMemoryMirrorBody(BaseModel):
     doc_id: str
     title: str = ""
@@ -401,6 +406,29 @@ def admin_set_agent_openclaw_memory(
         "user_id": user.id,
         "email": user.email,
         "agent_openclaw_memory_enabled": bool(user.agent_openclaw_memory_enabled),
+    }
+
+
+@router.post("/admin/api/set-agent-task-dispatch")
+def admin_set_agent_task_dispatch(
+    body: SetAgentTaskDispatchBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == body.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not user.is_agent and body.enabled:
+        raise HTTPException(status_code=400, detail="请先将该用户设为代理商")
+    user.agent_task_dispatch_enabled = bool(body.enabled)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {
+        "ok": True,
+        "user_id": user.id,
+        "email": user.email,
+        "agent_task_dispatch_enabled": bool(user.agent_task_dispatch_enabled),
     }
 
 

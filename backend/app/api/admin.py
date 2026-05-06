@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import CapabilityCallLog, CreditLedger, RechargeOrder, User, UserSkillVisibility
+from ..models import CapabilityCallLog, CreditLedger, H5ChatDevicePresence, RechargeOrder, ScheduledTask, ScheduledTaskRun, User, UserSkillVisibility
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits
 
@@ -183,6 +183,7 @@ def admin_search_user(
             "role": u.role,
             "is_agent": u.is_agent,
             "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
+            "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
             "parent_user_id": u.parent_user_id,
             "created_at": u.created_at.isoformat() if u.created_at else None,
         })
@@ -202,6 +203,16 @@ def admin_user_detail(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+    now = datetime.utcnow()
+    devices = (
+        db.query(H5ChatDevicePresence)
+        .filter(H5ChatDevicePresence.user_id == user_id)
+        .order_by(H5ChatDevicePresence.last_seen_at.desc())
+        .limit(20)
+        .all()
+    )
+    task_count = db.query(func.count(ScheduledTask.id)).filter(ScheduledTask.user_id == user_id).scalar() or 0
+    run_count = db.query(func.count(ScheduledTaskRun.id)).filter(ScheduledTaskRun.user_id == user_id).scalar() or 0
     ledger = (
         db.query(CreditLedger)
         .filter(CreditLedger.user_id == user_id)
@@ -227,10 +238,21 @@ def admin_user_detail(
             "role": user.role,
             "is_agent": user.is_agent,
             "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
+            "agent_task_dispatch_enabled": bool(getattr(user, "agent_task_dispatch_enabled", False)),
             "parent_user_id": user.parent_user_id,
             "brand_mark": user.brand_mark,
             "created_at": user.created_at.isoformat() if user.created_at else None,
         },
+        "devices": [
+            {
+                "installation_id": r.installation_id,
+                "display_name": r.display_name,
+                "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else None,
+                "online": ((now - r.last_seen_at).total_seconds() <= 20) if r.last_seen_at else False,
+            }
+            for r in devices
+        ],
+        "task_summary": {"tasks": int(task_count), "runs": int(run_count)},
         "ledger": ledger_list,
     }
 
@@ -342,6 +364,7 @@ def admin_list_users(
                 "role": u.role,
                 "is_agent": u.is_agent,
                 "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
+                "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
                 "parent_user_id": u.parent_user_id,
                 "created_at": u.created_at.isoformat() if u.created_at else None,
             }
@@ -638,6 +661,7 @@ def admin_set_agent(
     user.is_agent = body.is_agent
     if not body.is_agent:
         user.agent_openclaw_memory_enabled = False
+        user.agent_task_dispatch_enabled = False
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -649,6 +673,7 @@ def admin_set_agent(
         "email": user.email,
         "is_agent": user.is_agent,
         "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
+        "agent_task_dispatch_enabled": bool(getattr(user, "agent_task_dispatch_enabled", False)),
     }
 
 

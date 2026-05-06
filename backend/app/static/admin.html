@@ -95,6 +95,11 @@ tr:hover{background:var(--bg)}
 .tab:hover:not(.active){color:var(--text)}
 .detail-back{cursor:pointer;color:var(--primary);font-size:13px;margin-bottom:12px;display:inline-flex;align-items:center;gap:4px}
 .detail-back:hover{text-decoration:underline}
+.user-detail-tabs{display:flex;gap:4px;margin-bottom:14px;background:var(--bg);padding:4px;border-radius:8px;overflow-x:auto}
+.user-detail-tab{border:0;background:transparent;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-secondary);white-space:nowrap}
+.user-detail-tab.active{background:var(--card);color:var(--primary);box-shadow:var(--shadow)}
+.user-detail-panel{display:none}
+.user-detail-panel.active{display:block}
 /* Modal */
 .modal-mask{display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:200;align-items:center;justify-content:center;padding:20px}
 .modal-mask.show{display:flex}
@@ -234,6 +239,10 @@ tr:hover{background:var(--bg)}
     <div id="userDetailView" style="display:none">
       <div class="detail-back" onclick="hideDetail()">&larr; 返回列表</div>
       <div class="card" id="userDetailCard"></div>
+      <div class="card" id="userDevicesTaskCard" style="display:none">
+        <h3>设备与任务</h3>
+        <div id="userDevicesTaskSection"><div class="empty">请选择用户后加载</div></div>
+      </div>
       <!-- admin-only: agent toggle -->
       <div class="card" id="agentToggleCard" style="display:none">
         <h3>代理商管理</h3>
@@ -512,9 +521,105 @@ function renderUserTable(users, containerId, title) {
 
 let currentUserId = null;
 let currentUserData = null;
+function ensureUserDetailTabs() {
+  const root = document.getElementById('userDetailView');
+  if (!root || document.getElementById('userDetailTabs')) return;
+  const back = root.querySelector('.detail-back');
+  const tabs = document.createElement('div');
+  tabs.className = 'user-detail-tabs';
+  tabs.id = 'userDetailTabs';
+  const defs = [
+    ['overview', '概览'],
+    ['billing', '积分'],
+    ['skills', '技能/权限'],
+    ['devices', '设备/任务'],
+    ['memory', 'OpenClaw 记忆'],
+  ];
+  tabs.innerHTML = defs.map(function(x, idx) {
+    return '<button type="button" class="user-detail-tab' + (idx === 0 ? ' active' : '') + '" data-user-detail-tab="' + x[0] + '">' + x[1] + '</button>';
+  }).join('');
+  if (back && back.nextSibling) root.insertBefore(tabs, back.nextSibling);
+  else root.insertBefore(tabs, root.firstChild);
+
+  defs.forEach(function(x, idx) {
+    const panel = document.createElement('div');
+    panel.id = 'userDetailPanel' + x[0].charAt(0).toUpperCase() + x[0].slice(1);
+    panel.className = 'user-detail-panel' + (idx === 0 ? ' active' : '');
+    root.appendChild(panel);
+  });
+  const move = function(id, tab) {
+    const node = document.getElementById(id);
+    const panel = document.getElementById('userDetailPanel' + tab.charAt(0).toUpperCase() + tab.slice(1));
+    if (node && panel) panel.appendChild(node);
+  };
+  move('userDetailCard', 'overview');
+  move('removeSubCard', 'overview');
+  move('rechargeCard', 'billing');
+  const ledgerTable = document.getElementById('ledgerTable');
+  if (ledgerTable) {
+    const ledgerCard = ledgerTable.closest('.card');
+    const panel = document.getElementById('userDetailPanelBilling');
+    if (ledgerCard && panel) panel.appendChild(ledgerCard);
+  }
+  move('agentToggleCard', 'skills');
+  move('skillVisCard', 'skills');
+  move('userDevicesTaskCard', 'devices');
+  move('openclawMemoryAdminCard', 'memory');
+  tabs.addEventListener('click', function(e) {
+    const btn = e.target.closest('.user-detail-tab');
+    if (!btn) return;
+    const name = btn.getAttribute('data-user-detail-tab');
+    root.querySelectorAll('.user-detail-tab').forEach(function(t) { t.classList.toggle('active', t === btn); });
+    root.querySelectorAll('.user-detail-panel').forEach(function(p) {
+      p.classList.toggle('active', p.id === 'userDetailPanel' + name.charAt(0).toUpperCase() + name.slice(1));
+    });
+  });
+}
+
+function renderUserDevicesTaskSection(data) {
+  const el = document.getElementById('userDevicesTaskSection');
+  const card = document.getElementById('userDevicesTaskCard');
+  if (!el || !card) return;
+  card.style.display = '';
+  const devices = data.devices || [];
+  const summary = data.task_summary || {};
+  let html = '<div class="stats" style="margin-bottom:14px">'
+    + '<div class="stat-item"><div class="label">任务数</div><div class="value">' + (summary.tasks || 0) + '</div></div>'
+    + '<div class="stat-item"><div class="label">执行记录</div><div class="value">' + (summary.runs || 0) + '</div></div>'
+    + '<div class="stat-item"><div class="label">设备数</div><div class="value">' + devices.length + '</div></div>'
+    + '</div>';
+  if (!devices.length) {
+    html += '<div class="empty">暂无设备心跳记录</div>';
+    el.innerHTML = html;
+    return;
+  }
+  html += '<div class="table-wrap"><table><thead><tr><th>设备</th><th>名称</th><th>状态</th><th>最后在线</th></tr></thead><tbody>';
+  devices.forEach(function(d) {
+    html += '<tr><td style="font-size:12px">' + escapeHtml(d.installation_id || '-') + '</td>'
+      + '<td>' + escapeHtml(d.display_name || '-') + '</td>'
+      + '<td><span class="badge ' + (d.online ? 'badge-green' : 'badge-blue') + '">' + (d.online ? '在线' : '离线') + '</span></td>'
+      + '<td style="font-size:12px;color:var(--text-secondary)">' + (d.last_seen_at ? new Date(d.last_seen_at).toLocaleString('zh-CN') : '-') + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
+}
+
+function resetUserDetailTab() {
+  const root = document.getElementById('userDetailView');
+  if (!root) return;
+  root.querySelectorAll('.user-detail-tab').forEach(function(t) {
+    t.classList.toggle('active', t.getAttribute('data-user-detail-tab') === 'overview');
+  });
+  root.querySelectorAll('.user-detail-panel').forEach(function(p) {
+    p.classList.toggle('active', p.id === 'userDetailPanelOverview');
+  });
+}
+
 async function showUserDetail(userId) {
   currentUserId = userId;
   try {
+    ensureUserDetailTabs();
+    resetUserDetailTab();
     const data = await api('/admin/api/user/' + userId);
     currentUserData = data.user;
     document.getElementById('tabSearch').style.display = 'none';
@@ -539,6 +644,7 @@ async function showUserDetail(userId) {
       </div>
     `;
     document.getElementById('userDetailCard').innerHTML = detailHtml;
+    renderUserDevicesTaskSection(data);
 
     const viewingSelf = isViewingSelf(userId);
 
@@ -547,6 +653,7 @@ async function showUserDetail(userId) {
     if (isAdmin()) {
       agentCard.style.display = '';
       renderAgentToggle(u);
+      appendAgentTaskDispatchControl(u);
     } else {
       agentCard.style.display = 'none';
     }
@@ -645,6 +752,30 @@ async function toggleAgentOpenclawMemory(userId, enabled) {
     toast(enabled ? '已开通 OpenClaw 资料下发权限' : '已关闭 OpenClaw 资料下发权限');
     showUserDetail(userId);
   } catch(e) { toast(e.message, 'error'); }
+}
+
+async function toggleAgentTaskDispatch(userId, enabled) {
+  try {
+    await api('/admin/api/set-agent-task-dispatch', {
+      method: 'POST',
+      body: JSON.stringify({user_id: userId, enabled: !!enabled})
+    });
+    toast(enabled ? '已开通任务下发权限' : '已关闭任务下发权限');
+    showUserDetail(userId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function appendAgentTaskDispatchControl(u) {
+  if (!u || !u.is_agent || !isAdmin()) return;
+  const section = document.getElementById('agentToggleSection');
+  if (!section || section.querySelector('[data-agent-task-dispatch-btn]')) return;
+  const enabled = !!u.agent_task_dispatch_enabled;
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px';
+  row.innerHTML = '<button class="btn ' + (enabled ? 'btn-outline' : 'btn-agent') + ' btn-sm" data-agent-task-dispatch-btn="1" onclick="toggleAgentTaskDispatch(' + u.id + ',' + (!enabled) + ')">'
+    + (enabled ? '关闭任务下发权限' : '开通任务下发权限') + '</button>'
+    + '<span style="font-size:12px;color:var(--text-secondary)">当前：' + (enabled ? '已开通任务下发' : '未开通任务下发') + '</span>';
+  section.appendChild(row);
 }
 
 function hideDetail() {

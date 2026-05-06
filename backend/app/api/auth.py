@@ -987,4 +987,8 @@ def agent_sub_users(
             "total_recharged": int(paid_sum or 0),
             "created_at": u.created_at.isoformat() if u.created_at else None,
         })
-    return {"sub_users": result, "count": len(result)}
+    return {
+        "sub_users": result,
+        "count": len(result),
+        "agent_task_dispatch_enabled": bool(getattr(current_user, "agent_task_dispatch_enabled", False)),
+    }

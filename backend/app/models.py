@@ -30,6 +30,7 @@ class User(Base):
     wecom_userid: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, unique=True, index=True)
     is_agent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agent_openclaw_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    agent_task_dispatch_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     parent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -323,6 +324,68 @@ class H5ChatDevicePresence(Base):
     display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ScheduledTask(Base):
+    """Cloud-side task definition. Local online clients claim generated runs."""
+
+    __tablename__ = "scheduled_tasks"
+    __table_args__ = (
+        Index("ix_scheduled_tasks_user_status_next", "user_id", "status", "next_run_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    created_by_role: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    task_kind: Mapped[str] = mapped_column(String(32), default="openclaw_message", nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    schedule_type: Mapped[str] = mapped_column(String(16), default="once", nullable=False, index=True)
+    interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    target_installation_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    run_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class ScheduledTaskRun(Base):
+    """A single task execution record mirrored into H5 chat messages/events."""
+
+    __tablename__ = "scheduled_task_runs"
+    __table_args__ = (
+        Index("ix_scheduled_task_runs_user_status_created", "user_id", "status", "created_at"),
+        Index("ix_scheduled_task_runs_user_install_status", "user_id", "installation_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    task_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    created_by_role: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
+    installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    claimed_by_installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    task_kind: Mapped[str] = mapped_column(String(32), default="openclaw_message", nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    progress: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    result_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    result_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    h5_message_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class InstallationSignupBonusClaim(Base):

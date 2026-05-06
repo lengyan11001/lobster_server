@@ -24,6 +24,7 @@ from .api.mcp_gateway import router as mcp_gateway_router
 # from .api.custom_config import router as custom_config_router
 from .api.openclaw_config import router as openclaw_config_router
 from .api.openclaw_memory_cloud import router as openclaw_memory_cloud_router
+from .api.scheduled_tasks import router as scheduled_tasks_router
 from .api.billing import router as billing_router
 # 算力账号已去掉：速推统一走服务器配置的 SUTUI_SERVER_TOKEN(S)，负载均衡
 # from .api.consumption_accounts import router as consumption_accounts_router
@@ -286,6 +287,28 @@ def _migrate_user_agent_openclaw_memory_enabled():
         logger.info("[启动] users 已增加列 agent_openclaw_memory_enabled")
     except Exception as e:
         logger.warning("Migration user agent_openclaw_memory_enabled skipped: %s", e)
+
+
+def _migrate_user_agent_task_dispatch_enabled():
+    """Add agent scheduled task dispatch permission flag to users if missing."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = {c["name"] for c in insp.get_columns("users")}
+        if "agent_task_dispatch_enabled" in cols:
+            return
+        dname = engine.dialect.name
+        with engine.begin() as conn:
+            if dname == "sqlite":
+                conn.execute(text("ALTER TABLE users ADD COLUMN agent_task_dispatch_enabled BOOLEAN NOT NULL DEFAULT 0"))
+            else:
+                conn.execute(text("ALTER TABLE users ADD COLUMN agent_task_dispatch_enabled BOOLEAN NOT NULL DEFAULT FALSE"))
+        logger.info("[启动] users 已增加列 agent_task_dispatch_enabled")
+    except Exception as e:
+        logger.warning("Migration user agent_task_dispatch_enabled skipped: %s", e)
 
 
 def _migrate_wecom_config_secret():
@@ -716,6 +739,7 @@ def create_app() -> FastAPI:
     _migrate_user_brand_mark()
     _migrate_user_wecom_userid()
     _migrate_user_agent_openclaw_memory_enabled()
+    _migrate_user_agent_task_dispatch_enabled()
     _migrate_wecom_config_secret()
     _migrate_wecom_agent_id()
     _migrate_recharge_amount_fen()
@@ -780,6 +804,7 @@ def create_app() -> FastAPI:
     # app.include_router(publish_router, prefix="")
     app.include_router(logs_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
+    app.include_router(scheduled_tasks_router, prefix="")
     app.include_router(wechat_oa_router, prefix="")
     app.include_router(messenger_router, prefix="")
     app.include_router(twilio_whatsapp_router, prefix="")
