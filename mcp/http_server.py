@@ -2785,7 +2785,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                             get_comfly_task_token_group(_poll_tid),
                             api_format=get_comfly_task_api_format(_poll_tid),
                         )
-                        upstream_resp = format_comfly_video_response_as_sutui(_cf_resp)
+                        upstream_resp = format_comfly_video_response_as_sutui(_cf_resp, fallback_task_id=_poll_tid)
                     elif capability_id == "comfly.chat":
                         _cf_model = (payload.get("model") or "").strip()
                         _cf_messages = payload.get("messages") or []

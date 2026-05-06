@@ -39,6 +39,28 @@ _COMFLY_UPLOAD_ID_KEYS = (
     "id",
 )
 _COMFLY_UPLOAD_URL_KEYS = ("url", "image_url", "imageUrl", "file_url", "fileUrl", "download_url", "downloadUrl")
+_COMFLY_VIDEO_TASK_ID_KEYS = (
+    "task_id",
+    "taskId",
+    "taskID",
+    "id",
+    "job_id",
+    "jobId",
+    "request_id",
+    "requestId",
+    "generation_id",
+    "generationId",
+    "run_id",
+    "runId",
+)
+_COMFLY_VIDEO_URL_KEYS = (
+    "video_url",
+    "videoUrl",
+    "url",
+    "output",
+    "download_url",
+    "downloadUrl",
+)
 _COMFLY_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 _COMFLY_HTTP_RETRY_ATTEMPTS = 3
 _COMFLY_HTTP_RETRY_DELAY_SECONDS = 3.0
@@ -231,7 +253,7 @@ def _find_nested_string(value: Any, keys: Tuple[str, ...]) -> str:
             item = value.get(key)
             if isinstance(item, str) and item.strip():
                 return item.strip()
-        for child_key in ("data", "file", "payload", "result"):
+        for child_key in ("data", "file", "payload", "result", "task", "job", "generation", "video", "output"):
             found = _find_nested_string(value.get(child_key), keys)
             if found:
                 return found
@@ -862,8 +884,13 @@ async def call_comfly_chat_completions(
         return {"error": {"message": f"Comfly chat 请求失败: {e}"}}
 
 
-def format_comfly_video_response_as_sutui(resp: Dict[str, Any]) -> Dict[str, Any]:
+def format_comfly_video_response_as_sutui(resp: Dict[str, Any], *, fallback_task_id: str = "") -> Dict[str, Any]:
     """将 Comfly 视频响应转换为速推兼容格式。"""
+    if not isinstance(resp, dict):
+        return {"error": {"message": f"视频任务返回格式异常：{type(resp).__name__}"}}
+    if isinstance(resp.get("error"), dict):
+        return resp
+
     data = resp.get("data") or {}
     if isinstance(data, str):
         try:
@@ -871,12 +898,8 @@ def format_comfly_video_response_as_sutui(resp: Dict[str, Any]) -> Dict[str, Any
         except Exception:
             data = {}
     task_id = (
-        resp.get("task_id")
-        or resp.get("taskId")
-        or resp.get("id")
-        or (data.get("task_id") if isinstance(data, dict) else "")
-        or (data.get("taskId") if isinstance(data, dict) else "")
-        or (data.get("id") if isinstance(data, dict) else "")
+        (fallback_task_id or "").strip()
+        or _find_nested_string(resp, _COMFLY_VIDEO_TASK_ID_KEYS)
         or ""
     )
     raw_status = resp.get("status") or (data.get("status") if isinstance(data, dict) else "") or "pending"
@@ -910,11 +933,24 @@ def format_comfly_video_response_as_sutui(resp: Dict[str, Any]) -> Dict[str, Any
         "_comfly": True,
     }
 
-    video_url = resp.get("video_url") or resp.get("url") or ""
-    if not video_url:
-        out = resp.get("data") or resp.get("output") or {}
-        if isinstance(out, dict):
-            video_url = out.get("output") or out.get("video_url") or out.get("url") or ""
+    video_url = _find_nested_string(resp, _COMFLY_VIDEO_URL_KEYS)
+    if video_url and not video_url.startswith(("http://", "https://")):
+        video_url = ""
+
+    if not task_id and not video_url:
+        logger.error(
+            "[Comfly] format_video: missing task_id and video_url; resp_keys=%s data_keys=%s resp_preview=%s",
+            list(resp.keys()),
+            list(data.keys()) if isinstance(data, dict) else type(data).__name__,
+            str(resp)[:500],
+        )
+        return {
+            "error": {
+                "message": "视频任务创建失败：上游没有返回任务ID，无法查询结果，请稍后重试。"
+            },
+            "status": "failed",
+            "_comfly": True,
+        }
 
     if video_url:
         result["output"] = {"video_url": video_url}
