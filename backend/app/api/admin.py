@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import CapabilityCallLog, CreditLedger, H5ChatDevicePresence, RechargeOrder, ScheduledTask, ScheduledTaskRun, User, UserSkillVisibility
+from ..models import CapabilityCallLog, CreditLedger, H5ChatDevicePresence, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits
 
@@ -88,6 +88,17 @@ def _require_admin(ctx: AdminContext = Depends(_verify_admin_token)) -> AdminCon
 def _agent_sub_user_ids(db: Session, agent_user_id: int) -> list[int]:
     """返回代理商直属下级的 user_id 列表。"""
     return [uid for (uid,) in db.query(User.id).filter(User.parent_user_id == agent_user_id).all()]
+
+
+def _assert_can_manage_user(db: Session, ctx: AdminContext, user_id: int, *, allow_agent_self: bool = False) -> None:
+    if ctx.role == "admin":
+        return
+    if ctx.role != "agent" or ctx.user_id is None:
+        raise HTTPException(status_code=403, detail="forbidden")
+    if allow_agent_self and int(user_id) == int(ctx.user_id):
+        return
+    if int(user_id) not in _agent_sub_user_ids(db, int(ctx.user_id)):
+        raise HTTPException(status_code=403, detail="no permission for this user")
 
 
 # ── 页面 ──
@@ -379,24 +390,37 @@ def admin_list_users(
 @router.get("/admin/api/user-skill-visibility/{user_id}")
 def admin_get_user_skill_visibility(
     user_id: int,
-    ctx: AdminContext = Depends(_require_admin),
+    ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
+    _assert_can_manage_user(db, ctx, user_id)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     from .skills import _user_visible_package_ids, _load_registry, _pkg_store_visibility, _skill_store_admin
     visible = _user_visible_package_ids(db, user_id)
+    unlocked = {
+        row[0]
+        for row in db.query(SkillUnlock.package_id).filter(SkillUnlock.user_id == user_id).all()
+    }
     registry = _load_registry()
     packages = registry.get("packages", {})
     all_pkgs = [
-        {"id": k, "name": v.get("name", k), "store_visibility": _pkg_store_visibility(v)}
+        {
+            "id": k,
+            "name": v.get("name", k),
+            "store_visibility": _pkg_store_visibility(v),
+            "unlock_price_yuan": v.get("unlock_price_yuan"),
+            "unlock_price_credits": v.get("unlock_price_credits"),
+            "capabilities_count": len((v.get("capabilities") or {})),
+        }
         for k, v in packages.items()
     ]
     return {
         "user_id": user_id,
         "is_admin": _skill_store_admin(user),
         "visible_ids": sorted(visible),
+        "unlocked_ids": sorted(unlocked),
         "all_packages": all_pkgs,
     }
 
@@ -404,21 +428,24 @@ def admin_get_user_skill_visibility(
 class AdminSkillVisUpdate(BaseModel):
     add: list[str] = []
     remove: list[str] = []
+    unlock_add: list[str] = []
+    unlock_remove: list[str] = []
 
 
 @router.post("/admin/api/user-skill-visibility/{user_id}")
 def admin_update_user_skill_visibility(
     user_id: int,
     body: AdminSkillVisUpdate,
-    ctx: AdminContext = Depends(_require_admin),
+    ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
+    _assert_can_manage_user(db, ctx, user_id)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     from .skills import _ensure_user_visibility_seeded
     _ensure_user_visibility_seeded(db, user_id)
-    added, removed = [], []
+    added, removed, unlocked_added, unlocked_removed = [], [], [], []
     for pkg_id in body.add:
         pkg_id = pkg_id.strip()
         if not pkg_id:
@@ -441,8 +468,36 @@ def admin_update_user_skill_visibility(
         if row:
             db.delete(row)
             removed.append(pkg_id)
+    for pkg_id in body.unlock_add:
+        pkg_id = pkg_id.strip()
+        if not pkg_id:
+            continue
+        exists = db.query(SkillUnlock).filter(
+            SkillUnlock.user_id == user_id,
+            SkillUnlock.package_id == pkg_id,
+        ).first()
+        if not exists:
+            db.add(SkillUnlock(user_id=user_id, package_id=pkg_id))
+            unlocked_added.append(pkg_id)
+    for pkg_id in body.unlock_remove:
+        pkg_id = pkg_id.strip()
+        if not pkg_id:
+            continue
+        rows = db.query(SkillUnlock).filter(
+            SkillUnlock.user_id == user_id,
+            SkillUnlock.package_id == pkg_id,
+        ).all()
+        for row in rows:
+            db.delete(row)
+            unlocked_removed.append(pkg_id)
     db.commit()
-    return {"ok": True, "added": added, "removed": removed}
+    return {
+        "ok": True,
+        "added": added,
+        "removed": removed,
+        "unlocked_added": unlocked_added,
+        "unlocked_removed": unlocked_removed,
+    }
 
 
 # ── 数据统计 ──

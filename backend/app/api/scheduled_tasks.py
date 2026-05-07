@@ -321,9 +321,15 @@ def _create_task_row(
 @router.post("/api/scheduled-tasks/tasks", summary="创建定时/一次性任务")
 def create_scheduled_task(
     body: ScheduledTaskCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    xi = _header_installation_id(request)
+    if not xi:
+        raise HTTPException(status_code=400, detail="missing current installation id")
+    ensure_installation_slot(db, current_user.id, xi)
+    body.installation_ids = [xi]
     task = _create_task_row(
         db,
         body,

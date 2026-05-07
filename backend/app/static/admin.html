@@ -604,6 +604,148 @@ function renderUserDevicesTaskSection(data) {
   el.innerHTML = html;
 }
 
+function renderUserTaskDispatchForm(userId, devices) {
+  const hasDevices = (devices || []).length > 0;
+  return '<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px;background:#fff">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    + '<h4 style="margin:0;font-size:14px">下发任务</h4>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + (hasDevices ? '<button type="button" class="btn btn-outline btn-sm" onclick="selectOnlineTaskDevices()">全选在线设备</button>' : '')
+    + '<button type="button" class="btn btn-success btn-sm" id="userTaskSubmitBtn" onclick="submitUserScheduledTask(' + userId + ')">下发</button>'
+    + '</div></div>'
+    + '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">勾选下方设备可指定单个或多个盒子；不勾选则任意在线盒子可领取。</div>'
+    + '<div style="display:grid;grid-template-columns:minmax(180px,260px) minmax(180px,260px) 1fr;gap:10px;align-items:start">'
+    + '<div class="form-group" style="margin-bottom:0"><label>任务名称</label><input type="text" id="userTaskTitle" placeholder="例如：生成宣传视频"></div>'
+    + '<div class="form-group" style="margin-bottom:0"><label>任务类型</label><select id="userTaskKind" onchange="toggleUserTaskPayload()" style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px"><option value="openclaw_message">发消息给 OpenClaw</option><option value="chat_message">本地对话链路</option><option value="capability">调用能力</option></select></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="form-group" style="margin-bottom:0"><label>执行方式</label><select id="userTaskScheduleType" style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px"><option value="once">一次性</option><option value="interval">按间隔循环</option></select></div><div class="form-group" style="margin-bottom:0"><label>间隔分钟</label><input type="number" id="userTaskIntervalMinutes" min="1" value="60"></div></div>'
+    + '</div>'
+    + '<div class="form-group" id="userTaskContentWrap" style="margin-top:10px;margin-bottom:0"><label>要执行的内容</label><textarea id="userTaskContent" rows="4" placeholder="例如：打开 OpenClaw，按这个产品卖点生成 8 秒宣传视频并回传结果。" style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;resize:vertical"></textarea></div>'
+    + '<div class="form-group" id="userTaskPayloadWrap" style="display:none;margin-top:10px;margin-bottom:0"><label>能力调用 JSON</label><textarea id="userTaskPayload" rows="4" placeholder=\'{\"capability_id\":\"video.generate\",\"payload\":{\"prompt\":\"...\"}}\' style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;resize:vertical"></textarea></div>'
+    + '<div id="userTaskDispatchMsg" style="display:none;font-size:12px;margin-top:8px"></div>'
+    + '</div>';
+}
+
+function renderUserDevicesTaskSection(data) {
+  const el = document.getElementById('userDevicesTaskSection');
+  const card = document.getElementById('userDevicesTaskCard');
+  if (!el || !card) return;
+  card.style.display = '';
+  const devices = data.devices || [];
+  const summary = data.task_summary || {};
+  const userId = data.user && data.user.id;
+  const canDispatch = !!userId && (isAdmin() || (isAgent() && !isViewingSelf(userId)));
+  window._userTaskDevices = devices;
+  let html = '<div class="stats" style="margin-bottom:14px">'
+    + '<div class="stat-item"><div class="label">任务数</div><div class="value">' + (summary.tasks || 0) + '</div></div>'
+    + '<div class="stat-item"><div class="label">执行记录</div><div class="value">' + (summary.runs || 0) + '</div></div>'
+    + '<div class="stat-item"><div class="label">设备数</div><div class="value">' + devices.length + '</div></div>'
+    + '</div>';
+  if (canDispatch) html += renderUserTaskDispatchForm(userId, devices);
+  if (!devices.length) {
+    html += '<div class="empty">暂无设备心跳记录</div>';
+    el.innerHTML = html;
+    toggleUserTaskPayload();
+    return;
+  }
+  html += '<div class="table-wrap"><table><thead><tr>' + (canDispatch ? '<th>选择</th>' : '') + '<th>设备</th><th>名称</th><th>状态</th><th>最后在线</th></tr></thead><tbody>';
+  devices.forEach(function(d) {
+    html += '<tr>'
+      + (canDispatch ? '<td><input type="checkbox" data-user-task-device="' + escapeHtml(d.installation_id || '') + '"></td>' : '')
+      + '<td style="font-size:12px">' + escapeHtml(d.installation_id || '-') + '</td>'
+      + '<td>' + escapeHtml(d.display_name || '-') + '</td>'
+      + '<td><span class="badge ' + (d.online ? 'badge-green' : 'badge-blue') + '">' + (d.online ? '在线' : '离线') + '</span></td>'
+      + '<td style="font-size:12px;color:var(--text-secondary)">' + (d.last_seen_at ? new Date(d.last_seen_at).toLocaleString('zh-CN') : '-') + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
+  toggleUserTaskPayload();
+}
+
+function getSelectedUserTaskDevices() {
+  return Array.from(document.querySelectorAll('[data-user-task-device]:checked'))
+    .map(function(el) { return el.getAttribute('data-user-task-device') || ''; })
+    .filter(Boolean);
+}
+
+function selectOnlineTaskDevices() {
+  const online = new Set((window._userTaskDevices || []).filter(function(d) { return !!d.online; }).map(function(d) { return d.installation_id; }));
+  document.querySelectorAll('[data-user-task-device]').forEach(function(el) {
+    el.checked = online.has(el.getAttribute('data-user-task-device') || '');
+  });
+}
+
+function toggleUserTaskPayload() {
+  const kindEl = document.getElementById('userTaskKind');
+  const kind = kindEl ? kindEl.value : 'openclaw_message';
+  const payloadWrap = document.getElementById('userTaskPayloadWrap');
+  const contentWrap = document.getElementById('userTaskContentWrap');
+  if (payloadWrap) payloadWrap.style.display = kind === 'capability' ? '' : 'none';
+  if (contentWrap) contentWrap.style.display = kind === 'capability' ? 'none' : '';
+}
+
+function setUserTaskMsg(text, bad) {
+  const el = document.getElementById('userTaskDispatchMsg');
+  if (!el) return;
+  el.style.display = text ? '' : 'none';
+  el.style.color = bad ? 'var(--danger)' : 'var(--success)';
+  el.textContent = text || '';
+}
+
+function buildUserTaskBody(userId) {
+  const kind = (document.getElementById('userTaskKind') || {}).value || 'openclaw_message';
+  const scheduleType = (document.getElementById('userTaskScheduleType') || {}).value || 'once';
+  const intervalMin = parseInt((document.getElementById('userTaskIntervalMinutes') || {}).value || '60', 10);
+  const body = {
+    user_id: userId,
+    title: ((document.getElementById('userTaskTitle') || {}).value || '').trim(),
+    task_kind: kind,
+    content: ((document.getElementById('userTaskContent') || {}).value || '').trim(),
+    payload: {},
+    schedule_type: scheduleType,
+    interval_seconds: Math.max(60, (isNaN(intervalMin) ? 60 : intervalMin) * 60),
+    installation_ids: getSelectedUserTaskDevices()
+  };
+  if (kind === 'capability') {
+    const raw = ((document.getElementById('userTaskPayload') || {}).value || '').trim();
+    if (!raw) throw new Error('请输入能力调用 JSON');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('能力调用 JSON 必须是对象');
+    body.payload = parsed.capability_id ? parsed : { capability_id: parsed.capability || parsed.id || '', payload: parsed.payload || parsed };
+    body.content = body.content || ('调用能力 ' + (body.payload.capability_id || ''));
+  }
+  return body;
+}
+
+async function refreshUserDevicesTaskSection(userId) {
+  const data = await api('/admin/api/user/' + userId);
+  currentUserData = data.user;
+  renderUserDevicesTaskSection(data);
+}
+
+async function submitUserScheduledTask(userId) {
+  const btn = document.getElementById('userTaskSubmitBtn');
+  let body;
+  try {
+    body = buildUserTaskBody(userId);
+  } catch(e) {
+    setUserTaskMsg(e.message, true);
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '下发中...'; }
+  setUserTaskMsg('', false);
+  try {
+    await api('/admin/api/scheduled-tasks', { method: 'POST', body: JSON.stringify(body) });
+    toast('任务已下发');
+    setUserTaskMsg('任务已下发，盒子轮询后会开始执行。', false);
+    await refreshUserDevicesTaskSection(userId);
+  } catch(e) {
+    setUserTaskMsg(e.message, true);
+    toast(e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '下发'; }
+  }
+}
+
 function resetUserDetailTab() {
   const root = document.getElementById('userDetailView');
   if (!root) return;
@@ -658,8 +800,9 @@ async function showUserDetail(userId) {
       agentCard.style.display = 'none';
     }
 
-    // admin-only: skill visibility & reset password
-    document.getElementById('skillVisCard').style.display = isAdmin() ? '' : 'none';
+    // admin / agent: skill visibility & unlock permissions
+    const canManageSkills = isAdmin() || (isAgent() && !viewingSelf);
+    document.getElementById('skillVisCard').style.display = canManageSkills ? '' : 'none';
     document.getElementById('resetPwdBtn').style.display = isAdmin() ? '' : 'none';
 
     // agent: remove sub（自查时不显示）
@@ -706,7 +849,7 @@ async function showUserDetail(userId) {
     }
 
     document.getElementById('rechargeAmount').value = '';
-    if (isAdmin()) loadSkillVisibility(userId);
+    if (canManageSkills) loadSkillVisibility(userId);
   } catch(e) { toast(e.message, 'error'); }
 }
 
@@ -912,6 +1055,53 @@ async function toggleSkillVisibility(userId, pkgId, checked) {
     await api('/admin/api/user-skill-visibility/' + userId, { method: 'POST', body: JSON.stringify(body) });
     toast(checked ? '已添加: ' + pkgId : '已移除: ' + pkgId);
   } catch(e) { toast(e.message, 'error'); loadSkillVisibility(userId); }
+}
+
+async function toggleSkillUnlock(userId, pkgId, checked) {
+  try {
+    const body = {};
+    if (checked) body.unlock_add = [pkgId]; else body.unlock_remove = [pkgId];
+    await api('/admin/api/user-skill-visibility/' + userId, { method: 'POST', body: JSON.stringify(body) });
+    toast(checked ? '已解锁 ' + pkgId : '已取消解锁 ' + pkgId);
+    loadSkillVisibility(userId);
+  } catch(e) { toast(e.message, 'error'); loadSkillVisibility(userId); }
+}
+
+async function loadSkillVisibility(userId) {
+  const section = document.getElementById('skillVisibilitySection');
+  try {
+    const visData = await api('/admin/api/user-skill-visibility/' + userId);
+    const visibleIds = new Set(visData.visible_ids || []);
+    const unlockedIds = new Set(visData.unlocked_ids || []);
+    const allPackages = visData.all_packages || [];
+    if (visData.is_admin) {
+      section.innerHTML = '<div style="color:var(--text-secondary);font-size:13px">该用户是管理员，默认可见所有技能。</div>';
+      return;
+    }
+    if (!allPackages.length) {
+      section.innerHTML = '<div class="empty">暂无可管理技能包</div>';
+      return;
+    }
+    let html = '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">可见：控制用户技能商店能看到什么；解锁：控制付费技能/能力是否可用。</div>';
+    html += '<div class="table-wrap"><table><thead><tr><th>技能</th><th>类型/价格</th><th>能力数</th><th>可见</th><th>解锁/权限</th></tr></thead><tbody>';
+    for (const pkg of allPackages) {
+      const active = visibleIds.has(pkg.id);
+      const unlocked = unlockedIds.has(pkg.id);
+      const paid = !!(pkg.unlock_price_yuan || pkg.unlock_price_credits);
+      const price = pkg.unlock_price_credits ? (pkg.unlock_price_credits + ' 积分') : (pkg.unlock_price_yuan ? (pkg.unlock_price_yuan + ' 元') : '免费/默认');
+      html += '<tr>'
+        + '<td><div style="font-weight:600">' + escapeHtml(pkg.name || pkg.id) + '</div><div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(pkg.id) + '</div></td>'
+        + '<td><span class="badge badge-blue">' + escapeHtml(pkg.store_visibility || '-') + '</span><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(price) + '</div></td>'
+        + '<td>' + (pkg.capabilities_count || 0) + '</td>'
+        + '<td><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + ' onchange="toggleSkillVisibility(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"> <span>' + (active ? '可见' : '隐藏') + '</span></label></td>'
+        + '<td><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (unlocked ? 'checked' : '') + ' onchange="toggleSkillUnlock(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"> <span>' + (paid ? (unlocked ? '已解锁' : '未解锁') : (unlocked ? '已授权' : '授权')) + '</span></label></td>'
+        + '</tr>';
+    }
+    html += '</tbody></table></div>';
+    section.innerHTML = html;
+  } catch(e) {
+    section.innerHTML = '<div class="empty" style="color:var(--danger)">' + e.message + '</div>';
+  }
 }
 
 async function loadOpenclawMemoryAdmin(userId) {
