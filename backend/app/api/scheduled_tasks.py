@@ -229,19 +229,15 @@ def _enqueue_task(db: Session, task: ScheduledTask, now: Optional[datetime] = No
 
 def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     now = datetime.utcnow()
-    q = (
-        db.query(ScheduledTask)
-        .filter(
-            ScheduledTask.status == "active",
-            ScheduledTask.schedule_type == "interval",
-            ScheduledTask.next_run_at.isnot(None),
-            ScheduledTask.next_run_at <= now,
-        )
-        .order_by(ScheduledTask.next_run_at.asc())
-        .limit(50)
+    q = db.query(ScheduledTask).filter(
+        ScheduledTask.status == "active",
+        ScheduledTask.schedule_type == "interval",
+        ScheduledTask.next_run_at.isnot(None),
+        ScheduledTask.next_run_at <= now,
     )
     if user_id is not None:
         q = q.filter(ScheduledTask.user_id == user_id)
+    q = q.order_by(ScheduledTask.next_run_at.asc()).limit(50)
     count = 0
     for task in q.all():
         _enqueue_task(db, task, now)
