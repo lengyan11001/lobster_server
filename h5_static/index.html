@@ -488,9 +488,8 @@
         <button type="button" class="quick-pill" data-tone="image" data-prompt="帮我生成一张图片，画面内容是："><strong>图</strong><span>生成图片</span></button>
         <button type="button" class="quick-pill" data-tone="video" data-prompt="帮我生成一个8秒宣传视频，画面内容是："><strong>视</strong><span>生成视频</span></button>
         <button type="button" class="quick-pill" data-tone="upload" data-image-video="1"><strong>传</strong><span>图生视频</span></button>
-        <button type="button" class="quick-pill" data-tone="tvc" data-prompt="用爆款TVC帮我生成一个8秒带货视频。请先根据我提供的商品/图片提炼卖点，再输出分镜并生成视频："><strong>T</strong><span>爆款TVC</span></button>
-        <button type="button" class="quick-pill" data-tone="remix" data-prompt="帮我做爆款复刻。请根据我提供的参考内容拆解爆点、镜头、节奏和文案，并生成可直接复刻的新版本："><strong>复</strong><span>爆款复刻</span></button>
-        <button type="button" class="quick-pill" data-tone="publish" data-prompt="帮我发布内容。请先确认平台、账号、标题、正文、话题和素材，然后再执行发布："><strong>发</strong><span>发布</span></button>
+        <button type="button" class="quick-pill" data-tone="tvc" data-image-video="1" data-prompt="用爆款TVC生成一个视频"><strong>T</strong><span>爆款TVC</span></button>
+        <button type="button" class="quick-pill" data-tone="publish" data-prompt="把某素材发布到 平台 账号"><strong>发</strong><span>发布</span></button>
       </div>
       <div class="upload-preview" id="uploadPreview"></div>
       <form class="composer" id="sendForm">
@@ -513,7 +512,7 @@
       uploads: [],
     };
     const SHOW_INTERNAL_STEPS = false;
-    const IMAGE_TO_VIDEO_PROMPT = "请基于我上传的图片做图生视频，先识别图片中的主体、卖点和适合的短视频方向，再生成一个8秒宣传视频。要求：画面节奏快、卖点清晰、适合抖音/视频号投放，文案和最终视频内容必须一致。";
+    const IMAGE_TO_VIDEO_PROMPT = "用这个图片，提示词：";
 
     function toast(text) {
       const el = $("toast");
@@ -1013,7 +1012,7 @@
       const btn = evt.target.closest("button");
       if (!btn) return;
       if (btn.dataset.imageVideo === "1") {
-        setMessageTemplate(IMAGE_TO_VIDEO_PROMPT);
+        setMessageTemplate(btn.dataset.prompt || IMAGE_TO_VIDEO_PROMPT);
         $("imageInput").click();
         return;
       }
