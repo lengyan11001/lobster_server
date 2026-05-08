@@ -335,7 +335,7 @@ def _truncate_msg(m: dict, *, max_chars: int = _SLIM_MSG_MAX_CHARS) -> dict:
     return m
 
 
-_LOBSTER_SYSTEM_HINT = (
+_LOBSTER_SYSTEM_HINT_BASE = (
     "【龙虾工具使用规则】"
     "1. 生成图片：用 lobster__invoke_capability，capability_id=\"image.generate\"，"
     f"用户未指定模型时 payload.model 填 \"{_DEFAULT_IMAGE_GENERATE_MODEL_HINT}\"。"
@@ -356,7 +356,18 @@ _LOBSTER_SYSTEM_HINT = (
 )
 
 
-def _inject_lobster_system_hint(body: dict) -> None:
+_LOBSTER_OPENCLAW_EVIDENCE_HINT = (
+    "【OpenClaw 工具证据优先】"
+    "生成图片/视频、查询任务、保存素材、发布内容时，只能引用 lobster 工具返回 JSON 里的真实字段。"
+    "没有 task_id 时禁止说任务已提交；没有 media_urls/saved_assets 时禁止说已生成完成；没有 saved_assets 或 save_asset 返回时禁止编素材 ID；"
+    "没有 publish_content 成功返回时禁止说已发布。"
+    "费用/扣费只能引用 credits_used、credits_charged、credits_final 等龙虾积分字段；禁止把上游 result.price/cost/fee 当成用户积分或扣费。"
+    "如果工具返回 openclaw_evidence，必须按 claim_rules 回答；claim_rules 不允许的状态必须如实说不能确认。"
+    "查询任务进度必须使用本会话工具返回或用户明确提供的真实 task_id，找不到真实 task_id 时直接说明，不要编 ID。"
+)
+
+
+def _inject_lobster_system_hint(body: dict, *, openclaw_skill_request: bool = False) -> None:
     """Append lobster usage rules to the first system message, or prepend a new one."""
     msgs = body.get("messages")
     if not isinstance(msgs, list):
@@ -370,13 +381,16 @@ def _inject_lobster_system_hint(body: dict) -> None:
     )
     if not has_lobster_tool:
         return
+    hint = _LOBSTER_SYSTEM_HINT_BASE
+    if openclaw_skill_request:
+        hint = f"{hint}{_LOBSTER_OPENCLAW_EVIDENCE_HINT}"
     for m in msgs:
         if isinstance(m, dict) and m.get("role") == "system":
             existing = m.get("content") or ""
             if "龙虾工具使用规则" not in existing:
-                m["content"] = existing + "\n\n" + _LOBSTER_SYSTEM_HINT
+                m["content"] = existing + "\n\n" + hint
             return
-    msgs.insert(0, {"role": "system", "content": _LOBSTER_SYSTEM_HINT})
+    msgs.insert(0, {"role": "system", "content": hint})
 
 
 def _optimize_request_body(body: dict, *, preserve_local_tools: bool = False) -> int:
@@ -390,7 +404,7 @@ def _optimize_request_body(body: dict, *, preserve_local_tools: bool = False) ->
             tools = _filter_local_tools(tools)
         body["tools"] = _slim_tools(tools)
 
-    _inject_lobster_system_hint(body)
+    _inject_lobster_system_hint(body, openclaw_skill_request=preserve_local_tools)
 
     msgs = body.get("messages")
     if isinstance(msgs, list):

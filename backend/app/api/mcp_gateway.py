@@ -37,6 +37,11 @@ _UPSTREAM_HEADER_ALLOWLIST = frozenset(
         "x-user-authorization",
         "x-openclaw-agent-id",
         "x-installation-id",
+        "x-lobster-openclaw-intent",
+        "x-lobster-allowed-mcp-tools",
+        "x-lobster-allowed-capabilities",
+        "x-lobster-video-model-lock",
+        "x-lobster-video-model-lock-source",
     }
 )
 
