@@ -248,6 +248,102 @@
       border-radius: 999px;
       background: rgba(239, 244, 255, .92);
     }
+    .quickbar {
+      padding: 10px 14px 0;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      scroll-snap-type: x proximity;
+      -webkit-overflow-scrolling: touch;
+    }
+    .quickbar::-webkit-scrollbar { height: 0; }
+    .quick-pill {
+      flex: 0 0 auto;
+      scroll-snap-align: start;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 36px;
+      padding: 8px 12px;
+      color: #263759;
+      background: rgba(255, 255, 255, .78);
+      border: 1px solid rgba(223, 230, 242, .92);
+      box-shadow: 0 8px 22px rgba(35, 58, 109, .08);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .quick-pill strong {
+      display: inline-grid;
+      place-items: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      color: white;
+      font-size: 12px;
+      background: linear-gradient(135deg, var(--blue), var(--blue2));
+    }
+    .quick-pill[data-tone="image"] strong { background: linear-gradient(135deg, #ffba5b, #f08b2d); }
+    .quick-pill[data-tone="video"] strong { background: linear-gradient(135deg, #64a2ff, #416cff); }
+    .quick-pill[data-tone="tvc"] strong { background: linear-gradient(135deg, #ff8ea5, #e94f70); }
+    .quick-pill[data-tone="remix"] strong { background: linear-gradient(135deg, #b28cff, #7557e8); }
+    .quick-pill[data-tone="publish"] strong { background: linear-gradient(135deg, #71d89d, #19a96f); }
+    .quick-pill[data-tone="upload"] {
+      color: #245cff;
+      background: linear-gradient(135deg, rgba(238,244,255,.96), rgba(255,255,255,.9));
+      border-color: rgba(36, 92, 255, .18);
+    }
+    .upload-preview {
+      display: none;
+      gap: 10px;
+      padding: 10px 14px 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .upload-preview.show { display: flex; }
+    .upload-card {
+      position: relative;
+      flex: 0 0 auto;
+      width: 94px;
+      padding: 6px;
+      border-radius: 18px;
+      border: 1px solid rgba(223, 230, 242, .95);
+      background: rgba(255, 255, 255, .84);
+      box-shadow: 0 8px 24px rgba(35, 58, 109, .09);
+    }
+    .upload-card img {
+      width: 100%;
+      height: 70px;
+      display: block;
+      object-fit: cover;
+      border-radius: 13px;
+      background: #eef4ff;
+    }
+    .upload-status {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .upload-card.failed .upload-status { color: var(--danger); }
+    .upload-remove {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      color: white;
+      background: rgba(19, 33, 60, .72);
+      box-shadow: none;
+      font-size: 15px;
+    }
     .composer {
       padding: 14px;
       display: grid;
@@ -388,7 +484,17 @@
           发一条消息试试。H5 会把消息放到云端队列，本地 online 领取后再把处理进度和结果推回来。
         </div>
       </div>
+      <div class="quickbar" id="quickbar" aria-label="快捷入口">
+        <button type="button" class="quick-pill" data-tone="image" data-prompt="帮我生成一张图片，画面内容是："><strong>图</strong><span>生成图片</span></button>
+        <button type="button" class="quick-pill" data-tone="video" data-prompt="帮我生成一个8秒宣传视频，画面内容是："><strong>视</strong><span>生成视频</span></button>
+        <button type="button" class="quick-pill" data-tone="upload" data-image-video="1"><strong>传</strong><span>图生视频</span></button>
+        <button type="button" class="quick-pill" data-tone="tvc" data-prompt="用爆款TVC帮我生成一个8秒带货视频。请先根据我提供的商品/图片提炼卖点，再输出分镜并生成视频："><strong>T</strong><span>爆款TVC</span></button>
+        <button type="button" class="quick-pill" data-tone="remix" data-prompt="帮我做爆款复刻。请根据我提供的参考内容拆解爆点、镜头、节奏和文案，并生成可直接复刻的新版本："><strong>复</strong><span>爆款复刻</span></button>
+        <button type="button" class="quick-pill" data-tone="publish" data-prompt="帮我发布内容。请先确认平台、账号、标题、正文、话题和素材，然后再执行发布："><strong>发</strong><span>发布</span></button>
+      </div>
+      <div class="upload-preview" id="uploadPreview"></div>
       <form class="composer" id="sendForm">
+        <input type="file" id="imageInput" accept="image/*" multiple class="hidden" />
         <input id="messageInput" placeholder="输入消息，例如：帮我写一段产品短视频口播文案" autocomplete="off" />
         <button id="sendBtn" type="submit">发送</button>
       </form>
@@ -404,8 +510,10 @@
       user: null,
       streams: new Map(),
       pollers: new Map(),
+      uploads: [],
     };
     const SHOW_INTERNAL_STEPS = false;
+    const IMAGE_TO_VIDEO_PROMPT = "请基于我上传的图片做图生视频，先识别图片中的主体、卖点和适合的短视频方向，再生成一个8秒宣传视频。要求：画面节奏快、卖点清晰、适合抖音/视频号投放，文案和最终视频内容必须一致。";
 
     function toast(text) {
       const el = $("toast");
@@ -416,6 +524,110 @@
 
     function authHeaders() {
       return state.token ? { Authorization: `Bearer ${state.token}` } : {};
+    }
+
+    function setMessageTemplate(text) {
+      const input = $("messageInput");
+      if (!input) return;
+      input.value = text || "";
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+
+    function renderUploads() {
+      const box = $("uploadPreview");
+      if (!box) return;
+      box.innerHTML = "";
+      box.classList.toggle("show", state.uploads.length > 0);
+      state.uploads.forEach((item, idx) => {
+        const card = document.createElement("div");
+        card.className = `upload-card ${item.status === "failed" ? "failed" : ""}`;
+        const img = document.createElement("img");
+        img.src = item.previewUrl || item.url || "";
+        img.alt = item.name || "上传图片";
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "upload-remove";
+        rm.textContent = "×";
+        rm.addEventListener("click", () => {
+          const old = state.uploads[idx];
+          if (old && old.previewUrl) {
+            try { URL.revokeObjectURL(old.previewUrl); } catch {}
+          }
+          state.uploads.splice(idx, 1);
+          renderUploads();
+        });
+        const status = document.createElement("div");
+        status.className = "upload-status";
+        status.textContent = item.status === "uploading" ? "上传中..." : (item.status === "failed" ? (item.error || "上传失败") : "已上传");
+        card.appendChild(img);
+        card.appendChild(rm);
+        card.appendChild(status);
+        box.appendChild(card);
+      });
+    }
+
+    async function uploadImageFile(file) {
+      const item = {
+        name: file.name || "图片",
+        previewUrl: URL.createObjectURL(file),
+        url: "",
+        status: "uploading",
+        error: "",
+      };
+      state.uploads.push(item);
+      renderUploads();
+      const fd = new FormData();
+      fd.append("file", file);
+      try {
+        const resp = await fetch("/api/h5-chat/uploads", {
+          method: "POST",
+          headers: authHeaders(),
+          body: fd,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.detail || "上传失败");
+        item.url = data.url || "";
+        item.status = item.url ? "ready" : "failed";
+        if (!item.url) item.error = "缺少图片链接";
+      } catch (err) {
+        item.status = "failed";
+        item.error = err.message || "上传失败";
+      } finally {
+        renderUploads();
+      }
+    }
+
+    function hasUploadingImages() {
+      return state.uploads.some((item) => item.status === "uploading");
+    }
+
+    function readyImageUrls() {
+      return state.uploads.filter((item) => item.status === "ready" && item.url).map((item) => item.url);
+    }
+
+    function clearUploads() {
+      state.uploads.forEach((item) => {
+        if (item.previewUrl) {
+          try { URL.revokeObjectURL(item.previewUrl); } catch {}
+        }
+      });
+      state.uploads = [];
+      renderUploads();
+    }
+
+    function buildMessageContent(raw) {
+      const content = (raw || "").trim();
+      const urls = readyImageUrls();
+      if (!urls.length) return content;
+      const imageBlock = [
+        "",
+        "【用户已上传图片】",
+        ...urls.map((url, idx) => `${idx + 1}. ${url}`),
+        "",
+        "请在本轮任务中使用以上图片链接作为参考素材；如果用户要求图生视频，请直接基于图片生成视频，不要只写文案。",
+      ].join("\n");
+      return `${content}${imageBlock}`;
     }
 
     async function api(path, options = {}) {
@@ -797,6 +1009,32 @@
       state.token = "";
       location.reload();
     });
+    $("quickbar").addEventListener("click", (evt) => {
+      const btn = evt.target.closest("button");
+      if (!btn) return;
+      if (btn.dataset.imageVideo === "1") {
+        setMessageTemplate(IMAGE_TO_VIDEO_PROMPT);
+        $("imageInput").click();
+        return;
+      }
+      setMessageTemplate(btn.dataset.prompt || "");
+    });
+    $("imageInput").addEventListener("change", async () => {
+      const files = Array.from($("imageInput").files || []);
+      $("imageInput").value = "";
+      if (!files.length) return;
+      if (!state.token) {
+        toast("请先登录后再上传图片");
+        return;
+      }
+      for (const file of files) {
+        if (!/^image\//i.test(file.type || "")) {
+          toast("只能上传图片");
+          continue;
+        }
+        uploadImageFile(file);
+      }
+    });
 
     $("loginForm").addEventListener("submit", async (evt) => {
       evt.preventDefault();
@@ -821,18 +1059,24 @@
       evt.preventDefault();
       const input = $("messageInput");
       const content = input.value.trim();
+      if (hasUploadingImages()) {
+        toast("图片还在上传中，请稍等");
+        return;
+      }
       if (!content) return;
       input.value = "";
       $("sendBtn").disabled = true;
+      const messageContent = buildMessageContent(content);
       addBubble("user", content);
       const bot = addBubble("bot", "已发送，等待本地设备处理...");
       try {
         const data = await api("/api/h5-chat/messages", {
           method: "POST",
-          json: { content, mode: state.mode },
+          json: { content: messageContent, mode: state.mode },
         });
         const msg = data.message || {};
         if (msg.id) startSse(msg.id, bot);
+        clearUploads();
         await refreshDeviceStatus();
       } catch (err) {
         bot.classList.add("err");

@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
@@ -26,8 +27,18 @@ router = APIRouter()
 
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _H5_INDEX = _ROOT / "h5_static" / "index.html"
+_H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
 _VALID_MODES = {"direct", "openclaw"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
+_UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_MAX_H5_UPLOAD_BYTES = 15 * 1024 * 1024
+_IMAGE_EXT_BY_TYPE = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 
 class H5MessageCreate(BaseModel):
@@ -138,6 +149,24 @@ def _header_installation_id(request: Request) -> str:
     ).strip()
 
 
+def _public_base_url(request: Request) -> str:
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",", 1)[0].strip()
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or request.url.netloc
+        or "h5.bhzn.top"
+    ).split(",", 1)[0].strip()
+    return f"{proto}://{host}".rstrip("/")
+
+
+def _safe_upload_filename(filename: str) -> str:
+    name = (filename or "").strip()
+    if not name or not _UPLOAD_NAME_RE.match(name):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return name
+
+
 @router.get("/h5", include_in_schema=False)
 def h5_page():
     if not _H5_INDEX.is_file():
@@ -151,6 +180,52 @@ def h5_root(request: Request):
     if host == "h5.bhzn.top" or host.startswith("h5."):
         return h5_page()
     raise HTTPException(status_code=404, detail="Not Found")
+
+
+@router.post("/api/h5-chat/uploads", summary="H5 上传图片素材")
+async def upload_h5_chat_image(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
+    if content_type not in _IMAGE_EXT_BY_TYPE:
+        raise HTTPException(status_code=400, detail="仅支持上传图片")
+    raw = await file.read(_MAX_H5_UPLOAD_BYTES + 1)
+    if not raw:
+        raise HTTPException(status_code=400, detail="图片为空")
+    if len(raw) > _MAX_H5_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="图片不能超过 15MB")
+    _H5_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"u{current_user.id}_{uuid.uuid4().hex}{_IMAGE_EXT_BY_TYPE[content_type]}"
+    path = _H5_UPLOAD_DIR / filename
+    path.write_bytes(raw)
+    url = f"{_public_base_url(request)}/api/h5-chat/uploads/{filename}"
+    return {
+        "ok": True,
+        "url": url,
+        "filename": file.filename or filename,
+        "content_type": content_type,
+        "size": len(raw),
+    }
+
+
+@router.get("/api/h5-chat/uploads/{filename}", include_in_schema=False)
+def get_h5_chat_upload(filename: str):
+    safe = _safe_upload_filename(filename)
+    path = (_H5_UPLOAD_DIR / safe).resolve()
+    root = _H5_UPLOAD_DIR.resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    suffix = path.suffix.lower()
+    media_type = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(suffix, "application/octet-stream")
+    return FileResponse(str(path), media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.post("/api/h5-chat/messages", summary="H5 创建远程会话消息")
