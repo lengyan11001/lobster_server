@@ -9,7 +9,7 @@ import hashlib
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -31,6 +31,8 @@ _IMAGE_MAX_BYTES = 10 * 1024 * 1024
 _VIDEO_MAX_BYTES = 500 * 1024 * 1024
 _AUDIO_MAX_BYTES = 20 * 1024 * 1024
 _AUDIO_DRIVE_MAX_BYTES = 100 * 1024 * 1024
+_MAX_AVATAR_PAGE_SIZE = 100
+_MAX_VOICE_PAGE_SIZE = 300
 
 _IMAGE_EXTS = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}
 _VIDEO_EXTS = {"mp4": "video/mp4", "mov": "video/quicktime"}
@@ -45,6 +47,16 @@ _VOICE_PREVIEW_EXPIRY_SEC = 86400
 class HiflyTaskBody(BaseModel):
     task_id: str = Field(..., min_length=1)
     token: Optional[str] = None
+
+
+class HiflyTokenBody(BaseModel):
+    token: Optional[str] = None
+
+
+class HiflyAvatarLibraryBody(HiflyTokenBody):
+    page: int = 1
+    size: int = 10
+    include_mine: bool = False
 
 
 def _resolved_token(token: Optional[str]) -> str:
@@ -597,6 +609,166 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
         "styles": styles,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _base_name(title: str) -> str:
+    text = "".join(str(title or "").split())
+    text = text.replace("（", "(").replace("）", ")")
+    for suffix in ("-直播", "-分享", "-近景", "-中近景", "-远中景"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+    return text
+
+
+def _pick_public_cover(item: Dict[str, Any]) -> str:
+    for key in ("cover_url", "cover", "image_url", "avatar_url", "poster_url", "thumbnail_url", "preview_url"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _enrich_public_avatar_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in rows or []:
+        avatar_id = str(item.get("avatar") or "").strip()
+        if not avatar_id or avatar_id in seen:
+            continue
+        seen.add(avatar_id)
+        title = str(item.get("title") or avatar_id).strip() or avatar_id
+        result.append(
+            {
+                "avatar": avatar_id,
+                "title": title,
+                "kind": item.get("kind"),
+                "section": "public",
+                "section_label": "公共数字人",
+                "cover_url": _pick_public_cover(item),
+                "cover_guessed": False,
+                "cover_rank": 1 if _pick_public_cover(item) else 9,
+                "material_count": 1,
+                "tags": ["公共数字人"],
+            }
+        )
+    return sorted(result, key=lambda row: (_base_name(row.get("title") or ""), row.get("title") or ""))
+
+
+def _voice_title_parts(title: str) -> tuple[str, str]:
+    text = " ".join(str(title or "").split())
+    if not text or " " not in text:
+        return text or "未命名声音", ""
+    base, style = text.split(" ", 1)
+    return base.strip() or text, style.strip()
+
+
+def _enrich_public_voice_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    groups: Dict[str, Dict[str, Any]] = {}
+    for item in rows or []:
+        voice_id = str(item.get("voice") or item.get("voice_id") or "").strip()
+        if not voice_id:
+            continue
+        title = str(item.get("title") or voice_id).strip() or voice_id
+        base_title, style_label = _voice_title_parts(title)
+        group_key = base_title if base_title and base_title != "默认风格" else voice_id
+        group = groups.setdefault(
+            group_key,
+            {
+                "voice": voice_id,
+                "title": base_title or title,
+                "kind": item.get("kind"),
+                "section": "public",
+                "section_label": "公共声音",
+                "demo_url": "",
+                "cover_url": "",
+                "cover_rank": 9,
+                "styles": [],
+                "tags": ["公共声音"],
+                "search_text": "",
+            },
+        )
+        demo_url = str(item.get("demo_url") or item.get("audio_url") or item.get("preview_url") or "").strip()
+        style = {
+            "voice": voice_id,
+            "title": title,
+            "label": style_label or "默认风格",
+            "demo_url": demo_url,
+            "rate": str(item.get("rate") or "").strip(),
+            "pitch": str(item.get("pitch") or "").strip(),
+            "volume": str(item.get("volume") or "").strip(),
+            "language": str(item.get("languages") or item.get("language") or "").strip(),
+        }
+        group["styles"].append(style)
+        if demo_url and not group.get("demo_url"):
+            group["demo_url"] = demo_url
+            group["voice"] = voice_id
+    result: List[Dict[str, Any]] = []
+    for group in groups.values():
+        styles = group.get("styles") or []
+        if not styles:
+            continue
+        group["style_count"] = len(styles)
+        group["search_text"] = " ".join([str(group.get("title") or "")] + [str(s.get("label") or "") for s in styles])
+        result.append(group)
+    return sorted(result, key=lambda row: (_base_name(row.get("title") or ""), row.get("title") or ""))
+
+
+async def _fetch_all_hifly_pages(path: str, token: Optional[str], kind: int, page_size: int, max_pages: int = 12) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for page in range(1, max_pages + 1):
+        payload = await _get(path, token, {"page": page, "size": page_size, "kind": kind})
+        page_rows = payload.get("data") or []
+        if not isinstance(page_rows, list) or not page_rows:
+            break
+        rows.extend(page_rows)
+        if len(page_rows) < page_size:
+            break
+    return rows
+
+
+@router.post("/api/hifly/avatar/library")
+async def hifly_avatar_library(body: HiflyAvatarLibraryBody):
+    public_rows = await _fetch_all_hifly_pages(
+        "/api/v2/hifly/avatar/list",
+        body.token,
+        2,
+        _MAX_AVATAR_PAGE_SIZE,
+    )
+    public = _enrich_public_avatar_rows(public_rows)
+    return {
+        "ok": True,
+        "mine": [],
+        "public": public,
+        "mine_supported": False,
+        "mine_message": "我的数字人请走 /api/hifly/my/avatar/list",
+        "public_total": len(public),
+        "public_page": 1,
+        "public_size": len(public),
+        "public_has_more": False,
+        "mine_total": 0,
+        "using_default_token": bool((settings.hifly_default_token or "").strip() and not (body.token or "").strip()),
+    }
+
+
+@router.post("/api/hifly/voice/library")
+async def hifly_voice_library(body: HiflyTokenBody):
+    public_rows = await _fetch_all_hifly_pages(
+        "/api/v2/hifly/voice/list",
+        body.token,
+        2,
+        _MAX_VOICE_PAGE_SIZE,
+    )
+    public = _enrich_public_voice_rows(public_rows)
+    return {
+        "ok": True,
+        "mine": [],
+        "public": public,
+        "mine_supported": False,
+        "mine_message": "我的声音请走 /api/hifly/my/voice/list",
+        "public_total": len(public),
+        "manifest_count": 0,
+        "using_default_token": bool((settings.hifly_default_token or "").strip() and not (body.token or "").strip()),
     }
 
 
