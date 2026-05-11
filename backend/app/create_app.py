@@ -823,6 +823,14 @@ def create_app() -> FastAPI:
     assets_dir.mkdir(exist_ok=True)
     app.mount("/media", StaticFiles(directory=str(assets_dir)), name="media")
 
+    hifly_previews_dir = Path(__file__).resolve().parent.parent.parent / "data" / "hifly_previews"
+    hifly_previews_dir.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/static/hifly_previews",
+        StaticFiles(directory=str(hifly_previews_dir)),
+        name="hifly_previews",
+    )
+
     # 在线版客户端技能包 manifest / zip（HTTPS 直链，无需登录；与 lobster_online SKILL_BUNDLE_MANIFEST_URL 对应）
     _skill_bundle_dir = Path(__file__).resolve().parent.parent.parent / "client_static" / "skill_bundle"
     _skill_bundle_dir.mkdir(parents=True, exist_ok=True)
