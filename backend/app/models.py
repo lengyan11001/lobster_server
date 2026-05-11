@@ -122,6 +122,100 @@ class Asset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class UserHiflyAvatarAsset(Base):
+    __tablename__ = "user_hifly_avatar_assets"
+    __table_args__ = (
+        UniqueConstraint("hifly_task_id", name="uq_user_hifly_avatar_assets_task_id"),
+        Index("ix_user_hifly_avatar_assets_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False, default="未命名数字人")
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="image", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing", index=True)
+    hifly_task_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    hifly_avatar_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    file_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    cover_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    aigc_flag: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    model: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class UserHiflyVoiceAsset(Base):
+    __tablename__ = "user_hifly_voice_assets"
+    __table_args__ = (
+        UniqueConstraint("hifly_task_id", name="uq_user_hifly_voice_assets_task_id"),
+        Index("ix_user_hifly_voice_assets_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False, default="未命名声音")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing", index=True)
+    hifly_task_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    hifly_voice_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    file_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    demo_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cover_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    voice_type: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    languages: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class UserHiflyVideoAsset(Base):
+    """口播视频任务持久化：记录一次文本驱动视频合成的 task_id、成品 URL 以及转存后的永久地址。"""
+    __tablename__ = "user_hifly_video_assets"
+    __table_args__ = (
+        UniqueConstraint("hifly_task_id", name="uq_user_hifly_video_assets_task_id"),
+        Index("ix_user_hifly_video_assets_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False, default="数字人口播")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing", index=True)
+    hifly_task_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    avatar_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    voice_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    """HiFly 返回的临时视频下载地址（很快会过期，仅用于转存）。"""
+    source_video_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    """转存到对象存储后的永久 URL；若 TOS 未配置则回退为本地 /api/assets/file 签名链。"""
+    asset_video_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    """关联 Asset 表的 asset_id，便于后续接入素材库。"""
+    asset_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    duration: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    aigc_flag: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    st_show: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 class PublishAccount(Base):
     __tablename__ = "publish_accounts"
 

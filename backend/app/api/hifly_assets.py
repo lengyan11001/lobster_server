@@ -1,0 +1,1323 @@
+﻿from __future__ import annotations
+
+import mimetypes
+import logging
+import math
+import os
+import hmac
+import hashlib
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import httpx
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from ..core.config import settings
+from ..db import get_db
+from ..models import Asset, User, UserHiflyAvatarAsset, UserHiflyVideoAsset, UserHiflyVoiceAsset
+from .assets import _save_bytes_or_tos, _resolve_asset_public_base, build_asset_file_url
+from .auth import get_current_user
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+_HIFLY_API_BASE = "https://hfw-api.hifly.cc"
+_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+_VIDEO_MAX_BYTES = 500 * 1024 * 1024
+_AUDIO_MAX_BYTES = 20 * 1024 * 1024
+_AUDIO_DRIVE_MAX_BYTES = 100 * 1024 * 1024
+
+_IMAGE_EXTS = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}
+_VIDEO_EXTS = {"mp4": "video/mp4", "mov": "video/quicktime"}
+_AUDIO_EXTS = {"mp3": "audio/mpeg", "m4a": "audio/mp4", "wav": "audio/wav"}
+_HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
+_HIFLY_AUDIO_CAPABILITY_ID = "hifly.video.create_by_audio"
+_HIFLY_TTS_UNIT_CREDITS = 10
+_HIFLY_TTS_CHARS_PER_SECOND = 4
+_VOICE_PREVIEW_EXPIRY_SEC = 86400
+
+
+class HiflyTaskBody(BaseModel):
+    task_id: str = Field(..., min_length=1)
+    token: Optional[str] = None
+
+
+def _resolved_token(token: Optional[str]) -> str:
+    value = (token or "").strip()
+    if value:
+        return value
+    fallback = (settings.hifly_default_token or "").strip()
+    if fallback:
+        return fallback
+    raise HTTPException(status_code=400, detail="请先在服务端配置 HIFLY_DEFAULT_TOKEN，或提交时显式传入 token")
+
+
+def _bearer_from_request(request: Optional[Request]) -> str:
+    if request is None:
+        return ""
+    auth = (request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
+
+
+def _billing_base() -> str:
+    base = (getattr(settings, "auth_server_base", None) or "").strip().rstrip("/")
+    if not base:
+        raise HTTPException(status_code=503, detail="未配置 AUTH_SERVER_BASE，无法完成 HiFly 算力计费")
+    return base
+
+
+def _billing_headers(request: Request) -> Dict[str, str]:
+    token = _bearer_from_request(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="请先登录后再生成 HiFly 视频")
+    headers: Dict[str, str] = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    installation_id = (request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or "").strip()
+    if installation_id:
+        headers["X-Installation-Id"] = installation_id
+    billing_key = (getattr(settings, "lobster_mcp_billing_internal_key", None) or "").strip() or (os.environ.get("LOBSTER_MCP_BILLING_INTERNAL_KEY") or "").strip()
+    if billing_key:
+        headers["X-Lobster-Mcp-Billing"] = billing_key
+    return headers
+
+
+def _estimate_tts_seconds(text: str) -> int:
+    clean = "".join(str(text or "").split())
+    return max(1, int(math.ceil(len(clean) / _HIFLY_TTS_CHARS_PER_SECOND)))
+
+
+def _duration_seconds(value: Any) -> int:
+    try:
+        return max(1, int(math.ceil(float(value or 0))))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _estimate_audio_seconds(value: Any) -> int:
+    return _duration_seconds(value)
+
+
+async def _hifly_pre_deduct_tts(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
+    estimated_seconds = _estimate_tts_seconds(str(payload.get("text") or ""))
+    expected_credits = estimated_seconds * _HIFLY_TTS_UNIT_CREDITS
+    body = {
+        "capability_id": _HIFLY_TTS_CAPABILITY_ID,
+        "model": "hifly-text-driven",
+        "params": {
+            "estimated_seconds": estimated_seconds,
+            "unit_credits": _HIFLY_TTS_UNIT_CREDITS,
+            "text_length": len(str(payload.get("text") or "")),
+            "expected_credits": expected_credits,
+        },
+    }
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post(f"{_billing_base()}/capabilities/pre-deduct", json=body, headers=_billing_headers(request))
+    if resp.status_code == 402:
+        detail = (resp.json() if resp.content else {}).get("detail", "算力不足")
+        raise HTTPException(status_code=402, detail=f"算力不足，预计需预扣 {expected_credits} 算力。{detail}")
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录后再生成")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"HiFly 计费预扣失败 HTTP {resp.status_code}: {(resp.text or '')[:300]}")
+    data = resp.json() if resp.content else {}
+    try:
+        charged_value = float(data.get("credits_charged"))
+    except (TypeError, ValueError):
+        charged_value = float(expected_credits)
+    return {"credits_pre_deducted": charged_value, "estimated_seconds": estimated_seconds, "expected_credits": expected_credits, "raw": data}
+
+
+async def _hifly_pre_deduct_audio(request: Request, payload: Dict[str, Any], duration_seconds: int) -> Dict[str, Any]:
+    estimated_seconds = _estimate_audio_seconds(duration_seconds)
+    expected_credits = estimated_seconds * _HIFLY_TTS_UNIT_CREDITS
+    body = {
+        "capability_id": _HIFLY_AUDIO_CAPABILITY_ID,
+        "model": "hifly-audio-driven",
+        "params": {
+            "estimated_seconds": estimated_seconds,
+            "unit_credits": _HIFLY_TTS_UNIT_CREDITS,
+            "audio_size": int(payload.get("audio_size") or 0),
+            "expected_credits": expected_credits,
+        },
+    }
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post(f"{_billing_base()}/capabilities/pre-deduct", json=body, headers=_billing_headers(request))
+    if resp.status_code == 402:
+        detail = (resp.json() if resp.content else {}).get("detail", "算力不足")
+        raise HTTPException(status_code=402, detail=f"算力不足，预计需预扣 {expected_credits} 算力。{detail}")
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录后再生成")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"HiFly 计费预扣失败 HTTP {resp.status_code}: {(resp.text or '')[:300]}")
+    data = resp.json() if resp.content else {}
+    try:
+        charged_value = float(data.get("credits_charged"))
+    except (TypeError, ValueError):
+        charged_value = float(expected_credits)
+    return {"credits_pre_deducted": charged_value, "estimated_seconds": estimated_seconds, "expected_credits": expected_credits, "raw": data}
+
+
+async def _hifly_refund_capability(request: Request, capability_id: str, credits: float) -> None:
+    if credits <= 0:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            await client.post(f"{_billing_base()}/capabilities/refund", json={"capability_id": capability_id, "credits": credits}, headers=_billing_headers(request))
+    except Exception:
+        logger.exception("[hifly-billing] refund failed capability=%s credits=%s", capability_id, credits)
+
+
+async def _hifly_refund_tts(request: Request, credits: float) -> None:
+    await _hifly_refund_capability(request, _HIFLY_TTS_CAPABILITY_ID, credits)
+
+
+async def _hifly_record_video_billing(request: Request, row: UserHiflyVideoAsset, result: Dict[str, Any]) -> Dict[str, Any]:
+    meta = dict(row.meta or {})
+    billing = dict(meta.get("billing") or {})
+    capability_id = str(billing.get("capability_id") or _HIFLY_TTS_CAPABILITY_ID).strip() or _HIFLY_TTS_CAPABILITY_ID
+    credits_pre = float(billing.get("credits_pre_deducted") or 0)
+    actual_seconds = _duration_seconds(result.get("duration"))
+    credits_final = float(actual_seconds * _HIFLY_TTS_UNIT_CREDITS)
+    body = {
+        "capability_id": capability_id,
+        "success": True,
+        "source": "hifly_video_task",
+        "request_payload": {"task_id": row.hifly_task_id, "request_id": result.get("request_id") or billing.get("request_id") or "", "estimated_seconds": billing.get("estimated_seconds")},
+        "response_payload": {"duration": result.get("duration"), "video_url": result.get("video_url") or ""},
+        "credits_charged": credits_final,
+        "pre_deduct_applied": credits_pre > 0,
+        "credits_pre_deducted": credits_pre,
+        "credits_final": credits_final,
+    }
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post(f"{_billing_base()}/capabilities/record-call", json=body, headers=_billing_headers(request))
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"HiFly 计费结算失败 HTTP {resp.status_code}: {(resp.text or '')[:300]}")
+    billing.update({"billing_status": "settled", "credits_final": credits_final, "actual_seconds": actual_seconds, "settled_at": datetime.utcnow().isoformat() + "Z"})
+    return billing
+
+
+def _headers(token: Optional[str]) -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {_resolved_token(token)}",
+        "Accept": "application/json",
+    }
+
+
+def _url(path: str) -> str:
+    return f"{_HIFLY_API_BASE}{path}"
+
+
+def _safe_title(value: str, default: str, max_len: int = 20) -> str:
+    text = str(value or "").strip() or default
+    return text[:max_len] or default
+
+
+def _status_text(status: int) -> str:
+    return {
+        1: "等待中",
+        2: "处理中",
+        3: "已完成",
+        4: "失败",
+    }.get(status, "未知")
+
+
+def _local_status(status: int) -> str:
+    return {
+        1: "waiting",
+        2: "processing",
+        3: "success",
+        4: "failed",
+    }.get(status, "processing")
+
+
+def _raise_for_hifly_business_error(payload: Dict[str, Any]) -> None:
+    code = payload.get("code", 0)
+    if code in (None, 0):
+        return
+    message = str(payload.get("message") or payload.get("msg") or "HiFly business error")
+    raise HTTPException(status_code=502, detail=f"HiFly error {code}: {message}")
+
+
+async def _get(path: str, token: Optional[str], params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
+        resp = await client.get(_url(path), headers=_headers(token), params=params or {})
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="HiFly token invalid or expired")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"HiFly HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="HiFly returned non-JSON response") from exc
+    if isinstance(payload, dict):
+        _raise_for_hifly_business_error(payload)
+        return payload
+    raise HTTPException(status_code=502, detail="HiFly returned invalid payload")
+
+
+async def _post(path: str, token: Optional[str], body: Dict[str, Any]) -> Dict[str, Any]:
+    headers = _headers(token)
+    headers["Content-Type"] = "application/json"
+    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+        resp = await client.post(_url(path), headers=headers, json=body)
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="HiFly token invalid or expired")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"HiFly HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="HiFly returned non-JSON response") from exc
+    if isinstance(payload, dict):
+        _raise_for_hifly_business_error(payload)
+        return payload
+    raise HTTPException(status_code=502, detail="HiFly returned invalid payload")
+
+
+async def _put_bytes_to_url(upload_url: str, data: bytes, content_type: str) -> None:
+    headers = {"Content-Type": content_type or "application/octet-stream"}
+    async with httpx.AsyncClient(timeout=300.0, trust_env=False) as client:
+        resp = await client.put(upload_url, headers=headers, content=data)
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"HiFly upload failed HTTP {resp.status_code}: {(resp.text or '')[:240]}",
+        )
+
+
+def _normalized_extension(upload: UploadFile, allowed_exts: Dict[str, str], fallback: str) -> str:
+    filename_ext = Path(upload.filename or "").suffix.lower().lstrip(".")
+    if filename_ext in allowed_exts:
+        return filename_ext
+    guessed = (mimetypes.guess_extension(upload.content_type or "") or "").lower().lstrip(".")
+    if guessed == "jpe":
+        guessed = "jpeg"
+    if guessed in allowed_exts:
+        return guessed
+    return fallback
+
+
+async def _upload_file_to_hifly(
+    token: Optional[str],
+    upload: UploadFile,
+    *,
+    allowed_exts: Dict[str, str],
+    max_bytes: int,
+    fallback_ext: str,
+) -> Dict[str, Any]:
+    raw = await upload.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="上传文件为空")
+    if len(raw) > max_bytes:
+        raise HTTPException(status_code=400, detail=f"上传文件不能超过 {max_bytes // (1024 * 1024)}MB")
+
+    ext = _normalized_extension(upload, allowed_exts, fallback_ext)
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail=f"仅支持 {', '.join(sorted(allowed_exts))} 格式")
+
+    upload_meta = await _post("/api/v2/hifly/tool/create_upload_url", token, {"file_extension": ext})
+    upload_url = str(upload_meta.get("upload_url") or "").strip()
+    file_id = str(upload_meta.get("file_id") or "").strip()
+    if not upload_url or not file_id:
+        raise HTTPException(status_code=502, detail="HiFly 未返回 upload_url 或 file_id")
+
+    content_type = (
+        str(upload_meta.get("content_type") or "").strip()
+        or allowed_exts.get(ext)
+        or upload.content_type
+        or "application/octet-stream"
+    )
+    await _put_bytes_to_url(upload_url, raw, content_type)
+    return {
+        "file_id": file_id,
+        "content_type": content_type,
+        "filename": upload.filename or f"upload.{ext}",
+        "size": len(raw),
+        "extension": ext,
+        "raw_bytes": raw,
+    }
+
+
+def _upload_meta_for_store(uploaded: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "file_id": uploaded.get("file_id"),
+        "content_type": uploaded.get("content_type"),
+        "filename": uploaded.get("filename"),
+        "size": uploaded.get("size"),
+        "extension": uploaded.get("extension"),
+        "source_asset_id": uploaded.get("source_asset_id"),
+        "source_url": uploaded.get("source_url"),
+    }
+
+
+def _persist_input_asset(db: Session, user_id: int, uploaded: Dict[str, Any], media_type: str) -> Optional[Asset]:
+    raw = uploaded.get("raw_bytes")
+    if not raw:
+        return None
+    ext = "." + str(uploaded.get("extension") or "bin").lstrip(".")
+    content_type = str(uploaded.get("content_type") or "").strip()
+    asset_id, filename_or_key, file_size, source_url = _save_bytes_or_tos(raw, ext, content_type)
+    asset = Asset(
+        asset_id=asset_id,
+        user_id=user_id,
+        filename=filename_or_key,
+        media_type=media_type,
+        file_size=file_size,
+        source_url=source_url,
+    )
+    db.add(asset)
+    db.flush()
+    return asset
+
+
+def _payload_and_nested(payload: Dict[str, Any]):
+    """HiFly 有的接口把业务字段放在顶层，有的塞进 data。两处都要扫一遍。"""
+    nested = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    return payload, nested or {}
+
+
+def _pick_field(payload: Dict[str, Any], *keys: str) -> Any:
+    """按优先级从 payload 顶层或 payload.data 中取第一个非空字段。"""
+    top, nested = _payload_and_nested(payload)
+    for key in keys:
+        for src in (top, nested):
+            value = src.get(key)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _pick_cover(payload: Dict[str, Any]) -> str:
+    top, nested = _payload_and_nested(payload)
+    for key in ("image_url", "cover_url", "avatar_url", "pic_url", "thumbnail_url", "poster_url"):
+        for src in (top, nested):
+            value = str(src.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _pick_demo(payload: Dict[str, Any]) -> str:
+    top, nested = _payload_and_nested(payload)
+    for key in ("demo_url", "audio_url", "preview_url"):
+        for src in (top, nested):
+            value = str(src.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _voice_preview_token(row_id: int, expiry_ts: int) -> str:
+    raw = f"hifly_voice_preview:{int(row_id)}:{int(expiry_ts)}"
+    return hmac.new(
+        settings.secret_key.encode("utf-8"),
+        raw.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _build_voice_preview_proxy_url(request: Optional[Request], row_id: int) -> str:
+    if request is None:
+        return ""
+    expiry_ts = int(time.time()) + _VOICE_PREVIEW_EXPIRY_SEC
+    token = _voice_preview_token(row_id, expiry_ts)
+    base = _resolve_asset_public_base(request)
+    return f"{base}/api/hifly/my/voice/{int(row_id)}/preview?token={token}&expiry={expiry_ts}"
+
+
+def _resolve_voice_preview_source(row: UserHiflyVoiceAsset, request: Optional[Request] = None) -> str:
+    demo_url = str(row.demo_url or "").strip()
+    if demo_url:
+        return demo_url
+    if isinstance(row.meta, dict):
+        task_raw = row.meta.get("task_raw") if isinstance(row.meta.get("task_raw"), dict) else {}
+        create_raw = row.meta.get("create_raw") if isinstance(row.meta.get("create_raw"), dict) else {}
+        demo_url = _pick_demo(task_raw) or _pick_demo(create_raw) or ""
+        if demo_url:
+            return demo_url
+        upload_meta = row.meta.get("upload_meta") if isinstance(row.meta.get("upload_meta"), dict) else {}
+        upload_source_url = str(upload_meta.get("source_url") or "").strip()
+        if upload_source_url:
+            return upload_source_url
+        upload_asset_id = str(upload_meta.get("source_asset_id") or "").strip()
+        if request is not None and upload_asset_id:
+            return build_asset_file_url(request, upload_asset_id) or ""
+    return ""
+
+
+def _refresh_voice_asset_from_hifly(row: UserHiflyVoiceAsset) -> bool:
+    """对已成功但缺少 demo_url/voice_id 的旧记录做一次懒刷新。"""
+    task_id = str(row.hifly_task_id or "").strip()
+    if not task_id:
+        return False
+    try:
+        headers = {"Authorization": f"Bearer {_resolved_token(None)}"}
+        with httpx.Client(timeout=30.0, trust_env=False) as client:
+            resp = client.get(_url("/api/v2/hifly/voice/task"), headers=headers, params={"task_id": task_id})
+        if resp.status_code == 401:
+            logger.warning("[hifly_assets] refresh voice task unauthorized task_id=%s", task_id)
+            return False
+        if resp.status_code >= 400:
+            logger.warning("[hifly_assets] refresh voice task http=%s task_id=%s", resp.status_code, task_id)
+            return False
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            return False
+        _raise_for_hifly_business_error(payload)
+    except Exception as exc:
+        logger.warning("[hifly_assets] refresh voice task failed task_id=%s err=%s", task_id, exc)
+        return False
+
+    status_num = int(_pick_field(payload, "status") or 0)
+    next_status = _local_status(status_num)
+    next_title = _safe_title(str(_pick_field(payload, "title") or row.title or "未命名声音"), "未命名声音", 128)
+    next_voice_id = str(_pick_field(payload, "voice", "voice_id") or row.hifly_voice_id or "").strip() or None
+    next_demo_url = _pick_demo(payload) or row.demo_url
+    next_cover_url = _pick_cover(payload) or row.cover_url
+    next_error = str(_pick_field(payload, "message") or "").strip() or None
+    next_meta = dict(row.meta or {})
+    next_meta["task_raw"] = payload
+
+    changed = False
+    if row.status != next_status:
+        row.status = next_status
+        changed = True
+    if row.title != next_title:
+        row.title = next_title
+        changed = True
+    if row.hifly_voice_id != next_voice_id:
+        row.hifly_voice_id = next_voice_id
+        changed = True
+    if row.demo_url != next_demo_url:
+        row.demo_url = next_demo_url
+        changed = True
+    if row.cover_url != next_cover_url:
+        row.cover_url = next_cover_url
+        changed = True
+    if row.error_message != next_error:
+        row.error_message = next_error
+        changed = True
+    if row.meta != next_meta:
+        row.meta = next_meta
+        changed = True
+    return changed
+
+
+def _normalize_avatar_asset(row: UserHiflyAvatarAsset, request: Optional[Request] = None) -> Dict[str, Any]:
+    meta = dict(row.meta or {})
+    detail_asset_id = str(meta.get("source_asset_id") or "").strip()
+    detail_url = build_asset_file_url(request, detail_asset_id) if request and detail_asset_id else ""
+    cover_url = row.cover_url or ""
+    return {
+        "id": row.id,
+        "task_id": row.hifly_task_id,
+        "avatar": row.hifly_avatar_id or "",
+        "title": row.title,
+        "image_url": cover_url,
+        "cover_url": cover_url,
+        "source_type": row.source_type,
+        "detail_asset_id": detail_asset_id,
+        "detail_url": detail_url,
+        "status": row.status,
+        "status_text": {
+            "waiting": "等待中",
+            "processing": "处理中",
+            "success": "已完成",
+            "failed": "失败",
+        }.get(row.status, "处理中"),
+        "model": row.model,
+        "aigc_flag": row.aigc_flag,
+        "message": row.error_message or "",
+        "section_label": "我的数字人",
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] = None) -> Dict[str, Any]:
+    voice_id = row.hifly_voice_id or ""
+    demo_url = _resolve_voice_preview_source(row, request)
+    cover_url = row.cover_url or ""
+    # 旧记录可能因为没做 data 嵌套 fallback 而 demo_url 为空，这里再从 meta.task_raw 兜底一次
+    if (not demo_url or not voice_id) and isinstance(row.meta, dict):
+        task_raw = row.meta.get("task_raw") if isinstance(row.meta.get("task_raw"), dict) else {}
+        create_raw = row.meta.get("create_raw") if isinstance(row.meta.get("create_raw"), dict) else {}
+        if not demo_url:
+            demo_url = _pick_demo(task_raw) or _pick_demo(create_raw) or ""
+        if not voice_id:
+            vid = _pick_field(task_raw, "voice", "voice_id") or _pick_field(create_raw, "voice", "voice_id")
+            if vid:
+                voice_id = str(vid).strip()
+        if not cover_url:
+            cover_url = _pick_cover(task_raw) or _pick_cover(create_raw) or ""
+    if not demo_url and isinstance(row.meta, dict):
+        upload_meta = row.meta.get("upload_meta") if isinstance(row.meta.get("upload_meta"), dict) else {}
+        upload_asset_id = str(upload_meta.get("source_asset_id") or "").strip()
+        upload_source_url = str(upload_meta.get("source_url") or "").strip()
+        demo_url = upload_source_url or (build_asset_file_url(request, upload_asset_id) if request and upload_asset_id else "")
+    public_demo_url = _build_voice_preview_proxy_url(request, row.id) if request and demo_url else demo_url
+    styles = []
+    if voice_id:
+        styles.append(
+            {
+                "voice": voice_id,
+                "label": "默认风格",
+                "demo_url": public_demo_url,
+                "title": row.title,
+            }
+        )
+    return {
+        "id": row.id,
+        "task_id": row.hifly_task_id,
+        "voice": voice_id,
+        "title": row.title,
+        "image_url": cover_url,
+        "cover_url": cover_url,
+        "demo_url": public_demo_url,
+        "demo_origin_url": demo_url,
+        "status": row.status,
+        "status_text": {
+            "waiting": "等待中",
+            "processing": "处理中",
+            "success": "已完成",
+            "failed": "失败",
+        }.get(row.status, "处理中"),
+        "languages": row.languages or "zh",
+        "voice_type": row.voice_type,
+        "message": row.error_message or "",
+        "section_label": "我的声音",
+        "style_count": len(styles),
+        "styles": styles,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.post("/api/hifly/my/avatar/create-by-image-upload")
+async def create_my_avatar_by_image_upload(
+    request: Request,
+    token: Optional[str] = Form(None),
+    title: str = Form("未命名数字人"),
+    model: int = Form(2),
+    aigc_flag: int = Form(0),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    uploaded = await _upload_file_to_hifly(
+        token,
+        file,
+        allowed_exts=_IMAGE_EXTS,
+        max_bytes=_IMAGE_MAX_BYTES,
+        fallback_ext="png",
+    )
+    payload = {
+        "title": _safe_title(title, "未命名数字人"),
+        "file_id": uploaded["file_id"],
+        "model": 1 if int(model or 0) == 1 else 2,
+        "aigc_flag": int(aigc_flag or 0),
+    }
+    created = await _post("/api/v2/hifly/avatar/create_by_image", token, payload)
+    task_id = str(_pick_field(created, "task_id") or "").strip()
+    if not task_id:
+        raise HTTPException(status_code=502, detail="HiFly 未返回 task_id")
+
+    source_asset = _persist_input_asset(db, current_user.id, uploaded, "image")
+    row = UserHiflyAvatarAsset(
+        user_id=current_user.id,
+        title=payload["title"],
+        source_type="image",
+        status="processing",
+        hifly_task_id=task_id,
+        file_id=uploaded["file_id"],
+        aigc_flag=payload["aigc_flag"],
+        model=payload["model"],
+        meta={
+            "create_raw": created,
+            "upload_meta": _upload_meta_for_store(uploaded),
+            "source_asset_id": source_asset.asset_id if source_asset else "",
+        },
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _normalize_avatar_asset(row, request)}
+
+
+@router.post("/api/hifly/my/avatar/create-by-video-upload")
+async def create_my_avatar_by_video_upload(
+    request: Request,
+    token: Optional[str] = Form(None),
+    title: str = Form("未命名数字人"),
+    aigc_flag: int = Form(0),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    uploaded = await _upload_file_to_hifly(
+        token,
+        file,
+        allowed_exts=_VIDEO_EXTS,
+        max_bytes=_VIDEO_MAX_BYTES,
+        fallback_ext="mp4",
+    )
+    payload = {
+        "title": _safe_title(title, "未命名数字人"),
+        "file_id": uploaded["file_id"],
+        "aigc_flag": int(aigc_flag or 0),
+    }
+    created = await _post("/api/v2/hifly/avatar/create_by_video", token, payload)
+    task_id = str(_pick_field(created, "task_id") or "").strip()
+    if not task_id:
+        raise HTTPException(status_code=502, detail="HiFly 未返回 task_id")
+
+    source_asset = _persist_input_asset(db, current_user.id, uploaded, "video")
+    row = UserHiflyAvatarAsset(
+        user_id=current_user.id,
+        title=payload["title"],
+        source_type="video",
+        status="processing",
+        hifly_task_id=task_id,
+        file_id=uploaded["file_id"],
+        aigc_flag=payload["aigc_flag"],
+        meta={
+            "create_raw": created,
+            "upload_meta": _upload_meta_for_store(uploaded),
+            "source_asset_id": source_asset.asset_id if source_asset else "",
+        },
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _normalize_avatar_asset(row, request)}
+
+
+@router.post("/api/hifly/my/voice/create-upload")
+async def create_my_voice_upload(
+    request: Request,
+    token: Optional[str] = Form(None),
+    title: str = Form(...),
+    voice_type: int = Form(8),
+    languages: str = Form("zh"),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    uploaded = await _upload_file_to_hifly(
+        token,
+        file,
+        allowed_exts=_AUDIO_EXTS,
+        max_bytes=_AUDIO_MAX_BYTES,
+        fallback_ext="mp3",
+    )
+    source_asset = _persist_input_asset(db, current_user.id, uploaded, "audio")
+    if source_asset:
+        uploaded["source_asset_id"] = source_asset.asset_id
+        uploaded["source_url"] = source_asset.source_url or ""
+    payload = {
+        "title": _safe_title(title, "未命名声音"),
+        "voice_type": int(voice_type or 8),
+        "file_id": uploaded["file_id"],
+        "languages": (languages or "zh").strip() or "zh",
+    }
+    created = await _post("/api/v2/hifly/voice/create", token, payload)
+    task_id = str(_pick_field(created, "task_id") or "").strip()
+    if not task_id:
+        raise HTTPException(status_code=502, detail="HiFly 未返回 task_id")
+
+    row = UserHiflyVoiceAsset(
+        user_id=current_user.id,
+        title=payload["title"],
+        status="processing",
+        hifly_task_id=task_id,
+        file_id=uploaded["file_id"],
+        voice_type=payload["voice_type"],
+        languages=payload["languages"],
+        meta={"create_raw": created, "upload_meta": _upload_meta_for_store(uploaded)},
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _normalize_voice_asset(row, request)}
+
+
+@router.post("/api/hifly/my/avatar/task")
+async def poll_my_avatar_task(
+    request: Request,
+    body: HiflyTaskBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(UserHiflyAvatarAsset)
+        .filter(
+            UserHiflyAvatarAsset.user_id == current_user.id,
+            UserHiflyAvatarAsset.hifly_task_id == body.task_id.strip(),
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="未找到该数字人任务")
+
+    payload = await _get("/api/v2/hifly/avatar/task", body.token, {"task_id": row.hifly_task_id})
+    status_num = int(_pick_field(payload, "status") or 0)
+    row.status = _local_status(status_num)
+    row.title = _safe_title(str(_pick_field(payload, "title") or row.title or "未命名数字人"), "未命名数字人", 128)
+    row.hifly_avatar_id = str(_pick_field(payload, "avatar") or row.hifly_avatar_id or "").strip() or None
+    row.cover_url = _pick_cover(payload) or row.cover_url
+    row.error_message = str(_pick_field(payload, "message") or "").strip() or None
+    row.meta = dict(row.meta or {}, task_raw=payload)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": status_num != 4,
+        "task_id": row.hifly_task_id,
+        "status": status_num,
+        "status_text": _status_text(status_num),
+        "item": _normalize_avatar_asset(row, request),
+        "raw": payload,
+    }
+
+
+@router.get("/api/hifly/my/voice/{voice_asset_id}/preview")
+async def preview_my_voice_audio(
+    voice_asset_id: int,
+    token: str = Query(...),
+    expiry: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    expected = _voice_preview_token(voice_asset_id, expiry)
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="无效的试听签名")
+    if int(time.time()) > int(expiry):
+        raise HTTPException(status_code=403, detail="试听链接已过期")
+
+    row = db.query(UserHiflyVoiceAsset).filter(UserHiflyVoiceAsset.id == int(voice_asset_id)).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="试听记录不存在")
+
+    target_url = _resolve_voice_preview_source(row, None)
+    if not target_url:
+        raise HTTPException(status_code=404, detail="当前声音暂无可用试听音频")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0, trust_env=False, follow_redirects=True) as client:
+            resp = await client.get(target_url, headers={"User-Agent": "Mozilla/5.0"})
+    except Exception as exc:
+        logger.warning("[hifly_assets] preview proxy request failed row_id=%s err=%s", voice_asset_id, exc)
+        raise HTTPException(status_code=503, detail="试听音频拉取失败") from exc
+
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=503, detail=f"试听音频源站不可用 HTTP {resp.status_code}")
+
+    media_type = (resp.headers.get("content-type") or "audio/mpeg").split(";")[0].strip() or "audio/mpeg"
+    return Response(
+        content=resp.content,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.post("/api/hifly/my/voice/task")
+async def poll_my_voice_task(
+    request: Request,
+    body: HiflyTaskBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(UserHiflyVoiceAsset)
+        .filter(
+            UserHiflyVoiceAsset.user_id == current_user.id,
+            UserHiflyVoiceAsset.hifly_task_id == body.task_id.strip(),
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="未找到该声音任务")
+
+    payload = await _get("/api/v2/hifly/voice/task", body.token, {"task_id": row.hifly_task_id})
+    status_num = int(_pick_field(payload, "status") or 0)
+    row.status = _local_status(status_num)
+    row.title = _safe_title(str(_pick_field(payload, "title") or row.title or "未命名声音"), "未命名声音", 128)
+    row.hifly_voice_id = str(_pick_field(payload, "voice", "voice_id") or row.hifly_voice_id or "").strip() or None
+    row.demo_url = _pick_demo(payload) or row.demo_url
+    row.cover_url = _pick_cover(payload) or row.cover_url
+    row.error_message = str(_pick_field(payload, "message") or "").strip() or None
+    row.meta = dict(row.meta or {}, task_raw=payload)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": status_num != 4,
+        "task_id": row.hifly_task_id,
+        "status": status_num,
+        "status_text": _status_text(status_num),
+        "item": _normalize_voice_asset(row, request),
+        "raw": payload,
+    }
+
+
+@router.get("/api/hifly/my/avatar/list")
+def list_my_avatars(
+    request: Request,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    q: str = Query("", alias="keyword"),
+    status: str = Query(""),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(UserHiflyAvatarAsset).filter(UserHiflyAvatarAsset.user_id == current_user.id)
+    keyword = (q or "").strip()
+    if keyword:
+        query = query.filter(UserHiflyAvatarAsset.title.contains(keyword))
+    status_value = (status or "").strip()
+    if status_value:
+        query = query.filter(UserHiflyAvatarAsset.status == status_value)
+
+    total = query.count()
+    rows = (
+        query.order_by(UserHiflyAvatarAsset.created_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+        .all()
+    )
+    return {
+        "ok": True,
+        "items": [_normalize_avatar_asset(row, request) for row in rows],
+        "page": page,
+        "size": size,
+        "total": total,
+    }
+
+
+# ── 口播视频任务持久化 ──────────────────────────────────────────────
+
+class HiflyVideoCreateBody(BaseModel):
+    title: str = Field("数字人口播", max_length=128)
+    avatar: str = Field(..., min_length=1, max_length=128)
+    voice: str = Field(..., min_length=1, max_length=128)
+    text: str = Field(..., min_length=1, max_length=10000)
+    st_show: int = 0
+    aigc_flag: int = 0
+    token: Optional[str] = None
+
+
+def _pick_nested(payload: Dict[str, Any], key: str) -> Any:
+    """HiFly 部分接口把业务字段包在 data 里，这里做统一 fallback。"""
+    if payload.get(key) not in (None, ""):
+        return payload.get(key)
+    nested = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    return nested.get(key)
+
+
+def _video_item_url(row: UserHiflyVideoAsset, request: Optional[Request]) -> str:
+    """优先返回永久 URL，其次 /api/assets/file 签名链，最后退回 HiFly 临时链。"""
+    if row.asset_video_url:
+        return row.asset_video_url
+    if row.asset_id and request is not None:
+        signed = build_asset_file_url(request, row.asset_id)
+        if signed:
+            return signed
+    return row.source_video_url or ""
+
+
+def _normalize_video_asset(row: UserHiflyVideoAsset, request: Optional[Request] = None) -> Dict[str, Any]:
+    video_url = _video_item_url(row, request)
+    meta = dict(row.meta or {})
+    source_mode = str(meta.get("source_mode") or ("tts" if row.text else "audio")).strip() or "tts"
+    return {
+        "id": row.id,
+        "task_id": row.hifly_task_id,
+        "title": row.title,
+        "avatar": row.avatar_id or "",
+        "voice": row.voice_id or "",
+        "source_mode": source_mode,
+        "status": row.status,
+        "status_text": {
+            "waiting": "等待中",
+            "processing": "处理中",
+            "success": "已完成",
+            "failed": "失败",
+        }.get(row.status, "处理中"),
+        "video_url": video_url,
+        "asset_video_url": row.asset_video_url or "",
+        "asset_id": row.asset_id or "",
+        "source_video_url": row.source_video_url or "",
+        "text": row.text or "",
+        "duration": row.duration,
+        "aigc_flag": row.aigc_flag,
+        "st_show": row.st_show,
+        "message": row.error_message or "",
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+async def _download_bytes(url: str) -> tuple[bytes, str]:
+    """拉取 HiFly 临时视频返回 (data, content_type)。"""
+    async with httpx.AsyncClient(timeout=600.0, trust_env=False, follow_redirects=True) as client:
+        resp = await client.get(url)
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"下载 HiFly 视频失败 HTTP {resp.status_code}")
+    return resp.content, (resp.headers.get("content-type") or "video/mp4").split(";")[0].strip() or "video/mp4"
+
+
+async def _persist_video_result(
+    row: UserHiflyVideoAsset,
+    request: Optional[Request],
+    source_url: str,
+    db: Session,
+) -> None:
+    """HiFly 状态=3 时把临时视频拉回来，转存到 TOS/Asset，更新永久 URL。失败时保留 source_video_url。"""
+    if not source_url:
+        return
+    if row.asset_video_url:
+        return  # 已经转存过
+    try:
+        data, content_type = await _download_bytes(source_url)
+        ext = ".mp4"
+        if "webm" in content_type:
+            ext = ".webm"
+        elif "quicktime" in content_type or "mov" in content_type:
+            ext = ".mov"
+        asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, content_type)
+        asset = Asset(
+            asset_id=asset_id,
+            user_id=row.user_id,
+            filename=filename_or_key,
+            media_type="video",
+            file_size=file_size,
+            source_url=public_url,
+            tags="hifly,video_tts",
+            meta={"hifly_task_id": row.hifly_task_id, "title": row.title},
+        )
+        db.add(asset)
+        db.flush()
+        row.asset_id = asset_id
+        # 有 TOS 时用公网直链；无 TOS 时在返回前端时再用 build_asset_file_url 生成签名链
+        row.asset_video_url = public_url or ""
+        logger.info(
+            "[hifly] video task %s 已转存 asset_id=%s tos=%s",
+            row.hifly_task_id,
+            asset_id,
+            "yes" if public_url else "no",
+        )
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.exception("[hifly] 转存口播视频失败 task_id=%s", row.hifly_task_id)
+
+
+@router.post("/api/hifly/my/video/create-by-tts")
+async def create_my_video_by_tts(
+    request: Request,
+    body: HiflyVideoCreateBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    title = _safe_title(body.title, "数字人口播", 128)
+    payload = {
+        "title": title[:20] or "数字人口播",
+        "avatar": body.avatar.strip(),
+        "voice": body.voice.strip(),
+        "text": body.text.strip(),
+        "st_show": 1 if int(body.st_show or 0) == 1 else 0,
+        "aigc_flag": int(body.aigc_flag or 0),
+    }
+    billing = await _hifly_pre_deduct_tts(request, payload)
+    try:
+        created = await _post("/api/v2/hifly/video/create_by_tts", body.token, payload)
+        task_id = str(_pick_nested(created, "task_id") or "").strip()
+        if not task_id:
+            await _hifly_refund_tts(request, float(billing.get("credits_pre_deducted") or 0))
+            raise HTTPException(status_code=502, detail="HiFly 未返回 task_id")
+    except HTTPException:
+        if "task_id" not in locals():
+            await _hifly_refund_tts(request, float(billing.get("credits_pre_deducted") or 0))
+        raise
+    request_id = str(_pick_nested(created, "request_id") or "").strip()
+
+    row = UserHiflyVideoAsset(
+        user_id=current_user.id,
+        title=title,
+        status="processing",
+        hifly_task_id=task_id,
+        avatar_id=body.avatar.strip() or None,
+        voice_id=body.voice.strip() or None,
+        text=body.text.strip(),
+        aigc_flag=payload["aigc_flag"],
+        st_show=payload["st_show"],
+        meta={"create_raw": created, "create_payload": payload, "billing": {"capability_id": _HIFLY_TTS_CAPABILITY_ID, "billing_status": "pending", "credits_pre_deducted": billing.get("credits_pre_deducted"), "estimated_seconds": billing.get("estimated_seconds"), "expected_credits": billing.get("expected_credits"), "request_id": request_id, "created_at": datetime.utcnow().isoformat() + "Z"}},
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "task_id": task_id, "request_id": request_id, "billing": (row.meta or {}).get("billing") or {}, "item": _normalize_video_asset(row)}
+
+
+@router.post("/api/hifly/my/video/create-by-audio-upload")
+async def create_my_video_by_audio_upload(
+    request: Request,
+    avatar: str = Form(...),
+    title: str = Form("数字人口播"),
+    aigc_flag: int = Form(0),
+    audio_duration: float = Form(0),
+    token: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    avatar_value = str(avatar or "").strip()
+    if not avatar_value:
+        raise HTTPException(status_code=400, detail="请先选择数字人")
+
+    uploaded = await _upload_file_to_hifly(
+        token,
+        file,
+        allowed_exts=_AUDIO_EXTS,
+        max_bytes=_AUDIO_DRIVE_MAX_BYTES,
+        fallback_ext="mp3",
+    )
+    title_value = _safe_title(title, "数字人口播", 128)
+    payload = {
+        "title": title_value[:20] or "数字人口播",
+        "avatar": avatar_value,
+        "file_id": uploaded["file_id"],
+        "aigc_flag": int(aigc_flag or 0),
+    }
+    billing = await _hifly_pre_deduct_audio(request, {"audio_size": uploaded.get("size") or 0}, _estimate_audio_seconds(audio_duration))
+    try:
+        created = await _post("/api/v2/hifly/video/create_by_audio", token, payload)
+        task_id = str(_pick_nested(created, "task_id") or "").strip()
+        if not task_id:
+            await _hifly_refund_capability(request, _HIFLY_AUDIO_CAPABILITY_ID, float(billing.get("credits_pre_deducted") or 0))
+            raise HTTPException(status_code=502, detail="HiFly 未返回 task_id")
+    except HTTPException:
+        if "task_id" not in locals():
+            await _hifly_refund_capability(request, _HIFLY_AUDIO_CAPABILITY_ID, float(billing.get("credits_pre_deducted") or 0))
+        raise
+    request_id = str(_pick_nested(created, "request_id") or "").strip()
+
+    source_asset = _persist_input_asset(db, current_user.id, uploaded, "audio")
+    if source_asset:
+        uploaded["source_asset_id"] = source_asset.asset_id
+        uploaded["source_url"] = source_asset.source_url
+
+    row = UserHiflyVideoAsset(
+        user_id=current_user.id,
+        title=title_value,
+        status="processing",
+        hifly_task_id=task_id,
+        avatar_id=avatar_value or None,
+        aigc_flag=payload["aigc_flag"],
+        st_show=0,
+        meta={
+            "create_raw": created,
+            "create_payload": payload,
+            "upload_meta": _upload_meta_for_store(uploaded),
+            "source_asset_id": source_asset.asset_id if source_asset else "",
+            "source_mode": "audio",
+            "billing": {
+                "capability_id": _HIFLY_AUDIO_CAPABILITY_ID,
+                "billing_status": "pending",
+                "credits_pre_deducted": billing.get("credits_pre_deducted"),
+                "estimated_seconds": billing.get("estimated_seconds"),
+                "expected_credits": billing.get("expected_credits"),
+                "request_id": request_id,
+                "created_at": datetime.utcnow().isoformat() + "Z",
+            },
+        },
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "task_id": task_id, "request_id": request_id, "billing": (row.meta or {}).get("billing") or {}, "item": _normalize_video_asset(row)}
+
+
+@router.post("/api/hifly/my/video/task")
+async def poll_my_video_task(
+    request: Request,
+    body: HiflyTaskBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(UserHiflyVideoAsset)
+        .filter(
+            UserHiflyVideoAsset.user_id == current_user.id,
+            UserHiflyVideoAsset.hifly_task_id == body.task_id.strip(),
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="未找到该口播视频任务")
+
+    payload = await _get("/api/v2/hifly/video/task", body.token, {"task_id": row.hifly_task_id})
+    status_num = int(_pick_nested(payload, "status") or 0)
+    video_url = str(
+        _pick_nested(payload, "video_Url")
+        or _pick_nested(payload, "video_url")
+        or _pick_nested(payload, "videoUrl")
+        or ""
+    ).strip()
+    duration_raw = _pick_nested(payload, "duration")
+    row.status = _local_status(status_num)
+    if video_url:
+        row.source_video_url = video_url
+    if duration_raw not in (None, ""):
+        try:
+            row.duration = int(duration_raw)
+        except (TypeError, ValueError):
+            pass
+    row.error_message = str(_pick_nested(payload, "message") or "").strip() or None
+    meta = dict(row.meta or {}, task_raw=payload)
+    billing = dict(meta.get("billing") or {})
+    if billing and billing.get("billing_status") not in ("settled", "refunded"):
+        if status_num == 3:
+            billing_result = {
+                "duration": duration_raw,
+                "video_url": video_url,
+                "request_id": str(_pick_nested(payload, "request_id") or billing.get("request_id") or ""),
+            }
+            try:
+                billing = await _hifly_record_video_billing(request, row, billing_result)
+            except HTTPException as exc:
+                logger.exception("[hifly-billing] settle failed task_id=%s", row.hifly_task_id)
+                billing.update({"billing_status": "settle_failed", "billing_error": str(exc.detail)[:500], "updated_at": datetime.utcnow().isoformat() + "Z"})
+        elif status_num == 4:
+            credits_pre = float(billing.get("credits_pre_deducted") or 0)
+            capability_id = str(billing.get("capability_id") or _HIFLY_TTS_CAPABILITY_ID).strip() or _HIFLY_TTS_CAPABILITY_ID
+            await _hifly_refund_capability(request, capability_id, credits_pre)
+            billing.update({"billing_status": "refunded", "credits_refunded": credits_pre, "refunded_at": datetime.utcnow().isoformat() + "Z"})
+    meta["billing"] = billing
+    row.meta = meta
+
+    # 状态=3 且尚未转存过：把 HiFly 临时视频下载后写入 TOS/Asset，记录永久 URL
+    if status_num == 3 and video_url and not row.asset_video_url:
+        await _persist_video_result(row, request, video_url, db)
+
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    return {
+        "ok": status_num != 4,
+        "task_id": row.hifly_task_id,
+        "status": status_num,
+        "status_text": _status_text(status_num),
+        "video_url": _video_item_url(row, request),
+        "duration": row.duration,
+        "message": row.error_message or "",
+        "billing": ((row.meta or {}).get("billing") or {}),
+        "item": _normalize_video_asset(row, request),
+        "raw": payload,
+    }
+
+
+@router.get("/api/hifly/my/video/list")
+def list_my_videos(
+    request: Request,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    q: str = Query("", alias="keyword"),
+    status: str = Query(""),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(UserHiflyVideoAsset).filter(UserHiflyVideoAsset.user_id == current_user.id)
+    keyword = (q or "").strip()
+    if keyword:
+        query = query.filter(UserHiflyVideoAsset.title.contains(keyword))
+    status_value = (status or "").strip()
+    if status_value:
+        query = query.filter(UserHiflyVideoAsset.status == status_value)
+
+    total = query.count()
+    rows = (
+        query.order_by(UserHiflyVideoAsset.created_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+        .all()
+    )
+    return {
+        "ok": True,
+        "items": [_normalize_video_asset(row, request) for row in rows],
+        "page": page,
+        "size": size,
+        "total": total,
+    }
+
+
+@router.delete("/api/hifly/my/video/{video_id}")
+def delete_my_video(
+    video_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(UserHiflyVideoAsset)
+        .filter(UserHiflyVideoAsset.id == video_id, UserHiflyVideoAsset.user_id == current_user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/api/hifly/my/voice/list")
+def list_my_voices(
+    request: Request,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    q: str = Query("", alias="keyword"),
+    status: str = Query(""),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(UserHiflyVoiceAsset).filter(UserHiflyVoiceAsset.user_id == current_user.id)
+    keyword = (q or "").strip()
+    if keyword:
+        query = query.filter(UserHiflyVoiceAsset.title.contains(keyword))
+    status_value = (status or "").strip()
+    if status_value:
+        query = query.filter(UserHiflyVoiceAsset.status == status_value)
+
+    total = query.count()
+    rows = (
+        query.order_by(UserHiflyVoiceAsset.created_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+        .all()
+    )
+    changed = False
+    for row in rows:
+        missing_preview = not str(row.demo_url or "").strip()
+        missing_voice_id = not str(row.hifly_voice_id or "").strip()
+        if row.status == "success" and (missing_preview or missing_voice_id):
+            if _refresh_voice_asset_from_hifly(row):
+                db.add(row)
+                changed = True
+    if changed:
+        db.commit()
+        for row in rows:
+            db.refresh(row)
+    return {
+        "ok": True,
+        "items": [_normalize_voice_asset(row, request) for row in rows],
+        "page": page,
+        "size": size,
+        "total": total,
+    }
+
