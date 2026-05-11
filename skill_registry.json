@@ -408,6 +408,105 @@
         }
       },
       "tags": ["image", "video", "audio", "ai"]
-    }
+    },
+    "goal_video_pipeline_skill": {
+      "name": "目标成片",
+      "description": "输入一个目标，自动结合用户记忆和代理商记忆生成文案，再生成图片并图生视频；返回真实素材 ID，供 OpenClaw 调用。",
+      "type": "builtin",
+      "store_visibility": "debug",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {
+            "goal.video.pipeline": {
+                  "description": "根据目标和记忆自动规划文案、生成图片、再用图片生成视频，并返回最终视频素材 final_asset_id。",
+                  "upstream": "local",
+                  "upstream_tool": "invoke",
+                  "enabled": true,
+                  "is_default": false,
+                  "unit_credits": 0,
+                  "arg_schema": {
+                        "type": "object",
+                        "properties": {
+                              "action": {
+                                    "type": "string",
+                                    "enum": [
+                                          "run_pipeline",
+                                          "start_pipeline",
+                                          "poll_pipeline"
+                                    ],
+                                    "default": "start_pipeline"
+                              },
+                              "goal": {
+                                    "type": "string",
+                                    "description": "用户目标原文，例如：给某产品生成 8 秒宣传视频"
+                              },
+                              "job_id": {
+                                    "type": "string",
+                                    "description": "poll_pipeline 时传入的任务 ID"
+                              },
+                              "platform": {
+                                    "type": "string",
+                                    "default": "douyin"
+                              },
+                              "language": {
+                                    "type": "string",
+                                    "default": "中文"
+                              },
+                              "duration": {
+                                    "type": "integer",
+                                    "default": 8
+                              },
+                              "aspect_ratio": {
+                                    "type": "string",
+                                    "default": "9:16"
+                              },
+                              "memory_scope": {
+                                    "type": "string",
+                                    "default": "default"
+                              },
+                              "planning_model": {
+                                    "type": "string"
+                              },
+                              "image_model": {
+                                    "type": "string"
+                              },
+                              "video_model": {
+                                    "type": "string"
+                              },
+                              "reference_asset_ids": {
+                                    "type": "array",
+                                    "items": {
+                                          "type": "string"
+                                    }
+                              },
+                              "reference_image_urls": {
+                                    "type": "array",
+                                    "items": {
+                                          "type": "string"
+                                    }
+                              },
+                              "image_retry_count": {
+                                    "type": "integer",
+                                    "default": 2
+                              },
+                              "video_retry_count": {
+                                    "type": "integer",
+                                    "default": 2
+                              }
+                        },
+                        "required": [
+                              "goal"
+                        ]
+                  }
+            }
+      },
+      "tags": [
+            "OpenClaw",
+            "video",
+            "image",
+            "memory",
+            "workflow"
+      ]
+}
   }
 }
