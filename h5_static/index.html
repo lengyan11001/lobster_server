@@ -235,6 +235,24 @@
       text-underline-offset: 3px;
     }
     .bubble.user a { color: #fff; }
+    .media-preview {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .media-preview img,
+    .media-preview video {
+      width: min(220px, 100%);
+      max-height: 260px;
+      border-radius: 12px;
+      border: 1px solid rgba(223, 230, 242, .9);
+      background: #eef4ff;
+      object-fit: cover;
+    }
+    .media-preview audio {
+      width: min(280px, 100%);
+    }
     .steps {
       margin-top: 8px;
       display: none;
@@ -764,6 +782,73 @@
       textEl.innerHTML = linkifyText(bubble._rawText || "");
     }
 
+    function collectMediaUrls(payload) {
+      const out = [];
+      const seen = new Set();
+      function add(value) {
+        if (Array.isArray(value)) {
+          value.forEach(add);
+          return;
+        }
+        if (value && typeof value === "object") {
+          Object.values(value).forEach(add);
+          return;
+        }
+        const url = String(value || "").trim();
+        if (!/^https?:\/\//i.test(url) || seen.has(url)) return;
+        seen.add(url);
+        out.push(url);
+      }
+      add(payload && payload.media_urls);
+      add(payload && payload.result_refs && payload.result_refs.urls);
+      return out.slice(0, 6);
+    }
+
+    function renderMediaPreviews(bubble, urls) {
+      if (!bubble || !urls || !urls.length) return;
+      let box = bubble._mediaEl;
+      if (!box || !box.isConnected) {
+        box = document.createElement("div");
+        box.className = "media-preview";
+        bubble.appendChild(box);
+        bubble._mediaEl = box;
+      }
+      box.innerHTML = "";
+      urls.forEach((url) => {
+        const low = url.toLowerCase();
+        let el;
+        if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) {
+          el = document.createElement("video");
+          el.src = url;
+          el.controls = true;
+          el.playsInline = true;
+        } else if (/\.(mp3|wav|m4a|aac|ogg)(\?|#|$)/.test(low)) {
+          el = document.createElement("audio");
+          el.src = url;
+          el.controls = true;
+        } else if (/\.(png|jpe?g|webp|gif)(\?|#|$)/.test(low)) {
+          const a = document.createElement("a");
+          a.href = url;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          el = document.createElement("img");
+          el.src = url;
+          el.alt = "生成素材预览";
+          a.appendChild(el);
+          box.appendChild(a);
+          return;
+        } else {
+          el = document.createElement("a");
+          el.href = url;
+          el.target = "_blank";
+          el.rel = "noopener noreferrer";
+          el.textContent = "打开预览";
+        }
+        box.appendChild(el);
+      });
+      $("messages").scrollTop = $("messages").scrollHeight;
+    }
+
     function addBubble(role, text) {
       clearEmpty();
       const el = document.createElement("div");
@@ -845,6 +930,7 @@
       if (ev.type === "final") {
         const reply = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || "处理完成。";
         setBubbleText(bubble, reply);
+        renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
         closeStream(messageId);
       }
       if (ev.type === "error") {
@@ -939,12 +1025,15 @@
       if (!isFinal && hasDelta) initialText = "";
       const bot = addBubble("bot", initialText);
       if (msg.status === "failed") bot.classList.add("err");
+      let finalPayload = null;
       let lastEventId = 0;
       for (const ev of events) {
         lastEventId = Math.max(lastEventId, ev.id || 0);
+        if (ev && ev.type === "final") finalPayload = ev.payload || null;
         handleEvent(ev, bot, msg.id);
       }
       if (msg.status === "completed" && msg.reply_text) setBubbleText(bot, msg.reply_text);
+      if (finalPayload) renderMediaPreviews(bot, collectMediaUrls(finalPayload));
       if (msg.status === "failed") {
         bot.classList.add("err");
         setBubbleText(bot, msg.error || "处理失败");
