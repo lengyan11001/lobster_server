@@ -455,9 +455,6 @@
         <div class="top-menu">
           <button class="menu-toggle" id="topMenuBtn" type="button" aria-haspopup="true" aria-expanded="false">设置</button>
           <div class="menu-panel hidden" id="topMenuPanel">
-            <div class="menu-section-title">对话模式</div>
-            <button type="button" class="menu-option" data-mode-option="direct">直连</button>
-            <button type="button" class="menu-option" data-mode-option="openclaw">OpenClaw</button>
             <button type="button" class="menu-option danger" id="logoutBtn">退出登录</button>
           </div>
         </div>
@@ -523,7 +520,7 @@
     const $ = (id) => document.getElementById(id);
     const state = {
       token: localStorage.getItem("lobster_h5_token") || "",
-      mode: localStorage.getItem("lobster_h5_mode") || "direct",
+      mode: "direct",
       user: null,
       streams: new Map(),
       pollers: new Map(),
@@ -678,7 +675,7 @@
         $("loginPanel").classList.add("hidden");
         $("chatPanel").classList.remove("hidden");
         $("userbox").classList.remove("hidden");
-        setMode(state.mode);
+        setMode();
         await loadHistory();
         await refreshDeviceStatus();
         return true;
@@ -689,8 +686,8 @@
       }
     }
 
-    function setMode(mode) {
-      state.mode = mode === "openclaw" ? "openclaw" : "direct";
+    function setMode() {
+      state.mode = "direct";
       localStorage.setItem("lobster_h5_mode", state.mode);
       document.querySelectorAll("[data-mode-option]").forEach((btn) => {
         btn.classList.toggle("active", btn.dataset.modeOption === state.mode);
@@ -794,13 +791,17 @@
           Object.values(value).forEach(add);
           return;
         }
-        const url = String(value || "").trim();
-        if (!/^https?:\/\//i.test(url) || seen.has(url)) return;
-        seen.add(url);
-        out.push(url);
+        const text = String(value || "");
+        const matches = text.match(/https?:\/\/[^\s<>"'`]+/gi) || [];
+        matches.forEach((raw) => {
+          let url = raw;
+          while (/[)\].,!?，。！？、；：]$/.test(url)) url = url.slice(0, -1);
+          if (!url || seen.has(url)) return;
+          seen.add(url);
+          out.push(url);
+        });
       }
-      add(payload && payload.media_urls);
-      add(payload && payload.result_refs && payload.result_refs.urls);
+      add(payload);
       return out.slice(0, 6);
     }
 
@@ -927,6 +928,7 @@
       if (ev.type === "delta" && ev.payload && ev.payload.text) {
         appendBubbleText(bubble, ev.payload.text);
       }
+      renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
       if (ev.type === "final") {
         const reply = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || "处理完成。";
         setBubbleText(bubble, reply);
@@ -1080,7 +1082,7 @@
     });
     document.querySelectorAll("[data-mode-option]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        setMode(btn.dataset.modeOption);
+        setMode();
         closeTopMenu();
       });
     });
@@ -1160,7 +1162,7 @@
       try {
         const data = await api("/api/h5-chat/messages", {
           method: "POST",
-          json: { content: messageContent, mode: state.mode },
+          json: { content: messageContent, mode: "direct" },
         });
         const msg = data.message || {};
         if (msg.id) startSse(msg.id, bot);
@@ -1176,7 +1178,7 @@
     });
 
     (async function init() {
-      setMode(state.mode);
+      setMode();
       const ok = await loadMe();
       if (!ok) {
         $("loginPanel").classList.remove("hidden");

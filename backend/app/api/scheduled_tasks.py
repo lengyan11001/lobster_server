@@ -247,6 +247,33 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     return count
 
 
+def _cancel_pending_runs_for_task(db: Session, task: ScheduledTask, now: datetime) -> int:
+    rows = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.task_id == task.id,
+            ScheduledTaskRun.user_id == task.user_id,
+            ScheduledTaskRun.status == "pending",
+        )
+        .limit(200)
+        .all()
+    )
+    for row in rows:
+        row.status = "cancelled"
+        row.error = "任务已暂停"
+        row.finished_at = now
+        row.updated_at = now
+        if row.h5_message_id:
+            msg = db.query(H5ChatMessage).filter(H5ChatMessage.id == row.h5_message_id).first()
+            if msg:
+                msg.status = "cancelled"
+                msg.error = "任务已暂停"
+                msg.finished_at = now
+                msg.updated_at = now
+        _add_h5_event(db, row.h5_message_id, row.user_id, "cancelled", {"reason": "task_paused"})
+    return len(rows)
+
+
 def _assert_user_task_access(row_user_id: int, current_user: User) -> None:
     if int(row_user_id) != int(current_user.id):
         raise HTTPException(status_code=403, detail="无权访问该任务")
@@ -367,8 +394,13 @@ def patch_scheduled_task(
         status = body.status.strip().lower()
         if status not in {"active", "paused", "cancelled"}:
             raise HTTPException(status_code=400, detail="不支持的状态")
+        now = datetime.utcnow()
         task.status = status
-        task.updated_at = datetime.utcnow()
+        if status in {"paused", "cancelled"}:
+            _cancel_pending_runs_for_task(db, task, now)
+        if status == "active" and task.schedule_type == "interval" and not task.next_run_at:
+            task.next_run_at = now
+        task.updated_at = now
     db.commit()
     db.refresh(task)
     return {"ok": True, "task": _serialize_task(task)}

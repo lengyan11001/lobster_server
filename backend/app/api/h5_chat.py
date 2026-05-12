@@ -28,7 +28,7 @@ router = APIRouter()
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _H5_INDEX = _ROOT / "h5_static" / "index.html"
 _H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
-_VALID_MODES = {"direct", "openclaw"}
+_VALID_MODES = {"direct"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _MAX_H5_UPLOAD_BYTES = 15 * 1024 * 1024
@@ -235,9 +235,7 @@ def create_h5_message(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    mode = (body.mode or "direct").strip().lower()
-    if mode not in _VALID_MODES:
-        mode = "direct"
+    mode = "direct"
     content = (body.content or "").strip()
     if not content:
         raise HTTPException(status_code=400, detail="消息不能为空")
