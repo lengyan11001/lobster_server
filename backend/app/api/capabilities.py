@@ -6,6 +6,7 @@ invoke_capability 顺序触发，不在此之外再实现第二套扣费。
 import json
 import logging
 import os
+import math
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -30,6 +31,9 @@ from .skills import user_can_use_capability
 router = APIRouter()
 
 _PRICING_JSON_PATH = Path(__file__).resolve().parent.parent.parent.parent / "comfly_pricing.json"
+_HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
+_HIFLY_TTS_UNIT_CREDITS = 10
+_HIFLY_TTS_CHARS_PER_SECOND = 4
 
 
 def _get_user_price_multiplier() -> float:
@@ -363,6 +367,52 @@ def pre_deduct(
         return out
 
     _UNDERSTAND_CAPS = ("image.understand", "video.understand")
+    if body.capability_id == _HIFLY_TTS_CAPABILITY_ID:
+        params = body.params if isinstance(body.params, dict) else {}
+        raw_seconds = params.get("estimated_seconds")
+        if raw_seconds in (None, ""):
+            text = str(params.get("text") or "")
+            raw_seconds = max(1, int(math.ceil(len("".join(text.split())) / _HIFLY_TTS_CHARS_PER_SECOND)))
+        try:
+            seconds = max(1, int(math.ceil(float(raw_seconds or 1))))
+        except (TypeError, ValueError):
+            seconds = 1
+        est_d = quantize_credits(seconds * _HIFLY_TTS_UNIT_CREDITS)
+        if body.dry_run:
+            return {
+                "credits_charged": credits_json_float(est_d),
+                "dry_run": True,
+                "model": body.model or "hifly-text-driven",
+                "estimated_seconds": seconds,
+            }
+        db.refresh(current_user)
+        if user_balance_decimal(current_user) < est_d:
+            raise HTTPException(
+                status_code=402,
+                detail=f"积分不足：本次需 {float(est_d)} 积分，当前余额 {float(user_balance_decimal(current_user))}。请先充值。",
+            )
+        current_user.credits = user_balance_decimal(current_user) - est_d
+        bal = quantize_credits(current_user.credits)
+        append_credit_ledger(
+            db,
+            current_user.id,
+            -est_d,
+            "pre_deduct",
+            bal,
+            description="预扣",
+            ref_type="capability",
+            meta={
+                "capability_id": body.capability_id,
+                "model": body.model or "hifly-text-driven",
+                "estimated_seconds": seconds,
+                "unit_credits": _HIFLY_TTS_UNIT_CREDITS,
+            },
+        )
+        db.commit()
+        out = {"credits_charged": credits_json_float(est_d)}
+        _pre_deduct_idempotent_store(db, current_user.id, idem_key, out)
+        return out
+
     if upstream == "sutui" and upstream_tool == "generate" and body.capability_id not in _UNDERSTAND_CAPS:
         from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
 
@@ -488,14 +538,14 @@ def pre_deduct(
     # ── Comfly 定价查找（dry_run 兜底：MCP 尚未介入时用 comfly_pricing.json 估价）──
     if body.dry_run and (body.model or "").strip():
         try:
-            from mcp.comfly_upstream import lookup_comfly_model
-            _cm_entry = lookup_comfly_model((body.model or "").strip())
-            if _cm_entry and isinstance(_cm_entry, dict):
-                _cm_price = _cm_entry.get("price_per_unit")
-                if _cm_price is not None and float(_cm_price) > 0:
-                    _multiplier = _get_user_price_multiplier()
-                    _cm_est = quantize_credits(float(_cm_price) * _multiplier)
-                    return {"credits_charged": credits_json_float(_cm_est), "dry_run": True, "model": body.model}
+            from mcp.comfly_upstream import estimate_comfly_credits
+            _cm_est = estimate_comfly_credits((body.model or "").strip(), body.params or {}, for_user=True)
+            if _cm_est is not None:
+                return {
+                    "credits_charged": credits_json_float(quantize_credits(_cm_est)),
+                    "dry_run": True,
+                    "model": body.model,
+                }
         except Exception:
             pass
 

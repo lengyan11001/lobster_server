@@ -335,6 +335,28 @@
       }
     }
   },
+  "hifly.video.create_by_tts": {
+    "description": "飞影数字人口播：使用已选择的数字人 avatar 与声音 voice，根据 text 生成口播视频并入库，返回 task_id、asset_id、video_url。",
+    "upstream": "local",
+    "upstream_tool": "invoke",
+    "enabled": true,
+    "is_default": false,
+    "unit_credits": 0,
+    "arg_schema": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "视频标题" },
+        "avatar": { "type": "string", "description": "飞影数字人 avatar id" },
+        "voice": { "type": "string", "description": "飞影声音 voice id" },
+        "text": { "type": "string", "description": "口播文案" },
+        "st_show": { "type": "integer", "default": 0, "description": "是否显示字幕，0/1" },
+        "aigc_flag": { "type": "integer", "default": 0 },
+        "poll_interval_seconds": { "type": "integer", "default": 10 },
+        "poll_timeout_seconds": { "type": "integer", "default": 2400 }
+      },
+      "required": ["avatar", "voice", "text"]
+    }
+  },
   "ecommerce.publish": {
     "description": "电商商品发布：打开对应平台的商品创建页面，自动填写商品标题、价格，并上传主图/详情图，但不提交。",
     "upstream": "local",

@@ -56,6 +56,7 @@ DEFAULT_VISIBLE_PACKAGES: tuple[str, ...] = (
     "toutiao_publish",
     "openclaw_weixin_channel",
     "media_edit_skill",
+    "hifly_digital_human_skill",
 )
 
 

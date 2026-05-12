@@ -505,7 +505,7 @@ async def proxy_videos_generations_poll(
     return JSONResponse(resp)
 
 
-@router.post("/api/comfly-proxy/seedance/v3/contents/generations/tasks", summary="Comfly Seedance 视频提交 proxy（按 per_call 预扣）")
+@router.post("/api/comfly-proxy/seedance/v3/contents/generations/tasks", summary="Comfly Seedance 视频提交 proxy（按定价表预扣）")
 async def proxy_seedance_tasks_submit(
     request: Request,
     current_user: User = Depends(get_current_user),

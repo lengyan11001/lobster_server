@@ -163,6 +163,61 @@ def _upsert_missing_capabilities_from_catalog():
         db.close()
 
 
+def _sync_catalog_capability_definitions():
+    """Keep existing capability rows aligned with catalog metadata when a built-in capability changes."""
+    catalog_path = Path(__file__).resolve().parent.parent.parent / "mcp" / "capability_catalog.json"
+    if not catalog_path.exists():
+        return
+    db = SessionLocal()
+    try:
+        raw = json.loads(catalog_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return
+        changed = 0
+        for capability_id, cfg in raw.items():
+            if not isinstance(capability_id, str) or not isinstance(cfg, dict):
+                continue
+            cid = capability_id.strip()
+            row = db.query(models.CapabilityConfig).filter(models.CapabilityConfig.capability_id == cid).first()
+            if not row:
+                continue
+            next_upstream = str(cfg.get("upstream") or "sutui")
+            next_tool = str(cfg.get("upstream_tool") or "").strip()
+            next_schema = cfg.get("arg_schema") if isinstance(cfg.get("arg_schema"), dict) else None
+            next_enabled = bool(cfg.get("enabled", True))
+            next_default = bool(cfg.get("is_default", False))
+            next_unit = int(cfg.get("unit_credits") or 0)
+            next_desc = str(cfg.get("description") or cid)
+            if (
+                row.description != next_desc
+                or row.upstream != next_upstream
+                or row.upstream_tool != next_tool
+                or row.arg_schema != next_schema
+                or bool(row.enabled) != next_enabled
+                or bool(row.is_default) != next_default
+                or int(row.unit_credits or 0) != next_unit
+            ):
+                row.description = next_desc
+                row.upstream = next_upstream
+                row.upstream_tool = next_tool
+                row.arg_schema = next_schema
+                row.enabled = next_enabled
+                row.is_default = next_default
+                row.unit_credits = next_unit
+                db.add(row)
+                changed += 1
+        if changed:
+            db.commit()
+            logger.info("Capability catalog: synced %d existing row(s) from mcp/capability_catalog.json", changed)
+        else:
+            db.rollback()
+    except Exception as e:
+        db.rollback()
+        logger.warning("sync_catalog_capability_definitions skipped: %s", e)
+    finally:
+        db.close()
+
+
 def _auto_start_openclaw():
     """Start OpenClaw Gateway if it's not already running (仅当本机存在 node + openclaw.mjs，与 lobster_online 完整包一致)。"""
     try:
@@ -753,6 +808,7 @@ def create_app() -> FastAPI:
     _ensure_default_user()
     _seed_capability_catalog()
     _upsert_missing_capabilities_from_catalog()
+    _sync_catalog_capability_definitions()
     _auto_start_openclaw()
 
     app = FastAPI(
