@@ -801,7 +801,13 @@
           out.push(url);
         });
       }
-      add(payload);
+      const refs = payload && payload.result_refs && typeof payload.result_refs === "object" ? payload.result_refs : {};
+      if (Array.isArray(payload && payload.media_urls) || Array.isArray(refs.urls)) {
+        add(payload && payload.media_urls);
+        add(refs.urls);
+      } else {
+        add(payload);
+      }
       return out.slice(0, 6);
     }
 
