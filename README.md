@@ -28,3 +28,7 @@ chmod +x scripts/*.sh
 ```
 
 访问 `http://服务器IP:8000`。详细步骤与 systemd/Nginx 见 `docs/云服务器部署说明.md`。
+
+## 微信小程序
+
+小程序源码在 `miniprogram/`，用微信开发者工具打开即可。服务端需配置 `WECHAT_APP_ID`、`WECHAT_APP_SECRET` 与 `PUBLIC_BASE_URL`，详细流程见 `docs/微信小程序接入说明.md`。

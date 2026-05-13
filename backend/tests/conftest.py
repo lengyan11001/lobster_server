@@ -84,9 +84,13 @@ def _reset_fuiou_caches():
     """每个测试前后清空模块级 _key_cache，避免 monkeypatch 路径变更后仍命中旧 key。"""
     from backend.app.services import fuiou_pay
 
-    fuiou_pay._key_cache.clear()
+    cache = getattr(fuiou_pay, "_key_cache", None)
+    if cache is not None:
+        cache.clear()
     yield
-    fuiou_pay._key_cache.clear()
+    cache = getattr(fuiou_pay, "_key_cache", None)
+    if cache is not None:
+        cache.clear()
 
 
 @pytest.fixture

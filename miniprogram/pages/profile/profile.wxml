@@ -1,0 +1,38 @@
+<view class="page">
+  <view class="profile-card">
+    <view class="avatar">{{avatarText}}</view>
+    <view class="profile-main">
+      <text class="profile-name">{{phoneBound ? phone : '未绑定手机号'}}</text>
+      <text class="profile-sub">{{phoneBound ? '已关联 online 账号' : '授权手机号后关联电脑端 online'}}</text>
+    </view>
+  </view>
+
+  <view class="section">
+    <text class="section-title">设备</text>
+    <view class="status-line">
+      <view class="dot {{onlineAvailable ? 'ok' : 'warn'}}"></view>
+      <text>{{onlineAvailable ? '检测到 online 设备' : '暂未检测到 online 设备'}}</text>
+    </view>
+    <view wx:for="{{onlineDevices}}" wx:key="installation_id" class="device-row">
+      <view>
+        <text class="device-name">{{item.display_name || item.installation_id}}</text>
+        <text class="device-time">{{item.online ? '在线' : '离线'}} · {{item.last_seen_at}}</text>
+      </view>
+    </view>
+    <view wx:if="{{onlineDevices.length === 0}}" class="muted empty-line">电脑端 online 启动后会显示在这里。</view>
+    <view class="button-row">
+      <button class="ghost-btn" bindtap="loadDevices">刷新</button>
+      <button class="primary-btn" bindtap="goDownloads">素材下载</button>
+    </view>
+  </view>
+
+  <view class="section">
+    <text class="section-title">当前手机</text>
+    <text class="muted selectable">{{deviceId}}</text>
+  </view>
+
+  <view class="section">
+    <button class="danger-btn" bindtap="logout">退出登录</button>
+  </view>
+</view>
+

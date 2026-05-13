@@ -1,0 +1,17 @@
+{
+  "description": "必火AI员工小程序",
+  "appid": "touristappid",
+  "compileType": "miniprogram",
+  "libVersion": "3.8.12",
+  "projectname": "bihuo-ai-mobile",
+  "setting": {
+    "urlCheck": true,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "newFeature": true
+  },
+  "condition": {}
+}
+

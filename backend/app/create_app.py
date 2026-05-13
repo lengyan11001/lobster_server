@@ -71,17 +71,16 @@ def _ensure_default_user():
 
 def _migrate_capability_configs_extra_config():
     """Add extra_config JSON column to capability_configs if missing."""
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
 
     try:
-        if "sqlite" not in settings.database_url:
+        insp = inspect(engine)
+        if not insp.has_table("capability_configs"):
             return
-        with engine.connect() as conn:
-            r = conn.execute(text("PRAGMA table_info(capability_configs)"))
-            cols = [row[1] for row in r]
+        cols = [c["name"] for c in insp.get_columns("capability_configs")]
+        with engine.begin() as conn:
             if "extra_config" not in cols:
                 conn.execute(text("ALTER TABLE capability_configs ADD COLUMN extra_config JSON"))
-                conn.commit()
     except Exception as e:
         logger.warning("Migration capability_configs.extra_config skipped: %s", e)
 
@@ -253,32 +252,30 @@ def _auto_start_openclaw():
 
 def _migrate_user_sutui_token():
     """Add sutui_token column to users if missing (online edition)."""
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
     try:
-        if "sqlite" not in settings.database_url:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
             return
-        with engine.connect() as conn:
-            r = conn.execute(text("PRAGMA table_info(users)"))
-            cols = [row[1] for row in r]
+        cols = [c["name"] for c in insp.get_columns("users")]
+        with engine.begin() as conn:
             if "sutui_token" not in cols:
                 conn.execute(text("ALTER TABLE users ADD COLUMN sutui_token TEXT"))
-                conn.commit()
     except Exception as e:
         logger.warning("Migration sutui_token skipped: %s", e)
 
 
 def _migrate_user_wechat_openid():
     """Add wechat_openid column to users if missing (自建微信登录)."""
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
     try:
-        if "sqlite" not in settings.database_url:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
             return
-        with engine.connect() as conn:
-            r = conn.execute(text("PRAGMA table_info(users)"))
-            cols = [row[1] for row in r]
+        cols = [c["name"] for c in insp.get_columns("users")]
+        with engine.begin() as conn:
             if "wechat_openid" not in cols:
                 conn.execute(text("ALTER TABLE users ADD COLUMN wechat_openid VARCHAR(64)"))
-                conn.commit()
     except Exception as e:
         logger.warning("Migration wechat_openid skipped: %s", e)
 
@@ -370,67 +367,72 @@ def _migrate_user_agent_task_dispatch_enabled():
 
 def _migrate_wecom_config_secret():
     """Add secret, contacts_secret columns to wecom_configs if missing."""
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
     try:
-        with engine.connect() as conn:
-            r = conn.execute(text("PRAGMA table_info(wecom_configs)"))
-            cols = [row[1] for row in r]
+        insp = inspect(engine)
+        if not insp.has_table("wecom_configs"):
+            return
+        cols = [c["name"] for c in insp.get_columns("wecom_configs")]
+        with engine.begin() as conn:
             if "secret" not in cols:
                 conn.execute(text("ALTER TABLE wecom_configs ADD COLUMN secret VARCHAR(255)"))
-                conn.commit()
             if "contacts_secret" not in cols:
                 conn.execute(text("ALTER TABLE wecom_configs ADD COLUMN contacts_secret VARCHAR(255)"))
-                conn.commit()
     except Exception as e:
         logger.warning("Migration wecom_configs.secret skipped: %s", e)
 
 
 def _migrate_wecom_agent_id():
     """Add agent_id to wecom_configs and wecom_pending_messages (发送应用消息时必填)."""
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
     try:
-        with engine.connect() as conn:
-            r = conn.execute(text("PRAGMA table_info(wecom_configs)"))
-            cols = [row[1] for row in r]
-            if "agent_id" not in cols:
+        insp = inspect(engine)
+        with engine.begin() as conn:
+            if insp.has_table("wecom_configs"):
+                cols = [c["name"] for c in insp.get_columns("wecom_configs")]
+            else:
+                cols = []
+            if cols and "agent_id" not in cols:
                 conn.execute(text("ALTER TABLE wecom_configs ADD COLUMN agent_id INTEGER"))
-                conn.commit()
-            r2 = conn.execute(text("PRAGMA table_info(wecom_pending_messages)"))
-            cols2 = [row[1] for row in r2]
-            if "agent_id" not in cols2:
+
+            if insp.has_table("wecom_pending_messages"):
+                cols2 = [c["name"] for c in insp.get_columns("wecom_pending_messages")]
+            else:
+                cols2 = []
+            if cols2 and "agent_id" not in cols2:
                 conn.execute(text("ALTER TABLE wecom_pending_messages ADD COLUMN agent_id INTEGER"))
-                conn.commit()
     except Exception as e:
         logger.warning("Migration wecom agent_id skipped: %s", e)
 
 
 def _migrate_recharge_amount_fen():
     """Add amount_fen to recharge_orders（1分钱套餐用分计费）."""
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
     try:
-        with engine.connect() as conn:
-            r = conn.execute(text("PRAGMA table_info(recharge_orders)"))
-            cols = [row[1] for row in r]
+        insp = inspect(engine)
+        if not insp.has_table("recharge_orders"):
+            return
+        cols = [c["name"] for c in insp.get_columns("recharge_orders")]
+        with engine.begin() as conn:
             if "amount_fen" not in cols:
                 conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN amount_fen INTEGER DEFAULT 0"))
-                conn.commit()
     except Exception as e:
         logger.warning("Migration recharge_orders.amount_fen skipped: %s", e)
 
 
 def _migrate_recharge_callback_audit():
     """Add callback_amount_fen, wechat_transaction_id to recharge_orders（回调金额与交易号审计）."""
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
     try:
-        with engine.connect() as conn:
-            r = conn.execute(text("PRAGMA table_info(recharge_orders)"))
-            cols = [row[1] for row in r]
+        insp = inspect(engine)
+        if not insp.has_table("recharge_orders"):
+            return
+        cols = [c["name"] for c in insp.get_columns("recharge_orders")]
+        with engine.begin() as conn:
             if "callback_amount_fen" not in cols:
                 conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN callback_amount_fen INTEGER"))
-                conn.commit()
             if "wechat_transaction_id" not in cols:
                 conn.execute(text("ALTER TABLE recharge_orders ADD COLUMN wechat_transaction_id VARCHAR(64)"))
-                conn.commit()
     except Exception as e:
         logger.warning("Migration recharge_orders callback_audit skipped: %s", e)
 

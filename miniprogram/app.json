@@ -1,0 +1,41 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/downloads/downloads",
+    "pages/profile/profile"
+  ],
+  "window": {
+    "navigationBarTitleText": "必火AI员工",
+    "navigationBarBackgroundColor": "#07101f",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#07101f",
+    "backgroundTextStyle": "light"
+  },
+  "tabBar": {
+    "color": "#8390a6",
+    "selectedColor": "#2563eb",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/downloads/downloads",
+        "text": "素材"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的"
+      }
+    ]
+  },
+  "permission": {
+    "scope.writePhotosAlbum": {
+      "desc": "用于保存生成的视频和图片到手机相册"
+    }
+  },
+  "sitemapLocation": "sitemap.json"
+}
+

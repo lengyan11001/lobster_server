@@ -1,0 +1,30 @@
+.bind-tip,
+.check-result {
+  display: block;
+  margin-top: 18rpx;
+}
+
+.step {
+  display: flex;
+  gap: 18rpx;
+  align-items: flex-start;
+  margin-top: 18rpx;
+  color: #334155;
+  font-size: 27rpx;
+  line-height: 1.55;
+}
+
+.step text {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 42rpx;
+  width: 42rpx;
+  height: 42rpx;
+  color: #fff;
+  background: #2563eb;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+

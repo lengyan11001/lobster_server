@@ -1,0 +1,37 @@
+<view class="page">
+  <view class="hero">
+    <text class="hero-title">必火AI员工</text>
+    <text class="hero-subtitle">绑定手机号后，把 online 生成的图片和视频保存到手机。</text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">账号状态</text>
+    <view class="status-line">
+      <view class="dot {{phoneBound ? 'ok' : 'warn'}}"></view>
+      <text>{{statusText}}</text>
+    </view>
+    <view class="button-row">
+      <button class="ghost-btn" bindtap="login">微信登录</button>
+      <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+    </view>
+    <text class="muted bind-tip">必须绑定平台内已经注册过 online 的手机号；未注册的手机号不会创建 online 版本。</text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">检查手机号</text>
+    <input class="input" type="number" maxlength="11" value="{{phoneInput}}" bindinput="onPhoneInput" placeholder="输入手机号，检查是否已有 online" />
+    <view class="button-row">
+      <button class="ghost-btn" bindtap="checkPhone">检查</button>
+      <button class="primary-btn" bindtap="goDownloads">查看素材</button>
+    </view>
+    <text wx:if="{{phoneCheckText}}" class="muted check-result">{{phoneCheckText}}</text>
+  </view>
+
+  <view class="section">
+    <text class="section-title">使用流程</text>
+    <view class="step"><text>1</text><view>在电脑 online 端登录并生成素材。</view></view>
+    <view class="step"><text>2</text><view>小程序微信登录，授权手机号完成绑定。</view></view>
+    <view class="step"><text>3</text><view>进入素材页，预览并保存到手机相册。</view></view>
+  </view>
+</view>
+
