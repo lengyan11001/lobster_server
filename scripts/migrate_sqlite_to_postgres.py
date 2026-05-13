@@ -4,6 +4,7 @@
 This script is intentionally conservative:
 - it never modifies the SQLite source database;
 - it can create ORM tables on PostgreSQL;
+- it can drop and recreate PostgreSQL ORM tables only when --drop-target is explicitly set;
 - it truncates PostgreSQL tables only when --truncate-target is explicitly set;
 - it copies rows table-by-table in dependency order and resets PostgreSQL sequences;
 - it prints source/target row counts for verification.
@@ -12,7 +13,7 @@ Example:
   python scripts/migrate_sqlite_to_postgres.py \
     --sqlite ./lobster.db \
     --postgres postgresql+psycopg://lobster:pass@127.0.0.1:5432/lobster \
-    --create-tables --truncate-target
+    --create-tables --drop-target
 """
 from __future__ import annotations
 
@@ -74,6 +75,10 @@ def _truncate_target(engine: Engine, tables: list) -> None:
     with engine.begin() as conn:
         for table in reversed(tables):
             conn.execute(delete(table))
+
+
+def _drop_target(engine: Engine) -> None:
+    Base.metadata.drop_all(bind=engine)
 
 
 def _copy_table(source: Engine, target: Engine, table, batch_size: int) -> int:
@@ -146,6 +151,7 @@ def main() -> int:
     parser.add_argument("--sqlite", default="lobster.db", help="SQLite database path, default: lobster.db")
     parser.add_argument("--postgres", required=True, help="Target SQLAlchemy PostgreSQL URL")
     parser.add_argument("--create-tables", action="store_true", help="Create ORM tables on PostgreSQL before copying")
+    parser.add_argument("--drop-target", action="store_true", help="Drop ORM tables on PostgreSQL before copying")
     parser.add_argument("--truncate-target", action="store_true", help="Delete target table rows before copying")
     parser.add_argument("--backup-dir", default="db_backups", help="Directory for source SQLite backup")
     parser.add_argument("--batch-size", type=int, default=500)
@@ -159,12 +165,14 @@ def main() -> int:
         raise SystemExit("--postgres must be a PostgreSQL SQLAlchemy URL")
     if _is_sqlite_url(args.postgres):
         raise SystemExit("--postgres points to SQLite; refusing")
+    if args.drop_target and not args.create_tables:
+        raise SystemExit("--drop-target requires --create-tables")
 
     target = create_engine(args.postgres, pool_pre_ping=True)
     tables = _table_order()
 
     print(f"[migrate] source={sqlite_path.resolve()}")
-    print(f"[migrate] target={args.postgres}")
+    print(f"[migrate] target={target.url.render_as_string(hide_password=True)}")
     print(f"[migrate] tables={len(tables)}")
     backup = _backup_sqlite(sqlite_path, Path(args.backup_dir))
     print(f"[migrate] sqlite backup={backup}")
@@ -174,6 +182,10 @@ def main() -> int:
         for name, src, dst in _verify_counts(source, target, tables):
             print(f"[dry-run] {name}: sqlite={src} postgres={dst}")
         return 0
+
+    if args.drop_target:
+        print("[migrate] dropping target ORM tables...")
+        _drop_target(target)
 
     if args.create_tables:
         print("[migrate] creating target tables if missing...")
