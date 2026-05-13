@@ -31,17 +31,9 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 try:
-    log_dir = _root / "logs"
-    log_dir.mkdir(exist_ok=True)
-    handler = logging.FileHandler(log_dir / "background.log", mode="a", encoding="utf-8")
-    handler.setLevel(_log_level)
-    handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-    )
-    logging.getLogger().addHandler(handler)
+    from backend.app.core.log_retention import configure_daily_file_logging
+
+    configure_daily_file_logging(_root, "background", _log_level)
 except Exception:
     pass
 

@@ -22,6 +22,12 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+try:
+    from backend.app.core.log_retention import configure_daily_file_logging
+
+    configure_daily_file_logging(_root, "h5", _log_level)
+except Exception:
+    pass
 logger = logging.getLogger("backend.h5_run")
 
 import uvicorn

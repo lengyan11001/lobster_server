@@ -23,10 +23,14 @@ else
   exit 1
 fi
 
-echo "[日志] 截断 $ROOT/mcp.log / backend.log / background.log（若存在；便于本轮只看新输出如 [sutui-audit]）"
-: > "$ROOT/mcp.log" 2>/dev/null || true
-: > "$ROOT/backend.log" 2>/dev/null || true
-: > "$ROOT/background.log" 2>/dev/null || true
+echo "[日志] 清理 3 天前应用日志、诊断上传与 systemd journal"
+mkdir -p "$ROOT/logs"
+find "$ROOT/logs" -type f -name "*.log" -mtime +2 -delete 2>/dev/null || true
+find "$ROOT" -maxdepth 1 -type f \( -name "mcp.log" -o -name "backend.log" -o -name "background.log" -o -name "h5.log" \) -mtime +2 -delete 2>/dev/null || true
+find "$ROOT/diagnostics_uploads" -mindepth 2 -maxdepth 2 -type d -mtime +2 -exec rm -rf {} + 2>/dev/null || true
+if command -v journalctl >/dev/null 2>&1; then
+  sudo journalctl --vacuum-time=3d >/dev/null 2>&1 || true
+fi
 
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service 2>/dev/null | grep -q lobster-backend; then
   echo "[重启] systemctl stop + 端口清理 + start ..."
@@ -82,11 +86,13 @@ else
   pkill -f "mcp --port 8001" 2>/dev/null || true
   pkill -f "python -m mcp" 2>/dev/null || true
   sleep 2
-  nohup "$PY" -m mcp --port "${MCP_PORT:-8001}" >> mcp.log 2>&1 &
+  TODAY="$(date +%F)"
+  mkdir -p "$ROOT/logs"
+  nohup "$PY" -m mcp --port "${MCP_PORT:-8001}" >> "$ROOT/logs/mcp-$TODAY.log" 2>&1 &
   sleep 1
-  nohup "$PY" -m backend.background_worker >> background.log 2>&1 &
-  nohup "$PY" -m backend.run >> backend.log 2>&1 &
-  nohup "$PY" -m backend.h5_run >> h5.log 2>&1 &
+  nohup "$PY" -m backend.background_worker >> "$ROOT/logs/background-stdout-$TODAY.log" 2>&1 &
+  nohup "$PY" -m backend.run >> "$ROOT/logs/backend-stdout-$TODAY.log" 2>&1 &
+  nohup "$PY" -m backend.h5_run >> "$ROOT/logs/h5-stdout-$TODAY.log" 2>&1 &
   sleep 2
-  echo "[完成] MCP、Backend、Background 与 H5 已后台启动，日志: mcp.log / backend.log / background.log / h5.log"
+  echo "[完成] MCP、Backend、Background 与 H5 已后台启动，日志: logs/app-YYYY-MM-DD.log / logs/background-YYYY-MM-DD.log / logs/h5-YYYY-MM-DD.log"
 fi

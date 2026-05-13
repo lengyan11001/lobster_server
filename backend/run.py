@@ -1,6 +1,6 @@
 """启动后端：根据 LOBSTER_EDITION 决定监听地址；默认同时拉起 MCP(8001) 以提供速推等能力。
 全日志：默认 LOG_LEVEL=debug；要减少输出可设 .env 中 LOG_LEVEL=info。
-系统日志写入 lobster/logs/app.log，可在「日志」Tab 或 GET /api/logs 查看。"""
+系统日志写入 lobster/logs/app-YYYY-MM-DD.log，可在「日志」Tab 或 GET /api/logs 查看。"""
 import logging
 import os
 import subprocess
@@ -23,18 +23,11 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-# 系统日志同时写入 lobster/logs/app.log，便于「日志」Tab 与排错
-_log_dir = os.path.join(_root, "logs")
 try:
-    os.makedirs(_log_dir, exist_ok=True)
-    _log_file = os.path.join(_log_dir, "app.log")
-    _file_handler = logging.FileHandler(_log_file, mode="a", encoding="utf-8")
-    _file_handler.setLevel(_log_level)
-    _file_handler.setFormatter(logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    ))
-    logging.getLogger().addHandler(_file_handler)
+    from backend.app.core.log_retention import cleanup_diagnostics_uploads, configure_daily_file_logging
+
+    _log_file = configure_daily_file_logging(_root, "app", _log_level)
+    cleanup_diagnostics_uploads(_root)
 except Exception as _e:
     pass  # 无写权限等则仅控制台输出
 _logger = logging.getLogger("backend.run")
@@ -68,7 +61,9 @@ def _start_mcp_if_needed():
             if os.path.isdir(os.path.join(_parent, "mcp")):
                 mcp_root = _parent
                 _logger.info("[启动] MCP 自启：mcp 在上一级 %s", mcp_root)
-        mcp_log_path = os.path.join(mcp_root, "mcp.log")
+        mcp_log_dir = os.path.join(mcp_root, "logs")
+        os.makedirs(mcp_log_dir, exist_ok=True)
+        mcp_log_path = os.path.join(mcp_log_dir, "mcp-%s.log" % time.strftime("%Y-%m-%d"))
         try:
             _mcp_log = open(mcp_log_path, "a", encoding="utf-8")
         except Exception:

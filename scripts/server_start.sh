@@ -22,6 +22,12 @@ PORT="${PORT:-8000}"
 MCP_PORT="${MCP_PORT:-8001}"
 START_BACKGROUND="${START_BACKGROUND:-1}"
 
+find "$ROOT/logs" -type f -name "*.log" -mtime +2 -delete 2>/dev/null || true
+find "$ROOT" -maxdepth 1 -type f \( -name "mcp.log" -o -name "backend.log" -o -name "background.log" -o -name "h5.log" \) -mtime +2 -delete 2>/dev/null || true
+find "$ROOT/diagnostics_uploads" -mindepth 2 -maxdepth 2 -type d -mtime +2 -exec rm -rf {} + 2>/dev/null || true
+TODAY="$(date +%F)"
+mkdir -p "$ROOT/logs"
+
 # 若 8001 已在监听则跳过，否则后台启动 MCP
 start_mcp() {
   if "$PY" -c "
@@ -39,7 +45,7 @@ except Exception:
     return
   fi
   echo "[MCP] 启动 MCP 端口 $MCP_PORT ..."
-  nohup "$PY" -m mcp --port "$MCP_PORT" >> mcp.log 2>&1 &
+  nohup "$PY" -m mcp --port "$MCP_PORT" >> "$ROOT/logs/mcp-$TODAY.log" 2>&1 &
   sleep 1
 }
 
@@ -47,7 +53,7 @@ start_mcp
 
 if [ "$START_BACKGROUND" != "0" ]; then
   echo "[Background] 启动单例后台任务进程 ..."
-  nohup "$PY" -m backend.background_worker >> background.log 2>&1 &
+  nohup "$PY" -m backend.background_worker >> "$ROOT/logs/background-stdout-$TODAY.log" 2>&1 &
 fi
 
 echo "[Backend] 启动 Backend 端口 $PORT ..."

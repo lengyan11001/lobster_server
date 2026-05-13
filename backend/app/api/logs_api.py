@@ -1,4 +1,4 @@
-"""系统日志只读接口：GET /api/logs 返回 lobster/logs/app.log 末尾内容，供「日志」Tab 查看。"""
+"""系统日志只读接口：GET /api/logs 返回当天 app 日志末尾内容，供「日志」Tab 查看。"""
 import asyncio
 import json
 import logging
@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import PlainTextResponse
 
 from .auth import get_current_user
+from ..core.log_retention import cleanup_diagnostics_uploads, current_log_path
 from ..models import User
 
 router = APIRouter()
@@ -18,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 # lobster 项目根目录（与 run.py 中 _root 一致，即含 backend 的目录）
 _BASE = Path(__file__).resolve().parent.parent.parent.parent
-_LOG_FILE = (_BASE / "logs" / "app.log").resolve()
 _DIAGNOSTICS_DIR = (_BASE / "diagnostics_uploads").resolve()
 _MAX_LINES = 5000
 _DEFAULT_TAIL = 2000
@@ -55,16 +55,18 @@ async def get_logs(
     tail: int = Query(default=_DEFAULT_TAIL, ge=100, le=_MAX_LINES, description="返回最后 N 行"),
     current_user: User = Depends(get_current_user),
 ):
-    """返回 lobster/logs/app.log 最后 tail 行，用于前端「日志」Tab 或排错。"""
-    logger.info("[日志] GET /api/logs tail=%s path=%s exists=%s", tail, _LOG_FILE, _LOG_FILE.exists())
-    if not _LOG_FILE.exists():
-        logger.warning("[日志] 文件不存在: %s", _LOG_FILE)
+    """返回 lobster/logs/app-YYYY-MM-DD.log 最后 tail 行，用于前端「日志」Tab 或排错。"""
+    logger.info("[日志] GET /api/logs tail=%s", tail)
+    log_file = current_log_path(_BASE, "app")
+    logger.info("[日志] path=%s exists=%s", log_file, log_file.exists())
+    if not log_file.exists():
+        logger.warning("[日志] 文件不存在: %s", log_file)
         return PlainTextResponse(
-            f"日志文件不存在: {_LOG_FILE}\n请确认已用 start.bat 或 run_backend 启动过至少一次。",
+            f"日志文件不存在: {log_file}\n请确认已用 start.bat 或 run_backend 启动过至少一次。",
             status_code=404,
         )
     loop = asyncio.get_event_loop()
-    text, total = await loop.run_in_executor(None, _read_log_tail, _LOG_FILE, tail)
+    text, total = await loop.run_in_executor(None, _read_log_tail, log_file, tail)
     lines_returned = len(text.splitlines())
     logger.info("[日志] 返回 lines=%s total=%s", lines_returned, total)
     return PlainTextResponse(
@@ -80,6 +82,7 @@ async def upload_diagnostics_bundle(
     client_info: str = Form(default=""),
     current_user: User = Depends(get_current_user),
 ):
+    cleanup_diagnostics_uploads(_BASE)
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="diagnostic file is empty")
@@ -134,6 +137,7 @@ async def list_diagnostics_uploads(
     limit: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
 ):
+    cleanup_diagnostics_uploads(_BASE)
     base = (_DIAGNOSTICS_DIR / f"user_{current_user.id}").resolve()
     if not base.exists():
         return {"items": []}
