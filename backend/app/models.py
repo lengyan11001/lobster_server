@@ -365,6 +365,27 @@ class UserInstallation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class MobileDeviceBinding(Base):
+    """手机端/小程序设备与已有 online 手机号账号的绑定关系。"""
+
+    __tablename__ = "mobile_device_bindings"
+    __table_args__ = (
+        UniqueConstraint("device_id", name="uq_mobile_device_bindings_device"),
+        Index("ix_mobile_device_bindings_user_seen", "user_id", "last_seen_at"),
+        Index("ix_mobile_device_bindings_phone_seen", "phone", "last_seen_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    phone: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    device_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), default="mobile", nullable=False)
+    openid: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class H5ChatMessage(Base):
     """Remote H5 chat mailbox: browser submits, the user's local online client claims and replies."""
 

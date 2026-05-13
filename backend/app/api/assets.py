@@ -357,25 +357,19 @@ async def save_asset_from_url(
     ct = resp.headers.get("content-type", "") or ""
     ct_use = ct if ct else "application/octet-stream"
 
-    if _autosave_tags_require_tos(body.tags):
-        if _get_tos_config() is None:
-            raise HTTPException(
-                status_code=503,
-                detail="对话生成素材入库需配置 TOS_CONFIG（custom_configs.json，含 access_key/secret_key/endpoint/region/bucket_name/public_domain），未配置无法保存可预览的公网地址。",
-            )
-        aid, fname, fsize = _save_bytes(data, ext)
-        tos_public_url = _upload_to_tos(data, f"assets/{fname}", ct_use)
-        if not tos_public_url:
-            _unlink_safe_asset_file(ASSETS_DIR / fname)
-            raise HTTPException(
-                status_code=503,
-                detail="对话生成素材已下载但火山 TOS 上传失败，无法入库。请检查 TOS 配置与网络后重试。",
-            )
-        source_url = tos_public_url
-        fname_or_key = fname
-    else:
-        aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(data, ext, ct)
-        source_url = tos_public_url if tos_public_url else body.url
+    if _get_tos_config() is None:
+        raise HTTPException(
+            status_code=503,
+            detail="save-url 入库需配置 TOS_CONFIG（custom_configs.json，含 access_key/secret_key/endpoint/region/bucket_name/public_domain），未配置无法保存统一 CDN 地址。",
+        )
+    aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(data, ext, ct_use)
+    if not tos_public_url:
+        _unlink_safe_asset_file(ASSETS_DIR / fname_or_key)
+        raise HTTPException(
+            status_code=503,
+            detail="save-url 已下载素材但火山 TOS 上传失败，无法入库。请检查 TOS 配置与网络后重试。",
+        )
+    source_url = tos_public_url
     asset = Asset(
         asset_id=aid,
         user_id=current_user.id,
