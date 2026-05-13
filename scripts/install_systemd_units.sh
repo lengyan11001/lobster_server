@@ -27,6 +27,7 @@ User=$USER_NAME
 WorkingDirectory=$ROOT
 Environment=PYTHONPATH=$ROOT
 Environment=BACKEND_WORKERS=2
+Environment=LOBSTER_BACKEND_AUTOSTART_MCP=0
 EnvironmentFile=$ROOT/.env
 ExecStart=$PY -m backend.run
 Restart=always

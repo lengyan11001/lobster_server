@@ -45,6 +45,10 @@ from backend.app.core.config import settings
 
 def _start_mcp_if_needed():
     """若 8001 未被占用则启动 MCP，使对话侧速推/能力可用。"""
+    autostart = (os.environ.get("LOBSTER_BACKEND_AUTOSTART_MCP") or "1").strip().lower()
+    if autostart in {"0", "false", "no", "off"}:
+        _logger.info("[启动] Backend MCP 自启已关闭（由外部进程/systemd 管理）")
+        return
     mcp_port = int(getattr(settings, "mcp_port", 8001))
     try:
         import socket
