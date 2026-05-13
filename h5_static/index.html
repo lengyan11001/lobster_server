@@ -308,7 +308,7 @@
     .media-preview video { aspect-ratio: 9 / 16; background: #111; }
     .media-preview audio { width: min(280px, 100%); }
     .media-actions { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; line-height: 1.3; }
-    .media-actions a { padding: 4px 8px; border-radius: 999px; background: rgba(36,92,255,.08); text-decoration: none; }
+    .media-actions a, .media-actions button { padding: 4px 8px; border-radius: 999px; color: var(--blue); background: rgba(36,92,255,.08); text-decoration: none; box-shadow: none; border: 0; font-size: inherit; }
     .steps { margin-top: 8px; display: none; flex-wrap: wrap; gap: 6px; font-size: 12px; color: #52607a; }
     .upload-preview { display: none; gap: 10px; padding: 10px 14px 0; overflow-x: auto; }
     .upload-preview.show { display: flex; }
@@ -353,6 +353,7 @@
     .run-media { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
     .run-media-item { display: grid; gap: 5px; }
     .run-media-actions { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+    .run-media-actions button { padding: 4px 8px; border-radius: 999px; color: var(--blue); background: rgba(36,92,255,.08); box-shadow: none; font-size: inherit; }
     .run-media video { width: 132px; height: 76px; object-fit: cover; border-radius: 10px; background: #111; }
     .run-media img { width: 76px; height: 76px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
     .task-list { display: grid; gap: 10px; }
@@ -607,6 +608,43 @@
       el.textContent = text;
       el.classList.add("show");
       setTimeout(() => el.classList.remove("show"), 2600);
+    }
+
+    const UA = navigator.userAgent || "";
+    const IS_WECHAT = /MicroMessenger/i.test(UA);
+    const IS_IOS = /iPad|iPhone|iPod/i.test(UA) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+    async function copyText(text) {
+      const value = String(text || "");
+      if (!value) return false;
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
+          await navigator.clipboard.writeText(value);
+          return true;
+        } catch {}
+      }
+      const area = document.createElement("textarea");
+      area.value = value;
+      area.setAttribute("readonly", "readonly");
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      area.style.top = "0";
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch { ok = false; }
+      document.body.removeChild(area);
+      return ok;
+    }
+
+    async function copyMediaLink(url) {
+      const ok = await copyText(url);
+      toast(ok ? "链接已复制，请在外部浏览器打开后保存" : "复制失败，请长按链接复制后用外部浏览器打开");
+    }
+
+    function onIosDownloadClick() {
+      if (IS_IOS && !IS_WECHAT) toast("已开始下载，可在 Safari 下载项或文件 App 的下载目录查看");
     }
 
     function authHeaders(extra = {}) {
@@ -1174,14 +1212,23 @@
       open.target = "_blank";
       open.rel = "noopener noreferrer";
       open.textContent = "打开";
-      const download = document.createElement("a");
-      download.href = mediaProxyUrl(url, "attachment", filename);
-      download.target = "_blank";
-      download.rel = "noopener noreferrer";
-      download.download = filename;
-      download.textContent = downloadLabel;
       actions.appendChild(open);
-      actions.appendChild(download);
+      if (IS_WECHAT) {
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.textContent = "复制链接";
+        copy.addEventListener("click", () => copyMediaLink(url));
+        actions.appendChild(copy);
+      } else {
+        const download = document.createElement("a");
+        download.href = mediaProxyUrl(url, "attachment", filename);
+        download.target = "_blank";
+        download.rel = "noopener noreferrer";
+        download.download = filename;
+        download.textContent = IS_IOS ? "下载到文件" : downloadLabel;
+        download.addEventListener("click", onIosDownloadClick);
+        actions.appendChild(download);
+      }
       return actions;
     }
 
@@ -1190,7 +1237,12 @@
       const openUrl = escapeHtml(mediaProxyUrl(url, "inline", filename));
       const downloadUrl = escapeHtml(mediaProxyUrl(url, "attachment", filename));
       const safeName = escapeHtml(filename);
-      return `<div class="run-media-actions"><a href="${openUrl}" target="_blank" rel="noopener noreferrer">打开</a><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer">${escapeHtml(downloadLabel)}</a></div>`;
+      if (IS_WECHAT) {
+        return `<div class="run-media-actions"><a href="${openUrl}" target="_blank" rel="noopener noreferrer">打开</a><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button></div>`;
+      }
+      const label = IS_IOS ? "下载到文件" : downloadLabel;
+      const iosAttr = IS_IOS ? ` data-ios-download="1"` : "";
+      return `<div class="run-media-actions"><a href="${openUrl}" target="_blank" rel="noopener noreferrer">打开</a><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer"${iosAttr}>${escapeHtml(label)}</a></div>`;
     }
 
     function renderMediaPreviews(bubble, urls) {
@@ -1506,6 +1558,16 @@
       const btn = evt.target.closest("[data-delete-task]");
       if (!btn) return;
       deleteTask(btn.dataset.deleteTask, btn);
+    });
+
+    $("runList").addEventListener("click", (evt) => {
+      const copyBtn = evt.target.closest("[data-copy-media]");
+      if (copyBtn) {
+        copyMediaLink(copyBtn.dataset.copyMedia || "");
+        return;
+      }
+      const iosDownload = evt.target.closest("[data-ios-download]");
+      if (iosDownload) onIosDownloadClick();
     });
 
     $("homeQuickGrid").addEventListener("click", (evt) => {
