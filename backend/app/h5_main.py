@@ -9,6 +9,8 @@ from fastapi.responses import JSONResponse
 from . import models  # noqa: F401
 from .api.auth import router as auth_router
 from .api.h5_chat import router as h5_chat_router
+from .api.hifly_assets import router as hifly_assets_router
+from .api.scheduled_tasks import router as scheduled_tasks_router
 from .core.config import settings
 from .db import Base, engine
 
@@ -16,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_h5_app() -> FastAPI:
-    """Dedicated H5 app: auth + remote chat mailbox only, no MCP or scheduler startup tasks."""
+    """Dedicated H5 app: auth, remote chat, scheduled tasks, and lightweight HiFly resources."""
     logger.info("[H5] create_h5_app start")
     Base.metadata.create_all(bind=engine)
     app = FastAPI(
@@ -39,6 +41,8 @@ def create_h5_app() -> FastAPI:
 
     app.include_router(auth_router, prefix="/auth")
     app.include_router(h5_chat_router, prefix="")
+    app.include_router(hifly_assets_router, prefix="")
+    app.include_router(scheduled_tasks_router, prefix="")
     return app
 
 

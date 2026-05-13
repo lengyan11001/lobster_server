@@ -3,19 +3,20 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>必火AI员工对话</title>
+  <title>必火AI员工</title>
   <style>
     :root {
-      --ink: #13213c;
-      --muted: #6d7890;
+      --ink: #102036;
+      --muted: #6c7689;
       --line: #dfe6f2;
-      --card: rgba(255, 255, 255, .86);
+      --panel: rgba(255, 255, 255, .9);
       --blue: #245cff;
-      --blue2: #5f8bff;
-      --green: #0f9f6e;
+      --cyan: #13b7d8;
+      --green: #13a873;
       --orange: #f08b2d;
-      --danger: #d94646;
-      --shadow: 0 24px 70px rgba(35, 58, 109, .18);
+      --red: #d94646;
+      --dark: #111c32;
+      --shadow: 0 18px 52px rgba(29, 54, 105, .16);
     }
     * { box-sizing: border-box; }
     body {
@@ -24,419 +25,258 @@
       color: var(--ink);
       font-family: "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
       background:
-        radial-gradient(circle at 20% 8%, rgba(255, 220, 185, .68), transparent 30rem),
-        radial-gradient(circle at 82% 12%, rgba(107, 150, 255, .32), transparent 31rem),
-        linear-gradient(135deg, #fff8ef 0%, #f5f8ff 50%, #eef4ff 100%);
+        linear-gradient(120deg, rgba(36, 92, 255, .08) 0 1px, transparent 1px 96px),
+        linear-gradient(210deg, rgba(19, 183, 216, .09) 0 1px, transparent 1px 104px),
+        linear-gradient(135deg, #f8fbff 0%, #eef4ff 48%, #fff8ef 100%);
     }
-    .shell {
-      width: min(1080px, calc(100vw - 28px));
-      min-height: 100vh;
-      margin: 0 auto;
-      display: grid;
-      grid-template-rows: auto 1fr;
-      gap: 18px;
-      padding: 18px 0;
-    }
-    .topbar, .panel {
-      border: 1px solid rgba(255, 255, 255, .72);
-      background: var(--card);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(18px);
-      border-radius: 26px;
-    }
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 16px;
-      gap: 14px;
-      position: relative;
-      z-index: 40;
-      overflow: visible;
-    }
-    .panel { position: relative; z-index: 1; }
-    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-    .logo {
-      width: 42px;
-      height: 42px;
-      display: grid;
-      place-items: center;
-      border-radius: 14px;
-      background: linear-gradient(145deg, #fff, #ffe5c7);
-      box-shadow: inset 0 0 0 1px rgba(255, 177, 87, .36);
-      font-size: 22px;
-    }
-    h1 { margin: 0; font-size: 19px; letter-spacing: .02em; }
-    .subtitle { margin-top: 3px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .userbox { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; position: relative; }
-    .top-menu { position: relative; }
-    .menu-toggle {
-      padding: 8px 13px;
-      color: var(--ink);
-      background: rgba(255, 255, 255, .72);
-      box-shadow: inset 0 0 0 1px var(--line);
-    }
-    .menu-panel {
-      position: absolute;
-      top: calc(100% + 8px);
-      right: 0;
-      z-index: 80;
-      width: 174px;
-      padding: 8px;
-      border: 1px solid rgba(223, 230, 242, .95);
-      border-radius: 16px;
-      background: rgba(255, 255, 255, .96);
-      box-shadow: 0 18px 44px rgba(35, 58, 109, .18);
-    }
-    .menu-section-title {
-      padding: 4px 8px 7px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .menu-option {
-      width: 100%;
-      margin: 0;
-      padding: 9px 10px;
-      color: var(--ink);
-      text-align: left;
-      background: transparent;
-      box-shadow: none;
-      border-radius: 12px;
-    }
-    .menu-option.active {
-      color: white;
-      background: linear-gradient(135deg, var(--blue), var(--blue2));
-      box-shadow: 0 10px 22px rgba(36, 92, 255, .18);
-    }
-    .menu-option.danger { color: var(--danger); }
-    button, input {
-      font: inherit;
-    }
+    button, input, select { font: inherit; }
     button {
       border: 0;
       cursor: pointer;
       border-radius: 999px;
       padding: 10px 15px;
-      color: white;
-      background: linear-gradient(135deg, var(--blue), var(--blue2));
-      box-shadow: 0 12px 30px rgba(36, 92, 255, .22);
+      color: #fff;
+      background: linear-gradient(135deg, var(--blue), #6d8dff);
+      box-shadow: 0 12px 28px rgba(36, 92, 255, .2);
       transition: transform .16s ease, opacity .16s ease;
     }
     button:disabled { opacity: .55; cursor: not-allowed; }
     button:not(:disabled):active { transform: scale(.98); }
-    .ghost {
-      color: var(--ink);
-      background: rgba(255, 255, 255, .72);
-      box-shadow: inset 0 0 0 1px var(--line);
-    }
-    .login {
-      width: min(420px, 100%);
-      margin: clamp(22px, 8vh, 86px) auto;
-      padding: 24px;
-    }
-    .login h2 { margin: 0 0 8px; font-size: 25px; }
-    .login p { margin: 0 0 22px; color: var(--muted); line-height: 1.7; }
-    .field { display: grid; gap: 7px; margin-bottom: 14px; }
-    .field label { font-size: 13px; color: #46516a; }
-    input {
+    input, select {
       width: 100%;
-      height: 44px;
+      min-height: 44px;
       border: 1px solid var(--line);
       border-radius: 14px;
-      padding: 0 13px;
+      padding: 0 12px;
       color: var(--ink);
-      background: rgba(255, 255, 255, .9);
+      background: rgba(255, 255, 255, .94);
       outline: none;
     }
-    input:focus { border-color: rgba(36, 92, 255, .55); box-shadow: 0 0 0 4px rgba(36, 92, 255, .08); }
-    .captcha-row { display: grid; grid-template-columns: 1fr 112px; gap: 10px; align-items: end; }
-    .captcha-img {
-      height: 44px;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      object-fit: cover;
-      background: #fff;
-      cursor: pointer;
+    input:focus, select:focus { border-color: rgba(36, 92, 255, .55); box-shadow: 0 0 0 4px rgba(36, 92, 255, .08); }
+    .hidden { display: none !important; }
+    .shell {
+      width: min(980px, calc(100vw - 24px));
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: 14px 0 88px;
     }
+    .topbar, .panel {
+      border: 1px solid rgba(255, 255, 255, .74);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      border-radius: 24px;
+    }
+    .topbar {
+      position: sticky;
+      top: 10px;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+    }
+    .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+    .logo {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      color: #fff;
+      font-weight: 900;
+      background: linear-gradient(135deg, #182949, var(--blue));
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.24), 0 10px 24px rgba(36,92,255,.24);
+    }
+    h1 { margin: 0; font-size: 18px; letter-spacing: 0; }
+    .subtitle { margin-top: 2px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .userbox { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; }
+    .avatar-mini {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: white;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--cyan), var(--blue));
+    }
+    .ghost {
+      color: var(--ink);
+      background: rgba(255, 255, 255, .74);
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+    .danger { color: var(--red); background: rgba(255,255,255,.82); box-shadow: inset 0 0 0 1px rgba(217,70,70,.25); }
+    .view { display: none; }
+    .view.active { display: block; }
+    .login {
+      width: min(430px, 100%);
+      margin: clamp(28px, 8vh, 90px) auto;
+      padding: 24px;
+    }
+    .login h2 { margin: 0 0 8px; font-size: 24px; }
+    .login p, .hint { color: var(--muted); line-height: 1.7; font-size: 13px; }
+    .field { display: grid; gap: 7px; margin-bottom: 13px; }
+    .field label { color: #46516a; font-size: 13px; }
+    .captcha-row { display: grid; grid-template-columns: 1fr 112px; gap: 10px; align-items: end; }
+    .captcha-img { height: 44px; border: 1px solid var(--line); border-radius: 14px; background: #fff; cursor: pointer; object-fit: cover; }
+
+    .home-grid { display: grid; gap: 14px; }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 18px;
+      border-radius: 28px;
+      color: #fff;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.1) 1px, transparent 1px) 0 0 / 28px 28px,
+        linear-gradient(0deg, rgba(255,255,255,.08) 1px, transparent 1px) 0 0 / 28px 28px,
+        linear-gradient(135deg, #101a31 0%, #183f8f 54%, #10a7c8 100%);
+      box-shadow: 0 24px 68px rgba(16, 45, 105, .28);
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -18% -38% 28%;
+      height: 180px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.18), transparent);
+      transform: rotate(-10deg);
+    }
+    .hero-content { position: relative; z-index: 1; display: grid; gap: 14px; }
+    .hero-kicker { font-size: 12px; color: rgba(255,255,255,.72); }
+    .hero-title { margin: 0; max-width: 560px; font-size: clamp(24px, 6vw, 38px); line-height: 1.15; letter-spacing: 0; }
+    .task-card {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 20px;
+      background: rgba(255,255,255,.12);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+    }
+    .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .seg button {
+      min-height: 42px;
+      color: rgba(255,255,255,.84);
+      background: rgba(255,255,255,.1);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+      border-radius: 14px;
+    }
+    .seg button.active { color: #102036; background: #fff; box-shadow: 0 12px 26px rgba(0,0,0,.14); }
+    .task-fields { display: grid; grid-template-columns: 1.2fr .85fr .85fr; gap: 10px; align-items: end; }
+    .task-fields .field { margin: 0; }
+    .task-fields label { color: rgba(255,255,255,.78); }
+    .task-fields input, .task-fields select { background: rgba(255,255,255,.94); }
+    .digital-fields { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; }
+    .digital-fields .field { margin: 0; }
+    .hero-action { min-height: 44px; background: #fff; color: var(--blue); box-shadow: 0 14px 30px rgba(0,0,0,.18); }
+    .section-title { display: flex; align-items: center; justify-content: space-between; margin: 8px 2px 10px; }
+    .section-title h2 { margin: 0; font-size: 18px; }
+    .quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .quick-card {
+      min-height: 98px;
+      display: grid;
+      align-content: space-between;
+      gap: 10px;
+      padding: 13px;
+      color: var(--ink);
+      text-align: left;
+      border-radius: 18px;
+      background: rgba(255,255,255,.9);
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255,255,255,.7);
+    }
+    .quick-card strong { font-size: 15px; }
+    .quick-card span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .quick-mark { width: 26px; height: 26px; border-radius: 10px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--blue), var(--cyan)); font-size: 13px; font-weight: 900; }
+
     .chat {
-      min-height: 0;
+      min-height: calc(100vh - 126px);
       display: grid;
       grid-template-rows: auto 1fr auto;
       overflow: hidden;
     }
-    .chat-head {
-      padding: 12px 18px;
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 12px;
-      border-bottom: 1px solid rgba(223, 230, 242, .82);
-    }
-    .status {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      flex-wrap: wrap;
-      gap: 8px;
-      color: var(--muted);
-      font-size: 13px;
-      text-align: right;
-    }
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--orange);
-      box-shadow: 0 0 0 5px rgba(240, 139, 45, .12);
-    }
-    .dot.online { background: var(--green); box-shadow-color: rgba(15, 159, 110, .14); }
-    .messages {
-      min-height: 360px;
-      max-height: calc(100vh - 250px);
-      overflow: auto;
-      padding: 22px 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-    .empty {
-      margin: auto;
-      color: var(--muted);
-      text-align: center;
-      line-height: 1.8;
-      max-width: 520px;
-    }
-    .bubble {
-      max-width: min(720px, 86%);
-      padding: 13px 15px;
-      border-radius: 18px;
-      line-height: 1.7;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .bubble.user {
-      align-self: flex-end;
-      color: white;
-      border-bottom-right-radius: 6px;
-      background: linear-gradient(135deg, var(--blue), var(--blue2));
-      box-shadow: 0 14px 34px rgba(36, 92, 255, .22);
-    }
-    .bubble.bot {
-      align-self: flex-start;
-      border-bottom-left-radius: 6px;
-      background: rgba(255, 255, 255, .9);
-      border: 1px solid rgba(223, 230, 242, .82);
-    }
-    .bubble.err { color: #8d2b2b; border-color: rgba(217, 70, 70, .32); background: rgba(255, 244, 244, .9); }
-    .bubble a {
-      color: var(--blue);
-      font-weight: 700;
-      text-decoration: underline;
-      text-underline-offset: 3px;
-    }
+    .chat-head { padding: 12px 16px; border-bottom: 1px solid rgba(223,230,242,.8); }
+    .status { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 13px; }
+    .status-left { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 5px rgba(240,139,45,.12); }
+    .dot.online { background: var(--green); box-shadow-color: rgba(19,168,115,.14); }
+    .messages { min-height: 360px; max-height: calc(100vh - 260px); overflow: auto; padding: 18px 14px; display: flex; flex-direction: column; gap: 13px; }
+    .empty { margin: auto; color: var(--muted); text-align: center; line-height: 1.8; max-width: 520px; }
+    .bubble { max-width: min(720px, 88%); padding: 13px 15px; border-radius: 18px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+    .bubble.user { align-self: flex-end; color: #fff; border-bottom-right-radius: 6px; background: linear-gradient(135deg, var(--blue), #6d8dff); box-shadow: 0 14px 34px rgba(36,92,255,.22); }
+    .bubble.bot { align-self: flex-start; border-bottom-left-radius: 6px; background: rgba(255,255,255,.95); border: 1px solid rgba(223,230,242,.86); }
+    .bubble.err { color: #8d2b2b; border-color: rgba(217,70,70,.32); background: rgba(255,244,244,.94); }
+    .bubble a { color: var(--blue); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
     .bubble.user a { color: #fff; }
-    .media-preview {
-      margin-top: 10px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    .media-preview img,
-    .media-preview video {
-      width: min(220px, 100%);
-      max-height: 260px;
-      border-radius: 12px;
-      border: 1px solid rgba(223, 230, 242, .9);
-      background: #eef4ff;
-      object-fit: cover;
-    }
-    .media-preview audio {
-      width: min(280px, 100%);
-    }
-    .steps {
-      margin-top: 8px;
-      display: none;
-      flex-wrap: wrap;
-      gap: 6px;
-      font-size: 12px;
-      color: #52607a;
-    }
-    .step {
-      padding: 4px 8px;
-      border-radius: 999px;
-      background: rgba(239, 244, 255, .92);
-    }
-    .quickbar {
-      padding: 10px 14px 0;
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      overscroll-behavior-x: contain;
-      scroll-snap-type: x proximity;
-      -webkit-overflow-scrolling: touch;
-    }
-    .quickbar::-webkit-scrollbar { height: 0; }
-    .quick-pill {
-      flex: 0 0 auto;
-      scroll-snap-align: start;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      min-height: 36px;
-      padding: 8px 12px;
-      color: #263759;
-      background: rgba(255, 255, 255, .78);
-      border: 1px solid rgba(223, 230, 242, .92);
-      box-shadow: 0 8px 22px rgba(35, 58, 109, .08);
-      font-size: 13px;
-      font-weight: 700;
-      white-space: nowrap;
-    }
-    .quick-pill strong {
-      display: inline-grid;
-      place-items: center;
-      width: 20px;
-      height: 20px;
-      border-radius: 999px;
-      color: white;
-      font-size: 12px;
-      background: linear-gradient(135deg, var(--blue), var(--blue2));
-    }
-    .quick-pill[data-tone="image"] strong { background: linear-gradient(135deg, #ffba5b, #f08b2d); }
-    .quick-pill[data-tone="video"] strong { background: linear-gradient(135deg, #64a2ff, #416cff); }
-    .quick-pill[data-tone="tvc"] strong { background: linear-gradient(135deg, #ff8ea5, #e94f70); }
-    .quick-pill[data-tone="remix"] strong { background: linear-gradient(135deg, #b28cff, #7557e8); }
-    .quick-pill[data-tone="publish"] strong { background: linear-gradient(135deg, #71d89d, #19a96f); }
-    .quick-pill[data-tone="upload"] {
-      color: #245cff;
-      background: linear-gradient(135deg, rgba(238,244,255,.96), rgba(255,255,255,.9));
-      border-color: rgba(36, 92, 255, .18);
-    }
-    .upload-preview {
-      display: none;
-      gap: 10px;
-      padding: 10px 14px 0;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-    }
+    .media-preview { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+    .media-preview img, .media-preview video { width: min(220px, 100%); max-height: 260px; border-radius: 12px; border: 1px solid rgba(223,230,242,.9); background: #eef4ff; object-fit: cover; }
+    .media-preview audio { width: min(280px, 100%); }
+    .steps { margin-top: 8px; display: none; flex-wrap: wrap; gap: 6px; font-size: 12px; color: #52607a; }
+    .upload-preview { display: none; gap: 10px; padding: 10px 14px 0; overflow-x: auto; }
     .upload-preview.show { display: flex; }
-    .upload-card {
-      position: relative;
-      flex: 0 0 auto;
-      width: 94px;
-      padding: 6px;
-      border-radius: 18px;
-      border: 1px solid rgba(223, 230, 242, .95);
-      background: rgba(255, 255, 255, .84);
-      box-shadow: 0 8px 24px rgba(35, 58, 109, .09);
-    }
-    .upload-card img {
-      width: 100%;
-      height: 70px;
-      display: block;
-      object-fit: cover;
-      border-radius: 13px;
-      background: #eef4ff;
-    }
-    .upload-status {
-      margin-top: 5px;
-      color: var(--muted);
-      font-size: 11px;
-      line-height: 1.35;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .upload-card.failed .upload-status { color: var(--danger); }
-    .upload-remove {
-      position: absolute;
-      top: 3px;
-      right: 3px;
-      width: 22px;
-      height: 22px;
-      padding: 0;
-      display: grid;
-      place-items: center;
-      color: white;
-      background: rgba(19, 33, 60, .72);
-      box-shadow: none;
-      font-size: 15px;
-    }
-    .composer {
-      padding: 14px;
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 10px;
-      border-top: 1px solid rgba(223, 230, 242, .82);
-    }
+    .upload-card { position: relative; flex: 0 0 auto; width: 94px; padding: 6px; border-radius: 18px; border: 1px solid rgba(223,230,242,.95); background: rgba(255,255,255,.84); box-shadow: 0 8px 24px rgba(35,58,109,.09); }
+    .upload-card img { width: 100%; height: 70px; display: block; object-fit: cover; border-radius: 13px; background: #eef4ff; }
+    .upload-status { margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .upload-card.failed .upload-status { color: var(--red); }
+    .upload-remove { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; color: #fff; background: rgba(19,33,60,.72); box-shadow: none; font-size: 15px; }
+    .composer { padding: 12px; display: grid; grid-template-columns: 1fr auto; gap: 10px; border-top: 1px solid rgba(223,230,242,.82); }
     .composer input { height: 48px; border-radius: 18px; }
-    .hint { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.7; }
-    .hidden { display: none !important; }
-    .toast {
+
+    .profile-grid { display: grid; gap: 14px; }
+    .profile-head { display: flex; align-items: center; gap: 14px; padding: 18px; }
+    .profile-avatar { width: 62px; height: 62px; border-radius: 22px; display: grid; place-items: center; color: #fff; font-size: 24px; font-weight: 900; background: linear-gradient(135deg, var(--dark), var(--blue)); }
+    .profile-head h2 { margin: 0 0 4px; font-size: 20px; }
+    .settings { padding: 16px; display: grid; gap: 12px; }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border-radius: 16px; background: rgba(248,251,255,.9); border: 1px solid rgba(223,230,242,.8); }
+    .route-switch { display: inline-grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; border-radius: 999px; background: #eef4ff; }
+    .route-switch button { padding: 7px 11px; color: var(--muted); background: transparent; box-shadow: none; }
+    .route-switch button.active { color: #fff; background: var(--blue); }
+    .route-switch button:disabled { opacity: .45; }
+    .runs { padding: 16px; }
+    .run-list { display: grid; gap: 10px; }
+    .run-card { padding: 12px; border-radius: 16px; background: rgba(248,251,255,.92); border: 1px solid rgba(223,230,242,.86); }
+    .run-top { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+    .run-title { margin-top: 5px; font-weight: 800; }
+    .run-result { margin-top: 6px; color: #40506c; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .run-media { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .run-media video { width: 132px; height: 76px; object-fit: cover; border-radius: 10px; background: #111; }
+    .run-media img { width: 76px; height: 76px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
+
+    .bottom-nav {
       position: fixed;
       left: 50%;
-      bottom: 22px;
+      bottom: 12px;
       transform: translateX(-50%);
-      max-width: min(520px, calc(100vw - 32px));
-      padding: 11px 14px;
-      border-radius: 999px;
-      color: white;
-      background: rgba(19, 33, 60, .9);
-      box-shadow: 0 18px 44px rgba(19, 33, 60, .28);
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity .2s ease, transform .2s ease;
+      z-index: 90;
+      width: min(520px, calc(100vw - 24px));
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      padding: 8px;
+      border-radius: 22px;
+      background: rgba(255,255,255,.88);
+      border: 1px solid rgba(255,255,255,.74);
+      box-shadow: 0 18px 52px rgba(29,54,105,.2);
+      backdrop-filter: blur(18px);
     }
+    .bottom-nav button { min-height: 44px; color: var(--muted); background: transparent; box-shadow: none; border-radius: 16px; }
+    .bottom-nav button.active { color: #fff; background: linear-gradient(135deg, var(--blue), var(--cyan)); box-shadow: 0 10px 24px rgba(36,92,255,.2); }
+    .toast { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); max-width: min(520px, calc(100vw - 32px)); padding: 11px 14px; border-radius: 999px; color: #fff; background: rgba(19,33,60,.9); box-shadow: 0 18px 44px rgba(19,33,60,.28); opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 100; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
-    @media (max-width: 720px) {
-      .shell { width: min(100vw - 16px, 720px); padding: 8px 0; gap: 10px; }
-      .topbar {
-        border-radius: 18px;
-        padding: 10px 12px;
-        align-items: center;
-        flex-direction: row;
-      }
-      .logo {
-        width: 34px;
-        height: 34px;
-        border-radius: 12px;
-        font-size: 18px;
-      }
-      h1 { font-size: 18px; }
+    @media (max-width: 760px) {
+      .shell { width: min(100vw - 16px, 720px); padding-top: 8px; }
+      .topbar { top: 8px; border-radius: 18px; }
       .subtitle { display: none; }
-      .userbox {
-        gap: 6px;
-        font-size: 12px;
-        flex: 0 0 auto;
-      }
-      .userbox .ghost {
-        padding: 7px 11px;
-      }
-      .menu-panel {
-        width: 164px;
-        right: 0;
-      }
-      .chat-head {
-        padding: 10px 12px;
-        align-items: center;
-        flex-direction: row;
-        gap: 8px;
-      }
-      .status {
-        justify-content: flex-end;
-        text-align: right;
-        gap: 6px;
-        font-size: 12px;
-        width: 100%;
-      }
-      .status .ghost {
-        padding: 7px 11px;
-      }
-      .panel { border-radius: 20px; }
-      .messages { max-height: calc(100vh - 226px); padding: 16px 12px; }
+      .userbox span { display: none; }
+      .hero { border-radius: 22px; padding: 15px; }
+      .task-fields, .digital-fields { grid-template-columns: 1fr; }
+      .messages { max-height: calc(100vh - 238px); min-height: 350px; }
       .bubble { max-width: 94%; }
       .composer { grid-template-columns: 1fr; }
       .composer button { height: 46px; }
+      .quick-card { min-height: 92px; }
     }
   </style>
 </head>
@@ -444,26 +284,21 @@
   <main class="shell">
     <header class="topbar">
       <div class="brand">
-        <div class="logo">🦞</div>
+        <div class="logo">必</div>
         <div>
-          <h1>必火AI员工对话</h1>
-          <div class="subtitle">通过云端排队，把消息交给本地 AI 员工处理</div>
+          <h1>必火AI员工</h1>
+          <div class="subtitle">远程任务、消息和执行记录</div>
         </div>
       </div>
       <div class="userbox hidden" id="userbox">
+        <div class="avatar-mini" id="avatarMini">AI</div>
         <span id="userEmail"></span>
-        <div class="top-menu">
-          <button class="menu-toggle" id="topMenuBtn" type="button" aria-haspopup="true" aria-expanded="false">设置</button>
-          <div class="menu-panel hidden" id="topMenuPanel">
-            <button type="button" class="menu-option danger" id="logoutBtn">退出登录</button>
-          </div>
-        </div>
       </div>
     </header>
 
     <section class="panel login" id="loginPanel">
       <h2>登录设备账号</h2>
-      <p>不开放注册。请使用你在 AI 员工设备端已经注册过的账号，登录后即可远程发消息。</p>
+      <p>请使用 AI 员工设备端账号登录。</p>
       <form id="loginForm">
         <div class="field">
           <label for="account">账号 / 手机号</label>
@@ -483,37 +318,142 @@
         <input type="hidden" id="captchaId" name="captcha_id" />
         <button id="loginBtn" type="submit" style="width:100%;margin-top:18px">登录</button>
       </form>
-      <div class="hint">提示：本地 online 需要保持启动并登录同一个账号，否则消息会停留在“等待设备领取”。</div>
+      <div class="hint">本地 online 需要保持启动并登录同一个账号。</div>
     </section>
 
-    <section class="panel chat hidden" id="chatPanel">
-      <div class="chat-head">
-        <div class="status">
-          <span class="dot" id="onlineDot"></span>
-          <span id="deviceText">正在检查设备在线状态...</span>
-          <button class="ghost" id="refreshStatusBtn" type="button">刷新</button>
+    <div id="appPanel" class="hidden">
+      <section class="view active" id="homeView">
+        <div class="home-grid">
+          <div class="hero">
+            <div class="hero-content">
+              <div>
+                <div class="hero-kicker">SCHEDULED ENGINE</div>
+                <h2 class="hero-title">把记忆变成按时交付的内容资产</h2>
+              </div>
+              <div class="task-card">
+                <div class="seg" id="taskAbilitySeg">
+                  <button type="button" class="active" data-task-ability="goal.video.pipeline">创意成片</button>
+                  <button type="button" data-task-ability="hifly.video.create_by_tts">必火数字人</button>
+                </div>
+                <div class="task-fields">
+                  <div class="field">
+                    <label for="taskTitle">任务名称</label>
+                    <input id="taskTitle" placeholder="例如：每天生成一条宣传视频文案" />
+                  </div>
+                  <div class="field">
+                    <label for="taskScheduleType">执行方式</label>
+                    <select id="taskScheduleType">
+                      <option value="once">一次性</option>
+                      <option value="interval">循环执行</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="taskIntervalMinutes">间隔分钟</label>
+                    <input id="taskIntervalMinutes" type="number" min="1" value="60" />
+                  </div>
+                </div>
+                <div class="digital-fields hidden" id="digitalFields">
+                  <div class="field">
+                    <label for="taskAvatar">数字人</label>
+                    <select id="taskAvatar"><option value="">加载中...</option></select>
+                  </div>
+                  <div class="field">
+                    <label for="taskVoice">声音</label>
+                    <select id="taskVoice"><option value="">加载中...</option></select>
+                  </div>
+                  <button class="ghost" type="button" id="autoPickDigitalBtn">自动</button>
+                </div>
+                <button class="hero-action" type="button" id="createTaskBtn">下发任务</button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="section-title">
+              <h2>快捷消息</h2>
+              <button class="ghost" type="button" data-tab-target="messages">打开消息</button>
+            </div>
+            <div class="quick-grid" id="homeQuickGrid">
+              <button class="quick-card" type="button" data-tone="image" data-prompt="帮我生成一张图片，画面内容是："><div class="quick-mark">图</div><strong>生成图片</strong><span>跳转消息并填入图片生成指令</span></button>
+              <button class="quick-card" type="button" data-tone="video" data-prompt="帮我生成一个8秒宣传视频，画面内容是："><div class="quick-mark">视</div><strong>生成视频</strong><span>跳转消息并填入视频生成指令</span></button>
+              <button class="quick-card" type="button" data-tone="upload" data-image-video="1" data-prompt="用这个图片，提示词："><div class="quick-mark">传</div><strong>图生视频</strong><span>先上传图片，再进入消息继续补充</span></button>
+              <button class="quick-card" type="button" data-tone="tvc" data-prompt="用爆款TVC生成一个视频"><div class="quick-mark">T</div><strong>爆款TVC</strong><span>填入爆款复刻视频指令</span></button>
+              <button class="quick-card" type="button" data-tone="publish" data-prompt="把某素材发布到 平台 账号"><div class="quick-mark">发</div><strong>发布素材</strong><span>填入发布任务消息</span></button>
+              <button class="quick-card" type="button" data-tone="copy" data-prompt="根据我的记忆，写一条50字以内的朋友圈文案"><div class="quick-mark">文</div><strong>朋友圈文案</strong><span>快速生成短文案</span></button>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="messages" id="messages">
-        <div class="empty" id="empty">
-          发一条消息试试。H5 会把消息放到云端队列，本地 online 领取后再把处理进度和结果推回来。
+      </section>
+
+      <section class="view" id="messagesView">
+        <div class="panel chat">
+          <div class="chat-head">
+            <div class="status">
+              <div class="status-left">
+                <span class="dot" id="onlineDot"></span>
+                <span id="deviceText">正在检查设备在线状态...</span>
+              </div>
+              <button class="ghost" id="refreshStatusBtn" type="button">刷新</button>
+            </div>
+          </div>
+          <div class="messages" id="messages">
+            <div class="empty" id="empty">发一条消息试试。</div>
+          </div>
+          <div class="upload-preview" id="uploadPreview"></div>
+          <form class="composer" id="sendForm">
+            <input type="file" id="imageInput" accept="image/*" multiple class="hidden" />
+            <input id="messageInput" placeholder="输入消息，例如：帮我写一段产品短视频口播文案" autocomplete="off" />
+            <button id="sendBtn" type="submit">发送</button>
+          </form>
         </div>
-      </div>
-      <div class="quickbar" id="quickbar" aria-label="快捷入口">
-        <button type="button" class="quick-pill" data-tone="image" data-prompt="帮我生成一张图片，画面内容是："><strong>图</strong><span>生成图片</span></button>
-        <button type="button" class="quick-pill" data-tone="video" data-prompt="帮我生成一个8秒宣传视频，画面内容是："><strong>视</strong><span>生成视频</span></button>
-        <button type="button" class="quick-pill" data-tone="upload" data-image-video="1"><strong>传</strong><span>图生视频</span></button>
-        <button type="button" class="quick-pill" data-tone="tvc" data-image-video="1" data-prompt="用爆款TVC生成一个视频"><strong>T</strong><span>爆款TVC</span></button>
-        <button type="button" class="quick-pill" data-tone="publish" data-prompt="把某素材发布到 平台 账号"><strong>发</strong><span>发布</span></button>
-      </div>
-      <div class="upload-preview" id="uploadPreview"></div>
-      <form class="composer" id="sendForm">
-        <input type="file" id="imageInput" accept="image/*" multiple class="hidden" />
-        <input id="messageInput" placeholder="输入消息，例如：帮我写一段产品短视频口播文案" autocomplete="off" />
-        <button id="sendBtn" type="submit">发送</button>
-      </form>
-    </section>
+      </section>
+
+      <section class="view" id="profileView">
+        <div class="profile-grid">
+          <div class="panel profile-head">
+            <div class="profile-avatar" id="profileAvatar">AI</div>
+            <div>
+              <h2 id="profileName">已登录</h2>
+              <div class="hint" id="profileDeviceText">设备状态检查中</div>
+            </div>
+          </div>
+          <div class="panel settings">
+            <div class="setting-row">
+              <div>
+                <strong>设置</strong>
+                <div class="hint">消息和任务都走当前账号</div>
+              </div>
+              <button class="ghost" type="button" id="refreshProfileBtn">刷新</button>
+            </div>
+            <div class="setting-row">
+              <div>
+                <strong>路由切换</strong>
+                <div class="hint">手机会话当前使用直连通道</div>
+              </div>
+              <div class="route-switch">
+                <button type="button" class="active" data-route="direct">直连</button>
+                <button type="button" disabled data-route="openclaw">OpenClaw</button>
+              </div>
+            </div>
+            <button class="danger" type="button" id="logoutBtn">退出登录</button>
+          </div>
+          <div class="panel runs">
+            <div class="section-title">
+              <h2>执行记录</h2>
+              <button class="ghost" type="button" id="refreshRunsBtn">刷新</button>
+            </div>
+            <div class="run-list" id="runList"></div>
+          </div>
+        </div>
+      </section>
+    </div>
   </main>
+
+  <nav class="bottom-nav hidden" id="bottomNav">
+    <button type="button" class="active" data-tab-target="home">首页</button>
+    <button type="button" data-tab-target="messages">消息</button>
+    <button type="button" data-tab-target="profile">个人</button>
+  </nav>
   <div class="toast" id="toast"></div>
 
   <script>
@@ -525,6 +465,12 @@
       streams: new Map(),
       pollers: new Map(),
       uploads: [],
+      devices: [],
+      taskAbility: "goal.video.pipeline",
+      hiflyLoaded: false,
+      hiflyLoading: false,
+      avatarRows: [],
+      voiceRows: [],
     };
     const SHOW_INTERNAL_STEPS = false;
     const IMAGE_TO_VIDEO_PROMPT = "用这个图片，提示词：";
@@ -536,8 +482,70 @@
       setTimeout(() => el.classList.remove("show"), 2600);
     }
 
-    function authHeaders() {
-      return state.token ? { Authorization: `Bearer ${state.token}` } : {};
+    function authHeaders(extra = {}) {
+      return state.token ? { Authorization: `Bearer ${state.token}`, ...extra } : { ...extra };
+    }
+
+    function api(path, options = {}) {
+      const headers = { ...(options.headers || {}), ...authHeaders() };
+      if (options.json) {
+        headers["Content-Type"] = "application/json";
+        options.body = JSON.stringify(options.json);
+      }
+      return fetch(path, { ...options, headers }).then(async (resp) => {
+        const text = await resp.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
+        if (!resp.ok) throw new Error(data.detail || data.message || `HTTP ${resp.status}`);
+        return data;
+      });
+    }
+
+    function escapeHtml(text) {
+      return String(text || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function firstChar(text) {
+      const s = String(text || "AI").trim();
+      return (s[0] || "A").toUpperCase();
+    }
+
+    function fmtTime(value) {
+      if (!value) return "-";
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return String(value).slice(0, 16);
+      return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    }
+
+    function statusText(status) {
+      return {
+        pending: "待执行",
+        processing: "执行中",
+        completed: "完成",
+        failed: "失败",
+        cancelled: "已取消",
+        active: "启用",
+        paused: "暂停",
+      }[status] || status || "-";
+    }
+
+    function currentInstallationId() {
+      const online = state.devices.find((d) => d.online && d.installation_id);
+      const any = state.devices.find((d) => d.installation_id);
+      return (online || any || {}).installation_id || "";
+    }
+
+    function switchTab(tab) {
+      const key = tab || "home";
+      document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
+      document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
+      if (key === "profile") loadRuns();
+      if (key === "messages") setTimeout(() => { $("messageInput")?.focus(); }, 60);
     }
 
     function setMessageTemplate(text) {
@@ -546,6 +554,173 @@
       input.value = text || "";
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);
+    }
+
+    async function refreshCaptcha() {
+      const data = await fetch("/auth/captcha").then((r) => r.json());
+      $("captchaId").value = data.captcha_id || "";
+      $("captchaImg").src = data.image || "";
+      $("captcha").value = "";
+    }
+
+    async function loadMe() {
+      if (!state.token) return false;
+      try {
+        state.user = await api("/auth/me");
+        const name = state.user.email || "已登录";
+        $("userEmail").textContent = name;
+        $("profileName").textContent = name;
+        $("avatarMini").textContent = firstChar(name);
+        $("profileAvatar").textContent = firstChar(name);
+        $("loginPanel").classList.add("hidden");
+        $("appPanel").classList.remove("hidden");
+        $("userbox").classList.remove("hidden");
+        $("bottomNav").classList.remove("hidden");
+        await Promise.all([loadHistory(), refreshDeviceStatus(), loadRuns()]);
+        return true;
+      } catch (err) {
+        localStorage.removeItem("lobster_h5_token");
+        state.token = "";
+        return false;
+      }
+    }
+
+    async function refreshDeviceStatus() {
+      if (!state.token) return;
+      try {
+        const data = await api("/api/h5-chat/devices/status");
+        state.devices = Array.isArray(data.devices) ? data.devices : [];
+        $("onlineDot").classList.toggle("online", !!data.online);
+        const online = state.devices.filter((d) => d.online).length;
+        const total = state.devices.length;
+        const text = data.online ? `本地在线：${online}/${total || online} 台` : "未检测到本地 online";
+        $("deviceText").textContent = text;
+        $("profileDeviceText").textContent = text;
+      } catch (err) {
+        $("onlineDot").classList.remove("online");
+        $("deviceText").textContent = "设备状态获取失败";
+        $("profileDeviceText").textContent = "设备状态获取失败";
+      }
+    }
+
+    function normalizeAvatarRows(...groups) {
+      const out = [];
+      const seen = new Set();
+      groups.flat().forEach((row) => {
+        const avatar = String((row && row.avatar) || "").trim();
+        if (!avatar || seen.has(avatar)) return;
+        seen.add(avatar);
+        out.push({ avatar, title: row.title || avatar, section: row.section_label || row.section || "" });
+      });
+      return out;
+    }
+
+    function normalizeVoiceRows(...groups) {
+      const out = [];
+      const seen = new Set();
+      groups.flat().forEach((row) => {
+        const styles = Array.isArray(row && row.styles) && row.styles.length ? row.styles : [row];
+        styles.forEach((style) => {
+          const voice = String((style && style.voice) || (row && row.voice) || "").trim();
+          if (!voice || seen.has(voice)) return;
+          seen.add(voice);
+          const base = row && row.title ? row.title : voice;
+          const label = style && style.label && style.label !== "默认风格" ? `${base} - ${style.label}` : base;
+          out.push({ voice, title: label, section: row.section_label || row.section || "" });
+        });
+      });
+      return out;
+    }
+
+    function renderHiflyOptions() {
+      const avatarSel = $("taskAvatar");
+      const voiceSel = $("taskVoice");
+      if (avatarSel) {
+        avatarSel.innerHTML = state.avatarRows.length
+          ? state.avatarRows.map((row) => `<option value="${escapeHtml(row.avatar)}">${escapeHtml(row.title)}</option>`).join("")
+          : `<option value="">暂无可用数字人</option>`;
+      }
+      if (voiceSel) {
+        voiceSel.innerHTML = state.voiceRows.length
+          ? state.voiceRows.map((row) => `<option value="${escapeHtml(row.voice)}">${escapeHtml(row.title)}</option>`).join("")
+          : `<option value="">暂无可用声音</option>`;
+      }
+    }
+
+    async function loadHiflyLibraries() {
+      if (state.hiflyLoaded || state.hiflyLoading) return;
+      state.hiflyLoading = true;
+      try {
+        const [myAvatar, publicAvatar, myVoice, publicVoice] = await Promise.all([
+          api("/api/hifly/my/avatar/list?page=1&size=100").catch(() => ({ items: [] })),
+          api("/api/hifly/avatar/library", { method: "POST", json: { page: 1, size: 100, include_mine: true } }).catch(() => ({ public: [] })),
+          api("/api/hifly/my/voice/list?page=1&size=100").catch(() => ({ items: [] })),
+          api("/api/hifly/voice/library", { method: "POST", json: {} }).catch(() => ({ public: [] })),
+        ]);
+        state.avatarRows = normalizeAvatarRows(myAvatar.items || [], publicAvatar.public || []);
+        state.voiceRows = normalizeVoiceRows(myVoice.items || [], publicVoice.public || []);
+        state.hiflyLoaded = true;
+        renderHiflyOptions();
+      } catch (err) {
+        toast(err.message || "数字人资源加载失败");
+      } finally {
+        state.hiflyLoading = false;
+      }
+    }
+
+    function setTaskAbility(ability) {
+      state.taskAbility = ability || "goal.video.pipeline";
+      document.querySelectorAll("[data-task-ability]").forEach((btn) => btn.classList.toggle("active", btn.dataset.taskAbility === state.taskAbility));
+      $("digitalFields").classList.toggle("hidden", state.taskAbility !== "hifly.video.create_by_tts");
+      if (state.taskAbility === "hifly.video.create_by_tts") loadHiflyLibraries();
+    }
+
+    function autoPickDigital() {
+      if (state.avatarRows[0]) $("taskAvatar").value = state.avatarRows[0].avatar;
+      if (state.voiceRows[0]) $("taskVoice").value = state.voiceRows[0].voice;
+      loadHiflyLibraries();
+    }
+
+    async function createScheduledTask() {
+      const btn = $("createTaskBtn");
+      const installationId = currentInstallationId();
+      if (!installationId) {
+        toast("未检测到本地 online 设备");
+        return;
+      }
+      let capPayload = {};
+      if (state.taskAbility === "hifly.video.create_by_tts") {
+        const avatar = $("taskAvatar").value;
+        const voice = $("taskVoice").value;
+        if (!avatar) throw new Error("请选择数字人");
+        if (!voice) throw new Error("请选择声音");
+        capPayload = { avatar, voice };
+      }
+      const interval = parseInt($("taskIntervalMinutes").value || "60", 10);
+      const title = ($("taskTitle").value || "").trim() || (state.taskAbility === "hifly.video.create_by_tts" ? "必火数字人" : "创意成片");
+      const body = {
+        title,
+        task_kind: "capability",
+        content: `定时调用能力 ${state.taskAbility}`,
+        payload: { capability_id: state.taskAbility, payload: capPayload },
+        schedule_type: $("taskScheduleType").value || "once",
+        interval_seconds: Math.max(60, (Number.isNaN(interval) ? 60 : interval) * 60),
+        installation_ids: [installationId],
+      };
+      btn.disabled = true;
+      try {
+        await api("/api/scheduled-tasks/tasks", {
+          method: "POST",
+          json: body,
+          headers: { "X-Installation-Id": installationId },
+        });
+        toast("任务已下发");
+        await loadRuns();
+      } catch (err) {
+        toast(err.message || "下发失败");
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     function renderUploads() {
@@ -562,7 +737,7 @@
         const rm = document.createElement("button");
         rm.type = "button";
         rm.className = "upload-remove";
-        rm.textContent = "×";
+        rm.textContent = "x";
         rm.addEventListener("click", () => {
           const old = state.uploads[idx];
           if (old && old.previewUrl) {
@@ -582,23 +757,13 @@
     }
 
     async function uploadImageFile(file) {
-      const item = {
-        name: file.name || "图片",
-        previewUrl: URL.createObjectURL(file),
-        url: "",
-        status: "uploading",
-        error: "",
-      };
+      const item = { name: file.name || "图片", previewUrl: URL.createObjectURL(file), url: "", status: "uploading", error: "" };
       state.uploads.push(item);
       renderUploads();
       const fd = new FormData();
       fd.append("file", file);
       try {
-        const resp = await fetch("/api/h5-chat/uploads", {
-          method: "POST",
-          headers: authHeaders(),
-          body: fd,
-        });
+        const resp = await fetch("/api/h5-chat/uploads", { method: "POST", headers: authHeaders(), body: fd });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.detail || "上传失败");
         item.url = data.url || "";
@@ -634,93 +799,7 @@
       const content = (raw || "").trim();
       const urls = readyImageUrls();
       if (!urls.length) return content;
-      const imageBlock = [
-        "",
-        "【用户已上传图片】",
-        ...urls.map((url, idx) => `${idx + 1}. ${url}`),
-        "",
-        "请在本轮任务中使用以上图片链接作为参考素材；如果用户要求图生视频，请直接基于图片生成视频，不要只写文案。",
-      ].join("\n");
-      return `${content}${imageBlock}`;
-    }
-
-    async function api(path, options = {}) {
-      const headers = { ...(options.headers || {}), ...authHeaders() };
-      if (options.json) {
-        headers["Content-Type"] = "application/json";
-        options.body = JSON.stringify(options.json);
-      }
-      const resp = await fetch(path, { ...options, headers });
-      const text = await resp.text();
-      let data = {};
-      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
-      if (!resp.ok) {
-        throw new Error(data.detail || data.message || `HTTP ${resp.status}`);
-      }
-      return data;
-    }
-
-    async function refreshCaptcha() {
-      const data = await fetch("/auth/captcha").then((r) => r.json());
-      $("captchaId").value = data.captcha_id || "";
-      $("captchaImg").src = data.image || "";
-      $("captcha").value = "";
-    }
-
-    async function loadMe() {
-      if (!state.token) return false;
-      try {
-        state.user = await api("/auth/me");
-        $("userEmail").textContent = state.user.email || "已登录";
-        $("loginPanel").classList.add("hidden");
-        $("chatPanel").classList.remove("hidden");
-        $("userbox").classList.remove("hidden");
-        setMode();
-        await loadHistory();
-        await refreshDeviceStatus();
-        return true;
-      } catch (err) {
-        localStorage.removeItem("lobster_h5_token");
-        state.token = "";
-        return false;
-      }
-    }
-
-    function setMode() {
-      state.mode = "direct";
-      localStorage.setItem("lobster_h5_mode", state.mode);
-      document.querySelectorAll("[data-mode-option]").forEach((btn) => {
-        btn.classList.toggle("active", btn.dataset.modeOption === state.mode);
-      });
-    }
-
-    function closeTopMenu() {
-      const panel = $("topMenuPanel");
-      const btn = $("topMenuBtn");
-      if (panel) panel.classList.add("hidden");
-      if (btn) btn.setAttribute("aria-expanded", "false");
-    }
-
-    function toggleTopMenu() {
-      const panel = $("topMenuPanel");
-      const btn = $("topMenuBtn");
-      if (!panel || !btn) return;
-      const opening = panel.classList.contains("hidden");
-      panel.classList.toggle("hidden", !opening);
-      btn.setAttribute("aria-expanded", opening ? "true" : "false");
-    }
-
-    function clearEmpty() {
-      $("empty")?.classList.add("hidden");
-    }
-
-    function escapeHtml(text) {
-      return String(text || "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
+      return `${content}\n\n【用户已上传图片】\n${urls.map((url, idx) => `${idx + 1}. ${url}`).join("\n")}\n\n请在本轮任务中使用以上图片链接作为参考素材；如果用户要求图生视频，请直接基于图片生成视频，不要只写文案。`;
     }
 
     function normalizeMarkdownLinks(text) {
@@ -753,9 +832,7 @@
         return stash(linkAnchor(url, url)) + suffix;
       });
       let html = escapeHtml(value);
-      for (const item of links) {
-        html = html.replaceAll(item.token, item.anchor);
-      }
+      for (const item of links) html = html.replaceAll(item.token, item.anchor);
       return html;
     }
 
@@ -783,16 +860,9 @@
       const out = [];
       const seen = new Set();
       function add(value) {
-        if (Array.isArray(value)) {
-          value.forEach(add);
-          return;
-        }
-        if (value && typeof value === "object") {
-          Object.values(value).forEach(add);
-          return;
-        }
-        const text = String(value || "");
-        const matches = text.match(/https?:\/\/[^\s<>"'`]+/gi) || [];
+        if (Array.isArray(value)) { value.forEach(add); return; }
+        if (value && typeof value === "object") { Object.values(value).forEach(add); return; }
+        const matches = String(value || "").match(/https?:\/\/[^\s<>"'`]+/gi) || [];
         matches.forEach((raw) => {
           let url = raw;
           while (/[)\].,!?，。！？、；：]$/.test(url)) url = url.slice(0, -1);
@@ -856,6 +926,10 @@
       $("messages").scrollTop = $("messages").scrollHeight;
     }
 
+    function clearEmpty() {
+      $("empty")?.classList.add("hidden");
+    }
+
     function addBubble(role, text) {
       clearEmpty();
       const el = document.createElement("div");
@@ -878,25 +952,11 @@
     }
 
     function addStep(bubble, text) {
-      if (!SHOW_INTERNAL_STEPS) return;
-      if (!bubble || !bubble._steps || !text) return;
+      if (!SHOW_INTERNAL_STEPS || !bubble || !bubble._steps || !text) return;
       const s = document.createElement("span");
       s.className = "step";
       s.textContent = text;
       bubble._steps.appendChild(s);
-      $("messages").scrollTop = $("messages").scrollHeight;
-    }
-
-    function bubbleTextNode(bubble) {
-      if (!bubble) return null;
-      ensureBubbleTextElement(bubble);
-      return {
-        get nodeValue() { return bubble._rawText || ""; },
-        set nodeValue(value) {
-          bubble._rawText = value || "";
-          renderBubbleText(bubble);
-        }
-      };
     }
 
     function setBubbleText(bubble, text) {
@@ -907,8 +967,7 @@
     }
 
     function appendBubbleText(bubble, text) {
-      if (!text) return;
-      if (!bubble) return;
+      if (!text || !bubble) return;
       bubble._rawText = (bubble._rawText || "") + text;
       renderBubbleText(bubble);
       $("messages").scrollTop = $("messages").scrollHeight;
@@ -923,17 +982,23 @@
       if (ev.type === "tool_start") return p.name ? `调用能力：${p.name}` : "调用能力";
       if (ev.type === "tool_end") return p.name ? `能力完成：${p.name}` : "能力完成";
       if (ev.type === "progress") return p.text || p.message || "处理中";
-      if (ev.type === "delta") return "";
       return "";
+    }
+
+    function closeStream(messageId) {
+      const es = state.streams.get(messageId);
+      if (es) es.close();
+      state.streams.delete(messageId);
+      const poll = state.pollers.get(messageId);
+      if (poll) clearInterval(poll);
+      state.pollers.delete(messageId);
     }
 
     function handleEvent(ev, bubble, messageId) {
       if (!ev || !bubble) return;
       const label = eventLabel(ev);
       if (label) addStep(bubble, label);
-      if (ev.type === "delta" && ev.payload && ev.payload.text) {
-        appendBubbleText(bubble, ev.payload.text);
-      }
+      if (ev.type === "delta" && ev.payload && ev.payload.text) appendBubbleText(bubble, ev.payload.text);
       renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
       if (ev.type === "final") {
         const reply = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || "处理完成。";
@@ -948,15 +1013,6 @@
       }
     }
 
-    function closeStream(messageId) {
-      const es = state.streams.get(messageId);
-      if (es) es.close();
-      state.streams.delete(messageId);
-      const poll = state.pollers.get(messageId);
-      if (poll) clearInterval(poll);
-      state.pollers.delete(messageId);
-    }
-
     function startPolling(messageId, bubble, lastEventId = 0) {
       if (state.pollers.has(messageId)) return;
       let last = lastEventId;
@@ -968,9 +1024,7 @@
             handleEvent(ev, bubble, messageId);
           }
           if (data.message && ["completed", "failed", "cancelled"].includes(data.message.status)) {
-            if (data.message.status === "completed" && data.message.reply_text) {
-              setBubbleText(bubble, data.message.reply_text);
-            }
+            if (data.message.status === "completed" && data.message.reply_text) setBubbleText(bubble, data.message.reply_text);
             if (data.message.status === "failed") {
               bubble.classList.add("err");
               setBubbleText(bubble, data.message.error || "处理失败");
@@ -992,11 +1046,9 @@
         return;
       }
       let last = 0;
-      const url = `/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}`;
-      const es = new EventSource(url);
+      const es = new EventSource(`/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}`);
       state.streams.set(messageId, es);
-      const types = ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error"];
-      types.forEach((type) => {
+      ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error"].forEach((type) => {
         es.addEventListener(type, (evt) => {
           try {
             const ev = JSON.parse(evt.data || "{}");
@@ -1034,9 +1086,7 @@
       const bot = addBubble("bot", initialText);
       if (msg.status === "failed") bot.classList.add("err");
       let finalPayload = null;
-      let lastEventId = 0;
       for (const ev of events) {
-        lastEventId = Math.max(lastEventId, ev.id || 0);
         if (ev && ev.type === "final") finalPayload = ev.payload || null;
         handleEvent(ev, bot, msg.id);
       }
@@ -1046,10 +1096,7 @@
         bot.classList.add("err");
         setBubbleText(bot, msg.error || "处理失败");
       }
-      if (!isFinal) {
-        if (!bubbleTextNode(bot)?.nodeValue) setBubbleText(bot, "已恢复，等待本地设备处理...");
-        startSse(msg.id, bot);
-      }
+      if (!isFinal) startSse(msg.id, bot);
     }
 
     async function loadHistory() {
@@ -1065,56 +1112,72 @@
       }
     }
 
-    async function refreshDeviceStatus() {
-      if (!state.token) return;
+    function collectRunMediaUrls(row) {
+      const payload = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
+      return collectMediaUrls(payload).slice(0, 4);
+    }
+
+    function renderRunMedia(urls) {
+      if (!urls || !urls.length) return "";
+      return `<div class="run-media">${urls.map((url) => {
+        const low = url.toLowerCase();
+        if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) return `<video controls src="${escapeHtml(url)}"></video>`;
+        if (/\.(png|jpe?g|webp|gif)(\?|#|$)/.test(low)) return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(url)}" alt="预览"></a>`;
+        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开预览</a>`;
+      }).join("")}</div>`;
+    }
+
+    async function loadRuns() {
+      const box = $("runList");
+      if (!state.token || !box) return;
+      box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
-        const data = await api("/api/h5-chat/devices/status");
-        $("onlineDot").classList.toggle("online", !!data.online);
-        const online = (data.devices || []).filter((d) => d.online).length;
-        const total = (data.devices || []).length;
-        $("deviceText").textContent = data.online
-          ? `本地在线：${online}/${total || online} 台`
-          : "未检测到本地 online，发送后会等待设备领取";
+        const data = await api("/api/scheduled-tasks/runs?limit=30");
+        const rows = Array.isArray(data.runs) ? data.runs : [];
+        if (!rows.length) {
+          box.innerHTML = `<div class="hint">暂无执行记录。</div>`;
+          return;
+        }
+        box.innerHTML = rows.map((row) => {
+          const result = row.error || row.result_text || (row.progress && (row.progress.text || row.progress.message)) || "";
+          return `<div class="run-card">
+            <div class="run-top"><span>${escapeHtml(fmtTime(row.created_at))}</span><span>${escapeHtml(statusText(row.status))}</span></div>
+            <div class="run-title">${escapeHtml(row.title || "定时任务")}</div>
+            <div class="run-result">${escapeHtml(result || "等待结果")}</div>
+            ${renderRunMedia(collectRunMediaUrls(row))}
+          </div>`;
+        }).join("");
       } catch (err) {
-        $("onlineDot").classList.remove("online");
-        $("deviceText").textContent = "设备状态获取失败";
+        box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
       }
     }
 
-    $("captchaImg").addEventListener("click", refreshCaptcha);
-    $("topMenuBtn").addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      toggleTopMenu();
+    document.querySelectorAll("[data-tab-target]").forEach((btn) => {
+      btn.addEventListener("click", () => switchTab(btn.dataset.tabTarget));
     });
-    document.querySelectorAll("[data-mode-option]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        setMode();
-        closeTopMenu();
-      });
+    document.querySelectorAll("[data-task-ability]").forEach((btn) => {
+      btn.addEventListener("click", () => setTaskAbility(btn.dataset.taskAbility));
     });
-    document.addEventListener("click", (evt) => {
-      const menu = $("topMenuPanel");
-      const btn = $("topMenuBtn");
-      if (!menu || !btn) return;
-      if (menu.contains(evt.target) || btn.contains(evt.target)) return;
-      closeTopMenu();
-    });
+    $("autoPickDigitalBtn").addEventListener("click", autoPickDigital);
+    $("createTaskBtn").addEventListener("click", () => createScheduledTask().catch((err) => toast(err.message || "下发失败")));
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
+    $("refreshProfileBtn").addEventListener("click", () => Promise.all([refreshDeviceStatus(), loadRuns()]));
+    $("refreshRunsBtn").addEventListener("click", loadRuns);
     $("logoutBtn").addEventListener("click", () => {
       localStorage.removeItem("lobster_h5_token");
       state.token = "";
       location.reload();
     });
-    $("quickbar").addEventListener("click", (evt) => {
+    $("captchaImg").addEventListener("click", refreshCaptcha);
+
+    $("homeQuickGrid").addEventListener("click", (evt) => {
       const btn = evt.target.closest("button");
       if (!btn) return;
-      if (btn.dataset.imageVideo === "1") {
-        setMessageTemplate(btn.dataset.prompt || IMAGE_TO_VIDEO_PROMPT);
-        $("imageInput").click();
-        return;
-      }
+      switchTab("messages");
       setMessageTemplate(btn.dataset.prompt || "");
+      if (btn.dataset.imageVideo === "1") setTimeout(() => $("imageInput").click(), 120);
     });
+
     $("imageInput").addEventListener("change", async () => {
       const files = Array.from($("imageInput").files || []);
       $("imageInput").value = "";
@@ -1166,17 +1229,14 @@
       addBubble("user", content);
       const bot = addBubble("bot", "已发送，等待本地设备处理...");
       try {
-        const data = await api("/api/h5-chat/messages", {
-          method: "POST",
-          json: { content: messageContent, mode: "direct" },
-        });
+        const data = await api("/api/h5-chat/messages", { method: "POST", json: { content: messageContent, mode: state.mode } });
         const msg = data.message || {};
         if (msg.id) startSse(msg.id, bot);
         clearUploads();
         await refreshDeviceStatus();
       } catch (err) {
         bot.classList.add("err");
-        bot.childNodes[0].nodeValue = err.message || "发送失败";
+        setBubbleText(bot, err.message || "发送失败");
       } finally {
         $("sendBtn").disabled = false;
         input.focus();
@@ -1184,12 +1244,13 @@
     });
 
     (async function init() {
-      setMode();
+      setTaskAbility("goal.video.pipeline");
       const ok = await loadMe();
       if (!ok) {
         $("loginPanel").classList.remove("hidden");
-        $("chatPanel").classList.add("hidden");
+        $("appPanel").classList.add("hidden");
         $("userbox").classList.add("hidden");
+        $("bottomNav").classList.add("hidden");
         await refreshCaptcha();
       }
       setInterval(refreshDeviceStatus, 7000);
