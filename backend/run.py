@@ -97,10 +97,23 @@ if __name__ == "__main__":
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     # 监听地址：与 edition 无关，统一用配置（.env 或环境变量 HOST）。start.bat 默认 HOST=0.0.0.0 以便局域网访问
     host = (getattr(settings, "host", None) or os.environ.get("HOST") or "0.0.0.0").strip() or "0.0.0.0"
-    _logger.info("[启动] Backend 启动 host=%s port=%s edition=%s LOG_LEVEL=%s", host, port, edition, _log_level_name)
+    workers_raw = (os.environ.get("BACKEND_WORKERS") or os.environ.get("WEB_CONCURRENCY") or "1").strip()
+    try:
+        workers = max(1, int(workers_raw))
+    except ValueError:
+        workers = 1
+    _logger.info(
+        "[启动] Backend 启动 host=%s port=%s edition=%s LOG_LEVEL=%s workers=%s",
+        host,
+        port,
+        edition,
+        _log_level_name,
+        workers,
+    )
     uvicorn.run(
         "backend.app.main:app",
         host=host,
         port=port,
         log_level=_log_level_name,
+        workers=workers,
     )

@@ -108,8 +108,8 @@ POSTGRES_URL='postgresql+psycopg://lobster:密码@127.0.0.1:5432/lobster'
 
 ```env
 DATABASE_URL=postgresql+psycopg://lobster:密码@127.0.0.1:5432/lobster
-DB_POOL_SIZE=15
-DB_MAX_OVERFLOW=25
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=10
 DB_POOL_TIMEOUT=60
 DB_POOL_RECYCLE=280
 ```

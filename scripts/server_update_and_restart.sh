@@ -23,9 +23,10 @@ else
   exit 1
 fi
 
-echo "[日志] 截断 $ROOT/mcp.log / backend.log（若存在；便于本轮只看新输出如 [sutui-audit]）"
+echo "[日志] 截断 $ROOT/mcp.log / backend.log / background.log（若存在；便于本轮只看新输出如 [sutui-audit]）"
 : > "$ROOT/mcp.log" 2>/dev/null || true
 : > "$ROOT/backend.log" 2>/dev/null || true
+: > "$ROOT/background.log" 2>/dev/null || true
 
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service 2>/dev/null | grep -q lobster-backend; then
   echo "[重启] systemctl stop + 端口清理 + start ..."
@@ -33,7 +34,11 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
   if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-h5\.service'; then
     H5_UNIT="lobster-h5"
   fi
-  sudo systemctl stop $H5_UNIT lobster-mcp lobster-backend 2>/dev/null || true
+  BG_UNIT=""
+  if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-background\.service'; then
+    BG_UNIT="lobster-background"
+  fi
+  sudo systemctl stop $H5_UNIT $BG_UNIT lobster-mcp lobster-backend 2>/dev/null || true
   sleep 1
   # 确保 8001/8000 端口无残留进程
   for PORT in 8001 8000 8010; do
@@ -45,6 +50,9 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     fi
   done
   sudo systemctl start lobster-backend lobster-mcp
+  if [ -n "$BG_UNIT" ]; then
+    sudo systemctl start "$BG_UNIT"
+  fi
   if [ -n "$H5_UNIT" ]; then
     sudo systemctl start "$H5_UNIT"
   fi
@@ -61,7 +69,7 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
   if [ "$MCP_OK" = 0 ]; then
     echo "[WARN] MCP 可能未成功启动，检查 mcp.log"
   fi
-  sudo systemctl status lobster-backend lobster-mcp $H5_UNIT --no-pager || true
+  sudo systemctl status lobster-backend lobster-mcp $BG_UNIT $H5_UNIT --no-pager || true
   echo "[完成] 服务已重启"
 else
   echo "[重启] 无 systemd，结束旧进程并后台启动 MCP + Backend ..."
@@ -69,14 +77,16 @@ else
   [ -f .env ] && set -a && . ./.env && set +a
   PY="$ROOT/.venv/bin/python"
   pkill -f "backend.run" 2>/dev/null || true
+  pkill -f "backend.background_worker" 2>/dev/null || true
   pkill -f "backend.h5_run" 2>/dev/null || true
   pkill -f "mcp --port 8001" 2>/dev/null || true
   pkill -f "python -m mcp" 2>/dev/null || true
   sleep 2
   nohup "$PY" -m mcp --port "${MCP_PORT:-8001}" >> mcp.log 2>&1 &
   sleep 1
+  nohup "$PY" -m backend.background_worker >> background.log 2>&1 &
   nohup "$PY" -m backend.run >> backend.log 2>&1 &
   nohup "$PY" -m backend.h5_run >> h5.log 2>&1 &
   sleep 2
-  echo "[完成] MCP、Backend 与 H5 已后台启动，日志: mcp.log / backend.log / h5.log"
+  echo "[完成] MCP、Backend、Background 与 H5 已后台启动，日志: mcp.log / backend.log / background.log / h5.log"
 fi

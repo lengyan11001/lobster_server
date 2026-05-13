@@ -1,9 +1,7 @@
-import asyncio
 import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import contextmanager
 from pathlib import Path
-from typing import List
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,16 +55,37 @@ except Exception as e:
 from .core.config import settings
 from .db import Base, engine, SessionLocal
 from . import models  # noqa: F401
-from .services.sutui_llm_probe import is_sutui_llm_probe_enabled_for_this_instance, sutui_llm_probe_loop_forever
-from .services.sutui_reconcile import is_sutui_reconcile_enabled, sutui_reconcile_loop_forever
-from .services.meta_social_schedule_runner import meta_social_schedule_background_loop
 
 logger = logging.getLogger(__name__)
+_STARTUP_DB_LOCK_KEY = 510051001
 
 
 def _ensure_default_user():
     """在线版不创建默认用户，仅通过注册或速推扫码登录。"""
     return
+
+
+@contextmanager
+def _startup_db_lock():
+    """Serialize startup schema/catalog work when web API uses multiple workers."""
+    if engine.dialect.name != "postgresql":
+        yield
+        return
+    from sqlalchemy import text
+
+    conn = engine.connect()
+    locked = False
+    try:
+        conn.execute(text("SELECT pg_advisory_lock(:key)"), {"key": _STARTUP_DB_LOCK_KEY})
+        locked = True
+        yield
+    finally:
+        if locked:
+            try:
+                conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _STARTUP_DB_LOCK_KEY})
+            except Exception as e:
+                logger.warning("startup db advisory unlock failed: %s", e)
+        conn.close()
 
 
 def _migrate_capability_configs_extra_config():
@@ -764,61 +783,35 @@ def _backfill_installation_signup_bonus_claims():
         logger.warning("Backfill installation_signup_bonus_claims skipped: %s", e)
 
 
-@asynccontextmanager
-async def _app_lifespan(app: FastAPI):
-    bg_tasks: List[asyncio.Task] = []
-    if is_sutui_llm_probe_enabled_for_this_instance():
-        bg_tasks.append(asyncio.create_task(sutui_llm_probe_loop_forever(3600.0)))
-    else:
-        logger.info(
-            "[启动] 速推 LLM 定时探测已关闭（海外实例：LOBSTER_SERVER_REGION=overseas，"
-            "或已设置 LOBSTER_SUTUI_LLM_PROBE_ENABLED=0）"
-        )
-    if is_sutui_reconcile_enabled():
-        bg_tasks.append(asyncio.create_task(sutui_reconcile_loop_forever(3600.0)))
-    else:
-        logger.info("[启动] 速推对账任务已关闭（海外实例或 LOBSTER_SUTUI_RECONCILE_ENABLED=0）")
-    if settings.meta_app_id and settings.meta_app_secret:
-        bg_tasks.append(asyncio.create_task(meta_social_schedule_background_loop()))
-        logger.info("[启动] Meta Social 定时发布后台已启动")
-    yield
-    for t in bg_tasks:
-        t.cancel()
-        try:
-            await t
-        except asyncio.CancelledError:
-            pass
-
-
 def create_app() -> FastAPI:
     logger.info("[启动] create_app 开始")
-    Base.metadata.create_all(bind=engine)
-    _migrate_user_sutui_token()
-    _migrate_user_wechat_openid()
-    _migrate_user_brand_mark()
-    _migrate_user_wecom_userid()
-    _migrate_user_agent_openclaw_memory_enabled()
-    _migrate_user_agent_task_dispatch_enabled()
-    _migrate_wecom_config_secret()
-    _migrate_wecom_agent_id()
-    _migrate_recharge_amount_fen()
-    _migrate_recharge_callback_audit()
-    _migrate_credits_decimal_sqlite()
-    _migrate_credits_decimal_mysql()
-    _backfill_installation_signup_bonus_claims()
-    _migrate_sutui_recon_balance_remote_prev()
-    _migrate_capability_configs_extra_config()
-    _ensure_default_user()
-    _seed_capability_catalog()
-    _upsert_missing_capabilities_from_catalog()
-    _sync_catalog_capability_definitions()
+    with _startup_db_lock():
+        Base.metadata.create_all(bind=engine)
+        _migrate_user_sutui_token()
+        _migrate_user_wechat_openid()
+        _migrate_user_brand_mark()
+        _migrate_user_wecom_userid()
+        _migrate_user_agent_openclaw_memory_enabled()
+        _migrate_user_agent_task_dispatch_enabled()
+        _migrate_wecom_config_secret()
+        _migrate_wecom_agent_id()
+        _migrate_recharge_amount_fen()
+        _migrate_recharge_callback_audit()
+        _migrate_credits_decimal_sqlite()
+        _migrate_credits_decimal_mysql()
+        _backfill_installation_signup_bonus_claims()
+        _migrate_sutui_recon_balance_remote_prev()
+        _migrate_capability_configs_extra_config()
+        _ensure_default_user()
+        _seed_capability_catalog()
+        _upsert_missing_capabilities_from_catalog()
+        _sync_catalog_capability_definitions()
     _auto_start_openclaw()
 
     app = FastAPI(
         title="龙虾 (Lobster) API",
         version="0.1.0",
         description="龙虾 - 你的私人 AI 助手",
-        lifespan=_app_lifespan,
     )
 
     # 规范禁止 ACAO=* 与 Access-Control-Allow-Credentials:true 同时出现；浏览器会拒收响应。

@@ -20,6 +20,7 @@ fi
 PY="$ROOT/.venv/bin/python"
 PORT="${PORT:-8000}"
 MCP_PORT="${MCP_PORT:-8001}"
+START_BACKGROUND="${START_BACKGROUND:-1}"
 
 # 若 8001 已在监听则跳过，否则后台启动 MCP
 start_mcp() {
@@ -43,6 +44,11 @@ except Exception:
 }
 
 start_mcp
+
+if [ "$START_BACKGROUND" != "0" ]; then
+  echo "[Background] 启动单例后台任务进程 ..."
+  nohup "$PY" -m backend.background_worker >> background.log 2>&1 &
+fi
 
 echo "[Backend] 启动 Backend 端口 $PORT ..."
 echo "访问: http://0.0.0.0:$PORT"
