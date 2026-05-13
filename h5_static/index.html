@@ -84,11 +84,13 @@
       height: 40px;
       display: grid;
       place-items: center;
-      border-radius: 14px;
-      color: #fff;
-      font-weight: 900;
-      background: linear-gradient(135deg, #182949, var(--blue));
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.24), 0 10px 24px rgba(36,92,255,.24);
+      flex: 0 0 auto;
+    }
+    .logo img {
+      width: 32px;
+      height: 32px;
+      display: block;
+      object-fit: contain;
     }
     h1 { margin: 0; font-size: 18px; letter-spacing: 0; }
     .subtitle { margin-top: 2px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -231,8 +233,11 @@
     .bubble a { color: var(--blue); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
     .bubble.user a { color: #fff; }
     .media-preview { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+    .media-item { width: min(220px, 100%); display: grid; gap: 6px; align-content: start; }
     .media-preview img, .media-preview video { width: min(220px, 100%); max-height: 260px; border-radius: 12px; border: 1px solid rgba(223,230,242,.9); background: #eef4ff; object-fit: cover; }
     .media-preview audio { width: min(280px, 100%); }
+    .media-actions { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; line-height: 1.3; }
+    .media-actions a { padding: 4px 8px; border-radius: 999px; background: rgba(36,92,255,.08); text-decoration: none; }
     .steps { margin-top: 8px; display: none; flex-wrap: wrap; gap: 6px; font-size: 12px; color: #52607a; }
     .upload-preview { display: none; gap: 10px; padding: 10px 14px 0; overflow-x: auto; }
     .upload-preview.show { display: flex; }
@@ -241,8 +246,17 @@
     .upload-status { margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .upload-card.failed .upload-status { color: var(--red); }
     .upload-remove { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; color: #fff; background: rgba(19,33,60,.72); box-shadow: none; font-size: 15px; }
-    .composer { padding: 12px; display: grid; grid-template-columns: 1fr auto; gap: 10px; border-top: 1px solid rgba(223,230,242,.82); }
-    .composer input { height: 48px; border-radius: 18px; }
+    .composer { padding: 12px; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; border-top: 1px solid rgba(223,230,242,.82); }
+    .composer textarea {
+      min-height: 48px;
+      max-height: 148px;
+      padding-top: 13px;
+      padding-bottom: 13px;
+      border-radius: 18px;
+      line-height: 1.45;
+      resize: none;
+      overflow-y: auto;
+    }
 
     .profile-grid { display: grid; gap: 14px; }
     .profile-head { display: flex; align-items: center; gap: 14px; padding: 18px; }
@@ -261,8 +275,16 @@
     .run-title { margin-top: 5px; font-weight: 800; }
     .run-result { margin-top: 6px; color: #40506c; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
     .run-media { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .run-media-item { display: grid; gap: 5px; }
+    .run-media-actions { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; }
     .run-media video { width: 132px; height: 76px; object-fit: cover; border-radius: 10px; background: #111; }
     .run-media img { width: 76px; height: 76px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
+    .task-list { display: grid; gap: 10px; }
+    .task-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; border-radius: 16px; background: rgba(248,251,255,.92); border: 1px solid rgba(223,230,242,.86); }
+    .task-row-main { min-width: 0; }
+    .task-row-title { font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .task-row-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .task-row-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 
     .bottom-nav {
       position: fixed;
@@ -304,7 +326,7 @@
   <main class="shell">
     <header class="topbar">
       <div class="brand">
-        <div class="logo">必</div>
+        <div class="logo"><img src="/h5-static/bihu_32.png" width="32" height="32" alt=""></div>
         <div>
           <h1>必火AI员工</h1>
           <div class="subtitle">远程任务、消息和执行记录</div>
@@ -430,7 +452,7 @@
           <div class="upload-preview" id="uploadPreview"></div>
           <form class="composer" id="sendForm">
             <input type="file" id="imageInput" accept="image/*" multiple class="hidden" />
-            <input id="messageInput" placeholder="输入消息，例如：帮我写一段产品短视频口播文案" autocomplete="off" />
+            <textarea id="messageInput" rows="1" placeholder="输入消息，例如：帮我写一段产品短视频口播文案" autocomplete="off"></textarea>
             <button id="sendBtn" type="submit">发送</button>
           </form>
         </div>
@@ -464,6 +486,13 @@
               </div>
             </div>
             <button class="danger" type="button" id="logoutBtn">退出登录</button>
+          </div>
+          <div class="panel runs">
+            <div class="section-title">
+              <h2>定时任务</h2>
+              <button class="ghost" type="button" id="refreshTasksBtn">刷新</button>
+            </div>
+            <div class="task-list" id="taskList"></div>
           </div>
           <div class="panel runs">
             <div class="section-title">
@@ -563,26 +592,67 @@
       }[status] || status || "-";
     }
 
+    function capabilityName(capabilityId) {
+      return {
+        "goal.video.pipeline": "创意成片",
+        "hifly.video.create_by_tts": "必火数字人",
+      }[capabilityId] || capabilityId || "定时任务";
+    }
+
+    function taskCapabilityId(row) {
+      const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
+      return String(payload.capability_id || "");
+    }
+
     function currentInstallationId() {
       const online = state.devices.find((d) => d.online && d.installation_id);
       const any = state.devices.find((d) => d.installation_id);
       return (online || any || {}).installation_id || "";
     }
 
+    function scrollMessagesToBottom() {
+      const messages = $("messages");
+      if (messages) messages.scrollTop = messages.scrollHeight;
+      const composer = $("sendForm");
+      if (composer && typeof composer.scrollIntoView === "function") {
+        composer.scrollIntoView({ block: "end", behavior: "smooth" });
+      }
+    }
+
+    function focusMessageInput() {
+      const input = $("messageInput");
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+
+    function autosizeMessageInput() {
+      const input = $("messageInput");
+      if (!input) return;
+      input.style.height = "auto";
+      const next = Math.min(input.scrollHeight, 148);
+      input.style.height = `${Math.max(48, next)}px`;
+    }
+
     function switchTab(tab) {
       const key = tab || "home";
       document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
       document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
-      if (key === "profile") loadRuns();
-      if (key === "messages") setTimeout(() => { $("messageInput")?.focus(); }, 60);
+      if (key === "profile") Promise.all([loadTasks(), loadRuns()]);
+      if (key === "messages") setTimeout(() => {
+        autosizeMessageInput();
+        scrollMessagesToBottom();
+        focusMessageInput();
+      }, 80);
     }
 
     function setMessageTemplate(text) {
       const input = $("messageInput");
       if (!input) return;
       input.value = text || "";
-      input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
+      autosizeMessageInput();
+      focusMessageInput();
+      setTimeout(scrollMessagesToBottom, 80);
     }
 
     async function refreshCaptcha() {
@@ -605,7 +675,7 @@
         $("appPanel").classList.remove("hidden");
         $("userbox").classList.remove("hidden");
         $("bottomNav").classList.remove("hidden");
-        await Promise.all([loadHistory(), refreshDeviceStatus(), loadRuns()]);
+        await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks(), loadRuns()]);
         return true;
       } catch (err) {
         localStorage.removeItem("lobster_h5_token");
@@ -752,11 +822,60 @@
         });
         toast("任务已下发");
         setTaskPanelOpen(false);
-        await loadRuns();
+        await Promise.all([loadTasks(), loadRuns()]);
       } catch (err) {
         toast(err.message || "下发失败");
       } finally {
         btn.disabled = false;
+      }
+    }
+
+    async function loadTasks() {
+      const box = $("taskList");
+      if (!state.token || !box) return;
+      box.innerHTML = `<div class="hint">加载中...</div>`;
+      try {
+        const data = await api("/api/scheduled-tasks/tasks?limit=50");
+        const rows = Array.isArray(data.tasks) ? data.tasks : [];
+        if (!rows.length) {
+          box.innerHTML = `<div class="hint">暂无定时任务。</div>`;
+          return;
+        }
+        box.innerHTML = rows.map((row) => {
+          const interval = row.schedule_type === "interval" ? `每 ${Math.round((row.interval_seconds || 0) / 60)} 分钟` : "一次性";
+          return `<div class="task-row">
+            <div class="task-row-main">
+              <div class="task-row-title">${escapeHtml(row.title || capabilityName(taskCapabilityId(row)))}</div>
+              <div class="task-row-meta">${escapeHtml(capabilityName(taskCapabilityId(row)))} · ${escapeHtml(interval)} · ${escapeHtml(statusText(row.status))}</div>
+            </div>
+            <div class="task-row-actions">
+              <button class="ghost" type="button" data-delete-task="${escapeHtml(row.id)}">删除</button>
+            </div>
+          </div>`;
+        }).join("");
+      } catch (err) {
+        box.innerHTML = `<div class="hint">${escapeHtml(err.message || "定时任务加载失败")}</div>`;
+      }
+    }
+
+    async function deleteTask(taskId, btn) {
+      if (!taskId) return;
+      if (!confirm("删除前会先停止任务，并取消未完成的执行记录。确认删除？")) return;
+      const oldText = btn ? btn.textContent : "";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "删除中...";
+      }
+      try {
+        await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+        toast("已停止并删除任务");
+        await Promise.all([loadTasks(), loadRuns()]);
+      } catch (err) {
+        toast(err.message || "删除失败");
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText || "删除";
+        }
       }
     }
 
@@ -918,6 +1037,58 @@
       return out.slice(0, 6);
     }
 
+    function filenameFromUrl(url, fallback) {
+      try {
+        const parsed = new URL(url);
+        const name = decodeURIComponent(parsed.pathname.split("/").pop() || "");
+        return name || fallback;
+      } catch {
+        const clean = String(url || "").split(/[?#]/)[0].split("/").pop() || "";
+        return clean || fallback;
+      }
+    }
+
+    function mediaActions(url, downloadLabel, fallbackName) {
+      const actions = document.createElement("div");
+      actions.className = "media-actions";
+      const open = document.createElement("a");
+      open.href = url;
+      open.target = "_blank";
+      open.rel = "noopener noreferrer";
+      open.textContent = "打开";
+      const download = document.createElement("a");
+      download.href = url;
+      download.target = "_blank";
+      download.rel = "noopener noreferrer";
+      download.download = filenameFromUrl(url, fallbackName);
+      download.dataset.downloadUrl = url;
+      download.dataset.downloadName = download.download;
+      download.textContent = downloadLabel;
+      actions.appendChild(open);
+      actions.appendChild(download);
+      return actions;
+    }
+
+    function mediaActionHtml(url, downloadLabel, fallbackName) {
+      const safeUrl = escapeHtml(url);
+      const filename = escapeHtml(filenameFromUrl(url, fallbackName));
+      return `<div class="run-media-actions"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">打开</a><a href="${safeUrl}" download="${filename}" data-download-url="${safeUrl}" data-download-name="${filename}" target="_blank" rel="noopener noreferrer">${escapeHtml(downloadLabel)}</a></div>`;
+    }
+
+    async function downloadMedia(url, filename) {
+      const resp = await fetch(url, { mode: "cors" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename || "lobster-media";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+    }
+
     function renderMediaPreviews(bubble, urls) {
       if (!bubble || !urls || !urls.length) return;
       let box = bubble._mediaEl;
@@ -930,16 +1101,24 @@
       box.innerHTML = "";
       urls.forEach((url) => {
         const low = url.toLowerCase();
+        const item = document.createElement("div");
+        item.className = "media-item";
         let el;
+        let downloadLabel = "下载文件";
+        let fallbackName = "lobster-media";
         if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) {
           el = document.createElement("video");
           el.src = url;
           el.controls = true;
           el.playsInline = true;
+          downloadLabel = "下载视频";
+          fallbackName = "lobster-video.mp4";
         } else if (/\.(mp3|wav|m4a|aac|ogg)(\?|#|$)/.test(low)) {
           el = document.createElement("audio");
           el.src = url;
           el.controls = true;
+          downloadLabel = "下载音频";
+          fallbackName = "lobster-audio.mp3";
         } else if (/\.(png|jpe?g|webp|gif)(\?|#|$)/.test(low)) {
           const a = document.createElement("a");
           a.href = url;
@@ -949,7 +1128,9 @@
           el.src = url;
           el.alt = "生成素材预览";
           a.appendChild(el);
-          box.appendChild(a);
+          item.appendChild(a);
+          item.appendChild(mediaActions(url, "下载图片", "lobster-image.png"));
+          box.appendChild(item);
           return;
         } else {
           el = document.createElement("a");
@@ -958,7 +1139,9 @@
           el.rel = "noopener noreferrer";
           el.textContent = "打开预览";
         }
-        box.appendChild(el);
+        item.appendChild(el);
+        item.appendChild(mediaActions(url, downloadLabel, fallbackName));
+        box.appendChild(item);
       });
       $("messages").scrollTop = $("messages").scrollHeight;
     }
@@ -1158,9 +1341,13 @@
       if (!urls || !urls.length) return "";
       return `<div class="run-media">${urls.map((url) => {
         const low = url.toLowerCase();
-        if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) return `<video controls src="${escapeHtml(url)}"></video>`;
-        if (/\.(png|jpe?g|webp|gif)(\?|#|$)/.test(low)) return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(url)}" alt="预览"></a>`;
-        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开预览</a>`;
+        if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) {
+          return `<div class="run-media-item"><video controls src="${escapeHtml(url)}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}</div>`;
+        }
+        if (/\.(png|jpe?g|webp|gif)(\?|#|$)/.test(low)) {
+          return `<div class="run-media-item"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(url)}" alt="预览"></a>${mediaActionHtml(url, "下载图片", "lobster-image.png")}</div>`;
+        }
+        return `<div class="run-media-item"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开预览</a>${mediaActionHtml(url, "下载文件", "lobster-media")}</div>`;
       }).join("")}</div>`;
     }
 
@@ -1199,7 +1386,8 @@
     $("autoPickDigitalBtn").addEventListener("click", autoPickDigital);
     $("createTaskBtn").addEventListener("click", () => createScheduledTask().catch((err) => toast(err.message || "下发失败")));
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
-    $("refreshProfileBtn").addEventListener("click", () => Promise.all([refreshDeviceStatus(), loadRuns()]));
+    $("refreshProfileBtn").addEventListener("click", () => Promise.all([refreshDeviceStatus(), loadTasks(), loadRuns()]));
+    $("refreshTasksBtn").addEventListener("click", loadTasks);
     $("refreshRunsBtn").addEventListener("click", loadRuns);
     $("logoutBtn").addEventListener("click", () => {
       localStorage.removeItem("lobster_h5_token");
@@ -1208,12 +1396,36 @@
     });
     $("captchaImg").addEventListener("click", refreshCaptcha);
 
+    $("taskList").addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-delete-task]");
+      if (!btn) return;
+      deleteTask(btn.dataset.deleteTask, btn);
+    });
+
+    document.addEventListener("click", (evt) => {
+      const link = evt.target.closest("[data-download-url]");
+      if (!link) return;
+      evt.preventDefault();
+      downloadMedia(link.dataset.downloadUrl, link.dataset.downloadName).catch(() => {
+        location.href = link.href;
+      });
+    });
+
     $("homeQuickGrid").addEventListener("click", (evt) => {
       const btn = evt.target.closest("button");
       if (!btn) return;
       switchTab("messages");
       setMessageTemplate(btn.dataset.prompt || "");
       if (btn.dataset.imageVideo === "1") setTimeout(() => $("imageInput").click(), 120);
+      setTimeout(scrollMessagesToBottom, 160);
+    });
+
+    $("messageInput").addEventListener("input", autosizeMessageInput);
+    $("messageInput").addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter" && !evt.shiftKey && !evt.isComposing) {
+        evt.preventDefault();
+        $("sendForm").requestSubmit();
+      }
     });
 
     $("imageInput").addEventListener("change", async () => {
@@ -1262,6 +1474,7 @@
       }
       if (!content) return;
       input.value = "";
+      autosizeMessageInput();
       $("sendBtn").disabled = true;
       const messageContent = buildMessageContent(content);
       addBubble("user", content);

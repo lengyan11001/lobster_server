@@ -27,6 +27,7 @@ router = APIRouter()
 
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _H5_INDEX = _ROOT / "h5_static" / "index.html"
+_H5_STATIC_DIR = _ROOT / "h5_static"
 _H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
 _VALID_MODES = {"direct"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
@@ -167,11 +168,31 @@ def _safe_upload_filename(filename: str) -> str:
     return name
 
 
+def _image_media_type(path: Path) -> str:
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(path.suffix.lower(), "application/octet-stream")
+
+
 @router.get("/h5", include_in_schema=False)
 def h5_page():
     if not _H5_INDEX.is_file():
         raise HTTPException(status_code=404, detail="H5 页面未打包")
     return FileResponse(str(_H5_INDEX))
+
+
+@router.get("/h5-static/{filename}", include_in_schema=False)
+def h5_static_asset(filename: str):
+    safe = _safe_upload_filename(filename)
+    path = (_H5_STATIC_DIR / safe).resolve()
+    root = _H5_STATIC_DIR.resolve()
+    if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(str(path), media_type=_image_media_type(path), headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/", include_in_schema=False)
@@ -218,13 +239,7 @@ def get_h5_chat_upload(filename: str):
     if root not in path.parents or not path.is_file():
         raise HTTPException(status_code=404, detail="文件不存在")
     suffix = path.suffix.lower()
-    media_type = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".gif": "image/gif",
-    }.get(suffix, "application/octet-stream")
+    media_type = _image_media_type(path)
     return FileResponse(str(path), media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
 
 

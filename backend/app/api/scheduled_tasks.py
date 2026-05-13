@@ -274,6 +274,39 @@ def _cancel_pending_runs_for_task(db: Session, task: ScheduledTask, now: datetim
     return len(rows)
 
 
+def _cancel_unfinished_runs_for_task(
+    db: Session,
+    task: ScheduledTask,
+    now: datetime,
+    *,
+    message: str,
+    event_reason: str,
+) -> int:
+    rows = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.task_id == task.id,
+            ScheduledTaskRun.user_id == task.user_id,
+            ScheduledTaskRun.status.in_(["pending", "processing"]),
+        )
+        .all()
+    )
+    for row in rows:
+        row.status = "cancelled"
+        row.error = message
+        row.finished_at = now
+        row.updated_at = now
+        if row.h5_message_id:
+            msg = db.query(H5ChatMessage).filter(H5ChatMessage.id == row.h5_message_id).first()
+            if msg:
+                msg.status = "cancelled"
+                msg.error = message
+                msg.finished_at = now
+                msg.updated_at = now
+        _add_h5_event(db, row.h5_message_id, row.user_id, "cancelled", {"reason": event_reason})
+    return len(rows)
+
+
 def _assert_user_task_access(row_user_id: int, current_user: User) -> None:
     if int(row_user_id) != int(current_user.id):
         raise HTTPException(status_code=403, detail="无权访问该任务")
@@ -293,6 +326,19 @@ def _assert_admin_target_access(db: Session, ctx: AdminContext, target_user_id: 
     _agent_task_permission(db, ctx)
     if target_user_id not in _agent_sub_user_ids(db, int(ctx.user_id or 0)):
         raise HTTPException(status_code=403, detail="无权给该用户下发任务")
+
+
+def _delete_task_row(db: Session, task: ScheduledTask) -> int:
+    now = datetime.utcnow()
+    cancelled = _cancel_unfinished_runs_for_task(
+        db,
+        task,
+        now,
+        message="任务已删除",
+        event_reason="task_deleted",
+    )
+    db.delete(task)
+    return cancelled
 
 
 def _create_task_row(
@@ -404,6 +450,21 @@ def patch_scheduled_task(
     db.commit()
     db.refresh(task)
     return {"ok": True, "task": _serialize_task(task)}
+
+
+@router.delete("/api/scheduled-tasks/tasks/{task_id}", summary="删除任务")
+def delete_scheduled_task(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    _assert_user_task_access(task.user_id, current_user)
+    cancelled = _delete_task_row(db, task)
+    db.commit()
+    return {"ok": True, "deleted": True, "cancelled_runs": cancelled}
 
 
 @router.post("/api/scheduled-tasks/tasks/{task_id}/run-now", summary="立即执行任务")
@@ -607,6 +668,21 @@ def admin_list_scheduled_tasks(
         .all()
     )
     return {"ok": True, "tasks": [_serialize_task(r) for r in rows]}
+
+
+@router.delete("/admin/api/scheduled-tasks/{task_id}", summary="管理员/代理商删除任务")
+def admin_delete_scheduled_task(
+    task_id: int,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    _assert_admin_target_access(db, ctx, task.user_id)
+    cancelled = _delete_task_row(db, task)
+    db.commit()
+    return {"ok": True, "deleted": True, "cancelled_runs": cancelled}
 
 
 @router.get("/admin/api/scheduled-tasks/runs", summary="管理员/代理商查看执行记录")
