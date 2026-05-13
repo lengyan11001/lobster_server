@@ -247,6 +247,7 @@
     .upload-card.failed .upload-status { color: var(--red); }
     .upload-remove { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; color: #fff; background: rgba(19,33,60,.72); box-shadow: none; font-size: 15px; }
     .composer { padding: 12px; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; border-top: 1px solid rgba(223,230,242,.82); }
+    .composer-input { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; min-width: 0; }
     .composer textarea {
       min-height: 48px;
       max-height: 148px;
@@ -257,6 +258,10 @@
       resize: none;
       overflow-y: auto;
     }
+    .composer.expanded { grid-template-columns: 1fr; }
+    .composer.expanded .composer-input { grid-template-columns: 1fr; }
+    .composer.expanded textarea { min-height: 180px; max-height: min(46vh, 360px); }
+    .composer-toggle { width: 58px; height: 46px; padding: 0; justify-self: end; font-size: 13px; color: var(--blue); background: rgba(36,92,255,.08); box-shadow: none; }
 
     .profile-grid { display: grid; gap: 14px; }
     .profile-head { display: flex; align-items: center; gap: 14px; padding: 18px; }
@@ -317,6 +322,8 @@
       .messages { max-height: calc(100vh - 238px); min-height: 350px; }
       .bubble { max-width: 94%; }
       .composer { grid-template-columns: 1fr; }
+      .composer-input { grid-template-columns: 1fr auto; }
+      .composer.expanded textarea { min-height: 220px; max-height: 48vh; }
       .composer button { height: 46px; }
       .quick-card { min-height: 92px; }
     }
@@ -452,7 +459,10 @@
           <div class="upload-preview" id="uploadPreview"></div>
           <form class="composer" id="sendForm">
             <input type="file" id="imageInput" accept="image/*" multiple class="hidden" />
-            <textarea id="messageInput" rows="1" placeholder="输入消息，例如：帮我写一段产品短视频口播文案" autocomplete="off"></textarea>
+            <div class="composer-input">
+              <textarea id="messageInput" rows="1" placeholder="输入消息，例如：帮我写一段产品短视频口播文案" autocomplete="off"></textarea>
+              <button class="composer-toggle" id="toggleComposerBtn" type="button" aria-expanded="false">展开</button>
+            </div>
             <button id="sendBtn" type="submit">发送</button>
           </form>
         </div>
@@ -630,8 +640,22 @@
       const input = $("messageInput");
       if (!input) return;
       input.style.height = "auto";
-      const next = Math.min(input.scrollHeight, 148);
+      const expanded = $("sendForm")?.classList.contains("expanded");
+      const limit = expanded ? Math.min(window.innerHeight * 0.48, 360) : 148;
+      const next = Math.min(input.scrollHeight, limit);
       input.style.height = `${Math.max(48, next)}px`;
+    }
+
+    function setComposerExpanded(expanded) {
+      const form = $("sendForm");
+      const btn = $("toggleComposerBtn");
+      if (!form || !btn) return;
+      form.classList.toggle("expanded", !!expanded);
+      btn.textContent = expanded ? "收起" : "展开";
+      btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+      autosizeMessageInput();
+      focusMessageInput();
+      setTimeout(scrollMessagesToBottom, 60);
     }
 
     function switchTab(tab) {
@@ -1061,8 +1085,6 @@
       download.target = "_blank";
       download.rel = "noopener noreferrer";
       download.download = filenameFromUrl(url, fallbackName);
-      download.dataset.downloadUrl = url;
-      download.dataset.downloadName = download.download;
       download.textContent = downloadLabel;
       actions.appendChild(open);
       actions.appendChild(download);
@@ -1072,21 +1094,7 @@
     function mediaActionHtml(url, downloadLabel, fallbackName) {
       const safeUrl = escapeHtml(url);
       const filename = escapeHtml(filenameFromUrl(url, fallbackName));
-      return `<div class="run-media-actions"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">打开</a><a href="${safeUrl}" download="${filename}" data-download-url="${safeUrl}" data-download-name="${filename}" target="_blank" rel="noopener noreferrer">${escapeHtml(downloadLabel)}</a></div>`;
-    }
-
-    async function downloadMedia(url, filename) {
-      const resp = await fetch(url, { mode: "cors" });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const blob = await resp.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objectUrl;
-      a.download = filename || "lobster-media";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+      return `<div class="run-media-actions"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">打开</a><a href="${safeUrl}" download="${filename}" target="_blank" rel="noopener noreferrer">${escapeHtml(downloadLabel)}</a></div>`;
     }
 
     function renderMediaPreviews(bubble, urls) {
@@ -1402,15 +1410,6 @@
       deleteTask(btn.dataset.deleteTask, btn);
     });
 
-    document.addEventListener("click", (evt) => {
-      const link = evt.target.closest("[data-download-url]");
-      if (!link) return;
-      evt.preventDefault();
-      downloadMedia(link.dataset.downloadUrl, link.dataset.downloadName).catch(() => {
-        location.href = link.href;
-      });
-    });
-
     $("homeQuickGrid").addEventListener("click", (evt) => {
       const btn = evt.target.closest("button");
       if (!btn) return;
@@ -1423,9 +1422,13 @@
     $("messageInput").addEventListener("input", autosizeMessageInput);
     $("messageInput").addEventListener("keydown", (evt) => {
       if (evt.key === "Enter" && !evt.shiftKey && !evt.isComposing) {
+        if ($("sendForm").classList.contains("expanded")) return;
         evt.preventDefault();
         $("sendForm").requestSubmit();
       }
+    });
+    $("toggleComposerBtn").addEventListener("click", () => {
+      setComposerExpanded(!$("sendForm").classList.contains("expanded"));
     });
 
     $("imageInput").addEventListener("change", async () => {
