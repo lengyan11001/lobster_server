@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import re
+import socket
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote, unquote, urljoin, urlparse
 
+import httpx
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from jose import JWTError, jwt
@@ -33,12 +37,29 @@ _VALID_MODES = {"direct"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _MAX_H5_UPLOAD_BYTES = 15 * 1024 * 1024
+_MAX_MEDIA_PROXY_BYTES = 1024 * 1024 * 1024
 _IMAGE_EXT_BY_TYPE = {
     "image/jpeg": ".jpg",
     "image/jpg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
     "image/gif": ".gif",
+}
+_MEDIA_TYPE_BY_EXT = {
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".m4v": "video/mp4",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
 }
 
 
@@ -178,6 +199,107 @@ def _image_media_type(path: Path) -> str:
     }.get(path.suffix.lower(), "application/octet-stream")
 
 
+def _download_filename(value: str, url: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        parsed = urlparse(url)
+        raw = unquote((parsed.path or "").rsplit("/", 1)[-1])
+    name = raw.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    name = re.sub(r"[\r\n\"]+", "", name)
+    return (name or "lobster-media")[:160]
+
+
+def _content_disposition(kind: str, filename: str) -> str:
+    disposition = "attachment" if kind == "attachment" else "inline"
+    ascii_name = filename.encode("ascii", "ignore").decode("ascii") or "lobster-media"
+    ascii_name = ascii_name.replace("\\", "_").replace("/", "_").replace('"', "")
+    return f"{disposition}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+
+
+def _assert_public_remote_url(raw_url: str) -> str:
+    url = (raw_url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="下载链接无效")
+    host = parsed.hostname.strip().lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        raise HTTPException(status_code=400, detail="不支持本机链接")
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise HTTPException(status_code=400, detail="下载域名无法解析") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            raise HTTPException(status_code=400, detail="不支持内网链接")
+    return url
+
+
+async def _remote_media_response(request: Request, url: str, disposition: str, filename: str) -> StreamingResponse:
+    req_headers = {"User-Agent": "Lobster-H5/1.0", "Accept": "*/*"}
+    range_header = request.headers.get("range")
+    if range_header and disposition != "attachment":
+        req_headers["Range"] = range_header
+    timeout = httpx.Timeout(120.0, connect=10.0, read=120.0, write=30.0, pool=10.0)
+    client = httpx.AsyncClient(timeout=timeout, follow_redirects=False, trust_env=False)
+    try:
+        current_url = url
+        resp: httpx.Response | None = None
+        for _ in range(6):
+            resp = await client.send(client.build_request("GET", current_url, headers=req_headers), stream=True)
+            if resp.status_code in {301, 302, 303, 307, 308} and resp.headers.get("location"):
+                location = urljoin(current_url, resp.headers["location"])
+                await resp.aclose()
+                current_url = _assert_public_remote_url(location)
+                continue
+            break
+        if resp is None:
+            await client.aclose()
+            raise HTTPException(status_code=502, detail="远端素材下载失败")
+        parsed = urlparse(current_url)
+        ext = Path(parsed.path).suffix.lower()
+        if resp.status_code >= 400:
+            await resp.aclose()
+            await client.aclose()
+            raise HTTPException(status_code=502, detail=f"远端素材下载失败: HTTP {resp.status_code}")
+        length_raw = (resp.headers.get("content-length") or "").strip()
+        if length_raw.isdigit() and int(length_raw) > _MAX_MEDIA_PROXY_BYTES:
+            await resp.aclose()
+            await client.aclose()
+            raise HTTPException(status_code=413, detail="素材文件过大")
+        content_type = (resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+        if ext not in _MEDIA_TYPE_BY_EXT and not content_type.startswith(("video/", "audio/", "image/")):
+            await resp.aclose()
+            await client.aclose()
+            raise HTTPException(status_code=400, detail="仅支持媒体素材链接")
+        media_type = _MEDIA_TYPE_BY_EXT.get(ext) or content_type or "application/octet-stream"
+        headers = {
+            "Content-Disposition": _content_disposition(disposition, filename),
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        }
+        for name in ("content-length", "content-range", "accept-ranges"):
+            value = resp.headers.get(name)
+            if value:
+                headers["-".join(part.capitalize() for part in name.split("-"))] = value
+
+        async def gen():
+            try:
+                async for chunk in resp.aiter_bytes(256 * 1024):
+                    if chunk:
+                        yield chunk
+            finally:
+                await resp.aclose()
+                await client.aclose()
+
+        return StreamingResponse(gen(), status_code=resp.status_code, media_type=media_type, headers=headers)
+    except HTTPException:
+        raise
+    except httpx.RequestError as exc:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="远端素材下载失败") from exc
+
+
 @router.get("/h5", include_in_schema=False)
 def h5_page():
     if not _H5_INDEX.is_file():
@@ -241,6 +363,22 @@ def get_h5_chat_upload(filename: str):
     suffix = path.suffix.lower()
     media_type = _image_media_type(path)
     return FileResponse(str(path), media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/api/h5-chat/media", summary="H5 同源打开/下载远端素材")
+async def proxy_h5_chat_media(
+    request: Request,
+    url: str = Query(..., min_length=8, max_length=2000),
+    disposition: str = Query("inline"),
+    filename: str = Query("", max_length=200),
+    token: str = Query(""),
+    db: Session = Depends(get_db),
+):
+    _user_from_query_token(db, token)
+    remote_url = _assert_public_remote_url(url)
+    kind = "attachment" if (disposition or "").strip().lower() == "attachment" else "inline"
+    safe_filename = _download_filename(filename, remote_url)
+    return await _remote_media_response(request, remote_url, kind, safe_filename)
 
 
 @router.post("/api/h5-chat/messages", summary="H5 创建远程会话消息")

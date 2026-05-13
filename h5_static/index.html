@@ -988,9 +988,20 @@
         .replace(/\[([^\]\n]{1,120})\]\s*\n\s*\((https?:\/\/[^\s)]+)\)/g, "[$1]($2)");
     }
 
+    function mediaProxyUrl(url, disposition, filename) {
+      const params = new URLSearchParams({
+        url,
+        disposition: disposition || "inline",
+        filename: filename || filenameFromUrl(url, "lobster-media"),
+        token: state.token || "",
+      });
+      return `/api/h5-chat/media?${params.toString()}`;
+    }
+
     function linkAnchor(url, label) {
       if (!/^https?:\/\//i.test(url || "")) return escapeHtml(label || url || "");
-      return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label || url)}</a>`;
+      const href = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-media"));
+      return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label || url)}</a>`;
     }
 
     function linkifyText(text) {
@@ -1075,16 +1086,17 @@
     function mediaActions(url, downloadLabel, fallbackName) {
       const actions = document.createElement("div");
       actions.className = "media-actions";
+      const filename = filenameFromUrl(url, fallbackName);
       const open = document.createElement("a");
-      open.href = url;
+      open.href = mediaProxyUrl(url, "inline", filename);
       open.target = "_blank";
       open.rel = "noopener noreferrer";
       open.textContent = "打开";
       const download = document.createElement("a");
-      download.href = url;
+      download.href = mediaProxyUrl(url, "attachment", filename);
       download.target = "_blank";
       download.rel = "noopener noreferrer";
-      download.download = filenameFromUrl(url, fallbackName);
+      download.download = filename;
       download.textContent = downloadLabel;
       actions.appendChild(open);
       actions.appendChild(download);
@@ -1092,9 +1104,11 @@
     }
 
     function mediaActionHtml(url, downloadLabel, fallbackName) {
-      const safeUrl = escapeHtml(url);
-      const filename = escapeHtml(filenameFromUrl(url, fallbackName));
-      return `<div class="run-media-actions"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">打开</a><a href="${safeUrl}" download="${filename}" target="_blank" rel="noopener noreferrer">${escapeHtml(downloadLabel)}</a></div>`;
+      const filename = filenameFromUrl(url, fallbackName);
+      const openUrl = escapeHtml(mediaProxyUrl(url, "inline", filename));
+      const downloadUrl = escapeHtml(mediaProxyUrl(url, "attachment", filename));
+      const safeName = escapeHtml(filename);
+      return `<div class="run-media-actions"><a href="${openUrl}" target="_blank" rel="noopener noreferrer">打开</a><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer">${escapeHtml(downloadLabel)}</a></div>`;
     }
 
     function renderMediaPreviews(bubble, urls) {
@@ -1116,14 +1130,14 @@
         let fallbackName = "lobster-media";
         if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) {
           el = document.createElement("video");
-          el.src = url;
+          el.src = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4"));
           el.controls = true;
           el.playsInline = true;
           downloadLabel = "下载视频";
           fallbackName = "lobster-video.mp4";
         } else if (/\.(mp3|wav|m4a|aac|ogg)(\?|#|$)/.test(low)) {
           el = document.createElement("audio");
-          el.src = url;
+          el.src = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-audio.mp3"));
           el.controls = true;
           downloadLabel = "下载音频";
           fallbackName = "lobster-audio.mp3";
@@ -1133,7 +1147,7 @@
           a.target = "_blank";
           a.rel = "noopener noreferrer";
           el = document.createElement("img");
-          el.src = url;
+          el.src = mediaProxyUrl(url, "inline", "lobster-image.png");
           el.alt = "生成素材预览";
           a.appendChild(el);
           item.appendChild(a);
@@ -1142,7 +1156,7 @@
           return;
         } else {
           el = document.createElement("a");
-          el.href = url;
+          el.href = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-media"));
           el.target = "_blank";
           el.rel = "noopener noreferrer";
           el.textContent = "打开预览";
@@ -1350,10 +1364,11 @@
       return `<div class="run-media">${urls.map((url) => {
         const low = url.toLowerCase();
         if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item"><video controls src="${escapeHtml(url)}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}</div>`;
+          return `<div class="run-media-item"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}</div>`;
         }
         if (/\.(png|jpe?g|webp|gif)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(url)}" alt="预览"></a>${mediaActionHtml(url, "下载图片", "lobster-image.png")}</div>`;
+          const previewUrl = escapeHtml(mediaProxyUrl(url, "inline", "lobster-image.png"));
+          return `<div class="run-media-item"><a href="${previewUrl}" target="_blank" rel="noopener noreferrer"><img src="${previewUrl}" alt="预览"></a>${mediaActionHtml(url, "下载图片", "lobster-image.png")}</div>`;
         }
         return `<div class="run-media-item"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开预览</a>${mediaActionHtml(url, "下载文件", "lobster-media")}</div>`;
       }).join("")}</div>`;
