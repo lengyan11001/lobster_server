@@ -155,6 +155,25 @@
       background: rgba(255,255,255,.12);
       box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
     }
+    .task-card-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .task-card-title {
+      font-size: 17px;
+      font-weight: 800;
+      color: #fff;
+    }
+    .task-toggle {
+      min-width: 88px;
+      min-height: 42px;
+      background: #fff;
+      color: var(--blue);
+      box-shadow: 0 14px 30px rgba(0,0,0,.18);
+    }
+    .task-panel-body { display: grid; gap: 12px; }
     .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .seg button {
       min-height: 42px;
@@ -170,6 +189,7 @@
     .task-fields input, .task-fields select { background: rgba(255,255,255,.94); }
     .digital-fields { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; }
     .digital-fields .field { margin: 0; }
+    .task-actions { display: flex; justify-content: flex-end; gap: 10px; }
     .hero-action { min-height: 44px; background: #fff; color: var(--blue); box-shadow: 0 14px 30px rgba(0,0,0,.18); }
     .section-title { display: flex; align-items: center; justify-content: space-between; margin: 8px 2px 10px; }
     .section-title h2 { margin: 0; font-size: 18px; }
@@ -331,39 +351,47 @@
                 <h2 class="hero-title">把记忆变成按时交付的内容资产</h2>
               </div>
               <div class="task-card">
-                <div class="seg" id="taskAbilitySeg">
-                  <button type="button" class="active" data-task-ability="goal.video.pipeline">创意成片</button>
-                  <button type="button" data-task-ability="hifly.video.create_by_tts">必火数字人</button>
+                <div class="task-card-summary">
+                  <div class="task-card-title">定时任务</div>
+                  <button class="task-toggle" type="button" id="toggleTaskPanelBtn">开始</button>
                 </div>
-                <div class="task-fields">
-                  <div class="field">
-                    <label for="taskTitle">任务名称</label>
-                    <input id="taskTitle" placeholder="例如：每天生成一条宣传视频文案" />
+                <div class="task-panel-body hidden" id="taskPanelBody">
+                  <div class="seg" id="taskAbilitySeg">
+                    <button type="button" class="active" data-task-ability="goal.video.pipeline">创意成片</button>
+                    <button type="button" data-task-ability="hifly.video.create_by_tts">必火数字人</button>
                   </div>
-                  <div class="field">
-                    <label for="taskScheduleType">执行方式</label>
-                    <select id="taskScheduleType">
-                      <option value="once">一次性</option>
-                      <option value="interval">循环执行</option>
-                    </select>
+                  <div class="task-fields">
+                    <div class="field">
+                      <label for="taskTitle">任务名称</label>
+                      <input id="taskTitle" placeholder="例如：每天生成一条宣传视频文案" />
+                    </div>
+                    <div class="field">
+                      <label for="taskScheduleType">执行方式</label>
+                      <select id="taskScheduleType">
+                        <option value="once">一次性</option>
+                        <option value="interval">循环执行</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="taskIntervalMinutes">间隔分钟</label>
+                      <input id="taskIntervalMinutes" type="number" min="1" value="60" />
+                    </div>
                   </div>
-                  <div class="field">
-                    <label for="taskIntervalMinutes">间隔分钟</label>
-                    <input id="taskIntervalMinutes" type="number" min="1" value="60" />
+                  <div class="digital-fields hidden" id="digitalFields">
+                    <div class="field">
+                      <label for="taskAvatar">数字人</label>
+                      <select id="taskAvatar"><option value="">加载中...</option></select>
+                    </div>
+                    <div class="field">
+                      <label for="taskVoice">声音</label>
+                      <select id="taskVoice"><option value="">加载中...</option></select>
+                    </div>
+                    <button class="ghost" type="button" id="autoPickDigitalBtn">自动</button>
+                  </div>
+                  <div class="task-actions">
+                    <button class="hero-action" type="button" id="createTaskBtn">下发任务</button>
                   </div>
                 </div>
-                <div class="digital-fields hidden" id="digitalFields">
-                  <div class="field">
-                    <label for="taskAvatar">数字人</label>
-                    <select id="taskAvatar"><option value="">加载中...</option></select>
-                  </div>
-                  <div class="field">
-                    <label for="taskVoice">声音</label>
-                    <select id="taskVoice"><option value="">加载中...</option></select>
-                  </div>
-                  <button class="ghost" type="button" id="autoPickDigitalBtn">自动</button>
-                </div>
-                <button class="hero-action" type="button" id="createTaskBtn">下发任务</button>
               </div>
             </div>
           </div>
@@ -467,6 +495,7 @@
       uploads: [],
       devices: [],
       taskAbility: "goal.video.pipeline",
+      taskPanelOpen: false,
       hiflyLoaded: false,
       hiflyLoading: false,
       avatarRows: [],
@@ -672,7 +701,14 @@
       state.taskAbility = ability || "goal.video.pipeline";
       document.querySelectorAll("[data-task-ability]").forEach((btn) => btn.classList.toggle("active", btn.dataset.taskAbility === state.taskAbility));
       $("digitalFields").classList.toggle("hidden", state.taskAbility !== "hifly.video.create_by_tts");
-      if (state.taskAbility === "hifly.video.create_by_tts") loadHiflyLibraries();
+      if (state.taskPanelOpen && state.taskAbility === "hifly.video.create_by_tts") loadHiflyLibraries();
+    }
+
+    function setTaskPanelOpen(open) {
+      state.taskPanelOpen = !!open;
+      $("taskPanelBody").classList.toggle("hidden", !state.taskPanelOpen);
+      $("toggleTaskPanelBtn").textContent = state.taskPanelOpen ? "收起" : "开始";
+      if (state.taskPanelOpen && state.taskAbility === "hifly.video.create_by_tts") loadHiflyLibraries();
     }
 
     function autoPickDigital() {
@@ -715,6 +751,7 @@
           headers: { "X-Installation-Id": installationId },
         });
         toast("任务已下发");
+        setTaskPanelOpen(false);
         await loadRuns();
       } catch (err) {
         toast(err.message || "下发失败");
@@ -1158,6 +1195,7 @@
     document.querySelectorAll("[data-task-ability]").forEach((btn) => {
       btn.addEventListener("click", () => setTaskAbility(btn.dataset.taskAbility));
     });
+    $("toggleTaskPanelBtn").addEventListener("click", () => setTaskPanelOpen(!state.taskPanelOpen));
     $("autoPickDigitalBtn").addEventListener("click", autoPickDigital);
     $("createTaskBtn").addEventListener("click", () => createScheduledTask().catch((err) => toast(err.message || "下发失败")));
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
