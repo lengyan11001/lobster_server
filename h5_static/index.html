@@ -64,7 +64,7 @@
       width: min(980px, calc(100vw - 24px));
       min-height: 100vh;
       margin: 0 auto;
-      padding: 14px 0 88px;
+      padding: 14px 0 28px;
     }
     .topbar, .panel {
       border: 1px solid rgba(255, 255, 255, .74);
@@ -87,7 +87,14 @@
       padding: 12px 14px;
       margin-bottom: 14px;
     }
+    .topbar.subpage {
+      justify-content: flex-start;
+    }
+    .topbar.subpage .brand {
+      flex: 1 1 auto;
+    }
     .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+    .brand-title { min-width: 0; }
     .logo {
       width: 40px;
       height: 40px;
@@ -103,7 +110,38 @@
     }
     h1 { margin: 0; font-size: 18px; letter-spacing: 0; }
     .subtitle { margin-top: 2px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .userbox { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; }
+    .top-actions { display: flex; align-items: center; gap: 8px; }
+    .top-action {
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 12px;
+      color: var(--ink);
+      background: rgba(255,255,255,.76);
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+    .chat-entry-icon {
+      position: relative;
+      width: 19px;
+      height: 15px;
+      border: 2px solid currentColor;
+      border-radius: 7px;
+      opacity: .9;
+    }
+    .chat-entry-icon::after {
+      content: "";
+      position: absolute;
+      left: 3px;
+      bottom: -5px;
+      width: 7px;
+      height: 7px;
+      border-left: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      background: rgba(255,255,255,.76);
+      transform: rotate(-18deg);
+    }
     .avatar-mini {
       width: 34px;
       height: 34px;
@@ -114,6 +152,15 @@
       font-weight: 800;
       background: linear-gradient(135deg, var(--cyan), var(--blue));
     }
+    .avatar-action {
+      width: 40px;
+      min-height: 40px;
+      padding: 0;
+      color: #fff;
+      background: transparent;
+      box-shadow: none;
+    }
+    .top-back { flex: 0 0 auto; }
     .ghost {
       color: var(--ink);
       background: rgba(255, 255, 255, .74);
@@ -228,7 +275,21 @@
       grid-template-rows: auto 1fr auto;
       overflow: hidden;
     }
-    .chat-head { padding: 12px 16px; border-bottom: 1px solid rgba(223,230,242,.8); }
+    .chat-head { padding: 12px 16px; border-bottom: 1px solid rgba(223,230,242,.8); display: grid; gap: 10px; }
+    .subpage-head { display: flex; align-items: center; gap: 10px; }
+    .back-btn {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      color: var(--ink);
+      background: rgba(255,255,255,.82);
+      box-shadow: inset 0 0 0 1px var(--line);
+      font-size: 22px;
+      line-height: 1;
+    }
+    .subpage-title { display: grid; gap: 2px; min-width: 0; }
+    .subpage-title strong { font-size: 17px; }
+    .subpage-title span { color: var(--muted); font-size: 12px; }
     .status { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 13px; }
     .status-left { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 5px rgba(240,139,45,.12); }
@@ -301,32 +362,14 @@
     .task-row-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
     .task-row-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 
-    .bottom-nav {
-      position: fixed;
-      left: 50%;
-      bottom: 12px;
-      transform: translateX(-50%);
-      z-index: 90;
-      width: min(520px, calc(100vw - 24px));
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-      padding: 8px;
-      border-radius: 22px;
-      background: rgba(255,255,255,.88);
-      border: 1px solid rgba(255,255,255,.74);
-      box-shadow: 0 18px 52px rgba(29,54,105,.2);
-      backdrop-filter: blur(18px);
-    }
-    .bottom-nav button { min-height: 44px; color: var(--muted); background: transparent; box-shadow: none; border-radius: 16px; }
-    .bottom-nav button.active { color: #fff; background: linear-gradient(135deg, var(--blue), var(--cyan)); box-shadow: 0 10px 24px rgba(36,92,255,.2); }
-    .toast { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); max-width: min(520px, calc(100vw - 32px)); padding: 11px 14px; border-radius: 999px; color: #fff; background: rgba(19,33,60,.9); box-shadow: 0 18px 44px rgba(19,33,60,.28); opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 100; }
+    .toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); max-width: min(520px, calc(100vw - 32px)); padding: 11px 14px; border-radius: 999px; color: #fff; background: rgba(19,33,60,.9); box-shadow: 0 18px 44px rgba(19,33,60,.28); opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 100; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
     @media (max-width: 760px) {
       .shell { width: min(100vw - 16px, 720px); padding-top: 8px; }
       .topbar { top: 8px; border-radius: 18px; }
       .subtitle { display: none; }
-      .userbox span { display: none; }
+      .top-action-label { display: none; }
+      .top-action { width: 40px; padding: 0; }
       .hero { border-radius: 22px; padding: 15px; }
       .task-fields, .digital-fields { grid-template-columns: 1fr; }
       .messages { max-height: calc(100vh - 238px); min-height: 350px; }
@@ -346,17 +389,23 @@
 </head>
 <body>
   <main class="shell">
-    <header class="topbar">
+    <header class="topbar" id="topbar">
+      <button class="back-btn top-back hidden" type="button" id="topBackBtn" aria-label="返回首页">‹</button>
       <div class="brand">
         <div class="logo"><img src="/h5-static/bihu_32.png" width="32" height="32" alt=""></div>
-        <div>
-          <h1>必火AI员工</h1>
-          <div class="subtitle">远程任务、消息和执行记录</div>
+        <div class="brand-title">
+          <h1 id="pageTitle">必火AI员工</h1>
+          <div class="subtitle" id="pageSubtitle">远程任务、消息和执行记录</div>
         </div>
       </div>
-      <div class="userbox hidden" id="userbox">
-        <div class="avatar-mini" id="avatarMini">AI</div>
-        <span id="userEmail"></span>
+      <div class="top-actions hidden" id="topActions">
+        <button class="top-action" type="button" data-tab-target="messages" aria-label="进入消息">
+          <span class="chat-entry-icon" aria-hidden="true"></span>
+          <span class="top-action-label">消息</span>
+        </button>
+        <button class="avatar-action" type="button" data-tab-target="profile" aria-label="个人中心">
+          <span class="avatar-mini" id="avatarMini">AI</span>
+        </button>
       </div>
     </header>
 
@@ -531,11 +580,6 @@
     </div>
   </main>
 
-  <nav class="bottom-nav hidden" id="bottomNav">
-    <button type="button" class="active" data-tab-target="home">首页</button>
-    <button type="button" data-tab-target="messages">消息</button>
-    <button type="button" data-tab-target="profile">个人</button>
-  </nav>
   <div class="toast" id="toast"></div>
 
   <script>
@@ -677,6 +721,17 @@
       const key = tab || "home";
       document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
       document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
+      const titleMap = {
+        home: ["必火AI员工", "远程任务、消息和执行记录"],
+        messages: ["手机会话", "消息结果和素材预览"],
+        profile: ["个人中心", "账号、设置和执行记录"],
+      };
+      const nextTitle = titleMap[key] || titleMap.home;
+      $("pageTitle").textContent = nextTitle[0];
+      $("pageSubtitle").textContent = nextTitle[1];
+      $("topBackBtn").classList.toggle("hidden", key === "home");
+      $("topActions").classList.toggle("hidden", key !== "home" || !state.token);
+      $("topbar").classList.toggle("subpage", key !== "home");
       if (key === "profile") Promise.all([loadTasks(), loadRuns()]);
       if (key === "messages") setTimeout(() => {
         autosizeMessageInput();
@@ -706,14 +761,12 @@
       try {
         state.user = await api("/auth/me");
         const name = state.user.email || "已登录";
-        $("userEmail").textContent = name;
         $("profileName").textContent = name;
         $("avatarMini").textContent = firstChar(name);
         $("profileAvatar").textContent = firstChar(name);
         $("loginPanel").classList.add("hidden");
         $("appPanel").classList.remove("hidden");
-        $("userbox").classList.remove("hidden");
-        $("bottomNav").classList.remove("hidden");
+        switchTab("home");
         await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks(), loadRuns()]);
         return true;
       } catch (err) {
@@ -1431,6 +1484,7 @@
     document.querySelectorAll("[data-tab-target]").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tabTarget));
     });
+    $("topBackBtn").addEventListener("click", () => switchTab("home"));
     document.querySelectorAll("[data-task-ability]").forEach((btn) => {
       btn.addEventListener("click", () => setTaskAbility(btn.dataset.taskAbility));
     });
@@ -1547,8 +1601,7 @@
       if (!ok) {
         $("loginPanel").classList.remove("hidden");
         $("appPanel").classList.add("hidden");
-        $("userbox").classList.add("hidden");
-        $("bottomNav").classList.add("hidden");
+        $("topActions").classList.add("hidden");
         await refreshCaptcha();
       }
       setInterval(refreshDeviceStatus, 7000);
