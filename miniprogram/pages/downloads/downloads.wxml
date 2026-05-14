@@ -2,58 +2,66 @@
   <view class="chat-header">
     <view>
       <text class="chat-title">手机消息</text>
-      <text class="chat-subtitle">{{onlineText}}</text>
+      <text class="chat-subtitle">{{phoneBound ? onlineText : '发送时授权绑定 online'}}</text>
     </view>
     <button class="mini-btn" bindtap="loadMessages">刷新</button>
   </view>
 
-  <view wx:if="{{!phoneBound}}" class="section">
-    <text class="section-title">需要先绑定</text>
-    <text class="muted">请回到首页，微信登录并授权手机号后再发送消息。</text>
+  <view class="quick-row">
+    <button data-text="根据我的记忆，帮我生成一条产品宣传视频或图片素材。" bindtap="quickFill">生成素材</button>
+    <button data-text="帮我写一条适合朋友圈发布的文案。" bindtap="quickFill">朋友圈文案</button>
+    <button data-text="查看最近生成任务的结果，并整理可下载链接。" bindtap="quickFill">整理结果</button>
+  </view>
+
+  <view wx:if="{{authPanelVisible && !phoneBound}}" class="section auth-section">
+    <text class="section-title">授权后发送</text>
+    <text class="muted">{{authHint}}</text>
     <view class="button-row">
-      <button class="primary-btn" bindtap="goHome">去绑定</button>
+      <button class="ghost-btn" bindtap="login">微信登录</button>
+      <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+    </view>
+    <button class="sms-link" bindtap="showSmsBind">微信取号失败，用短信验证码绑定</button>
+    <view wx:if="{{smsBindVisible}}" class="sms-bind-box">
+      <input class="input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入已开通 online 的手机号" />
+      <view class="sms-code-row">
+        <input class="input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
+        <button class="ghost-btn sms-code-btn" loading="{{smsSending}}" bindtap="sendSmsCode">获取</button>
+      </view>
+      <button class="primary-btn sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">绑定手机号</button>
     </view>
   </view>
 
-  <block wx:else>
-    <view class="quick-row">
-      <button data-text="根据我的记忆，帮我生成一条产品宣传视频或图片素材。" bindtap="quickFill">生成素材</button>
-      <button data-text="帮我写一条适合朋友圈发布的文案。" bindtap="quickFill">朋友圈文案</button>
-      <button data-text="查看最近生成任务的结果，并整理可下载链接。" bindtap="quickFill">整理结果</button>
-    </view>
+  <view wx:if="{{loading}}" class="empty">正在加载消息...</view>
+  <view wx:elif="{{messages.length === 0}}" class="empty">{{phoneBound ? '还没有消息' : '可以先输入消息，发送时再授权。'}}</view>
 
-    <view wx:if="{{loading}}" class="empty">正在加载消息...</view>
-    <view wx:elif="{{messages.length === 0}}" class="empty">还没有消息</view>
+  <view wx:else class="message-list">
+    <view wx:for="{{messages}}" wx:for-index="msgIndex" wx:key="id" class="message-card">
+      <view class="bubble user-bubble">
+        <text>{{item.content}}</text>
+      </view>
+      <view class="bubble reply-bubble">
+        <text wx:if="{{item.status === 'pending' || item.status === 'processing'}}">正在执行...</text>
+        <text wx:elif="{{item.status === 'failed'}}">{{item.error || '执行失败'}}</text>
+        <text wx:else>{{item.reply_text || '已完成'}}</text>
+      </view>
 
-    <view wx:else class="message-list">
-      <view wx:for="{{messages}}" wx:for-index="msgIndex" wx:key="id" class="message-card">
-        <view class="bubble user-bubble">
-          <text>{{item.content}}</text>
-        </view>
-        <view class="bubble reply-bubble">
-          <text wx:if="{{item.status === 'pending' || item.status === 'processing'}}">正在执行...</text>
-          <text wx:elif="{{item.status === 'failed'}}">{{item.error || '执行失败'}}</text>
-          <text wx:else>{{item.reply_text || '已完成'}}</text>
-        </view>
-
-        <view wx:if="{{item.mediaItems.length > 0}}" class="media-grid">
-          <view wx:for="{{item.mediaItems}}" wx:for-item="mediaItem" wx:for-index="mediaIndex" wx:key="id" class="media-card">
-            <image wx:if="{{mediaItem.media_type === 'image'}}" class="preview image-preview" src="{{mediaItem.preview_url || mediaItem.url}}" mode="aspectFill" data-url="{{mediaItem.preview_url || mediaItem.url}}" bindtap="previewImage" />
-            <video wx:elif="{{mediaItem.media_type === 'video'}}" class="preview video-preview" src="{{mediaItem.preview_url || mediaItem.url}}" controls show-fullscreen-btn show-play-btn></video>
-            <view wx:else class="file-preview"><text>{{mediaItem.media_type}}</text></view>
-            <text class="media-title">{{mediaItem.title}}</text>
-            <view class="media-actions">
-              <button class="ghost-btn" data-msg="{{msgIndex}}" data-index="{{mediaIndex}}" bindtap="copyMedia">复制</button>
-              <button class="primary-btn" data-msg="{{msgIndex}}" data-index="{{mediaIndex}}" bindtap="saveMedia">{{mediaItem.media_type === 'image' || mediaItem.media_type === 'video' ? '保存' : '复制链接'}}</button>
-            </view>
+      <view wx:if="{{item.mediaItems.length > 0}}" class="media-grid">
+        <view wx:for="{{item.mediaItems}}" wx:for-item="mediaItem" wx:for-index="mediaIndex" wx:key="id" class="media-card">
+          <image wx:if="{{mediaItem.media_type === 'image'}}" class="preview image-preview" src="{{mediaItem.preview_url || mediaItem.url}}" mode="aspectFill" data-url="{{mediaItem.preview_url || mediaItem.url}}" bindtap="previewImage" />
+          <video wx:elif="{{mediaItem.media_type === 'video'}}" class="preview video-preview" src="{{mediaItem.preview_url || mediaItem.url}}" controls show-fullscreen-btn show-play-btn></video>
+          <view wx:else class="file-preview"><text>{{mediaItem.media_type}}</text></view>
+          <text class="media-title">{{mediaItem.title}}</text>
+          <view class="media-actions">
+            <button class="ghost-btn" data-msg="{{msgIndex}}" data-index="{{mediaIndex}}" bindtap="copyMedia">复制</button>
+            <button class="primary-btn" data-msg="{{msgIndex}}" data-index="{{mediaIndex}}" bindtap="saveMedia">{{mediaItem.media_type === 'image' || mediaItem.media_type === 'video' ? '保存' : '复制链接'}}</button>
           </view>
         </view>
       </view>
     </view>
+  </view>
 
-    <view class="composer">
-      <textarea class="message-input" value="{{inputText}}" bindinput="onInput" maxlength="8000" auto-height placeholder="输入消息，例如：帮我生成一段产品短视频口播文案" />
-      <button class="primary-btn send-btn" loading="{{sending}}" bindtap="sendMessage">发送</button>
-    </view>
-  </block>
+  <view class="composer">
+    <textarea class="message-input" value="{{inputText}}" bindinput="onInput" maxlength="8000" auto-height placeholder="输入消息，例如：帮我生成一段产品短视频口播文案" />
+    <button class="primary-btn send-btn" loading="{{sending}}" bindtap="sendMessage">发送</button>
+  </view>
 </view>

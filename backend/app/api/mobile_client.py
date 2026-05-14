@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import random
+import threading
+import time
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -23,6 +26,8 @@ from ..models import (
     User,
 )
 from ..core.config import settings
+from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
+from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
 from .auth import access_token_claims, create_access_token, get_current_user, get_password_hash
 from .auth import _get_wechat_access_token
 from .installation_slots import parse_installation_id_strict
@@ -33,15 +38,27 @@ _PHONE_EMAIL_SUFFIX = "@sms.lobster.local"
 _CN_MOBILE_RE = re.compile(r"^1[3-9]\d{9}$")
 _MEDIA_EXTS = {".mp4", ".webm", ".mov", ".m4v", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _URL_RE = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+_MOBILE_SMS_LOCK = threading.Lock()
+_MOBILE_SMS_CODE_STORE: dict[str, tuple[str, float]] = {}
+_MOBILE_SMS_SEND_AT: dict[str, float] = {}
+_MOBILE_SMS_SEND_HOUR_COUNT: dict[str, tuple[float, int]] = {}
+_MOBILE_SMS_CODE_TTL_SEC = 600
+_MOBILE_SMS_SEND_COOLDOWN_SEC = 60
+_MOBILE_SMS_MAX_PER_HOUR = 10
 
 
 class MobileBindRequest(BaseModel):
     phone: Optional[str] = Field(None, max_length=32)
     phone_code: Optional[str] = Field(None, max_length=128)
+    sms_code: Optional[str] = Field(None, max_length=16)
     device_id: str = Field(..., min_length=8, max_length=128)
     platform: str = Field("wechat_miniprogram", max_length=32)
     openid: Optional[str] = Field(None, max_length=128)
     display_name: Optional[str] = Field(None, max_length=128)
+
+
+class MobileSmsSendRequest(BaseModel):
+    phone: str = Field(..., max_length=32)
 
 
 class MobileWechatLoginRequest(BaseModel):
@@ -146,9 +163,88 @@ def _resolve_bind_phone(body: MobileBindRequest) -> tuple[str, bool]:
             if plain_phone != verified_phone:
                 raise HTTPException(status_code=400, detail="填写手机号与微信授权手机号不一致")
         return verified_phone, True
+    if (body.sms_code or "").strip():
+        if not plain:
+            raise HTTPException(status_code=400, detail="请填写手机号")
+        mobile = _normalize_cn_mobile(plain)
+        _verify_mobile_sms_code(mobile, body.sms_code or "")
+        return mobile, True
     if not plain:
         raise HTTPException(status_code=400, detail="请提供手机号或微信手机号授权 code")
     return _normalize_cn_mobile(plain), verified
+
+
+def _purge_mobile_sms_stale_locked(now_m: float) -> None:
+    for key in [x for x, v in _MOBILE_SMS_CODE_STORE.items() if v[1] <= now_m]:
+        del _MOBILE_SMS_CODE_STORE[key]
+
+
+def _sms_channel_ready() -> tuple[bool, bool]:
+    aliyun_ak = (getattr(settings, "aliyun_sms_access_key_id", None) or "").strip()
+    aliyun_sk = (getattr(settings, "aliyun_sms_access_key_secret", None) or "").strip()
+    ihuyi_acc = (getattr(settings, "ihuyi_sms_account", None) or "").strip()
+    ihuyi_pwd = (getattr(settings, "ihuyi_sms_password", None) or "").strip()
+    return bool(aliyun_ak and aliyun_sk), bool(ihuyi_acc and ihuyi_pwd)
+
+
+def _send_mobile_sms_code(mobile: str) -> None:
+    use_aliyun, use_ihuyi = _sms_channel_ready()
+    if not use_aliyun and not use_ihuyi:
+        raise HTTPException(status_code=503, detail="未配置短信通道")
+    now_m = time.monotonic()
+    with _MOBILE_SMS_LOCK:
+        _purge_mobile_sms_stale_locked(now_m)
+        last = _MOBILE_SMS_SEND_AT.get(mobile, 0.0)
+        if now_m - last < _MOBILE_SMS_SEND_COOLDOWN_SEC:
+            raise HTTPException(status_code=429, detail="发送过于频繁，请 1 分钟后再试")
+        win = _MOBILE_SMS_SEND_HOUR_COUNT.get(mobile)
+        if win:
+            wstart, cnt = win
+            if now_m - wstart > 3600:
+                _MOBILE_SMS_SEND_HOUR_COUNT[mobile] = (now_m, 1)
+            elif cnt >= _MOBILE_SMS_MAX_PER_HOUR:
+                raise HTTPException(status_code=429, detail="该号码本小时发送次数过多，请稍后再试")
+            else:
+                _MOBILE_SMS_SEND_HOUR_COUNT[mobile] = (wstart, cnt + 1)
+        else:
+            _MOBILE_SMS_SEND_HOUR_COUNT[mobile] = (now_m, 1)
+        code = f"{random.randint(0, 999999):06d}"
+        _MOBILE_SMS_CODE_STORE[mobile] = (code, now_m + _MOBILE_SMS_CODE_TTL_SEC)
+        _MOBILE_SMS_SEND_AT[mobile] = now_m
+    try:
+        if use_aliyun:
+            _aliyun_send(
+                access_key_id=(getattr(settings, "aliyun_sms_access_key_id", None) or "").strip(),
+                access_key_secret=(getattr(settings, "aliyun_sms_access_key_secret", None) or "").strip(),
+                sign_name=getattr(settings, "aliyun_sms_sign_name", "深圳市必火智能信息技术"),
+                template_code=getattr(settings, "aliyun_sms_template_code", "SMS_333406023"),
+                mobile=mobile,
+                code=code,
+            )
+        else:
+            _ihuyi_send(
+                account=(getattr(settings, "ihuyi_sms_account", None) or "").strip(),
+                api_key=(getattr(settings, "ihuyi_sms_password", None) or "").strip(),
+                mobile=mobile,
+                code=code,
+            )
+    except RuntimeError as exc:
+        with _MOBILE_SMS_LOCK:
+            _MOBILE_SMS_CODE_STORE.pop(mobile, None)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _verify_mobile_sms_code(mobile: str, code: str) -> None:
+    code_in = (code or "").strip()
+    if not code_in or len(code_in) > 8:
+        raise HTTPException(status_code=400, detail="短信验证码无效")
+    now_m = time.monotonic()
+    with _MOBILE_SMS_LOCK:
+        _purge_mobile_sms_stale_locked(now_m)
+        row = _MOBILE_SMS_CODE_STORE.get(mobile)
+        if not row or row[1] <= now_m or row[0] != code_in:
+            raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
+        del _MOBILE_SMS_CODE_STORE[mobile]
 
 
 def _media_type_from_url(url: str, fallback: str = "") -> str:
@@ -298,6 +394,24 @@ def mobile_phone_status(phone: str = Query(...), db: Session = Depends(get_db)):
         "has_online": bool(user),
         "message": "该手机号已开通 online" if user else "该手机号未在平台内注册过，没有 online 版本",
     }
+
+
+@router.post("/api/mobile/sms/send", summary="手机端：发送绑定手机号短信验证码")
+def send_mobile_bind_sms(
+    body: MobileSmsSendRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    mobile = _normalize_cn_mobile(body.phone)
+    user = db.query(User).filter(User.email == _phone_email(mobile)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="该手机号未在平台内注册过，没有 online 版本")
+    current_openid = (getattr(current_user, "wechat_openid", None) or "").strip()
+    is_wechat_session = bool(current_openid) or str(current_user.email or "").endswith("@wechat.lobster.local")
+    if user.id != current_user.id and not is_wechat_session:
+        raise HTTPException(status_code=403, detail="当前登录账号与手机号不一致，请先用该手机号登录")
+    _send_mobile_sms_code(mobile)
+    return {"ok": True}
 
 
 @router.post("/api/mobile/wechat-login", summary="手机端：小程序 wx.login 登录")

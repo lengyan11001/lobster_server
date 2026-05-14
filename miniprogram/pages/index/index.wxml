@@ -1,42 +1,82 @@
 <view class="page">
   <view class="hero home-hero">
-    <text class="hero-title">必火AI员工</text>
-    <text class="hero-subtitle">手机上发消息，电脑端 online 执行，结果里的图片和视频可直接保存。</text>
-    <view class="hero-actions">
-      <button class="light-btn" bindtap="goMessages">进入消息</button>
-      <button class="outline-light-btn" bindtap="goProfile">个人中心</button>
+    <view class="hero-top">
+      <view>
+        <text class="hero-kicker">SCHEDULED ENGINE</text>
+        <text class="hero-title">把记忆变成按时交付的内容资产</text>
+      </view>
+      <button class="profile-pill" bindtap="goProfile">{{phoneBound ? '个人' : '授权'}}</button>
+    </view>
+
+    <view class="task-card">
+      <view class="task-card-summary">
+        <view>
+          <text class="task-card-title">定时任务</text>
+          <text class="task-card-sub">{{onlineText}}</text>
+        </view>
+        <button class="task-toggle" bindtap="toggleTaskPanel">{{taskExpanded ? '收起' : '开始'}}</button>
+      </view>
+
+      <view wx:if="{{taskExpanded}}" class="task-panel">
+        <view wx:if="{{authPanelVisible && !phoneBound}}" class="auth-card">
+          <text class="auth-title">授权后继续</text>
+          <text class="muted">{{authHint}}</text>
+          <view class="button-row compact-row">
+            <button class="ghost-btn" bindtap="login">微信登录</button>
+            <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+          </view>
+          <button class="sms-link" bindtap="showSmsBind">微信取号失败，用短信验证码绑定</button>
+          <view wx:if="{{smsBindVisible}}" class="sms-bind-box">
+            <input class="input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入已开通 online 的手机号" />
+            <view class="sms-code-row">
+              <input class="input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
+              <button class="ghost-btn sms-code-btn" loading="{{smsSending}}" bindtap="sendSmsCode">获取</button>
+            </view>
+            <button class="primary-btn sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">绑定手机号</button>
+          </view>
+        </view>
+
+        <block wx:else>
+          <view class="seg">
+            <button wx:for="{{capabilities}}" wx:key="id" class="{{taskAbility === item.id ? 'active' : ''}}" data-ability="{{item.id}}" bindtap="setTaskAbility">{{item.name}}</button>
+          </view>
+
+          <view class="compact-fields">
+            <input class="input" value="{{taskTitle}}" bindinput="onTaskTitleInput" placeholder="任务名称，可不填" />
+            <view class="seg small-seg">
+              <button class="{{scheduleType === 'once' ? 'active' : ''}}" data-type="once" bindtap="setScheduleType">一次性</button>
+              <button class="{{scheduleType === 'interval' ? 'active' : ''}}" data-type="interval" bindtap="setScheduleType">循环</button>
+            </view>
+            <input wx:if="{{scheduleType === 'interval'}}" class="input" type="number" value="{{intervalMinutes}}" bindinput="onIntervalInput" placeholder="间隔分钟" />
+          </view>
+
+          <view wx:if="{{taskAbility === 'hifly.video.create_by_tts'}}" class="digital-fields">
+            <picker mode="selector" range="{{avatarRows}}" range-key="title" value="{{avatarIndex}}" bindchange="onAvatarChange">
+              <view class="picker-box">{{hiflyLoading ? '数字人加载中...' : (selectedAvatarTitle || '请选择数字人')}}</view>
+            </picker>
+            <picker mode="selector" range="{{voiceRows}}" range-key="title" value="{{voiceIndex}}" bindchange="onVoiceChange">
+              <view class="picker-box">{{hiflyLoading ? '声音加载中...' : (selectedVoiceTitle || '请选择声音')}}</view>
+            </picker>
+            <button class="ghost-btn auto-btn" bindtap="autoPickDigital">自动</button>
+          </view>
+
+          <button class="primary-btn submit-task" loading="{{submittingTask}}" bindtap="createScheduledTask">下发任务</button>
+        </block>
+      </view>
     </view>
   </view>
 
   <view class="section">
     <view class="section-head">
-      <text class="section-title inline-title">账号状态</text>
-      <view class="dot {{phoneBound ? 'ok' : 'warn'}}"></view>
+      <text class="section-title inline-title">快捷消息</text>
+      <button class="mini-link" bindtap="goMessages">打开消息</button>
     </view>
-    <text class="status-text">{{statusText}}</text>
-    <view class="button-row">
-      <button class="ghost-btn" bindtap="login">微信登录</button>
-      <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
-    </view>
-    <text class="muted bind-tip">手机号用于匹配已经开通的 online 账号；未注册手机号不会创建 online 版本。</text>
-  </view>
-
-  <view class="section">
-    <text class="section-title">快捷消息</text>
     <view class="quick-grid">
       <button wx:for="{{quickMessages}}" wx:key="title" class="quick-card" data-index="{{index}}" bindtap="quickMessage">
+        <text class="quick-mark">{{item.mark}}</text>
         <text class="quick-title">{{item.title}}</text>
         <text class="quick-text">{{item.text}}</text>
       </button>
     </view>
-  </view>
-
-  <view class="section slim-section">
-    <text class="section-title">检查手机号</text>
-    <input class="input" type="number" maxlength="11" value="{{phoneInput}}" bindinput="onPhoneInput" placeholder="输入手机号，检查是否已有 online" />
-    <view class="button-row">
-      <button class="ghost-btn" bindtap="checkPhone">检查</button>
-    </view>
-    <text wx:if="{{phoneCheckText}}" class="muted check-result">{{phoneCheckText}}</text>
   </view>
 </view>

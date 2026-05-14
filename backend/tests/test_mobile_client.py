@@ -130,6 +130,38 @@ def test_bind_mobile_device_merges_wechat_session_into_phone_user(mobile_client,
         assert binding.phone == PHONE
 
 
+def test_bind_mobile_device_with_sms_code(mobile_client, db_session_factory, mobile_users):
+    from backend.app.api import mobile_client as mobile_module
+
+    phone_user, _ = mobile_users
+    with mobile_module._MOBILE_SMS_LOCK:
+        mobile_module._MOBILE_SMS_CODE_STORE[PHONE] = ("123456", 9999999999.0)
+
+    res = mobile_client.post(
+        "/api/mobile/devices/bind",
+        json={
+            "phone": PHONE,
+            "sms_code": "123456",
+            "device_id": DEVICE_ID,
+            "platform": "wechat_miniprogram",
+            "display_name": "微信小程序",
+        },
+    )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["user_id"] == phone_user.id
+    assert data["phone"] == PHONE
+    assert data["phone_verified"] is True
+
+    from backend.app.models import MobileDeviceBinding
+
+    with db_session_factory() as s:
+        binding = s.query(MobileDeviceBinding).filter(MobileDeviceBinding.device_id == DEVICE_ID).first()
+        assert binding.user_id == phone_user.id
+        assert binding.phone == PHONE
+
+
 def test_downloads_require_bound_device(mobile_client):
     res = mobile_client.get(f"/api/mobile/downloads?device_id={DEVICE_ID}")
 

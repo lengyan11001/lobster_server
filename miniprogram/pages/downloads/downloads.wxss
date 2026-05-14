@@ -55,6 +55,38 @@
   font-weight: 700;
 }
 
+.auth-section {
+  margin-top: 18rpx;
+}
+
+.sms-link {
+  margin-top: 16rpx;
+  padding: 0;
+  color: #1d4ed8;
+  text-align: left;
+  background: transparent;
+  font-size: 24rpx;
+  font-weight: 800;
+}
+
+.sms-bind-box {
+  display: grid;
+  gap: 12rpx;
+  margin-top: 16rpx;
+}
+
+.sms-code-row {
+  display: grid;
+  grid-template-columns: 1fr 132rpx;
+  gap: 12rpx;
+}
+
+.sms-code-btn,
+.sms-submit {
+  min-height: 76rpx;
+  font-size: 24rpx;
+}
+
 .message-list {
   margin-top: 18rpx;
 }

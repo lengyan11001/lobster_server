@@ -86,6 +86,13 @@ function normalizeHistory(raw) {
 Page({
   data: {
     phoneBound: false,
+    authPanelVisible: false,
+    smsBindVisible: false,
+    authHint: "发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。",
+    smsPhone: "",
+    smsCode: "",
+    smsSending: false,
+    smsBinding: false,
     loading: false,
     sending: false,
     inputText: "",
@@ -99,6 +106,7 @@ Page({
     if (prefill) wx.removeStorageSync("lobster_message_prefill");
     this.setData({
       phoneBound: Boolean(app.globalData.token && app.globalData.phone),
+      authPanelVisible: false,
       inputText: prefill || this.data.inputText
     });
     if (this.data.phoneBound) {
@@ -143,6 +151,145 @@ Page({
     this.setData({ inputText: evt.detail.value || "" });
   },
 
+  refreshAuthState() {
+    const phoneBound = Boolean(app.globalData.token && app.globalData.phone);
+    this.setData({ phoneBound });
+    return phoneBound;
+  },
+
+  showAuthPanel(hint) {
+    this.refreshAuthState();
+    if (this.data.phoneBound) return false;
+    this.setData({
+      authPanelVisible: true,
+      authHint: hint || "发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。"
+    });
+    return true;
+  },
+
+  login() {
+    wx.showLoading({ title: "登录中", mask: true });
+    app
+      .loginWithWechat()
+      .then((data) => {
+        this.refreshAuthState();
+        if (data.needs_phone_bind || !app.globalData.phone) {
+          wx.showToast({ title: "请授权手机号", icon: "none" });
+          return;
+        }
+        this.setData({ authPanelVisible: false });
+        wx.showToast({ title: "登录成功", icon: "success" });
+        this.loadMessages();
+        this.loadOnlineStatus();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => wx.hideLoading());
+  },
+
+  onGetPhoneNumber(evt) {
+    const code = evt.detail && evt.detail.code;
+    if (!code) {
+      this.setData({ smsBindVisible: true });
+      wx.showToast({ title: "微信取号失败，可用短信绑定", icon: "none" });
+      return;
+    }
+    const bind = () => this.bindPhone(code);
+    if (!app.globalData.token) {
+      app.loginWithWechat().then(bind).catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
+      return;
+    }
+    bind();
+  },
+
+  bindPhone(code) {
+    wx.showLoading({ title: "绑定中", mask: true });
+    app
+      .bindPhone(code)
+      .then(() => {
+        this.setData({ authPanelVisible: false, smsBindVisible: false, phoneBound: true });
+        wx.showToast({ title: "绑定成功", icon: "success" });
+        this.loadMessages();
+        this.loadOnlineStatus();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => wx.hideLoading());
+  },
+
+  showSmsBind() {
+    this.setData({ smsBindVisible: true });
+  },
+
+  onSmsPhoneInput(evt) {
+    this.setData({ smsPhone: evt.detail.value || "" });
+  },
+
+  onSmsCodeInput(evt) {
+    this.setData({ smsCode: evt.detail.value || "" });
+  },
+
+  sendSmsCode() {
+    const phone = (this.data.smsPhone || "").trim();
+    if (!/^1[3-9]\d{9}$/.test(phone)) {
+      wx.showToast({ title: "手机号格式不对", icon: "none" });
+      return;
+    }
+    const send = () => {
+      this.setData({ smsSending: true });
+      app
+        .request({ method: "POST", url: "/api/mobile/sms/send", data: { phone } })
+        .then(() => wx.showToast({ title: "验证码已发送", icon: "success" }))
+        .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+        .finally(() => this.setData({ smsSending: false }));
+    };
+    if (!app.globalData.token) {
+      app.loginWithWechat().then(send).catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
+      return;
+    }
+    send();
+  },
+
+  bindBySms() {
+    const phone = (this.data.smsPhone || "").trim();
+    const code = (this.data.smsCode || "").trim();
+    if (!/^1[3-9]\d{9}$/.test(phone)) {
+      wx.showToast({ title: "手机号格式不对", icon: "none" });
+      return;
+    }
+    if (!code) {
+      wx.showToast({ title: "请输入短信验证码", icon: "none" });
+      return;
+    }
+    const bind = () => {
+      this.setData({ smsBinding: true });
+      app
+        .request({
+          method: "POST",
+          url: "/api/mobile/devices/bind",
+          data: {
+            phone,
+            sms_code: code,
+            device_id: app.globalData.deviceId,
+            platform: "wechat_miniprogram",
+            display_name: "微信小程序"
+          }
+        })
+        .then((data) => {
+          app.saveSession(data);
+          this.setData({ authPanelVisible: false, smsBindVisible: false, phoneBound: true, smsCode: "" });
+          wx.showToast({ title: "绑定成功", icon: "success" });
+          this.loadMessages();
+          this.loadOnlineStatus();
+        })
+        .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+        .finally(() => this.setData({ smsBinding: false }));
+    };
+    if (!app.globalData.token) {
+      app.loginWithWechat().then(bind).catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
+      return;
+    }
+    bind();
+  },
+
   quickFill(evt) {
     const text = evt.currentTarget.dataset.text || "";
     this.setData({ inputText: text });
@@ -154,10 +301,7 @@ Page({
       wx.showToast({ title: "请输入消息", icon: "none" });
       return;
     }
-    if (!app.globalData.token) {
-      wx.showToast({ title: "请先登录绑定", icon: "none" });
-      return;
-    }
+    if (this.showAuthPanel("发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。")) return;
     this.setData({ sending: true });
     app
       .request({
