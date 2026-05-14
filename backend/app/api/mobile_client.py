@@ -55,6 +55,14 @@ class MobileHeartbeatRequest(BaseModel):
     display_name: Optional[str] = Field(None, max_length=128)
 
 
+def _wechat_json(resp: httpx.Response) -> dict:
+    """微信接口常以 text/plain 返回 JSON，按 body 解析更稳。"""
+    try:
+        return resp.json() if (resp.text or "").strip() else {}
+    except Exception:
+        return {}
+
+
 def _normalize_cn_mobile(raw: str) -> str:
     mobile = re.sub(r"\D", "", (raw or "").strip())
     if not _CN_MOBILE_RE.match(mobile):
@@ -93,7 +101,7 @@ def _exchange_wechat_login_code(js_code: str) -> str:
                     "grant_type": "authorization_code",
                 },
             )
-        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        data = _wechat_json(resp)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"微信登录失败: {exc!s}") from exc
     if data.get("errcode"):
@@ -115,7 +123,7 @@ def _exchange_wechat_phone_code(phone_code: str) -> str:
                 f"https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token={quote(token, safe='')}",
                 json={"code": code},
             )
-        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        data = _wechat_json(resp)
     except HTTPException:
         raise
     except Exception as exc:

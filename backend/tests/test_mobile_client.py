@@ -256,3 +256,19 @@ def test_wechat_login_creates_temporary_user(mobile_client):
     assert data["access_token"]
     assert data["openid_bound"] is True
     assert data["needs_phone_bind"] is True
+
+
+def test_wechat_helpers_parse_text_plain_json():
+    import httpx
+
+    from backend.app.api.auth import _response_json_any_content_type
+    from backend.app.api.mobile_client import _wechat_json
+
+    resp = httpx.Response(
+        200,
+        headers={"content-type": "text/plain"},
+        text='{"openid":"openid_text_plain","errcode":0}',
+    )
+
+    assert _wechat_json(resp)["openid"] == "openid_text_plain"
+    assert _response_json_any_content_type(resp)["openid"] == "openid_text_plain"

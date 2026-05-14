@@ -531,6 +531,15 @@ def _sutui_api_post(path: str, body: dict) -> dict:
     return data
 
 
+def _response_json_any_content_type(resp: httpx.Response) -> dict:
+    """微信接口经常用 text/plain 返回 JSON，不能依赖 Content-Type 判断。"""
+    try:
+        return resp.json() if (resp.text or "").strip() else {}
+    except Exception:
+        logger.warning("response json parse failed: status=%s body=%s", resp.status_code, (resp.text or "")[:500])
+        return {}
+
+
 @router.get("/sutui-qrcode", summary="在线版：获取微信登录二维码（速推 get_qrcode 代理）")
 def get_sutui_qrcode():
     """代理 GET api.xskill.ai/api/get_qrcode，返回 url、scene_id 供前端展示二维码并轮询。"""
@@ -667,7 +676,7 @@ def _get_wechat_access_token() -> str:
             "https://api.weixin.qq.com/cgi-bin/token",
             params={"grant_type": "client_credential", "appid": app_id, "secret": app_secret},
         )
-    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    data = _response_json_any_content_type(r)
     if data.get("errcode") or not data.get("access_token"):
         raise ValueError(data.get("errmsg") or "获取 access_token 失败")
     token = (data.get("access_token") or "").strip()
@@ -763,7 +772,7 @@ def wechat_miniprogram_login(
                 "grant_type": "authorization_code",
             },
         )
-    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    data = _response_json_any_content_type(r)
     if data.get("errcode"):
         errmsg = data.get("errmsg") or "小程序登录失败"
         logger.warning("jscode2session err: %s", data)
@@ -834,11 +843,7 @@ def wechat_callback(
                 "redirect_uri": redirect_uri,
             },
         )
-    try:
-        # 微信可能返回 text/plain，不依赖 Content-Type，直接解析 body
-        data = r.json() if (r.text and r.text.strip()) else {}
-    except Exception:
-        data = {}
+    data = _response_json_any_content_type(r)
     openid = (data.get("openid") or "").strip()
     if not openid:
         errcode = data.get("errcode", "")
