@@ -60,6 +60,14 @@ class HiflyTokenBody(BaseModel):
     token: Optional[str] = None
 
 
+class HiflyVoiceEditBody(BaseModel):
+    voice: str = Field(..., min_length=1, max_length=128)
+    rate: str = Field("1.0")
+    volume: str = Field("1.0")
+    pitch: str = Field("1.0")
+    token: Optional[str] = None
+
+
 class HiflyAvatarLibraryBody(HiflyTokenBody):
     page: int = 1
     size: int = 10
@@ -236,6 +244,18 @@ def _url(path: str) -> str:
 def _safe_title(value: str, default: str, max_len: int = 20) -> str:
     text = str(value or "").strip() or default
     return text[:max_len] or default
+
+
+def _voice_param_text(value: Any, default: str, min_value: float, max_value: float, label: str) -> str:
+    raw = str(value if value is not None else default).strip() or default
+    try:
+        number = float(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{label}必须是数字")
+    if number < min_value or number > max_value:
+        raise HTTPException(status_code=400, detail=f"{label}必须在 {min_value:g} 到 {max_value:g} 之间")
+    text = f"{number:.2f}".rstrip("0").rstrip(".")
+    return text or default
 
 
 def _status_text(status: int) -> str:
@@ -555,6 +575,7 @@ def _normalize_avatar_asset(row: UserHiflyAvatarAsset, request: Optional[Request
         "aigc_flag": row.aigc_flag,
         "message": row.error_message or "",
         "section_label": "我的数字人",
+        "is_mine": True,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
@@ -564,6 +585,9 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
     voice_id = row.hifly_voice_id or ""
     demo_url = _resolve_voice_preview_source(row, request)
     cover_url = row.cover_url or ""
+    voice_params = {}
+    if isinstance(row.meta, dict) and isinstance(row.meta.get("voice_params"), dict):
+        voice_params = dict(row.meta.get("voice_params") or {})
     # 旧记录可能因为没做 data 嵌套 fallback 而 demo_url 为空，这里再从 meta.task_raw 兜底一次
     if (not demo_url or not voice_id) and isinstance(row.meta, dict):
         task_raw = row.meta.get("task_raw") if isinstance(row.meta.get("task_raw"), dict) else {}
@@ -612,6 +636,12 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
         "voice_type": row.voice_type,
         "message": row.error_message or "",
         "section_label": "我的声音",
+        "is_mine": True,
+        "voice_params": {
+            "rate": str(voice_params.get("rate") or "1.0"),
+            "volume": str(voice_params.get("volume") or "1.0"),
+            "pitch": str(voice_params.get("pitch") or "1.0"),
+        },
         "style_count": len(styles),
         "styles": styles,
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -1264,6 +1294,63 @@ async def poll_my_voice_task(
     }
 
 
+@router.post("/api/hifly/my/voice/edit")
+async def edit_my_voice_params(
+    request: Request,
+    body: HiflyVoiceEditBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    voice_id = (body.voice or "").strip()
+    row = (
+        db.query(UserHiflyVoiceAsset)
+        .filter(
+            UserHiflyVoiceAsset.user_id == current_user.id,
+            UserHiflyVoiceAsset.hifly_voice_id == voice_id,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="声音不存在或不属于当前账号")
+    rate = _voice_param_text(body.rate, "1.0", 0.5, 2.0, "语速")
+    volume = _voice_param_text(body.volume, "1.0", 0.1, 2.0, "音量")
+    pitch = _voice_param_text(body.pitch, "1.0", 0.1, 2.0, "语调")
+    payload = {"voice": voice_id, "rate": rate, "volume": volume, "pitch": pitch}
+    meta = dict(row.meta or {})
+    meta["voice_params"] = {"rate": rate, "volume": volume, "pitch": pitch}
+    meta["voice_edit_at"] = datetime.utcnow().isoformat() + "Z"
+    result: Dict[str, Any] = {}
+    synced = False
+    sync_error = ""
+    if (body.token or "").strip() or (getattr(settings, "hifly_default_token", None) or "").strip():
+        try:
+            result = await _post("/api/v2/hifly/voice/edit", body.token, payload)
+            synced = True
+            meta["voice_edit_raw"] = result
+            meta["voice_edit_synced_at"] = datetime.utcnow().isoformat() + "Z"
+        except HTTPException as exc:
+            sync_error = str(exc.detail or "HiFly 同步失败")
+            meta["voice_edit_sync_error"] = sync_error
+    else:
+        sync_error = "本地服务端未配置 HIFLY_DEFAULT_TOKEN，已仅保存到本地，生成口播时会随任务参数提交。"
+        meta["voice_edit_sync_error"] = sync_error
+    row.meta = meta
+    row.updated_at = datetime.utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "synced": synced,
+        "sync_error": sync_error,
+        "request_id": str(result.get("request_id") or ""),
+        "message": str(result.get("message") or ""),
+        "params": meta["voice_params"],
+        "item": _normalize_voice_asset(row, request),
+        "raw": result,
+    }
+
+
 @router.get("/api/hifly/my/avatar/list")
 def list_my_avatars(
     request: Request,
@@ -1274,7 +1361,10 @@ def list_my_avatars(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(UserHiflyAvatarAsset).filter(UserHiflyAvatarAsset.user_id == current_user.id)
+    query = db.query(UserHiflyAvatarAsset).filter(
+        UserHiflyAvatarAsset.user_id == current_user.id,
+        UserHiflyAvatarAsset.status != "deleted",
+    )
     keyword = (q or "").strip()
     if keyword:
         query = query.filter(UserHiflyAvatarAsset.title.contains(keyword))
@@ -1298,6 +1388,33 @@ def list_my_avatars(
     }
 
 
+@router.delete("/api/hifly/my/avatar/{avatar_asset_id}")
+def delete_my_avatar(
+    avatar_asset_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(UserHiflyAvatarAsset)
+        .filter(
+            UserHiflyAvatarAsset.id == avatar_asset_id,
+            UserHiflyAvatarAsset.user_id == current_user.id,
+            UserHiflyAvatarAsset.status != "deleted",
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="数字人不存在或已删除")
+    meta = dict(row.meta or {})
+    meta["deleted"] = True
+    meta["deleted_at"] = datetime.utcnow().isoformat()
+    row.meta = meta
+    row.status = "deleted"
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True, "deleted": avatar_asset_id}
+
+
 # ── 口播视频任务持久化 ──────────────────────────────────────────────
 
 class HiflyVideoCreateBody(BaseModel):
@@ -1307,6 +1424,9 @@ class HiflyVideoCreateBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=10000)
     st_show: int = 0
     aigc_flag: int = 0
+    rate: Optional[str] = None
+    volume: Optional[str] = None
+    pitch: Optional[str] = None
     token: Optional[str] = None
 
 
@@ -1438,6 +1558,26 @@ async def create_my_video_by_tts(
         "st_show": 1 if int(body.st_show or 0) == 1 else 0,
         "aigc_flag": int(body.aigc_flag or 0),
     }
+    voice_params: Dict[str, str] = {}
+    if body.rate is not None:
+        voice_params["rate"] = _voice_param_text(body.rate, "1.0", 0.5, 2.0, "语速")
+    if body.volume is not None:
+        voice_params["volume"] = _voice_param_text(body.volume, "1.0", 0.1, 2.0, "音量")
+    if body.pitch is not None:
+        voice_params["pitch"] = _voice_param_text(body.pitch, "1.0", 0.1, 2.0, "语调")
+    if not voice_params:
+        voice_row = (
+            db.query(UserHiflyVoiceAsset)
+            .filter(UserHiflyVoiceAsset.user_id == current_user.id, UserHiflyVoiceAsset.hifly_voice_id == voice_value)
+            .first()
+        )
+        if voice_row and isinstance(voice_row.meta, dict) and isinstance(voice_row.meta.get("voice_params"), dict):
+            stored_params = voice_row.meta.get("voice_params") or {}
+            for key in ("rate", "volume", "pitch"):
+                value = str(stored_params.get(key) or "").strip()
+                if value:
+                    voice_params[key] = value
+    payload.update(voice_params)
     billing = await _hifly_pre_deduct_tts(request, payload)
     try:
         created = await _post("/api/v2/hifly/video/create_by_tts", body.token, payload)
