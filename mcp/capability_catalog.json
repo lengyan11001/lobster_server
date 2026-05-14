@@ -336,7 +336,7 @@
     }
   },
   "hifly.video.create_by_tts": {
-    "description": "飞影数字人口播：使用已选择的数字人 avatar 与声音 voice，根据 text 生成口播视频并入库，返回 task_id、asset_id、video_url。",
+    "description": "必火数字人口播：使用已选择的数字人 avatar 与声音 voice，根据 text 生成口播视频并入库，返回 task_id、asset_id、video_url。",
     "upstream": "local",
     "upstream_tool": "invoke",
     "enabled": true,
@@ -346,8 +346,8 @@
       "type": "object",
       "properties": {
         "title": { "type": "string", "description": "视频标题" },
-        "avatar": { "type": "string", "description": "飞影数字人 avatar id" },
-        "voice": { "type": "string", "description": "飞影声音 voice id" },
+        "avatar": { "type": "string", "description": "必火数字人 avatar id" },
+        "voice": { "type": "string", "description": "必火声音 voice id" },
         "text": { "type": "string", "description": "口播文案" },
         "st_show": { "type": "integer", "default": 0, "description": "是否显示字幕，0/1" },
         "aigc_flag": { "type": "integer", "default": 0 },

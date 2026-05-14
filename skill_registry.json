@@ -410,15 +410,15 @@
       "tags": ["image", "video", "audio", "ai"]
     },
     "hifly_digital_human_skill": {
-      "name": "飞影数字人",
-      "description": "使用飞影数字人和声音生成口播视频，生成完成后自动入库。",
+      "name": "必火数字人",
+      "description": "选择数字人和声音，输入口播文案后生成必火数字人视频，生成完成后自动入库。",
       "type": "builtin",
       "store_visibility": "online",
       "default_installed": true,
       "status": "available",
       "capabilities": {
         "hifly.video.create_by_tts": {
-          "description": "飞影数字人口播：传入 avatar、voice、text 后生成口播视频并入库。",
+          "description": "必火数字人口播：传入 avatar、voice、text 后生成口播视频并入库。",
           "upstream": "local",
           "upstream_tool": "invoke",
           "enabled": true,
@@ -438,7 +438,7 @@
           }
         }
       },
-      "tags": ["video", "digital-human", "hifly"]
+      "tags": ["video", "digital-human", "必火"]
     },
     "goal_video_pipeline_skill": {
       "name": "目标成片",
