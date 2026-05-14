@@ -22,7 +22,7 @@
     <view wx:if="{{onlineDevices.length === 0}}" class="muted empty-line">电脑端 online 启动后会显示在这里。</view>
     <view class="button-row">
       <button class="ghost-btn" bindtap="loadDevices">刷新</button>
-      <button class="primary-btn" bindtap="goDownloads">素材下载</button>
+      <button class="primary-btn" bindtap="goDownloads">手机消息</button>
     </view>
   </view>
 
@@ -35,4 +35,3 @@
     <button class="danger-btn" bindtap="logout">退出登录</button>
   </view>
 </view>
-

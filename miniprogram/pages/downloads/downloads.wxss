@@ -1,75 +1,111 @@
-.compact {
-  padding: 30rpx;
+.chat-page {
+  padding-bottom: 220rpx;
 }
 
-.compact .hero-title {
-  font-size: 40rpx;
-}
-
-.tabs {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12rpx;
-  margin: 24rpx 0;
-  padding: 8rpx;
-  background: #e9eef7;
-  border-radius: 999rpx;
-}
-
-.tabs button {
-  height: 68rpx;
-  color: #64748b;
-  background: transparent;
-  border-radius: 999rpx;
-  font-size: 26rpx;
-}
-
-.tabs button.active {
-  color: #0f172a;
-  background: #fff;
-  box-shadow: 0 8rpx 20rpx rgba(15, 23, 42, 0.08);
-}
-
-.media-card {
-  margin-top: 22rpx;
-  padding: 22rpx;
-  background: #fff;
-  border: 1rpx solid #e5eaf3;
-  border-radius: 24rpx;
-}
-
-.media-head {
+.chat-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16rpx;
-  margin-bottom: 16rpx;
+  gap: 20rpx;
+  padding: 26rpx;
+  color: #fff;
+  background: linear-gradient(135deg, #07101f, #1d4ed8 62%, #06b6d4);
+  border-radius: 28rpx;
 }
 
-.media-title {
-  overflow: hidden;
+.chat-title,
+.chat-subtitle {
+  display: block;
+}
+
+.chat-title {
+  font-size: 38rpx;
+  font-weight: 900;
+}
+
+.chat-subtitle {
+  margin-top: 8rpx;
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 24rpx;
+}
+
+.mini-btn {
+  flex: 0 0 132rpx;
+  height: 68rpx;
   color: #0f172a;
-  font-size: 29rpx;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  background: #fff;
+  border-radius: 999rpx;
+  font-size: 25rpx;
+  font-weight: 800;
 }
 
-.media-kind {
-  flex: 0 0 auto;
-  padding: 8rpx 14rpx;
-  color: #2563eb;
+.quick-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12rpx;
+  margin: 22rpx 0;
+}
+
+.quick-row button {
+  height: 70rpx;
+  color: #1d4ed8;
   background: #eff6ff;
   border-radius: 999rpx;
-  font-size: 22rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+.message-list {
+  margin-top: 18rpx;
+}
+
+.message-card {
+  margin-top: 22rpx;
+}
+
+.bubble {
+  padding: 20rpx 24rpx;
+  border-radius: 22rpx;
+  font-size: 27rpx;
+  line-height: 1.6;
+}
+
+.user-bubble {
+  margin-left: 80rpx;
+  color: #fff;
+  background: #2563eb;
+  border-bottom-right-radius: 8rpx;
+}
+
+.reply-bubble {
+  margin-top: 12rpx;
+  margin-right: 48rpx;
+  color: #0f172a;
+  background: #fff;
+  border: 1rpx solid #e5eaf3;
+  border-bottom-left-radius: 8rpx;
+}
+
+.media-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16rpx;
+  margin-top: 14rpx;
+}
+
+.media-card {
+  padding: 14rpx;
+  background: #fff;
+  border: 1rpx solid #e5eaf3;
+  border-radius: 20rpx;
 }
 
 .preview {
   width: 100%;
-  height: 420rpx;
+  height: 300rpx;
   overflow: hidden;
   background: #0f172a;
-  border-radius: 18rpx;
+  border-radius: 16rpx;
 }
 
 .image-preview {
@@ -84,24 +120,60 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 240rpx;
+  height: 220rpx;
   color: #64748b;
   background: #f8fafc;
-  border-radius: 18rpx;
+  border-radius: 16rpx;
 }
 
-.media-meta {
+.media-title {
   display: block;
-  margin-top: 14rpx;
-  color: #64748b;
-  font-size: 24rpx;
-  line-height: 1.55;
+  overflow: hidden;
+  margin-top: 12rpx;
+  color: #334155;
+  font-size: 23rpx;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .media-actions {
   display: grid;
-  grid-template-columns: 1fr 1.3fr;
-  gap: 16rpx;
-  margin-top: 18rpx;
+  grid-template-columns: 1fr 1fr;
+  gap: 10rpx;
+  margin-top: 12rpx;
 }
 
+.media-actions .primary-btn,
+.media-actions .ghost-btn {
+  min-height: 60rpx;
+  padding: 0 12rpx;
+  font-size: 23rpx;
+}
+
+.composer {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 18rpx 24rpx calc(18rpx + env(safe-area-inset-bottom));
+  background: rgba(243, 246, 251, 0.96);
+  border-top: 1rpx solid #dbe3ef;
+}
+
+.message-input {
+  width: 100%;
+  min-height: 86rpx;
+  max-height: 210rpx;
+  padding: 22rpx 24rpx;
+  color: #0f172a;
+  background: #fff;
+  border: 1rpx solid #dbe3ef;
+  border-radius: 24rpx;
+  font-size: 28rpx;
+  line-height: 1.45;
+}
+
+.send-btn {
+  width: 100%;
+  margin-top: 14rpx;
+}

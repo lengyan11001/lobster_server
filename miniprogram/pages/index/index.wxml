@@ -1,37 +1,42 @@
 <view class="page">
-  <view class="hero">
+  <view class="hero home-hero">
     <text class="hero-title">必火AI员工</text>
-    <text class="hero-subtitle">绑定手机号后，把 online 生成的图片和视频保存到手机。</text>
+    <text class="hero-subtitle">手机上发消息，电脑端 online 执行，结果里的图片和视频可直接保存。</text>
+    <view class="hero-actions">
+      <button class="light-btn" bindtap="goMessages">进入消息</button>
+      <button class="outline-light-btn" bindtap="goProfile">个人中心</button>
+    </view>
   </view>
 
   <view class="section">
-    <text class="section-title">账号状态</text>
-    <view class="status-line">
+    <view class="section-head">
+      <text class="section-title inline-title">账号状态</text>
       <view class="dot {{phoneBound ? 'ok' : 'warn'}}"></view>
-      <text>{{statusText}}</text>
     </view>
+    <text class="status-text">{{statusText}}</text>
     <view class="button-row">
       <button class="ghost-btn" bindtap="login">微信登录</button>
       <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
     </view>
-    <text class="muted bind-tip">必须绑定平台内已经注册过 online 的手机号；未注册的手机号不会创建 online 版本。</text>
+    <text class="muted bind-tip">手机号用于匹配已经开通的 online 账号；未注册手机号不会创建 online 版本。</text>
   </view>
 
   <view class="section">
+    <text class="section-title">快捷消息</text>
+    <view class="quick-grid">
+      <button wx:for="{{quickMessages}}" wx:key="title" class="quick-card" data-index="{{index}}" bindtap="quickMessage">
+        <text class="quick-title">{{item.title}}</text>
+        <text class="quick-text">{{item.text}}</text>
+      </button>
+    </view>
+  </view>
+
+  <view class="section slim-section">
     <text class="section-title">检查手机号</text>
     <input class="input" type="number" maxlength="11" value="{{phoneInput}}" bindinput="onPhoneInput" placeholder="输入手机号，检查是否已有 online" />
     <view class="button-row">
       <button class="ghost-btn" bindtap="checkPhone">检查</button>
-      <button class="primary-btn" bindtap="goDownloads">查看素材</button>
     </view>
     <text wx:if="{{phoneCheckText}}" class="muted check-result">{{phoneCheckText}}</text>
   </view>
-
-  <view class="section">
-    <text class="section-title">使用流程</text>
-    <view class="step"><text>1</text><view>在电脑 online 端登录并生成素材。</view></view>
-    <view class="step"><text>2</text><view>小程序微信登录，授权手机号完成绑定。</view></view>
-    <view class="step"><text>3</text><view>进入素材页，预览并保存到手机相册。</view></view>
-  </view>
 </view>
-

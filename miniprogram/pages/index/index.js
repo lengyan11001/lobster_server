@@ -7,7 +7,13 @@ Page({
     phone: "",
     phoneInput: "",
     phoneCheckText: "",
-    statusText: "正在检查登录状态..."
+    statusText: "正在检查登录状态...",
+    quickMessages: [
+      { title: "产品短视频文案", text: "帮我写一段产品短视频口播文案，突出卖点和转化。" },
+      { title: "朋友圈发布文案", text: "根据我的记忆，帮我写一条适合朋友圈发布的文案。" },
+      { title: "生成宣传素材", text: "根据我的记忆，帮我生成一条产品宣传视频或图片素材。" },
+      { title: "查看执行结果", text: "帮我查看最近生成任务的结果，并把可用链接整理出来。" }
+    ]
   },
 
   onShow() {
@@ -89,8 +95,20 @@ Page({
       .finally(() => wx.hideLoading());
   },
 
-  goDownloads() {
+  goMessages() {
     wx.switchTab({ url: "/pages/downloads/downloads" });
+  },
+
+  goProfile() {
+    wx.switchTab({ url: "/pages/profile/profile" });
+  },
+
+  quickMessage(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.quickMessages[index];
+    if (item && item.text) {
+      wx.setStorageSync("lobster_message_prefill", item.text);
+    }
+    this.goMessages();
   }
 });
-

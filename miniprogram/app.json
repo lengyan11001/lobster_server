@@ -23,11 +23,11 @@
       },
       {
         "pagePath": "pages/downloads/downloads",
-        "text": "素材"
+        "text": "消息"
       },
       {
         "pagePath": "pages/profile/profile",
-        "text": "我的"
+        "text": "个人"
       }
     ]
   },
@@ -38,4 +38,3 @@
   },
   "sitemapLocation": "sitemap.json"
 }
-
