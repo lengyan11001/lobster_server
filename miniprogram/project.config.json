@@ -1,6 +1,6 @@
 {
   "description": "必火AI员工小程序",
-  "appid": "touristappid",
+  "appid": "wxbbf4a4f9a0fdd872",
   "compileType": "miniprogram",
   "libVersion": "3.8.12",
   "projectname": "bihuo-ai-mobile",
@@ -14,4 +14,3 @@
   },
   "condition": {}
 }
-
