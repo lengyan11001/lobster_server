@@ -77,14 +77,24 @@
 
 .sms-code-row {
   display: grid;
-  grid-template-columns: 1fr 132rpx;
+  grid-template-columns: minmax(0, 1fr) 136rpx;
   gap: 12rpx;
 }
 
 .sms-code-btn,
 .sms-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-height: 76rpx;
+  padding: 0 18rpx;
   font-size: 24rpx;
+  text-align: center;
+}
+
+.sms-code-btn[disabled] {
+  color: #64748b;
+  background: #e2e8f0;
 }
 
 .message-list {

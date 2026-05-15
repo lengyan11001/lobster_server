@@ -57,6 +57,7 @@ Page({
     smsCode: "",
     smsSending: false,
     smsBinding: false,
+    smsCountdown: 0,
     onlineText: "点击开始后检查 online",
     onlineDevices: [],
     selectedInstallationId: "",
@@ -85,12 +86,18 @@ Page({
     ]
   },
 
+  smsTimer: null,
+
   onShow() {
     app.restoreSession();
     this.refreshState();
     if (app.globalData.token && app.globalData.phone) {
       this.loadOnlineStatus(false);
     }
+  },
+
+  onUnload() {
+    this.clearSmsCountdown();
   },
 
   refreshState() {
@@ -174,6 +181,7 @@ Page({
   },
 
   sendSmsCode() {
+    if (this.data.smsSending || this.data.smsCountdown > 0) return;
     const phone = (this.data.smsPhone || "").trim();
     if (!/^1[3-9]\d{9}$/.test(phone)) {
       wx.showToast({ title: "手机号格式不对", icon: "none" });
@@ -183,7 +191,10 @@ Page({
       this.setData({ smsSending: true });
       app
         .request({ method: "POST", url: "/api/mobile/sms/send", data: { phone } })
-        .then(() => wx.showToast({ title: "验证码已发送", icon: "success" }))
+        .then(() => {
+          wx.showToast({ title: "验证码已发送", icon: "success" });
+          this.startSmsCountdown();
+        })
         .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
         .finally(() => this.setData({ smsSending: false }));
     };
@@ -192,6 +203,23 @@ Page({
       return;
     }
     send();
+  },
+
+  startSmsCountdown() {
+    this.clearSmsCountdown();
+    this.setData({ smsCountdown: 60 });
+    this.smsTimer = setInterval(() => {
+      const next = Math.max(0, Number(this.data.smsCountdown || 0) - 1);
+      this.setData({ smsCountdown: next });
+      if (next <= 0) this.clearSmsCountdown();
+    }, 1000);
+  },
+
+  clearSmsCountdown() {
+    if (this.smsTimer) {
+      clearInterval(this.smsTimer);
+      this.smsTimer = null;
+    }
   },
 
   bindBySms() {

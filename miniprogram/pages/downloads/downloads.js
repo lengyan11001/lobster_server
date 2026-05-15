@@ -93,12 +93,16 @@ Page({
     smsCode: "",
     smsSending: false,
     smsBinding: false,
+    smsCountdown: 0,
     loading: false,
     sending: false,
     inputText: "",
     messages: [],
+    onlineAvailable: false,
     onlineText: "检查 online 状态中..."
   },
+
+  smsTimer: null,
 
   onShow() {
     app.restoreSession();
@@ -119,14 +123,22 @@ Page({
     Promise.all([this.loadMessages(), this.loadOnlineStatus()]).finally(() => wx.stopPullDownRefresh());
   },
 
+  onUnload() {
+    this.clearSmsCountdown();
+  },
+
   loadOnlineStatus() {
     if (!app.globalData.token) return Promise.resolve();
     return app
       .request({ url: "/api/h5-chat/devices/status" })
       .then((data) => {
-        this.setData({ onlineText: data.online ? "online 已连接" : "online 暂未在线" });
+        const online = Boolean(data.online);
+        this.setData({
+          onlineAvailable: online,
+          onlineText: online ? "online 已连接" : "online 暂未在线"
+        });
       })
-      .catch(() => this.setData({ onlineText: "online 状态获取失败" }));
+      .catch(() => this.setData({ onlineAvailable: false, onlineText: "online 状态获取失败" }));
   },
 
   loadMessages() {
@@ -228,6 +240,7 @@ Page({
   },
 
   sendSmsCode() {
+    if (this.data.smsSending || this.data.smsCountdown > 0) return;
     const phone = (this.data.smsPhone || "").trim();
     if (!/^1[3-9]\d{9}$/.test(phone)) {
       wx.showToast({ title: "手机号格式不对", icon: "none" });
@@ -237,7 +250,10 @@ Page({
       this.setData({ smsSending: true });
       app
         .request({ method: "POST", url: "/api/mobile/sms/send", data: { phone } })
-        .then(() => wx.showToast({ title: "验证码已发送", icon: "success" }))
+        .then(() => {
+          wx.showToast({ title: "验证码已发送", icon: "success" });
+          this.startSmsCountdown();
+        })
         .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
         .finally(() => this.setData({ smsSending: false }));
     };
@@ -246,6 +262,23 @@ Page({
       return;
     }
     send();
+  },
+
+  startSmsCountdown() {
+    this.clearSmsCountdown();
+    this.setData({ smsCountdown: 60 });
+    this.smsTimer = setInterval(() => {
+      const next = Math.max(0, Number(this.data.smsCountdown || 0) - 1);
+      this.setData({ smsCountdown: next });
+      if (next <= 0) this.clearSmsCountdown();
+    }, 1000);
+  },
+
+  clearSmsCountdown() {
+    if (this.smsTimer) {
+      clearInterval(this.smsTimer);
+      this.smsTimer = null;
+    }
   },
 
   bindBySms() {
@@ -303,16 +336,23 @@ Page({
     }
     if (this.showAuthPanel("发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。")) return;
     this.setData({ sending: true });
-    app
-      .request({
-        method: "POST",
-        url: "/api/h5-chat/messages",
-        data: { content }
-      })
+    this.loadOnlineStatus()
       .then(() => {
-        this.setData({ inputText: "" });
-        wx.showToast({ title: "已发送", icon: "success" });
-        return this.loadMessages();
+        if (!this.data.onlineAvailable) {
+          wx.showToast({ title: "online 未在线，启动电脑端后再发送", icon: "none" });
+          return Promise.resolve();
+        }
+        return app
+          .request({
+            method: "POST",
+            url: "/api/h5-chat/messages",
+            data: { content }
+          })
+          .then(() => {
+            this.setData({ inputText: "" });
+            wx.showToast({ title: "已发送", icon: "success" });
+            return this.loadMessages();
+          });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => this.setData({ sending: false }));

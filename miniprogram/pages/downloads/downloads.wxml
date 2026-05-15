@@ -25,7 +25,7 @@
       <input class="input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入已开通 online 的手机号" />
       <view class="sms-code-row">
         <input class="input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
-        <button class="ghost-btn sms-code-btn" loading="{{smsSending}}" bindtap="sendSmsCode">获取</button>
+        <button class="ghost-btn sms-code-btn" disabled="{{smsSending || smsCountdown > 0}}" loading="{{smsSending}}" bindtap="sendSmsCode">{{smsCountdown > 0 ? smsCountdown + 's' : '获取'}}</button>
       </view>
       <button class="primary-btn sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">绑定手机号</button>
     </view>
@@ -40,7 +40,8 @@
         <text>{{item.content}}</text>
       </view>
       <view class="bubble reply-bubble">
-        <text wx:if="{{item.status === 'pending' || item.status === 'processing'}}">正在执行...</text>
+        <text wx:if="{{item.status === 'pending'}}">{{onlineAvailable ? '等待领取...' : '等待 online 上线'}}</text>
+        <text wx:elif="{{item.status === 'processing'}}">{{onlineAvailable ? '正在执行...' : 'online 已离线，等待恢复'}}</text>
         <text wx:elif="{{item.status === 'failed'}}">{{item.error || '执行失败'}}</text>
         <text wx:else>{{item.reply_text || '已完成'}}</text>
       </view>

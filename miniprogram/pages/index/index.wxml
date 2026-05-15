@@ -30,7 +30,7 @@
             <input class="input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入已开通 online 的手机号" />
             <view class="sms-code-row">
               <input class="input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
-              <button class="ghost-btn sms-code-btn" loading="{{smsSending}}" bindtap="sendSmsCode">获取</button>
+              <button class="ghost-btn sms-code-btn" disabled="{{smsSending || smsCountdown > 0}}" loading="{{smsSending}}" bindtap="sendSmsCode">{{smsCountdown > 0 ? smsCountdown + 's' : '获取'}}</button>
             </view>
             <button class="primary-btn sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">绑定手机号</button>
           </view>
@@ -52,10 +52,10 @@
 
           <view wx:if="{{taskAbility === 'hifly.video.create_by_tts'}}" class="digital-fields">
             <picker mode="selector" range="{{avatarRows}}" range-key="title" value="{{avatarIndex}}" bindchange="onAvatarChange">
-              <view class="picker-box">{{hiflyLoading ? '数字人加载中...' : (selectedAvatarTitle || '请选择数字人')}}</view>
+              <view class="picker-box"><text class="picker-label">数字人</text><text class="picker-value">{{hiflyLoading ? '加载中...' : (selectedAvatarTitle || '请选择')}}</text></view>
             </picker>
             <picker mode="selector" range="{{voiceRows}}" range-key="title" value="{{voiceIndex}}" bindchange="onVoiceChange">
-              <view class="picker-box">{{hiflyLoading ? '声音加载中...' : (selectedVoiceTitle || '请选择声音')}}</view>
+              <view class="picker-box"><text class="picker-label">声音</text><text class="picker-value">{{hiflyLoading ? '加载中...' : (selectedVoiceTitle || '请选择')}}</text></view>
             </picker>
             <button class="ghost-btn auto-btn" bindtap="autoPickDigital">自动</button>
           </view>
