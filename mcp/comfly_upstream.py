@@ -56,8 +56,12 @@ _COMFLY_VIDEO_TASK_ID_KEYS = (
 _COMFLY_VIDEO_URL_KEYS = (
     "video_url",
     "videoUrl",
+    "mp4url",
+    "mp4Url",
     "url",
     "output",
+    "output_url",
+    "outputUrl",
     "download_url",
     "downloadUrl",
 )
@@ -253,7 +257,7 @@ def _find_nested_string(value: Any, keys: Tuple[str, ...]) -> str:
             item = value.get(key)
             if isinstance(item, str) and item.strip():
                 return item.strip()
-        for child_key in ("data", "file", "payload", "result", "task", "job", "generation", "video", "output"):
+        for child_key in ("data", "file", "payload", "result", "task", "job", "generation", "video", "content", "output"):
             found = _find_nested_string(value.get(child_key), keys)
             if found:
                 return found
@@ -590,11 +594,21 @@ async def call_comfly_image_generate(
     body: Dict[str, Any] = {
         "model": comfly_model,
         "prompt": prompt,
-        "n": payload.get("n") or 1,
     }
+    if payload.get("n") is not None:
+        body["n"] = payload.get("n") or 1
     size = payload.get("image_size") or payload.get("size")
     if size:
-        body["size"] = size
+        if str(comfly_model).strip().lower().startswith("nano-banana-2"):
+            body["image_size"] = size
+        else:
+            body["size"] = size
+    aspect_ratio = payload.get("aspect_ratio") or payload.get("ratio")
+    if aspect_ratio:
+        body["aspect_ratio"] = aspect_ratio
+    response_format = payload.get("response_format")
+    if response_format:
+        body["response_format"] = response_format
 
     image_url = payload.get("image_url") or ""
     image_urls = payload.get("image_urls") or []
@@ -702,9 +716,26 @@ async def call_comfly_video_generate(
             body = {
                 "model": comfly_model,
                 "prompt": prompt,
-            }
+        }
         if duration:
             body["duration"] = str(int(duration))
+    elif api_format == "seedance_legacy":
+        url = f"{base}/seedance/v3/contents/generations/tasks"
+        content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+        if first_image:
+            content.append({"type": "image_url", "image_url": {"url": first_image}, "role": "reference_image"})
+        body = {
+            "model": comfly_model,
+            "content": content,
+            "ratio": payload.get("ratio") or payload.get("aspect_ratio") or "9:16",
+            "duration": 10 if duration >= 10 else 5,
+            "generate_audio": bool(payload.get("generate_audio", False)),
+            "watermark": bool(payload.get("watermark", False)),
+        }
+        if payload.get("resolution"):
+            body["resolution"] = payload.get("resolution")
+        if payload.get("seed") is not None:
+            body["seed"] = payload.get("seed")
     elif api_format == "sora2":
         url = f"{base}/v1/videos"
         request_mode = "multipart"
@@ -779,6 +810,8 @@ async def call_comfly_task_query(task_id: str, token_group: str = "", api_format
         url = f"{base}/v2/videos/generations/{task_id}"
     elif api_format == "sora2":
         url = f"{base}/v1/videos/{task_id}"
+    elif api_format == "seedance_legacy":
+        url = f"{base}/seedance/v3/contents/generations/tasks/{task_id}"
     else:
         url = f"{base}/task/query/{task_id}"
     logger.info("[Comfly] 任务查询 task_id=%s url=%s api_format=%s", task_id, url, api_format or "(default)")
