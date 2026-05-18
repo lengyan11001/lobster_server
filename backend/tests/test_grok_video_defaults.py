@@ -39,3 +39,32 @@ def test_xai_grok_models_keep_sutui_route():
 
     assert should_route_to_comfly("video.generate", "xai/grok-imagine-video/text-to-video") is False
     assert should_route_to_comfly("video.generate", "xai/grok-imagine-video/image-to-video") is False
+
+
+def test_grok_resolution_is_limited_to_upstream_enum():
+    out = _normalize_video_generate_payload(
+        {
+            "model": "xai/grok-imagine-video/text-to-video",
+            "prompt": "产品短视频",
+            "resolution": "720P",
+        }
+    )
+    assert out["resolution"] == "720p"
+
+    out = _normalize_video_generate_payload(
+        {
+            "model": "xai/grok-imagine-video/text-to-video",
+            "prompt": "产品短视频",
+            "resolution": "1080p",
+        }
+    )
+    assert out["resolution"] == "720p"
+
+    out = _normalize_video_generate_payload(
+        {
+            "model": "xai/grok-imagine-video/text-to-video",
+            "prompt": "产品短视频",
+            "resolution": "auto",
+        }
+    )
+    assert "resolution" not in out

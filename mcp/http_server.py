@@ -1495,8 +1495,10 @@ def _sanitize_video_resolution_value(raw: Any) -> Optional[str]:
     return s
 
 
-def _coerce_grok_video_resolution(raw: Any) -> str:
+def _coerce_grok_video_resolution(raw: Any) -> Optional[str]:
     s = str(raw or "").strip().lower().replace(" ", "")
+    if not s or s in ("auto", "automatic", "default", "original"):
+        return None
     if "480" in s:
         return "480p"
     return "720p"
@@ -1989,7 +1991,7 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         if not first_url or _has_ar:
             out["aspect_ratio"] = aspect_ratio if ratio_ok else "9:16"
         out["duration"] = duration_sec
-        _grok_res = _sanitize_video_resolution_value(payload.get("resolution"))
+        _grok_res = _coerce_grok_video_resolution(payload.get("resolution"))
         if _grok_res is not None:
             out["resolution"] = _grok_res
         for k in ("audio", "seed", "negative_prompt"):
