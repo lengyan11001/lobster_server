@@ -2,6 +2,7 @@
   "lazyCodeLoading": "requiredComponents",
   "pages": [
     "pages/index/index",
+    "pages/digital/digital",
     "pages/downloads/downloads",
     "pages/profile/profile"
   ],

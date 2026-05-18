@@ -420,6 +420,10 @@ Page({
     wx.switchTab({ url: "/pages/downloads/downloads" });
   },
 
+  goDigital() {
+    wx.navigateTo({ url: "/pages/digital/digital" });
+  },
+
   goProfile() {
     wx.switchTab({ url: "/pages/profile/profile" });
   },

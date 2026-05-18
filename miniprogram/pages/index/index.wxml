@@ -68,6 +68,20 @@
 
   <view class="section">
     <view class="section-head">
+      <text class="section-title inline-title">数字人</text>
+      <button class="mini-link" bindtap="goDigital">打开</button>
+    </view>
+    <view class="digital-entry" bindtap="goDigital">
+      <view class="digital-entry-mark">数</view>
+      <view class="digital-entry-copy">
+        <text class="digital-entry-title">生成数字人口播视频</text>
+        <text class="digital-entry-text">选择数字人和声音，输入文案后创建视频作品。</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
       <text class="section-title inline-title">快捷消息</text>
       <button class="mini-link" bindtap="goMessages">打开消息</button>
     </view>

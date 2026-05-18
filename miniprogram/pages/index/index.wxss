@@ -326,3 +326,48 @@
   font-size: 22rpx;
   line-height: 1.45;
 }
+
+.digital-entry {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  margin-top: 20rpx;
+  padding: 22rpx;
+  background: #f8fafc;
+  border: 1rpx solid #dbe3ef;
+  border-radius: 22rpx;
+}
+
+.digital-entry-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 76rpx;
+  width: 76rpx;
+  height: 76rpx;
+  color: #fff;
+  background: linear-gradient(135deg, #1d4ed8, #10b981);
+  border-radius: 20rpx;
+  font-size: 30rpx;
+  font-weight: 900;
+}
+
+.digital-entry-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.digital-entry-title {
+  display: block;
+  color: #0f172a;
+  font-size: 29rpx;
+  font-weight: 900;
+}
+
+.digital-entry-text {
+  display: block;
+  margin-top: 8rpx;
+  color: #64748b;
+  font-size: 23rpx;
+  line-height: 1.45;
+}
