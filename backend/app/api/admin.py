@@ -175,11 +175,13 @@ def admin_search_user(
     q = q.strip()
     if not q:
         return {"users": []}
+    filters = [User.email.ilike(f"%{q}%")]
+    if q.isdigit():
+        id_value = int(q)
+        if 0 < id_value <= 2_147_483_647:
+            filters.append(User.id == id_value)
     query = db.query(User).filter(
-        or_(
-            User.email.ilike(f"%{q}%"),
-            User.id == int(q) if q.isdigit() else False,
-        )
+        or_(*filters)
     )
     if ctx.role == "agent":
         sub_ids = _agent_sub_user_ids(db, ctx.user_id)
