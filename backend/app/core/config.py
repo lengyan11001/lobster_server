@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     """下发给 lobster_online 的默认图片生成模型；客户端拉取失败时才使用本地兜底。"""
     lobster_default_image_generate_model: str = "gpt-image2"
     """下发给 lobster_online 的默认视频生成模型；客户端拉取失败时才使用本地兜底。"""
-    lobster_default_video_generate_model: str = "veo3.1-fast"
+    lobster_default_video_generate_model: str = "grok-video-3"
     """Server-side Sutui chat model used by the isolated OpenClaw Browser/Computer workspace alias."""
     lobster_openclaw_skill_sutui_chat_model: str = "claude-sonnet-4-6"
     """已废弃：前端由 lobster_online 提供，本服务仅 API，不再挂载 /static 与前端页。保留项以免旧 .env 报错。"""
@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     wechat_app_id: Optional[str] = None
     wechat_app_secret: Optional[str] = None
     """小程序码跳转的页面路径，如 pages/index/index，扫码后打开该页并带 scene"""
-    wechat_miniprogram_page: Optional[str] = None
+    wechat_miniprogram_page: Optional[str] = "pages/index/index"
     """服务号网页授权（与小程序二选一或并存）：AppID/AppSecret，配置后登录页返回 login_url 供扫码"""
     wechat_oa_app_id: Optional[str] = None
     wechat_oa_secret: Optional[str] = None

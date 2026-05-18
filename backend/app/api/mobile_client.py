@@ -270,6 +270,23 @@ def _public_media_url(request: Request, raw_url: str, disposition: str = "inline
     return f"{base}/api/h5-chat/media?url={quote(url, safe='')}&disposition={quote(disposition)}&filename={quote(name)}"
 
 
+def _direct_mobile_media_url(raw_url: str) -> str:
+    url = (raw_url or "").strip()
+    return url if url.startswith("https://") else ""
+
+
+def _mobile_media_urls(request: Request, raw_url: str, filename: str) -> Dict[str, str]:
+    direct = _direct_mobile_media_url(raw_url)
+    proxy_preview = _public_media_url(request, raw_url, "inline", filename)
+    proxy_download = _public_media_url(request, raw_url, "attachment", filename)
+    return {
+        "preview_url": direct or proxy_preview,
+        "download_url": direct or proxy_download,
+        "proxy_preview_url": proxy_preview,
+        "proxy_download_url": proxy_download,
+    }
+
+
 def _request_public_base_url(request: Request) -> str:
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",", 1)[0].strip()
     host = (
@@ -289,7 +306,7 @@ def _asset_download_item(request: Request, asset: Asset) -> Optional[Dict[str, A
         return None
     filename = asset.filename or Path(urlparse(url).path).name or f"{asset.asset_id}"
     media_type = _media_type_from_url(url, asset.media_type)
-    return {
+    item = {
         "id": f"asset:{asset.asset_id}",
         "source": "asset",
         "asset_id": asset.asset_id,
@@ -297,13 +314,13 @@ def _asset_download_item(request: Request, asset: Asset) -> Optional[Dict[str, A
         "media_type": media_type,
         "file_size": asset.file_size or 0,
         "url": url,
-        "preview_url": _public_media_url(request, url, "inline", filename),
-        "download_url": _public_media_url(request, url, "attachment", filename),
         "created_at": asset.created_at.isoformat() if asset.created_at else "",
         "prompt": asset.prompt or "",
         "model": asset.model or "",
         "tags": asset.tags or "",
     }
+    item.update(_mobile_media_urls(request, url, filename))
+    return item
 
 
 def _add_url_item(
@@ -327,18 +344,16 @@ def _add_url_item(
     seen.add(clean)
     filename = Path(urlparse(clean).path).name or "lobster-media"
     media_type = _media_type_from_url(clean, fallback_media_type)
-    items.append(
-        {
-            "id": f"{source}:{context_id}:{len(seen)}",
-            "source": source,
-            "title": title or filename,
-            "media_type": media_type,
-            "url": clean,
-            "preview_url": _public_media_url(request, clean, "inline", filename),
-            "download_url": _public_media_url(request, clean, "attachment", filename),
-            "created_at": created_at.isoformat() if created_at else "",
-        }
-    )
+    item = {
+        "id": f"{source}:{context_id}:{len(seen)}",
+        "source": source,
+        "title": title or filename,
+        "media_type": media_type,
+        "url": clean,
+        "created_at": created_at.isoformat() if created_at else "",
+    }
+    item.update(_mobile_media_urls(request, clean, filename))
+    items.append(item)
 
 
 def _unwrap_media_proxy_url(raw_url: str) -> str:

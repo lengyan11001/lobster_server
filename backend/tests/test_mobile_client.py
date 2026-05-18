@@ -273,8 +273,10 @@ def test_downloads_collect_assets_runs_and_h5_results(db_session, db_session_fac
     assert "https://cdn.example.com/run-image.jpg" in urls
     assert "https://cdn.example.com/h5-video.mp4" in urls
     assert "https://cdn.example.com/event-image.png" in urls
-    assert all(item["preview_url"].startswith("http://testserver/api/h5-chat/media?") for item in data["items"])
-    assert all(item["download_url"].startswith("http://testserver/api/h5-chat/media?") for item in data["items"])
+    assert all(item["preview_url"].startswith("https://cdn.example.com/") for item in data["items"])
+    assert all(item["download_url"].startswith("https://cdn.example.com/") for item in data["items"])
+    assert all(item["proxy_preview_url"].startswith("http://testserver/api/h5-chat/media?") for item in data["items"])
+    assert all(item["proxy_download_url"].startswith("http://testserver/api/h5-chat/media?") for item in data["items"])
 
 
 def test_wechat_login_creates_temporary_user(mobile_client):

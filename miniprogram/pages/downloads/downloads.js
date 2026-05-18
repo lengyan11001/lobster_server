@@ -40,6 +40,11 @@ function mediaProxyUrl(url, disposition) {
   return api.buildUrl(`/api/h5-chat/media?${params.join("&")}`);
 }
 
+function directDownloadUrl(url) {
+  const clean = String(url || "").trim();
+  return /^https:\/\//i.test(clean) ? clean : "";
+}
+
 function extractMedia(replyText, events) {
   const urls = [];
   const seen = {};
@@ -68,8 +73,10 @@ function extractMedia(replyText, events) {
       title: filename,
       media_type: mediaType,
       url,
-      preview_url: mediaProxyUrl(url, "inline"),
-      download_url: mediaProxyUrl(url, "attachment")
+      preview_url: directDownloadUrl(url) || mediaProxyUrl(url, "inline"),
+      download_url: directDownloadUrl(url) || mediaProxyUrl(url, "attachment"),
+      proxy_preview_url: mediaProxyUrl(url, "inline"),
+      proxy_download_url: mediaProxyUrl(url, "attachment")
     };
   });
 }

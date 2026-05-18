@@ -703,6 +703,18 @@ async def call_comfly_video_generate(
         }
         aspect_ratio = payload.get("aspect_ratio") or "16:9"
         body["aspect_ratio"] = aspect_ratio
+    elif api_format == "grok":
+        url = f"{base}/v2/videos/generations"
+        grok_duration = 10 if duration == 10 else 6
+        body = {
+            "model": comfly_model,
+            "prompt": prompt,
+            "ratio": payload.get("ratio") or payload.get("aspect_ratio") or "9:16",
+            "resolution": payload.get("resolution") or "720P",
+            "duration": grok_duration,
+        }
+        if first_image:
+            body["images"] = [first_image]
     elif api_format == "unified_video":
         if first_image:
             url = f"{base}/task/submit/i2v"
@@ -806,7 +818,7 @@ async def call_comfly_task_query(task_id: str, token_group: str = "", api_format
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
-    if api_format == "veo":
+    if api_format in ("veo", "grok"):
         url = f"{base}/v2/videos/generations/{task_id}"
     elif api_format == "sora2":
         url = f"{base}/v1/videos/{task_id}"

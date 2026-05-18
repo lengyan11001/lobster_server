@@ -66,7 +66,12 @@ def main() -> int:
     ap.add_argument(
         "--public-base",
         default="https://bhzn.top",
-        help="manifest.bundle_url 使用的 API 根（与线上一致）",
+        help="manifest.bundle_url 使用的 API 根（未指定 --bundle-url 时使用）",
+    )
+    ap.add_argument(
+        "--bundle-url",
+        default="",
+        help="已上传到 OSS/TOS/CDN 的 OTA zip HTTPS 直链；指定后只上传/写 manifest，不再让 bundle_url 指向 bhzn.top 文件。",
     )
     args = ap.parse_args()
 
@@ -89,7 +94,7 @@ def main() -> int:
     pp = env.get("LOBSTER_SSH_KEY_PASSPHRASE", "").encode()
 
     bundle_name = z.name
-    bundle_url = f"{args.public_base.rstrip('/')}/client/client-code/bundles/{bundle_name}"
+    bundle_url = (args.bundle_url or "").strip() or f"{args.public_base.rstrip('/')}/client/client-code/bundles/{bundle_name}"
     manifest = {
         "version": args.version,
         "build": args.build,

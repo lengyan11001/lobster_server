@@ -261,10 +261,30 @@ def _upstream_model(model: str, entry: Dict[str, Any]) -> str:
 
 def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
     upstream = _upstream_model(model, entry)
-    if upstream == model:
-        return body
     forwarded = dict(body)
     forwarded["model"] = upstream
+    api_format = str(entry.get("api_format") or "").strip().lower()
+    if api_format == "grok":
+        prompt = str(forwarded.get("prompt") or "").strip()
+        grok_body: Dict[str, Any] = {"model": upstream, "prompt": prompt}
+        images = forwarded.get("images")
+        if not isinstance(images, list):
+            images = []
+        images = [str(x).strip() for x in images if str(x or "").strip()]
+        if not images and forwarded.get("image_url"):
+            images = [str(forwarded.get("image_url")).strip()]
+        if images:
+            grok_body["images"] = images[:1]
+        if "ratio" not in forwarded and forwarded.get("aspect_ratio"):
+            forwarded["ratio"] = forwarded.get("aspect_ratio")
+        grok_body["ratio"] = str(forwarded.get("ratio") or "9:16")
+        grok_body["resolution"] = str(forwarded.get("resolution") or "720P")
+        try:
+            duration = int(forwarded.get("duration") or forwarded.get("seconds") or 6)
+        except (TypeError, ValueError):
+            duration = 6
+        grok_body["duration"] = 10 if duration == 10 else 6
+        return grok_body
     return forwarded
 
 

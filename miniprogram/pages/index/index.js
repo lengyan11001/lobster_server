@@ -78,7 +78,7 @@ Page({
     hiflyLoaded: false,
     quickMessages: [
       { mark: "图", title: "生成图片", text: "帮我生成一张图片，画面内容是：" },
-      { mark: "视", title: "生成视频", text: "帮我生成一个8秒宣传视频，画面内容是：" },
+      { mark: "视", title: "生成视频", text: "帮我生成一个6秒宣传视频，画面内容是：" },
       { mark: "传", title: "图生视频", text: "用这个图片，提示词：" },
       { mark: "T", title: "爆款TVC", text: "用爆款TVC生成一个视频" },
       { mark: "发", title: "发布素材", text: "把某素材发布到 平台 账号" },

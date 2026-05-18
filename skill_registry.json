@@ -469,7 +469,7 @@
                               },
                               "goal": {
                                     "type": "string",
-                                    "description": "用户目标原文，例如：给某产品生成 8 秒宣传视频"
+                                    "description": "用户目标原文，例如：给某产品生成 6 秒宣传视频"
                               },
                               "job_id": {
                                     "type": "string",
@@ -485,7 +485,7 @@
                               },
                               "duration": {
                                     "type": "integer",
-                                    "default": 8
+                                    "default": 6
                               },
                               "aspect_ratio": {
                                     "type": "string",
