@@ -53,6 +53,15 @@ _COMFLY_VIDEO_TASK_ID_KEYS = (
     "run_id",
     "runId",
 )
+
+
+def _coerce_grok_video_resolution(raw: Any) -> str:
+    s = str(raw or "").strip().lower().replace(" ", "")
+    if "480" in s:
+        return "480p"
+    return "720p"
+
+
 _COMFLY_VIDEO_URL_KEYS = (
     "video_url",
     "videoUrl",
@@ -710,7 +719,7 @@ async def call_comfly_video_generate(
             "model": comfly_model,
             "prompt": prompt,
             "ratio": payload.get("ratio") or payload.get("aspect_ratio") or "9:16",
-            "resolution": payload.get("resolution") or "720P",
+            "resolution": _coerce_grok_video_resolution(payload.get("resolution")),
             "duration": grok_duration,
         }
         if first_image:

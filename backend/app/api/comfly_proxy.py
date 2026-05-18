@@ -259,6 +259,13 @@ def _upstream_model(model: str, entry: Dict[str, Any]) -> str:
     return str(entry.get("comfly_model") or model).strip() or model
 
 
+def _coerce_grok_video_resolution(raw: Any) -> str:
+    s = str(raw or "").strip().lower().replace(" ", "")
+    if "480" in s:
+        return "480p"
+    return "720p"
+
+
 def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
     upstream = _upstream_model(model, entry)
     forwarded = dict(body)
@@ -278,7 +285,7 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
         if "ratio" not in forwarded and forwarded.get("aspect_ratio"):
             forwarded["ratio"] = forwarded.get("aspect_ratio")
         grok_body["ratio"] = str(forwarded.get("ratio") or "9:16")
-        grok_body["resolution"] = str(forwarded.get("resolution") or "720P")
+        grok_body["resolution"] = _coerce_grok_video_resolution(forwarded.get("resolution"))
         try:
             duration = int(forwarded.get("duration") or forwarded.get("seconds") or 6)
         except (TypeError, ValueError):

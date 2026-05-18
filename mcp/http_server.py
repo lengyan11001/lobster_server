@@ -1495,6 +1495,13 @@ def _sanitize_video_resolution_value(raw: Any) -> Optional[str]:
     return s
 
 
+def _coerce_grok_video_resolution(raw: Any) -> str:
+    s = str(raw or "").strip().lower().replace(" ", "")
+    if "480" in s:
+        return "480p"
+    return "720p"
+
+
 def _sanitize_options_dict_resolution(options: Dict[str, Any]) -> None:
     """Seedance 等 options.resolution 合并后去掉 auto 占位。"""
     if not isinstance(options, dict) or "resolution" not in options:
@@ -1983,12 +1990,7 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         if not first_url or _has_ar:
             out["ratio"] = aspect_ratio if ratio_ok else "9:16"
         out["duration"] = 10 if duration_sec == 10 else 6
-        _ger = _sanitize_video_resolution_value(payload.get("resolution"))
-        out["resolution"] = _ger or "720P"
-        for k in ["audio", "seed", "negative_prompt"]:
-            if k in payload:
-                out[k] = payload[k]
-        _merge_common_video_ui_fields(out, payload)
+        out["resolution"] = _coerce_grok_video_resolution(payload.get("resolution"))
         return out
 
     # 即梦视频：只支持 prompt + image_url + end_image_url（无 duration/aspect_ratio）
