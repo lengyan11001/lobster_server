@@ -506,7 +506,7 @@ def pre_deduct(
             except (TypeError, ValueError):
                 storyboard_count = 5
             storyboard_count = max(1, min(storyboard_count, 20))  # safety bound
-            video_model = (params.get("video_model") or "grok-video-3").strip()
+            video_model = (params.get("video_model") or "xai/grok-imagine-video/image-to-video").strip()
             image_model = (params.get("image_model") or "nano-banana-2").strip()
             analysis_model = (params.get("analysis_model") or "gemini-2.5-pro").strip()
 
@@ -830,8 +830,8 @@ def comfly_pricing():
             getattr(settings, "lobster_default_image_generate_model", None) or "gpt-image2"
         ).strip() or "gpt-image2",
         "video_generate_model": (
-            getattr(settings, "lobster_default_video_generate_model", None) or "grok-video-3"
-        ).strip() or "grok-video-3",
+            getattr(settings, "lobster_default_video_generate_model", None) or "xai/grok-imagine-video/text-to-video"
+        ).strip() or "xai/grok-imagine-video/text-to-video",
     }
     p = _Path(__file__).resolve().parent.parent.parent.parent / "comfly_pricing.json"
     if not p.exists():

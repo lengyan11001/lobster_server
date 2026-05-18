@@ -25,13 +25,13 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "model": { "type": "string", "description": "可选（省略时默认 sora2 即 fal-ai/sora-2/text-to-video）" },
+        "model": { "type": "string", "description": "可选（省略时由 MCP 使用默认视频模型：文生视频 xai/grok-imagine-video/text-to-video，图生视频 xai/grok-imagine-video/image-to-video）" },
         "prompt": { "type": "string", "description": "描述/动作提示词" },
         "image_url": { "type": "string", "description": "图生视频时必传，公开可访问的图片 URL；本地图可用 sutui.transfer_url 先转存" },
         "aspect_ratio": { "type": "string", "description": "可选，宽高比 16:9 或 9:16" },
         "duration": { "type": "integer", "description": "可选，视频时长秒数，如 5 或 10" }
       },
-      "required": ["model", "prompt"]
+      "required": ["prompt"]
     }
   },
   "task.get_result": {

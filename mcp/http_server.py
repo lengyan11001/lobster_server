@@ -52,8 +52,8 @@ _DEFAULT_IMAGE_MODEL = (
 _DEFAULT_VIDEO_MODEL = (
     getattr(settings, "lobster_default_video_generate_model", None)
     or os.getenv("LOBSTER_DEFAULT_VIDEO_GENERATE_MODEL")
-    or "grok-video-3"
-).strip() or "grok-video-3"
+    or "xai/grok-imagine-video/text-to-video"
+).strip() or "xai/grok-imagine-video/text-to-video"
 
 
 def _sanitize_for_json(obj: Any) -> Any:
@@ -1980,17 +1980,22 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         _merge_common_video_ui_fields(out, payload)
         return out
 
-    # Grok Video: Comfly /v2/videos/generations uses ratio/resolution/images.
+    # Grok Imagine Video: use SuTui/xskill model ids, not the unstable Comfly alias.
     if "grok" in model.lower():
         out = {"model": model, "prompt": prompt}
         if first_url:
             out["image_url"] = first_url
-            out["images"] = [first_url]
         _has_ar = _payload_get_aspect_ratio(payload) is not None
         if not first_url or _has_ar:
-            out["ratio"] = aspect_ratio if ratio_ok else "9:16"
-        out["duration"] = 10 if duration_sec == 10 else 6
-        out["resolution"] = _coerce_grok_video_resolution(payload.get("resolution"))
+            out["aspect_ratio"] = aspect_ratio if ratio_ok else "9:16"
+        out["duration"] = duration_sec
+        _grok_res = _sanitize_video_resolution_value(payload.get("resolution"))
+        if _grok_res is not None:
+            out["resolution"] = _grok_res
+        for k in ("audio", "seed", "negative_prompt"):
+            if k in payload:
+                out[k] = payload[k]
+        _merge_common_video_ui_fields(out, payload)
         return out
 
     # 即梦视频：只支持 prompt + image_url + end_image_url（无 duration/aspect_ratio）
