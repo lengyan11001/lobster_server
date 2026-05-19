@@ -188,12 +188,9 @@
         </view>
         <view class="speed-row">
           <text>语速</text>
-          <text>1.00x</text>
+          <text>{{speechRateText}}</text>
         </view>
-        <view class="speed-track">
-          <view class="speed-fill"></view>
-          <view class="speed-thumb"></view>
-        </view>
+        <slider class="speed-slider" min="50" max="200" step="5" value="{{speechRate * 100}}" block-size="26" activeColor="#10f5dd" backgroundColor="rgba(255,255,255,0.16)" block-color="#ffffff" bindchanging="onSpeechRateChange" bindchange="onSpeechRateChange" />
         <scroll-view scroll-x class="pick-scroll" show-scrollbar="{{false}}">
           <view class="pick-strip">
             <view class="custom-card voice-custom">
@@ -214,7 +211,7 @@
         <text>{{progressText || '视频生成中'}}</text>
       </view>
 
-      <button class="next-btn generate-btn" loading="{{submitting}}" bindtap="submitDigitalTask">算力生成</button>
+      <button class="next-btn generate-btn" loading="{{submitting}}" bindtap="submitDigitalTask">提交数字人任务</button>
     </block>
   </block>
 

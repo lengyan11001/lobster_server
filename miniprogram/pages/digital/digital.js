@@ -112,6 +112,8 @@ Page({
     title: "数字人口播",
     text: "",
     stShow: true,
+    speechRate: 1,
+    speechRateText: "1.00x",
     loadingAssets: false,
     loadingVideos: false,
     submitting: false,
@@ -337,6 +339,15 @@ Page({
     this.setData({ text: evt.detail.value || "" });
   },
 
+  onSpeechRateChange(evt) {
+    const raw = Number(evt.detail.value || 100);
+    const rate = Math.max(50, Math.min(200, raw)) / 100;
+    this.setData({
+      speechRate: rate,
+      speechRateText: `${rate.toFixed(2)}x`
+    });
+  },
+
   toggleSubtitle(evt) {
     this.setData({ stShow: Boolean(evt.detail.value) });
   },
@@ -417,7 +428,7 @@ Page({
           voice: voice.voice,
           text,
           st_show: this.data.stShow ? 1 : 0,
-          rate: voice.rate || undefined,
+          rate: this.data.speechRate || voice.rate || undefined,
           volume: voice.volume || undefined,
           pitch: voice.pitch || undefined
         },

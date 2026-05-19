@@ -735,30 +735,9 @@
   font-weight: 900;
 }
 
-.speed-track {
-  position: relative;
-  height: 4rpx;
-  margin: 28rpx 34rpx 28rpx;
-  background: rgba(255,255,255,0.16);
-}
-
-.speed-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 34%;
-  height: 4rpx;
-  background: #10f5dd;
-}
-
-.speed-thumb {
-  position: absolute;
-  left: 32%;
-  top: -15rpx;
-  width: 34rpx;
-  height: 34rpx;
-  background: #fff;
-  border-radius: 999rpx;
+.speed-slider {
+  margin: 22rpx 18rpx 24rpx;
+  padding: 0;
 }
 
 .pick-voice-card {
