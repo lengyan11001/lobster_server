@@ -1427,6 +1427,9 @@ class HiflyVideoCreateBody(BaseModel):
     rate: Optional[str] = None
     volume: Optional[str] = None
     pitch: Optional[str] = None
+    avatar_title: Optional[str] = None
+    avatar_image_url: Optional[str] = None
+    voice_title: Optional[str] = None
     token: Optional[str] = None
 
 
@@ -1468,6 +1471,9 @@ def _normalize_video_asset(row: UserHiflyVideoAsset, request: Optional[Request] 
             "failed": "失败",
         }.get(row.status, "处理中"),
         "video_url": video_url,
+        "cover_url": str(meta.get("avatar_image_url") or "").strip(),
+        "avatar_title": str(meta.get("avatar_title") or "").strip(),
+        "voice_title": str(meta.get("voice_title") or "").strip(),
         "asset_video_url": row.asset_video_url or "",
         "asset_id": row.asset_id or "",
         "source_video_url": row.source_video_url or "",
@@ -1601,7 +1607,22 @@ async def create_my_video_by_tts(
         text=body.text.strip(),
         aigc_flag=payload["aigc_flag"],
         st_show=payload["st_show"],
-        meta={"create_raw": created, "create_payload": payload, "billing": {"capability_id": _HIFLY_TTS_CAPABILITY_ID, "billing_status": "pending", "credits_pre_deducted": billing.get("credits_pre_deducted"), "estimated_seconds": billing.get("estimated_seconds"), "expected_credits": billing.get("expected_credits"), "request_id": request_id, "created_at": datetime.utcnow().isoformat() + "Z"}},
+        meta={
+            "create_raw": created,
+            "create_payload": payload,
+            "avatar_title": (body.avatar_title or "").strip(),
+            "avatar_image_url": (body.avatar_image_url or "").strip(),
+            "voice_title": (body.voice_title or "").strip(),
+            "billing": {
+                "capability_id": _HIFLY_TTS_CAPABILITY_ID,
+                "billing_status": "pending",
+                "credits_pre_deducted": billing.get("credits_pre_deducted"),
+                "estimated_seconds": billing.get("estimated_seconds"),
+                "expected_credits": billing.get("expected_credits"),
+                "request_id": request_id,
+                "created_at": datetime.utcnow().isoformat() + "Z",
+            },
+        },
     )
     db.add(row)
     db.commit()

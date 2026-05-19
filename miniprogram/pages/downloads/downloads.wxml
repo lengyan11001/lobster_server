@@ -1,92 +1,102 @@
-<view class="page chat-page">
-  <view class="chat-stars stars-a"></view>
-  <view class="chat-stars stars-b"></view>
+<view class="works-page">
+  <view class="space-layer stars-a"></view>
+  <view class="space-layer stars-b"></view>
 
-  <view class="chat-header">
-    <view>
-      <text class="chat-title">AI员工消息</text>
-      <text class="chat-subtitle">{{phoneBound ? onlineText : '发送时授权绑定 online'}}</text>
-    </view>
-    <view class="header-actions">
-      <view class="status-pill {{onlineAvailable ? 'online' : ''}}">
-        <view class="status-dot"></view>
-        <text>{{onlineAvailable ? '在线' : '待连接'}}</text>
-      </view>
-      <button class="mini-btn" bindtap="loadMessages">刷新</button>
-    </view>
+  <view class="works-head">
+    <text class="works-title">我的作品</text>
+    <button class="refresh-btn" loading="{{loading}}" bindtap="loadWorks">刷新</button>
   </view>
 
-  <view class="quick-row">
-    <button data-text="根据我的记忆，帮我生成一条产品宣传视频或图片素材。" bindtap="quickFill">
-      <text class="quick-mark">视</text>
-      <text>生成素材</text>
+  <view class="media-tabs">
+    <button class="{{mediaTab === 'video' ? 'active' : ''}}" data-tab="video" bindtap="setMediaTab">
+      <text class="tab-icon">▣</text>
+      <text>视频</text>
     </button>
-    <button data-text="帮我写一条适合朋友圈发布的文案。" bindtap="quickFill">
-      <text class="quick-mark">文</text>
-      <text>朋友圈文案</text>
+    <button class="{{mediaTab === 'image' ? 'active' : ''}}" data-tab="image" bindtap="setMediaTab">
+      <text class="tab-icon">▧</text>
+      <text>图片</text>
     </button>
-    <button data-text="查看最近生成任务的结果，并整理可下载链接。" bindtap="quickFill">
-      <text class="quick-mark">链</text>
-      <text>整理结果</text>
+    <button class="{{mediaTab === 'text' ? 'active' : ''}}" data-tab="text" bindtap="setMediaTab">
+      <text class="tab-icon">▤</text>
+      <text>文本</text>
+    </button>
+    <button class="{{mediaTab === 'audio' ? 'active' : ''}}" data-tab="audio" bindtap="setMediaTab">
+      <text class="tab-icon">♪</text>
+      <text>音频</text>
     </button>
   </view>
 
-  <view wx:if="{{authPanelVisible && !phoneBound}}" class="section auth-section">
-    <text class="section-title">授权后发送</text>
-    <text class="muted">{{authHint}}</text>
-    <view class="button-row">
-      <button class="ghost-btn" bindtap="login">微信登录</button>
-      <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+  <view wx:if="{{mediaTab === 'video'}}" class="kind-tabs">
+    <button class="{{videoKind === 'digital' ? 'active' : ''}}" data-kind="digital" bindtap="setVideoKind">数字人视频</button>
+    <button class="{{videoKind === 'super' ? 'active' : ''}}" data-kind="super" bindtap="setVideoKind">超级视频</button>
+  </view>
+
+  <block wx:if="{{authPanelVisible && !phoneBound}}">
+    <view class="auth-card">
+      <text class="auth-title">授权后查看作品</text>
+      <text class="auth-text">{{authHint}}</text>
+      <view class="auth-actions">
+        <button class="ghost-btn" bindtap="login">微信登录</button>
+        <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+      </view>
     </view>
-    <button class="sms-link" bindtap="showSmsBind">微信取号失败，用短信验证码绑定</button>
-    <view wx:if="{{smsBindVisible}}" class="sms-bind-box">
-      <input class="input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入已开通 online 的手机号" />
-      <view class="sms-code-row">
-        <input class="input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
-        <button class="ghost-btn sms-code-btn" disabled="{{smsSending || smsCountdown > 0}}" loading="{{smsSending}}" bindtap="sendSmsCode">{{smsCountdown > 0 ? smsCountdown + 's' : '获取'}}</button>
-      </view>
-      <button class="primary-btn sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">绑定手机号</button>
+  </block>
+
+  <block wx:elif="{{!phoneBound && !authPanelVisible}}">
+    <view class="empty-card">
+      <text>登录后查看生成作品</text>
+      <button class="primary-btn" bindtap="login">微信登录</button>
     </view>
-  </view>
+  </block>
 
-  <view wx:if="{{loading}}" class="empty">
-    <text>正在加载消息...</text>
-  </view>
-  <view wx:elif="{{messages.length === 0}}" class="empty">
-    <text>{{phoneBound ? '还没有消息' : '可以先输入消息，发送时再授权。'}}</text>
-  </view>
+  <block wx:elif="{{mediaTab !== 'video' || videoKind !== 'digital'}}">
+    <view class="empty-card">
+      <text>这里暂时还没有作品</text>
+    </view>
+  </block>
 
-  <view wx:else class="message-list">
-    <view wx:for="{{messages}}" wx:for-index="msgIndex" wx:key="id" class="message-card">
-      <view class="message-label user-label">我</view>
-      <view class="bubble user-bubble">
-        <text>{{item.content}}</text>
-      </view>
-      <view class="message-label reply-label">OpenClaw</view>
-      <view class="bubble reply-bubble">
-        <text wx:if="{{item.status === 'pending'}}">{{onlineAvailable ? '等待领取...' : '等待 online 上线'}}</text>
-        <text wx:elif="{{item.status === 'processing'}}">{{onlineAvailable ? '正在执行...' : 'online 已离线，等待恢复'}}</text>
-        <text wx:elif="{{item.status === 'failed'}}">{{item.error || '执行失败'}}</text>
-        <text wx:else>{{item.reply_text || '已完成'}}</text>
-      </view>
+  <block wx:elif="{{loading && works.length === 0}}">
+    <view class="empty-card">
+      <text>正在加载作品...</text>
+    </view>
+  </block>
 
-      <view wx:if="{{item.mediaItems.length > 0}}" class="media-grid">
-        <view wx:for="{{item.mediaItems}}" wx:for-item="mediaItem" wx:for-index="mediaIndex" wx:key="id" class="media-card">
-          <image wx:if="{{mediaItem.media_type === 'image'}}" class="preview image-preview" src="{{mediaItem.preview_url || mediaItem.url}}" mode="aspectFill" data-url="{{mediaItem.preview_url || mediaItem.url}}" bindtap="previewImage" />
-          <video wx:elif="{{mediaItem.media_type === 'video'}}" class="preview video-preview" src="{{mediaItem.preview_url || mediaItem.url}}" controls show-fullscreen-btn show-play-btn></video>
-          <view wx:else class="file-preview"><text>{{mediaItem.media_type}}</text></view>
-          <text class="media-title">{{mediaItem.title}}</text>
-          <view class="media-actions">
-            <button class="ghost-btn" data-msg="{{msgIndex}}" data-index="{{mediaIndex}}" bindtap="copyMedia">复制</button>
-            <button class="primary-btn" data-msg="{{msgIndex}}" data-index="{{mediaIndex}}" bindtap="saveMedia">{{mediaItem.media_type === 'image' || mediaItem.media_type === 'video' ? '保存' : '复制链接'}}</button>
+  <block wx:elif="{{works.length === 0}}">
+    <view class="empty-card">
+      <text>还没有数字人视频</text>
+      <button class="primary-btn" bindtap="goCreate">去创作</button>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="work-list">
+      <view wx:for="{{works}}" wx:key="id" wx:for-index="index" class="work-card" data-index="{{index}}" bindtap="openWork">
+        <view class="work-cover">
+          <image wx:if="{{item.cover_url}}" class="cover-img" src="{{item.cover_url}}" mode="aspectFill" />
+          <video wx:elif="{{item.is_success && item.playable_url}}" class="cover-video" src="{{item.playable_url}}" show-center-play-btn="{{false}}" controls="{{false}}" muted object-fit="cover"></video>
+          <view wx:else class="cover-placeholder">AI</view>
+          <view wx:if="{{item.is_processing}}" class="cover-state">
+            <text>生成中</text>
+            <text>预计5-10分钟</text>
           </view>
+          <view wx:if="{{item.is_success}}" class="play-btn">▶</view>
+        </view>
+
+        <view class="work-main">
+          <view class="work-line">
+            <text class="type-chip">{{item.work_type_label}}</text>
+            <text class="status-chip {{item.status}}">{{item.status_label}}</text>
+          </view>
+          <text class="work-title">{{item.title}}</text>
+          <text class="work-prompt">{{item.prompt || item.message || '暂无创作参数'}}</text>
+          <text class="work-time">时间: {{item.created_at_text || '--'}}</text>
+        </view>
+
+        <view class="work-actions" catchtap="noop">
+          <button class="icon-btn" data-index="{{index}}" catchtap="copyPrompt">□</button>
+          <button class="icon-btn danger" data-index="{{index}}" catchtap="deleteWork">⌫</button>
         </view>
       </view>
     </view>
-  </view>
-
-  <view class="composer">
-    <textarea class="message-input" value="{{inputText}}" bindinput="onInput" maxlength="8000" auto-height placeholder="输入消息，例如：帮我生成一段产品短视频口播文案" placeholder-class="message-placeholder" />
-    <button class="send-btn" loading="{{sending}}" bindtap="sendMessage">发送</button>
-  </view>
+  </block>
 </view>

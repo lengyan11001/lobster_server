@@ -140,6 +140,7 @@ Page({
 
   onShow() {
     app.restoreSession();
+    this.applyPrefill();
     this.refreshAuthState();
     if (this.data.phoneBound) {
       this.loadAll();
@@ -159,6 +160,17 @@ Page({
     const phoneBound = Boolean(app.globalData.token && app.globalData.phone);
     this.setData({ phoneBound });
     return phoneBound;
+  },
+
+  applyPrefill() {
+    const prefill = wx.getStorageSync("lobster_digital_prefill");
+    if (!prefill) return;
+    wx.removeStorageSync("lobster_digital_prefill");
+    this.setData({
+      pageMode: "create",
+      title: prefill.title || this.data.title,
+      text: prefill.text || this.data.text
+    });
   },
 
   showAuthPanel(hint) {
@@ -458,7 +470,10 @@ Page({
           data: {
             title,
             avatar: avatar.avatar,
+            avatar_title: avatar.title || "",
+            avatar_image_url: avatar.image_url || "",
             voice: voice.voice,
+            voice_title: voice.title || "",
             text,
             st_show: this.data.stShow ? 1 : 0,
             rate: voiceParamText(this.data.speechRate || voice.rate, 1, 0.5, 2),
@@ -475,8 +490,11 @@ Page({
             progressText: "视频生成中，请稍候",
             text: ""
           });
-          this.loadVideos();
-          this.startPolling(data.task_id);
+          wx.setStorageSync("lobster_refresh_works", "1");
+          this.stopPolling();
+          setTimeout(() => {
+            wx.switchTab({ url: "/pages/downloads/downloads" });
+          }, 500);
         })
         .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
         .finally(() => this.setData({ submitting: false }));

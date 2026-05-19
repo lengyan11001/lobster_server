@@ -1,0 +1,68 @@
+<view class="detail-page">
+  <view class="space-layer stars-a"></view>
+  <view class="space-layer stars-b"></view>
+
+  <view class="detail-head">
+    <button class="back-btn" bindtap="goBack">‹</button>
+    <text class="detail-title">作品详情</text>
+  </view>
+
+  <block wx:if="{{work}}">
+    <view class="player-panel">
+      <video wx:if="{{work.playable_url}}" class="work-video" src="{{work.playable_url}}" controls show-fullscreen-btn show-play-btn object-fit="contain"></video>
+      <view wx:else class="video-waiting">
+        <image wx:if="{{work.cover_url}}" src="{{work.cover_url}}" mode="aspectFill" />
+        <view class="waiting-mask">
+          <text>{{work.status_label}}</text>
+          <text>{{work.is_processing ? '预计5-10分钟' : (work.message || '视频暂不可播放')}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="params-card">
+      <text class="card-title">创作参数</text>
+
+      <text class="field-label">作品名称</text>
+      <view class="field-box">
+        <text>{{work.title}}</text>
+      </view>
+
+      <text class="field-label">提示词</text>
+      <view class="field-box prompt-box">
+        <text>{{work.prompt || '暂无提示词'}}</text>
+        <button wx:if="{{work.prompt}}" class="copy-btn" bindtap="copyPrompt">复制</button>
+      </view>
+
+      <text class="field-label">参考图片</text>
+      <view class="reference-row">
+        <image wx:if="{{work.cover_url}}" class="reference-img" src="{{work.cover_url}}" mode="aspectFill" />
+        <view wx:else class="reference-empty">暂无</view>
+      </view>
+
+      <view class="meta-grid">
+        <view>
+          <text>状态</text>
+          <text>{{work.status_label}}</text>
+        </view>
+        <view>
+          <text>时长</text>
+          <text>{{work.duration_text}}</text>
+        </view>
+        <view>
+          <text>创建时间</text>
+          <text>{{work.created_at_text || '--'}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="bottom-actions">
+      <button class="action-btn" bindtap="regenerate">↻ 重新生成</button>
+      <button class="action-btn primary" loading="{{loading}}" bindtap="saveVideo">⬇ 下载</button>
+      <button class="action-btn" bindtap="shareWork">⌯ 分享</button>
+    </view>
+  </block>
+
+  <view wx:else class="empty-card">
+    <text>{{loading ? '正在加载作品...' : '未找到作品'}}</text>
+  </view>
+</view>

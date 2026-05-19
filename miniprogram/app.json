@@ -4,6 +4,7 @@
     "pages/index/index",
     "pages/digital/digital",
     "pages/downloads/downloads",
+    "pages/work-detail/work-detail",
     "pages/profile/profile"
   ],
   "window": {

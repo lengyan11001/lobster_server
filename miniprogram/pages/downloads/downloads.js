@@ -2,91 +2,47 @@ const app = getApp();
 const api = require("../../utils/api");
 const media = require("../../utils/media");
 
-const URL_RE = /https?:\/\/[^\s<>"']+/gi;
-const MEDIA_EXTS = {
-  ".mp4": "video",
-  ".webm": "video",
-  ".mov": "video",
-  ".m4v": "video",
-  ".png": "image",
-  ".jpg": "image",
-  ".jpeg": "image",
-  ".webp": "image",
-  ".gif": "image",
-  ".mp3": "audio",
-  ".wav": "audio",
-  ".m4a": "audio"
-};
-
-function mediaTypeFromUrl(url) {
-  const clean = String(url || "").split("?")[0].toLowerCase();
-  const match = clean.match(/\.[a-z0-9]+$/);
-  return (match && MEDIA_EXTS[match[0]]) || "media";
+function videoUrl(item) {
+  return item.video_url || item.asset_video_url || item.source_video_url || "";
 }
 
-function filenameFromUrl(url) {
-  const path = String(url || "").split("?")[0].split("#")[0];
-  return decodeURIComponent(path.split("/").pop() || "生成素材");
+function coverUrl(item) {
+  return item.cover_url || item.image_url || item.avatar_image_url || item.avatar_url || "";
 }
 
-function mediaProxyUrl(url, disposition) {
-  const token = app.globalData.token || wx.getStorageSync("lobster_token") || "";
-  const params = [
-    `url=${encodeURIComponent(url)}`,
-    `disposition=${encodeURIComponent(disposition || "inline")}`,
-    `filename=${encodeURIComponent(filenameFromUrl(url))}`
-  ];
-  if (token) params.push(`token=${encodeURIComponent(token)}`);
-  return api.buildUrl(`/api/h5-chat/media?${params.join("&")}`);
+function statusLabel(status) {
+  if (status === "success") return "已完成";
+  if (status === "failed") return "失败";
+  if (status === "waiting") return "等待中";
+  return "生成中";
 }
 
-function directDownloadUrl(url) {
-  const clean = String(url || "").trim();
-  return /^https:\/\//i.test(clean) ? clean : "";
+function formatTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).replace("T", " ").slice(0, 19);
+  const pad = (num) => String(num).padStart(2, "0");
+  return `${date.getFullYear()}.${pad(date.getMonth() + 1)}.${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-function extractMedia(replyText, events) {
-  const urls = [];
-  const seen = {};
-  function add(url) {
-    const clean = String(url || "").trim().replace(/[，。；;)]+$/, "");
-    if (!/^https?:\/\//i.test(clean) || seen[clean]) return;
-    seen[clean] = true;
-    urls.push(clean);
-  }
-  String(replyText || "").replace(URL_RE, (url) => {
-    add(url);
-    return url;
-  });
-  (events || []).forEach((ev) => {
-    const text = JSON.stringify((ev && ev.payload) || {});
-    text.replace(URL_RE, (url) => {
-      add(url);
-      return url;
-    });
-  });
-  return urls.map((url, index) => {
-    const mediaType = mediaTypeFromUrl(url);
-    const filename = filenameFromUrl(url);
-    return {
-      id: `${index}_${url}`,
-      title: filename,
-      media_type: mediaType,
-      url,
-      preview_url: directDownloadUrl(url) || mediaProxyUrl(url, "inline"),
-      download_url: directDownloadUrl(url) || mediaProxyUrl(url, "attachment"),
-      proxy_preview_url: mediaProxyUrl(url, "inline"),
-      proxy_download_url: mediaProxyUrl(url, "attachment")
-    };
-  });
-}
-
-function normalizeHistory(raw) {
-  const row = raw.message || {};
-  const events = raw.events || [];
-  return Object.assign({}, row, {
-    events,
-    mediaItems: extractMedia(row.reply_text || "", events)
+function normalizeVideo(item) {
+  const status = item.status || "processing";
+  const url = videoUrl(item);
+  return Object.assign({}, item, {
+    work_type: "digital_video",
+    media_type: "video",
+    work_type_label: "数字人视频",
+    title: item.title || "未命名视频",
+    prompt: item.text || item.prompt || "",
+    cover_url: coverUrl(item),
+    playable_url: url,
+    preview_url: url,
+    status,
+    status_label: statusLabel(status),
+    created_at_text: formatTime(item.created_at),
+    is_processing: status === "processing" || status === "waiting",
+    is_success: status === "success",
+    is_failed: status === "failed"
   });
 }
 
@@ -94,80 +50,35 @@ Page({
   data: {
     phoneBound: false,
     authPanelVisible: false,
-    smsBindVisible: false,
-    authHint: "发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。",
-    smsPhone: "",
-    smsCode: "",
-    smsSending: false,
-    smsBinding: false,
-    smsCountdown: 0,
+    authHint: "查看作品前需要微信登录并绑定手机号。",
+    mediaTab: "video",
+    videoKind: "digital",
     loading: false,
-    sending: false,
-    inputText: "",
-    messages: [],
-    onlineAvailable: false,
-    onlineText: "检查 online 状态中..."
+    polling: false,
+    works: [],
+    onlineText: ""
   },
 
-  smsTimer: null,
+  pollTimer: null,
 
   onShow() {
     app.restoreSession();
-    const prefill = wx.getStorageSync("lobster_message_prefill") || "";
-    if (prefill) wx.removeStorageSync("lobster_message_prefill");
-    this.setData({
-      phoneBound: Boolean(app.globalData.token && app.globalData.phone),
-      authPanelVisible: false,
-      inputText: prefill || this.data.inputText
-    });
-    if (this.data.phoneBound) {
-      this.loadMessages();
-      this.loadOnlineStatus();
-    }
+    this.refreshAuthState();
+    const shouldRefresh = wx.getStorageSync("lobster_refresh_works");
+    if (shouldRefresh) wx.removeStorageSync("lobster_refresh_works");
+    if (this.data.phoneBound) this.loadWorks();
   },
 
-  onPullDownRefresh() {
-    Promise.all([this.loadMessages(), this.loadOnlineStatus()]).finally(() => wx.stopPullDownRefresh());
+  onHide() {
+    this.stopPolling();
   },
 
   onUnload() {
-    this.clearSmsCountdown();
+    this.stopPolling();
   },
 
-  loadOnlineStatus() {
-    if (!app.globalData.token) return Promise.resolve();
-    return app
-      .request({ url: "/api/h5-chat/devices/status" })
-      .then((data) => {
-        const online = Boolean(data.online);
-        this.setData({
-          onlineAvailable: online,
-          onlineText: online ? "online 已连接" : "online 暂未在线"
-        });
-      })
-      .catch(() => this.setData({ onlineAvailable: false, onlineText: "online 状态获取失败" }));
-  },
-
-  loadMessages() {
-    if (!app.globalData.token) {
-      this.setData({ phoneBound: false, loading: false, messages: [] });
-      return Promise.resolve();
-    }
-    this.setData({ loading: true });
-    return app
-      .request({ url: "/api/h5-chat/messages?limit=40" })
-      .then((data) => {
-        this.setData({ messages: (data.messages || []).map(normalizeHistory), phoneBound: true });
-      })
-      .catch((err) => {
-        wx.showToast({ title: api.errorMessage(err), icon: "none" });
-        if (/401|403|未绑定/.test(api.errorMessage(err))) this.setData({ phoneBound: false });
-      })
-      .finally(() => this.setData({ loading: false }));
-  },
-
-  onInput(evt) {
-    this.setData({ inputText: evt.detail.value || "" });
+  onPullDownRefresh() {
+    this.loadWorks().finally(() => wx.stopPullDownRefresh());
   },
 
   refreshAuthState() {
@@ -181,7 +92,7 @@ Page({
     if (this.data.phoneBound) return false;
     this.setData({
       authPanelVisible: true,
-      authHint: hint || "发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。"
+      authHint: hint || "查看作品前需要微信登录并绑定手机号。"
     });
     return true;
   },
@@ -197,9 +108,7 @@ Page({
           return;
         }
         this.setData({ authPanelVisible: false });
-        wx.showToast({ title: "登录成功", icon: "success" });
-        this.loadMessages();
-        this.loadOnlineStatus();
+        this.loadWorks();
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => wx.hideLoading());
@@ -208,8 +117,7 @@ Page({
   onGetPhoneNumber(evt) {
     const code = evt.detail && evt.detail.code;
     if (!code) {
-      this.setData({ smsBindVisible: true });
-      wx.showToast({ title: "微信取号失败，可用短信绑定", icon: "none" });
+      wx.showToast({ title: "微信取号失败", icon: "none" });
       return;
     }
     const bind = () => this.bindPhone(code);
@@ -225,187 +133,151 @@ Page({
     app
       .bindPhone(code)
       .then(() => {
-        this.setData({ authPanelVisible: false, smsBindVisible: false, phoneBound: true });
+        this.setData({ authPanelVisible: false, phoneBound: true });
         wx.showToast({ title: "绑定成功", icon: "success" });
-        this.loadMessages();
-        this.loadOnlineStatus();
+        this.loadWorks();
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => wx.hideLoading());
   },
 
-  showSmsBind() {
-    this.setData({ smsBindVisible: true });
+  setMediaTab(evt) {
+    const tab = evt.currentTarget.dataset.tab || "video";
+    this.setData({ mediaTab: tab });
   },
 
-  onSmsPhoneInput(evt) {
-    this.setData({ smsPhone: evt.detail.value || "" });
+  setVideoKind(evt) {
+    const kind = evt.currentTarget.dataset.kind || "digital";
+    this.setData({ videoKind: kind });
   },
 
-  onSmsCodeInput(evt) {
-    this.setData({ smsCode: evt.detail.value || "" });
-  },
+  noop() {},
 
-  sendSmsCode() {
-    if (this.data.smsSending || this.data.smsCountdown > 0) return;
-    const phone = (this.data.smsPhone || "").trim();
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-      wx.showToast({ title: "手机号格式不对", icon: "none" });
-      return;
+  loadWorks() {
+    if (!this.refreshAuthState()) {
+      this.setData({ works: [], loading: false });
+      return Promise.resolve();
     }
-    const send = () => {
-      this.setData({ smsSending: true });
-      app
-        .request({ method: "POST", url: "/api/mobile/sms/send", data: { phone } })
-        .then(() => {
-          wx.showToast({ title: "验证码已发送", icon: "success" });
-          this.startSmsCountdown();
-        })
-        .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-        .finally(() => this.setData({ smsSending: false }));
-    };
-    if (!app.globalData.token) {
-      app.loginWithWechat().then(send).catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
-      return;
-    }
-    send();
-  },
-
-  startSmsCountdown() {
-    this.clearSmsCountdown();
-    this.setData({ smsCountdown: 60 });
-    this.smsTimer = setInterval(() => {
-      const next = Math.max(0, Number(this.data.smsCountdown || 0) - 1);
-      this.setData({ smsCountdown: next });
-      if (next <= 0) this.clearSmsCountdown();
-    }, 1000);
-  },
-
-  clearSmsCountdown() {
-    if (this.smsTimer) {
-      clearInterval(this.smsTimer);
-      this.smsTimer = null;
-    }
-  },
-
-  bindBySms() {
-    const phone = (this.data.smsPhone || "").trim();
-    const code = (this.data.smsCode || "").trim();
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-      wx.showToast({ title: "手机号格式不对", icon: "none" });
-      return;
-    }
-    if (!code) {
-      wx.showToast({ title: "请输入短信验证码", icon: "none" });
-      return;
-    }
-    const bind = () => {
-      this.setData({ smsBinding: true });
-      app
-        .request({
-          method: "POST",
-          url: "/api/mobile/devices/bind",
-          data: {
-            phone,
-            sms_code: code,
-            device_id: app.globalData.deviceId,
-            platform: "wechat_miniprogram",
-            display_name: "微信小程序"
-          }
-        })
-        .then((data) => {
-          app.saveSession(data);
-          this.setData({ authPanelVisible: false, smsBindVisible: false, phoneBound: true, smsCode: "" });
-          wx.showToast({ title: "绑定成功", icon: "success" });
-          this.loadMessages();
-          this.loadOnlineStatus();
-        })
-        .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-        .finally(() => this.setData({ smsBinding: false }));
-    };
-    if (!app.globalData.token) {
-      app.loginWithWechat().then(bind).catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
-      return;
-    }
-    bind();
-  },
-
-  quickFill(evt) {
-    const text = evt.currentTarget.dataset.text || "";
-    this.setData({ inputText: text });
-  },
-
-  sendMessage() {
-    const content = (this.data.inputText || "").trim();
-    if (!content) {
-      wx.showToast({ title: "请输入消息", icon: "none" });
-      return;
-    }
-    if (this.showAuthPanel("发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。")) return;
-    this.setData({ sending: true });
-    this.loadOnlineStatus()
-      .then(() => {
-        if (!this.data.onlineAvailable) {
-          wx.showToast({ title: "online 未在线，启动电脑端后再发送", icon: "none" });
-          return Promise.resolve();
-        }
-        return app
-          .request({
-            method: "POST",
-            url: "/api/h5-chat/messages",
-            data: { content }
-          })
-          .then(() => {
-            this.setData({ inputText: "" });
-            wx.showToast({ title: "已发送", icon: "success" });
-            return this.loadMessages();
-          });
+    this.setData({ loading: true });
+    return app
+      .request({ url: "/api/hifly/my/video/list?page=1&size=50" })
+      .then((data) => {
+        const works = (data.items || []).map(normalizeVideo);
+        this.setData({ works, authPanelVisible: false });
+        this.refreshPolling();
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => this.setData({ sending: false }));
+      .finally(() => this.setData({ loading: false }));
   },
 
-  previewImage(evt) {
-    const url = evt.currentTarget.dataset.url;
-    if (!url) return;
-    wx.previewImage({ urls: [url], current: url });
+  refreshPolling() {
+    const hasProcessing = this.data.works.some((item) => item.is_processing && item.task_id);
+    if (hasProcessing) {
+      this.startPolling();
+      return;
+    }
+    this.stopPolling();
   },
 
-  copyMedia(evt) {
-    const item = this.data.messages[Number(evt.currentTarget.dataset.msg || 0)].mediaItems[Number(evt.currentTarget.dataset.index || 0)];
+  startPolling() {
+    if (this.pollTimer) return;
+    this.pollTimer = setInterval(() => this.pollProcessingWorks(), 8000);
+  },
+
+  stopPolling() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+  },
+
+  pollProcessingWorks() {
+    const targets = this.data.works.filter((item) => item.is_processing && item.task_id).slice(0, 5);
+    if (!targets.length || this.data.polling) return;
+    this.setData({ polling: true });
+    Promise.all(
+      targets.map((item) =>
+        app
+          .request({
+            method: "POST",
+            url: "/api/hifly/my/video/task",
+            data: { task_id: item.task_id },
+            timeout: 60000
+          })
+          .then((data) => normalizeVideo(data.item || item))
+          .catch(() => item)
+      )
+    )
+      .then((updated) => {
+        const byId = {};
+        updated.forEach((item) => {
+          byId[String(item.id)] = item;
+        });
+        const works = this.data.works.map((item) => byId[String(item.id)] || item);
+        this.setData({ works });
+        this.refreshPolling();
+      })
+      .finally(() => this.setData({ polling: false }));
+  },
+
+  openWork(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.works[index];
     if (!item) return;
-    media.copyLink(item.url).then(() => wx.showToast({ title: "链接已复制", icon: "success" }));
+    wx.setStorageSync("lobster_work_detail", item);
+    wx.navigateTo({ url: `/pages/work-detail/work-detail?id=${item.id || ""}&task_id=${item.task_id || ""}` });
   },
 
-  saveMedia(evt) {
-    const msg = this.data.messages[Number(evt.currentTarget.dataset.msg || 0)];
-    const item = msg && msg.mediaItems[Number(evt.currentTarget.dataset.index || 0)];
-    if (!item) return;
-    if (item.media_type !== "image" && item.media_type !== "video") {
-      this.copyMedia(evt);
+  copyPrompt(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.works[index];
+    if (!item || !item.prompt) return;
+    wx.setClipboardData({ data: item.prompt });
+  },
+
+  deleteWork(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.works[index];
+    if (!item || !item.id) return;
+    wx.showModal({
+      title: "删除作品",
+      content: "删除后作品记录不可恢复。",
+      confirmText: "删除",
+      confirmColor: "#ef4444",
+      success: (res) => {
+        if (!res.confirm) return;
+        app
+          .request({ method: "DELETE", url: `/api/hifly/my/video/${item.id}` })
+          .then(() => {
+            wx.showToast({ title: "已删除", icon: "success" });
+            this.loadWorks();
+          })
+          .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
+      }
+    });
+  },
+
+  saveWork(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.works[index];
+    if (!item || !item.playable_url) {
+      wx.showToast({ title: "视频还未生成", icon: "none" });
       return;
     }
     media
-      .saveToAlbum(item)
+      .saveToAlbum({
+        id: item.id,
+        title: item.title,
+        media_type: "video",
+        url: item.playable_url,
+        preview_url: item.playable_url,
+        download_url: item.playable_url
+      })
       .then(() => wx.showToast({ title: "已保存", icon: "success" }))
-      .catch((err) => {
-        const text = api.errorMessage(err);
-        if (/auth deny|authorize|permission|scope/i.test(text)) {
-          wx.showModal({
-            title: "需要相册权限",
-            content: "请允许保存到相册后再试。",
-            confirmText: "去设置",
-            success(res) {
-              if (res.confirm) wx.openSetting({});
-            }
-          });
-          return;
-        }
-        media.copyLink(item.url).finally(() => wx.showToast({ title: "保存失败，已复制链接", icon: "none" }));
-      });
+      .catch(() => media.copyLink(item.playable_url).finally(() => wx.showToast({ title: "保存失败，已复制链接", icon: "none" })));
   },
 
-  goHome() {
-    wx.switchTab({ url: "/pages/index/index" });
+  goCreate() {
+    wx.navigateTo({ url: "/pages/digital/digital" });
   }
 });
