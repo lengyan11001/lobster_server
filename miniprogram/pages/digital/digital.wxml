@@ -1,132 +1,198 @@
 <view class="page digital-page">
-  <view class="hero digital-hero">
-    <text class="hero-kicker">DIGITAL HUMAN</text>
-    <text class="hero-title">数字人口播视频</text>
-    <text class="hero-subtitle">选择数字人和声音，输入文案后生成可播放、可保存的视频。</text>
-  </view>
+  <view class="digital-stars stars-a"></view>
+  <view class="digital-stars stars-b"></view>
 
-  <view wx:if="{{authPanelVisible && !phoneBound}}" class="section auth-card">
-    <text class="section-title">授权后继续</text>
-    <text class="muted">{{authHint}}</text>
-    <view class="button-row">
+  <view wx:if="{{authPanelVisible && !phoneBound}}" class="auth-card">
+    <text class="auth-title">授权后继续</text>
+    <text class="auth-text">{{authHint}}</text>
+    <view class="auth-actions">
       <button class="ghost-btn" bindtap="login">微信登录</button>
       <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
     </view>
   </view>
 
-  <view wx:if="{{!phoneBound}}" class="section auth-card">
-    <text class="section-title">先登录账号</text>
-    <text class="muted">数字人生成会关联你的账号余额和作品记录。</text>
-    <view class="button-row">
-      <button class="primary-btn" bindtap="login">微信登录</button>
-    </view>
+  <view wx:if="{{!phoneBound && !authPanelVisible}}" class="auth-card">
+    <text class="auth-title">先登录账号</text>
+    <text class="auth-text">数字人生成会关联你的账号余额和作品记录。</text>
+    <button class="primary-btn auth-login" bindtap="login">微信登录</button>
   </view>
 
   <block wx:else>
-    <view class="section create-card">
-      <view class="section-head">
-        <text class="section-title inline-title">创建视频</text>
-        <button class="mini-link" bindtap="fillSample">示例文案</button>
+    <block wx:if="{{pageMode === 'select'}}">
+      <view class="digital-top">
+        <button class="back-btn" bindtap="goBack">‹</button>
+        <text class="digital-title">选择数字分身</text>
+        <button class="more-btn" bindtap="goManage">管理</button>
       </view>
 
-      <view class="selected-row">
-        <view class="selected-box">
-          <text class="selected-label">数字人</text>
-          <text class="selected-value">{{selectedAvatar ? selectedAvatar.title : '请选择'}}</text>
-        </view>
-        <view class="selected-box">
-          <text class="selected-label">声音</text>
-          <text class="selected-value">{{selectedVoice ? selectedVoice.title : '请选择'}}</text>
-        </view>
+      <view class="hero-preview">
+        <image wx:if="{{selectedAvatar && selectedAvatar.image_url}}" class="hero-avatar" src="{{selectedAvatar.image_url}}" mode="aspectFill" />
+        <view wx:else class="hero-avatar hero-placeholder">数</view>
+        <view class="hero-shadow"></view>
+        <text class="hero-name">{{selectedAvatar ? selectedAvatar.title : '请选择数字人'}}</text>
       </view>
 
-      <input class="input title-input" value="{{title}}" bindinput="onTitleInput" maxlength="50" placeholder="视频标题" />
-      <textarea class="script-input" value="{{text}}" bindinput="onTextInput" maxlength="1500" placeholder="输入数字人口播文案" />
-      <view class="option-row">
-        <text class="muted">显示字幕</text>
-        <switch checked="{{stShow}}" bindchange="toggleSubtitle" />
-      </view>
-      <button class="primary-btn create-btn" loading="{{submitting}}" bindtap="createVideo">生成数字人视频</button>
-      <view wx:if="{{pollingTaskId}}" class="progress-card">
-        <view class="spinner"></view>
-        <text>{{progressText || '视频生成中'}}</text>
-      </view>
-    </view>
-
-    <view class="section">
-      <view class="asset-tabs">
-        <button class="{{activeAssetTab === 'avatar' ? 'active' : ''}}" data-tab="avatar" bindtap="setAssetTab">数字人</button>
-        <button class="{{activeAssetTab === 'voice' ? 'active' : ''}}" data-tab="voice" bindtap="setAssetTab">声音</button>
+      <view class="asset-switch">
+        <button class="{{activeAssetTab === 'avatar' ? 'active' : ''}}" data-tab="avatar" bindtap="setAssetTab">我的形象</button>
+        <button class="{{activeAssetTab === 'voice' ? 'active' : ''}}" data-tab="voice" bindtap="setAssetTab">我的声音</button>
+        <button class="manage-chip" bindtap="goManage">管理</button>
       </view>
 
       <block wx:if="{{activeAssetTab === 'avatar'}}">
-        <view class="sub-tabs">
-          <button class="{{avatarTab === 'mine' ? 'active' : ''}}" data-tab="mine" bindtap="setAvatarTab">我的</button>
-          <button class="{{avatarTab === 'public' ? 'active' : ''}}" data-tab="public" bindtap="setAvatarTab">公共</button>
-        </view>
-        <view wx:if="{{loadingAssets}}" class="empty">正在加载数字人...</view>
-        <view wx:elif="{{avatarTab === 'mine' && avatarsMine.length === 0}}" class="empty">还没有自己的数字人，先使用公共数字人。</view>
-        <view wx:elif="{{avatarTab === 'public' && avatarsPublic.length === 0}}" class="empty">暂无可用公共数字人。</view>
-        <scroll-view wx:else scroll-x class="asset-scroll" show-scrollbar="{{false}}">
-          <view class="asset-strip">
-            <view wx:for="{{avatarTab === 'mine' ? avatarsMine : avatarsPublic}}" wx:key="id" class="avatar-card {{selectedAvatar && selectedAvatar.avatar === item.avatar ? 'selected' : ''}}" data-source="{{avatarTab}}" data-index="{{index}}" bindtap="selectAvatar">
-              <image wx:if="{{item.image_url}}" src="{{item.image_url}}" mode="aspectFill" class="avatar-image" />
-              <view wx:else class="avatar-placeholder">数</view>
-              <text class="asset-title">{{item.title}}</text>
-              <text class="asset-tag">{{item.section_label}}</text>
+        <scroll-view scroll-x class="select-strip-scroll" show-scrollbar="{{false}}">
+          <view class="select-strip">
+            <view class="create-mini-card">
+              <view class="plus-circle">+</view>
+              <text>克隆分身</text>
+            </view>
+            <view wx:for="{{displayAvatars}}" wx:key="id" class="mini-avatar-card {{selectedAvatar && selectedAvatar.avatar === item.avatar ? 'selected' : ''}}" data-source="{{displayAvatarSource}}" data-index="{{index}}" bindtap="selectAvatar">
+              <image wx:if="{{item.image_url}}" class="mini-avatar-img" src="{{item.image_url}}" mode="aspectFill" />
+              <view wx:else class="mini-avatar-img mini-placeholder">数</view>
+              <text>{{item.title}}</text>
             </view>
           </view>
         </scroll-view>
       </block>
 
       <block wx:else>
-        <view class="sub-tabs">
-          <button class="{{voiceTab === 'mine' ? 'active' : ''}}" data-tab="mine" bindtap="setVoiceTab">我的</button>
-          <button class="{{voiceTab === 'public' ? 'active' : ''}}" data-tab="public" bindtap="setVoiceTab">公共</button>
-        </view>
-        <view wx:if="{{loadingAssets}}" class="empty">正在加载声音...</view>
-        <view wx:elif="{{voiceTab === 'mine' && voicesMine.length === 0}}" class="empty">还没有自己的声音，先使用公共声音。</view>
-        <view wx:elif="{{voiceTab === 'public' && voicesPublic.length === 0}}" class="empty">暂无可用公共声音。</view>
-        <view wx:else class="voice-list">
-          <view wx:for="{{voiceTab === 'mine' ? voicesMine : voicesPublic}}" wx:key="id" class="voice-card {{selectedVoice && selectedVoice.voice === item.voice ? 'selected' : ''}}" data-source="{{voiceTab}}" data-index="{{index}}" bindtap="selectVoice">
-            <view class="voice-main">
-              <text class="voice-title">{{item.title}}</text>
-              <text class="asset-tag">{{item.section_label}}</text>
+        <scroll-view scroll-x class="select-strip-scroll" show-scrollbar="{{false}}">
+          <view class="select-strip">
+            <view class="create-mini-card voice-create">
+              <view class="plus-circle">麦</view>
+              <text>模拟声音</text>
             </view>
-            <button class="play-btn" catchtap="playVoice" data-source="{{voiceTab}}" data-index="{{index}}">{{audioPlayingId === item.id ? '停止' : '试听'}}</button>
+            <view wx:for="{{displayVoices}}" wx:key="id" class="mini-voice-card {{selectedVoice && selectedVoice.voice === item.voice ? 'selected' : ''}}" data-source="{{displayVoiceSource}}" data-index="{{index}}" bindtap="selectVoice">
+              <button class="play-round" catchtap="playVoice" data-source="{{displayVoiceSource}}" data-index="{{index}}">{{audioPlayingId === item.id ? 'Ⅱ' : '▶'}}</button>
+              <text class="mini-voice-title">{{item.title}}</text>
+              <text class="mini-voice-time">30秒</text>
+            </view>
+          </view>
+        </scroll-view>
+      </block>
+
+      <button class="bottom-create-btn" bindtap="goCreate">去创作</button>
+    </block>
+
+    <block wx:elif="{{pageMode === 'manage'}}">
+      <view class="manage-top">
+        <button class="back-btn" bindtap="goSelect">‹</button>
+        <view>
+          <text class="manage-title">管理数字分身</text>
+          <text class="manage-sub">MANAGE AVATARS</text>
+        </view>
+      </view>
+
+      <view class="manage-tabs">
+        <button class="{{manageTab === 'avatar' ? 'active avatar-active' : ''}}" data-tab="avatar" bindtap="setManageTab">形象管理</button>
+        <button class="{{manageTab === 'voice' ? 'active voice-active' : ''}}" data-tab="voice" bindtap="setManageTab">声音管理</button>
+      </view>
+
+      <block wx:if="{{manageTab === 'avatar'}}">
+        <view class="manage-head">
+          <text>我的形象</text>
+          <text>{{avatarsMine.length || avatarsPublic.length}}个</text>
+        </view>
+        <view wx:if="{{loadingAssets}}" class="empty">正在加载数字人...</view>
+        <view wx:else class="avatar-manage-grid">
+          <view wx:for="{{displayAvatars}}" wx:key="id" class="manage-avatar-card" data-source="{{displayAvatarSource}}" data-index="{{index}}" bindtap="selectAvatar">
+            <image wx:if="{{item.image_url}}" class="manage-avatar-img" src="{{item.image_url}}" mode="aspectFill" />
+            <view wx:else class="manage-avatar-img manage-placeholder">数</view>
+            <text>{{item.title}}</text>
           </view>
         </view>
       </block>
-    </view>
 
-    <view class="section">
-      <view class="section-head">
-        <text class="section-title inline-title">我的作品</text>
-        <button class="mini-link" bindtap="loadVideos">刷新</button>
-      </view>
-      <view wx:if="{{loadingVideos}}" class="empty">正在加载作品...</view>
-      <view wx:elif="{{videos.length === 0}}" class="empty">还没有数字人视频。</view>
-      <view wx:else class="video-list">
-        <view wx:for="{{videos}}" wx:key="id" class="video-card">
-          <view class="video-thumb" bindtap="previewVideo" data-index="{{index}}">
-            <text class="video-state {{item.status}}">{{item.status_text}}</text>
-            <text class="play-mark">{{item.status === 'success' ? '播放' : '刷新'}}</text>
+      <block wx:else>
+        <view class="manage-head">
+          <text>我的声音</text>
+          <text>{{voicesMine.length || voicesPublic.length}}个</text>
+        </view>
+        <view wx:if="{{loadingAssets}}" class="empty">正在加载声音...</view>
+        <view wx:else class="voice-manage-grid">
+          <view wx:for="{{displayVoices}}" wx:key="id" class="manage-voice-card" data-source="{{displayVoiceSource}}" data-index="{{index}}" bindtap="selectVoice">
+            <button class="manage-play" catchtap="playVoice" data-source="{{displayVoiceSource}}" data-index="{{index}}">{{audioPlayingId === item.id ? 'Ⅱ' : '▶'}}</button>
+            <text>{{item.title}}</text>
+            <text>30秒</text>
           </view>
-          <view class="video-info">
-            <text class="video-title">{{item.title}}</text>
-            <text class="video-meta">{{item.created_at || ''}}</text>
-            <text wx:if="{{item.message}}" class="video-error">{{item.message}}</text>
-            <view class="video-actions">
-              <button wx:if="{{item.status !== 'success'}}" bindtap="pollVideo" data-index="{{index}}">刷新</button>
-              <button wx:if="{{item.status === 'success'}}" bindtap="previewVideo" data-index="{{index}}">播放</button>
-              <button wx:if="{{item.status === 'success'}}" bindtap="saveVideo" data-index="{{index}}">保存</button>
-              <button wx:if="{{item.status === 'success'}}" bindtap="copyVideo" data-index="{{index}}">复制</button>
-              <button class="danger" bindtap="deleteVideo" data-index="{{index}}">删除</button>
+        </view>
+      </block>
+    </block>
+
+    <block wx:else>
+      <view class="create-top">
+        <button class="back-btn" bindtap="goSelect">‹</button>
+        <text class="step-title"><text>1.</text> 输入文字</text>
+      </view>
+
+      <view class="create-form">
+        <text class="form-label">标题（选填）</text>
+        <input class="form-input" value="{{title}}" bindinput="onTitleInput" maxlength="50" placeholder="可不填" placeholder-class="form-placeholder" />
+
+        <text class="form-label">话题（选填）</text>
+        <input class="form-input" placeholder="可不填" placeholder-class="form-placeholder" />
+
+        <view class="script-head">
+          <text class="form-label">请输入视频内容</text>
+          <button class="sample-btn" bindtap="fillSample">示例文案</button>
+        </view>
+        <textarea class="script-input" value="{{text}}" bindinput="onTextInput" maxlength="1500" placeholder="请输入视频内容" placeholder-class="form-placeholder" />
+
+        <view class="create-actions">
+          <button class="assist-btn" bindtap="fillSample">AI帮我写</button>
+          <view class="subtitle-toggle">
+            <text>字幕</text>
+            <switch checked="{{stShow}}" bindchange="toggleSubtitle" />
+          </view>
+        </view>
+
+        <view class="selected-row">
+          <view class="selected-box">
+            <text>数字人</text>
+            <text>{{selectedAvatar ? selectedAvatar.title : '请选择'}}</text>
+          </view>
+          <view class="selected-box">
+            <text>声音</text>
+            <text>{{selectedVoice ? selectedVoice.title : '请选择'}}</text>
+          </view>
+        </view>
+      </view>
+
+      <button class="next-btn" loading="{{submitting}}" bindtap="createVideo">下一步</button>
+
+      <view wx:if="{{pollingTaskId}}" class="progress-card">
+        <view class="spinner"></view>
+        <text>{{progressText || '视频生成中'}}</text>
+      </view>
+
+      <view class="works-section">
+        <view class="section-head">
+          <text>我的作品</text>
+          <button bindtap="loadVideos">刷新</button>
+        </view>
+        <view wx:if="{{loadingVideos}}" class="empty">正在加载作品...</view>
+        <view wx:elif="{{videos.length === 0}}" class="empty">还没有数字人视频。</view>
+        <view wx:else class="video-list">
+          <view wx:for="{{videos}}" wx:key="id" class="video-card">
+            <view class="video-thumb" bindtap="previewVideo" data-index="{{index}}">
+              <text class="video-state {{item.status}}">{{item.status_text}}</text>
+              <text class="play-mark">{{item.status === 'success' ? '播放' : '刷新'}}</text>
+            </view>
+            <view class="video-info">
+              <text class="video-title">{{item.title}}</text>
+              <text class="video-meta">{{item.created_at || ''}}</text>
+              <text wx:if="{{item.message}}" class="video-error">{{item.message}}</text>
+              <view class="video-actions">
+                <button wx:if="{{item.status !== 'success'}}" bindtap="pollVideo" data-index="{{index}}">刷新</button>
+                <button wx:if="{{item.status === 'success'}}" bindtap="previewVideo" data-index="{{index}}">播放</button>
+                <button wx:if="{{item.status === 'success'}}" bindtap="saveVideo" data-index="{{index}}">保存</button>
+                <button wx:if="{{item.status === 'success'}}" bindtap="copyVideo" data-index="{{index}}">复制</button>
+                <button class="danger" bindtap="deleteVideo" data-index="{{index}}">删除</button>
+              </view>
             </view>
           </view>
         </view>
       </view>
-    </view>
+    </block>
   </block>
 
   <view wx:if="{{previewVisible}}" class="preview-mask">
@@ -136,7 +202,7 @@
         <button bindtap="closePreview">关闭</button>
       </view>
       <video src="{{previewVideoUrl}}" controls autoplay class="preview-video"></video>
-      <view class="button-row">
+      <view class="auth-actions">
         <button class="ghost-btn" bindtap="copyVideo">复制链接</button>
         <button class="primary-btn" bindtap="saveVideo">保存视频</button>
       </view>

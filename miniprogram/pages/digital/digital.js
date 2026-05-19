@@ -84,10 +84,16 @@ function normalizeVoiceList(rows, source) {
   return out;
 }
 
+function selectSource(mine, publicRows) {
+  return mine && mine.length ? "mine" : "public";
+}
+
 Page({
   data: {
     phoneBound: false,
     authPanelVisible: false,
+    pageMode: "select",
+    manageTab: "avatar",
     activeAssetTab: "avatar",
     avatarTab: "public",
     voiceTab: "public",
@@ -95,6 +101,10 @@ Page({
     avatarsPublic: [],
     voicesMine: [],
     voicesPublic: [],
+    displayAvatars: [],
+    displayAvatarSource: "public",
+    displayVoices: [],
+    displayVoiceSource: "public",
     videos: [],
     selectedAvatar: null,
     selectedVoice: null,
@@ -213,11 +223,17 @@ Page({
         const voicesPublic = uniqueBy(normalizeVoiceList(publicVoices.public || [], "public"), "voice");
         const selectedAvatar = this.data.selectedAvatar || avatarsMine[0] || avatarsPublic[0] || null;
         const selectedVoice = this.data.selectedVoice || voicesMine[0] || voicesPublic[0] || null;
+        const displayAvatarSource = selectSource(avatarsMine, avatarsPublic);
+        const displayVoiceSource = selectSource(voicesMine, voicesPublic);
         this.setData({
           avatarsMine,
           avatarsPublic,
           voicesMine,
           voicesPublic,
+          displayAvatars: displayAvatarSource === "mine" ? avatarsMine : avatarsPublic,
+          displayAvatarSource,
+          displayVoices: displayVoiceSource === "mine" ? voicesMine : voicesPublic,
+          displayVoiceSource,
           selectedAvatar,
           selectedVoice,
           avatarTab: avatarsMine.length ? "mine" : "public",
@@ -239,6 +255,43 @@ Page({
 
   setAssetTab(evt) {
     this.setData({ activeAssetTab: evt.currentTarget.dataset.tab || "avatar" });
+  },
+
+  setPageMode(evt) {
+    const mode = evt.currentTarget.dataset.mode || "select";
+    this.setData({ pageMode: mode });
+  },
+
+  goSelect() {
+    this.setData({ pageMode: "select" });
+  },
+
+  goBack() {
+    wx.navigateBack({
+      fail() {
+        wx.switchTab({ url: "/pages/index/index" });
+      }
+    });
+  },
+
+  goCreate() {
+    if (!this.data.selectedAvatar) {
+      wx.showToast({ title: "请选择数字人", icon: "none" });
+      return;
+    }
+    if (!this.data.selectedVoice) {
+      wx.showToast({ title: "请选择声音", icon: "none" });
+      return;
+    }
+    this.setData({ pageMode: "create" });
+  },
+
+  goManage() {
+    this.setData({ pageMode: "manage", manageTab: this.data.activeAssetTab || "avatar" });
+  },
+
+  setManageTab(evt) {
+    this.setData({ manageTab: evt.currentTarget.dataset.tab || "avatar" });
   },
 
   setAvatarTab(evt) {

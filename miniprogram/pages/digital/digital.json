@@ -1,5 +1,8 @@
 {
   "navigationBarTitleText": "数字人",
   "enablePullDownRefresh": true,
-  "backgroundColor": "#f3f6fb"
+  "navigationBarBackgroundColor": "#050505",
+  "navigationBarTextStyle": "white",
+  "backgroundColor": "#050505",
+  "backgroundTextStyle": "light"
 }
