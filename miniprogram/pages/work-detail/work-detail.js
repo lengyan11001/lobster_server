@@ -10,6 +10,23 @@ function coverUrl(item) {
   return item.cover_url || item.image_url || item.avatar_image_url || item.avatar_url || "";
 }
 
+function filenameFor(item) {
+  const raw = item.title || item.asset_id || item.id || "digital-human-video";
+  const base = String(raw).replace(/[\\/:*?"<>|#%&=]+/g, "_").slice(0, 80) || "digital-human-video";
+  return /\.mp4$/i.test(base) ? base : `${base}.mp4`;
+}
+
+function mediaProxyUrl(url, disposition, filename) {
+  const token = app.globalData.token || wx.getStorageSync("lobster_token") || "";
+  const params = [
+    `url=${encodeURIComponent(url || "")}`,
+    `disposition=${encodeURIComponent(disposition || "attachment")}`,
+    `filename=${encodeURIComponent(filename || "digital-human-video.mp4")}`
+  ];
+  if (token) params.push(`token=${encodeURIComponent(token)}`);
+  return api.buildUrl(`/api/h5-chat/media?${params.join("&")}`);
+}
+
 function statusLabel(status) {
   if (status === "success") return "已完成";
   if (status === "failed") return "失败";
@@ -28,11 +45,15 @@ function formatTime(value) {
 function normalize(item) {
   const status = item.status || "processing";
   const url = videoUrl(item);
+  const filename = filenameFor(item);
   return Object.assign({}, item, {
     title: item.title || "未命名视频",
     prompt: item.text || item.prompt || "",
     cover_url: coverUrl(item),
     playable_url: url,
+    download_url: url ? mediaProxyUrl(url, "attachment", filename) : "",
+    proxy_download_url: url ? mediaProxyUrl(url, "attachment", filename) : "",
+    proxy_preview_url: url ? mediaProxyUrl(url, "inline", filename) : "",
     status,
     status_label: statusLabel(status),
     created_at_text: formatTime(item.created_at),
@@ -186,10 +207,15 @@ Page({
         media_type: "video",
         url: work.playable_url,
         preview_url: work.playable_url,
-        download_url: work.playable_url
+        download_url: work.download_url,
+        proxy_download_url: work.proxy_download_url,
+        proxy_preview_url: work.proxy_preview_url
       })
       .then(() => wx.showToast({ title: "已保存", icon: "success" }))
-      .catch(() => media.copyLink(work.playable_url).finally(() => wx.showToast({ title: "保存失败，已复制链接", icon: "none" })));
+      .catch((err) => {
+        const reason = api.errorMessage(err);
+        media.copyLink(work.playable_url).finally(() => wx.showToast({ title: `保存失败: ${reason}`.slice(0, 28), icon: "none" }));
+      });
   },
 
   regenerate() {
