@@ -27,7 +27,7 @@
   <view class="clone-card" bindtap="goAssistant">
     <view class="clone-copy">
       <view class="clone-title-row">
-        <text class="clone-title">AI超级分身</text>
+        <text class="clone-title">AI超级员工</text>
         <text class="active-badge">ACTIVE</text>
       </view>
       <text class="clone-sub">OPENCLAW AI EMPLOYEE</text>
