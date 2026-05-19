@@ -55,9 +55,10 @@
       </view>
     </view>
 
-    <view class="bottom-actions result-actions">
-      <button class="action-btn try-btn" bindtap="regenerate">★ 我也试试</button>
-      <button class="action-btn share-btn" open-type="share" disabled="{{!isSharedView && !shareToken}}" bindtap="onShareTap">{{!isSharedView && !shareToken ? '准备中' : '⌯ 分享'}}</button>
+    <view class="bottom-actions">
+      <button class="action-btn" bindtap="regenerate">↻ 重新生成</button>
+      <button class="action-btn primary" loading="{{loading}}" bindtap="saveVideo">⬇ 下载</button>
+      <button class="action-btn" open-type="share" disabled="{{!isSharedView && !shareToken}}" bindtap="onShareTap">{{!isSharedView && !shareToken ? '准备中' : '⌯ 分享'}}</button>
     </view>
   </block>
 
