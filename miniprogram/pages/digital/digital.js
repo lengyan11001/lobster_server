@@ -88,6 +88,13 @@ function selectSource(mine, publicRows) {
   return mine && mine.length ? "mine" : "public";
 }
 
+function voiceParamText(value, fallback, min, max) {
+  const raw = value === undefined || value === null || value === "" ? fallback : value;
+  const num = Number(raw);
+  const safeNum = Math.max(min, Math.min(max, Number.isNaN(num) ? fallback : num));
+  return safeNum.toFixed(2);
+}
+
 Page({
   data: {
     phoneBound: false,
@@ -428,9 +435,9 @@ Page({
           voice: voice.voice,
           text,
           st_show: this.data.stShow ? 1 : 0,
-          rate: this.data.speechRate || voice.rate || undefined,
-          volume: voice.volume || undefined,
-          pitch: voice.pitch || undefined
+          rate: voiceParamText(this.data.speechRate || voice.rate, 1, 0.5, 2),
+          volume: voiceParamText(voice.volume, 1, 0.1, 2),
+          pitch: voiceParamText(voice.pitch, 1, 0.1, 2)
         },
         timeout: 60000
       })
