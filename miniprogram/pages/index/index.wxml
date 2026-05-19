@@ -12,7 +12,7 @@
   </view>
 
   <view class="brand-stage">
-    <image class="hero-art" src="/static/openclaw-hero.jpg" mode="aspectFill" />
+    <image class="hero-art" src="/static/openclaw-hero.jpg" mode="aspectFit" />
     <view class="hero-vignette"></view>
     <view class="planet-glow"></view>
     <view class="brand-orbit">
