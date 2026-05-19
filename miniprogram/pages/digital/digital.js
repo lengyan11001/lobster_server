@@ -129,6 +129,9 @@ Page({
     audioPlayingId: "",
     previewVisible: false,
     previewVideoUrl: "",
+    onlineDevices: [],
+    selectedInstallationId: "",
+    onlineText: "",
     authHint: "使用数字人前需要微信登录并绑定手机号。"
   },
 
@@ -214,7 +217,28 @@ Page({
 
   loadAll() {
     if (!this.refreshAuthState()) return Promise.resolve();
-    return Promise.all([this.loadAssets(), this.loadVideos()]);
+    return Promise.all([this.loadAssets(), this.loadVideos(), this.loadOnlineStatus()]);
+  },
+
+  loadOnlineStatus(showToast) {
+    if (!app.globalData.token) return Promise.resolve();
+    this.setData({ onlineText: "正在检查 online..." });
+    return app
+      .request({ url: "/api/h5-chat/devices/status" })
+      .then((data) => {
+        const devices = Array.isArray(data.devices) ? data.devices : [];
+        const selected = devices.find((d) => d.online && d.installation_id) || devices.find((d) => d.installation_id) || {};
+        const onlineCount = devices.filter((d) => d.online).length;
+        this.setData({
+          onlineDevices: devices,
+          selectedInstallationId: selected.installation_id || "",
+          onlineText: data.online ? `online 已连接 ${onlineCount}/${devices.length || onlineCount}` : "online 暂未在线"
+        });
+      })
+      .catch((err) => {
+        this.setData({ onlineText: "online 状态获取失败" });
+        if (showToast) wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      });
   },
 
   loadAssets() {
@@ -424,36 +448,55 @@ Page({
       wx.showToast({ title: "请输入口播文案", icon: "none" });
       return;
     }
-    this.setData({ submitting: true, progressText: "正在创建数字人视频" });
-    app
-      .request({
-        method: "POST",
-        url: "/api/hifly/my/video/create-by-tts",
-        data: {
-          title,
-          avatar: avatar.avatar,
-          voice: voice.voice,
-          text,
-          st_show: this.data.stShow ? 1 : 0,
-          rate: voiceParamText(this.data.speechRate || voice.rate, 1, 0.5, 2),
-          volume: voiceParamText(voice.volume, 1, 0.1, 2),
-          pitch: voiceParamText(voice.pitch, 1, 0.1, 2)
-        },
-        timeout: 60000
-      })
-      .then((data) => {
-        wx.showToast({ title: "任务已创建", icon: "success" });
-        this.setData({
-          pollingTaskId: data.task_id || "",
-          selectedVideo: data.item || null,
-          progressText: "视频生成中，请稍候",
-          text: ""
-        });
-        this.loadVideos();
-        this.startPolling(data.task_id);
-      })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => this.setData({ submitting: false }));
+    const sendCreateRequest = (installationId) => {
+      this.setData({ submitting: true, progressText: "正在创建数字人视频" });
+      return app
+        .request({
+          method: "POST",
+          url: "/api/hifly/my/video/create-by-tts",
+          header: { "X-Installation-Id": installationId },
+          data: {
+            title,
+            avatar: avatar.avatar,
+            voice: voice.voice,
+            text,
+            st_show: this.data.stShow ? 1 : 0,
+            rate: voiceParamText(this.data.speechRate || voice.rate, 1, 0.5, 2),
+            volume: voiceParamText(voice.volume, 1, 0.1, 2),
+            pitch: voiceParamText(voice.pitch, 1, 0.1, 2)
+          },
+          timeout: 60000
+        })
+        .then((data) => {
+          wx.showToast({ title: "任务已创建", icon: "success" });
+          this.setData({
+            pollingTaskId: data.task_id || "",
+            selectedVideo: data.item || null,
+            progressText: "视频生成中，请稍候",
+            text: ""
+          });
+          this.loadVideos();
+          this.startPolling(data.task_id);
+        })
+        .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+        .finally(() => this.setData({ submitting: false }));
+    };
+
+    const installationId = this.data.selectedInstallationId;
+    if (!installationId) {
+      this.setData({ progressText: "正在检查本地 online 设备" });
+      this.loadOnlineStatus(true).then(() => {
+        const refreshedInstallationId = this.data.selectedInstallationId;
+        if (!refreshedInstallationId) {
+          wx.showToast({ title: "未检测到本地 online 设备", icon: "none" });
+          this.setData({ progressText: "" });
+          return;
+        }
+        sendCreateRequest(refreshedInstallationId);
+      });
+      return;
+    }
+    sendCreateRequest(installationId);
   },
 
   startPolling(taskId) {
