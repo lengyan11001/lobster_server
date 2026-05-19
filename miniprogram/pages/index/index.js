@@ -417,17 +417,17 @@ Page({
   },
 
   goMessages() {
-    wx.switchTab({ url: "/pages/downloads/downloads" });
+    wx.navigateTo({ url: "/pages/assistant/assistant" });
   },
 
   goAssistant() {
-    wx.switchTab({ url: "/pages/downloads/downloads" });
+    wx.navigateTo({ url: "/pages/assistant/assistant" });
   },
 
   goFeature(evt) {
     const prompt = evt.currentTarget.dataset.prompt || "";
     if (prompt) wx.setStorageSync("lobster_message_prefill", prompt);
-    wx.switchTab({ url: "/pages/downloads/downloads" });
+    wx.navigateTo({ url: "/pages/assistant/assistant" });
   },
 
   goDigital() {
