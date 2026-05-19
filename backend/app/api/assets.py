@@ -445,7 +445,14 @@ async def upload_asset(
     db.add(asset)
     db.commit()
     logger.info("[上传流程-步骤5] 服务器直连上传完成（TOS）asset_id=%s source_url=%s", aid, tos_public_url[:80])
-    return {"asset_id": aid, "filename": fname_or_key, "media_type": mtype, "file_size": fsize}
+    return {
+        "asset_id": aid,
+        "filename": fname_or_key,
+        "media_type": mtype,
+        "file_size": fsize,
+        "source_url": tos_public_url,
+        "url": tos_public_url,
+    }
 
 
 # ── Temporary file upload (for clients without TOS) ───────────────

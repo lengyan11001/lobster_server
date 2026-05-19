@@ -62,7 +62,16 @@
   </view>
 
   <view class="composer">
+    <view wx:if="{{attachedImages.length > 0}}" class="attached-strip">
+      <view wx:for="{{attachedImages}}" wx:for-index="attachIndex" wx:key="url" class="attached-card">
+        <image class="attached-image" src="{{item.preview_url || item.url}}" mode="aspectFill" />
+        <button class="attached-remove" data-index="{{attachIndex}}" bindtap="removeAttachedImage">×</button>
+      </view>
+    </view>
     <textarea class="message-input" value="{{inputText}}" bindinput="onInput" maxlength="8000" auto-height placeholder="输入消息，例如：帮我生成一段产品短视频口播文案" />
-    <button class="primary-btn send-btn" loading="{{sending}}" bindtap="sendMessage">发送</button>
+    <view class="composer-actions">
+      <button class="ghost-btn attach-btn" disabled="{{uploadingImage || attachedImages.length >= 3}}" loading="{{uploadingImage}}" bindtap="chooseUploadImage">{{attachedImages.length >= 3 ? '最多3张' : '上传图片'}}</button>
+      <button class="primary-btn send-btn" loading="{{sending}}" bindtap="sendMessage">发送</button>
+    </view>
   </view>
 </view>

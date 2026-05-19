@@ -17,6 +17,9 @@ const MEDIA_EXTS = {
   ".wav": "audio",
   ".m4a": "audio"
 };
+const MOBILE_UPLOAD_TITLE = "【手机上传素材】";
+const MOBILE_UPLOAD_BLOCK_RE = /\n*【手机上传素材】\n[\s\S]*$/;
+const MAX_ATTACH_IMAGES = 3;
 
 function mediaTypeFromUrl(url) {
   const clean = String(url || "").split("?")[0].toLowerCase();
@@ -43,6 +46,39 @@ function mediaProxyUrl(url, disposition) {
 function directDownloadUrl(url) {
   const clean = String(url || "").trim();
   return /^https:\/\//i.test(clean) ? clean : "";
+}
+
+function stripUploadBlock(text) {
+  const raw = String(text || "");
+  if (raw.indexOf(MOBILE_UPLOAD_TITLE) < 0) return raw;
+  return raw.replace(MOBILE_UPLOAD_BLOCK_RE, "").trim() || "已上传图片";
+}
+
+function extractUploadedMediaFromContent(content) {
+  const raw = String(content || "");
+  const idx = raw.indexOf(MOBILE_UPLOAD_TITLE);
+  if (idx < 0) return [];
+  const block = raw.slice(idx);
+  const seen = {};
+  const out = [];
+  block.split(/\n+/).forEach((line, index) => {
+    const urlMatch = String(line || "").match(/URL:\s*(https?:\/\/\S+)/i);
+    if (!urlMatch) return;
+    const url = urlMatch[1].replace(/[，。；;)]+$/, "");
+    if (!url || seen[url]) return;
+    seen[url] = true;
+    out.push({
+      id: `upload_${index}_${url}`,
+      title: "上传图片",
+      media_type: "image",
+      url,
+      preview_url: directDownloadUrl(url) || mediaProxyUrl(url, "inline"),
+      download_url: directDownloadUrl(url) || mediaProxyUrl(url, "attachment"),
+      proxy_preview_url: mediaProxyUrl(url, "inline"),
+      proxy_download_url: mediaProxyUrl(url, "attachment")
+    });
+  });
+  return out;
 }
 
 function extractMedia(replyText, events) {
@@ -85,8 +121,9 @@ function normalizeHistory(raw) {
   const row = raw.message || {};
   const events = raw.events || [];
   return Object.assign({}, row, {
+    content: stripUploadBlock(row.content || ""),
     events,
-    mediaItems: extractMedia(row.reply_text || "", events)
+    mediaItems: extractUploadedMediaFromContent(row.content || "").concat(extractMedia(row.reply_text || "", events))
   });
 }
 
@@ -103,7 +140,9 @@ Page({
     smsCountdown: 0,
     loading: false,
     sending: false,
+    uploadingImage: false,
     inputText: "",
+    attachedImages: [],
     messages: [],
     onlineAvailable: false,
     onlineText: "检查 online 状态中..."
@@ -168,6 +207,84 @@ Page({
 
   onInput(evt) {
     this.setData({ inputText: evt.detail.value || "" });
+  },
+
+  chooseUploadImage() {
+    if (this.showAuthPanel("上传图片前需要微信登录并绑定手机号，用来关联你的电脑端 online。")) return;
+    const remain = MAX_ATTACH_IMAGES - (this.data.attachedImages || []).length;
+    if (remain <= 0) {
+      wx.showToast({ title: `最多上传${MAX_ATTACH_IMAGES}张`, icon: "none" });
+      return;
+    }
+    wx.chooseMedia({
+      count: remain,
+      mediaType: ["image"],
+      sourceType: ["album", "camera"],
+      sizeType: ["compressed"],
+      success: (res) => {
+        const files = (res.tempFiles || [])
+          .map((item) => item.tempFilePath || item.path || "")
+          .filter(Boolean);
+        if (files.length) this.uploadImages(files);
+      }
+    });
+  },
+
+  uploadImages(filePaths) {
+    if (!filePaths || !filePaths.length) return;
+    this.setData({ uploadingImage: true });
+    const uploaded = [];
+    let chain = Promise.resolve();
+    filePaths.forEach((filePath) => {
+      chain = chain.then(() => this.uploadOneImage(filePath).then((item) => uploaded.push(item)));
+    });
+    chain
+      .then(() => {
+        const attachedImages = (this.data.attachedImages || []).concat(uploaded).slice(0, MAX_ATTACH_IMAGES);
+        this.setData({ attachedImages });
+        wx.showToast({ title: "图片已上传", icon: "success" });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => this.setData({ uploadingImage: false }));
+  },
+
+  uploadOneImage(filePath) {
+    return api
+      .uploadFile({
+        url: "/api/assets/upload",
+        filePath,
+        name: "file",
+        token: app.globalData.token || wx.getStorageSync("lobster_token") || ""
+      })
+      .then((data) => {
+        const url = data.source_url || data.url || "";
+        if (!url) throw new Error("上传成功但没有返回图片链接");
+        return {
+          asset_id: data.asset_id || "",
+          title: data.filename || "上传图片",
+          media_type: "image",
+          url,
+          source_url: url,
+          preview_url: filePath
+        };
+      });
+  },
+
+  removeAttachedImage(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const attachedImages = (this.data.attachedImages || []).filter((_, i) => i !== index);
+    this.setData({ attachedImages });
+  },
+
+  buildMessageContent(content, attachments) {
+    const clean = String(content || "").trim();
+    const images = (attachments || []).filter((item) => item && item.url);
+    if (!images.length) return clean;
+    const lines = images.map((item) => {
+      const assetId = item.asset_id || "";
+      return `- asset_id: ${assetId}  media_type: image  URL: ${item.url}`;
+    });
+    return `${clean || "请根据上传图片继续处理。"}\n\n${MOBILE_UPLOAD_TITLE}\n${lines.join("\n")}`;
   },
 
   refreshAuthState() {
@@ -336,12 +453,14 @@ Page({
   },
 
   sendMessage() {
-    const content = (this.data.inputText || "").trim();
-    if (!content) {
-      wx.showToast({ title: "请输入消息", icon: "none" });
+    const inputText = (this.data.inputText || "").trim();
+    const attachedImages = this.data.attachedImages || [];
+    if (!inputText && attachedImages.length === 0) {
+      wx.showToast({ title: "请输入消息或上传图片", icon: "none" });
       return;
     }
     if (this.showAuthPanel("发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。")) return;
+    const content = this.buildMessageContent(inputText, attachedImages);
     this.setData({ sending: true });
     this.loadOnlineStatus()
       .then(() => {
@@ -356,7 +475,7 @@ Page({
             data: { content }
           })
           .then(() => {
-            this.setData({ inputText: "" });
+            this.setData({ inputText: "", attachedImages: [] });
             wx.showToast({ title: "已发送", icon: "success" });
             return this.loadMessages();
           });
