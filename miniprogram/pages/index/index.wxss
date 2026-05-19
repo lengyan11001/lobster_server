@@ -147,7 +147,7 @@ page {
 .hero-lobster {
   position: absolute;
   left: 50%;
-  top: 120rpx;
+  top: 82rpx;
   width: 470rpx;
   height: 530rpx;
   margin-left: -235rpx;
@@ -184,7 +184,7 @@ page {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 118rpx;
+  bottom: 142rpx;
   z-index: 3;
   color: rgba(255,255,255,0.68);
   font-size: 26rpx;
