@@ -43,6 +43,7 @@ _HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
 _HIFLY_AUDIO_CAPABILITY_ID = "hifly.video.create_by_audio"
 _HIFLY_TTS_UNIT_CREDITS = 10
 _HIFLY_TTS_CHARS_PER_SECOND = 4
+_HIFLY_SHARE_SECRET = (getattr(settings, "secret_key", None) or os.getenv("SECRET_KEY") or "lobster-share-secret").encode("utf-8")
 _VOICE_PREVIEW_EXPIRY_SEC = 86400
 _DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 _HIFLY_PUBLIC_AVATARS_PATH = _DATA_DIR / "hifly_public_avatars.json"
@@ -1487,6 +1488,25 @@ def _normalize_video_asset(row: UserHiflyVideoAsset, request: Optional[Request] 
     }
 
 
+def _video_share_token(video_id: int) -> str:
+    raw = str(int(video_id))
+    sig = hmac.new(_HIFLY_SHARE_SECRET, raw.encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+    return f"{raw}.{sig}"
+
+
+def _video_id_from_share_token(token: str) -> int:
+    raw = (token or "").strip()
+    if "." not in raw:
+        raise HTTPException(status_code=400, detail="分享链接无效")
+    video_id_text, sig = raw.split(".", 1)
+    if not video_id_text.isdigit():
+        raise HTTPException(status_code=400, detail="分享链接无效")
+    expected = _video_share_token(int(video_id_text)).split(".", 1)[1]
+    if not hmac.compare_digest(sig, expected):
+        raise HTTPException(status_code=400, detail="分享链接无效")
+    return int(video_id_text)
+
+
 async def _download_bytes(url: str) -> tuple[bytes, str]:
     """拉取 HiFly 临时视频返回 (data, content_type)。"""
     async with httpx.AsyncClient(timeout=600.0, trust_env=False, follow_redirects=True) as client:
@@ -1821,6 +1841,38 @@ def list_my_videos(
         "size": size,
         "total": total,
     }
+
+
+@router.post("/api/hifly/my/video/{video_id}/share")
+def create_my_video_share(
+    video_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(UserHiflyVideoAsset)
+        .filter(UserHiflyVideoAsset.id == video_id, UserHiflyVideoAsset.user_id == current_user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="作品不存在")
+    if row.status != "success":
+        raise HTTPException(status_code=400, detail="作品生成完成后才能分享")
+    return {"ok": True, "share_token": _video_share_token(row.id), "item": _normalize_video_asset(row, request)}
+
+
+@router.get("/api/hifly/video/share/{share_token}")
+def get_shared_video(
+    share_token: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    video_id = _video_id_from_share_token(share_token)
+    row = db.query(UserHiflyVideoAsset).filter(UserHiflyVideoAsset.id == video_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="分享作品不存在")
+    return {"ok": True, "item": _normalize_video_asset(row, request)}
 
 
 @router.delete("/api/hifly/my/video/{video_id}")

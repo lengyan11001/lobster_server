@@ -68,6 +68,9 @@ Page({
   data: {
     id: "",
     taskId: "",
+    shareToken: "",
+    isSharedView: false,
+    sharePath: "",
     loading: false,
     work: null
   },
@@ -75,6 +78,11 @@ Page({
   pollTimer: null,
 
   onLoad(query) {
+    if (query.share) {
+      this.setData({ shareToken: query.share || "", isSharedView: true });
+      this.loadSharedWork(query.share);
+      return;
+    }
     const cached = wx.getStorageSync("lobster_work_detail");
     if (cached && (String(cached.id || "") === String(query.id || "") || String(cached.task_id || "") === String(query.task_id || ""))) {
       this.setData({ work: normalize(cached) });
@@ -97,6 +105,7 @@ Page({
 
   refreshWork() {
     app.restoreSession();
+    if (this.data.isSharedView) return this.loadSharedWork(this.data.shareToken);
     if (!app.globalData.token) return Promise.resolve();
     const taskId = this.data.taskId || (this.data.work && this.data.work.task_id);
     if (taskId && (!this.data.work || this.data.work.is_processing)) {
@@ -144,12 +153,24 @@ Page({
       id: work.id || this.data.id,
       taskId: work.task_id || this.data.taskId
     });
-    wx.setStorageSync("lobster_refresh_works", "1");
+    if (!this.data.isSharedView) wx.setStorageSync("lobster_refresh_works", "1");
     if (work.is_processing && work.task_id) {
       this.startPolling();
       return;
     }
     this.stopPolling();
+    if (!this.data.isSharedView && work.is_success) this.prepareShareToken();
+  },
+
+  loadSharedWork(shareToken) {
+    const token = shareToken || this.data.shareToken;
+    if (!token) return Promise.resolve();
+    this.setData({ loading: true, shareToken: token, isSharedView: true });
+    return app
+      .request({ url: `/api/hifly/video/share/${encodeURIComponent(token)}` })
+      .then((data) => this.applyWork(data.item || data))
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => this.setData({ loading: false }));
   },
 
   startPolling() {
@@ -227,7 +248,45 @@ Page({
     wx.navigateTo({ url: "/pages/digital/digital?mode=create" });
   },
 
-  shareWork() {
-    this.copyLink();
+  ensureShareToken() {
+    if (this.data.shareToken) return Promise.resolve(this.data.shareToken);
+    const work = this.data.work || {};
+    if (!work.id) return Promise.reject(new Error("作品还未加载"));
+    if (!work.is_success) return Promise.reject(new Error("作品生成完成后才能分享"));
+    return app
+      .request({ method: "POST", url: `/api/hifly/my/video/${work.id}/share` })
+      .then((data) => {
+        const token = data.share_token || "";
+        if (!token) throw new Error("分享链接生成失败");
+        this.setData({
+          shareToken: token,
+          sharePath: `/pages/work-detail/work-detail?share=${encodeURIComponent(token)}`
+        });
+        return token;
+      });
+  },
+
+  prepareShareToken() {
+    if (this.data.shareToken || this.data.loading) return;
+    this.ensureShareToken().catch(() => {});
+  },
+
+  onShareTap() {
+    if (this.data.shareToken || this.data.isSharedView) return;
+    wx.showToast({ title: "正在生成分享链接，请稍后再点", icon: "none" });
+    this.prepareShareToken();
+  },
+
+  onShareAppMessage() {
+    const work = this.data.work || {};
+    const token = this.data.shareToken || "";
+    const path = token
+      ? `/pages/work-detail/work-detail?share=${encodeURIComponent(token)}`
+      : `/pages/work-detail/work-detail?id=${work.id || this.data.id || ""}&task_id=${work.task_id || this.data.taskId || ""}`;
+    return {
+      title: work.title ? `${work.title} - 龙虾AI员工` : "我用龙虾AI员工生成了一个数字人视频",
+      path,
+      imageUrl: work.cover_url || ""
+    };
   }
 });
