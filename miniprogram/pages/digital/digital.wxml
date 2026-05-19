@@ -118,7 +118,7 @@
       </block>
     </block>
 
-    <block wx:else>
+    <block wx:elif="{{pageMode === 'create'}}">
       <view class="create-top">
         <button class="back-btn" bindtap="goSelect">‹</button>
         <text class="step-title"><text>1.</text> 输入文字</text>
@@ -144,54 +144,77 @@
             <switch checked="{{stShow}}" bindchange="toggleSubtitle" />
           </view>
         </view>
-
-        <view class="selected-row">
-          <view class="selected-box">
-            <text>数字人</text>
-            <text>{{selectedAvatar ? selectedAvatar.title : '请选择'}}</text>
-          </view>
-          <view class="selected-box">
-            <text>声音</text>
-            <text>{{selectedVoice ? selectedVoice.title : '请选择'}}</text>
-          </view>
-        </view>
       </view>
 
-      <button class="next-btn" loading="{{submitting}}" bindtap="createVideo">下一步</button>
+      <button class="next-btn" bindtap="goPickDigital">下一步</button>
+
+      <view wx:if="{{pollingTaskId}}" class="progress-card">
+        <view class="spinner"></view>
+        <text>{{progressText || '视频生成中'}}</text>
+      </view>
+    </block>
+
+    <block wx:else>
+      <view class="create-top pick-top">
+        <button class="back-btn" bindtap="goCreate">‹</button>
+        <text class="step-title"><text>2.</text> 选择数字人</text>
+      </view>
+
+      <view class="pick-section">
+        <view class="pick-head">
+          <text>选择数字人</text>
+          <button bindtap="goManage">更多 ›</button>
+        </view>
+        <scroll-view scroll-x class="pick-scroll" show-scrollbar="{{false}}">
+          <view class="pick-strip">
+            <view class="custom-card">
+              <view class="custom-plus">+</view>
+              <text>自定义</text>
+            </view>
+            <view wx:for="{{displayAvatars}}" wx:key="id" class="pick-avatar-card {{selectedAvatar && selectedAvatar.avatar === item.avatar ? 'selected' : ''}}" data-source="{{displayAvatarSource}}" data-index="{{index}}" bindtap="selectAvatar">
+              <image wx:if="{{item.image_url}}" class="pick-avatar-img" src="{{item.image_url}}" mode="aspectFill" />
+              <view wx:else class="pick-avatar-img pick-placeholder">数</view>
+              <view wx:if="{{selectedAvatar && selectedAvatar.avatar === item.avatar}}" class="selected-check">✓</view>
+              <text>{{item.title}}</text>
+            </view>
+          </view>
+        </scroll-view>
+      </view>
+
+      <view class="pick-section">
+        <view class="pick-head">
+          <text>选择声音</text>
+          <button bindtap="goManage">更多 ›</button>
+        </view>
+        <view class="speed-row">
+          <text>语速</text>
+          <text>1.00x</text>
+        </view>
+        <view class="speed-track">
+          <view class="speed-fill"></view>
+          <view class="speed-thumb"></view>
+        </view>
+        <scroll-view scroll-x class="pick-scroll" show-scrollbar="{{false}}">
+          <view class="pick-strip">
+            <view class="custom-card voice-custom">
+              <view class="custom-plus">+</view>
+              <text>自定义</text>
+            </view>
+            <view wx:for="{{displayVoices}}" wx:key="id" class="pick-voice-card {{selectedVoice && selectedVoice.voice === item.voice ? 'selected' : ''}}" data-source="{{displayVoiceSource}}" data-index="{{index}}" bindtap="selectVoice">
+              <button class="pick-play" catchtap="playVoice" data-source="{{displayVoiceSource}}" data-index="{{index}}">{{audioPlayingId === item.id ? 'Ⅱ' : '▶'}}</button>
+              <view wx:if="{{selectedVoice && selectedVoice.voice === item.voice}}" class="selected-check">✓</view>
+              <text>{{item.title}}</text>
+            </view>
+          </view>
+        </scroll-view>
+      </view>
 
       <view wx:if="{{pollingTaskId}}" class="progress-card">
         <view class="spinner"></view>
         <text>{{progressText || '视频生成中'}}</text>
       </view>
 
-      <view class="works-section">
-        <view class="section-head">
-          <text>我的作品</text>
-          <button bindtap="loadVideos">刷新</button>
-        </view>
-        <view wx:if="{{loadingVideos}}" class="empty">正在加载作品...</view>
-        <view wx:elif="{{videos.length === 0}}" class="empty">还没有数字人视频。</view>
-        <view wx:else class="video-list">
-          <view wx:for="{{videos}}" wx:key="id" class="video-card">
-            <view class="video-thumb" bindtap="previewVideo" data-index="{{index}}">
-              <text class="video-state {{item.status}}">{{item.status_text}}</text>
-              <text class="play-mark">{{item.status === 'success' ? '播放' : '刷新'}}</text>
-            </view>
-            <view class="video-info">
-              <text class="video-title">{{item.title}}</text>
-              <text class="video-meta">{{item.created_at || ''}}</text>
-              <text wx:if="{{item.message}}" class="video-error">{{item.message}}</text>
-              <view class="video-actions">
-                <button wx:if="{{item.status !== 'success'}}" bindtap="pollVideo" data-index="{{index}}">刷新</button>
-                <button wx:if="{{item.status === 'success'}}" bindtap="previewVideo" data-index="{{index}}">播放</button>
-                <button wx:if="{{item.status === 'success'}}" bindtap="saveVideo" data-index="{{index}}">保存</button>
-                <button wx:if="{{item.status === 'success'}}" bindtap="copyVideo" data-index="{{index}}">复制</button>
-                <button class="danger" bindtap="deleteVideo" data-index="{{index}}">删除</button>
-              </view>
-            </view>
-          </view>
-        </view>
-      </view>
+      <button class="next-btn generate-btn" loading="{{submitting}}" bindtap="submitDigitalTask">算力生成</button>
     </block>
   </block>
 

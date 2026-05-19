@@ -275,6 +275,19 @@ Page({
   },
 
   goCreate() {
+    this.setData({ pageMode: "create" });
+  },
+
+  goPickDigital() {
+    const text = (this.data.text || "").trim();
+    if (!text) {
+      wx.showToast({ title: "请输入视频内容", icon: "none" });
+      return;
+    }
+    this.setData({ pageMode: "pick" });
+  },
+
+  submitDigitalTask() {
     if (!this.data.selectedAvatar) {
       wx.showToast({ title: "请选择数字人", icon: "none" });
       return;
@@ -283,7 +296,7 @@ Page({
       wx.showToast({ title: "请选择声音", icon: "none" });
       return;
     }
-    this.setData({ pageMode: "create" });
+    this.createVideo();
   },
 
   goManage() {

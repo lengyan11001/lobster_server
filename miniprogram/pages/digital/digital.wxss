@@ -49,7 +49,8 @@
 .create-form,
 .next-btn,
 .progress-card,
-.works-section {
+.works-section,
+.pick-section {
   position: relative;
   z-index: 1;
 }
@@ -563,6 +564,230 @@
 }
 
 .next-btn {
+  background: linear-gradient(135deg, #10f5dd, #1688ff);
+}
+
+.pick-top {
+  margin-bottom: 34rpx;
+}
+
+.pick-section {
+  margin-top: 36rpx;
+}
+
+.pick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.pick-head text {
+  color: #fff;
+  font-size: 32rpx;
+  font-weight: 900;
+}
+
+.pick-head button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48rpx;
+  margin: 0;
+  padding: 0 8rpx;
+  color: rgba(255,255,255,0.68);
+  background: transparent;
+  font-size: 24rpx;
+  font-weight: 800;
+}
+
+.pick-scroll {
+  margin: 20rpx -36rpx 0;
+  white-space: nowrap;
+}
+
+.pick-strip {
+  display: flex;
+  gap: 16rpx;
+  padding: 0 36rpx 12rpx;
+}
+
+.custom-card,
+.pick-avatar-card,
+.pick-voice-card {
+  position: relative;
+  flex: 0 0 142rpx;
+  width: 142rpx;
+  height: 204rpx;
+  overflow: hidden;
+  background: rgba(255,255,255,0.06);
+  border: 1rpx solid rgba(255,255,255,0.1);
+  border-radius: 22rpx;
+}
+
+.custom-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: linear-gradient(180deg, rgba(255,255,255,0.1), rgba(255,255,255,0.04));
+}
+
+.custom-card::after,
+.pick-avatar-card::after,
+.pick-voice-card::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 44rpx;
+  background: linear-gradient(135deg, #10d8df, #0b8de3);
+}
+
+.custom-plus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64rpx;
+  height: 64rpx;
+  margin-bottom: 46rpx;
+  color: rgba(255,255,255,0.76);
+  border: 1rpx solid rgba(255,255,255,0.24);
+  border-radius: 999rpx;
+  font-size: 46rpx;
+  font-weight: 300;
+}
+
+.custom-card text,
+.pick-avatar-card text,
+.pick-voice-card text {
+  position: absolute;
+  z-index: 2;
+  left: 10rpx;
+  right: 10rpx;
+  bottom: 11rpx;
+  overflow: hidden;
+  color: #fff;
+  font-size: 20rpx;
+  font-weight: 900;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-avatar-img {
+  display: block;
+  width: 100%;
+  height: 160rpx;
+}
+
+.pick-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #1f2937;
+  font-size: 48rpx;
+  font-weight: 900;
+}
+
+.pick-avatar-card.selected,
+.pick-voice-card.selected {
+  border-color: #10f5dd;
+  box-shadow: 0 0 0 2rpx rgba(16,245,221,0.36), 0 18rpx 36rpx rgba(16,245,221,0.16);
+}
+
+.selected-check {
+  position: absolute;
+  right: 8rpx;
+  bottom: 42rpx;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28rpx;
+  height: 28rpx;
+  color: #fff;
+  background: #10f5dd;
+  border-radius: 999rpx;
+  font-size: 18rpx;
+  font-weight: 900;
+}
+
+.speed-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 24rpx;
+}
+
+.speed-row text:first-child {
+  color: #fff;
+  font-size: 28rpx;
+  font-weight: 900;
+}
+
+.speed-row text:last-child {
+  color: #10f5dd;
+  font-size: 28rpx;
+  font-weight: 900;
+}
+
+.speed-track {
+  position: relative;
+  height: 4rpx;
+  margin: 28rpx 34rpx 28rpx;
+  background: rgba(255,255,255,0.16);
+}
+
+.speed-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 34%;
+  height: 4rpx;
+  background: #10f5dd;
+}
+
+.speed-thumb {
+  position: absolute;
+  left: 32%;
+  top: -15rpx;
+  width: 34rpx;
+  height: 34rpx;
+  background: #fff;
+  border-radius: 999rpx;
+}
+
+.pick-voice-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #12d6e8, #0b8de3);
+}
+
+.voice-custom {
+  background: rgba(255,255,255,0.06);
+}
+
+.pick-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64rpx;
+  height: 64rpx;
+  margin: 0 0 42rpx;
+  padding: 0;
+  color: #fff;
+  background: rgba(255,255,255,0.18);
+  border: 0;
+  border-radius: 999rpx;
+  font-size: 28rpx;
+}
+
+.generate-btn {
   background: linear-gradient(135deg, #10f5dd, #1688ff);
 }
 
