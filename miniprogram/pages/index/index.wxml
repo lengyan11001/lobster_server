@@ -78,6 +78,88 @@
     <text class="wide-arrow">></text>
   </view>
 
+  <view class="task-card">
+    <view class="task-card-summary">
+      <view class="task-icon">定</view>
+      <view class="task-copy">
+        <view class="task-title-row">
+          <text class="task-title">定时任务</text>
+          <text class="task-status {{phoneBound ? 'online' : ''}}">{{phoneBound ? 'ONLINE' : 'AUTH'}}</text>
+        </view>
+        <text class="task-sub">{{onlineText}}</text>
+      </view>
+      <button class="task-toggle" bindtap="toggleTaskPanel">{{taskExpanded ? '收起' : '配置'}}</button>
+    </view>
+
+    <view wx:if="{{taskExpanded}}" class="task-panel">
+      <view wx:if="{{authPanelVisible && !phoneBound}}" class="auth-card">
+        <text class="auth-title">授权后启用定时任务</text>
+        <text class="auth-text">{{authHint}}</text>
+        <view class="auth-actions">
+          <button class="task-ghost-btn" bindtap="login">微信登录</button>
+          <button class="task-primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+        </view>
+        <button class="sms-link" bindtap="showSmsBind">微信取号失败，用短信验证码绑定</button>
+        <view wx:if="{{smsBindVisible}}" class="sms-bind-box">
+          <input class="task-input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入已开通 online 的手机号" />
+          <view class="sms-code-row">
+            <input class="task-input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
+            <button class="task-ghost-btn sms-code-btn" disabled="{{smsSending || smsCountdown > 0}}" loading="{{smsSending}}" bindtap="sendSmsCode">{{smsCountdown > 0 ? smsCountdown + 's' : '获取'}}</button>
+          </view>
+          <button class="task-primary-btn sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">绑定手机号</button>
+        </view>
+      </view>
+
+      <block wx:else>
+        <view class="task-field">
+          <text class="task-field-label">AI能力</text>
+          <view class="task-seg">
+            <button wx:for="{{capabilities}}" wx:key="id" class="{{taskAbility === item.id ? 'active' : ''}}" data-ability="{{item.id}}" bindtap="setTaskAbility">{{item.name}}</button>
+          </view>
+        </view>
+
+        <view class="task-field">
+          <text class="task-field-label">任务名称</text>
+          <input class="task-input" value="{{taskTitle}}" bindinput="onTaskTitleInput" placeholder="不填则自动使用能力名称" />
+        </view>
+
+        <view class="task-field">
+          <text class="task-field-label">执行方式</text>
+          <view class="task-seg">
+            <button class="{{scheduleType === 'once' ? 'active' : ''}}" data-type="once" bindtap="setScheduleType">一次性</button>
+            <button class="{{scheduleType === 'interval' ? 'active' : ''}}" data-type="interval" bindtap="setScheduleType">循环执行</button>
+          </view>
+        </view>
+
+        <view wx:if="{{scheduleType === 'interval'}}" class="task-field">
+          <text class="task-field-label">循环间隔</text>
+          <view class="interval-row">
+            <input class="task-input" type="number" value="{{intervalMinutes}}" bindinput="onIntervalInput" placeholder="间隔分钟" />
+            <text>分钟</text>
+          </view>
+        </view>
+
+        <view wx:if="{{taskAbility === 'hifly.video.create_by_tts'}}" class="digital-fields">
+          <picker mode="selector" range="{{avatarRows}}" range-key="title" value="{{avatarIndex}}" bindchange="onAvatarChange">
+            <view class="picker-box">
+              <text class="picker-label">数字人</text>
+              <text class="picker-value">{{hiflyLoading ? '加载中...' : (selectedAvatarTitle || '请选择')}}</text>
+            </view>
+          </picker>
+          <picker mode="selector" range="{{voiceRows}}" range-key="title" value="{{voiceIndex}}" bindchange="onVoiceChange">
+            <view class="picker-box">
+              <text class="picker-label">声音</text>
+              <text class="picker-value">{{hiflyLoading ? '加载中...' : (selectedVoiceTitle || '请选择')}}</text>
+            </view>
+          </picker>
+          <button class="task-ghost-btn auto-btn" bindtap="autoPickDigital">自动选择</button>
+        </view>
+
+        <button class="task-submit" loading="{{submittingTask}}" bindtap="createScheduledTask">下发定时任务</button>
+      </block>
+    </view>
+  </view>
+
   <view class="showcase-section">
     <view class="showcase-head">
       <text class="showcase-title">AI数字人 · 销冠模板</text>
