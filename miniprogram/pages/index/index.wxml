@@ -12,15 +12,10 @@
   </view>
 
   <view class="brand-stage">
-    <image class="hero-art" src="/static/openclaw-hero.jpg" mode="aspectFit" />
+    <image class="hero-bg" src="/static/openclaw-hero-bg.jpg" mode="aspectFill" />
+    <image class="hero-lobster" src="/static/openclaw-lobster.png" mode="aspectFit" />
     <view class="hero-vignette"></view>
     <view class="planet-glow"></view>
-    <view class="brand-orbit">
-      <view class="orbit-ring ring-a"></view>
-      <view class="orbit-ring ring-b"></view>
-      <text class="brand-mark">OPENCLAW</text>
-      <text class="brand-name">龙虾AI</text>
-    </view>
     <text class="brand-line">把不凡的创意变成现实</text>
   </view>
 
