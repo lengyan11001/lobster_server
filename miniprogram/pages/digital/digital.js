@@ -2,6 +2,15 @@ const app = getApp();
 const api = require("../../utils/api");
 const media = require("../../utils/media");
 
+function assetUrl(path) {
+  const value = String(path || "").trim();
+  if (!value) return "";
+  if (/^https?:\/\//i.test(value)) return value;
+  if (/^\/\//.test(value)) return `https:${value}`;
+  if (value.charAt(0) === "/") return api.buildUrl(value);
+  return api.buildUrl(value);
+}
+
 function uniqueBy(rows, keyName) {
   const out = [];
   const seen = {};
@@ -17,11 +26,12 @@ function uniqueBy(rows, keyName) {
 function normalizeAvatar(row, source) {
   const avatar = String((row && row.avatar) || "").trim();
   if (!avatar) return null;
+  const rawImage = (row && (row.image_url || row.cover_url || row.detail_url || row.thumb || row.avatar_url || row.poster_url || row.thumbnail_url || row.preview_url)) || "";
   return {
     avatar,
     id: `${source}:${avatar}`,
     title: (row && (row.title || row.name || row.avatar)) || avatar,
-    image_url: (row && (row.image_url || row.cover_url || row.detail_url || row.thumb)) || "",
+    image_url: assetUrl(rawImage),
     section: source,
     section_label: source === "mine" ? "我的数字人" : "公共数字人",
     status: (row && row.status) || "success",
@@ -41,7 +51,7 @@ function normalizeVoice(row, source) {
       voice,
       id: `${source}:${voice}`,
       title: label,
-      demo_url: (style && style.demo_url) || (row && (row.demo_url || row.voice || row.audio_url)) || "",
+      demo_url: assetUrl((style && style.demo_url) || (row && (row.demo_url || row.audio_url || row.preview_url)) || ""),
       section: source,
       section_label: source === "mine" ? "我的声音" : "公共声音",
       status: (row && row.status) || "success",

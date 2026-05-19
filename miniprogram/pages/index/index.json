@@ -1,4 +1,6 @@
 {
-  "navigationBarTitleText": "必火AI员工"
+  "navigationBarTitleText": "AI员工",
+  "navigationBarBackgroundColor": "#07101f",
+  "navigationBarTextStyle": "white",
+  "backgroundColor": "#020403"
 }
-

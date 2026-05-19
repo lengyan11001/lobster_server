@@ -163,6 +163,7 @@
 
 .avatar-image,
 .avatar-placeholder {
+  display: block;
   width: 186rpx;
   height: 240rpx;
   border-radius: 16rpx;
@@ -222,13 +223,20 @@
 }
 
 .play-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 100rpx;
   height: 58rpx;
+  min-height: 58rpx;
+  padding: 0;
   color: #1d4ed8;
   background: #dbeafe;
   border-radius: 999rpx;
   font-size: 23rpx;
   font-weight: 800;
+  line-height: 58rpx;
+  text-align: center;
 }
 
 .video-card {

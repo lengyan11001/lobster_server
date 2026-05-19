@@ -420,8 +420,22 @@ Page({
     wx.switchTab({ url: "/pages/downloads/downloads" });
   },
 
+  goAssistant() {
+    wx.switchTab({ url: "/pages/downloads/downloads" });
+  },
+
+  goFeature(evt) {
+    const prompt = evt.currentTarget.dataset.prompt || "";
+    if (prompt) wx.setStorageSync("lobster_message_prefill", prompt);
+    wx.switchTab({ url: "/pages/downloads/downloads" });
+  },
+
   goDigital() {
     wx.navigateTo({ url: "/pages/digital/digital" });
+  },
+
+  goComingSoon() {
+    wx.showToast({ title: "功能即将上线", icon: "none" });
   },
 
   goProfile() {

@@ -7,29 +7,29 @@
     "pages/profile/profile"
   ],
   "window": {
-    "navigationBarTitleText": "必火AI员工",
+    "navigationBarTitleText": "龙虾AI员工",
     "navigationBarBackgroundColor": "#07101f",
     "navigationBarTextStyle": "white",
     "backgroundColor": "#07101f",
     "backgroundTextStyle": "light"
   },
   "tabBar": {
-    "color": "#8390a6",
-    "selectedColor": "#2563eb",
-    "backgroundColor": "#ffffff",
-    "borderStyle": "white",
+    "color": "#8b96a8",
+    "selectedColor": "#10f5dd",
+    "backgroundColor": "#080b10",
+    "borderStyle": "black",
     "list": [
       {
         "pagePath": "pages/index/index",
-        "text": "首页"
+        "text": "AI员工"
       },
       {
         "pagePath": "pages/downloads/downloads",
-        "text": "消息"
+        "text": "作品"
       },
       {
         "pagePath": "pages/profile/profile",
-        "text": "个人"
+        "text": "我的"
       }
     ]
   },
