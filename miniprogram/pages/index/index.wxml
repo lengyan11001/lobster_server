@@ -163,7 +163,7 @@
   <view class="showcase-section">
     <view class="showcase-head">
       <text class="showcase-title">AI数字人 · 销冠模板</text>
-      <button bindtap="goDigital">查看全部 ></button>
+      <button bindtap="goAvatarTemplates">查看全部 ></button>
     </view>
     <scroll-view scroll-x class="showcase-scroll" show-scrollbar="{{false}}">
       <view class="showcase-strip">
@@ -171,17 +171,17 @@
           <view class="plus-circle">+</view>
           <text>开始定制</text>
         </view>
-        <view class="template-card person-a" bindtap="goDigital">
-          <text class="template-title">销冠口播</text>
-          <text class="template-sub">数字人分身</text>
+        <view wx:if="{{avatarTemplatesLoading && !publicAvatarTemplates.length}}" class="template-card template-loading">
+          <view class="template-skeleton"></view>
+          <text class="template-title">加载模板中</text>
+          <text class="template-sub">公共数字人</text>
         </view>
-        <view class="template-card person-b" bindtap="goDigital">
-          <text class="template-title">品牌讲解</text>
-          <text class="template-sub">AI员工上镜</text>
-        </view>
-        <view class="template-card person-c" bindtap="goDigital">
-          <text class="template-title">知识带货</text>
-          <text class="template-sub">文案驱动视频</text>
+        <view wx:for="{{publicAvatarTemplates}}" wx:key="avatar" class="template-card" data-index="{{index}}" bindtap="selectPublicAvatarTemplate">
+          <image wx:if="{{item.image_url}}" class="template-img" src="{{item.image_url}}" mode="aspectFill" />
+          <view wx:else class="template-img template-placeholder">数</view>
+          <view class="template-mask"></view>
+          <text class="template-title">{{item.title}}</text>
+          <text class="template-sub">公共数字人</text>
         </view>
       </view>
     </scroll-view>

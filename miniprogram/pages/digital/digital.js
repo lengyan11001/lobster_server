@@ -166,11 +166,18 @@ Page({
     const prefill = wx.getStorageSync("lobster_digital_prefill");
     if (!prefill) return;
     wx.removeStorageSync("lobster_digital_prefill");
-    this.setData({
+    const selectedAvatar = prefill.avatar ? normalizeAvatar(prefill.avatar, prefill.avatar.section || "public") : null;
+    const data = {
       pageMode: "create",
       title: prefill.title || this.data.title,
       text: prefill.text || this.data.text
-    });
+    };
+    if (selectedAvatar) {
+      data.selectedAvatar = selectedAvatar;
+      data.avatarTab = selectedAvatar.section || "public";
+      data.displayAvatarSource = selectedAvatar.section || "public";
+    }
+    this.setData(data);
   },
 
   showAuthPanel(hint) {
@@ -268,7 +275,7 @@ Page({
         const voicesPublic = uniqueBy(normalizeVoiceList(publicVoices.public || [], "public"), "voice");
         const selectedAvatar = this.data.selectedAvatar || avatarsMine[0] || avatarsPublic[0] || null;
         const selectedVoice = this.data.selectedVoice || voicesMine[0] || voicesPublic[0] || null;
-        const displayAvatarSource = selectSource(avatarsMine, avatarsPublic);
+        const displayAvatarSource = selectedAvatar && selectedAvatar.section ? selectedAvatar.section : selectSource(avatarsMine, avatarsPublic);
         const displayVoiceSource = selectSource(voicesMine, voicesPublic);
         this.setData({
           avatarsMine,
@@ -281,7 +288,7 @@ Page({
           displayVoiceSource,
           selectedAvatar,
           selectedVoice,
-          avatarTab: avatarsMine.length ? "mine" : "public",
+          avatarTab: displayAvatarSource,
           voiceTab: voicesMine.length ? "mine" : "public"
         });
       })

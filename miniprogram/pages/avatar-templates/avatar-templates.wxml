@@ -1,0 +1,46 @@
+<view class="templates-page">
+  <view class="space-layer stars-a"></view>
+  <view class="space-layer stars-b"></view>
+
+  <view class="page-top">
+    <button class="back-btn" bindtap="goBack">‹</button>
+    <view class="page-title-block">
+      <text class="page-title">公共数字人模板</text>
+      <text class="page-sub">选择形象后进入数字人任务</text>
+    </view>
+  </view>
+
+  <view class="hero-panel">
+    <view>
+      <text class="hero-title">AI数字人 · 销冠模板</text>
+      <text class="hero-sub">从公共数字人库选择一个上镜形象，再输入文案生成口播视频。</text>
+    </view>
+    <button bindtap="createCustom">自定义</button>
+  </view>
+
+  <view wx:if="{{loading && !templates.length}}" class="loading-grid">
+    <view wx:for="{{[1,2,3,4,5,6]}}" wx:key="*this" class="skeleton-card">
+      <view></view>
+      <text></text>
+    </view>
+  </view>
+
+  <view wx:elif="{{templates.length}}" class="template-grid">
+    <view wx:for="{{templates}}" wx:key="avatar" class="template-card" data-index="{{index}}" bindtap="selectTemplate">
+      <image wx:if="{{item.image_url}}" class="template-img" src="{{item.image_url}}" mode="aspectFill" />
+      <view wx:else class="template-img template-placeholder">数</view>
+      <view class="template-mask"></view>
+      <view class="template-copy">
+        <text class="template-title">{{item.title}}</text>
+        <text class="template-sub">公共数字人</text>
+      </view>
+    </view>
+  </view>
+
+  <view wx:else class="empty-card">
+    <text>{{errorText || '暂无可用数字人模板'}}</text>
+    <button bindtap="loadTemplates">重新加载</button>
+  </view>
+
+  <view class="bottom-space"></view>
+</view>

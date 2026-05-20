@@ -1,5 +1,6 @@
 const app = getApp();
 const api = require("../../utils/api");
+const avatarTemplates = require("../../utils/digital_avatar_templates");
 
 const CAPABILITIES = [
   { id: "goal.video.pipeline", name: "创意成片" },
@@ -76,6 +77,8 @@ Page({
     selectedVoiceTitle: "",
     hiflyLoading: false,
     hiflyLoaded: false,
+    publicAvatarTemplates: [],
+    avatarTemplatesLoading: false,
     quickMessages: [
       { mark: "图", title: "生成图片", text: "帮我生成一张图片，画面内容是：" },
       { mark: "视", title: "生成视频", text: "帮我生成一个6秒宣传视频，画面内容是：" },
@@ -94,6 +97,7 @@ Page({
     if (app.globalData.token && app.globalData.phone) {
       this.loadOnlineStatus(false);
     }
+    this.loadPublicAvatarTemplates();
   },
 
   onUnload() {
@@ -420,6 +424,23 @@ Page({
     wx.navigateTo({ url: "/pages/assistant/assistant" });
   },
 
+  loadPublicAvatarTemplates() {
+    if (this.data.avatarTemplatesLoading || this.data.publicAvatarTemplates.length) return Promise.resolve();
+    this.setData({ avatarTemplatesLoading: true });
+    return app
+      .request({ method: "POST", url: "/api/hifly/avatar/library", data: { page: 1, size: 100 } })
+      .then((data) => {
+        const rows = avatarTemplates.pickPublicAvatarTemplates(data.public || [], 20);
+        this.setData({ publicAvatarTemplates: rows });
+        wx.setStorageSync("lobster_public_avatar_templates", rows);
+      })
+      .catch(() => {
+        const cached = wx.getStorageSync("lobster_public_avatar_templates") || [];
+        if (cached.length) this.setData({ publicAvatarTemplates: cached.slice(0, 20) });
+      })
+      .finally(() => this.setData({ avatarTemplatesLoading: false }));
+  },
+
   goAssistant() {
     wx.navigateTo({ url: "/pages/assistant/assistant" });
   },
@@ -431,6 +452,20 @@ Page({
   },
 
   goDigital() {
+    wx.navigateTo({ url: "/pages/digital/digital" });
+  },
+
+  goAvatarTemplates() {
+    wx.navigateTo({ url: "/pages/avatar-templates/avatar-templates" });
+  },
+
+  selectPublicAvatarTemplate(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.publicAvatarTemplates[index];
+    if (!avatarTemplates.storeDigitalAvatarPrefill(item)) {
+      wx.showToast({ title: "数字人模板不可用", icon: "none" });
+      return;
+    }
     wx.navigateTo({ url: "/pages/digital/digital" });
   },
 
