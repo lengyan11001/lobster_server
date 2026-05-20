@@ -469,10 +469,6 @@ Page({
     wx.navigateTo({ url: "/pages/digital/digital" });
   },
 
-  goComingSoon() {
-    wx.showToast({ title: "功能即将上线", icon: "none" });
-  },
-
   goProfile() {
     wx.switchTab({ url: "/pages/profile/profile" });
   },

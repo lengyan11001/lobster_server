@@ -61,7 +61,6 @@ page {
 .clone-card,
 .tool-grid,
 .wide-card,
-.disabled-card,
 .task-card,
 .showcase-section {
   position: relative;
@@ -224,8 +223,7 @@ page {
 }
 
 .active-badge,
-.new-badge,
-.soon-badge {
+.new-badge {
   height: 42rpx;
   line-height: 42rpx;
   padding: 0 16rpx;
@@ -349,8 +347,7 @@ page {
   text-align: center;
 }
 
-.wide-card,
-.disabled-card {
+.wide-card {
   display: flex;
   align-items: center;
   gap: 20rpx;
@@ -362,12 +359,7 @@ page {
   border-radius: 28rpx;
 }
 
-.disabled-card {
-  opacity: 0.58;
-}
-
-.wide-icon,
-.disabled-icon {
+.wide-icon {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -398,12 +390,6 @@ page {
   border: 0;
 }
 
-.soon-badge {
-  color: #f5d0fe;
-  background: rgba(126, 34, 206, 0.5);
-  border: 1rpx solid rgba(216, 180, 254, 0.32);
-}
-
 .wide-sub {
   display: block;
   margin-top: 8rpx;
@@ -415,10 +401,6 @@ page {
   color: rgba(255,255,255,0.48);
   font-size: 40rpx;
   font-weight: 900;
-}
-
-.muted-title {
-  color: rgba(255,255,255,0.72);
 }
 
 .task-card {

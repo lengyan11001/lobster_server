@@ -66,18 +66,6 @@
     <text class="wide-arrow">></text>
   </view>
 
-  <view class="disabled-card" bindtap="goComingSoon">
-    <view class="disabled-icon">AI</view>
-    <view class="wide-copy">
-      <view class="wide-title-row">
-        <text class="wide-title muted-title">AI超级混剪</text>
-        <text class="soon-badge">即将上线</text>
-      </view>
-      <text class="wide-sub">多视频一键成片</text>
-    </view>
-    <text class="wide-arrow">></text>
-  </view>
-
   <view class="task-card">
     <view class="task-card-summary">
       <view class="task-icon">定</view>
