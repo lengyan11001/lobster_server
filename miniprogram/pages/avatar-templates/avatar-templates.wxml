@@ -26,9 +26,15 @@
   </view>
 
   <view wx:elif="{{templates.length}}" class="template-grid">
-    <view wx:for="{{templates}}" wx:key="avatar" class="template-card" data-index="{{index}}" bindtap="selectTemplate">
+    <view wx:for="{{templates}}" wx:key="avatar" class="template-card {{item.tone}}" data-index="{{index}}" bindtap="selectTemplate">
       <image wx:if="{{item.image_url}}" class="template-img" src="{{item.image_url}}" mode="aspectFill" />
-      <view wx:else class="template-img template-placeholder">数</view>
+      <view wx:else class="template-static">
+        <view class="avatar-glow"></view>
+        <view class="avatar-head">{{item.initial || 'AI'}}</view>
+        <view class="avatar-body"></view>
+        <view class="avatar-line line-a"></view>
+        <view class="avatar-line line-b"></view>
+      </view>
       <view class="template-mask"></view>
       <view class="template-copy">
         <text class="template-title">{{item.title}}</text>

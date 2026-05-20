@@ -436,7 +436,7 @@ Page({
       })
       .catch(() => {
         const cached = wx.getStorageSync("lobster_public_avatar_templates") || [];
-        if (cached.length) this.setData({ publicAvatarTemplates: cached.slice(0, 20) });
+        if (cached.length) this.setData({ publicAvatarTemplates: avatarTemplates.pickPublicAvatarTemplates(cached, 20) });
       })
       .finally(() => this.setData({ avatarTemplatesLoading: false }));
   },

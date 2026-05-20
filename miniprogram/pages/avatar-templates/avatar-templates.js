@@ -11,7 +11,9 @@ Page({
 
   onLoad() {
     const cached = wx.getStorageSync("lobster_public_avatar_templates") || [];
-    if (cached.length) this.setData({ templates: cached.slice(0, 20) });
+    if (cached.length) {
+      this.setData({ templates: avatarTemplates.pickPublicAvatarTemplates(cached, 20) });
+    }
     this.loadTemplates();
   },
 
@@ -32,7 +34,7 @@ Page({
       .catch((err) => {
         const cached = wx.getStorageSync("lobster_public_avatar_templates") || [];
         if (cached.length) {
-          this.setData({ templates: cached.slice(0, 20), errorText: "" });
+          this.setData({ templates: avatarTemplates.pickPublicAvatarTemplates(cached, 20), errorText: "" });
           return;
         }
         this.setData({ errorText: api.errorMessage(err) });

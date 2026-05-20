@@ -5,6 +5,13 @@ const media = require("../../utils/media");
 function assetUrl(path) {
   const value = String(path || "").trim();
   if (!value) return "";
+  let decoded = value;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch (e) {
+    decoded = value;
+  }
+  if (/hfcdn\.lingverse\.co/i.test(value) || /hfcdn\.lingverse\.co/i.test(decoded)) return "";
   if (/^https?:\/\//i.test(value)) return value;
   if (/^\/\//.test(value)) return `https:${value}`;
   if (value.charAt(0) === "/") return api.buildUrl(value);

@@ -3,9 +3,27 @@ const api = require("./api");
 function assetUrl(path) {
   const value = String(path || "").trim();
   if (!value) return "";
+  if (/hfcdn\.lingverse\.co/i.test(value) || /hfcdn%2Elingverse%2Eco/i.test(value) || /hfcdn\.lingverse\.co/i.test(decodeURIComponentSafe(value))) {
+    return "";
+  }
   if (/^https?:\/\//i.test(value)) return value;
   if (/^\/\//.test(value)) return `https:${value}`;
   return api.buildUrl(value);
+}
+
+function decodeURIComponentSafe(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch (e) {
+    return value;
+  }
+}
+
+function avatarInitial(title) {
+  const text = String(title || "").trim();
+  if (!text) return "AI";
+  const clean = text.replace(/^AI/i, "").replace(/[-_—｜|].*$/, "").trim();
+  return (clean || text).slice(0, 2).toUpperCase();
 }
 
 function baseAvatarTitle(title) {
@@ -30,6 +48,8 @@ function normalizePublicAvatarTemplate(row) {
     id: `public:${avatar}`,
     title,
     base_title: baseAvatarTitle(title),
+    initial: avatarInitial(title),
+    tone: "",
     image_url: imageUrl,
     cover_url: imageUrl,
     section: "public",
@@ -49,12 +69,16 @@ function pickPublicAvatarTemplates(rows, limit) {
     if (seenAvatar[item.avatar] || seenTitle[item.base_title]) return;
     seenAvatar[item.avatar] = true;
     seenTitle[item.base_title] = true;
+    item.tone = `tone-${out.length % 6}`;
     out.push(item);
   });
   if (out.length < limit) {
     normalized.forEach((item) => {
       if (seenAvatar[item.avatar]) return;
+      if (seenTitle[item.base_title] && out.length >= Math.min(limit || 20, 12)) return;
       seenAvatar[item.avatar] = true;
+      seenTitle[item.base_title] = true;
+      item.tone = `tone-${out.length % 6}`;
       out.push(item);
     });
   }

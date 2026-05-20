@@ -176,9 +176,13 @@
           <text class="template-title">加载模板中</text>
           <text class="template-sub">公共数字人</text>
         </view>
-        <view wx:for="{{publicAvatarTemplates}}" wx:key="avatar" class="template-card" data-index="{{index}}" bindtap="selectPublicAvatarTemplate">
+        <view wx:for="{{publicAvatarTemplates}}" wx:key="avatar" class="template-card {{item.tone}}" data-index="{{index}}" bindtap="selectPublicAvatarTemplate">
           <image wx:if="{{item.image_url}}" class="template-img" src="{{item.image_url}}" mode="aspectFill" />
-          <view wx:else class="template-img template-placeholder">数</view>
+          <view wx:else class="template-static">
+            <view class="avatar-glow"></view>
+            <view class="avatar-head">{{item.initial || 'AI'}}</view>
+            <view class="avatar-body"></view>
+          </view>
           <view class="template-mask"></view>
           <text class="template-title">{{item.title}}</text>
           <text class="template-sub">公共数字人</text>
