@@ -28,6 +28,8 @@ _TASK_KINDS = {"openclaw_message", "chat_message", "capability"}
 _SCHEDULE_TYPES = {"once", "interval"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _MAX_TARGET_DEVICES = 20
+_VIDEO_EXTS = (".mp4", ".webm", ".mov", ".m4v", ".avi")
+_RUNNING_STATUSES = {"running", "processing", "pending", "queued", "waiting"}
 
 
 class ScheduledTaskCreate(BaseModel):
@@ -155,6 +157,92 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
         "started_at": _iso(row.started_at),
         "finished_at": _iso(row.finished_at),
     }
+
+
+def _is_video_url(value: Any) -> bool:
+    s = str(value or "").strip().lower().split("?", 1)[0].split("#", 1)[0]
+    return s.endswith(_VIDEO_EXTS)
+
+
+def _goal_video_payload_has_video(obj: Any) -> bool:
+    stack: List[Any] = [obj]
+    seen: set[int] = set()
+    while stack:
+        cur = stack.pop()
+        oid = id(cur)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        if isinstance(cur, dict):
+            for key in ("video_asset_id", "final_asset_id"):
+                if str(cur.get(key) or "").strip():
+                    return True
+            for item in cur.get("saved_assets") or []:
+                if not isinstance(item, dict):
+                    continue
+                mt = str(item.get("media_type") or item.get("type") or "").strip().lower()
+                if mt == "video" and str(item.get("asset_id") or item.get("id") or "").strip():
+                    return True
+                if not mt and any(_is_video_url(item.get(k)) for k in ("filename", "url", "source_url", "public_url")):
+                    return True
+            for value in cur.values():
+                if _is_video_url(value):
+                    return True
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(cur, list):
+            for item in cur:
+                if _is_video_url(item):
+                    return True
+                if isinstance(item, (dict, list)):
+                    stack.append(item)
+    return False
+
+
+def _goal_video_payload_pending_reason(obj: Any) -> str:
+    stack: List[Any] = [obj]
+    seen: set[int] = set()
+    while stack:
+        cur = stack.pop()
+        oid = id(cur)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        if isinstance(cur, dict):
+            video = cur.get("video")
+            if isinstance(video, dict):
+                status = str(video.get("status") or "").strip().lower()
+                final = video.get("final_result")
+                final_result = final.get("result") if isinstance(final, dict) and isinstance(final.get("result"), dict) else {}
+                final_status = str((final_result or {}).get("status") or (final or {}).get("status") or "").strip().lower() if isinstance(final, dict) else ""
+                if status in _RUNNING_STATUSES or final_status in _RUNNING_STATUSES:
+                    task_id = str(video.get("task_id") or (final_result or {}).get("task_id") or "").strip()
+                    return f"创意成片视频仍在生成中{('，task_id=' + task_id) if task_id else ''}"
+            status = str(cur.get("status") or cur.get("state") or cur.get("task_status") or cur.get("taskStatus") or "").strip().lower()
+            if status in _RUNNING_STATUSES:
+                task_id = str(cur.get("task_id") or cur.get("id") or "").strip()
+                return f"创意成片视频仍在生成中{('，task_id=' + task_id) if task_id else ''}"
+            for value in cur.values():
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(cur, list):
+            stack.extend(v for v in cur if isinstance(v, (dict, list)))
+    return ""
+
+
+def _normalize_scheduled_completion_error(body: ScheduledTaskCompleteIn) -> str:
+    error = (body.error or "").strip()
+    if error:
+        return error
+    payload = body.result_payload or {}
+    if not isinstance(payload, dict):
+        return ""
+    capability_id = str(payload.get("capability_id") or "").strip()
+    if capability_id != "goal.video.pipeline":
+        return ""
+    if _goal_video_payload_has_video(payload):
+        return ""
+    return _goal_video_payload_pending_reason(payload) or "创意成片视频未取得视频素材或视频链接"
 
 
 def _add_h5_event(db: Session, message_id: Optional[str], user_id: int, event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -602,7 +690,7 @@ def complete_scheduled_task_run(
     row = _run_for_user(db, run_id, current_user.id)
     _assert_worker_can_update(row, _header_installation_id(request))
     now = datetime.utcnow()
-    error = (body.error or "").strip()
+    error = _normalize_scheduled_completion_error(body)
     result_text = (body.result_text or "").strip()
     row.status = "failed" if error else "completed"
     row.result_text = result_text or None

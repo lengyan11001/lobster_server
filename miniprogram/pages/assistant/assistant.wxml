@@ -1,34 +1,16 @@
 <view class="page chat-page">
-  <view class="chat-stars stars-a"></view>
-  <view class="chat-stars stars-b"></view>
-
   <view class="chat-header">
     <view>
       <text class="chat-title">AI超级员工</text>
       <text class="chat-subtitle">{{phoneBound ? onlineText : '发送时授权绑定 online'}}</text>
     </view>
-    <view class="header-actions">
-      <view class="status-pill {{onlineAvailable ? 'online' : ''}}">
-        <view class="status-dot"></view>
-        <text>{{onlineAvailable ? '在线' : '待连接'}}</text>
-      </view>
-      <button class="mini-btn" bindtap="loadMessages">刷新</button>
-    </view>
+    <button class="mini-btn" bindtap="loadMessages">刷新</button>
   </view>
 
   <view class="quick-row">
-    <button data-text="根据我的记忆，帮我生成一条产品宣传视频或图片素材。" bindtap="quickFill">
-      <text class="quick-mark">视</text>
-      <text>生成素材</text>
-    </button>
-    <button data-text="帮我写一条适合朋友圈发布的文案。" bindtap="quickFill">
-      <text class="quick-mark">文</text>
-      <text>朋友圈文案</text>
-    </button>
-    <button data-text="查看最近生成任务的结果，并整理可下载链接。" bindtap="quickFill">
-      <text class="quick-mark">链</text>
-      <text>整理结果</text>
-    </button>
+    <button data-text="根据我的记忆，帮我生成一条产品宣传视频或图片素材。" bindtap="quickFill">生成素材</button>
+    <button data-text="帮我写一条适合朋友圈发布的文案。" bindtap="quickFill">朋友圈文案</button>
+    <button data-text="查看最近生成任务的结果，并整理可下载链接。" bindtap="quickFill">整理结果</button>
   </view>
 
   <view wx:if="{{authPanelVisible && !phoneBound}}" class="section auth-section">
@@ -49,20 +31,14 @@
     </view>
   </view>
 
-  <view wx:if="{{loading}}" class="empty">
-    <text>正在加载消息...</text>
-  </view>
-  <view wx:elif="{{messages.length === 0}}" class="empty">
-    <text>{{phoneBound ? '还没有消息' : '可以先输入消息，发送时再授权。'}}</text>
-  </view>
+  <view wx:if="{{loading}}" class="empty">正在加载消息...</view>
+  <view wx:elif="{{messages.length === 0}}" class="empty">{{phoneBound ? '还没有消息' : '可以先输入消息，发送时再授权。'}}</view>
 
   <view wx:else class="message-list">
     <view wx:for="{{messages}}" wx:for-index="msgIndex" wx:key="id" class="message-card">
-      <view class="message-label user-label">我</view>
       <view class="bubble user-bubble">
         <text>{{item.content}}</text>
       </view>
-      <view class="message-label reply-label">OpenClaw</view>
       <view class="bubble reply-bubble">
         <text wx:if="{{item.status === 'pending'}}">{{onlineAvailable ? '等待领取...' : '等待 online 上线'}}</text>
         <text wx:elif="{{item.status === 'processing'}}">{{onlineAvailable ? '正在执行...' : 'online 已离线，等待恢复'}}</text>
@@ -86,7 +62,16 @@
   </view>
 
   <view class="composer">
-    <textarea class="message-input" value="{{inputText}}" bindinput="onInput" maxlength="8000" auto-height placeholder="输入消息，例如：帮我生成一段产品短视频口播文案" placeholder-class="message-placeholder" />
-    <button class="send-btn" loading="{{sending}}" bindtap="sendMessage">发送</button>
+    <view wx:if="{{attachedImages.length > 0}}" class="attached-strip">
+      <view wx:for="{{attachedImages}}" wx:for-index="attachIndex" wx:key="url" class="attached-card">
+        <image class="attached-image" src="{{item.preview_url || item.url}}" mode="aspectFill" />
+        <button class="attached-remove" data-index="{{attachIndex}}" bindtap="removeAttachedImage">×</button>
+      </view>
+    </view>
+    <textarea class="message-input" value="{{inputText}}" bindinput="onInput" maxlength="8000" auto-height placeholder="输入消息，例如：帮我生成一段产品短视频口播文案" />
+    <view class="composer-actions">
+      <button class="ghost-btn attach-btn" disabled="{{uploadingImage || attachedImages.length >= 3}}" loading="{{uploadingImage}}" bindtap="chooseUploadImage">{{attachedImages.length >= 3 ? '最多3张' : '上传图片'}}</button>
+      <button class="primary-btn send-btn" loading="{{sending}}" bindtap="sendMessage">发送</button>
+    </view>
   </view>
 </view>

@@ -37,7 +37,7 @@
   },
   "permission": {
     "scope.writePhotosAlbum": {
-      "desc": "用于保存生成的视频和图片到手机相册"
+      "desc": "用于将你生成或收到的图片、视频素材保存到手机相册，便于本地查看、下载和分享"
     }
   },
   "sitemapLocation": "sitemap.json"

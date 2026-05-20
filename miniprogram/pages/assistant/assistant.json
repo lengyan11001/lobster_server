@@ -1,8 +1,4 @@
 {
   "navigationBarTitleText": "AI超级员工",
-  "navigationBarBackgroundColor": "#07101f",
-  "navigationBarTextStyle": "white",
-  "backgroundColor": "#020403",
-  "backgroundTextStyle": "light",
   "enablePullDownRefresh": true
 }
