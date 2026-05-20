@@ -782,7 +782,7 @@ page {
   align-items: center;
   justify-content: center;
   flex: 0 0 90rpx;
-  height: 286rpx;
+  height: 300rpx;
   color: rgba(255,255,255,0.78);
   background: linear-gradient(180deg, #3f3f46, #171717);
   border: 1rpx solid rgba(255,255,255,0.16);
@@ -806,8 +806,8 @@ page {
 
 .template-card {
   position: relative;
-  flex: 0 0 220rpx;
-  height: 286rpx;
+  flex: 0 0 214rpx;
+  height: 300rpx;
   overflow: hidden;
   border-radius: 30rpx;
   background: linear-gradient(180deg, #1f2937, #020617);
