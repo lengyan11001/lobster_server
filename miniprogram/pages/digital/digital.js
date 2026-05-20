@@ -11,7 +11,12 @@ function assetUrl(path) {
   } catch (e) {
     decoded = value;
   }
-  if (/hfcdn\.lingverse\.co/i.test(value) || /hfcdn\.lingverse\.co/i.test(decoded)) return "";
+  if (/hfcdn\.lingverse\.co/i.test(value) || /hfcdn\.lingverse\.co/i.test(decoded)) {
+    const match = decoded.match(/https?:\/\/hfcdn\.lingverse\.co\/[^"'&\s]+/i);
+    const clean = match ? match[0].split("?")[0].split("#")[0] : "";
+    const filename = clean.split("/").pop();
+    return filename ? `/static/hifly_avatars/${filename}.jpg` : "";
+  }
   if (/^https?:\/\//i.test(value)) return value;
   if (/^\/\//.test(value)) return `https:${value}`;
   if (value.charAt(0) === "/") return api.buildUrl(value);

@@ -3,9 +3,8 @@ const api = require("./api");
 function assetUrl(path) {
   const value = String(path || "").trim();
   if (!value) return "";
-  if (/hfcdn\.lingverse\.co/i.test(value) || /hfcdn%2Elingverse%2Eco/i.test(value) || /hfcdn\.lingverse\.co/i.test(decodeURIComponentSafe(value))) {
-    return "";
-  }
+  const localHiflyAvatar = localHiflyAvatarUrl(value);
+  if (localHiflyAvatar) return localHiflyAvatar;
   if (/^https?:\/\//i.test(value)) return value;
   if (/^\/\//.test(value)) return `https:${value}`;
   return api.buildUrl(value);
@@ -17,6 +16,16 @@ function decodeURIComponentSafe(value) {
   } catch (e) {
     return value;
   }
+}
+
+function localHiflyAvatarUrl(value) {
+  const decoded = decodeURIComponentSafe(String(value || ""));
+  const match = decoded.match(/https?:\/\/hfcdn\.lingverse\.co\/[^"'&\s]+/i);
+  if (!match) return "";
+  const clean = match[0].split("?")[0].split("#")[0];
+  const filename = clean.split("/").pop();
+  if (!filename) return "";
+  return `/static/hifly_avatars/${filename}.jpg`;
 }
 
 function avatarInitial(title) {
