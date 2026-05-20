@@ -19,6 +19,7 @@ function assetUrl(path) {
   }
   if (/^https?:\/\//i.test(value)) return value;
   if (/^\/\//.test(value)) return `https:${value}`;
+  if (value.indexOf("/static/") === 0) return value;
   if (value.charAt(0) === "/") return api.buildUrl(value);
   return api.buildUrl(value);
 }

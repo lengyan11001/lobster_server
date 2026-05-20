@@ -7,6 +7,7 @@ function assetUrl(path) {
   if (localHiflyAvatar) return localHiflyAvatar;
   if (/^https?:\/\//i.test(value)) return value;
   if (/^\/\//.test(value)) return `https:${value}`;
+  if (value.indexOf("/static/") === 0) return value;
   return api.buildUrl(value);
 }
 
