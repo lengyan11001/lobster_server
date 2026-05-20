@@ -12,6 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote, unquote
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -45,6 +46,7 @@ _HIFLY_TTS_UNIT_CREDITS = 10
 _HIFLY_TTS_CHARS_PER_SECOND = 4
 _HIFLY_SHARE_SECRET = (getattr(settings, "secret_key", None) or os.getenv("SECRET_KEY") or "lobster-share-secret").encode("utf-8")
 _VOICE_PREVIEW_EXPIRY_SEC = 86400
+_AVATAR_COVER_EXPIRY_SEC = 30 * 86400
 _DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 _HIFLY_PUBLIC_AVATARS_PATH = _DATA_DIR / "hifly_public_avatars.json"
 _HIFLY_PUBLIC_AVATAR_COVERS_PATH = _DATA_DIR / "hifly_public_avatar_covers.json"
@@ -472,6 +474,21 @@ def _build_voice_preview_proxy_url(request: Optional[Request], row_id: int) -> s
     return f"{base}/api/hifly/my/voice/{int(row_id)}/preview?token={token}&expiry={expiry_ts}"
 
 
+def _avatar_cover_token(url: str, expiry: int) -> str:
+    msg = f"avatar-cover:{int(expiry)}:{url}".encode("utf-8")
+    return hmac.new(_HIFLY_SHARE_SECRET, msg, hashlib.sha256).hexdigest()
+
+
+def _build_avatar_cover_proxy_url(request: Optional[Request], url: str) -> str:
+    value = str(url or "").strip()
+    if request is None or not value.startswith(("http://", "https://")):
+        return value
+    expiry_ts = int(time.time()) + _AVATAR_COVER_EXPIRY_SEC
+    token = _avatar_cover_token(value, expiry_ts)
+    base = _resolve_asset_public_base(request).rstrip("/")
+    return f"{base}/api/hifly/avatar/cover?url={quote(value, safe='')}&token={token}&expiry={expiry_ts}"
+
+
 def _resolve_voice_preview_source(row: UserHiflyVoiceAsset, request: Optional[Request] = None) -> str:
     demo_url = str(row.demo_url or "").strip()
     if demo_url:
@@ -775,7 +792,7 @@ def _sort_public_avatar_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     )
 
 
-def _enrich_public_avatar_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _enrich_public_avatar_rows(rows: List[Dict[str, Any]], request: Optional[Request] = None) -> List[Dict[str, Any]]:
     result: List[Dict[str, Any]] = []
     seen: set[str] = set()
     cover_maps = _load_public_avatar_cover_maps()
@@ -784,9 +801,10 @@ def _enrich_public_avatar_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any
         if not avatar_id or avatar_id in seen:
             continue
         title = str(item.get("title") or avatar_id).strip() or avatar_id
-        cover_url = _pick_public_cover(item) or _public_avatar_cover_override(avatar_id, title, cover_maps)
-        if not cover_url:
+        origin_cover_url = _pick_public_cover(item) or _public_avatar_cover_override(avatar_id, title, cover_maps)
+        if not origin_cover_url:
             continue
+        cover_url = _build_avatar_cover_proxy_url(request, origin_cover_url)
         seen.add(avatar_id)
         result.append(
             {
@@ -798,6 +816,7 @@ def _enrich_public_avatar_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any
                 "image_url": cover_url,
                 "cover_url": cover_url,
                 "detail_url": cover_url,
+                "origin_cover_url": origin_cover_url,
                 "cover_guessed": False,
                 "cover_rank": 1,
                 "material_count": None,
@@ -961,7 +980,7 @@ async def _fetch_all_hifly_pages(path: str, token: Optional[str], kind: int, pag
 
 
 @router.post("/api/hifly/avatar/library")
-async def hifly_avatar_library(body: HiflyAvatarLibraryBody):
+async def hifly_avatar_library(body: HiflyAvatarLibraryBody, request: Request):
     public_seed_rows = _load_seed_public_avatar_rows()
     public_api_rows: List[Dict[str, Any]] = []
     source = "local_seed" if public_seed_rows else "empty"
@@ -978,7 +997,7 @@ async def hifly_avatar_library(body: HiflyAvatarLibraryBody):
             if not public_seed_rows:
                 raise
             logger.warning("[hifly_assets] avatar/library HiFly fetch failed; using local seed", exc_info=True)
-    public = _enrich_public_avatar_rows(public_seed_rows + public_api_rows)
+    public = _enrich_public_avatar_rows(public_seed_rows + public_api_rows, request)
     return {
         "ok": True,
         "mine": [],
@@ -1486,6 +1505,44 @@ def _normalize_video_asset(row: UserHiflyVideoAsset, request: Optional[Request] 
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
+
+
+@router.get("/api/hifly/avatar/cover")
+async def proxy_public_avatar_cover(
+    url: str = Query(..., min_length=1),
+    token: str = Query(..., min_length=1),
+    expiry: int = Query(...),
+):
+    target_url = unquote(str(url or "").strip())
+    if not target_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="封面地址无效")
+    expected = _avatar_cover_token(target_url, expiry)
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="无效的封面签名")
+    if int(time.time()) > int(expiry):
+        raise HTTPException(status_code=403, detail="封面链接已过期")
+    try:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False, follow_redirects=True) as client:
+            resp = await client.get(
+                target_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                },
+            )
+    except Exception as exc:
+        logger.warning("[hifly_assets] avatar cover proxy failed url=%s err=%s", target_url[:180], exc)
+        raise HTTPException(status_code=503, detail="数字人封面拉取失败") from exc
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=503, detail=f"数字人封面源站不可用 HTTP {resp.status_code}")
+    media_type = (resp.headers.get("content-type") or "image/jpeg").split(";")[0].strip() or "image/jpeg"
+    if not media_type.startswith("image/"):
+        media_type = "image/jpeg"
+    return Response(
+        content=resp.content,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 def _video_share_token(video_id: int) -> str:
