@@ -1,6 +1,7 @@
 const app = getApp();
 const api = require("../../utils/api");
 const media = require("../../utils/media");
+const staticAssets = require("../../utils/static_assets");
 
 function assetUrl(path) {
   const value = String(path || "").trim();
@@ -15,19 +16,19 @@ function assetUrl(path) {
     const match = decoded.match(/https?:\/\/hfcdn\.lingverse\.co\/[^"'&\s]+/i);
     const clean = match ? match[0].split("?")[0].split("#")[0] : "";
     const filename = clean.split("/").pop();
-    return filename ? api.buildUrl(`/client/miniprogram/hifly_avatars/${filename}.jpg`) : "";
+    return filename ? staticAssets.hiflyAvatarUrl(`${filename}.jpg`) : "";
   }
   const staticMatch = decoded.match(/\/static\/hifly_avatars\/([^"'&?\s#]+)/i);
   if (staticMatch && staticMatch[1]) {
-    return api.buildUrl(`/client/miniprogram/hifly_avatars/${staticMatch[1]}`);
+    return staticAssets.hiflyAvatarUrl(staticMatch[1]);
   }
   const hostedMatch = decoded.match(/\/client\/miniprogram\/hifly_avatars\/([^"'&?\s#]+)/i);
   if (hostedMatch && hostedMatch[1]) {
-    return api.buildUrl(`/client/miniprogram/hifly_avatars/${hostedMatch[1]}`);
+    return staticAssets.hiflyAvatarUrl(hostedMatch[1]);
   }
   if (/^https?:\/\//i.test(value)) return value;
   if (/^\/\//.test(value)) return `https:${value}`;
-  if (value.indexOf("/client/miniprogram/") === 0) return api.buildUrl(value);
+  if (value.indexOf("/client/miniprogram/") === 0) return staticAssets.staticAssetUrl(value.replace("/client/miniprogram/", ""));
   if (value.charAt(0) === "/") return api.buildUrl(value);
   return api.buildUrl(value);
 }

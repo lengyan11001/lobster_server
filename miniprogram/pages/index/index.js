@@ -1,6 +1,7 @@
 const app = getApp();
 const api = require("../../utils/api");
 const avatarTemplates = require("../../utils/digital_avatar_templates");
+const staticAssets = require("../../utils/static_assets");
 
 const CAPABILITIES = [
   { id: "goal.video.pipeline", name: "创意成片" },
@@ -48,10 +49,10 @@ function capabilityName(id) {
 
 Page({
   data: {
-    heroBgUrl: api.buildUrl("/client/miniprogram/openclaw-hero-bg.jpg"),
-    lobsterUrl: api.buildUrl("/client/miniprogram/openclaw-lobster.png"),
-    aiImageBgUrl: api.buildUrl("/client/miniprogram/ai-image-bg.jpg"),
-    aiVideoBgUrl: api.buildUrl("/client/miniprogram/ai-video-bg.jpg"),
+    heroBgUrl: staticAssets.staticAssetUrl("openclaw-hero-bg.jpg"),
+    lobsterUrl: staticAssets.staticAssetUrl("openclaw-lobster.png"),
+    aiImageBgUrl: staticAssets.staticAssetUrl("ai-image-bg.jpg"),
+    aiVideoBgUrl: staticAssets.staticAssetUrl("ai-video-bg.jpg"),
     phoneBound: false,
     phone: "",
     accountText: "点击功能时授权",
