@@ -7,6 +7,24 @@
     </view>
   </view>
 
+  <view wx:if="{{!phoneBound}}" class="section bind-section">
+    <text class="section-title">账号绑定</text>
+    <text class="muted">绑定手机号后，手机端才能找到你的电脑端 online，并下发 AI 员工、数字人和素材任务。</text>
+    <view class="button-row">
+      <button class="ghost-btn" bindtap="login">微信登录</button>
+      <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+    </view>
+    <button class="sms-link" bindtap="showSmsBind">微信取号失败，用短信验证码绑定</button>
+    <view wx:if="{{smsBindVisible}}" class="sms-bind-box">
+      <input class="input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入已开通 online 的手机号" />
+      <view class="sms-code-row">
+        <input class="input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
+        <button class="ghost-btn sms-code-btn" disabled="{{smsSending || smsCountdown > 0}}" loading="{{smsSending}}" bindtap="sendSmsCode">{{smsCountdown > 0 ? smsCountdown + 's' : '获取'}}</button>
+      </view>
+      <button class="primary-btn sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">绑定手机号</button>
+    </view>
+  </view>
+
   <view class="section">
     <text class="section-title">设备</text>
     <view class="status-line">
