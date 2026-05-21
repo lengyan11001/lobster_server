@@ -489,6 +489,31 @@ def _build_avatar_cover_proxy_url(request: Optional[Request], url: str) -> str:
     return f"{base}/api/hifly/avatar/cover?url={quote(value, safe='')}&token={token}&expiry={expiry_ts}"
 
 
+def _static_hifly_avatar_cover_url(request: Optional[Request], url: str) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    decoded = unquote(value)
+    proxy_match = re.search(r"[?&]url=([^&]+)", value)
+    if proxy_match:
+        decoded = unquote(proxy_match.group(1))
+    if "/client/miniprogram/hifly_avatars/" in decoded:
+        filename = decoded.rsplit("/client/miniprogram/hifly_avatars/", 1)[-1].split("?", 1)[0].split("#", 1)[0]
+    elif "/static/hifly_avatars/" in decoded:
+        filename = decoded.rsplit("/static/hifly_avatars/", 1)[-1].split("?", 1)[0].split("#", 1)[0]
+    elif "hfcdn.lingverse.co/" in decoded:
+        filename = decoded.split("?", 1)[0].split("#", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+        if filename:
+            filename = f"{filename}.jpg"
+    else:
+        return ""
+    if not filename or "/" in filename or "\\" in filename:
+        return ""
+    base = _static_public_base(request).rstrip("/")
+    path = f"/client/miniprogram/hifly_avatars/{filename}"
+    return f"{base}{path}" if base else path
+
+
 def _resolve_voice_preview_source(row: UserHiflyVoiceAsset, request: Optional[Request] = None) -> str:
     demo_url = str(row.demo_url or "").strip()
     if demo_url:
@@ -804,7 +829,7 @@ def _enrich_public_avatar_rows(rows: List[Dict[str, Any]], request: Optional[Req
         origin_cover_url = _pick_public_cover(item) or _public_avatar_cover_override(avatar_id, title, cover_maps)
         if not origin_cover_url:
             continue
-        cover_url = _build_avatar_cover_proxy_url(request, origin_cover_url)
+        cover_url = _static_hifly_avatar_cover_url(request, origin_cover_url) or _build_avatar_cover_proxy_url(request, origin_cover_url)
         seen.add(avatar_id)
         result.append(
             {

@@ -904,6 +904,14 @@ def create_app() -> FastAPI:
         name="client_client_code",
     )
 
+    _miniprogram_static_dir = Path(__file__).resolve().parent.parent.parent / "client_static" / "miniprogram"
+    _miniprogram_static_dir.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/client/miniprogram",
+        StaticFiles(directory=str(_miniprogram_static_dir)),
+        name="client_miniprogram",
+    )
+
     # 前端由 lobster_online 提供，本服务仅 API；根路径返回说明
     @app.get("/", include_in_schema=False)
     def index():

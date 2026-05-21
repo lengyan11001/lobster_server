@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import models  # noqa: F401
 from .api.auth import router as auth_router
@@ -43,6 +45,14 @@ def create_h5_app() -> FastAPI:
     app.include_router(h5_chat_router, prefix="")
     app.include_router(hifly_assets_router, prefix="")
     app.include_router(scheduled_tasks_router, prefix="")
+
+    miniprogram_static_dir = Path(__file__).resolve().parent.parent.parent / "client_static" / "miniprogram"
+    miniprogram_static_dir.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/client/miniprogram",
+        StaticFiles(directory=str(miniprogram_static_dir)),
+        name="client_miniprogram",
+    )
     return app
 
 

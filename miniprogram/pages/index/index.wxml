@@ -12,8 +12,8 @@
   </view>
 
   <view class="brand-stage">
-    <image class="hero-bg" src="/static/openclaw-hero-bg.jpg" mode="aspectFill" />
-    <image class="hero-lobster" src="/static/openclaw-lobster.png" mode="aspectFit" />
+    <image class="hero-bg" src="{{heroBgUrl}}" mode="aspectFill" />
+    <image class="hero-lobster" src="{{lobsterUrl}}" mode="aspectFit" />
     <view class="hero-vignette"></view>
     <view class="planet-glow"></view>
     <text class="brand-line">把不凡的创意变成现实</text>
@@ -186,7 +186,7 @@
     </view>
     <view class="video-feature-grid">
       <view class="video-feature image-gen" data-prompt="帮我生成一张高质感商业海报图。" bindtap="goFeature">
-        <image class="feature-bg" src="/static/ai-image-bg.jpg" mode="aspectFill" />
+        <image class="feature-bg" src="{{aiImageBgUrl}}" mode="aspectFill" />
         <view class="feature-mask"></view>
         <view class="feature-copy">
           <text>AI图片生成</text>
@@ -194,7 +194,7 @@
         </view>
       </view>
       <view class="video-feature video-gen" data-prompt="帮我生成一个 10 秒品牌宣传视频。" bindtap="goFeature">
-        <image class="feature-bg" src="/static/ai-video-bg.jpg" mode="aspectFill" />
+        <image class="feature-bg" src="{{aiVideoBgUrl}}" mode="aspectFill" />
         <view class="feature-mask"></view>
         <view class="feature-copy">
           <text>AI视频生成</text>

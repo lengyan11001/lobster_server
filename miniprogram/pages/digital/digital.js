@@ -15,11 +15,19 @@ function assetUrl(path) {
     const match = decoded.match(/https?:\/\/hfcdn\.lingverse\.co\/[^"'&\s]+/i);
     const clean = match ? match[0].split("?")[0].split("#")[0] : "";
     const filename = clean.split("/").pop();
-    return filename ? `/static/hifly_avatars/${filename}.jpg` : "";
+    return filename ? api.buildUrl(`/client/miniprogram/hifly_avatars/${filename}.jpg`) : "";
+  }
+  const staticMatch = decoded.match(/\/static\/hifly_avatars\/([^"'&?\s#]+)/i);
+  if (staticMatch && staticMatch[1]) {
+    return api.buildUrl(`/client/miniprogram/hifly_avatars/${staticMatch[1]}`);
+  }
+  const hostedMatch = decoded.match(/\/client\/miniprogram\/hifly_avatars\/([^"'&?\s#]+)/i);
+  if (hostedMatch && hostedMatch[1]) {
+    return api.buildUrl(`/client/miniprogram/hifly_avatars/${hostedMatch[1]}`);
   }
   if (/^https?:\/\//i.test(value)) return value;
   if (/^\/\//.test(value)) return `https:${value}`;
-  if (value.indexOf("/static/") === 0) return value;
+  if (value.indexOf("/client/miniprogram/") === 0) return api.buildUrl(value);
   if (value.charAt(0) === "/") return api.buildUrl(value);
   return api.buildUrl(value);
 }
