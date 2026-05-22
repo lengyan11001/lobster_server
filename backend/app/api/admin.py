@@ -206,6 +206,8 @@ def admin_search_user(
 @router.get("/admin/api/user/{user_id}")
 def admin_user_detail(
     user_id: int,
+    ledger_limit: int = 50,
+    ledger_offset: int = 0,
     ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
@@ -226,11 +228,15 @@ def admin_user_detail(
     )
     task_count = db.query(func.count(ScheduledTask.id)).filter(ScheduledTask.user_id == user_id).scalar() or 0
     run_count = db.query(func.count(ScheduledTaskRun.id)).filter(ScheduledTaskRun.user_id == user_id).scalar() or 0
+    ledger_limit = min(max(int(ledger_limit or 50), 1), 200)
+    ledger_offset = max(int(ledger_offset or 0), 0)
+    ledger_query = db.query(CreditLedger).filter(CreditLedger.user_id == user_id)
+    ledger_total = ledger_query.with_entities(func.count(CreditLedger.id)).scalar() or 0
     ledger = (
-        db.query(CreditLedger)
-        .filter(CreditLedger.user_id == user_id)
+        ledger_query
         .order_by(CreditLedger.created_at.desc())
-        .limit(50)
+        .offset(ledger_offset)
+        .limit(ledger_limit)
         .all()
     )
     ledger_list = []
@@ -241,6 +247,9 @@ def admin_user_detail(
             "balance_after": float(entry.balance_after),
             "entry_type": entry.entry_type,
             "description": entry.description,
+            "ref_type": entry.ref_type,
+            "ref_id": entry.ref_id,
+            "meta": entry.meta,
             "created_at": entry.created_at.isoformat() if entry.created_at else None,
         })
     return {
@@ -267,6 +276,13 @@ def admin_user_detail(
         ],
         "task_summary": {"tasks": int(task_count), "runs": int(run_count)},
         "ledger": ledger_list,
+        "ledger_pagination": {
+            "total": int(ledger_total),
+            "limit": int(ledger_limit),
+            "offset": int(ledger_offset),
+            "has_prev": ledger_offset > 0,
+            "has_next": ledger_offset + ledger_limit < int(ledger_total),
+        },
     }
 
 

@@ -271,8 +271,9 @@ tr:hover{background:var(--bg)}
         </div>
       </div>
       <div class="card">
-        <h3>积分流水（最近50条）</h3>
+        <h3 id="ledgerTitle">积分流水</h3>
         <div id="ledgerTable"></div>
+        <div class="pagination" id="ledgerPagination"></div>
       </div>
       <!-- agent: remove sub -->
       <div class="card" id="removeSubCard" style="display:none">
@@ -521,6 +522,8 @@ function renderUserTable(users, containerId, title) {
 
 let currentUserId = null;
 let currentUserData = null;
+let currentLedgerOffset = 0;
+const LEDGER_PAGE_SIZE = 50;
 function ensureUserDetailTabs() {
   const root = document.getElementById('userDetailView');
   if (!root || document.getElementById('userDetailTabs')) return;
@@ -617,12 +620,53 @@ function renderUserTaskDispatchForm(userId, devices) {
     + '<div style="display:grid;grid-template-columns:minmax(180px,260px) minmax(180px,260px) 1fr;gap:10px;align-items:start">'
     + '<div class="form-group" style="margin-bottom:0"><label>任务名称</label><input type="text" id="userTaskTitle" placeholder="例如：生成宣传视频"></div>'
     + '<div class="form-group" style="margin-bottom:0"><label>任务类型</label><select id="userTaskKind" onchange="toggleUserTaskPayload()" style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px"><option value="openclaw_message">发消息给 OpenClaw</option><option value="chat_message">本地对话链路</option><option value="capability">调用能力</option></select></div>'
-    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="form-group" style="margin-bottom:0"><label>执行方式</label><select id="userTaskScheduleType" style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px"><option value="once">一次性</option><option value="interval">按间隔循环</option></select></div><div class="form-group" style="margin-bottom:0"><label>间隔分钟</label><input type="number" id="userTaskIntervalMinutes" min="1" value="60"></div></div>'
+    + '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px"><div class="form-group" style="margin-bottom:0"><label>执行方式</label><select id="userTaskScheduleType" onchange="toggleUserTaskScheduleFields()" style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px"><option value="once">一次性</option><option value="interval">按间隔循环</option><option value="daily_times">每天固定时间</option></select></div><div class="form-group" id="userTaskIntervalWrap" style="margin-bottom:0"><label>间隔分钟</label><input type="number" id="userTaskIntervalMinutes" min="1" value="60"></div><div class="form-group" id="userTaskStartAtWrap" style="margin-bottom:0"><label>开始时间（可选）</label><input type="datetime-local" id="userTaskStartAt"></div><div class="form-group" id="userTaskDailyTimesWrap" style="display:none;margin-bottom:0"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px"><label style="margin:0">每天执行时间</label><button type="button" class="btn btn-outline btn-sm" onclick="addUserTaskDailyTime()">+ 添加时间点</button></div><div id="userTaskDailyTimesList" style="display:grid;gap:6px"></div></div></div>'
     + '</div>'
     + '<div class="form-group" id="userTaskContentWrap" style="margin-top:10px;margin-bottom:0"><label>要执行的内容</label><textarea id="userTaskContent" rows="4" placeholder="例如：打开 OpenClaw，按这个产品卖点生成 8 秒宣传视频并回传结果。" style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;resize:vertical"></textarea></div>'
     + '<div class="form-group" id="userTaskPayloadWrap" style="display:none;margin-top:10px;margin-bottom:0"><label>能力调用 JSON</label><textarea id="userTaskPayload" rows="4" placeholder=\'{\"capability_id\":\"video.generate\",\"payload\":{\"prompt\":\"...\"}}\' style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;resize:vertical"></textarea></div>'
     + '<div id="userTaskDispatchMsg" style="display:none;font-size:12px;margin-top:8px"></div>'
     + '</div>';
+}
+
+function addUserTaskDailyTime(value) {
+  const list = document.getElementById('userTaskDailyTimesList');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.style.cssText = 'display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center';
+  const input = document.createElement('input');
+  input.type = 'time';
+  input.step = '60';
+  input.value = value || '';
+  input.setAttribute('data-user-task-daily-time', '1');
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn btn-outline btn-sm';
+  remove.textContent = '-';
+  remove.title = '删除时间点';
+  remove.onclick = function() { row.remove(); };
+  row.appendChild(input);
+  row.appendChild(remove);
+  list.appendChild(row);
+}
+
+function collectUserTaskDailyTimes() {
+  return Array.from(document.querySelectorAll('[data-user-task-daily-time]'))
+    .map(function(el) { return String(el.value || '').trim(); })
+    .filter(Boolean);
+}
+
+function userTimezoneOffsetMinutes() {
+  return -new Date().getTimezoneOffset();
+}
+
+function toggleUserTaskScheduleFields() {
+  const type = (document.getElementById('userTaskScheduleType') || {}).value || 'once';
+  const interval = document.getElementById('userTaskIntervalWrap');
+  const start = document.getElementById('userTaskStartAtWrap');
+  const daily = document.getElementById('userTaskDailyTimesWrap');
+  if (interval) interval.style.display = type === 'interval' ? '' : 'none';
+  if (start) start.style.display = type === 'daily_times' ? 'none' : '';
+  if (daily) daily.style.display = type === 'daily_times' ? '' : 'none';
 }
 
 function renderUserDevicesTaskSection(data) {
@@ -645,6 +689,7 @@ function renderUserDevicesTaskSection(data) {
     html += '<div class="empty">暂无设备心跳记录</div>';
     el.innerHTML = html;
     toggleUserTaskPayload();
+    toggleUserTaskScheduleFields();
     return;
   }
   html += '<div class="table-wrap"><table><thead><tr>' + (canDispatch ? '<th>选择</th>' : '') + '<th>设备</th><th>名称</th><th>状态</th><th>最后在线</th></tr></thead><tbody>';
@@ -659,6 +704,7 @@ function renderUserDevicesTaskSection(data) {
   html += '</tbody></table></div>';
   el.innerHTML = html;
   toggleUserTaskPayload();
+  toggleUserTaskScheduleFields();
 }
 
 function getSelectedUserTaskDevices() {
@@ -695,6 +741,9 @@ function buildUserTaskBody(userId) {
   const kind = (document.getElementById('userTaskKind') || {}).value || 'openclaw_message';
   const scheduleType = (document.getElementById('userTaskScheduleType') || {}).value || 'once';
   const intervalMin = parseInt((document.getElementById('userTaskIntervalMinutes') || {}).value || '60', 10);
+  const startAt = ((document.getElementById('userTaskStartAt') || {}).value || '').trim();
+  const dailyTimes = collectUserTaskDailyTimes();
+  if (scheduleType === 'daily_times' && !dailyTimes.length) throw new Error('请添加每天执行时间点');
   const body = {
     user_id: userId,
     title: ((document.getElementById('userTaskTitle') || {}).value || '').trim(),
@@ -702,9 +751,12 @@ function buildUserTaskBody(userId) {
     content: ((document.getElementById('userTaskContent') || {}).value || '').trim(),
     payload: {},
     schedule_type: scheduleType,
-    interval_seconds: Math.max(60, (isNaN(intervalMin) ? 60 : intervalMin) * 60),
+    timezone_offset_minutes: userTimezoneOffsetMinutes(),
     installation_ids: getSelectedUserTaskDevices()
   };
+  if (startAt && scheduleType !== 'daily_times') body.start_at = startAt;
+  if (scheduleType === 'interval') body.interval_seconds = Math.max(60, (isNaN(intervalMin) ? 60 : intervalMin) * 60);
+  if (scheduleType === 'daily_times') body.daily_times = dailyTimes;
   if (kind === 'capability') {
     const raw = ((document.getElementById('userTaskPayload') || {}).value || '').trim();
     if (!raw) throw new Error('请输入能力调用 JSON');
@@ -757,12 +809,86 @@ function resetUserDetailTab() {
   });
 }
 
+function formatLedgerMeta(meta) {
+  if (!meta || typeof meta !== 'object') return '';
+  const parts = [];
+  if (meta.capability_id) parts.push(meta.capability_id);
+  if (meta.model) parts.push(meta.model);
+  if (meta.endpoint) parts.push(meta.endpoint);
+  if (meta.pre_estimated !== undefined) parts.push('预扣 ' + meta.pre_estimated);
+  if (meta.refund_credits !== undefined) parts.push('退款 ' + meta.refund_credits);
+  if (meta.final !== undefined) parts.push('实际 ' + meta.final);
+  return parts.join(' / ');
+}
+
+function renderLedger(data) {
+  const ledger = data.ledger || [];
+  const page = data.ledger_pagination || {total: ledger.length, limit: LEDGER_PAGE_SIZE, offset: currentLedgerOffset};
+  const title = document.getElementById('ledgerTitle');
+  if (title) {
+    const start = page.total ? page.offset + 1 : 0;
+    const end = Math.min(page.offset + page.limit, page.total || 0);
+    title.textContent = `积分流水（${start}-${end} / 共 ${page.total || 0} 条）`;
+  }
+  const table = document.getElementById('ledgerTable');
+  const pager = document.getElementById('ledgerPagination');
+  if (!table) return;
+  if (!ledger.length) {
+    table.innerHTML = '<div class="empty">暂无流水记录</div>';
+  } else {
+    let html = `<div class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>变动</th><th>余额</th><th>描述</th><th>关联</th></tr></thead><tbody>`;
+    for (const e of ledger) {
+      const isPositive = e.delta > 0;
+      const typeBadge = {
+        'recharge': 'badge-green', 'refund': 'badge-green',
+        'pre_deduct': 'badge-yellow', 'settle': 'badge-yellow',
+        'sutui_chat': 'badge-red', 'skill_unlock': 'badge-red', 'unit_deduct': 'badge-red',
+      }[e.entry_type] || 'badge-blue';
+      const metaText = formatLedgerMeta(e.meta);
+      const refText = [e.ref_type || '', e.ref_id || ''].filter(Boolean).join(':');
+      html += `<tr>
+        <td style="font-size:11px;white-space:nowrap">${e.created_at?new Date(e.created_at).toLocaleString('zh-CN'):'-'}</td>
+        <td><span class="badge ${typeBadge}">${escapeHtml(e.entry_type)}</span></td>
+        <td style="color:${isPositive?'var(--success)':'var(--danger)'};font-weight:600;white-space:nowrap">${isPositive?'+':''}${e.delta.toFixed(4)}</td>
+        <td style="font-weight:500">${e.balance_after.toFixed(4)}</td>
+        <td style="font-size:11px;color:var(--text-secondary)">${escapeHtml(e.description||'-')}</td>
+        <td style="font-size:11px;color:var(--text-secondary)">${escapeHtml(metaText || refText || '-')}</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+    table.innerHTML = html;
+  }
+  if (!pager) return;
+  const total = page.total || 0;
+  if (total <= (page.limit || LEDGER_PAGE_SIZE)) {
+    pager.innerHTML = '';
+    return;
+  }
+  const prevOffset = Math.max(0, page.offset - page.limit);
+  const nextOffset = page.offset + page.limit;
+  let html = '';
+  if (page.has_prev) html += `<button class="btn btn-outline btn-sm" onclick="loadLedgerPage(${prevOffset})">上一页</button>`;
+  html += `<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">第 ${Math.floor(page.offset / page.limit) + 1}/${Math.ceil(total / page.limit)} 页</span>`;
+  if (page.has_next) html += `<button class="btn btn-outline btn-sm" onclick="loadLedgerPage(${nextOffset})">下一页</button>`;
+  pager.innerHTML = html;
+}
+
+async function loadLedgerPage(offset) {
+  if (!currentUserId) return;
+  currentLedgerOffset = Math.max(0, offset || 0);
+  try {
+    const data = await api('/admin/api/user/' + currentUserId + '?ledger_limit=' + LEDGER_PAGE_SIZE + '&ledger_offset=' + currentLedgerOffset);
+    renderLedger(data);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
 async function showUserDetail(userId) {
   currentUserId = userId;
+  currentLedgerOffset = 0;
   try {
     ensureUserDetailTabs();
     resetUserDetailTab();
-    const data = await api('/admin/api/user/' + userId);
+    const data = await api('/admin/api/user/' + userId + '?ledger_limit=' + LEDGER_PAGE_SIZE + '&ledger_offset=0');
     currentUserData = data.user;
     document.getElementById('tabSearch').style.display = 'none';
     document.getElementById('tabAll').style.display = 'none';
@@ -824,29 +950,7 @@ async function showUserDetail(userId) {
     document.getElementById('openclawMemoryAdminCard').style.display = '';
     loadOpenclawMemoryAdmin(userId);
 
-    const ledger = data.ledger;
-    if (!ledger.length) {
-      document.getElementById('ledgerTable').innerHTML = '<div class="empty">暂无流水记录</div>';
-    } else {
-      let html = `<div class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>变动</th><th>余额</th><th>描述</th></tr></thead><tbody>`;
-      for (const e of ledger) {
-        const isPositive = e.delta > 0;
-        const typeBadge = {
-          'recharge': 'badge-green', 'refund': 'badge-green',
-          'pre_deduct': 'badge-yellow', 'settle': 'badge-yellow',
-          'sutui_chat': 'badge-red', 'skill_unlock': 'badge-red', 'unit_deduct': 'badge-red',
-        }[e.entry_type] || 'badge-blue';
-        html += `<tr>
-          <td style="font-size:11px;white-space:nowrap">${e.created_at?new Date(e.created_at).toLocaleDateString('zh-CN'):'-'}</td>
-          <td><span class="badge ${typeBadge}">${e.entry_type}</span></td>
-          <td style="color:${isPositive?'var(--success)':'var(--danger)'};font-weight:600;white-space:nowrap">${isPositive?'+':''}${e.delta.toFixed(2)}</td>
-          <td style="font-weight:500">${e.balance_after.toFixed(0)}</td>
-          <td style="font-size:11px;color:var(--text-secondary)">${e.description||'-'}</td>
-        </tr>`;
-      }
-      html += '</tbody></table></div>';
-      document.getElementById('ledgerTable').innerHTML = html;
-    }
+    renderLedger(data);
 
     document.getElementById('rechargeAmount').value = '';
     if (canManageSkills) loadSkillVisibility(userId);

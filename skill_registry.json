@@ -440,6 +440,273 @@
       },
       "tags": ["video", "digital-human", "必火"]
     },
+    "comfly_veo_skill": {
+      "name": "爆款TVC",
+      "description": "用一张商品/主图自动做多分镜 + 多段 Veo 成片，可选拼接为一条 TVC；用户对话里可说「用爆款TVC和这个素材做个视频」。技能卡片**必须**在本账号下配置 Comfly 的 API Key 与 API 根地址（每用户独立，不走服务端环境变量兜底），分镜、提示词、模型与拼接由技能内置流程完成，无需用户在卡片里改流水线参数。下方 package_config 中的模型字段仅供系统/高级覆盖，普通用户可忽略。无需算力解锁。技术说明：提示词走 OpenAI 兼容 chat（根地址常为 https://ai.comfly.org）；视频任务走 Comfly v2（POST /v2/videos/generations，以官方文档为准）。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "comfly_api_base": "https://ai.comfly.org",
+        "video_model": "veo3.1",
+        "analysis_model": "gemini-2.5-pro",
+        "aspect_ratio": "9:16",
+        "enhance_prompt": true,
+        "storyboard_image_model": "nano-banana-2",
+        "image_request_style": "openai_images"
+      },
+      "capabilities": {
+        "comfly.daihuo": {
+          "description": "（单段/分步调试）Comfly + Veo 图生视频：invoke_capability(capability_id=comfly.daihuo，payload.action=upload|generate_prompts|submit_video|poll_video)。成片优先用 comfly.daihuo.pipeline。",
+          "upstream": "local",
+          "upstream_tool": "invoke",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "upload",
+                  "generate_prompts",
+                  "submit_video",
+                  "poll_video"
+                ],
+                "description": "upload: 本机 asset_id 上传得 image_url；generate_prompts: 从 image_url 生成 5 条英文视频 prompt；submit_video: 提交 Veo 任务；poll_video: 查询 task_id 状态与 output"
+              },
+              "asset_id": {
+                "type": "string",
+                "description": "upload 时必填"
+              },
+              "image_url": {
+                "type": "string",
+                "description": "generate_prompts/submit_video 时可用"
+              },
+              "prompt": {
+                "type": "string",
+                "description": "submit_video 视频提示词"
+              },
+              "task_id": {
+                "type": "string",
+                "description": "poll_video 必填"
+              },
+              "video_model": {
+                "type": "string",
+                "description": "覆盖卡片默认 Veo 模型"
+              },
+              "analysis_model": {
+                "type": "string",
+                "description": "覆盖卡片默认分析模型"
+              },
+              "aspect_ratio": {
+                "type": "string",
+                "description": "如 9:16、16:9"
+              },
+              "enhance_prompt": {
+                "type": "boolean",
+                "description": "非英文 prompt 时是否增强"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        },
+        "comfly.daihuo.pipeline": {
+          "description": "爆款TVC 整包成片：action=start_pipeline + asset_id（或 image_url）+ auto_save=true 即可，MCP 自动轮询至完成并入库；run_pipeline 为同步长请求；poll_pipeline+job_id 查进度。",
+          "upstream": "local",
+          "upstream_tool": "invoke",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "run_pipeline",
+                  "start_pipeline",
+                  "poll_pipeline"
+                ]
+              },
+              "job_id": {
+                "type": "string"
+              },
+              "asset_id": {
+                "type": "string"
+              },
+              "image_url": {
+                "type": "string"
+              },
+              "merge_clips": {
+                "type": "boolean"
+              },
+              "storyboard_count": {
+                "type": "integer"
+              },
+              "auto_save": {
+                "type": "boolean"
+              },
+              "task_text": {
+                "type": "string"
+              },
+              "isolate_job_dir": {
+                "type": "boolean"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              },
+              "language": {
+                "type": "string"
+              },
+              "output_dir": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "tags": [
+        "video",
+        "comfly",
+        "veo",
+        "i2v",
+        "爆款TVC",
+        "TVC",
+        "credential_package"
+      ]
+    },
+    "comfly_seedance_tvc_skill": {
+      "name": "创意分镜头视频",
+      "description": "上传商品/品牌参考图后，按 10 秒一段自动设计同一条 TVC 的连续分镜板，再用 gpt-image-2 生成分镜设计图（失败自动降级到 nano-banana-2），并为每张分镜图生成 10 秒 Seedance 视频，最后强制合成为 1 条完整成片。总时长支持 10/20/30/40/50/60 秒，适合美妆护肤、品牌广告、招商页风格 TVC。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "analysis_model": "gpt-4.1-mini",
+        "storyboard_image_model": "gpt-image-2",
+        "storyboard_image_model_fallback": "nano-banana-2",
+        "video_model": "doubao-seedance-2-0-fast-260128",
+        "storyboard_count": 2,
+        "segment_count": 2,
+        "segment_duration_seconds": 10,
+        "total_duration_seconds": 20,
+        "aspect_ratio": "9:16"
+      },
+      "capabilities": {
+        "comfly.seedance.tvc.pipeline": {
+          "description": "一体化分镜 TVC 成片：总时长仅支持 10/20/30/40/50/60 秒，并固定按每 10 秒生成 1 张分镜图和 1 段视频，所有段最终自动合成为 1 条完整视频。推荐 action=start_pipeline + asset_id（或 image_url）；poll_pipeline + job_id 用于追进度。",
+          "upstream": "local",
+          "upstream_tool": "invoke",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "run_pipeline",
+                  "start_pipeline",
+                  "poll_pipeline"
+                ]
+              },
+              "job_id": {
+                "type": "string"
+              },
+              "asset_id": {
+                "type": "string"
+              },
+              "image_url": {
+                "type": "string"
+              },
+              "merge_clips": {
+                "type": "boolean",
+                "description": "保留兼容字段；该流水线最终始终会合并所有分段视频"
+              },
+              "storyboard_count": {
+                "type": "integer",
+                "description": "兼容旧字段；若传入将按 storyboard_count * 10 秒推导总时长"
+              },
+              "segment_count": {
+                "type": "integer",
+                "description": "兼容旧字段；若传入必须与 total_duration_seconds / 10 一致"
+              },
+              "segment_duration_seconds": {
+                "type": "integer",
+                "description": "固定为 10 秒；若传入必须是 10"
+              },
+              "total_duration_seconds": {
+                "type": "integer",
+                "enum": [
+                  10,
+                  20,
+                  30,
+                  40,
+                  50,
+                  60
+                ],
+                "description": "总时长，仅支持 10/20/30/40/50/60 秒"
+              },
+              "auto_save": {
+                "type": "boolean"
+              },
+              "task_text": {
+                "type": "string"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "country": {
+                "type": "string"
+              },
+              "language": {
+                "type": "string"
+              },
+              "analysis_model": {
+                "type": "string"
+              },
+              "image_model": {
+                "type": "string"
+              },
+              "image_model_fallback": {
+                "type": "string",
+                "description": "主图模型失败时的兜底模型，默认 nano-banana-2"
+              },
+              "video_model": {
+                "type": "string"
+              },
+              "output_dir": {
+                "type": "string"
+              },
+              "isolate_job_dir": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "tags": [
+        "video",
+        "seedance",
+        "tvc",
+        "storyboard",
+        "gpt-image-2",
+        "nano-banana-2",
+        "doubao",
+        "comfly",
+        "credential_package"
+      ]
+    },
     "goal_video_pipeline_skill": {
       "name": "目标成片",
       "description": "输入一个目标，自动结合用户记忆和代理商记忆生成文案，再生成图片并图生视频；返回真实素材 ID，供 OpenClaw 调用。",
