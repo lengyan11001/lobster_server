@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 PHONE = "13800138000"
 PHONE_EMAIL = f"{PHONE}@sms.lobster.local"
+NEW_PHONE = "13900139000"
+NEW_PHONE_EMAIL = f"{NEW_PHONE}@sms.lobster.local"
 DEVICE_ID = "mp_test_device_001"
 
 
@@ -90,12 +92,25 @@ def test_phone_status_reports_registered_online(mobile_client):
 
 
 def test_phone_status_reports_missing_online(mobile_client):
-    res = mobile_client.get("/api/mobile/phone/status?phone=13900139000")
+    res = mobile_client.get(f"/api/mobile/phone/status?phone={NEW_PHONE}")
 
     assert res.status_code == 200
     data = res.json()
     assert data["registered"] is False
-    assert "没有 online 版本" in data["message"]
+    assert "验证码通过后会自动创建账号" in data["message"]
+
+
+def test_send_mobile_sms_allows_new_phone(mobile_client, monkeypatch):
+    from backend.app.api import mobile_client as mobile_module
+
+    sent: list[str] = []
+    monkeypatch.setattr(mobile_module, "_send_mobile_sms_code", lambda mobile: sent.append(mobile))
+
+    res = mobile_client.post("/api/mobile/sms/send", json={"phone": NEW_PHONE})
+
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+    assert sent == [NEW_PHONE]
 
 
 def test_bind_mobile_device_merges_wechat_session_into_phone_user(mobile_client, db_session_factory, mobile_users):
@@ -160,6 +175,47 @@ def test_bind_mobile_device_with_sms_code(mobile_client, db_session_factory, mob
         binding = s.query(MobileDeviceBinding).filter(MobileDeviceBinding.device_id == DEVICE_ID).first()
         assert binding.user_id == phone_user.id
         assert binding.phone == PHONE
+
+
+def test_bind_mobile_device_with_sms_code_creates_new_phone_user(mobile_client, db_session_factory, mobile_users):
+    from backend.app.api import mobile_client as mobile_module
+
+    _, temp_user = mobile_users
+    with mobile_module._MOBILE_SMS_LOCK:
+        mobile_module._MOBILE_SMS_CODE_STORE[NEW_PHONE] = ("654321", 9999999999.0)
+
+    res = mobile_client.post(
+        "/api/mobile/devices/bind",
+        json={
+            "phone": NEW_PHONE,
+            "sms_code": "654321",
+            "device_id": DEVICE_ID,
+            "platform": "wechat_miniprogram",
+            "display_name": "微信小程序",
+        },
+    )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["phone"] == NEW_PHONE
+    assert data["phone_verified"] is True
+    assert data["created_user"] is True
+    assert data["access_token"]
+
+    from backend.app.models import MobileDeviceBinding, SkillUnlock, User
+
+    with db_session_factory() as s:
+        created = s.query(User).filter(User.email == NEW_PHONE_EMAIL).first()
+        old_temp = s.query(User).filter(User.id == temp_user.id).first()
+        binding = s.query(MobileDeviceBinding).filter(MobileDeviceBinding.device_id == DEVICE_ID).first()
+        unlocks = s.query(SkillUnlock).filter(SkillUnlock.user_id == created.id).all()
+        assert created is not None
+        assert created.hashed_password
+        assert created.wechat_openid == "openid_test"
+        assert old_temp.wechat_openid is None
+        assert binding.user_id == created.id
+        assert binding.phone == NEW_PHONE
+        assert {row.package_id for row in unlocks} >= {"sutui_mcp", "douyin_publish"}
 
 
 def test_downloads_require_bound_device(mobile_client):

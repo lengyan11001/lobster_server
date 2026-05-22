@@ -3,7 +3,7 @@
     <view class="avatar">{{avatarText}}</view>
     <view class="profile-main">
       <text class="profile-name">{{phoneBound ? phone : '未绑定手机号'}}</text>
-      <text class="profile-sub">{{phoneBound ? '已关联 online 账号' : '授权手机号后关联电脑端 online'}}</text>
+      <text class="profile-sub">{{phoneBound ? '已登录手机号账号' : '授权手机号后登录或创建账号'}}</text>
     </view>
   </view>
 

@@ -27,12 +27,12 @@
           </view>
           <button class="sms-link" bindtap="showSmsBind">微信取号失败，用短信验证码绑定</button>
           <view wx:if="{{smsBindVisible}}" class="sms-bind-box">
-            <input class="input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入已开通 online 的手机号" />
+            <input class="input" type="number" maxlength="11" value="{{smsPhone}}" bindinput="onSmsPhoneInput" placeholder="输入手机号" />
             <view class="sms-code-row">
               <input class="input" type="number" maxlength="8" value="{{smsCode}}" bindinput="onSmsCodeInput" placeholder="短信验证码" />
               <button class="ghost-btn sms-code-btn" disabled="{{smsSending || smsCountdown > 0}}" loading="{{smsSending}}" bindtap="sendSmsCode">{{smsCountdown > 0 ? smsCountdown + 's' : '获取'}}</button>
             </view>
-            <button class="primary-btn sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">绑定手机号</button>
+            <button class="primary-btn sms-submit" loading="{{smsBinding}}" bindtap="bindBySms">登录 / 注册</button>
           </view>
         </view>
 

@@ -52,7 +52,7 @@ Page({
     accountText: "点击功能时授权",
     authPanelVisible: false,
     smsBindVisible: false,
-    authHint: "使用前需要微信登录并绑定手机号，用来关联你的电脑端 online。",
+    authHint: "使用前需要微信登录并验证手机号，新手机号会自动创建账号。",
     smsPhone: "",
     smsCode: "",
     smsSending: false,
@@ -116,7 +116,7 @@ Page({
     this.setData({
       authPanelVisible: true,
       smsBindVisible: this.data.smsBindVisible,
-      authHint: hint || "使用前需要微信登录并绑定手机号，用来关联你的电脑端 online。"
+      authHint: hint || "使用前需要微信登录并验证手机号，新手机号会自动创建账号。"
     });
     return true;
   },
@@ -162,7 +162,7 @@ Page({
         this.refreshState();
         this.setData({ authPanelVisible: false, smsBindVisible: false });
         this.loadOnlineStatus(false);
-        wx.showToast({ title: "绑定成功", icon: "success" });
+        wx.showToast({ title: "登录成功", icon: "success" });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => wx.hideLoading());
@@ -252,7 +252,7 @@ Page({
           this.refreshState();
           this.setData({ authPanelVisible: false, smsBindVisible: false, smsCode: "" });
           this.loadOnlineStatus(false);
-          wx.showToast({ title: "绑定成功", icon: "success" });
+          wx.showToast({ title: "登录成功", icon: "success" });
         })
         .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
         .finally(() => this.setData({ smsBinding: false }));
@@ -268,7 +268,7 @@ Page({
     const next = !this.data.taskExpanded;
     this.setData({ taskExpanded: next });
     if (!next) return;
-    if (this.showAuthPanel("下发定时任务前需要绑定手机号，用来找到你的电脑端 online。")) return;
+    if (this.showAuthPanel("下发定时任务前需要验证手机号，用来找到你的电脑端 online。")) return;
     this.loadOnlineStatus(true);
     if (this.data.taskAbility === "hifly.video.create_by_tts") this.loadHiflyLibraries();
   },
@@ -363,7 +363,7 @@ Page({
   },
 
   createScheduledTask() {
-    if (this.showAuthPanel("下发定时任务前需要绑定手机号，用来找到你的电脑端 online。")) return;
+    if (this.showAuthPanel("下发定时任务前需要验证手机号，用来找到你的电脑端 online。")) return;
     const installationId = this.data.selectedInstallationId;
     if (!installationId) {
       this.loadOnlineStatus(true).then(() => {

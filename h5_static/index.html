@@ -179,6 +179,7 @@
     .field { display: grid; gap: 7px; margin-bottom: 13px; }
     .field label { color: #46516a; font-size: 13px; }
     .captcha-row { display: grid; grid-template-columns: 1fr 112px; gap: 10px; align-items: end; }
+    .sms-row { display: grid; grid-template-columns: 1fr 112px; gap: 10px; align-items: end; }
     .captcha-img { height: 44px; border: 1px solid var(--line); border-radius: 14px; background: #fff; cursor: pointer; object-fit: cover; }
 
     .home-grid { display: grid; gap: 14px; }
@@ -411,28 +412,31 @@
     </header>
 
     <section class="panel login" id="loginPanel">
-      <h2>登录设备账号</h2>
-      <p>请使用 AI 员工设备端账号登录。</p>
+      <h2>手机号注册和登录</h2>
+      <p>输入手机号，验证码正确后直接进入。</p>
       <form id="loginForm">
         <div class="field">
-          <label for="account">账号 / 手机号</label>
-          <input id="account" name="username" autocomplete="username" required />
-        </div>
-        <div class="field">
-          <label for="password">密码</label>
-          <input id="password" name="password" type="password" autocomplete="current-password" required />
+          <label for="phone">手机号</label>
+          <input id="phone" name="phone" type="tel" inputmode="numeric" maxlength="11" autocomplete="tel" required />
         </div>
         <div class="captcha-row">
           <div class="field" style="margin-bottom:0">
-            <label for="captcha">验证码</label>
-            <input id="captcha" name="captcha_answer" required />
+            <label for="captcha">图形验证码</label>
+            <input id="captcha" name="captcha_answer" />
           </div>
           <img class="captcha-img" id="captchaImg" alt="验证码" title="点击刷新" />
         </div>
         <input type="hidden" id="captchaId" name="captcha_id" />
-        <button id="loginBtn" type="submit" style="width:100%;margin-top:18px">登录</button>
+        <button id="sendSmsBtn" type="button" class="secondary" style="width:100%;margin-top:12px">获取短信验证码</button>
+        <div class="sms-row" style="margin-top:12px">
+          <div class="field" style="margin-bottom:0">
+            <label for="smsCode">短信验证码</label>
+            <input id="smsCode" name="code" inputmode="numeric" maxlength="8" autocomplete="one-time-code" required />
+          </div>
+          <button id="loginBtn" type="submit">进入</button>
+        </div>
       </form>
-      <div class="hint">本地 online 需要保持启动并登录同一个账号。</div>
+      <div class="hint">新手机号会自动创建账号；已有手机号会直接登录。</div>
     </section>
 
     <div id="appPanel" class="hidden">
@@ -792,6 +796,39 @@
       $("captchaId").value = data.captcha_id || "";
       $("captchaImg").src = data.image || "";
       $("captcha").value = "";
+    }
+
+    function normalizePhone(raw) {
+      const value = String(raw || "").replace(/\D/g, "");
+      return /^1[3-9]\d{9}$/.test(value) ? value : "";
+    }
+
+    let smsTimer = null;
+    function setSmsCooldown(seconds) {
+      const btn = $("sendSmsBtn");
+      if (smsTimer) {
+        clearInterval(smsTimer);
+        smsTimer = null;
+      }
+      if (!seconds) {
+        btn.disabled = false;
+        btn.textContent = "获取短信验证码";
+        return;
+      }
+      let left = seconds;
+      btn.disabled = true;
+      const tick = () => {
+        btn.textContent = left > 0 ? `已发送（${left}s）` : "获取短信验证码";
+        if (left <= 0) {
+          clearInterval(smsTimer);
+          smsTimer = null;
+          btn.disabled = false;
+          return;
+        }
+        left -= 1;
+      };
+      tick();
+      smsTimer = setInterval(tick, 1000);
     }
 
     async function loadMe() {
@@ -1553,6 +1590,39 @@
       location.reload();
     });
     $("captchaImg").addEventListener("click", refreshCaptcha);
+    $("sendSmsBtn").addEventListener("click", async () => {
+      const phone = normalizePhone($("phone").value);
+      const captchaAnswer = $("captcha").value.trim();
+      if (!phone) {
+        toast("请输入有效手机号");
+        return;
+      }
+      if (!captchaAnswer) {
+        toast("请先填写图形验证码");
+        return;
+      }
+      $("sendSmsBtn").disabled = true;
+      try {
+        const resp = await fetch("/auth/sms/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone,
+            captcha_id: $("captchaId").value || "",
+            captcha_answer: captchaAnswer,
+          }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.detail || "发送失败");
+        toast("验证码已发送");
+        setSmsCooldown(60);
+        await refreshCaptcha();
+      } catch (err) {
+        toast(err.message || "发送失败");
+        $("sendSmsBtn").disabled = false;
+        await refreshCaptcha();
+      }
+    });
 
     $("taskList").addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-delete-task]");
@@ -1612,15 +1682,22 @@
       evt.preventDefault();
       $("loginBtn").disabled = true;
       try {
-        const form = new FormData(evt.currentTarget);
-        const resp = await fetch("/auth/login", { method: "POST", body: form });
+        const phone = normalizePhone($("phone").value);
+        const code = $("smsCode").value.trim();
+        if (!phone) throw new Error("请输入有效手机号");
+        if (!code) throw new Error("请输入短信验证码");
+        const resp = await fetch("/auth/register-phone", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone, code }),
+        });
         const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data.detail || "登录失败");
+        if (!resp.ok) throw new Error(data.detail || "进入失败");
         state.token = data.access_token;
         localStorage.setItem("lobster_h5_token", state.token);
         await loadMe();
       } catch (err) {
-        toast(err.message || "登录失败");
+        toast(err.message || "进入失败");
         await refreshCaptcha();
       } finally {
         $("loginBtn").disabled = false;

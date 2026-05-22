@@ -122,7 +122,7 @@ class SmsSendBody(BaseModel):
 class RegisterPhoneBody(BaseModel):
     phone: str
     code: str
-    password: str
+    password: Optional[str] = None
     brand_mark: Optional[str] = None
     parent_account: Optional[str] = None
 
@@ -406,10 +406,10 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
     use_independent = getattr(settings, "lobster_independent_auth", True)
     if edition != "online" or not use_independent:
         raise HTTPException(status_code=400, detail="当前版本不支持自主注册")
-    raise HTTPException(status_code=400, detail="已关闭账号密码注册，请使用手机号与短信验证码注册")
+    raise HTTPException(status_code=400, detail="已关闭账号密码注册，请使用手机号验证码登录/注册")
 
 
-@router.post("/sms/send", summary="发送手机注册短信验证码（需先通过图形验证码）")
+@router.post("/sms/send", summary="发送手机登录/注册短信验证码（需先通过图形验证码）")
 def send_register_sms(body: SmsSendBody, request: Request, db: Session = Depends(get_db)):
     from ..core.config import settings
 
@@ -455,7 +455,7 @@ def send_register_sms(body: SmsSendBody, request: Request, db: Session = Depends
     return {"ok": True}
 
 
-@router.post("/register-phone", response_model=Token, summary="手机号注册（短信验证码 + 密码）")
+@router.post("/register-phone", response_model=Token, summary="手机号验证码注册和登录")
 def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depends(get_db)):
     from ..core.config import settings
 
@@ -469,12 +469,15 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
         raise HTTPException(status_code=400, detail="短信验证码无效")
     if not _verify_sms_challenge(db, mobile, code_in):
         raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
-    if len(body.password or "") < 6:
-        raise HTTPException(status_code=400, detail="密码至少 6 位")
     email = _phone_account_email(mobile)
     existing = db.query(User).filter(User.email == email).first()
     if existing:
-        raise HTTPException(status_code=400, detail="该手机号已注册，请直接登录")
+        reg_iid = optional_installation_id_from_request(request)
+        if reg_iid:
+            ensure_installation_slot(db, existing.id, reg_iid)
+        access_token = create_access_token(data=access_token_claims(existing))
+        logger.info("[auth/register-phone] login existing user_id=%s mobile_tail=%s", existing.id, mobile[-4:])
+        return Token(access_token=access_token)
     reg_iid = optional_installation_id_from_request(request)
     parent_uid = None
     raw_parent = (body.parent_account or "").strip()
@@ -488,7 +491,7 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
             logger.warning("[auth/register-phone] parent_account=%s not found", raw_parent[:20])
     user = User(
         email=email,
-        hashed_password=get_password_hash(body.password),
+        hashed_password=get_password_hash("phone-code-" + secrets.token_urlsafe(32)),
         credits=REGISTER_INITIAL_CREDITS,
         role="user",
         preferred_model="sutui",

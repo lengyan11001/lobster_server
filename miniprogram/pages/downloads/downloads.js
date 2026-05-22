@@ -132,7 +132,7 @@ Page({
     phoneBound: false,
     authPanelVisible: false,
     smsBindVisible: false,
-    authHint: "发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。",
+    authHint: "发送消息前需要微信登录并验证手机号，新手机号会自动创建账号。",
     smsPhone: "",
     smsCode: "",
     smsSending: false,
@@ -210,7 +210,7 @@ Page({
   },
 
   chooseUploadImage() {
-    if (this.showAuthPanel("上传图片前需要微信登录并绑定手机号，用来关联你的电脑端 online。")) return;
+    if (this.showAuthPanel("上传图片前需要微信登录并验证手机号，新手机号会自动创建账号。")) return;
     const remain = MAX_ATTACH_IMAGES - (this.data.attachedImages || []).length;
     if (remain <= 0) {
       wx.showToast({ title: `最多上传${MAX_ATTACH_IMAGES}张`, icon: "none" });
@@ -298,7 +298,7 @@ Page({
     if (this.data.phoneBound) return false;
     this.setData({
       authPanelVisible: true,
-      authHint: hint || "发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。"
+      authHint: hint || "发送消息前需要微信登录并验证手机号，新手机号会自动创建账号。"
     });
     return true;
   },
@@ -343,7 +343,7 @@ Page({
       .bindPhone(code)
       .then(() => {
         this.setData({ authPanelVisible: false, smsBindVisible: false, phoneBound: true });
-        wx.showToast({ title: "绑定成功", icon: "success" });
+        wx.showToast({ title: "登录成功", icon: "success" });
         this.loadMessages();
         this.loadOnlineStatus();
       })
@@ -433,7 +433,7 @@ Page({
         .then((data) => {
           app.saveSession(data);
           this.setData({ authPanelVisible: false, smsBindVisible: false, phoneBound: true, smsCode: "" });
-          wx.showToast({ title: "绑定成功", icon: "success" });
+          wx.showToast({ title: "登录成功", icon: "success" });
           this.loadMessages();
           this.loadOnlineStatus();
         })
@@ -459,7 +459,7 @@ Page({
       wx.showToast({ title: "请输入消息或上传图片", icon: "none" });
       return;
     }
-    if (this.showAuthPanel("发送消息前需要微信登录并绑定手机号，用来关联你的电脑端 online。")) return;
+    if (this.showAuthPanel("发送消息前需要微信登录并验证手机号，新手机号会自动创建账号。")) return;
     const content = this.buildMessageContent(inputText, attachedImages);
     this.setData({ sending: true });
     this.loadOnlineStatus()

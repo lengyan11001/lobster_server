@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+
+PHONE = "13800138000"
+PHONE_EMAIL = f"{PHONE}@sms.lobster.local"
+
+
+def _client(db_session_factory, monkeypatch):
+    from backend.app.api.auth import router as auth_router
+    from backend.app.core.config import settings
+    from backend.app.db import get_db
+
+    monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
+    monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
+
+    app = FastAPI()
+    app.include_router(auth_router, prefix="/auth")
+
+    def _get_db_override():
+        s = db_session_factory()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    return TestClient(app)
+
+
+def _put_sms_code(db_session, phone: str, code: str = "123456") -> None:
+    from backend.app.api.auth import _create_auth_challenge
+
+    _create_auth_challenge(db_session, kind="sms", target=phone, answer=code, ttl_seconds=600)
+    db_session.commit()
+
+
+def test_register_phone_existing_user_logs_in_without_password(db_session, db_session_factory, monkeypatch):
+    from backend.app.models import User
+
+    user = User(
+        email=PHONE_EMAIL,
+        hashed_password="x",
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    _put_sms_code(db_session, PHONE)
+
+    res = _client(db_session_factory, monkeypatch).post(
+        "/auth/register-phone",
+        json={"phone": PHONE, "code": "123456"},
+    )
+
+    assert res.status_code == 200
+    assert res.json()["access_token"]
+    with db_session_factory() as s:
+        assert s.query(User).filter(User.email == PHONE_EMAIL).count() == 1
+
+
+def test_register_phone_new_user_creates_and_logs_in_without_password(db_session, db_session_factory, monkeypatch):
+    from backend.app.models import User
+
+    phone = "13900139000"
+    _put_sms_code(db_session, phone)
+
+    res = _client(db_session_factory, monkeypatch).post(
+        "/auth/register-phone",
+        json={"phone": phone, "code": "123456"},
+    )
+
+    assert res.status_code == 200
+    assert res.json()["access_token"]
+    with db_session_factory() as s:
+        user = s.query(User).filter(User.email == f"{phone}@sms.lobster.local").first()
+        assert user is not None
+        assert user.hashed_password

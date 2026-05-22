@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import random
+import secrets
 import threading
 import time
 from datetime import datetime
@@ -23,12 +24,13 @@ from ..models import (
     H5ChatMessage,
     MobileDeviceBinding,
     ScheduledTaskRun,
+    SkillUnlock,
     User,
 )
 from ..core.config import settings
 from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
 from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
-from .auth import access_token_claims, create_access_token, get_current_user, get_password_hash
+from .auth import REGISTER_INITIAL_CREDITS, access_token_claims, create_access_token, get_current_user, get_password_hash
 from .auth import _get_wechat_access_token
 from .installation_slots import parse_installation_id_strict
 
@@ -45,6 +47,12 @@ _MOBILE_SMS_SEND_HOUR_COUNT: dict[str, tuple[float, int]] = {}
 _MOBILE_SMS_CODE_TTL_SEC = 600
 _MOBILE_SMS_SEND_COOLDOWN_SEC = 60
 _MOBILE_SMS_MAX_PER_HOUR = 10
+_DEFAULT_PHONE_UNLOCK_PACKAGES = (
+    "sutui_mcp",
+    "douyin_publish",
+    "xiaohongshu_publish",
+    "toutiao_publish",
+)
 
 
 class MobileBindRequest(BaseModel):
@@ -97,6 +105,26 @@ def _phone_from_user_email(email: str) -> str:
         return ""
     raw = value[: -len(_PHONE_EMAIL_SUFFIX)]
     return raw if _CN_MOBILE_RE.match(raw) else ""
+
+
+def _get_or_create_phone_user(db: Session, mobile: str) -> tuple[User, bool]:
+    email = _phone_email(mobile)
+    user = db.query(User).filter(User.email == email).first()
+    if user:
+        return user, False
+    user = User(
+        email=email,
+        hashed_password=get_password_hash("phone-code-" + secrets.token_urlsafe(32)),
+        credits=REGISTER_INITIAL_CREDITS,
+        role="user",
+        preferred_model="sutui",
+    )
+    db.add(user)
+    db.flush()
+    for pkg_id in _DEFAULT_PHONE_UNLOCK_PACKAGES:
+        db.add(SkillUnlock(user_id=user.id, package_id=pkg_id))
+    db.flush()
+    return user, True
 
 
 def _exchange_wechat_login_code(js_code: str) -> str:
@@ -399,7 +427,7 @@ def _current_binding(db: Session, current_user: User, device_id: str) -> MobileD
     return row
 
 
-@router.get("/api/mobile/phone/status", summary="手机端：检查手机号是否已开通 online")
+@router.get("/api/mobile/phone/status", summary="手机端：检查手机号是否已有账号")
 def mobile_phone_status(phone: str = Query(...), db: Session = Depends(get_db)):
     mobile = _normalize_cn_mobile(phone)
     user = db.query(User).filter(User.email == _phone_email(mobile)).first()
@@ -407,7 +435,7 @@ def mobile_phone_status(phone: str = Query(...), db: Session = Depends(get_db)):
         "ok": True,
         "registered": bool(user),
         "has_online": bool(user),
-        "message": "该手机号已开通 online" if user else "该手机号未在平台内注册过，没有 online 版本",
+        "message": "该手机号已注册，可直接登录" if user else "该手机号未注册，验证码通过后会自动创建账号",
     }
 
 
@@ -419,11 +447,9 @@ def send_mobile_bind_sms(
 ):
     mobile = _normalize_cn_mobile(body.phone)
     user = db.query(User).filter(User.email == _phone_email(mobile)).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="该手机号未在平台内注册过，没有 online 版本")
     current_openid = (getattr(current_user, "wechat_openid", None) or "").strip()
     is_wechat_session = bool(current_openid) or str(current_user.email or "").endswith("@wechat.lobster.local")
-    if user.id != current_user.id and not is_wechat_session:
+    if user and user.id != current_user.id and not is_wechat_session:
         raise HTTPException(status_code=403, detail="当前登录账号与手机号不一致，请先用该手机号登录")
     _send_mobile_sms_code(mobile)
     return {"ok": True}
@@ -499,20 +525,18 @@ def mobile_wechat_login(
         "user_id": user.id,
         "needs_phone_bind": not bool(phone),
         "created_temp_user": created_temp_user,
-        "message": "已绑定 online 手机号账号" if phone else "请授权手机号以关联已有 online 账号",
+        "message": "已绑定手机号账号" if phone else "请授权手机号以登录或创建账号",
     }
 
 
-@router.post("/api/mobile/devices/bind", summary="手机端：绑定当前手机设备到已有 online 手机号账号")
+@router.post("/api/mobile/devices/bind", summary="手机端：绑定当前手机设备到手机号账号")
 def bind_mobile_device(
     body: MobileBindRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     mobile, phone_verified = _resolve_bind_phone(body)
-    phone_user = db.query(User).filter(User.email == _phone_email(mobile)).first()
-    if not phone_user:
-        raise HTTPException(status_code=404, detail="该手机号未在平台内注册过，没有 online 版本")
+    phone_user, created_phone_user = _get_or_create_phone_user(db, mobile)
 
     bind_user = phone_user
     current_openid = (getattr(current_user, "wechat_openid", None) or "").strip()
@@ -580,6 +604,7 @@ def bind_mobile_device(
         "bound_at": now.isoformat(),
         "access_token": access_token,
         "token_type": "bearer",
+        "created_user": created_phone_user,
     }
 
 
