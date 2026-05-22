@@ -22,13 +22,13 @@ def _clean_expired() -> None:
                 del _CAPTCHA_STORE[cid]
 
 
-def create_captcha(length: int = 4) -> tuple[str, str]:
-    """生成验证码，返回 (captcha_id, image_base64)。image 为 data:image/svg+xml;base64,..."""
-    _clean_expired()
-    answer = "".join(random.choices(_CAPTCHA_CHARS, k=length))
-    cid = secrets.token_urlsafe(16)
-    with _STORE_LOCK:
-        _CAPTCHA_STORE[cid] = (answer.upper(), time.time() + _CAPTCHA_TTL)
+def generate_captcha_answer(length: int = 4) -> str:
+    return "".join(random.choices(_CAPTCHA_CHARS, k=length)).upper()
+
+
+def render_captcha_image(answer: str) -> str:
+    """渲染验证码图片，返回 data:image/svg+xml;base64,..."""
+    answer = (answer or "").strip().upper()
     # SVG 图片：简单文字 + 干扰线，避免依赖 Pillow
     w, h = 120, 44
     lines = []
@@ -52,8 +52,17 @@ def create_captcha(length: int = 4) -> tuple[str, str]:
     )
     import base64
     b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
-    data_uri = f"data:image/svg+xml;base64,{b64}"
-    return cid, data_uri
+    return f"data:image/svg+xml;base64,{b64}"
+
+
+def create_captcha(length: int = 4) -> tuple[str, str]:
+    """生成验证码，返回 (captcha_id, image_base64)。image 为 data:image/svg+xml;base64,..."""
+    _clean_expired()
+    answer = generate_captcha_answer(length)
+    cid = secrets.token_urlsafe(16)
+    with _STORE_LOCK:
+        _CAPTCHA_STORE[cid] = (answer, time.time() + _CAPTCHA_TTL)
+    return cid, render_captcha_image(answer)
 
 
 def verify_captcha(captcha_id: str, answer: str) -> bool:

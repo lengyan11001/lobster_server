@@ -34,6 +34,32 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class AuthChallenge(Base):
+    __tablename__ = "auth_challenges"
+    __table_args__ = (
+        Index("ix_auth_challenges_kind_target", "kind", "target"),
+        Index("ix_auth_challenges_expires_at", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    target: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    answer_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class SmsSendLimit(Base):
+    __tablename__ = "sms_send_limits"
+
+    mobile: Mapped[str] = mapped_column(String(32), primary_key=True)
+    last_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    hour_window_start: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    hour_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class CapabilityConfig(Base):
     __tablename__ = "capability_configs"
 
