@@ -1,6 +1,7 @@
 const app = getApp();
 const api = require("../../utils/api");
 const media = require("../../utils/media");
+const share = require("../../utils/share");
 
 function videoUrl(item) {
   return item.video_url || item.asset_video_url || item.source_video_url || "";
@@ -83,6 +84,7 @@ Page({
   pollTimer: null,
 
   onShow() {
+    share.showShareMenu();
     app.restoreSession();
     this.refreshAuthState();
     const shouldRefresh = wx.getStorageSync("lobster_refresh_works");
@@ -305,5 +307,18 @@ Page({
 
   goCreate() {
     wx.navigateTo({ url: "/pages/digital/digital" });
+  },
+
+  onShareAppMessage() {
+    return share.appShare({
+      title: "我的AI作品 - 必火AI员工",
+      path: "/pages/downloads/downloads"
+    });
+  },
+
+  onShareTimeline() {
+    return share.timelineShare({
+      title: "必火AI员工 - AI视频作品"
+    });
   }
 });

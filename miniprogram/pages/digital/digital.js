@@ -2,6 +2,7 @@ const app = getApp();
 const api = require("../../utils/api");
 const media = require("../../utils/media");
 const staticAssets = require("../../utils/static_assets");
+const share = require("../../utils/share");
 
 function assetUrl(path) {
   const value = String(path || "").trim();
@@ -161,6 +162,7 @@ Page({
   pollTimer: null,
 
   onShow() {
+    share.showShareMenu();
     app.restoreSession();
     this.applyPrefill();
     this.refreshAuthState();
@@ -664,6 +666,19 @@ Page({
           })
           .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }));
       }
+    });
+  },
+
+  onShareAppMessage() {
+    return share.appShare({
+      title: "必火AI数字人 - 快速生成口播视频",
+      path: "/pages/digital/digital"
+    });
+  },
+
+  onShareTimeline() {
+    return share.timelineShare({
+      title: "必火AI数字人 - 快速生成口播视频"
     });
   }
 });

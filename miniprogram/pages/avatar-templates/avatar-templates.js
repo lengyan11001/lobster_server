@@ -1,6 +1,7 @@
 const app = getApp();
 const api = require("../../utils/api");
 const avatarTemplates = require("../../utils/digital_avatar_templates");
+const share = require("../../utils/share");
 
 Page({
   data: {
@@ -10,6 +11,7 @@ Page({
   },
 
   onLoad() {
+    share.showShareMenu();
     const cached = wx.getStorageSync("lobster_public_avatar_templates") || [];
     if (cached.length) {
       this.setData({ templates: avatarTemplates.pickPublicAvatarTemplates(cached, 20) });
@@ -62,5 +64,18 @@ Page({
       return;
     }
     wx.navigateTo({ url: "/pages/digital/digital" });
+  },
+
+  onShareAppMessage() {
+    return share.appShare({
+      title: "必火AI数字人模板",
+      path: "/pages/avatar-templates/avatar-templates"
+    });
+  },
+
+  onShareTimeline() {
+    return share.timelineShare({
+      title: "必火AI数字人模板"
+    });
   }
 });

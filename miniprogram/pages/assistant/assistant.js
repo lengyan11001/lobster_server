@@ -1,6 +1,7 @@
 const app = getApp();
 const api = require("../../utils/api");
 const media = require("../../utils/media");
+const share = require("../../utils/share");
 
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const MEDIA_EXTS = {
@@ -151,6 +152,7 @@ Page({
   smsTimer: null,
 
   onShow() {
+    share.showShareMenu();
     app.restoreSession();
     const prefill = wx.getStorageSync("lobster_message_prefill") || "";
     if (prefill) wx.removeStorageSync("lobster_message_prefill");
@@ -526,5 +528,18 @@ Page({
 
   goHome() {
     wx.switchTab({ url: "/pages/index/index" });
+  },
+
+  onShareAppMessage() {
+    return share.appShare({
+      title: "打开必火AI员工，对话安排创作任务",
+      path: "/pages/assistant/assistant"
+    });
+  },
+
+  onShareTimeline() {
+    return share.timelineShare({
+      title: "必火AI员工 - 对话安排AI任务"
+    });
   }
 });

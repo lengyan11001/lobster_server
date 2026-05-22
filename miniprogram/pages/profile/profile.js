@@ -1,5 +1,6 @@
 const app = getApp();
 const api = require("../../utils/api");
+const share = require("../../utils/share");
 
 Page({
   data: {
@@ -24,6 +25,7 @@ Page({
   smsTimer: null,
 
   onShow() {
+    share.showShareMenu();
     app.restoreSession();
     this.refreshState();
     if (app.globalData.token) this.loadDevices();
@@ -298,6 +300,19 @@ Page({
         });
         wx.switchTab({ url: "/pages/index/index" });
       }
+    });
+  },
+
+  onShareAppMessage() {
+    return share.appShare({
+      title: "必火AI员工 - 绑定手机连接 OpenClaw",
+      path: "/pages/index/index"
+    });
+  },
+
+  onShareTimeline() {
+    return share.timelineShare({
+      title: "必火AI员工 - 数字人和AI视频创作"
     });
   }
 });

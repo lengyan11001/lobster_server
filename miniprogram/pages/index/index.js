@@ -2,6 +2,7 @@ const app = getApp();
 const api = require("../../utils/api");
 const avatarTemplates = require("../../utils/digital_avatar_templates");
 const staticAssets = require("../../utils/static_assets");
+const share = require("../../utils/share");
 
 const CAPABILITIES = [
   { id: "goal.video.pipeline", name: "创意成片" },
@@ -97,6 +98,7 @@ Page({
   smsTimer: null,
 
   onShow() {
+    share.showShareMenu();
     app.restoreSession();
     this.refreshState();
     if (app.globalData.token && app.globalData.phone) {
@@ -483,5 +485,20 @@ Page({
     const item = this.data.quickMessages[index];
     if (item && item.text) wx.setStorageSync("lobster_message_prefill", item.text);
     this.goMessages();
+  },
+
+  onShareAppMessage() {
+    return share.appShare({
+      title: "必火AI员工 - 数字人和AI视频创作",
+      path: "/pages/index/index",
+      imageUrl: this.data.heroBgUrl
+    });
+  },
+
+  onShareTimeline() {
+    return share.timelineShare({
+      title: "必火AI员工 - 数字人和AI视频创作",
+      imageUrl: this.data.heroBgUrl
+    });
   }
 });

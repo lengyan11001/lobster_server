@@ -1,6 +1,7 @@
 const app = getApp();
 const api = require("../../utils/api");
 const media = require("../../utils/media");
+const share = require("../../utils/share");
 
 function videoUrl(item) {
   return item.video_url || item.asset_video_url || item.source_video_url || "";
@@ -78,6 +79,7 @@ Page({
   pollTimer: null,
 
   onLoad(query) {
+    share.showShareMenu();
     if (query.share) {
       this.setData({ shareToken: query.share || "", isSharedView: true });
       this.loadSharedWork(query.share);
@@ -92,6 +94,7 @@ Page({
   },
 
   onShow() {
+    share.showShareMenu();
     app.restoreSession();
   },
 
@@ -288,5 +291,18 @@ Page({
       path,
       imageUrl: work.cover_url || ""
     };
+  },
+
+  onShareTimeline() {
+    const work = this.data.work || {};
+    const token = this.data.shareToken || "";
+    const query = token
+      ? `share=${encodeURIComponent(token)}`
+      : `id=${encodeURIComponent(work.id || this.data.id || "")}&task_id=${encodeURIComponent(work.task_id || this.data.taskId || "")}`;
+    return share.timelineShare({
+      title: work.title ? `${work.title} - 必火AI员工` : "必火AI数字人视频",
+      query,
+      imageUrl: work.cover_url || share.DEFAULT_IMAGE
+    });
   }
 });
