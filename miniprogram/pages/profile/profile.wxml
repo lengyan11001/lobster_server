@@ -2,16 +2,20 @@
   <view class="profile-card">
     <view class="avatar">{{avatarText}}</view>
     <view class="profile-main">
-      <text class="profile-name">{{phoneBound ? phone : '未绑定手机号'}}</text>
-      <text class="profile-sub">{{phoneBound ? '已关联 online 账号' : '授权手机号后关联电脑端 online'}}</text>
+      <text class="profile-name">{{phoneBound ? phone : (wechatLoggedIn ? '已微信登录' : '未绑定手机号')}}</text>
+      <text class="profile-sub">{{phoneBound ? '已关联 online 账号' : (wechatLoggedIn ? '还需要授权手机号完成绑定' : '授权手机号后关联电脑端 online')}}</text>
     </view>
   </view>
 
   <view wx:if="{{!phoneBound}}" class="section bind-section">
     <text class="section-title">账号绑定</text>
     <text class="muted">绑定手机号后，手机端才能找到你的电脑端 online，并下发 AI 员工、数字人和素材任务。</text>
+    <view wx:if="{{wechatLoggedIn}}" class="login-state">
+      <view class="dot ok"></view>
+      <text>微信登录已完成，请继续授权手机号。</text>
+    </view>
     <view class="button-row">
-      <button class="ghost-btn" bindtap="login">微信登录</button>
+      <button class="ghost-btn" bindtap="login">{{wechatLoggedIn ? '重新登录' : '微信登录'}}</button>
       <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
     </view>
     <button class="sms-link" bindtap="showSmsBind">微信取号失败，用短信验证码绑定</button>

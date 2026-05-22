@@ -44,6 +44,19 @@
   margin-bottom: 4rpx;
 }
 
+.login-state {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-top: 18rpx;
+  padding: 16rpx 18rpx;
+  color: #166534;
+  background: #f0fdf4;
+  border: 1rpx solid #bbf7d0;
+  border-radius: 16rpx;
+  font-size: 25rpx;
+}
+
 .sms-link {
   margin-top: 16rpx;
   padding: 0;

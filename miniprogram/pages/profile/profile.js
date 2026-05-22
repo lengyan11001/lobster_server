@@ -5,6 +5,7 @@ Page({
   data: {
     phone: "",
     phoneBound: false,
+    wechatLoggedIn: false,
     avatarText: "AI",
     deviceId: "",
     onlineAvailable: false,
@@ -34,6 +35,7 @@ Page({
     this.setData({
       phone,
       phoneBound: Boolean(app.globalData.token && phone),
+      wechatLoggedIn: Boolean(app.globalData.token && !phone),
       avatarText: phone ? phone.slice(-2) : "AI",
       deviceId: app.globalData.deviceId
     });
@@ -63,15 +65,18 @@ Page({
       .loginWithWechat()
       .then((data) => {
         this.refreshState();
+        wx.hideLoading();
         if (data.needs_phone_bind || !app.globalData.phone) {
-          wx.showToast({ title: "请授权手机号", icon: "none" });
+          wx.showToast({ title: "继续授权手机号", icon: "none" });
           return;
         }
         wx.showToast({ title: "登录成功", icon: "success" });
         this.loadDevices();
       })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => wx.hideLoading());
+      .catch((err) => {
+        wx.hideLoading();
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      });
   },
 
   onGetPhoneNumber(evt) {
@@ -96,11 +101,14 @@ Page({
       .then(() => {
         this.refreshState();
         this.setData({ smsBindVisible: false });
+        wx.hideLoading();
         wx.showToast({ title: "绑定成功", icon: "success" });
         this.loadDevices();
       })
-      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
-      .finally(() => wx.hideLoading());
+      .catch((err) => {
+        wx.hideLoading();
+        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+      });
   },
 
   showSmsBind() {
