@@ -15,7 +15,10 @@ Page({
     smsCode: "",
     smsSending: false,
     smsBinding: false,
-    smsCountdown: 0
+    smsCountdown: 0,
+    loginBusy: false,
+    loginDebug: "",
+    lastError: ""
   },
 
   smsTimer: null,
@@ -59,31 +62,80 @@ Page({
       .finally(() => wx.hideLoading());
   },
 
+  setLoginDebug(text) {
+    this.setData({ loginDebug: text || "" });
+  },
+
+  showLoginError(title, err) {
+    const message = api.errorMessage(err);
+    this.setData({ lastError: message });
+    wx.showModal({
+      title: title || "登录失败",
+      content: message,
+      showCancel: false
+    });
+  },
+
   login() {
+    if (this.data.loginBusy) return;
+    const deviceId = app.globalData.deviceId || wx.getStorageSync("lobster_device_id") || "";
+    this.setData({ loginBusy: true, lastError: "" });
+    this.setLoginDebug("1/3 正在调用微信登录...");
     wx.showLoading({ title: "登录中", mask: true });
-    app
-      .loginWithWechat()
-      .then((data) => {
-        this.refreshState();
-        wx.hideLoading();
-        if (data.needs_phone_bind || !app.globalData.phone) {
-          wx.showToast({ title: "继续授权手机号", icon: "none" });
+    wx.login({
+      success: (res) => {
+        if (!res.code) {
+          wx.hideLoading();
+          this.setData({ loginBusy: false });
+          this.setLoginDebug("微信未返回登录 code");
+          this.showLoginError("微信登录失败", res.errMsg || "wx.login 未返回 code");
           return;
         }
-        wx.showToast({ title: "登录成功", icon: "success" });
-        this.loadDevices();
-      })
-      .catch((err) => {
+        this.setLoginDebug("2/3 已拿到微信 code，正在请求 bhzn.top...");
+        api
+          .request({
+            method: "POST",
+            url: "/api/mobile/wechat-login",
+            data: {
+              code: res.code,
+              device_id: deviceId,
+              platform: "wechat_miniprogram",
+              display_name: "微信小程序"
+            }
+          })
+          .then((data) => {
+            app.saveSession(data);
+            this.refreshState();
+            wx.hideLoading();
+            this.setLoginDebug(data.needs_phone_bind || !app.globalData.phone ? "3/3 微信登录成功，还需要授权手机号。" : "3/3 微信登录成功。");
+            if (data.needs_phone_bind || !app.globalData.phone) {
+              wx.showToast({ title: "继续授权手机号", icon: "none" });
+              return;
+            }
+            wx.showToast({ title: "登录成功", icon: "success" });
+            this.loadDevices();
+          })
+          .catch((err) => {
+            wx.hideLoading();
+            this.setLoginDebug("请求登录接口失败");
+            this.showLoginError("登录接口失败", err);
+          })
+          .finally(() => this.setData({ loginBusy: false }));
+      },
+      fail: (err) => {
         wx.hideLoading();
-        wx.showToast({ title: api.errorMessage(err), icon: "none" });
-      });
+        this.setData({ loginBusy: false });
+        this.setLoginDebug("wx.login 调用失败");
+        this.showLoginError("微信登录失败", err);
+      }
+    });
   },
 
   onGetPhoneNumber(evt) {
     const code = evt.detail && evt.detail.code;
     if (!code) {
       this.setData({ smsBindVisible: true });
-      wx.showToast({ title: "微信取号失败，可用短信绑定", icon: "none" });
+      this.showLoginError("手机号授权失败", (evt.detail && evt.detail.errMsg) || "微信取号失败，可用短信绑定");
       return;
     }
     const bind = () => this.bindPhone(code);
@@ -107,7 +159,7 @@ Page({
       })
       .catch((err) => {
         wx.hideLoading();
-        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+        this.showLoginError("绑定手机号失败", err);
       });
   },
 
@@ -209,6 +261,21 @@ Page({
 
   goDownloads() {
     wx.switchTab({ url: "/pages/downloads/downloads" });
+  },
+
+  copyDiagnostics() {
+    const lines = [
+      `loginDebug=${this.data.loginDebug || ""}`,
+      `lastError=${this.data.lastError || ""}`,
+      `token=${app.globalData.token ? "yes" : "no"}`,
+      `phone=${app.globalData.phone || ""}`,
+      `deviceId=${app.globalData.deviceId || ""}`,
+      `apiBase=https://bhzn.top`
+    ];
+    wx.setClipboardData({
+      data: lines.join("\n"),
+      success: () => wx.showToast({ title: "诊断已复制", icon: "success" })
+    });
   },
 
   logout() {

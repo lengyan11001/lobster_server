@@ -57,6 +57,44 @@
   font-size: 25rpx;
 }
 
+.debug-box {
+  display: grid;
+  gap: 10rpx;
+  margin-top: 18rpx;
+  padding: 16rpx 18rpx;
+  background: #f8fafc;
+  border: 1rpx solid #dbe3ef;
+  border-radius: 16rpx;
+}
+
+.debug-line,
+.debug-error {
+  display: block;
+  font-size: 24rpx;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.debug-line {
+  color: #334155;
+}
+
+.debug-error {
+  color: #b91c1c;
+}
+
+.debug-copy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 58rpx;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
 .sms-link {
   margin-top: 16rpx;
   padding: 0;

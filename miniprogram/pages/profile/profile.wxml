@@ -15,8 +15,13 @@
       <text>微信登录已完成，请继续授权手机号。</text>
     </view>
     <view class="button-row">
-      <button class="ghost-btn" bindtap="login">{{wechatLoggedIn ? '重新登录' : '微信登录'}}</button>
+      <button class="ghost-btn" loading="{{loginBusy}}" disabled="{{loginBusy}}" bindtap="login">{{wechatLoggedIn ? '重新登录' : '微信登录'}}</button>
       <button class="primary-btn" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+    </view>
+    <view wx:if="{{loginDebug || lastError}}" class="debug-box">
+      <text wx:if="{{loginDebug}}" class="debug-line">{{loginDebug}}</text>
+      <text wx:if="{{lastError}}" class="debug-error">{{lastError}}</text>
+      <button class="debug-copy" bindtap="copyDiagnostics">复制诊断信息</button>
     </view>
     <button class="sms-link" bindtap="showSmsBind">微信取号失败，用短信验证码绑定</button>
     <view wx:if="{{smsBindVisible}}" class="sms-bind-box">
