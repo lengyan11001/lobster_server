@@ -137,7 +137,7 @@ _CUSTOM_CONFIGS_FILE = _BASE_DIR / "custom_configs.json"
 _DEFAULT_SKILL_UNLOCK = {"min_yuan": 98, "max_yuan": 198}
 _DEFAULT_CREDIT_PACKAGES = [
     {"price_yuan": 100, "credits": 10000, "label": "100元 - 10000算力"},
-    {"price_yuan": 200, "credits": 20000, "label": "200元 - 20000算力"},
+    {"price_yuan": 300, "credits": 30000, "label": "300元 - 30000算力"},
     {"price_yuan": 500, "credits": 50000, "label": "500元 - 50000算力"},
     {"price_yuan": 1000, "credits": 100000, "label": "1000元 - 100000算力"},
 ]
