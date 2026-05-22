@@ -46,7 +46,7 @@
         <text class="device-time">{{item.online ? '在线' : '离线'}} · {{item.last_seen_at}}</text>
       </view>
     </view>
-    <view wx:if="{{onlineDevices.length === 0}}" class="muted empty-line">电脑端 online 启动后会显示在这里。</view>
+    <view wx:if="{{onlineDevices.length === 0}}" class="muted empty-line">当前没有在线的电脑端 online。</view>
     <view class="button-row">
       <button class="ghost-btn" bindtap="loadDevices">刷新</button>
       <button class="primary-btn" bindtap="goDownloads">我的作品</button>

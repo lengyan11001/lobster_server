@@ -53,9 +53,10 @@ Page({
     app
       .request({ url: "/api/mobile/devices" })
       .then((data) => {
+        const onlineDevices = (data.online_devices || []).filter((item) => item && item.online);
         this.setData({
-          onlineAvailable: Boolean(data.online_available),
-          onlineDevices: data.online_devices || []
+          onlineAvailable: onlineDevices.length > 0,
+          onlineDevices
         });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
