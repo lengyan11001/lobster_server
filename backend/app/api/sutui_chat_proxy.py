@@ -26,6 +26,7 @@ from ..services.sutui_api_audit import clip_openai_chat_completions_json_for_aud
 from ..services.sutui_pricing import (
     credits_from_chat_usage_when_no_docs_pricing,
     credits_from_direct_api_usage,
+    credits_from_llm_market_usage,
     estimate_credits_from_pricing,
     estimate_pre_deduct_credits,
     extract_upstream_billing_snapshot,
@@ -353,6 +354,10 @@ _LOBSTER_SYSTEM_HINT_BASE = (
     "用户在写文章请求里追加「发去头条/公众号/发布」时，正确流程是：① 直接写出正文给用户看 → ② 询问"
     "「是否直接发布纯文字版（无封面），还是要我加配图」 → ③ 按用户回答调 publish_content（纯文字时设 toutiao_graphic_no_cover:true）。"
     "头条号支持纯文字发布，**禁止**报「已完成」但实际只调了 image.generate 而没调 publish_content。"
+    "9. 【短视频方案/镜头脚本 — 文字任务】用户说「生成/写/给出短视频方案」「创意短视频方案」「镜头脚本」「分镜脚本」「拍摄方案」「口播文案」时，"
+    "这是文字创作任务，必须直接输出可执行方案和脚本，禁止调用 image.generate / video.generate / goal.video.pipeline。"
+    "资料不足时先给通用可执行版本，并说明可按具体行业再细化；不要只反问补充信息。"
+    "只有用户明确说「开始生成视频」「做成片」「渲染成视频」「按这个脚本生成视频」时，才调用生成能力。"
 )
 
 
@@ -939,6 +944,33 @@ def _should_deduct_credits() -> bool:
     return edition == "online" and getattr(settings, "lobster_independent_auth", True)
 
 
+_SUTUI_CHAT_MIN_CHARGE_CREDITS = quantize_credits(Decimal("10"))
+
+
+def _internal_billing_key_ok(request: Request) -> bool:
+    expected = (getattr(settings, "lobster_mcp_billing_internal_key", None) or "").strip()
+    if not expected:
+        return False
+    got = (request.headers.get("X-Lobster-Mcp-Billing") or request.headers.get("x-lobster-mcp-billing") or "").strip()
+    return bool(got and got == expected)
+
+
+def _is_openclaw_internal_llm_request(request: Request) -> bool:
+    if not _internal_billing_key_ok(request):
+        return False
+    mode = (
+        request.headers.get("X-Lobster-LLM-Billing-Mode")
+        or request.headers.get("x-lobster-llm-billing-mode")
+        or ""
+    ).strip().lower()
+    marker = (
+        request.headers.get("X-Lobster-OpenClaw-Internal")
+        or request.headers.get("x-lobster-openclaw-internal")
+        or ""
+    ).strip().lower()
+    return mode == "openclaw_internal" or marker in {"1", "true", "yes"}
+
+
 def _rough_prompt_tokens_from_messages(messages: Any) -> int:
     """粗估 prompt token 数，仅用于预检（略高估，减少「余额够预检但事后不够扣」）。"""
     if not isinstance(messages, list):
@@ -1020,6 +1052,8 @@ def _require_balance_before_upstream_chat(
     current_user: User,
     model_id: str,
     body: Dict[str, Any],
+    *,
+    apply_min_charge: bool = True,
 ) -> None:
     """
     LLM 对话：**不按**速推 docs 定价表预拦（与素材生成不同）；放行后按上游返回的 usage/价字段扣费。
@@ -1029,10 +1063,21 @@ def _require_balance_before_upstream_chat(
         return
     db.refresh(current_user)
     bal = user_balance_decimal(current_user)
-    if bal <= 0:
+    if not apply_min_charge:
+        if bal <= 0:
+            raise HTTPException(
+                status_code=402,
+                detail=f"积分不足：当前余额 {bal}。请先充值后再试。",
+            )
+        return
+    if bal < _SUTUI_CHAT_MIN_CHARGE_CREDITS:
         raise HTTPException(
             status_code=402,
-            detail="积分不足：当前余额为 0，请充值后再使用智能对话。",
+            headers={"X-Lobster-Min-Charge-Credits": str(_SUTUI_CHAT_MIN_CHARGE_CREDITS)},
+            detail=(
+                f"积分不足：LLM 对话单次最低需 {_SUTUI_CHAT_MIN_CHARGE_CREDITS} 算力，"
+                f"当前余额 {bal}。请先充值后再试。"
+            ),
         )
 
 
@@ -1060,6 +1105,11 @@ def _credits_for_sutui_chat(
         reported = extract_upstream_reported_credits(response_body)
         if reported > 0:
             return quantize_credits(reported), "upstream价字段优先"
+
+    if usage and isinstance(usage, dict):
+        market_credits = credits_from_llm_market_usage(model, usage)
+        if market_credits > 0:
+            return market_credits, "apiz_market_usage"
 
     # 注意：fallback（SUTUI_CHAT_FALLBACK_CREDITS_PER_1K 常为 1）必须在 docs 定价之后，
     # 否则「每千 token 1 积分」会先命中（如 24k token→25），永远轮不到 token_based 真实单价（往往≈0.0x/千）。
@@ -1104,6 +1154,8 @@ def _apply_chat_deduct(
     billing_recon: Optional[Dict[str, Any]] = None,
     trace_id: Optional[str] = None,
     is_direct_api: bool = False,
+    apply_min_charge: bool = True,
+    billing_mode: str = "standard",
 ) -> None:
     tid = trace_id or "-"
     if not _should_deduct_credits():
@@ -1119,6 +1171,10 @@ def _apply_chat_deduct(
     if response_body and isinstance(response_body, dict):
         reported_raw = extract_upstream_reported_credits(response_body)
     credits, billing_src = _credits_for_sutui_chat(model, usage, response_body, is_direct_api=is_direct_api)
+    raw_computed_credits = credits
+    if apply_min_charge and credits < _SUTUI_CHAT_MIN_CHARGE_CREDITS:
+        credits = _SUTUI_CHAT_MIN_CHARGE_CREDITS
+        billing_src = f"{billing_src}+min_10"
     snap = extract_upstream_billing_snapshot(response_body if isinstance(response_body, dict) else None)
     try:
         snap_json = json.dumps(snap, ensure_ascii=False, default=str)
@@ -1135,18 +1191,6 @@ def _apply_chat_deduct(
         usage,
         _sutui_chat_upstream_body_for_log(response_body if isinstance(response_body, dict) else None),
     )
-    if credits <= 0:
-        logger.info(
-            "[chat_trace] trace_id=%s path=sutui_chat_deduct result=skipped reason=credits_zero "
-            "user_id=%s model=%s billing_src=%s computed_credits=%s usage=%s",
-            tid,
-            current_user.id,
-            model,
-            billing_src,
-            credits,
-            usage,
-        )
-        return
     db.refresh(current_user)
     bal = user_balance_decimal(current_user)
     if bal < credits:
@@ -1170,6 +1214,11 @@ def _apply_chat_deduct(
         "model": model,
         "usage": usage,
         "deduct_credits": credits_json_float(credits),
+        "raw_computed_credits": credits_json_float(raw_computed_credits),
+        "min_charge_credits": credits_json_float(_SUTUI_CHAT_MIN_CHARGE_CREDITS) if apply_min_charge else 0,
+        "min_charge_applied": bool(apply_min_charge),
+        "billing_mode": billing_mode,
+        "trace_id": tid,
         "billing_src": billing_src,
     }
     if billing_recon:
@@ -1211,12 +1260,14 @@ async def sutui_chat_completions(
         (request.headers.get(TRACE_HEADER) or request.headers.get(TRACE_HEADER.lower()) or "").strip()
         or uuid.uuid4().hex
     )
+    openclaw_internal_llm = _is_openclaw_internal_llm_request(request)
     logger.info(
-        "[chat_trace] trace_id=%s path=sutui_chat_completions enter user_id=%s stream=%s model_in=%s",
+        "[chat_trace] trace_id=%s path=sutui_chat_completions enter user_id=%s stream=%s model_in=%s openclaw_internal_llm=%s",
         trace_id,
         current_user.id,
         bool(body.get("stream")),
         (body.get("model") or "-"),
+        openclaw_internal_llm,
     )
 
     openclaw_skill_request = _is_openclaw_skill_model_alias((body.get("model") or "").strip())
@@ -1276,7 +1327,13 @@ async def sutui_chat_completions(
         model_candidates,
     )
 
-    _require_balance_before_upstream_chat(db, current_user, model_id, body)
+    _require_balance_before_upstream_chat(
+        db,
+        current_user,
+        model_id,
+        body,
+        apply_min_charge=not openclaw_internal_llm,
+    )
 
     user_bal_str = "-"
     if _should_deduct_credits():
@@ -1498,6 +1555,8 @@ async def sutui_chat_completions(
                 billing_recon=chat_billing_recon,
                 trace_id=trace_id,
                 is_direct_api=winning_is_direct,
+                apply_min_charge=not openclaw_internal_llm,
+                billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
             )
         else:
             logger.info(
@@ -1717,6 +1776,8 @@ async def sutui_chat_completions(
                         billing_recon=chat_billing_recon,
                         trace_id=trace_id,
                         is_direct_api=billing_is_direct_holder[0],
+                        apply_min_charge=not openclaw_internal_llm,
+                        billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
                     )
             except HTTPException as exc:
                 if exc.status_code == 402:

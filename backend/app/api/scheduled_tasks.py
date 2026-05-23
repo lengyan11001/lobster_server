@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -25,7 +26,7 @@ from .installation_slots import ensure_installation_slot
 router = APIRouter()
 
 _TASK_KINDS = {"openclaw_message", "chat_message", "capability"}
-_SCHEDULE_TYPES = {"once", "interval"}
+_SCHEDULE_TYPES = {"once", "interval", "daily_times"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _MAX_TARGET_DEVICES = 20
 _VIDEO_EXTS = (".mp4", ".webm", ".mov", ".m4v", ".avi")
@@ -40,6 +41,9 @@ class ScheduledTaskCreate(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
     schedule_type: str = "once"
     interval_seconds: Optional[int] = None
+    start_at: Optional[str] = None
+    daily_times: Any = Field(default_factory=list)
+    timezone_offset_minutes: Optional[int] = None
     installation_ids: List[str] = Field(default_factory=list)
 
 
@@ -60,6 +64,101 @@ class ScheduledTaskCompleteIn(BaseModel):
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
+
+
+def _parse_client_datetime(value: Optional[str], timezone_offset_minutes: Optional[int]) -> Optional[datetime]:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        text = raw.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="开始时间格式不正确")
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    offset = int(timezone_offset_minutes if timezone_offset_minutes is not None else 480)
+    return dt - timedelta(minutes=offset)
+
+
+_DAILY_TIME_RE = re.compile(r"^([01]?\d|2[0-3])[:：]([0-5]\d)$")
+_DAILY_HOUR_RE = re.compile(r"^([01]?\d|2[0-3])(?:点|时)?$")
+
+
+def _normalize_daily_times(values: Any) -> List[str]:
+    if isinstance(values, str):
+        raw_values = re.split(r"[,\s，、]+", values)
+    elif isinstance(values, list):
+        raw_values = values
+    else:
+        raw_values = []
+    seen: set[str] = set()
+    out: List[str] = []
+    for raw in raw_values:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        m = _DAILY_TIME_RE.match(text)
+        if m:
+            item = f"{int(m.group(1)):02d}:{int(m.group(2)):02d}"
+        else:
+            m = _DAILY_HOUR_RE.match(text)
+            if not m:
+                raise HTTPException(status_code=400, detail="固定时间格式应为 9,12,18 或 09:00,12:00,18:00")
+            item = f"{int(m.group(1)):02d}:00"
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    out.sort()
+    if not out:
+        raise HTTPException(status_code=400, detail="请填写每天固定执行时间")
+    if len(out) > 24:
+        raise HTTPException(status_code=400, detail="每天固定执行时间最多 24 个")
+    return out
+
+
+def _compute_next_daily_time(
+    *,
+    now_utc: datetime,
+    daily_times: List[str],
+    timezone_offset_minutes: int,
+    not_before_utc: Optional[datetime] = None,
+    inclusive: bool = False,
+) -> datetime:
+    floor = max(now_utc, not_before_utc) if not_before_utc else now_utc
+    local_floor = floor + timedelta(minutes=timezone_offset_minutes)
+    base_date = local_floor.date()
+    for day_offset in range(0, 370):
+        cur_date = base_date + timedelta(days=day_offset)
+        for item in daily_times:
+            hour, minute = [int(x) for x in item.split(":", 1)]
+            local_dt = datetime(cur_date.year, cur_date.month, cur_date.day, hour, minute)
+            candidate = local_dt - timedelta(minutes=timezone_offset_minutes)
+            if candidate > floor or (inclusive and candidate == floor):
+                return candidate
+    return floor + timedelta(days=1)
+
+
+def _schedule_config_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = payload if isinstance(payload, dict) else {}
+    cfg = payload.get("schedule_config")
+    if isinstance(cfg, dict):
+        return cfg
+    return {}
+
+
+def _task_schedule_label(row: ScheduledTask) -> str:
+    cfg = _schedule_config_from_payload(row.payload or {})
+    if row.schedule_type == "interval":
+        minutes = max(1, int(row.interval_seconds or 3600) // 60)
+        first = str(cfg.get("start_at") or "").strip()
+        return f"每 {minutes} 分钟" + (f"；开始 {first}" if first else "")
+    if row.schedule_type == "daily_times":
+        times = cfg.get("daily_times") if isinstance(cfg.get("daily_times"), list) else []
+        return "每天 " + "、".join(str(x) for x in times)
+    first = str(cfg.get("start_at") or "").strip()
+    return "一次性" + (f"；执行 {first}" if first else "")
 
 
 def _header_installation_id(request: Request) -> str:
@@ -120,6 +219,8 @@ def _serialize_task(row: ScheduledTask) -> Dict[str, Any]:
         "payload": row.payload or {},
         "schedule_type": row.schedule_type,
         "interval_seconds": row.interval_seconds,
+        "schedule_config": _schedule_config_from_payload(row.payload or {}),
+        "schedule_label": _task_schedule_label(row),
         "installation_ids": row.target_installation_ids or [],
         "status": row.status,
         "next_run_at": _iso(row.next_run_at),
@@ -309,9 +410,18 @@ def _enqueue_task(db: Session, task: ScheduledTask, now: Optional[datetime] = No
     if task.schedule_type == "once":
         task.status = "completed"
         task.next_run_at = None
-    else:
+    elif task.schedule_type == "interval":
         interval = max(60, int(task.interval_seconds or 3600))
         task.next_run_at = now + timedelta(seconds=interval)
+    elif task.schedule_type == "daily_times":
+        cfg = _schedule_config_from_payload(task.payload or {})
+        times = _normalize_daily_times(cfg.get("daily_times") or [])
+        offset = int(cfg.get("timezone_offset_minutes") if cfg.get("timezone_offset_minutes") is not None else 480)
+        task.next_run_at = _compute_next_daily_time(
+            now_utc=now,
+            daily_times=times,
+            timezone_offset_minutes=offset,
+        )
     return runs
 
 
@@ -319,7 +429,7 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     now = datetime.utcnow()
     q = db.query(ScheduledTask).filter(
         ScheduledTask.status == "active",
-        ScheduledTask.schedule_type == "interval",
+        ScheduledTask.schedule_type.in_(["once", "interval", "daily_times"]),
         ScheduledTask.next_run_at.isnot(None),
         ScheduledTask.next_run_at <= now,
     )
@@ -429,6 +539,27 @@ def _delete_task_row(db: Session, task: ScheduledTask) -> int:
     return cancelled
 
 
+def _delete_run_row(db: Session, row: ScheduledTaskRun) -> None:
+    status = (row.status or "").strip().lower()
+    if status == "processing":
+        raise HTTPException(status_code=409, detail="执行中的记录不能删除，请等待完成或先删除任务")
+    now = datetime.utcnow()
+    if status == "pending" and row.h5_message_id:
+        msg = db.query(H5ChatMessage).filter(H5ChatMessage.id == row.h5_message_id).first()
+        if msg:
+            msg.status = "cancelled"
+            msg.error = "执行记录已删除"
+            msg.finished_at = now
+            msg.updated_at = now
+        _add_h5_event(db, row.h5_message_id, row.user_id, "cancelled", {"reason": "run_deleted"})
+    if row.task_id:
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first()
+        if task and task.last_run_id == row.id:
+            task.last_run_id = None
+            task.updated_at = now
+    db.delete(row)
+
+
 def _create_task_row(
     db: Session,
     body: ScheduledTaskCreate,
@@ -447,10 +578,27 @@ def _create_task_row(
         raise HTTPException(status_code=400, detail="能力调用任务需要 payload.capability_id")
     interval_seconds = None
     now = datetime.utcnow()
-    next_run_at = now
+    tz_offset = int(body.timezone_offset_minutes if body.timezone_offset_minutes is not None else 480)
+    start_at_utc = None if schedule_type == "daily_times" else _parse_client_datetime(body.start_at, tz_offset)
+    schedule_config: Dict[str, Any] = {
+        "timezone_offset_minutes": tz_offset,
+    }
+    if start_at_utc:
+        schedule_config["start_at"] = body.start_at
+        schedule_config["start_at_utc"] = start_at_utc.isoformat()
+    next_run_at = start_at_utc or now
     if schedule_type == "interval":
         interval_seconds = max(60, min(int(body.interval_seconds or 3600), 366 * 24 * 3600))
-        next_run_at = now
+    elif schedule_type == "daily_times":
+        daily_times = _normalize_daily_times(body.daily_times or payload.get("daily_times") or [])
+        schedule_config["daily_times"] = daily_times
+        next_run_at = _compute_next_daily_time(
+            now_utc=now,
+            daily_times=daily_times,
+            timezone_offset_minutes=tz_offset,
+        )
+    payload = dict(payload)
+    payload["schedule_config"] = schedule_config
     task = ScheduledTask(
         user_id=target_user_id,
         created_by_user_id=created_by_user_id,
@@ -469,7 +617,8 @@ def _create_task_row(
     )
     db.add(task)
     db.flush()
-    _enqueue_task(db, task, now)
+    if task.next_run_at and task.next_run_at <= now:
+        _enqueue_task(db, task, now)
     db.commit()
     db.refresh(task)
     return task
@@ -532,8 +681,16 @@ def patch_scheduled_task(
         task.status = status
         if status in {"paused", "cancelled"}:
             _cancel_pending_runs_for_task(db, task, now)
-        if status == "active" and task.schedule_type == "interval" and not task.next_run_at:
-            task.next_run_at = now
+        if status == "active" and not task.next_run_at:
+            if task.schedule_type == "interval":
+                task.next_run_at = now
+            elif task.schedule_type == "daily_times":
+                cfg = _schedule_config_from_payload(task.payload or {})
+                task.next_run_at = _compute_next_daily_time(
+                    now_utc=now,
+                    daily_times=_normalize_daily_times(cfg.get("daily_times") or []),
+                    timezone_offset_minutes=int(cfg.get("timezone_offset_minutes") if cfg.get("timezone_offset_minutes") is not None else 480),
+                )
         task.updated_at = now
     db.commit()
     db.refresh(task)
@@ -566,7 +723,7 @@ def run_scheduled_task_now(
         raise HTTPException(status_code=404, detail="任务不存在")
     _assert_user_task_access(task.user_id, current_user)
     runs = _enqueue_task(db, task, datetime.utcnow())
-    if task.schedule_type == "interval" and task.status != "cancelled":
+    if task.schedule_type in {"interval", "daily_times"} and task.status != "cancelled":
         task.status = "active"
     db.commit()
     return {"ok": True, "runs": [_serialize_run(r) for r in runs]}
@@ -587,6 +744,18 @@ def list_scheduled_task_runs(
         .all()
     )
     return {"ok": True, "runs": [_serialize_run(r) for r in rows]}
+
+
+@router.delete("/api/scheduled-tasks/runs/{run_id}", summary="删除执行记录")
+def delete_scheduled_task_run(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _run_for_user(db, run_id, current_user.id)
+    _delete_run_row(db, row)
+    db.commit()
+    return {"ok": True, "deleted": True, "run_id": run_id}
 
 
 @router.get("/api/scheduled-tasks/pending", summary="本地 online 领取待执行任务")
@@ -788,6 +957,21 @@ def admin_list_scheduled_task_runs(
         .all()
     )
     return {"ok": True, "runs": [_serialize_run(r) for r in rows]}
+
+
+@router.delete("/admin/api/scheduled-tasks/runs/{run_id}", summary="管理员/代理商删除执行记录")
+def admin_delete_scheduled_task_run(
+    run_id: str,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    row = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == run_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="执行记录不存在")
+    _assert_admin_target_access(db, ctx, row.user_id)
+    _delete_run_row(db, row)
+    db.commit()
+    return {"ok": True, "deleted": True, "run_id": run_id}
 
 
 @router.get("/admin/api/scheduled-tasks/devices", summary="管理员/代理商查看用户设备")

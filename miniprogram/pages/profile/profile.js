@@ -284,7 +284,7 @@ Page({
   logout() {
     wx.showModal({
       title: "退出登录",
-      content: "退出后需要重新微信登录并授权手机号。",
+      content: "退出后需要重新微信登录并验证手机号。",
       success: (res) => {
         if (!res.confirm) return;
         app.clearSession();

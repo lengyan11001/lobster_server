@@ -14,6 +14,7 @@ from pathlib import Path
 DEFAULT_CLIENT_CODE_OTA_PATHS = [
     "CLIENT_CODE_VERSION.json",
     "backend",
+    "desktop",
     "mcp",
     "static",
     "scripts",
@@ -21,6 +22,8 @@ DEFAULT_CLIENT_CODE_OTA_PATHS = [
     "skills",
     "skill_registry.json",
     "upstream_urls.json",
+    ".env",
+    "必火智能AI.exe",
     "openclaw",
     "requirements.txt",
     ".env.example",
@@ -101,7 +104,7 @@ def main() -> int:
         "bundle_url": bundle_url,
         "sha256": sha,
         "paths": DEFAULT_CLIENT_CODE_OTA_PATHS,
-        "note": f"OTA {bundle_name}; .env excluded",
+        "note": f"OTA {bundle_name}; ordinary client-code paths",
     }
     remote_base = f"{remote_root}/client_static/client_code"
     remote_bundles = f"{remote_base}/bundles"

@@ -57,15 +57,19 @@ DEFAULT_VISIBLE_PACKAGES: tuple[str, ...] = (
     "openclaw_weixin_channel",
     "media_edit_skill",
     "hifly_digital_human_skill",
+    "comfly_veo_skill",
+    "comfly_seedance_tvc_skill",
 )
 
 
 def _ensure_user_visibility_seeded(db: Session, user_id: int) -> None:
-    """如果用户还没有任何可见技能记录，自动种入默认列表。"""
-    existing = db.query(UserSkillVisibility).filter(UserSkillVisibility.user_id == user_id).first()
-    if existing is not None:
+    """自动给用户补齐默认可见技能包。"""
+    rows = db.query(UserSkillVisibility.package_id).filter(UserSkillVisibility.user_id == user_id).all()
+    existing_ids = {r[0] for r in rows}
+    missing_ids = [pkg_id for pkg_id in DEFAULT_VISIBLE_PACKAGES if pkg_id not in existing_ids]
+    if not missing_ids:
         return
-    for pkg_id in DEFAULT_VISIBLE_PACKAGES:
+    for pkg_id in missing_ids:
         db.add(UserSkillVisibility(user_id=user_id, package_id=pkg_id))
     db.commit()
 

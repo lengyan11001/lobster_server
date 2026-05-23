@@ -15,7 +15,7 @@ from typing import Any
 
 CREDIT_PACKAGES = [
     {"price_yuan": 100, "credits": 10000, "label": "100元 - 10000算力"},
-    {"price_yuan": 200, "credits": 20000, "label": "200元 - 20000算力"},
+    {"price_yuan": 300, "credits": 30000, "label": "300元 - 30000算力"},
     {"price_yuan": 500, "credits": 50000, "label": "500元 - 50000算力"},
     {"price_yuan": 1000, "credits": 100000, "label": "1000元 - 100000算力"},
 ]

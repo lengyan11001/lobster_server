@@ -1,11 +1,10 @@
 import base64
 import hashlib
+import hmac
 import json
 import logging
-import random
 import re
 import secrets
-import threading
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -22,9 +21,9 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from ..core.config import settings, get_effective_public_base_url
-from ..captcha_util import create_captcha, verify_captcha
+from ..captcha_util import generate_captcha_answer, render_captcha_image
 from ..db import get_db
-from ..models import SkillUnlock, User
+from ..models import AuthChallenge, SkillUnlock, SmsSendLimit, User
 from ..services.credits_amount import credits_json_float
 from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
 from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
@@ -41,10 +40,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 ONLINE_USER_EMAIL = "online@sutui.lobster.local"
 
-_SMS_LOCK = threading.Lock()
-_SMS_CODE_STORE: dict[str, tuple[str, float]] = {}
-_SMS_SEND_AT: dict[str, float] = {}
-_SMS_SEND_HOUR_COUNT: dict[str, tuple[float, int]] = {}
+CAPTCHA_CODE_TTL_SEC = 300
 SMS_CODE_TTL_SEC = 600
 SMS_SEND_COOLDOWN_SEC = 60
 SMS_MAX_PER_HOUR = 10
@@ -126,7 +122,7 @@ class SmsSendBody(BaseModel):
 class RegisterPhoneBody(BaseModel):
     phone: str
     code: str
-    password: str
+    password: Optional[str] = None
     brand_mark: Optional[str] = None
     parent_account: Optional[str] = None
 
@@ -142,9 +138,129 @@ def _phone_account_email(mobile: str) -> str:
     return f"{mobile}{PHONE_EMAIL_SUFFIX}"
 
 
-def _purge_sms_stale_locked(now_m: float) -> None:
-    for k in [x for x, v in _SMS_CODE_STORE.items() if v[1] <= now_m]:
-        del _SMS_CODE_STORE[k]
+def _utcnow() -> datetime:
+    return datetime.utcnow()
+
+
+def _auth_code_hash(kind: str, subject: str, answer: str) -> str:
+    key = (settings.secret_key or "lobster-auth-secret").encode("utf-8")
+    msg = f"{kind}|{subject}|{(answer or '').strip().upper()}".encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
+def _delete_expired_auth_challenges(db: Session, now: Optional[datetime] = None) -> None:
+    now = now or _utcnow()
+    db.query(AuthChallenge).filter(AuthChallenge.expires_at <= now).delete(synchronize_session=False)
+
+
+def _create_auth_challenge(
+    db: Session,
+    *,
+    kind: str,
+    answer: str,
+    ttl_seconds: int,
+    target: Optional[str] = None,
+    challenge_id: Optional[str] = None,
+) -> str:
+    now = _utcnow()
+    _delete_expired_auth_challenges(db, now)
+    cid = challenge_id or secrets.token_urlsafe(16)
+    subject = target or cid
+    if target is not None:
+        db.query(AuthChallenge).filter(
+            AuthChallenge.kind == kind,
+            AuthChallenge.target == target,
+        ).delete(synchronize_session=False)
+    db.add(
+        AuthChallenge(
+            id=cid,
+            kind=kind,
+            target=target,
+            answer_hash=_auth_code_hash(kind, subject, answer),
+            expires_at=now + timedelta(seconds=ttl_seconds),
+        )
+    )
+    db.commit()
+    return cid
+
+
+def _verify_auth_challenge(db: Session, *, kind: str, subject: str, answer: str) -> bool:
+    value = (answer or "").strip()
+    if not subject or not value:
+        return False
+    now = _utcnow()
+    _delete_expired_auth_challenges(db, now)
+    row = (
+        db.query(AuthChallenge)
+        .filter(AuthChallenge.kind == kind, AuthChallenge.id == subject.strip())
+        .first()
+    )
+    if not row:
+        db.commit()
+        return False
+    ok = row.expires_at > now and hmac.compare_digest(
+        row.answer_hash,
+        _auth_code_hash(kind, row.target or row.id, value),
+    )
+    db.delete(row)
+    db.commit()
+    return ok
+
+
+def _verify_sms_challenge(db: Session, mobile: str, code: str) -> bool:
+    value = (code or "").strip()
+    if not mobile or not value:
+        return False
+    now = _utcnow()
+    _delete_expired_auth_challenges(db, now)
+    row = (
+        db.query(AuthChallenge)
+        .filter(AuthChallenge.kind == "sms", AuthChallenge.target == mobile)
+        .first()
+    )
+    if not row:
+        db.commit()
+        return False
+    ok = row.expires_at > now and hmac.compare_digest(
+        row.answer_hash,
+        _auth_code_hash("sms", mobile, value),
+    )
+    if ok:
+        db.delete(row)
+    db.commit()
+    return ok
+
+
+def _check_and_update_sms_send_limit(db: Session, mobile: str) -> None:
+    now = _utcnow()
+    limit = db.query(SmsSendLimit).filter(SmsSendLimit.mobile == mobile).first()
+    if limit and limit.last_sent_at and (now - limit.last_sent_at).total_seconds() < SMS_SEND_COOLDOWN_SEC:
+        raise HTTPException(status_code=429, detail="发送过于频繁，请 1 分钟后再试")
+    if not limit:
+        limit = SmsSendLimit(
+            mobile=mobile,
+            last_sent_at=now,
+            hour_window_start=now,
+            hour_count=1,
+        )
+        db.add(limit)
+        db.commit()
+        return
+    if not limit.hour_window_start or (now - limit.hour_window_start).total_seconds() > 3600:
+        limit.hour_window_start = now
+        limit.hour_count = 1
+    elif limit.hour_count >= SMS_MAX_PER_HOUR:
+        raise HTTPException(status_code=429, detail="该号码本小时发送次数过多，请稍后再试")
+    else:
+        limit.hour_count += 1
+    limit.last_sent_at = now
+    db.add(limit)
+    db.commit()
+
+
+def _clear_sms_code(db: Session, mobile: str) -> None:
+    db.query(AuthChallenge).filter(AuthChallenge.kind == "sms", AuthChallenge.target == mobile).delete(synchronize_session=False)
+    db.commit()
 
 
 def _login_account_key(username: str) -> str:
@@ -176,10 +292,17 @@ def _normalize_and_validate_account(raw: str) -> str:
 
 
 @router.get("/captcha", summary="获取图片验证码（登录/注册前调用，传输请使用 HTTPS）")
-def get_captcha():
+def get_captcha(db: Session = Depends(get_db)):
     """返回 captcha_id 与 data URI 图片，提交登录/注册时带上 captcha_id 与用户输入的 captcha_answer。
     生产环境必须使用 HTTPS，以保证验证码答案与密码在传输过程中加密。"""
-    captcha_id, image_data_uri = create_captcha()
+    answer = generate_captcha_answer()
+    captcha_id = _create_auth_challenge(
+        db,
+        kind="captcha",
+        answer=answer,
+        ttl_seconds=CAPTCHA_CODE_TTL_SEC,
+    )
+    image_data_uri = render_captcha_image(answer)
     return {"captcha_id": captcha_id, "image": image_data_uri}
 
 
@@ -262,7 +385,7 @@ async def login(request: Request, db: Session = Depends(get_db)):
     captcha_answer = (form.get("captcha_answer") or "").strip()
     if not username or not password:
         raise HTTPException(status_code=400, detail="请输入账号和密码")
-    if not verify_captcha(captcha_id, captcha_answer):
+    if not _verify_auth_challenge(db, kind="captcha", subject=captcha_id, answer=captcha_answer):
         raise HTTPException(status_code=400, detail="验证码错误或已过期，请刷新后重试")
     account_lower = _login_account_key(username)
     if not account_lower:
@@ -284,11 +407,11 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
     use_independent = getattr(settings, "lobster_independent_auth", True)
     if edition != "online" or not use_independent:
         raise HTTPException(status_code=400, detail="当前版本不支持自主注册")
-    raise HTTPException(status_code=400, detail="已关闭账号密码注册，请使用手机号与短信验证码注册")
+    raise HTTPException(status_code=400, detail="已关闭账号密码注册，请使用手机号验证码登录/注册")
 
 
-@router.post("/sms/send", summary="发送手机注册短信验证码（需先通过图形验证码）")
-def send_register_sms(body: SmsSendBody, request: Request):
+@router.post("/sms/send", summary="发送手机登录/注册短信验证码（需先通过图形验证码）")
+def send_register_sms(body: SmsSendBody, request: Request, db: Session = Depends(get_db)):
     from ..core.config import settings
 
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
@@ -302,29 +425,18 @@ def send_register_sms(body: SmsSendBody, request: Request):
     use_aliyun = bool(aliyun_ak and aliyun_sk)
     if not use_aliyun and not (ihuyi_acc and ihuyi_pwd):
         raise HTTPException(status_code=503, detail="未配置短信通道")
-    if not verify_captcha(body.captcha_id or "", body.captcha_answer or ""):
+    if not _verify_auth_challenge(db, kind="captcha", subject=body.captcha_id or "", answer=body.captcha_answer or ""):
         raise HTTPException(status_code=400, detail="图形验证码错误或已过期，请刷新后重试")
     mobile = _normalize_cn_mobile(body.phone)
-    now_m = time.monotonic()
-    with _SMS_LOCK:
-        _purge_sms_stale_locked(now_m)
-        last = _SMS_SEND_AT.get(mobile, 0.0)
-        if now_m - last < SMS_SEND_COOLDOWN_SEC:
-            raise HTTPException(status_code=429, detail="发送过于频繁，请 1 分钟后再试")
-        win = _SMS_SEND_HOUR_COUNT.get(mobile)
-        if win:
-            wstart, cnt = win
-            if now_m - wstart > 3600:
-                _SMS_SEND_HOUR_COUNT[mobile] = (now_m, 1)
-            elif cnt >= SMS_MAX_PER_HOUR:
-                raise HTTPException(status_code=429, detail="该号码本小时发送次数过多，请稍后再试")
-            else:
-                _SMS_SEND_HOUR_COUNT[mobile] = (wstart, cnt + 1)
-        else:
-            _SMS_SEND_HOUR_COUNT[mobile] = (now_m, 1)
-        code = f"{random.randint(0, 999999):06d}"
-        _SMS_CODE_STORE[mobile] = (code, now_m + SMS_CODE_TTL_SEC)
-        _SMS_SEND_AT[mobile] = now_m
+    _check_and_update_sms_send_limit(db, mobile)
+    code = f"{secrets.randbelow(1000000):06d}"
+    _create_auth_challenge(
+        db,
+        kind="sms",
+        target=mobile,
+        answer=code,
+        ttl_seconds=SMS_CODE_TTL_SEC,
+    )
     try:
         if use_aliyun:
             _aliyun_send(
@@ -338,14 +450,13 @@ def send_register_sms(body: SmsSendBody, request: Request):
         else:
             _ihuyi_send(account=ihuyi_acc, api_key=ihuyi_pwd, mobile=mobile, code=code)
     except RuntimeError as e:
-        with _SMS_LOCK:
-            _SMS_CODE_STORE.pop(mobile, None)
+        _clear_sms_code(db, mobile)
         raise HTTPException(status_code=502, detail=str(e)) from e
     logger.info("[auth/sms/send] mobile=%s ok=1", mobile[:3] + "****" + mobile[-4:])
     return {"ok": True}
 
 
-@router.post("/register-phone", response_model=Token, summary="手机号注册（短信验证码 + 密码）")
+@router.post("/register-phone", response_model=Token, summary="手机号验证码注册和登录")
 def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depends(get_db)):
     from ..core.config import settings
 
@@ -357,19 +468,17 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
     code_in = (body.code or "").strip()
     if not code_in or len(code_in) > 8:
         raise HTTPException(status_code=400, detail="短信验证码无效")
-    now_m = time.monotonic()
-    with _SMS_LOCK:
-        _purge_sms_stale_locked(now_m)
-        row = _SMS_CODE_STORE.get(mobile)
-        if not row or row[1] <= now_m or row[0] != code_in:
-            raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
-        del _SMS_CODE_STORE[mobile]
-    if len(body.password or "") < 6:
-        raise HTTPException(status_code=400, detail="密码至少 6 位")
+    if not _verify_sms_challenge(db, mobile, code_in):
+        raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
     email = _phone_account_email(mobile)
     existing = db.query(User).filter(User.email == email).first()
     if existing:
-        raise HTTPException(status_code=400, detail="该手机号已注册，请直接登录")
+        reg_iid = optional_installation_id_from_request(request)
+        if reg_iid:
+            ensure_installation_slot(db, existing.id, reg_iid)
+        access_token = create_access_token(data=access_token_claims(existing))
+        logger.info("[auth/register-phone] login existing user_id=%s mobile_tail=%s", existing.id, mobile[-4:])
+        return Token(access_token=access_token)
     reg_iid = optional_installation_id_from_request(request)
     parent_uid = None
     raw_parent = (body.parent_account or "").strip()
@@ -383,7 +492,7 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
             logger.warning("[auth/register-phone] parent_account=%s not found", raw_parent[:20])
     user = User(
         email=email,
-        hashed_password=get_password_hash(body.password),
+        hashed_password=get_password_hash("phone-code-" + secrets.token_urlsafe(32)),
         credits=REGISTER_INITIAL_CREDITS,
         role="user",
         preferred_model="sutui",
