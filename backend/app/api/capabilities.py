@@ -426,27 +426,28 @@ def pre_deduct(
 
         if body.dry_run:
             _multiplier = _get_user_price_multiplier()
-            sutui_price = None
+            sutui_user_price = None
             try:
                 _s = assert_pricing_pre_deduct_allows_upstream_or_http(
                     db, current_user, model, params, action_label="素材生成",
                 )
-                sutui_price = float(_s)
+                sutui_user_price = float(_s) * _multiplier
             except Exception:
                 pass
-            comfly_price = None
             try:
-                from mcp.comfly_upstream import lookup_comfly_model, should_route_to_comfly
-                if should_route_to_comfly(body.capability_id, model, sutui_price=sutui_price):
-                    _cm = lookup_comfly_model(model)
-                    if _cm and isinstance(_cm, dict) and _cm.get("price_per_unit") is not None:
-                        comfly_price = float(_cm["price_per_unit"])
+                from mcp.comfly_upstream import estimate_comfly_credits, should_route_to_comfly
+                sutui_purchase_price = None
+                if sutui_user_price is not None and _multiplier > 0:
+                    sutui_purchase_price = float(sutui_user_price) / _multiplier
+                if should_route_to_comfly(body.capability_id, model, sutui_price=sutui_purchase_price):
+                    comfly_user_price = estimate_comfly_credits(model, body.params or {}, for_user=True)
+                    if comfly_user_price is not None and comfly_user_price > 0:
+                        est_final = quantize_credits(comfly_user_price)
+                        return {"credits_charged": credits_json_float(est_final), "dry_run": True, "model": model}
             except Exception:
                 pass
-            candidates = [p for p in (sutui_price, comfly_price) if p is not None and p > 0]
-            if candidates:
-                best = min(candidates)
-                est_final = quantize_credits(best * _multiplier)
+            if sutui_user_price is not None and sutui_user_price > 0:
+                est_final = quantize_credits(sutui_user_price)
                 return {"credits_charged": credits_json_float(est_final), "dry_run": True, "model": model}
             return {"credits_charged": 0, "dry_run": True, "model": model}
 

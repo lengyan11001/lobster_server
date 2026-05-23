@@ -940,6 +940,9 @@ def _should_deduct_credits() -> bool:
     return edition == "online" and getattr(settings, "lobster_independent_auth", True)
 
 
+_SUTUI_CHAT_MIN_CHARGE_CREDITS = quantize_credits(Decimal("10"))
+
+
 def _rough_prompt_tokens_from_messages(messages: Any) -> int:
     """粗估 prompt token 数，仅用于预检（略高估，减少「余额够预检但事后不够扣」）。"""
     if not isinstance(messages, list):
@@ -1030,10 +1033,14 @@ def _require_balance_before_upstream_chat(
         return
     db.refresh(current_user)
     bal = user_balance_decimal(current_user)
-    if bal <= 0:
+    if bal < _SUTUI_CHAT_MIN_CHARGE_CREDITS:
         raise HTTPException(
             status_code=402,
-            detail="积分不足：当前余额为 0，请充值后再使用智能对话。",
+            headers={"X-Lobster-Min-Charge-Credits": str(_SUTUI_CHAT_MIN_CHARGE_CREDITS)},
+            detail=(
+                f"积分不足：LLM 对话单次最低需 {_SUTUI_CHAT_MIN_CHARGE_CREDITS} 算力，"
+                f"当前余额 {bal}。请先充值后再试。"
+            ),
         )
 
 
@@ -1125,6 +1132,10 @@ def _apply_chat_deduct(
     if response_body and isinstance(response_body, dict):
         reported_raw = extract_upstream_reported_credits(response_body)
     credits, billing_src = _credits_for_sutui_chat(model, usage, response_body, is_direct_api=is_direct_api)
+    raw_computed_credits = credits
+    if credits < _SUTUI_CHAT_MIN_CHARGE_CREDITS:
+        credits = _SUTUI_CHAT_MIN_CHARGE_CREDITS
+        billing_src = f"{billing_src}+min_10"
     snap = extract_upstream_billing_snapshot(response_body if isinstance(response_body, dict) else None)
     try:
         snap_json = json.dumps(snap, ensure_ascii=False, default=str)
@@ -1141,18 +1152,6 @@ def _apply_chat_deduct(
         usage,
         _sutui_chat_upstream_body_for_log(response_body if isinstance(response_body, dict) else None),
     )
-    if credits <= 0:
-        logger.info(
-            "[chat_trace] trace_id=%s path=sutui_chat_deduct result=skipped reason=credits_zero "
-            "user_id=%s model=%s billing_src=%s computed_credits=%s usage=%s",
-            tid,
-            current_user.id,
-            model,
-            billing_src,
-            credits,
-            usage,
-        )
-        return
     db.refresh(current_user)
     bal = user_balance_decimal(current_user)
     if bal < credits:
@@ -1176,6 +1175,8 @@ def _apply_chat_deduct(
         "model": model,
         "usage": usage,
         "deduct_credits": credits_json_float(credits),
+        "raw_computed_credits": credits_json_float(raw_computed_credits),
+        "min_charge_credits": credits_json_float(_SUTUI_CHAT_MIN_CHARGE_CREDITS),
         "billing_src": billing_src,
     }
     if billing_recon:

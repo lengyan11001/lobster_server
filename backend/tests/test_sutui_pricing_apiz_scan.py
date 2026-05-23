@@ -200,3 +200,26 @@ def test_llm_market_usage_pricing(monkeypatch):
         {"prompt_tokens": 1000, "completion_tokens": 500},
     )
     assert credits == quantize_credits("3.0")
+
+
+def test_comfly_estimate_uses_global_user_multiplier(monkeypatch):
+    from mcp import comfly_upstream
+
+    monkeypatch.setenv("USER_PRICE_MULTIPLIER", "2")
+    monkeypatch.delenv("COMFLY_USER_PRICE_MULTIPLIER", raising=False)
+    monkeypatch.setattr(
+        comfly_upstream,
+        "_load_pricing",
+        lambda: {
+            "user_price_multiplier_default": 3,
+            "models": {
+                "test-comfly-model": {
+                    "enabled": True,
+                    "price_type": "per_call",
+                    "price_per_unit": 100,
+                }
+            },
+        },
+    )
+
+    assert comfly_upstream.estimate_comfly_credits("test-comfly-model", {}, for_user=True) == 200

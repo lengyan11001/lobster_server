@@ -534,13 +534,14 @@ def should_route_to_comfly(capability_id: str, model_id: str, *, sutui_price: Op
 
 
 def _user_price_multiplier() -> float:
-    """用户实际消耗 = 采购价 × 倍率。优先取环境变量 COMFLY_USER_PRICE_MULTIPLIER，其次 JSON 配置。"""
-    env_val = os.environ.get("COMFLY_USER_PRICE_MULTIPLIER", "").strip()
-    if env_val:
-        try:
-            return float(env_val)
-        except ValueError:
-            pass
+    """用户实际消耗 = 采购价 × 倍率。优先取全局倍率，其次 Comfly 专用倍率，最后 JSON 配置。"""
+    for env_name in ("USER_PRICE_MULTIPLIER", "COMFLY_USER_PRICE_MULTIPLIER"):
+        env_val = os.environ.get(env_name, "").strip()
+        if env_val:
+            try:
+                return float(env_val)
+            except ValueError:
+                pass
     pricing = _load_pricing()
     return float(pricing.get("user_price_multiplier_default", 3))
 
