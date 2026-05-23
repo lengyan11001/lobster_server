@@ -1,4 +1,4 @@
-<view class="page chat-page">
+<view class="page chat-page" style="padding-bottom: {{composerBottomPadding}}px;">
   <view class="chat-header">
     <view>
       <text class="chat-title">AI超级员工</text>
@@ -60,6 +60,7 @@
       </view>
     </view>
   </view>
+  <view id="message-bottom" class="message-bottom"></view>
 
   <view class="composer">
     <view wx:if="{{attachedImages.length > 0}}" class="attached-strip">

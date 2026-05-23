@@ -146,10 +146,13 @@ Page({
     attachedImages: [],
     messages: [],
     onlineAvailable: false,
-    onlineText: "检查 online 状态中..."
+    onlineText: "检查 online 状态中...",
+    composerBottomPadding: 180
   },
 
   smsTimer: null,
+  scrollTimer: null,
+  messagePollTimer: null,
 
   onShow() {
     share.showShareMenu();
@@ -162,17 +165,96 @@ Page({
       inputText: prefill || this.data.inputText
     });
     if (this.data.phoneBound) {
-      this.loadMessages();
+      this.loadMessages({ forceScroll: true });
       this.loadOnlineStatus();
+      this.startMessagePolling();
+    } else {
+      this.stopMessagePolling();
     }
+    this.updateComposerPadding();
   },
 
   onPullDownRefresh() {
-    Promise.all([this.loadMessages(), this.loadOnlineStatus()]).finally(() => wx.stopPullDownRefresh());
+    Promise.all([this.loadMessages({ forceScroll: true }), this.loadOnlineStatus()]).finally(() => wx.stopPullDownRefresh());
+  },
+
+  onHide() {
+    this.stopMessagePolling();
   },
 
   onUnload() {
     this.clearSmsCountdown();
+    this.stopMessagePolling();
+    if (this.scrollTimer) {
+      clearTimeout(this.scrollTimer);
+      this.scrollTimer = null;
+    }
+  },
+
+  updateComposerPadding(callback) {
+    wx.nextTick(() => {
+      const query = wx.createSelectorQuery().in(this);
+      query
+        .select(".composer")
+        .boundingClientRect((rect) => {
+          const height = rect && rect.height ? Math.ceil(rect.height) : 180;
+          const nextPadding = height + 28;
+          if (Math.abs(Number(this.data.composerBottomPadding || 0) - nextPadding) > 2) {
+            this.setData({ composerBottomPadding: nextPadding }, () => {
+              if (typeof callback === "function") callback();
+            });
+            return;
+          }
+          if (typeof callback === "function") callback();
+        })
+        .exec();
+    });
+  },
+
+  scrollToBottom(delay) {
+    if (this.scrollTimer) clearTimeout(this.scrollTimer);
+    this.scrollTimer = setTimeout(() => {
+      wx.pageScrollTo({
+        selector: "#message-bottom",
+        duration: 220,
+        fail: () => wx.pageScrollTo({ scrollTop: 999999, duration: 220 })
+      });
+    }, typeof delay === "number" ? delay : 80);
+  },
+
+  refreshLayoutToBottom(delay) {
+    this.updateComposerPadding(() => this.scrollToBottom(delay));
+  },
+
+  startMessagePolling() {
+    this.stopMessagePolling();
+    if (!this.data.phoneBound) return;
+    this.messagePollTimer = setInterval(() => {
+      if (!this.data.phoneBound || this.data.sending) return;
+      this.loadMessages({ silent: true, scrollOnChange: true });
+    }, 5000);
+  },
+
+  stopMessagePolling() {
+    if (this.messagePollTimer) {
+      clearInterval(this.messagePollTimer);
+      this.messagePollTimer = null;
+    }
+  },
+
+  messagesDigest(messages) {
+    return (messages || [])
+      .map((item) =>
+        [
+          item.id,
+          item.status,
+          item.reply_text || "",
+          item.error || "",
+          (item.events || []).length,
+          (item.mediaItems || []).length
+        ].join("|")
+      )
+      .join("||");
   },
 
   loadOnlineStatus() {
@@ -189,26 +271,43 @@ Page({
       .catch(() => this.setData({ onlineAvailable: false, onlineText: "online 状态获取失败" }));
   },
 
-  loadMessages() {
+  loadMessages(options) {
+    const opts = options || {};
     if (!app.globalData.token) {
       this.setData({ phoneBound: false, loading: false, messages: [] });
+      this.stopMessagePolling();
       return Promise.resolve();
     }
-    this.setData({ loading: true });
+    const beforeDigest = this.messagesDigest(this.data.messages);
+    if (!opts.silent) this.setData({ loading: true });
     return app
       .request({ url: "/api/h5-chat/messages?limit=40" })
       .then((data) => {
-        this.setData({ messages: (data.messages || []).map(normalizeHistory), phoneBound: true });
+        const messages = (data.messages || []).map(normalizeHistory);
+        const changed = beforeDigest !== this.messagesDigest(messages);
+        this.setData({ messages, phoneBound: true }, () => {
+          if (opts.forceScroll || (changed && opts.scrollOnChange !== false)) {
+            this.refreshLayoutToBottom(80);
+          } else {
+            this.updateComposerPadding();
+          }
+        });
       })
       .catch((err) => {
-        wx.showToast({ title: api.errorMessage(err), icon: "none" });
-        if (/401|403|未绑定/.test(api.errorMessage(err))) this.setData({ phoneBound: false });
+        const message = api.errorMessage(err);
+        if (/401|403|未绑定/.test(message)) {
+          this.setData({ phoneBound: false });
+          this.stopMessagePolling();
+        }
+        if (!opts.silent) wx.showToast({ title: message, icon: "none" });
       })
-      .finally(() => this.setData({ loading: false }));
+      .finally(() => {
+        if (!opts.silent) this.setData({ loading: false });
+      });
   },
 
   onInput(evt) {
-    this.setData({ inputText: evt.detail.value || "" });
+    this.setData({ inputText: evt.detail.value || "" }, () => this.updateComposerPadding());
   },
 
   chooseUploadImage() {
@@ -243,7 +342,7 @@ Page({
     chain
       .then(() => {
         const attachedImages = (this.data.attachedImages || []).concat(uploaded).slice(0, MAX_ATTACH_IMAGES);
-        this.setData({ attachedImages });
+        this.setData({ attachedImages }, () => this.refreshLayoutToBottom());
         wx.showToast({ title: "图片已上传", icon: "success" });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
@@ -275,7 +374,7 @@ Page({
   removeAttachedImage(evt) {
     const index = Number(evt.currentTarget.dataset.index || 0);
     const attachedImages = (this.data.attachedImages || []).filter((_, i) => i !== index);
-    this.setData({ attachedImages });
+    this.setData({ attachedImages }, () => this.refreshLayoutToBottom());
   },
 
   buildMessageContent(content, attachments) {
@@ -317,8 +416,9 @@ Page({
         }
         this.setData({ authPanelVisible: false });
         wx.showToast({ title: "登录成功", icon: "success" });
-        this.loadMessages();
+        this.loadMessages({ forceScroll: true });
         this.loadOnlineStatus();
+        this.startMessagePolling();
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => wx.hideLoading());
@@ -345,9 +445,10 @@ Page({
       .bindPhone(code)
       .then(() => {
         this.setData({ authPanelVisible: false, smsBindVisible: false, phoneBound: true });
-        wx.showToast({ title: "绑定成功", icon: "success" });
-        this.loadMessages();
+        wx.showToast({ title: "登录成功", icon: "success" });
+        this.loadMessages({ forceScroll: true });
         this.loadOnlineStatus();
+        this.startMessagePolling();
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => wx.hideLoading());
@@ -435,9 +536,10 @@ Page({
         .then((data) => {
           app.saveSession(data);
           this.setData({ authPanelVisible: false, smsBindVisible: false, phoneBound: true, smsCode: "" });
-          wx.showToast({ title: "绑定成功", icon: "success" });
-          this.loadMessages();
+          wx.showToast({ title: "登录成功", icon: "success" });
+          this.loadMessages({ forceScroll: true });
           this.loadOnlineStatus();
+          this.startMessagePolling();
         })
         .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
         .finally(() => this.setData({ smsBinding: false }));
@@ -477,9 +579,9 @@ Page({
             data: { content }
           })
           .then(() => {
-            this.setData({ inputText: "", attachedImages: [] });
+            this.setData({ inputText: "", attachedImages: [] }, () => this.refreshLayoutToBottom());
             wx.showToast({ title: "已发送", icon: "success" });
-            return this.loadMessages();
+            return this.loadMessages({ forceScroll: true });
           });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
