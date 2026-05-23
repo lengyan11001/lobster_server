@@ -21,6 +21,7 @@ from .credits_amount import quantize_credits
 
 _DOCS_CACHE: Dict[str, Tuple[float, Optional[dict]]] = {}
 _MCP_MODELS_PRICING_CACHE: Dict[str, Tuple[float, Dict[str, dict]]] = {}
+_LLM_MARKET_PRICING_CACHE: Dict[str, Tuple[float, Dict[str, dict]]] = {}
 _CACHE_TTL_SEC = 3600
 
 # 公开 docs 无条目的对话模型：流式常无 x_billing，仅能按 usage×费率估算；费率按与非流式 x_billing 同量级校准，可用 env JSON 覆盖。
@@ -122,6 +123,91 @@ def _api_base() -> str:
     if base == "https://api.xskill.ai":
         return "https://api.apiz.ai"
     return base
+
+
+def _llm_market_pricing_urls() -> list[str]:
+    base = _api_base().rstrip("/")
+    urls = [f"{base}/v1/models/market?lang=zh"]
+    if "api.apiz.ai" not in base:
+        urls.append("https://api.apiz.ai/v1/models/market?lang=zh")
+    return urls
+
+
+def _fetch_llm_market_pricing_map() -> Dict[str, dict]:
+    now = time.time()
+    cache_key = "models"
+    ent = _LLM_MARKET_PRICING_CACHE.get(cache_key)
+    if ent and now - ent[0] < _CACHE_TTL_SEC:
+        return ent[1]
+    headers = _sutui_auth_headers()
+    pricing_map: Dict[str, dict] = {}
+    for url in _llm_market_pricing_urls():
+        try:
+            r = httpx.get(url, headers=headers, timeout=20.0)
+            if r.status_code >= 400:
+                continue
+            j = r.json()
+            models = j.get("models", []) if isinstance(j, dict) else []
+            if not isinstance(models, list):
+                continue
+            for m in models:
+                if not isinstance(m, dict):
+                    continue
+                mid = str(m.get("id") or "").strip()
+                p = m.get("pricing")
+                if mid and isinstance(p, dict):
+                    pricing_map[mid] = p
+            if pricing_map:
+                break
+        except Exception:
+            continue
+    _LLM_MARKET_PRICING_CACHE[cache_key] = (now, pricing_map)
+    return pricing_map
+
+
+def fetch_llm_market_pricing(model_id: str) -> Optional[dict]:
+    mid = (model_id or "").strip()
+    if not mid:
+        return None
+    pricing = _fetch_llm_market_pricing_map().get(mid)
+    return pricing if isinstance(pricing, dict) else None
+
+
+def credits_from_llm_market_usage(model_id: str, usage: Optional[dict]) -> Decimal:
+    if not usage or not isinstance(usage, dict):
+        return Decimal(0)
+    pricing = fetch_llm_market_pricing(model_id)
+    if not pricing or str(pricing.get("pricing_mode") or "").lower() != "token":
+        return Decimal(0)
+    in_rate = _pricing_number(pricing.get("input_price_credits_per_1m"))
+    out_rate = _pricing_number(pricing.get("output_price_credits_per_1m"))
+    if (in_rate is None or in_rate <= 0) and (out_rate is None or out_rate <= 0):
+        return Decimal(0)
+
+    prompt_tokens = 0
+    completion_tokens = 0
+    try:
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    except (TypeError, ValueError):
+        prompt_tokens = 0
+    try:
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+    except (TypeError, ValueError):
+        completion_tokens = 0
+    if prompt_tokens <= 0 and completion_tokens <= 0:
+        try:
+            prompt_tokens = int(usage.get("total_tokens") or 0)
+        except (TypeError, ValueError):
+            prompt_tokens = 0
+
+    cost = Decimal(0)
+    if prompt_tokens > 0 and in_rate and in_rate > 0:
+        cost += Decimal(prompt_tokens) * Decimal(str(in_rate)) / Decimal(1_000_000)
+    if completion_tokens > 0 and out_rate and out_rate > 0:
+        cost += Decimal(completion_tokens) * Decimal(str(out_rate)) / Decimal(1_000_000)
+    if cost <= 0:
+        return Decimal(0)
+    return quantize_credits(cost)
 
 
 def _quantize_credits(value: float) -> int:

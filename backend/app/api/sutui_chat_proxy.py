@@ -26,6 +26,7 @@ from ..services.sutui_api_audit import clip_openai_chat_completions_json_for_aud
 from ..services.sutui_pricing import (
     credits_from_chat_usage_when_no_docs_pricing,
     credits_from_direct_api_usage,
+    credits_from_llm_market_usage,
     estimate_credits_from_pricing,
     estimate_pre_deduct_credits,
     extract_upstream_billing_snapshot,
@@ -1060,6 +1061,11 @@ def _credits_for_sutui_chat(
         reported = extract_upstream_reported_credits(response_body)
         if reported > 0:
             return quantize_credits(reported), "upstream价字段优先"
+
+    if usage and isinstance(usage, dict):
+        market_credits = credits_from_llm_market_usage(model, usage)
+        if market_credits > 0:
+            return market_credits, "apiz_market_usage"
 
     # 注意：fallback（SUTUI_CHAT_FALLBACK_CREDITS_PER_1K 常为 1）必须在 docs 定价之后，
     # 否则「每千 token 1 积分」会先命中（如 24k token→25），永远轮不到 token_based 真实单价（往往≈0.0x/千）。

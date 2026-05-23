@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from backend.app.services.sutui_pricing import estimate_credits_from_pricing
+from backend.app.services.credits_amount import quantize_credits
 
 
 def test_grok_video_per_second_from_apiz_docs():
@@ -179,3 +180,23 @@ def test_explicit_ignored_resolution_does_not_override_dynamic_model_tier():
         pricing,
         {"model": "seedance2.0_fast_direct", "resolution": "720p", "duration": 4},
     ) == 200
+
+
+def test_llm_market_usage_pricing(monkeypatch):
+    from backend.app.services import sutui_pricing
+
+    monkeypatch.setattr(
+        sutui_pricing,
+        "fetch_llm_market_pricing",
+        lambda model_id: {
+            "pricing_mode": "token",
+            "input_price_credits_per_1m": 1000,
+            "output_price_credits_per_1m": 4000,
+        } if model_id == "gpt-4o" else None,
+    )
+
+    credits = sutui_pricing.credits_from_llm_market_usage(
+        "gpt-4o",
+        {"prompt_tokens": 1000, "completion_tokens": 500},
+    )
+    assert credits == quantize_credits("3.0")
