@@ -23,7 +23,7 @@ DEFAULT_CLIENT_CODE_OTA_PATHS = [
     "skill_registry.json",
     "upstream_urls.json",
     ".env",
-    "必火AI员工.exe",
+    "必火智能AI.exe",
     "openclaw",
     "requirements.txt",
     ".env.example",

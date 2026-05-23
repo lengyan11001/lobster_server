@@ -1,5 +1,6 @@
 .chat-page {
-  padding-bottom: 220rpx;
+  min-height: 100vh;
+  padding-bottom: 360rpx;
 }
 
 .chat-header {
@@ -105,6 +106,10 @@
   margin-top: 22rpx;
 }
 
+.message-bottom {
+  height: 1px;
+}
+
 .bubble {
   padding: 20rpx 24rpx;
   border-radius: 22rpx;
@@ -197,12 +202,14 @@
   right: 0;
   bottom: 0;
   left: 0;
+  z-index: 20;
   padding: 18rpx 24rpx calc(18rpx + env(safe-area-inset-bottom));
   background: rgba(243, 246, 251, 0.96);
   border-top: 1rpx solid #dbe3ef;
 }
 
 .message-input {
+  box-sizing: border-box;
   width: 100%;
   min-height: 86rpx;
   max-height: 210rpx;
