@@ -79,11 +79,11 @@ if ! _ssh_agent_has_keys; then
     export SSH_ASKPASS="$AP"
     export DISPLAY="${DISPLAY:-localhost:0}"
     ssh-add "$LOBSTER_DEPLOY_SSH_KEY"
-    rm -f "$AP"
-    trap _deploy_cleanup_ssh_agent EXIT
     if [ -n "$LOBSTER_DEPLOY_HOST_OVERSEAS" ] && [ -n "${LOBSTER_DEPLOY_SSH_KEY_OVERSEAS:-}" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" ]; then
       ssh-add "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" || true
     fi
+    rm -f "$AP"
+    trap _deploy_cleanup_ssh_agent EXIT
   fi
 fi
 
