@@ -19,6 +19,12 @@ if [ -n "$DIRTY_TRACKED" ]; then
   echo "[WARN] tracked working tree changes backed up to $BACKUP_PATCH"
 fi
 git reset --hard origin/main
+POST_RESET_DIRTY="$(git status --porcelain --untracked-files=no)"
+if [ -n "$POST_RESET_DIRTY" ]; then
+  echo "[ERR] tracked working tree is still dirty after reset; aborting deploy:"
+  echo "$POST_RESET_DIRTY"
+  exit 1
+fi
 
 NEW_COMMIT="$(git rev-parse HEAD)"
 echo "[版本] $PREV_COMMIT → $NEW_COMMIT"
@@ -26,6 +32,8 @@ echo "[版本] $PREV_COMMIT → $NEW_COMMIT"
 if [ -x "$ROOT/.venv/bin/pip" ]; then
   echo "[依赖] .venv pip install -r requirements.txt ..."
   "$ROOT/.venv/bin/pip" install -r "$ROOT/requirements.txt"
+  echo "[校验] deploy preflight imports ..."
+  PYTHONPATH="$ROOT" "$ROOT/.venv/bin/python" "$ROOT/scripts/deploy_preflight.py"
 else
   echo "[ERR] 未找到 $ROOT/.venv/bin/pip，请先在本机创建虚拟环境并安装依赖后再部署。"
   exit 1
