@@ -29,6 +29,7 @@ fi
 
 REMOTE_DIR="${LOBSTER_DEPLOY_REMOTE_DIR:-/opt/lobster-server}"
 REMOTE_DIR_OS="${LOBSTER_DEPLOY_REMOTE_DIR_OVERSEAS:-$REMOTE_DIR}"
+DEPLOY_OVERSEAS="${LOBSTER_DEPLOY_OVERSEAS:-0}"
 SSH_BASE="-o StrictHostKeyChecking=accept-new"
 # 若本机已 ssh-add 解锁密钥，不要用 -i（否则会再次读盘加密私钥、易弹窗索要口令）
 _ssh_agent_has_keys() {
@@ -79,7 +80,7 @@ if ! _ssh_agent_has_keys; then
     export SSH_ASKPASS="$AP"
     export DISPLAY="${DISPLAY:-localhost:0}"
     ssh-add "$LOBSTER_DEPLOY_SSH_KEY"
-    if [ -n "$LOBSTER_DEPLOY_HOST_OVERSEAS" ] && [ -n "${LOBSTER_DEPLOY_SSH_KEY_OVERSEAS:-}" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" ]; then
+    if [ "$DEPLOY_OVERSEAS" = "1" ] && [ -n "$LOBSTER_DEPLOY_HOST_OVERSEAS" ] && [ -n "${LOBSTER_DEPLOY_SSH_KEY_OVERSEAS:-}" ] && [ -r "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" ]; then
       ssh-add "$LOBSTER_DEPLOY_SSH_KEY_OVERSEAS" || true
     fi
     rm -f "$AP"
@@ -112,7 +113,7 @@ _run_remote() {
 _run_remote "$LOBSTER_DEPLOY_HOST" "$REMOTE_DIR" "$SSH_OPTS_MAIN"
 echo "[完成] 大陆/主服务器已更新并重启"
 
-if [ -n "$LOBSTER_DEPLOY_HOST_OVERSEAS" ]; then
+if [ "$DEPLOY_OVERSEAS" = "1" ] && [ -n "$LOBSTER_DEPLOY_HOST_OVERSEAS" ]; then
   _run_remote "$LOBSTER_DEPLOY_HOST_OVERSEAS" "$REMOTE_DIR_OS" "$SSH_OPTS_OS"
   echo "[完成] 海外服务器已更新并重启"
 fi
