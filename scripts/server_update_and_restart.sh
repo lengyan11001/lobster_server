@@ -10,7 +10,15 @@ echo "[备份] 当前版本 $PREV_COMMIT 已记录到 .deploy_rollback_commit"
 
 echo "[更新] 拉取 origin main ..."
 git fetch origin main
-git pull origin main
+DIRTY_TRACKED="$(git status --porcelain --untracked-files=no)"
+if [ -n "$DIRTY_TRACKED" ]; then
+  BACKUP_DIR="$ROOT/.deploy_dirty_backups"
+  mkdir -p "$BACKUP_DIR"
+  BACKUP_PATCH="$BACKUP_DIR/$(date +%Y%m%d_%H%M%S)_${PREV_COMMIT}.patch"
+  git diff > "$BACKUP_PATCH"
+  echo "[WARN] tracked working tree changes backed up to $BACKUP_PATCH"
+fi
+git reset --hard origin/main
 
 NEW_COMMIT="$(git rev-parse HEAD)"
 echo "[版本] $PREV_COMMIT → $NEW_COMMIT"

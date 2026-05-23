@@ -106,8 +106,8 @@ _run_remote() {
   local host="$1"
   local dir="$2"
   local sshopts="$3"
-  echo "[部署] SSH $host → cd $dir && git pull origin main && bash scripts/server_update_and_restart.sh"
-  ssh $sshopts "$host" "cd $dir && git fetch origin main && git pull origin main && bash scripts/server_update_and_restart.sh"
+  echo "[部署] SSH $host → cd $dir && git fetch origin main && backup dirty tracked files && git reset --hard origin/main && bash scripts/server_update_and_restart.sh"
+  ssh $sshopts "$host" "cd $dir && git fetch origin main && DIRTY_TRACKED=\"\$(git status --porcelain --untracked-files=no)\" && if [ -n \"\$DIRTY_TRACKED\" ]; then BACKUP_DIR=\".deploy_dirty_backups\"; mkdir -p \"\$BACKUP_DIR\"; BACKUP_PATCH=\"\$BACKUP_DIR/\$(date +%Y%m%d_%H%M%S)_\$(git rev-parse --short HEAD).patch\"; git diff > \"\$BACKUP_PATCH\"; echo \"[WARN] tracked working tree changes backed up to \$BACKUP_PATCH\"; fi && git reset --hard origin/main && bash scripts/server_update_and_restart.sh"
 }
 
 _run_remote "$LOBSTER_DEPLOY_HOST" "$REMOTE_DIR" "$SSH_OPTS_MAIN"

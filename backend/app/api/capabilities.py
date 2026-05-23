@@ -706,15 +706,29 @@ def record_call(
             "delta_settle": credits_json_float(-delta),
         }
     elif credits_charged_body > 0 and _should_deduct_credits() and not pre_applied:
-        if user_balance_decimal(current_user) < credits_charged_body:
+        charge_multiplier = 1.0
+        if upstream_rc == "sutui" and (cap.upstream_tool if cap else None) == "generate":
+            charge_multiplier = _get_user_price_multiplier()
+        raw_upstream_charge = credits_charged_body
+        charge_to_user = quantize_credits(float(raw_upstream_charge) * charge_multiplier)
+        if user_balance_decimal(current_user) < charge_to_user:
             raise HTTPException(
                 status_code=402,
-                detail=f"积分不足：本次需 {credits_charged_body} 积分（速推返回消耗），当前余额 {user_balance_decimal(current_user)}。请先充值。",
+                detail=(
+                    f"积分不足：本次需 {charge_to_user} 积分"
+                    f"（速推返回消耗 {raw_upstream_charge} * 倍率 {charge_multiplier}），"
+                    f"当前余额 {user_balance_decimal(current_user)}。请先充值。"
+                ),
             )
-        current_user.credits = user_balance_decimal(current_user) - credits_charged_body
-        credits_charged = credits_charged_body
+        current_user.credits = user_balance_decimal(current_user) - charge_to_user
+        credits_charged = charge_to_user
         ledger_kind = "direct_charge"
-        ledger_meta = {"capability_id": body.capability_id, "credits_charged": credits_json_float(credits_charged_body)}
+        ledger_meta = {
+            "capability_id": body.capability_id,
+            "upstream_reported_credits": credits_json_float(raw_upstream_charge),
+            "price_multiplier": charge_multiplier,
+            "credits_charged": credits_json_float(charge_to_user),
+        }
     elif credits_charged_body == 0 and _should_deduct_credits() and not pre_applied and unit_credits > 0:
         uc = quantize_credits(unit_credits)
         if user_balance_decimal(current_user) < uc:

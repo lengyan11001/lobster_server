@@ -2646,6 +2646,22 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                     "text": "预扣积分返回异常（无法解析认证中心响应）。请稍后重试。",
                                 }
                             ], True
+                    elif upstream_name == "sutui" and upstream_tool == "generate":
+                        logger.error(
+                            "[MCP] pre_deduct unexpected status=%s capability_id=%s body_prefix=%s",
+                            pre_r.status_code,
+                            capability_id,
+                            (pre_r.text or "")[:300],
+                        )
+                        return [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "预扣积分失败，已停止调用上游以避免未按定价扣费。"
+                                    f" 详情：HTTP {pre_r.status_code} {(pre_r.text or '')[:200]}"
+                                ),
+                            }
+                        ], True
                 except Exception as e:
                     if upstream_name == "sutui" and upstream_tool == "generate":
                         logger.exception("[MCP] pre-deduct 请求失败 capability_id=%s", capability_id)
@@ -3184,7 +3200,11 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     sutui_token_ref=sutui_token_ref_for_billing if upstream_name == "sutui" else None,
                 )
             else:
-                bill_credits = actual_used
+                bill_credits = (
+                    quantize_credits(float(actual_used) * _settle_multiplier)
+                    if actual_used > 0
+                    else quantize_credits(0)
+                )
                 pre_applied_flag = False
                 logger.info(
                     "[MCP] invoke_capability 计费 capability_id=%s pre_deduct=%s upstream_parsed=%s bill=%s pre_applied=%s",
@@ -3207,7 +3227,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             ):
                 created_tid = _extract_task_id_from_sutui_response(upstream_resp)
                 if created_tid:
-                    refund_on_fail = pre_deduct_amount if pre_deduct_amount > 0 else settle_final
+                    refund_on_fail = pre_deduct_amount if pre_deduct_amount > 0 else bill_credits
                     _remember_task_billed_credits(created_tid, refund_on_fail)
                     logger.info(
                         "[MCP] 已记录创建任务扣费 task_id=%s credits=%s pre_deduct=%s settle=%s（失败时凭 task_id 退款）",
@@ -3218,8 +3238,12 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     )
             logger.info("[MCP] invoke_capability 完成 capability_id=%s latency_ms=%s ok=%s", capability_id, latency_ms, not bool(upstream_error))
             data: Dict[str, Any] = {"capability_id": capability_id, "result": _redact_sensitive(upstream_resp)}
-            if settle_final > 0:
-                data["credits_used"] = settle_final
+            user_credits_used = pre_deduct_amount if pre_deduct_amount > 0 else bill_credits
+            if user_credits_used > 0:
+                data["credits_used"] = user_credits_used
+                if settle_final > 0 and user_credits_used != settle_final:
+                    data["upstream_credits_used"] = settle_final
+                    data["price_multiplier"] = _settle_multiplier
 
             # 自动入库：一次生成任务只入库一轮；该轮可含多个资源（多 URL）。异步 generate 不入库；get_result 仅终态且同一 task_id 只入库一次（轮询会多次终态成功）。
             # 云端 API 场景可设 MCP_AUTOSAVE_ASSETS=0，避免与「素材仅本机」冲突，由本机 lobster_online 保存。
