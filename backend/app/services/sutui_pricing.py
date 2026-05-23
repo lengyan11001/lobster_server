@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import time
 from decimal import Decimal
 from typing import Any, Dict, Optional, Tuple
@@ -117,7 +118,10 @@ def _usage_credits_per_1k_for_model(model_id: str) -> float:
 
 
 def _api_base() -> str:
-    return (getattr(settings, "sutui_api_base", None) or "https://api.xskill.ai").rstrip("/")
+    base = (getattr(settings, "sutui_api_base", None) or "https://api.apiz.ai").rstrip("/")
+    if base == "https://api.xskill.ai":
+        return "https://api.apiz.ai"
+    return base
 
 
 def _quantize_credits(value: float) -> int:
@@ -178,19 +182,87 @@ def _duration_seconds_from_params(params: Dict[str, Any]) -> float:
     return 0.0
 
 
+def _pricing_params_with_defaults(pricing: dict, params: Dict[str, Any]) -> Dict[str, Any]:
+    defaults = pricing.get("_param_defaults")
+    if not isinstance(defaults, dict):
+        return params
+    merged = dict(defaults)
+    merged.update(params)
+    return merged
+
+
 def _duration_from_example(ex: dict) -> float:
     for key in ("duration", "duration_sec", "duration_seconds", "seconds", "length"):
         x = _pricing_number(ex.get(key))
         if x and x > 0:
             return x
     desc = str(ex.get("description") or ex.get("label") or ex.get("name") or "")
-    digits = "".join(c for c in desc if c.isdigit() or c == ".")
-    x = _pricing_number(digits)
-    return x if x and x > 0 else 0.0
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:秒|s\b|sec(?:ond)?s?)", desc, flags=re.IGNORECASE)
+    if m:
+        x = _pricing_number(m.group(1))
+        return x if x and x > 0 else 0.0
+    m = re.search(r"(?:时长|duration|dur)\D*(\d+(?:\.\d+)?)", desc, flags=re.IGNORECASE)
+    if m:
+        x = _pricing_number(m.group(1))
+        return x if x and x > 0 else 0.0
+    # Matrix examples are often written as "720p + 4"; the value after "+"
+    # is the duration, while the resolution number must not be parsed as time.
+    if "+" in desc:
+        m = re.search(r"\+\s*(\d+(?:\.\d+)?)\b", desc)
+        if m:
+            x = _pricing_number(m.group(1))
+            return x if x and x > 0 else 0.0
+    return 0.0
 
 
-def _example_prices(pricing: dict) -> list[tuple[float, float]]:
-    out: list[tuple[float, float]] = []
+def _normalize_pricing_token(value: Any) -> str:
+    s = str(value or "").strip().lower()
+    s = s.replace("ｋ", "k").replace("Ｋ", "k")
+    return re.sub(r"\s+", "", s)
+
+
+def _param_token(params: Dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        if key not in params:
+            continue
+        token = _normalize_pricing_token(params.get(key))
+        if token and token != "auto":
+            return token
+    return ""
+
+
+def _param_tokens(params: Dict[str, Any], keys: tuple[str, ...]) -> list[str]:
+    out: list[str] = []
+    for key in keys:
+        if key not in params:
+            continue
+        token = _normalize_pricing_token(params.get(key))
+        if token and token != "auto" and token not in out:
+            out.append(token)
+    return out
+
+
+def _truthy_param(params: Dict[str, Any], keys: tuple[str, ...]) -> Optional[bool]:
+    for key in keys:
+        if key not in params:
+            continue
+        v = params.get(key)
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return bool(v)
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in {"1", "true", "yes", "y", "on"}:
+                return True
+            if s in {"0", "false", "no", "n", "off", ""}:
+                return False
+        return bool(v)
+    return None
+
+
+def _example_rows(pricing: dict) -> list[tuple[float, float, str]]:
+    out: list[tuple[float, float, str]] = []
     examples = pricing.get("examples") or pricing.get("duration_prices") or pricing.get("prices") or []
     if not isinstance(examples, list):
         return out
@@ -200,24 +272,165 @@ def _example_prices(pricing: dict) -> list[tuple[float, float]]:
         price = _pricing_base_amount(ex)
         if price is None:
             continue
-        out.append((_duration_from_example(ex), price))
+        desc = str(ex.get("description") or ex.get("label") or ex.get("name") or "")
+        out.append((_duration_from_example(ex), price, desc))
     return out
 
 
-def _price_from_duration_examples(pricing: dict, params: Dict[str, Any]) -> Optional[float]:
-    prices = _example_prices(pricing)
-    if not prices:
+def _example_prices(pricing: dict) -> list[tuple[float, float]]:
+    return [(duration, price) for duration, price, _desc in _example_rows(pricing)]
+
+
+def _description_audio_state(desc: str) -> str:
+    low = desc.lower()
+    if any(x in desc for x in ("语音控制", "语音")) or "voice" in low:
+        return "voice"
+    if any(x in desc for x in ("无音频", "无音效")) or "no audio" in low or "without audio" in low:
+        return "no_audio"
+    if any(x in desc for x in ("开启音频", "含音频", "音频")) or "+audio" in low or "audio" in low:
+        return "audio"
+    return "unknown"
+
+
+def _has_voice_control(params: Dict[str, Any]) -> bool:
+    for key in ("voice_ids", "voice_id", "voices"):
+        if key not in params:
+            continue
+        v = params.get(key)
+        if isinstance(v, list):
+            return len(v) > 0
+        if isinstance(v, str):
+            return bool(v.strip())
+        if v:
+            return True
+    return False
+
+
+def _filter_examples_by_params(
+    rows: list[tuple[float, float, str]], params: Dict[str, Any]
+) -> list[tuple[float, float, str]]:
+    candidates = rows
+    model_aliases: Dict[str, str] = {
+        "seedance2.0fastdirect": "fast",
+        "seedance2.0direct": "标准",
+        "seedance2.0fastvision": "fastvip",
+        "seedance2.0vision": "标准vip",
+        "seedance20fastdirect": "fast",
+        "seedance20direct": "标准",
+        "seedance20fastvision": "fastvip",
+        "seedance20vision": "标准vip",
+        "seedance20fast": "fast",
+        "seedance20fastvip": "fastvip",
+        "seedance20vip": "标准vip",
+        "seedance20": "标准",
+    }
+
+    model_tokens = _param_tokens(params, ("model", "model_type"))
+    for token in model_tokens:
+        token = model_aliases.get(token.replace("_", "").replace("-", "").replace(".", ""), token)
+        if token in {"标准", "fast"}:
+            matched = [
+                row for row in candidates
+                if token in _normalize_pricing_token(row[2])
+                and "vip" not in _normalize_pricing_token(row[2])
+            ]
+            if matched:
+                candidates = matched
+                continue
+        matched = [row for row in candidates if token in _normalize_pricing_token(row[2])]
+        if matched:
+            candidates = matched
+
+    for keys in (
+        ("resolution", "video_resolution", "output_resolution", "size"),
+        ("quality", "image_quality", "resolution_quality"),
+        ("mode", "variant", "version", "tier"),
+    ):
+        token = _param_token(params, keys)
+        if not token:
+            continue
+        matched = [row for row in candidates if token in _normalize_pricing_token(row[2])]
+        if matched:
+            candidates = matched
+
+    if _has_voice_control(params):
+        matched = [
+            row for row in candidates
+            if _description_audio_state(row[2]) == "voice"
+        ]
+        if matched:
+            candidates = matched
+    else:
+        audio = _truthy_param(params, ("generate_audio", "enable_audio", "with_audio"))
+        if audio is True:
+            matched = [
+                row for row in candidates
+                if _description_audio_state(row[2]) in {"audio", "voice"}
+            ]
+            if matched:
+                candidates = matched
+        elif audio is False:
+            matched = [
+                row for row in candidates
+                if _description_audio_state(row[2]) in {"no_audio", "unknown"}
+            ]
+            if matched:
+                candidates = matched
+
+    web_search = _truthy_param(params, ("enable_web_search", "web_search", "use_web_search"))
+    if web_search is True:
+        matched = [
+            row for row in candidates
+            if "web" in row[2].lower() or "search" in row[2].lower() or "搜索" in row[2]
+        ]
+        if matched:
+            candidates = matched
+    elif web_search is False:
+        matched = [
+            row for row in candidates
+            if "web" not in row[2].lower() and "search" not in row[2].lower() and "搜索" not in row[2]
+        ]
+        if matched:
+            candidates = matched
+
+    return candidates
+
+
+def _price_from_examples_by_params(pricing: dict, params: Dict[str, Any]) -> Optional[float]:
+    rows = _filter_examples_by_params(_example_rows(pricing), params)
+    if not rows:
         return None
     d = _duration_seconds_from_params(params)
     if d > 0:
-        with_duration = sorted((dur, price) for dur, price in prices if dur > 0)
-        for dur, price in with_duration:
-            if d <= dur:
-                return price
+        with_duration = [row for row in rows if row[0] > 0]
         if with_duration:
-            return with_duration[-1][1]
-    # 无 duration 时取最大价，避免预扣低估；没有 duration 档位则取首个有效价。
-    return max(price for _, price in prices)
+            durations = sorted({row[0] for row in with_duration})
+            chosen = next((dur for dur in durations if d <= dur + 1e-9), durations[-1])
+            bucket = [row for row in with_duration if abs(row[0] - chosen) < 1e-9]
+            if bucket:
+                return max(row[1] for row in bucket)
+    return max(row[1] for row in rows)
+
+
+def _linear_price_from_examples(pricing: dict, params: Dict[str, Any]) -> Optional[float]:
+    d = _duration_seconds_from_params(params)
+    if d <= 0:
+        return None
+    rows = _filter_examples_by_params(_example_rows(pricing), params)
+    with_duration = [row for row in rows if row[0] > 0 and row[1] > 0]
+    if not with_duration:
+        return None
+    exact = [row[1] for row in with_duration if abs(row[0] - d) < 1e-9]
+    if exact:
+        return max(exact)
+    rates = [row[1] / row[0] for row in with_duration if row[0] > 0]
+    if not rates:
+        return None
+    return math.ceil(d * max(rates))
+
+
+def _price_from_duration_examples(pricing: dict, params: Dict[str, Any]) -> Optional[float]:
+    return _price_from_examples_by_params(pricing, params)
 
 
 def _matrix_price_candidates(node: Any) -> list[float]:
@@ -269,6 +482,137 @@ def _price_from_quality_size_matrix(pricing: dict, params: Dict[str, Any]) -> Op
             return max(values)
     values = _matrix_price_candidates(matrix)
     return max(values) if values else None
+
+
+def _price_from_price_factors_quality_matrix(pricing: dict, params: Dict[str, Any]) -> Optional[float]:
+    factors = pricing.get("price_factors")
+    if not isinstance(factors, list):
+        return None
+    resolution = _param_token(params, ("resolution", "size", "image_size"))
+    quality = _param_token(params, ("quality", "image_quality", "resolution_quality")) or "high"
+    parsed: list[tuple[str, dict[str, float], list[float]]] = []
+    for item in factors:
+        text = str(item or "").strip()
+        if ":" not in text:
+            continue
+        key, rest = text.split(":", 1)
+        res_key = _normalize_pricing_token(key)
+        nums = [
+            float(x)
+            for x in re.findall(r"\d+(?:\.\d+)?", rest.split("（", 1)[0].split("(", 1)[0])
+        ]
+        if not nums:
+            continue
+        labels: list[str] = []
+        m = re.search(r"[（(]([^）)]+)[）)]", rest)
+        if m:
+            labels = [
+                _normalize_pricing_token(x)
+                for x in re.split(r"[/,，、\s]+", m.group(1))
+                if _normalize_pricing_token(x)
+            ]
+        mapped: dict[str, float] = {}
+        for idx, label in enumerate(labels):
+            if idx < len(nums):
+                mapped[label] = nums[idx]
+        if not mapped and len(nums) == 3:
+            mapped = {"low": nums[0], "medium": nums[1], "high": nums[2]}
+        parsed.append((res_key, mapped, nums))
+    if not parsed:
+        return None
+
+    rows = [row for row in parsed if resolution and row[0] == resolution]
+    if not rows and resolution:
+        rows = [row for row in parsed if resolution in row[0] or row[0] in resolution]
+    if not rows:
+        rows = parsed[:1]
+    prices: list[float] = []
+    for _res, mapped, nums in rows:
+        if quality in mapped:
+            prices.append(mapped[quality])
+        elif mapped:
+            prices.append(max(mapped.values()))
+        else:
+            prices.append(max(nums))
+    return max(prices) if prices else None
+
+
+def _price_from_table_matrix(pricing: dict, params: Dict[str, Any]) -> Optional[float]:
+    table = pricing.get("price_matrix")
+    if not isinstance(table, dict):
+        return None
+    columns = table.get("columns")
+    rows = table.get("rows")
+    if not isinstance(columns, list) or not isinstance(rows, list) or len(columns) < 2:
+        return None
+    resolution = _param_token(params, ("resolution", "size", "output_resolution"))
+    ratio = _param_token(params, ("image_size", "aspect_ratio", "ratio"))
+    if not ratio:
+        ratio = "4:3"
+    col_tokens = [_normalize_pricing_token(c) for c in columns]
+    col_idx = None
+    for idx, token in enumerate(col_tokens[1:], start=1):
+        if ratio == token:
+            col_idx = idx
+            break
+
+    row_matches: list[list[Any]] = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 2:
+            continue
+        row_token = _normalize_pricing_token(row[0])
+        if resolution and row_token == resolution:
+            row_matches.append(row)
+    if not row_matches and resolution:
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 2:
+                continue
+            row_token = _normalize_pricing_token(row[0])
+            if resolution in row_token or row_token in resolution:
+                row_matches.append(row)
+    if not row_matches:
+        row_matches = [row for row in rows if isinstance(row, list) and len(row) > 1][:1]
+
+    values: list[float] = []
+    for row in row_matches:
+        if col_idx is not None and col_idx < len(row):
+            x = _pricing_number(row[col_idx])
+            if x is not None:
+                values.append(x)
+        if not values:
+            for cell in row[1:]:
+                x = _pricing_number(cell)
+                if x is not None:
+                    values.append(x)
+    return max(values) if values else None
+
+
+def _addon_unit_from_examples(pricing: dict, base: float) -> float:
+    deltas = [
+        price - base
+        for _duration, price, _desc in _example_rows(pricing)
+        if price and price > base
+    ]
+    positives = sorted(x for x in deltas if x > 0)
+    return positives[0] if positives else 0.0
+
+
+def _has_extra_view_input(params: Dict[str, Any]) -> bool:
+    view_keys = (
+        "back_image_url",
+        "left_image_url",
+        "right_image_url",
+        "top_image_url",
+        "bottom_image_url",
+        "left_front_image_url",
+        "right_front_image_url",
+    )
+    if any(params.get(key) for key in view_keys):
+        return True
+    images = params.get("image_urls") or params.get("images")
+    if isinstance(images, list) and len([x for x in images if x]) > 1:
+        return True
+    return False
 
 
 _MODEL_SHORT_TO_FULL: Dict[str, str] = {
@@ -409,6 +753,14 @@ def fetch_model_pricing(model_id: str) -> Optional[dict]:
             out = dict(p)
             schema = data.get("params_schema") if isinstance(data, dict) else None
             props = schema.get("properties") if isinstance(schema, dict) else None
+            if isinstance(props, dict):
+                defaults = {
+                    str(key): spec.get("default")
+                    for key, spec in props.items()
+                    if isinstance(spec, dict) and "default" in spec and not spec.get("visible_if")
+                }
+                if defaults:
+                    out["_param_defaults"] = defaults
             duration_schema = props.get("duration") if isinstance(props, dict) else None
             if isinstance(duration_schema, dict):
                 default_duration = _pricing_number(duration_schema.get("default"))
@@ -435,7 +787,7 @@ def pricing_is_free_fixed(pricing: dict) -> bool:
 
 def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
     """根据 pricing + 请求参数估算预扣积分（保守估计，避免低估）。"""
-    params = params or {}
+    params = _pricing_params_with_defaults(pricing, params or {})
     if not pricing:
         return 0
     price_type = (pricing.get("price_type") or "").strip().lower()
@@ -445,7 +797,11 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
         return 0
 
     # per_second / dynamic_per_second: base_price 可能为 None，用 per_second 字段
-    if price_type in ("per_second", "dynamic_per_second"):
+    if price_type in ("per_second", "dynamic_per_second", "per_second_actual_duration"):
+        if price_type == "dynamic_per_second":
+            ex_price = _linear_price_from_examples(pricing, params) or _price_from_examples_by_params(pricing, params)
+            if ex_price is not None:
+                return _quantize_credits(ex_price)
         try:
             rate = float(pricing.get("per_second") or 0)
         except (TypeError, ValueError):
@@ -475,23 +831,9 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
 
     # duration_map: base_price 是最短时长的价格，按时长比例估算
     if price_type == "duration_map":
-        d = _duration_seconds_from_params(params)
-        if d <= 0:
-            ex_price = _price_from_duration_examples(pricing, params)
-            return _quantize_credits(ex_price if ex_price is not None else base)
-        examples = pricing.get("examples") or []
-        for ex in examples:
-            if not isinstance(ex, dict):
-                continue
-            desc = str(ex.get("description") or "")
-            try:
-                ex_dur = float("".join(c for c in desc if c.isdigit() or c == "."))
-            except (ValueError, TypeError):
-                continue
-            if ex_dur > 0 and d <= ex_dur:
-                return int(ex.get("price", base))
-        if examples:
-            return int(examples[-1].get("price", base))
+        ex_price = _price_from_examples_by_params(pricing, params)
+        if ex_price is not None:
+            return _quantize_credits(ex_price)
         return base
 
     # token_postcharge: 后付费，预扣用 examples 中最低价作保守估计
@@ -516,10 +858,16 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
         return base * n_int
 
     if price_type in ("duration_based", "duration_price"):
-        if price_type == "duration_price" and base <= 0:
-            ex_price = _price_from_duration_examples(pricing, params)
+        if price_type == "duration_price":
+            ex_price = _linear_price_from_examples(pricing, params) or _price_from_examples_by_params(pricing, params)
             if ex_price is not None:
                 return _quantize_credits(ex_price)
+            rate = _pricing_number(pricing.get("per_second"))
+            if rate is not None and rate > 0:
+                d = _duration_seconds_from_params(params)
+                if d <= 0:
+                    d = 5.0
+                return _quantize_credits(float(math.ceil(float(d) * rate)))
         if base <= 0:
             return 0
         d = _duration_seconds_from_params(params)
@@ -533,6 +881,8 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
     if price_type == "quality_size_matrix":
         price = _price_from_quality_size_matrix(pricing, params)
         if price is None:
+            price = _price_from_price_factors_quality_matrix(pricing, params)
+        if price is None:
             price = base_amount
         if price is None:
             return 0
@@ -540,14 +890,44 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
 
     if price_type == "matrix":
         matrix_price = _price_from_quality_size_matrix(pricing, params)
+        if matrix_price is None:
+            matrix_price = _price_from_table_matrix(pricing, params)
         if matrix_price is not None:
             return _quantize_credits(matrix_price * _num_outputs_from_params(params))
+        ex_price = _linear_price_from_examples(pricing, params) or _price_from_examples_by_params(pricing, params)
+        if ex_price is not None:
+            return _quantize_credits(ex_price)
         if base <= 0:
             return 0
         d = _duration_seconds_from_params(params)
         if d > 0:
             return _quantize_credits(float(math.ceil(d * float(base))))
         return base
+
+    if price_type == "resolution_ratio_matrix":
+        price = _price_from_table_matrix(pricing, params)
+        if price is None:
+            price = base_amount
+        if price is None:
+            return 0
+        total = price * _num_outputs_from_params(params)
+        if _truthy_param(params, ("enable_prompt_expansion", "prompt_expansion")) is True:
+            total += 1
+        return _quantize_credits(total)
+
+    if price_type == "fixed_plus_addons":
+        if base_amount is None:
+            return 0
+        addon = _addon_unit_from_examples(pricing, float(base_amount))
+        total = float(base_amount)
+        if _truthy_param(params, ("enable_pbr", "pbr")) is True:
+            total += addon
+        if _has_extra_view_input(params):
+            total += addon
+        face_count = _pricing_number(params.get("face_count"))
+        if face_count is not None and abs(face_count - 500000.0) > 1e-9:
+            total += addon
+        return _quantize_credits(total)
 
     if price_type == "token_based":
         if base <= 0:
@@ -582,6 +962,9 @@ def estimate_credits_from_pricing(pricing: dict, params: Optional[dict]) -> int:
         return _quantize_credits(float(units * base))
 
     if price_type in ("resolution_quantity", "size_based"):
+        ex_price = _price_from_examples_by_params(pricing, params)
+        if ex_price is not None:
+            return _quantize_credits(ex_price * _num_outputs_from_params(params))
         if base <= 0:
             return 0
         return base * _num_outputs_from_params(params)
