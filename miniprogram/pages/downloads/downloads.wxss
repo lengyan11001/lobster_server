@@ -235,6 +235,19 @@ page {
   background: rgba(255,255,255,0.08);
 }
 
+.media-work-video {
+  display: block;
+}
+
+.media-work-file {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(226, 232, 240, 0.72);
+  font-size: 24rpx;
+  font-weight: 900;
+}
+
 .media-work-body {
   padding: 18rpx;
 }

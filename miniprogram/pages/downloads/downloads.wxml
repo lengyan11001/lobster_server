@@ -55,22 +55,24 @@
     </view>
   </block>
 
-  <block wx:elif="{{mediaTab === 'image' && loading && mediaWorks.length === 0}}">
+  <block wx:elif="{{((mediaTab === 'image') || (mediaTab === 'video' && videoKind === 'super')) && loading && mediaWorks.length === 0}}">
     <view class="empty-card">
-      <text>正在加载图片作品...</text>
+      <text>{{mediaTab === 'image' ? '正在加载图片作品...' : '正在加载视频作品...'}}</text>
     </view>
   </block>
 
-  <block wx:elif="{{mediaTab === 'image' && mediaWorks.length === 0}}">
+  <block wx:elif="{{((mediaTab === 'image') || (mediaTab === 'video' && videoKind === 'super')) && mediaWorks.length === 0}}">
     <view class="empty-card">
-      <text>这里暂时还没有图片作品</text>
+      <text>{{mediaTab === 'image' ? '这里暂时还没有图片作品' : '这里暂时还没有超级视频'}}</text>
     </view>
   </block>
 
-  <block wx:elif="{{mediaTab === 'image'}}">
+  <block wx:elif="{{mediaTab === 'image' || (mediaTab === 'video' && videoKind === 'super')}}">
     <view class="media-grid-list">
       <view wx:for="{{mediaWorks}}" wx:key="id" wx:for-index="index" class="media-work-card">
-        <image class="media-work-img" src="{{item.preview_url || item.url}}" mode="aspectFill" data-index="{{index}}" bindtap="previewMediaWork" />
+        <image wx:if="{{item.media_type === 'image'}}" class="media-work-img" src="{{item.preview_url || item.url}}" mode="aspectFill" data-index="{{index}}" bindtap="previewMediaWork" />
+        <video wx:elif="{{item.media_type === 'video'}}" class="media-work-img media-work-video" src="{{item.preview_url || item.url}}" controls show-fullscreen-btn show-play-btn object-fit="cover"></video>
+        <view wx:else class="media-work-img media-work-file">{{item.media_type}}</view>
         <view class="media-work-body">
           <text class="media-work-title">{{item.title}}</text>
           <text class="media-work-time">{{item.created_at_text || '--'}}</text>

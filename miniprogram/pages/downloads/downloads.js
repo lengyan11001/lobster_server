@@ -83,7 +83,7 @@ function normalizeMediaItem(item) {
     id: item.id || item.asset_id || url,
     media_type: mediaType,
     work_type: mediaType,
-    work_type_label: mediaType === "image" ? "AI图片" : mediaType === "audio" ? "AI音频" : "AI素材",
+    work_type_label: mediaType === "image" ? "AI图片" : mediaType === "video" ? "AI视频" : mediaType === "audio" ? "AI音频" : "AI素材",
     title,
     prompt: item.prompt || "",
     playable_url: url,
@@ -204,6 +204,7 @@ Page({
   setVideoKind(evt) {
     const kind = evt.currentTarget.dataset.kind || "digital";
     this.setData({ videoKind: kind });
+    if (this.data.phoneBound) this.loadWorks();
   },
 
   noop() {},
@@ -214,6 +215,7 @@ Page({
       return Promise.resolve();
     }
     if (this.data.mediaTab !== "video") return this.loadMediaWorks(this.data.mediaTab);
+    if (this.data.videoKind !== "digital") return this.loadMediaWorks("video");
     this.setData({ loading: true });
     return app
       .request({ url: "/api/hifly/my/video/list?page=1&size=50" })
