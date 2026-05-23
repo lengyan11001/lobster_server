@@ -2594,10 +2594,19 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             # ━━━ 用户积分：唯一业务入口（调用上游之前只在此处处理） ━━━
             pre_deduct_amount = quantize_credits(0)
             billing_idem = str(uuid.uuid4())
+            _UNDERSTAND_CAPS = ("image.understand", "video.understand")
+            _requires_positive_pre_deduct = (
+                upstream_name == "sutui"
+                and upstream_tool == "generate"
+                and capability_id not in _UNDERSTAND_CAPS
+            ) or (
+                _early_use_comfly
+                and not _early_comfly_task_query
+                and capability_id in ("image.generate", "video.generate", "comfly.daihuo", "comfly.daihuo.pipeline")
+            )
             if token:
                 try:
                     pre_body: Dict[str, Any] = {"capability_id": capability_id}
-                    _UNDERSTAND_CAPS = ("image.understand", "video.understand")
                     if _early_use_comfly and _comfly_user_credits and _comfly_user_credits > 0:
                         pre_body["force_credits"] = _comfly_user_credits
                         pre_body["model"] = _comfly_model_id
@@ -2674,6 +2683,22 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                                 ),
                             }
                         ], True
+
+            if _requires_positive_pre_deduct and pre_deduct_amount <= 0:
+                logger.error(
+                    "[MCP] blocked billable generate without positive pre_deduct capability_id=%s upstream=%s tool=%s model=%s comfly=%s",
+                    capability_id,
+                    upstream_name,
+                    upstream_tool,
+                    normalized_model or original_model or "",
+                    _early_use_comfly,
+                )
+                return [
+                    {
+                        "type": "text",
+                        "text": "预扣积分未完成，已停止调用上游以避免未扣费生成。请稍后重试。",
+                    }
+                ], True
 
             if not upstream_url:
                 return [{"type": "text", "text": f"未配置上游网关: {upstream_name}，请在 .env 或技能商店中配置"}], True
