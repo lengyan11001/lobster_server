@@ -68,6 +68,36 @@ function normalizeVideo(item) {
   });
 }
 
+function filenameFromUrl(url) {
+  const path = String(url || "").split("?")[0].split("#")[0];
+  const name = decodeURIComponent(path.split("/").pop() || "");
+  return name || "AI图片";
+}
+
+function normalizeMediaItem(item) {
+  const url = item.url || item.preview_url || item.download_url || "";
+  const title = item.title || item.filename || filenameFromUrl(url);
+  const mediaType = item.media_type || "media";
+  const filename = filenameFromUrl(url || title);
+  return Object.assign({}, item, {
+    id: item.id || item.asset_id || url,
+    media_type: mediaType,
+    work_type: mediaType,
+    work_type_label: mediaType === "image" ? "AI图片" : mediaType === "audio" ? "AI音频" : "AI素材",
+    title,
+    prompt: item.prompt || "",
+    playable_url: url,
+    preview_url: item.preview_url || url,
+    download_url: item.download_url || url,
+    proxy_download_url: item.proxy_download_url || item.download_url || url,
+    proxy_preview_url: item.proxy_preview_url || item.preview_url || url,
+    status: "success",
+    status_label: "已完成",
+    created_at_text: formatTime(item.created_at),
+    filename
+  });
+}
+
 Page({
   data: {
     phoneBound: false,
@@ -78,6 +108,7 @@ Page({
     loading: false,
     polling: false,
     works: [],
+    mediaWorks: [],
     onlineText: ""
   },
 
@@ -167,6 +198,7 @@ Page({
   setMediaTab(evt) {
     const tab = evt.currentTarget.dataset.tab || "video";
     this.setData({ mediaTab: tab });
+    if (this.data.phoneBound) this.loadWorks();
   },
 
   setVideoKind(evt) {
@@ -178,9 +210,10 @@ Page({
 
   loadWorks() {
     if (!this.refreshAuthState()) {
-      this.setData({ works: [], loading: false });
+      this.setData({ works: [], mediaWorks: [], loading: false });
       return Promise.resolve();
     }
+    if (this.data.mediaTab !== "video") return this.loadMediaWorks(this.data.mediaTab);
     this.setData({ loading: true });
     return app
       .request({ url: "/api/hifly/my/video/list?page=1&size=50" })
@@ -188,6 +221,29 @@ Page({
         const works = (data.items || []).map(normalizeVideo);
         this.setData({ works, authPanelVisible: false });
         this.refreshPolling();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => this.setData({ loading: false }));
+  },
+
+  loadMediaWorks(mediaType) {
+    const type = mediaType || this.data.mediaTab || "image";
+    if (type === "text") {
+      this.setData({ mediaWorks: [], loading: false });
+      return Promise.resolve();
+    }
+    const deviceId = app.globalData.deviceId || wx.getStorageSync("lobster_device_id") || "";
+    if (!deviceId) {
+      wx.showToast({ title: "未找到当前手机设备", icon: "none" });
+      return Promise.resolve();
+    }
+    this.stopPolling();
+    this.setData({ loading: true });
+    return app
+      .request({ url: `/api/mobile/downloads?device_id=${encodeURIComponent(deviceId)}&media_type=${encodeURIComponent(type)}&limit=80` })
+      .then((data) => {
+        const rows = (data.items || []).map(normalizeMediaItem).filter((item) => item.media_type === type);
+        this.setData({ mediaWorks: rows, authPanelVisible: false });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => this.setData({ loading: false }));
@@ -303,6 +359,46 @@ Page({
         const reason = api.errorMessage(err);
         media.copyLink(item.playable_url).finally(() => wx.showToast({ title: `保存失败: ${reason}`.slice(0, 28), icon: "none" }));
       });
+  },
+
+  saveMediaWork(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.mediaWorks[index];
+    if (!item || !item.download_url) {
+      wx.showToast({ title: "暂无可保存链接", icon: "none" });
+      return;
+    }
+    media
+      .saveToAlbum(item)
+      .then(() => wx.showToast({ title: "已保存", icon: "success" }))
+      .catch((err) => {
+        const reason = api.errorMessage(err);
+        media.copyLink(item.url || item.download_url || "").finally(() => wx.showToast({ title: `保存失败: ${reason}`.slice(0, 28), icon: "none" }));
+      });
+  },
+
+  copyMediaWork(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.mediaWorks[index];
+    const url = item && (item.url || item.download_url || item.preview_url);
+    if (!url) {
+      wx.showToast({ title: "暂无链接", icon: "none" });
+      return;
+    }
+    media.copyLink(url).then(() => wx.showToast({ title: "链接已复制", icon: "success" }));
+  },
+
+  previewMediaWork(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.mediaWorks[index];
+    const url = item && (item.preview_url || item.url);
+    if (!url) return;
+    if (item.media_type === "image") {
+      wx.previewImage({
+        current: url,
+        urls: this.data.mediaWorks.filter((row) => row.media_type === "image").map((row) => row.preview_url || row.url).filter(Boolean)
+      });
+    }
   },
 
   goCreate() {
