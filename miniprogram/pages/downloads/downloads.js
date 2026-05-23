@@ -98,6 +98,26 @@ function normalizeMediaItem(item) {
   });
 }
 
+function normalizeAssetItem(item) {
+  const url = item.source_url || item.url || "";
+  return normalizeMediaItem(Object.assign({}, item, {
+    id: item.id || item.asset_id || url,
+    title: item.filename || item.title || filenameFromUrl(url),
+    url,
+    preview_url: item.preview_url || url,
+    download_url: item.download_url || url,
+    proxy_preview_url: item.proxy_preview_url || url,
+    proxy_download_url: item.proxy_download_url || url,
+    media_type: item.media_type || "media"
+  }));
+}
+
+function isHiflyVideoAsset(item) {
+  const tags = String((item && item.tags) || "").toLowerCase();
+  const meta = item && item.meta ? JSON.stringify(item.meta).toLowerCase() : "";
+  return tags.indexOf("hifly") >= 0 || tags.indexOf("video_tts") >= 0 || meta.indexOf("hifly") >= 0;
+}
+
 Page({
   data: {
     phoneBound: false,
@@ -215,7 +235,7 @@ Page({
       return Promise.resolve();
     }
     if (this.data.mediaTab !== "video") return this.loadMediaWorks(this.data.mediaTab);
-    if (this.data.videoKind !== "digital") return this.loadMediaWorks("video");
+    if (this.data.videoKind !== "digital") return this.loadAssetVideos();
     this.setData({ loading: true });
     return app
       .request({ url: "/api/hifly/my/video/list?page=1&size=50" })
@@ -223,6 +243,21 @@ Page({
         const works = (data.items || []).map(normalizeVideo);
         this.setData({ works, authPanelVisible: false });
         this.refreshPolling();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => this.setData({ loading: false }));
+  },
+
+  loadAssetVideos() {
+    this.stopPolling();
+    this.setData({ loading: true });
+    return app
+      .request({ url: "/api/assets?media_type=video&limit=80" })
+      .then((data) => {
+        const rows = (data.assets || [])
+          .filter((item) => item && item.source_url && item.media_type === "video" && !isHiflyVideoAsset(item))
+          .map(normalizeAssetItem);
+        this.setData({ mediaWorks: rows, authPanelVisible: false });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => this.setData({ loading: false }));
