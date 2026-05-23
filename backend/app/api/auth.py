@@ -225,7 +225,8 @@ def _verify_sms_challenge(db: Session, mobile: str, code: str) -> bool:
         row.answer_hash,
         _auth_code_hash("sms", mobile, value),
     )
-    db.delete(row)
+    if ok:
+        db.delete(row)
     db.commit()
     return ok
 

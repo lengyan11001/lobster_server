@@ -436,10 +436,11 @@ def pre_deduct(
                 pass
             comfly_price = None
             try:
-                from mcp.comfly_upstream import lookup_comfly_model
-                _cm = lookup_comfly_model(model)
-                if _cm and isinstance(_cm, dict) and _cm.get("price_per_unit") is not None:
-                    comfly_price = float(_cm["price_per_unit"])
+                from mcp.comfly_upstream import lookup_comfly_model, should_route_to_comfly
+                if should_route_to_comfly(body.capability_id, model, sutui_price=sutui_price):
+                    _cm = lookup_comfly_model(model)
+                    if _cm and isinstance(_cm, dict) and _cm.get("price_per_unit") is not None:
+                        comfly_price = float(_cm["price_per_unit"])
             except Exception:
                 pass
             candidates = [p for p in (sutui_price, comfly_price) if p is not None and p > 0]
@@ -538,8 +539,13 @@ def pre_deduct(
     # ── Comfly 定价查找（dry_run 兜底：MCP 尚未介入时用 comfly_pricing.json 估价）──
     if body.dry_run and (body.model or "").strip():
         try:
-            from mcp.comfly_upstream import estimate_comfly_credits
-            _cm_est = estimate_comfly_credits((body.model or "").strip(), body.params or {}, for_user=True)
+            from mcp.comfly_upstream import estimate_comfly_credits, should_route_to_comfly
+            _model_for_comfly = (body.model or "").strip()
+            _cm_est = (
+                estimate_comfly_credits(_model_for_comfly, body.params or {}, for_user=True)
+                if should_route_to_comfly(body.capability_id, _model_for_comfly)
+                else None
+            )
             if _cm_est is not None:
                 return {
                     "credits_charged": credits_json_float(quantize_credits(_cm_est)),

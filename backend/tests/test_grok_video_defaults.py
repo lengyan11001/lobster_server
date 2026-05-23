@@ -35,10 +35,12 @@ def test_grok_aliases_resolve_to_xai_grok_models():
 
 
 def test_xai_grok_models_keep_sutui_route():
-    from mcp.comfly_upstream import should_route_to_comfly
+    from mcp.comfly_upstream import lookup_comfly_model, should_route_to_comfly
 
     assert should_route_to_comfly("video.generate", "xai/grok-imagine-video/text-to-video") is False
     assert should_route_to_comfly("video.generate", "xai/grok-imagine-video/image-to-video") is False
+    assert lookup_comfly_model("xai/grok-imagine-video/text-to-video") is None
+    assert lookup_comfly_model("xai/grok-imagine-video/image-to-video") is None
 
 
 def test_grok_resolution_is_limited_to_upstream_enum():

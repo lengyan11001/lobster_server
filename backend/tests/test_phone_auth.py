@@ -67,6 +67,42 @@ def test_register_phone_existing_user_logs_in_without_password(db_session, db_se
         assert s.query(User).filter(User.email == PHONE_EMAIL).count() == 1
 
 
+def test_wrong_sms_code_does_not_consume_challenge(db_session, db_session_factory, monkeypatch):
+    from backend.app.models import AuthChallenge, User
+
+    user = User(
+        email=PHONE_EMAIL,
+        hashed_password="x",
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    _put_sms_code(db_session, PHONE)
+
+    client = _client(db_session_factory, monkeypatch)
+    bad = client.post(
+        "/auth/register-phone",
+        json={"phone": PHONE, "code": "000000"},
+    )
+    assert bad.status_code == 400
+
+    with db_session_factory() as s:
+        assert s.query(AuthChallenge).filter(AuthChallenge.kind == "sms", AuthChallenge.target == PHONE).count() == 1
+
+    ok = client.post(
+        "/auth/register-phone",
+        json={"phone": PHONE, "code": "123456"},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["access_token"]
+
+    with db_session_factory() as s:
+        assert s.query(AuthChallenge).filter(AuthChallenge.kind == "sms", AuthChallenge.target == PHONE).count() == 0
+
+
 def test_register_phone_new_user_creates_and_logs_in_without_password(db_session, db_session_factory, monkeypatch):
     from backend.app.models import User
 
