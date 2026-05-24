@@ -13,6 +13,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica N
 .login-card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:40px;width:100%;max-width:380px}
 .login-card h1{text-align:center;margin-bottom:8px;font-size:22px;color:var(--primary)}
 .login-card .login-hint{display:none}
+.login-tabs{display:flex;gap:4px;margin:18px 0;background:var(--bg);padding:4px;border-radius:8px}
+.login-tab{flex:1;border:0;background:transparent;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-secondary)}
+.login-tab.active{background:var(--card);color:var(--primary);box-shadow:var(--shadow)}
+.login-panel{display:none}
+.login-panel.active{display:block}
 .form-group{margin-bottom:16px}
 .form-group label{display:block;margin-bottom:6px;font-size:13px;font-weight:600;color:var(--text-secondary)}
 .form-group input{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;transition:border-color .2s}
@@ -155,6 +160,7 @@ tr:hover{background:var(--bg)}
   .chart-bar-value{font-size:11px;min-width:36px}
   .login-card{padding:24px}
   .login-card h1{font-size:18px}
+  .login-tab{font-size:12px;padding:8px 6px}
   .modal-card{padding:20px;margin:12px}
   .toast{right:12px;left:12px;text-align:center}
   .badge{font-size:10px;padding:2px 6px}
@@ -176,29 +182,42 @@ tr:hover{background:var(--bg)}
   <div class="login-card">
     <div style="text-align:center;margin-bottom:12px"><img src="/admin/static/bihu_64.png" width="56" height="56" style="border-radius:12px"></div>
     <h1>必火AI员工管理后台</h1>
-    <div class="form-group">
-      <label>账号</label>
-      <input type="text" id="loginUser" autocomplete="username" placeholder="管理员用户名 / 代理商手机号">
+    <div class="login-tabs">
+      <button class="login-tab active" type="button" data-login-tab="password" onclick="switchLoginTab('password')">账号密码登录</button>
+      <button class="login-tab" type="button" data-login-tab="sms" onclick="switchLoginTab('sms')">手机号验证码登录</button>
     </div>
-    <div class="form-group">
-      <label>密码</label>
-      <input type="password" id="loginPass" autocomplete="current-password" placeholder="密码">
-    </div>
-    <div class="form-group">
-      <label>图形验证码</label>
-      <div class="captcha-row">
-        <input type="text" id="loginCaptchaAnswer" placeholder="验证码">
-        <img id="loginCaptchaImg" alt="验证码" title="点击刷新" onclick="loadLoginCaptcha()">
+    <div class="login-panel active" id="loginPanelPassword">
+      <div class="form-group">
+        <label>账号</label>
+        <input type="text" id="loginUser" autocomplete="username" placeholder="管理员用户名 / 代理商手机号">
       </div>
-    </div>
-    <div class="form-group">
-      <label>短信验证码（代理商可用）</label>
-      <div class="sms-row">
-        <input type="text" id="loginSmsCode" autocomplete="one-time-code" placeholder="短信验证码">
-        <button class="btn btn-outline btn-sm" id="sendLoginSmsBtn" type="button" onclick="sendLoginSms()">发送验证码</button>
+      <div class="form-group">
+        <label>密码</label>
+        <input type="password" id="loginPass" autocomplete="current-password" placeholder="密码">
       </div>
+      <button class="btn btn-primary" onclick="doLogin()">登录</button>
     </div>
-    <button class="btn btn-primary" onclick="doLogin()">登录</button>
+    <div class="login-panel" id="loginPanelSms">
+      <div class="form-group">
+        <label>手机号</label>
+        <input type="text" id="loginSmsPhone" autocomplete="username" placeholder="代理商手机号">
+      </div>
+      <div class="form-group">
+        <label>图形验证码</label>
+        <div class="captcha-row">
+          <input type="text" id="loginCaptchaAnswer" placeholder="验证码">
+          <img id="loginCaptchaImg" alt="验证码" title="点击刷新" onclick="loadLoginCaptcha()">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>短信验证码</label>
+        <div class="sms-row">
+          <input type="text" id="loginSmsCode" autocomplete="one-time-code" placeholder="短信验证码">
+          <button class="btn btn-outline btn-sm" id="sendLoginSmsBtn" type="button" onclick="sendLoginSms()">发送验证码</button>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="doLogin()">登录</button>
+    </div>
     <div class="error-msg" id="loginError"></div>
   </div>
 </div>
@@ -364,9 +383,10 @@ let secondAgentOptionsCache = null;
 let commissionOffset = 0;
 let loginCaptchaId = '';
 let loginSmsCooldownTimer = null;
+let currentLoginTab = 'password';
 const COMMISSION_PAGE_SIZE = 100;
 
-if (TOKEN) { showDashboard(); } else { loadLoginCaptcha(); }
+if (TOKEN) { showDashboard(); }
 
 function toast(msg, type='success') {
   const el = document.createElement('div');
@@ -404,6 +424,20 @@ async function loadLoginCaptcha() {
   }
 }
 
+function switchLoginTab(tab) {
+  currentLoginTab = tab === 'sms' ? 'sms' : 'password';
+  document.querySelectorAll('.login-tab').forEach(function(btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-login-tab') === currentLoginTab);
+  });
+  document.getElementById('loginPanelPassword').classList.toggle('active', currentLoginTab === 'password');
+  document.getElementById('loginPanelSms').classList.toggle('active', currentLoginTab === 'sms');
+  const err = document.getElementById('loginError');
+  if (err) err.textContent = '';
+  if (currentLoginTab === 'sms') {
+    loadLoginCaptcha();
+  }
+}
+
 function startLoginSmsCooldown(seconds) {
   const btn = document.getElementById('sendLoginSmsBtn');
   if (!btn) return;
@@ -424,7 +458,7 @@ function startLoginSmsCooldown(seconds) {
 }
 
 async function sendLoginSms() {
-  const phone = document.getElementById('loginUser').value.trim();
+  const phone = document.getElementById('loginSmsPhone').value.trim();
   const captchaAnswer = document.getElementById('loginCaptchaAnswer').value.trim();
   if (!phone) { toast('请输入代理商手机号', 'error'); return; }
   if (!captchaAnswer) { toast('请输入图形验证码', 'error'); return; }
@@ -460,23 +494,21 @@ function escapeHtml(s) {
 }
 
 async function doLogin() {
-  const u = document.getElementById('loginUser').value.trim();
-  const p = document.getElementById('loginPass').value.trim();
-  const captchaAnswer = document.getElementById('loginCaptchaAnswer').value.trim();
-  const smsCode = document.getElementById('loginSmsCode').value.trim();
+  const isSms = currentLoginTab === 'sms';
+  const u = (isSms ? document.getElementById('loginSmsPhone') : document.getElementById('loginUser')).value.trim();
+  const p = isSms ? '' : document.getElementById('loginPass').value.trim();
+  const smsCode = isSms ? document.getElementById('loginSmsCode').value.trim() : '';
   const err = document.getElementById('loginError');
   err.textContent = '';
   if (!u) { err.textContent = '请输入账号'; return; }
-  if (!p && !smsCode) { err.textContent = '请输入密码或短信验证码'; return; }
-  if (smsCode && !captchaAnswer) { err.textContent = '请输入图形验证码'; return; }
+  if (isSms && !smsCode) { err.textContent = '请输入短信验证码'; return; }
+  if (!isSms && !p) { err.textContent = '请输入密码'; return; }
   try {
     const data = await api('/admin/api/login', {
       method:'POST',
       body: JSON.stringify({
         username: u,
         password: p,
-        captcha_id: loginCaptchaId,
-        captcha_answer: captchaAnswer,
         sms_code: smsCode,
       })
     });
@@ -495,7 +527,7 @@ async function doLogin() {
     showDashboard();
   } catch(e) {
     err.textContent = e.message;
-    await loadLoginCaptcha();
+    if (isSms) await loadLoginCaptcha();
   }
 }
 
@@ -512,7 +544,7 @@ function doLogout() {
   localStorage.removeItem('admin_agent_level');
   document.getElementById('loginView').style.display = 'flex';
   document.getElementById('dashboardView').style.display = 'none';
-  loadLoginCaptcha();
+  if (currentLoginTab === 'sms') loadLoginCaptcha();
 }
 
 function isAdmin() { return ROLE === 'admin'; }
@@ -1672,6 +1704,8 @@ async function deleteOpenclawMemoryDoc(docId, userId) {
 document.getElementById('loginPass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 document.getElementById('loginCaptchaAnswer').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 document.getElementById('loginSmsCode').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+document.getElementById('loginUser').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+document.getElementById('loginSmsPhone').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 document.getElementById('resetPwdConfirm').addEventListener('keydown', e => { if(e.key==='Enter') doResetPassword(); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.getElementById('resetPwdModal').classList.contains('show')) closeResetPassword();
