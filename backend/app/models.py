@@ -28,6 +28,8 @@ class User(Base):
     """企业微信消息回调 FromUserName（成员 userid 等），与站内账号绑定后用于渠道侧扣费。"""
     wecom_userid: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, unique=True, index=True)
     is_agent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # 0=普通用户，1=一级代理，2=二级代理；历史 is_agent=True 且 agent_level=0 按一级代理兼容。
+    agent_level: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     agent_openclaw_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agent_task_dispatch_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     parent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
@@ -409,6 +411,30 @@ class RechargeOrder(Base):
     # 审计：微信回调中的实付金额(分)、微信交易号，用于校验与对账
     callback_amount_fen: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     wechat_transaction_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+
+
+class AgentCommissionLedger(Base):
+    """代理商充值分润流水，按现金金额(分)记录，不影响用户算力余额。"""
+
+    __tablename__ = "agent_commission_ledger"
+    __table_args__ = (
+        UniqueConstraint("agent_user_id", "recharge_order_id", "relation", name="uq_agent_commission_order_relation"),
+        Index("ix_agent_commission_agent_created", "agent_user_id", "created_at"),
+        Index("ix_agent_commission_source_created", "source_user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    agent_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    source_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    recharge_order_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    out_trade_no: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    relation: Mapped[str] = mapped_column(String(32), nullable=False)
+    relation_level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    base_amount_fen: Mapped[int] = mapped_column(Integer, nullable=False)
+    rate_bps: Mapped[int] = mapped_column(Integer, nullable=False)
+    commission_fen: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="settled", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class UserInstallation(Base):

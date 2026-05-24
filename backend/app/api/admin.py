@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import CapabilityCallLog, CreditLedger, H5ChatDevicePresence, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..models import AgentCommissionLedger, CapabilityCallLog, CreditLedger, H5ChatDevicePresence, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits
 
@@ -90,6 +90,79 @@ def _agent_sub_user_ids(db: Session, agent_user_id: int) -> list[int]:
     return [uid for (uid,) in db.query(User.id).filter(User.parent_user_id == agent_user_id).all()]
 
 
+def _agent_level(user: Optional[User]) -> int:
+    if not user or not getattr(user, "is_agent", False):
+        return 0
+    try:
+        level = int(getattr(user, "agent_level", 0) or 0)
+    except Exception:
+        level = 0
+    return level if level in (1, 2) else 1
+
+
+def _agent_visible_user_ids(db: Session, agent_user_id: int) -> list[int]:
+    """代理商可见用户：自己的直属下级，以及直属二级代理名下的下级。"""
+    direct_ids = _agent_sub_user_ids(db, agent_user_id)
+    if not direct_ids:
+        return []
+    agent = db.query(User).filter(User.id == agent_user_id).first()
+    if _agent_level(agent) == 2:
+        return direct_ids
+    second_agent_ids = [
+        uid
+        for (uid,) in (
+            db.query(User.id)
+            .filter(User.id.in_(direct_ids), User.is_agent == True, User.agent_level == 2)  # noqa: E712
+            .all()
+        )
+    ]
+    if not second_agent_ids:
+        return direct_ids
+    second_sub_ids = [
+        uid
+        for (uid,) in db.query(User.id).filter(User.parent_user_id.in_(second_agent_ids)).all()
+    ]
+    return list(dict.fromkeys(direct_ids + second_sub_ids))
+
+
+def _agent_second_agent_ids(db: Session, agent_user_id: int) -> list[int]:
+    return [
+        uid
+        for (uid,) in (
+            db.query(User.id)
+            .filter(User.parent_user_id == agent_user_id, User.is_agent == True, User.agent_level == 2)  # noqa: E712
+            .all()
+        )
+    ]
+
+
+def _require_level1_agent(db: Session, ctx: AdminContext) -> User:
+    if ctx.role != "agent" or not ctx.user_id:
+        raise HTTPException(status_code=403, detail="仅代理商可执行此操作")
+    agent = db.query(User).filter(User.id == ctx.user_id).first()
+    if not agent or not agent.is_agent:
+        raise HTTPException(status_code=401, detail="代理商账号无效")
+    if _agent_level(agent) != 1:
+        raise HTTPException(status_code=403, detail="二级代理不能继续设置下级")
+    return agent
+
+
+def _user_public_payload(u: User) -> dict:
+    return {
+        "id": u.id,
+        "email": u.email,
+        "credits": float(u.credits or 0),
+        "role": u.role,
+        "is_agent": u.is_agent,
+        "agent_level": _agent_level(u),
+        "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
+        "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
+        "parent_user_id": u.parent_user_id,
+        "brand_mark": getattr(u, "brand_mark", None),
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+    }
+
+
 def _assert_can_manage_user(db: Session, ctx: AdminContext, user_id: int, *, allow_agent_self: bool = False) -> None:
     if ctx.role == "admin":
         return
@@ -97,7 +170,7 @@ def _assert_can_manage_user(db: Session, ctx: AdminContext, user_id: int, *, all
         raise HTTPException(status_code=403, detail="forbidden")
     if allow_agent_self and int(user_id) == int(ctx.user_id):
         return
-    if int(user_id) not in _agent_sub_user_ids(db, int(ctx.user_id)):
+    if int(user_id) not in _agent_visible_user_ids(db, int(ctx.user_id)):
         raise HTTPException(status_code=403, detail="no permission for this user")
 
 
@@ -124,7 +197,10 @@ def admin_static(filename: str):
 
 class LoginBody(BaseModel):
     username: str
-    password: str
+    password: str = ""
+    captcha_id: str = ""
+    captcha_answer: str = ""
+    sms_code: str = ""
 
 
 @router.post("/admin/api/login")
@@ -132,8 +208,9 @@ def admin_login(body: LoginBody, db: Session = Depends(get_db)):
     """管理后台登录。优先匹配管理员（.env），否则尝试代理商账号密码。"""
     username = body.username.strip()
     password = body.password.strip()
-    if not username or not password:
-        raise HTTPException(status_code=400, detail="请输入账号和密码")
+    sms_code = (body.sms_code or "").strip()
+    if not username or (not password and not sms_code):
+        raise HTTPException(status_code=400, detail="请输入账号和密码或短信验证码")
 
     if _admin_enabled():
         admin_u = (settings.lobster_admin_username or "").strip()
@@ -142,11 +219,18 @@ def admin_login(body: LoginBody, db: Session = Depends(get_db)):
             token = ADMIN_TOKEN_PREFIX + admin_p
             return {"ok": True, "token": token, "role": "admin", "display_name": "管理员"}
 
-    from .auth import verify_password, _login_account_key
+    from .auth import _normalize_cn_mobile, _login_account_key, _verify_sms_challenge, verify_password
     account_key = _login_account_key(username)
     if account_key:
         user = db.query(User).filter(User.email == account_key).first()
-        if user and user.is_agent and verify_password(password, user.hashed_password):
+        sms_ok = False
+        if user and user.is_agent and sms_code:
+            mobile = _normalize_cn_mobile(username)
+            sms_ok = _verify_sms_challenge(db, mobile, sms_code)
+            if not sms_ok:
+                raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
+        password_ok = bool(user and user.is_agent and password and verify_password(password, user.hashed_password))
+        if user and user.is_agent and (password_ok or sms_ok):
             agent_jwt = jwt.encode(
                 {"sub": str(user.id), "scope": "agent_admin", "exp": datetime.utcnow() + timedelta(days=7)},
                 settings.secret_key,
@@ -160,10 +244,11 @@ def admin_login(body: LoginBody, db: Session = Depends(get_db)):
                 "role": "agent",
                 "user_id": user.id,
                 "display_name": display,
+                "agent_level": _agent_level(user),
                 "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
             }
 
-    raise HTTPException(status_code=401, detail="用户名或密码错误")
+    raise HTTPException(status_code=401, detail="用户名或密码/验证码错误")
 
 
 @router.get("/admin/api/search")
@@ -184,22 +269,12 @@ def admin_search_user(
         or_(*filters)
     )
     if ctx.role == "agent":
-        sub_ids = _agent_sub_user_ids(db, ctx.user_id)
+        sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         query = query.filter(User.id.in_(sub_ids)) if sub_ids else query.filter(False)
     query = query.order_by(User.id).limit(50)
     users = []
     for u in query.all():
-        users.append({
-            "id": u.id,
-            "email": u.email,
-            "credits": float(u.credits or 0),
-            "role": u.role,
-            "is_agent": u.is_agent,
-            "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
-            "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
-            "parent_user_id": u.parent_user_id,
-            "created_at": u.created_at.isoformat() if u.created_at else None,
-        })
+        users.append(_user_public_payload(u))
     return {"users": users}
 
 
@@ -212,7 +287,7 @@ def admin_user_detail(
     db: Session = Depends(get_db),
 ):
     if ctx.role == "agent":
-        sub_ids = _agent_sub_user_ids(db, ctx.user_id)
+        sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         if user_id != ctx.user_id and user_id not in sub_ids:
             raise HTTPException(status_code=403, detail="无权查看此用户")
     user = db.query(User).filter(User.id == user_id).first()
@@ -253,18 +328,7 @@ def admin_user_detail(
             "created_at": entry.created_at.isoformat() if entry.created_at else None,
         })
     return {
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "credits": float(user.credits or 0),
-            "role": user.role,
-            "is_agent": user.is_agent,
-            "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
-            "agent_task_dispatch_enabled": bool(getattr(user, "agent_task_dispatch_enabled", False)),
-            "parent_user_id": user.parent_user_id,
-            "brand_mark": user.brand_mark,
-            "created_at": user.created_at.isoformat() if user.created_at else None,
-        },
+        "user": _user_public_payload(user),
         "devices": [
             {
                 "installation_id": r.installation_id,
@@ -301,7 +365,7 @@ def admin_add_credits(
     if body.amount == 0:
         raise HTTPException(status_code=400, detail="积分数量不能为 0")
     if ctx.role == "agent":
-        sub_ids = _agent_sub_user_ids(db, ctx.user_id)
+        sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         if body.user_id not in sub_ids:
             raise HTTPException(status_code=403, detail="无权操作此用户")
     user = db.query(User).filter(User.id == body.user_id).first()
@@ -376,7 +440,7 @@ def admin_list_users(
 ):
     base_q = db.query(User)
     if ctx.role == "agent":
-        sub_ids = _agent_sub_user_ids(db, ctx.user_id)
+        sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         base_q = base_q.filter(User.id.in_(sub_ids)) if sub_ids else base_q.filter(False)
     total = base_q.with_entities(func.count(User.id)).scalar() or 0
     offset = (max(1, page) - 1) * page_size
@@ -386,17 +450,7 @@ def admin_list_users(
         "page": page,
         "page_size": page_size,
         "users": [
-            {
-                "id": u.id,
-                "email": u.email,
-                "credits": float(u.credits or 0),
-                "role": u.role,
-                "is_agent": u.is_agent,
-                "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
-                "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
-                "parent_user_id": u.parent_user_id,
-                "created_at": u.created_at.isoformat() if u.created_at else None,
-            }
+            _user_public_payload(u)
             for u in users
         ],
     }
@@ -534,7 +588,7 @@ def admin_stats(
     # 代理商只看自己下级的数据
     agent_sub_ids: Optional[list[int]] = None
     if ctx.role == "agent":
-        agent_sub_ids = _agent_sub_user_ids(db, ctx.user_id)
+        agent_sub_ids = _agent_visible_user_ids(db, ctx.user_id)
 
     def _user_filter(q):
         if agent_sub_ids is not None:
@@ -732,6 +786,7 @@ def admin_set_agent(
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     user.is_agent = body.is_agent
+    user.agent_level = 1 if body.is_agent else 0
     if not body.is_agent:
         user.agent_openclaw_memory_enabled = False
         user.agent_task_dispatch_enabled = False
@@ -745,6 +800,7 @@ def admin_set_agent(
         "user_id": user.id,
         "email": user.email,
         "is_agent": user.is_agent,
+        "agent_level": _agent_level(user),
         "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
         "agent_task_dispatch_enabled": bool(getattr(user, "agent_task_dispatch_enabled", False)),
     }
@@ -757,6 +813,16 @@ class ClaimSubBody(BaseModel):
     account: str
 
 
+class SetSecondAgentBody(BaseModel):
+    user_id: int
+    enabled: bool
+
+
+class AssignSubParentBody(BaseModel):
+    user_id: int
+    second_agent_user_id: Optional[int] = None
+
+
 @router.post("/admin/api/agent/claim-sub")
 def agent_claim_sub(
     body: ClaimSubBody,
@@ -764,10 +830,10 @@ def agent_claim_sub(
     db: Session = Depends(get_db),
 ):
     """代理商通过账号认领下级用户。仅当该用户未被其他代理商认领时可操作。管理员也可调用。"""
-    if ctx.role == "agent":
-        agent_user_id = ctx.user_id
-    else:
+    if ctx.role != "agent":
         raise HTTPException(status_code=400, detail="此接口仅限代理商使用，管理员请使用 set-agent + assign-parent")
+    agent = _require_level1_agent(db, ctx)
+    agent_user_id = agent.id
 
     from .auth import _login_account_key
     account_key = _login_account_key(body.account.strip())
@@ -798,6 +864,87 @@ def agent_claim_sub(
     }
 
 
+@router.post("/admin/api/agent/set-second-agent")
+def agent_set_second_agent(
+    body: SetSecondAgentBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    """一级代理将自己的某个直属下级设置/取消为二级代理。"""
+    agent = _require_level1_agent(db, ctx)
+    target_user = db.query(User).filter(User.id == body.user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target_user.parent_user_id != agent.id:
+        raise HTTPException(status_code=403, detail="只能设置自己的直属下级")
+    if target_user.id == agent.id:
+        raise HTTPException(status_code=400, detail="不能设置自己")
+
+    if body.enabled:
+        target_user.is_agent = True
+        target_user.agent_level = 2
+    else:
+        if _agent_level(target_user) != 2:
+            raise HTTPException(status_code=400, detail="该用户不是二级代理")
+        child_count = db.query(func.count(User.id)).filter(User.parent_user_id == target_user.id).scalar() or 0
+        if child_count:
+            raise HTTPException(status_code=400, detail="请先将该二级代理名下下级移回或改派后再取消")
+        target_user.is_agent = False
+        target_user.agent_level = 0
+        target_user.agent_openclaw_memory_enabled = False
+        target_user.agent_task_dispatch_enabled = False
+    db.add(target_user)
+    db.commit()
+    db.refresh(target_user)
+    logger.info(
+        "[agent/set-second-agent] agent_id=%s target_id=%s enabled=%s",
+        agent.id,
+        target_user.id,
+        body.enabled,
+    )
+    return {"ok": True, "user": _user_public_payload(target_user)}
+
+
+@router.post("/admin/api/agent/assign-sub-parent")
+def agent_assign_sub_parent(
+    body: AssignSubParentBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    """一级代理把自己体系内的普通下级分配给某个二级代理，或移回直属。"""
+    agent = _require_level1_agent(db, ctx)
+    target_user = db.query(User).filter(User.id == body.user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target_user.id == agent.id:
+        raise HTTPException(status_code=400, detail="不能操作自己")
+    if _agent_level(target_user) == 2:
+        raise HTTPException(status_code=400, detail="二级代理本人不能被分配到其他二级代理名下")
+
+    second_agent_ids = _agent_second_agent_ids(db, agent.id)
+    allowed_parent_ids = set([agent.id] + second_agent_ids)
+    if target_user.parent_user_id not in allowed_parent_ids:
+        raise HTTPException(status_code=403, detail="只能调整自己体系内的下级")
+
+    if body.second_agent_user_id:
+        second_agent = db.query(User).filter(User.id == body.second_agent_user_id).first()
+        if not second_agent or second_agent.id not in second_agent_ids or _agent_level(second_agent) != 2:
+            raise HTTPException(status_code=400, detail="请选择自己的直属二级代理")
+        target_user.parent_user_id = second_agent.id
+    else:
+        target_user.parent_user_id = agent.id
+    db.add(target_user)
+    db.commit()
+    db.refresh(target_user)
+    logger.info(
+        "[agent/assign-sub-parent] agent_id=%s target_id=%s new_parent=%s",
+        agent.id,
+        target_user.id,
+        target_user.parent_user_id,
+    )
+    return {"ok": True, "user": _user_public_payload(target_user)}
+
+
 class RemoveSubBody(BaseModel):
     user_id: int
 
@@ -814,8 +961,11 @@ def agent_remove_sub(
         raise HTTPException(status_code=404, detail="用户不存在")
 
     if ctx.role == "agent":
+        _require_level1_agent(db, ctx)
         if target_user.parent_user_id != ctx.user_id:
             raise HTTPException(status_code=403, detail="该用户不是你的下级")
+        if _agent_level(target_user) == 2:
+            raise HTTPException(status_code=400, detail="请先取消二级代理后再移除此下级")
 
     target_user.parent_user_id = None
     db.add(target_user)
@@ -835,12 +985,93 @@ def agent_my_info(
     user = db.query(User).filter(User.id == ctx.user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
-    sub_count = db.query(func.count(User.id)).filter(User.parent_user_id == ctx.user_id).scalar() or 0
+    direct_sub_count = db.query(func.count(User.id)).filter(User.parent_user_id == ctx.user_id).scalar() or 0
+    visible_sub_count = len(_agent_visible_user_ids(db, int(ctx.user_id)))
     return {
         "role": "agent",
         "user_id": user.id,
         "email": user.email,
         "display_name": user.email.replace("@sms.lobster.local", ""),
-        "sub_count": sub_count,
+        "sub_count": direct_sub_count,
+        "visible_sub_count": visible_sub_count,
+        "agent_level": _agent_level(user),
         "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
+    }
+
+
+def _commission_relation_label(relation: str) -> str:
+    return {
+        "direct_sub": "直属下级充值",
+        "second_agent_self": "二级代理本人充值",
+        "second_level_sub_direct": "直属下级充值",
+        "second_level_sub_grand": "二级下级充值",
+    }.get(relation or "", relation or "-")
+
+
+@router.get("/admin/api/agent/commissions")
+def agent_commissions(
+    limit: int = 100,
+    offset: int = 0,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    """代理商查看自己的分润金额和成功充值分润流水。"""
+    if ctx.role != "agent" or not ctx.user_id:
+        raise HTTPException(status_code=403, detail="仅代理商可查看")
+    limit = min(max(int(limit or 100), 1), 200)
+    offset = max(int(offset or 0), 0)
+    base_q = db.query(AgentCommissionLedger).filter(AgentCommissionLedger.agent_user_id == ctx.user_id)
+    total = base_q.with_entities(func.count(AgentCommissionLedger.id)).scalar() or 0
+    total_commission_fen = (
+        base_q.with_entities(func.coalesce(func.sum(AgentCommissionLedger.commission_fen), 0)).scalar() or 0
+    )
+    rows = (
+        base_q.order_by(AgentCommissionLedger.created_at.desc(), AgentCommissionLedger.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    source_ids = [r.source_user_id for r in rows]
+    order_ids = [r.recharge_order_id for r in rows]
+    users = {u.id: u for u in db.query(User).filter(User.id.in_(source_ids)).all()} if source_ids else {}
+    orders = {o.id: o for o in db.query(RechargeOrder).filter(RechargeOrder.id.in_(order_ids)).all()} if order_ids else {}
+
+    def _yuan(fen: int) -> float:
+        return round(int(fen or 0) / 100, 2)
+
+    items = []
+    for r in rows:
+        u = users.get(r.source_user_id)
+        order = orders.get(r.recharge_order_id)
+        items.append({
+            "id": r.id,
+            "source_user_id": r.source_user_id,
+            "source_account": (u.email.replace("@sms.lobster.local", "") if u else str(r.source_user_id)),
+            "recharge_order_id": r.recharge_order_id,
+            "out_trade_no": r.out_trade_no,
+            "relation": r.relation,
+            "relation_label": _commission_relation_label(r.relation),
+            "relation_level": int(r.relation_level or 0),
+            "base_amount_fen": int(r.base_amount_fen or 0),
+            "base_amount_yuan": _yuan(r.base_amount_fen),
+            "rate_percent": round(int(r.rate_bps or 0) / 100, 2),
+            "commission_fen": int(r.commission_fen or 0),
+            "commission_yuan": _yuan(r.commission_fen),
+            "paid_at": order.paid_at.isoformat() if order and order.paid_at else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+    return {
+        "summary": {
+            "total": int(total),
+            "total_commission_fen": int(total_commission_fen or 0),
+            "total_commission_yuan": _yuan(total_commission_fen),
+        },
+        "items": items,
+        "pagination": {
+            "total": int(total),
+            "limit": int(limit),
+            "offset": int(offset),
+            "has_prev": offset > 0,
+            "has_next": offset + limit < int(total),
+        },
     }

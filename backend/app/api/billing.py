@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings, get_effective_public_base_url
 from ..db import get_db
 from .auth import get_current_user
-from ..models import CapabilityCallLog, CreditLedger, RechargeOrder, User
+from ..models import AgentCommissionLedger, CapabilityCallLog, CreditLedger, RechargeOrder, User
 from ..services.credit_ledger import append_credit_ledger, public_ledger_meta
 from ..services.credits_amount import (
     credits_json_float,
@@ -79,6 +79,113 @@ def _get_public_base_url() -> str:
     return get_effective_public_base_url()
 
 
+def _agent_level(user: Optional[User]) -> int:
+    if not user or not getattr(user, "is_agent", False):
+        return 0
+    try:
+        level = int(getattr(user, "agent_level", 0) or 0)
+    except Exception:
+        level = 0
+    return level if level in (1, 2) else 1
+
+
+def _commission_fen(base_amount_fen: int, rate_bps: int) -> int:
+    return max(0, int(base_amount_fen or 0) * int(rate_bps or 0) // 10000)
+
+
+def _add_agent_commission(
+    db: Session,
+    *,
+    agent: User,
+    source_user: User,
+    order: RechargeOrder,
+    base_amount_fen: int,
+    rate_bps: int,
+    relation: str,
+    relation_level: int,
+) -> None:
+    commission_fen = _commission_fen(base_amount_fen, rate_bps)
+    if commission_fen <= 0:
+        return
+    exists = (
+        db.query(AgentCommissionLedger.id)
+        .filter(
+            AgentCommissionLedger.agent_user_id == agent.id,
+            AgentCommissionLedger.recharge_order_id == order.id,
+            AgentCommissionLedger.relation == relation,
+        )
+        .first()
+    )
+    if exists:
+        return
+    db.add(
+        AgentCommissionLedger(
+            agent_user_id=agent.id,
+            source_user_id=source_user.id,
+            recharge_order_id=order.id,
+            out_trade_no=(order.out_trade_no or "")[:64],
+            relation=relation,
+            relation_level=relation_level,
+            base_amount_fen=int(base_amount_fen or 0),
+            rate_bps=int(rate_bps or 0),
+            commission_fen=commission_fen,
+        )
+    )
+
+
+def _create_agent_commissions_for_paid_order(
+    db: Session,
+    *,
+    order: RechargeOrder,
+    source_user: User,
+    paid_total_fen: int,
+) -> None:
+    """按两级分销规则生成充值分润：直属/二级代理本人 20%，二级下级给二级 20% 且给一级 10%。"""
+    if not source_user.parent_user_id:
+        return
+    parent = db.query(User).filter(User.id == source_user.parent_user_id).first()
+    if not parent or not getattr(parent, "is_agent", False):
+        return
+    parent_level = _agent_level(parent)
+    source_level = _agent_level(source_user)
+    if parent_level == 1:
+        _add_agent_commission(
+            db,
+            agent=parent,
+            source_user=source_user,
+            order=order,
+            base_amount_fen=paid_total_fen,
+            rate_bps=2000,
+            relation="second_agent_self" if source_level == 2 else "direct_sub",
+            relation_level=1,
+        )
+        return
+    if parent_level == 2:
+        _add_agent_commission(
+            db,
+            agent=parent,
+            source_user=source_user,
+            order=order,
+            base_amount_fen=paid_total_fen,
+            rate_bps=2000,
+            relation="second_level_sub_direct",
+            relation_level=1,
+        )
+        if parent.parent_user_id:
+            top_agent = db.query(User).filter(User.id == parent.parent_user_id).first()
+            if top_agent and _agent_level(top_agent) == 1:
+                _add_agent_commission(
+                    db,
+                    agent=top_agent,
+                    source_user=source_user,
+                    order=order,
+                    base_amount_fen=paid_total_fen,
+                    rate_bps=1000,
+                    relation="second_level_sub_grand",
+                    relation_level=2,
+                )
+
+
 def _apply_paid_to_order(
     order: RechargeOrder,
     paid_total_fen: int,
@@ -118,6 +225,7 @@ def _apply_paid_to_order(
                 "channel_transaction_id": channel_transaction_id,
             },
         )
+        _create_agent_commissions_for_paid_order(db, order=order, source_user=user, paid_total_fen=paid_total_fen)
     order.status = "paid"
     order.paid_at = datetime.utcnow()
     db.commit()
@@ -648,25 +756,7 @@ def complete_recharge(
         raise HTTPException(status_code=404, detail="订单不存在")
     if order.status == "paid":
         return {"ok": True, "message": "订单已支付过", "order_id": order.id}
-    user = db.query(User).filter(User.id == order.user_id).first()
-    if not user:
-        raise HTTPException(status_code=500, detail="用户不存在")
-    add_credits = quantize_credits(order.credits or 0)
-    user.credits = quantize_credits(user.credits or 0) + add_credits
-    bal = quantize_credits(user.credits)
-    append_credit_ledger(
-        db,
-        user.id,
-        add_credits,
-        "recharge",
-        bal,
-        description="充值到账",
-        ref_type="recharge_order",
-        ref_id=(order.out_trade_no or "")[:128],
-        meta={"order_id": order.id, "source": "admin_complete"},
-    )
-    order.status = "paid"
-    from datetime import datetime
-    order.paid_at = datetime.utcnow()
-    db.commit()
+    paid_fen = (order.amount_fen or 0) or int(order.amount_yuan or 0) * 100
+    if not _apply_paid_to_order(order, paid_fen, None, db, channel_label="管理员确认到账"):
+        raise HTTPException(status_code=400, detail="金额校验未通过")
     return {"ok": True, "message": f"已到账 {order.credits} 积分", "order_id": order.id}

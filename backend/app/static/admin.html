@@ -17,6 +17,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica N
 .form-group label{display:block;margin-bottom:6px;font-size:13px;font-weight:600;color:var(--text-secondary)}
 .form-group input{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;transition:border-color .2s}
 .form-group input:focus{outline:none;border-color:var(--primary)}
+.captcha-row{display:flex;gap:8px;align-items:center}
+.captcha-row input{flex:1;min-width:0}
+.captcha-row img{width:112px;height:40px;border:1px solid var(--border);border-radius:8px;object-fit:cover;cursor:pointer;background:#fff}
+.sms-row{display:flex;gap:8px;align-items:center}
+.sms-row input{flex:1;min-width:0}
+.sms-row .btn{width:auto;white-space:nowrap}
 .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .15s}
 .btn-primary{background:var(--primary);color:#fff;width:100%}
 .btn-primary:hover{background:var(--primary-hover)}
@@ -114,6 +120,8 @@ tr:hover{background:var(--bg)}
 .claim-bar input:focus{outline:none;border-color:var(--agent-color)}
 .agent-banner{padding:12px 24px;background:var(--agent-bg);border-bottom:1px solid #fde68a;font-size:13px;color:#92400e;text-align:center}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.agent-action-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.agent-action-row select{padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-width:180px;background:#fff}
 
 /* Mobile responsive */
 @media(max-width:768px){
@@ -136,6 +144,7 @@ tr:hover{background:var(--bg)}
   .claim-bar{flex-direction:column;gap:8px;padding:12px}
   .claim-bar input{width:100%}
   .claim-bar .btn{width:100%}
+  .agent-action-row select{width:100%;min-width:0}
   .recharge-row{flex-direction:column;gap:8px}
   .recharge-row input{width:100%}
   .recharge-row .btn{width:100%}
@@ -175,6 +184,20 @@ tr:hover{background:var(--bg)}
       <label>密码</label>
       <input type="password" id="loginPass" autocomplete="current-password" placeholder="密码">
     </div>
+    <div class="form-group">
+      <label>图形验证码</label>
+      <div class="captcha-row">
+        <input type="text" id="loginCaptchaAnswer" placeholder="验证码">
+        <img id="loginCaptchaImg" alt="验证码" title="点击刷新" onclick="loadLoginCaptcha()">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>短信验证码（代理商可用）</label>
+      <div class="sms-row">
+        <input type="text" id="loginSmsCode" autocomplete="one-time-code" placeholder="短信验证码">
+        <button class="btn btn-outline btn-sm" id="sendLoginSmsBtn" type="button" onclick="sendLoginSms()">发送验证码</button>
+      </div>
+    </div>
     <button class="btn btn-primary" onclick="doLogin()">登录</button>
     <div class="error-msg" id="loginError"></div>
   </div>
@@ -188,6 +211,7 @@ tr:hover{background:var(--bg)}
       <div class="nav-tabs" id="navTabs">
         <div class="nav-tab active" data-nav="stats" onclick="switchNav('stats')">统计</div>
         <div class="nav-tab" data-nav="users" onclick="switchNav('users')">用户信息</div>
+        <div class="nav-tab" data-nav="commissions" id="commissionNavTab" onclick="switchNav('commissions')" style="display:none">分润</div>
       </div>
     </div>
     <div class="user-info">
@@ -296,6 +320,16 @@ tr:hover{background:var(--bg)}
     </div>
     <div class="chart-card"><h3>积分消耗 TOP 10 用户</h3><div id="chartTopConsumers"></div></div>
   </div>
+
+  <!-- Page: Agent commissions -->
+  <div class="container" id="pageCommissions" style="display:none">
+    <div id="commissionOverview" class="stats-grid"></div>
+    <div class="card">
+      <h3>成功充值分润记录</h3>
+      <div id="commissionTable"><div class="empty">加载中...</div></div>
+      <div class="pagination" id="commissionPagination"></div>
+    </div>
+  </div>
 </div>
 
 <!-- 重置密码弹窗 -->
@@ -325,8 +359,14 @@ let TOKEN = localStorage.getItem('admin_token') || '';
 let ROLE = localStorage.getItem('admin_role') || '';
 let DISPLAY_NAME = localStorage.getItem('admin_display_name') || '';
 let MY_USER_ID = parseInt(localStorage.getItem('admin_my_user_id') || '0', 10) || 0;
+let AGENT_LEVEL = parseInt(localStorage.getItem('admin_agent_level') || '0', 10) || 0;
+let secondAgentOptionsCache = null;
+let commissionOffset = 0;
+let loginCaptchaId = '';
+let loginSmsCooldownTimer = null;
+const COMMISSION_PAGE_SIZE = 100;
 
-if (TOKEN) { showDashboard(); }
+if (TOKEN) { showDashboard(); } else { loadLoginCaptcha(); }
 
 function toast(msg, type='success') {
   const el = document.createElement('div');
@@ -346,6 +386,59 @@ async function api(path, opts={}) {
     throw new Error(data.detail || '请求失败');
   }
   return data;
+}
+
+async function loadLoginCaptcha() {
+  const img = document.getElementById('loginCaptchaImg');
+  if (!img) return;
+  try {
+    const res = await fetch(API + '/auth/captcha');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '验证码加载失败');
+    loginCaptchaId = data.captcha_id || '';
+    img.src = data.image || '';
+    const input = document.getElementById('loginCaptchaAnswer');
+    if (input) input.value = '';
+  } catch(e) {
+    toast(e.message || '验证码加载失败', 'error');
+  }
+}
+
+function startLoginSmsCooldown(seconds) {
+  const btn = document.getElementById('sendLoginSmsBtn');
+  if (!btn) return;
+  let left = seconds || 60;
+  btn.disabled = true;
+  clearInterval(loginSmsCooldownTimer);
+  const tick = function() {
+    btn.textContent = left > 0 ? left + 's' : '发送验证码';
+    if (left <= 0) {
+      clearInterval(loginSmsCooldownTimer);
+      loginSmsCooldownTimer = null;
+      btn.disabled = false;
+    }
+    left -= 1;
+  };
+  tick();
+  loginSmsCooldownTimer = setInterval(tick, 1000);
+}
+
+async function sendLoginSms() {
+  const phone = document.getElementById('loginUser').value.trim();
+  const captchaAnswer = document.getElementById('loginCaptchaAnswer').value.trim();
+  if (!phone) { toast('请输入代理商手机号', 'error'); return; }
+  if (!captchaAnswer) { toast('请输入图形验证码', 'error'); return; }
+  try {
+    await api('/auth/sms/send', {
+      method: 'POST',
+      body: JSON.stringify({phone, captcha_id: loginCaptchaId, captcha_answer: captchaAnswer})
+    });
+    toast('短信验证码已发送');
+    startLoginSmsCooldown(60);
+  } catch(e) {
+    toast(e.message, 'error');
+    await loadLoginCaptcha();
+  }
 }
 
 async function apiForm(path, formData) {
@@ -369,22 +462,41 @@ function escapeHtml(s) {
 async function doLogin() {
   const u = document.getElementById('loginUser').value.trim();
   const p = document.getElementById('loginPass').value.trim();
+  const captchaAnswer = document.getElementById('loginCaptchaAnswer').value.trim();
+  const smsCode = document.getElementById('loginSmsCode').value.trim();
   const err = document.getElementById('loginError');
   err.textContent = '';
-  if (!u || !p) { err.textContent = '请输入账号和密码'; return; }
+  if (!u) { err.textContent = '请输入账号'; return; }
+  if (!p && !smsCode) { err.textContent = '请输入密码或短信验证码'; return; }
+  if (smsCode && !captchaAnswer) { err.textContent = '请输入图形验证码'; return; }
   try {
-    const data = await api('/admin/api/login', {method:'POST', body: JSON.stringify({username:u,password:p})});
+    const data = await api('/admin/api/login', {
+      method:'POST',
+      body: JSON.stringify({
+        username: u,
+        password: p,
+        captcha_id: loginCaptchaId,
+        captcha_answer: captchaAnswer,
+        sms_code: smsCode,
+      })
+    });
     TOKEN = data.token;
     ROLE = data.role || 'admin';
     DISPLAY_NAME = data.display_name || '管理员';
     MY_USER_ID = parseInt(data.user_id || 0, 10) || 0;
+    AGENT_LEVEL = parseInt(data.agent_level || 0, 10) || 0;
     localStorage.setItem('admin_token', TOKEN);
     localStorage.setItem('admin_role', ROLE);
     localStorage.setItem('admin_display_name', DISPLAY_NAME);
     if (MY_USER_ID) localStorage.setItem('admin_my_user_id', String(MY_USER_ID));
     else localStorage.removeItem('admin_my_user_id');
+    if (AGENT_LEVEL) localStorage.setItem('admin_agent_level', String(AGENT_LEVEL));
+    else localStorage.removeItem('admin_agent_level');
     showDashboard();
-  } catch(e) { err.textContent = e.message; }
+  } catch(e) {
+    err.textContent = e.message;
+    await loadLoginCaptcha();
+  }
 }
 
 function doLogout() {
@@ -392,16 +504,20 @@ function doLogout() {
   ROLE = '';
   DISPLAY_NAME = '';
   MY_USER_ID = 0;
+  AGENT_LEVEL = 0;
   localStorage.removeItem('admin_token');
   localStorage.removeItem('admin_role');
   localStorage.removeItem('admin_display_name');
   localStorage.removeItem('admin_my_user_id');
+  localStorage.removeItem('admin_agent_level');
   document.getElementById('loginView').style.display = 'flex';
   document.getElementById('dashboardView').style.display = 'none';
+  loadLoginCaptcha();
 }
 
 function isAdmin() { return ROLE === 'admin'; }
 function isAgent() { return ROLE === 'agent'; }
+function isLevel1Agent() { return isAgent() && Number(AGENT_LEVEL || 0) !== 2; }
 function isViewingSelf(userId) { return isAgent() && MY_USER_ID && Number(userId) === Number(MY_USER_ID); }
 
 function openMyAgentMemory() {
@@ -419,11 +535,13 @@ function showDashboard() {
   if (isAgent()) {
     badge.style.display = '';
     badge.className = 'badge badge-yellow';
-    badge.textContent = '代理商';
+    badge.textContent = AGENT_LEVEL === 2 ? '二级代理' : '代理商';
     document.getElementById('topbar').classList.add('agent-topbar');
-    document.getElementById('topbarTitle').textContent = '代理商后台';
+    document.getElementById('topbarTitle').textContent = AGENT_LEVEL === 2 ? '二级代理后台' : '代理商后台';
     document.getElementById('agentBanner').style.display = 'flex';
-    document.getElementById('claimBar').style.display = 'flex';
+    document.getElementById('claimBar').style.display = isLevel1Agent() ? 'flex' : 'none';
+    const commissionTab = document.getElementById('commissionNavTab');
+    if (commissionTab) commissionTab.style.display = '';
     const memEntry = document.getElementById('agentMemoryEntryBtn');
     if (memEntry) memEntry.style.display = MY_USER_ID ? '' : 'none';
   } else {
@@ -434,6 +552,8 @@ function showDashboard() {
     document.getElementById('topbarTitle').textContent = '必火AI员工管理后台';
     document.getElementById('agentBanner').style.display = 'none';
     document.getElementById('claimBar').style.display = 'none';
+    const commissionTab = document.getElementById('commissionNavTab');
+    if (commissionTab) commissionTab.style.display = 'none';
     const memEntry = document.getElementById('agentMemoryEntryBtn');
     if (memEntry) memEntry.style.display = 'none';
   }
@@ -446,11 +566,15 @@ function showDashboard() {
 
 let currentNav = 'stats';
 function switchNav(nav) {
+  if (nav === 'commissions' && !isAgent()) nav = 'stats';
   currentNav = nav;
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.nav === nav));
   document.getElementById('pageUsers').style.display = nav === 'users' ? '' : 'none';
   document.getElementById('pageStats').style.display = nav === 'stats' ? '' : 'none';
+  const pageCommissions = document.getElementById('pageCommissions');
+  if (pageCommissions) pageCommissions.style.display = nav === 'commissions' ? '' : 'none';
   if (nav === 'stats') loadStats();
+  if (nav === 'commissions') loadCommissions(0);
 }
 
 function switchTab(tab) {
@@ -504,13 +628,14 @@ function renderUserTable(users, containerId, title) {
   html += `<th>注册时间</th><th></th></tr></thead><tbody>`;
   for (const u of users) {
     const email = u.email.replace(/@sms\.lobster\.local$/, '');
+    const agentLabel = u.agent_level === 2 ? '二级代理' : (u.is_agent ? '代理' : '-');
     html += `<tr>
       <td>${u.id}</td>
       <td>${email}</td>
       <td class="credits-value">${u.credits.toFixed(0)}</td>
       <td><span class="badge ${u.role==='admin'?'badge-red':'badge-blue'}">${u.role}</span></td>`;
     if (isAdmin()) {
-      html += `<td>${u.is_agent ? '<span class="badge badge-yellow">代理</span>' : '-'}</td>`;
+      html += `<td>${u.is_agent ? '<span class="badge badge-yellow">' + agentLabel + '</span>' : '-'}</td>`;
     }
     html += `<td style="font-size:11px;color:var(--text-secondary)">${u.created_at ? new Date(u.created_at).toLocaleDateString('zh-CN') : '-'}</td>
       <td><button class="btn btn-outline btn-sm" onclick="showUserDetail(${u.id})">详情</button></td>
@@ -904,7 +1029,7 @@ async function showUserDetail(userId) {
         <div class="stat-item"><div class="label">账号</div><div class="value" style="font-size:15px">${email}${isSms?' <span style="font-size:11px;color:#94a3b8">(手机)</span>':''}</div></div>
         <div class="stat-item"><div class="label">积分余额</div><div class="value">${u.credits.toFixed(2)}</div></div>
         <div class="stat-item"><div class="label">角色</div><div class="value" style="font-size:14px">${u.role}</div></div>
-        <div class="stat-item"><div class="label">代理商</div><div class="value" style="font-size:14px;${u.is_agent?'color:var(--agent-color)':''}">${u.is_agent?'是':'否'}</div></div>
+        <div class="stat-item"><div class="label">代理商</div><div class="value" style="font-size:14px;${u.is_agent?'color:var(--agent-color)':''}">${u.is_agent?(u.agent_level===2?'二级代理':'一级代理'):'否'}</div></div>
         <div class="stat-item"><div class="label">资料下发</div><div class="value" style="font-size:14px">${u.agent_openclaw_memory_enabled?'已开通':'未开通'}</div></div>
         <div class="stat-item"><div class="label">品牌</div><div class="value" style="font-size:14px">${u.brand_mark||'-'}</div></div>
         <div class="stat-item"><div class="label">上级ID</div><div class="value" style="font-size:14px">${u.parent_user_id||'无'}</div></div>
@@ -935,10 +1060,7 @@ async function showUserDetail(userId) {
     const removeCard = document.getElementById('removeSubCard');
     if (isAgent() && !viewingSelf) {
       removeCard.style.display = '';
-      document.getElementById('removeSubSection').innerHTML = `
-        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">此用户是你的下级。如需解除关系，点击下方按钮。</p>
-        <button class="btn btn-danger btn-sm" onclick="doRemoveSub(${u.id})">移除此下级</button>
-      `;
+      renderAgentSubManage(u);
     } else {
       removeCard.style.display = 'none';
     }
@@ -1025,6 +1147,86 @@ function appendAgentTaskDispatchControl(u) {
   section.appendChild(row);
 }
 
+function renderAgentSubManage(u) {
+  const section = document.getElementById('removeSubSection');
+  if (!section) return;
+  if (!isLevel1Agent()) {
+    section.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:0">二级代理只可查看已分配的下级与分润记录，不能继续设置下级。</p>';
+    return;
+  }
+  let html = '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">可管理你的直属下级，或将普通下级分配给某个二级代理。</p>';
+  if (u.parent_user_id === MY_USER_ID) {
+    if (u.agent_level === 2) {
+      html += '<button class="btn btn-outline btn-sm" onclick="toggleSecondAgent(' + u.id + ', false)">取消二级代理</button>';
+    } else {
+      html += '<div class="agent-action-row">'
+        + '<button class="btn btn-agent btn-sm" onclick="toggleSecondAgent(' + u.id + ', true)">设为二级代理</button>'
+        + '<select id="assignSecondAgentSelect"><option value="">选择二级代理...</option></select>'
+        + '<button class="btn btn-outline btn-sm" onclick="assignToSecondAgent(' + u.id + ')">分配给二级代理</button>'
+        + '<button class="btn btn-danger btn-sm" onclick="doRemoveSub(' + u.id + ')">移除此下级</button>'
+        + '</div>';
+    }
+  } else {
+    html += '<div class="agent-action-row">'
+      + '<select id="assignSecondAgentSelect"><option value="">移回我的直属</option></select>'
+      + '<button class="btn btn-outline btn-sm" onclick="assignToSecondAgent(' + u.id + ')">调整归属</button>'
+      + '</div>';
+  }
+  section.innerHTML = html;
+  fillSecondAgentSelect();
+}
+
+async function loadSecondAgentOptions(force=false) {
+  if (!isLevel1Agent()) return [];
+  if (secondAgentOptionsCache && !force) return secondAgentOptionsCache;
+  const data = await api('/admin/api/users?page=1&page_size=200');
+  secondAgentOptionsCache = (data.users || []).filter(function(u) {
+    return u.parent_user_id === MY_USER_ID && u.agent_level === 2;
+  });
+  return secondAgentOptionsCache;
+}
+
+async function fillSecondAgentSelect() {
+  const sel = document.getElementById('assignSecondAgentSelect');
+  if (!sel) return;
+  try {
+    const firstLabel = sel.options.length ? sel.options[0].textContent : '选择二级代理...';
+    const options = await loadSecondAgentOptions(false);
+    sel.innerHTML = '<option value="">' + escapeHtml(firstLabel) + '</option>' + options.map(function(u) {
+      return '<option value="' + u.id + '">' + escapeHtml(u.email.replace(/@sms\.lobster\.local$/, '')) + '</option>';
+    }).join('');
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function toggleSecondAgent(userId, enabled) {
+  try {
+    await api('/admin/api/agent/set-second-agent', {
+      method: 'POST',
+      body: JSON.stringify({user_id: userId, enabled: !!enabled})
+    });
+    secondAgentOptionsCache = null;
+    toast(enabled ? '已设为二级代理' : '已取消二级代理');
+    showUserDetail(userId);
+    if (currentNav === 'users') loadAllUsers(currentPage);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function assignToSecondAgent(userId) {
+  const sel = document.getElementById('assignSecondAgentSelect');
+  const secondId = sel && sel.value ? parseInt(sel.value, 10) : null;
+  try {
+    await api('/admin/api/agent/assign-sub-parent', {
+      method: 'POST',
+      body: JSON.stringify({user_id: userId, second_agent_user_id: secondId})
+    });
+    toast(secondId ? '已分配给二级代理' : '已移回我的直属');
+    showUserDetail(userId);
+    if (currentNav === 'users') loadAllUsers(currentPage);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
 function hideDetail() {
   document.getElementById('userDetailView').style.display = 'none';
   const activeTab = document.querySelector('.tab.active')?.dataset.tab || 'search';
@@ -1084,6 +1286,7 @@ async function doClaimSub() {
       body: JSON.stringify({account})
     });
     toast(`已成功认领下级：${data.email}`);
+    secondAgentOptionsCache = null;
     document.getElementById('claimAccount').value = '';
     if (currentNav === 'users') {
       const activeTab = document.querySelector('.tab.active')?.dataset.tab;
@@ -1100,6 +1303,7 @@ async function doRemoveSub(userId) {
       body: JSON.stringify({user_id: userId})
     });
     toast('已移除下级');
+    secondAgentOptionsCache = null;
     hideDetail();
     const activeTab = document.querySelector('.tab.active')?.dataset.tab;
     if (activeTab === 'all') loadAllUsers(currentPage);
@@ -1466,6 +1670,8 @@ async function deleteOpenclawMemoryDoc(docId, userId) {
 }
 
 document.getElementById('loginPass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+document.getElementById('loginCaptchaAnswer').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+document.getElementById('loginSmsCode').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 document.getElementById('resetPwdConfirm').addEventListener('keydown', e => { if(e.key==='Enter') doResetPassword(); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.getElementById('resetPwdModal').classList.contains('show')) closeResetPassword();
@@ -1509,6 +1715,58 @@ function renderStats(data) {
   renderBarChart('chartDailyConsume', data.daily_consume, 'amount', 'red');
   renderCapRanking(data.capability_ranking);
   renderTopConsumers(data.top_consumers);
+}
+
+async function loadCommissions(offset) {
+  commissionOffset = Math.max(0, offset || 0);
+  const overview = document.getElementById('commissionOverview');
+  const table = document.getElementById('commissionTable');
+  if (overview) overview.innerHTML = '<div class="empty">加载中...</div>';
+  if (table) table.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const data = await api('/admin/api/agent/commissions?limit=' + COMMISSION_PAGE_SIZE + '&offset=' + commissionOffset);
+    renderCommissions(data);
+  } catch(e) {
+    toast(e.message, 'error');
+    if (table) table.innerHTML = '<div class="empty" style="color:var(--danger)">加载失败：' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderCommissions(data) {
+  const s = data.summary || {};
+  document.getElementById('commissionOverview').innerHTML = `
+    ${statCard('累计分润', '¥' + Number(s.total_commission_yuan || 0).toFixed(2), '')}
+    ${statCard('分润记录', s.total || 0, '笔')}
+    ${statCard('代理级别', AGENT_LEVEL === 2 ? '二级代理' : '一级代理', '')}
+  `;
+  const items = data.items || [];
+  const table = document.getElementById('commissionTable');
+  if (!items.length) {
+    table.innerHTML = '<div class="empty">暂无成功充值分润记录</div>';
+    document.getElementById('commissionPagination').innerHTML = '';
+    return;
+  }
+  let html = '<div class="table-wrap"><table><thead><tr><th>时间</th><th>充值用户</th><th>下级关系</th><th>充值金额</th><th>比例</th><th>本笔收入</th><th>订单号</th></tr></thead><tbody>';
+  items.forEach(function(item) {
+    const when = item.paid_at || item.created_at;
+    html += '<tr>'
+      + '<td style="font-size:12px;color:var(--text-secondary)">' + (when ? new Date(when).toLocaleString('zh-CN') : '-') + '</td>'
+      + '<td>' + escapeHtml(item.source_account || '-') + '</td>'
+      + '<td><span class="badge ' + (item.relation_level === 2 ? 'badge-purple' : 'badge-blue') + '">' + escapeHtml(item.relation_label || '-') + '</span></td>'
+      + '<td>¥' + Number(item.base_amount_yuan || 0).toFixed(2) + '</td>'
+      + '<td>' + Number(item.rate_percent || 0).toFixed(0) + '%</td>'
+      + '<td class="credits-value">¥' + Number(item.commission_yuan || 0).toFixed(2) + '</td>'
+      + '<td style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(item.out_trade_no || '-') + '</td>'
+      + '</tr>';
+  });
+  html += '</tbody></table></div>';
+  table.innerHTML = html;
+  const p = data.pagination || {};
+  let pageHtml = '';
+  if (p.has_prev) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadCommissions(' + Math.max(0, commissionOffset - COMMISSION_PAGE_SIZE) + ')">上一页</button>';
+  pageHtml += '<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">共 ' + (p.total || 0) + ' 笔</span>';
+  if (p.has_next) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadCommissions(' + (commissionOffset + COMMISSION_PAGE_SIZE) + ')">下一页</button>';
+  document.getElementById('commissionPagination').innerHTML = pageHtml;
 }
 
 function statCard(label, value, unit) {
