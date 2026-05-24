@@ -25,6 +25,7 @@ from ..db import SessionLocal, get_db
 from ..models import H5ChatDevicePresence, H5ChatEvent, H5ChatMessage, User
 from .auth import ALGORITHM, get_current_user
 from .installation_slots import INSTALLATION_ID_HEADER, ensure_installation_slot, optional_installation_id_from_request
+from .sutui_chat_proxy import charge_chat_turn_once
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,6 +36,7 @@ _H5_STATIC_DIR = _ROOT / "h5_static"
 _H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
 _VALID_MODES = {"direct"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
+_CHAT_TURN_BILLING_SUPPORT_HEADER = "X-Lobster-Chat-Turn-Billing"
 _UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _MAX_H5_UPLOAD_BYTES = 15 * 1024 * 1024
 _MAX_MEDIA_PROXY_BYTES = 1024 * 1024 * 1024
@@ -98,7 +100,12 @@ def _serialize_event(row: H5ChatEvent) -> Dict[str, Any]:
     }
 
 
-def _serialize_message(row: H5ChatMessage, *, include_reply: bool = True) -> Dict[str, Any]:
+def _serialize_message(
+    row: H5ChatMessage,
+    *,
+    include_reply: bool = True,
+    chat_turn_charged: bool = False,
+) -> Dict[str, Any]:
     data = {
         "id": row.id,
         "mode": row.mode,
@@ -111,6 +118,9 @@ def _serialize_message(row: H5ChatMessage, *, include_reply: bool = True) -> Dic
         "claimed_at": _iso(row.claimed_at),
         "finished_at": _iso(row.finished_at),
     }
+    if chat_turn_charged and row.status == "processing":
+        data["chat_turn_charged"] = True
+        data["chat_turn_id"] = f"h5:{row.id}"
     if include_reply:
         data["reply_text"] = row.reply_text
         data["error"] = row.error
@@ -606,6 +616,11 @@ def h5_pending_messages(
     xi = _header_installation_id(request)
     if xi:
         ensure_installation_slot(db, current_user.id, xi)
+    turn_billing_supported = (
+        request.headers.get(_CHAT_TURN_BILLING_SUPPORT_HEADER)
+        or request.headers.get(_CHAT_TURN_BILLING_SUPPORT_HEADER.lower())
+        or ""
+    ).strip().lower() in {"1", "true", "yes", "pre_deduct_v1", "chat_turn_pre_deduct"}
 
     now = datetime.utcnow()
     stale_cutoff = now - timedelta(minutes=10)
@@ -635,14 +650,42 @@ def h5_pending_messages(
         .order_by(H5ChatMessage.created_at.asc())
     )
     rows = q.limit(limit).all()
+    claimed_rows: List[H5ChatMessage] = []
     for row in rows:
+        turn_id = f"h5:{row.id}"
+        if turn_billing_supported:
+            try:
+                charge_chat_turn_once(
+                    db,
+                    current_user,
+                    turn_id,
+                    source="h5_chat",
+                    session_id=f"h5-{row.id}",
+                    context_id=f"h5-{row.id}",
+                    message_id=row.id,
+                )
+            except HTTPException as exc:
+                if exc.status_code != 402:
+                    raise
+                detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                row.status = "failed"
+                row.error = detail
+                row.finished_at = now
+                row.updated_at = now
+                _add_event(db, row, "error", {"error": detail, "billing": "insufficient_credits"})
+                db.commit()
+                continue
         row.status = "processing"
         row.claimed_by_installation_id = xi or "unknown"
         row.claimed_at = now
         row.updated_at = now
-        _add_event(db, row, "claimed", {"installation_id": xi or ""})
-    db.commit()
-    return {"ok": True, "items": [_serialize_message(r, include_reply=False) for r in rows]}
+        claimed_payload = {"installation_id": xi or ""}
+        if turn_billing_supported:
+            claimed_payload.update({"chat_turn_charged": True, "chat_turn_id": turn_id})
+        _add_event(db, row, "claimed", claimed_payload)
+        db.commit()
+        claimed_rows.append(row)
+    return {"ok": True, "items": [_serialize_message(r, include_reply=False, chat_turn_charged=turn_billing_supported) for r in claimed_rows]}
 
 
 def _assert_worker_can_update(message: H5ChatMessage, xi: str) -> None:

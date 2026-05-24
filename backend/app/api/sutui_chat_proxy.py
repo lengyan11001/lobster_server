@@ -12,6 +12,8 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from mcp.sutui_tokens import next_sutui_server_token_with_pool, sutui_token_recon_meta, sutui_token_ref_from_secret
@@ -19,7 +21,7 @@ from mcp.sutui_tokens import next_sutui_server_token_with_pool, sutui_token_reco
 from .auth import brand_mark_for_jwt_claim
 from ..core.config import settings
 from ..db import SessionLocal, get_db
-from ..models import User
+from ..models import BillingIdempotency, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.sutui_api_audit import clip_openai_chat_completions_json_for_audit, log_xskill_http
@@ -40,6 +42,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 TRACE_HEADER = "X-Lobster-Chat-Trace-Id"
+CHAT_TURN_CHARGED_HEADER = "X-Lobster-Chat-Turn-Charged"
+CHAT_TURN_ID_HEADER = "X-Lobster-Chat-Turn-Id"
 _DEFAULT_IMAGE_GENERATE_MODEL_HINT = (
     getattr(settings, "lobster_default_image_generate_model", None) or "gpt-image2"
 ).strip() or "gpt-image2"
@@ -945,6 +949,16 @@ def _should_deduct_credits() -> bool:
 
 
 _SUTUI_CHAT_MIN_CHARGE_CREDITS = quantize_credits(Decimal("10"))
+_CHAT_TURN_PRE_DEDUCT_ENDPOINT = "chat_turn"
+_CHAT_TURN_CHARGE_CREDITS = _SUTUI_CHAT_MIN_CHARGE_CREDITS
+
+
+class ChatTurnPreDeductIn(BaseModel):
+    turn_id: str = Field(..., min_length=1, max_length=128)
+    source: str = Field(default="chat", max_length=32)
+    session_id: Optional[str] = Field(default=None, max_length=128)
+    context_id: Optional[str] = Field(default=None, max_length=128)
+    message_id: Optional[str] = Field(default=None, max_length=128)
 
 
 def _internal_billing_key_ok(request: Request) -> bool:
@@ -969,6 +983,196 @@ def _is_openclaw_internal_llm_request(request: Request) -> bool:
         or ""
     ).strip().lower()
     return mode == "openclaw_internal" or marker in {"1", "true", "yes"}
+
+
+def _chat_turn_id_from_request(request: Request) -> str:
+    return (request.headers.get(CHAT_TURN_ID_HEADER) or request.headers.get(CHAT_TURN_ID_HEADER.lower()) or "").strip()[:128]
+
+
+def _is_chat_turn_precharged_request(request: Request) -> bool:
+    if not _internal_billing_key_ok(request):
+        return False
+    marker = (
+        request.headers.get(CHAT_TURN_CHARGED_HEADER)
+        or request.headers.get(CHAT_TURN_CHARGED_HEADER.lower())
+        or ""
+    ).strip().lower()
+    mode = (
+        request.headers.get("X-Lobster-LLM-Billing-Mode")
+        or request.headers.get("x-lobster-llm-billing-mode")
+        or ""
+    ).strip().lower()
+    return marker in {"1", "true", "yes"} or mode in {"turn_precharged", "chat_turn_precharged"}
+
+
+def _chat_turn_cached_response(db: Session, user_id: int, turn_id: str) -> Optional[dict]:
+    if not turn_id:
+        return None
+    row = (
+        db.query(BillingIdempotency)
+        .filter(
+            BillingIdempotency.user_id == user_id,
+            BillingIdempotency.key == turn_id,
+            BillingIdempotency.endpoint == _CHAT_TURN_PRE_DEDUCT_ENDPOINT,
+        )
+        .first()
+    )
+    if not row:
+        return None
+    try:
+        return json.loads(row.response_json)
+    except Exception:
+        return None
+
+
+def _store_chat_turn_idempotency(db: Session, user_id: int, turn_id: str, payload: dict) -> None:
+    if not turn_id:
+        return
+    try:
+        db.add(
+            BillingIdempotency(
+                user_id=user_id,
+                key=turn_id,
+                endpoint=_CHAT_TURN_PRE_DEDUCT_ENDPOINT,
+                response_json=json.dumps(payload, ensure_ascii=False, default=str),
+            )
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+    except Exception:
+        db.rollback()
+
+
+def charge_chat_turn_once(
+    db: Session,
+    current_user: User,
+    turn_id: str,
+    *,
+    source: str = "chat",
+    session_id: Optional[str] = None,
+    context_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+) -> dict:
+    """Charge one accepted user conversation turn exactly once."""
+    tid = (turn_id or "").strip()[:128]
+    if not tid:
+        raise HTTPException(status_code=400, detail="缺少对话轮次 turn_id")
+
+    cached = _chat_turn_cached_response(db, current_user.id, tid)
+    if cached is not None:
+        return cached
+
+    if not _should_deduct_credits():
+        payload = {
+            "ok": True,
+            "turn_id": tid,
+            "charged": False,
+            "credits_charged": 0,
+            "billing_skipped": "no_user_deduct",
+        }
+        _store_chat_turn_idempotency(db, current_user.id, tid, payload)
+        return payload
+
+    idem_row = BillingIdempotency(
+        user_id=current_user.id,
+        key=tid,
+        endpoint=_CHAT_TURN_PRE_DEDUCT_ENDPOINT,
+        response_json="{}",
+    )
+    try:
+        db.add(idem_row)
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        cached = _chat_turn_cached_response(db, current_user.id, tid)
+        if cached is not None:
+            return cached
+        raise HTTPException(status_code=409, detail="对话轮次正在扣费，请稍后重试")
+
+    db.refresh(current_user)
+    bal = user_balance_decimal(current_user)
+    if bal < _CHAT_TURN_CHARGE_CREDITS:
+        db.rollback()
+        raise HTTPException(
+            status_code=402,
+            headers={"X-Lobster-Min-Charge-Credits": str(_CHAT_TURN_CHARGE_CREDITS)},
+            detail=(
+                f"积分不足：对话本轮需 {_CHAT_TURN_CHARGE_CREDITS} 算力，"
+                f"当前余额 {bal}。请先充值后再试。"
+            ),
+        )
+
+    current_user.credits = bal - _CHAT_TURN_CHARGE_CREDITS
+    bal_after = quantize_credits(current_user.credits)
+    source_clean = (source or "chat").strip()[:32] or "chat"
+    meta = {
+        "turn_id": tid,
+        "source": source_clean,
+        "session_id": (session_id or "").strip()[:128] or None,
+        "context_id": (context_id or "").strip()[:128] or None,
+        "message_id": (message_id or "").strip()[:128] or None,
+        "deduct_credits": credits_json_float(_CHAT_TURN_CHARGE_CREDITS),
+        "billing_rule": "chat_turn_flat_10",
+    }
+    if trace_id:
+        meta["trace_id"] = trace_id
+    append_credit_ledger(
+        db,
+        current_user.id,
+        -_CHAT_TURN_CHARGE_CREDITS,
+        "chat_turn",
+        bal_after,
+        description="对话轮次扣费",
+        ref_type="chat_turn",
+        ref_id=tid,
+        meta={k: v for k, v in meta.items() if v is not None},
+    )
+    payload = {
+        "ok": True,
+        "turn_id": tid,
+        "charged": True,
+        "credits_charged": credits_json_float(_CHAT_TURN_CHARGE_CREDITS),
+        "balance_after": credits_json_float(bal_after),
+    }
+    idem_row.response_json = json.dumps(payload, ensure_ascii=False, default=str)
+    db.commit()
+    logger.info(
+        "[chat_trace] trace_id=%s path=chat_turn_pre_deduct result=ok user_id=%s turn_id=%s source=%s credits=%s balance_after=%s",
+        trace_id or "-",
+        current_user.id,
+        tid,
+        source_clean,
+        _CHAT_TURN_CHARGE_CREDITS,
+        bal_after,
+    )
+    return payload
+
+
+@router.post("/api/sutui-chat/turn-pre-deduct", summary="对话轮次预扣 10 算力（内部调用）")
+def sutui_chat_turn_pre_deduct(
+    body: ChatTurnPreDeductIn,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if _should_deduct_credits() and not _internal_billing_key_ok(request):
+        raise HTTPException(status_code=403, detail="缺少内部计费授权")
+    trace_id = (
+        (request.headers.get(TRACE_HEADER) or request.headers.get(TRACE_HEADER.lower()) or "").strip()
+        or uuid.uuid4().hex
+    )
+    return charge_chat_turn_once(
+        db,
+        current_user,
+        body.turn_id,
+        source=body.source,
+        session_id=body.session_id,
+        context_id=body.context_id,
+        message_id=body.message_id,
+        trace_id=trace_id,
+    )
 
 
 def _rough_prompt_tokens_from_messages(messages: Any) -> int:
@@ -1261,13 +1465,18 @@ async def sutui_chat_completions(
         or uuid.uuid4().hex
     )
     openclaw_internal_llm = _is_openclaw_internal_llm_request(request)
+    chat_turn_precharged = _is_chat_turn_precharged_request(request)
+    chat_turn_id = _chat_turn_id_from_request(request)
     logger.info(
-        "[chat_trace] trace_id=%s path=sutui_chat_completions enter user_id=%s stream=%s model_in=%s openclaw_internal_llm=%s",
+        "[chat_trace] trace_id=%s path=sutui_chat_completions enter user_id=%s stream=%s model_in=%s "
+        "openclaw_internal_llm=%s chat_turn_precharged=%s chat_turn_id=%s",
         trace_id,
         current_user.id,
         bool(body.get("stream")),
         (body.get("model") or "-"),
         openclaw_internal_llm,
+        chat_turn_precharged,
+        chat_turn_id or "-",
     )
 
     openclaw_skill_request = _is_openclaw_skill_model_alias((body.get("model") or "").strip())
@@ -1332,7 +1541,7 @@ async def sutui_chat_completions(
         current_user,
         model_id,
         body,
-        apply_min_charge=not openclaw_internal_llm,
+        apply_min_charge=not (openclaw_internal_llm or chat_turn_precharged),
     )
 
     user_bal_str = "-"
@@ -1546,18 +1755,27 @@ async def sutui_chat_completions(
                 body,
                 usage_raw if isinstance(usage_raw, dict) else None,
             )
-            _apply_chat_deduct(
-                db,
-                current_user,
-                winning_model,
-                usage_bill,
-                data if isinstance(data, dict) else None,
-                billing_recon=chat_billing_recon,
-                trace_id=trace_id,
-                is_direct_api=winning_is_direct,
-                apply_min_charge=not openclaw_internal_llm,
-                billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
-            )
+            if chat_turn_precharged:
+                logger.info(
+                    "[chat_trace] trace_id=%s path=sutui_chat_deduct result=skipped reason=chat_turn_precharged "
+                    "turn_id=%s model=%s",
+                    trace_id,
+                    chat_turn_id or "-",
+                    winning_model,
+                )
+            else:
+                _apply_chat_deduct(
+                    db,
+                    current_user,
+                    winning_model,
+                    usage_bill,
+                    data if isinstance(data, dict) else None,
+                    billing_recon=chat_billing_recon,
+                    trace_id=trace_id,
+                    is_direct_api=winning_is_direct,
+                    apply_min_charge=not openclaw_internal_llm,
+                    billing_mode="openclaw_internal" if openclaw_internal_llm else "standard",
+                )
         else:
             logger.info(
                 "[chat_trace] trace_id=%s deduct=skipped_nonstream reason=%s http=%s model=%r route=%s",
@@ -1743,6 +1961,15 @@ async def sutui_chat_completions(
                     yield f"data: {err}\n\n".encode("utf-8")
         finally:
             bill_model = billing_model_holder[0]
+            if chat_turn_precharged:
+                logger.info(
+                    "[chat_trace] trace_id=%s path=sutui_chat stream_deduct=skipped reason=chat_turn_precharged "
+                    "turn_id=%s model=%s",
+                    trace_id,
+                    chat_turn_id or "-",
+                    bill_model or "-",
+                )
+                return
             if not stream_completed_ok or not bill_model or not _should_deduct_credits():
                 logger.info(
                     "[chat_trace] trace_id=%s path=sutui_chat stream_deduct=skipped stream_ok=%s model_id=%r "

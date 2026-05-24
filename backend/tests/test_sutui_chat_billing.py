@@ -118,3 +118,71 @@ def test_sutui_chat_deduct_keeps_price_above_min(db_session, monkeypatch):
     assert row.meta["deduct_credits"] == 12.5
     assert row.meta["raw_computed_credits"] == 12.5
     assert row.meta["billing_src"] == "test_high_price"
+
+
+def test_sutui_chat_turn_precharged_requires_internal_key(monkeypatch):
+    from starlette.datastructures import Headers
+    from starlette.requests import Request
+
+    from backend.app.api import sutui_chat_proxy
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "lobster_mcp_billing_internal_key", "internal-key", raising=False)
+
+    def _request(headers: dict[str, str]) -> Request:
+        return Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/sutui-chat/completions",
+                "headers": Headers(headers).raw,
+            }
+        )
+
+    assert sutui_chat_proxy._is_chat_turn_precharged_request(
+        _request(
+            {
+                "X-Lobster-Mcp-Billing": "internal-key",
+                "X-Lobster-Chat-Turn-Charged": "1",
+            }
+        )
+    )
+    assert not sutui_chat_proxy._is_chat_turn_precharged_request(
+        _request({"X-Lobster-Chat-Turn-Charged": "1"})
+    )
+
+
+def test_charge_chat_turn_once_is_idempotent(db_session, monkeypatch):
+    from backend.app.api import sutui_chat_proxy
+    from backend.app.core.config import settings
+    from backend.app.models import CreditLedger
+
+    monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
+    monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
+
+    user = _user("100.0000")
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    first = sutui_chat_proxy.charge_chat_turn_once(
+        db_session,
+        user,
+        "turn-1",
+        source="test",
+    )
+    second = sutui_chat_proxy.charge_chat_turn_once(
+        db_session,
+        user,
+        "turn-1",
+        source="test",
+    )
+
+    db_session.refresh(user)
+    assert first["charged"] is True
+    assert second["charged"] is True
+    assert user.credits == Decimal("90.0000")
+    rows = db_session.query(CreditLedger).filter(CreditLedger.user_id == user.id).all()
+    assert len(rows) == 1
+    assert rows[0].entry_type == "chat_turn"
+    assert rows[0].delta == Decimal("-10.0000")
