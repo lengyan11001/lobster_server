@@ -8,7 +8,7 @@ def test_default_video_model_uses_xai_grok_text_to_video():
     out = _normalize_video_generate_payload({"prompt": "一条产品宣传短视频"})
 
     assert out["model"] == "xai/grok-imagine-video/text-to-video"
-    assert out["duration"] == 5
+    assert out["duration"] == 10
 
 
 def test_default_video_model_switches_to_xai_grok_image_to_video_when_image_present():
@@ -23,6 +23,18 @@ def test_default_video_model_switches_to_xai_grok_image_to_video_when_image_pres
     assert out["model"] == "xai/grok-imagine-video/image-to-video"
     assert out["image_url"] == "https://example.com/a.png"
     assert out["duration"] == 8
+
+
+def test_grok_text_to_video_keeps_explicit_duration():
+    out = _normalize_video_generate_payload(
+        {
+            "model": "xai/grok-imagine-video/text-to-video",
+            "prompt": "product video",
+            "duration": 30,
+        }
+    )
+
+    assert out["duration"] == 30
 
 
 def test_grok_aliases_resolve_to_xai_grok_models():

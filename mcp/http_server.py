@@ -54,6 +54,7 @@ _DEFAULT_VIDEO_MODEL = (
     or os.getenv("LOBSTER_DEFAULT_VIDEO_GENERATE_MODEL")
     or "xai/grok-imagine-video/text-to-video"
 ).strip() or "xai/grok-imagine-video/text-to-video"
+_GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS = 10
 
 
 def _sanitize_for_json(obj: Any) -> Any:
@@ -1990,7 +1991,10 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         _has_ar = _payload_get_aspect_ratio(payload) is not None
         if not first_url or _has_ar:
             out["aspect_ratio"] = aspect_ratio if ratio_ok else "9:16"
-        out["duration"] = duration_sec
+        out["duration"] = _parse_video_duration_seconds(
+            _payload_get_duration_raw(payload),
+            default=_GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS,
+        )
         _grok_res = _coerce_grok_video_resolution(payload.get("resolution"))
         if _grok_res is not None:
             out["resolution"] = _grok_res

@@ -9,7 +9,7 @@ import os
 import math
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,13 @@ _PRICING_JSON_PATH = Path(__file__).resolve().parent.parent.parent.parent / "com
 _HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
 _HIFLY_TTS_UNIT_CREDITS = 10
 _HIFLY_TTS_CHARS_PER_SECOND = 4
+_GROK_IMAGINE_VIDEO_FIXED_PRICE_CREDITS = 320
+_GROK_IMAGINE_VIDEO_MODELS = frozenset(
+    {
+        "xai/grok-imagine-video/text-to-video",
+        "xai/grok-imagine-video/image-to-video",
+    }
+)
 
 
 def _get_user_price_multiplier() -> float:
@@ -64,6 +71,41 @@ def _should_deduct_credits() -> bool:
     """是否启用「调用能力时扣积分」（在线版 + 独立认证时）。"""
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     return edition == "online" and getattr(settings, "lobster_independent_auth", True)
+
+
+def _normalize_model_id(model: Optional[str]) -> str:
+    return (model or "").strip().lower()
+
+
+def _payload_model_id(payload: Optional[dict]) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("model", "model_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _fixed_generate_user_price(
+    capability_id: str,
+    model: Optional[str],
+    params: Optional[dict],
+) -> Optional[tuple[Any, dict[str, Any]]]:
+    if capability_id != "video.generate":
+        return None
+    if _normalize_model_id(model) not in _GROK_IMAGINE_VIDEO_MODELS:
+        return None
+    meta: dict[str, Any] = {
+        "billing_rule": "grok_imagine_video_flat_320",
+        "fixed_price_credits": _GROK_IMAGINE_VIDEO_FIXED_PRICE_CREDITS,
+    }
+    if isinstance(params, dict):
+        for key in ("duration", "duration_sec", "duration_seconds", "length", "video_length"):
+            if key in params:
+                meta["requested_duration"] = params.get(key)
+                break
+    return quantize_credits(_GROK_IMAGINE_VIDEO_FIXED_PRICE_CREDITS), meta
 
 
 def _require_sutui_brand_for_billing(user: User, *, upstream: str) -> None:
@@ -327,7 +369,16 @@ def pre_deduct(
     _require_sutui_brand_for_billing(current_user, upstream=upstream)
 
     # ── force_credits: MCP 已算好金额（Comfly 路由等场景）──
-    if body.force_credits is not None and body.force_credits > 0:
+    if (
+        body.force_credits is not None
+        and body.force_credits > 0
+        and _fixed_generate_user_price(
+            body.capability_id,
+            body.model,
+            body.params if isinstance(body.params, dict) else None,
+        )
+        is None
+    ):
         fc = quantize_credits(body.force_credits)
         if body.dry_run:
             return {"credits_charged": credits_json_float(fc), "dry_run": True, "model": body.model or ""}
@@ -414,8 +465,6 @@ def pre_deduct(
         return out
 
     if upstream == "sutui" and upstream_tool == "generate" and body.capability_id not in _UNDERSTAND_CAPS:
-        from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
-
         model = (body.model or "").strip()
         if not model:
             raise HTTPException(
@@ -423,6 +472,53 @@ def pre_deduct(
                 detail="调用生成能力时必须提供 model 以按速推定价预扣积分。",
             )
         params = body.params if isinstance(body.params, dict) else None
+        fixed_price = _fixed_generate_user_price(body.capability_id, model, params)
+        if fixed_price is not None:
+            est_d, fixed_meta = fixed_price
+            if body.dry_run:
+                return {
+                    "credits_charged": credits_json_float(est_d),
+                    "dry_run": True,
+                    "model": model,
+                    "billing_rule": fixed_meta.get("billing_rule"),
+                }
+            db.refresh(current_user)
+            if user_balance_decimal(current_user) < est_d:
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"积分不足：本次需 {float(est_d)} 积分，当前余额 {float(user_balance_decimal(current_user))}。请先充值。",
+                )
+            current_user.credits = user_balance_decimal(current_user) - est_d
+            bal = quantize_credits(current_user.credits)
+            _recon = _sutui_recon_for_ledger(
+                request,
+                upstream=upstream,
+                sutui_pool=body.sutui_pool,
+                sutui_token_ref=body.sutui_token_ref,
+            )
+            append_credit_ledger(
+                db,
+                current_user.id,
+                -est_d,
+                "pre_deduct",
+                bal,
+                description="预扣",
+                ref_type="capability",
+                meta={
+                    **(_recon or {}),
+                    **fixed_meta,
+                    "capability_id": body.capability_id,
+                    "model": model,
+                    "pre_estimated": credits_json_float(est_d),
+                    "price_multiplier": 1.0,
+                },
+            )
+            db.commit()
+            out = {"credits_charged": credits_json_float(est_d), "billing_rule": fixed_meta.get("billing_rule")}
+            _pre_deduct_idempotent_store(db, current_user.id, idem_key, out)
+            return out
+
+        from ..services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
 
         if body.dry_run:
             _multiplier = _get_user_price_multiplier()
@@ -678,6 +774,12 @@ def record_call(
     pre_applied = bool(getattr(body, "pre_deduct_applied", False))
     credits_final = getattr(body, "credits_final", None)
     credits_pre_deducted = getattr(body, "credits_pre_deducted", None)
+    record_model = _payload_model_id(body.request_payload) or _payload_model_id(body.response_payload)
+    fixed_record_price = _fixed_generate_user_price(
+        body.capability_id,
+        record_model,
+        body.request_payload if isinstance(body.request_payload, dict) else None,
+    )
 
     credits_charged = quantize_credits(0)
     db.refresh(current_user)
@@ -687,7 +789,11 @@ def record_call(
 
     if _should_deduct_credits() and pre_applied and credits_final is not None:
         pre = quantize_credits(credits_pre_deducted if credits_pre_deducted is not None else credits_charged_body)
-        final = quantize_credits(credits_final)
+        upstream_final = quantize_credits(credits_final)
+        final = upstream_final
+        fixed_meta = None
+        if fixed_record_price is not None:
+            final, fixed_meta = fixed_record_price
         delta = final - pre
         if delta > 0 and user_balance_decimal(current_user) < delta:
             raise HTTPException(
@@ -706,12 +812,19 @@ def record_call(
             "final": credits_json_float(final),
             "delta_settle": credits_json_float(-delta),
         }
+        if fixed_meta is not None:
+            ledger_meta.update(fixed_meta)
+            ledger_meta["upstream_reported_final"] = credits_json_float(upstream_final)
     elif credits_charged_body > 0 and _should_deduct_credits() and not pre_applied:
         charge_multiplier = 1.0
         if upstream_rc == "sutui" and (cap.upstream_tool if cap else None) == "generate":
             charge_multiplier = _get_user_price_multiplier()
         raw_upstream_charge = credits_charged_body
         charge_to_user = quantize_credits(float(raw_upstream_charge) * charge_multiplier)
+        fixed_meta = None
+        if fixed_record_price is not None:
+            charge_to_user, fixed_meta = fixed_record_price
+            charge_multiplier = 1.0
         if user_balance_decimal(current_user) < charge_to_user:
             raise HTTPException(
                 status_code=402,
@@ -730,6 +843,8 @@ def record_call(
             "price_multiplier": charge_multiplier,
             "credits_charged": credits_json_float(charge_to_user),
         }
+        if fixed_meta is not None:
+            ledger_meta.update(fixed_meta)
     elif credits_charged_body == 0 and _should_deduct_credits() and not pre_applied and unit_credits > 0:
         uc = quantize_credits(unit_credits)
         if user_balance_decimal(current_user) < uc:
@@ -742,7 +857,10 @@ def record_call(
         ledger_kind = "unit_charge"
         ledger_meta = {"capability_id": body.capability_id, "unit_credits": unit_credits}
     elif pre_applied and credits_final is None and credits_charged_body > 0:
-        credits_charged = credits_charged_body
+        if fixed_record_price is not None:
+            credits_charged = fixed_record_price[0]
+        else:
+            credits_charged = credits_charged_body
     log = CapabilityCallLog(
         user_id=current_user.id,
         capability_id=body.capability_id,
