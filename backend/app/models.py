@@ -241,6 +241,40 @@ class UserHiflyVideoAsset(Base):
     )
 
 
+class UserWanRoleTask(Base):
+    """Aliyun Wan role replacement / action transfer task."""
+
+    __tablename__ = "user_wan_role_tasks"
+    __table_args__ = (
+        UniqueConstraint("dashscope_task_id", name="uq_user_wan_role_tasks_dashscope_task_id"),
+        Index("ix_user_wan_role_tasks_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False, default="AI角色替换")
+    task_type: Mapped[str] = mapped_column(String(32), nullable=False, default="move", index=True)
+    model: Mapped[str] = mapped_column(String(64), nullable=False, default="wan2.2-animate-move")
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, default="wan-std")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing", index=True)
+    dashscope_task_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    image_url: Mapped[str] = mapped_column(Text, nullable=False)
+    video_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_video_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    asset_video_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    asset_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 class PublishAccount(Base):
     __tablename__ = "publish_accounts"
 
