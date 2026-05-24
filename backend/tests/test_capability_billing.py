@@ -73,7 +73,7 @@ def test_sutui_generate_direct_charge_uses_user_multiplier(db_session, db_sessio
             "capability_id": "video.generate",
             "success": True,
             "credits_charged": 100,
-            "request_payload": {"model": "xai/grok-imagine-video/text-to-video", "duration": 5},
+            "request_payload": {"model": "fal-ai/wan/v2.6/text-to-video", "duration": 5},
             "response_payload": {"price": 100, "task_id": "task-1"},
         },
     )
@@ -89,6 +89,61 @@ def test_sutui_generate_direct_charge_uses_user_multiplier(db_session, db_sessio
         assert row.meta["upstream_reported_credits"] == 100.0
         assert row.meta["price_multiplier"] == 2.0
         assert row.meta["credits_charged"] == 200.0
+
+
+def test_grok_imagine_video_direct_charge_uses_fixed_user_price(db_session, db_session_factory, monkeypatch):
+    from backend.app.models import CapabilityConfig, CreditLedger, User
+
+    user = User(
+        email="grok-direct-billing@test.local",
+        hashed_password="x",
+        credits=Decimal("500.0000"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="bihuo",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(
+        CapabilityConfig(
+            capability_id="video.generate",
+            description="video",
+            upstream="sutui",
+            upstream_tool="generate",
+            unit_credits=0,
+            enabled=True,
+        )
+    )
+    db_session.commit()
+    db_session.refresh(user)
+
+    client = _client(db_session_factory, user.id, monkeypatch, multiplier="2")
+    resp = client.post(
+        "/capabilities/record-call",
+        headers={"X-Installation-Id": "test-install-1", "X-Lobster-Mcp-Billing": "test-billing-key"},
+        json={
+            "capability_id": "video.generate",
+            "success": True,
+            "credits_charged": 100,
+            "request_payload": {"model": "xai/grok-imagine-video/text-to-video", "duration": 30},
+            "response_payload": {"price": 100, "task_id": "task-1"},
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["credits_charged"] == 320.0
+
+    with db_session_factory() as s:
+        u = s.query(User).filter(User.id == user.id).first()
+        assert u.credits == Decimal("180.0000")
+        row = s.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
+        assert row.entry_type == "direct_charge"
+        assert row.delta == Decimal("-320.0000")
+        assert row.meta["upstream_reported_credits"] == 100.0
+        assert row.meta["price_multiplier"] == 1.0
+        assert row.meta["credits_charged"] == 320.0
+        assert row.meta["billing_rule"] == "grok_imagine_video_flat_320"
+        assert row.meta["requested_duration"] == 30
 
 
 def test_pre_deduct_force_credits_charges_exact_amount(db_session, db_session_factory, monkeypatch):
@@ -181,7 +236,7 @@ def test_sutui_generate_pre_deduct_uses_user_multiplier(db_session, db_session_f
         headers={"X-Installation-Id": "test-install-1", "X-Lobster-Mcp-Billing": "test-billing-key"},
         json={
             "capability_id": "video.generate",
-            "model": "xai/grok-imagine-video/text-to-video",
+            "model": "fal-ai/wan/v2.6/text-to-video",
             "params": {"duration": 5},
         },
     )
@@ -196,3 +251,78 @@ def test_sutui_generate_pre_deduct_uses_user_multiplier(db_session, db_session_f
         assert row.delta == Decimal("-200.0000")
         assert row.meta["price_multiplier"] == 2.0
         assert row.meta["pre_estimated"] == 200.0
+
+
+def test_grok_imagine_video_pre_deduct_uses_fixed_user_price(db_session, db_session_factory, monkeypatch):
+    from backend.app.models import CapabilityConfig, CreditLedger, User
+    from backend.app.services import sutui_billing_gate
+
+    user = User(
+        email="grok-pre-billing@test.local",
+        hashed_password="x",
+        credits=Decimal("500.0000"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="bihuo",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(
+        CapabilityConfig(
+            capability_id="video.generate",
+            description="video",
+            upstream="sutui",
+            upstream_tool="generate",
+            unit_credits=0,
+            enabled=True,
+        )
+    )
+    db_session.commit()
+    db_session.refresh(user)
+
+    def _unexpected_pricing_call(*args, **kwargs):
+        raise AssertionError("grok fixed price should not use upstream pricing lookup")
+
+    monkeypatch.setattr(
+        sutui_billing_gate,
+        "assert_pricing_pre_deduct_allows_upstream_or_http",
+        _unexpected_pricing_call,
+    )
+
+    client = _client(db_session_factory, user.id, monkeypatch, multiplier="2")
+    dry_run = client.post(
+        "/capabilities/pre-deduct",
+        headers={"X-Installation-Id": "test-install-1", "X-Lobster-Mcp-Billing": "test-billing-key"},
+        json={
+            "capability_id": "video.generate",
+            "model": "xai/grok-imagine-video/image-to-video",
+            "params": {"duration": 99},
+            "dry_run": True,
+        },
+    )
+    assert dry_run.status_code == 200
+    assert dry_run.json()["credits_charged"] == 320.0
+
+    resp = client.post(
+        "/capabilities/pre-deduct",
+        headers={"X-Installation-Id": "test-install-1", "X-Lobster-Mcp-Billing": "test-billing-key"},
+        json={
+            "capability_id": "video.generate",
+            "model": "xai/grok-imagine-video/image-to-video",
+            "params": {"duration": 99},
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["credits_charged"] == 320.0
+
+    with db_session_factory() as s:
+        u = s.query(User).filter(User.id == user.id).first()
+        assert u.credits == Decimal("180.0000")
+        row = s.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
+        assert row.entry_type == "pre_deduct"
+        assert row.delta == Decimal("-320.0000")
+        assert row.meta["price_multiplier"] == 1.0
+        assert row.meta["pre_estimated"] == 320.0
+        assert row.meta["billing_rule"] == "grok_imagine_video_flat_320"
+        assert row.meta["requested_duration"] == 99
