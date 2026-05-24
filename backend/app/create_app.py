@@ -402,7 +402,10 @@ def _migrate_user_agent_level():
                 else:
                     conn.execute(text("ALTER TABLE users ADD COLUMN agent_level INTEGER NOT NULL DEFAULT 0"))
                 logger.info("[启动] users 已增加列 agent_level")
-            conn.execute(text("UPDATE users SET agent_level = 1 WHERE is_agent = 1 AND (agent_level IS NULL OR agent_level = 0)"))
+            if dname in {"postgresql", "postgres"}:
+                conn.execute(text("UPDATE users SET agent_level = 1 WHERE is_agent IS TRUE AND (agent_level IS NULL OR agent_level = 0)"))
+            else:
+                conn.execute(text("UPDATE users SET agent_level = 1 WHERE is_agent = 1 AND (agent_level IS NULL OR agent_level = 0)"))
     except Exception as e:
         logger.warning("Migration user agent_level skipped: %s", e)
 
