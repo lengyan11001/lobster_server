@@ -7,8 +7,56 @@ function videoUrl(item) {
   return item.video_url || item.asset_video_url || item.source_video_url || "";
 }
 
+function safeUrl(url) {
+  const value = String(url || "").trim();
+  if (!/^https?:\/\//i.test(value)) return "";
+  if (/^https?:\/\/webstatic\/?$/i.test(value)) return "";
+  if (/^https?:\/\/[^/?#]+\/?$/i.test(value) && value.indexOf("webstatic") >= 0) return "";
+  if (/aihuoke-1409040632\.cos\.ap-shanghai\.myqcloud\.com\/client\/miniprogram\/hifly_avatars\//i.test(value)) return "";
+  return value;
+}
+
+function decodeSafe(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch (e) {
+    return value;
+  }
+}
+
+function hiflyStaticCover(url) {
+  const decoded = decodeSafe(String(url || ""));
+  const staticMatch = decoded.match(/\/static\/hifly_avatars\/([^"'&?\s#]+)/i);
+  if (staticMatch && staticMatch[1]) return "";
+  const hostedMatch = decoded.match(/\/client\/miniprogram\/hifly_avatars\/([^"'&?\s#]+)/i);
+  if (hostedMatch && hostedMatch[1]) return "";
+  const hfcdnMatch = decoded.match(/https?:\/\/hfcdn\.lingverse\.co\/[^"'&\s]+/i);
+  if (hfcdnMatch) {
+    return "";
+  }
+  return "";
+}
+
+function safeCoverUrl(url) {
+  const value = String(url || "").trim();
+  if (/hfcdn\.lingverse\.co/i.test(value)) return "";
+  if (/aihuoke-1409040632\.cos\.ap-shanghai\.myqcloud\.com\/client\/miniprogram\/hifly_avatars\//i.test(value)) return "";
+  const staticCover = hiflyStaticCover(url);
+  if (staticCover) return staticCover;
+  return safeUrl(url);
+}
+
 function coverUrl(item) {
-  return item.cover_url || item.image_url || item.avatar_image_url || item.avatar_url || "";
+  return (
+    safeCoverUrl(item.cover_url) ||
+    safeCoverUrl(item.image_url) ||
+    safeCoverUrl(item.avatar_image_url) ||
+    safeCoverUrl(item.avatar_url) ||
+    safeCoverUrl(item.poster_url) ||
+    safeCoverUrl(item.thumbnail_url) ||
+    safeCoverUrl(item.preview_image_url) ||
+    ""
+  );
 }
 
 function filenameFor(item) {
@@ -68,16 +116,53 @@ function normalizeVideo(item) {
   });
 }
 
+function normalizeWanRoleTask(item) {
+  const status = item.status || "processing";
+  const url = safeUrl(item.playable_url) || safeUrl(item.video_result_url) || safeUrl(item.asset_video_url) || safeUrl(item.source_video_url) || "";
+  const title = item.title || item.task_type_label || (item.task_type === "mix" ? "角色替换" : "动作迁移");
+  const filename = filenameFor(Object.assign({}, item, { title }));
+  return Object.assign({}, item, {
+    id: `wan-${item.id || item.dashscope_task_id || url}`,
+    raw_id: item.id,
+    work_type: "wan_role_video",
+    media_type: "video",
+    work_type_label: item.task_type_label || (item.task_type === "mix" ? "角色替换" : "动作迁移"),
+    title,
+    prompt: item.task_type === "mix" ? "AI角色替换任务" : "AI动作迁移任务",
+    cover_url: safeUrl(item.image_url),
+    playable_url: url,
+    preview_url: url,
+    url,
+    download_url: url ? mediaProxyUrl(url, "attachment", filename) : "",
+    proxy_download_url: url ? mediaProxyUrl(url, "attachment", filename) : "",
+    proxy_preview_url: url ? mediaProxyUrl(url, "inline", filename) : "",
+    status,
+    status_label: item.status_label || statusLabel(status),
+    created_at_text: formatTime(item.created_at),
+    is_processing: status === "processing" || status === "waiting",
+    is_success: status === "success",
+    is_failed: status === "failed",
+    filename,
+    billing: item.meta && item.meta.billing ? item.meta.billing : null
+  });
+}
+
 function filenameFromUrl(url) {
   const path = String(url || "").split("?")[0].split("#")[0];
   const name = decodeURIComponent(path.split("/").pop() || "");
   return name || "AI图片";
 }
 
+function looksLikeStorageFilename(value) {
+  return /^(assets|uploads|temp_assets)\//i.test(String(value || "")) || /^[a-f0-9]{8,}\.(mp4|mov|webm|jpg|png|jpeg)$/i.test(String(value || ""));
+}
+
 function normalizeMediaItem(item) {
-  const url = item.url || item.preview_url || item.download_url || "";
-  const title = item.title || item.filename || filenameFromUrl(url);
+  const url = safeUrl(item.url) || safeUrl(item.preview_url) || safeUrl(item.download_url) || "";
   const mediaType = item.media_type || "media";
+  const rawTitle = item.title || item.prompt || "";
+  const rawFilename = item.filename || filenameFromUrl(url);
+  const title = rawTitle && !looksLikeStorageFilename(rawTitle) ? rawTitle : (mediaType === "video" ? "AI视频结果" : rawFilename);
   const filename = filenameFromUrl(url || title);
   return Object.assign({}, item, {
     id: item.id || item.asset_id || url,
@@ -87,10 +172,10 @@ function normalizeMediaItem(item) {
     title,
     prompt: item.prompt || "",
     playable_url: url,
-    preview_url: item.preview_url || url,
-    download_url: item.download_url || url,
-    proxy_download_url: item.proxy_download_url || item.download_url || url,
-    proxy_preview_url: item.proxy_preview_url || item.preview_url || url,
+    preview_url: safeUrl(item.preview_url) || url,
+    download_url: safeUrl(item.download_url) || url,
+    proxy_download_url: safeUrl(item.proxy_download_url) || safeUrl(item.download_url) || url,
+    proxy_preview_url: safeUrl(item.proxy_preview_url) || safeUrl(item.preview_url) || url,
     status: "success",
     status_label: "已完成",
     created_at_text: formatTime(item.created_at),
@@ -99,15 +184,15 @@ function normalizeMediaItem(item) {
 }
 
 function normalizeAssetItem(item) {
-  const url = item.source_url || item.url || "";
+  const url = safeUrl(item.source_url) || safeUrl(item.url) || "";
   return normalizeMediaItem(Object.assign({}, item, {
     id: item.id || item.asset_id || url,
     title: item.filename || item.title || filenameFromUrl(url),
     url,
-    preview_url: item.preview_url || url,
-    download_url: item.download_url || url,
-    proxy_preview_url: item.proxy_preview_url || url,
-    proxy_download_url: item.proxy_download_url || url,
+    preview_url: safeUrl(item.preview_url) || url,
+    download_url: safeUrl(item.download_url) || url,
+    proxy_preview_url: safeUrl(item.proxy_preview_url) || url,
+    proxy_download_url: safeUrl(item.proxy_download_url) || url,
     media_type: item.media_type || "media"
   }));
 }
@@ -116,6 +201,25 @@ function isHiflyVideoAsset(item) {
   const tags = String((item && item.tags) || "").toLowerCase();
   const meta = item && item.meta ? JSON.stringify(item.meta).toLowerCase() : "";
   return tags.indexOf("hifly") >= 0 || tags.indexOf("video_tts") >= 0 || meta.indexOf("hifly") >= 0;
+}
+
+function isInputVideoAsset(item) {
+  const tags = String((item && item.tags) || "").toLowerCase();
+  const meta = item && item.meta ? JSON.stringify(item.meta).toLowerCase() : "";
+  if (tags.indexOf("input") >= 0) return true;
+  if (tags.indexOf("role_transfer/input") >= 0) return true;
+  if (meta.indexOf("role_transfer/input") >= 0) return true;
+  if (meta.indexOf('"input"') >= 0 && meta.indexOf("role_transfer") >= 0) return true;
+  return false;
+}
+
+function isGeneratedVideoAsset(item) {
+  const tags = String((item && item.tags) || "").toLowerCase();
+  const meta = item && item.meta ? JSON.stringify(item.meta).toLowerCase() : "";
+  if (isInputVideoAsset(item)) return false;
+  if (tags.indexOf("role_transfer") >= 0 || meta.indexOf("wan_role_task_id") >= 0) return true;
+  if (tags.indexOf("auto") >= 0 || tags.indexOf("generated") >= 0 || tags.indexOf("result") >= 0) return true;
+  return false;
 }
 
 Page({
@@ -129,6 +233,9 @@ Page({
     polling: false,
     works: [],
     mediaWorks: [],
+    previewVisible: false,
+    previewItem: null,
+    previewVideoUrl: "",
     onlineText: ""
   },
 
@@ -138,6 +245,11 @@ Page({
     share.showShareMenu();
     app.restoreSession();
     this.refreshAuthState();
+    const openSuperVideo = wx.getStorageSync("lobster_open_super_video");
+    if (openSuperVideo) {
+      wx.removeStorageSync("lobster_open_super_video");
+      this.setData({ mediaTab: "video", videoKind: "super" });
+    }
     const shouldRefresh = wx.getStorageSync("lobster_refresh_works");
     if (shouldRefresh) wx.removeStorageSync("lobster_refresh_works");
     if (this.data.phoneBound) this.loadWorks();
@@ -251,13 +363,24 @@ Page({
   loadAssetVideos() {
     this.stopPolling();
     this.setData({ loading: true });
-    return app
-      .request({ url: "/api/assets?media_type=video&limit=80" })
-      .then((data) => {
-        const rows = (data.assets || [])
+    return Promise.all([
+      app.request({ url: "/api/wan/role-transfer/tasks?page=1&size=30&refresh=true" }).catch(() => ({ items: [] })),
+      app.request({ url: "/api/assets?media_type=video&limit=80" }).catch(() => ({ assets: [] }))
+    ])
+      .then(([taskData, assetData]) => {
+        const taskRows = (taskData.items || []).map(normalizeWanRoleTask);
+        const taskAssetIds = {};
+        taskRows.forEach((item) => {
+          if (item.asset_id) taskAssetIds[String(item.asset_id)] = true;
+        });
+        const assetRows = (assetData.assets || [])
           .filter((item) => item && item.source_url && item.media_type === "video" && !isHiflyVideoAsset(item))
+          .filter((item) => isGeneratedVideoAsset(item))
+          .filter((item) => !item.asset_id || !taskAssetIds[String(item.asset_id)])
           .map(normalizeAssetItem);
+        const rows = taskRows.concat(assetRows);
         this.setData({ mediaWorks: rows, authPanelVisible: false });
+        this.refreshSuperVideoPolling();
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => this.setData({ loading: false }));
@@ -295,6 +418,15 @@ Page({
     this.stopPolling();
   },
 
+  refreshSuperVideoPolling() {
+    const hasProcessing = this.data.mediaTab === "video" && this.data.videoKind === "super" && this.data.mediaWorks.some((item) => item.work_type === "wan_role_video" && item.is_processing);
+    if (hasProcessing) {
+      this.startPolling();
+      return;
+    }
+    this.stopPolling();
+  },
+
   startPolling() {
     if (this.pollTimer) return;
     this.pollTimer = setInterval(() => this.pollProcessingWorks(), 8000);
@@ -308,6 +440,12 @@ Page({
   },
 
   pollProcessingWorks() {
+    if (this.data.mediaTab === "video" && this.data.videoKind === "super") {
+      if (this.data.polling) return;
+      this.setData({ polling: true });
+      this.loadAssetVideos().finally(() => this.setData({ polling: false }));
+      return;
+    }
     const targets = this.data.works.filter((item) => item.is_processing && item.task_id).slice(0, 5);
     if (!targets.length || this.data.polling) return;
     this.setData({ polling: true });
@@ -340,8 +478,20 @@ Page({
     const index = Number(evt.currentTarget.dataset.index || 0);
     const item = this.data.works[index];
     if (!item) return;
-    wx.setStorageSync("lobster_work_detail", item);
-    wx.navigateTo({ url: `/pages/work-detail/work-detail?id=${item.id || ""}&task_id=${item.task_id || ""}` });
+    if (item.is_processing) {
+      wx.showToast({ title: "生成中，预计5-10分钟", icon: "none" });
+      return;
+    }
+    const url = safeUrl(item.proxy_preview_url) || safeUrl(item.preview_url) || safeUrl(item.playable_url);
+    if (!url) {
+      wx.showToast({ title: item.is_failed ? "生成失败，请重新提交" : "暂无可播放视频", icon: "none" });
+      return;
+    }
+    this.setData({
+      previewVisible: true,
+      previewItem: item,
+      previewVideoUrl: url
+    });
   },
 
   copyPrompt(evt) {
@@ -375,7 +525,7 @@ Page({
 
   saveWork(evt) {
     const index = Number(evt.currentTarget.dataset.index || 0);
-    const item = this.data.works[index];
+    const item = evt.currentTarget.dataset.source === "preview" ? this.data.previewItem : this.data.works[index];
     if (!item || !item.playable_url) {
       wx.showToast({ title: "视频还未生成", icon: "none" });
       return;
@@ -400,9 +550,9 @@ Page({
 
   saveMediaWork(evt) {
     const index = Number(evt.currentTarget.dataset.index || 0);
-    const item = this.data.mediaWorks[index];
+    const item = evt.currentTarget.dataset.source === "preview" ? this.data.previewItem : this.data.mediaWorks[index];
     if (!item || !item.download_url) {
-      wx.showToast({ title: "暂无可保存链接", icon: "none" });
+      wx.showToast({ title: item && item.is_processing ? "生成中，预计5-10分钟" : "暂无可保存链接", icon: "none" });
       return;
     }
     media
@@ -414,12 +564,55 @@ Page({
       });
   },
 
+  openMediaWork(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.mediaWorks[index];
+    if (!item) return;
+    if (item.media_type === "image") {
+      this.previewMediaWork(evt);
+      return;
+    }
+    if (item.media_type !== "video") return;
+    if (item.is_processing) {
+      wx.showToast({ title: "生成中，预计5-10分钟", icon: "none" });
+      return;
+    }
+    const url = safeUrl(item.proxy_preview_url) || safeUrl(item.preview_url) || safeUrl(item.url) || safeUrl(item.playable_url);
+    if (!url) {
+      wx.showToast({ title: item.is_failed ? "生成失败，请重新提交" : "暂无可播放视频", icon: "none" });
+      return;
+    }
+    this.setData({
+      previewVisible: true,
+      previewItem: item,
+      previewVideoUrl: url
+    });
+  },
+
+  closePreview() {
+    this.setData({
+      previewVisible: false,
+      previewItem: null,
+      previewVideoUrl: ""
+    });
+  },
+
+  savePreviewWork() {
+    const item = this.data.previewItem;
+    if (!item) return;
+    if (item.work_type === "digital_video") {
+      this.saveWork({ currentTarget: { dataset: { source: "preview" } } });
+      return;
+    }
+    this.saveMediaWork({ currentTarget: { dataset: { source: "preview" } } });
+  },
+
   copyMediaWork(evt) {
     const index = Number(evt.currentTarget.dataset.index || 0);
     const item = this.data.mediaWorks[index];
     const url = item && (item.url || item.download_url || item.preview_url);
     if (!url) {
-      wx.showToast({ title: "暂无链接", icon: "none" });
+      wx.showToast({ title: item && item.is_processing ? "生成中，预计5-10分钟" : "暂无链接", icon: "none" });
       return;
     }
     media.copyLink(url).then(() => wx.showToast({ title: "链接已复制", icon: "success" }));
@@ -428,7 +621,7 @@ Page({
   previewMediaWork(evt) {
     const index = Number(evt.currentTarget.dataset.index || 0);
     const item = this.data.mediaWorks[index];
-    const url = item && (item.preview_url || item.url);
+    const url = item && (safeUrl(item.preview_url) || safeUrl(item.url));
     if (!url) return;
     if (item.media_type === "image") {
       wx.previewImage({
@@ -443,6 +636,14 @@ Page({
   },
 
   onShareAppMessage() {
+    const item = this.data.previewItem;
+    if (this.data.previewVisible && item) {
+      return share.appShare({
+        title: item.title || "我的AI视频作品",
+        path: "/pages/downloads/downloads",
+        imageUrl: item.cover_url || ""
+      });
+    }
     return share.appShare({
       title: "我的AI作品 - 必火AI员工",
       path: "/pages/downloads/downloads"

@@ -1,0 +1,125 @@
+<view class="page role-page">
+  <image class="page-bg" src="{{heroBgUrl}}" mode="aspectFill" />
+  <view class="bg-mask"></view>
+
+  <view class="topbar">
+    <button class="back-btn" bindtap="goBack">‹</button>
+  </view>
+
+  <view class="hero">
+    <text class="hero-title">AI角色替换·动作迁移</text>
+    <view class="title-line"></view>
+  </view>
+
+  <view wx:if="{{authPanelVisible && !phoneBound}}" class="auth-card">
+    <text class="auth-title">登录后使用 AI 视频能力</text>
+    <text class="auth-text">生成任务会关联你的账号和作品记录。</text>
+    <view class="auth-actions">
+      <button bindtap="login">微信登录</button>
+      <button open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+    </view>
+  </view>
+
+  <view class="mode-card">
+    <view class="mode-head">
+      <text>选择复刻类型</text>
+      <text>内容由AI生成，禁止用于违法违规或侵权用途</text>
+    </view>
+    <view class="mode-grid">
+      <view class="mode-item {{taskType === 'move' ? 'active' : ''}}" data-type="move" bindtap="setTaskType">
+        <image class="mode-bg" src="{{moveBgUrl}}" mode="aspectFill" />
+        <view class="mode-mask"></view>
+        <view class="play-dot">▶</view>
+        <text>动作迁移</text>
+        <text>图片人物模仿视频动起来</text>
+      </view>
+      <view class="mode-item {{taskType === 'mix' ? 'active' : ''}}" data-type="mix" bindtap="setTaskType">
+        <image class="mode-bg" src="{{mixBgUrl}}" mode="aspectFill" />
+        <view class="mode-mask"></view>
+        <view class="play-dot">▶</view>
+        <text>角色替换</text>
+        <text>图片人物替换视频中人物</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="form-block">
+    <view class="section-title"><text>*</text> 添加图片</view>
+    <scroll-view scroll-x class="sample-scroll" show-scrollbar="{{false}}">
+      <view class="upload-row image-sample-row">
+      <view class="upload-card" bindtap="chooseImage">
+        <text class="upload-icon plus-icon">+</text>
+        <text>{{uploadingImage ? '上传中...' : '上传/选择'}}</text>
+      </view>
+        <view wx:for="{{sampleImages}}" wx:key="source_url" wx:for-index="index" class="sample-card {{sampleImageIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="selectSampleImage">
+          <image src="{{item.source_url}}" mode="aspectFill" />
+          <view class="picked-mask"></view>
+          <text>{{item.title}}</text>
+          <view class="zoom-dot">⌕</view>
+        </view>
+      </view>
+    </scroll-view>
+
+    <view wx:if="{{imageAsset}}" class="selected-line">
+      <view class="selected-thumb">
+        <image src="{{imageAsset.local_path || imageAsset.source_url}}" mode="aspectFill" />
+        <view class="picked-mask"></view>
+      </view>
+      <view>
+        <text>已选人物图片</text>
+        <text>{{imageAsset.title || imageAsset.source_url}}</text>
+      </view>
+    </view>
+
+    <view class="section-title"><text>*</text> 添加视频</view>
+    <scroll-view scroll-x class="sample-scroll" show-scrollbar="{{false}}">
+      <view class="upload-row video-sample-row">
+        <view class="upload-card" bindtap="chooseVideo">
+          <text class="upload-icon plus-icon">+</text>
+          <text>{{uploadingVideo ? '上传中...' : '上传/选择'}}</text>
+        </view>
+        <view wx:for="{{sampleVideos}}" wx:key="source_url" wx:for-index="index" class="sample-card video-sample-card {{sampleVideoIndex === index ? 'active' : ''}}" data-index="{{index}}" bindtap="selectSampleVideo">
+          <image src="{{item.cover_url}}" mode="aspectFill" />
+          <view class="picked-mask"></view>
+          <view class="play-badge" data-index="{{index}}" catchtap="previewSampleVideo">▶</view>
+          <text>{{item.title}}</text>
+        </view>
+      </view>
+    </scroll-view>
+
+    <view wx:if="{{videoAsset}}" class="selected-line">
+      <view class="selected-thumb">
+        <image wx:if="{{videoAsset.cover_url}}" src="{{videoAsset.cover_url}}" mode="aspectFill" />
+        <video wx:else src="{{videoAsset.local_path || videoAsset.source_url}}" controls="{{false}}" muted object-fit="cover"></video>
+        <view class="picked-mask"></view>
+      </view>
+      <view>
+        <text>已选参考视频</text>
+        <text>{{videoAsset.title || videoAsset.source_url}}</text>
+      </view>
+    </view>
+    <view wx:else class="video-hint">
+      <text>{{taskType === 'move' ? '动作参考视频' : '待换人视频'}}</text>
+      <text>建议 2-30 秒，可上传本地视频或选择上方样例</text>
+    </view>
+
+    <button class="submit-btn" loading="{{submitting}}" bindtap="submitTask">
+      <text>立即生成</text>
+      <text>{{costHint}}</text>
+    </button>
+    <text class="cost-text">生成中预计 5-10 分钟，成功后自动保存到作品页超级视频</text>
+  </view>
+
+  <view class="bottom-space"></view>
+
+  <view wx:if="{{previewVisible}}" class="preview-modal" catchtap="closeVideoPreview">
+    <view class="preview-panel" catchtap="noop">
+      <view class="preview-head">
+        <text>{{previewVideoTitle}}</text>
+        <button bindtap="closeVideoPreview">×</button>
+      </view>
+      <video class="preview-video" src="{{previewVideoUrl}}" controls autoplay object-fit="contain"></video>
+      <button class="preview-select-btn" bindtap="closeVideoPreview">继续选择</button>
+    </view>
+  </view>
+</view>

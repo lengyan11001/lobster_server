@@ -85,6 +85,27 @@ Page({
     hiflyLoaded: false,
     publicAvatarTemplates: [],
     avatarTemplatesLoading: false,
+    abilityCurrent: 0,
+    abilitySlides: [
+      {
+        type: "role",
+        icon: "⇄",
+        title: "AI角色替换/动作迁移",
+        sub: "人物角色/视频动作一键替换"
+      },
+      {
+        type: "digital",
+        icon: "数",
+        title: "AI数字人口播",
+        sub: "选择分身，生成口播视频"
+      },
+      {
+        type: "more",
+        icon: "AI",
+        title: "更多AI",
+        sub: "持续开发中"
+      }
+    ],
     quickMessages: [
       { mark: "图", title: "生成图片", text: "帮我生成一张图片，画面内容是：" },
       { mark: "视", title: "生成视频", text: "帮我生成一个6秒宣传视频，画面内容是：" },
@@ -460,6 +481,33 @@ Page({
 
   goDigital() {
     wx.navigateTo({ url: "/pages/digital/digital" });
+  },
+
+  goRoleTransfer() {
+    wx.navigateTo({ url: "/pages/role-transfer/role-transfer" });
+  },
+
+  onAbilityChange(evt) {
+    this.setData({ abilityCurrent: evt.detail.current || 0 });
+  },
+
+  tapAbilitySlide(evt) {
+    const type = evt.currentTarget.dataset.type || "";
+    if (type === "role") {
+      this.goRoleTransfer();
+      return;
+    }
+    if (type === "digital") {
+      this.goDigital();
+      return;
+    }
+    this.goFeature({
+      currentTarget: {
+        dataset: {
+          prompt: "打开更多 AI 员工能力，并根据我的目标推荐下一步。"
+        }
+      }
+    });
   },
 
   goAvatarTemplates() {

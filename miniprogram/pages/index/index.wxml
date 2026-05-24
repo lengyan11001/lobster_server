@@ -54,16 +54,34 @@
     </button>
   </view>
 
-  <view class="wide-card" data-prompt="帮我制作一条短剧广告：先给出爆款脚本，再规划画面和视频生成方案。" bindtap="goFeature">
-    <view class="wide-icon">AD</view>
-    <view class="wide-copy">
-      <view class="wide-title-row">
-        <text class="wide-title">短剧广告制作</text>
-        <text class="new-badge">NEW</text>
-      </view>
-      <text class="wide-sub">AI拍电影做广告，一键生成大片</text>
+  <view class="ability-carousel">
+    <swiper
+      class="ability-swiper"
+      autoplay="{{true}}"
+      circular="{{true}}"
+      interval="3200"
+      duration="450"
+      current="{{abilityCurrent}}"
+      bindchange="onAbilityChange"
+    >
+      <swiper-item wx:for="{{abilitySlides}}" wx:key="type" class="ability-swiper-item">
+        <view class="ability-slide ability-slide-{{item.type}}" data-type="{{item.type}}" bindtap="tapAbilitySlide">
+          <view class="ability-slide-icon">{{item.icon}}</view>
+          <view class="ability-slide-copy">
+            <text>{{item.title}}</text>
+            <text>{{item.sub}}</text>
+          </view>
+          <text class="ability-slide-arrow">›</text>
+        </view>
+      </swiper-item>
+    </swiper>
+    <view class="ability-dots">
+      <view
+        wx:for="{{abilitySlides}}"
+        wx:key="type"
+        class="ability-dot {{abilityCurrent === index ? 'active' : ''}}"
+      ></view>
     </view>
-    <text class="wide-arrow">></text>
   </view>
 
   <view class="task-card">

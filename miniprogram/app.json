@@ -3,6 +3,7 @@
   "pages": [
     "pages/index/index",
     "pages/assistant/assistant",
+    "pages/role-transfer/role-transfer",
     "pages/digital/digital",
     "pages/avatar-templates/avatar-templates",
     "pages/downloads/downloads",
