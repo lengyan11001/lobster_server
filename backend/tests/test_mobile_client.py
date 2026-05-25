@@ -15,6 +15,13 @@ NEW_PHONE_EMAIL = f"{NEW_PHONE}@sms.lobster.local"
 DEVICE_ID = "mp_test_device_001"
 
 
+def _put_mobile_sms_code(db_session_factory, phone: str, code: str = "123456") -> None:
+    from backend.app.api.auth import SMS_CODE_TTL_SEC, _create_auth_challenge
+
+    with db_session_factory() as s:
+        _create_auth_challenge(s, kind="sms", target=phone, answer=code, ttl_seconds=SMS_CODE_TTL_SEC)
+
+
 @pytest.fixture
 def mobile_users(db_session):
     from backend.app.models import User
@@ -104,7 +111,7 @@ def test_send_mobile_sms_allows_new_phone(mobile_client, monkeypatch):
     from backend.app.api import mobile_client as mobile_module
 
     sent: list[str] = []
-    monkeypatch.setattr(mobile_module, "_send_mobile_sms_code", lambda mobile: sent.append(mobile))
+    monkeypatch.setattr(mobile_module, "_send_mobile_sms_code", lambda db, mobile: sent.append(mobile))
 
     res = mobile_client.post("/api/mobile/sms/send", json={"phone": NEW_PHONE})
 
@@ -146,11 +153,8 @@ def test_bind_mobile_device_merges_wechat_session_into_phone_user(mobile_client,
 
 
 def test_bind_mobile_device_with_sms_code(mobile_client, db_session_factory, mobile_users):
-    from backend.app.api import mobile_client as mobile_module
-
     phone_user, _ = mobile_users
-    with mobile_module._MOBILE_SMS_LOCK:
-        mobile_module._MOBILE_SMS_CODE_STORE[PHONE] = ("123456", 9999999999.0)
+    _put_mobile_sms_code(db_session_factory, PHONE, "123456")
 
     res = mobile_client.post(
         "/api/mobile/devices/bind",
@@ -178,11 +182,8 @@ def test_bind_mobile_device_with_sms_code(mobile_client, db_session_factory, mob
 
 
 def test_bind_mobile_device_with_sms_code_creates_new_phone_user(mobile_client, db_session_factory, mobile_users):
-    from backend.app.api import mobile_client as mobile_module
-
     _, temp_user = mobile_users
-    with mobile_module._MOBILE_SMS_LOCK:
-        mobile_module._MOBILE_SMS_CODE_STORE[NEW_PHONE] = ("654321", 9999999999.0)
+    _put_mobile_sms_code(db_session_factory, NEW_PHONE, "654321")
 
     res = mobile_client.post(
         "/api/mobile/devices/bind",
@@ -216,6 +217,38 @@ def test_bind_mobile_device_with_sms_code_creates_new_phone_user(mobile_client, 
         assert binding.user_id == created.id
         assert binding.phone == NEW_PHONE
         assert {row.package_id for row in unlocks} >= {"sutui_mcp", "douyin_publish"}
+
+
+def test_wrong_mobile_sms_code_does_not_consume_challenge(mobile_client, db_session_factory, mobile_users):
+    phone_user, _ = mobile_users
+    _put_mobile_sms_code(db_session_factory, PHONE, "123456")
+
+    bad = mobile_client.post(
+        "/api/mobile/devices/bind",
+        json={
+            "phone": PHONE,
+            "sms_code": "000000",
+            "device_id": DEVICE_ID,
+            "platform": "wechat_miniprogram",
+        },
+    )
+
+    assert bad.status_code == 400
+
+    ok = mobile_client.post(
+        "/api/mobile/devices/bind",
+        json={
+            "phone": PHONE,
+            "sms_code": "123456",
+            "device_id": DEVICE_ID,
+            "platform": "wechat_miniprogram",
+        },
+    )
+
+    assert ok.status_code == 200
+    data = ok.json()
+    assert data["user_id"] == phone_user.id
+    assert data["phone_verified"] is True
 
 
 def test_downloads_require_bound_device(mobile_client):
@@ -387,7 +420,6 @@ def test_wechat_login_binds_share_agent_for_unclaimed_user(mobile_client, db_ses
 
 
 def test_phone_bind_binds_share_agent_without_overwriting_existing_parent(mobile_client, db_session_factory, mobile_users):
-    from backend.app.api import mobile_client as mobile_module
     from backend.app.models import User
 
     phone_user, _ = mobile_users
@@ -420,8 +452,7 @@ def test_phone_bind_binds_share_agent_without_overwriting_existing_parent(mobile
         old_agent_id = old_agent.id
         new_agent_id = new_agent.id
 
-    with mobile_module._MOBILE_SMS_LOCK:
-        mobile_module._MOBILE_SMS_CODE_STORE[PHONE] = ("123456", 9999999999.0)
+    _put_mobile_sms_code(db_session_factory, PHONE, "123456")
 
     res = mobile_client.post(
         "/api/mobile/devices/bind",

@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import re
-import random
 import secrets
-import threading
-import time
 import logging
 from datetime import datetime
 from decimal import Decimal
@@ -31,7 +28,8 @@ from ..models import (
 from ..core.config import settings
 from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
 from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
-from .auth import REGISTER_INITIAL_CREDITS, access_token_claims, create_access_token, get_current_user, get_password_hash
+from .auth import REGISTER_INITIAL_CREDITS, SMS_CODE_TTL_SEC, access_token_claims, create_access_token, get_current_user, get_password_hash
+from .auth import _check_and_update_sms_send_limit, _clear_sms_code, _create_auth_challenge, _verify_sms_challenge
 from .auth import _get_wechat_access_token
 from .installation_slots import parse_installation_id_strict
 
@@ -42,13 +40,6 @@ _PHONE_EMAIL_SUFFIX = "@sms.lobster.local"
 _CN_MOBILE_RE = re.compile(r"^1[3-9]\d{9}$")
 _MEDIA_EXTS = {".mp4", ".webm", ".mov", ".m4v", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _URL_RE = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
-_MOBILE_SMS_LOCK = threading.Lock()
-_MOBILE_SMS_CODE_STORE: dict[str, tuple[str, float]] = {}
-_MOBILE_SMS_SEND_AT: dict[str, float] = {}
-_MOBILE_SMS_SEND_HOUR_COUNT: dict[str, tuple[float, int]] = {}
-_MOBILE_SMS_CODE_TTL_SEC = 600
-_MOBILE_SMS_SEND_COOLDOWN_SEC = 60
-_MOBILE_SMS_MAX_PER_HOUR = 10
 _DEFAULT_PHONE_UNLOCK_PACKAGES = (
     "sutui_mcp",
     "douyin_publish",
@@ -255,7 +246,7 @@ def _exchange_wechat_phone_code(phone_code: str) -> str:
     return _normalize_cn_mobile(str(raw_phone))
 
 
-def _resolve_bind_phone(body: MobileBindRequest) -> tuple[str, bool]:
+def _resolve_bind_phone(body: MobileBindRequest, db: Session) -> tuple[str, bool]:
     plain = (body.phone or "").strip()
     verified = False
     if (body.phone_code or "").strip():
@@ -269,16 +260,11 @@ def _resolve_bind_phone(body: MobileBindRequest) -> tuple[str, bool]:
         if not plain:
             raise HTTPException(status_code=400, detail="请填写手机号")
         mobile = _normalize_cn_mobile(plain)
-        _verify_mobile_sms_code(mobile, body.sms_code or "")
+        _verify_mobile_sms_code(db, mobile, body.sms_code or "")
         return mobile, True
     if not plain:
         raise HTTPException(status_code=400, detail="请提供手机号或微信手机号授权 code")
     return _normalize_cn_mobile(plain), verified
-
-
-def _purge_mobile_sms_stale_locked(now_m: float) -> None:
-    for key in [x for x, v in _MOBILE_SMS_CODE_STORE.items() if v[1] <= now_m]:
-        del _MOBILE_SMS_CODE_STORE[key]
 
 
 def _sms_channel_ready() -> tuple[bool, bool]:
@@ -289,30 +275,13 @@ def _sms_channel_ready() -> tuple[bool, bool]:
     return bool(aliyun_ak and aliyun_sk), bool(ihuyi_acc and ihuyi_pwd)
 
 
-def _send_mobile_sms_code(mobile: str) -> None:
+def _send_mobile_sms_code(db: Session, mobile: str) -> None:
     use_aliyun, use_ihuyi = _sms_channel_ready()
     if not use_aliyun and not use_ihuyi:
         raise HTTPException(status_code=503, detail="未配置短信通道")
-    now_m = time.monotonic()
-    with _MOBILE_SMS_LOCK:
-        _purge_mobile_sms_stale_locked(now_m)
-        last = _MOBILE_SMS_SEND_AT.get(mobile, 0.0)
-        if now_m - last < _MOBILE_SMS_SEND_COOLDOWN_SEC:
-            raise HTTPException(status_code=429, detail="发送过于频繁，请 1 分钟后再试")
-        win = _MOBILE_SMS_SEND_HOUR_COUNT.get(mobile)
-        if win:
-            wstart, cnt = win
-            if now_m - wstart > 3600:
-                _MOBILE_SMS_SEND_HOUR_COUNT[mobile] = (now_m, 1)
-            elif cnt >= _MOBILE_SMS_MAX_PER_HOUR:
-                raise HTTPException(status_code=429, detail="该号码本小时发送次数过多，请稍后再试")
-            else:
-                _MOBILE_SMS_SEND_HOUR_COUNT[mobile] = (wstart, cnt + 1)
-        else:
-            _MOBILE_SMS_SEND_HOUR_COUNT[mobile] = (now_m, 1)
-        code = f"{random.randint(0, 999999):06d}"
-        _MOBILE_SMS_CODE_STORE[mobile] = (code, now_m + _MOBILE_SMS_CODE_TTL_SEC)
-        _MOBILE_SMS_SEND_AT[mobile] = now_m
+    _check_and_update_sms_send_limit(db, mobile)
+    code = f"{secrets.randbelow(1000000):06d}"
+    _create_auth_challenge(db, kind="sms", target=mobile, answer=code, ttl_seconds=SMS_CODE_TTL_SEC)
     try:
         if use_aliyun:
             _aliyun_send(
@@ -331,22 +300,16 @@ def _send_mobile_sms_code(mobile: str) -> None:
                 code=code,
             )
     except RuntimeError as exc:
-        with _MOBILE_SMS_LOCK:
-            _MOBILE_SMS_CODE_STORE.pop(mobile, None)
+        _clear_sms_code(db, mobile)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-def _verify_mobile_sms_code(mobile: str, code: str) -> None:
+def _verify_mobile_sms_code(db: Session, mobile: str, code: str) -> None:
     code_in = (code or "").strip()
     if not code_in or len(code_in) > 8:
         raise HTTPException(status_code=400, detail="短信验证码无效")
-    now_m = time.monotonic()
-    with _MOBILE_SMS_LOCK:
-        _purge_mobile_sms_stale_locked(now_m)
-        row = _MOBILE_SMS_CODE_STORE.get(mobile)
-        if not row or row[1] <= now_m or row[0] != code_in:
-            raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
-        del _MOBILE_SMS_CODE_STORE[mobile]
+    if not _verify_sms_challenge(db, mobile, code_in):
+        raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
 
 
 def _media_type_from_url(url: str, fallback: str = "") -> str:
@@ -525,7 +488,7 @@ def send_mobile_bind_sms(
     is_wechat_session = bool(current_openid) or str(current_user.email or "").endswith("@wechat.lobster.local")
     if user and user.id != current_user.id and not is_wechat_session:
         raise HTTPException(status_code=403, detail="当前登录账号与手机号不一致，请先用该手机号登录")
-    _send_mobile_sms_code(mobile)
+    _send_mobile_sms_code(db, mobile)
     return {"ok": True}
 
 
@@ -636,7 +599,7 @@ def bind_mobile_device(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    mobile, phone_verified = _resolve_bind_phone(body)
+    mobile, phone_verified = _resolve_bind_phone(body, db)
     phone_user, created_phone_user = _get_or_create_phone_user(db, mobile)
     ref_bound = _apply_ref_agent_binding(db, phone_user, body, "phone_bind")
 
