@@ -5,6 +5,7 @@ import random
 import secrets
 import threading
 import time
+import logging
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -35,6 +36,7 @@ from .auth import _get_wechat_access_token
 from .installation_slots import parse_installation_id_strict
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _PHONE_EMAIL_SUFFIX = "@sms.lobster.local"
 _CN_MOBILE_RE = re.compile(r"^1[3-9]\d{9}$")
@@ -63,6 +65,9 @@ class MobileBindRequest(BaseModel):
     platform: str = Field("wechat_miniprogram", max_length=32)
     openid: Optional[str] = Field(None, max_length=128)
     display_name: Optional[str] = Field(None, max_length=128)
+    ref_agent_user_id: Optional[int] = None
+    invite_agent_user_id: Optional[int] = None
+    parent_user_id: Optional[int] = None
 
 
 class MobileSmsSendRequest(BaseModel):
@@ -74,6 +79,15 @@ class MobileWechatLoginRequest(BaseModel):
     device_id: Optional[str] = Field(None, min_length=8, max_length=128)
     platform: str = Field("wechat_miniprogram", max_length=32)
     display_name: Optional[str] = Field(None, max_length=128)
+    ref_agent_user_id: Optional[int] = None
+    invite_agent_user_id: Optional[int] = None
+    parent_user_id: Optional[int] = None
+
+
+class MobileShareBindRequest(BaseModel):
+    ref_agent_user_id: Optional[int] = None
+    invite_agent_user_id: Optional[int] = None
+    parent_user_id: Optional[int] = None
 
 
 class MobileHeartbeatRequest(BaseModel):
@@ -125,6 +139,66 @@ def _get_or_create_phone_user(db: Session, mobile: str) -> tuple[User, bool]:
         db.add(SkillUnlock(user_id=user.id, package_id=pkg_id))
     db.flush()
     return user, True
+
+
+def _candidate_ref_agent_user_id(body: Any) -> Optional[int]:
+    for key in ("ref_agent_user_id", "invite_agent_user_id", "parent_user_id"):
+        try:
+            value = getattr(body, key, None)
+        except Exception:
+            value = None
+        try:
+            ref_id = int(value or 0)
+        except Exception:
+            ref_id = 0
+        if ref_id > 0:
+            return ref_id
+    return None
+
+
+def _agent_level_for_bind(user: Optional[User]) -> int:
+    if not user or not getattr(user, "is_agent", False):
+        return 0
+    try:
+        level = int(getattr(user, "agent_level", 0) or 0)
+    except Exception:
+        level = 0
+    return level if level in (1, 2) else 1
+
+
+def _apply_ref_agent_binding(db: Session, user: User, body: Any, source: str) -> bool:
+    """Bind a new/unclaimed mobile user to the sharing agent.
+
+    The share parameter is only a hint.  Server-side rules stay authoritative:
+    the inviter must be a level-1 or level-2 agent, users never bind to
+    themselves, and an existing parent_user_id is not overwritten.
+    """
+    ref_id = _candidate_ref_agent_user_id(body)
+    if not ref_id or not user or not getattr(user, "id", None):
+        return False
+    if int(user.id) == int(ref_id):
+        return False
+    if getattr(user, "parent_user_id", None):
+        return False
+    agent = db.query(User).filter(User.id == int(ref_id)).first()
+    if _agent_level_for_bind(agent) not in (1, 2):
+        logger.info(
+            "[mobile/share-bind] ignored non-agent ref source=%s user_id=%s ref_id=%s",
+            source,
+            user.id,
+            ref_id,
+        )
+        return False
+    user.parent_user_id = int(agent.id)
+    db.add(user)
+    logger.info(
+        "[mobile/share-bind] bound source=%s user_id=%s parent_user_id=%s parent_level=%s",
+        source,
+        user.id,
+        agent.id,
+        _agent_level_for_bind(agent),
+    )
+    return True
 
 
 def _exchange_wechat_login_code(js_code: str) -> str:
@@ -455,6 +529,27 @@ def send_mobile_bind_sms(
     return {"ok": True}
 
 
+@router.post("/api/mobile/share-bind", summary="手机端：按分享来源绑定代理关系")
+def mobile_share_bind(
+    body: MobileShareBindRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="用户不存在")
+    ref_bound = _apply_ref_agent_binding(db, user, body, "share_bind")
+    if ref_bound:
+        db.commit()
+        db.refresh(user)
+    return {
+        "ok": True,
+        "user_id": user.id,
+        "parent_user_id": user.parent_user_id,
+        "ref_agent_bound": ref_bound,
+    }
+
+
 @router.post("/api/mobile/wechat-login", summary="手机端：小程序 wx.login 登录")
 def mobile_wechat_login(
     body: MobileWechatLoginRequest,
@@ -479,6 +574,10 @@ def mobile_wechat_login(
         db.commit()
         db.refresh(user)
         created_temp_user = True
+    ref_bound = _apply_ref_agent_binding(db, user, body, "wechat_login")
+    if ref_bound:
+        db.commit()
+        db.refresh(user)
     phone = _phone_from_user_email(user.email)
     token = create_access_token(data=access_token_claims(user))
     if phone and body.device_id:
@@ -523,6 +622,8 @@ def mobile_wechat_login(
         "phone_bound": bool(phone),
         "phone": phone,
         "user_id": user.id,
+        "parent_user_id": user.parent_user_id,
+        "ref_agent_bound": ref_bound,
         "needs_phone_bind": not bool(phone),
         "created_temp_user": created_temp_user,
         "message": "已绑定手机号账号" if phone else "请授权手机号以登录或创建账号",
@@ -537,6 +638,7 @@ def bind_mobile_device(
 ):
     mobile, phone_verified = _resolve_bind_phone(body)
     phone_user, created_phone_user = _get_or_create_phone_user(db, mobile)
+    ref_bound = _apply_ref_agent_binding(db, phone_user, body, "phone_bind")
 
     bind_user = phone_user
     current_openid = (getattr(current_user, "wechat_openid", None) or "").strip()
@@ -605,6 +707,8 @@ def bind_mobile_device(
         "access_token": access_token,
         "token_type": "bearer",
         "created_user": created_phone_user,
+        "parent_user_id": bind_user.parent_user_id,
+        "ref_agent_bound": ref_bound,
     }
 
 

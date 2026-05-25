@@ -348,6 +348,129 @@ def test_wechat_login_creates_temporary_user(mobile_client):
     assert data["needs_phone_bind"] is True
 
 
+def test_wechat_login_binds_share_agent_for_unclaimed_user(mobile_client, db_session_factory):
+    from backend.app.models import User
+
+    with db_session_factory() as s:
+        agent = User(
+            email="13800138099@sms.lobster.local",
+            hashed_password="x",
+            credits=Decimal("0"),
+            role="user",
+            preferred_model="sutui",
+            is_agent=True,
+            agent_level=1,
+            created_at=datetime.utcnow(),
+        )
+        s.add(agent)
+        s.commit()
+        agent_id = agent.id
+
+    res = mobile_client.post(
+        "/api/mobile/wechat-login",
+        json={
+            "code": "wx-login-code",
+            "device_id": DEVICE_ID,
+            "platform": "wechat_miniprogram",
+            "ref_agent_user_id": agent_id,
+        },
+    )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["parent_user_id"] == agent_id
+    assert data["ref_agent_bound"] is True
+
+    with db_session_factory() as s:
+        created = s.query(User).filter(User.wechat_openid == "openid_login").first()
+        assert created.parent_user_id == agent_id
+
+
+def test_phone_bind_binds_share_agent_without_overwriting_existing_parent(mobile_client, db_session_factory, mobile_users):
+    from backend.app.api import mobile_client as mobile_module
+    from backend.app.models import User
+
+    phone_user, _ = mobile_users
+    with db_session_factory() as s:
+        old_agent = User(
+            email="13800138098@sms.lobster.local",
+            hashed_password="x",
+            credits=Decimal("0"),
+            role="user",
+            preferred_model="sutui",
+            is_agent=True,
+            agent_level=1,
+            created_at=datetime.utcnow(),
+        )
+        new_agent = User(
+            email="13800138097@sms.lobster.local",
+            hashed_password="x",
+            credits=Decimal("0"),
+            role="user",
+            preferred_model="sutui",
+            is_agent=True,
+            agent_level=1,
+            created_at=datetime.utcnow(),
+        )
+        s.add_all([old_agent, new_agent])
+        s.flush()
+        user = s.query(User).filter(User.id == phone_user.id).first()
+        user.parent_user_id = old_agent.id
+        s.commit()
+        old_agent_id = old_agent.id
+        new_agent_id = new_agent.id
+
+    with mobile_module._MOBILE_SMS_LOCK:
+        mobile_module._MOBILE_SMS_CODE_STORE[PHONE] = ("123456", 9999999999.0)
+
+    res = mobile_client.post(
+        "/api/mobile/devices/bind",
+        json={
+            "phone": PHONE,
+            "sms_code": "123456",
+            "device_id": DEVICE_ID,
+            "platform": "wechat_miniprogram",
+            "ref_agent_user_id": new_agent_id,
+        },
+    )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["parent_user_id"] == old_agent_id
+    assert data["ref_agent_bound"] is False
+
+
+def test_share_bind_endpoint_binds_logged_in_user(mobile_client, db_session_factory, mobile_users):
+    from backend.app.models import User
+
+    _, temp_user = mobile_users
+    with db_session_factory() as s:
+        agent = User(
+            email="13800138096@sms.lobster.local",
+            hashed_password="x",
+            credits=Decimal("0"),
+            role="user",
+            preferred_model="sutui",
+            is_agent=True,
+            agent_level=2,
+            created_at=datetime.utcnow(),
+        )
+        s.add(agent)
+        s.commit()
+        agent_id = agent.id
+
+    res = mobile_client.post("/api/mobile/share-bind", json={"ref_agent_user_id": agent_id})
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["parent_user_id"] == agent_id
+    assert data["ref_agent_bound"] is True
+
+    with db_session_factory() as s:
+        user = s.query(User).filter(User.id == temp_user.id).first()
+        assert user.parent_user_id == agent_id
+
+
 def test_wechat_helpers_parse_text_plain_json():
     import httpx
 

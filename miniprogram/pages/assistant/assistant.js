@@ -530,7 +530,8 @@ Page({
             sms_code: code,
             device_id: app.globalData.deviceId,
             platform: "wechat_miniprogram",
-            display_name: "微信小程序"
+            display_name: "微信小程序",
+            ...app.refAgentPayload()
           }
         })
         .then((data) => {
