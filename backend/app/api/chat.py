@@ -107,8 +107,8 @@ def _build_lobster_main_system_prompt(edition: str, has_tools: bool) -> str:
         comfly_models = _get_comfly_image_models()
         if comfly_models:
             default_image_model = (
-                getattr(settings, "lobster_default_image_generate_model", None) or "gpt-image2"
-            ).strip() or "gpt-image2"
+                getattr(settings, "lobster_default_image_generate_model", None) or "openai/gpt-image-2"
+            ).strip() or "openai/gpt-image-2"
             body += (
                 f"【图片模型补充】用户未指定模型时默认使用 {default_image_model}。"
                 "可用图片模型: "

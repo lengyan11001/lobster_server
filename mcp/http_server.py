@@ -47,8 +47,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_IMAGE_MODEL = (
     getattr(settings, "lobster_default_image_generate_model", None)
     or os.getenv("LOBSTER_DEFAULT_IMAGE_GENERATE_MODEL")
-    or "gpt-image2"
-).strip() or "gpt-image2"
+    or "openai/gpt-image-2"
+).strip() or "openai/gpt-image-2"
 _DEFAULT_VIDEO_MODEL = (
     getattr(settings, "lobster_default_video_generate_model", None)
     or os.getenv("LOBSTER_DEFAULT_VIDEO_GENERATE_MODEL")
@@ -1558,9 +1558,10 @@ def _clamp_num_images_for_image_model(num: int, model: str) -> int:
 
 
 _IMAGE_MODEL_ALIASES: Dict[str, str] = {
-    "gpt-image": "gpt-image-2",
-    "gpt-image2": "gpt-image-2",
-    "gptimage2": "gpt-image-2",
+    "gpt-image": "openai/gpt-image-2",
+    "gpt-image2": "openai/gpt-image-2",
+    "gpt-image-2": "openai/gpt-image-2",
+    "gptimage2": "openai/gpt-image-2",
     "flux-2/flash": "fal-ai/flux-2/flash",
     "flux2/flash": "fal-ai/flux-2/flash",
     "flux2-flash": "fal-ai/flux-2/flash",

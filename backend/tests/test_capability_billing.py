@@ -253,6 +253,80 @@ def test_sutui_generate_pre_deduct_uses_user_multiplier(db_session, db_session_f
         assert row.meta["pre_estimated"] == 200.0
 
 
+def test_openai_gpt_image_2_pre_deduct_uses_fixed_user_price(db_session, db_session_factory, monkeypatch):
+    from backend.app.models import CapabilityConfig, CreditLedger, User
+    from backend.app.services import sutui_billing_gate
+
+    user = User(
+        email="gpt-image2-pre-billing@test.local",
+        hashed_password="x",
+        credits=Decimal("500.0000"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="bihuo",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(
+        CapabilityConfig(
+            capability_id="image.generate",
+            description="image",
+            upstream="sutui",
+            upstream_tool="generate",
+            unit_credits=0,
+            enabled=True,
+        )
+    )
+    db_session.commit()
+    db_session.refresh(user)
+
+    def _unexpected_pricing_call(*args, **kwargs):
+        raise AssertionError("openai/gpt-image-2 fixed price should not use upstream pricing lookup")
+
+    monkeypatch.setattr(
+        sutui_billing_gate,
+        "assert_pricing_pre_deduct_allows_upstream_or_http",
+        _unexpected_pricing_call,
+    )
+
+    client = _client(db_session_factory, user.id, monkeypatch, multiplier="2")
+    dry_run = client.post(
+        "/capabilities/pre-deduct",
+        headers={"X-Installation-Id": "test-install-1", "X-Lobster-Mcp-Billing": "test-billing-key"},
+        json={
+            "capability_id": "image.generate",
+            "model": "openai/gpt-image-2",
+            "params": {"prompt": "test image", "quality": "high", "image_size": "4K"},
+            "dry_run": True,
+        },
+    )
+    assert dry_run.status_code == 200
+    assert dry_run.json()["credits_charged"] == 60.0
+
+    resp = client.post(
+        "/capabilities/pre-deduct",
+        headers={"X-Installation-Id": "test-install-1", "X-Lobster-Mcp-Billing": "test-billing-key"},
+        json={
+            "capability_id": "image.generate",
+            "model": "openai/gpt-image-2",
+            "params": {"prompt": "test image", "quality": "high", "image_size": "4K"},
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["credits_charged"] == 60.0
+
+    with db_session_factory() as s:
+        u = s.query(User).filter(User.id == user.id).first()
+        assert u.credits == Decimal("440.0000")
+        row = s.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
+        assert row.entry_type == "pre_deduct"
+        assert row.delta == Decimal("-60.0000")
+        assert row.meta["price_multiplier"] == 1.0
+        assert row.meta["pre_estimated"] == 60.0
+        assert row.meta["billing_rule"] == "gpt_image_2_flat_60"
+
+
 def test_grok_imagine_video_pre_deduct_uses_fixed_user_price(db_session, db_session_factory, monkeypatch):
     from backend.app.models import CapabilityConfig, CreditLedger, User
     from backend.app.services import sutui_billing_gate

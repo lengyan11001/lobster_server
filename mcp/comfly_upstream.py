@@ -489,6 +489,7 @@ _SUTUI_MODEL_ID_PREFIXES = (
     "wan/",
     "xai/",
     "ark/",
+    "openai/",
     "openrouter/",
     "sora2pub/",
 )

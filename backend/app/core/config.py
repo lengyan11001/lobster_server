@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     """是否允许 online 用户自配模型 Key；False 时统一走速推服务端模型（仅 online 使用）"""
     sutui_online_model_self_config: bool = True
     """下发给 lobster_online 的默认图片生成模型；客户端拉取失败时才使用本地兜底。"""
-    lobster_default_image_generate_model: str = "gpt-image2"
+    lobster_default_image_generate_model: str = "openai/gpt-image-2"
     """下发给 lobster_online 的默认视频生成模型；客户端拉取失败时才使用本地兜底。"""
     lobster_default_video_generate_model: str = "xai/grok-imagine-video/text-to-video"
     """Server-side Sutui chat model used by the isolated OpenClaw Browser/Computer workspace alias."""

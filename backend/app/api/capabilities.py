@@ -34,6 +34,16 @@ _PRICING_JSON_PATH = Path(__file__).resolve().parent.parent.parent.parent / "com
 _HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
 _HIFLY_TTS_UNIT_CREDITS = 10
 _HIFLY_TTS_CHARS_PER_SECOND = 4
+_IMAGE_GENERATE_FIXED_PRICE_CREDITS = 60
+_IMAGE_GENERATE_FIXED_PRICE_MODELS = frozenset(
+    {
+        "openai/gpt-image-2",
+        "gpt-image2",
+        "gpt-image-2",
+        "gpt-image",
+        "gptimage2",
+    }
+)
 _GROK_IMAGINE_VIDEO_FIXED_PRICE_CREDITS = 320
 _GROK_IMAGINE_VIDEO_MODELS = frozenset(
     {
@@ -92,9 +102,20 @@ def _fixed_generate_user_price(
     model: Optional[str],
     params: Optional[dict],
 ) -> Optional[tuple[Any, dict[str, Any]]]:
+    mid = _normalize_model_id(model)
+    if capability_id == "image.generate" and mid in _IMAGE_GENERATE_FIXED_PRICE_MODELS:
+        meta: dict[str, Any] = {
+            "billing_rule": "gpt_image_2_flat_60",
+            "fixed_price_credits": _IMAGE_GENERATE_FIXED_PRICE_CREDITS,
+        }
+        if isinstance(params, dict):
+            for key in ("image_size", "size", "resolution", "quality", "num_images", "n"):
+                if key in params:
+                    meta[f"requested_{key}"] = params.get(key)
+        return quantize_credits(_IMAGE_GENERATE_FIXED_PRICE_CREDITS), meta
     if capability_id != "video.generate":
         return None
-    if _normalize_model_id(model) not in _GROK_IMAGINE_VIDEO_MODELS:
+    if mid not in _GROK_IMAGINE_VIDEO_MODELS:
         return None
     meta: dict[str, Any] = {
         "billing_rule": "grok_imagine_video_flat_320",
@@ -966,8 +987,8 @@ def comfly_pricing():
     from pathlib import Path as _Path
     defaults = {
         "image_generate_model": (
-            getattr(settings, "lobster_default_image_generate_model", None) or "gpt-image2"
-        ).strip() or "gpt-image2",
+            getattr(settings, "lobster_default_image_generate_model", None) or "openai/gpt-image-2"
+        ).strip() or "openai/gpt-image-2",
         "video_generate_model": (
             getattr(settings, "lobster_default_video_generate_model", None) or "xai/grok-imagine-video/text-to-video"
         ).strip() or "xai/grok-imagine-video/text-to-video",

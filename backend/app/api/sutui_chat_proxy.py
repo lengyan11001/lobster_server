@@ -45,8 +45,8 @@ TRACE_HEADER = "X-Lobster-Chat-Trace-Id"
 CHAT_TURN_CHARGED_HEADER = "X-Lobster-Chat-Turn-Charged"
 CHAT_TURN_ID_HEADER = "X-Lobster-Chat-Turn-Id"
 _DEFAULT_IMAGE_GENERATE_MODEL_HINT = (
-    getattr(settings, "lobster_default_image_generate_model", None) or "gpt-image2"
-).strip() or "gpt-image2"
+    getattr(settings, "lobster_default_image_generate_model", None) or "openai/gpt-image-2"
+).strip() or "openai/gpt-image-2"
 _DEFAULT_VIDEO_GENERATE_MODEL_HINT = (
     getattr(settings, "lobster_default_video_generate_model", None) or "xai/grok-imagine-video/text-to-video"
 ).strip() or "xai/grok-imagine-video/text-to-video"
