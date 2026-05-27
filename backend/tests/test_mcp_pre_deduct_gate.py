@@ -6,6 +6,21 @@ import types
 import pytest
 
 
+class _Request:
+    headers = {"Authorization": "Bearer user-token"}
+
+
+class _JsonResponse:
+    def __init__(self, status_code: int, payload: dict):
+        self.status_code = status_code
+        self._payload = payload
+        self.content = b"{}"
+        self.text = "{}"
+
+    def json(self):
+        return self._payload
+
+
 @pytest.mark.asyncio
 async def test_sutui_generate_stops_when_pre_deduct_has_no_charge(monkeypatch):
     from mcp import http_server
@@ -84,6 +99,93 @@ async def test_sutui_generate_stops_when_pre_deduct_has_no_charge(monkeypatch):
     assert is_error is True
     assert content and content[0]["type"] == "text"
     assert upstream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_gpt_image_2_defaults_low_quality_and_uses_server_price(monkeypatch):
+    from mcp import http_server
+
+    monkeypatch.setattr(
+        http_server,
+        "_load_capability_catalog",
+        lambda: {
+            "image.generate": {
+                "upstream": "sutui",
+                "upstream_tool": "generate",
+                "enabled": True,
+            }
+        },
+    )
+    monkeypatch.setattr(http_server, "_load_upstream_urls", lambda: {"sutui": "https://sutui.test/mcp"})
+    monkeypatch.setattr(http_server, "resolve_brand_mark_for_request", lambda _auth: "bihuo")
+    monkeypatch.setattr(http_server, "sutui_token_ref_from_secret", lambda _secret: "token-ref")
+
+    async def _allowed(_token):
+        return None
+
+    async def _not_admin(_token):
+        return False
+
+    async def _server_token(*, brand_mark):
+        return "sutui-secret", brand_mark
+
+    upstream_payloads = []
+
+    async def _call_upstream(_url, _tool, payload, **_kwargs):
+        upstream_payloads.append(payload)
+        return {"task_id": "img-task-1", "price": 32}
+
+    record_bodies = []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *args, **kwargs):
+            body = kwargs.get("json") or {}
+            if str(url).endswith("/capabilities/pre-deduct"):
+                return _JsonResponse(200, {"credits_charged": 80, "billing_rule": "gpt_image_2_flat"})
+            if str(url).endswith("/capabilities/record-call"):
+                record_bodies.append(body)
+                return _JsonResponse(200, {"credits_charged": 80})
+            raise AssertionError(f"unexpected POST {url}")
+
+    monkeypatch.setattr(http_server, "_fetch_user_allowed_capability_ids", _allowed)
+    monkeypatch.setattr(http_server, "_fetch_is_skill_store_admin", _not_admin)
+    monkeypatch.setattr(http_server, "next_sutui_server_token_with_pool", _server_token)
+    monkeypatch.setattr(http_server, "_call_upstream_mcp_tool", _call_upstream)
+    monkeypatch.setattr(http_server.httpx, "AsyncClient", _FakeAsyncClient)
+
+    content, is_error = await http_server._call_tool(
+        "invoke_capability",
+        {
+            "capability_id": "image.generate",
+            "payload": {
+                "prompt": "test image",
+                "model": "openai/gpt-image-2",
+            },
+        },
+        token="user-token",
+        request=_Request(),
+    )
+
+    assert is_error is False
+    assert upstream_payloads[0]["quality"] == "low"
+    assert record_bodies
+    assert record_bodies[0]["credits_charged"] == 80.0
+    assert record_bodies[0]["credits_pre_deducted"] == 80.0
+    assert "credits_final" not in record_bodies[0]
+    assert content and content[0]["type"] == "text"
+    compact_text = content[0]["text"].replace(" ", "")
+    assert '"credits_used":80.0' in compact_text
+    assert '"price":80.0' in compact_text
+    assert '"upstream_credits_used":80.0' not in compact_text
 
 
 @pytest.mark.asyncio

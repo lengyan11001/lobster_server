@@ -955,7 +955,9 @@ _CHAT_TURN_CHARGE_CREDITS = _SUTUI_CHAT_MIN_CHARGE_CREDITS
 
 class ChatTurnPreDeductIn(BaseModel):
     turn_id: str = Field(..., min_length=1, max_length=128)
-    source: str = Field(default="chat", max_length=32)
+    # Older Online builds sent a 35-char task-status source. Accept it here and
+    # normalize to 32 chars in the ledger metadata below.
+    source: str = Field(default="chat", max_length=64)
     session_id: Optional[str] = Field(default=None, max_length=128)
     context_id: Optional[str] = Field(default=None, max_length=128)
     message_id: Optional[str] = Field(default=None, max_length=128)

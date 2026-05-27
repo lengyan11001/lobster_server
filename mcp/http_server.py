@@ -55,6 +55,16 @@ _DEFAULT_VIDEO_MODEL = (
     or "xai/grok-imagine-video/text-to-video"
 ).strip() or "xai/grok-imagine-video/text-to-video"
 _GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS = 10
+_GPT_IMAGE_2_MODEL_ID = "openai/gpt-image-2"
+_GPT_IMAGE_2_MODEL_IDS = frozenset(
+    {
+        _GPT_IMAGE_2_MODEL_ID,
+        "gpt-image",
+        "gpt-image2",
+        "gpt-image-2",
+        "gptimage2",
+    }
+)
 
 
 def _sanitize_for_json(obj: Any) -> Any:
@@ -1558,10 +1568,10 @@ def _clamp_num_images_for_image_model(num: int, model: str) -> int:
 
 
 _IMAGE_MODEL_ALIASES: Dict[str, str] = {
-    "gpt-image": "openai/gpt-image-2",
-    "gpt-image2": "openai/gpt-image-2",
-    "gpt-image-2": "openai/gpt-image-2",
-    "gptimage2": "openai/gpt-image-2",
+    "gpt-image": _GPT_IMAGE_2_MODEL_ID,
+    "gpt-image2": _GPT_IMAGE_2_MODEL_ID,
+    "gpt-image-2": _GPT_IMAGE_2_MODEL_ID,
+    "gptimage2": _GPT_IMAGE_2_MODEL_ID,
     "flux-2/flash": "fal-ai/flux-2/flash",
     "flux2/flash": "fal-ai/flux-2/flash",
     "flux2-flash": "fal-ai/flux-2/flash",
@@ -1569,6 +1579,27 @@ _IMAGE_MODEL_ALIASES: Dict[str, str] = {
     "flux2": "fal-ai/flux-2/flash",
     "flux-2": "fal-ai/flux-2/flash",
 }
+
+
+def _is_gpt_image_2_model(model: Any) -> bool:
+    mid = str(model or "").strip().lower()
+    return mid in _GPT_IMAGE_2_MODEL_IDS
+
+
+def _apply_user_price_to_result(obj: Any, credits: Decimal) -> Any:
+    """Keep user-facing MCP JSON from exposing upstream raw price as the user charge."""
+    if not isinstance(obj, dict):
+        return obj
+    out = dict(obj)
+    for key in ("price", "cost", "credits", "credits_used", "credits_charged", "credits_final"):
+        if key not in out:
+            continue
+        try:
+            float(out.get(key))
+        except (TypeError, ValueError):
+            continue
+        out[key] = float(credits)
+    return out
 
 _IMAGE_SOCIAL_PLATFORM_PATTERN = r"(?:抖音|小红书|今日头条|头条|快手|B站|b站|视频号|微博|TikTok|tiktok|YouTube|youtube|Instagram|instagram)"
 _IMAGE_PUBLISH_CONTEXT_RE = re.compile(
@@ -1656,6 +1687,8 @@ def _normalize_image_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
     if isinstance(num_images, (int, float)):
         num_images = max(1, int(num_images))
     num_images = _clamp_num_images_for_image_model(num_images, model)
+    if _is_gpt_image_2_model(model):
+        payload["quality"] = "low"
 
     # jimeng-4.0 / jimeng-4.5：prompt 必填，image_url 可选，n
     if "jimeng-" in model:
@@ -2598,6 +2631,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
 
             # ━━━ 用户积分：唯一业务入口（调用上游之前只在此处处理） ━━━
             pre_deduct_amount = quantize_credits(0)
+            pre_deduct_billing_rule = ""
             billing_idem = str(uuid.uuid4())
             _UNDERSTAND_CAPS = ("image.understand", "video.understand")
             _requires_positive_pre_deduct = (
@@ -2647,6 +2681,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                             if not isinstance(body_ok, dict):
                                 body_ok = {}
                             pre_deduct_amount = quantize_credits(body_ok.get("credits_charged") or 0)
+                            pre_deduct_billing_rule = str(body_ok.get("billing_rule") or "").strip()
                         except Exception as parse_e:
                             logger.warning(
                                 "[MCP] pre_deduct 200 响应非 JSON capability_id=%s err=%s body_prefix=%s",
@@ -3183,7 +3218,16 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 else:
                     actual_used = extract_upstream_reported_credits(upstream_resp)
 
+            authoritative_user_price = None
+            if (
+                pre_deduct_amount > 0
+                and pre_deduct_billing_rule
+                and not upstream_error
+            ):
+                authoritative_user_price = pre_deduct_amount
             settle_final = quantize_credits(0) if upstream_error else quantize_credits(actual_used)
+            if authoritative_user_price is not None:
+                settle_final = authoritative_user_price
 
             _UNDERSTAND_CAPS_SETTLE = ("image.understand", "video.understand")
             _settle_multiplier = 1.0
@@ -3201,9 +3245,16 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             if pre_deduct_amount > 0:
                 pre_applied_flag = True
                 bill_credits = pre_deduct_amount
-                actual_user_price = quantize_credits(float(actual_used) * _settle_multiplier) if actual_used > 0 else quantize_credits(0)
+                if authoritative_user_price is not None:
+                    actual_user_price = authoritative_user_price
+                elif actual_used > 0:
+                    actual_user_price = quantize_credits(float(actual_used) * _settle_multiplier)
+                else:
+                    actual_user_price = quantize_credits(0)
                 if upstream_error:
-                    cf_out: Optional[int] = 0
+                    cf_out: Optional[float] = 0
+                elif authoritative_user_price is not None:
+                    cf_out = None
                 elif actual_used <= 0:
                     cf_out = None
                     logger.info(
@@ -3230,11 +3281,10 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     sutui_token_ref=sutui_token_ref_for_billing if upstream_name == "sutui" else None,
                 )
             else:
-                bill_credits = (
-                    quantize_credits(float(actual_used) * _settle_multiplier)
-                    if actual_used > 0
-                    else quantize_credits(0)
-                )
+                if actual_used > 0:
+                    bill_credits = quantize_credits(float(actual_used) * _settle_multiplier)
+                else:
+                    bill_credits = quantize_credits(0)
                 pre_applied_flag = False
                 logger.info(
                     "[MCP] invoke_capability 计费 capability_id=%s pre_deduct=%s upstream_parsed=%s bill=%s pre_applied=%s",
@@ -3267,7 +3317,10 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         settle_final,
                     )
             logger.info("[MCP] invoke_capability 完成 capability_id=%s latency_ms=%s ok=%s", capability_id, latency_ms, not bool(upstream_error))
-            data: Dict[str, Any] = {"capability_id": capability_id, "result": _redact_sensitive(upstream_resp)}
+            result_for_user = _redact_sensitive(upstream_resp)
+            if authoritative_user_price is not None:
+                result_for_user = _apply_user_price_to_result(result_for_user, authoritative_user_price)
+            data: Dict[str, Any] = {"capability_id": capability_id, "result": result_for_user}
             user_credits_used = pre_deduct_amount if pre_deduct_amount > 0 else bill_credits
             if user_credits_used > 0:
                 data["credits_used"] = user_credits_used

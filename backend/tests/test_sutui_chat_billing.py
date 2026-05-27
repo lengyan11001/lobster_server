@@ -186,3 +186,31 @@ def test_charge_chat_turn_once_is_idempotent(db_session, monkeypatch):
     assert len(rows) == 1
     assert rows[0].entry_type == "chat_turn"
     assert rows[0].delta == Decimal("-10.0000")
+
+
+def test_charge_chat_turn_accepts_legacy_long_source(db_session, monkeypatch):
+    from backend.app.api import sutui_chat_proxy
+    from backend.app.core.config import settings
+    from backend.app.models import CreditLedger
+
+    monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
+    monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
+
+    user = _user("100.0000")
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    out = sutui_chat_proxy.charge_chat_turn_once(
+        db_session,
+        user,
+        "turn-long-source",
+        source="online_chat_stream_task_status_fast",
+    )
+
+    db_session.refresh(user)
+    assert out["charged"] is True
+    assert user.credits == Decimal("90.0000")
+    row = db_session.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
+    assert row.meta["source"] == "online_chat_stream_task_status_f"
+    assert len(row.meta["source"]) == 32
