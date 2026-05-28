@@ -149,6 +149,42 @@ class Asset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class CreativeGenerationJob(Base):
+    __tablename__ = "creative_generation_jobs"
+    __table_args__ = (
+        UniqueConstraint("job_id", name="uq_creative_generation_jobs_job_id"),
+        Index("ix_creative_jobs_user_feature_created", "user_id", "feature_type", "created_at"),
+        Index("ix_creative_jobs_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    job_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    feature_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    provider_task_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="running", nullable=False, index=True)
+    stage: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    progress: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    request_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    result_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    asset_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    saved_assets: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+
+
 class UserHiflyAvatarAsset(Base):
     __tablename__ = "user_hifly_avatar_assets"
     __table_args__ = (
