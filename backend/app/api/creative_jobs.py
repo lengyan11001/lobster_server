@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -202,7 +203,27 @@ async def upsert_creative_job(
         if body.provider is not None:
             row.provider = (body.provider or "").strip()[:64] or None
     _apply_payload(row, body)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        # Local workers may report queued/generating almost at the same time.
+        # Treat duplicate job_id as an upsert retry instead of surfacing a 500.
+        existing = (
+            db.query(CreativeGenerationJob)
+            .filter(CreativeGenerationJob.job_id == job_id)
+            .first()
+        )
+        if existing is None:
+            raise
+        if int(existing.user_id) != int(current_user.id):
+            raise HTTPException(status_code=409, detail="job_id already exists") from exc
+        existing.feature_type = _clean_feature(body.feature_type or existing.feature_type)
+        if body.provider is not None:
+            existing.provider = (body.provider or "").strip()[:64] or None
+        _apply_payload(existing, body)
+        db.commit()
+        row = existing
     db.refresh(row)
     return {"ok": True, "job": _job_dict(row, db)}
 
