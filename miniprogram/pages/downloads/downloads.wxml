@@ -99,6 +99,10 @@
           <text wx:elif="{{item.is_processing}}">视频结果：生成中</text>
           <text wx:elif="{{item.is_failed}}">视频结果：失败</text>
         </view>
+        <view wx:if="{{item.publish_draft}}" class="publish-row" catchtap="noop">
+          <text>{{item.publish_status_label}} · {{item.publish_target_label}}</text>
+          <button wx:if="{{item.can_publish}}" data-index="{{index}}" catchtap="publishMediaWork">{{item.publish_status === 'failed' ? '重新发布' : '发布'}}</button>
+        </view>
       </view>
     </view>
 
@@ -113,6 +117,10 @@
           </view>
           <text class="media-work-title">{{item.title}}</text>
           <text class="media-work-time">{{item.created_at_text || '--'}}</text>
+        </view>
+        <view wx:if="{{item.publish_draft}}" class="publish-row compact" catchtap="noop">
+          <text>{{item.publish_status_label}} · {{item.publish_target_label}}</text>
+          <button wx:if="{{item.can_publish}}" data-index="{{index}}" catchtap="publishMediaWork">{{item.publish_status === 'failed' ? '重新发布' : '发布'}}</button>
         </view>
       </view>
     </view>

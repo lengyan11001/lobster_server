@@ -56,6 +56,10 @@
             <button class="ghost-btn" data-msg="{{msgIndex}}" data-index="{{mediaIndex}}" bindtap="copyMedia">复制</button>
             <button class="primary-btn" data-msg="{{msgIndex}}" data-index="{{mediaIndex}}" bindtap="saveMedia">{{mediaItem.media_type === 'image' || mediaItem.media_type === 'video' ? '保存' : '复制链接'}}</button>
           </view>
+          <view wx:if="{{mediaItem.publish_draft}}" class="publish-row" catchtap="noop">
+            <text>{{mediaItem.publish_status_label}} · {{mediaItem.publish_target_label}}</text>
+            <button wx:if="{{mediaItem.can_publish}}" data-msg="{{msgIndex}}" data-index="{{mediaIndex}}" catchtap="publishMedia">{{mediaItem.publish_status === 'failed' ? '重新发布' : '发布'}}</button>
+          </view>
         </view>
       </view>
     </view>

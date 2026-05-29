@@ -399,6 +399,7 @@ def _add_url_item(
     created_at: Optional[datetime],
     context_id: str,
     fallback_media_type: str = "",
+    extra: Optional[Dict[str, Any]] = None,
 ) -> None:
     clean = _unwrap_media_proxy_url(url).strip().rstrip("，。；;)")
     if not clean.startswith(("http://", "https://")) or clean in seen:
@@ -417,6 +418,8 @@ def _add_url_item(
         "url": clean,
         "created_at": created_at.isoformat() if created_at else "",
     }
+    if extra:
+        item.update(extra)
     item.update(_mobile_media_urls(request, clean, filename))
     items.append(item)
 
@@ -775,6 +778,9 @@ def mobile_downloads(
         )
         for run in runs:
             before = len(items)
+            result_payload = run.result_payload if isinstance(run.result_payload, dict) else {}
+            draft = result_payload.get("publish_draft") if isinstance(result_payload.get("publish_draft"), dict) else None
+            publish_extra = {"run_id": run.id, "publish_draft": draft} if draft else {"run_id": run.id}
             for url in _walk_media_urls(run.result_payload):
                 _add_url_item(
                     request,
@@ -786,6 +792,7 @@ def mobile_downloads(
                     created_at=run.finished_at or run.created_at,
                     context_id=run.id,
                     fallback_media_type=wanted,
+                    extra=publish_extra,
                 )
             for url in _walk_media_urls(run.result_text or ""):
                 _add_url_item(
@@ -798,6 +805,7 @@ def mobile_downloads(
                     created_at=run.finished_at or run.created_at,
                     context_id=run.id,
                     fallback_media_type=wanted,
+                    extra=publish_extra,
                 )
             if wanted and wanted != "media":
                 items[:] = [x for x in items if x.get("media_type") == wanted or x.get("source") == "asset"]

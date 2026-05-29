@@ -164,8 +164,16 @@ function normalizeMediaItem(item) {
   const rawFilename = item.filename || filenameFromUrl(url);
   const title = rawTitle && !looksLikeStorageFilename(rawTitle) ? rawTitle : (mediaType === "video" ? "AI视频结果" : rawFilename);
   const filename = filenameFromUrl(url || title);
+  const draft = item.publish_draft && typeof item.publish_draft === "object" ? item.publish_draft : null;
+  const draftStatus = String((draft && draft.status) || "").toLowerCase();
   return Object.assign({}, item, {
     id: item.id || item.asset_id || url,
+    run_id: item.run_id || (draft && draft.run_id) || "",
+    publish_draft: draft,
+    publish_status: draftStatus,
+    publish_status_label: publishStatusLabel(draftStatus),
+    can_publish: !!draft && !["published", "pending", "processing"].includes(draftStatus),
+    publish_target_label: draft ? [draft.platform_name || draft.platform, draft.account_nickname || draft.account_id].filter(Boolean).join(" · ") : "",
     media_type: mediaType,
     work_type: mediaType,
     work_type_label: mediaType === "image" ? "AI图片" : mediaType === "video" ? "AI视频" : mediaType === "audio" ? "AI音频" : "AI素材",
@@ -181,6 +189,18 @@ function normalizeMediaItem(item) {
     created_at_text: formatTime(item.created_at),
     filename
   });
+}
+
+function publishStatusLabel(status) {
+  const s = String(status || "").toLowerCase();
+  return {
+    ready: "待发布",
+    draft: "待发布",
+    pending: "等待发布",
+    processing: "发布中",
+    published: "已发布",
+    failed: "发布失败"
+  }[s] || "";
 }
 
 function normalizeAssetItem(item) {
@@ -616,6 +636,29 @@ Page({
       return;
     }
     media.copyLink(url).then(() => wx.showToast({ title: "链接已复制", icon: "success" }));
+  },
+
+  publishMediaWork(evt) {
+    const index = Number(evt.currentTarget.dataset.index || 0);
+    const item = this.data.mediaWorks[index];
+    const runId = item && (item.run_id || (item.publish_draft && item.publish_draft.run_id));
+    if (!runId) {
+      wx.showToast({ title: "缺少发布记录", icon: "none" });
+      return;
+    }
+    wx.showLoading({ title: "提交发布", mask: true });
+    app
+      .request({
+        method: "POST",
+        url: `/api/scheduled-tasks/runs/${encodeURIComponent(runId)}/publish-request`,
+        data: {}
+      })
+      .then(() => {
+        wx.showToast({ title: "已提交发布", icon: "success" });
+        this.loadMediaWorks(this.data.mediaTab);
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => wx.hideLoading());
   },
 
   previewMediaWork(evt) {

@@ -120,3 +120,59 @@ def test_register_phone_new_user_creates_and_logs_in_without_password(db_session
         user = s.query(User).filter(User.email == f"{phone}@sms.lobster.local").first()
         assert user is not None
         assert user.hashed_password
+
+
+def test_set_password_then_phone_password_login(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import create_access_token, get_password_hash
+    from backend.app.models import User
+
+    user = User(
+        email=PHONE_EMAIL,
+        hashed_password=get_password_hash("phone-code-old"),
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    client = _client(db_session_factory, monkeypatch)
+    token = create_access_token(data={"sub": str(user.id)})
+
+    set_res = client.post(
+        "/auth/set-password",
+        json={"password": "abc123456"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert set_res.status_code == 200
+    assert set_res.json()["ok"] is True
+
+    login_res = client.post(
+        "/auth/login-phone-password",
+        json={"phone": PHONE, "password": "abc123456"},
+    )
+    assert login_res.status_code == 200
+    assert login_res.json()["access_token"]
+
+
+def test_phone_password_login_rejects_wrong_password(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import get_password_hash
+    from backend.app.models import User
+
+    user = User(
+        email=PHONE_EMAIL,
+        hashed_password=get_password_hash("right-pass"),
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    res = _client(db_session_factory, monkeypatch).post(
+        "/auth/login-phone-password",
+        json={"phone": PHONE, "password": "wrong-pass"},
+    )
+    assert res.status_code == 400

@@ -85,6 +85,7 @@ function extractUploadedMediaFromContent(content) {
 function extractMedia(replyText, events) {
   const urls = [];
   const seen = {};
+  let publishDraft = null;
   function add(url) {
     const clean = String(url || "").trim().replace(/[，。；;)]+$/, "");
     if (!/^https?:\/\//i.test(clean) || seen[clean]) return;
@@ -96,7 +97,13 @@ function extractMedia(replyText, events) {
     return url;
   });
   (events || []).forEach((ev) => {
-    const text = JSON.stringify((ev && ev.payload) || {});
+    const payload = (ev && ev.payload) || {};
+    if (payload.publish_draft && typeof payload.publish_draft === "object") {
+      publishDraft = Object.assign({}, payload.publish_draft, {
+        run_id: payload.publish_draft.run_id || payload.run_id || ""
+      });
+    }
+    const text = JSON.stringify(payload);
     text.replace(URL_RE, (url) => {
       add(url);
       return url;
@@ -110,12 +117,30 @@ function extractMedia(replyText, events) {
       title: filename,
       media_type: mediaType,
       url,
+      publish_draft: publishDraft,
+      run_id: publishDraft && publishDraft.run_id,
+      publish_status: publishDraft ? String(publishDraft.status || "").toLowerCase() : "",
+      publish_status_label: publishStatusLabel(publishDraft && publishDraft.status),
+      can_publish: !!publishDraft && !["published", "pending", "processing"].includes(String(publishDraft.status || "").toLowerCase()),
+      publish_target_label: publishDraft ? [publishDraft.platform_name || publishDraft.platform, publishDraft.account_nickname || publishDraft.account_id].filter(Boolean).join(" · ") : "",
       preview_url: directDownloadUrl(url) || mediaProxyUrl(url, "inline"),
       download_url: directDownloadUrl(url) || mediaProxyUrl(url, "attachment"),
       proxy_preview_url: mediaProxyUrl(url, "inline"),
       proxy_download_url: mediaProxyUrl(url, "attachment")
     };
   });
+}
+
+function publishStatusLabel(status) {
+  const s = String(status || "").toLowerCase();
+  return {
+    ready: "待发布",
+    draft: "待发布",
+    pending: "等待发布",
+    processing: "发布中",
+    published: "已发布",
+    failed: "发布失败"
+  }[s] || "";
 }
 
 function normalizeHistory(raw) {
@@ -627,6 +652,29 @@ Page({
         }
         media.copyLink(item.url).finally(() => wx.showToast({ title: "保存失败，已复制链接", icon: "none" }));
       });
+  },
+
+  publishMedia(evt) {
+    const msg = this.data.messages[Number(evt.currentTarget.dataset.msg || 0)];
+    const item = msg && msg.mediaItems[Number(evt.currentTarget.dataset.index || 0)];
+    const runId = item && (item.run_id || (item.publish_draft && item.publish_draft.run_id));
+    if (!runId) {
+      wx.showToast({ title: "缺少发布记录", icon: "none" });
+      return;
+    }
+    wx.showLoading({ title: "提交发布", mask: true });
+    app
+      .request({
+        method: "POST",
+        url: `/api/scheduled-tasks/runs/${encodeURIComponent(runId)}/publish-request`,
+        data: {}
+      })
+      .then(() => {
+        wx.showToast({ title: "已提交发布", icon: "success" });
+        this.loadMessages({ silent: true, scrollOnChange: false });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => wx.hideLoading());
   },
 
   goHome() {

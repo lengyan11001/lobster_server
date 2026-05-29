@@ -197,6 +197,45 @@
   font-size: 23rpx;
 }
 
+.publish-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10rpx;
+  margin-top: 12rpx;
+  padding: 10rpx 12rpx;
+  color: #475569;
+  background: #eff6ff;
+  border-radius: 16rpx;
+  font-size: 21rpx;
+}
+
+.publish-row text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.publish-row button {
+  flex: 0 0 auto;
+  min-width: 92rpx;
+  height: 48rpx;
+  min-height: 48rpx;
+  margin: 0;
+  padding: 0 14rpx;
+  color: #fff;
+  background: #2563eb;
+  border-radius: 999rpx;
+  font-size: 21rpx;
+  line-height: 48rpx;
+}
+
+.publish-row button::after {
+  border: 0;
+}
+
 .composer {
   position: fixed;
   right: 0;

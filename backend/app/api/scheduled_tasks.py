@@ -31,6 +31,8 @@ _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _MAX_TARGET_DEVICES = 20
 _VIDEO_EXTS = (".mp4", ".webm", ".mov", ".m4v", ".avi")
 _RUNNING_STATUSES = {"running", "processing", "pending", "queued", "waiting"}
+_GOAL_VIDEO_SOURCE_AI_IMAGE = "ai_image"
+_GOAL_VIDEO_SOURCE_ASSET_RANDOM = "asset_random"
 
 
 class ScheduledTaskCreate(BaseModel):
@@ -59,6 +61,11 @@ class ScheduledTaskEventIn(BaseModel):
 class ScheduledTaskCompleteIn(BaseModel):
     result_text: Optional[str] = None
     result_payload: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+
+
+class ScheduledPublishCompleteIn(BaseModel):
+    publish_result: Dict[str, Any] = Field(default_factory=dict)
     error: Optional[str] = None
 
 
@@ -188,6 +195,40 @@ def _normalize_task_kind(value: str) -> str:
     if kind not in _TASK_KINDS:
         raise HTTPException(status_code=400, detail="不支持的任务类型")
     return kind
+
+
+def _normalize_goal_video_source_mode(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"ai_image", "ai", "generated_image", "image_generate", "generate_image"}:
+        return _GOAL_VIDEO_SOURCE_AI_IMAGE
+    return _GOAL_VIDEO_SOURCE_ASSET_RANDOM
+
+
+def _normalize_goal_video_task_payload(payload: Dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        return
+    if str(payload.get("capability_id") or "").strip() != "goal.video.pipeline":
+        return
+    cap_payload = payload.get("payload")
+    if not isinstance(cap_payload, dict):
+        cap_payload = {}
+        payload["payload"] = cap_payload
+    raw_source_mode = (
+        cap_payload.get("source_mode")
+        or cap_payload.get("video_source_mode")
+        or cap_payload.get("image_source")
+        or cap_payload.get("first_frame_source")
+    )
+    source_mode = _normalize_goal_video_source_mode(raw_source_mode)
+    if source_mode == _GOAL_VIDEO_SOURCE_AI_IMAGE:
+        cap_payload["source_mode"] = _GOAL_VIDEO_SOURCE_AI_IMAGE
+        cap_payload["candidate_group"] = ""
+        return
+    candidate_group = str(cap_payload.get("candidate_group") or cap_payload.get("candidate_group_name") or "").strip()
+    if not candidate_group:
+        raise HTTPException(status_code=400, detail="请选择创意成片备选素材组")
+    cap_payload["source_mode"] = _GOAL_VIDEO_SOURCE_ASSET_RANDOM
+    cap_payload["candidate_group"] = candidate_group
 
 
 def _normalize_schedule_type(value: str) -> str:
@@ -344,6 +385,35 @@ def _normalize_scheduled_completion_error(body: ScheduledTaskCompleteIn) -> str:
     if _goal_video_payload_has_video(payload):
         return ""
     return _goal_video_payload_pending_reason(payload) or "创意成片视频未取得视频素材或视频链接"
+
+
+def _run_result_payload(row: ScheduledTaskRun) -> Dict[str, Any]:
+    payload = row.result_payload if isinstance(row.result_payload, dict) else {}
+    return dict(payload or {})
+
+
+def _publish_draft_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    draft = payload.get("publish_draft") if isinstance(payload, dict) else None
+    return dict(draft or {}) if isinstance(draft, dict) else {}
+
+
+def _set_publish_draft(row: ScheduledTaskRun, draft: Dict[str, Any]) -> Dict[str, Any]:
+    payload = _run_result_payload(row)
+    payload["publish_draft"] = dict(draft or {})
+    row.result_payload = payload
+    return payload
+
+
+def _publish_event_payload(row: ScheduledTaskRun, draft: Dict[str, Any], extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    payload = {
+        "run_id": row.id,
+        "task_id": row.task_id,
+        "title": row.title,
+        "publish_draft": dict(draft or {}),
+    }
+    if extra:
+        payload.update(extra)
+    return payload
 
 
 def _add_h5_event(db: Session, message_id: Optional[str], user_id: int, event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -576,6 +646,9 @@ def _create_task_row(
         raise HTTPException(status_code=400, detail="消息内容不能为空")
     if task_kind == "capability" and not str(payload.get("capability_id") or "").strip():
         raise HTTPException(status_code=400, detail="能力调用任务需要 payload.capability_id")
+    if task_kind == "capability":
+        payload = dict(payload)
+        _normalize_goal_video_task_payload(payload)
     interval_seconds = None
     now = datetime.utcnow()
     tz_offset = int(body.timezone_offset_minutes if body.timezone_offset_minutes is not None else 480)
@@ -816,6 +889,76 @@ def pending_scheduled_task_runs(
     return {"ok": True, "items": [_serialize_run(r) for r in rows]}
 
 
+@router.post("/api/scheduled-tasks/runs/{run_id}/publish-request", summary="提交定时任务结果发布请求")
+def request_scheduled_task_publish(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _run_for_user(db, run_id, current_user.id)
+    if row.status != "completed":
+        raise HTTPException(status_code=409, detail="任务完成后才能发布")
+    payload = _run_result_payload(row)
+    draft = _publish_draft_from_payload(payload)
+    if not draft:
+        raise HTTPException(status_code=400, detail="该记录没有可发布草稿")
+    if not str(draft.get("asset_id") or "").strip():
+        raise HTTPException(status_code=400, detail="发布草稿缺少素材 asset_id")
+    if not str(draft.get("account_id") or "").strip() and not str(draft.get("account_nickname") or "").strip():
+        raise HTTPException(status_code=400, detail="发布草稿缺少发布账号")
+    status = str(draft.get("status") or "ready").strip().lower()
+    if status == "published":
+        return {"ok": True, "status": "published", "run": _serialize_run(row)}
+    now = datetime.utcnow()
+    draft["status"] = "pending"
+    draft["requested_at"] = now.isoformat()
+    draft.pop("error", None)
+    _set_publish_draft(row, draft)
+    row.updated_at = now
+    _add_h5_event(db, row.h5_message_id, row.user_id, "publish_pending", _publish_event_payload(row, draft))
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "status": "pending", "run": _serialize_run(row)}
+
+
+@router.get("/api/scheduled-tasks/publish/pending", summary="本地 online 领取待发布草稿")
+def pending_scheduled_publish_requests(
+    request: Request,
+    limit: int = Query(1, ge=1, le=5),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    xi = _header_installation_id(request)
+    if xi:
+        ensure_installation_slot(db, current_user.id, xi)
+    now = datetime.utcnow()
+    rows = (
+        db.query(ScheduledTaskRun)
+        .filter(ScheduledTaskRun.user_id == current_user.id, ScheduledTaskRun.status == "completed")
+        .filter(or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == xi))
+        .order_by(ScheduledTaskRun.finished_at.asc(), ScheduledTaskRun.created_at.asc())
+        .limit(200)
+        .all()
+    )
+    picked: List[ScheduledTaskRun] = []
+    for row in rows:
+        draft = _publish_draft_from_payload(_run_result_payload(row))
+        status = str(draft.get("status") or "").strip().lower()
+        if status != "pending":
+            continue
+        draft["status"] = "processing"
+        draft["claimed_by_installation_id"] = xi or "unknown"
+        draft["processing_at"] = now.isoformat()
+        _set_publish_draft(row, draft)
+        row.updated_at = now
+        _add_h5_event(db, row.h5_message_id, row.user_id, "publish_claimed", _publish_event_payload(row, draft))
+        picked.append(row)
+        if len(picked) >= limit:
+            break
+    db.commit()
+    return {"ok": True, "items": [_serialize_run(r) for r in picked]}
+
+
 def _run_for_user(db: Session, run_id: str, user_id: int) -> ScheduledTaskRun:
     row = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == run_id, ScheduledTaskRun.user_id == user_id).first()
     if row is None:
@@ -886,6 +1029,48 @@ def complete_scheduled_task_run(
         _add_h5_event(db, row.h5_message_id, row.user_id, "final", {"reply_text": result_text, **(body.result_payload or {})})
     db.commit()
     return {"ok": True, "status": row.status}
+
+
+@router.post("/api/scheduled-tasks/runs/{run_id}/publish-complete", summary="本地 online 回传发布结果")
+def complete_scheduled_task_publish(
+    run_id: str,
+    body: ScheduledPublishCompleteIn,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _run_for_user(db, run_id, current_user.id)
+    if row.status != "completed":
+        raise HTTPException(status_code=409, detail="任务未完成，不能回传发布结果")
+    draft = _publish_draft_from_payload(_run_result_payload(row))
+    if not draft:
+        raise HTTPException(status_code=400, detail="该记录没有可发布草稿")
+    claimed = str(draft.get("claimed_by_installation_id") or "").strip()
+    xi = _header_installation_id(request)
+    if claimed and xi and claimed != xi:
+        raise HTTPException(status_code=409, detail="发布任务已由其他设备处理")
+    now = datetime.utcnow()
+    error = (body.error or "").strip()
+    result = body.publish_result if isinstance(body.publish_result, dict) else {}
+    draft["status"] = "failed" if error else "published"
+    draft["completed_at"] = now.isoformat()
+    draft["publish_result"] = result
+    if error:
+        draft["error"] = error[:500]
+    else:
+        draft.pop("error", None)
+        draft["published_at"] = now.isoformat()
+    _set_publish_draft(row, draft)
+    row.updated_at = now
+    _add_h5_event(
+        db,
+        row.h5_message_id,
+        row.user_id,
+        "publish_result",
+        _publish_event_payload(row, draft, {"error": error, "publish_result": result}),
+    )
+    db.commit()
+    return {"ok": True, "status": draft["status"], "run_id": run_id}
 
 
 @router.post("/admin/api/scheduled-tasks", summary="管理员/代理商下发任务")

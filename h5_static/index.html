@@ -176,6 +176,9 @@
     }
     .login h2 { margin: 0 0 8px; font-size: 24px; }
     .login p, .hint { color: var(--muted); line-height: 1.7; font-size: 13px; }
+    .auth-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 16px 0 18px; padding: 4px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.7); }
+    .auth-tabs button { min-height: 38px; color: var(--muted); background: transparent; box-shadow: none; border-radius: 12px; font-size: 14px; }
+    .auth-tabs button.active { color: #102036; background: #fff; box-shadow: 0 10px 24px rgba(28,61,120,.12); }
     .field { display: grid; gap: 7px; margin-bottom: 13px; }
     .field label { color: #46516a; font-size: 13px; }
     .captcha-row { display: grid; grid-template-columns: 1fr 112px; gap: 10px; align-items: end; }
@@ -310,6 +313,9 @@
     .media-preview audio { width: min(280px, 100%); }
     .media-actions { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; line-height: 1.3; }
     .media-actions a, .media-actions button { padding: 4px 8px; border-radius: 999px; color: var(--blue); background: rgba(36,92,255,.08); text-decoration: none; box-shadow: none; border: 0; font-size: inherit; }
+    .publish-actions { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+    .publish-actions button { padding: 6px 12px; color: #fff; background: linear-gradient(135deg, var(--blue), var(--cyan)); box-shadow: none; }
+    .publish-actions span { color: var(--muted); }
     .steps { margin-top: 8px; display: none; flex-wrap: wrap; gap: 6px; font-size: 12px; color: #52607a; }
     .upload-preview { display: none; gap: 10px; padding: 10px 14px 0; overflow-x: auto; }
     .upload-preview.show { display: flex; }
@@ -355,6 +361,9 @@
     .run-media-item { display: grid; gap: 5px; }
     .run-media-actions { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; }
     .run-media-actions button { padding: 4px 8px; border-radius: 999px; color: var(--blue); background: rgba(36,92,255,.08); box-shadow: none; font-size: inherit; }
+    .run-publish-actions { margin-top: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+    .run-publish-actions button { padding: 5px 10px; border-radius: 999px; color: #fff; background: linear-gradient(135deg, var(--blue), var(--cyan)); box-shadow: none; font-size: inherit; }
+    .run-publish-actions span { color: var(--muted); }
     .run-media video { width: 132px; height: 76px; object-fit: cover; border-radius: 10px; background: #111; }
     .run-media img { width: 76px; height: 76px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
     .task-list { display: grid; gap: 10px; }
@@ -413,8 +422,12 @@
 
     <section class="panel login" id="loginPanel">
       <h2>手机号注册和登录</h2>
-      <p>输入手机号，验证码正确后直接进入。</p>
-      <form id="loginForm">
+      <p>默认用验证码登录；设置过密码后也可以直接用手机号密码登录。</p>
+      <div class="auth-tabs" id="authTabs" role="tablist" aria-label="登录方式">
+        <button type="button" class="active" data-auth-tab="sms" role="tab" aria-selected="true">验证码登录</button>
+        <button type="button" data-auth-tab="password" role="tab" aria-selected="false">密码登录</button>
+      </div>
+      <form id="loginForm" data-auth-panel="sms">
         <div class="field">
           <label for="phone">手机号</label>
           <input id="phone" name="phone" type="tel" inputmode="numeric" maxlength="11" autocomplete="tel" required />
@@ -435,6 +448,17 @@
           </div>
           <button id="loginBtn" type="submit">进入</button>
         </div>
+      </form>
+      <form id="passwordLoginForm" data-auth-panel="password" class="hidden">
+        <div class="field">
+          <label for="passwordPhone">手机号</label>
+          <input id="passwordPhone" name="phone" type="tel" inputmode="numeric" maxlength="11" autocomplete="tel" required />
+        </div>
+        <div class="field">
+          <label for="loginPassword">密码</label>
+          <input id="loginPassword" name="password" type="password" maxlength="128" autocomplete="current-password" required />
+        </div>
+        <button id="passwordLoginBtn" type="submit" style="width:100%;">登录</button>
       </form>
       <div class="hint">新手机号会自动创建账号；已有手机号会直接登录。</div>
     </section>
@@ -801,6 +825,18 @@
     function normalizePhone(raw) {
       const value = String(raw || "").replace(/\D/g, "");
       return /^1[3-9]\d{9}$/.test(value) ? value : "";
+    }
+
+    function setAuthTab(tabName) {
+      const name = tabName === "password" ? "password" : "sms";
+      document.querySelectorAll("[data-auth-tab]").forEach((btn) => {
+        const active = btn.dataset.authTab === name;
+        btn.classList.toggle("active", active);
+        btn.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      document.querySelectorAll("[data-auth-panel]").forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.authPanel !== name);
+      });
     }
 
     let smsTimer = null;
@@ -1339,6 +1375,85 @@
       $("messages").scrollTop = $("messages").scrollHeight;
     }
 
+    function publishDraftFromPayload(payload) {
+      const draft = payload && payload.publish_draft && typeof payload.publish_draft === "object" ? payload.publish_draft : null;
+      if (!draft) return null;
+      return { ...draft, run_id: draft.run_id || (payload && (payload.run_id || payload.scheduled_run_id)) || "" };
+    }
+
+    function publishDraftLabel(draft) {
+      const status = String((draft && draft.status) || "ready").toLowerCase();
+      return {
+        ready: "待发布",
+        draft: "待发布",
+        pending: "等待发布",
+        processing: "发布中",
+        published: "已发布",
+        failed: "发布失败"
+      }[status] || "待发布";
+    }
+
+    function renderPublishDraftActions(bubble, payload) {
+      if (!bubble) return;
+      const draft = publishDraftFromPayload(payload || {});
+      if (!draft) return;
+      let box = bubble._publishEl;
+      if (!box || !box.isConnected) {
+        box = document.createElement("div");
+        box.className = "publish-actions";
+        bubble.appendChild(box);
+        bubble._publishEl = box;
+      }
+      const status = String(draft.status || "ready").toLowerCase();
+      const platform = draft.platform_name || draft.platform || "";
+      const account = draft.account_nickname || draft.account_id || "";
+      box.innerHTML = "";
+      const label = document.createElement("span");
+      label.textContent = `${publishDraftLabel(draft)}${platform || account ? ` · ${platform}${account ? " · " + account : ""}` : ""}`;
+      box.appendChild(label);
+      if (status !== "published" && status !== "pending" && status !== "processing") {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = status === "failed" ? "重新发布" : "发布";
+        btn.dataset.publishRun = draft.run_id || "";
+        btn.addEventListener("click", () => requestRunPublish(btn.dataset.publishRun, btn));
+        box.appendChild(btn);
+      }
+      if (draft.error) {
+        const err = document.createElement("span");
+        err.style.color = "var(--red)";
+        err.textContent = String(draft.error).slice(0, 80);
+        box.appendChild(err);
+      }
+      $("messages").scrollTop = $("messages").scrollHeight;
+    }
+
+    async function requestRunPublish(runId, btn) {
+      if (!runId) {
+        toast("缺少任务记录 ID");
+        return;
+      }
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "提交中...";
+      }
+      try {
+        await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}/publish-request`, { method: "POST", json: {} });
+        toast("已提交发布，online 会用已绑定账号发布");
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "等待发布";
+        }
+        await loadRuns();
+      } catch (err) {
+        toast(err.message || "提交发布失败");
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "发布";
+        }
+      }
+    }
+
     function clearEmpty() {
       $("empty")?.classList.add("hidden");
     }
@@ -1413,11 +1528,16 @@
       if (label) addStep(bubble, label);
       if (ev.type === "delta" && ev.payload && ev.payload.text) appendBubbleText(bubble, ev.payload.text);
       renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
+      renderPublishDraftActions(bubble, ev.payload || {});
       if (ev.type === "final") {
         const reply = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || "处理完成。";
         setBubbleText(bubble, reply);
         renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
+        renderPublishDraftActions(bubble, ev.payload || {});
         closeStream(messageId);
+      }
+      if (ev.type === "publish_pending" || ev.type === "publish_claimed" || ev.type === "publish_result") {
+        renderPublishDraftActions(bubble, ev.payload || {});
       }
       if (ev.type === "error") {
         bubble.classList.add("err");
@@ -1461,7 +1581,7 @@
       let last = 0;
       const es = new EventSource(`/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}`);
       state.streams.set(messageId, es);
-      ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error"].forEach((type) => {
+      ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error", "publish_pending", "publish_claimed", "publish_result"].forEach((type) => {
         es.addEventListener(type, (evt) => {
           try {
             const ev = JSON.parse(evt.data || "{}");
@@ -1545,6 +1665,22 @@
       }).join("")}</div>`;
     }
 
+    function renderRunPublishActions(row) {
+      const payload = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
+      const draft = publishDraftFromPayload({ ...payload, run_id: row && row.id });
+      if (!draft) return "";
+      const status = String(draft.status || "ready").toLowerCase();
+      const platform = draft.platform_name || draft.platform || "";
+      const account = draft.account_nickname || draft.account_id || "";
+      const label = `${publishDraftLabel(draft)}${platform || account ? ` · ${platform}${account ? " · " + account : ""}` : ""}`;
+      const canPublish = status !== "published" && status !== "pending" && status !== "processing";
+      return `<div class="run-publish-actions">
+        <span>${escapeHtml(label)}</span>
+        ${canPublish ? `<button type="button" data-publish-run="${escapeHtml(draft.run_id || (row && row.id) || "")}">${status === "failed" ? "重新发布" : "发布"}</button>` : ""}
+        ${draft.error ? `<span style="color:var(--red);">${escapeHtml(String(draft.error).slice(0, 80))}</span>` : ""}
+      </div>`;
+    }
+
     async function loadRuns() {
       const box = $("runList");
       if (!state.token || !box) return;
@@ -1563,6 +1699,7 @@
             <div class="run-title">${escapeHtml(row.title || "定时任务")}</div>
             <div class="run-result">${escapeHtml(result || "等待结果")}</div>
             ${renderRunMedia(collectRunMediaUrls(row))}
+            ${renderRunPublishActions(row)}
           </div>`;
         }).join("");
       } catch (err) {
@@ -1572,6 +1709,9 @@
 
     document.querySelectorAll("[data-tab-target]").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tabTarget));
+    });
+    document.querySelectorAll("[data-auth-tab]").forEach((btn) => {
+      btn.addEventListener("click", () => setAuthTab(btn.dataset.authTab));
     });
     $("topBackBtn").addEventListener("click", () => switchTab("home"));
     document.querySelectorAll("[data-task-ability]").forEach((btn) => {
@@ -1631,6 +1771,11 @@
     });
 
     $("runList").addEventListener("click", (evt) => {
+      const publishBtn = evt.target.closest("[data-publish-run]");
+      if (publishBtn) {
+        requestRunPublish(publishBtn.dataset.publishRun || "", publishBtn);
+        return;
+      }
       const copyBtn = evt.target.closest("[data-copy-media]");
       if (copyBtn) {
         copyMediaLink(copyBtn.dataset.copyMedia || "");
@@ -1704,6 +1849,31 @@
       }
     });
 
+    $("passwordLoginForm").addEventListener("submit", async (evt) => {
+      evt.preventDefault();
+      $("passwordLoginBtn").disabled = true;
+      try {
+        const phone = normalizePhone($("passwordPhone").value);
+        const password = $("loginPassword").value;
+        if (!phone) throw new Error("请输入有效手机号");
+        if (!password) throw new Error("请输入密码");
+        const resp = await fetch("/auth/login-phone-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone, password }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.detail || "登录失败");
+        state.token = data.access_token;
+        localStorage.setItem("lobster_h5_token", state.token);
+        await loadMe();
+      } catch (err) {
+        toast(err.message || "登录失败");
+      } finally {
+        $("passwordLoginBtn").disabled = false;
+      }
+    });
+
     $("sendForm").addEventListener("submit", async (evt) => {
       evt.preventDefault();
       const input = $("messageInput");
@@ -1735,6 +1905,7 @@
     });
 
     (async function init() {
+      setAuthTab("sms");
       setTaskAbility("goal.video.pipeline");
       const ok = await loadMe();
       if (!ok) {

@@ -127,6 +127,15 @@ class RegisterPhoneBody(BaseModel):
     parent_account: Optional[str] = None
 
 
+class PhonePasswordLoginBody(BaseModel):
+    phone: str
+    password: str
+
+
+class SetPasswordBody(BaseModel):
+    password: str
+
+
 def _normalize_cn_mobile(raw: str) -> str:
     d = re.sub(r"\D", "", (raw or "").strip())
     if not _CN_MOBILE_RE.match(d):
@@ -136,6 +145,15 @@ def _normalize_cn_mobile(raw: str) -> str:
 
 def _phone_account_email(mobile: str) -> str:
     return f"{mobile}{PHONE_EMAIL_SUFFIX}"
+
+
+def _normalize_new_password(raw: str) -> str:
+    password = raw or ""
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="密码至少 6 位")
+    if len(password) > 128:
+        raise HTTPException(status_code=400, detail="密码不能超过 128 位")
+    return password
 
 
 def _utcnow() -> datetime:
@@ -398,6 +416,36 @@ async def login(request: Request, db: Session = Depends(get_db)):
     if iid:
         ensure_installation_slot(db, user.id, iid)
     return Token(access_token=access_token)
+
+
+@router.post("/login-phone-password", response_model=Token, summary="手机号密码登录")
+def login_phone_password(body: PhonePasswordLoginBody, request: Request, db: Session = Depends(get_db)):
+    mobile = _normalize_cn_mobile(body.phone)
+    password = body.password or ""
+    if not password:
+        raise HTTPException(status_code=400, detail="请输入密码")
+    user = db.query(User).filter(User.email == _phone_account_email(mobile)).first()
+    if not user or not verify_password(password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="手机号或密码错误")
+    access_token = create_access_token(data=access_token_claims(user))
+    iid = optional_installation_id_from_request(request)
+    if iid:
+        ensure_installation_slot(db, user.id, iid)
+    return Token(access_token=access_token)
+
+
+@router.post("/set-password", summary="当前登录用户设置手机号密码")
+def set_password(
+    body: SetPasswordBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    password = _normalize_new_password(body.password)
+    current_user.hashed_password = get_password_hash(password)
+    db.add(current_user)
+    db.commit()
+    logger.info("[auth/set-password] user_id=%s ok=1", current_user.id)
+    return {"ok": True}
 
 
 @router.post("/register", response_model=Token, summary="（已关闭）原字母账号注册，请用 /auth/register-phone")
