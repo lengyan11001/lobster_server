@@ -142,6 +142,33 @@
       background: rgba(255,255,255,.76);
       transform: rotate(-18deg);
     }
+    .workbench-entry-icon {
+      position: relative;
+      width: 19px;
+      height: 17px;
+      border: 2px solid currentColor;
+      border-radius: 4px;
+      opacity: .9;
+    }
+    .workbench-entry-icon::before {
+      content: "";
+      position: absolute;
+      left: 3px;
+      right: 3px;
+      top: -5px;
+      height: 5px;
+      border: 2px solid currentColor;
+      border-bottom: 0;
+      border-radius: 5px 5px 0 0;
+    }
+    .workbench-entry-icon::after {
+      content: "";
+      position: absolute;
+      left: 4px;
+      right: 4px;
+      top: 6px;
+      border-top: 2px solid currentColor;
+    }
     .avatar-mini {
       width: 34px;
       height: 34px;
@@ -186,6 +213,362 @@
     .captcha-img { height: 44px; border: 1px solid var(--line); border-radius: 14px; background: #fff; cursor: pointer; object-fit: cover; }
 
     .home-grid { display: grid; gap: 14px; }
+    .office-grid { display: grid; gap: 14px; }
+    .office-hero {
+      position: relative;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      padding: 20px;
+      border-radius: 28px;
+      color: #fff;
+      background:
+        linear-gradient(135deg, #102036 0%, #245cff 56%, #13b7d8 100%),
+        #102036;
+      box-shadow: 0 24px 68px rgba(16, 45, 105, .26);
+    }
+    .office-hero h2 { margin: 0; font-size: clamp(25px, 7vw, 42px); line-height: 1.12; letter-spacing: 0; }
+    .office-hero p { margin: 8px 0 0; color: rgba(255,255,255,.78); line-height: 1.65; }
+    .office-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(74px, 1fr));
+      gap: 8px;
+      align-content: end;
+      min-width: min(330px, 100%);
+    }
+    .office-stat {
+      min-height: 78px;
+      display: grid;
+      align-content: center;
+      gap: 3px;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.13);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.17);
+    }
+    .office-stat strong { font-size: 24px; }
+    .office-stat span { color: rgba(255,255,255,.74); font-size: 12px; }
+    .office-floor {
+      position: relative;
+      min-height: 430px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+      padding: 14px;
+      border-radius: 28px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.92), rgba(248,251,255,.86)),
+        #fff;
+      border: 1px solid rgba(255,255,255,.74);
+      box-shadow: var(--shadow);
+    }
+    .office-empty {
+      grid-column: 1 / -1;
+      min-height: 260px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: var(--muted);
+      line-height: 1.8;
+      padding: 22px;
+    }
+    .employee-card {
+      min-height: 238px;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: 12px;
+      padding: 14px;
+      color: var(--ink);
+      text-align: left;
+      border-radius: 22px;
+      background: rgba(255,255,255,.94);
+      border: 1px solid rgba(223,230,242,.85);
+      box-shadow: 0 14px 34px rgba(29,54,105,.12);
+    }
+    .employee-card.online { cursor: pointer; }
+    .employee-card.online:active { transform: scale(.99); }
+    .employee-scene {
+      position: relative;
+      min-height: 142px;
+      overflow: hidden;
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, #f8fbff 0 64%, #e9f0fb 64% 100%);
+      border: 1px solid rgba(223,230,242,.72);
+    }
+    .desk {
+      position: absolute;
+      left: 28px;
+      right: 20px;
+      bottom: 24px;
+      height: 18px;
+      border-radius: 8px;
+      background: #d9aa6a;
+      box-shadow: 0 12px 0 #b87d42;
+    }
+    .desk::before, .desk::after {
+      content: "";
+      position: absolute;
+      bottom: -38px;
+      width: 8px;
+      height: 38px;
+      border-radius: 6px;
+      background: #9c6635;
+    }
+    .desk::before { left: 18px; }
+    .desk::after { right: 18px; }
+    .screen {
+      position: absolute;
+      right: 34px;
+      bottom: 49px;
+      width: 58px;
+      height: 38px;
+      border-radius: 8px;
+      background: #13213a;
+      box-shadow: inset 0 0 0 5px #243959;
+    }
+    .screen::after {
+      content: "";
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: -12px;
+      height: 8px;
+      border-radius: 6px;
+      background: #52657f;
+    }
+    .person {
+      position: absolute;
+      left: 42px;
+      bottom: 45px;
+      width: 70px;
+      height: 92px;
+    }
+    .head {
+      position: absolute;
+      left: 20px;
+      top: 2px;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: #ffd5b8;
+      box-shadow: inset -4px -3px 0 rgba(175,95,55,.12);
+    }
+    .hair {
+      position: absolute;
+      left: 15px;
+      top: -2px;
+      width: 42px;
+      height: 22px;
+      border-radius: 18px 18px 8px 8px;
+      background: #25324a;
+    }
+    .body {
+      position: absolute;
+      left: 18px;
+      top: 42px;
+      width: 40px;
+      height: 46px;
+      border-radius: 18px 18px 10px 10px;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+    }
+    .arm {
+      position: absolute;
+      top: 50px;
+      width: 30px;
+      height: 10px;
+      border-radius: 10px;
+      background: #ffd5b8;
+      transform-origin: 6px 5px;
+    }
+    .arm.left { left: 2px; transform: rotate(26deg); }
+    .arm.right { left: 42px; transform: rotate(-24deg); }
+    .employee-card.idle .person { animation: idle-breathe 2.4s ease-in-out infinite; }
+    .employee-card.idle .head { animation: idle-nod 2.4s ease-in-out infinite; }
+    .employee-card.working .arm.left { animation: typing-left .42s ease-in-out infinite alternate; }
+    .employee-card.working .arm.right { animation: typing-right .42s ease-in-out infinite alternate; }
+    .employee-card.working .screen { box-shadow: inset 0 0 0 5px #243959, 0 0 22px rgba(19,183,216,.28); }
+    .employee-card.offline .employee-scene { filter: grayscale(.75); opacity: .74; }
+    .employee-card.offline .desk, .employee-card.offline .screen, .employee-card.offline .person { opacity: .72; }
+    .employee-meta { display: grid; gap: 8px; }
+    .employee-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .employee-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; }
+    .employee-state {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      color: #0c815b;
+      background: rgba(19,168,115,.1);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .employee-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .employee-card.working .employee-state { color: var(--blue); background: rgba(36,92,255,.1); }
+    .employee-card.offline .employee-state { color: #8a6471; background: rgba(138,100,113,.12); }
+    .employee-desc { color: var(--muted); font-size: 12px; line-height: 1.55; min-height: 38px; }
+    .employee-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+    }
+    .employee-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      padding: 0;
+      border-radius: 0;
+      background: rgba(8, 16, 32, .28);
+      box-shadow: none;
+    }
+    .employee-popover {
+      position: relative;
+      width: min(430px, calc(100vw - 32px));
+      overflow: hidden;
+      padding: 18px;
+      border-radius: 24px;
+      color: #fff;
+      background:
+        linear-gradient(135deg, rgba(20,55,132,.96), rgba(20,117,209,.92)),
+        #143784;
+      box-shadow: 0 28px 80px rgba(11, 38, 95, .38);
+      border: 1px solid rgba(255,255,255,.2);
+    }
+    .employee-popover::after {
+      content: "";
+      position: absolute;
+      right: -42px;
+      bottom: -68px;
+      width: 220px;
+      height: 180px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.1);
+      pointer-events: none;
+    }
+    .employee-popover-head { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; padding-right: 36px; }
+    .employee-mini-avatar {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 18px;
+      color: #12356f;
+      background: rgba(255,255,255,.92);
+      font-weight: 900;
+    }
+    .employee-popover-title { display: grid; gap: 4px; min-width: 0; }
+    .employee-popover-title strong { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .employee-popover-title span { color: rgba(255,255,255,.76); font-size: 12px; }
+    .employee-popover-close {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 34px;
+      min-height: 34px;
+      padding: 0;
+      color: #fff;
+      background: rgba(255,255,255,.13);
+      box-shadow: none;
+      font-size: 20px;
+    }
+    .employee-popover-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      width: max-content;
+      margin-top: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      color: #fff;
+      background: rgba(255,255,255,.14);
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .employee-popover-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .employee-modal[data-mode="idle"] .employee-popover-badge { color: #9ff4ce; }
+    .employee-modal[data-mode="working"] .employee-popover-badge { color: #b9e8ff; }
+    .employee-modal[data-mode="offline"] .employee-popover-badge { color: #ffd1a9; }
+    .employee-task-steps {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 10px;
+      margin: 16px 0;
+    }
+    .employee-task-step {
+      position: relative;
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      padding-left: 14px;
+    }
+    .employee-task-step::before {
+      content: "";
+      position: absolute;
+      left: 2px;
+      top: 7px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.86);
+      box-shadow: 0 0 0 4px rgba(255,255,255,.12);
+    }
+    .employee-task-step::after {
+      content: "";
+      position: absolute;
+      left: 5px;
+      top: 18px;
+      bottom: -12px;
+      width: 1px;
+      background: rgba(255,255,255,.28);
+    }
+    .employee-task-step:last-child::after { display: none; }
+    .employee-task-step span { color: rgba(255,255,255,.68); font-size: 12px; }
+    .employee-task-step strong { color: #fff; line-height: 1.55; word-break: break-word; font-size: 13px; }
+    .employee-popover-actions {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .employee-popover-actions button { min-height: 40px; padding: 0 14px; }
+    .employee-popover-actions .ghost { color: #fff; background: rgba(255,255,255,.12); box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); }
+    .hire-fab {
+      position: fixed;
+      right: max(18px, calc((100vw - 980px) / 2 + 18px));
+      bottom: 24px;
+      z-index: 60;
+      min-height: 48px;
+      padding: 0 18px;
+      background: linear-gradient(135deg, var(--orange), var(--blue));
+      box-shadow: 0 16px 34px rgba(36,92,255,.22);
+    }
+    @keyframes idle-breathe {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(4px); }
+    }
+    @keyframes idle-nod {
+      0%, 100% { transform: rotate(0); }
+      50% { transform: rotate(5deg); }
+    }
+    @keyframes typing-left {
+      from { transform: rotate(14deg) translateY(0); }
+      to { transform: rotate(32deg) translateY(5px); }
+    }
+    @keyframes typing-right {
+      from { transform: rotate(-14deg) translateY(5px); }
+      to { transform: rotate(-32deg) translateY(0); }
+    }
     .hero {
       position: relative;
       overflow: hidden;
@@ -254,6 +637,7 @@
     .task-actions { display: flex; justify-content: flex-end; gap: 10px; }
     .hero-action { min-height: 44px; background: #fff; color: var(--blue); box-shadow: 0 14px 30px rgba(0,0,0,.18); }
     .section-title { display: flex; align-items: center; justify-content: space-between; margin: 8px 2px 10px; }
+    .section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .section-title h2 { margin: 0; font-size: 18px; }
     .quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .quick-card {
@@ -372,6 +756,118 @@
     .task-row-title { font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .task-row-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
     .task-row-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+    .work-shell { display: grid; gap: 14px; }
+    .work-header {
+      padding: 20px;
+      border-radius: 28px;
+      background: rgba(255,255,255,.92);
+      border: 1px solid rgba(255,255,255,.74);
+      box-shadow: var(--shadow);
+    }
+    .work-title {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+    .work-title::before {
+      content: "";
+      width: 5px;
+      height: 34px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--blue), var(--cyan));
+    }
+    .work-subtitle { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
+    .work-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+    .work-summary-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 76px;
+      padding: 12px;
+      border-radius: 18px;
+      background: #fff;
+      border: 1px solid rgba(223,230,242,.86);
+    }
+    .work-summary-icon {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: var(--blue);
+      background: rgba(36,92,255,.08);
+      font-weight: 900;
+    }
+    .work-summary-card strong { display: block; font-size: 24px; color: var(--blue); }
+    .work-summary-card span { color: var(--muted); font-size: 12px; }
+    .work-timeline {
+      position: relative;
+      display: grid;
+      gap: 12px;
+      padding: 4px 0 28px;
+    }
+    .work-node {
+      position: relative;
+      display: grid;
+      grid-template-columns: 82px minmax(0, 1fr);
+      gap: 14px;
+      align-items: stretch;
+    }
+    .work-time {
+      position: relative;
+      display: grid;
+      justify-items: end;
+      align-content: start;
+      gap: 4px;
+      padding-top: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .work-time::after {
+      content: "";
+      position: absolute;
+      right: -8px;
+      top: 20px;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--blue);
+      box-shadow: 0 0 0 5px rgba(36,92,255,.12);
+    }
+    .work-time::before {
+      content: "";
+      position: absolute;
+      right: -3px;
+      top: 0;
+      bottom: -24px;
+      width: 2px;
+      background: rgba(36,92,255,.24);
+    }
+    .work-time strong { color: var(--blue); font-size: 17px; }
+    .work-card {
+      display: grid;
+      gap: 10px;
+      padding: 15px;
+      border-radius: 20px;
+      background: rgba(255,255,255,.94);
+      border: 1px solid rgba(223,230,242,.82);
+      box-shadow: 0 12px 30px rgba(29,54,105,.12);
+    }
+    .work-card.current { border-left: 5px solid var(--green); }
+    .work-card.future { border-left: 5px solid var(--cyan); }
+    .work-card.done { border-left: 5px solid var(--blue); }
+    .work-card.failed { border-left: 5px solid var(--orange); }
+    .work-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .work-card-title { font-size: 18px; font-weight: 900; word-break: break-word; }
+    .work-badge { flex: 0 0 auto; padding: 5px 9px; border-radius: 999px; color: var(--blue); background: rgba(36,92,255,.08); font-size: 12px; font-weight: 800; }
+    .work-card.current .work-badge { color: var(--green); background: rgba(19,168,115,.1); }
+    .work-card.failed .work-badge { color: var(--orange); background: rgba(240,139,45,.12); }
+    .work-meta { color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .work-card-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+    .work-card-actions button { min-height: 36px; padding: 0 12px; }
 
     .toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); max-width: min(520px, calc(100vw - 32px)); padding: 11px 14px; border-radius: 999px; color: #fff; background: rgba(19,33,60,.9); box-shadow: 0 18px 44px rgba(19,33,60,.28); opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 100; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
@@ -381,6 +877,12 @@
       .subtitle { display: none; }
       .top-action-label { display: none; }
       .top-action { width: 40px; padding: 0; }
+      .office-hero { grid-template-columns: 1fr; border-radius: 22px; padding: 16px; }
+      .office-summary { min-width: 0; }
+      .office-floor { grid-template-columns: 1fr; border-radius: 22px; padding: 10px; }
+      .employee-card { min-height: 220px; }
+      .employee-task-step { grid-template-columns: 58px minmax(0, 1fr); }
+      .hire-fab { right: 16px; bottom: 18px; }
       .hero { border-radius: 22px; padding: 15px; }
       .task-fields, .digital-fields { grid-template-columns: 1fr; }
       .messages { max-height: calc(100vh - 238px); min-height: 350px; }
@@ -395,6 +897,10 @@
       .composer.expanded textarea { min-height: 220px; max-height: 48vh; }
       .composer button { height: 46px; }
       .quick-card { min-height: 92px; }
+      .section-title { align-items: flex-start; gap: 8px; }
+      .work-summary-grid { grid-template-columns: 1fr; }
+      .work-node { grid-template-columns: 62px minmax(0, 1fr); gap: 10px; }
+      .work-card-title { font-size: 16px; }
     }
   </style>
 </head>
@@ -410,6 +916,10 @@
         </div>
       </div>
       <div class="top-actions hidden" id="topActions">
+        <button class="top-action" type="button" data-tab-target="home" aria-label="安排工作">
+          <span class="workbench-entry-icon" aria-hidden="true"></span>
+          <span class="top-action-label">安排工作</span>
+        </button>
         <button class="top-action" type="button" data-tab-target="messages" aria-label="进入消息">
           <span class="chat-entry-icon" aria-hidden="true"></span>
           <span class="top-action-label">消息</span>
@@ -464,7 +974,27 @@
     </section>
 
     <div id="appPanel" class="hidden">
-      <section class="view active" id="homeView">
+      <section class="view active" id="officeView">
+        <div class="office-grid">
+          <div class="office-hero">
+            <div>
+              <h2>我的AI员工</h2>
+              <p>一个在线设备，就是一个正在上岗的AI员工。点击员工可查看状态，也可以继续安排工作。</p>
+            </div>
+            <div class="office-summary">
+              <div class="office-stat"><strong id="officeTotalCount">0</strong><span>员工总数</span></div>
+              <div class="office-stat"><strong id="officeOnlineCount">0</strong><span>正在上班</span></div>
+              <div class="office-stat"><strong id="officeWorkingCount">0</strong><span>正在工作</span></div>
+            </div>
+          </div>
+          <div class="office-floor" id="employeeFloor">
+            <div class="office-empty">正在检查员工状态...</div>
+          </div>
+        </div>
+        <button class="hire-fab" type="button" id="hireEmployeeBtn">雇佣新员工</button>
+      </section>
+
+      <section class="view" id="homeView">
         <div class="home-grid">
           <div class="hero">
             <div class="hero-content">
@@ -521,7 +1051,9 @@
           <div>
             <div class="section-title">
               <h2>快捷消息</h2>
-              <button class="ghost" type="button" data-tab-target="messages">打开消息</button>
+              <div class="section-actions">
+                <button class="ghost" type="button" data-tab-target="messages">打开消息</button>
+              </div>
             </div>
             <div class="quick-grid" id="homeQuickGrid">
               <button class="quick-card" type="button" data-tone="image" data-prompt="帮我生成一张图片，画面内容是："><div class="quick-mark">图</div><strong>生成图片</strong><span>跳转消息并填入图片生成指令</span></button>
@@ -531,6 +1063,28 @@
               <button class="quick-card" type="button" data-tone="publish" data-prompt="把某素材发布到 平台 账号"><div class="quick-mark">发</div><strong>发布素材</strong><span>填入发布任务消息</span></button>
               <button class="quick-card" type="button" data-tone="copy" data-prompt="根据我的记忆，写一条50字以内的朋友圈文案"><div class="quick-mark">文</div><strong>朋友圈文案</strong><span>快速生成短文案</span></button>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="workListView">
+        <div class="work-shell">
+          <div class="work-header">
+            <h2 class="work-title">24h 自动任务</h2>
+            <p class="work-subtitle" id="workListSubtitle">正在整理员工今天的工作节点...</p>
+            <div class="work-summary-grid">
+              <div class="work-summary-card">
+                <div class="work-summary-icon">工</div>
+                <div><strong id="workTaskCount">0</strong><span>任务节点</span></div>
+              </div>
+              <div class="work-summary-card">
+                <div class="work-summary-icon">台</div>
+                <div><strong id="workPlatformCount">0</strong><span>覆盖平台</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="work-timeline" id="workTimeline">
+            <div class="office-empty">暂无工作记录。</div>
           </div>
         </div>
       </section>
@@ -609,6 +1163,26 @@
     </div>
   </main>
 
+  <div class="employee-modal hidden" id="employeeModal" data-mode="idle" role="dialog" aria-modal="true" aria-labelledby="employeeModalTitle">
+    <button class="employee-modal-backdrop" type="button" id="employeeModalBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover">
+      <button class="employee-popover-close" type="button" id="employeeModalClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar" id="employeeModalAvatar">AI</div>
+        <div class="employee-popover-title">
+          <strong id="employeeModalTitle">AI员工</strong>
+          <span id="employeeModalSub">正在读取状态</span>
+        </div>
+      </div>
+      <div class="employee-popover-badge" id="employeeModalBadge">发呆中</div>
+      <div class="employee-task-steps" id="employeeTaskSteps"></div>
+      <div class="employee-popover-actions">
+        <button class="ghost" type="button" id="employeeWorkListBtn">工作列表</button>
+        <button type="button" id="employeeWorkbenchBtn">安排工作</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
   <script>
@@ -621,6 +1195,9 @@
       pollers: new Map(),
       uploads: [],
       devices: [],
+      tasks: [],
+      runs: [],
+      historyItems: [],
       taskAbility: "goal.video.pipeline",
       taskPanelOpen: false,
       hiflyLoaded: false,
@@ -739,6 +1316,274 @@
       return String(payload.capability_id || "");
     }
 
+    function parseDate(value) {
+      if (!value) return null;
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+
+    function timeLabel(value) {
+      const d = parseDate(value);
+      if (!d) return "--:--";
+      return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    }
+
+    function shortId(value) {
+      const s = String(value || "");
+      if (!s) return "";
+      return s.length > 10 ? `${s.slice(0, 6)}...${s.slice(-4)}` : s;
+    }
+
+    function isActiveRun(row) {
+      const status = String((row && row.status) || "").toLowerCase();
+      return status === "pending" || status === "processing" || status === "running";
+    }
+
+    function runInstallationId(row) {
+      return String((row && (row.claimed_by_installation_id || row.installation_id)) || "").trim();
+    }
+
+    function activeRunForDevice(device) {
+      const id = String((device && device.installation_id) || "").trim();
+      const activeRuns = state.runs.filter(isActiveRun);
+      if (!activeRuns.length) return null;
+      const matched = activeRuns.find((row) => runInstallationId(row) && runInstallationId(row) === id);
+      if (matched) return matched;
+      if (state.devices.filter((d) => d.online).length === 1) {
+        return activeRuns.find((row) => !runInstallationId(row)) || null;
+      }
+      return null;
+    }
+
+    function activeMessageForDevice(device) {
+      const id = String((device && device.installation_id) || "").trim();
+      const rows = state.historyItems.filter((row) => {
+        const msg = row && row.message ? row.message : row;
+        const status = String((msg && msg.status) || "").toLowerCase();
+        return status === "pending" || status === "processing";
+      });
+      if (!rows.length) return null;
+      return rows.find((row) => {
+        const msg = row && row.message ? row.message : row;
+        return String(msg.claimed_by_installation_id || msg.installation_id || "").trim() === id;
+      }) || null;
+    }
+
+    function employeeName(device, index) {
+      return String((device && device.display_name) || "").trim() || `AI员工 ${index + 1}`;
+    }
+
+    function deviceByInstallationId(installationId) {
+      const id = String(installationId || "").trim();
+      return state.devices.find((device) => String(device.installation_id || "").trim() === id) || null;
+    }
+
+    function messageRow(entry) {
+      return entry && entry.message ? entry.message : entry;
+    }
+
+    function employeeSnapshot(device) {
+      const run = device && device.online ? activeRunForDevice(device) : null;
+      const msgEntry = device && device.online && !run ? activeMessageForDevice(device) : null;
+      const msg = messageRow(msgEntry);
+      const mode = !device || !device.online ? "offline" : (run || msg ? "working" : "idle");
+      const label = mode === "offline" ? "下班了" : mode === "working" ? "工作中" : "发呆中";
+      const detail = run
+        ? (run.error || run.result_text || (run.progress && (run.progress.text || run.progress.message)) || run.content || "正在执行任务")
+        : msg
+          ? (msg.content || msg.reply_text || "正在处理手机会话消息")
+          : mode === "idle"
+            ? "在线待命，当前没有领取任务。"
+            : `最近在线：${fmtTime(device && device.last_seen_at)}`;
+      const title = run ? (run.title || capabilityName(taskCapabilityId(run))) : (msg ? "手机会话消息" : (mode === "idle" ? "等待新工作" : "已下班"));
+      const started = run ? (run.started_at || run.claimed_at || run.created_at) : (msg ? (msg.claimed_at || msg.created_at) : (device && device.last_seen_at));
+      const steps = [];
+      steps.push(["状态", label]);
+      if (mode === "working") {
+        steps.push(["当前", title]);
+        steps.push(["进展", detail]);
+        steps.push(["时间", fmtTime(started)]);
+      } else if (mode === "idle") {
+        steps.push(["当前", "没有进行中的任务"]);
+        steps.push(["待命", "可以从安排工作或手机会话继续下发工作"]);
+      } else {
+        steps.push(["当前", "设备不在线"]);
+        steps.push(["最近", fmtTime(device && device.last_seen_at)]);
+      }
+      return { mode, label, title, detail, started, steps, run, msg };
+    }
+
+    function openEmployeeModal(installationId) {
+      const device = deviceByInstallationId(installationId);
+      if (!device) return;
+      const snapshot = employeeSnapshot(device);
+      const modal = $("employeeModal");
+      modal.dataset.mode = snapshot.mode;
+      modal.dataset.employeeId = device.installation_id || "";
+      $("employeeModalAvatar").textContent = firstChar(employeeName(device, 0));
+      $("employeeModalTitle").textContent = employeeName(device, state.devices.indexOf(device));
+      $("employeeModalSub").textContent = device.installation_id ? `设备 ${shortId(device.installation_id)}` : "未绑定设备 ID";
+      $("employeeModalBadge").textContent = snapshot.label;
+      $("employeeTaskSteps").innerHTML = snapshot.steps.map(([label, value]) => `<div class="employee-task-step"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "-")}</strong></div>`).join("");
+      $("employeeWorkbenchBtn").disabled = snapshot.mode === "offline";
+      modal.classList.remove("hidden");
+    }
+
+    function closeEmployeeModal() {
+      const modal = $("employeeModal");
+      modal.classList.add("hidden");
+      modal.dataset.employeeId = "";
+    }
+
+    function renderOfficeEmployees() {
+      const floor = $("employeeFloor");
+      if (!floor) return;
+      const devices = state.devices || [];
+      const onlineCount = devices.filter((d) => d.online).length;
+      const workingIds = new Set();
+      devices.forEach((device) => {
+        if (!device.online) return;
+        if (activeRunForDevice(device) || activeMessageForDevice(device)) workingIds.add(device.installation_id || employeeName(device, 0));
+      });
+      if ($("officeTotalCount")) $("officeTotalCount").textContent = String(devices.length);
+      if ($("officeOnlineCount")) $("officeOnlineCount").textContent = String(onlineCount);
+      if ($("officeWorkingCount")) $("officeWorkingCount").textContent = String(workingIds.size);
+      if (!devices.length) {
+        floor.innerHTML = `<div class="office-empty">暂未检测到 online 员工。电脑端启动并登录后，这里会出现它的办公位。</div>`;
+        return;
+      }
+      floor.innerHTML = devices.map((device, index) => {
+        const snapshot = employeeSnapshot(device);
+        const mode = snapshot.mode;
+        const label = snapshot.label;
+        const desc = mode === "working" ? `正在处理：${snapshot.title}` : snapshot.detail;
+        return `<button class="employee-card ${mode} ${device.online ? "online" : "offline"}" type="button" data-employee-id="${escapeHtml(device.installation_id || "")}" aria-label="${escapeHtml(employeeName(device, index))}">
+          <div class="employee-scene" aria-hidden="true">
+            <div class="screen"></div>
+            <div class="desk"></div>
+            <div class="person">
+              <div class="hair"></div>
+              <div class="head"></div>
+              <div class="body"></div>
+              <div class="arm left"></div>
+              <div class="arm right"></div>
+            </div>
+          </div>
+          <div class="employee-meta">
+            <div class="employee-title"><strong>${escapeHtml(employeeName(device, index))}</strong><span class="employee-state">${escapeHtml(label)}</span></div>
+            <div class="employee-desc">${escapeHtml(desc)}${device.installation_id ? ` · ${escapeHtml(shortId(device.installation_id))}` : ""}</div>
+          </div>
+        </button>`;
+      }).join("");
+    }
+
+    function collectPlatforms(row) {
+      const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
+      const result = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
+      const draft = publishDraftFromPayload ? publishDraftFromPayload({ ...result, run_id: row && row.id }) : null;
+      const raw = [
+        payload.platform,
+        payload.platform_name,
+        payload.publish_platform,
+        result.platform,
+        result.platform_name,
+        draft && (draft.platform_name || draft.platform),
+      ].filter(Boolean);
+      return raw.map((v) => String(v).trim()).filter(Boolean);
+    }
+
+    function workSortTime(item) {
+      const d = parseDate(item.time);
+      return d ? d.getTime() : 0;
+    }
+
+    function renderWorkList() {
+      const timeline = $("workTimeline");
+      if (!timeline) return;
+      const tasks = state.tasks || [];
+      const runs = state.runs || [];
+      const platforms = new Set();
+      [...tasks, ...runs].forEach((row) => collectPlatforms(row).forEach((p) => platforms.add(p)));
+      const current = runs.filter(isActiveRun).slice(0, 8).map((row) => ({
+        type: "current",
+        time: row.started_at || row.claimed_at || row.created_at,
+        title: row.title || "正在执行的任务",
+        badge: statusText(row.status),
+        meta: `${capabilityName(taskCapabilityId(row) || row.task_kind)} · ${runInstallationId(row) ? "员工 " + shortId(runInstallationId(row)) : "等待员工领取"}`,
+        actionTaskId: "",
+      }));
+      const done = runs.filter((row) => !isActiveRun(row)).slice(0, 18).map((row) => ({
+        type: String(row.status).toLowerCase() === "failed" ? "failed" : "done",
+        time: row.finished_at || row.updated_at || row.created_at,
+        title: row.title || "已执行任务",
+        badge: statusText(row.status),
+        meta: (row.error || row.result_text || (row.progress && (row.progress.text || row.progress.message)) || capabilityName(taskCapabilityId(row) || row.task_kind) || "已记录").slice(0, 90),
+        actionTaskId: "",
+      }));
+      const messages = state.historyItems.slice(-12).map((entry) => {
+        const row = entry && entry.message ? entry.message : entry;
+        const status = String((row && row.status) || "").toLowerCase();
+        return {
+          type: status === "failed" ? "failed" : (status === "pending" || status === "processing" ? "current" : "done"),
+          time: row.finished_at || row.updated_at || row.created_at,
+          title: "手机会话",
+          badge: statusText(row.status),
+          meta: String(row.error || row.reply_text || row.content || "会话消息").slice(0, 90),
+          actionTaskId: "",
+        };
+      });
+      const future = tasks
+        .filter((row) => String(row.status || "").toLowerCase() !== "cancelled")
+        .slice(0, 12)
+        .map((row) => ({
+          type: "future",
+          time: row.next_run_at || row.updated_at || row.created_at,
+          title: row.title || capabilityName(taskCapabilityId(row)),
+          badge: row.next_run_at ? "待执行" : statusText(row.status),
+          meta: `${capabilityName(taskCapabilityId(row))} · ${row.schedule_type === "interval" ? `每 ${Math.round((row.interval_seconds || 0) / 60)} 分钟` : "一次性"}`,
+          actionTaskId: row.id || "",
+        }));
+      const items = [...current, ...future, ...done, ...messages]
+        .filter((item) => item.title)
+        .sort((a, b) => (a.type === "current" ? -1 : b.type === "current" ? 1 : workSortTime(a) - workSortTime(b)))
+        .slice(0, 28);
+      if ($("workTaskCount")) $("workTaskCount").textContent = String(items.length);
+      if ($("workPlatformCount")) $("workPlatformCount").textContent = String(platforms.size);
+      if ($("workListSubtitle")) $("workListSubtitle").textContent = `共 ${items.length} 个任务节点 · AI 自动执行`;
+      if (!items.length) {
+        timeline.innerHTML = `<div class="office-empty">暂无工作记录。创建定时任务或从消息里下发任务后，这里会形成时间线。</div>`;
+        return;
+      }
+      timeline.innerHTML = items.map((item) => `<div class="work-node">
+        <div class="work-time"><strong>${escapeHtml(timeLabel(item.time))}</strong><span>${escapeHtml(fmtTime(item.time))}</span></div>
+        <div class="work-card ${escapeHtml(item.type)}">
+          <div class="work-card-top"><div class="work-card-title">${escapeHtml(item.title)}</div><span class="work-badge">${escapeHtml(item.badge)}</span></div>
+          <div class="work-meta">${escapeHtml(item.meta || "")}</div>
+          ${item.actionTaskId ? `<div class="work-card-actions"><button type="button" data-run-task-now="${escapeHtml(item.actionTaskId)}">立即执行</button></div>` : ""}
+        </div>
+      </div>`).join("");
+    }
+
+    async function runTaskNow(taskId, btn) {
+      if (!taskId) return;
+      const oldText = btn ? btn.textContent : "";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "下发中...";
+      }
+      try {
+        await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(taskId)}/run-now`, { method: "POST", json: {} });
+        toast("已下发执行");
+        await Promise.all([loadTasks(), loadRuns()]);
+      } catch (err) {
+        toast(err.message || "下发失败");
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText || "立即执行";
+        }
+      }
+    }
+
     function currentInstallationId() {
       const online = state.devices.find((d) => d.online && d.installation_id);
       const any = state.devices.find((d) => d.installation_id);
@@ -784,21 +1629,29 @@
     }
 
     function switchTab(tab) {
-      const key = tab || "home";
+      const key = tab || "office";
       document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
       document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
       const titleMap = {
-        home: ["必火AI员工", "远程任务、消息和执行记录"],
+        office: ["必火AI员工", "我的AI员工办公室"],
+        home: ["安排工作", "远程任务、消息和执行记录"],
+        workList: ["工作列表", "已完成、当前和待执行的工作节点"],
         messages: ["手机会话", "消息结果和素材预览"],
         profile: ["个人中心", "账号、设置和执行记录"],
       };
-      const nextTitle = titleMap[key] || titleMap.home;
+      const nextTitle = titleMap[key] || titleMap.office;
       $("pageTitle").textContent = nextTitle[0];
       $("pageSubtitle").textContent = nextTitle[1];
-      $("topBackBtn").classList.toggle("hidden", key === "home");
-      $("topActions").classList.toggle("hidden", key !== "home" || !state.token);
-      $("topbar").classList.toggle("subpage", key !== "home");
+      $("topBackBtn").classList.toggle("hidden", key === "office");
+      $("topActions").classList.toggle("hidden", key !== "office" || !state.token);
+      $("topbar").classList.toggle("subpage", key !== "office");
+      if (key === "office") renderOfficeEmployees();
+      if (key !== "office") closeEmployeeModal();
       if (key === "profile") Promise.all([loadTasks(), loadRuns()]);
+      if (key === "workList") {
+        renderWorkList();
+        Promise.all([loadTasks(), loadRuns()]);
+      }
       if (key === "messages") setTimeout(() => {
         autosizeMessageInput();
         scrollMessagesToBottom();
@@ -877,7 +1730,7 @@
         $("profileAvatar").textContent = firstChar(name);
         $("loginPanel").classList.add("hidden");
         $("appPanel").classList.remove("hidden");
-        switchTab("home");
+        switchTab("office");
         await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks(), loadRuns()]);
         return true;
       } catch (err) {
@@ -898,10 +1751,12 @@
         const text = data.online ? `本地在线：${online}/${total || online} 台` : "未检测到本地 online";
         $("deviceText").textContent = text;
         $("profileDeviceText").textContent = text;
+        renderOfficeEmployees();
       } catch (err) {
         $("onlineDot").classList.remove("online");
         $("deviceText").textContent = "设备状态获取失败";
         $("profileDeviceText").textContent = "设备状态获取失败";
+        renderOfficeEmployees();
       }
     }
 
@@ -1035,11 +1890,14 @@
 
     async function loadTasks() {
       const box = $("taskList");
-      if (!state.token || !box) return;
-      box.innerHTML = `<div class="hint">加载中...</div>`;
+      if (!state.token) return;
+      if (box) box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
         const data = await api("/api/scheduled-tasks/tasks?limit=50");
         const rows = Array.isArray(data.tasks) ? data.tasks : [];
+        state.tasks = rows;
+        renderWorkList();
+        if (!box) return;
         if (!rows.length) {
           box.innerHTML = `<div class="hint">暂无定时任务。</div>`;
           return;
@@ -1057,7 +1915,9 @@
           </div>`;
         }).join("");
       } catch (err) {
-        box.innerHTML = `<div class="hint">${escapeHtml(err.message || "定时任务加载失败")}</div>`;
+        state.tasks = [];
+        renderWorkList();
+        if (box) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "定时任务加载失败")}</div>`;
       }
     }
 
@@ -1524,6 +2384,31 @@
 
     function handleEvent(ev, bubble, messageId) {
       if (!ev || !bubble) return;
+      if (messageId) {
+        const hit = state.historyItems.find((entry) => {
+          const msg = entry && entry.message ? entry.message : entry;
+          return msg && msg.id === messageId;
+        });
+        const msg = hit && hit.message ? hit.message : hit;
+        if (msg) {
+          if (ev.type === "claimed") {
+            msg.status = "processing";
+            msg.claimed_by_installation_id = (ev.payload && ev.payload.installation_id) || msg.claimed_by_installation_id;
+          }
+          if (ev.type === "final") {
+            msg.status = "completed";
+            msg.reply_text = (ev.payload && (ev.payload.reply_text || ev.payload.text)) || msg.reply_text;
+            msg.finished_at = ev.created_at || new Date().toISOString();
+          }
+          if (ev.type === "error") {
+            msg.status = "failed";
+            msg.error = (ev.payload && (ev.payload.error || ev.payload.detail || ev.payload.message)) || msg.error;
+            msg.finished_at = ev.created_at || new Date().toISOString();
+          }
+          renderOfficeEmployees();
+          renderWorkList();
+        }
+      }
       const label = eventLabel(ev);
       if (label) addStep(bubble, label);
       if (ev.type === "delta" && ev.payload && ev.payload.text) appendBubbleText(bubble, ev.payload.text);
@@ -1557,6 +2442,16 @@
             handleEvent(ev, bubble, messageId);
           }
           if (data.message && ["completed", "failed", "cancelled"].includes(data.message.status)) {
+            const hit = state.historyItems.find((entry) => {
+              const msg = entry && entry.message ? entry.message : entry;
+              return msg && msg.id === messageId;
+            });
+            if (hit) {
+              if (hit.message) hit.message = data.message;
+              else Object.assign(hit, data.message);
+              renderOfficeEmployees();
+              renderWorkList();
+            }
             if (data.message.status === "completed" && data.message.reply_text) setBubbleText(bubble, data.message.reply_text);
             if (data.message.status === "failed") {
               bubble.classList.add("err");
@@ -1637,6 +2532,8 @@
       try {
         const data = await api("/api/h5-chat/messages?limit=40");
         const items = Array.isArray(data.messages) ? data.messages : [];
+        state.historyItems = items;
+        renderOfficeEmployees();
         if (!items.length) return;
         clearRenderedMessages();
         for (const item of items) renderHistoryItem(item);
@@ -1683,11 +2580,15 @@
 
     async function loadRuns() {
       const box = $("runList");
-      if (!state.token || !box) return;
-      box.innerHTML = `<div class="hint">加载中...</div>`;
+      if (!state.token) return;
+      if (box) box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
         const data = await api("/api/scheduled-tasks/runs?limit=30");
         const rows = Array.isArray(data.runs) ? data.runs : [];
+        state.runs = rows;
+        renderOfficeEmployees();
+        renderWorkList();
+        if (!box) return;
         if (!rows.length) {
           box.innerHTML = `<div class="hint">暂无执行记录。</div>`;
           return;
@@ -1703,7 +2604,10 @@
           </div>`;
         }).join("");
       } catch (err) {
-        box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
+        state.runs = [];
+        renderOfficeEmployees();
+        renderWorkList();
+        if (box) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
       }
     }
 
@@ -1713,7 +2617,7 @@
     document.querySelectorAll("[data-auth-tab]").forEach((btn) => {
       btn.addEventListener("click", () => setAuthTab(btn.dataset.authTab));
     });
-    $("topBackBtn").addEventListener("click", () => switchTab("home"));
+    $("topBackBtn").addEventListener("click", () => switchTab("office"));
     document.querySelectorAll("[data-task-ability]").forEach((btn) => {
       btn.addEventListener("click", () => setTaskAbility(btn.dataset.taskAbility));
     });
@@ -1724,6 +2628,32 @@
     $("refreshProfileBtn").addEventListener("click", () => Promise.all([refreshDeviceStatus(), loadTasks(), loadRuns()]));
     $("refreshTasksBtn").addEventListener("click", loadTasks);
     $("refreshRunsBtn").addEventListener("click", loadRuns);
+    $("hireEmployeeBtn").addEventListener("click", () => {
+      if (confirm("雇佣新员工需要到官网下载安装电脑端 online。现在打开官网吗？")) {
+        window.open("https://bhzn.top/", "_blank", "noopener,noreferrer");
+      }
+    });
+    $("employeeFloor").addEventListener("click", (evt) => {
+      const card = evt.target.closest("[data-employee-id]");
+      if (!card) return;
+      openEmployeeModal(card.dataset.employeeId || "");
+    });
+    $("employeeModalBackdrop").addEventListener("click", closeEmployeeModal);
+    $("employeeModalClose").addEventListener("click", closeEmployeeModal);
+    $("employeeWorkListBtn").addEventListener("click", () => {
+      closeEmployeeModal();
+      switchTab("workList");
+    });
+    $("employeeWorkbenchBtn").addEventListener("click", () => {
+      if ($("employeeWorkbenchBtn").disabled) return;
+      closeEmployeeModal();
+      switchTab("home");
+    });
+    $("workTimeline").addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-run-task-now]");
+      if (!btn) return;
+      runTaskNow(btn.dataset.runTaskNow || "", btn);
+    });
     $("logoutBtn").addEventListener("click", () => {
       localStorage.removeItem("lobster_h5_token");
       state.token = "";
@@ -1892,6 +2822,12 @@
       try {
         const data = await api("/api/h5-chat/messages", { method: "POST", json: { content: messageContent, mode: state.mode } });
         const msg = data.message || {};
+        if (msg.id) {
+          state.historyItems.push({ message: msg, events: [] });
+          state.historyItems = state.historyItems.slice(-40);
+          renderOfficeEmployees();
+          renderWorkList();
+        }
         if (msg.id) startSse(msg.id, bot);
         clearUploads();
         await refreshDeviceStatus();
@@ -1915,6 +2851,11 @@
         await refreshCaptcha();
       }
       setInterval(refreshDeviceStatus, 7000);
+      setInterval(() => {
+        if (!state.token) return;
+        const activeView = document.querySelector(".view.active");
+        if (activeView && (activeView.id === "officeView" || activeView.id === "workListView")) loadRuns();
+      }, 15000);
     })();
   </script>
 </body>
