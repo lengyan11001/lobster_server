@@ -12,13 +12,16 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import (
+    Asset,
     H5ChatDevicePresence,
     H5ChatEvent,
     H5ChatMessage,
+    PublishAccount,
     ScheduledTask,
     ScheduledTaskRun,
     User,
 )
+from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
 from .auth import get_current_user
 from .installation_slots import ensure_installation_slot
@@ -33,6 +36,26 @@ _VIDEO_EXTS = (".mp4", ".webm", ".mov", ".m4v", ".avi")
 _RUNNING_STATUSES = {"running", "processing", "pending", "queued", "waiting"}
 _GOAL_VIDEO_SOURCE_AI_IMAGE = "ai_image"
 _GOAL_VIDEO_SOURCE_ASSET_RANDOM = "asset_random"
+
+
+def _creative_candidate_group(meta: Optional[dict]) -> str:
+    if not isinstance(meta, dict):
+        return ""
+    current = str(meta.get("creative_candidate_group") or "").strip()
+    if current:
+        return current[:40]
+    raw = meta.get("creative_candidate_groups")
+    if isinstance(raw, str):
+        raw_items = re.split(r"[,\s，、；;]+", raw)
+    elif isinstance(raw, list):
+        raw_items = raw
+    else:
+        raw_items = []
+    for item in raw_items:
+        name = str(item or "").strip()
+        if name:
+            return name[:40]
+    return ""
 
 
 class ScheduledTaskCreate(BaseModel):
@@ -733,6 +756,53 @@ def list_scheduled_tasks(
         .all()
     )
     return {"ok": True, "tasks": [_serialize_task(r) for r in rows]}
+
+
+@router.get("/api/scheduled-tasks/assets/creative-candidate-groups", summary="H5 创意成片备选素材组列表")
+def list_h5_creative_candidate_groups(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = db.query(Asset).filter(Asset.user_id == current_user.id, Asset.media_type == "image").all()
+    groups: Dict[str, int] = {}
+    for row in rows:
+        name = _creative_candidate_group(row.meta)
+        if name:
+            groups[name] = groups.get(name, 0) + 1
+    return {
+        "ok": True,
+        "groups": [
+            {"name": name, "count": count}
+            for name, count in sorted(groups.items(), key=lambda kv: (-kv[1], kv[0]))
+        ],
+    }
+
+
+@router.get("/api/scheduled-tasks/publish/accounts", summary="H5 定时任务可用发布账号")
+def list_h5_scheduled_publish_accounts(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(PublishAccount)
+        .filter(PublishAccount.user_id == current_user.id)
+        .order_by(PublishAccount.created_at.desc())
+        .all()
+    )
+    return {
+        "ok": True,
+        "accounts": [
+            {
+                "id": row.id,
+                "platform": row.platform,
+                "platform_name": SUPPORTED_PLATFORMS.get(row.platform, {}).get("name", row.platform),
+                "nickname": row.nickname,
+                "status": row.status,
+            }
+            for row in rows
+        ],
+        "platforms": [{"id": key, "name": value["name"]} for key, value in SUPPORTED_PLATFORMS.items()],
+    }
 
 
 @router.patch("/api/scheduled-tasks/tasks/{task_id}", summary="更新任务状态")

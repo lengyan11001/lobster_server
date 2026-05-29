@@ -782,6 +782,23 @@
     .task-fields .field { margin: 0; }
     .task-fields label { color: rgba(255,255,255,.78); }
     .task-fields input, .task-fields select { background: rgba(255,255,255,.94); }
+    .task-param-fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      align-items: start;
+    }
+    .task-param-fields .field { margin: 0; }
+    .task-param-fields .field.full { grid-column: 1 / -1; }
+    .task-param-fields label { color: rgba(255,255,255,.78); }
+    .task-param-fields input, .task-param-fields select, .task-param-fields textarea { background: rgba(255,255,255,.94); box-sizing: border-box; }
+    .task-param-fields textarea { min-height: 86px; padding: 10px 12px; resize: vertical; line-height: 1.5; }
+    .task-param-note { margin: 5px 0 0; color: rgba(255,255,255,.68); font-size: 12px; line-height: 1.5; }
+    .task-checkbox { min-height: 44px; display: flex; align-items: center; gap: 8px; color: rgba(255,255,255,.88); }
+    .task-checkbox input { width: auto; min-height: auto; }
+    .task-daily-times { display: grid; gap: 7px; }
+    .task-daily-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+    .task-daily-row button { min-width: 42px; padding: 0 10px; min-height: 38px; }
     .digital-fields { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; }
     .digital-fields .field { margin: 0; }
     .task-actions { display: flex; justify-content: flex-end; gap: 10px; }
@@ -1068,7 +1085,7 @@
       .employee-task-step { grid-template-columns: 58px minmax(0, 1fr); }
       .hire-fab { right: 16px; bottom: 18px; max-width: calc(100vw - 32px); padding: 0 14px; }
       .hero { border-radius: 22px; padding: 15px; }
-      .task-fields, .digital-fields { grid-template-columns: 1fr; }
+      .task-fields, .task-param-fields, .digital-fields { grid-template-columns: 1fr; }
       .messages { max-height: calc(100vh - 238px); min-height: 350px; }
       .bubble { max-width: 94%; }
       .bubble.bot { max-width: 100%; }
@@ -1204,6 +1221,7 @@
                 <div class="task-panel-body hidden" id="taskPanelBody">
                   <div class="seg" id="taskAbilitySeg">
                     <button type="button" class="active" data-task-ability="goal.video.pipeline">创意成片</button>
+                    <button type="button" data-task-ability="goal.image.pipeline">文案+创意图片</button>
                     <button type="button" data-task-ability="hifly.video.create_by_tts">必火数字人</button>
                   </div>
                   <div class="task-fields">
@@ -1216,24 +1234,24 @@
                       <select id="taskScheduleType">
                         <option value="once">一次性</option>
                         <option value="interval">循环执行</option>
+                        <option value="daily_times">每天固定时间</option>
                       </select>
                     </div>
                     <div class="field">
+                      <label for="taskStartAt">开始时间（可选）</label>
+                      <input id="taskStartAt" type="datetime-local" />
+                    </div>
+                    <div class="field" id="taskIntervalBlock">
                       <label for="taskIntervalMinutes">间隔分钟</label>
                       <input id="taskIntervalMinutes" type="number" min="1" value="60" />
                     </div>
-                  </div>
-                  <div class="digital-fields hidden" id="digitalFields">
-                    <div class="field">
-                      <label for="taskAvatar">数字人</label>
-                      <select id="taskAvatar"><option value="">加载中...</option></select>
+                    <div class="field hidden" id="taskDailyTimesBlock">
+                      <label>每天执行时间</label>
+                      <div class="task-daily-times" id="taskDailyTimesList"></div>
+                      <button class="ghost" type="button" id="addDailyTimeBtn">添加时间点</button>
                     </div>
-                    <div class="field">
-                      <label for="taskVoice">声音</label>
-                      <select id="taskVoice"><option value="">加载中...</option></select>
-                    </div>
-                    <button class="ghost" type="button" id="autoPickDigitalBtn">自动</button>
                   </div>
+                  <div class="task-param-fields" id="taskParamFields"></div>
                   <div class="task-actions">
                     <button class="hero-action" type="button" id="createTaskBtn">下发任务</button>
                   </div>
@@ -1418,9 +1436,27 @@
       hiflyLoading: false,
       avatarRows: [],
       voiceRows: [],
+      candidateGroups: [],
+      publishAccounts: [],
+      publishAccountsLoaded: false,
+      publishAccountsLoading: false,
     };
     const SHOW_INTERNAL_STEPS = false;
     const IMAGE_TO_VIDEO_PROMPT = "用这个图片，提示词：";
+    const TASK_CAPABILITIES = {
+      "goal.video.pipeline": {
+        label: "创意成片",
+        description: "根据记忆或自定义提示词生成文案，可从备选素材组随机取图，或先 AI 生成首帧再生成视频。",
+      },
+      "goal.image.pipeline": {
+        label: "文案+创意图片",
+        description: "根据记忆或自定义提示词生成文案和创意图片，生成图片后结束。",
+      },
+      "hifly.video.create_by_tts": {
+        label: "必火数字人",
+        description: "选择本机已有数字人模板和声音，生成数字人口播视频。",
+      },
+    };
 
     function toast(text) {
       const el = $("toast");
@@ -1521,6 +1557,7 @@
     function capabilityName(capabilityId) {
       return {
         "goal.video.pipeline": "创意成片",
+        "goal.image.pipeline": "文案+创意图片",
         "hifly.video.create_by_tts": "必火数字人",
       }[capabilityId] || capabilityId || "定时任务";
     }
@@ -2215,6 +2252,136 @@
       }
     }
 
+    function optionHtml(value, label) {
+      return `<option value="${escapeHtml(value || "")}">${escapeHtml(label || value || "-")}</option>`;
+    }
+
+    function taskFieldHtml(label, control, full = false) {
+      return `<div class="field ${full ? "full" : ""}"><label>${escapeHtml(label)}</label>${control}</div>`;
+    }
+
+    function taskSelectHtml(id, options) {
+      return `<select id="${escapeHtml(id)}">${options}</select>`;
+    }
+
+    function taskTextareaHtml(id, placeholder) {
+      return `<textarea id="${escapeHtml(id)}" rows="3" placeholder="${escapeHtml(placeholder || "")}"></textarea>`;
+    }
+
+    function platformDisplayName(platform) {
+      return {
+        douyin: "抖音",
+        xiaohongshu: "小红书",
+        toutiao: "今日头条",
+        kuaishou: "快手",
+        bilibili: "B站",
+      }[String(platform || "").trim()] || platform || "-";
+    }
+
+    function fillCandidateGroupSelect() {
+      const sel = $("taskCandidateGroup");
+      if (!sel) return;
+      const current = sel.value;
+      if (!state.candidateGroups.length) {
+        sel.innerHTML = optionHtml("", "暂无备选组，请先到素材库设置");
+        return;
+      }
+      sel.innerHTML = state.candidateGroups.map((row) => optionHtml(row.name, `${row.name}${row.count ? `（${row.count}张）` : ""}`)).join("");
+      if (current && state.candidateGroups.some((row) => row.name === current)) sel.value = current;
+    }
+
+    async function loadCandidateGroups() {
+      try {
+        const data = await api("/api/scheduled-tasks/assets/creative-candidate-groups");
+        state.candidateGroups = Array.isArray(data.groups) ? data.groups : [];
+      } catch {
+        state.candidateGroups = [];
+      }
+      fillCandidateGroupSelect();
+    }
+
+    function fillPublishPlatformSelect() {
+      const sel = $("taskPublishPlatform");
+      if (!sel) return;
+      const current = sel.value;
+      const byPlatform = new Map();
+      (state.publishAccounts || []).forEach((row) => {
+        const platform = String(row && row.platform || "").trim();
+        if (!platform) return;
+        if (!byPlatform.has(platform)) byPlatform.set(platform, row.platform_name || platformDisplayName(platform));
+      });
+      sel.innerHTML = optionHtml("", "不发布，仅生成记录")
+        + Array.from(byPlatform.entries()).map(([platform, label]) => optionHtml(platform, label)).join("");
+      if (current && byPlatform.has(current)) sel.value = current;
+      fillPublishAccountSelect();
+    }
+
+    function fillPublishAccountSelect() {
+      const sel = $("taskPublishAccount");
+      if (!sel) return;
+      const current = sel.value;
+      const platform = $("taskPublishPlatform") ? $("taskPublishPlatform").value : "";
+      const rows = (state.publishAccounts || []).filter((row) => !platform || row.platform === platform);
+      sel.innerHTML = rows.length
+        ? optionHtml("", "请选择账号") + rows.map((row) => optionHtml(String(row.id), `${row.platform_name || platformDisplayName(row.platform)} - ${row.nickname || `账号 #${row.id}`}`)).join("")
+        : optionHtml("", platform ? "该平台暂无账号" : "先选择发布平台");
+      if (current && rows.some((row) => String(row.id) === current)) sel.value = current;
+    }
+
+    async function loadPublishAccounts() {
+      if (state.publishAccountsLoaded || state.publishAccountsLoading) {
+        fillPublishPlatformSelect();
+        return;
+      }
+      state.publishAccountsLoading = true;
+      try {
+        const data = await api("/api/scheduled-tasks/publish/accounts");
+        state.publishAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+        state.publishAccountsLoaded = true;
+      } catch (err) {
+        state.publishAccounts = [];
+        toast(err.message || "发布账号加载失败");
+      } finally {
+        state.publishAccountsLoading = false;
+        fillPublishPlatformSelect();
+      }
+    }
+
+    function updateGoalVideoSourceMode() {
+      const mode = $("taskVideoSourceMode") ? $("taskVideoSourceMode").value : "asset_random";
+      if ($("taskCandidateGroupField")) $("taskCandidateGroupField").classList.toggle("hidden", mode === "ai_image");
+    }
+
+    function renderTaskParamFields() {
+      const host = $("taskParamFields");
+      if (!host) return;
+      if (state.taskAbility === "hifly.video.create_by_tts") {
+        host.innerHTML = taskFieldHtml("数字人", taskSelectHtml("taskAvatar", optionHtml("", "加载中...")))
+          + taskFieldHtml("声音", taskSelectHtml("taskVoice", optionHtml("", "加载中...")))
+          + `<div class="field"><label>&nbsp;</label><button class="ghost" type="button" id="autoPickDigitalBtn">自动选择</button></div>`;
+        renderHiflyOptions();
+        if ($("autoPickDigitalBtn")) $("autoPickDigitalBtn").addEventListener("click", autoPickDigital);
+        if (state.taskPanelOpen) loadHiflyLibraries();
+        return;
+      }
+      if (state.taskAbility === "goal.image.pipeline") {
+        host.innerHTML = taskFieldHtml("发布平台", taskSelectHtml("taskPublishPlatform", optionHtml("", "不发布，仅生成记录")))
+          + taskFieldHtml("发布账号", taskSelectHtml("taskPublishAccount", optionHtml("", "先选择发布平台")))
+          + taskFieldHtml("发布方式", `<label class="task-checkbox"><input id="taskPublishAuto" type="checkbox">生成后自动发布</label><p class="task-param-note">不勾选时只推送到 H5/小程序/online 记录，之后可手动点击发布。</p>`, true)
+          + taskFieldHtml("提示词（可选）", taskTextareaHtml("taskCreativePrompt", "填写后直接按这段提示词生成图片；留空则根据记忆资料自动生成文案和画面方向"), true);
+        if ($("taskPublishPlatform")) $("taskPublishPlatform").addEventListener("change", fillPublishAccountSelect);
+        loadPublishAccounts();
+        return;
+      }
+      host.innerHTML = taskFieldHtml("首帧图片来源", taskSelectHtml("taskVideoSourceMode", optionHtml("asset_random", "从素材库备选组随机图片") + optionHtml("ai_image", "AI 生成图片")))
+        + `<div class="field" id="taskCandidateGroupField"><label>备选素材组</label>${taskSelectHtml("taskCandidateGroup", optionHtml("", "加载中..."))}</div>`
+        + taskFieldHtml("提示词（可选）", taskTextareaHtml("taskCreativePrompt", "填写后直接按这段提示词生成；留空则根据记忆资料自动生成文案和画面方向"), true);
+      if ($("taskVideoSourceMode")) $("taskVideoSourceMode").addEventListener("change", updateGoalVideoSourceMode);
+      updateGoalVideoSourceMode();
+      fillCandidateGroupSelect();
+      loadCandidateGroups();
+    }
+
     async function loadHiflyLibraries() {
       if (state.hiflyLoaded || state.hiflyLoading) return;
       state.hiflyLoading = true;
@@ -2239,7 +2406,7 @@
     function setTaskAbility(ability) {
       state.taskAbility = ability || "goal.video.pipeline";
       document.querySelectorAll("[data-task-ability]").forEach((btn) => btn.classList.toggle("active", btn.dataset.taskAbility === state.taskAbility));
-      $("digitalFields").classList.toggle("hidden", state.taskAbility !== "hifly.video.create_by_tts");
+      renderTaskParamFields();
       if (state.taskPanelOpen && state.taskAbility === "hifly.video.create_by_tts") loadHiflyLibraries();
     }
 
@@ -2247,6 +2414,10 @@
       state.taskPanelOpen = !!open;
       $("taskPanelBody").classList.toggle("hidden", !state.taskPanelOpen);
       $("toggleTaskPanelBtn").textContent = state.taskPanelOpen ? "收起" : "开始";
+      if (state.taskPanelOpen) {
+        renderTaskParamFields();
+        updateScheduleFields();
+      }
       if (state.taskPanelOpen && state.taskAbility === "hifly.video.create_by_tts") loadHiflyLibraries();
     }
 
@@ -2256,6 +2427,79 @@
       loadHiflyLibraries();
     }
 
+    function timezoneOffsetMinutes() {
+      return -new Date().getTimezoneOffset();
+    }
+
+    function collectDailyTimes() {
+      return Array.from(document.querySelectorAll("[data-task-daily-time]"))
+        .map((el) => String(el.value || "").trim())
+        .filter(Boolean);
+    }
+
+    function addDailyTime(value = "") {
+      const list = $("taskDailyTimesList");
+      if (!list) return;
+      const row = document.createElement("div");
+      row.className = "task-daily-row";
+      row.innerHTML = `<input type="time" step="60" data-task-daily-time value="${escapeHtml(value)}"><button class="ghost" type="button" aria-label="删除时间点">-</button>`;
+      row.querySelector("button").addEventListener("click", () => row.remove());
+      list.appendChild(row);
+    }
+
+    function updateScheduleFields() {
+      const type = $("taskScheduleType") ? $("taskScheduleType").value : "once";
+      if ($("taskIntervalBlock")) $("taskIntervalBlock").classList.toggle("hidden", type !== "interval");
+      if ($("taskDailyTimesBlock")) $("taskDailyTimesBlock").classList.toggle("hidden", type !== "daily_times");
+      if ($("taskStartAt")) $("taskStartAt").closest(".field").classList.toggle("hidden", type === "daily_times");
+      if (type === "daily_times" && $("taskDailyTimesList") && !$("taskDailyTimesList").children.length) addDailyTime("09:00");
+    }
+
+    function collectCapabilityPayload() {
+      if (state.taskAbility === "hifly.video.create_by_tts") {
+        const avatar = $("taskAvatar") ? $("taskAvatar").value : "";
+        const voice = $("taskVoice") ? $("taskVoice").value : "";
+        if (!avatar) throw new Error("请选择数字人");
+        if (!voice) throw new Error("请选择声音");
+        return { avatar, voice };
+      }
+      if (state.taskAbility === "goal.video.pipeline") {
+        const sourceMode = $("taskVideoSourceMode") ? $("taskVideoSourceMode").value : "asset_random";
+        const group = $("taskCandidateGroup") ? $("taskCandidateGroup").value : "";
+        if (sourceMode !== "ai_image" && !group) throw new Error("请选择创意成片备选素材组");
+        return {
+          source_mode: sourceMode,
+          candidate_group: sourceMode === "ai_image" ? "" : group,
+          prompt: $("taskCreativePrompt") ? $("taskCreativePrompt").value.trim() : "",
+        };
+      }
+      if (state.taskAbility === "goal.image.pipeline") {
+        const publishPlatform = $("taskPublishPlatform") ? $("taskPublishPlatform").value : "";
+        const publishAccountId = $("taskPublishAccount") ? $("taskPublishAccount").value : "";
+        const autoPublish = !!($("taskPublishAuto") && $("taskPublishAuto").checked);
+        let account = null;
+        if (publishAccountId) {
+          account = state.publishAccounts.find((row) => String(row.id) === String(publishAccountId)) || null;
+        }
+        const payload = {
+          prompt: $("taskCreativePrompt") ? $("taskCreativePrompt").value.trim() : "",
+        };
+        if (publishPlatform || publishAccountId || autoPublish) {
+          if (!publishPlatform) throw new Error("请选择发布平台");
+          if (!publishAccountId) throw new Error("请选择发布账号");
+          const parsedId = parseInt(publishAccountId, 10);
+          if (Number.isNaN(parsedId)) throw new Error("发布账号无效");
+          payload.publish_platform = publishPlatform;
+          payload.publish_platform_name = account ? (account.platform_name || platformDisplayName(publishPlatform)) : platformDisplayName(publishPlatform);
+          payload.publish_account_id = parsedId;
+          payload.publish_account_nickname = account ? (account.nickname || "") : "";
+          payload.publish_auto = autoPublish;
+        }
+        return payload;
+      }
+      return {};
+    }
+
     async function createScheduledTask() {
       const btn = $("createTaskBtn");
       const installationId = currentInstallationId();
@@ -2263,23 +2507,22 @@
         toast("未检测到本地 online 设备");
         return;
       }
-      let capPayload = {};
-      if (state.taskAbility === "hifly.video.create_by_tts") {
-        const avatar = $("taskAvatar").value;
-        const voice = $("taskVoice").value;
-        if (!avatar) throw new Error("请选择数字人");
-        if (!voice) throw new Error("请选择声音");
-        capPayload = { avatar, voice };
-      }
+      const capPayload = collectCapabilityPayload();
+      const scheduleType = $("taskScheduleType").value || "once";
+      const dailyTimes = collectDailyTimes();
+      if (scheduleType === "daily_times" && !dailyTimes.length) throw new Error("请填写每天执行时间，例如 09:00、12:00、18:00");
       const interval = parseInt($("taskIntervalMinutes").value || "60", 10);
-      const title = ($("taskTitle").value || "").trim() || (state.taskAbility === "hifly.video.create_by_tts" ? "必火数字人" : "创意成片");
+      const title = ($("taskTitle").value || "").trim() || capabilityName(state.taskAbility);
       const body = {
         title,
         task_kind: "capability",
         content: `定时调用能力 ${state.taskAbility}`,
         payload: { capability_id: state.taskAbility, payload: capPayload },
-        schedule_type: $("taskScheduleType").value || "once",
+        schedule_type: scheduleType,
         interval_seconds: Math.max(60, (Number.isNaN(interval) ? 60 : interval) * 60),
+        start_at: $("taskStartAt") ? $("taskStartAt").value : "",
+        daily_times: scheduleType === "daily_times" ? dailyTimes : [],
+        timezone_offset_minutes: timezoneOffsetMinutes(),
         installation_ids: [installationId],
       };
       btn.disabled = true;
@@ -2314,7 +2557,9 @@
           return;
         }
         box.innerHTML = rows.map((row) => {
-          const interval = row.schedule_type === "interval" ? `每 ${Math.round((row.interval_seconds || 0) / 60)} 分钟` : "一次性";
+          const interval = row.schedule_label || (row.schedule_type === "daily_times"
+            ? `每天 ${(row.schedule_config && Array.isArray(row.schedule_config.daily_times) ? row.schedule_config.daily_times.join("、") : "")}`
+            : (row.schedule_type === "interval" ? `每 ${Math.round((row.interval_seconds || 0) / 60)} 分钟` : "一次性"));
           return `<div class="task-row">
             <div class="task-row-main">
               <div class="task-row-title">${escapeHtml(row.title || capabilityName(taskCapabilityId(row)))}</div>
@@ -3036,7 +3281,8 @@
       btn.addEventListener("click", () => setTaskAbility(btn.dataset.taskAbility));
     });
     $("toggleTaskPanelBtn").addEventListener("click", () => setTaskPanelOpen(!state.taskPanelOpen));
-    $("autoPickDigitalBtn").addEventListener("click", autoPickDigital);
+    $("taskScheduleType").addEventListener("change", updateScheduleFields);
+    $("addDailyTimeBtn").addEventListener("click", () => addDailyTime());
     $("createTaskBtn").addEventListener("click", () => createScheduledTask().catch((err) => toast(err.message || "下发失败")));
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
     $("refreshProfileBtn").addEventListener("click", () => Promise.all([refreshDeviceStatus(), loadTasks(), loadRuns()]));
