@@ -1581,6 +1581,19 @@
       return null;
     }
 
+    function onlineDeviceIndex(device) {
+      const id = String((device && device.installation_id) || "").trim();
+      return state.devices.filter((d) => d.online).findIndex((d) => String(d.installation_id || "").trim() === id);
+    }
+
+    function unassignedActiveRunForDevice(device) {
+      const online = state.devices.filter((d) => d.online);
+      const index = onlineDeviceIndex(device);
+      if (index < 0) return null;
+      const rows = state.runs.filter((row) => isActiveRun(row) && !runInstallationId(row));
+      return rows[index % Math.max(online.length, 1)] || null;
+    }
+
     function activeMessageForDevice(device) {
       const id = String((device && device.installation_id) || "").trim();
       const rows = state.historyItems.filter((row) => {
@@ -1592,7 +1605,20 @@
       return rows.find((row) => {
         const msg = row && row.message ? row.message : row;
         return String(msg.claimed_by_installation_id || msg.installation_id || "").trim() === id;
-      }) || null;
+      }) || unassignedActiveMessageForDevice(device);
+    }
+
+    function unassignedActiveMessageForDevice(device) {
+      const online = state.devices.filter((d) => d.online);
+      const index = onlineDeviceIndex(device);
+      if (index < 0) return null;
+      const rows = state.historyItems.filter((row) => {
+        const msg = row && row.message ? row.message : row;
+        const status = String((msg && msg.status) || "").toLowerCase();
+        const owner = String(msg && (msg.claimed_by_installation_id || msg.installation_id) || "").trim();
+        return (status === "pending" || status === "processing") && !owner;
+      });
+      return rows[index % Math.max(online.length, 1)] || null;
     }
 
     function employeeName(device, index) {
@@ -1721,11 +1747,13 @@
         if (text) return text;
       }
       const msg = messageRow(entry);
-      return msg && msg.status === "processing" ? "正在处理手机会话" : "";
+      if (msg && msg.status === "pending") return "任务提交中，等待本地设备领取";
+      if (msg && msg.status === "processing") return "生成中，正在处理手机会话";
+      return "";
     }
 
     function employeeSnapshot(device, index = 0) {
-      const run = device && device.online ? activeRunForDevice(device) : null;
+      const run = device && device.online ? (activeRunForDevice(device) || unassignedActiveRunForDevice(device)) : null;
       const msgEntry = device && device.online && !run ? activeMessageForDevice(device) : null;
       const msg = messageRow(msgEntry);
       const mode = !device || !device.online ? "offline" : (run || msg ? "working" : "idle");
@@ -1741,8 +1769,8 @@
       const started = run ? (run.started_at || run.claimed_at || run.created_at) : (msg ? (msg.claimed_at || msg.created_at) : (device && device.last_seen_at));
       const bubble = mode === "working"
         ? (run
-          ? ((run.progress && (run.progress.text || run.progress.message || run.progress.phase || run.progress.status)) || title || "正在执行任务")
-          : (latestProgressTextForMessage(msgEntry) || "正在处理手机会话"))
+          ? ((run.progress && (run.progress.text || run.progress.message || run.progress.phase || run.progress.status)) || (run.status === "pending" ? "任务提交中，等待员工领取" : title) || "正在执行任务")
+          : (latestProgressTextForMessage(msgEntry) || "生成中，正在处理手机会话"))
         : (mode === "idle" ? idleBubbleForDevice(device, index) : "");
       const steps = [];
       steps.push(["状态", label]);
@@ -1817,7 +1845,7 @@
       const workingIds = new Set();
       devices.forEach((device) => {
         if (!device.online) return;
-        if (activeRunForDevice(device) || activeMessageForDevice(device)) workingIds.add(device.installation_id || employeeName(device, 0));
+        if (activeRunForDevice(device) || unassignedActiveRunForDevice(device) || activeMessageForDevice(device)) workingIds.add(device.installation_id || employeeName(device, 0));
       });
       if ($("officeTotalCount")) $("officeTotalCount").textContent = String(devices.length);
       if ($("officeOnlineCount")) $("officeOnlineCount").textContent = String(onlineCount);
@@ -1872,6 +1900,13 @@
       return d ? d.getTime() : 0;
     }
 
+    function messageWorkBadge(row) {
+      const status = String((row && row.status) || "").toLowerCase();
+      if (status === "pending") return "任务提交中";
+      if (status === "processing") return "生成中";
+      return statusText(row && row.status);
+    }
+
     function renderWorkList() {
       const timeline = $("workTimeline");
       if (!timeline) return;
@@ -1898,12 +1933,13 @@
       const messages = state.historyItems.slice(-12).map((entry) => {
         const row = entry && entry.message ? entry.message : entry;
         const status = String((row && row.status) || "").toLowerCase();
+        const progress = latestProgressTextForMessage(entry);
         return {
           type: status === "failed" ? "failed" : (status === "pending" || status === "processing" ? "current" : "done"),
           time: row.finished_at || row.updated_at || row.created_at,
-          title: "手机会话",
-          badge: statusText(row.status),
-          meta: String(row.error || row.reply_text || row.content || "会话消息").slice(0, 90),
+          title: status === "pending" ? "任务提交中" : (status === "processing" ? "生成中" : "手机会话"),
+          badge: messageWorkBadge(row),
+          meta: String(row.error || progress || row.reply_text || row.content || "会话消息").slice(0, 90),
           actionTaskId: "",
         };
       });
@@ -3019,7 +3055,7 @@
       updateCompanySign();
       updateBossOfficeStats(
         state.devices.filter((d) => d.online).length,
-        state.devices.filter((d) => d.online && (activeRunForDevice(d) || activeMessageForDevice(d))).length
+        state.devices.filter((d) => d.online && (activeRunForDevice(d) || unassignedActiveRunForDevice(d) || activeMessageForDevice(d))).length
       );
     });
     $("hireEmployeeBtn").addEventListener("click", () => {
