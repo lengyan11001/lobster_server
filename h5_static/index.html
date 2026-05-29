@@ -219,18 +219,16 @@
     .office-hero {
       position: relative;
       overflow: hidden;
-      display: grid;
-      grid-template-columns: minmax(0, 1.1fr) minmax(250px, .9fr);
-      gap: 18px;
-      min-height: 288px;
-      padding: 18px;
-      border-radius: 28px;
+      display: block;
+      min-height: 0;
+      padding: 12px;
+      border-radius: 24px;
       color: #fff;
       background:
         linear-gradient(90deg, rgba(8,18,38,.94) 0%, rgba(13,34,78,.78) 48%, rgba(11,82,130,.38) 100%),
         url("/h5-static/h5-office-boss-bg.jpg") center / cover no-repeat,
         #102036;
-      box-shadow: 0 24px 68px rgba(16, 45, 105, .26);
+      box-shadow: 0 16px 42px rgba(16, 45, 105, .22);
     }
     .office-hero::before {
       content: "";
@@ -241,8 +239,22 @@
         linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,0) 56%);
       pointer-events: none;
     }
-    .boss-copy, .office-summary { position: relative; z-index: 1; }
-    .boss-copy { display: grid; align-content: space-between; gap: 16px; min-height: 250px; }
+    .boss-card {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 82px minmax(0, 1fr);
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      min-height: 112px;
+      padding: 8px 12px 8px 6px;
+      border-radius: 20px;
+      background: rgba(255,255,255,.16);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 12px 28px rgba(4,15,38,.18);
+      backdrop-filter: blur(8px);
+      box-sizing: border-box;
+    }
     .boss-kicker {
       width: fit-content;
       padding: 5px 10px;
@@ -253,56 +265,43 @@
       font-size: 12px;
       font-weight: 900;
     }
-    .office-hero h2 { margin: 0; font-size: clamp(25px, 7vw, 40px); line-height: 1.12; letter-spacing: 0; }
-    .office-hero p { margin: 8px 0 0; max-width: 470px; color: rgba(255,255,255,.8); line-height: 1.65; }
-    .boss-card {
-      display: grid;
-      grid-template-columns: 112px minmax(0, 1fr);
-      align-items: center;
-      gap: 12px;
-      width: min(380px, 100%);
-      padding: 10px 12px 10px 6px;
-      border-radius: 22px;
-      background: rgba(255,255,255,.16);
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 14px 34px rgba(4,15,38,.2);
-      backdrop-filter: blur(8px);
-    }
     .boss-avatar {
-      width: 112px;
-      height: 126px;
+      width: 82px;
+      height: 96px;
       object-fit: contain;
-      filter: drop-shadow(0 16px 22px rgba(0,0,0,.22));
+      filter: drop-shadow(0 12px 18px rgba(0,0,0,.2));
       animation: boss-breathe 3.2s ease-in-out infinite;
     }
-    .boss-info { min-width: 0; display: grid; gap: 4px; }
-    .boss-info strong { font-size: 18px; }
-    .boss-info span { color: rgba(255,255,255,.78); font-size: 12px; line-height: 1.6; word-break: break-word; }
-    .office-summary {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(92px, 1fr));
+    .boss-info { min-width: 0; display: grid; gap: 6px; }
+    .boss-heading {
+      display: flex;
+      align-items: center;
       gap: 8px;
-      align-content: stretch;
-      min-width: min(330px, 100%);
+      min-width: 0;
+      flex-wrap: wrap;
     }
-    .office-stat {
-      min-height: 88px;
+    .boss-info strong { font-size: 18px; line-height: 1.2; }
+    .boss-info span { color: rgba(255,255,255,.78); font-size: 12px; line-height: 1.4; word-break: break-word; }
+    .boss-metrics {
       display: grid;
-      align-content: center;
-      gap: 3px;
-      padding: 12px;
-      border-radius: 18px;
-      background: rgba(255,255,255,.84);
-      color: #102036;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.64), 0 12px 28px rgba(4,15,38,.14);
-      backdrop-filter: blur(8px);
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      width: 100%;
     }
-    .office-stat.primary {
-      grid-column: span 2;
-      min-height: 96px;
-      background: linear-gradient(135deg, rgba(255,255,255,.94), rgba(206,246,255,.88));
+    .boss-metric {
+      min-width: 0;
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 4px;
+      padding: 6px 7px;
+      border-radius: 12px;
+      background: rgba(255,255,255,.14);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.13);
+      white-space: nowrap;
     }
-    .office-stat strong { font-size: 25px; font-variant-numeric: tabular-nums; }
-    .office-stat span { color: #607089; font-size: 12px; }
+    .boss-metric strong { font-size: 18px; font-variant-numeric: tabular-nums; line-height: 1; }
+    .boss-metric span { color: rgba(255,255,255,.74); font-size: 11px; line-height: 1; }
     .office-floor {
       position: relative;
       min-height: clamp(470px, 62vh, 680px);
@@ -1028,13 +1027,16 @@
       .subtitle { display: none; }
       .top-action-label { display: none; }
       .top-action { width: 40px; padding: 0; }
-      .office-hero { grid-template-columns: 1fr; border-radius: 22px; padding: 14px; min-height: 0; }
-      .boss-copy { min-height: 0; }
-      .boss-card { grid-template-columns: 92px minmax(0, 1fr); width: 100%; padding: 8px 10px 8px 4px; }
-      .boss-avatar { width: 92px; height: 108px; }
-      .office-summary { min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .office-stat { min-height: 72px; padding: 10px; }
-      .office-stat strong { font-size: 22px; }
+      .office-hero { border-radius: 20px; padding: 10px; }
+      .boss-card { grid-template-columns: 72px minmax(0, 1fr); min-height: 98px; padding: 7px 9px 7px 4px; }
+      .boss-avatar { width: 72px; height: 86px; }
+      .boss-info { gap: 5px; }
+      .boss-info strong { font-size: 16px; }
+      .boss-info span { font-size: 11px; }
+      .boss-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+      .boss-metric { padding: 5px 4px; gap: 2px; border-radius: 10px; }
+      .boss-metric strong { font-size: 15px; }
+      .boss-metric span { font-size: 10px; }
       .office-floor { border-radius: 22px; padding: 62px 10px 10px; min-height: 560px; }
       .company-sign { left: 10px; right: 10px; justify-content: center; }
       .employee-card { width: 126px; }
@@ -1136,26 +1138,21 @@
       <section class="view active" id="officeView">
         <div class="office-grid">
           <div class="office-hero">
-            <div class="boss-copy">
-              <div>
-                <div class="boss-kicker">老板办公室</div>
-                <h2>我的AI员工</h2>
-                <p>一个在线设备，就是一个正在上岗的AI员工。老板在这里看全局投入和产出。</p>
-              </div>
-              <div class="boss-card">
-                <img class="boss-avatar" src="/h5-static/h5-boss-avatar.png" alt="" loading="lazy">
-                <div class="boss-info">
+            <div class="boss-card">
+              <img class="boss-avatar" src="/h5-static/h5-boss-avatar.png" alt="" loading="lazy">
+              <div class="boss-info">
+                <div class="boss-heading">
+                  <div class="boss-kicker">老板办公室</div>
                   <strong id="bossName">老板</strong>
-                  <span id="bossOfficeLine">正在巡视办公室，等待员工汇报今天的工作。</span>
+                </div>
+                <span id="bossOfficeLine">巡视员工状态，盯住投入和产出。</span>
+                <div class="boss-metrics">
+                  <div class="boss-metric"><strong id="bossCreditsSpent">0</strong><span>算力</span></div>
+                  <div class="boss-metric"><strong id="bossHarvestCount">0</strong><span>素材</span></div>
+                  <div class="boss-metric"><strong id="officeWorkingCount">0</strong><span>工作</span></div>
+                  <div class="boss-metric"><strong id="officeOnlineCount">0</strong><span>上班</span></div>
                 </div>
               </div>
-            </div>
-            <div class="office-summary">
-              <div class="office-stat primary"><strong id="bossCreditsSpent">0</strong><span>已花算力</span></div>
-              <div class="office-stat"><strong id="bossHarvestCount">0</strong><span>收获素材</span></div>
-              <div class="office-stat"><strong id="officeWorkingCount">0</strong><span>正在工作</span></div>
-              <div class="office-stat"><strong id="officeTotalCount">0</strong><span>员工总数</span></div>
-              <div class="office-stat"><strong id="officeOnlineCount">0</strong><span>正在上班</span></div>
             </div>
           </div>
           <div class="office-floor" id="employeeFloor">
@@ -1672,7 +1669,7 @@
       if ($("bossName")) $("bossName").textContent = `${state.companyName || "我的AI公司"}老板`;
       const line = workingCount > 0
         ? `${workingCount} 位员工正在干活，老板盯着交付进度。`
-        : (onlineCount > 0 ? "员工已到岗，老板正在安排下一份工作。" : "员工还没到岗，老板办公室先亮着灯。");
+        : (onlineCount > 0 ? `${onlineCount} 位员工已到岗，等待安排。` : "员工还没到岗，办公室先亮着灯。");
       if ($("bossOfficeLine")) $("bossOfficeLine").textContent = line;
     }
 
