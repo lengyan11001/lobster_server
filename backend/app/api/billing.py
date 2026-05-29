@@ -26,6 +26,7 @@ from ..services.credits_amount import (
     ledger_display_delta,
     quantize_credits,
 )
+from ..services.daily_credit_limit import daily_limit_status, set_user_daily_limit
 from ..services.fuiou_pay import (
     fuiou_configured,
     fuiou_order_pay,
@@ -328,6 +329,37 @@ def _get_billing_pricing() -> dict[str, Any]:
 def get_billing_pricing(current_user: User = Depends(get_current_user)):
     """返回技能解锁价格区间与算力套餐列表，供前端展示。可在 custom_configs.json 的 configs.BILLING_PRICING 中覆盖。"""
     return _get_billing_pricing()
+
+
+class DailyCreditLimitBody(BaseModel):
+    daily_limit: Optional[float] = None
+
+
+@router.get("/api/billing/daily-limit", summary="我的每日算力消耗上限")
+def get_daily_credit_limit(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return daily_limit_status(db, current_user.id)
+
+
+@router.put("/api/billing/daily-limit", summary="设置每日算力消耗上限")
+def update_daily_credit_limit(
+    body: DailyCreditLimitBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    raw = body.daily_limit
+    if raw is None:
+        raw = 0
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="每日上限必须是数字")
+    if value < 0:
+        raise HTTPException(status_code=400, detail="每日上限不能小于 0")
+    set_user_daily_limit(db, current_user.id, value)
+    return daily_limit_status(db, current_user.id)
 
 
 # ── 自有充值（独立于速推）────────────────────────────────────────────────────

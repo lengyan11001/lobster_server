@@ -24,6 +24,7 @@ from ..db import SessionLocal, get_db
 from ..models import BillingIdempotency, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
+from ..services.daily_credit_limit import assert_daily_limit_allows
 from ..services.sutui_api_audit import clip_openai_chat_completions_json_for_audit, log_xskill_http
 from ..services.sutui_pricing import (
     credits_from_chat_usage_when_no_docs_pricing,
@@ -1077,6 +1078,19 @@ def charge_chat_turn_once(
         _store_chat_turn_idempotency(db, current_user.id, tid, payload)
         return payload
 
+    db.refresh(current_user)
+    bal = user_balance_decimal(current_user)
+    if bal < _CHAT_TURN_CHARGE_CREDITS:
+        raise HTTPException(
+            status_code=402,
+            headers={"X-Lobster-Min-Charge-Credits": str(_CHAT_TURN_CHARGE_CREDITS)},
+            detail=(
+                f"积分不足：对话本轮需 {_CHAT_TURN_CHARGE_CREDITS} 算力，"
+                f"当前余额 {bal}。请先充值后再试。"
+            ),
+        )
+    assert_daily_limit_allows(db, current_user.id, _CHAT_TURN_CHARGE_CREDITS, action_label="本轮对话")
+
     idem_row = BillingIdempotency(
         user_id=current_user.id,
         key=tid,
@@ -1092,19 +1106,6 @@ def charge_chat_turn_once(
         if cached is not None:
             return cached
         raise HTTPException(status_code=409, detail="对话轮次正在扣费，请稍后重试")
-
-    db.refresh(current_user)
-    bal = user_balance_decimal(current_user)
-    if bal < _CHAT_TURN_CHARGE_CREDITS:
-        db.rollback()
-        raise HTTPException(
-            status_code=402,
-            headers={"X-Lobster-Min-Charge-Credits": str(_CHAT_TURN_CHARGE_CREDITS)},
-            detail=(
-                f"积分不足：对话本轮需 {_CHAT_TURN_CHARGE_CREDITS} 算力，"
-                f"当前余额 {bal}。请先充值后再试。"
-            ),
-        )
 
     current_user.credits = bal - _CHAT_TURN_CHARGE_CREDITS
     bal_after = quantize_credits(current_user.credits)
@@ -1414,6 +1415,7 @@ def _apply_chat_deduct(
                 f"积分不足：本次应答需扣 {credits} 积分，当前余额 {bal}。请充值后重试。"
             ),
         )
+    assert_daily_limit_allows(db, current_user.id, credits, action_label="本次对话")
     current_user.credits = bal - credits
     bal_after = quantize_credits(current_user.credits)
     meta_chat = {

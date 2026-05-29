@@ -24,6 +24,7 @@ from .auth import get_current_user, brand_mark_for_jwt_claim
 from ..models import BillingIdempotency, CapabilityCallLog, CapabilityConfig, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
+from ..services.daily_credit_limit import assert_daily_limit_allows
 from ..services.sutui_api_audit import log_capability_call_log_persisted
 from .installation_slots import installation_slots_enabled, parse_installation_id_strict
 from .skills import user_can_use_capability
@@ -409,6 +410,7 @@ def pre_deduct(
                 status_code=402,
                 detail=f"积分不足：本次需 {float(fc)} 积分，当前余额 {float(user_balance_decimal(current_user))}。请先充值。",
             )
+        assert_daily_limit_allows(db, current_user.id, fc, action_label="本次生成")
         current_user.credits = user_balance_decimal(current_user) - fc
         bal = quantize_credits(current_user.credits)
         _recon_fc = _sutui_recon_for_ledger(
@@ -463,6 +465,7 @@ def pre_deduct(
                 status_code=402,
                 detail=f"积分不足：本次需 {float(est_d)} 积分，当前余额 {float(user_balance_decimal(current_user))}。请先充值。",
             )
+        assert_daily_limit_allows(db, current_user.id, est_d, action_label="本次生成")
         current_user.credits = user_balance_decimal(current_user) - est_d
         bal = quantize_credits(current_user.credits)
         append_credit_ledger(
@@ -509,6 +512,7 @@ def pre_deduct(
                     status_code=402,
                     detail=f"积分不足：本次需 {float(est_d)} 积分，当前余额 {float(user_balance_decimal(current_user))}。请先充值。",
                 )
+            assert_daily_limit_allows(db, current_user.id, est_d, action_label="本次生成")
             current_user.credits = user_balance_decimal(current_user) - est_d
             bal = quantize_credits(current_user.credits)
             _recon = _sutui_recon_for_ledger(
@@ -583,6 +587,7 @@ def pre_deduct(
                 status_code=402,
                 detail=f"积分不足：本次需 {float(est_d)} 积分（模型估价×{_multiplier:.0f}），当前余额 {float(user_balance_decimal(current_user))}。请先充值。",
             )
+        assert_daily_limit_allows(db, current_user.id, est_d, action_label="本次生成")
         current_user.credits = user_balance_decimal(current_user) - est_d
         bal = quantize_credits(current_user.credits)
         _recon = _sutui_recon_for_ledger(
@@ -685,6 +690,7 @@ def pre_deduct(
             status_code=402,
             detail=f"积分不足：本次需 {unit_credits} 积分，当前余额 {user_balance_decimal(current_user)}。请先充值。",
         )
+    assert_daily_limit_allows(db, current_user.id, uc, action_label="本次调用")
     current_user.credits = user_balance_decimal(current_user) - uc
     bal = quantize_credits(current_user.credits)
     _recon_u = _sutui_recon_for_ledger(
@@ -824,6 +830,8 @@ def record_call(
                     f"当前余额 {user_balance_decimal(current_user)}。请先充值。"
                 ),
             )
+        if delta > 0:
+            assert_daily_limit_allows(db, current_user.id, delta, action_label="本次结算补扣")
         current_user.credits = user_balance_decimal(current_user) - delta
         credits_charged = final
         ledger_kind = "settle"
@@ -855,6 +863,7 @@ def record_call(
                     f"当前余额 {user_balance_decimal(current_user)}。请先充值。"
                 ),
             )
+        assert_daily_limit_allows(db, current_user.id, charge_to_user, action_label="本次调用")
         current_user.credits = user_balance_decimal(current_user) - charge_to_user
         credits_charged = charge_to_user
         ledger_kind = "direct_charge"
@@ -873,6 +882,7 @@ def record_call(
                 status_code=402,
                 detail=f"积分不足：本次需 {unit_credits} 积分，当前余额 {user_balance_decimal(current_user)}。请先充值。",
             )
+        assert_daily_limit_allows(db, current_user.id, uc, action_label="本次调用")
         current_user.credits = user_balance_decimal(current_user) - uc
         credits_charged = uc
         ledger_kind = "unit_charge"

@@ -733,6 +733,24 @@ class CreditLedger(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class UserDailyCreditLimit(Base):
+    """Per-user daily credit spend cap. Null/0 means no cap."""
+
+    __tablename__ = "user_daily_credit_limits"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_user_daily_credit_limits_user_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    daily_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 # ── Meta Social（Instagram / Facebook）发布 + 数据同步 ────────────────────────
 
 
