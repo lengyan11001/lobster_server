@@ -86,6 +86,10 @@ class H5HeartbeatIn(BaseModel):
     display_name: Optional[str] = None
 
 
+class H5DeviceDisplayNameIn(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=128)
+
+
 def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
 
@@ -564,7 +568,7 @@ def h5_device_heartbeat(
     )
     if row:
         row.last_seen_at = now
-        if body.display_name is not None:
+        if body.display_name is not None and not (row.display_name or "").strip():
             row.display_name = body.display_name.strip()[:128] or None
     else:
         row = H5ChatDevicePresence(
@@ -577,6 +581,40 @@ def h5_device_heartbeat(
         db.add(row)
     db.commit()
     return {"ok": True, "installation_id": xi, "last_seen_at": _iso(now)}
+
+
+@router.patch("/api/h5-chat/devices/{installation_id}/display-name", summary="H5 设置 online 员工昵称")
+def h5_update_device_display_name(
+    installation_id: str,
+    body: H5DeviceDisplayNameIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    iid = (installation_id or "").strip()
+    if not iid:
+        raise HTTPException(status_code=400, detail="缺少设备 ID")
+    row = (
+        db.query(H5ChatDevicePresence)
+        .filter(H5ChatDevicePresence.user_id == current_user.id, H5ChatDevicePresence.installation_id == iid)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    row.display_name = (body.display_name or "").strip()[:128] or None
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    now = datetime.utcnow()
+    age = (now - row.last_seen_at).total_seconds() if row.last_seen_at else 999999
+    return {
+        "ok": True,
+        "device": {
+            "installation_id": row.installation_id,
+            "display_name": row.display_name,
+            "last_seen_at": _iso(row.last_seen_at),
+            "online": age <= 20,
+        },
+    }
 
 
 @router.get("/api/h5-chat/devices/status", summary="H5 查询本地 online 是否在线")

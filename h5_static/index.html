@@ -28,6 +28,7 @@
     body {
       margin: 0;
       min-height: 100vh;
+      overflow-x: hidden;
       color: var(--ink);
       font-family: "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
       background:
@@ -62,6 +63,7 @@
     .hidden { display: none !important; }
     .shell {
       width: min(980px, calc(100vw - 24px));
+      max-width: 100%;
       min-height: 100vh;
       margin: 0 auto;
       padding: 14px 0 28px;
@@ -218,37 +220,89 @@
       position: relative;
       overflow: hidden;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 14px;
-      padding: 20px;
+      grid-template-columns: minmax(0, 1.1fr) minmax(250px, .9fr);
+      gap: 18px;
+      min-height: 288px;
+      padding: 18px;
       border-radius: 28px;
       color: #fff;
       background:
-        linear-gradient(135deg, #102036 0%, #245cff 56%, #13b7d8 100%),
+        linear-gradient(90deg, rgba(8,18,38,.94) 0%, rgba(13,34,78,.78) 48%, rgba(11,82,130,.38) 100%),
+        url("/h5-static/h5-office-boss-bg.jpg") center / cover no-repeat,
         #102036;
       box-shadow: 0 24px 68px rgba(16, 45, 105, .26);
     }
-    .office-hero h2 { margin: 0; font-size: clamp(25px, 7vw, 42px); line-height: 1.12; letter-spacing: 0; }
-    .office-hero p { margin: 8px 0 0; color: rgba(255,255,255,.78); line-height: 1.65; }
+    .office-hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 16% 18%, rgba(255,255,255,.2), transparent 26%),
+        linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,0) 56%);
+      pointer-events: none;
+    }
+    .boss-copy, .office-summary { position: relative; z-index: 1; }
+    .boss-copy { display: grid; align-content: space-between; gap: 16px; min-height: 250px; }
+    .boss-kicker {
+      width: fit-content;
+      padding: 5px 10px;
+      border-radius: 999px;
+      color: #c8f7ff;
+      background: rgba(19,183,216,.18);
+      box-shadow: inset 0 0 0 1px rgba(180,241,255,.28);
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .office-hero h2 { margin: 0; font-size: clamp(25px, 7vw, 40px); line-height: 1.12; letter-spacing: 0; }
+    .office-hero p { margin: 8px 0 0; max-width: 470px; color: rgba(255,255,255,.8); line-height: 1.65; }
+    .boss-card {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr);
+      align-items: center;
+      gap: 12px;
+      width: min(380px, 100%);
+      padding: 10px 12px 10px 6px;
+      border-radius: 22px;
+      background: rgba(255,255,255,.16);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 14px 34px rgba(4,15,38,.2);
+      backdrop-filter: blur(8px);
+    }
+    .boss-avatar {
+      width: 112px;
+      height: 126px;
+      object-fit: contain;
+      filter: drop-shadow(0 16px 22px rgba(0,0,0,.22));
+      animation: boss-breathe 3.2s ease-in-out infinite;
+    }
+    .boss-info { min-width: 0; display: grid; gap: 4px; }
+    .boss-info strong { font-size: 18px; }
+    .boss-info span { color: rgba(255,255,255,.78); font-size: 12px; line-height: 1.6; word-break: break-word; }
     .office-summary {
       display: grid;
-      grid-template-columns: repeat(3, minmax(74px, 1fr));
+      grid-template-columns: repeat(2, minmax(92px, 1fr));
       gap: 8px;
-      align-content: end;
+      align-content: stretch;
       min-width: min(330px, 100%);
     }
     .office-stat {
-      min-height: 78px;
+      min-height: 88px;
       display: grid;
       align-content: center;
       gap: 3px;
       padding: 12px;
       border-radius: 18px;
-      background: rgba(255,255,255,.13);
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.17);
+      background: rgba(255,255,255,.84);
+      color: #102036;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.64), 0 12px 28px rgba(4,15,38,.14);
+      backdrop-filter: blur(8px);
     }
-    .office-stat strong { font-size: 24px; }
-    .office-stat span { color: rgba(255,255,255,.74); font-size: 12px; }
+    .office-stat.primary {
+      grid-column: span 2;
+      min-height: 96px;
+      background: linear-gradient(135deg, rgba(255,255,255,.94), rgba(206,246,255,.88));
+    }
+    .office-stat strong { font-size: 25px; font-variant-numeric: tabular-nums; }
+    .office-stat span { color: #607089; font-size: 12px; }
     .office-floor {
       position: relative;
       min-height: clamp(470px, 62vh, 680px);
@@ -334,9 +388,9 @@
       position: absolute;
       z-index: 2;
       left: var(--x, 50%);
-      top: var(--y, 56%);
-      width: 138px;
-      min-height: 172px;
+      top: var(--y, 220px);
+      width: 128px;
+      min-height: 168px;
       display: block;
       padding: 0;
       color: var(--ink);
@@ -351,10 +405,11 @@
     .employee-card.online:active { transform: translate(-50%, -50%) scale(.98); }
     .employee-card.idle { animation: employee-wander 6.2s ease-in-out infinite alternate; animation-delay: var(--delay, 0s); }
     .employee-card.working { z-index: 3; }
+    .employee-card.offline { animation: employee-off-duty 5.8s ease-in-out infinite alternate; animation-delay: var(--delay, 0s); }
     .employee-scene {
       position: relative;
-      width: 138px;
-      min-height: 128px;
+      width: 128px;
+      min-height: 148px;
       overflow: visible;
       border-radius: 0;
       background: transparent;
@@ -364,7 +419,7 @@
       position: absolute;
       z-index: 5;
       left: 50%;
-      top: -18px;
+      top: -56px;
       max-width: 158px;
       padding: 8px 10px;
       border-radius: 14px 14px 14px 5px;
@@ -393,9 +448,9 @@
     }
     .desk {
       position: absolute;
-      left: 16px;
-      right: 10px;
-      bottom: 18px;
+      left: 15px;
+      right: 13px;
+      bottom: 14px;
       height: 16px;
       border-radius: 8px;
       background: #d9aa6a;
@@ -414,8 +469,8 @@
     .desk::after { right: 16px; }
     .screen {
       position: absolute;
-      right: 24px;
-      bottom: 42px;
+      right: 17px;
+      bottom: 38px;
       width: 52px;
       height: 34px;
       border-radius: 8px;
@@ -432,59 +487,31 @@
       border-radius: 6px;
       background: #52657f;
     }
+    .employee-card .desk,
+    .employee-card .screen { display: none; }
     .person {
       position: absolute;
-      left: 34px;
-      bottom: 38px;
-      width: 70px;
-      height: 92px;
+      left: 50%;
+      bottom: 14px;
+      width: 96px;
+      height: 138px;
+      transform: translateX(-50%);
+      pointer-events: none;
+      filter: drop-shadow(0 18px 15px rgba(22,45,84,.2));
     }
-    .head {
-      position: absolute;
-      left: 20px;
-      top: 2px;
-      width: 34px;
-      height: 34px;
-      border-radius: 50%;
-      background: #ffd5b8;
-      box-shadow: inset -4px -3px 0 rgba(175,95,55,.12);
+    .employee-avatar-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      object-position: center bottom;
     }
-    .hair {
-      position: absolute;
-      left: 15px;
-      top: -2px;
-      width: 42px;
-      height: 22px;
-      border-radius: 18px 18px 8px 8px;
-      background: #25324a;
-    }
-    .body {
-      position: absolute;
-      left: 18px;
-      top: 42px;
-      width: 40px;
-      height: 46px;
-      border-radius: 18px 18px 10px 10px;
-      background: linear-gradient(135deg, var(--blue), var(--cyan));
-    }
-    .arm {
-      position: absolute;
-      top: 50px;
-      width: 30px;
-      height: 10px;
-      border-radius: 10px;
-      background: #ffd5b8;
-      transform-origin: 6px 5px;
-    }
-    .arm.left { left: 2px; transform: rotate(26deg); }
-    .arm.right { left: 42px; transform: rotate(-24deg); }
     .employee-card.idle .person { animation: idle-breathe 2.4s ease-in-out infinite; }
-    .employee-card.idle .head { animation: idle-nod 2.4s ease-in-out infinite; }
-    .employee-card.working .arm.left { animation: typing-left .42s ease-in-out infinite alternate; }
-    .employee-card.working .arm.right { animation: typing-right .42s ease-in-out infinite alternate; }
+    .employee-card.working .person { width: 104px; animation: work-focus .6s ease-in-out infinite alternate; }
     .employee-card.working .screen { box-shadow: inset 0 0 0 5px #243959, 0 0 22px rgba(19,183,216,.28); }
     .employee-card.offline .employee-scene { filter: grayscale(.75); opacity: .74; }
-    .employee-card.offline .desk, .employee-card.offline .screen, .employee-card.offline .person { opacity: .72; }
+    .employee-card.offline .desk, .employee-card.offline .screen { display: none; }
+    .employee-card.offline .person { bottom: 14px; opacity: .86; animation: off-duty-wave 2.8s ease-in-out infinite; }
+    .employee-card.idle .desk, .employee-card.idle .screen { display: none; }
     .employee-meta { display: grid; justify-items: center; gap: 6px; margin-top: 4px; }
     .employee-title {
       display: inline-flex;
@@ -655,7 +682,7 @@
     .employee-popover-actions .ghost { color: #fff; background: rgba(255,255,255,.12); box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); }
     .hire-fab {
       position: fixed;
-      right: max(18px, calc((100vw - 980px) / 2 + 18px));
+      right: max(18px, calc((100vw - min(980px, calc(100vw - 24px))) / 2 + 18px));
       bottom: 24px;
       z-index: 60;
       min-height: 48px;
@@ -664,20 +691,16 @@
       box-shadow: 0 16px 34px rgba(36,92,255,.22);
     }
     @keyframes idle-breathe {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(4px); }
+      0%, 100% { transform: translateX(-50%) translateY(0); }
+      50% { transform: translateX(-50%) translateY(4px); }
     }
-    @keyframes idle-nod {
-      0%, 100% { transform: rotate(0); }
-      50% { transform: rotate(5deg); }
+    @keyframes work-focus {
+      from { transform: translateX(-50%) translateY(0) rotate(-1deg); }
+      to { transform: translateX(-50%) translateY(3px) rotate(1deg); }
     }
-    @keyframes typing-left {
-      from { transform: rotate(14deg) translateY(0); }
-      to { transform: rotate(32deg) translateY(5px); }
-    }
-    @keyframes typing-right {
-      from { transform: rotate(-14deg) translateY(5px); }
-      to { transform: rotate(-32deg) translateY(0); }
+    @keyframes off-duty-wave {
+      0%, 100% { transform: translateX(-50%) translateY(0) rotate(-2deg); }
+      50% { transform: translateX(-50%) translateY(-4px) rotate(3deg); }
     }
     @keyframes bubble-pop {
       from { opacity: 0; transform: translateY(6px) scale(.96); }
@@ -687,6 +710,15 @@
       0% { transform: translate(-50%, -50%) translate(-8px, 0); }
       45% { transform: translate(-50%, -50%) translate(8px, -4px); }
       100% { transform: translate(-50%, -50%) translate(-3px, 5px); }
+    }
+    @keyframes employee-off-duty {
+      0% { transform: translate(-50%, -50%) translate(-5px, 4px); }
+      50% { transform: translate(-50%, -50%) translate(7px, -2px); }
+      100% { transform: translate(-50%, -50%) translate(1px, 5px); }
+    }
+    @keyframes boss-breathe {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-5px); }
     }
     .hero {
       position: relative;
@@ -996,14 +1028,20 @@
       .subtitle { display: none; }
       .top-action-label { display: none; }
       .top-action { width: 40px; padding: 0; }
-      .office-hero { grid-template-columns: 1fr; border-radius: 22px; padding: 16px; }
-      .office-summary { min-width: 0; }
+      .office-hero { grid-template-columns: 1fr; border-radius: 22px; padding: 14px; min-height: 0; }
+      .boss-copy { min-height: 0; }
+      .boss-card { grid-template-columns: 92px minmax(0, 1fr); width: 100%; padding: 8px 10px 8px 4px; }
+      .boss-avatar { width: 92px; height: 108px; }
+      .office-summary { min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .office-stat { min-height: 72px; padding: 10px; }
+      .office-stat strong { font-size: 22px; }
       .office-floor { border-radius: 22px; padding: 62px 10px 10px; min-height: 560px; }
       .company-sign { left: 10px; right: 10px; justify-content: center; }
       .employee-card { width: 126px; }
       .employee-scene { width: 126px; }
+      .employee-progress-bubble { max-width: 126px; font-size: 11px; top: -58px; padding: 7px 8px; }
       .employee-task-step { grid-template-columns: 58px minmax(0, 1fr); }
-      .hire-fab { right: 16px; bottom: 18px; }
+      .hire-fab { right: 16px; bottom: 18px; max-width: calc(100vw - 32px); padding: 0 14px; }
       .hero { border-radius: 22px; padding: 15px; }
       .task-fields, .digital-fields { grid-template-columns: 1fr; }
       .messages { max-height: calc(100vh - 238px); min-height: 350px; }
@@ -1098,14 +1136,26 @@
       <section class="view active" id="officeView">
         <div class="office-grid">
           <div class="office-hero">
-            <div>
-              <h2>我的AI员工</h2>
-              <p>一个在线设备，就是一个正在上岗的AI员工。点击员工可查看状态，也可以继续安排工作。</p>
+            <div class="boss-copy">
+              <div>
+                <div class="boss-kicker">老板办公室</div>
+                <h2>我的AI员工</h2>
+                <p>一个在线设备，就是一个正在上岗的AI员工。老板在这里看全局投入和产出。</p>
+              </div>
+              <div class="boss-card">
+                <img class="boss-avatar" src="/h5-static/h5-boss-avatar.png" alt="" loading="lazy">
+                <div class="boss-info">
+                  <strong id="bossName">老板</strong>
+                  <span id="bossOfficeLine">正在巡视办公室，等待员工汇报今天的工作。</span>
+                </div>
+              </div>
             </div>
             <div class="office-summary">
+              <div class="office-stat primary"><strong id="bossCreditsSpent">0</strong><span>已花算力</span></div>
+              <div class="office-stat"><strong id="bossHarvestCount">0</strong><span>收获素材</span></div>
+              <div class="office-stat"><strong id="officeWorkingCount">0</strong><span>正在工作</span></div>
               <div class="office-stat"><strong id="officeTotalCount">0</strong><span>员工总数</span></div>
               <div class="office-stat"><strong id="officeOnlineCount">0</strong><span>正在上班</span></div>
-              <div class="office-stat"><strong id="officeWorkingCount">0</strong><span>正在工作</span></div>
             </div>
           </div>
           <div class="office-floor" id="employeeFloor">
@@ -1301,6 +1351,7 @@
       <div class="employee-popover-badge" id="employeeModalBadge">发呆中</div>
       <div class="employee-task-steps" id="employeeTaskSteps"></div>
       <div class="employee-popover-actions">
+        <button class="ghost" type="button" id="employeeRenameBtn">改名字</button>
         <button class="ghost" type="button" id="employeeWorkListBtn">工作列表</button>
         <button type="button" id="employeeWorkbenchBtn">安排工作</button>
       </div>
@@ -1459,6 +1510,18 @@
       return s.length > 10 ? `${s.slice(0, 6)}...${s.slice(-4)}` : s;
     }
 
+    function compactNumber(value, digits = 0) {
+      const n = Number(value || 0);
+      if (!Number.isFinite(n)) return "0";
+      if (Math.abs(n) >= 10000) return `${(n / 10000).toFixed(1).replace(/\.0$/, "")}万`;
+      return n.toFixed(digits).replace(/\.0+$/, "");
+    }
+
+    function numericValue(value) {
+      const n = Number(value || 0);
+      return Number.isFinite(n) ? n : 0;
+    }
+
     function isActiveRun(row) {
       const status = String((row && row.status) || "").toLowerCase();
       return status === "pending" || status === "processing" || status === "running";
@@ -1498,6 +1561,24 @@
       return String((device && device.display_name) || "").trim() || "实习员工";
     }
 
+    function stableHash(value) {
+      const s = String(value || "");
+      let h = 0;
+      for (let i = 0; i < s.length; i += 1) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+      return Math.abs(h);
+    }
+
+    function employeeGender(device, index) {
+      const seed = `${device && device.installation_id ? device.installation_id : ""}:${index}`;
+      return stableHash(seed) % 2 === 0 ? "male" : "female";
+    }
+
+    function employeeAsset(device, index, mode) {
+      const gender = employeeGender(device, index);
+      const status = mode === "working" ? "working" : (mode === "offline" ? "offline" : "idle");
+      return `/h5-static/h5-employee-${gender}-${status}.png`;
+    }
+
     function idleBubbleForDevice(device, index) {
       const lines = ["等我一声，我马上开工", "今天也在认真待命", "我可以帮你做内容和任务"];
       const raw = `${device && device.installation_id ? device.installation_id : ""}:${index}`;
@@ -1511,17 +1592,24 @@
       if (el) el.textContent = state.companyName || "我的AI公司";
     }
 
-    function employeePositionStyle(index) {
-      const positions = [
-        [18, 35], [42, 31], [68, 36], [86, 32],
-        [25, 58], [52, 55], [78, 60],
-        [18, 78], [43, 76], [68, 80], [88, 74],
-        [34, 43], [62, 45], [83, 51],
-        [12, 66], [54, 69], [76, 43], [31, 86], [58, 88], [87, 88],
-      ];
-      const pair = positions[index % positions.length];
+    function employeeLayoutMetrics(total) {
+      const mobile = window.matchMedia && window.matchMedia("(max-width: 760px)").matches;
+      const cols = mobile ? 2 : Math.min(4, Math.max(2, Math.ceil(Math.sqrt(Math.max(total, 1)))));
+      const rowGap = mobile ? 192 : 190;
+      const top = mobile ? 194 : 214;
+      const rows = Math.max(1, Math.ceil(Math.max(total, 1) / cols));
+      return { cols, rowGap, top, minHeight: Math.max(mobile ? 620 : 560, top + rows * rowGap + 90) };
+    }
+
+    function employeePositionStyle(index, total = 1) {
+      const metrics = employeeLayoutMetrics(total);
+      const col = index % metrics.cols;
+      const row = Math.floor(index / metrics.cols);
+      const jitter = (stableHash(`${index}:jitter`) % 11) - 5;
+      const x = ((col + 0.5) / metrics.cols) * 100;
+      const y = metrics.top + row * metrics.rowGap + jitter;
       const delay = -((index % 7) * 0.45).toFixed(2);
-      return `--x:${pair[0]}%;--y:${pair[1]}%;--delay:${delay}s;`;
+      return `--x:${x.toFixed(2)}%;--y:${y}px;--delay:${delay}s;`;
     }
 
     function deviceByInstallationId(installationId) {
@@ -1552,6 +1640,40 @@
       if (ev.type === "final") return "处理完成";
       if (ev.type === "error") return p.error || p.detail || "处理失败";
       return "";
+    }
+
+    function officeOutcomeStats() {
+      const runs = Array.isArray(state.runs) ? state.runs : [];
+      const messages = Array.isArray(state.historyItems) ? state.historyItems : [];
+      let spent = 0;
+      let harvest = 0;
+      runs.forEach((row) => {
+        const payload = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
+        spent += numericValue(
+          row && (row.credits_used || row.credits_charged || row.price || row.cost_credits)
+          || payload.credits_used || payload.credits_charged || payload.credits_final || payload.price || payload.cost_credits
+        );
+        harvest += collectMediaUrls(payload).length;
+      });
+      messages.forEach((entry) => {
+        const msg = messageRow(entry) || {};
+        spent += numericValue(msg.credits_used || msg.credits_charged || msg.price || msg.cost_credits);
+        messageEvents(entry).forEach((ev) => {
+          if (ev && (ev.type === "final" || ev.type === "publish_result")) harvest += collectMediaUrls(ev.payload || {}).length;
+        });
+      });
+      return { spent, harvest };
+    }
+
+    function updateBossOfficeStats(onlineCount = 0, workingCount = 0) {
+      const stats = officeOutcomeStats();
+      if ($("bossCreditsSpent")) $("bossCreditsSpent").textContent = compactNumber(stats.spent, stats.spent > 0 && stats.spent < 10 ? 1 : 0);
+      if ($("bossHarvestCount")) $("bossHarvestCount").textContent = compactNumber(stats.harvest);
+      if ($("bossName")) $("bossName").textContent = `${state.companyName || "我的AI公司"}老板`;
+      const line = workingCount > 0
+        ? `${workingCount} 位员工正在干活，老板盯着交付进度。`
+        : (onlineCount > 0 ? "员工已到岗，老板正在安排下一份工作。" : "员工还没到岗，老板办公室先亮着灯。");
+      if ($("bossOfficeLine")) $("bossOfficeLine").textContent = line;
     }
 
     function latestProgressTextForMessage(entry) {
@@ -1622,6 +1744,33 @@
       modal.dataset.employeeId = "";
     }
 
+    async function renameActiveEmployee() {
+      const modal = $("employeeModal");
+      const installationId = String((modal && modal.dataset.employeeId) || "").trim();
+      const device = deviceByInstallationId(installationId);
+      if (!installationId || !device) return;
+      const next = prompt("给这个 AI 员工起个名字", employeeName(device, 0));
+      if (next === null) return;
+      const displayName = next.trim().slice(0, 24);
+      try {
+        const data = await api(`/api/h5-chat/devices/${encodeURIComponent(installationId)}/display-name`, {
+          method: "PATCH",
+          json: { display_name: displayName },
+        });
+        const updated = data.device || {};
+        state.devices = state.devices.map((row) => (
+          String(row.installation_id || "") === installationId
+            ? { ...row, display_name: updated.display_name || displayName || "" }
+            : row
+        ));
+        renderOfficeEmployees();
+        openEmployeeModal(installationId);
+        toast(displayName ? "员工名字已更新" : "已恢复默认名字");
+      } catch (err) {
+        toast(err.message || "改名失败");
+      }
+    }
+
     function renderOfficeEmployees() {
       const floor = $("employeeFloor");
       if (!floor) return;
@@ -1636,6 +1785,9 @@
       if ($("officeOnlineCount")) $("officeOnlineCount").textContent = String(onlineCount);
       if ($("officeWorkingCount")) $("officeWorkingCount").textContent = String(workingIds.size);
       updateCompanySign();
+      updateBossOfficeStats(onlineCount, workingIds.size);
+      const metrics = employeeLayoutMetrics(devices.length);
+      floor.style.minHeight = `${metrics.minHeight}px`;
       if (!devices.length) {
         floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="office-empty">暂未检测到 online 员工。电脑端启动并登录后，这里会出现它的办公位。</div>`;
         return;
@@ -1645,18 +1797,13 @@
         const mode = snapshot.mode;
         const label = snapshot.label;
         const desc = mode === "working" ? `正在处理：${snapshot.title}` : snapshot.detail;
-        return `<button class="employee-card ${mode} ${device.online ? "online" : "offline"}" type="button" data-employee-id="${escapeHtml(device.installation_id || "")}" style="${escapeHtml(employeePositionStyle(index))}" aria-label="${escapeHtml(employeeName(device, index))}">
+        const img = employeeAsset(device, index, mode);
+        return `<button class="employee-card ${mode} ${device.online ? "online" : "offline"}" type="button" data-employee-id="${escapeHtml(device.installation_id || "")}" style="${escapeHtml(employeePositionStyle(index, devices.length))}" aria-label="${escapeHtml(employeeName(device, index))}">
           <div class="employee-scene" aria-hidden="true">
             ${snapshot.bubble ? `<div class="employee-progress-bubble">${escapeHtml(String(snapshot.bubble).slice(0, 46))}</div>` : ""}
             <div class="screen"></div>
             <div class="desk"></div>
-            <div class="person">
-              <div class="hair"></div>
-              <div class="head"></div>
-              <div class="body"></div>
-              <div class="arm left"></div>
-              <div class="arm right"></div>
-            </div>
+            <div class="person"><img class="employee-avatar-img" src="${escapeHtml(img)}" alt="" loading="lazy"></div>
           </div>
           <div class="employee-meta">
             <div class="employee-title"><strong>${escapeHtml(employeeName(device, index))}</strong><span class="employee-state">${escapeHtml(label)}</span></div>
@@ -2832,6 +2979,10 @@
       state.companyName = name;
       localStorage.setItem("lobster_h5_company_name", name);
       updateCompanySign();
+      updateBossOfficeStats(
+        state.devices.filter((d) => d.online).length,
+        state.devices.filter((d) => d.online && (activeRunForDevice(d) || activeMessageForDevice(d))).length
+      );
     });
     $("hireEmployeeBtn").addEventListener("click", () => {
       if (confirm("雇佣新员工需要到官网下载安装电脑端 online。现在打开官网吗？")) {
@@ -2860,10 +3011,16 @@
       closeEmployeeModal();
       switchTab("workList");
     });
+    $("employeeRenameBtn").addEventListener("click", () => {
+      renameActiveEmployee();
+    });
     $("employeeWorkbenchBtn").addEventListener("click", () => {
       if ($("employeeWorkbenchBtn").disabled) return;
       closeEmployeeModal();
       switchTab("home");
+    });
+    window.addEventListener("resize", () => {
+      if (document.querySelector("#officeView.active")) renderOfficeEmployees();
     });
     $("workTimeline").addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-run-task-now]");
