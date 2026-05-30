@@ -59,6 +59,7 @@ DEFAULT_VISIBLE_PACKAGES: tuple[str, ...] = (
     "hifly_digital_human_skill",
     "comfly_veo_skill",
     "comfly_seedance_tvc_skill",
+    "create_video_pipeline_skill",
 )
 
 

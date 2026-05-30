@@ -491,5 +491,84 @@
         "category": { "type": "string" }
       }
     }
+  },
+  "create.video.pipeline": {
+    "description": "Sutui create-video pipeline: plan scenes, call image.generate(openai/gpt-image-2), then call video.generate(fal-ai/veo3.1/image-to-video). Online provides the local runner; server controls entry and permission.",
+    "upstream": "local",
+    "upstream_tool": "invoke",
+    "enabled": true,
+    "is_default": false,
+    "unit_credits": 0,
+    "arg_schema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["run_pipeline", "start_pipeline", "poll_pipeline"],
+          "default": "start_pipeline"
+        },
+        "job_id": {
+          "type": "string",
+          "description": "Job id returned by start_pipeline; used by poll_pipeline."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Video goal, topic, or creative brief."
+        },
+        "topic": {
+          "type": "string",
+          "description": "Compatibility alias for prompt."
+        },
+        "video_type": {
+          "type": "string",
+          "default": "brand_promo"
+        },
+        "target_audience": {
+          "type": "string",
+          "default": "general_audience"
+        },
+        "style": {
+          "type": "string",
+          "default": "premium commercial, realistic, cinematic lighting"
+        },
+        "duration": {
+          "type": "integer",
+          "default": 8,
+          "minimum": 3,
+          "maximum": 60
+        },
+        "scene_count": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 6
+        },
+        "aspect_ratio": {
+          "type": "string",
+          "default": "16:9"
+        },
+        "planning_model": {
+          "type": "string",
+          "default": "gpt-5.4"
+        },
+        "image_model": {
+          "type": "string",
+          "default": "openai/gpt-image-2"
+        },
+        "video_model": {
+          "type": "string",
+          "default": "fal-ai/veo3.1/image-to-video"
+        },
+        "reference_asset_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "reference_image_urls": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "required": ["prompt"]
+    }
   }
 }
