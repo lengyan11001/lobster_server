@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import or_
+from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -453,6 +453,37 @@ def _add_h5_event(db: Session, message_id: Optional[str], user_id: int, event_ty
     )
 
 
+def _claim_pending_run(
+    db: Session,
+    *,
+    run_id: str,
+    user_id: int,
+    installation_id: str,
+    now: datetime,
+) -> Optional[ScheduledTaskRun]:
+    claimed_by = installation_id or "unknown"
+    stmt = (
+        update(ScheduledTaskRun)
+        .where(
+            ScheduledTaskRun.id == run_id,
+            ScheduledTaskRun.user_id == user_id,
+            ScheduledTaskRun.status == "pending",
+            or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == installation_id),
+        )
+        .values(
+            status="processing",
+            claimed_by_installation_id=claimed_by,
+            claimed_at=now,
+            started_at=now,
+            updated_at=now,
+        )
+    )
+    result = db.execute(stmt)
+    if int(result.rowcount or 0) != 1:
+        return None
+    return db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == run_id).first()
+
+
 def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Optional[str], now: datetime) -> ScheduledTaskRun:
     run_id = uuid.uuid4().hex
     message_id = f"task_{run_id}"[:64]
@@ -518,6 +549,22 @@ def _enqueue_task(db: Session, task: ScheduledTask, now: Optional[datetime] = No
     return runs
 
 
+def _reserve_due_task_for_enqueue(db: Session, task: ScheduledTask, now: datetime) -> Optional[ScheduledTask]:
+    result = db.execute(
+        update(ScheduledTask)
+        .where(
+            ScheduledTask.id == task.id,
+            ScheduledTask.status == "active",
+            ScheduledTask.next_run_at.isnot(None),
+            ScheduledTask.next_run_at <= now,
+        )
+        .values(next_run_at=None, updated_at=now)
+    )
+    if int(result.rowcount or 0) != 1:
+        return None
+    return db.query(ScheduledTask).filter(ScheduledTask.id == task.id).first()
+
+
 def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     now = datetime.utcnow()
     q = db.query(ScheduledTask).filter(
@@ -528,9 +575,12 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     )
     if user_id is not None:
         q = q.filter(ScheduledTask.user_id == user_id)
-    q = q.order_by(ScheduledTask.next_run_at.asc()).limit(50)
+    q = q.order_by(ScheduledTask.next_run_at.asc()).limit(50).with_for_update(skip_locked=True)
     count = 0
-    for task in q.all():
+    for candidate in q.all():
+        task = _reserve_due_task_for_enqueue(db, candidate, now)
+        if not task:
+            continue
         _enqueue_task(db, task, now)
         count += 1
     if count:
@@ -933,20 +983,20 @@ def pending_scheduled_task_runs(
         row.updated_at = now
         _add_h5_event(db, row.h5_message_id, row.user_id, "queued", {"reason": "processing_timeout_requeued"})
 
-    rows = (
+    candidates = (
         db.query(ScheduledTaskRun)
+        .with_for_update(skip_locked=True)
         .filter(ScheduledTaskRun.user_id == current_user.id, ScheduledTaskRun.status == "pending")
         .filter(or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == xi))
         .order_by(ScheduledTaskRun.created_at.asc())
         .limit(limit)
         .all()
     )
-    for row in rows:
-        row.status = "processing"
-        row.claimed_by_installation_id = xi or "unknown"
-        row.claimed_at = now
-        row.started_at = now
-        row.updated_at = now
+    rows: List[ScheduledTaskRun] = []
+    for candidate in candidates:
+        row = _claim_pending_run(db, run_id=candidate.id, user_id=current_user.id, installation_id=xi, now=now)
+        if not row:
+            continue
         if row.h5_message_id:
             msg = db.query(H5ChatMessage).filter(H5ChatMessage.id == row.h5_message_id).first()
             if msg:
@@ -955,6 +1005,7 @@ def pending_scheduled_task_runs(
                 msg.claimed_at = now
                 msg.updated_at = now
         _add_h5_event(db, row.h5_message_id, row.user_id, "claimed", {"installation_id": xi or ""})
+        rows.append(row)
     db.commit()
     return {"ok": True, "items": [_serialize_run(r) for r in rows]}
 
@@ -1054,8 +1105,11 @@ def submit_scheduled_task_event(
 ):
     row = _run_for_user(db, run_id, current_user.id)
     _assert_worker_can_update(row, _header_installation_id(request))
+    now = datetime.utcnow()
     row.progress = body.payload or {}
-    row.updated_at = datetime.utcnow()
+    if body.type == "heartbeat" and row.status == "processing":
+        row.claimed_at = now
+    row.updated_at = now
     _add_h5_event(db, row.h5_message_id, row.user_id, body.type, body.payload)
     db.commit()
     return {"ok": True}
