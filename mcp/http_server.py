@@ -269,6 +269,27 @@ def _backend_headers(token: Optional[str], request: Optional[Request] = None) ->
         xi = (request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or "").strip()
         if xi:
             h["X-Installation-Id"] = xi
+        pipeline_charged = (
+            request.headers.get("X-Lobster-Pipeline-Precharged")
+            or request.headers.get("x-lobster-pipeline-precharged")
+            or ""
+        ).strip()
+        pipeline_id = (
+            request.headers.get("X-Lobster-Pipeline-Id")
+            or request.headers.get("x-lobster-pipeline-id")
+            or ""
+        ).strip()
+        pipeline_cap = (
+            request.headers.get("X-Lobster-Pipeline-Capability")
+            or request.headers.get("x-lobster-pipeline-capability")
+            or ""
+        ).strip()
+        if pipeline_charged:
+            h["X-Lobster-Pipeline-Precharged"] = pipeline_charged
+        if pipeline_id:
+            h["X-Lobster-Pipeline-Id"] = pipeline_id[:128]
+        if pipeline_cap:
+            h["X-Lobster-Pipeline-Capability"] = pipeline_cap[:128]
     bk = (os.environ.get("LOBSTER_MCP_BILLING_INTERNAL_KEY") or "").strip()
     if bk:
         h["X-Lobster-Mcp-Billing"] = bk
@@ -2634,6 +2655,18 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             pre_deduct_billing_rule = ""
             billing_idem = str(uuid.uuid4())
             _UNDERSTAND_CAPS = ("image.understand", "video.understand")
+            _pipeline_precharged = (
+                (request.headers.get("X-Lobster-Pipeline-Precharged") or request.headers.get("x-lobster-pipeline-precharged") or "").strip()
+                in ("1", "true", "yes", "on")
+            )
+            _pipeline_id = (
+                request.headers.get("X-Lobster-Pipeline-Id") or request.headers.get("x-lobster-pipeline-id") or ""
+            ).strip()
+            _pipeline_capability = (
+                request.headers.get("X-Lobster-Pipeline-Capability")
+                or request.headers.get("x-lobster-pipeline-capability")
+                or ""
+            ).strip()
             _requires_positive_pre_deduct = (
                 upstream_name == "sutui"
                 and upstream_tool == "generate"
@@ -2643,7 +2676,15 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 and not _early_comfly_task_query
                 and capability_id in ("image.generate", "video.generate", "comfly.daihuo", "comfly.daihuo.pipeline")
             )
-            if token:
+            if _pipeline_precharged and upstream_name == "sutui" and upstream_tool == "generate" and capability_id in ("image.generate", "video.generate"):
+                _requires_positive_pre_deduct = False
+                logger.info(
+                    "[MCP] pipeline precharged, skip substep pre_deduct capability_id=%s pipeline=%s pipeline_capability=%s",
+                    capability_id,
+                    _pipeline_id[:48],
+                    _pipeline_capability[:80],
+                )
+            elif token:
                 try:
                     pre_body: Dict[str, Any] = {"capability_id": capability_id}
                     if _early_use_comfly and _comfly_user_credits and _comfly_user_credits > 0:
@@ -3280,6 +3321,31 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     sutui_pool=sutui_pool_for_billing if upstream_name == "sutui" else None,
                     sutui_token_ref=sutui_token_ref_for_billing if upstream_name == "sutui" else None,
                 )
+            elif _pipeline_precharged and upstream_name == "sutui" and upstream_tool == "generate" and capability_id in ("image.generate", "video.generate"):
+                bill_credits = quantize_credits(0)
+                pre_applied_flag = True
+                logger.info(
+                    "[MCP] invoke_capability pipeline-substep no-charge capability_id=%s pipeline=%s upstream_parsed=%s",
+                    capability_id,
+                    _pipeline_id[:48],
+                    actual_used,
+                )
+                await _record_call(
+                    token,
+                    record_capability_id,
+                    not bool(upstream_error),
+                    latency_ms,
+                    payload,
+                    upstream_resp if isinstance(upstream_resp, dict) else {},
+                    upstream_error or None,
+                    credits_charged=0,
+                    pre_deduct_applied=True,
+                    credits_pre_deducted=0,
+                    credits_final=0,
+                    request=request,
+                    sutui_pool=sutui_pool_for_billing if upstream_name == "sutui" else None,
+                    sutui_token_ref=sutui_token_ref_for_billing if upstream_name == "sutui" else None,
+                )
             else:
                 if actual_used > 0:
                     bill_credits = quantize_credits(float(actual_used) * _settle_multiplier)
@@ -3303,6 +3369,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 upstream_tool == "generate"
                 and not upstream_error
                 and (settle_final > 0 or pre_deduct_amount > 0)
+                and not _pipeline_precharged
                 and isinstance(upstream_resp, dict)
             ):
                 created_tid = _extract_task_id_from_sutui_response(upstream_resp)

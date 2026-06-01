@@ -395,6 +395,116 @@ def _goal_video_payload_pending_reason(obj: Any) -> str:
     return ""
 
 
+def _scheduled_media_urls(obj: Any, *, want: str = "") -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+
+    def add(value: Any) -> None:
+        if not isinstance(value, str):
+            return
+        for raw in re.findall(r"https?://[^\s\"'<>锛屻€傦紱;銆?\]\}]+", value):
+            low = raw.lower().split("?", 1)[0].split("#", 1)[0]
+            is_video = low.endswith(_VIDEO_EXTS)
+            is_image = low.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"))
+            if want == "video" and not is_video:
+                continue
+            if want == "image" and not is_image:
+                continue
+            if raw not in seen:
+                seen.add(raw)
+                out.append(raw)
+
+    stack: List[Any] = [obj]
+    seen_obj: set[int] = set()
+    while stack:
+        cur = stack.pop()
+        oid = id(cur)
+        if oid in seen_obj:
+            continue
+        seen_obj.add(oid)
+        if isinstance(cur, dict):
+            for value in cur.values():
+                if isinstance(value, str):
+                    add(value)
+                elif isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(cur, list):
+            for value in cur:
+                if isinstance(value, str):
+                    add(value)
+                elif isinstance(value, (dict, list)):
+                    stack.append(value)
+    return out
+
+
+def _scheduled_asset_ids(obj: Any, *, media_type: str = "") -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    stack: List[Any] = [obj]
+    seen_obj: set[int] = set()
+    while stack:
+        cur = stack.pop()
+        oid = id(cur)
+        if oid in seen_obj:
+            continue
+        seen_obj.add(oid)
+        if isinstance(cur, dict):
+            saved = cur.get("saved_assets")
+            if isinstance(saved, list):
+                for item in saved:
+                    if not isinstance(item, dict):
+                        continue
+                    mt = str(item.get("media_type") or item.get("type") or "").strip().lower()
+                    if media_type and mt and mt != media_type:
+                        continue
+                    aid = str(item.get("asset_id") or item.get("id") or "").strip()
+                    if aid and aid not in seen:
+                        seen.add(aid)
+                        out.append(aid)
+            for key in ("image_asset_id", "asset_id", "final_asset_id"):
+                aid = str(cur.get(key) or "").strip()
+                if aid and (not media_type or key != "final_asset_id") and aid not in seen:
+                    seen.add(aid)
+                    out.append(aid)
+            for value in cur.values():
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(cur, list):
+            stack.extend(v for v in cur if isinstance(v, (dict, list)))
+    return out
+
+
+def _partial_video_resume_payload_from_run(row: ScheduledTaskRun) -> Dict[str, Any]:
+    payload = _run_result_payload(row)
+    direct = payload.get("resume_payload") if isinstance(payload.get("resume_payload"), dict) else {}
+    mcp_result = payload.get("mcp_result") if isinstance(payload.get("mcp_result"), dict) else {}
+    resume = dict(direct or (mcp_result.get("resume_payload") if isinstance(mcp_result.get("resume_payload"), dict) else {}) or {})
+    capability_id = str(payload.get("capability_id") or resume.get("capability_id") or "").strip()
+    if capability_id not in {"goal.video.pipeline", "create.video.pipeline"}:
+        raise HTTPException(status_code=400, detail="run is not a resumable video pipeline record")
+    image_asset_ids = [x for x in _scheduled_asset_ids(mcp_result, media_type="image") if x]
+    image_urls = _scheduled_media_urls(mcp_result, want="image")
+    if resume.get("reference_asset_ids"):
+        image_asset_ids = [str(x).strip() for x in resume.get("reference_asset_ids") or [] if str(x).strip()] + image_asset_ids
+    if resume.get("reference_image_urls"):
+        image_urls = [str(x).strip() for x in resume.get("reference_image_urls") or [] if str(x).strip()] + image_urls
+    dedup_ids = list(dict.fromkeys(image_asset_ids))
+    dedup_urls = list(dict.fromkeys(image_urls))
+    if not dedup_ids and not dedup_urls:
+        raise HTTPException(status_code=400, detail="run has no generated image to resume from")
+    if capability_id == "goal.video.pipeline":
+        resume.setdefault("source_mode", "reference_image")
+        resume.setdefault("goal", str((payload.get("generated") or {}).get("goal") or row.title or "").strip())
+    else:
+        resume.setdefault("prompt", str((payload.get("generated") or {}).get("goal") or row.title or "").strip())
+        resume.setdefault("scene_count", max(1, len(dedup_ids or dedup_urls)))
+    resume["reference_asset_ids"] = dedup_ids
+    resume["reference_image_urls"] = dedup_urls
+    resume["resume_from_image"] = True
+    resume["action"] = "run_pipeline"
+    return {"capability_id": capability_id, "payload": resume}
+
+
 def _normalize_scheduled_completion_error(body: ScheduledTaskCompleteIn) -> str:
     error = (body.error or "").strip()
     if error:
@@ -403,7 +513,7 @@ def _normalize_scheduled_completion_error(body: ScheduledTaskCompleteIn) -> str:
     if not isinstance(payload, dict):
         return ""
     capability_id = str(payload.get("capability_id") or "").strip()
-    if capability_id != "goal.video.pipeline":
+    if capability_id not in {"goal.video.pipeline", "create.video.pipeline"}:
         return ""
     if _goal_video_payload_has_video(payload):
         return ""
@@ -1037,6 +1147,44 @@ def request_scheduled_task_publish(
     _set_publish_draft(row, draft)
     row.updated_at = now
     _add_h5_event(db, row.h5_message_id, row.user_id, "publish_pending", _publish_event_payload(row, draft))
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "status": "pending", "run": _serialize_run(row)}
+
+
+@router.post("/api/scheduled-tasks/runs/{run_id}/resume-video", summary="只生成图片的创意成片记录补发视频")
+def resume_scheduled_task_video_from_image(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _run_for_user(db, run_id, current_user.id)
+    if row.status not in _FINAL_STATUSES:
+        raise HTTPException(status_code=409, detail="任务仍在执行中，不能补发")
+    resume_payload = _partial_video_resume_payload_from_run(row)
+    now = datetime.utcnow()
+    row.payload = resume_payload
+    row.status = "pending"
+    row.progress = {"queued_at": now.isoformat(), "resume_from_run_id": run_id, "resume_from_image": True}
+    row.error = None
+    row.result_text = None
+    row.result_payload = {}
+    row.claimed_by_installation_id = None
+    row.claimed_at = None
+    row.started_at = None
+    row.finished_at = None
+    row.updated_at = now
+    if row.h5_message_id:
+        msg = db.query(H5ChatMessage).filter(H5ChatMessage.id == row.h5_message_id).first()
+        if msg:
+            msg.status = "pending"
+            msg.reply_text = None
+            msg.error = None
+            msg.claimed_by_installation_id = None
+            msg.claimed_at = None
+            msg.finished_at = None
+            msg.updated_at = now
+        _add_h5_event(db, row.h5_message_id, row.user_id, "queued", {"run_id": run_id, "resume_from_image": True})
     db.commit()
     db.refresh(row)
     return {"ok": True, "status": "pending", "run": _serialize_run(row)}

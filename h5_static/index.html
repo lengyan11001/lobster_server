@@ -284,7 +284,7 @@
     .boss-info span { color: rgba(255,255,255,.78); font-size: 12px; line-height: 1.4; word-break: break-word; }
     .boss-metrics {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 6px;
       width: 100%;
     }
@@ -299,6 +299,17 @@
       background: rgba(255,255,255,.14);
       box-shadow: inset 0 0 0 1px rgba(255,255,255,.13);
       white-space: nowrap;
+    }
+    button.boss-metric {
+      font: inherit;
+      color: #fff;
+      border: 0;
+      cursor: pointer;
+    }
+    button.boss-metric:active { transform: translateY(1px); }
+    button.boss-metric.active {
+      background: rgba(255,255,255,.28);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.34), 0 8px 22px rgba(4,18,45,.16);
     }
     .boss-metric strong { font-size: 18px; font-variant-numeric: tabular-nums; line-height: 1; }
     .boss-metric span { color: rgba(255,255,255,.74); font-size: 11px; line-height: 1; }
@@ -370,6 +381,37 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .office-filter-note {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 4;
+      min-height: 38px;
+      max-width: min(360px, calc(100% - 190px));
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border: 1px solid rgba(36,92,255,.18);
+      border-radius: 999px;
+      color: #1e4ee8;
+      background: rgba(255,255,255,.9);
+      box-shadow: 0 10px 26px rgba(29,54,105,.12);
+      font-weight: 900;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .office-filter-note::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 0 4px rgba(36,92,255,.1);
+      flex: 0 0 auto;
     }
     .office-empty {
       grid-column: 1 / -1;
@@ -1073,10 +1115,11 @@
       .boss-info { gap: 5px; }
       .boss-info strong { font-size: 16px; }
       .boss-info span { font-size: 11px; }
-      .boss-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+      .boss-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
       .boss-metric { padding: 5px 4px; gap: 2px; border-radius: 10px; }
       .boss-metric strong { font-size: 15px; }
       .boss-metric span { font-size: 10px; }
+      .office-filter-note { left: 10px; right: 10px; top: 58px; max-width: none; min-height: 34px; justify-content: center; padding: 0 10px; }
       .office-floor { border-radius: 22px; padding: 62px 10px 10px; min-height: 560px; }
       .company-sign { left: 10px; right: 10px; justify-content: center; }
       .employee-card { width: 126px; }
@@ -1189,8 +1232,9 @@
                 <div class="boss-metrics">
                   <div class="boss-metric"><strong id="bossCreditsSpent">0</strong><span>算力</span></div>
                   <div class="boss-metric"><strong id="bossHarvestCount">0</strong><span>素材</span></div>
-                  <div class="boss-metric"><strong id="officeWorkingCount">0</strong><span>工作</span></div>
-                  <div class="boss-metric"><strong id="officeOnlineCount">0</strong><span>上班</span></div>
+                  <button class="boss-metric" type="button" data-device-filter="working"><strong id="officeWorkingCount">0</strong><span>工作</span></button>
+                  <button class="boss-metric" type="button" data-device-filter="idle"><strong id="officeIdleCount">0</strong><span>空闲</span></button>
+                  <button class="boss-metric" type="button" data-device-filter="offline"><strong id="officeOfflineCount">0</strong><span>下班</span></button>
                 </div>
               </div>
             </div>
@@ -1430,6 +1474,7 @@
       runs: [],
       historyItems: [],
       companyName: localStorage.getItem("lobster_h5_company_name") || "我的AI公司",
+      officeDeviceFilter: "all",
       taskAbility: "goal.video.pipeline",
       taskPanelOpen: false,
       hiflyLoaded: false,
@@ -1600,6 +1645,19 @@
     function isActiveRun(row) {
       const status = String((row && row.status) || "").toLowerCase();
       return status === "pending" || status === "processing" || status === "running";
+    }
+
+    function isActiveMessageStatus(status) {
+      const s = String(status || "").toLowerCase();
+      return s === "pending" || s === "processing";
+    }
+
+    function itemTimeMs(...values) {
+      for (const value of values) {
+        const d = parseDate(value);
+        if (d) return d.getTime();
+      }
+      return 0;
     }
 
     function runInstallationId(row) {
@@ -1825,6 +1883,48 @@
       return { mode, label, title, detail, started, steps, run, msg, msgEntry, bubble };
     }
 
+    function deviceSnapshot(device) {
+      const index = state.devices.indexOf(device);
+      return employeeSnapshot(device, index >= 0 ? index : 0);
+    }
+
+    function deviceSortRank(device) {
+      const snapshot = deviceSnapshot(device);
+      if (snapshot.mode === "working") return 0;
+      if (snapshot.mode === "idle") return 1;
+      return 2;
+    }
+
+    function sortDevicesForOffice(devices) {
+      return (devices || []).slice().sort((a, b) => {
+        const ar = deviceSortRank(a);
+        const br = deviceSortRank(b);
+        if (ar !== br) return ar - br;
+        return itemTimeMs(b && b.last_seen_at) - itemTimeMs(a && a.last_seen_at);
+      });
+    }
+
+    function filteredOfficeDevices(devices) {
+      const filter = state.officeDeviceFilter || "all";
+      const sorted = sortDevicesForOffice(devices);
+      if (filter === "all") return sorted;
+      return sorted.filter((device) => deviceSnapshot(device).mode === filter);
+    }
+
+    function officeFilterLabel(filter) {
+      return {
+        working: "工作中的员工",
+        idle: "空闲待命员工",
+        offline: "下班离线员工",
+      }[filter] || "";
+    }
+
+    function setOfficeDeviceFilter(filter) {
+      const next = ["working", "idle", "offline"].includes(filter) ? filter : "all";
+      state.officeDeviceFilter = state.officeDeviceFilter === next ? "all" : next;
+      renderOfficeEmployees();
+    }
+
     function openEmployeeModal(installationId) {
       const device = deviceByInstallationId(installationId);
       if (!device) return;
@@ -1878,30 +1978,44 @@
       const floor = $("employeeFloor");
       if (!floor) return;
       const devices = state.devices || [];
-      const onlineCount = devices.filter((d) => d.online).length;
-      const workingIds = new Set();
-      devices.forEach((device) => {
-        if (!device.online) return;
-        if (activeRunForDevice(device) || unassignedActiveRunForDevice(device) || activeMessageForDevice(device)) workingIds.add(device.installation_id || employeeName(device, 0));
-      });
+      const snapshots = devices.map((device) => ({ device, snapshot: deviceSnapshot(device) }));
+      const workingCount = snapshots.filter((row) => row.snapshot.mode === "working").length;
+      const idleCount = snapshots.filter((row) => row.snapshot.mode === "idle").length;
+      const offlineCount = snapshots.filter((row) => row.snapshot.mode === "offline").length;
+      const onlineCount = workingCount + idleCount;
       if ($("officeTotalCount")) $("officeTotalCount").textContent = String(devices.length);
       if ($("officeOnlineCount")) $("officeOnlineCount").textContent = String(onlineCount);
-      if ($("officeWorkingCount")) $("officeWorkingCount").textContent = String(workingIds.size);
+      if ($("officeWorkingCount")) $("officeWorkingCount").textContent = String(workingCount);
+      if ($("officeIdleCount")) $("officeIdleCount").textContent = String(idleCount);
+      if ($("officeOfflineCount")) $("officeOfflineCount").textContent = String(offlineCount);
+      document.querySelectorAll("[data-device-filter]").forEach((btn) => {
+        btn.classList.toggle("active", (state.officeDeviceFilter || "all") === btn.dataset.deviceFilter);
+      });
       updateCompanySign();
-      updateBossOfficeStats(onlineCount, workingIds.size);
-      const metrics = employeeLayoutMetrics(devices.length);
+      updateBossOfficeStats(onlineCount, workingCount);
+      const visibleDevices = filteredOfficeDevices(devices);
+      const metrics = employeeLayoutMetrics(Math.max(visibleDevices.length, 1));
       floor.style.minHeight = `${metrics.minHeight}px`;
       if (!devices.length) {
         floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="office-empty">暂未检测到 online 员工。电脑端启动并登录后，这里会出现它的办公位。</div>`;
         return;
       }
-      floor.innerHTML = devices.map((device, index) => {
-        const snapshot = employeeSnapshot(device, index);
+      if (!visibleDevices.length) {
+        const label = officeFilterLabel(state.officeDeviceFilter);
+        floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="office-filter-note">${escapeHtml(label)}</div><div class="office-empty">当前没有${escapeHtml(label || "符合条件的员工")}。</div>`;
+        return;
+      }
+      const filterNote = state.officeDeviceFilter !== "all"
+        ? `<div class="office-filter-note">${escapeHtml(officeFilterLabel(state.officeDeviceFilter))}</div>`
+        : "";
+      floor.innerHTML = visibleDevices.map((device, index) => {
+        const originalIndex = Math.max(0, state.devices.indexOf(device));
+        const snapshot = employeeSnapshot(device, originalIndex);
         const mode = snapshot.mode;
         const label = snapshot.label;
         const desc = mode === "working" ? `正在处理：${snapshot.title}` : snapshot.detail;
-        const img = employeeAsset(device, index, mode);
-        return `<button class="employee-card ${mode} ${device.online ? "online" : "offline"}" type="button" data-employee-id="${escapeHtml(device.installation_id || "")}" style="${escapeHtml(employeePositionStyle(index, devices.length))}" aria-label="${escapeHtml(employeeName(device, index))}">
+        const img = employeeAsset(device, originalIndex, mode);
+        return `<button class="employee-card ${mode} ${device.online ? "online" : "offline"}" type="button" data-employee-id="${escapeHtml(device.installation_id || "")}" style="${escapeHtml(employeePositionStyle(index, visibleDevices.length))}" aria-label="${escapeHtml(employeeName(device, originalIndex))}">
           <div class="employee-scene" aria-hidden="true">
             ${snapshot.bubble ? `<div class="employee-progress-bubble">${escapeHtml(String(snapshot.bubble).slice(0, 46))}</div>` : ""}
             <div class="screen"></div>
@@ -1909,12 +2023,13 @@
             <div class="person"><img class="employee-avatar-img" src="${escapeHtml(img)}" alt="" loading="lazy"></div>
           </div>
           <div class="employee-meta">
-            <div class="employee-title"><strong>${escapeHtml(employeeName(device, index))}</strong><span class="employee-state">${escapeHtml(label)}</span></div>
+            <div class="employee-title"><strong>${escapeHtml(employeeName(device, originalIndex))}</strong><span class="employee-state">${escapeHtml(label)}</span></div>
             <div class="employee-desc">${escapeHtml(desc)}${device.installation_id ? ` · ${escapeHtml(shortId(device.installation_id))}` : ""}</div>
           </div>
         </button>`;
       }).join("");
       floor.insertAdjacentHTML("afterbegin", `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button>`);
+      if (filterNote) floor.insertAdjacentHTML("afterbegin", filterNote);
     }
 
     function collectPlatforms(row) {
@@ -1933,8 +2048,13 @@
     }
 
     function workSortTime(item) {
-      const d = parseDate(item.time);
+      const d = parseDate(item && (item.sortTime || item.time || item.createdTime || item.updatedTime));
       return d ? d.getTime() : 0;
+    }
+
+    function workDisplayTime(item) {
+      if (item && item.type === "future") return item.time || item.createdTime || item.updatedTime;
+      return item.time || item.createdTime || item.updatedTime;
     }
 
     function messageWorkBadge(row) {
@@ -1954,6 +2074,8 @@
       const current = runs.filter(isActiveRun).slice(0, 8).map((row) => ({
         type: "current",
         time: row.started_at || row.claimed_at || row.created_at,
+        sortTime: row.updated_at || row.started_at || row.claimed_at || row.created_at,
+        createdTime: row.created_at,
         title: row.title || "正在执行的任务",
         badge: statusText(row.status),
         meta: `${capabilityName(taskCapabilityId(row) || row.task_kind)} · ${runInstallationId(row) ? "员工 " + shortId(runInstallationId(row)) : "等待员工领取"}`,
@@ -1962,18 +2084,22 @@
       const done = runs.filter((row) => !isActiveRun(row)).slice(0, 18).map((row) => ({
         type: String(row.status).toLowerCase() === "failed" ? "failed" : "done",
         time: row.finished_at || row.updated_at || row.created_at,
+        sortTime: row.finished_at || row.updated_at || row.created_at,
+        createdTime: row.created_at,
         title: row.title || "已执行任务",
         badge: statusText(row.status),
         meta: (row.error || row.result_text || (row.progress && (row.progress.text || row.progress.message)) || capabilityName(taskCapabilityId(row) || row.task_kind) || "已记录").slice(0, 90),
         actionTaskId: "",
       }));
-      const messages = state.historyItems.slice(-12).map((entry) => {
+      const messages = state.historyItems.slice(-18).map((entry) => {
         const row = entry && entry.message ? entry.message : entry;
         const status = String((row && row.status) || "").toLowerCase();
         const progress = latestProgressTextForMessage(entry);
         return {
-          type: status === "failed" ? "failed" : (status === "pending" || status === "processing" ? "current" : "done"),
+          type: status === "failed" ? "failed" : (isActiveMessageStatus(status) ? "current" : "done"),
           time: row.finished_at || row.updated_at || row.created_at,
+          sortTime: row.finished_at || row.updated_at || row.created_at,
+          createdTime: row.created_at,
           title: status === "pending" ? "任务提交中" : (status === "processing" ? "生成中" : "手机会话"),
           badge: messageWorkBadge(row),
           meta: String(row.error || progress || row.reply_text || row.content || "会话消息").slice(0, 90),
@@ -1986,6 +2112,8 @@
         .map((row) => ({
           type: "future",
           time: row.next_run_at || row.updated_at || row.created_at,
+          sortTime: row.updated_at || row.created_at,
+          createdTime: row.created_at,
           title: row.title || capabilityName(taskCapabilityId(row)),
           badge: row.next_run_at ? "待执行" : statusText(row.status),
           meta: `${capabilityName(taskCapabilityId(row))} · ${row.schedule_type === "interval" ? `每 ${Math.round((row.interval_seconds || 0) / 60)} 分钟` : "一次性"}`,
@@ -1993,7 +2121,7 @@
         }));
       const items = [...current, ...future, ...done, ...messages]
         .filter((item) => item.title)
-        .sort((a, b) => (a.type === "current" ? -1 : b.type === "current" ? 1 : workSortTime(a) - workSortTime(b)))
+        .sort((a, b) => workSortTime(b) - workSortTime(a))
         .slice(0, 28);
       if ($("workTaskCount")) $("workTaskCount").textContent = String(items.length);
       if ($("workPlatformCount")) $("workPlatformCount").textContent = String(platforms.size);
@@ -2003,7 +2131,7 @@
         return;
       }
       timeline.innerHTML = items.map((item) => `<div class="work-node">
-        <div class="work-time"><strong>${escapeHtml(timeLabel(item.time))}</strong><span>${escapeHtml(fmtTime(item.time))}</span></div>
+        <div class="work-time"><strong>${escapeHtml(timeLabel(workDisplayTime(item)))}</strong><span>${escapeHtml(fmtTime(workDisplayTime(item)))}</span></div>
         <div class="work-card ${escapeHtml(item.type)}">
           <div class="work-card-top"><div class="work-card-title">${escapeHtml(item.title)}</div><span class="work-badge">${escapeHtml(item.badge)}</span></div>
           <div class="work-meta">${escapeHtml(item.meta || "")}</div>
@@ -3289,6 +3417,13 @@
     $("refreshTasksBtn").addEventListener("click", loadTasks);
     $("refreshRunsBtn").addEventListener("click", loadRuns);
     $("employeeFloor").addEventListener("click", (evt) => {
+      const metric = evt.target.closest("[data-device-filter]");
+      if (metric) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        setOfficeDeviceFilter(metric.dataset.deviceFilter || "all");
+        return;
+      }
       const sign = evt.target.closest("#companySignBtn");
       if (!sign) return;
       evt.preventDefault();
@@ -3303,6 +3438,9 @@
         state.devices.filter((d) => d.online).length,
         state.devices.filter((d) => d.online && (activeRunForDevice(d) || unassignedActiveRunForDevice(d) || activeMessageForDevice(d))).length
       );
+    });
+    document.querySelectorAll("[data-device-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => setOfficeDeviceFilter(btn.dataset.deviceFilter || "all"));
     });
     $("hireEmployeeBtn").addEventListener("click", () => {
       if (confirm("雇佣新员工需要到官网下载安装电脑端 online。现在打开官网吗？")) {

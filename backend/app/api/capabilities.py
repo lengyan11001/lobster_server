@@ -52,6 +52,15 @@ _GROK_IMAGINE_VIDEO_MODELS = frozenset(
         "xai/grok-imagine-video/image-to-video",
     }
 )
+_PIPELINE_TOTAL_PREDEDUCT_CAPABILITIES = frozenset(
+    {
+        "goal.video.pipeline",
+        "create.video.pipeline",
+    }
+)
+_PIPELINE_DEFAULT_IMAGE_MODEL = "openai/gpt-image-2"
+_PIPELINE_DEFAULT_GOAL_VIDEO_MODEL = "xai/grok-imagine-video/image-to-video"
+_PIPELINE_DEFAULT_CREATE_VIDEO_MODEL = "fal-ai/veo3.1/image-to-video"
 
 
 def _get_user_price_multiplier() -> float:
@@ -128,6 +137,121 @@ def _fixed_generate_user_price(
                 meta["requested_duration"] = params.get(key)
                 break
     return quantize_credits(_GROK_IMAGINE_VIDEO_FIXED_PRICE_CREDITS), meta
+
+
+def _pipeline_positive_int(params: Optional[dict], key: str, default: int, *, min_value: int = 1, max_value: int = 20) -> int:
+    if not isinstance(params, dict):
+        return default
+    try:
+        value = int(params.get(key) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(min_value, min(max_value, value))
+
+
+def _estimate_pipeline_total_user_price(
+    capability_id: str,
+    params: Optional[dict],
+) -> Optional[tuple[Any, dict[str, Any]]]:
+    """Estimate and charge the whole local video pipeline once.
+
+    The local runner calls image.generate/video.generate internally with a
+    pipeline-precharged marker, so the user-facing charge must be reserved at
+    the pipeline entry instead of charging each sub-step.
+    """
+    if capability_id not in _PIPELINE_TOTAL_PREDEDUCT_CAPABILITIES:
+        return None
+    params = params if isinstance(params, dict) else {}
+    source_mode = str(
+        params.get("source_mode")
+        or params.get("video_source_mode")
+        or params.get("image_source")
+        or params.get("first_frame_source")
+        or ""
+    ).strip().lower()
+    uses_existing_image = source_mode in {
+        "asset_random",
+        "asset",
+        "material",
+        "reference",
+        "reference_image",
+        "resume_image",
+        "resume_from_image",
+        "existing_image",
+    }
+    if params.get("reference_asset_ids") or params.get("reference_image_urls"):
+        uses_existing_image = True
+    if params.get("resume_from_image"):
+        uses_existing_image = True
+    if capability_id == "goal.video.pipeline":
+        scene_count = 1
+        image_model = str(params.get("image_model") or _PIPELINE_DEFAULT_IMAGE_MODEL).strip()
+        video_model = str(params.get("video_model") or _PIPELINE_DEFAULT_GOAL_VIDEO_MODEL).strip()
+    else:
+        scene_count = _pipeline_positive_int(params, "scene_count", 1, min_value=1, max_value=6)
+        image_model = str(params.get("image_model") or _PIPELINE_DEFAULT_IMAGE_MODEL).strip()
+        video_model = str(params.get("video_model") or _PIPELINE_DEFAULT_CREATE_VIDEO_MODEL).strip()
+        if not uses_existing_image:
+            if params.get("reference_asset_ids") or params.get("reference_image_urls"):
+                uses_existing_image = True
+
+    image_total = 0
+    image_meta: dict[str, Any] = {}
+    if not uses_existing_image:
+        image_price = _fixed_generate_user_price("image.generate", image_model, params)
+        if image_price is not None:
+            image_total = int(image_price[0]) * scene_count
+            image_meta = image_price[1]
+        else:
+            image_total = _IMAGE_GENERATE_FIXED_PRICE_CREDITS * scene_count
+            image_meta = {"billing_rule": "pipeline_default_image_flat_60"}
+
+    video_price = _fixed_generate_user_price("video.generate", video_model, params)
+    if video_price is not None:
+        per_video = int(video_price[0])
+        video_meta = video_price[1]
+    else:
+        try:
+            from ..services.sutui_pricing import estimate_credits_from_pricing, fetch_model_pricing
+
+            pricing = fetch_model_pricing(video_model)
+            if not pricing:
+                raise RuntimeError("pricing not found")
+            per_video = int(
+                quantize_credits(
+                    float(estimate_credits_from_pricing(pricing, params))
+                    * _get_user_price_multiplier()
+                )
+            )
+            if per_video <= 0:
+                raise RuntimeError("pricing estimated zero")
+            video_meta = {"billing_rule": "pipeline_video_pricing_docs"}
+        except Exception:
+            # Keep pipeline entry conservative and deterministic if docs lookup is
+            # temporarily unavailable. The older behavior charged later substeps;
+            # now we need a single reservation before starting.
+            per_video = _GROK_IMAGINE_VIDEO_FIXED_PRICE_CREDITS
+            video_meta = {"billing_rule": "pipeline_video_fallback_320"}
+
+    total = quantize_credits(image_total + per_video * scene_count)
+    meta = {
+        "billing_rule": "pipeline_total_pre_deduct",
+        "capability_id": capability_id,
+        "scene_count": scene_count,
+        "source_mode": source_mode or ("asset_random" if uses_existing_image else "ai_image"),
+        "uses_existing_image": uses_existing_image,
+        "image_model": image_model,
+        "video_model": video_model,
+        "image_subtotal": image_total,
+        "video_per_call": per_video,
+        "video_subtotal": per_video * scene_count,
+        "total": credits_json_float(total),
+    }
+    if image_meta:
+        meta["image_billing_rule"] = image_meta.get("billing_rule")
+    if video_meta:
+        meta["video_billing_rule"] = video_meta.get("billing_rule")
+    return total, meta
 
 
 def _require_sutui_brand_for_billing(user: User, *, upstream: str) -> None:
@@ -389,6 +513,44 @@ def pre_deduct(
     upstream = (cap.upstream or "").strip() if cap else ""
     upstream_tool = (cap.upstream_tool or "").strip() if cap else ""
     _require_sutui_brand_for_billing(current_user, upstream=upstream)
+
+    pipeline_total_price = _estimate_pipeline_total_user_price(body.capability_id, body.params)
+    if pipeline_total_price is not None:
+        est_d, pipeline_meta = pipeline_total_price
+        if body.dry_run:
+            return {
+                "credits_charged": credits_json_float(est_d),
+                "dry_run": True,
+                "billing_rule": pipeline_meta.get("billing_rule"),
+                "breakdown": pipeline_meta,
+            }
+        db.refresh(current_user)
+        if user_balance_decimal(current_user) < est_d:
+            raise HTTPException(
+                status_code=402,
+                detail=f"积分不足：本次流水线需 {float(est_d)} 积分，当前余额 {float(user_balance_decimal(current_user))}。请先充值。",
+            )
+        assert_daily_limit_allows(db, current_user.id, est_d, action_label="本次创意成片")
+        current_user.credits = user_balance_decimal(current_user) - est_d
+        bal = quantize_credits(current_user.credits)
+        append_credit_ledger(
+            db,
+            current_user.id,
+            -est_d,
+            "pre_deduct",
+            bal,
+            description="流水线总预扣",
+            ref_type="capability",
+            meta=pipeline_meta,
+        )
+        db.commit()
+        out = {
+            "credits_charged": credits_json_float(est_d),
+            "billing_rule": pipeline_meta.get("billing_rule"),
+            "breakdown": pipeline_meta,
+        }
+        _pre_deduct_idempotent_store(db, current_user.id, idem_key, out)
+        return out
 
     # ── force_credits: MCP 已算好金额（Comfly 路由等场景）──
     if (
@@ -807,6 +969,10 @@ def record_call(
         record_model,
         body.request_payload if isinstance(body.request_payload, dict) else None,
     )
+    pipeline_record_price = _estimate_pipeline_total_user_price(
+        body.capability_id,
+        body.request_payload if isinstance(body.request_payload, dict) else None,
+    )
 
     credits_charged = quantize_credits(0)
     db.refresh(current_user)
@@ -821,6 +987,8 @@ def record_call(
         fixed_meta = None
         if fixed_record_price is not None:
             final, fixed_meta = fixed_record_price
+        elif pipeline_record_price is not None:
+            final, fixed_meta = pipeline_record_price
         delta = final - pre
         if delta > 0 and user_balance_decimal(current_user) < delta:
             raise HTTPException(
@@ -853,6 +1021,9 @@ def record_call(
         fixed_meta = None
         if fixed_record_price is not None:
             charge_to_user, fixed_meta = fixed_record_price
+            charge_multiplier = 1.0
+        elif pipeline_record_price is not None:
+            charge_to_user, fixed_meta = pipeline_record_price
             charge_multiplier = 1.0
         if user_balance_decimal(current_user) < charge_to_user:
             raise HTTPException(
@@ -890,6 +1061,8 @@ def record_call(
     elif pre_applied and credits_final is None and credits_charged_body > 0:
         if fixed_record_price is not None:
             credits_charged = fixed_record_price[0]
+        elif pipeline_record_price is not None:
+            credits_charged = pipeline_record_price[0]
         else:
             credits_charged = credits_charged_body
     log = CapabilityCallLog(
