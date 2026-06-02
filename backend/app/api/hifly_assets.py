@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import mimetypes
+import base64
 import json
 import logging
 import math
@@ -9,6 +10,7 @@ import re
 import hmac
 import hashlib
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -44,6 +46,10 @@ _HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
 _HIFLY_AUDIO_CAPABILITY_ID = "hifly.video.create_by_audio"
 _HIFLY_TTS_UNIT_CREDITS = 10
 _HIFLY_TTS_CHARS_PER_SECOND = 4
+_MINIMAX_PROVIDER = "minimax"
+_MINIMAX_DEFAULT_VOICE_ID = "male-qn-qingse"
+_MINIMAX_DEFAULT_EMOTION = "happy"
+_MINIMAX_EMOTIONS = {"happy", "sad", "angry", "fearful", "disgusted", "surprised", "neutral"}
 _HIFLY_SHARE_SECRET = (getattr(settings, "secret_key", None) or os.getenv("SECRET_KEY") or "lobster-share-secret").encode("utf-8")
 _VOICE_PREVIEW_EXPIRY_SEC = 86400
 _AVATAR_COVER_EXPIRY_SEC = 30 * 86400
@@ -68,7 +74,17 @@ class HiflyVoiceEditBody(BaseModel):
     rate: str = Field("1.0")
     volume: str = Field("1.0")
     pitch: str = Field("1.0")
+    emotion: Optional[str] = None
     token: Optional[str] = None
+
+
+class HiflyVoicePreviewTtsBody(BaseModel):
+    voice: str = Field(..., min_length=1, max_length=128)
+    text: str = Field("你好，这是 MiniMax 声音试听。当前语速、音量和语调参数会参与重新合成。", max_length=500)
+    rate: str = Field("1.0")
+    volume: str = Field("1.0")
+    pitch: str = Field("0")
+    emotion: Optional[str] = None
 
 
 class HiflyAvatarLibraryBody(HiflyTokenBody):
@@ -131,6 +147,252 @@ def _duration_seconds(value: Any) -> int:
 
 def _estimate_audio_seconds(value: Any) -> int:
     return _duration_seconds(value)
+
+
+def _minimax_base_url() -> str:
+    return (getattr(settings, "minimax_api_base", None) or "https://api.minimaxi.com").strip().rstrip("/")
+
+
+def _minimax_api_key() -> str:
+    key = (getattr(settings, "minimax_api_key", None) or os.environ.get("MINIMAX_API_KEY") or "").strip()
+    if not key:
+        raise HTTPException(status_code=503, detail="服务端未配置 MINIMAX_API_KEY，暂不能使用 MiniMax 声音")
+    return key
+
+
+def _minimax_tts_model() -> str:
+    return (getattr(settings, "minimax_tts_model", None) or "speech-2.8-turbo").strip() or "speech-2.8-turbo"
+
+
+def _minimax_headers() -> Dict[str, str]:
+    return {"Authorization": f"Bearer {_minimax_api_key()}", "Content-Type": "application/json"}
+
+
+def _voice_provider(row: Optional[UserHiflyVoiceAsset]) -> str:
+    meta = row.meta if row and isinstance(row.meta, dict) else {}
+    return str(meta.get("provider") or "hifly").strip().lower() or "hifly"
+
+
+def _minimax_voice_id_from_row(row: Optional[UserHiflyVoiceAsset]) -> str:
+    if row and isinstance(row.meta, dict):
+        voice_id = str(row.meta.get("minimax_voice_id") or row.hifly_voice_id or "").strip()
+        if voice_id:
+            return voice_id
+    return _MINIMAX_DEFAULT_VOICE_ID
+
+
+def _param_float(value: Any, default: float, min_value: float, max_value: float) -> float:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        num = default
+    return max(min_value, min(max_value, num))
+
+
+def _minimax_emotion(value: Any) -> str:
+    raw = str(value or "").strip()
+    return raw if raw in _MINIMAX_EMOTIONS else _MINIMAX_DEFAULT_EMOTION
+
+
+def _minimax_pitch_text(value: Any) -> str:
+    return str(int(round(_param_float(value, 0.0, -12.0, 12.0))))
+
+
+def _minimax_naturalize_text(text: str) -> str:
+    """Light touch: fewer pauses, sparse breath, never prepend breath at the opening."""
+    paragraphs = [p.strip() for p in str(text or "").splitlines() if p.strip()]
+    if not paragraphs:
+        return str(text or "").strip()
+    out: List[str] = []
+    for idx, paragraph in enumerate(paragraphs):
+        if idx in (2, 4, 6):
+            paragraph = "(breath)" + paragraph
+        out.append(paragraph)
+    return "<#0.22#>\n".join(out)
+
+
+async def _minimax_upload_file(raw: bytes, filename: str, purpose: str) -> Dict[str, Any]:
+    if not raw:
+        raise HTTPException(status_code=400, detail="MiniMax 上传文件为空")
+    safe_filename = filename or "voice.mp3"
+    content_type = mimetypes.guess_type(safe_filename)[0] or "audio/mpeg"
+    files = {"file": (safe_filename, raw, content_type)}
+    data = {"purpose": purpose}
+    headers = {"Authorization": f"Bearer {_minimax_api_key()}"}
+    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+        resp = await client.post(f"{_minimax_base_url()}/v1/files/upload", headers=headers, data=data, files=files)
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"MiniMax 文件上传失败 HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    payload = resp.json() if resp.content else {}
+    base_resp = payload.get("base_resp") if isinstance(payload, dict) else {}
+    if isinstance(base_resp, dict) and int(base_resp.get("status_code") or 0) != 0:
+        raise HTTPException(status_code=502, detail=f"MiniMax 文件上传失败: {base_resp.get('status_msg') or base_resp}")
+    file_id = str(((payload.get("file") or {}) if isinstance(payload, dict) else {}).get("file_id") or "").strip()
+    if not file_id:
+        raise HTTPException(status_code=502, detail="MiniMax 文件上传未返回 file_id")
+    return payload
+
+
+async def _minimax_clone_voice(*, raw: bytes, filename: str, title: str) -> Dict[str, Any]:
+    upload_payload = await _minimax_upload_file(raw, filename, "voice_clone")
+    raw_file_id = (upload_payload.get("file") or {}).get("file_id")
+    try:
+        file_id = int(raw_file_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"MiniMax 文件上传返回的 file_id 异常: {raw_file_id}") from exc
+    voice_id = f"lobster_u{uuid.uuid4().hex[:24]}"
+    body = {
+        "file_id": file_id,
+        "voice_id": voice_id,
+        "text": f"{_safe_title(title, '声音试听', 20)}声音克隆试听。",
+        "model": _minimax_tts_model(),
+        "need_noise_reduction": True,
+        "need_volume_normalization": True,
+        "aigc_watermark": False,
+    }
+    async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+        resp = await client.post(f"{_minimax_base_url()}/v1/voice_clone", headers=_minimax_headers(), json=body)
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"MiniMax 声音克隆失败 HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    payload = resp.json() if resp.content else {}
+    base_resp = payload.get("base_resp") if isinstance(payload, dict) else {}
+    if isinstance(base_resp, dict) and int(base_resp.get("status_code") or 0) != 0:
+        status_code = base_resp.get("status_code")
+        status_msg = base_resp.get("status_msg") or base_resp.get("status_msg_cn") or base_resp
+        raise HTTPException(status_code=502, detail=f"MiniMax 声音克隆失败: {status_code} {status_msg}")
+    return {"voice_id": voice_id, "file_id": str(file_id), "upload_raw": upload_payload, "clone_raw": payload}
+
+
+async def _minimax_tts_audio(
+    *,
+    voice_id: str,
+    text: str,
+    rate: Any = None,
+    volume: Any = None,
+    pitch: Any = None,
+    emotion: Any = None,
+) -> Dict[str, Any]:
+    tts_text = _minimax_naturalize_text(text)
+    speed = _param_float(rate, 1.0, 0.5, 2.0)
+    vol = _param_float(volume, 1.0, 0.1, 2.0)
+    pitch_value = int(round(_param_float(pitch, 0.0, -12.0, 12.0)))
+    body = {
+        "model": _minimax_tts_model(),
+        "text": tts_text,
+        "stream": False,
+        "voice_setting": {
+            "voice_id": voice_id,
+            "speed": speed,
+            "vol": vol,
+            "pitch": pitch_value,
+            "emotion": _minimax_emotion(emotion),
+        },
+        "audio_setting": {
+            "sample_rate": 32000,
+            "bitrate": 128000,
+            "format": "mp3",
+            "channel": 1,
+        },
+        "subtitle_enable": False,
+    }
+    async with httpx.AsyncClient(timeout=240.0, trust_env=False) as client:
+        resp = await client.post(f"{_minimax_base_url()}/v1/t2a_v2", headers=_minimax_headers(), json=body)
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"MiniMax 语音合成失败 HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    payload = resp.json() if resp.content else {}
+    base_resp = payload.get("base_resp") if isinstance(payload, dict) else {}
+    if isinstance(base_resp, dict) and int(base_resp.get("status_code") or 0) != 0:
+        raise HTTPException(status_code=502, detail=f"MiniMax 语音合成失败: {base_resp.get('status_msg') or base_resp}")
+    audio_hex = str(((payload.get("data") or {}) if isinstance(payload, dict) else {}).get("audio") or "").strip()
+    if not audio_hex:
+        raise HTTPException(status_code=502, detail="MiniMax 语音合成未返回音频")
+    try:
+        audio_bytes = bytes.fromhex(audio_hex)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="MiniMax 语音音频格式异常") from exc
+    extra = payload.get("extra_info") if isinstance(payload.get("extra_info"), dict) else {}
+    duration_ms = float(extra.get("audio_length") or 0)
+    duration_seconds = max(1, int(math.ceil(duration_ms / 1000.0))) if duration_ms > 0 else _estimate_tts_seconds(text)
+    return {
+        "audio_bytes": audio_bytes,
+        "duration_seconds": duration_seconds,
+        "extra_info": extra,
+        "tts_text": tts_text,
+        "request_body": body,
+        "raw": {k: v for k, v in payload.items() if k != "data"},
+    }
+
+
+async def _upload_generated_audio_to_hifly(token: Optional[str], raw: bytes, filename: str = "minimax-tts.mp3") -> Dict[str, Any]:
+    if not raw:
+        raise HTTPException(status_code=400, detail="生成的音频为空")
+    upload_meta = await _post("/api/v2/hifly/tool/create_upload_url", token, {"file_extension": "mp3"})
+    upload_url = str(upload_meta.get("upload_url") or "").strip()
+    file_id = str(upload_meta.get("file_id") or "").strip()
+    if not upload_url or not file_id:
+        raise HTTPException(status_code=502, detail="HiFly 未返回 upload_url 或 file_id")
+    content_type = str(upload_meta.get("content_type") or "").strip() or "audio/mpeg"
+    await _put_bytes_to_url(upload_url, raw, content_type)
+    return {
+        "file_id": file_id,
+        "content_type": content_type,
+        "filename": filename,
+        "size": len(raw),
+        "extension": "mp3",
+        "raw_bytes": raw,
+    }
+
+
+async def _persist_voice_demo_asset(
+    db: Session,
+    user_id: int,
+    *,
+    raw: Optional[bytes] = None,
+    source_url: str = "",
+    title: str = "声音试听",
+    voice_id: str = "",
+    params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    data = raw or b""
+    content_type = "audio/mpeg"
+    if not data and source_url:
+        data, content_type = await _download_bytes(source_url)
+    if not data:
+        return {}
+    media_type = (content_type or "audio/mpeg").split(";", 1)[0].strip() or "audio/mpeg"
+    ext = ".mp3"
+    if "wav" in media_type:
+        ext = ".wav"
+    elif "mp4" in media_type or "m4a" in media_type:
+        ext = ".m4a"
+    asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, media_type)
+    asset = Asset(
+        asset_id=asset_id,
+        user_id=user_id,
+        filename=filename_or_key,
+        media_type="audio",
+        file_size=file_size,
+        source_url=public_url,
+        tags="hifly,voice,demo,minimax",
+        prompt=title,
+        model=_minimax_tts_model(),
+        meta={
+            "source": "hifly_voice_demo",
+            "provider": _MINIMAX_PROVIDER,
+            "voice_id": voice_id,
+            "source_url": source_url,
+            "params": params or {},
+        },
+    )
+    db.add(asset)
+    db.flush()
+    return {
+        "asset_id": asset_id,
+        "source_url": public_url or "",
+        "filename": filename_or_key,
+        "file_size": file_size,
+        "content_type": media_type,
+    }
 
 
 async def _hifly_pre_deduct_tts(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -448,7 +710,7 @@ def _pick_cover(payload: Dict[str, Any]) -> str:
 
 def _pick_demo(payload: Dict[str, Any]) -> str:
     top, nested = _payload_and_nested(payload)
-    for key in ("demo_url", "audio_url", "preview_url"):
+    for key in ("demo_url", "audio_url", "preview_url", "demo_audio", "trial_audio", "preview_audio", "audio"):
         for src in (top, nested):
             value = str(src.get(key) or "").strip()
             if value:
@@ -515,6 +777,14 @@ def _static_hifly_avatar_cover_url(request: Optional[Request], url: str) -> str:
 
 
 def _resolve_voice_preview_source(row: UserHiflyVoiceAsset, request: Optional[Request] = None) -> str:
+    if isinstance(row.meta, dict):
+        demo_asset = row.meta.get("demo_asset") if isinstance(row.meta.get("demo_asset"), dict) else {}
+        demo_source_url = str(demo_asset.get("source_url") or "").strip()
+        if demo_source_url:
+            return demo_source_url
+        demo_asset_id = str(demo_asset.get("asset_id") or "").strip()
+        if request is not None and demo_asset_id:
+            return build_asset_file_url(request, demo_asset_id) or ""
     demo_url = str(row.demo_url or "").strip()
     if demo_url:
         return demo_url
@@ -659,6 +929,7 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
                 "title": row.title,
             }
         )
+    provider = _voice_provider(row)
     return {
         "id": row.id,
         "task_id": row.hifly_task_id,
@@ -680,10 +951,12 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
         "message": row.error_message or "",
         "section_label": "我的声音",
         "is_mine": True,
+        "provider": provider,
         "voice_params": {
             "rate": str(voice_params.get("rate") or "1.0"),
             "volume": str(voice_params.get("volume") or "1.0"),
-            "pitch": str(voice_params.get("pitch") or "1.0"),
+            "pitch": _minimax_pitch_text(voice_params.get("pitch")) if provider == _MINIMAX_PROVIDER else str(voice_params.get("pitch") or "1.0"),
+            "emotion": str(voice_params.get("emotion") or (_MINIMAX_DEFAULT_EMOTION if provider == _MINIMAX_PROVIDER else "")),
         },
         "style_count": len(styles),
         "styles": styles,
@@ -1194,31 +1467,64 @@ async def create_my_voice_upload(
     if source_asset:
         uploaded["source_asset_id"] = source_asset.asset_id
         uploaded["source_url"] = source_asset.source_url or ""
-    payload = {
-        "title": _safe_title(title, "未命名声音"),
-        "voice_type": int(voice_type or 8),
-        "file_id": uploaded["file_id"],
-        "languages": (languages or "zh").strip() or "zh",
-    }
-    created = await _post("/api/v2/hifly/voice/create", token, payload)
-    task_id = str(_pick_field(created, "task_id") or "").strip()
-    if not task_id:
-        raise HTTPException(status_code=502, detail="HiFly 未返回 task_id")
+    title_value = _safe_title(title, "未命名声音")
+    language_value = (languages or "zh").strip() or "zh"
+    cloned = await _minimax_clone_voice(raw=uploaded["raw_bytes"], filename=str(uploaded.get("filename") or "voice.mp3"), title=title_value)
+    task_id = f"minimax_voice_{uuid.uuid4().hex}"
+    minimax_voice_id = str(cloned.get("voice_id") or "").strip()
+    clone_raw = cloned.get("clone_raw") if isinstance(cloned.get("clone_raw"), dict) else {}
+    demo_url = _pick_demo(clone_raw)
+    demo_asset: Dict[str, Any] = {}
+    if demo_url:
+        try:
+            demo_asset = await _persist_voice_demo_asset(
+                db,
+                current_user.id,
+                source_url=demo_url,
+                title=f"{title_value} 克隆试听",
+                voice_id=minimax_voice_id,
+                params={"rate": "1.0", "volume": "1.0", "pitch": "0", "emotion": _MINIMAX_DEFAULT_EMOTION},
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("[hifly] MiniMax 克隆试听音频转存失败 voice_id=%s", minimax_voice_id)
 
     row = UserHiflyVoiceAsset(
         user_id=current_user.id,
-        title=payload["title"],
-        status="processing",
+        title=title_value,
+        status="success",
         hifly_task_id=task_id,
-        file_id=uploaded["file_id"],
-        voice_type=payload["voice_type"],
-        languages=payload["languages"],
-        meta={"create_raw": created, "upload_meta": _upload_meta_for_store(uploaded)},
+        hifly_voice_id=minimax_voice_id,
+        file_id=str(cloned.get("file_id") or uploaded["file_id"]),
+        demo_url=demo_url,
+        voice_type=int(voice_type or 8),
+        languages=language_value,
+        meta={
+            "provider": _MINIMAX_PROVIDER,
+            "minimax_voice_id": minimax_voice_id,
+            "create_raw": clone_raw,
+            "minimax_upload_raw": cloned.get("upload_raw"),
+            "demo_asset": demo_asset,
+            "upload_meta": _upload_meta_for_store(uploaded),
+            "voice_params": {
+                "rate": "1.0",
+                "volume": "1.0",
+                "pitch": "0",
+                "emotion": _MINIMAX_DEFAULT_EMOTION,
+            },
+        },
     )
     db.add(row)
     db.commit()
     db.refresh(row)
-    return {"ok": True, "item": _normalize_voice_asset(row, request)}
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "status": 3,
+        "status_text": "已完成",
+        "voice": minimax_voice_id,
+        "demo_url": demo_url,
+        "item": _normalize_voice_asset(row, request),
+    }
 
 
 @router.post("/api/hifly/my/avatar/task")
@@ -1317,6 +1623,18 @@ async def poll_my_voice_task(
     if not row:
         raise HTTPException(status_code=404, detail="未找到该声音任务")
 
+    if _voice_provider(row) == _MINIMAX_PROVIDER:
+        return {
+            "ok": row.status != "failed",
+            "task_id": row.hifly_task_id,
+            "status": 3 if row.status == "success" else 4 if row.status == "failed" else 1,
+            "status_text": "已完成" if row.status == "success" else ("失败" if row.status == "failed" else "处理中"),
+            "voice": row.hifly_voice_id or "",
+            "demo_url": _resolve_voice_preview_source(row, request),
+            "item": _normalize_voice_asset(row, request),
+            "raw": row.meta or {},
+        }
+
     payload = await _get("/api/v2/hifly/voice/task", body.token, {"task_id": row.hifly_task_id})
     status_num = int(_pick_field(payload, "status") or 0)
     row.status = _local_status(status_num)
@@ -1357,17 +1675,53 @@ async def edit_my_voice_params(
     )
     if not row:
         raise HTTPException(status_code=404, detail="声音不存在或不属于当前账号")
+    is_minimax_voice = _voice_provider(row) == _MINIMAX_PROVIDER
     rate = _voice_param_text(body.rate, "1.0", 0.5, 2.0, "语速")
     volume = _voice_param_text(body.volume, "1.0", 0.1, 2.0, "音量")
-    pitch = _voice_param_text(body.pitch, "1.0", 0.1, 2.0, "语调")
+    pitch = _voice_param_text(body.pitch, "0" if is_minimax_voice else "1.0", -12.0 if is_minimax_voice else 0.1, 12.0 if is_minimax_voice else 2.0, "语调")
+    emotion = _minimax_emotion(body.emotion) if is_minimax_voice else ""
     payload = {"voice": voice_id, "rate": rate, "volume": volume, "pitch": pitch}
     meta = dict(row.meta or {})
     meta["voice_params"] = {"rate": rate, "volume": volume, "pitch": pitch}
+    if is_minimax_voice:
+        meta["voice_params"]["emotion"] = emotion
     meta["voice_edit_at"] = datetime.utcnow().isoformat() + "Z"
     result: Dict[str, Any] = {}
     synced = False
     sync_error = ""
-    if (body.token or "").strip() or (getattr(settings, "hifly_default_token", None) or "").strip():
+    if is_minimax_voice:
+        synced = True
+        meta["voice_edit_synced_at"] = datetime.utcnow().isoformat() + "Z"
+        preview_text = f"你好，这是{_safe_title(row.title, '当前声音', 20)}的参数试听。"
+        try:
+            preview = await _minimax_tts_audio(
+                voice_id=_minimax_voice_id_from_row(row),
+                text=preview_text,
+                rate=rate,
+                volume=volume,
+                pitch=pitch,
+                emotion=emotion,
+            )
+            demo_asset = await _persist_voice_demo_asset(
+                db,
+                current_user.id,
+                raw=preview.get("audio_bytes") or b"",
+                title=f"{row.title} 参数试听",
+                voice_id=voice_id,
+                params=meta["voice_params"],
+            )
+            if demo_asset:
+                meta["demo_asset"] = demo_asset
+                meta["voice_preview_tts"] = {
+                    "duration_seconds": preview.get("duration_seconds"),
+                    "extra_info": preview.get("extra_info"),
+                    "tts_text": preview.get("tts_text"),
+                    "raw": preview.get("raw"),
+                }
+        except Exception as exc:  # noqa: BLE001
+            sync_error = f"参数已保存，但新试听音频生成失败：{exc}"
+            meta["voice_preview_sync_error"] = sync_error
+    elif (body.token or "").strip() or (getattr(settings, "hifly_default_token", None) or "").strip():
         try:
             result = await _post("/api/v2/hifly/voice/edit", body.token, payload)
             synced = True
@@ -1393,6 +1747,39 @@ async def edit_my_voice_params(
         "params": meta["voice_params"],
         "item": _normalize_voice_asset(row, request),
         "raw": result,
+    }
+
+
+@router.post("/api/hifly/my/voice/preview-tts")
+async def preview_my_voice_tts(
+    body: HiflyVoicePreviewTtsBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    voice_id = (body.voice or "").strip()
+    row = (
+        db.query(UserHiflyVoiceAsset)
+        .filter(UserHiflyVoiceAsset.user_id == current_user.id, UserHiflyVoiceAsset.hifly_voice_id == voice_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="声音不存在或不属于当前账号")
+    if _voice_provider(row) != _MINIMAX_PROVIDER:
+        raise HTTPException(status_code=400, detail="当前声音不是 MiniMax 音色，不能实时合成试听")
+    result = await _minimax_tts_audio(
+        voice_id=_minimax_voice_id_from_row(row),
+        text=(body.text or "").strip() or "你好，这是 MiniMax 声音试听。",
+        rate=body.rate,
+        volume=body.volume,
+        pitch=body.pitch,
+        emotion=body.emotion,
+    )
+    audio_b64 = base64.b64encode(result["audio_bytes"]).decode("ascii")
+    return {
+        "ok": True,
+        "audio_url": f"data:audio/mpeg;base64,{audio_b64}",
+        "duration_seconds": result.get("duration_seconds"),
+        "extra_info": result.get("extra_info"),
     }
 
 
@@ -1460,6 +1847,33 @@ def delete_my_avatar(
     return {"ok": True, "deleted": avatar_asset_id}
 
 
+@router.delete("/api/hifly/my/voice/{voice_asset_id}")
+def delete_my_voice(
+    voice_asset_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(UserHiflyVoiceAsset)
+        .filter(
+            UserHiflyVoiceAsset.id == voice_asset_id,
+            UserHiflyVoiceAsset.user_id == current_user.id,
+            UserHiflyVoiceAsset.status != "deleted",
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="声音不存在或已删除")
+    meta = dict(row.meta or {})
+    meta["deleted"] = True
+    meta["deleted_at"] = datetime.utcnow().isoformat()
+    row.meta = meta
+    row.status = "deleted"
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True, "deleted": voice_asset_id}
+
+
 # ── 口播视频任务持久化 ──────────────────────────────────────────────
 
 class HiflyVideoCreateBody(BaseModel):
@@ -1472,6 +1886,7 @@ class HiflyVideoCreateBody(BaseModel):
     rate: Optional[str] = None
     volume: Optional[str] = None
     pitch: Optional[str] = None
+    emotion: Optional[str] = None
     avatar_title: Optional[str] = None
     avatar_image_url: Optional[str] = None
     voice_title: Optional[str] = None
@@ -1666,25 +2081,123 @@ async def create_my_video_by_tts(
         "st_show": 1 if int(body.st_show or 0) == 1 else 0,
         "aigc_flag": int(body.aigc_flag or 0),
     }
+    voice_row: Optional[UserHiflyVoiceAsset] = None
+    if voice_value:
+        voice_row = (
+            db.query(UserHiflyVoiceAsset)
+            .filter(UserHiflyVoiceAsset.user_id == current_user.id, UserHiflyVoiceAsset.hifly_voice_id == voice_value)
+            .first()
+        )
+    is_minimax_voice = _voice_provider(voice_row) == _MINIMAX_PROVIDER
     voice_params: Dict[str, str] = {}
     if body.rate is not None:
         voice_params["rate"] = _voice_param_text(body.rate, "1.0", 0.5, 2.0, "语速")
     if body.volume is not None:
         voice_params["volume"] = _voice_param_text(body.volume, "1.0", 0.1, 2.0, "音量")
     if body.pitch is not None:
-        voice_params["pitch"] = _voice_param_text(body.pitch, "1.0", 0.1, 2.0, "语调")
-    if not voice_params:
-        voice_row = (
-            db.query(UserHiflyVoiceAsset)
-            .filter(UserHiflyVoiceAsset.user_id == current_user.id, UserHiflyVoiceAsset.hifly_voice_id == voice_value)
-            .first()
+        voice_params["pitch"] = _voice_param_text(
+            body.pitch,
+            "0" if is_minimax_voice else "1.0",
+            -12.0 if is_minimax_voice else 0.1,
+            12.0 if is_minimax_voice else 2.0,
+            "语调",
         )
+    if is_minimax_voice:
+        if body.emotion is not None:
+            voice_params["emotion"] = _minimax_emotion(body.emotion)
+    if not voice_params:
         if voice_row and isinstance(voice_row.meta, dict) and isinstance(voice_row.meta.get("voice_params"), dict):
             stored_params = voice_row.meta.get("voice_params") or {}
-            for key in ("rate", "volume", "pitch"):
+            for key in ("rate", "volume", "pitch", "emotion"):
                 value = str(stored_params.get(key) or "").strip()
                 if value:
                     voice_params[key] = value
+
+    if is_minimax_voice:
+        minimax_voice_id = _minimax_voice_id_from_row(voice_row)
+        rate = voice_params.get("rate") or "1.0"
+        volume = voice_params.get("volume") or "1.0"
+        pitch = voice_params.get("pitch") or "0"
+        emotion = voice_params.get("emotion") or _MINIMAX_DEFAULT_EMOTION
+        tts_result = await _minimax_tts_audio(
+            voice_id=minimax_voice_id,
+            text=body.text.strip(),
+            rate=rate,
+            volume=volume,
+            pitch=pitch,
+            emotion=emotion,
+        )
+        generated_upload = await _upload_generated_audio_to_hifly(body.token, tts_result["audio_bytes"])
+        source_asset = _persist_input_asset(db, current_user.id, generated_upload, "audio")
+        if source_asset:
+            generated_upload["source_asset_id"] = source_asset.asset_id
+            generated_upload["source_url"] = source_asset.source_url or ""
+        audio_payload = {
+            "title": title[:20] or "数字人口播",
+            "avatar": body.avatar.strip(),
+            "file_id": generated_upload["file_id"],
+            "aigc_flag": int(body.aigc_flag or 0),
+        }
+        billing = await _hifly_pre_deduct_audio(
+            request,
+            {"audio_size": generated_upload.get("size") or 0},
+            int(tts_result.get("duration_seconds") or 0),
+        )
+        try:
+            created = await _post("/api/v2/hifly/video/create_by_audio", body.token, audio_payload)
+            task_id = str(_pick_nested(created, "task_id") or "").strip()
+            if not task_id:
+                await _hifly_refund_capability(request, _HIFLY_AUDIO_CAPABILITY_ID, float(billing.get("credits_pre_deducted") or 0))
+                raise HTTPException(status_code=502, detail="HiFly 未返回 task_id")
+        except HTTPException:
+            if "task_id" not in locals():
+                await _hifly_refund_capability(request, _HIFLY_AUDIO_CAPABILITY_ID, float(billing.get("credits_pre_deducted") or 0))
+            raise
+        request_id = str(_pick_nested(created, "request_id") or "").strip()
+        row = UserHiflyVideoAsset(
+            user_id=current_user.id,
+            title=title,
+            status="processing",
+            hifly_task_id=task_id,
+            avatar_id=body.avatar.strip() or None,
+            voice_id=voice_value or None,
+            text=body.text.strip(),
+            aigc_flag=audio_payload["aigc_flag"],
+            st_show=0,
+            meta={
+                "create_raw": created,
+                "create_payload": audio_payload,
+                "upload_meta": _upload_meta_for_store(generated_upload),
+                "source_asset_id": source_asset.asset_id if source_asset else "",
+                "source_mode": "minimax_tts_audio",
+                "tts_provider": _MINIMAX_PROVIDER,
+                "minimax_voice_id": minimax_voice_id,
+                "minimax_tts": {
+                    "duration_seconds": tts_result.get("duration_seconds"),
+                    "extra_info": tts_result.get("extra_info"),
+                    "request_body": tts_result.get("request_body"),
+                    "tts_text": tts_result.get("tts_text"),
+                    "raw": tts_result.get("raw"),
+                },
+                "avatar_title": (body.avatar_title or "").strip(),
+                "avatar_image_url": (body.avatar_image_url or "").strip(),
+                "voice_title": (body.voice_title or (voice_row.title if voice_row else "") or "").strip(),
+                "billing": {
+                    "capability_id": _HIFLY_AUDIO_CAPABILITY_ID,
+                    "billing_status": "pending",
+                    "credits_pre_deducted": billing.get("credits_pre_deducted"),
+                    "estimated_seconds": billing.get("estimated_seconds"),
+                    "expected_credits": billing.get("expected_credits"),
+                    "request_id": request_id,
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                },
+            },
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return {"ok": True, "task_id": task_id, "request_id": request_id, "billing": (row.meta or {}).get("billing") or {}, "item": _normalize_video_asset(row)}
+
     payload.update(voice_params)
     billing = await _hifly_pre_deduct_tts(request, payload)
     try:
@@ -1985,7 +2498,10 @@ def list_my_voices(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(UserHiflyVoiceAsset).filter(UserHiflyVoiceAsset.user_id == current_user.id)
+    query = db.query(UserHiflyVoiceAsset).filter(
+        UserHiflyVoiceAsset.user_id == current_user.id,
+        UserHiflyVoiceAsset.status != "deleted",
+    )
     keyword = (q or "").strip()
     if keyword:
         query = query.filter(UserHiflyVoiceAsset.title.contains(keyword))

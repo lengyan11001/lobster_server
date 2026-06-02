@@ -130,6 +130,10 @@ class Settings(BaseSettings):
     hifly_default_token: Optional[str] = None
     """HiFly 消费者站 JWT；用于调用 hifly.cc 内部接口（如声音 preview），过期需手动更新。"""
     hifly_consumer_jwt: Optional[str] = None
+    """MiniMax API Key；配置后数字人声音创建/文案配音可走 MiniMax。"""
+    minimax_api_key: Optional[str] = None
+    minimax_api_base: str = "https://api.minimaxi.com"
+    minimax_tts_model: str = "speech-2.8-turbo"
     # 预留：大陆 API 转发 Messenger CRUD 至海外（未实现 HTTP 转发时勿依赖）
     messenger_upstream_url: Optional[str] = None
     # 海外实例：与大陆共用 SECRET_KEY 时，库中无 users 行仍信任 JWT sub 作为 messenger_configs.user_id
