@@ -128,7 +128,8 @@ class RegisterPhoneBody(BaseModel):
 
 
 class PhonePasswordLoginBody(BaseModel):
-    phone: str
+    phone: Optional[str] = None
+    account: Optional[str] = None
     password: str
 
 
@@ -418,15 +419,18 @@ async def login(request: Request, db: Session = Depends(get_db)):
     return Token(access_token=access_token)
 
 
-@router.post("/login-phone-password", response_model=Token, summary="手机号密码登录")
+@router.post("/login-phone-password", response_model=Token, summary="账号/手机号密码登录")
 def login_phone_password(body: PhonePasswordLoginBody, request: Request, db: Session = Depends(get_db)):
-    mobile = _normalize_cn_mobile(body.phone)
+    account = (body.account or body.phone or "").strip()
     password = body.password or ""
+    account_key = _login_account_key(account)
+    if not account_key:
+        raise HTTPException(status_code=400, detail="请输入账号或手机号")
     if not password:
         raise HTTPException(status_code=400, detail="请输入密码")
-    user = db.query(User).filter(User.email == _phone_account_email(mobile)).first()
+    user = db.query(User).filter(User.email == account_key).first()
     if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="手机号或密码错误")
+        raise HTTPException(status_code=400, detail="账号或密码错误")
     access_token = create_access_token(data=access_token_claims(user))
     iid = optional_installation_id_from_request(request)
     if iid:

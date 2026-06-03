@@ -176,3 +176,26 @@ def test_phone_password_login_rejects_wrong_password(db_session, db_session_fact
         json={"phone": PHONE, "password": "wrong-pass"},
     )
     assert res.status_code == 400
+
+
+def test_password_login_accepts_non_phone_account(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import get_password_hash
+    from backend.app.models import User
+
+    user = User(
+        email="agent_demo",
+        hashed_password=get_password_hash("right-pass"),
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    res = _client(db_session_factory, monkeypatch).post(
+        "/auth/login-phone-password",
+        json={"account": "agent_demo", "password": "right-pass"},
+    )
+    assert res.status_code == 200
+    assert res.json()["access_token"]
