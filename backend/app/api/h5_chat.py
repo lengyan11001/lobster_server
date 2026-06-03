@@ -345,7 +345,9 @@ async def upload_h5_chat_image(
     request: Request,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
     if content_type not in _IMAGE_EXT_BY_TYPE:
         raise HTTPException(status_code=400, detail="仅支持上传图片")
@@ -355,7 +357,7 @@ async def upload_h5_chat_image(
     if len(raw) > _MAX_H5_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="图片不能超过 15MB")
     _H5_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    filename = f"u{current_user.id}_{uuid.uuid4().hex}{_IMAGE_EXT_BY_TYPE[content_type]}"
+    filename = f"u{owner_user.id}_{uuid.uuid4().hex}{_IMAGE_EXT_BY_TYPE[content_type]}"
     path = _H5_UPLOAD_DIR / filename
     path.write_bytes(raw)
     url = f"{_public_base_url(request)}/api/h5-chat/uploads/{filename}"

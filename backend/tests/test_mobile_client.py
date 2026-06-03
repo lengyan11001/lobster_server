@@ -379,6 +379,66 @@ def test_h5_messages_from_wechat_session_are_owned_by_bound_phone_user(db_sessio
     assert pending.json()["items"][0]["id"] == message_id
 
 
+def test_asset_upload_from_wechat_session_is_owned_by_bound_phone_user(db_session, db_session_factory, mobile_users, monkeypatch):
+    from backend.app.api.auth import get_current_user
+    from backend.app.api.assets import router as assets_router
+    from backend.app.core.config import settings
+    from backend.app.db import get_db
+    from backend.app.models import Asset, MobileDeviceBinding, User
+
+    phone_user, temp_user = mobile_users
+    monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
+    monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
+    now = datetime.utcnow()
+    db_session.add(
+        MobileDeviceBinding(
+            user_id=temp_user.id,
+            phone=PHONE,
+            device_id=DEVICE_ID,
+            platform="wechat_miniprogram",
+            created_at=now,
+            last_seen_at=now,
+        )
+    )
+    db_session.commit()
+
+    from backend.app.api import assets as assets_module
+
+    monkeypatch.setattr(
+        assets_module,
+        "_save_bytes_or_tos",
+        lambda data, ext, content_type="": ("asset-test", f"assets/asset-test{ext}", len(data), "https://cdn.example.com/asset-test.png"),
+    )
+
+    app = FastAPI()
+    app.include_router(assets_router, prefix="")
+
+    def _get_db_override():
+        s = db_session_factory()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    def _get_current_user_override():
+        s = db_session_factory()
+        try:
+            return s.query(User).filter(User.id == temp_user.id).first()
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    app.dependency_overrides[get_current_user] = _get_current_user_override
+    client = TestClient(app)
+
+    res = client.post("/api/assets/upload", files={"file": ("demo.png", b"fakepng", "image/png")})
+
+    assert res.status_code == 200
+    with db_session_factory() as s:
+        asset = s.query(Asset).filter(Asset.asset_id == "asset-test").first()
+        assert asset.user_id == phone_user.id
+
+
 def test_scheduled_task_from_wechat_session_targets_bound_phone_user(db_session, db_session_factory, mobile_users, monkeypatch):
     from backend.app.api.auth import get_current_user
     from backend.app.api.scheduled_tasks import router as scheduled_router

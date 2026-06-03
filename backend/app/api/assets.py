@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .auth import get_current_user
+from .mobile_identity import online_user_for_mobile_user
 from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, User
@@ -402,6 +403,7 @@ async def upload_asset(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     data = await file.read()
     if not data:
         raise HTTPException(400, detail="文件为空")
@@ -436,7 +438,7 @@ async def upload_asset(
         )
     asset = Asset(
         asset_id=aid,
-        user_id=current_user.id,
+        user_id=owner_user.id,
         filename=fname_or_key,
         media_type=mtype,
         file_size=fsize,
