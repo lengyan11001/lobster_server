@@ -25,6 +25,7 @@ from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
 from .auth import get_current_user
 from .installation_slots import ensure_installation_slot
+from .mobile_identity import online_user_for_mobile_user
 
 router = APIRouter()
 
@@ -758,8 +759,9 @@ def _cancel_unfinished_runs_for_task(
     return len(rows)
 
 
-def _assert_user_task_access(row_user_id: int, current_user: User) -> None:
-    if int(row_user_id) != int(current_user.id):
+def _assert_user_task_access(row_user_id: int, current_user: User, owner_user: Optional[User] = None) -> None:
+    allowed_id = int((owner_user or current_user).id)
+    if int(row_user_id) != allowed_id:
         raise HTTPException(status_code=403, detail="无权访问该任务")
 
 
@@ -887,15 +889,16 @@ def create_scheduled_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     xi = _header_installation_id(request)
     if not xi:
         raise HTTPException(status_code=400, detail="missing current installation id")
-    ensure_installation_slot(db, current_user.id, xi)
+    ensure_installation_slot(db, owner_user.id, xi)
     body.installation_ids = [xi]
     task = _create_task_row(
         db,
         body,
-        target_user_id=current_user.id,
+        target_user_id=owner_user.id,
         created_by_user_id=current_user.id,
         created_by_role="user",
     )
@@ -908,9 +911,10 @@ def list_scheduled_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     rows = (
         db.query(ScheduledTask)
-        .filter(ScheduledTask.user_id == current_user.id)
+        .filter(ScheduledTask.user_id == owner_user.id)
         .order_by(ScheduledTask.created_at.desc())
         .limit(limit)
         .all()
@@ -923,7 +927,8 @@ def list_h5_creative_candidate_groups(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    rows = db.query(Asset).filter(Asset.user_id == current_user.id, Asset.media_type == "image").all()
+    owner_user = online_user_for_mobile_user(db, current_user)
+    rows = db.query(Asset).filter(Asset.user_id == owner_user.id, Asset.media_type == "image").all()
     groups: Dict[str, int] = {}
     for row in rows:
         name = _creative_candidate_group(row.meta)
@@ -943,9 +948,10 @@ def list_h5_scheduled_publish_accounts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     rows = (
         db.query(PublishAccount)
-        .filter(PublishAccount.user_id == current_user.id)
+        .filter(PublishAccount.user_id == owner_user.id)
         .order_by(PublishAccount.created_at.desc())
         .all()
     )
@@ -972,10 +978,11 @@ def patch_scheduled_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    _assert_user_task_access(task.user_id, current_user)
+    _assert_user_task_access(task.user_id, current_user, owner_user)
     if body.status:
         status = body.status.strip().lower()
         if status not in {"active", "paused", "cancelled"}:
@@ -1006,10 +1013,11 @@ def delete_scheduled_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    _assert_user_task_access(task.user_id, current_user)
+    _assert_user_task_access(task.user_id, current_user, owner_user)
     cancelled = _delete_task_row(db, task)
     db.commit()
     return {"ok": True, "deleted": True, "cancelled_runs": cancelled}
@@ -1021,10 +1029,11 @@ def run_scheduled_task_now(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    _assert_user_task_access(task.user_id, current_user)
+    _assert_user_task_access(task.user_id, current_user, owner_user)
     runs = _enqueue_task(db, task, datetime.utcnow())
     if task.schedule_type in {"interval", "daily_times"} and task.status != "cancelled":
         task.status = "active"
@@ -1038,10 +1047,11 @@ def list_scheduled_task_runs(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _enqueue_due_tasks(db, current_user.id)
+    owner_user = online_user_for_mobile_user(db, current_user)
+    _enqueue_due_tasks(db, owner_user.id)
     rows = (
         db.query(ScheduledTaskRun)
-        .filter(ScheduledTaskRun.user_id == current_user.id)
+        .filter(ScheduledTaskRun.user_id == owner_user.id)
         .order_by(ScheduledTaskRun.created_at.desc())
         .limit(limit)
         .all()
@@ -1055,7 +1065,8 @@ def delete_scheduled_task_run(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    row = _run_for_user(db, run_id, current_user.id)
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = _run_for_user(db, run_id, owner_user.id)
     _delete_run_row(db, row)
     db.commit()
     return {"ok": True, "deleted": True, "run_id": run_id}
@@ -1126,7 +1137,8 @@ def request_scheduled_task_publish(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    row = _run_for_user(db, run_id, current_user.id)
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = _run_for_user(db, run_id, owner_user.id)
     if row.status != "completed":
         raise HTTPException(status_code=409, detail="任务完成后才能发布")
     payload = _run_result_payload(row)
@@ -1158,7 +1170,8 @@ def resume_scheduled_task_video_from_image(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    row = _run_for_user(db, run_id, current_user.id)
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = _run_for_user(db, run_id, owner_user.id)
     if row.status not in _FINAL_STATUSES:
         raise HTTPException(status_code=409, detail="任务仍在执行中，不能补发")
     resume_payload = _partial_video_resume_payload_from_run(row)

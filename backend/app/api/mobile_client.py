@@ -32,6 +32,12 @@ from .auth import REGISTER_INITIAL_CREDITS, SMS_CODE_TTL_SEC, access_token_claim
 from .auth import _check_and_update_sms_send_limit, _clear_sms_code, _create_auth_challenge, _verify_sms_challenge
 from .auth import _get_wechat_access_token
 from .installation_slots import parse_installation_id_strict
+from .mobile_identity import (
+    is_wechat_session_user,
+    latest_mobile_binding,
+    online_user_for_mobile_binding,
+    online_user_for_mobile_user,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -130,6 +136,44 @@ def _get_or_create_phone_user(db: Session, mobile: str) -> tuple[User, bool]:
         db.add(SkillUnlock(user_id=user.id, package_id=pkg_id))
     db.flush()
     return user, True
+
+
+def _new_wechat_user(db: Session, openid: str) -> User:
+    email = f"wx_{openid[:16]}@wechat.lobster.local"
+    if db.query(User).filter(User.email == email).first():
+        email = f"wx_{openid}@wechat.lobster.local"
+    if db.query(User).filter(User.email == email).first():
+        email = f"wx_{openid[:16]}_{secrets.token_hex(4)}@wechat.lobster.local"
+    user = User(
+        email=email,
+        hashed_password=get_password_hash(f"wechat-{openid}"),
+        credits=Decimal("0"),
+        role="user",
+        preferred_model="sutui",
+        wechat_openid=openid,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def _get_or_create_wechat_user(db: Session, openid: str) -> tuple[User, bool, str]:
+    legacy_phone = ""
+    for user in db.query(User).filter(User.wechat_openid == openid).order_by(User.id.asc()).all():
+        phone = _phone_from_user_email(user.email or "")
+        if phone:
+            legacy_phone = legacy_phone or phone
+            user.wechat_openid = None
+            db.add(user)
+            continue
+        return user, False, legacy_phone
+    if legacy_phone:
+        db.flush()
+        user = db.query(User).filter(User.wechat_openid == openid).order_by(User.id.asc()).first()
+        if user and not _phone_from_user_email(user.email or ""):
+            return user, False, legacy_phone
+    user = _new_wechat_user(db, openid)
+    return user, True, legacy_phone
 
 
 def _candidate_ref_agent_user_id(body: Any) -> Optional[int]:
@@ -467,6 +511,10 @@ def _current_binding(db: Session, current_user: User, device_id: str) -> MobileD
     return row
 
 
+def _asset_owner_for_mobile_request(db: Session, current_user: User, binding: MobileDeviceBinding) -> User:
+    return online_user_for_mobile_binding(db, current_user, binding)
+
+
 @router.get("/api/mobile/phone/status", summary="手机端：检查手机号是否已有账号")
 def mobile_phone_status(phone: str = Query(...), db: Session = Depends(get_db)):
     mobile = _normalize_cn_mobile(phone)
@@ -522,29 +570,17 @@ def mobile_wechat_login(
     db: Session = Depends(get_db),
 ):
     openid = _exchange_wechat_login_code(body.code)
-    user = db.query(User).filter(User.wechat_openid == openid).first()
-    created_temp_user = False
-    if user is None:
-        email = f"wx_{openid[:16]}@wechat.lobster.local"
-        if db.query(User).filter(User.email == email).first():
-            email = f"wx_{openid}@wechat.lobster.local"
-        user = User(
-            email=email,
-            hashed_password=get_password_hash(f"wechat-{openid}"),
-            credits=Decimal("0"),
-            role="user",
-            preferred_model="sutui",
-            wechat_openid=openid,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        created_temp_user = True
+    user, created_temp_user, legacy_phone = _get_or_create_wechat_user(db, openid)
+    if legacy_phone:
+        _get_or_create_phone_user(db, legacy_phone)
+    db.commit()
+    db.refresh(user)
     ref_bound = _apply_ref_agent_binding(db, user, body, "wechat_login")
     if ref_bound:
         db.commit()
         db.refresh(user)
-    phone = _phone_from_user_email(user.email)
+    latest_binding = latest_mobile_binding(db, user)
+    phone = (legacy_phone or (latest_binding.phone if latest_binding else "") or _phone_from_user_email(user.email)).strip()
     token = create_access_token(data=access_token_claims(user))
     if phone and body.device_id:
         device_id = parse_installation_id_strict(body.device_id)
@@ -604,27 +640,21 @@ def bind_mobile_device(
 ):
     mobile, phone_verified = _resolve_bind_phone(body, db)
     phone_user, created_phone_user = _get_or_create_phone_user(db, mobile)
-    ref_bound = _apply_ref_agent_binding(db, phone_user, body, "phone_bind")
-
-    bind_user = phone_user
+    bind_user = current_user
     current_openid = (getattr(current_user, "wechat_openid", None) or "").strip()
     incoming_openid = (body.openid or "").strip()
     openid = current_openid or incoming_openid
     if phone_user.id != current_user.id:
-        is_wechat_session = bool(current_openid) or str(current_user.email or "").endswith("@wechat.lobster.local")
-        if not is_wechat_session:
+        if not is_wechat_session_user(current_user):
             raise HTTPException(status_code=403, detail="当前登录账号与手机号不一致，请先用该手机号登录")
         if not phone_verified:
             raise HTTPException(status_code=400, detail="绑定手机号账号需要使用微信手机号授权 code")
-        existing_openid = (getattr(phone_user, "wechat_openid", None) or "").strip()
-        if existing_openid and openid and existing_openid != openid:
-            raise HTTPException(status_code=409, detail="该手机号已绑定其他微信")
-        if openid:
-            phone_user.wechat_openid = openid
-            if current_openid == openid:
-                current_user.wechat_openid = None
-        db.add(phone_user)
-        db.add(current_user)
+    ref_bound = _apply_ref_agent_binding(db, phone_user, body, "phone_bind")
+    if not ref_bound and not getattr(phone_user, "parent_user_id", None) and getattr(bind_user, "parent_user_id", None):
+        phone_user.parent_user_id = int(bind_user.parent_user_id)
+        ref_bound = True
+    db.add(phone_user)
+    db.add(bind_user)
     db.flush()
 
     device_id = parse_installation_id_strict(body.device_id)
@@ -673,7 +703,9 @@ def bind_mobile_device(
         "access_token": access_token,
         "token_type": "bearer",
         "created_user": created_phone_user,
-        "parent_user_id": bind_user.parent_user_id,
+        "phone_user_id": phone_user.id,
+        "parent_user_id": phone_user.parent_user_id or bind_user.parent_user_id,
+        "wechat_parent_user_id": bind_user.parent_user_id,
         "ref_agent_bound": ref_bound,
     }
 
@@ -684,9 +716,10 @@ def list_mobile_devices(
     db: Session = Depends(get_db),
 ):
     now = datetime.utcnow()
+    online_user = online_user_for_mobile_user(db, current_user)
     online_rows = (
         db.query(H5ChatDevicePresence)
-        .filter(H5ChatDevicePresence.user_id == current_user.id)
+        .filter(H5ChatDevicePresence.user_id == online_user.id)
         .order_by(H5ChatDevicePresence.last_seen_at.desc())
         .limit(20)
         .all()
@@ -748,14 +781,15 @@ def mobile_downloads(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _current_binding(db, current_user, device_id)
+    binding = _current_binding(db, current_user, device_id)
+    owner_user = _asset_owner_for_mobile_request(db, current_user, binding)
     wanted = (media_type or "").strip().lower()
     if wanted and wanted not in {"image", "video", "audio", "media"}:
         raise HTTPException(status_code=400, detail="media_type 无效")
 
     items: List[Dict[str, Any]] = []
     seen: set[str] = set()
-    q = db.query(Asset).filter(Asset.user_id == current_user.id, Asset.source_url.isnot(None))
+    q = db.query(Asset).filter(Asset.user_id == owner_user.id, Asset.source_url.isnot(None))
     if wanted in {"image", "video", "audio"}:
         q = q.filter(Asset.media_type == wanted)
     for row in q.order_by(Asset.created_at.desc()).limit(limit).all():
@@ -771,7 +805,7 @@ def mobile_downloads(
     if remaining:
         runs = (
             db.query(ScheduledTaskRun)
-            .filter(ScheduledTaskRun.user_id == current_user.id, ScheduledTaskRun.status == "completed")
+            .filter(ScheduledTaskRun.user_id == owner_user.id, ScheduledTaskRun.status == "completed")
             .order_by(ScheduledTaskRun.created_at.desc())
             .limit(100)
             .all()
@@ -816,7 +850,7 @@ def mobile_downloads(
     if remaining:
         messages = (
             db.query(H5ChatMessage)
-            .filter(H5ChatMessage.user_id == current_user.id, H5ChatMessage.status == "completed")
+            .filter(H5ChatMessage.user_id == owner_user.id, H5ChatMessage.status == "completed")
             .order_by(H5ChatMessage.created_at.desc())
             .limit(100)
             .all()
@@ -840,7 +874,7 @@ def mobile_downloads(
     if len(items) < limit:
         events = (
             db.query(H5ChatEvent)
-            .filter(H5ChatEvent.user_id == current_user.id, H5ChatEvent.event_type == "final")
+            .filter(H5ChatEvent.user_id == owner_user.id, H5ChatEvent.event_type == "final")
             .order_by(H5ChatEvent.created_at.desc())
             .limit(100)
             .all()

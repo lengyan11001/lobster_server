@@ -25,6 +25,7 @@ from ..db import SessionLocal, get_db
 from ..models import H5ChatDevicePresence, H5ChatEvent, H5ChatMessage, User
 from .auth import ALGORITHM, get_current_user
 from .installation_slots import INSTALLATION_ID_HEADER, ensure_installation_slot, optional_installation_id_from_request
+from .mobile_identity import online_user_for_mobile_user
 from .sutui_chat_proxy import charge_chat_turn_once
 
 logger = logging.getLogger(__name__)
@@ -402,6 +403,7 @@ def create_h5_message(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     mode = "direct"
     content = (body.content or "").strip()
     if not content:
@@ -410,11 +412,11 @@ def create_h5_message(
     target_installation = (body.installation_id or "").strip() or None
     request_installation = optional_installation_id_from_request(request)
     if request_installation:
-        ensure_installation_slot(db, current_user.id, request_installation)
+        ensure_installation_slot(db, owner_user.id, request_installation)
 
     row = H5ChatMessage(
         id=uuid.uuid4().hex,
-        user_id=current_user.id,
+        user_id=owner_user.id,
         installation_id=target_installation,
         mode=mode,
         content=content,
@@ -435,9 +437,10 @@ def list_h5_messages(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     rows = (
         db.query(H5ChatMessage)
-        .filter(H5ChatMessage.user_id == current_user.id)
+        .filter(H5ChatMessage.user_id == owner_user.id)
         .order_by(H5ChatMessage.created_at.desc())
         .limit(limit)
         .all()
@@ -448,7 +451,7 @@ def list_h5_messages(
     if message_ids:
         events = (
             db.query(H5ChatEvent)
-            .filter(H5ChatEvent.user_id == current_user.id, H5ChatEvent.message_id.in_(message_ids))
+            .filter(H5ChatEvent.user_id == owner_user.id, H5ChatEvent.message_id.in_(message_ids))
             .order_by(H5ChatEvent.id.asc())
             .all()
         )
@@ -473,7 +476,8 @@ def get_h5_message(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    row = _message_for_user(db, message_id, current_user.id)
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = _message_for_user(db, message_id, owner_user.id)
     events = (
         db.query(H5ChatEvent)
         .filter(H5ChatEvent.message_id == row.id, H5ChatEvent.id > after_event_id)
@@ -503,8 +507,9 @@ async def stream_h5_message_events(
     db0 = SessionLocal()
     try:
         user = _user_from_query_token(db0, token)
-        msg = _message_for_user(db0, message_id, user.id)
-        user_id = user.id
+        owner_user = online_user_for_mobile_user(db0, user)
+        msg = _message_for_user(db0, message_id, owner_user.id)
+        user_id = owner_user.id
         if msg.status in _FINAL_STATUSES:
             initial_last = max(0, initial_last)
     finally:
@@ -590,12 +595,13 @@ def h5_update_device_display_name(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    owner_user = online_user_for_mobile_user(db, current_user)
     iid = (installation_id or "").strip()
     if not iid:
         raise HTTPException(status_code=400, detail="缺少设备 ID")
     row = (
         db.query(H5ChatDevicePresence)
-        .filter(H5ChatDevicePresence.user_id == current_user.id, H5ChatDevicePresence.installation_id == iid)
+        .filter(H5ChatDevicePresence.user_id == owner_user.id, H5ChatDevicePresence.installation_id == iid)
         .first()
     )
     if not row:
@@ -623,9 +629,10 @@ def h5_devices_status(
     db: Session = Depends(get_db),
 ):
     now = datetime.utcnow()
+    owner_user = online_user_for_mobile_user(db, current_user)
     rows = (
         db.query(H5ChatDevicePresence)
-        .filter(H5ChatDevicePresence.user_id == current_user.id)
+        .filter(H5ChatDevicePresence.user_id == owner_user.id)
         .order_by(H5ChatDevicePresence.last_seen_at.desc())
         .limit(20)
         .all()

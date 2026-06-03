@@ -120,7 +120,7 @@ def test_send_mobile_sms_allows_new_phone(mobile_client, monkeypatch):
     assert sent == [NEW_PHONE]
 
 
-def test_bind_mobile_device_merges_wechat_session_into_phone_user(mobile_client, db_session_factory, mobile_users):
+def test_bind_mobile_device_links_wechat_session_to_phone_without_merging_user(mobile_client, db_session_factory, mobile_users):
     phone_user, temp_user = mobile_users
 
     res = mobile_client.post(
@@ -135,7 +135,8 @@ def test_bind_mobile_device_merges_wechat_session_into_phone_user(mobile_client,
 
     assert res.status_code == 200
     data = res.json()
-    assert data["user_id"] == phone_user.id
+    assert data["user_id"] == temp_user.id
+    assert data["phone_user_id"] == phone_user.id
     assert data["phone"] == PHONE
     assert data["phone_verified"] is True
     assert data["access_token"]
@@ -146,14 +147,14 @@ def test_bind_mobile_device_merges_wechat_session_into_phone_user(mobile_client,
         bound_user = s.query(User).filter(User.id == phone_user.id).first()
         old_temp = s.query(User).filter(User.id == temp_user.id).first()
         binding = s.query(MobileDeviceBinding).filter(MobileDeviceBinding.device_id == DEVICE_ID).first()
-        assert bound_user.wechat_openid == "openid_test"
-        assert old_temp.wechat_openid is None
-        assert binding.user_id == phone_user.id
+        assert bound_user.wechat_openid is None
+        assert old_temp.wechat_openid == "openid_test"
+        assert binding.user_id == temp_user.id
         assert binding.phone == PHONE
 
 
 def test_bind_mobile_device_with_sms_code(mobile_client, db_session_factory, mobile_users):
-    phone_user, _ = mobile_users
+    phone_user, temp_user = mobile_users
     _put_mobile_sms_code(db_session_factory, PHONE, "123456")
 
     res = mobile_client.post(
@@ -169,7 +170,8 @@ def test_bind_mobile_device_with_sms_code(mobile_client, db_session_factory, mob
 
     assert res.status_code == 200
     data = res.json()
-    assert data["user_id"] == phone_user.id
+    assert data["user_id"] == temp_user.id
+    assert data["phone_user_id"] == phone_user.id
     assert data["phone"] == PHONE
     assert data["phone_verified"] is True
 
@@ -177,7 +179,7 @@ def test_bind_mobile_device_with_sms_code(mobile_client, db_session_factory, mob
 
     with db_session_factory() as s:
         binding = s.query(MobileDeviceBinding).filter(MobileDeviceBinding.device_id == DEVICE_ID).first()
-        assert binding.user_id == phone_user.id
+        assert binding.user_id == temp_user.id
         assert binding.phone == PHONE
 
 
@@ -198,6 +200,7 @@ def test_bind_mobile_device_with_sms_code_creates_new_phone_user(mobile_client, 
 
     assert res.status_code == 200
     data = res.json()
+    assert data["user_id"] == temp_user.id
     assert data["phone"] == NEW_PHONE
     assert data["phone_verified"] is True
     assert data["created_user"] is True
@@ -212,11 +215,231 @@ def test_bind_mobile_device_with_sms_code_creates_new_phone_user(mobile_client, 
         unlocks = s.query(SkillUnlock).filter(SkillUnlock.user_id == created.id).all()
         assert created is not None
         assert created.hashed_password
-        assert created.wechat_openid == "openid_test"
-        assert old_temp.wechat_openid is None
-        assert binding.user_id == created.id
+        assert created.wechat_openid is None
+        assert old_temp.wechat_openid == "openid_test"
+        assert binding.user_id == temp_user.id
         assert binding.phone == NEW_PHONE
         assert {row.package_id for row in unlocks} >= {"sutui_mcp", "douyin_publish"}
+
+
+def test_bind_mobile_allows_same_phone_for_another_wechat(mobile_client, db_session_factory, mobile_users):
+    phone_user, temp_user = mobile_users
+    with db_session_factory() as s:
+        user = s.query(type(phone_user)).filter(type(phone_user).id == phone_user.id).first()
+        user.wechat_openid = "openid_old_wechat"
+        s.commit()
+
+    res = mobile_client.post(
+        "/api/mobile/devices/bind",
+        json={
+            "phone_code": "wx-phone-code",
+            "device_id": DEVICE_ID,
+            "platform": "wechat_miniprogram",
+            "display_name": "微信小程序",
+        },
+    )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["user_id"] == temp_user.id
+    assert data["phone_user_id"] == phone_user.id
+    assert data["phone"] == PHONE
+
+
+def test_mobile_devices_resolve_online_devices_by_bound_phone(db_session, db_session_factory, mobile_users, monkeypatch):
+    from backend.app.api.auth import get_current_user
+    from backend.app.api.mobile_client import router as mobile_router
+    from backend.app.core.config import settings
+    from backend.app.db import get_db
+    from backend.app.models import H5ChatDevicePresence, MobileDeviceBinding, User
+
+    phone_user, temp_user = mobile_users
+    monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
+    monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
+    now = datetime.utcnow()
+    db_session.add(
+        MobileDeviceBinding(
+            user_id=temp_user.id,
+            phone=PHONE,
+            device_id=DEVICE_ID,
+            platform="wechat_miniprogram",
+            display_name="微信小程序",
+            created_at=now,
+            last_seen_at=now,
+        )
+    )
+    db_session.add(
+        H5ChatDevicePresence(
+            user_id=phone_user.id,
+            installation_id="online-installation-1",
+            display_name="电脑端 online",
+            created_at=now,
+            last_seen_at=now,
+        )
+    )
+    db_session.commit()
+
+    app = FastAPI()
+    app.include_router(mobile_router, prefix="")
+
+    def _get_db_override():
+        s = db_session_factory()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    def _get_current_user_override():
+        s = db_session_factory()
+        try:
+            return s.query(User).filter(User.id == temp_user.id).first()
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    app.dependency_overrides[get_current_user] = _get_current_user_override
+    client = TestClient(app)
+
+    res = client.get("/api/mobile/devices")
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["online_available"] is True
+    assert data["online_devices"][0]["installation_id"] == "online-installation-1"
+
+
+def test_h5_messages_from_wechat_session_are_owned_by_bound_phone_user(db_session, db_session_factory, mobile_users, monkeypatch):
+    from backend.app.api.auth import get_current_user
+    from backend.app.api.h5_chat import router as h5_router
+    from backend.app.core.config import settings
+    from backend.app.db import get_db
+    from backend.app.models import H5ChatDevicePresence, H5ChatMessage, MobileDeviceBinding, User
+
+    phone_user, temp_user = mobile_users
+    monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
+    monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
+    now = datetime.utcnow()
+    db_session.add(
+        MobileDeviceBinding(
+            user_id=temp_user.id,
+            phone=PHONE,
+            device_id=DEVICE_ID,
+            platform="wechat_miniprogram",
+            created_at=now,
+            last_seen_at=now,
+        )
+    )
+    db_session.add(
+        H5ChatDevicePresence(
+            user_id=phone_user.id,
+            installation_id="online-installation-1",
+            display_name="电脑端 online",
+            created_at=now,
+            last_seen_at=now,
+        )
+    )
+    db_session.commit()
+
+    app = FastAPI()
+    app.include_router(h5_router, prefix="")
+
+    def _get_db_override():
+        s = db_session_factory()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    def _current_user(user_id):
+        def _get_current_user_override():
+            s = db_session_factory()
+            try:
+                return s.query(User).filter(User.id == user_id).first()
+            finally:
+                s.close()
+
+        return _get_current_user_override
+
+    app.dependency_overrides[get_db] = _get_db_override
+    app.dependency_overrides[get_current_user] = _current_user(temp_user.id)
+    client = TestClient(app)
+
+    created = client.post("/api/h5-chat/messages", json={"content": "生成一张海报"})
+    assert created.status_code == 200
+    message_id = created.json()["message"]["id"]
+
+    with db_session_factory() as s:
+        msg = s.query(H5ChatMessage).filter(H5ChatMessage.id == message_id).first()
+        assert msg.user_id == phone_user.id
+
+    app.dependency_overrides[get_current_user] = _current_user(phone_user.id)
+    pending = client.get("/api/h5-chat/pending", headers={"X-Installation-Id": "online-installation-1"})
+
+    assert pending.status_code == 200
+    assert pending.json()["items"][0]["id"] == message_id
+
+
+def test_scheduled_task_from_wechat_session_targets_bound_phone_user(db_session, db_session_factory, mobile_users, monkeypatch):
+    from backend.app.api.auth import get_current_user
+    from backend.app.api.scheduled_tasks import router as scheduled_router
+    from backend.app.core.config import settings
+    from backend.app.db import get_db
+    from backend.app.models import MobileDeviceBinding, ScheduledTask, User
+
+    phone_user, temp_user = mobile_users
+    monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
+    monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
+    now = datetime.utcnow()
+    db_session.add(
+        MobileDeviceBinding(
+            user_id=temp_user.id,
+            phone=PHONE,
+            device_id=DEVICE_ID,
+            platform="wechat_miniprogram",
+            created_at=now,
+            last_seen_at=now,
+        )
+    )
+    db_session.commit()
+
+    app = FastAPI()
+    app.include_router(scheduled_router, prefix="")
+
+    def _get_db_override():
+        s = db_session_factory()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    def _get_current_user_override():
+        s = db_session_factory()
+        try:
+            return s.query(User).filter(User.id == temp_user.id).first()
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    app.dependency_overrides[get_current_user] = _get_current_user_override
+    client = TestClient(app)
+
+    res = client.post(
+        "/api/scheduled-tasks/tasks",
+        headers={"X-Installation-Id": "online-installation-1"},
+        json={
+            "title": "手机端一次性任务",
+            "task_kind": "chat_message",
+            "content": "帮我生成短视频文案",
+            "schedule_type": "once",
+        },
+    )
+
+    assert res.status_code == 200
+    task_id = res.json()["task"]["id"]
+    with db_session_factory() as s:
+        task = s.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+        assert task.user_id == phone_user.id
+        assert task.created_by_user_id == temp_user.id
 
 
 def test_wrong_mobile_sms_code_does_not_consume_challenge(mobile_client, db_session_factory, mobile_users):
@@ -247,7 +470,7 @@ def test_wrong_mobile_sms_code_does_not_consume_challenge(mobile_client, db_sess
 
     assert ok.status_code == 200
     data = ok.json()
-    assert data["user_id"] == phone_user.id
+    assert data["user_id"] != phone_user.id
     assert data["phone_verified"] is True
 
 
