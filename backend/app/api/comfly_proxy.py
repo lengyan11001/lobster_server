@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -246,6 +247,22 @@ def _comfly_auth_headers(model: str = "") -> Dict[str, str]:
     if not key:
         raise HTTPException(503, "服务端未配置 Comfly Key：缺少环境变量 COMFLY_API_KEY")
     return {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+
+
+def _yunwu_base_url() -> str:
+    base = (os.environ.get("YUNWU_API_BASE") or "https://yunwu.ai").strip().rstrip("/")
+    return base or "https://yunwu.ai"
+
+
+def _yunwu_api_key() -> str:
+    key = (os.environ.get("YUNWU_API_KEY") or os.environ.get("COMFLY_API_KEY_YUNWU") or "").strip()
+    if not key:
+        raise HTTPException(503, "Server missing YUNWU_API_KEY")
+    return key
+
+
+def _yunwu_headers() -> Dict[str, str]:
+    return {"Authorization": f"Bearer {_yunwu_api_key()}", "Accept": "application/json", "Content-Type": "application/json"}
 
 
 def _require_model_entry(model: str) -> Dict[str, Any]:
@@ -529,6 +546,81 @@ async def proxy_videos_generations_poll(
                                      None, _comfly_headers(), _TIMEOUT_VIDEO_POLL)
     except Exception as e:
         raise HTTPException(502, f"Comfly videos poll 调用失败：{e}")
+    return JSONResponse(resp)
+
+
+@router.post("/api/comfly-proxy/v1/video/create", summary="Yunwu video create proxy")
+async def proxy_yunwu_video_create(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _check_request_authorized_for_billing(request)
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(400, "missing model")
+    entry = _require_model_entry(model)
+    upstream_body = _body_for_upstream_model(body, model, entry)
+
+    estimated = estimate_comfly_credits(model, body, for_user=True) or 1
+    pre = _do_pre_deduct(
+        db,
+        current_user,
+        estimated,
+        capability_id=_CAPABILITY_FOR_BILLING,
+        model=model,
+        endpoint="yunwu_video_create",
+    )
+    _audit("yunwu_video_create_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
+
+    try:
+        resp = await _comfly_request(
+            "POST",
+            f"{_yunwu_base_url()}/v1/video/create",
+            upstream_body,
+            _yunwu_headers(),
+            _TIMEOUT_VIDEO_SUBMIT,
+        )
+    except Exception as e:
+        _do_full_refund(
+            db,
+            current_user,
+            pre=pre,
+            capability_id=_CAPABILITY_FOR_BILLING,
+            model=model,
+            endpoint="yunwu_video_create",
+            error=str(e),
+        )
+        _audit("yunwu_video_create_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        raise HTTPException(502, f"Yunwu video create failed: {e}")
+
+    _audit("yunwu_video_create_ok", user_id=current_user.id, model=model, task_id=resp.get("id"), pre=credits_json_float(pre))
+    return JSONResponse(resp)
+
+
+@router.get("/api/comfly-proxy/v1/video/query", summary="Yunwu video query proxy")
+async def proxy_yunwu_video_query(
+    id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    _check_request_authorized_for_billing(request)
+    task_id = (id or "").strip()
+    if not task_id:
+        raise HTTPException(400, "missing id")
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_VIDEO_POLL) as client:
+            r = await client.get(
+                f"{_yunwu_base_url()}/v1/video/query",
+                params={"id": task_id},
+                headers={"Authorization": f"Bearer {_yunwu_api_key()}", "Accept": "application/json"},
+            )
+        if r.status_code >= 400:
+            raise RuntimeError(f"Yunwu HTTP {r.status_code}: {(r.text or '')[:500]}")
+        resp = r.json() if r.content else {}
+    except Exception as e:
+        raise HTTPException(502, f"Yunwu video query failed: {e}")
     return JSONResponse(resp)
 
 

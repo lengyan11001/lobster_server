@@ -539,15 +539,13 @@ Page({
   onShareAppMessage() {
     return share.appShare({
       title: "必火AI员工 - 数字人和AI视频创作",
-      path: "/pages/index/index",
-      imageUrl: this.data.heroBgUrl
+      path: "/pages/index/index"
     });
   },
 
   onShareTimeline() {
     return share.timelineShare({
-      title: "必火AI员工 - 数字人和AI视频创作",
-      imageUrl: this.data.heroBgUrl
+      title: "必火AI员工 - 数字人和AI视频创作"
     });
   }
 });

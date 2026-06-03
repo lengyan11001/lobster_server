@@ -42,7 +42,7 @@ class WanRoleCreateBody(BaseModel):
     video_url: str = Field(..., min_length=8)
     title: str = ""
     mode: str = "wan-std"
-    watermark: bool = True
+    watermark: bool = False
     video_duration: float = 0
 
 

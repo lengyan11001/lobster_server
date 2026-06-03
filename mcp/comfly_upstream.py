@@ -139,21 +139,31 @@ def _load_pricing() -> Dict[str, Any]:
 def get_comfly_config(token_group: str = "") -> Tuple[str, str]:
     """返回 (base_url, api_key)。
 
-    token_group 对应环境变量 COMFLY_API_KEY_<GROUP>（大写），
-    未设置时回退到默认 COMFLY_API_KEY。
+    token_group 对应环境变量 COMFLY_API_BASE_<GROUP> / COMFLY_API_KEY_<GROUP>（大写），
+    未设置时回退到默认 COMFLY_API_BASE / COMFLY_API_KEY。
     base_url 会去除尾部 /v1 以避免与端点路径拼接时出现 /v1/v1 重复。
     """
     base = (os.environ.get("COMFLY_API_BASE") or "").strip().rstrip("/")
-    if base.endswith("/v1"):
-        base = base[:-3]
     key = ""
     if token_group:
-        env_name = f"COMFLY_API_KEY_{token_group.upper()}"
-        key = (os.environ.get(env_name) or "").strip()
+        group = token_group.upper()
+        base_env_name = f"COMFLY_API_BASE_{group}"
+        key_env_name = f"COMFLY_API_KEY_{group}"
+        grouped_base = (os.environ.get(base_env_name) or "").strip().rstrip("/")
+        if not grouped_base and group == "YUNWU":
+            grouped_base = (os.environ.get("YUNWU_API_BASE") or "").strip().rstrip("/")
+        if grouped_base:
+            base = grouped_base
+            logger.debug("[Comfly] 使用 token_group=%s base_env=%s", token_group, base_env_name)
+        key = (os.environ.get(key_env_name) or "").strip()
+        if not key and group == "YUNWU":
+            key = (os.environ.get("YUNWU_API_KEY") or "").strip()
         if key:
-            logger.debug("[Comfly] 使用 token_group=%s env=%s", token_group, env_name)
+            logger.debug("[Comfly] 使用 token_group=%s key_env=%s", token_group, key_env_name)
     if not key:
         key = (os.environ.get("COMFLY_API_KEY") or "").strip()
+    if base.endswith("/v1"):
+        base = base[:-3]
     return base, key
 
 

@@ -1,7 +1,7 @@
 const staticAssets = require("./static_assets");
 
 const DEFAULT_TITLE = "必火AI员工";
-const DEFAULT_IMAGE = staticAssets.staticAssetUrl("openclaw-hero-bg.jpg");
+const DEFAULT_IMAGE = staticAssets.staticAssetUrl("share-ai-employee.png");
 
 function parseQuery(query) {
   const out = {};

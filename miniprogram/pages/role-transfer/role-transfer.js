@@ -362,6 +362,7 @@ Page({
           video_url: video.source_url,
           video_duration: video.duration || this.data.billableSeconds || MAX_VIDEO_SECONDS,
           mode: "wan-std",
+          watermark: false,
           title
         },
         timeout: 180000
@@ -405,15 +406,13 @@ Page({
   onShareAppMessage() {
     return share.appShare({
       title: "AI角色替换·动作迁移",
-      path: "/pages/role-transfer/role-transfer",
-      imageUrl: this.data.heroBgUrl
+      path: "/pages/role-transfer/role-transfer"
     });
   },
 
   onShareTimeline() {
     return share.timelineShare({
-      title: "AI角色替换·动作迁移",
-      imageUrl: this.data.heroBgUrl
+      title: "AI角色替换·动作迁移"
     });
   }
 });

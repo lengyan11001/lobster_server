@@ -134,6 +134,12 @@ class Settings(BaseSettings):
     minimax_api_key: Optional[str] = None
     minimax_api_base: str = "https://api.minimaxi.com"
     minimax_tts_model: str = "speech-2.8-turbo"
+    hifly_voice_tts_provider: str = "qwen"
+    dashscope_api_key: Optional[str] = None
+    dashscope_base_url: str = "https://dashscope.aliyuncs.com"
+    qwen_tts_model: str = "qwen3-tts-vc-2026-01-22"
+    qwen_voice_enroll_model: str = "qwen-voice-enrollment"
+    hifly_voice_translate_model: str = "gpt-5.4"
     # 预留：大陆 API 转发 Messenger CRUD 至海外（未实现 HTTP 转发时勿依赖）
     messenger_upstream_url: Optional[str] = None
     # 海外实例：与大陆共用 SECRET_KEY 时，库中无 users 行仍信任 JWT sub 作为 messenger_configs.user_id

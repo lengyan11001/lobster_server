@@ -7,6 +7,9 @@ import logging
 import math
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import hmac
 import hashlib
 import time
@@ -46,6 +49,12 @@ _HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
 _HIFLY_AUDIO_CAPABILITY_ID = "hifly.video.create_by_audio"
 _HIFLY_TTS_UNIT_CREDITS = 10
 _HIFLY_TTS_CHARS_PER_SECOND = 4
+_QWEN_PROVIDER = "qwen"
+_QWEN_TTS_MODEL = "qwen3-tts-vc-2026-01-22"
+_QWEN_VOICE_ENROLL_MODEL = "qwen-voice-enrollment"
+_QWEN_DEFAULT_INSTRUCTIONS = "普通话自然口播，语速适中，情绪亲切，像真人日常分享，不要播音腔，不要太夸张。"
+_QWEN_TRANSLATE_MODEL = "gpt-5.4"
+_VOICE_PARAM_PREVIEW_TEXT = "那我来给大家推荐一款T恤，这款呢真的是超级好看，这个颜色呢很显气质，而且呢也是搭配的绝佳单品。"
 _MINIMAX_PROVIDER = "minimax"
 _MINIMAX_DEFAULT_VOICE_ID = "male-qn-qingse"
 _MINIMAX_DEFAULT_EMOTION = "happy"
@@ -58,6 +67,29 @@ _HIFLY_PUBLIC_AVATARS_PATH = _DATA_DIR / "hifly_public_avatars.json"
 _HIFLY_PUBLIC_AVATAR_COVERS_PATH = _DATA_DIR / "hifly_public_avatar_covers.json"
 _HIFLY_PUBLIC_VOICES_SEED_PATH = _DATA_DIR / "hifly_public_voices_seed.json"
 _HIFLY_PREVIEWS_MANIFEST_PATH = _DATA_DIR / "hifly_previews" / "manifest.json"
+_HIFLY_SUBTITLE_FONT_PATHS = [
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/simhei.ttf",
+]
+_QWEN_LANGUAGE_LABELS: Dict[str, str] = {
+    "Auto": "自动识别",
+    "Chinese": "中文",
+    "English": "英文",
+    "German": "德文",
+    "Italian": "意大利文",
+    "Portuguese": "葡萄牙文",
+    "Spanish": "西班牙文",
+    "Japanese": "日文",
+    "Korean": "韩文",
+    "French": "法文",
+    "Russian": "俄文",
+}
+_QWEN_TRANSLATE_TARGETS = {k for k in _QWEN_LANGUAGE_LABELS if k not in {"Auto", "Chinese"}}
 
 
 class HiflyTaskBody(BaseModel):
@@ -75,16 +107,18 @@ class HiflyVoiceEditBody(BaseModel):
     volume: str = Field("1.0")
     pitch: str = Field("1.0")
     emotion: Optional[str] = None
+    instructions: Optional[str] = Field(None, max_length=1600)
     token: Optional[str] = None
 
 
 class HiflyVoicePreviewTtsBody(BaseModel):
     voice: str = Field(..., min_length=1, max_length=128)
-    text: str = Field("你好，这是 MiniMax 声音试听。当前语速、音量和语调参数会参与重新合成。", max_length=500)
+    text: str = Field(_VOICE_PARAM_PREVIEW_TEXT, max_length=500)
     rate: str = Field("1.0")
     volume: str = Field("1.0")
     pitch: str = Field("0")
     emotion: Optional[str] = None
+    instructions: Optional[str] = Field(None, max_length=1600)
 
 
 class HiflyAvatarLibraryBody(HiflyTokenBody):
@@ -168,9 +202,100 @@ def _minimax_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {_minimax_api_key()}", "Content-Type": "application/json"}
 
 
+def _voice_tts_provider() -> str:
+    raw = (
+        getattr(settings, "hifly_voice_tts_provider", None)
+        or os.environ.get("HIFLY_VOICE_TTS_PROVIDER")
+        or _QWEN_PROVIDER
+    )
+    provider = str(raw or "").strip().lower()
+    return provider if provider in {_QWEN_PROVIDER, _MINIMAX_PROVIDER} else _QWEN_PROVIDER
+
+
+def _dashscope_base_url() -> str:
+    return (
+        getattr(settings, "dashscope_base_url", None)
+        or os.environ.get("DASHSCOPE_BASE_URL")
+        or "https://dashscope.aliyuncs.com"
+    ).strip().rstrip("/")
+
+
+def _dashscope_api_key() -> str:
+    key = (
+        getattr(settings, "dashscope_api_key", None)
+        or os.environ.get("DASHSCOPE_API_KEY")
+        or os.environ.get("ALIYUN_DASHSCOPE_API_KEY")
+        or ""
+    ).strip()
+    if not key:
+        raise HTTPException(status_code=503, detail="服务端未配置 DASHSCOPE_API_KEY，暂不能使用千问声音")
+    return key
+
+
+def _qwen_tts_model() -> str:
+    return (getattr(settings, "qwen_tts_model", None) or os.environ.get("QWEN_TTS_MODEL") or _QWEN_TTS_MODEL).strip() or _QWEN_TTS_MODEL
+
+
+def _qwen_translate_model() -> str:
+    return (
+        getattr(settings, "hifly_voice_translate_model", None)
+        or os.environ.get("HIFLY_VOICE_TRANSLATE_MODEL")
+        or _QWEN_TRANSLATE_MODEL
+    ).strip() or _QWEN_TRANSLATE_MODEL
+
+
+def _qwen_voice_enroll_model() -> str:
+    return (
+        getattr(settings, "qwen_voice_enroll_model", None)
+        or os.environ.get("QWEN_VOICE_ENROLL_MODEL")
+        or _QWEN_VOICE_ENROLL_MODEL
+    ).strip() or _QWEN_VOICE_ENROLL_MODEL
+
+
+def _qwen_headers() -> Dict[str, str]:
+    return {"Authorization": f"Bearer {_dashscope_api_key()}", "Content-Type": "application/json"}
+
+
+def _normalize_qwen_language(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "Chinese"
+    lower_map = {key.lower(): key for key in _QWEN_LANGUAGE_LABELS}
+    return lower_map.get(raw.lower(), "Chinese")
+
+
+def _should_translate_tts_text(language_type: str) -> bool:
+    return _normalize_qwen_language(language_type) in _QWEN_TRANSLATE_TARGETS
+
+
 def _voice_provider(row: Optional[UserHiflyVoiceAsset]) -> str:
     meta = row.meta if row and isinstance(row.meta, dict) else {}
-    return str(meta.get("provider") or "hifly").strip().lower() or "hifly"
+    provider = str(meta.get("provider") or "").strip().lower()
+    if provider in {_QWEN_PROVIDER, _MINIMAX_PROVIDER}:
+        return provider
+    if str(meta.get("qwen_voice_id") or "").strip():
+        return _QWEN_PROVIDER
+    if str(meta.get("minimax_voice_id") or "").strip():
+        return _MINIMAX_PROVIDER
+    voice_id = str(row.hifly_voice_id if row else "" or "").strip().lower()
+    if voice_id.startswith(("qwen-", "qwen_", "qwen3-", "qwen3_")):
+        return _QWEN_PROVIDER
+    if voice_id.startswith(("minimax_", "minimax-", "lobster_u")):
+        return _MINIMAX_PROVIDER
+    task_id = str(row.hifly_task_id if row else "" or "").strip().lower()
+    if task_id.startswith("qwen_voice_"):
+        return _QWEN_PROVIDER
+    if task_id.startswith("minimax_voice_"):
+        return _MINIMAX_PROVIDER
+    return "hifly"
+
+
+def _qwen_voice_id_from_row(row: Optional[UserHiflyVoiceAsset]) -> str:
+    if row and isinstance(row.meta, dict):
+        voice_id = str(row.meta.get("qwen_voice_id") or row.hifly_voice_id or "").strip()
+        if voice_id:
+            return voice_id
+    raise HTTPException(status_code=400, detail="当前千问音色缺少 voice id，请重新创建声音")
 
 
 def _minimax_voice_id_from_row(row: Optional[UserHiflyVoiceAsset]) -> str:
@@ -198,6 +323,146 @@ def _minimax_pitch_text(value: Any) -> str:
     return str(int(round(_param_float(value, 0.0, -12.0, 12.0))))
 
 
+def _qwen_instructions(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return _QWEN_DEFAULT_INSTRUCTIONS
+    return raw[:1600]
+
+
+def _extract_chat_message(payload: Dict[str, Any]) -> str:
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content = message.get("content")
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("content") or ""))
+            else:
+                parts.append(str(item or ""))
+        return "".join(parts).strip()
+    return str(content or first.get("text") or "").strip()
+
+
+def _clean_translation_text(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"^```(?:\w+)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text).strip()
+    return text.strip().strip("\"'“”‘’")
+
+
+def _comfly_translate_base_url() -> str:
+    return (
+        getattr(settings, "comfly_api_base", None)
+        or os.environ.get("COMFLY_API_BASE")
+        or "https://ai.comfly.org"
+    ).strip().rstrip("/")
+
+
+def _comfly_translate_api_key() -> str:
+    key = (
+        getattr(settings, "comfly_api_key", None)
+        or os.environ.get("COMFLY_API_KEY")
+        or ""
+    ).strip()
+    if not key:
+        raise RuntimeError("COMFLY_API_KEY missing")
+    return key
+
+
+def _yunwu_translate_base_url() -> str:
+    return (os.environ.get("YUNWU_API_BASE") or "https://yunwu.ai").strip().rstrip("/") or "https://yunwu.ai"
+
+
+def _yunwu_translate_api_key() -> str:
+    key = (os.environ.get("YUNWU_API_KEY") or os.environ.get("COMFLY_API_KEY_YUNWU") or "").strip()
+    if not key:
+        raise RuntimeError("YUNWU_API_KEY missing")
+    return key
+
+
+async def _translate_tts_text_for_language(text: str, language_type: str) -> Dict[str, Any]:
+    source_text = str(text or "").strip()
+    normalized_language = _normalize_qwen_language(language_type)
+    if not source_text or not _should_translate_tts_text(normalized_language):
+        return {
+            "text": source_text,
+            "source_text": source_text,
+            "language_type": normalized_language,
+            "translated": False,
+        }
+    target_label = _QWEN_LANGUAGE_LABELS.get(normalized_language, normalized_language)
+    model = _qwen_translate_model()
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a professional dubbing translation engine. Translate the user's script into the target "
+                "language for spoken TTS. Preserve meaning, product names, numbers, punctuation rhythm, and line "
+                "breaks. Return only the translated script, with no notes."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Target language: {target_label} ({normalized_language})\n\nScript:\n{source_text}",
+        },
+    ]
+    body = {"model": model, "messages": messages, "temperature": 0.2}
+    attempts = []
+    try:
+        url = f"{_comfly_translate_base_url()}/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {_comfly_translate_api_key()}", "Content-Type": "application/json", "Accept": "application/json"}
+        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+            resp = await client.post(url, headers=headers, json=body)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Comfly HTTP {resp.status_code}: {(resp.text or '')[:300]}")
+        payload = resp.json() if resp.content else {}
+        translated = _clean_translation_text(_extract_chat_message(payload))
+        if not translated:
+            raise RuntimeError("Comfly translation empty")
+        return {
+            "text": translated,
+            "source_text": source_text,
+            "language_type": normalized_language,
+            "target_label": target_label,
+            "translated": True,
+            "provider": "comfly",
+            "model": model,
+            "raw": {"usage": payload.get("usage"), "id": payload.get("id")},
+        }
+    except Exception as exc:  # noqa: BLE001
+        attempts.append({"provider": "comfly", "error": str(exc)[:300]})
+    try:
+        url = f"{_yunwu_translate_base_url()}/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {_yunwu_translate_api_key()}", "Content-Type": "application/json", "Accept": "application/json"}
+        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+            resp = await client.post(url, headers=headers, json=body)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Yunwu HTTP {resp.status_code}: {(resp.text or '')[:300]}")
+        payload = resp.json() if resp.content else {}
+        translated = _clean_translation_text(_extract_chat_message(payload))
+        if not translated:
+            raise RuntimeError("Yunwu translation empty")
+        return {
+            "text": translated,
+            "source_text": source_text,
+            "language_type": normalized_language,
+            "target_label": target_label,
+            "translated": True,
+            "provider": "yunwu",
+            "model": model,
+            "fallback_from": attempts,
+            "raw": {"usage": payload.get("usage"), "id": payload.get("id")},
+        }
+    except Exception as exc:  # noqa: BLE001
+        attempts.append({"provider": "yunwu", "error": str(exc)[:300]})
+    raise HTTPException(status_code=502, detail=f"口播文案翻译失败：{attempts[-1].get('error') if attempts else 'unknown error'}")
+
+
 def _minimax_naturalize_text(text: str) -> str:
     """Light touch: fewer pauses, sparse breath, never prepend breath at the opening."""
     paragraphs = [p.strip() for p in str(text or "").splitlines() if p.strip()]
@@ -209,6 +474,90 @@ def _minimax_naturalize_text(text: str) -> str:
             paragraph = "(breath)" + paragraph
         out.append(paragraph)
     return "<#0.22#>\n".join(out)
+
+
+async def _qwen_clone_voice(*, raw: bytes, filename: str, title: str) -> Dict[str, Any]:
+    if not raw:
+        raise HTTPException(status_code=400, detail="千问声音复刻上传文件为空")
+    media_type = mimetypes.guess_type(filename or "voice.mp3")[0] or "audio/mpeg"
+    audio_b64 = base64.b64encode(raw).decode("ascii")
+    preferred_name = f"lv{uuid.uuid4().hex[:10]}"
+    body = {
+        "model": _qwen_voice_enroll_model(),
+        "input": {
+            "action": "create",
+            "target_model": _qwen_tts_model(),
+            "preferred_name": preferred_name,
+            "audio": {"data": f"data:{media_type};base64,{audio_b64}"},
+            "language": "zh",
+        },
+    }
+    async with httpx.AsyncClient(timeout=240.0, trust_env=False) as client:
+        resp = await client.post(f"{_dashscope_base_url()}/api/v1/services/audio/tts/customization", headers=_qwen_headers(), json=body)
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"千问声音复刻失败 HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    payload = resp.json() if resp.content else {}
+    voice_id = str(((payload.get("output") or {}) if isinstance(payload, dict) else {}).get("voice") or "").strip()
+    if not voice_id:
+        raise HTTPException(status_code=502, detail=f"千问声音复刻未返回 voice: {str(payload)[:500]}")
+    return {
+        "voice_id": voice_id,
+        "preferred_name": preferred_name,
+        "clone_raw": payload,
+        "request_body": {k: v for k, v in body.items() if k != "input"},
+        "source_filename": filename,
+        "source_title": title,
+    }
+
+
+async def _qwen_tts_audio(
+    *,
+    voice_id: str,
+    text: str,
+    instructions: Any = None,
+    language_type: str = "Chinese",
+) -> Dict[str, Any]:
+    clean_text = str(text or "").strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="千问语音合成文本不能为空")
+    body = {
+        "model": _qwen_tts_model(),
+        "input": {
+            "text": clean_text,
+            "voice": voice_id,
+            "language_type": language_type or "Chinese",
+        },
+    }
+    instruction_text = _qwen_instructions(instructions)
+    if instruction_text:
+        body["input"]["instructions"] = instruction_text
+        body["input"]["optimize_instructions"] = True
+    async with httpx.AsyncClient(timeout=240.0, trust_env=False) as client:
+        resp = await client.post(
+            f"{_dashscope_base_url()}/api/v1/services/aigc/multimodal-generation/generation",
+            headers=_qwen_headers(),
+            json=body,
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"千问语音合成失败 HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    payload = resp.json() if resp.content else {}
+    audio_url = str((((payload.get("output") or {}).get("audio") or {}) if isinstance(payload, dict) else {}).get("url") or "").strip()
+    if not audio_url:
+        raise HTTPException(status_code=502, detail=f"千问语音合成未返回音频: {str(payload)[:500]}")
+    audio_bytes, content_type = await _download_bytes(audio_url)
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    duration_seconds = _estimate_tts_seconds(clean_text)
+    return {
+        "audio_bytes": audio_bytes,
+        "duration_seconds": duration_seconds,
+        "content_type": content_type,
+        "audio_url": audio_url,
+        "usage": usage,
+        "tts_text": clean_text,
+        "instructions": instruction_text,
+        "request_body": body,
+        "raw": {k: v for k, v in payload.items() if k != "output"},
+    }
 
 
 async def _minimax_upload_file(raw: bytes, filename: str, purpose: str) -> Dict[str, Any]:
@@ -352,6 +701,8 @@ async def _persist_voice_demo_asset(
     title: str = "声音试听",
     voice_id: str = "",
     params: Optional[Dict[str, Any]] = None,
+    provider: str = _MINIMAX_PROVIDER,
+    model: str = "",
 ) -> Dict[str, Any]:
     data = raw or b""
     content_type = "audio/mpeg"
@@ -373,12 +724,12 @@ async def _persist_voice_demo_asset(
         media_type="audio",
         file_size=file_size,
         source_url=public_url,
-        tags="hifly,voice,demo,minimax",
+        tags=f"hifly,voice,demo,{provider}",
         prompt=title,
-        model=_minimax_tts_model(),
+        model=model or (_qwen_tts_model() if provider == _QWEN_PROVIDER else _minimax_tts_model()),
         meta={
             "source": "hifly_voice_demo",
-            "provider": _MINIMAX_PROVIDER,
+            "provider": provider,
             "voice_id": voice_id,
             "source_url": source_url,
             "params": params or {},
@@ -955,8 +1306,9 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
         "voice_params": {
             "rate": str(voice_params.get("rate") or "1.0"),
             "volume": str(voice_params.get("volume") or "1.0"),
-            "pitch": _minimax_pitch_text(voice_params.get("pitch")) if provider == _MINIMAX_PROVIDER else str(voice_params.get("pitch") or "1.0"),
+            "pitch": _minimax_pitch_text(voice_params.get("pitch")) if provider in {_MINIMAX_PROVIDER, _QWEN_PROVIDER} else str(voice_params.get("pitch") or "1.0"),
             "emotion": str(voice_params.get("emotion") or (_MINIMAX_DEFAULT_EMOTION if provider == _MINIMAX_PROVIDER else "")),
+            "instructions": str(voice_params.get("instructions") or (_QWEN_DEFAULT_INSTRUCTIONS if provider == _QWEN_PROVIDER else "")),
         },
         "style_count": len(styles),
         "styles": styles,
@@ -1469,49 +1821,96 @@ async def create_my_voice_upload(
         uploaded["source_url"] = source_asset.source_url or ""
     title_value = _safe_title(title, "未命名声音")
     language_value = (languages or "zh").strip() or "zh"
-    cloned = await _minimax_clone_voice(raw=uploaded["raw_bytes"], filename=str(uploaded.get("filename") or "voice.mp3"), title=title_value)
-    task_id = f"minimax_voice_{uuid.uuid4().hex}"
-    minimax_voice_id = str(cloned.get("voice_id") or "").strip()
-    clone_raw = cloned.get("clone_raw") if isinstance(cloned.get("clone_raw"), dict) else {}
-    demo_url = _pick_demo(clone_raw)
+    provider = _voice_tts_provider()
+    default_params: Dict[str, Any]
+    meta: Dict[str, Any]
+    demo_url = ""
     demo_asset: Dict[str, Any] = {}
-    if demo_url:
+    if provider == _QWEN_PROVIDER:
+        cloned = await _qwen_clone_voice(raw=uploaded["raw_bytes"], filename=str(uploaded.get("filename") or "voice.mp3"), title=title_value)
+        task_id = f"qwen_voice_{uuid.uuid4().hex}"
+        voice_id = str(cloned.get("voice_id") or "").strip()
+        clone_raw = cloned.get("clone_raw") if isinstance(cloned.get("clone_raw"), dict) else {}
+        default_params = {
+            "rate": "1.0",
+            "volume": "1.0",
+            "pitch": "0",
+            "emotion": "",
+            "instructions": _QWEN_DEFAULT_INSTRUCTIONS,
+        }
         try:
+            preview = await _qwen_tts_audio(
+                voice_id=voice_id,
+                text=f"你好，这是{_safe_title(title_value, '当前声音', 20)}的声音试听。",
+                instructions=default_params["instructions"],
+            )
             demo_asset = await _persist_voice_demo_asset(
                 db,
                 current_user.id,
-                source_url=demo_url,
+                raw=preview.get("audio_bytes") or b"",
                 title=f"{title_value} 克隆试听",
-                voice_id=minimax_voice_id,
-                params={"rate": "1.0", "volume": "1.0", "pitch": "0", "emotion": _MINIMAX_DEFAULT_EMOTION},
+                voice_id=voice_id,
+                params=default_params,
+                provider=_QWEN_PROVIDER,
+                model=_qwen_tts_model(),
             )
+            demo_url = str(demo_asset.get("source_url") or "")
         except Exception:  # noqa: BLE001
-            logger.exception("[hifly] MiniMax 克隆试听音频转存失败 voice_id=%s", minimax_voice_id)
+            logger.exception("[hifly] Qwen 克隆试听音频转存失败 voice_id=%s", voice_id)
+        meta = {
+            "provider": _QWEN_PROVIDER,
+            "qwen_voice_id": voice_id,
+            "qwen_tts_model": _qwen_tts_model(),
+            "qwen_voice_enroll_model": _qwen_voice_enroll_model(),
+            "create_raw": clone_raw,
+            "demo_asset": demo_asset,
+            "upload_meta": _upload_meta_for_store(uploaded),
+            "voice_params": default_params,
+        }
+        file_id_value = str(uploaded["file_id"])
+    else:
+        cloned = await _minimax_clone_voice(raw=uploaded["raw_bytes"], filename=str(uploaded.get("filename") or "voice.mp3"), title=title_value)
+        task_id = f"minimax_voice_{uuid.uuid4().hex}"
+        voice_id = str(cloned.get("voice_id") or "").strip()
+        clone_raw = cloned.get("clone_raw") if isinstance(cloned.get("clone_raw"), dict) else {}
+        demo_url = _pick_demo(clone_raw)
+        default_params = {"rate": "1.0", "volume": "1.0", "pitch": "0", "emotion": _MINIMAX_DEFAULT_EMOTION}
+        if demo_url:
+            try:
+                demo_asset = await _persist_voice_demo_asset(
+                    db,
+                    current_user.id,
+                    source_url=demo_url,
+                    title=f"{title_value} 克隆试听",
+                    voice_id=voice_id,
+                    params=default_params,
+                    provider=_MINIMAX_PROVIDER,
+                    model=_minimax_tts_model(),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("[hifly] MiniMax 克隆试听音频转存失败 voice_id=%s", voice_id)
+        meta = {
+            "provider": _MINIMAX_PROVIDER,
+            "minimax_voice_id": voice_id,
+            "create_raw": clone_raw,
+            "minimax_upload_raw": cloned.get("upload_raw"),
+            "demo_asset": demo_asset,
+            "upload_meta": _upload_meta_for_store(uploaded),
+            "voice_params": default_params,
+        }
+        file_id_value = str(cloned.get("file_id") or uploaded["file_id"])
 
     row = UserHiflyVoiceAsset(
         user_id=current_user.id,
         title=title_value,
         status="success",
         hifly_task_id=task_id,
-        hifly_voice_id=minimax_voice_id,
-        file_id=str(cloned.get("file_id") or uploaded["file_id"]),
+        hifly_voice_id=voice_id,
+        file_id=file_id_value,
         demo_url=demo_url,
         voice_type=int(voice_type or 8),
         languages=language_value,
-        meta={
-            "provider": _MINIMAX_PROVIDER,
-            "minimax_voice_id": minimax_voice_id,
-            "create_raw": clone_raw,
-            "minimax_upload_raw": cloned.get("upload_raw"),
-            "demo_asset": demo_asset,
-            "upload_meta": _upload_meta_for_store(uploaded),
-            "voice_params": {
-                "rate": "1.0",
-                "volume": "1.0",
-                "pitch": "0",
-                "emotion": _MINIMAX_DEFAULT_EMOTION,
-            },
-        },
+        meta=meta,
     )
     db.add(row)
     db.commit()
@@ -1521,7 +1920,7 @@ async def create_my_voice_upload(
         "task_id": task_id,
         "status": 3,
         "status_text": "已完成",
-        "voice": minimax_voice_id,
+        "voice": voice_id,
         "demo_url": demo_url,
         "item": _normalize_voice_asset(row, request),
     }
@@ -1623,7 +2022,7 @@ async def poll_my_voice_task(
     if not row:
         raise HTTPException(status_code=404, detail="未找到该声音任务")
 
-    if _voice_provider(row) == _MINIMAX_PROVIDER:
+    if _voice_provider(row) in {_MINIMAX_PROVIDER, _QWEN_PROVIDER}:
         return {
             "ok": row.status != "failed",
             "task_id": row.hifly_task_id,
@@ -1675,24 +2074,62 @@ async def edit_my_voice_params(
     )
     if not row:
         raise HTTPException(status_code=404, detail="声音不存在或不属于当前账号")
-    is_minimax_voice = _voice_provider(row) == _MINIMAX_PROVIDER
+    provider = _voice_provider(row)
+    is_minimax_voice = provider == _MINIMAX_PROVIDER
+    is_qwen_voice = provider == _QWEN_PROVIDER
     rate = _voice_param_text(body.rate, "1.0", 0.5, 2.0, "语速")
     volume = _voice_param_text(body.volume, "1.0", 0.1, 2.0, "音量")
-    pitch = _voice_param_text(body.pitch, "0" if is_minimax_voice else "1.0", -12.0 if is_minimax_voice else 0.1, 12.0 if is_minimax_voice else 2.0, "语调")
+    pitch = _voice_param_text(body.pitch, "0" if (is_minimax_voice or is_qwen_voice) else "1.0", -12.0 if (is_minimax_voice or is_qwen_voice) else 0.1, 12.0 if (is_minimax_voice or is_qwen_voice) else 2.0, "语调")
     emotion = _minimax_emotion(body.emotion) if is_minimax_voice else ""
+    instructions = _qwen_instructions(body.instructions) if is_qwen_voice else ""
     payload = {"voice": voice_id, "rate": rate, "volume": volume, "pitch": pitch}
     meta = dict(row.meta or {})
     meta["voice_params"] = {"rate": rate, "volume": volume, "pitch": pitch}
     if is_minimax_voice:
         meta["voice_params"]["emotion"] = emotion
+    if is_qwen_voice:
+        meta["voice_params"]["emotion"] = ""
+        meta["voice_params"]["instructions"] = instructions
     meta["voice_edit_at"] = datetime.utcnow().isoformat() + "Z"
     result: Dict[str, Any] = {}
     synced = False
     sync_error = ""
-    if is_minimax_voice:
+    if is_qwen_voice:
         synced = True
         meta["voice_edit_synced_at"] = datetime.utcnow().isoformat() + "Z"
-        preview_text = f"你好，这是{_safe_title(row.title, '当前声音', 20)}的参数试听。"
+        preview_text = _VOICE_PARAM_PREVIEW_TEXT
+        try:
+            preview = await _qwen_tts_audio(
+                voice_id=_qwen_voice_id_from_row(row),
+                text=preview_text,
+                instructions=instructions,
+            )
+            demo_asset = await _persist_voice_demo_asset(
+                db,
+                current_user.id,
+                raw=preview.get("audio_bytes") or b"",
+                title=f"{row.title} 参数试听",
+                voice_id=voice_id,
+                params=meta["voice_params"],
+                provider=_QWEN_PROVIDER,
+                model=_qwen_tts_model(),
+            )
+            if demo_asset:
+                meta["demo_asset"] = demo_asset
+                meta["voice_preview_tts"] = {
+                    "duration_seconds": preview.get("duration_seconds"),
+                    "usage": preview.get("usage"),
+                    "tts_text": preview.get("tts_text"),
+                    "instructions": preview.get("instructions"),
+                    "raw": preview.get("raw"),
+                }
+        except Exception as exc:  # noqa: BLE001
+            sync_error = f"参数已保存，但新试听音频生成失败：{exc}"
+            meta["voice_preview_sync_error"] = sync_error
+    elif is_minimax_voice:
+        synced = True
+        meta["voice_edit_synced_at"] = datetime.utcnow().isoformat() + "Z"
+        preview_text = _VOICE_PARAM_PREVIEW_TEXT
         try:
             preview = await _minimax_tts_audio(
                 voice_id=_minimax_voice_id_from_row(row),
@@ -1764,16 +2201,24 @@ async def preview_my_voice_tts(
     )
     if not row:
         raise HTTPException(status_code=404, detail="声音不存在或不属于当前账号")
-    if _voice_provider(row) != _MINIMAX_PROVIDER:
-        raise HTTPException(status_code=400, detail="当前声音不是 MiniMax 音色，不能实时合成试听")
-    result = await _minimax_tts_audio(
-        voice_id=_minimax_voice_id_from_row(row),
-        text=(body.text or "").strip() or "你好，这是 MiniMax 声音试听。",
-        rate=body.rate,
-        volume=body.volume,
-        pitch=body.pitch,
-        emotion=body.emotion,
-    )
+    provider = _voice_provider(row)
+    if provider == _QWEN_PROVIDER:
+        result = await _qwen_tts_audio(
+            voice_id=_qwen_voice_id_from_row(row),
+            text=(body.text or "").strip() or "你好，这是千问声音试听。",
+            instructions=body.instructions or ((row.meta or {}).get("voice_params") or {}).get("instructions"),
+        )
+    elif provider == _MINIMAX_PROVIDER:
+        result = await _minimax_tts_audio(
+            voice_id=_minimax_voice_id_from_row(row),
+            text=(body.text or "").strip() or "你好，这是 MiniMax 声音试听。",
+            rate=body.rate,
+            volume=body.volume,
+            pitch=body.pitch,
+            emotion=body.emotion,
+        )
+    else:
+        raise HTTPException(status_code=400, detail="当前声音不能实时合成试听")
     audio_b64 = base64.b64encode(result["audio_bytes"]).decode("ascii")
     return {
         "ok": True,
@@ -1887,9 +2332,12 @@ class HiflyVideoCreateBody(BaseModel):
     volume: Optional[str] = None
     pitch: Optional[str] = None
     emotion: Optional[str] = None
+    instructions: Optional[str] = Field(None, max_length=1600)
+    speech_language: str = Field("Chinese", max_length=32)
     avatar_title: Optional[str] = None
     avatar_image_url: Optional[str] = None
     voice_title: Optional[str] = None
+    voice_provider: Optional[str] = None
     token: Optional[str] = None
 
 
@@ -1899,6 +2347,33 @@ def _pick_nested(payload: Dict[str, Any], key: str) -> Any:
         return payload.get(key)
     nested = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     return nested.get(key)
+
+
+def _normalize_voice_provider_hint(value: Any) -> str:
+    provider = str(value or "").strip().lower()
+    return provider if provider in {_QWEN_PROVIDER, _MINIMAX_PROVIDER} else ""
+
+
+def _qwen_voice_id_for_tts(row: Optional[UserHiflyVoiceAsset], fallback_voice: str) -> str:
+    if row and isinstance(row.meta, dict):
+        voice_id = str(row.meta.get("qwen_voice_id") or row.hifly_voice_id or "").strip()
+        if voice_id:
+            return voice_id
+    fallback = str(fallback_voice or "").strip()
+    if fallback:
+        return fallback
+    raise HTTPException(status_code=400, detail="当前声音缺少可用于合成的 voice id，请重新创建声音")
+
+
+def _minimax_voice_id_for_tts(row: Optional[UserHiflyVoiceAsset], fallback_voice: str) -> str:
+    if row and isinstance(row.meta, dict):
+        voice_id = str(row.meta.get("minimax_voice_id") or row.hifly_voice_id or "").strip()
+        if voice_id:
+            return voice_id
+    fallback = str(fallback_voice or "").strip()
+    if fallback:
+        return fallback
+    return _MINIMAX_DEFAULT_VOICE_ID
 
 
 def _video_item_url(row: UserHiflyVideoAsset, request: Optional[Request]) -> str:
@@ -2004,6 +2479,165 @@ def _video_id_from_share_token(token: str) -> int:
     return int(video_id_text)
 
 
+def _needs_local_subtitle_burn(row: UserHiflyVideoAsset) -> bool:
+    """HiFly 音频驱动接口不支持字幕参数，Qwen/MiniMax 声音需本地烧录字幕兜底。"""
+    if int(row.st_show or 0) != 1:
+        return False
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    source_mode = str(meta.get("source_mode") or "").strip().lower()
+    if source_mode in {"qwen_tts_audio", "minimax_tts_audio"}:
+        return True
+    payload = meta.get("create_payload") if isinstance(meta.get("create_payload"), dict) else {}
+    return bool(payload.get("file_id")) and not payload.get("voice") and not payload.get("text")
+
+
+def _subtitle_source_text(row: UserHiflyVideoAsset) -> str:
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    for path in (
+        ("qwen_tts", "tts_text"),
+        ("minimax_tts", "tts_text"),
+        ("translation", "text"),
+    ):
+        root = meta.get(path[0])
+        if isinstance(root, dict):
+            value = str(root.get(path[1]) or "").strip()
+            if value:
+                return value
+    return str(row.text or "").strip()
+
+
+def _subtitle_font_path() -> str:
+    for path in _HIFLY_SUBTITLE_FONT_PATHS:
+        if Path(path).is_file():
+            return path
+    return ""
+
+
+def _subtitle_wrap_lines(text: str, max_chars: int = 18) -> List[str]:
+    clean = re.sub(r"\s+", " ", str(text or "").strip())
+    if not clean:
+        return []
+    parts = re.split(r"([。！？!?；;，,、])", clean)
+    sentences: List[str] = []
+    buf = ""
+    for part in parts:
+        if not part:
+            continue
+        buf += part
+        if re.fullmatch(r"[。！？!?；;，,、]", part):
+            sentences.append(buf.strip())
+            buf = ""
+    if buf.strip():
+        sentences.append(buf.strip())
+    lines: List[str] = []
+    for sentence in sentences or [clean]:
+        current = ""
+        for ch in sentence:
+            if len(current) >= max_chars:
+                lines.append(current)
+                current = ch
+            else:
+                current += ch
+        if current:
+            lines.append(current)
+    return [line.strip() for line in lines if line.strip()]
+
+
+def _ass_time(seconds: float) -> str:
+    value = max(0.0, float(seconds or 0))
+    h = int(value // 3600)
+    m = int((value % 3600) // 60)
+    s = int(value % 60)
+    cs = int(round((value - int(value)) * 100))
+    if cs >= 100:
+        s += 1
+        cs = 0
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def _ass_escape(text: str) -> str:
+    return str(text or "").replace("\\", "\\\\").replace("{", r"\{").replace("}", r"\}").replace("\n", r"\N")
+
+
+def _build_ass_subtitle(text: str, duration_seconds: int) -> str:
+    lines = _subtitle_wrap_lines(text)
+    if not lines:
+        return ""
+    duration = max(int(duration_seconds or 0), len(lines) * 2)
+    slot = max(1.6, duration / max(1, len(lines)))
+    events = []
+    for idx, line in enumerate(lines):
+        start = idx * slot
+        end = min(duration, (idx + 1) * slot + 0.15)
+        if end <= start:
+            end = start + 1.5
+        events.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{_ass_escape(line)}")
+    return "\n".join([
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "PlayResX: 1080",
+        "PlayResY: 1920",
+        "WrapStyle: 2",
+        "ScaledBorderAndShadow: yes",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        "Style: Default,Noto Sans CJK SC,54,&H00FFFFFF,&H000000FF,&HAA000000,&H66000000,0,0,0,0,100,100,0,0,1,3,0,2,72,72,128,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+        *events,
+        "",
+    ])
+
+
+def _burn_subtitles_if_needed(row: UserHiflyVideoAsset, video_data: bytes, content_type: str) -> tuple[bytes, str, bool]:
+    if not _needs_local_subtitle_burn(row):
+        return video_data, content_type, False
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logger.warning("[hifly] task %s 需要字幕但服务器未安装 ffmpeg，保留原视频", row.hifly_task_id)
+        return video_data, content_type, False
+    subtitle_text = _subtitle_source_text(row)
+    ass_text = _build_ass_subtitle(subtitle_text, int(row.duration or 0))
+    if not ass_text:
+        return video_data, content_type, False
+    font_path = _subtitle_font_path()
+    with tempfile.TemporaryDirectory(prefix="hifly_subtitle_") as tmp:
+        tmp_dir = Path(tmp)
+        input_path = tmp_dir / "input.mp4"
+        ass_path = tmp_dir / "subtitle.ass"
+        output_path = tmp_dir / "output.mp4"
+        input_path.write_bytes(video_data)
+        ass_path.write_text(ass_text, encoding="utf-8")
+        ass_filter = str(ass_path).replace("\\", "/").replace(":", r"\:")
+        vf = f"ass='{ass_filter}'"
+        if font_path:
+            fonts_dir = str(Path(font_path).parent).replace("\\", "/").replace(":", r"\:")
+            vf = f"ass='{ass_filter}':fontsdir='{fonts_dir}'"
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-i", str(input_path),
+            "-vf", vf,
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "23",
+            "-c:a", "copy",
+            "-movflags", "+faststart",
+            str(output_path),
+        ]
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+            burned = output_path.read_bytes()
+            if burned:
+                logger.info("[hifly] task %s 已本地烧录字幕 size=%s", row.hifly_task_id, len(burned))
+                return burned, "video/mp4", True
+        except Exception:  # noqa: BLE001
+            logger.exception("[hifly] task %s 本地烧录字幕失败，保留原视频", row.hifly_task_id)
+    return video_data, content_type, False
+
+
 async def _download_bytes(url: str) -> tuple[bytes, str]:
     """拉取 HiFly 临时视频返回 (data, content_type)。"""
     async with httpx.AsyncClient(timeout=600.0, trust_env=False, follow_redirects=True) as client:
@@ -2026,6 +2660,7 @@ async def _persist_video_result(
         return  # 已经转存过
     try:
         data, content_type = await _download_bytes(source_url)
+        data, content_type, subtitle_burned = _burn_subtitles_if_needed(row, data, content_type)
         ext = ".mp4"
         if "webm" in content_type:
             ext = ".webm"
@@ -2040,11 +2675,19 @@ async def _persist_video_result(
             file_size=file_size,
             source_url=public_url,
             tags="hifly,video_tts",
-            meta={"hifly_task_id": row.hifly_task_id, "title": row.title},
+            meta={
+                "hifly_task_id": row.hifly_task_id,
+                "title": row.title,
+                "st_show": int(row.st_show or 0),
+                "subtitle_burned": bool(subtitle_burned),
+            },
         )
         db.add(asset)
         db.flush()
         row.asset_id = asset_id
+        meta = dict(row.meta or {})
+        meta["subtitle_burned"] = bool(subtitle_burned)
+        row.meta = meta
         # 有 TOS 时用公网直链；无 TOS 时在返回前端时再用 build_asset_file_url 生成签名链
         row.asset_video_url = public_url or ""
         logger.info(
@@ -2088,13 +2731,26 @@ async def create_my_video_by_tts(
             .filter(UserHiflyVoiceAsset.user_id == current_user.id, UserHiflyVoiceAsset.hifly_voice_id == voice_value)
             .first()
         )
-    is_minimax_voice = _voice_provider(voice_row) == _MINIMAX_PROVIDER
+    provider = _voice_provider(voice_row)
+    provider_hint = _normalize_voice_provider_hint(body.voice_provider)
+    if provider == "hifly" and provider_hint:
+        provider = provider_hint
+    logger.info(
+        "[hifly] create_my_video_by_tts user_id=%s voice=%s provider=%s provider_hint=%s voice_row=%s",
+        current_user.id,
+        voice_value[:64],
+        provider,
+        provider_hint,
+        bool(voice_row),
+    )
+    is_minimax_voice = provider == _MINIMAX_PROVIDER
+    is_qwen_voice = provider == _QWEN_PROVIDER
     voice_params: Dict[str, str] = {}
-    if body.rate is not None:
+    if not is_qwen_voice and body.rate is not None:
         voice_params["rate"] = _voice_param_text(body.rate, "1.0", 0.5, 2.0, "语速")
-    if body.volume is not None:
+    if not is_qwen_voice and body.volume is not None:
         voice_params["volume"] = _voice_param_text(body.volume, "1.0", 0.1, 2.0, "音量")
-    if body.pitch is not None:
+    if not is_qwen_voice and body.pitch is not None:
         voice_params["pitch"] = _voice_param_text(
             body.pitch,
             "0" if is_minimax_voice else "1.0",
@@ -2105,28 +2761,51 @@ async def create_my_video_by_tts(
     if is_minimax_voice:
         if body.emotion is not None:
             voice_params["emotion"] = _minimax_emotion(body.emotion)
+    if is_qwen_voice and body.instructions is not None:
+        voice_params["instructions"] = _qwen_instructions(body.instructions)
     if not voice_params:
         if voice_row and isinstance(voice_row.meta, dict) and isinstance(voice_row.meta.get("voice_params"), dict):
             stored_params = voice_row.meta.get("voice_params") or {}
-            for key in ("rate", "volume", "pitch", "emotion"):
+            stored_keys = ("instructions",) if is_qwen_voice else ("rate", "volume", "pitch", "emotion")
+            for key in stored_keys:
                 value = str(stored_params.get(key) or "").strip()
                 if value:
                     voice_params[key] = value
 
-    if is_minimax_voice:
-        minimax_voice_id = _minimax_voice_id_from_row(voice_row)
+    if is_minimax_voice or is_qwen_voice:
         rate = voice_params.get("rate") or "1.0"
         volume = voice_params.get("volume") or "1.0"
         pitch = voice_params.get("pitch") or "0"
-        emotion = voice_params.get("emotion") or _MINIMAX_DEFAULT_EMOTION
-        tts_result = await _minimax_tts_audio(
-            voice_id=minimax_voice_id,
-            text=body.text.strip(),
-            rate=rate,
-            volume=volume,
-            pitch=pitch,
-            emotion=emotion,
-        )
+        speech_language = _normalize_qwen_language(body.speech_language)
+        translation_result: Dict[str, Any] = {
+            "text": body.text.strip(),
+            "source_text": body.text.strip(),
+            "language_type": "Chinese",
+            "translated": False,
+        }
+        if is_qwen_voice:
+            translation_result = await _translate_tts_text_for_language(body.text.strip(), speech_language)
+            instructions = voice_params.get("instructions") or _QWEN_DEFAULT_INSTRUCTIONS
+            tts_voice_id = _qwen_voice_id_for_tts(voice_row, voice_value)
+            tts_result = await _qwen_tts_audio(
+                voice_id=tts_voice_id,
+                text=translation_result.get("text") or body.text.strip(),
+                instructions=instructions,
+                language_type=translation_result.get("language_type") or speech_language,
+            )
+            tts_provider = _QWEN_PROVIDER
+        else:
+            emotion = voice_params.get("emotion") or _MINIMAX_DEFAULT_EMOTION
+            tts_voice_id = _minimax_voice_id_for_tts(voice_row, voice_value)
+            tts_result = await _minimax_tts_audio(
+                voice_id=tts_voice_id,
+                text=body.text.strip(),
+                rate=rate,
+                volume=volume,
+                pitch=pitch,
+                emotion=emotion,
+            )
+            tts_provider = _MINIMAX_PROVIDER
         generated_upload = await _upload_generated_audio_to_hifly(body.token, tts_result["audio_bytes"])
         source_asset = _persist_input_asset(db, current_user.id, generated_upload, "audio")
         if source_asset:
@@ -2136,6 +2815,7 @@ async def create_my_video_by_tts(
             "title": title[:20] or "数字人口播",
             "avatar": body.avatar.strip(),
             "file_id": generated_upload["file_id"],
+            "st_show": 1 if int(body.st_show or 0) == 1 else 0,
             "aigc_flag": int(body.aigc_flag or 0),
         }
         billing = await _hifly_pre_deduct_audio(
@@ -2163,25 +2843,30 @@ async def create_my_video_by_tts(
             voice_id=voice_value or None,
             text=body.text.strip(),
             aigc_flag=audio_payload["aigc_flag"],
-            st_show=0,
+            st_show=audio_payload["st_show"],
             meta={
                 "create_raw": created,
                 "create_payload": audio_payload,
                 "upload_meta": _upload_meta_for_store(generated_upload),
                 "source_asset_id": source_asset.asset_id if source_asset else "",
-                "source_mode": "minimax_tts_audio",
-                "tts_provider": _MINIMAX_PROVIDER,
-                "minimax_voice_id": minimax_voice_id,
-                "minimax_tts": {
+                "source_mode": f"{tts_provider}_tts_audio",
+                "tts_provider": tts_provider,
+                f"{tts_provider}_voice_id": tts_voice_id,
+                f"{tts_provider}_tts": {
                     "duration_seconds": tts_result.get("duration_seconds"),
                     "extra_info": tts_result.get("extra_info"),
+                    "usage": tts_result.get("usage"),
                     "request_body": tts_result.get("request_body"),
                     "tts_text": tts_result.get("tts_text"),
+                    "instructions": tts_result.get("instructions"),
                     "raw": tts_result.get("raw"),
                 },
+                "translation": translation_result if is_qwen_voice else {},
                 "avatar_title": (body.avatar_title or "").strip(),
                 "avatar_image_url": (body.avatar_image_url or "").strip(),
                 "voice_title": (body.voice_title or (voice_row.title if voice_row else "") or "").strip(),
+                "voice_provider_hint": provider_hint,
+                "voice_row_found": bool(voice_row),
                 "billing": {
                     "capability_id": _HIFLY_AUDIO_CAPABILITY_ID,
                     "billing_status": "pending",
@@ -2199,6 +2884,11 @@ async def create_my_video_by_tts(
         return {"ok": True, "task_id": task_id, "request_id": request_id, "billing": (row.meta or {}).get("billing") or {}, "item": _normalize_video_asset(row)}
 
     payload.update(voice_params)
+    if provider_hint:
+        raise HTTPException(
+            status_code=400,
+            detail="当前声音是克隆声音，但服务端没有找到对应声音记录，已阻止直接提交给 HiFly。请刷新声音列表后重新选择声音，或重新创建声音。",
+        )
     billing = await _hifly_pre_deduct_tts(request, payload)
     try:
         created = await _post("/api/v2/hifly/video/create_by_tts", body.token, payload)

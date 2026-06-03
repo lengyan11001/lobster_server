@@ -9,6 +9,15 @@
       "comfly_model": "gpt-image-2",
       "sutui_equivalent": ["gpt-image2", "gpt-image-2", "gpt-image"]
     },
+    "gpt-image-2-yunwu": {
+      "price_type": "per_call",
+      "price_per_unit": 30,
+      "api_format": "dalle",
+      "comfly_model": "gpt-image-2",
+      "token_group": "yunwu",
+      "sutui_equivalent": ["gpt-image2", "gpt-image-2", "gpt-image"],
+      "note": "Same image model routed through Yunwu token/base as a fallback channel."
+    },
     "gpt-4.1-mini": {
       "price_type": "per_token",
       "input_price_per_1k_tokens": 0.125,
@@ -16,6 +25,14 @@
       "api_format": "chat",
       "comfly_model": "gpt-4.1-mini",
       "note": "For Comfly Seedance storyboard analysis; temporary price aligned with existing chat proxy estimate."
+    },
+    "gpt-5.4": {
+      "price_type": "per_token",
+      "input_price_per_1k_tokens": 0.125,
+      "output_price_per_1k_tokens": 1.0,
+      "api_format": "chat",
+      "comfly_model": "gpt-5.4",
+      "note": "For Comfly storyboard analysis; temporary price aligned with existing chat proxy estimate."
     },
     "gpt-4o-mini": {
       "price_type": "per_call",
@@ -73,7 +90,7 @@
       "price_per_unit": 80,
       "api_format": "veo",
       "comfly_model": "veo3.1",
-      "token_group": "veo31",
+      "token_group": "yunwu",
       "sutui_equivalent": ["fal-ai/veo3.1"]
     },
     "veo3.1-fast": {
@@ -124,6 +141,14 @@
       "api_format": "dalle",
       "comfly_model": "nano-banana-2",
       "token_group": "premium"
+    },
+    "nano-banana-2-yunwu": {
+      "price_type": "per_call",
+      "price_per_unit": 42,
+      "api_format": "dalle",
+      "comfly_model": "nano-banana-2",
+      "token_group": "yunwu",
+      "note": "Nano fallback routed through Yunwu token/base."
     },
     "gemini-2.5-pro": {
       "price_type": "per_token",
