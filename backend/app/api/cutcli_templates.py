@@ -1061,15 +1061,41 @@ def _run_auto_caption_job_sync(
         warnings.extend(draft_warnings)
 
         _update_job_manifest(job_id, stage="cloud_render", draft_id=draft_id, quality=quality, warnings=warnings)
-        cloud_result = _render_cutcli_cloud(cutcli, draft_id, job_dir=job_dir, api_key=token)
-        preview_url = _extract_first_video_url(cloud_result)
-        if not preview_url:
-            raise AutoCaptionJobError("render_url_missing", "CutCLI cloud render did not return a video URL")
-        cloud_job_id = _extract_job_id(cloud_result)
+        cloud_result: Dict[str, Any] = {}
+        cloud_job_id: Optional[str] = None
+        try:
+            cloud_result = _render_cutcli_cloud(cutcli, draft_id, job_dir=job_dir, api_key=token, timeout_seconds=300)
+            preview_url = _extract_first_video_url(cloud_result)
+            if not preview_url:
+                raise AutoCaptionJobError("render_url_missing", "CutCLI cloud render did not return a video URL")
+            cloud_job_id = _extract_job_id(cloud_result)
 
-        _update_job_manifest(job_id, stage="mirror_result", cloud_job_id=cloud_job_id, preview_url=preview_url)
-        final_url, file_size, mirror_warnings = _mirror_video_url_to_tos(preview_url, job_id=job_id)
-        warnings.extend(mirror_warnings)
+            _update_job_manifest(job_id, stage="mirror_result", cloud_job_id=cloud_job_id, preview_url=preview_url)
+            final_url, file_size, mirror_warnings = _mirror_video_url_to_tos(preview_url, job_id=job_id)
+            warnings.extend(mirror_warnings)
+            render_strategy = "cutcli_cloud"
+        except AutoCaptionJobError as exc:
+            if exc.code != "cloud_render_queued_timeout":
+                raise
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            cloud_job_id = str(detail.get("job_id") or "") or _extract_job_id(detail) or None
+            warnings.append(exc.code)
+            _update_job_manifest(
+                job_id,
+                stage="fallback_render",
+                cloud_job_id=cloud_job_id,
+                cloud_render_detail=detail,
+                warnings=warnings,
+            )
+            final_url, file_size, fallback_warnings = _render_fallback_caption_video(
+                ffmpeg=ffmpeg,
+                job_dir=job_dir,
+                source=source,
+                captions=captions,
+                job_id=job_id,
+            )
+            warnings.extend(fallback_warnings)
+            render_strategy = "ffmpeg_ass_fallback"
 
         asset_id = _save_auto_caption_asset(
             db=db,
@@ -1103,6 +1129,7 @@ def _run_auto_caption_job_sync(
             warnings=warnings,
             token_source=token_source,
             token_masked=token_masked,
+            render_strategy=render_strategy,
             draft_info=draft_info,
         )
     except AutoCaptionJobError as exc:
@@ -1300,12 +1327,16 @@ def _collect_urls(value: Any, *, key_hint: str = "") -> List[Tuple[int, str]]:
     if any(ext in lowered for ext in (".mp4", ".mov", ".webm")):
         score += 10
     if any(ext in lowered for ext in (".zip", ".json")):
-        score -= 5
+        score -= 50
     return [(score, value)]
 
 
 def _extract_first_video_url(value: Dict[str, Any]) -> Optional[str]:
-    urls = _collect_urls(value)
+    urls = [
+        item
+        for item in _collect_urls(value)
+        if any(ext in item[1].lower() for ext in (".mp4", ".mov", ".webm"))
+    ]
     if not urls:
         return None
     urls.sort(key=lambda item: item[0], reverse=True)
@@ -1381,6 +1412,32 @@ def _ensure_cutcli_uses_token(cutcli: str, *, api_key: str, job_dir: Path, env: 
         )
 
 
+def _render_job_payload(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    for key in ("renderJob", "render_job", "job", "data"):
+        item = value.get(key)
+        if isinstance(item, dict):
+            return item
+    return value
+
+
+def _render_job_status(value: Any) -> str:
+    payload = _render_job_payload(value)
+    return str(payload.get("status") or "").strip().lower()
+
+
+def _render_job_failure_reason(value: Any) -> str:
+    payload = _render_job_payload(value)
+    return str(
+        payload.get("failure_reason")
+        or payload.get("failureReason")
+        or payload.get("error")
+        or payload.get("message")
+        or ""
+    ).strip()
+
+
 def _render_cutcli_cloud(
     cutcli: str,
     draft_id: str,
@@ -1403,32 +1460,148 @@ def _render_cutcli_cloud(
         ) from exc
 
     render_result = _json_from_cmd(
-        [cutcli, "cloud", "render", draft_id, "--wait", "--pretty"],
-        timeout=timeout_seconds + 60,
+        [cutcli, "cloud", "render", draft_id, "--pretty"],
+        timeout=300,
         env=env,
     )
-    (job_dir / "cloud_render_result.json").write_text(
+    (job_dir / "cloud_render_submit.json").write_text(
         json.dumps(render_result, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     cloud_job_id = _extract_job_id(render_result)
     if not cloud_job_id:
         return render_result
-    try:
+    deadline = time.time() + timeout_seconds
+    last_result: Dict[str, Any] = {}
+    while time.time() < deadline:
         cloud_result = _json_from_cmd(
             [cutcli, "cloud", "result", cloud_job_id, "--pretty"],
             timeout=120,
             env=env,
         )
-        (job_dir / "cloud_result.json").write_text(
+        last_result = cloud_result
+        (job_dir / "cloud_result_latest.json").write_text(
             json.dumps(cloud_result, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        return {"render": render_result, "result": cloud_result, "job_id": cloud_job_id}
-    except Exception as exc:
-        logger.warning("[CutCLI模板] cloud result failed: %s", exc)
-        render_result["_cloud_result_warning"] = str(exc)[:500]
-        return render_result
+        video_url = _extract_first_video_url(cloud_result)
+        status = _render_job_status(cloud_result)
+        if video_url or status in {"completed", "complete", "success", "succeeded", "finished", "done"}:
+            (job_dir / "cloud_result.json").write_text(
+                json.dumps(cloud_result, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return {"render": render_result, "result": cloud_result, "job_id": cloud_job_id}
+        if status in {"failed", "error", "cancelled", "canceled", "rejected"}:
+            raise AutoCaptionJobError(
+                "cloud_render_failed",
+                _render_job_failure_reason(cloud_result) or f"CutCLI cloud render failed: {status}",
+                detail={"job_id": cloud_job_id, "status": status, "result": cloud_result},
+            )
+        time.sleep(15)
+    raise AutoCaptionJobError(
+        "cloud_render_queued_timeout",
+        f"CutCLI cloud render job {cloud_job_id} did not finish in {timeout_seconds}s",
+        detail={
+            "job_id": cloud_job_id,
+            "status": _render_job_status(last_result) or "unknown",
+            "result": last_result,
+        },
+    )
+
+
+def _ass_time(us: int) -> str:
+    total_cs = max(0, int(round(us / 10_000)))
+    cs = total_cs % 100
+    total_s = total_cs // 100
+    s = total_s % 60
+    total_m = total_s // 60
+    m = total_m % 60
+    h = total_m // 60
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def _escape_ass_text(text: Any) -> str:
+    s = str(text or "").replace("\\", "\\\\").replace("{", "｛").replace("}", "｝")
+    return s.replace("\r", " ").replace("\n", " ").strip()
+
+
+def _ffmpeg_filter_path(path: Path) -> str:
+    return str(path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+
+
+def _write_pop_caption_ass(job_dir: Path, captions: List[Dict[str, Any]]) -> Path:
+    ass_path = job_dir / "fallback_captions.ass"
+    lines = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "PlayResX: 1080",
+        "PlayResY: 1920",
+        "WrapStyle: 0",
+        "ScaledBorderAndShadow: yes",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        "Style: PopCaption,Noto Sans CJK SC,86,&H0000F7FF,&H00FFFFFF,&H00FF3C00,&H90000000,-1,0,0,0,100,100,0,0,1,7,4,2,90,90,265,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    effect = r"{\fad(80,120)\blur0.35\t(0,220,\fscx112\fscy112)\t(220,520,\fscx100\fscy100)}"
+    for cap in captions:
+        text = _escape_ass_text(cap.get("text"))
+        if not text:
+            continue
+        start = int(cap.get("start") or 0)
+        end = int(cap.get("end") or start + 600_000)
+        lines.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},PopCaption,,0,0,0,,{effect}{text}")
+    ass_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return ass_path
+
+
+def _render_fallback_caption_video(
+    *,
+    ffmpeg: str,
+    job_dir: Path,
+    source: str,
+    captions: List[Dict[str, Any]],
+    job_id: str,
+) -> Tuple[str, Optional[int], List[str]]:
+    warnings: List[str] = ["cutcli_cloud_render_queued_timeout", "fallback_renderer_ffmpeg_ass"]
+    ass_path = _write_pop_caption_ass(job_dir, captions)
+    output_path = job_dir / "fallback_render.mp4"
+    _run_cmd(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            source,
+            "-vf",
+            f"ass='{_ffmpeg_filter_path(ass_path)}'",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "20",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
+        timeout=900,
+    )
+    if not output_path.exists() or output_path.stat().st_size <= 1024:
+        raise AutoCaptionJobError("fallback_render_failed", "ffmpeg fallback output is empty")
+    final_url = _upload_job_file_to_tos(
+        output_path,
+        object_key=f"assets/cutcli_auto_caption/{job_id}/fallback_final.mp4",
+        content_type="video/mp4",
+    )
+    return final_url, output_path.stat().st_size, warnings
 
 
 @router.get("/api/cutcli/templates", summary="CutCLI 视频模板列表")
