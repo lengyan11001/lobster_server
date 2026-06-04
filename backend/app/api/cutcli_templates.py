@@ -895,13 +895,145 @@ def _caption_display_len(text: str) -> int:
     return total
 
 
-def _split_caption_text(text: str, max_chars: int = 11) -> List[str]:
+def _caption_visual_units(text: str) -> float:
+    total = 0.0
+    for ch in str(text or ""):
+        if ch.isspace():
+            total += 0.28
+        elif re.match(r"[A-Za-z0-9]", ch):
+            total += 0.56
+        elif ch in _EDGE_PUNCT or ch in _CAPTION_HARD_BREAK_CHARS or ch in _CAPTION_SOFT_BREAK_CHARS:
+            total += 0.38
+        elif "\u4e00" <= ch <= "\u9fff":
+            total += 1.0
+        else:
+            total += 0.86
+    return total
+
+
+def _caption_layout_scale_headroom(caption_style: Dict[str, Any]) -> float:
+    layout = str(caption_style.get("ass_layout") or "")
+    if layout == "dramatic_hook":
+        return 1.34
+    if layout == "center_burst":
+        return 1.24
+    if layout == "side_neon":
+        return 1.08
+    return 1.06
+
+
+def _caption_usable_width(caption_style: Dict[str, Any], *, video_width: Optional[int] = None) -> float:
+    width = max(360, int(video_width or 720))
+    border = max(0, int(caption_style.get("ass_border") or 0))
+    shadow = max(0, int(caption_style.get("ass_shadow") or 0))
+    layout = str(caption_style.get("ass_layout") or "")
+    usable_ratio = 0.84
+    if layout == "center_burst":
+        usable_ratio = 0.88
+    elif layout == "lower_clean":
+        usable_ratio = 0.88
+    elif layout == "side_neon":
+        usable_ratio = 0.62
+    elif layout == "dramatic_hook":
+        usable_ratio = 0.78
+    return max(180.0, width * usable_ratio - border * 4 - shadow * 2)
+
+
+def _caption_ass_font_size_value(cap: Dict[str, Any], caption_style: Dict[str, Any]) -> int:
+    ass_font_size = int(caption_style.get("ass_font_size") or 86)
+    base_cli_size = int(caption_style.get("font_size") or 13)
+    cap_cli_size = int(cap.get("fontSize") or base_cli_size)
+    return max(44, ass_font_size + (cap_cli_size - base_cli_size) * 7)
+
+
+def _caption_font_unit_width(font_size: int, caption_style: Dict[str, Any]) -> float:
+    return max(36.0, font_size * 0.9 * _caption_layout_scale_headroom(caption_style))
+
+
+def _safe_caption_visual_units(caption_style: Dict[str, Any], *, video_width: Optional[int] = None) -> float:
+    configured = max(4, int(caption_style.get("caption_max_chars") or 11))
+    pattern = str(caption_style.get("font_size_pattern") or "steady")
+    base_cli_size = int(caption_style.get("font_size") or 13)
+    worst_cli_size = base_cli_size
+    if pattern == "punch":
+        worst_cli_size += 2
+    elif pattern == "burst":
+        worst_cli_size += 1
+    ass_font_size = _caption_ass_font_size_value({"fontSize": worst_cli_size}, caption_style)
+    usable_width = _caption_usable_width(caption_style, video_width=video_width)
+    font_unit_width = _caption_font_unit_width(ass_font_size, caption_style)
+    return max(3.0, min(float(configured), usable_width / font_unit_width))
+
+
+def _caption_visual_overflows(
+    cap: Dict[str, Any],
+    caption_style: Dict[str, Any],
+    *,
+    video_width: Optional[int] = None,
+) -> bool:
+    text = _clean_caption_text(cap.get("text"))
+    if not text:
+        return False
+    usable_width = _caption_usable_width(caption_style, video_width=video_width)
+    fs = _caption_ass_font_size_value(cap, caption_style)
+    estimated_width = _caption_visual_units(text) * _caption_font_unit_width(fs, caption_style)
+    return estimated_width > usable_width
+
+
+def _caption_fits_visual_width(
+    text: str,
+    *,
+    max_chars: int,
+    max_visual_units: Optional[float],
+) -> bool:
+    if _caption_display_len(text) > max_chars:
+        return False
+    if max_visual_units is not None and _caption_visual_units(text) > max_visual_units:
+        return False
+    return True
+
+
+def _split_caption_text(
+    text: str,
+    max_chars: int = 11,
+    *,
+    max_visual_units: Optional[float] = None,
+) -> List[str]:
     tokens = re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]|[^\s]", text or "")
+    expanded: List[str] = []
+    for tok in tokens:
+        if (
+            max_visual_units is not None
+            and len(tok) > 1
+            and re.match(r"^[A-Za-z0-9]+$", tok)
+            and _caption_visual_units(tok) > max_visual_units
+        ):
+            chunk = ""
+            for ch in tok:
+                candidate = chunk + ch
+                if chunk and not _caption_fits_visual_width(
+                    candidate,
+                    max_chars=max_chars,
+                    max_visual_units=max_visual_units,
+                ):
+                    expanded.append(chunk)
+                    chunk = ch
+                else:
+                    chunk = candidate
+            if chunk:
+                expanded.append(chunk)
+            continue
+        expanded.append(tok)
+    tokens = expanded
     chunks: List[str] = []
     cur = ""
     for tok in tokens:
         candidate = (cur + (" " if cur and re.match(r"^[A-Za-z0-9]+$", tok) else "") + tok).strip()
-        if cur and _caption_display_len(candidate) > max_chars:
+        if cur and not _caption_fits_visual_width(
+            candidate,
+            max_chars=max_chars,
+            max_visual_units=max_visual_units,
+        ):
             chunks.append(_clean_caption_text(cur))
             cur = tok
         else:
@@ -1039,6 +1171,7 @@ def _captions_from_stt(
     *,
     video_duration_sec: float,
     caption_style: Dict[str, Any],
+    video_width: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     output = _extract_stt_output(stt_data)
     utterances = output.get("utterances") if isinstance(output, dict) else None
@@ -1046,6 +1179,7 @@ def _captions_from_stt(
     video_end_us = max(100_000, int(max(video_duration_sec, 0.1) * 1_000_000))
     utterance_segments = _caption_utterance_segments(utterances)
     max_chars = int(caption_style.get("caption_max_chars") or 11)
+    max_visual_units = _safe_caption_visual_units(caption_style, video_width=video_width)
     font_size_pattern = str(caption_style.get("font_size_pattern") or "steady")
     base_font_size = int(caption_style.get("font_size") or 13)
 
@@ -1075,6 +1209,22 @@ def _captions_from_stt(
         clean = _clean_caption_text(text)
         if not clean:
             return
+        if not _caption_fits_visual_width(
+            clean,
+            max_chars=max_chars,
+            max_visual_units=max_visual_units,
+        ):
+            sub_chunks = _split_caption_text(
+                clean,
+                max_chars=max_chars,
+                max_visual_units=max_visual_units,
+            )
+            if len(sub_chunks) > 1:
+                span_ms = max(len(sub_chunks) * 320, end_ms - start_ms)
+                step_ms = max(320, int(span_ms / len(sub_chunks)))
+                for idx, chunk in enumerate(sub_chunks):
+                    add_caption(chunk, start_ms + idx * step_ms, start_ms + (idx + 1) * step_ms)
+                return
         start_us = max(0, int(start_ms * 1000))
         end_us = max(start_us + 450_000, int(end_ms * 1000))
         if start_us >= video_end_us:
@@ -1107,7 +1257,11 @@ def _captions_from_stt(
         captions.append(item)
 
     def add_caption_chunks(text: str, start_ms: int, end_ms: int, *, min_step_ms: int = 500) -> None:
-        chunks = _split_caption_text(text, max_chars=max_chars)
+        chunks = _split_caption_text(
+            text,
+            max_chars=max_chars,
+            max_visual_units=max_visual_units,
+        )
         if not chunks:
             return
         span = max(min_step_ms, end_ms - start_ms)
@@ -1142,7 +1296,15 @@ def _captions_from_stt(
                 candidate_start = cur_start if cur_start is not None else int(word["start_ms"])
                 candidate = _clean_caption_text("".join(cur_words) + text)
                 dur_ms = int(word["end_ms"] - candidate_start)
-                if cur_words and (gap_ms >= 360 or _caption_display_len(candidate) > max_chars or dur_ms > 2300):
+                if cur_words and (
+                    gap_ms >= 360
+                    or not _caption_fits_visual_width(
+                        candidate,
+                        max_chars=max_chars,
+                        max_visual_units=max_visual_units,
+                    )
+                    or dur_ms > 2300
+                ):
                     add_caption("".join(cur_words), int(cur_start or 0), cur_end)
                     cur_words = []
                     cur_start = None
@@ -1160,7 +1322,14 @@ def _captions_from_stt(
                 soft_after = bool(word.get("soft_end")) and (
                     _caption_display_len(current) >= 6 or current_ms >= 900
                 )
-                full_enough = _caption_display_len(current) >= max_chars or current_ms >= 2300
+                full_enough = (
+                    not _caption_fits_visual_width(
+                        current,
+                        max_chars=max_chars,
+                        max_visual_units=max_visual_units,
+                    )
+                    or current_ms >= 2300
+                )
                 if hard_after or soft_after or full_enough:
                     add_caption("".join(cur_words), cur_start, cur_end)
                     cur_words = []
@@ -1190,11 +1359,13 @@ def _validate_caption_quality(
     captions: List[Dict[str, Any]],
     *,
     caption_style: Dict[str, Any],
+    video_width: Optional[int] = None,
 ) -> Tuple[Dict[str, Any], List[str], List[str]]:
     errors: List[str] = []
     warnings: List[str] = []
     duplicate_adjacent = 0
     overlap_count = 0
+    visual_overflow_count = 0
     last_text = ""
     last_end = -1
     for cap in captions:
@@ -1205,6 +1376,9 @@ def _validate_caption_quality(
             errors.append("empty_caption_text")
         if end <= start:
             errors.append("invalid_caption_time")
+        if _caption_visual_overflows(cap, caption_style, video_width=video_width):
+            visual_overflow_count += 1
+            errors.append("caption_visual_overflow")
         if last_text and text == last_text:
             duplicate_adjacent += 1
         if last_end >= 0 and start < last_end:
@@ -1226,6 +1400,9 @@ def _validate_caption_quality(
         "caption_count": len(captions),
         "duplicate_adjacent_count": duplicate_adjacent,
         "overlap_count": overlap_count,
+        "visual_overflow_count": visual_overflow_count,
+        "safe_visual_units": round(_safe_caption_visual_units(caption_style, video_width=video_width), 2),
+        "source_width": int(video_width or 0),
         "expected_caption_tracks": 1,
         "background_enabled": False,
         "text_effect": caption_style.get("text_effect") or "",
@@ -1485,12 +1662,17 @@ def _run_auto_caption_job_sync(
             stt_data,
             video_duration_sec=float(source_info.get("duration") or 0.1),
             caption_style=caption_style,
+            video_width=int(source_info.get("width") or 0) or None,
         )
         (job_dir / "generated_captions.json").write_text(
             json.dumps(captions, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        quality, quality_errors, quality_warnings = _validate_caption_quality(captions, caption_style=caption_style)
+        quality, quality_errors, quality_warnings = _validate_caption_quality(
+            captions,
+            caption_style=caption_style,
+            video_width=int(source_info.get("width") or 0) or None,
+        )
         warnings.extend(quality_warnings)
         if quality_errors:
             raise AutoCaptionJobError("caption_quality_failed", ",".join(sorted(set(quality_errors))))
@@ -2009,11 +2191,22 @@ def _ass_y_from_norm(value: Any, play_height: int = 1920) -> int:
     return _clamp_int((play_height / 2) - _float_value(value, -0.62) * half_span, margin, play_height - margin)
 
 
-def _ass_caption_font_size(cap: Dict[str, Any], caption_style: Dict[str, Any]) -> int:
-    ass_font_size = int(caption_style.get("ass_font_size") or 86)
-    base_cli_size = int(caption_style.get("font_size") or 13)
-    cap_cli_size = int(cap.get("fontSize") or base_cli_size)
-    return max(44, ass_font_size + (cap_cli_size - base_cli_size) * 7)
+def _ass_caption_font_size(
+    cap: Dict[str, Any],
+    caption_style: Dict[str, Any],
+    *,
+    play_width: Optional[int] = None,
+) -> int:
+    fs = _caption_ass_font_size_value(cap, caption_style)
+    text_units = _caption_visual_units(_clean_caption_text(cap.get("text")))
+    if text_units <= 0:
+        return fs
+    usable_width = _caption_usable_width(caption_style, video_width=play_width)
+    estimated_width = text_units * _caption_font_unit_width(fs, caption_style)
+    if estimated_width <= usable_width:
+        return fs
+    scaled = int(fs * (usable_width / max(1.0, estimated_width)) * 0.98)
+    return max(44, min(fs, scaled))
 
 
 def _ass_caption_override(
@@ -2025,7 +2218,7 @@ def _ass_caption_override(
     play_height: int = 1920,
 ) -> str:
     layout = str(caption_style.get("ass_layout") or "center_burst")
-    fs = _ass_caption_font_size(cap, caption_style)
+    fs = _ass_caption_font_size(cap, caption_style, play_width=play_width)
     border = int(caption_style.get("ass_border") or 7)
     shadow = int(caption_style.get("ass_shadow") or 4)
 
@@ -2074,7 +2267,7 @@ def _ass_typewriter_override(
     play_width: int,
     play_height: int,
 ) -> str:
-    fs = _ass_caption_font_size(cap, caption_style)
+    fs = _ass_caption_font_size(cap, caption_style, play_width=play_width)
     border = int(caption_style.get("ass_border") or 7)
     shadow = int(caption_style.get("ass_shadow") or 4)
     norm_x = _float_value(cap.get("transformX", caption_style.get("transform_x", -0.50)))

@@ -13,12 +13,13 @@ def _caption_texts(stt_data):
     return [item["text"] for item in captions]
 
 
-def _captions_for_template(template_id, stt_data):
+def _captions_for_template(template_id, stt_data, video_width=None):
     style = templates._caption_style_for_template(templates._TEMPLATES[template_id])
     return templates._captions_from_stt(
         stt_data,
         video_duration_sec=3.0,
         caption_style=style,
+        video_width=video_width,
     )
 
 
@@ -120,3 +121,66 @@ def test_template_captions_apply_position_and_font_differences():
     assert len({item["transformY"] for item in side_caps}) == 2
     assert all(item["inAnimation"] == "故障打字" for item in side_caps)
     assert max(item["fontSize"] for item in punch_caps) > max(item["fontSize"] for item in clean_caps)
+
+
+def test_large_yellow_caption_splits_to_visual_safe_chunks():
+    text = "\u4e00\u4e2a\u4e13\u4e1a\u9760\u8c31\u7684\u8d22\u7a0e\u987e\u95ee"
+    stt_data = {
+        "output": {
+            "utterances": [
+                {
+                    "text": text,
+                    "start_time": 0,
+                    "end_time": 1800,
+                    "words": [
+                        {"text": text, "start_time": 0, "end_time": 1800},
+                    ],
+                }
+            ]
+        }
+    }
+    style = templates._caption_style_for_template(
+        templates._TEMPLATES[templates._AUTO_CAPTION_TEMPLATE_ID]
+    )
+
+    captions = _captions_for_template(
+        templates._AUTO_CAPTION_TEMPLATE_ID,
+        stt_data,
+        video_width=720,
+    )
+    caption_texts = [item["text"] for item in captions]
+
+    assert len(caption_texts) >= 3
+    assert "".join(caption_texts) == text
+    safe_units = templates._safe_caption_visual_units(style, video_width=720)
+    assert all(templates._caption_visual_units(item["text"]) <= safe_units + 0.01 for item in captions)
+    quality, errors, _warnings = templates._validate_caption_quality(
+        captions,
+        caption_style=style,
+        video_width=720,
+    )
+    assert quality["visual_overflow_count"] == 0
+    assert "caption_visual_overflow" not in errors
+
+
+def test_caption_quality_rejects_visual_overflow():
+    style = templates._caption_style_for_template(
+        templates._TEMPLATES[templates._AUTO_CAPTION_TEMPLATE_ID]
+    )
+    captions = [
+        {
+            "text": "\u4e00\u4e2a\u4e13\u4e1a\u9760\u8c31\u7684\u8d22\u7a0e\u987e\u95ee",
+            "start": 0,
+            "end": 1_200_000,
+            "fontSize": 15,
+        }
+    ]
+
+    quality, errors, _warnings = templates._validate_caption_quality(
+        captions,
+        caption_style=style,
+        video_width=720,
+    )
+
+    assert quality["visual_overflow_count"] == 1
+    assert "caption_visual_overflow" in errors
