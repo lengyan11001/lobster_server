@@ -49,6 +49,7 @@ _CAPTION_HUAZI_EFFECT_ID = "7336838590023912710"
 _CAPTION_HUAZI_NAME = "4B\u9ec4\u5b57\u84dd\u8fb9\u6295\u5f71"
 _CAPTION_IN_ANIMATION = "\u54cd\u4eae\u5f3a\u8c03"
 _CAPTION_LOOP_ANIMATION = "\u9010\u5b57\u653e\u5927"
+_CAPTION_TYPEWRITER_ANIMATION = "\u6545\u969c\u6253\u5b57"
 _STT_TERMINAL_SUCCESS = {"completed", "complete", "success", "succeeded", "finished", "done"}
 _STT_TERMINAL_FAILURE = {"failed", "error", "cancelled", "canceled", "timeout", "rejected"}
 _STT_RUNNING = {"pending", "queued", "running", "processing", "waiting", "created"}
@@ -79,12 +80,6 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "中下大字 + 爆点弹跳",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4",
-        "preview_captions": [
-            {"text": "别划走", "start": 80_000, "end": 1_020_000},
-            {"text": "重点来了", "start": 1_060_000, "end": 2_180_000},
-            {"text": "一句话抓住用户", "start": 2_240_000, "end": 4_150_000},
-            {"text": "爆点必须够大", "start": 4_220_000, "end": 6_200_000},
-        ],
         "caption_style": {
             "id": "yellow_burst",
             "text_effect": _CAPTION_HUAZI_NAME,
@@ -95,7 +90,7 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
             "loop_animation_duration": 430_000,
             "font_size": 14,
             "font_size_pattern": "burst",
-            "caption_max_chars": 8,
+            "caption_max_chars": 11,
             "text_color": "#FFFFFF",
             "border_color": "#041B51",
             "border_width": "0.09",
@@ -125,12 +120,6 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "下三分之一 + 轻渐显",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_clean_fade_v1.mp4",
-        "preview_captions": [
-            {"text": "干净讲清每一句", "start": 180_000, "end": 1_650_000},
-            {"text": "适合采访和课程", "start": 1_760_000, "end": 3_240_000},
-            {"text": "不抢人物表情", "start": 3_360_000, "end": 4_820_000},
-            {"text": "信息层次更舒服", "start": 4_940_000, "end": 6_520_000},
-        ],
         "caption_style": {
             "id": "clean_fade",
             "text_effect": "",
@@ -169,32 +158,30 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "tags": ["科技", "侧标", "霓虹"],
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
-        "quality_label": "左侧标注 + 青蓝霓虹",
+        "quality_label": "左侧终端快打 + 青蓝霓虹",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4",
-        "preview_captions": [
-            {"text": "左侧标注重点", "start": 120_000, "end": 1_360_000},
-            {"text": "科技感更强", "start": 1_480_000, "end": 2_640_000},
-            {"text": "适合 AI 产品", "start": 2_760_000, "end": 4_150_000},
-            {"text": "信息像界面浮出", "start": 4_260_000, "end": 6_260_000},
-        ],
         "caption_style": {
             "id": "side_neon",
             "text_effect": "",
             "text_effect_id": "",
-            "in_animation": "渐显",
-            "in_animation_duration": 260_000,
-            "loop_animation": _CAPTION_LOOP_ANIMATION,
-            "loop_animation_duration": 520_000,
+            "in_animation": _CAPTION_TYPEWRITER_ANIMATION,
+            "in_animation_duration": 420_000,
+            "loop_animation": "",
+            "loop_animation_duration": 0,
             "font_size": 11,
             "font_size_pattern": "side_neon",
-            "caption_max_chars": 9,
+            "caption_max_chars": 11,
+            "caption_motion": "typewriter",
+            "typing_interval_ms": 85,
+            "typing_min_hold_ms": 420,
+            "typing_cursor": "|",
             "text_color": "#7CFBFF",
             "border_color": "#062A4D",
             "border_width": "0.085",
             "has_shadow": True,
             "shadow_color": "#00111F",
-            "transform_x": "-0.48",
-            "transform_y": "0.18",
+            "transform_x": "-0.56",
+            "transform_y": "0.38",
             "ass_layout": "side_neon",
             "ass_font_size": 74,
             "ass_primary": "&H00FFFB7C",
@@ -217,13 +204,6 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "居中重击 + 情绪反转",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_punch_big_v1.mp4",
-        "preview_captions": [
-            {"text": "不对！", "start": 100_000, "end": 920_000},
-            {"text": "你亏大了", "start": 980_000, "end": 2_000_000},
-            {"text": "这个转折", "start": 2_100_000, "end": 3_320_000},
-            {"text": "必须看完", "start": 3_420_000, "end": 4_720_000},
-            {"text": "下一秒反转", "start": 4_860_000, "end": 6_280_000},
-        ],
         "caption_style": {
             "id": "punch_big",
             "text_effect": _CAPTION_HUAZI_NAME,
@@ -234,7 +214,7 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
             "loop_animation_duration": 360_000,
             "font_size": 16,
             "font_size_pattern": "punch",
-            "caption_max_chars": 6,
+            "caption_max_chars": 7,
             "text_color": "#FFFFFF",
             "border_color": "#07123F",
             "border_width": "0.10",
@@ -1082,7 +1062,7 @@ def _captions_from_stt(
     def caption_position(index: int) -> Tuple[Optional[float], Optional[float]]:
         layout = str(caption_style.get("ass_layout") or "")
         if layout == "side_neon":
-            return (-0.50, 0.24 if index % 2 == 0 else 0.08)
+            return (-0.58, 0.46 if index % 2 == 0 else 0.32)
         if layout == "dramatic_hook":
             return (0.0, -0.26 if index % 2 == 0 else -0.40)
         if layout == "center_burst":
@@ -2087,6 +2067,56 @@ def _ass_caption_override(
     )
 
 
+def _ass_typewriter_override(
+    cap: Dict[str, Any],
+    caption_style: Dict[str, Any],
+    *,
+    play_width: int,
+    play_height: int,
+) -> str:
+    fs = _ass_caption_font_size(cap, caption_style)
+    border = int(caption_style.get("ass_border") or 7)
+    shadow = int(caption_style.get("ass_shadow") or 4)
+    norm_x = _float_value(cap.get("transformX", caption_style.get("transform_x", -0.50)))
+    left_side = norm_x <= 0
+    anchor = 7 if left_side else 9
+    x = int(play_width * (0.09 if left_side else 0.91))
+    y = _ass_y_from_norm(cap.get("transformY", caption_style.get("transform_y", 0.18)), play_height)
+    return f"{{\\an{anchor}\\pos({x},{y})\\blur0.28\\fs{fs}\\bord{border}\\shad{shadow}\\fsp2}}"
+
+
+def _ass_typewriter_dialogues(
+    *,
+    start_us: int,
+    end_us: int,
+    text: str,
+    effect: str,
+    style_name: str,
+    interval_ms: int,
+    min_hold_ms: int,
+    cursor: str,
+) -> List[str]:
+    chars = [ch for ch in text if ch]
+    if len(chars) <= 1 or end_us <= start_us + 160_000:
+        return [f"Dialogue: 0,{_ass_time(start_us)},{_ass_time(end_us)},{style_name},,0,0,0,,{effect}{text}"]
+    duration_us = max(180_000, end_us - start_us)
+    hold_us = min(max(120_000, int(min_hold_ms or 420) * 1000), max(120_000, duration_us // 2))
+    typing_window_us = max(120_000, duration_us - hold_us)
+    interval_us = min(max(35_000, int(interval_ms or 85) * 1000), max(35_000, typing_window_us // len(chars)))
+    lines: List[str] = []
+    for idx in range(1, len(chars)):
+        seg_start = start_us + (idx - 1) * interval_us
+        seg_end = min(end_us, start_us + idx * interval_us)
+        if seg_start >= end_us or seg_end <= seg_start:
+            break
+        visible = "".join(chars[:idx]) + cursor
+        lines.append(f"Dialogue: 0,{_ass_time(seg_start)},{_ass_time(seg_end)},{style_name},,0,0,0,,{effect}{visible}")
+    final_start = min(end_us - 80_000, start_us + max(0, len(chars) - 1) * interval_us)
+    final_start = max(start_us, final_start)
+    lines.append(f"Dialogue: 0,{_ass_time(final_start)},{_ass_time(end_us)},{style_name},,0,0,0,,{effect}{text}")
+    return lines
+
+
 def _write_pop_caption_ass(
     job_dir: Path,
     captions: List[Dict[str, Any]],
@@ -2119,12 +2149,33 @@ def _write_pop_caption_ass(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     fallback_effect = str(caption_style.get("ass_effect") or "")
+    is_typewriter = str(caption_style.get("caption_motion") or "") == "typewriter"
     for idx, cap in enumerate(captions):
         text = _escape_ass_text(cap.get("text"))
         if not text:
             continue
         start = int(cap.get("start") or 0)
         end = int(cap.get("end") or start + 600_000)
+        if is_typewriter:
+            effect = fallback_effect or _ass_typewriter_override(
+                cap,
+                caption_style,
+                play_width=play_width,
+                play_height=play_height,
+            )
+            lines.extend(
+                _ass_typewriter_dialogues(
+                    start_us=start,
+                    end_us=end,
+                    text=text,
+                    effect=effect,
+                    style_name="PopCaption",
+                    interval_ms=int(caption_style.get("typing_interval_ms") or 85),
+                    min_hold_ms=int(caption_style.get("typing_min_hold_ms") or 420),
+                    cursor=str(caption_style.get("typing_cursor") or ""),
+                )
+            )
+            continue
         effect = fallback_effect or _ass_caption_override(
             cap,
             caption_style,

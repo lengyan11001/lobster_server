@@ -86,6 +86,8 @@ def test_caption_templates_have_distinct_design_layouts():
     assert styles[templates._AUTO_CAPTION_TEMPLATE_ID]["ass_layout"] == "center_burst"
     assert styles[templates._AUTO_CAPTION_CLEAN_TEMPLATE_ID]["ass_layout"] == "lower_clean"
     assert styles[templates._AUTO_CAPTION_NEON_TEMPLATE_ID]["ass_layout"] == "side_neon"
+    assert styles[templates._AUTO_CAPTION_NEON_TEMPLATE_ID]["caption_motion"] == "typewriter"
+    assert styles[templates._AUTO_CAPTION_NEON_TEMPLATE_ID]["in_animation"] == "故障打字"
     assert styles[templates._AUTO_CAPTION_PUNCH_TEMPLATE_ID]["ass_layout"] == "dramatic_hook"
     assert len({style["ass_layout"] for style in styles.values()}) == 4
     assert styles[templates._AUTO_CAPTION_PUNCH_TEMPLATE_ID]["font_size"] > styles[templates._AUTO_CAPTION_CLEAN_TEMPLATE_ID]["font_size"]
@@ -116,4 +118,5 @@ def test_template_captions_apply_position_and_font_differences():
     assert len(side_caps) == 2
     assert all(item["transformX"] <= -0.45 for item in side_caps)
     assert len({item["transformY"] for item in side_caps}) == 2
+    assert all(item["inAnimation"] == "故障打字" for item in side_caps)
     assert max(item["fontSize"] for item in punch_caps) > max(item["fontSize"] for item in clean_caps)

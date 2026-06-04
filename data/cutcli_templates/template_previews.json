@@ -1,25 +1,33 @@
 {
   "auto_caption_pop_huazi_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4?v=real-stt-typewriter-20260604c",
     "source": "f6d33710677daeddfda25f021246a681.mp4",
+    "caption_source": "stt",
+    "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
     "style": "yellow_burst"
   },
   "auto_caption_clean_fade_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_clean_fade_v1.mp4",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_clean_fade_v1.mp4?v=real-stt-typewriter-20260604c",
     "source": "f6d33710677daeddfda25f021246a681.mp4",
+    "caption_source": "stt",
+    "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
     "style": "clean_fade"
   },
   "auto_caption_neon_focus_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4?v=real-stt-typewriter-20260604c",
     "source": "f6d33710677daeddfda25f021246a681.mp4",
+    "caption_source": "stt",
+    "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
     "style": "side_neon"
   },
   "auto_caption_punch_big_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_punch_big_v1.mp4",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_punch_big_v1.mp4?v=real-stt-typewriter-20260604c",
     "source": "f6d33710677daeddfda25f021246a681.mp4",
+    "caption_source": "stt",
+    "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
     "style": "punch_big"
   }
