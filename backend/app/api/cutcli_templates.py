@@ -55,20 +55,16 @@ _SUTUI_TOKEN_POOL_INDEX: Dict[str, int] = {}
 _TEMPLATES: Dict[str, Dict[str, Any]] = {
     _AUTO_CAPTION_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_TEMPLATE_ID,
-        "name": "爆款花字自动字幕",
-        "description": "用户上传视频，服务器用火山录音文件识别 2.0 转写，并生成单轨黄字蓝边花字字幕，完成后自动入库。",
-        "aspect_ratio": "9:16",
-        "default_duration": 30,
-        "tags": ["auto_caption", "subtitle", "huazi", "server"],
+        "name": "爆款花字字幕",
+        "description": "上传视频或填写素材 ID，保留原视频比例和时长，自动识别语音并添加黄字蓝边花字字幕。",
+        "aspect_ratio": "source",
+        "default_duration": 0,
+        "tags": ["花字字幕", "自动识别", "生成同款"],
+        "input_modes": ["upload", "asset_id"],
+        "preserve_source_video": True,
+        "quality_label": "单轨字幕、无黑底、黄字蓝边花字",
+        "sample_video_url": "https://cdn-video.51sux.com/assets/cutcli_auto_caption/20260604031403_1870c270/fallback_final.mp4",
     },
-    "brand_cinematic_opener": {
-        "id": "brand_cinematic_opener",
-        "name": "高级品牌快剪",
-        "description": "把一条视频包装成 9:16 品牌片头风格，叠加高级暗色遮罩、金色线条、标题字幕和轻电影调色。",
-        "aspect_ratio": "9:16",
-        "default_duration": 8,
-        "tags": ["brand", "cinematic", "video"],
-    }
 }
 
 
@@ -79,6 +75,10 @@ class TemplateListItem(BaseModel):
     aspect_ratio: str = "9:16"
     default_duration: int = 8
     tags: List[str] = []
+    input_modes: List[str] = []
+    preserve_source_video: bool = True
+    quality_label: str = ""
+    render_path: str = ""
     preview_url: str = ""
     sample_video_url: str = ""
     sample_asset_id: str = ""
@@ -126,7 +126,8 @@ def _template_preview_url(template_id: str) -> str:
         sample = _STATIC_PREVIEW_DIR / f"{template_id}{ext}"
         if sample.exists():
             return f"{_STATIC_PREVIEW_PUBLIC_PREFIX}/{sample.name}"
-    return ""
+    tpl = _TEMPLATES.get(template_id) or {}
+    return str(tpl.get("preview_url") or tpl.get("sample_video_url") or "").strip()
 
 
 def _template_sample_asset_id(template_id: str) -> str:
@@ -421,6 +422,30 @@ def _update_job_manifest(job_id: str, **fields: Any) -> Dict[str, Any]:
     cur.update(fields)
     _write_job_manifest(job_id, cur)
     return cur
+
+
+def _job_record_from_manifest(data: Dict[str, Any], fallback_job_id: str) -> Dict[str, Any]:
+    tpl = data.get("template") if isinstance(data.get("template"), dict) else {}
+    quality = data.get("quality") if isinstance(data.get("quality"), dict) else {}
+    return {
+        "job_id": data.get("job_id") or fallback_job_id,
+        "status": data.get("status") or "",
+        "stage": data.get("stage") or "",
+        "template_id": data.get("template_id") or tpl.get("id") or "",
+        "template_name": tpl.get("name") or data.get("template_name") or "",
+        "source_asset_id": data.get("source_asset_id") or "",
+        "source_name": data.get("source_name") or "",
+        "preview_asset_id": data.get("preview_asset_id") or data.get("final_asset_id") or "",
+        "preview_url": data.get("preview_url") or data.get("open_url") or "",
+        "open_url": data.get("open_url") or data.get("preview_url") or "",
+        "caption_count": data.get("caption_count") or quality.get("caption_count") or 0,
+        "render_strategy": data.get("render_strategy") or "",
+        "error": data.get("error") or "",
+        "error_code": data.get("error_code") or "",
+        "created_at": data.get("created_at") or 0,
+        "updated_at": data.get("updated_at") or 0,
+        "poll_path": f"/api/cutcli/templates/jobs/{data.get('job_id') or fallback_job_id}",
+    }
 
 
 def _safe_error_text(value: Any, limit: int = 1200) -> str:
@@ -1615,8 +1640,38 @@ def list_cutcli_templates(
         row["preview_url"] = preview_url
         row["sample_video_url"] = preview_url
         row["sample_asset_id"] = _template_sample_asset_id(row["id"])
+        row["render_path"] = f"/api/cutcli/templates/{row['id']}/render"
+        row.setdefault("input_modes", ["upload", "asset_id"])
+        row.setdefault("preserve_source_video", True)
         templates.append(TemplateListItem(**row).model_dump())
     return {"ok": True, "templates": templates}
+
+
+@router.get("/api/cutcli/templates/jobs", summary="CutCLI 模板生成记录")
+def list_cutcli_template_jobs(
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        max_items = max(1, min(int(limit or 50), 100))
+    except Exception:
+        max_items = 50
+    records: List[Dict[str, Any]] = []
+    for manifest_path in _JOBS_DIR.glob("*/manifest.json"):
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if int(data.get("user_id") or 0) != int(current_user.id):
+            continue
+        records.append(_job_record_from_manifest(data, manifest_path.parent.name))
+    records.sort(
+        key=lambda row: int(row.get("updated_at") or row.get("created_at") or 0),
+        reverse=True,
+    )
+    return {"ok": True, "jobs": records[:max_items]}
 
 
 @router.get("/api/cutcli/templates/jobs/{job_id}", summary="CutCLI 模板任务状态")
@@ -1639,9 +1694,9 @@ def get_cutcli_template_job(
 async def render_cutcli_template(
     request: Request,
     template_id: str = Form(_AUTO_CAPTION_TEMPLATE_ID),
-    title: str = Form("品牌高光时刻"),
-    subtitle: str = Form("用一条视频生成高级宣传片"),
-    duration_seconds: int = Form(8),
+    title: str = Form(""),
+    subtitle: str = Form(""),
+    duration_seconds: int = Form(0),
     asset_id: str = Form(""),
     video_url: str = Form(""),
     file: Optional[UploadFile] = File(None),
@@ -1712,6 +1767,7 @@ async def render_cutcli_template(
             "stage": "queued",
             "poll_path": f"/api/cutcli/templates/jobs/{job_id}",
             "template": tpl,
+            "preserve_source_video": bool(tpl.get("preserve_source_video", True)),
             "source_asset_id": source_asset_id,
             "source_name": source_name,
             "stt_model": _STT_MODEL,
@@ -1719,7 +1775,7 @@ async def render_cutcli_template(
         }
 
     cutcli = _find_cutcli_bin()
-    duration = max(4, min(int(duration_seconds or tpl["default_duration"]), 20))
+    duration = max(4, min(int(duration_seconds or tpl.get("default_duration") or 8), 20))
     overlay = job_dir / "overlay.png"
     _make_overlay_png(overlay, title=title, subtitle=subtitle, duration=duration)
 
@@ -1782,3 +1838,27 @@ async def render_cutcli_template(
         "open_url": preview_url,
         "warnings": warnings,
     }
+
+
+@router.post("/api/cutcli/templates/{template_id}/render", summary="按模板 ID 套用 CutCLI 视频模板")
+async def render_cutcli_template_by_id(
+    request: Request,
+    template_id: str,
+    asset_id: str = Form(""),
+    video_url: str = Form(""),
+    file: Optional[UploadFile] = File(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return await render_cutcli_template(
+        request=request,
+        template_id=template_id,
+        title="",
+        subtitle="",
+        duration_seconds=0,
+        asset_id=asset_id,
+        video_url=video_url,
+        file=file,
+        current_user=current_user,
+        db=db,
+    )
