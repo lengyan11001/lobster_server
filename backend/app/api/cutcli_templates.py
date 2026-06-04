@@ -127,169 +127,204 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
     _AUTO_CAPTION_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_TEMPLATE_ID,
         "kind": "auto_caption",
-        "name": "\u7206\u70b9\u9ec4\u5b57\u5f39\u8df3",
-        "description": "\u77ed\u53e5\u7206\u70b9\u578b\u5b57\u5e55\uff0c\u9ec4\u5b57\u84dd\u8fb9\u3001\u91cd\u5165\u573a\u3001\u5f3a\u5f39\u8df3\uff0c\u9002\u5408\u5f00\u573a\u94a9\u5b50\u3001\u5356\u70b9\u5f3a\u8c03\u548c\u53e3\u64ad\u91cd\u70b9\u53e5\u3002",
+        "name": "\u4f01\u4e1a\u53f3\u4fa7\u540d\u7247\u5b57\u5e55",
+        "description": "\u53f3\u4fa7\u84dd\u8272\u7ad6\u6761\u627f\u8f7d\u4e13\u4e1a\u80cc\u4e66\uff0c\u5e95\u90e8\u4fdd\u7559\u8ddf\u8bf4\u5b57\u5e55\uff0c\u9002\u5408\u521b\u59cb\u4eba\u81ea\u62cd\u3001\u4f01\u4e1a\u670d\u52a1\u548c\u4e13\u5bb6\u53e3\u64ad\u3002",
         "aspect_ratio": "source",
         "default_duration": 0,
-        "tags": ["\u7206\u70b9", "\u9ec4\u5b57\u84dd\u8fb9", "\u5f39\u8df3"],
+        "tags": ["\u4f01\u4e1a", "\u540d\u7247", "\u53e3\u64ad"],
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
-        "quality_label": "\u4e2d\u4e0b\u5927\u5b57 + \u7206\u70b9\u5f39\u8df3",
+        "quality_label": "\u53f3\u4fa7\u84dd\u6761\u540d\u7247 + \u5e95\u90e8\u8ddf\u8bf4",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4",
-        "overlay_fields": [],
+        "overlay_fields": _overlay_fields(
+            _overlay_field("title", "\u52a9\u529b\u4e2d\u5c0f\u4f01\u4e1a\u4e0a\u5343\u5bb6", label="\u84dd\u6761\u6587\u6848", placeholder="\u52a9\u529b\u4e2d\u5c0f\u4f01\u4e1a\u4e0a\u5343\u5bb6", max_length=18),
+            _overlay_field("subtitle", "10\u5e74\u7f51\u7edc\u8fd0\u8425", label="\u4fa7\u8fb9\u8d44\u5386", placeholder="10\u5e74\u7f51\u7edc\u8fd0\u8425", max_length=12),
+        ),
         "caption_style": {
-            "id": "yellow_burst",
-            "text_effect": _CAPTION_HUAZI_NAME,
-            "text_effect_id": _CAPTION_HUAZI_EFFECT_ID,
-            "in_animation": _CAPTION_IN_ANIMATION,
-            "in_animation_duration": 220_000,
-            "loop_animation": _CAPTION_LOOP_ANIMATION,
-            "loop_animation_duration": 430_000,
-            "font_size": 14,
-            "font_size_pattern": "burst",
-            "caption_max_chars": 11,
+            "id": "business_side_card",
+            "text_effect": "",
+            "text_effect_id": "",
+            "in_animation": "\u6e10\u663e",
+            "in_animation_duration": 180_000,
+            "loop_animation": "",
+            "loop_animation_duration": 0,
+            "font_size": 12,
+            "font_size_pattern": "steady",
+            "caption_max_chars": 10,
             "text_color": "#FFFFFF",
-            "border_color": "#041B51",
-            "border_width": "0.09",
+            "border_color": "#111827",
+            "border_width": "0.075",
             "has_shadow": True,
             "shadow_color": "#000000",
             "transform_x": "0",
-            "transform_y": "-0.55",
-            "ass_layout": "center_burst",
-            "ass_font_size": 96,
-            "ass_primary": "&H0000F7FF",
-            "ass_outline": "&H00FF3600",
-            "ass_shadow": 5,
-            "ass_border": 8,
+            "transform_y": "-0.72",
+            "ass_layout": "right_vertical_card",
+            "ass_font_size": 72,
+            "ass_primary": "&H00FFFFFF",
+            "ass_outline": "&H00111111",
+            "ass_shadow": 3,
+            "ass_border": 5,
             "ass_alignment": 2,
-            "ass_margin_v": 250,
+            "ass_margin_v": 260,
+            "overlay_style": {
+                "layout": "right_vertical_card",
+                "card_color": "&H00E8724B",
+                "title_font_size": 38,
+                "subtitle_font_size": 34,
+            },
         },
     },
     _AUTO_CAPTION_CLEAN_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_CLEAN_TEMPLATE_ID,
         "kind": "auto_caption",
-        "name": "\u8bbf\u8c08\u6e05\u900f\u5b57\u5e55",
-        "description": "\u7ec6\u63cf\u8fb9\u767d\u5b57\uff0c\u7a33\u5b9a\u653e\u5728\u753b\u9762\u4e0b\u4e09\u5206\u4e4b\u4e00\uff0c\u6e10\u663e\u5165\u573a\uff0c\u4e0d\u62a2\u4eba\u7269\u8868\u60c5\uff0c\u9002\u5408\u8bfe\u7a0b\u3001\u91c7\u8bbf\u548c\u5458\u5de5\u53e3\u64ad\u3002",
+        "name": "\u6559\u80b2\u9876\u90e8\u91cd\u70b9\u6761",
+        "description": "\u9876\u90e8\u9ec4\u9ed1\u53cc\u884c\u6807\u9898\u52a0\u8bb2\u5e08\u540d\u7247\uff0c\u4e2d\u4e0b\u90e8\u767d\u5e95\u91cd\u70b9\u6761\uff0c\u9002\u5408\u8bfe\u7a0b\u3001\u5bb6\u957f\u6559\u80b2\u548c\u5b9e\u7528\u6280\u5de7\u53e3\u64ad\u3002",
         "aspect_ratio": "source",
         "default_duration": 0,
-        "tags": ["\u8bbf\u8c08", "\u8bfe\u7a0b", "\u6e05\u900f"],
+        "tags": ["\u6559\u80b2", "\u8bfe\u7a0b", "\u91cd\u70b9\u6761"],
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
-        "quality_label": "\u4e0b\u4e09\u5206\u4e4b\u4e00 + \u8f7b\u6e10\u663e",
+        "quality_label": "\u9876\u90e8\u9192\u76ee\u6807\u9898 + \u767d\u5e95\u91cd\u70b9",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_clean_fade_v1.mp4",
-        "overlay_fields": [],
+        "overlay_fields": _overlay_fields(
+            _overlay_field("top_text", "\u5bb6\u957f\u4eec\u6ce8\u610f\u4e86\n\u5b69\u5b50\u5199\u4f5c\u4e1a\u78e8\u8e6d\u600e\u4e48\u529e", label="\u9876\u90e8\u6807\u9898", placeholder="\u5bb6\u957f\u4eec\u6ce8\u610f\u4e86\n\u5b69\u5b50\u5199\u4f5c\u4e1a\u78e8\u8e6d\u600e\u4e48\u529e", max_length=32),
+            _overlay_field("title", "\u4f0d\u8001\u5e08", label="\u8bb2\u5e08\u540d", placeholder="\u4f0d\u8001\u5e08", max_length=8),
+            _overlay_field("subtitle", "\u6559\u80b2\u884c\u4e1a\u5341\u5e74\u7ecf\u9a8c\n\u6559\u80b2\u89c4\u5212\u5b9e\u6218\u5bfc\u5e08", label="\u8bb2\u5e08\u4ecb\u7ecd", placeholder="\u6559\u80b2\u884c\u4e1a\u5341\u5e74\u7ecf\u9a8c", multiline=True, max_length=28),
+            _overlay_field("badge", "\u4eca\u5929\u6559\u4e2a\u8d85\u5b9e\u7528\u7684", label="\u767d\u5e95\u91cd\u70b9", placeholder="\u4eca\u5929\u6559\u4e2a\u8d85\u5b9e\u7528\u7684", max_length=14),
+        ),
         "caption_style": {
-            "id": "clean_fade",
+            "id": "education_focus_bar",
             "text_effect": "",
             "text_effect_id": "",
             "in_animation": "\u6e10\u663e",
-            "in_animation_duration": 360_000,
+            "in_animation_duration": 220_000,
             "loop_animation": "",
             "loop_animation_duration": 0,
-            "font_size": 11,
+            "font_size": 10,
             "font_size_pattern": "steady",
-            "caption_max_chars": 14,
+            "caption_max_chars": 12,
             "text_color": "#FFFFFF",
             "border_color": "#111827",
             "border_width": "0.065",
             "has_shadow": True,
             "shadow_color": "#000000",
             "transform_x": "0",
-            "transform_y": "-0.72",
-            "ass_layout": "lower_clean",
-            "ass_font_size": 72,
+            "transform_y": "-0.78",
+            "ass_layout": "education_focus_bar",
+            "ass_font_size": 58,
             "ass_primary": "&H00FFFFFF",
             "ass_outline": "&H00231B12",
             "ass_shadow": 2,
             "ass_border": 5,
             "ass_alignment": 2,
-            "ass_margin_v": 310,
+            "ass_margin_v": 300,
+            "overlay_style": {
+                "layout": "education_focus_bar",
+                "top_y_ratio": 0.08,
+                "badge_y_ratio": 0.58,
+                "title_x_ratio": 0.09,
+                "title_y_ratio": 0.43,
+            },
         },
     },
     _AUTO_CAPTION_NEON_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_NEON_TEMPLATE_ID,
         "kind": "auto_caption",
-        "name": "\u79d1\u6280\u4fa7\u6807\u5b57\u5e55",
-        "description": "\u5b57\u5e55\u4ece\u753b\u9762\u5de6\u4fa7\u50cf UI \u6807\u6ce8\u4e00\u6837\u6d6e\u51fa\uff0c\u9752\u84dd\u9713\u8679\u914d\u6df1\u8272\u63cf\u8fb9\uff0c\u9002\u5408 AI\u3001SaaS\u3001\u4ea7\u54c1\u6f14\u793a\u548c\u79d1\u6280\u611f\u5185\u5bb9\u3002",
+        "name": "\u8336\u996e\u5c45\u4e2d\u53cc\u6807\u9898",
+        "description": "\u4e2d\u592e\u5927\u4e66\u540d\u53f7\u4e3b\u9898\u52a0\u9ec4\u8272\u526f\u6807\uff0c\u5e95\u90e8\u4fdd\u7559\u8ddf\u8bf4\u5b57\u5e55\uff0c\u9002\u5408\u517b\u751f\u3001\u8336\u996e\u3001\u77e5\u8bc6\u70b9\u548c\u5355\u4e00\u4e3b\u9898\u53e3\u64ad\u3002",
         "aspect_ratio": "source",
         "default_duration": 0,
-        "tags": ["\u79d1\u6280", "\u4fa7\u6807", "\u9713\u8679"],
+        "tags": ["\u8336\u996e", "\u517b\u751f", "\u53cc\u6807\u9898"],
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
-        "quality_label": "\u5de6\u4fa7\u7ec8\u7aef\u5feb\u6253 + \u9752\u84dd\u9713\u8679",
+        "quality_label": "\u5c45\u4e2d\u4e66\u540d\u53f7 + \u9ec4\u8272\u526f\u6807",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4",
-        "overlay_fields": [],
+        "overlay_fields": _overlay_fields(
+            _overlay_field("title", "\u300a\u6ce1\u8336\u300b", label="\u4e3b\u6807\u9898", placeholder="\u300a\u6ce1\u8336\u300b", max_length=12),
+            _overlay_field("subtitle", "\u8336\u53f6\u80fd\u6ce1\u51e0\u6b21", label="\u526f\u6807\u9898", placeholder="\u8336\u53f6\u80fd\u6ce1\u51e0\u6b21", max_length=14),
+        ),
         "caption_style": {
-            "id": "side_neon",
+            "id": "tea_center_title",
             "text_effect": "",
             "text_effect_id": "",
-            "in_animation": _CAPTION_TYPEWRITER_ANIMATION,
-            "in_animation_duration": 420_000,
+            "in_animation": "\u6e10\u663e",
+            "in_animation_duration": 220_000,
             "loop_animation": "",
             "loop_animation_duration": 0,
             "font_size": 11,
-            "font_size_pattern": "side_neon",
-            "caption_max_chars": 11,
-            "caption_motion": "typewriter",
-            "typing_interval_ms": 85,
-            "typing_min_hold_ms": 420,
-            "typing_cursor": "|",
-            "text_color": "#7CFBFF",
-            "border_color": "#062A4D",
-            "border_width": "0.085",
+            "font_size_pattern": "steady",
+            "caption_max_chars": 12,
+            "text_color": "#FFFFFF",
+            "border_color": "#111827",
+            "border_width": "0.075",
             "has_shadow": True,
-            "shadow_color": "#00111F",
-            "transform_x": "-0.56",
-            "transform_y": "0.38",
-            "ass_layout": "side_neon",
-            "ass_font_size": 74,
-            "ass_primary": "&H00FFFB7C",
-            "ass_outline": "&H004D2A06",
-            "ass_shadow": 5,
-            "ass_border": 6,
-            "ass_alignment": 7,
-            "ass_margin_v": 250,
+            "shadow_color": "#000000",
+            "transform_x": "0",
+            "transform_y": "-0.72",
+            "ass_layout": "tea_center_title",
+            "ass_font_size": 68,
+            "ass_primary": "&H00FFFFFF",
+            "ass_outline": "&H00111111",
+            "ass_shadow": 3,
+            "ass_border": 5,
+            "ass_alignment": 2,
+            "ass_margin_v": 310,
+            "overlay_style": {
+                "layout": "tea_center_title",
+                "headline_y_ratio": 0.47,
+                "headline_font_size": 92,
+                "subheadline_font_size": 56,
+            },
         },
     },
     _AUTO_CAPTION_PUNCH_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_PUNCH_TEMPLATE_ID,
         "kind": "auto_caption",
-        "name": "\u77ed\u5267\u91cd\u51fb\u5927\u5b57",
-        "description": "\u4e00\u53e5\u4e00\u7838\u7684\u77ed\u5267\u5b57\u5e55\uff0c\u5b57\u53f7\u66f4\u5927\u3001\u4f4d\u7f6e\u66f4\u9ad8\u3001\u5165\u573a\u66f4\u731b\uff0c\u9002\u5408\u60c5\u7eea\u53cd\u8f6c\u3001\u51b2\u7a81\u53e5\u548c\u5f3a\u94a9\u5b50\u3002",
+        "name": "\u7ea2\u9ec4\u51b2\u51fb\u699c\u5355\u6807\u9898",
+        "description": "\u9876\u90e8\u7ea2\u8272\u51b2\u51fb\u4e3b\u6807\u9898\u914d\u9ec4\u8272\u62ec\u53f7\u526f\u6807\uff0c\u4e2d\u4e0b\u90e8\u7c97\u767d\u5b57\u8ddf\u8bf4\uff0c\u9002\u5408\u6392\u884c\u699c\u3001\u751f\u6d3b\u5e38\u8bc6\u548c\u5f3a\u94a9\u5b50\u5185\u5bb9\u3002",
         "aspect_ratio": "source",
         "default_duration": 0,
-        "tags": ["\u77ed\u5267", "\u91cd\u51fb", "\u94a9\u5b50"],
+        "tags": ["\u699c\u5355", "\u7ea2\u9ec4", "\u5f3a\u94a9\u5b50"],
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
-        "quality_label": "\u5c45\u4e2d\u91cd\u51fb + \u60c5\u7eea\u53cd\u8f6c",
+        "quality_label": "\u9876\u90e8\u51b2\u51fb\u6807\u9898 + \u9ec4\u8272\u62ec\u53f7",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_punch_big_v1.mp4",
-        "overlay_fields": [],
+        "overlay_fields": _overlay_fields(
+            _overlay_field("title", "\u6bd4\u559d\u6cb9\u8fd8\u957f\u8089\u7684", label="\u9876\u90e8\u4e3b\u6807\u9898", placeholder="\u6bd4\u559d\u6cb9\u8fd8\u957f\u8089\u7684", max_length=14),
+            _overlay_field("subtitle", "\u30105\u79cd\u98df\u7269\u3011", label="\u62ec\u53f7\u526f\u6807\u9898", placeholder="\u30105\u79cd\u98df\u7269\u3011", max_length=12),
+        ),
         "caption_style": {
-            "id": "punch_big",
-            "text_effect": _CAPTION_HUAZI_NAME,
-            "text_effect_id": _CAPTION_HUAZI_EFFECT_ID,
-            "in_animation": _CAPTION_IN_ANIMATION,
+            "id": "red_yellow_hook",
+            "text_effect": "",
+            "text_effect_id": "",
+            "in_animation": "\u54cd\u4eae\u5f3a\u8c03",
             "in_animation_duration": 160_000,
-            "loop_animation": _CAPTION_LOOP_ANIMATION,
-            "loop_animation_duration": 360_000,
-            "font_size": 16,
-            "font_size_pattern": "punch",
-            "caption_max_chars": 7,
+            "loop_animation": "",
+            "loop_animation_duration": 0,
+            "font_size": 13,
+            "font_size_pattern": "burst",
+            "caption_max_chars": 10,
             "text_color": "#FFFFFF",
-            "border_color": "#07123F",
-            "border_width": "0.10",
+            "border_color": "#111111",
+            "border_width": "0.085",
             "has_shadow": True,
             "shadow_color": "#000000",
             "transform_x": "0",
-            "transform_y": "-0.34",
-            "ass_layout": "dramatic_hook",
-            "ass_font_size": 118,
-            "ass_primary": "&H0000F7FF",
-            "ass_outline": "&H003F1207",
-            "ass_shadow": 7,
-            "ass_border": 9,
+            "transform_y": "-0.55",
+            "ass_layout": "red_yellow_hook",
+            "ass_font_size": 74,
+            "ass_primary": "&H00FFFFFF",
+            "ass_outline": "&H00111111",
+            "ass_shadow": 4,
+            "ass_border": 6,
             "ass_alignment": 5,
-            "ass_margin_v": 220,
+            "ass_margin_v": 260,
+            "overlay_style": {
+                "layout": "red_yellow_hook",
+                "headline_y_ratio": 0.10,
+                "headline_font_size": 78,
+                "subheadline_font_size": 70,
+            },
         },
     },
     _AUTO_CAPTION_HEALTH_BANNER_TEMPLATE_ID: {
@@ -1926,6 +1961,10 @@ def _captions_from_stt(
             return (-0.58, 0.46 if index % 2 == 0 else 0.32)
         if layout == "dramatic_hook":
             return (0.0, -0.26 if index % 2 == 0 else -0.40)
+        if layout in {"right_vertical_card", "tea_center_title", "red_yellow_hook"}:
+            return (0.0, -0.70)
+        if layout == "education_focus_bar":
+            return (0.0, -0.82)
         if layout == "center_burst":
             return (0.0, -0.52 if index % 2 == 0 else -0.64)
         if layout == "lower_clean":
@@ -2977,6 +3016,17 @@ def _escape_ass_text(text: Any) -> str:
     return s.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\N").strip()
 
 
+def _overlay_default_texts(caption_style: Dict[str, Any]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for field in caption_style.get("overlay_fields") or []:
+        if not isinstance(field, dict):
+            continue
+        key = str(field.get("key") or "").strip()
+        if key:
+            out[key] = _clean_caption_text(field.get("default"))
+    return out
+
+
 def _ffmpeg_filter_path(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
 
@@ -3070,6 +3120,16 @@ def _ass_caption_override(
             f"\\t(290,470,\\fscx106\\fscy106)}}"
         )
 
+    if layout == "education_focus_bar":
+        x = _ass_x_from_norm(cap.get("transformX", 0), play_width)
+        y = _ass_y_from_norm(cap.get("transformY", -0.82), play_height)
+        return f"{{\\an2\\pos({x},{y})\\fad(120,120)\\blur0.18\\fs{fs}\\bord{border}\\shad{shadow}\\fsp1}}"
+
+    if layout in {"right_vertical_card", "tea_center_title", "red_yellow_hook"}:
+        x = _ass_x_from_norm(cap.get("transformX", 0), play_width)
+        y = _ass_y_from_norm(cap.get("transformY", -0.70), play_height)
+        return f"{{\\an2\\pos({x},{y})\\fad(80,110)\\blur0.22\\fs{fs}\\bord{border}\\shad{shadow}\\fsp1}}"
+
     x = _ass_x_from_norm(cap.get("transformX", 0), play_width)
     y = _ass_y_from_norm(cap.get("transformY", -0.56 if index % 2 == 0 else -0.64), play_height)
     return (
@@ -3138,6 +3198,279 @@ def _ass_typewriter_dialogues(
     return lines
 
 
+def _overlay_plain_lines(value: str) -> List[str]:
+    return [line for line in _clean_caption_text(value).split("\n") if line.strip()]
+
+
+def _vertical_text(value: str) -> str:
+    text = _clean_caption_text(value).replace("\n", "")
+    return "\n".join(ch for ch in text if ch.strip())
+
+
+def _vertical_units(value: str) -> List[str]:
+    text = _clean_caption_text(value).replace("\n", "")
+    units: List[str] = []
+    buf = ""
+    for ch in text:
+        if not ch.strip():
+            continue
+        if ch.isascii() and ch.isalnum():
+            buf += ch
+            continue
+        if buf:
+            units.append(buf)
+            buf = ""
+        units.append(ch)
+    if buf:
+        units.append(buf)
+    return units
+
+
+def _overlay_text_value(overlay_texts: Dict[str, str], caption_style: Dict[str, Any], key: str) -> str:
+    if key in overlay_texts:
+        return _clean_caption_text(overlay_texts.get(key))
+    return _clean_caption_text(_overlay_default_texts(caption_style).get(key, ""))
+
+
+def _overlay_text_value_any(overlay_texts: Dict[str, str], caption_style: Dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        if key in overlay_texts:
+            return _clean_caption_text(overlay_texts.get(key))
+    defaults = _overlay_default_texts(caption_style)
+    for key in keys:
+        value = _clean_caption_text(defaults.get(key, ""))
+        if value:
+            return value
+    return ""
+
+
+def _fit_overlay_font_size(raw_size: int, lines: List[str], *, width: int, height_limit: int, min_size: int = 34) -> int:
+    if not lines:
+        return max(min_size, int(raw_size))
+    max_units = max(_caption_visual_units(line) for line in lines) or 1.0
+    by_width = int(max(80, width * 0.88) / max_units)
+    by_height = int(max(24, height_limit) / (max(1, len(lines)) * 1.12))
+    return max(min_size, min(int(raw_size), by_width, by_height))
+
+
+def _ass_box_dialogue(end: str, color: str, points: List[Tuple[int, int]], *, layer: int = 2) -> str:
+    if not points:
+        points = [(0, 0)]
+    min_x = min(x for x, _ in points)
+    min_y = min(y for _, y in points)
+    rel_points = [(x - min_x, y - min_y) for x, y in points]
+    if rel_points[-1] != rel_points[0]:
+        rel_points.append(rel_points[0])
+    path = "m %d %d" % rel_points[0]
+    for x, y in rel_points[1:]:
+        path += " l %d %d" % (x, y)
+    return f"Dialogue: {layer},0:00:00.00,{end},OverlayBox,,0,0,0,,{{\\an7\\pos({min_x},{min_y})\\p1\\c{color}\\alpha&H00&}}{path}{{\\p0}}"
+
+
+def _vertical_unit_dialogues(
+    *,
+    end: str,
+    units: List[str],
+    style_name: str,
+    x: int,
+    center_y: int,
+    font_size: int,
+    line_height: int,
+    color: str = "&H00FFFFFF",
+    outline: str = "&H00000000",
+    border: int = 0,
+    shadow: int = 0,
+    layer: int = 5,
+) -> List[str]:
+    if not units:
+        return []
+    total_h = max(1, (len(units) - 1) * line_height)
+    start_y = int(center_y - total_h / 2)
+    lines: List[str] = []
+    for idx, unit in enumerate(units):
+        y = start_y + idx * line_height
+        lines.append(
+            "Dialogue: %d,0:00:00.00,%s,%s,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c%s\\3c%s\\bord%d\\shad%d}%s"
+            % (layer, end, style_name, x, y, font_size, color, outline, border, shadow, _escape_ass_text(unit))
+        )
+    return lines
+
+
+def _overlay_dialogues(
+    caption_style: Dict[str, Any],
+    *,
+    play_width: int,
+    play_height: int,
+    duration_sec: float,
+    overlay_texts: Optional[Dict[str, str]] = None,
+) -> List[str]:
+    overlay_style = caption_style.get("overlay_style") if isinstance(caption_style.get("overlay_style"), dict) else {}
+    layout = str(overlay_style.get("layout") or "").strip()
+    texts = overlay_texts or {}
+    top_text = _overlay_text_value_any(texts, caption_style, "top_text", "headline")
+    title = _overlay_text_value_any(texts, caption_style, "title", "headline")
+    subtitle = _overlay_text_value_any(texts, caption_style, "subtitle", "subheadline")
+    badge = _overlay_text_value(texts, caption_style, "badge")
+    if not any([top_text, title, subtitle, badge]):
+        return []
+    end = _ass_time(int(max(0.5, duration_sec) * 1_000_000))
+    width = play_width
+    height = play_height
+    lines: List[str] = []
+
+    if layout == "right_vertical_card":
+        card_w = int(width * 0.19)
+        card_h = int(height * 0.34)
+        x2 = int(width * 0.90)
+        x1 = max(0, x2 - card_w)
+        y1 = int(height * 0.10)
+        y2 = y1 + card_h
+        card_color = str(overlay_style.get("card_color") or "&H00E8724B")
+        lines.append(_ass_box_dialogue(end, card_color, [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]))
+        title_units = _vertical_units(title)
+        subtitle_units = _vertical_units(subtitle)
+        if title_units or subtitle_units:
+            fs = max(24, min(int(overlay_style.get("title_font_size") or 40), int(card_h / max(8.2, len(title_units) * 1.03))))
+            sub_fs = max(20, min(int(overlay_style.get("subtitle_font_size") or 28), int(card_h / max(5.8, len(subtitle_units) * 1.0))))
+            title_x = x1 + int(card_w * 0.67)
+            subtitle_x = x1 + int(card_w * 0.36)
+            title_y = y1 + int(card_h * 0.52)
+            subtitle_y = y1 + int(card_h * 0.55)
+            lines.extend(_vertical_unit_dialogues(end=end, units=title_units, style_name="OverlayTitle", x=title_x, center_y=title_y, font_size=fs, line_height=int(fs * 1.08), layer=5))
+            lines.extend(_vertical_unit_dialogues(end=end, units=subtitle_units, style_name="OverlaySub", x=subtitle_x, center_y=subtitle_y, font_size=sub_fs, line_height=int(sub_fs * 1.05), layer=5))
+        return lines
+
+    if layout == "education_focus_bar":
+        top_lines = _overlay_plain_lines(top_text)
+        if top_text:
+            y = int(height * _float_value(overlay_style.get("top_y_ratio"), 0.08))
+            first, rest = top_lines[0], "\n".join(top_lines[1:])
+            fs1 = _fit_overlay_font_size(74, [first], width=int(width * 0.82), height_limit=int(height * 0.08), min_size=46)
+            lines.append(
+                "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00000000&\\bord4\\shad1}%s"
+                % (end, width // 2, y, fs1, _escape_ass_text(first))
+            )
+            if rest:
+                fs2 = _fit_overlay_font_size(66, _overlay_plain_lines(rest), width=int(width * 0.92), height_limit=int(height * 0.11), min_size=42)
+                lines.append(
+                    "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord5\\shad1}%s"
+                    % (end, width // 2, y + int(fs1 * 0.86), fs2, _escape_ass_text(rest))
+                )
+        if title or subtitle:
+            x = int(width * _float_value(overlay_style.get("title_x_ratio"), 0.09))
+            y = int(height * _float_value(overlay_style.get("title_y_ratio"), 0.43))
+            if title:
+                lines.append(
+                    "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an1\\pos(%d,%d)\\fs32\\c&H0000F7FF&\\3c&H00111111&\\bord2\\shad1}%s"
+                    % (end, x, y, _escape_ass_text(title))
+                )
+            if subtitle:
+                lines.append(
+                    "Dialogue: 7,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an1\\pos(%d,%d)\\fs26\\c&H00FFFFFF&\\3c&H00111111&\\bord2\\shad1}%s"
+                    % (end, x, y + 42, _escape_ass_text(subtitle))
+                )
+        if badge:
+            bar_w = int(width * 0.84)
+            bar_h = int(height * 0.07)
+            x1 = (width - bar_w) // 2
+            y1 = int(height * _float_value(overlay_style.get("badge_y_ratio"), 0.58))
+            lines.append(_ass_box_dialogue(end, "&H00FFFFFF", [(x1, y1), (x1 + bar_w, y1), (x1 + bar_w, y1 + bar_h), (x1, y1 + bar_h)], layer=4))
+            fs = _fit_overlay_font_size(42, [badge], width=bar_w - 40, height_limit=bar_h - 8, min_size=30)
+            lines.append(
+                "Dialogue: 8,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00000000&\\bord0\\shad0}%s"
+                % (end, width // 2, y1 + bar_h // 2, fs, _escape_ass_text(badge))
+            )
+        return lines
+
+    if layout == "tea_center_title":
+        y = int(height * _float_value(overlay_style.get("headline_y_ratio"), 0.47))
+        if title:
+            fs = _fit_overlay_font_size(int(overlay_style.get("headline_font_size") or 92), _overlay_plain_lines(title), width=int(width * 0.84), height_limit=int(height * 0.11), min_size=54)
+            lines.append(
+                "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00111111&\\bord5\\shad2}%s"
+                % (end, width // 2, y, fs, _escape_ass_text(title))
+            )
+        if subtitle:
+            fs2 = _fit_overlay_font_size(int(overlay_style.get("subheadline_font_size") or 56), _overlay_plain_lines(subtitle), width=int(width * 0.86), height_limit=int(height * 0.09), min_size=38)
+            lines.append(
+                "Dialogue: 7,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00111111&\\bord4\\shad2}%s"
+                % (end, width // 2, y + int(fs2 * 1.05), fs2, _escape_ass_text(subtitle))
+            )
+        return lines
+
+    if layout == "red_yellow_hook":
+        y = int(height * _float_value(overlay_style.get("headline_y_ratio"), 0.10))
+        if title:
+            fs = _fit_overlay_font_size(int(overlay_style.get("headline_font_size") or 78), _overlay_plain_lines(title), width=int(width * 0.9), height_limit=int(height * 0.10), min_size=46)
+            lines.append(
+                "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H002620D8&\\3c&H00FFFFFF&\\bord4\\shad2\\frz-2}%s"
+                % (end, width // 2, y, fs, _escape_ass_text(title))
+            )
+        if subtitle:
+            fs2 = _fit_overlay_font_size(int(overlay_style.get("subheadline_font_size") or 70), _overlay_plain_lines(subtitle), width=int(width * 0.86), height_limit=int(height * 0.09), min_size=44)
+            lines.append(
+                "Dialogue: 7,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00000000&\\bord4\\shad2\\frz-2}%s"
+                % (end, width // 2, y + int(fs2 * 0.98), fs2, _escape_ass_text(subtitle))
+            )
+        return lines
+
+    if layout == "top_banner":
+        top_lines = _overlay_plain_lines(top_text)
+        profile_title = _overlay_text_value_any(texts, caption_style, "title")
+        profile_subtitle = _overlay_text_value_any(texts, caption_style, "subtitle", "subheadline")
+        title_lines = _overlay_plain_lines(profile_title)
+        subtitle_lines = _overlay_plain_lines(profile_subtitle)
+        default_ratio = 0.30 if len(top_lines) > 1 else 0.22
+        ratio = _float_value(overlay_style.get("banner_height_ratio"), default_ratio)
+        box_h = min(max(120, int(height * ratio)), max(120, height - 24))
+        bg = str(overlay_style.get("banner_color") or "&HA8F3E7CF")
+        text_color = str(overlay_style.get("headline_color") or "&H001F4A86")
+        outline = str(overlay_style.get("headline_outline") or "&H00FFFFFF")
+        raw_fs = int(overlay_style.get("headline_font_size") or max(58, width * 0.085))
+        fs = _fit_overlay_font_size(raw_fs, top_lines, width=width, height_limit=int(box_h * 0.88), min_size=40)
+        if top_text:
+            lines.append(_ass_box_dialogue(end, bg, [(0, 0), (width, 0), (width, box_h), (0, box_h)]))
+            lines.append(
+                "Dialogue: 5,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c%s\\3c%s\\bord4\\shad1}%s"
+                % (end, width // 2, int(box_h * _float_value(overlay_style.get("headline_y_ratio"), 0.56)), fs, text_color, outline, _escape_ass_text(top_text))
+            )
+        if title_lines or subtitle_lines:
+            base_x = int(width * _float_value(overlay_style.get("profile_x_ratio"), 0.10))
+            base_y = int(height * _float_value(overlay_style.get("profile_y_ratio"), 0.57))
+            profile_limit = int(width * 0.48)
+            title_fs = _fit_overlay_font_size(int(overlay_style.get("profile_title_font_size") or max(34, width * 0.045)), title_lines, width=profile_limit, height_limit=int(height * 0.12), min_size=24)
+            subtitle_fs = _fit_overlay_font_size(int(overlay_style.get("profile_subtitle_font_size") or max(22, width * 0.027)), subtitle_lines, width=profile_limit, height_limit=int(height * 0.14), min_size=18)
+            if profile_title:
+                lines.append("Dialogue: 6,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an1\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H002A1606&\\bord4\\shad2}%s" % (end, base_x, base_y, title_fs, _escape_ass_text(profile_title)))
+            if profile_subtitle:
+                lines.append("Dialogue: 6,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an1\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H002A1606&\\bord2\\shad2}%s" % (end, base_x, base_y + max(30, int(title_fs * 0.78)), subtitle_fs, _escape_ass_text(profile_subtitle)))
+        return lines
+
+    if layout == "center_quote":
+        y = int(height * _float_value(overlay_style.get("headline_y_ratio"), 0.48))
+        if title:
+            lines.append("Dialogue: 5,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c%s\\3c%s\\bord5\\shad2}%s" % (end, width // 2, y, int(overlay_style.get("headline_font_size") or 88), str(overlay_style.get("headline_color") or "&H00FFFFFF"), str(overlay_style.get("headline_outline") or "&H00222931"), _escape_ass_text(title)))
+        if subtitle:
+            lines.append("Dialogue: 5,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H001E293B&\\bord2\\shad2}%s" % (end, width // 2, y + 68, int(overlay_style.get("subheadline_font_size") or 42), _escape_ass_text(subtitle)))
+        return lines
+
+    if layout == "market_label":
+        y = int(height * _float_value(overlay_style.get("headline_y_ratio"), 0.58))
+        fs = int(overlay_style.get("headline_font_size") or 84)
+        if badge:
+            x1 = int(width * 0.13)
+            x2 = int(width * 0.50)
+            y1 = y - int(fs * 0.95)
+            y2 = y - int(fs * 0.40)
+            lines.append(_ass_box_dialogue(end, str(overlay_style.get("badge_color") or "&H001B7BE6"), [(x1, y1), (x2, y1), (x2, y2), (x1, y2)], layer=3))
+            lines.append("Dialogue: 6,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\bord0\\shad0}%s" % (end, (x1 + x2) // 2, (y1 + y2) // 2, max(28, int(fs * 0.34)), _escape_ass_text(badge)))
+        if title:
+            lines.append("Dialogue: 5,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c%s\\3c%s\\bord5\\shad3}%s" % (end, width // 2, y, fs, str(overlay_style.get("headline_color") or "&H00FFFFFF"), str(overlay_style.get("headline_outline") or "&H00111111"), _escape_ass_text(title)))
+        return lines
+
+    return lines
+
+
 def _write_pop_caption_ass(
     job_dir: Path,
     captions: List[Dict[str, Any]],
@@ -3145,6 +3478,8 @@ def _write_pop_caption_ass(
     caption_style: Dict[str, Any],
     play_width: int = 1080,
     play_height: int = 1920,
+    duration_sec: Optional[float] = None,
+    overlay_texts: Optional[Dict[str, str]] = None,
 ) -> Path:
     ass_path = job_dir / "fallback_captions.ass"
     ass_font_size = int(caption_style.get("ass_font_size") or 86)
@@ -3165,10 +3500,26 @@ def _write_pop_caption_ass(
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: PopCaption,{_ass_font_name()},{ass_font_size},{ass_primary},&H00FFFFFF,{ass_outline},&H90000000,-1,0,0,0,100,100,0,0,1,{ass_border},{ass_shadow},{ass_alignment},90,90,{ass_margin_v},1",
+        f"Style: OverlayTitle,{_ass_font_name()},72,&H00FFFFFF,&H00FFFFFF,&H00111827,&H64000000,-1,0,0,0,100,100,0,0,1,4,2,5,30,30,30,1",
+        f"Style: OverlaySub,{_ass_font_name()},42,&H00FFFFFF,&H00FFFFFF,&H00111827,&H64000000,-1,0,0,0,100,100,0,0,1,2,1,5,30,30,30,1",
+        f"Style: OverlayBox,{_ass_font_name()},32,&H80FFFFFF,&H80FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
+    if duration_sec is None:
+        duration_sec = 0.0
+        for cap in captions:
+            duration_sec = max(duration_sec, float(cap.get("end") or 0) / 1_000_000.0)
+    lines.extend(
+        _overlay_dialogues(
+            caption_style,
+            play_width=play_width,
+            play_height=play_height,
+            duration_sec=max(duration_sec or 0.5, 0.5),
+            overlay_texts=overlay_texts,
+        )
+    )
     fallback_effect = str(caption_style.get("ass_effect") or "")
     is_typewriter = str(caption_style.get("caption_motion") or "") == "typewriter"
     for idx, cap in enumerate(captions):
@@ -3229,6 +3580,7 @@ def _render_fallback_caption_video(
         caption_style=caption_style,
         play_width=play_width,
         play_height=play_height,
+        duration_sec=float(source_info.get("duration") or 0.5),
     )
     output_path = job_dir / "fallback_render.mp4"
     _run_cmd(

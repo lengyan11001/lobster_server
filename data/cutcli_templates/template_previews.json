@@ -1,35 +1,35 @@
 {
   "auto_caption_pop_huazi_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4?v=real-stt-typewriter-20260604c",
-    "source": "f6d33710677daeddfda25f021246a681.mp4",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4?v=ref-card-20260604f",
+    "source": "cutcli_source_f6d337.mp4",
     "caption_source": "stt",
     "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
-    "style": "yellow_burst"
+    "style": "business_side_card"
   },
   "auto_caption_clean_fade_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_clean_fade_v1.mp4?v=real-stt-typewriter-20260604c",
-    "source": "f6d33710677daeddfda25f021246a681.mp4",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_clean_fade_v1.mp4?v=ref-card-20260604f",
+    "source": "cutcli_source_f6d337.mp4",
     "caption_source": "stt",
     "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
-    "style": "clean_fade"
+    "style": "education_focus_bar"
   },
   "auto_caption_neon_focus_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4?v=real-stt-typewriter-20260604c",
-    "source": "f6d33710677daeddfda25f021246a681.mp4",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4?v=ref-card-20260604f",
+    "source": "cutcli_source_f6d337.mp4",
     "caption_source": "stt",
     "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
-    "style": "side_neon"
+    "style": "tea_center_title"
   },
   "auto_caption_punch_big_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_punch_big_v1.mp4?v=real-stt-typewriter-20260604c",
-    "source": "f6d33710677daeddfda25f021246a681.mp4",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_punch_big_v1.mp4?v=ref-card-20260604f",
+    "source": "cutcli_source_f6d337.mp4",
     "caption_source": "stt",
     "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
-    "style": "punch_big"
+    "style": "red_yellow_hook"
   },
   "auto_caption_health_banner_v1": {
     "preview_url": "/client/client-code/cutcli_templates/auto_caption_health_banner_v1.mp4?v=overlay-layout-20260604b",

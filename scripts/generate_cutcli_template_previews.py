@@ -79,9 +79,19 @@ def _load_stt_data(args: argparse.Namespace, *, ffmpeg: str, source: Path, scrat
     return stt_data
 
 
-def _write_preview_catalog(out_dir: Path, duration_sec: float, version: str, source_name: str) -> None:
+def _write_preview_catalog(out_dir: Path, duration_sec: float, version: str, source_name: str, selected_ids: List[str]) -> None:
     catalog: Dict[str, Any] = {}
-    for template_id, template in templates._TEMPLATES.items():
+    if templates._PREVIEW_CATALOG_FILE.exists():
+        try:
+            loaded = json.loads(templates._PREVIEW_CATALOG_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                catalog.update(loaded)
+        except Exception:
+            pass
+    for template_id in selected_ids:
+        template = templates._TEMPLATES.get(template_id)
+        if not template:
+            continue
         style = templates._caption_style_for_template(template)
         catalog[template_id] = {
             "preview_url": f"{templates._STATIC_PREVIEW_PUBLIC_PREFIX}/{template_id}.mp4?v={version}",
@@ -107,6 +117,7 @@ def main() -> None:
     parser.add_argument("--refresh-stt", action="store_true")
     parser.add_argument("--brand", default="bihuo")
     parser.add_argument("--version", default="")
+    parser.add_argument("--templates", default="")
     args = parser.parse_args()
 
     source = Path(args.source).resolve()
@@ -121,10 +132,16 @@ def main() -> None:
     stt_data = _load_stt_data(args, ffmpeg=ffmpeg, source=source, scratch=scratch)
     version = args.version.strip() or time.strftime("%Y%m%d%H%M%S")
 
-    for template_id, template in templates._TEMPLATES.items():
+    selected = [item.strip() for item in str(args.templates or "").split(",") if item.strip()]
+    selected_ids = selected or list(templates._TEMPLATES.keys())
+
+    for template_id in selected_ids:
+        template = templates._TEMPLATES.get(template_id)
+        if not template:
+            raise KeyError(f"unknown template: {template_id}")
         style = templates._caption_style_for_template(template)
         captions = _template_captions(template, stt_data, duration_sec)
-        ass_path = templates._write_pop_caption_ass(scratch, captions, caption_style=style)
+        ass_path = templates._write_pop_caption_ass(scratch, captions, caption_style=style, duration_sec=duration_sec)
         named_ass = scratch / f"{template_id}.ass"
         named_ass.write_text(ass_path.read_text(encoding="utf-8"), encoding="utf-8")
         output = out_dir / f"{template_id}.mp4"
@@ -157,7 +174,7 @@ def main() -> None:
         ]
         templates._run_cmd(cmd, timeout=900)
         print(f"{template_id}: {output} ({output.stat().st_size} bytes)")
-    _write_preview_catalog(out_dir, duration_sec, version, source.name)
+    _write_preview_catalog(out_dir, duration_sec, version, source.name, selected_ids)
     print(f"catalog: {templates._PREVIEW_CATALOG_FILE} (v={version})")
 
 
