@@ -74,11 +74,11 @@ def _public_url(path: str) -> str:
 _DEFAULT_OVERLAY_FIELDS: List[Dict[str, Any]] = [
     {
         "key": "headline",
-        "label": "\u9876\u90e8\u56fa\u5b9a\u6587\u6848",
+        "label": "\u4e3b\u6807\u9898",
         "placeholder": "\u6bcf\u5929 3 \u5206\u949f\n\u6c14\u8840\u65fa\u5230\u5192\u7ea2\u5149",
         "default": "",
         "multiline": True,
-        "max_length": 48,
+        "max_length": 32,
     },
     {
         "key": "subheadline",
