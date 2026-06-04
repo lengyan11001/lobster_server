@@ -1,4 +1,5 @@
 from backend.app.api import cutcli_templates as templates
+from backend.app.models import CreativeGenerationJob
 
 
 def _caption_texts(stt_data):
@@ -314,3 +315,155 @@ def test_caption_quality_rejects_visual_overflow():
 
     assert quality["visual_overflow_count"] == 1
     assert "caption_visual_overflow" in errors
+
+
+def test_cutcli_job_public_payload_uses_database_row(db_session, db_session_factory, monkeypatch):
+    monkeypatch.setattr(templates, "SessionLocal", db_session_factory)
+    template = templates._TEMPLATES[templates._AUTO_CAPTION_TEMPLATE_ID]
+    row = templates._create_cutcli_job(
+        db_session,
+        job_id="20260604000000_abcdef12",
+        user_id=7,
+        template=template,
+        source_asset_id="src123",
+        source_name="source.mp4",
+        source_info={"width": 720, "height": 1280, "duration": 12.3},
+        quality_policy={"expected_caption_tracks": 1},
+    )
+    templates._update_cutcli_job(
+        row.job_id,
+        status="completed",
+        stage="completed",
+        asset_ids=["asset123"],
+        result_updates={
+            "preview_url": "https://cdn.example/final.mp4",
+            "open_url": "https://cdn.example/final.mp4",
+            "preview_asset_id": "asset123",
+            "caption_count": 4,
+            "render_strategy": "cutcli_cloud",
+        },
+        meta_updates={"local_workspace_cleanup": {"removed_bytes": 123}},
+    )
+
+    db_session.expire_all()
+    saved = (
+        db_session.query(CreativeGenerationJob)
+        .filter(CreativeGenerationJob.job_id == row.job_id)
+        .first()
+    )
+    payload = templates._job_row_to_public(saved)
+
+    assert payload["job_id"] == row.job_id
+    assert payload["status"] == "completed"
+    assert payload["template_id"] == template["id"]
+    assert payload["preview_asset_id"] == "asset123"
+    assert payload["preview_url"] == "https://cdn.example/final.mp4"
+    assert payload["caption_count"] == 4
+    assert payload["audio_url"] == ""
+    assert payload["local_workspace_cleanup"]["removed_bytes"] == 123
+
+
+def test_auto_caption_job_uses_client_audio_url_without_server_extract(
+    db_session,
+    db_session_factory,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(templates, "SessionLocal", db_session_factory)
+    monkeypatch.setattr(templates, "_JOBS_DIR", tmp_path)
+    job_id = "20260604000001_abcdef12"
+    (tmp_path / job_id).mkdir(parents=True)
+    template = templates._TEMPLATES[templates._AUTO_CAPTION_TEMPLATE_ID]
+    audio_url = "https://cdn.example/audio.wav"
+    templates._create_cutcli_job(
+        db_session,
+        job_id=job_id,
+        user_id=7,
+        template=template,
+        source_asset_id=None,
+        source_name="source.mp4",
+        source_info={"width": 720, "height": 1280, "duration": 2.0},
+        quality_policy={"expected_caption_tracks": 1},
+        audio_url=audio_url,
+    )
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("server audio extraction should be skipped")
+
+    monkeypatch.setattr(templates, "_find_cutcli_bin", lambda: "cutcli")
+    monkeypatch.setattr(templates, "_find_ffmpeg_bin", fail_if_called)
+    monkeypatch.setattr(templates, "_extract_audio_wav", fail_if_called)
+    monkeypatch.setattr(templates, "_upload_job_file_to_tos", fail_if_called)
+    monkeypatch.setattr(templates, "_load_sutui_token_for_stt", lambda *_args, **_kwargs: ("tok", "env.server"))
+    monkeypatch.setattr(templates, "_stt_create_task", lambda token, url, *, job_dir: {"task_id": "stt1"})
+    monkeypatch.setattr(templates, "_stt_poll_task", lambda token, task_id, *, job_dir: {"output": {}})
+    monkeypatch.setattr(
+        templates,
+        "_captions_from_stt",
+        lambda *_args, **_kwargs: [
+            {"text": "hello", "start": 0, "end": 1_000_000, "fontSize": 12}
+        ],
+    )
+    monkeypatch.setattr(
+        templates,
+        "_validate_caption_quality",
+        lambda *_args, **_kwargs: ({"caption_count": 1}, [], []),
+    )
+    monkeypatch.setattr(
+        templates,
+        "_build_auto_caption_cutcli_draft",
+        lambda **_kwargs: ("draft1", {"draft_id": "draft1"}, {"actual_caption_count": 1}, []),
+    )
+    monkeypatch.setattr(
+        templates,
+        "_render_cutcli_cloud",
+        lambda *_args, **_kwargs: {"url": "https://cdn.example/final.mp4", "job_id": "cloud1"},
+    )
+    monkeypatch.setattr(
+        templates,
+        "_mirror_video_url_to_tos",
+        lambda *_args, **_kwargs: ("https://tos.example/final.mp4", 123, []),
+    )
+    monkeypatch.setattr(templates, "_save_auto_caption_asset", lambda **_kwargs: "asset-final")
+    monkeypatch.setattr(templates, "_cleanup_auto_caption_workspace_and_record", lambda job_id: None)
+
+    templates._run_auto_caption_job_sync(
+        job_id=job_id,
+        user_id=7,
+        template_id=template["id"],
+        source="https://cdn.example/source.mp4",
+        source_asset_id=None,
+        source_name="source.mp4",
+        source_info={"width": 720, "height": 1280, "duration": 2.0},
+        audio_url=audio_url,
+    )
+
+    db_session.expire_all()
+    saved = (
+        db_session.query(CreativeGenerationJob)
+        .filter(CreativeGenerationJob.job_id == job_id)
+        .first()
+    )
+    payload = templates._job_row_to_public(saved)
+    assert payload["status"] == "completed"
+    assert payload["audio_url"] == audio_url
+    assert payload["preview_url"] == "https://tos.example/final.mp4"
+    assert saved.meta["audio_source"] == "client_audio_url"
+
+
+def test_cutcli_workspace_cleanup_removes_job_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(templates, "_JOBS_DIR", tmp_path)
+    job_id = "20260604000000_abcdef12"
+    job_dir = tmp_path / job_id
+    nested = job_dir / "cutcli_drafts" / "draft_a"
+    nested.mkdir(parents=True)
+    (job_dir / "source.mp4").write_bytes(b"source")
+    (job_dir / "audio.wav").write_bytes(b"audio")
+    (nested / "draft.json").write_bytes(b"draft")
+
+    cleanup = templates._cleanup_auto_caption_workspace(job_id)
+
+    assert cleanup["removed_bytes"] == len(b"sourceaudiodraft")
+    assert cleanup["removed_files"] == 2
+    assert cleanup["removed_dirs"] >= 1
+    assert not job_dir.exists()

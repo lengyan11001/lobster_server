@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
-from ..models import Asset, User
+from ..models import Asset, CreativeGenerationJob, User
 from .assets import ASSETS_DIR, _upload_to_tos
 from .auth import brand_mark_for_jwt_claim, get_current_user
 from ..core.config import settings
@@ -38,6 +38,7 @@ _AUTO_CAPTION_TEMPLATE_ID = "auto_caption_pop_huazi_v1"
 _AUTO_CAPTION_CLEAN_TEMPLATE_ID = "auto_caption_clean_fade_v1"
 _AUTO_CAPTION_NEON_TEMPLATE_ID = "auto_caption_neon_focus_v1"
 _AUTO_CAPTION_PUNCH_TEMPLATE_ID = "auto_caption_punch_big_v1"
+_CUTCLI_TEMPLATE_JOB_FEATURE = "cutcli_template"
 _STT_MODEL = "volcengine/speech-to-text/bigmodel-v2"
 _STT_API_BASE = (
     getattr(settings, "sutui_api_base", None)
@@ -71,14 +72,14 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
     _AUTO_CAPTION_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_TEMPLATE_ID,
         "kind": "auto_caption",
-        "name": "爆点黄字弹跳",
-        "description": "短句爆点型字幕，黄字蓝边、重入场、强弹跳，适合开场钩子、卖点强调和口播重点句。",
+        "name": "\u7206\u70b9\u9ec4\u5b57\u5f39\u8df3",
+        "description": "\u77ed\u53e5\u7206\u70b9\u578b\u5b57\u5e55\uff0c\u9ec4\u5b57\u84dd\u8fb9\u3001\u91cd\u5165\u573a\u3001\u5f3a\u5f39\u8df3\uff0c\u9002\u5408\u5f00\u573a\u94a9\u5b50\u3001\u5356\u70b9\u5f3a\u8c03\u548c\u53e3\u64ad\u91cd\u70b9\u53e5\u3002",
         "aspect_ratio": "source",
         "default_duration": 0,
-        "tags": ["爆点", "黄字蓝边", "弹跳"],
+        "tags": ["\u7206\u70b9", "\u9ec4\u5b57\u84dd\u8fb9", "\u5f39\u8df3"],
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
-        "quality_label": "中下大字 + 爆点弹跳",
+        "quality_label": "\u4e2d\u4e0b\u5927\u5b57 + \u7206\u70b9\u5f39\u8df3",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4",
         "caption_style": {
             "id": "yellow_burst",
@@ -111,20 +112,20 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
     _AUTO_CAPTION_CLEAN_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_CLEAN_TEMPLATE_ID,
         "kind": "auto_caption",
-        "name": "访谈清透字幕",
-        "description": "细描边白字，稳定放在画面下三分之一，渐显入场，不抢人物表情，适合课程、采访和员工口播。",
+        "name": "\u8bbf\u8c08\u6e05\u900f\u5b57\u5e55",
+        "description": "\u7ec6\u63cf\u8fb9\u767d\u5b57\uff0c\u7a33\u5b9a\u653e\u5728\u753b\u9762\u4e0b\u4e09\u5206\u4e4b\u4e00\uff0c\u6e10\u663e\u5165\u573a\uff0c\u4e0d\u62a2\u4eba\u7269\u8868\u60c5\uff0c\u9002\u5408\u8bfe\u7a0b\u3001\u91c7\u8bbf\u548c\u5458\u5de5\u53e3\u64ad\u3002",
         "aspect_ratio": "source",
         "default_duration": 0,
-        "tags": ["访谈", "课程", "清透"],
+        "tags": ["\u8bbf\u8c08", "\u8bfe\u7a0b", "\u6e05\u900f"],
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
-        "quality_label": "下三分之一 + 轻渐显",
+        "quality_label": "\u4e0b\u4e09\u5206\u4e4b\u4e00 + \u8f7b\u6e10\u663e",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_clean_fade_v1.mp4",
         "caption_style": {
             "id": "clean_fade",
             "text_effect": "",
             "text_effect_id": "",
-            "in_animation": "渐显",
+            "in_animation": "\u6e10\u663e",
             "in_animation_duration": 360_000,
             "loop_animation": "",
             "loop_animation_duration": 0,
@@ -151,14 +152,14 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
     _AUTO_CAPTION_NEON_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_NEON_TEMPLATE_ID,
         "kind": "auto_caption",
-        "name": "科技侧标字幕",
-        "description": "字幕从画面左侧像 UI 标注一样浮出，青蓝霓虹配深色描边，适合 AI、SaaS、产品演示和科技感内容。",
+        "name": "\u79d1\u6280\u4fa7\u6807\u5b57\u5e55",
+        "description": "\u5b57\u5e55\u4ece\u753b\u9762\u5de6\u4fa7\u50cf UI \u6807\u6ce8\u4e00\u6837\u6d6e\u51fa\uff0c\u9752\u84dd\u9713\u8679\u914d\u6df1\u8272\u63cf\u8fb9\uff0c\u9002\u5408 AI\u3001SaaS\u3001\u4ea7\u54c1\u6f14\u793a\u548c\u79d1\u6280\u611f\u5185\u5bb9\u3002",
         "aspect_ratio": "source",
         "default_duration": 0,
-        "tags": ["科技", "侧标", "霓虹"],
+        "tags": ["\u79d1\u6280", "\u4fa7\u6807", "\u9713\u8679"],
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
-        "quality_label": "左侧终端快打 + 青蓝霓虹",
+        "quality_label": "\u5de6\u4fa7\u7ec8\u7aef\u5feb\u6253 + \u9752\u84dd\u9713\u8679",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4",
         "caption_style": {
             "id": "side_neon",
@@ -195,14 +196,14 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
     _AUTO_CAPTION_PUNCH_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_PUNCH_TEMPLATE_ID,
         "kind": "auto_caption",
-        "name": "短剧重击大字",
-        "description": "一句一炸的短剧字幕，字号更大、位置更高、入场更猛，适合情绪反转、冲突句和强钩子。",
+        "name": "\u77ed\u5267\u91cd\u51fb\u5927\u5b57",
+        "description": "\u4e00\u53e5\u4e00\u7838\u7684\u77ed\u5267\u5b57\u5e55\uff0c\u5b57\u53f7\u66f4\u5927\u3001\u4f4d\u7f6e\u66f4\u9ad8\u3001\u5165\u573a\u66f4\u731b\uff0c\u9002\u5408\u60c5\u7eea\u53cd\u8f6c\u3001\u51b2\u7a81\u53e5\u548c\u5f3a\u94a9\u5b50\u3002",
         "aspect_ratio": "source",
         "default_duration": 0,
-        "tags": ["短剧", "重击", "钩子"],
+        "tags": ["\u77ed\u5267", "\u91cd\u51fb", "\u94a9\u5b50"],
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
-        "quality_label": "居中重击 + 情绪反转",
+        "quality_label": "\u5c45\u4e2d\u91cd\u51fb + \u60c5\u7eea\u53cd\u8f6c",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_punch_big_v1.mp4",
         "caption_style": {
             "id": "punch_big",
@@ -250,6 +251,17 @@ class TemplateListItem(BaseModel):
     preview_url: str = ""
     sample_video_url: str = ""
     sample_asset_id: str = ""
+
+
+class CutcliSttTranscribeBody(BaseModel):
+    audio_url: str
+
+
+class CutcliCloudRenderDraftBody(BaseModel):
+    draft_id: str
+    draft_zip_url: str
+    timeout_seconds: int = 1800
+    mirror_to_tos: bool = True
 
 
 def _caption_style_for_template(template: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -314,7 +326,7 @@ def _find_cutcli_bin() -> str:
             return str(Path(value))
     raise HTTPException(
         status_code=500,
-        detail="服务端未找到 cutcli，请先安装 CutCLI 或设置 CUTCLI_BIN。",
+        detail="server cutcli binary not found; install CutCLI or set CUTCLI_BIN",
     )
 
 
@@ -325,7 +337,7 @@ def _load_preview_catalog() -> Dict[str, Any]:
         data = json.loads(_PREVIEW_CATALOG_FILE.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except Exception as exc:
-        logger.warning("[CutCLI模板] failed to read preview catalog: %s", exc)
+        logger.warning("[CutCLI妯℃澘] failed to read preview catalog: %s", exc)
         return {}
 
 
@@ -370,7 +382,7 @@ def _find_ffprobe_bin() -> str:
         if b.exists():
             ffprobe = str(b)
     if not ffprobe or not Path(ffprobe).exists():
-        raise HTTPException(status_code=500, detail="服务端未找到 ffprobe，无法读取视频信息。")
+        raise HTTPException(status_code=500, detail="server ffprobe binary not found")
     return str(ffprobe)
 
 
@@ -400,7 +412,7 @@ def _run_cmd(
     cwd: Optional[Path] = None,
     env: Optional[Dict[str, str]] = None,
 ) -> str:
-    logger.info("[CutCLI模板] run: %s", " ".join(str(x) for x in args[:4]))
+    logger.info("[CutCLI妯℃澘] run: %s", " ".join(str(x) for x in args[:4]))
     proc = subprocess.run(
         args,
         cwd=str(cwd) if cwd else None,
@@ -428,7 +440,7 @@ def _json_from_cmd(
     try:
         value = json.loads(out)
     except Exception as exc:
-        raise RuntimeError(f"命令返回不是 JSON: {out[:500]}") from exc
+        raise RuntimeError(f"鍛戒护杩斿洖涓嶆槸 JSON: {out[:500]}") from exc
     return value if isinstance(value, dict) else {}
 
 
@@ -446,6 +458,13 @@ def _safe_ext(name: str, default: str = ".mp4") -> str:
     return default
 
 
+def _clean_public_http_url(value: str) -> str:
+    url = str(value or "").strip()
+    if re.match(r"^https?://", url, flags=re.IGNORECASE):
+        return url
+    return ""
+
+
 async def _resolve_source_video(
     *,
     file: Optional[UploadFile],
@@ -458,7 +477,7 @@ async def _resolve_source_video(
     if file is not None and file.filename:
         data = await file.read()
         if not data:
-            raise HTTPException(status_code=400, detail="上传的视频文件为空。")
+            raise HTTPException(status_code=400, detail="uploaded video file is empty")
         ext = _safe_ext(file.filename)
         src_path = job_dir / f"source{ext}"
         src_path.write_bytes(data)
@@ -468,22 +487,22 @@ async def _resolve_source_video(
     if aid:
         row = db.query(Asset).filter(Asset.asset_id == aid, Asset.user_id == user_id).first()
         if not row:
-            raise HTTPException(status_code=404, detail="没有找到这个素材 ID。")
+            raise HTTPException(status_code=404, detail="asset not found")
         if (row.media_type or "").lower() != "video":
-            raise HTTPException(status_code=400, detail="这个素材不是视频，请选择视频素材。")
+            raise HTTPException(status_code=400, detail="asset is not a video")
         local = _asset_local_path(row)
         if local:
             return str(local), row.asset_id, row.filename
         url = (row.source_url or "").strip()
         if url.startswith(("http://", "https://")):
             return url, row.asset_id, row.filename
-        raise HTTPException(status_code=400, detail="这个素材没有可用的视频文件或公网地址。")
+        raise HTTPException(status_code=400, detail="asset has no usable local video file or public URL")
 
     url = (video_url or "").strip()
     if url.startswith(("http://", "https://")):
         return url, None, Path(url.split("?")[0]).name or "remote-video.mp4"
 
-    raise HTTPException(status_code=400, detail="请上传视频、选择素材库视频，或填写视频素材 ID。")
+    raise HTTPException(status_code=400, detail="video file, video asset_id, or video_url is required")
 
 
 def _probe_video(ffprobe: str, source: str) -> Dict[str, Any]:
@@ -503,7 +522,7 @@ def _probe_video(ffprobe: str, source: str) -> Dict[str, Any]:
     try:
         data = json.loads(raw)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="无法读取视频信息，请确认视频文件可播放。") from exc
+        raise HTTPException(status_code=400, detail="cannot read video info; make sure the video is playable") from exc
     stream = (data.get("streams") or [{}])[0] or {}
     fmt = data.get("format") or {}
     width = int(stream.get("width") or 1080)
@@ -536,7 +555,7 @@ def _make_overlay_png(path: Path, *, title: str, subtitle: str, duration: int) -
     try:
         from PIL import Image, ImageDraw, ImageFont
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="服务端缺少 Pillow，无法生成模板包装层。") from exc
+        raise HTTPException(status_code=500, detail="server Pillow is missing; cannot generate overlay") from exc
 
     w, h = 1080, 1920
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -560,8 +579,8 @@ def _make_overlay_png(path: Path, *, title: str, subtitle: str, duration: int) -
     draw.line((72, 1480, 245, 1480), fill=gold, width=6)
     draw.rounded_rectangle((72, 1515, 1008, 1778), radius=34, fill=panel, outline=(255, 255, 255, 42), width=1)
 
-    title = (title or "品牌高光时刻").strip()[:28]
-    subtitle = (subtitle or "用一条视频生成高级宣传片").strip()[:46]
+    title = (title or "鍝佺墝楂樺厜鏃跺埢").strip()[:28]
+    subtitle = (subtitle or "鐢ㄤ竴鏉¤棰戠敓鎴愰珮绾у浼犵墖").strip()[:46]
     draw.text((118, 1565), title, fill=white, font=_pil_font(60, bold=True))
     draw.text((120, 1650), subtitle, fill=muted, font=_pil_font(34))
     draw.text((120, 1722), f"{duration}s TEMPLATE VIDEO", fill=gold, font=_pil_font(26))
@@ -609,60 +628,291 @@ class AutoCaptionJobError(RuntimeError):
         self.detail = detail
 
 
-def _job_manifest_path(job_id: str) -> Path:
-    return _JOBS_DIR / job_id / "manifest.json"
+def _utcnow() -> datetime:
+    return datetime.utcnow()
 
 
-def _read_job_manifest(job_id: str) -> Dict[str, Any]:
-    path = _job_manifest_path(job_id)
-    if not path.exists():
-        return {}
+def _ts(value: Any) -> int:
+    if isinstance(value, datetime):
+        return int(value.timestamp())
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        return int(value or 0)
     except Exception:
-        return {}
+        return 0
 
 
-def _write_job_manifest(job_id: str, data: Dict[str, Any]) -> None:
-    job_dir = _JOBS_DIR / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-    data["updated_at"] = int(time.time())
-    _job_manifest_path(job_id).write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
+def _job_row_to_public(row: CreativeGenerationJob) -> Dict[str, Any]:
+    request_payload = row.request_payload if isinstance(row.request_payload, dict) else {}
+    result_payload = row.result_payload if isinstance(row.result_payload, dict) else {}
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    template = request_payload.get("template") if isinstance(request_payload.get("template"), dict) else {}
+    quality = result_payload.get("quality") if isinstance(result_payload.get("quality"), dict) else {}
+    source_asset_id = (
+        result_payload.get("source_asset_id")
+        or request_payload.get("source_asset_id")
+        or ""
+    )
+    source_name = result_payload.get("source_name") or request_payload.get("source_name") or ""
+    audio_url = (
+        result_payload.get("audio_url")
+        or request_payload.get("audio_url")
+        or ""
+    )
+    preview_asset_id = (
+        result_payload.get("preview_asset_id")
+        or result_payload.get("final_asset_id")
+        or ((row.asset_ids or [None])[0] if isinstance(row.asset_ids, list) and row.asset_ids else "")
+        or ""
+    )
+    preview_url = result_payload.get("preview_url") or result_payload.get("open_url") or ""
+    open_url = result_payload.get("open_url") or result_payload.get("preview_url") or ""
+    return {
+        "ok": True,
+        "async": True,
+        "job_id": row.job_id,
+        "status": row.status or "",
+        "stage": row.stage or "",
+        "user_id": row.user_id,
+        "template_id": request_payload.get("template_id") or template.get("id") or "",
+        "template": template,
+        "template_name": template.get("name") or row.title or "",
+        "source_asset_id": source_asset_id,
+        "source_name": source_name,
+        "source_info": request_payload.get("source_info") or {},
+        "audio_url": audio_url,
+        "stt_model": meta.get("stt_model") or request_payload.get("stt_model") or _STT_MODEL,
+        "quality_policy": request_payload.get("quality_policy") or {},
+        "preview_asset_id": preview_asset_id,
+        "final_asset_id": result_payload.get("final_asset_id") or preview_asset_id,
+        "preview_url": preview_url,
+        "open_url": open_url,
+        "caption_count": result_payload.get("caption_count") or quality.get("caption_count") or 0,
+        "render_strategy": result_payload.get("render_strategy") or "",
+        "error": row.error or "",
+        "error_code": result_payload.get("error_code") or "",
+        "quality": quality,
+        "warnings": result_payload.get("warnings") or [],
+        "draft_id": result_payload.get("draft_id") or "",
+        "cloud_job_id": result_payload.get("cloud_job_id") or "",
+        "token_source": meta.get("token_source") or "",
+        "token_masked": meta.get("token_masked") or "",
+        "local_workspace_cleanup": meta.get("local_workspace_cleanup") or {},
+        "local_workspace_cleaned_at": _ts(meta.get("local_workspace_cleaned_at")),
+        "created_at": _ts(row.created_at),
+        "updated_at": _ts(row.updated_at),
+        "completed_at": _ts(row.completed_at),
+        "poll_path": f"/api/cutcli/templates/jobs/{row.job_id}",
+    }
+
+
+def _get_cutcli_job_row(db: Session, job_id: str) -> Optional[CreativeGenerationJob]:
+    return (
+        db.query(CreativeGenerationJob)
+        .filter(
+            CreativeGenerationJob.job_id == job_id,
+            CreativeGenerationJob.feature_type == _CUTCLI_TEMPLATE_JOB_FEATURE,
+            CreativeGenerationJob.deleted_at.is_(None),
+        )
+        .first()
     )
 
 
-def _update_job_manifest(job_id: str, **fields: Any) -> Dict[str, Any]:
-    cur = _read_job_manifest(job_id)
-    cur.update(fields)
-    _write_job_manifest(job_id, cur)
-    return cur
+def _create_cutcli_job(
+    db: Session,
+    *,
+    job_id: str,
+    user_id: int,
+    template: Dict[str, Any],
+    source_asset_id: Optional[str],
+    source_name: str,
+    source_info: Dict[str, Any],
+    quality_policy: Dict[str, Any],
+    audio_url: str = "",
+) -> CreativeGenerationJob:
+    now = _utcnow()
+    row = CreativeGenerationJob(
+        job_id=job_id,
+        user_id=user_id,
+        feature_type=_CUTCLI_TEMPLATE_JOB_FEATURE,
+        provider="cutcli",
+        status="running",
+        stage="queued",
+        title=str(template.get("name") or ""),
+        request_payload={
+            "template_id": template.get("id") or "",
+            "template": template,
+            "source_asset_id": source_asset_id,
+            "source_name": source_name,
+            "source_info": source_info,
+            "audio_url": audio_url,
+            "stt_model": _STT_MODEL,
+            "quality_policy": quality_policy,
+        },
+        result_payload={"audio_url": audio_url} if audio_url else {},
+        asset_ids=[],
+        saved_assets=[],
+        meta={
+            "stt_model": _STT_MODEL,
+            "audio_source": "client_audio_url" if audio_url else "",
+        },
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
 
 
-def _job_record_from_manifest(data: Dict[str, Any], fallback_job_id: str) -> Dict[str, Any]:
-    tpl = data.get("template") if isinstance(data.get("template"), dict) else {}
-    quality = data.get("quality") if isinstance(data.get("quality"), dict) else {}
-    return {
-        "job_id": data.get("job_id") or fallback_job_id,
-        "status": data.get("status") or "",
-        "stage": data.get("stage") or "",
-        "template_id": data.get("template_id") or tpl.get("id") or "",
-        "template_name": tpl.get("name") or data.get("template_name") or "",
-        "source_asset_id": data.get("source_asset_id") or "",
-        "source_name": data.get("source_name") or "",
-        "preview_asset_id": data.get("preview_asset_id") or data.get("final_asset_id") or "",
-        "preview_url": data.get("preview_url") or data.get("open_url") or "",
-        "open_url": data.get("open_url") or data.get("preview_url") or "",
-        "caption_count": data.get("caption_count") or quality.get("caption_count") or 0,
-        "render_strategy": data.get("render_strategy") or "",
-        "error": data.get("error") or "",
-        "error_code": data.get("error_code") or "",
-        "created_at": data.get("created_at") or 0,
-        "updated_at": data.get("updated_at") or 0,
-        "poll_path": f"/api/cutcli/templates/jobs/{data.get('job_id') or fallback_job_id}",
+def _merge_dict(base: Any, updates: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(base) if isinstance(base, dict) else {}
+    out.update(updates)
+    return out
+
+
+def _update_cutcli_job(job_id: str, **fields: Any) -> Dict[str, Any]:
+    db = SessionLocal()
+    try:
+        row = _get_cutcli_job_row(db, job_id)
+        if not row:
+            return {}
+        now = _utcnow()
+        status = fields.pop("status", None)
+        stage = fields.pop("stage", None)
+        error = fields.pop("error", None)
+        result_updates = fields.pop("result_updates", None)
+        meta_updates = fields.pop("meta_updates", None)
+        asset_ids = fields.pop("asset_ids", None)
+        provider_task_id = fields.pop("provider_task_id", None)
+        if status is not None:
+            row.status = str(status)
+        if stage is not None:
+            row.stage = str(stage)
+        if error is not None:
+            row.error = str(error) if error else None
+        if provider_task_id is not None:
+            row.provider_task_id = str(provider_task_id) if provider_task_id else None
+        if asset_ids is not None:
+            row.asset_ids = asset_ids
+            row.saved_assets = asset_ids
+        if result_updates:
+            row.result_payload = _merge_dict(row.result_payload, result_updates)
+        if meta_updates:
+            row.meta = _merge_dict(row.meta, meta_updates)
+        row.updated_at = now
+        if row.status in {"completed", "failed"} and row.completed_at is None:
+            row.completed_at = now
+        db.commit()
+        db.refresh(row)
+        return _job_row_to_public(row)
+    finally:
+        db.close()
+
+
+def _path_is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _path_size_bytes(path: Path) -> int:
+    try:
+        if path.is_file() or path.is_symlink():
+            return int(path.stat().st_size)
+        if path.is_dir():
+            total = 0
+            for item in path.rglob("*"):
+                try:
+                    if item.is_file() or item.is_symlink():
+                        total += int(item.stat().st_size)
+                except OSError:
+                    continue
+            return total
+    except OSError:
+        return 0
+    return 0
+
+
+def _remove_workspace_path(path: Path) -> Tuple[int, bool]:
+    size = _path_size_bytes(path)
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path, ignore_errors=True)
+        return size, True
+    try:
+        path.unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
+    return size, False
+
+
+def _cleanup_auto_caption_workspace(job_id: str) -> Dict[str, Any]:
+    result: Dict[str, Any] = {
+        "kept": [],
+        "removed_files": 0,
+        "removed_dirs": 0,
+        "removed_bytes": 0,
+        "warnings": [],
     }
+    job_dir = _JOBS_DIR / job_id
+    try:
+        jobs_root = _JOBS_DIR.resolve()
+        resolved_job_dir = job_dir.resolve()
+    except OSError as exc:
+        result["warnings"].append(f"cleanup_resolve_failed: {str(exc)[:180]}")
+        return result
+    if resolved_job_dir == jobs_root or not _path_is_relative_to(resolved_job_dir, jobs_root):
+        result["warnings"].append("cleanup_skipped_unsafe_job_dir")
+        return result
+    if not resolved_job_dir.exists():
+        return result
+    for item in list(resolved_job_dir.iterdir()):
+        try:
+            resolved_item = item.resolve()
+        except OSError:
+            continue
+        if not _path_is_relative_to(resolved_item, resolved_job_dir):
+            result["warnings"].append(f"cleanup_skipped_unsafe_path: {item.name}")
+            continue
+        try:
+            size, was_dir = _remove_workspace_path(resolved_item)
+            result["removed_bytes"] += size
+            if was_dir:
+                result["removed_dirs"] += 1
+            else:
+                result["removed_files"] += 1
+        except Exception as exc:
+            result["warnings"].append(f"cleanup_failed_{item.name}: {str(exc)[:180]}")
+    try:
+        resolved_job_dir.rmdir()
+        result["removed_dirs"] += 1
+    except OSError:
+        pass
+    return result
+
+
+def _cleanup_auto_caption_workspace_and_record(job_id: str) -> None:
+    try:
+        cleanup = _cleanup_auto_caption_workspace(job_id)
+        _update_cutcli_job(
+            job_id,
+            meta_updates={
+                "local_workspace_cleanup": cleanup,
+                "local_workspace_cleaned_at": int(time.time()),
+            },
+        )
+    except Exception as exc:
+        logger.warning("[cutcli-auto-caption] workspace cleanup failed job_id=%s: %s", job_id, exc)
+        _update_cutcli_job(
+            job_id,
+            meta_updates={
+                "local_workspace_cleanup": {
+                    "warnings": [f"cleanup_failed: {str(exc)[:180]}"],
+                },
+                "local_workspace_cleaned_at": int(time.time()),
+            },
+        )
 
 
 def _safe_error_text(value: Any, limit: int = 1200) -> str:
@@ -820,11 +1070,11 @@ def _stt_create_task(token: str, audio_url: str, *, job_dir: Path) -> Dict[str, 
     )
     if resp.status_code >= 400:
         msg = _safe_error_text(payload or resp.text)
-        code = "stt_balance_insufficient" if "余额不足" in msg or "balance" in msg.lower() else "stt_create_failed"
+        code = "stt_balance_insufficient" if "浣欓涓嶈冻" in msg or "balance" in msg.lower() else "stt_create_failed"
         raise AutoCaptionJobError(code, msg, detail=payload)
     if isinstance(payload, dict) and payload.get("code") not in (None, 200, "200"):
         msg = _safe_error_text(payload)
-        code = "stt_balance_insufficient" if "余额不足" in msg or "balance" in msg.lower() else "stt_create_failed"
+        code = "stt_balance_insufficient" if "浣欓涓嶈冻" in msg or "balance" in msg.lower() else "stt_create_failed"
         raise AutoCaptionJobError(code, msg, detail=payload)
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, dict):
@@ -870,13 +1120,13 @@ def _stt_poll_task(token: str, task_id: str, *, job_dir: Path, timeout_seconds: 
                 raise AutoCaptionJobError("stt_task_failed", _safe_error_text(data), detail=last_payload)
             if resp.status_code >= 400:
                 msg = _safe_error_text(last_payload)
-                code = "stt_balance_insufficient" if "余额不足" in msg or "balance" in msg.lower() else "stt_query_failed"
+                code = "stt_balance_insufficient" if "浣欓涓嶈冻" in msg or "balance" in msg.lower() else "stt_query_failed"
                 raise AutoCaptionJobError(code, msg, detail=last_payload)
             time.sleep(2.5)
     raise AutoCaptionJobError("stt_timeout", f"STT task timed out: {task_id}", detail=last_payload)
 
 
-_EDGE_PUNCT = " \t\r\n,.;:!?，。！？；：、\"'“”‘’（）()[]【】<>《》"
+_EDGE_PUNCT = " \t\r\n,.;:!?\uff0c\u3002\uff01\uff1f\uff1b\uff1a\u3001\"'\u201c\u201d\u2018\u2019\uff08\uff09()[]\u3010\u3011<>\u300a\u300b"
 
 
 def _clean_caption_text(text: Any) -> str:
@@ -923,7 +1173,7 @@ def _caption_needs_space_between(left: str, right: str) -> bool:
     right_lower = right.lower()
     if right_lower in {"'s", "'re", "'ve", "'ll", "'d", "'m", "n't"}:
         return False
-    if b in ".,!?;:%)]}，。！？；：、":
+    if b in ".,!?;:%)]}\uff0c\u3002\uff01\uff1f\uff1b\uff1a\u3001":
         return False
     if a in "([{":
         return False
@@ -1079,25 +1329,25 @@ def _caption_fits_wrapped_visual_width(
 
 
 _CAPTION_PROTECTED_PHRASES = (
-    "需要具备",
-    "财税顾问",
-    "一个专业",
-    "专业靠谱",
-    "靠谱的",
-    "具备",
-    "需要",
-    "财税",
-    "顾问",
-    "专业",
-    "靠谱",
-    "字幕",
-    "配音",
-    "自动",
-    "数字人",
+    "\u9700\u8981\u5177\u5907",
+    "\u8d22\u7a0e\u987e\u95ee",
+    "\u4e00\u4e2a\u4e13\u4e1a",
+    "\u4e13\u4e1a\u9760\u8c31",
+    "\u9760\u8c31\u7684",
+    "\u5177\u5907",
+    "\u9700\u8981",
+    "\u8d22\u7a0e",
+    "\u987e\u95ee",
+    "\u4e13\u4e1a",
+    "\u9760\u8c31",
+    "\u5b57\u5e55",
+    "\u914d\u97f3",
+    "\u81ea\u52a8",
+    "\u6570\u5b57\u4eba",
 )
-_CAPTION_BAD_LINE_END_CHARS = set("需具财顾专靠数自配字")
-_CAPTION_BAD_LINE_START_CHARS = set("备问税业谱音幕动")
-_CAPTION_TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?|[\u4e00-\u9fff]|[^\s]")
+_CAPTION_BAD_LINE_END_CHARS = set("\u9700\u5177\u8d22\u987e\u4e13\u9760\u6570\u81ea\u914d\u5b57")
+_CAPTION_BAD_LINE_START_CHARS = set("\u5907\u95ee\u7a0e\u4e1a\u8c31\u97f3\u5e55\u52a8")
+_CAPTION_TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:['\u2019][A-Za-z0-9]+)?|[\u4e00-\u9fff]|[^\s]")
 
 
 def _caption_tokens(text: str) -> List[str]:
@@ -1135,7 +1385,7 @@ def _caption_boundary_score(text: str, index: int, target_units: float) -> float
         score -= 20.0
     elif left and left[-1] in _CAPTION_SOFT_BREAK_CHARS:
         score -= 10.0
-    for phrase in ("需要", "具备", "财税", "顾问"):
+    for phrase in ("\u9700\u8981", "\u5177\u5907", "\u8d22\u7a0e", "\u987e\u95ee"):
         if right.startswith(phrase):
             score -= 6.0
     return score
@@ -1719,6 +1969,7 @@ def _build_auto_caption_cutcli_draft(
     caption_style: Dict[str, Any],
 ) -> Tuple[str, Dict[str, Any], Dict[str, Any], List[str]]:
     warnings: List[str] = []
+    env = _job_cutcli_env(job_dir)
     draft_name = "lobster_caption_" + job_dir.name
     draft_width = int(source_info.get("width") or 1080)
     draft_height = int(source_info.get("height") or 1920)
@@ -1736,6 +1987,7 @@ def _build_auto_caption_cutcli_draft(
             "--pretty",
         ],
         timeout=60,
+        env=env,
     )
     draft_id = str(created.get("draftId") or draft_name)
     duration_us = max(100_000, int(float(source_info.get("duration") or 0.1) * 1_000_000))
@@ -1753,7 +2005,7 @@ def _build_auto_caption_cutcli_draft(
             }
         ],
     )
-    _run_cmd([cutcli, "videos", "add", draft_id, "--video-infos", video_json], timeout=180)
+    _run_cmd([cutcli, "videos", "add", draft_id, "--video-infos", video_json], timeout=180, env=env)
 
     captions_json = _write_json(job_dir / "cutcli_auto_captions.json", _cutcli_caption_payload(captions))
     caption_cmd = [
@@ -1784,11 +2036,11 @@ def _build_auto_caption_cutcli_draft(
     text_effect = str(caption_style.get("text_effect") or "").strip()
     if text_effect:
         caption_cmd.extend(["--text-effect", text_effect])
-    _run_cmd(caption_cmd, timeout=180)
+    _run_cmd(caption_cmd, timeout=180, env=env)
 
     captions_list: Any = []
     try:
-        captions_list = _json_value_from_cmd([cutcli, "captions", "list", draft_id], timeout=90)
+        captions_list = _json_value_from_cmd([cutcli, "captions", "list", draft_id], timeout=90, env=env)
         (job_dir / "captions_list.json").write_text(
             json.dumps(captions_list, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -1807,7 +2059,7 @@ def _build_auto_caption_cutcli_draft(
         if actual_captions != len(captions):
             warnings.append(f"caption_count_mismatch: expected {len(captions)} got {actual_captions}")
 
-    info = _json_from_cmd([cutcli, "draft", "info", draft_id, "--pretty"], timeout=60)
+    info = _json_from_cmd([cutcli, "draft", "info", draft_id, "--pretty"], timeout=60, env=env)
     (job_dir / "draft_info.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
     quality = {
         "actual_caption_count": actual_captions,
@@ -1899,37 +2151,67 @@ def _run_auto_caption_job_sync(
     source_asset_id: Optional[str],
     source_name: str,
     source_info: Dict[str, Any],
+    audio_url: str = "",
 ) -> None:
     job_dir = _JOBS_DIR / job_id
     warnings: List[str] = []
     template = _TEMPLATES.get(template_id) or _TEMPLATES[_AUTO_CAPTION_TEMPLATE_ID]
     caption_style = _caption_style_for_template(template)
     db = SessionLocal()
+    ffmpeg: Optional[str] = None
     try:
-        _update_job_manifest(job_id, status="running", stage="extract_audio")
-        ffmpeg = _find_ffmpeg_bin()
         cutcli = _find_cutcli_bin()
-        audio_path = job_dir / "audio.wav"
-        _extract_audio_wav(ffmpeg=ffmpeg, source=source, out_path=audio_path)
+        stt_audio_url = _clean_public_http_url(audio_url)
+        if stt_audio_url:
+            _update_cutcli_job(
+                job_id,
+                status="running",
+                stage="stt_create",
+                result_updates={"audio_url": stt_audio_url},
+                meta_updates={
+                    "stt_model": _STT_MODEL,
+                    "audio_source": "client_audio_url",
+                },
+            )
+        else:
+            _update_cutcli_job(job_id, status="running", stage="extract_audio")
+            ffmpeg = _find_ffmpeg_bin()
+            audio_path = job_dir / "audio.wav"
+            _extract_audio_wav(ffmpeg=ffmpeg, source=source, out_path=audio_path)
 
-        _update_job_manifest(job_id, stage="upload_audio")
-        audio_url = _upload_job_file_to_tos(
-            audio_path,
-            object_key=f"assets/cutcli_auto_caption/{job_id}/audio.wav",
-            content_type="audio/wav",
-        )
-        _update_job_manifest(job_id, stage="stt_create", audio_url=audio_url, stt_model=_STT_MODEL)
+            _update_cutcli_job(job_id, stage="upload_audio")
+            stt_audio_url = _upload_job_file_to_tos(
+                audio_path,
+                object_key=f"assets/cutcli_auto_caption/{job_id}/audio.wav",
+                content_type="audio/wav",
+            )
+            _update_cutcli_job(
+                job_id,
+                stage="stt_create",
+                result_updates={"audio_url": stt_audio_url},
+                meta_updates={
+                    "stt_model": _STT_MODEL,
+                    "audio_source": "server_extracted_wav",
+                },
+            )
 
         token, token_source = _load_sutui_token_for_stt(db, user_id)
         token_masked = _mask_token(token)
-        _update_job_manifest(
+        _update_cutcli_job(
             job_id,
-            token_source=token_source,
-            token_masked=token_masked,
+            meta_updates={
+                "token_source": token_source,
+                "token_masked": token_masked,
+            },
         )
-        stt_created = _stt_create_task(token, audio_url, job_dir=job_dir)
+        stt_created = _stt_create_task(token, stt_audio_url, job_dir=job_dir)
         task_id = stt_created["task_id"]
-        _update_job_manifest(job_id, stage="stt_poll", stt_task_id=task_id)
+        _update_cutcli_job(
+            job_id,
+            stage="stt_poll",
+            provider_task_id=task_id,
+            result_updates={"stt_task_id": task_id},
+        )
 
         stt_data = _stt_poll_task(token, task_id, job_dir=job_dir)
         captions = _captions_from_stt(
@@ -1950,7 +2232,15 @@ def _run_auto_caption_job_sync(
         warnings.extend(quality_warnings)
         if quality_errors:
             raise AutoCaptionJobError("caption_quality_failed", ",".join(sorted(set(quality_errors))))
-        _update_job_manifest(job_id, stage="build_draft", quality=quality, caption_count=len(captions))
+        _update_cutcli_job(
+            job_id,
+            stage="build_draft",
+            result_updates={
+                "quality": quality,
+                "caption_count": len(captions),
+                "warnings": warnings,
+            },
+        )
 
         draft_id, draft_info, draft_quality, draft_warnings = _build_auto_caption_cutcli_draft(
             cutcli=cutcli,
@@ -1963,7 +2253,15 @@ def _run_auto_caption_job_sync(
         quality.update(draft_quality)
         warnings.extend(draft_warnings)
 
-        _update_job_manifest(job_id, stage="cloud_render", draft_id=draft_id, quality=quality, warnings=warnings)
+        _update_cutcli_job(
+            job_id,
+            stage="cloud_render",
+            result_updates={
+                "draft_id": draft_id,
+                "quality": quality,
+                "warnings": warnings,
+            },
+        )
         cloud_result: Dict[str, Any] = {}
         cloud_job_id: Optional[str] = None
         try:
@@ -1973,7 +2271,15 @@ def _run_auto_caption_job_sync(
                 raise AutoCaptionJobError("render_url_missing", "CutCLI cloud render did not return a video URL")
             cloud_job_id = _extract_job_id(cloud_result)
 
-            _update_job_manifest(job_id, stage="mirror_result", cloud_job_id=cloud_job_id, preview_url=preview_url)
+            _update_cutcli_job(
+                job_id,
+                stage="mirror_result",
+                provider_task_id=cloud_job_id,
+                result_updates={
+                    "cloud_job_id": cloud_job_id,
+                    "preview_url": preview_url,
+                },
+            )
             final_url, file_size, mirror_warnings = _mirror_video_url_to_tos(preview_url, job_id=job_id)
             warnings.extend(mirror_warnings)
             render_strategy = "cutcli_cloud"
@@ -1983,13 +2289,17 @@ def _run_auto_caption_job_sync(
             detail = exc.detail if isinstance(exc.detail, dict) else {}
             cloud_job_id = str(detail.get("job_id") or "") or _extract_job_id(detail) or None
             warnings.append(exc.code)
-            _update_job_manifest(
+            _update_cutcli_job(
                 job_id,
                 stage="fallback_render",
-                cloud_job_id=cloud_job_id,
-                cloud_render_detail=detail,
-                warnings=warnings,
+                provider_task_id=cloud_job_id,
+                result_updates={
+                    "cloud_job_id": cloud_job_id,
+                    "cloud_render_detail": detail,
+                    "warnings": warnings,
+                },
             )
+            ffmpeg = ffmpeg or _find_ffmpeg_bin()
             final_url, file_size, fallback_warnings = _render_fallback_caption_video(
                 ffmpeg=ffmpeg,
                 job_dir=job_dir,
@@ -2018,49 +2328,60 @@ def _run_auto_caption_job_sync(
             token_source=token_source,
             token_masked=token_masked,
         )
-        _update_job_manifest(
+        _update_cutcli_job(
             job_id,
             status="completed",
             stage="completed",
             error=None,
-            draft_id=draft_id,
-            cloud_job_id=cloud_job_id,
-            preview_url=final_url,
-            open_url=final_url,
-            preview_asset_id=asset_id,
-            final_asset_id=asset_id,
-            source_asset_id=source_asset_id,
-            source_name=source_name,
-            quality=quality,
-            warnings=warnings,
-            token_source=token_source,
-            token_masked=token_masked,
-            render_strategy=render_strategy,
-            draft_info=draft_info,
+            asset_ids=[asset_id],
+            result_updates={
+                "draft_id": draft_id,
+                "cloud_job_id": cloud_job_id,
+                "preview_url": final_url,
+                "open_url": final_url,
+                "preview_asset_id": asset_id,
+                "final_asset_id": asset_id,
+                "source_asset_id": source_asset_id,
+                "source_name": source_name,
+                "quality": quality,
+                "caption_count": len(captions),
+                "warnings": warnings,
+                "render_strategy": render_strategy,
+                "draft_info": draft_info,
+            },
+            meta_updates={
+                "token_source": token_source,
+                "token_masked": token_masked,
+            },
         )
     except AutoCaptionJobError as exc:
         logger.warning("[cutcli-auto-caption] job failed job_id=%s code=%s msg=%s", job_id, exc.code, exc.message)
-        _update_job_manifest(
+        _update_cutcli_job(
             job_id,
             status="failed",
             stage="failed",
-            error_code=exc.code,
             error=exc.message,
-            error_detail=exc.detail,
-            warnings=warnings,
+            result_updates={
+                "error_code": exc.code,
+                "error_detail": exc.detail,
+                "warnings": warnings,
+            },
         )
     except Exception as exc:
         logger.exception("[cutcli-auto-caption] job failed job_id=%s", job_id)
-        _update_job_manifest(
+        _update_cutcli_job(
             job_id,
             status="failed",
             stage="failed",
-            error_code="auto_caption_failed",
             error=str(exc)[:2000],
-            warnings=warnings,
+            result_updates={
+                "error_code": "auto_caption_failed",
+                "warnings": warnings,
+            },
         )
     finally:
         db.close()
+        _cleanup_auto_caption_workspace_and_record(job_id)
 
 
 def _build_cutcli_draft(
@@ -2075,10 +2396,12 @@ def _build_cutcli_draft(
     subtitle: str,
 ) -> Tuple[str, Dict[str, Any], List[str]]:
     warnings: List[str] = []
+    env = _job_cutcli_env(job_dir)
     draft_name = "lobster_tpl_" + job_dir.name
     created = _json_from_cmd(
         [cutcli, "draft", "create", "--name", draft_name, "--width", "1080", "--height", "1920", "--pretty"],
         timeout=60,
+        env=env,
     )
     draft_id = str(created.get("draftId") or draft_name)
     duration_us = int(duration * 1_000_000)
@@ -2097,7 +2420,7 @@ def _build_cutcli_draft(
             }
         ],
     )
-    _run_cmd([cutcli, "videos", "add", draft_id, "--video-infos", video_json], timeout=120)
+    _run_cmd([cutcli, "videos", "add", draft_id, "--video-infos", video_json], timeout=120, env=env)
 
     if overlay and overlay.exists():
         overlay_json = _write_json(
@@ -2113,14 +2436,14 @@ def _build_cutcli_draft(
             ],
         )
         try:
-            _run_cmd([cutcli, "images", "add", draft_id, "--image-infos", overlay_json], timeout=120)
+            _run_cmd([cutcli, "images", "add", draft_id, "--image-infos", overlay_json], timeout=120, env=env)
         except Exception as exc:
             warnings.append(f"overlay: {str(exc)[:180]}")
-            logger.warning("[CutCLI模板] overlay add failed: %s", exc)
+            logger.warning("[CutCLI妯℃澘] overlay add failed: %s", exc)
 
     title_json = _write_json(
         job_dir / "cutcli_title.json",
-        [{"text": (title or "品牌高光时刻")[:28], "start": 200_000, "end": min(duration_us, 2_800_000)}],
+        [{"text": (title or "鍝佺墝楂樺厜鏃跺埢")[:28], "start": 200_000, "end": min(duration_us, 2_800_000)}],
     )
     _run_cmd(
         [
@@ -2143,6 +2466,7 @@ def _build_cutcli_draft(
             "-0.62",
         ],
         timeout=90,
+        env=env,
     )
 
     if subtitle:
@@ -2166,6 +2490,7 @@ def _build_cutcli_draft(
                 "-0.72",
             ],
             timeout=90,
+            env=env,
         )
 
     optional_steps = [
@@ -2179,19 +2504,19 @@ def _build_cutcli_draft(
                 "--effect-infos",
                 _write_json(
                     job_dir / "cutcli_effect.json",
-                    [{"effectTitle": "胶片漏光", "start": 0, "end": min(duration_us, 2_500_000)}],
+                    [{"effectTitle": "鑳剁墖婕忓厜", "start": 0, "end": min(duration_us, 2_500_000)}],
                 ),
             ],
         ),
     ]
     for label, cmd in optional_steps:
         try:
-            _run_cmd(cmd, timeout=90)
+            _run_cmd(cmd, timeout=90, env=env)
         except Exception as exc:
             warnings.append(f"{label}: {str(exc)[:180]}")
-            logger.warning("[CutCLI模板] optional %s failed: %s", label, exc)
+            logger.warning("[CutCLI妯℃澘] optional %s failed: %s", label, exc)
 
-    info = _json_from_cmd([cutcli, "draft", "info", draft_id, "--pretty"], timeout=60)
+    info = _json_from_cmd([cutcli, "draft", "info", draft_id, "--pretty"], timeout=60, env=env)
     (job_dir / "draft_info.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
     return draft_id, info, warnings
 
@@ -2210,6 +2535,14 @@ def _cutcli_cloud_env(api_key: str = "") -> Dict[str, str]:
     if api_base.endswith("/api") or "/api/cutcli" in api_base or "/mcp" in api_base:
         env["CUTCLI_API_BASE"] = "https://api.xskill.ai"
     return env
+
+
+def _job_cutcli_env(job_dir: Path, env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    out = dict(env or os.environ)
+    drafts_dir = job_dir / "cutcli_drafts"
+    drafts_dir.mkdir(parents=True, exist_ok=True)
+    out["CUT_DRAFTS_DIR"] = str(drafts_dir)
+    return out
 
 
 def _collect_urls(value: Any, *, key_hint: str = "") -> List[Tuple[int, str]]:
@@ -2350,11 +2683,12 @@ def _render_cutcli_cloud(
     *,
     job_dir: Path,
     api_key: str,
+    zip_path: Optional[Path] = None,
     timeout_seconds: int = 1800,
 ) -> Dict[str, Any]:
     if not (api_key or "").strip():
         raise AutoCaptionJobError("cutcli_token_missing", "server sutui token is not configured for CutCLI render")
-    env = _cutcli_cloud_env(api_key)
+    env = _job_cutcli_env(job_dir, _cutcli_cloud_env(api_key))
     try:
         _ensure_cutcli_uses_token(cutcli, api_key=api_key, job_dir=job_dir, env=env)
     except AutoCaptionJobError:
@@ -2362,14 +2696,14 @@ def _render_cutcli_cloud(
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"服务端 CutCLI 云渲染未完成登录配置，无法生成视频: {str(exc)[:500]}",
+            detail=f"鏈嶅姟绔?CutCLI 浜戞覆鏌撴湭瀹屾垚鐧诲綍閰嶇疆锛屾棤娉曠敓鎴愯棰? {str(exc)[:500]}",
         ) from exc
 
-    render_result = _json_from_cmd(
-        [cutcli, "cloud", "render", draft_id, "--pretty"],
-        timeout=300,
-        env=env,
-    )
+    render_cmd = [cutcli, "cloud", "render", draft_id]
+    if zip_path is not None:
+        render_cmd.extend(["--zip", str(zip_path)])
+    render_cmd.append("--pretty")
+    render_result = _json_from_cmd(render_cmd, timeout=300, env=env)
     (job_dir / "cloud_render_submit.json").write_text(
         json.dumps(render_result, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -2428,7 +2762,7 @@ def _ass_time(us: int) -> str:
 
 
 def _escape_ass_text(text: Any) -> str:
-    s = str(text or "").replace("\\", "\\\\").replace("{", "｛").replace("}", "｝")
+    s = str(text or "").replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
     return s.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\N").strip()
 
 
@@ -2720,7 +3054,120 @@ def _render_fallback_caption_video(
     return final_url, output_path.stat().st_size, warnings
 
 
-@router.get("/api/cutcli/templates", summary="CutCLI 视频模板列表")
+@router.post("/api/cutcli/stt/transcribe", summary="Transcribe an uploaded audio URL with server STT token")
+def cutcli_stt_transcribe(
+    body: CutcliSttTranscribeBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    audio_url = _clean_public_http_url(body.audio_url)
+    if not audio_url:
+        raise HTTPException(status_code=400, detail="audio_url must be an http(s) URL")
+    job_id = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_" + uuid.uuid4().hex[:8]
+    job_dir = _JOBS_DIR / "stt" / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        token, token_source = _load_sutui_token_for_stt(db, current_user.id)
+        created = _stt_create_task(token, audio_url, job_dir=job_dir)
+        task_id = created["task_id"]
+        stt_data = _stt_poll_task(token, task_id, job_dir=job_dir)
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "task_id": task_id,
+            "audio_url": audio_url,
+            "stt_model": _STT_MODEL,
+            "token_source": token_source,
+            "token_masked": _mask_token(token),
+            "stt_data": stt_data,
+        }
+    except AutoCaptionJobError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": exc.message, "detail": exc.detail}) from exc
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
+@router.post("/api/cutcli/cloud/render-draft", summary="Render an already-built CutCLI draft zip with server token")
+def cutcli_cloud_render_draft(
+    body: CutcliCloudRenderDraftBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    draft_id = str(body.draft_id or "").strip()
+    draft_zip_url = _clean_public_http_url(body.draft_zip_url)
+    if not draft_id:
+        raise HTTPException(status_code=400, detail="draft_id is required")
+    if not draft_zip_url:
+        raise HTTPException(status_code=400, detail="draft_zip_url must be an http(s) URL")
+    job_id = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_" + uuid.uuid4().hex[:8]
+    job_dir = _JOBS_DIR / "cloud_render" / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = job_dir / "draft.zip"
+    try:
+        try:
+            with httpx.Client(timeout=300.0, follow_redirects=True, trust_env=False) as client:
+                response = client.get(draft_zip_url)
+            if response.status_code >= 400:
+                raise AutoCaptionJobError(
+                    "draft_zip_download_failed",
+                    f"draft zip download failed: HTTP {response.status_code}",
+                    {"draft_zip_url": draft_zip_url},
+                )
+            zip_path.write_bytes(response.content)
+            if zip_path.stat().st_size <= 0:
+                raise AutoCaptionJobError(
+                    "draft_zip_empty",
+                    "downloaded draft zip is empty",
+                    {"draft_zip_url": draft_zip_url},
+                )
+        except AutoCaptionJobError:
+            raise
+        except Exception as exc:
+            raise AutoCaptionJobError(
+                "draft_zip_download_failed",
+                f"draft zip download failed: {str(exc)[:500]}",
+                {"draft_zip_url": draft_zip_url},
+            ) from exc
+        token, token_source = _load_sutui_token_for_stt(db, current_user.id)
+        cutcli = _find_cutcli_bin()
+        cloud_result = _render_cutcli_cloud(
+            cutcli,
+            draft_id,
+            job_dir=job_dir,
+            api_key=token,
+            zip_path=zip_path,
+            timeout_seconds=max(60, min(int(body.timeout_seconds or 1800), 3600)),
+        )
+        preview_url = _extract_first_video_url(cloud_result)
+        if not preview_url:
+            raise AutoCaptionJobError("render_url_missing", "CutCLI cloud render did not return a video URL")
+        final_url = preview_url
+        file_size: Optional[int] = None
+        warnings: List[str] = []
+        if body.mirror_to_tos:
+            final_url, file_size, warnings = _mirror_video_url_to_tos(preview_url, job_id=job_id)
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "draft_id": draft_id,
+            "draft_zip_url": draft_zip_url,
+            "cloud_job_id": _extract_job_id(cloud_result),
+            "preview_url": final_url,
+            "open_url": final_url,
+            "raw_preview_url": preview_url,
+            "file_size": file_size,
+            "warnings": warnings,
+            "token_source": token_source,
+            "token_masked": _mask_token(token),
+            "cloud_result": cloud_result,
+        }
+    except AutoCaptionJobError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": exc.message, "detail": exc.detail}) from exc
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
+@router.get("/api/cutcli/templates", summary="CutCLI template list")
 def list_cutcli_templates(
     _: User = Depends(get_current_user),
 ):
@@ -2738,50 +3185,46 @@ def list_cutcli_templates(
     return {"ok": True, "templates": templates}
 
 
-@router.get("/api/cutcli/templates/jobs", summary="CutCLI 模板生成记录")
+@router.get("/api/cutcli/templates/jobs", summary="CutCLI 妯℃澘鐢熸垚璁板綍")
 def list_cutcli_template_jobs(
     limit: int = 50,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     try:
         max_items = max(1, min(int(limit or 50), 100))
     except Exception:
         max_items = 50
-    records: List[Dict[str, Any]] = []
-    for manifest_path in _JOBS_DIR.glob("*/manifest.json"):
-        try:
-            data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(data, dict):
-            continue
-        if int(data.get("user_id") or 0) != int(current_user.id):
-            continue
-        records.append(_job_record_from_manifest(data, manifest_path.parent.name))
-    records.sort(
-        key=lambda row: int(row.get("updated_at") or row.get("created_at") or 0),
-        reverse=True,
+    rows = (
+        db.query(CreativeGenerationJob)
+        .filter(
+            CreativeGenerationJob.user_id == current_user.id,
+            CreativeGenerationJob.feature_type == _CUTCLI_TEMPLATE_JOB_FEATURE,
+            CreativeGenerationJob.deleted_at.is_(None),
+        )
+        .order_by(CreativeGenerationJob.updated_at.desc(), CreativeGenerationJob.created_at.desc())
+        .limit(max_items)
+        .all()
     )
-    return {"ok": True, "jobs": records[:max_items]}
+    return {"ok": True, "jobs": [_job_row_to_public(row) for row in rows]}
 
 
-@router.get("/api/cutcli/templates/jobs/{job_id}", summary="CutCLI 模板任务状态")
+@router.get("/api/cutcli/templates/jobs/{job_id}", summary="CutCLI template job detail")
 def get_cutcli_template_job(
     job_id: str,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     jid = (job_id or "").strip()
     if not re.match(r"^\d{14}_[0-9a-f]{8}$", jid):
         raise HTTPException(status_code=400, detail="invalid job_id")
-    job = _read_job_manifest(jid)
-    if not job:
+    row = _get_cutcli_job_row(db, jid)
+    if not row or int(row.user_id) != int(current_user.id):
         raise HTTPException(status_code=404, detail="job not found")
-    if int(job.get("user_id") or 0) != int(current_user.id):
-        raise HTTPException(status_code=404, detail="job not found")
-    return {"ok": True, **job}
+    return _job_row_to_public(row)
 
 
-@router.post("/api/cutcli/templates/render", summary="套用 CutCLI 视频模板并生成预览")
+@router.post("/api/cutcli/templates/render", summary="Render a CutCLI template preview")
 async def render_cutcli_template(
     request: Request,
     template_id: str = Form(_AUTO_CAPTION_TEMPLATE_ID),
@@ -2790,13 +3233,17 @@ async def render_cutcli_template(
     duration_seconds: int = Form(0),
     asset_id: str = Form(""),
     video_url: str = Form(""),
+    audio_url: str = Form(""),
     file: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     tpl = _TEMPLATES.get((template_id or "").strip())
     if not tpl:
-        raise HTTPException(status_code=404, detail="模板不存在。")
+        raise HTTPException(status_code=404, detail="template not found")
+    clean_audio_url = _clean_public_http_url(audio_url)
+    if (audio_url or "").strip() and not clean_audio_url:
+        raise HTTPException(status_code=400, detail="audio_url must be an http(s) URL")
     job_id = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_" + uuid.uuid4().hex[:8]
     job_dir = _JOBS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -2822,24 +3269,16 @@ async def render_cutcli_template(
             "caption_style": _caption_style_public(caption_style),
             "stt_model": _STT_MODEL,
         }
-        _write_job_manifest(
-            job_id,
-            {
-                "ok": True,
-                "async": True,
-                "job_id": job_id,
-                "status": "running",
-                "stage": "queued",
-                "user_id": current_user.id,
-                "template_id": tpl["id"],
-                "template": tpl,
-                "source_asset_id": source_asset_id,
-                "source_name": source_name,
-                "source_info": source_info,
-                "stt_model": _STT_MODEL,
-                "quality_policy": quality_policy,
-                "created_at": int(time.time()),
-            },
+        row = _create_cutcli_job(
+            db,
+            job_id=job_id,
+            user_id=current_user.id,
+            template=tpl,
+            source_asset_id=source_asset_id,
+            source_name=source_name,
+            source_info=source_info,
+            quality_policy=quality_policy,
+            audio_url=clean_audio_url,
         )
         asyncio.create_task(
             asyncio.to_thread(
@@ -2851,22 +3290,12 @@ async def render_cutcli_template(
                 source_asset_id=source_asset_id,
                 source_name=source_name,
                 source_info=source_info,
+                audio_url=clean_audio_url,
             )
         )
-        return {
-            "ok": True,
-            "async": True,
-            "job_id": job_id,
-            "status": "running",
-            "stage": "queued",
-            "poll_path": f"/api/cutcli/templates/jobs/{job_id}",
-            "template": tpl,
-            "preserve_source_video": bool(tpl.get("preserve_source_video", True)),
-            "source_asset_id": source_asset_id,
-            "source_name": source_name,
-            "stt_model": _STT_MODEL,
-            "quality_policy": quality_policy,
-        }
+        payload = _job_row_to_public(row)
+        payload["preserve_source_video"] = bool(tpl.get("preserve_source_video", True))
+        return payload
 
     cutcli = _find_cutcli_bin()
     duration = max(4, min(int(duration_seconds or tpl.get("default_duration") or 8), 20))
@@ -2888,7 +3317,7 @@ async def render_cutcli_template(
     cloud_result = _render_cutcli_cloud(cutcli, draft_id, job_dir=job_dir, api_key=legacy_token)
     preview_url = _extract_first_video_url(cloud_result)
     if not preview_url:
-        raise HTTPException(status_code=500, detail="CutCLI 云渲染完成但没有返回可用视频 URL。")
+        raise HTTPException(status_code=500, detail="CutCLI cloud render did not return a usable video URL")
     cloud_job_id = _extract_job_id(cloud_result)
 
     out_asset_id = uuid.uuid4().hex[:12]
@@ -2918,6 +3347,7 @@ async def render_cutcli_template(
     )
     db.add(asset)
     db.commit()
+    local_workspace_cleanup = _cleanup_auto_caption_workspace(job_id)
 
     return {
         "ok": True,
@@ -2931,15 +3361,17 @@ async def render_cutcli_template(
         "preview_url": preview_url,
         "open_url": preview_url,
         "warnings": warnings,
+        "local_workspace_cleanup": local_workspace_cleanup,
     }
 
 
-@router.post("/api/cutcli/templates/{template_id}/render", summary="按模板 ID 套用 CutCLI 视频模板")
+@router.post("/api/cutcli/templates/{template_id}/render", summary="鎸夋ā鏉?ID 濂楃敤 CutCLI 瑙嗛妯℃澘")
 async def render_cutcli_template_by_id(
     request: Request,
     template_id: str,
     asset_id: str = Form(""),
     video_url: str = Form(""),
+    audio_url: str = Form(""),
     file: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -2952,6 +3384,7 @@ async def render_cutcli_template_by_id(
         duration_seconds=0,
         asset_id=asset_id,
         video_url=video_url,
+        audio_url=audio_url,
         file=file,
         current_user=current_user,
         db=db,
