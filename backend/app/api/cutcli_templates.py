@@ -38,6 +38,9 @@ _AUTO_CAPTION_TEMPLATE_ID = "auto_caption_pop_huazi_v1"
 _AUTO_CAPTION_CLEAN_TEMPLATE_ID = "auto_caption_clean_fade_v1"
 _AUTO_CAPTION_NEON_TEMPLATE_ID = "auto_caption_neon_focus_v1"
 _AUTO_CAPTION_PUNCH_TEMPLATE_ID = "auto_caption_punch_big_v1"
+_AUTO_CAPTION_HEALTH_BANNER_TEMPLATE_ID = "auto_caption_health_banner_v1"
+_AUTO_CAPTION_QUOTE_FOCUS_TEMPLATE_ID = "auto_caption_quote_focus_v1"
+_AUTO_CAPTION_MARKET_LABEL_TEMPLATE_ID = "auto_caption_market_label_v1"
 _CUTCLI_TEMPLATE_JOB_FEATURE = "cutcli_template"
 _STT_MODEL = "volcengine/speech-to-text/bigmodel-v2"
 _STT_API_BASE = (
@@ -68,6 +71,44 @@ def _public_url(path: str) -> str:
     return f"{base}/{value.lstrip('/')}"
 
 
+_DEFAULT_OVERLAY_FIELDS: List[Dict[str, Any]] = [
+    {
+        "key": "headline",
+        "label": "\u9876\u90e8\u56fa\u5b9a\u6587\u6848",
+        "placeholder": "\u6bcf\u5929 3 \u5206\u949f\n\u6c14\u8840\u65fa\u5230\u5192\u7ea2\u5149",
+        "default": "",
+        "multiline": True,
+        "max_length": 48,
+    },
+    {
+        "key": "subheadline",
+        "label": "\u526f\u6807\u9898",
+        "placeholder": "Emotional stability",
+        "default": "",
+        "multiline": False,
+        "max_length": 36,
+    },
+    {
+        "key": "badge",
+        "label": "\u6807\u7b7e",
+        "placeholder": "\u517b\u751f\u65b0\u5e02\u573a",
+        "default": "",
+        "multiline": False,
+        "max_length": 16,
+    },
+]
+
+
+def _overlay_fields(*, headline: str = "", subheadline: str = "", badge: str = "") -> List[Dict[str, Any]]:
+    defaults = {"headline": headline, "subheadline": subheadline, "badge": badge}
+    fields: List[Dict[str, Any]] = []
+    for field in _DEFAULT_OVERLAY_FIELDS:
+        row = dict(field)
+        row["default"] = defaults.get(str(row.get("key") or ""), "")
+        fields.append(row)
+    return fields
+
+
 _TEMPLATES: Dict[str, Dict[str, Any]] = {
     _AUTO_CAPTION_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_TEMPLATE_ID,
@@ -81,6 +122,7 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u4e2d\u4e0b\u5927\u5b57 + \u7206\u70b9\u5f39\u8df3",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4",
+        "overlay_fields": _overlay_fields(),
         "caption_style": {
             "id": "yellow_burst",
             "text_effect": _CAPTION_HUAZI_NAME,
@@ -121,6 +163,7 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u4e0b\u4e09\u5206\u4e4b\u4e00 + \u8f7b\u6e10\u663e",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_clean_fade_v1.mp4",
+        "overlay_fields": _overlay_fields(),
         "caption_style": {
             "id": "clean_fade",
             "text_effect": "",
@@ -161,6 +204,7 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u5de6\u4fa7\u7ec8\u7aef\u5feb\u6253 + \u9752\u84dd\u9713\u8679",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4",
+        "overlay_fields": _overlay_fields(),
         "caption_style": {
             "id": "side_neon",
             "text_effect": "",
@@ -205,6 +249,7 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u5c45\u4e2d\u91cd\u51fb + \u60c5\u7eea\u53cd\u8f6c",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_punch_big_v1.mp4",
+        "overlay_fields": _overlay_fields(),
         "caption_style": {
             "id": "punch_big",
             "text_effect": _CAPTION_HUAZI_NAME,
@@ -233,6 +278,132 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
             "ass_margin_v": 220,
         },
     },
+    _AUTO_CAPTION_HEALTH_BANNER_TEMPLATE_ID: {
+        "id": _AUTO_CAPTION_HEALTH_BANNER_TEMPLATE_ID,
+        "kind": "auto_caption",
+        "name": "\u517b\u751f\u9876\u680f\u91d1\u53e5",
+        "description": "\u53c2\u7167\u4e13\u5bb6\u53e3\u64ad\u7c7b\u7248\u5f0f\uff1a\u9876\u90e8\u534a\u900f\u660e\u6a2a\u680f\u627f\u8f7d\u56fa\u5b9a\u5927\u6807\u9898\uff0c\u4e2d\u4e0b\u90e8\u4fdd\u7559\u8ddf\u8bf4\u5b57\u5e55\uff0c\u9002\u5408\u517b\u751f\u3001\u8d22\u7a0e\u3001\u5b9e\u7528\u6280\u5de7\u548c\u77e5\u8bc6\u53e3\u64ad\u3002",
+        "aspect_ratio": "source",
+        "default_duration": 0,
+        "tags": ["\u9876\u680f", "\u91d1\u53e5", "\u77e5\u8bc6\u53e3\u64ad"],
+        "input_modes": ["upload", "asset_id"],
+        "preserve_source_video": True,
+        "quality_label": "\u9876\u90e8\u5927\u6807\u9898 + \u4e0b\u65b9\u8ddf\u8bf4",
+        "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_health_banner_v1.mp4",
+        "overlay_fields": _overlay_fields(headline="\u6bcf\u5929 3 \u5206\u949f\n\u6c14\u8840\u65fa\u5230\u5192\u7ea2\u5149"),
+        "caption_style": {
+            "id": "health_banner",
+            "font_size": 12,
+            "font_size_pattern": "steady",
+            "caption_max_chars": 13,
+            "text_color": "#FFFFFF",
+            "border_color": "#2A1606",
+            "border_width": "0.07",
+            "has_shadow": True,
+            "shadow_color": "#000000",
+            "transform_x": "0",
+            "transform_y": "-0.68",
+            "ass_layout": "health_banner",
+            "ass_font_size": 78,
+            "ass_primary": "&H00FFFFFF",
+            "ass_outline": "&H00151208",
+            "ass_shadow": 4,
+            "ass_border": 5,
+            "ass_alignment": 2,
+            "ass_margin_v": 300,
+            "overlay_style": {
+                "layout": "top_banner",
+                "headline_font_size": 92,
+                "headline_color": "&H001F4A86",
+                "headline_outline": "&H00FFFFFF",
+                "banner_color": "&HA8F3E7CF",
+            },
+        },
+    },
+    _AUTO_CAPTION_QUOTE_FOCUS_TEMPLATE_ID: {
+        "id": _AUTO_CAPTION_QUOTE_FOCUS_TEMPLATE_ID,
+        "kind": "auto_caption",
+        "name": "\u60c5\u7eea\u5f15\u53f7\u7126\u70b9",
+        "description": "\u753b\u9762\u4e2d\u90e8\u7528\u5f15\u53f7\u5927\u5b57\u6253\u51fa\u56fa\u5b9a\u4e3b\u9898\uff0c\u4e0b\u65b9\u52a0\u82f1\u6587/\u526f\u6807\u9898\u5c42\u6b21\uff0c\u8ddf\u8bf4\u5b57\u5e55\u653e\u5728\u66f4\u4f4e\u5904\uff0c\u9002\u5408\u60c5\u7eea\u3001\u6559\u80b2\u3001\u6210\u957f\u7c7b\u77ed\u89c6\u9891\u3002",
+        "aspect_ratio": "source",
+        "default_duration": 0,
+        "tags": ["\u5f15\u53f7", "\u60c5\u7eea", "\u53cc\u8bed"],
+        "input_modes": ["upload", "asset_id"],
+        "preserve_source_video": True,
+        "quality_label": "\u4e2d\u90e8\u4e3b\u9898\u5f15\u53f7 + \u53cc\u8bed\u526f\u6807",
+        "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_quote_focus_v1.mp4",
+        "overlay_fields": _overlay_fields(headline="\u300c\u60c5\u7eea\u7a33\u5b9a\u300d", subheadline="Emotional stability"),
+        "caption_style": {
+            "id": "quote_focus",
+            "font_size": 11,
+            "font_size_pattern": "steady",
+            "caption_max_chars": 13,
+            "text_color": "#FFFFFF",
+            "border_color": "#1F2937",
+            "border_width": "0.07",
+            "has_shadow": True,
+            "shadow_color": "#000000",
+            "transform_x": "0",
+            "transform_y": "-0.76",
+            "ass_layout": "quote_focus",
+            "ass_font_size": 68,
+            "ass_primary": "&H00FFFFFF",
+            "ass_outline": "&H001F2937",
+            "ass_shadow": 3,
+            "ass_border": 5,
+            "ass_alignment": 2,
+            "ass_margin_v": 340,
+            "overlay_style": {
+                "layout": "center_quote",
+                "headline_font_size": 96,
+                "headline_color": "&H00FFFFFF",
+                "headline_outline": "&H00222931",
+                "subheadline_font_size": 42,
+            },
+        },
+    },
+    _AUTO_CAPTION_MARKET_LABEL_TEMPLATE_ID: {
+        "id": _AUTO_CAPTION_MARKET_LABEL_TEMPLATE_ID,
+        "kind": "auto_caption",
+        "name": "\u54c1\u724c\u6807\u7b7e\u5927\u5b57",
+        "description": "\u4e2d\u4e0b\u5927\u6807\u9898\u914d\u6a59\u8272\u80f6\u56ca\u6807\u7b7e\uff0c\u753b\u9762\u5e95\u90e8\u4fdd\u7559\u8ddf\u8bf4\u5b57\u5e55\uff0c\u9002\u5408\u52a0\u76df\u3001\u4ea7\u54c1\u5356\u70b9\u3001\u54c1\u724c\u62db\u5546\u548c\u65b0\u5e02\u573a\u5185\u5bb9\u3002",
+        "aspect_ratio": "source",
+        "default_duration": 0,
+        "tags": ["\u6807\u7b7e", "\u62db\u5546", "\u5927\u5b57"],
+        "input_modes": ["upload", "asset_id"],
+        "preserve_source_video": True,
+        "quality_label": "\u6a59\u8272\u80f6\u56ca\u6807\u7b7e + \u4e2d\u4e0b\u5927\u6807\u9898",
+        "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_market_label_v1.mp4",
+        "overlay_fields": _overlay_fields(headline="\u65b0\u5174\u517b\u751f\u52a0\u76df", badge="\u517b\u751f\u65b0\u5e02\u573a"),
+        "caption_style": {
+            "id": "market_label",
+            "font_size": 12,
+            "font_size_pattern": "steady",
+            "caption_max_chars": 13,
+            "text_color": "#FFFFFF",
+            "border_color": "#111827",
+            "border_width": "0.07",
+            "has_shadow": True,
+            "shadow_color": "#000000",
+            "transform_x": "0",
+            "transform_y": "-0.78",
+            "ass_layout": "market_label",
+            "ass_font_size": 68,
+            "ass_primary": "&H00FFFFFF",
+            "ass_outline": "&H00111111",
+            "ass_shadow": 4,
+            "ass_border": 5,
+            "ass_alignment": 2,
+            "ass_margin_v": 340,
+            "overlay_style": {
+                "layout": "market_label",
+                "headline_font_size": 92,
+                "headline_color": "&H00FFFFFF",
+                "headline_outline": "&H00111111",
+                "badge_color": "&H001B7BE6",
+            },
+        },
+    },
 }
 
 
@@ -254,6 +425,7 @@ class TemplateListItem(BaseModel):
     render_modes: List[str] = Field(default_factory=list)
     generation_strategy: Dict[str, Any] = Field(default_factory=dict)
     caption_style: Dict[str, Any] = Field(default_factory=dict)
+    overlay_fields: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class CutcliSttTranscribeBody(BaseModel):
@@ -271,6 +443,9 @@ def _caption_style_for_template(template: Optional[Dict[str, Any]]) -> Dict[str,
     base = dict((_TEMPLATES.get(_AUTO_CAPTION_TEMPLATE_ID) or {}).get("caption_style") or {})
     if isinstance(template, dict):
         base.update(template.get("caption_style") or {})
+        overlay_fields = template.get("overlay_fields") if isinstance(template.get("overlay_fields"), list) else []
+        if overlay_fields:
+            base["overlay_fields"] = overlay_fields
     base.setdefault("text_effect", _CAPTION_HUAZI_NAME)
     base.setdefault("text_effect_id", _CAPTION_HUAZI_EFFECT_ID)
     base.setdefault("in_animation", _CAPTION_IN_ANIMATION)
@@ -3186,6 +3361,7 @@ def list_cutcli_templates(
         row["render_modes"] = ["ffmpeg", "cutcli_cloud"]
         row.setdefault("input_modes", ["upload", "asset_id", "video_url"])
         row.setdefault("preserve_source_video", True)
+        row.setdefault("overlay_fields", _overlay_fields())
         row["caption_style"] = caption_style
         row["generation_strategy"] = {
             "version": 1,
@@ -3199,6 +3375,7 @@ def list_cutcli_templates(
             "render_modes": row["render_modes"],
             "cloud_render_endpoint": "/api/cutcli/cloud/render-draft",
             "caption_style": caption_style,
+            "overlay_fields": row.get("overlay_fields") or [],
             "preserve_source_video": True,
         }
         templates.append(TemplateListItem(**row).model_dump())
