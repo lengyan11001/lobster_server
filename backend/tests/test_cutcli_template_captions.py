@@ -78,6 +78,34 @@ def test_caption_split_keeps_stt_utterance_boundaries():
     ]
 
 
+def test_caption_does_not_split_single_stt_sentence_for_width_only():
+    text = "\u4e00\u4e2a\u4e13\u4e1a\u9760\u8c31\u7684\u8d22\u7a0e\u987e\u95ee"
+    stt_data = {
+        "output": {
+            "utterances": [
+                {
+                    "text": text,
+                    "start_time": 0,
+                    "end_time": 1600,
+                    "words": [
+                        {"text": text, "start_time": 0, "end_time": 1600},
+                    ],
+                }
+            ]
+        }
+    }
+
+    captions = _captions_for_template(
+        templates._AUTO_CAPTION_TEMPLATE_ID,
+        stt_data,
+        video_width=720,
+    )
+
+    assert len(captions) == 1
+    assert captions[0]["text"].replace("\n", "") == text
+    assert "\n" in captions[0]["text"]
+
+
 def test_caption_templates_have_distinct_design_layouts():
     styles = {
         template_id: templates._caption_style_for_template(template)
@@ -123,7 +151,7 @@ def test_template_captions_apply_position_and_font_differences():
     assert max(item["fontSize"] for item in punch_caps) > max(item["fontSize"] for item in clean_caps)
 
 
-def test_large_yellow_caption_splits_to_visual_safe_chunks():
+def test_large_yellow_caption_wraps_inside_one_caption():
     text = "\u4e00\u4e2a\u4e13\u4e1a\u9760\u8c31\u7684\u8d22\u7a0e\u987e\u95ee"
     stt_data = {
         "output": {
@@ -150,10 +178,9 @@ def test_large_yellow_caption_splits_to_visual_safe_chunks():
     )
     caption_texts = [item["text"] for item in captions]
 
-    assert len(caption_texts) >= 3
-    assert "".join(caption_texts) == text
-    safe_units = templates._safe_caption_visual_units(style, video_width=720)
-    assert all(templates._caption_visual_units(item["text"]) <= safe_units + 0.01 for item in captions)
+    assert len(caption_texts) == 1
+    assert "\n" in caption_texts[0]
+    assert caption_texts[0].replace("\n", "") == text
     quality, errors, _warnings = templates._validate_caption_quality(
         captions,
         caption_style=style,

@@ -880,10 +880,16 @@ _EDGE_PUNCT = " \t\r\n,.;:!?，。！？；：、\"'“”‘’（）()[]【】
 
 
 def _clean_caption_text(text: Any) -> str:
-    s = str(text or "").replace("\u3000", " ").strip()
-    s = re.sub(r"\s+", " ", s)
-    s = s.strip(_EDGE_PUNCT)
-    return s
+    s = str(text or "").replace("\u3000", " ").replace("\r\n", "\n").replace("\r", "\n").strip()
+    s = re.sub(r"[ \t\f\v]+", " ", s)
+    s = re.sub(r" *\n+ *", "\n", s)
+    lines = [part.strip(_EDGE_PUNCT).strip() for part in s.split("\n")]
+    return "\n".join(part for part in lines if part).strip()
+
+
+def _caption_text_lines(text: str) -> List[str]:
+    lines = [part.strip() for part in str(text or "").split("\n") if part.strip()]
+    return lines or [""]
 
 
 def _caption_display_len(text: str) -> int:
@@ -895,20 +901,27 @@ def _caption_display_len(text: str) -> int:
     return total
 
 
+def _caption_line_display_len(text: str) -> int:
+    return max((_caption_display_len(line) for line in _caption_text_lines(text)), default=0)
+
+
 def _caption_visual_units(text: str) -> float:
-    total = 0.0
-    for ch in str(text or ""):
-        if ch.isspace():
-            total += 0.28
-        elif re.match(r"[A-Za-z0-9]", ch):
-            total += 0.56
-        elif ch in _EDGE_PUNCT or ch in _CAPTION_HARD_BREAK_CHARS or ch in _CAPTION_SOFT_BREAK_CHARS:
-            total += 0.38
-        elif "\u4e00" <= ch <= "\u9fff":
-            total += 1.0
-        else:
-            total += 0.86
-    return total
+    line_units: List[float] = []
+    for line in _caption_text_lines(text):
+        total = 0.0
+        for ch in line:
+            if ch.isspace():
+                total += 0.28
+            elif re.match(r"[A-Za-z0-9]", ch):
+                total += 0.56
+            elif ch in _EDGE_PUNCT or ch in _CAPTION_HARD_BREAK_CHARS or ch in _CAPTION_SOFT_BREAK_CHARS:
+                total += 0.38
+            elif "\u4e00" <= ch <= "\u9fff":
+                total += 1.0
+            else:
+                total += 0.86
+        line_units.append(total)
+    return max(line_units or [0.0])
 
 
 def _caption_layout_scale_headroom(caption_style: Dict[str, Any]) -> float:
@@ -977,7 +990,16 @@ def _caption_visual_overflows(
     usable_width = _caption_usable_width(caption_style, video_width=video_width)
     fs = _caption_ass_font_size_value(cap, caption_style)
     estimated_width = _caption_visual_units(text) * _caption_font_unit_width(fs, caption_style)
-    return estimated_width > usable_width
+    if estimated_width <= usable_width:
+        return False
+    if "\n" in text and _caption_fits_wrapped_visual_width(
+        text,
+        max_chars=max(4, int(caption_style.get("caption_max_chars") or 11)),
+        max_visual_units=_safe_caption_visual_units(caption_style, video_width=video_width),
+    ):
+        scaled = int(fs * (usable_width / max(1.0, estimated_width)) * 0.98)
+        return scaled < 44
+    return True
 
 
 def _caption_fits_visual_width(
@@ -986,9 +1008,26 @@ def _caption_fits_visual_width(
     max_chars: int,
     max_visual_units: Optional[float],
 ) -> bool:
-    if _caption_display_len(text) > max_chars:
+    if _caption_line_display_len(text) > max_chars:
         return False
     if max_visual_units is not None and _caption_visual_units(text) > max_visual_units:
+        return False
+    return True
+
+
+def _caption_fits_wrapped_visual_width(
+    text: str,
+    *,
+    max_chars: int,
+    max_visual_units: Optional[float],
+    max_lines: int = 2,
+) -> bool:
+    lines = _caption_text_lines(text)
+    if len(lines) > max_lines:
+        return False
+    if max((_caption_display_len(line) for line in lines), default=0) > max_chars:
+        return False
+    if max_visual_units is not None and _caption_visual_units(text) > max_visual_units * 1.55:
         return False
     return True
 
@@ -1041,6 +1080,54 @@ def _split_caption_text(
     if cur:
         chunks.append(_clean_caption_text(cur))
     return [x for x in chunks if x]
+
+
+def _wrap_caption_text(
+    text: str,
+    *,
+    max_chars: int,
+    max_visual_units: Optional[float],
+    max_lines: int = 2,
+) -> str:
+    clean = _clean_caption_text(text)
+    if not clean:
+        return ""
+    if _caption_fits_visual_width(clean, max_chars=max_chars, max_visual_units=max_visual_units):
+        return clean
+    visual_limit = max_visual_units if max_visual_units is not None else float(max_chars)
+    total_units = _caption_visual_units(clean)
+    balanced_limit = (total_units / max(1, max_lines)) + 0.5
+    wrap_limit = max(4.0, min(float(max_chars), max(visual_limit, balanced_limit)))
+    tokens = re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]|[^\s]", clean)
+    lines: List[str] = []
+    cur = ""
+    for tok in tokens:
+        joiner = " " if cur and re.match(r"^[A-Za-z0-9]+$", tok) else ""
+        candidate = (cur + joiner + tok).strip()
+        if cur and (
+            _caption_display_len(candidate) > max_chars
+            or _caption_visual_units(candidate) > wrap_limit
+        ):
+            lines.append(_clean_caption_text(cur))
+            cur = tok
+        else:
+            cur = candidate
+    if cur:
+        lines.append(_clean_caption_text(cur))
+    lines = [line for line in lines if line]
+    if not lines or len(lines) > max_lines:
+        return clean
+    wrapped = "\n".join(lines)
+    return (
+        wrapped
+        if _caption_fits_wrapped_visual_width(
+            wrapped,
+            max_chars=max_chars,
+            max_visual_units=max_visual_units,
+            max_lines=max_lines,
+        )
+        else clean
+    )
 
 
 _CAPTION_HARD_BREAK_CHARS = set(".!?;\u3002\uff01\uff1f\uff1b")
@@ -1185,13 +1272,14 @@ def _captions_from_stt(
 
     def caption_font_size(index: int, text: str) -> int:
         display_len = _caption_display_len(text)
+        wrap_adjust = 1 if "\n" in text else 0
         if font_size_pattern == "punch":
-            return base_font_size + (2 if display_len <= 4 else 0)
+            return max(9, base_font_size + (2 if display_len <= 4 else 0) - wrap_adjust)
         if font_size_pattern == "burst":
-            return base_font_size + (1 if index % 2 == 0 else 0)
+            return max(9, base_font_size + (1 if index % 2 == 0 else 0) - wrap_adjust)
         if font_size_pattern == "side_neon":
-            return max(9, base_font_size - (1 if display_len >= 8 else 0))
-        return base_font_size
+            return max(9, base_font_size - (1 if display_len >= 8 else 0) - wrap_adjust)
+        return max(9, base_font_size - wrap_adjust)
 
     def caption_position(index: int) -> Tuple[Optional[float], Optional[float]]:
         layout = str(caption_style.get("ass_layout") or "")
@@ -1209,7 +1297,14 @@ def _captions_from_stt(
         clean = _clean_caption_text(text)
         if not clean:
             return
-        if not _caption_fits_visual_width(
+        wrapped = _wrap_caption_text(
+            clean,
+            max_chars=max_chars,
+            max_visual_units=max_visual_units,
+        )
+        if wrapped:
+            clean = wrapped
+        if not _caption_fits_wrapped_visual_width(
             clean,
             max_chars=max_chars,
             max_visual_units=max_visual_units,
@@ -1295,14 +1390,15 @@ def _captions_from_stt(
                 gap_ms = int(word["start_ms"] - cur_end) if cur_words else 0
                 candidate_start = cur_start if cur_start is not None else int(word["start_ms"])
                 candidate = _clean_caption_text("".join(cur_words) + text)
+                candidate_display = _wrap_caption_text(
+                    candidate,
+                    max_chars=max_chars,
+                    max_visual_units=max_visual_units,
+                ) or candidate
                 dur_ms = int(word["end_ms"] - candidate_start)
                 if cur_words and (
                     gap_ms >= 360
-                    or not _caption_fits_visual_width(
-                        candidate,
-                        max_chars=max_chars,
-                        max_visual_units=max_visual_units,
-                    )
+                    or not _caption_fits_wrapped_visual_width(candidate_display, max_chars=max_chars, max_visual_units=max_visual_units)
                     or dur_ms > 2300
                 ):
                     add_caption("".join(cur_words), int(cur_start or 0), cur_end)
@@ -1323,8 +1419,8 @@ def _captions_from_stt(
                     _caption_display_len(current) >= 6 or current_ms >= 900
                 )
                 full_enough = (
-                    not _caption_fits_visual_width(
-                        current,
+                    not _caption_fits_wrapped_visual_width(
+                        _wrap_caption_text(current, max_chars=max_chars, max_visual_units=max_visual_units) or current,
                         max_chars=max_chars,
                         max_visual_units=max_visual_units,
                     )
@@ -2155,7 +2251,7 @@ def _ass_time(us: int) -> str:
 
 def _escape_ass_text(text: Any) -> str:
     s = str(text or "").replace("\\", "\\\\").replace("{", "｛").replace("}", "｝")
-    return s.replace("\r", " ").replace("\n", " ").strip()
+    return s.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\N").strip()
 
 
 def _ffmpeg_filter_path(path: Path) -> str:
@@ -2289,22 +2385,31 @@ def _ass_typewriter_dialogues(
     min_hold_ms: int,
     cursor: str,
 ) -> List[str]:
-    chars = [ch for ch in text if ch]
-    if len(chars) <= 1 or end_us <= start_us + 160_000:
+    units: List[str] = []
+    idx = 0
+    while idx < len(text):
+        if text.startswith("\\N", idx):
+            units.append("\\N")
+            idx += 2
+            continue
+        units.append(text[idx])
+        idx += 1
+    units = [unit for unit in units if unit]
+    if len(units) <= 1 or end_us <= start_us + 160_000:
         return [f"Dialogue: 0,{_ass_time(start_us)},{_ass_time(end_us)},{style_name},,0,0,0,,{effect}{text}"]
     duration_us = max(180_000, end_us - start_us)
     hold_us = min(max(120_000, int(min_hold_ms or 420) * 1000), max(120_000, duration_us // 2))
     typing_window_us = max(120_000, duration_us - hold_us)
-    interval_us = min(max(35_000, int(interval_ms or 85) * 1000), max(35_000, typing_window_us // len(chars)))
+    interval_us = min(max(35_000, int(interval_ms or 85) * 1000), max(35_000, typing_window_us // len(units)))
     lines: List[str] = []
-    for idx in range(1, len(chars)):
-        seg_start = start_us + (idx - 1) * interval_us
-        seg_end = min(end_us, start_us + idx * interval_us)
+    for unit_idx in range(1, len(units)):
+        seg_start = start_us + (unit_idx - 1) * interval_us
+        seg_end = min(end_us, start_us + unit_idx * interval_us)
         if seg_start >= end_us or seg_end <= seg_start:
             break
-        visible = "".join(chars[:idx]) + cursor
+        visible = "".join(units[:unit_idx]) + cursor
         lines.append(f"Dialogue: 0,{_ass_time(seg_start)},{_ass_time(seg_end)},{style_name},,0,0,0,,{effect}{visible}")
-    final_start = min(end_us - 80_000, start_us + max(0, len(chars) - 1) * interval_us)
+    final_start = min(end_us - 80_000, start_us + max(0, len(units) - 1) * interval_us)
     final_start = max(start_us, final_start)
     lines.append(f"Dialogue: 0,{_ass_time(final_start)},{_ass_time(end_us)},{style_name},,0,0,0,,{effect}{text}")
     return lines
