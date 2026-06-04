@@ -905,6 +905,51 @@ def _caption_line_display_len(text: str) -> int:
     return max((_caption_display_len(line) for line in _caption_text_lines(text)), default=0)
 
 
+def _is_ascii_word_char(ch: str) -> bool:
+    return bool(ch and re.match(r"[A-Za-z0-9]", ch))
+
+
+def _is_cjk_char(ch: str) -> bool:
+    return bool(ch and "\u4e00" <= ch <= "\u9fff")
+
+
+def _caption_needs_space_between(left: str, right: str) -> bool:
+    left = str(left or "").rstrip()
+    right = str(right or "").lstrip()
+    if not left or not right:
+        return False
+    a = left[-1]
+    b = right[0]
+    right_lower = right.lower()
+    if right_lower in {"'s", "'re", "'ve", "'ll", "'d", "'m", "n't"}:
+        return False
+    if b in ".,!?;:%)]}，。！？；：、":
+        return False
+    if a in "([{":
+        return False
+    if a in "-/" or b in "-/":
+        return False
+    if _is_ascii_word_char(a) and _is_ascii_word_char(b):
+        return True
+    if a in ".,!?;:" and (_is_ascii_word_char(b) or _is_cjk_char(b)):
+        return True
+    if (_is_ascii_word_char(a) and _is_cjk_char(b)) or (_is_cjk_char(a) and _is_ascii_word_char(b)):
+        return True
+    return False
+
+
+def _join_caption_fragments(parts: List[str]) -> str:
+    out = ""
+    for raw in parts:
+        piece = _clean_caption_text(raw)
+        if not piece:
+            continue
+        if out and _caption_needs_space_between(out, piece):
+            out += " "
+        out += piece
+    return _clean_caption_text(out)
+
+
 def _caption_visual_units(text: str) -> float:
     line_units: List[float] = []
     for line in _caption_text_lines(text):
@@ -1027,9 +1072,106 @@ def _caption_fits_wrapped_visual_width(
         return False
     if max((_caption_display_len(line) for line in lines), default=0) > max_chars:
         return False
-    if max_visual_units is not None and _caption_visual_units(text) > max_visual_units * 1.55:
+    multiplier = 2.05 if re.search(r"[A-Za-z]", text) else 1.78
+    if max_visual_units is not None and _caption_visual_units(text) > max_visual_units * multiplier:
         return False
     return True
+
+
+_CAPTION_PROTECTED_PHRASES = (
+    "需要具备",
+    "财税顾问",
+    "一个专业",
+    "专业靠谱",
+    "靠谱的",
+    "具备",
+    "需要",
+    "财税",
+    "顾问",
+    "专业",
+    "靠谱",
+    "字幕",
+    "配音",
+    "自动",
+    "数字人",
+)
+_CAPTION_BAD_LINE_END_CHARS = set("需具财顾专靠数自配字")
+_CAPTION_BAD_LINE_START_CHARS = set("备问税业谱音幕动")
+_CAPTION_TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?|[\u4e00-\u9fff]|[^\s]")
+
+
+def _caption_tokens(text: str) -> List[str]:
+    return _CAPTION_TOKEN_RE.findall(text or "")
+
+
+def _caption_boundary_splits_protected(text: str, index: int) -> bool:
+    if index <= 0 or index >= len(text):
+        return False
+    for phrase in _CAPTION_PROTECTED_PHRASES:
+        start = text.find(phrase)
+        while start >= 0:
+            end = start + len(phrase)
+            if start < index < end:
+                return True
+            start = text.find(phrase, start + 1)
+    return False
+
+
+def _caption_boundary_score(text: str, index: int, target_units: float) -> float:
+    left = text[:index]
+    right = text[index:]
+    left_units = _caption_visual_units(left)
+    right_units = _caption_visual_units(right)
+    score = abs(left_units - right_units) * 1.4 + abs(left_units - target_units) * 0.7
+    if _caption_boundary_splits_protected(text, index):
+        score += 100.0
+    if _caption_display_len(left) < 3 or _caption_display_len(right) < 3:
+        score += 35.0
+    if left and left[-1] in _CAPTION_BAD_LINE_END_CHARS:
+        score += 18.0
+    if right and right[0] in _CAPTION_BAD_LINE_START_CHARS:
+        score += 18.0
+    if left and left[-1] in _CAPTION_HARD_BREAK_CHARS:
+        score -= 20.0
+    elif left and left[-1] in _CAPTION_SOFT_BREAK_CHARS:
+        score -= 10.0
+    for phrase in ("需要", "具备", "财税", "顾问"):
+        if right.startswith(phrase):
+            score -= 6.0
+    return score
+
+
+def _caption_best_two_line_wrap(
+    text: str,
+    *,
+    max_chars: int,
+    max_visual_units: Optional[float],
+) -> str:
+    clean = _clean_caption_text(text)
+    if not clean or "\n" in clean:
+        return clean
+    tokens = _caption_tokens(clean)
+    if len(tokens) < 2:
+        return clean
+    target_units = _caption_visual_units(clean) / 2.0
+    best: Tuple[float, str] = (float("inf"), clean)
+    for index in range(1, len(tokens)):
+        left = _join_caption_fragments(tokens[:index])
+        right = _join_caption_fragments(tokens[index:])
+        if _caption_display_len(left) < 2 or _caption_display_len(right) < 2:
+            continue
+        candidate = left + "\n" + right
+        if not _caption_fits_wrapped_visual_width(
+            candidate,
+            max_chars=max_chars,
+            max_visual_units=max_visual_units,
+        ):
+            continue
+        plain_left_len = len(_join_caption_fragments(tokens[:index]))
+        score = _caption_boundary_score(clean, plain_left_len, target_units)
+        if score < best[0]:
+            best = (score, candidate)
+    return best[1]
 
 
 def _split_caption_text(
@@ -1038,7 +1180,7 @@ def _split_caption_text(
     *,
     max_visual_units: Optional[float] = None,
 ) -> List[str]:
-    tokens = re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]|[^\s]", text or "")
+    tokens = _caption_tokens(text or "")
     expanded: List[str] = []
     for tok in tokens:
         if (
@@ -1067,7 +1209,7 @@ def _split_caption_text(
     chunks: List[str] = []
     cur = ""
     for tok in tokens:
-        candidate = (cur + (" " if cur and re.match(r"^[A-Za-z0-9]+$", tok) else "") + tok).strip()
+        candidate = _join_caption_fragments([cur, tok])
         if cur and not _caption_fits_visual_width(
             candidate,
             max_chars=max_chars,
@@ -1079,7 +1221,28 @@ def _split_caption_text(
             cur = candidate
     if cur:
         chunks.append(_clean_caption_text(cur))
-    return [x for x in chunks if x]
+    chunks = [x for x in chunks if x]
+    fixed: List[str] = []
+    idx = 0
+    while idx < len(chunks):
+        if idx + 1 < len(chunks):
+            joined = _join_caption_fragments([chunks[idx], chunks[idx + 1]])
+            wrapped = _caption_best_two_line_wrap(
+                joined,
+                max_chars=max_chars,
+                max_visual_units=max_visual_units,
+            )
+            if wrapped != joined and _caption_fits_wrapped_visual_width(
+                wrapped,
+                max_chars=max_chars,
+                max_visual_units=max_visual_units,
+            ):
+                fixed.append(wrapped)
+                idx += 2
+                continue
+        fixed.append(chunks[idx])
+        idx += 1
+    return fixed
 
 
 def _wrap_caption_text(
@@ -1094,16 +1257,29 @@ def _wrap_caption_text(
         return ""
     if _caption_fits_visual_width(clean, max_chars=max_chars, max_visual_units=max_visual_units):
         return clean
+    if re.search(r"[A-Za-z]", clean) and _caption_fits_wrapped_visual_width(
+        clean,
+        max_chars=max_chars,
+        max_visual_units=max_visual_units,
+        max_lines=1,
+    ):
+        return clean
+    best_wrap = _caption_best_two_line_wrap(
+        clean,
+        max_chars=max_chars,
+        max_visual_units=max_visual_units,
+    )
+    if best_wrap != clean:
+        return best_wrap
     visual_limit = max_visual_units if max_visual_units is not None else float(max_chars)
     total_units = _caption_visual_units(clean)
     balanced_limit = (total_units / max(1, max_lines)) + 0.5
     wrap_limit = max(4.0, min(float(max_chars), max(visual_limit, balanced_limit)))
-    tokens = re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]|[^\s]", clean)
+    tokens = _caption_tokens(clean)
     lines: List[str] = []
     cur = ""
     for tok in tokens:
-        joiner = " " if cur and re.match(r"^[A-Za-z0-9]+$", tok) else ""
-        candidate = (cur + joiner + tok).strip()
+        candidate = _join_caption_fragments([cur, tok])
         if cur and (
             _caption_display_len(candidate) > max_chars
             or _caption_visual_units(candidate) > wrap_limit
@@ -1273,6 +1449,8 @@ def _captions_from_stt(
     def caption_font_size(index: int, text: str) -> int:
         display_len = _caption_display_len(text)
         wrap_adjust = 1 if "\n" in text else 0
+        if re.search(r"[A-Za-z]", text) and " " in text:
+            wrap_adjust += 1
         if font_size_pattern == "punch":
             return max(9, base_font_size + (2 if display_len <= 4 else 0) - wrap_adjust)
         if font_size_pattern == "burst":
@@ -1382,14 +1560,14 @@ def _captions_from_stt(
                 text = str(word.get("text") or "")
                 if not text:
                     if cur_words and word.get("sentence_end") and cur_start is not None:
-                        add_caption("".join(cur_words), cur_start, cur_end)
+                        add_caption(_join_caption_fragments(cur_words), cur_start, cur_end)
                         cur_words = []
                         cur_start = None
                     continue
 
                 gap_ms = int(word["start_ms"] - cur_end) if cur_words else 0
                 candidate_start = cur_start if cur_start is not None else int(word["start_ms"])
-                candidate = _clean_caption_text("".join(cur_words) + text)
+                candidate = _join_caption_fragments(cur_words + [text])
                 candidate_display = _wrap_caption_text(
                     candidate,
                     max_chars=max_chars,
@@ -1401,7 +1579,7 @@ def _captions_from_stt(
                     or not _caption_fits_wrapped_visual_width(candidate_display, max_chars=max_chars, max_visual_units=max_visual_units)
                     or dur_ms > 2300
                 ):
-                    add_caption("".join(cur_words), int(cur_start or 0), cur_end)
+                    add_caption(_join_caption_fragments(cur_words), int(cur_start or 0), cur_end)
                     cur_words = []
                     cur_start = None
 
@@ -1410,7 +1588,7 @@ def _captions_from_stt(
                 cur_words.append(text)
                 cur_end = int(word["end_ms"])
 
-                current = _clean_caption_text("".join(cur_words))
+                current = _join_caption_fragments(cur_words)
                 next_word = segment[idx + 1] if idx + 1 < len(segment) else None
                 next_gap = int(next_word["start_ms"] - cur_end) if next_word else None
                 current_ms = int(cur_end - cur_start)
@@ -1427,13 +1605,13 @@ def _captions_from_stt(
                     or current_ms >= 2300
                 )
                 if hard_after or soft_after or full_enough:
-                    add_caption("".join(cur_words), cur_start, cur_end)
+                    add_caption(_join_caption_fragments(cur_words), cur_start, cur_end)
                     cur_words = []
                     cur_start = None
                     cur_end = 0
 
             if cur_words and cur_start is not None:
-                add_caption("".join(cur_words), cur_start, cur_end)
+                add_caption(_join_caption_fragments(cur_words), cur_start, cur_end)
     else:
         text = _clean_caption_text(output.get("text") if isinstance(output, dict) else "")
         add_caption_chunks(text, 0, int(video_end_us / 1000), min_step_ms=900)

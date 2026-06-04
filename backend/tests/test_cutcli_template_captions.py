@@ -106,6 +106,109 @@ def test_caption_does_not_split_single_stt_sentence_for_width_only():
     assert "\n" in captions[0]["text"]
 
 
+def test_caption_wrap_keeps_required_phrase_together():
+    text = "\u4e00\u4e2a\u4e13\u4e1a\u9760\u8c31\u7684\u8d22\u7a0e\u987e\u95ee\u9700\u8981\u5177\u5907"
+    stt_data = {
+        "output": {
+            "utterances": [
+                {
+                    "text": text,
+                    "start_time": 0,
+                    "end_time": 2200,
+                    "words": [
+                        {"text": text, "start_time": 0, "end_time": 2200},
+                    ],
+                }
+            ]
+        }
+    }
+
+    captions = _captions_for_template(
+        templates._AUTO_CAPTION_TEMPLATE_ID,
+        stt_data,
+        video_width=720,
+    )
+    caption_text = "|".join(item["text"] for item in captions)
+
+    assert caption_text.replace("\n", "").replace("|", "") == text
+    assert "\u5177\n\u5907" not in caption_text
+    assert "\u5177|\u5907" not in caption_text
+    assert any(
+        line.endswith("\u9700\u8981\u5177\u5907") or line.endswith("\u5177\u5907")
+        for item in captions
+        for line in item["text"].split("\n")
+    )
+
+
+def test_caption_preserves_english_word_spaces():
+    stt_data = {
+        "output": {
+            "utterances": [
+                {
+                    "text": "we had a lot of",
+                    "start_time": 0,
+                    "end_time": 1400,
+                    "words": [
+                        {"text": "we", "start_time": 0, "end_time": 180},
+                        {"text": "had", "start_time": 180, "end_time": 360},
+                        {"text": "a", "start_time": 360, "end_time": 480},
+                        {"text": "lot", "start_time": 480, "end_time": 720},
+                        {"text": "of", "start_time": 720, "end_time": 980},
+                    ],
+                }
+            ]
+        }
+    }
+
+    captions = _captions_for_template(
+        templates._AUTO_CAPTION_TEMPLATE_ID,
+        stt_data,
+        video_width=720,
+    )
+    text = " ".join(item["text"].replace("\n", " ") for item in captions)
+
+    raw = "|".join(item["text"] for item in captions)
+    assert "we had a lot of" in text
+    assert "wehadalotof" not in raw
+    assert all(" " in item["text"] or len(item["text"].split()) <= 1 for item in captions)
+
+
+def test_caption_wrap_does_not_break_english_words():
+    text = "we had a lot of international customers today"
+    stt_data = {
+        "output": {
+            "utterances": [
+                {
+                    "text": text,
+                    "start_time": 0,
+                    "end_time": 2200,
+                    "words": [
+                        {"text": "we", "start_time": 0, "end_time": 150},
+                        {"text": "had", "start_time": 150, "end_time": 300},
+                        {"text": "a", "start_time": 300, "end_time": 420},
+                        {"text": "lot", "start_time": 420, "end_time": 620},
+                        {"text": "of", "start_time": 620, "end_time": 760},
+                        {"text": "international", "start_time": 760, "end_time": 1320},
+                        {"text": "customers", "start_time": 1320, "end_time": 1760},
+                        {"text": "today", "start_time": 1760, "end_time": 2200},
+                    ],
+                }
+            ]
+        }
+    }
+
+    captions = _captions_for_template(
+        templates._AUTO_CAPTION_CLEAN_TEMPLATE_ID,
+        stt_data,
+        video_width=1280,
+    )
+    rendered = " ".join(item["text"].replace("\n", " ") for item in captions)
+
+    assert rendered == text
+    for token in text.split():
+        assert token in rendered
+
+
 def test_caption_templates_have_distinct_design_layouts():
     styles = {
         template_id: templates._caption_style_for_template(template)
