@@ -71,24 +71,32 @@ def _public_url(path: str) -> str:
     return f"{base}/{value.lstrip('/')}"
 
 
-_DEFAULT_OVERLAY_FIELDS: List[Dict[str, Any]] = [
-    {
-        "key": "headline",
-        "label": "\u4e3b\u6807\u9898",
+_OVERLAY_FIELD_DEFS: Dict[str, Dict[str, Any]] = {
+    "top_text": {
+        "key": "top_text",
+        "label": "\u9876\u90e8\u6587\u6848",
         "placeholder": "\u6bcf\u5929 3 \u5206\u949f\n\u6c14\u8840\u65fa\u5230\u5192\u7ea2\u5149",
         "default": "",
         "multiline": True,
         "max_length": 32,
     },
-    {
-        "key": "subheadline",
-        "label": "\u526f\u6807\u9898",
-        "placeholder": "Emotional stability",
+    "title": {
+        "key": "title",
+        "label": "\u4e3b\u6807\u9898",
+        "placeholder": "\u6c64\u5609\u6021",
         "default": "",
         "multiline": False,
-        "max_length": 36,
+        "max_length": 24,
     },
-    {
+    "subtitle": {
+        "key": "subtitle",
+        "label": "\u526f\u6807\u9898",
+        "placeholder": "\u5341\u5e74\u5927\u5065\u5eb7\u884c\u4e1a\u7ecf\u9a8c",
+        "default": "",
+        "multiline": False,
+        "max_length": 40,
+    },
+    "badge": {
         "key": "badge",
         "label": "\u6807\u7b7e",
         "placeholder": "\u517b\u751f\u65b0\u5e02\u573a",
@@ -96,17 +104,23 @@ _DEFAULT_OVERLAY_FIELDS: List[Dict[str, Any]] = [
         "multiline": False,
         "max_length": 16,
     },
-]
+}
 
 
-def _overlay_fields(*, headline: str = "", subheadline: str = "", badge: str = "") -> List[Dict[str, Any]]:
-    defaults = {"headline": headline, "subheadline": subheadline, "badge": badge}
-    fields: List[Dict[str, Any]] = []
-    for field in _DEFAULT_OVERLAY_FIELDS:
-        row = dict(field)
-        row["default"] = defaults.get(str(row.get("key") or ""), "")
-        fields.append(row)
-    return fields
+def _overlay_field(key: str, default: str = "", **overrides: Any) -> Dict[str, Any]:
+    base = _OVERLAY_FIELD_DEFS.get(key)
+    if not base:
+        return {}
+    row = dict(base)
+    row["default"] = default
+    for name, value in overrides.items():
+        if value is not None:
+            row[name] = value
+    return row
+
+
+def _overlay_fields(*fields: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [dict(field) for field in fields if field]
 
 
 _TEMPLATES: Dict[str, Dict[str, Any]] = {
@@ -122,7 +136,7 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u4e2d\u4e0b\u5927\u5b57 + \u7206\u70b9\u5f39\u8df3",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4",
-        "overlay_fields": _overlay_fields(),
+        "overlay_fields": [],
         "caption_style": {
             "id": "yellow_burst",
             "text_effect": _CAPTION_HUAZI_NAME,
@@ -163,7 +177,7 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u4e0b\u4e09\u5206\u4e4b\u4e00 + \u8f7b\u6e10\u663e",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_clean_fade_v1.mp4",
-        "overlay_fields": _overlay_fields(),
+        "overlay_fields": [],
         "caption_style": {
             "id": "clean_fade",
             "text_effect": "",
@@ -204,7 +218,7 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u5de6\u4fa7\u7ec8\u7aef\u5feb\u6253 + \u9752\u84dd\u9713\u8679",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4",
-        "overlay_fields": _overlay_fields(),
+        "overlay_fields": [],
         "caption_style": {
             "id": "side_neon",
             "text_effect": "",
@@ -249,7 +263,7 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u5c45\u4e2d\u91cd\u51fb + \u60c5\u7eea\u53cd\u8f6c",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_punch_big_v1.mp4",
-        "overlay_fields": _overlay_fields(),
+        "overlay_fields": [],
         "caption_style": {
             "id": "punch_big",
             "text_effect": _CAPTION_HUAZI_NAME,
@@ -290,7 +304,16 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u9876\u90e8\u5927\u6807\u9898 + \u4e0b\u65b9\u8ddf\u8bf4",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_health_banner_v1.mp4",
-        "overlay_fields": _overlay_fields(headline="\u6bcf\u5929 3 \u5206\u949f\n\u6c14\u8840\u65fa\u5230\u5192\u7ea2\u5149"),
+        "overlay_fields": _overlay_fields(
+            _overlay_field("top_text", "\u6bcf\u5929 3 \u5206\u949f\n\u6c14\u8840\u65fa\u5230\u5192\u7ea2\u5149"),
+            _overlay_field("title", "\u6c64\u5609\u6021", placeholder="\u59d3\u540d"),
+            _overlay_field(
+                "subtitle",
+                "\u5341\u5e74\u5927\u5065\u5eb7\u884c\u4e1a\u7ecf\u9a8c",
+                placeholder="\u5c97\u4f4d / \u8eab\u4efd",
+                max_length=32,
+            ),
+        ),
         "caption_style": {
             "id": "health_banner",
             "font_size": 12,
@@ -334,7 +357,10 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u4e2d\u90e8\u4e3b\u9898\u5f15\u53f7 + \u53cc\u8bed\u526f\u6807",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_quote_focus_v1.mp4",
-        "overlay_fields": _overlay_fields(headline="\u300c\u60c5\u7eea\u7a33\u5b9a\u300d", subheadline="Emotional stability"),
+        "overlay_fields": _overlay_fields(
+            _overlay_field("title", "\u300c\u60c5\u7eea\u7a33\u5b9a\u300d", placeholder="\u300c\u60c5\u7eea\u7a33\u5b9a\u300d"),
+            _overlay_field("subtitle", "Emotional stability", placeholder="Emotional stability", max_length=36),
+        ),
         "caption_style": {
             "id": "quote_focus",
             "font_size": 11,
@@ -377,7 +403,10 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
         "preserve_source_video": True,
         "quality_label": "\u6a59\u8272\u80f6\u56ca\u6807\u7b7e + \u4e2d\u4e0b\u5927\u6807\u9898",
         "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_market_label_v1.mp4",
-        "overlay_fields": _overlay_fields(headline="\u65b0\u5174\u517b\u751f\u52a0\u76df", badge="\u517b\u751f\u65b0\u5e02\u573a"),
+        "overlay_fields": _overlay_fields(
+            _overlay_field("badge", "\u517b\u751f\u65b0\u5e02\u573a"),
+            _overlay_field("title", "\u65b0\u5174\u517b\u751f\u52a0\u76df", placeholder="\u65b0\u5174\u517b\u751f\u52a0\u76df", max_length=28),
+        ),
         "caption_style": {
             "id": "market_label",
             "font_size": 12,
@@ -3365,7 +3394,7 @@ def list_cutcli_templates(
         row["render_modes"] = ["ffmpeg", "cutcli_cloud"]
         row.setdefault("input_modes", ["upload", "asset_id", "video_url"])
         row.setdefault("preserve_source_video", True)
-        row.setdefault("overlay_fields", _overlay_fields())
+        row.setdefault("overlay_fields", [])
         row["caption_style"] = caption_style
         row["generation_strategy"] = {
             "version": 1,
