@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
@@ -251,6 +251,9 @@ class TemplateListItem(BaseModel):
     preview_url: str = ""
     sample_video_url: str = ""
     sample_asset_id: str = ""
+    render_modes: List[str] = Field(default_factory=list)
+    generation_strategy: Dict[str, Any] = Field(default_factory=dict)
+    caption_style: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CutcliSttTranscribeBody(BaseModel):
@@ -3175,12 +3178,29 @@ def list_cutcli_templates(
     for item in _TEMPLATES.values():
         row = dict(item)
         preview_url = _template_preview_url(row["id"])
+        caption_style = _caption_style_for_template(row)
         row["preview_url"] = preview_url
         row["sample_video_url"] = preview_url
         row["sample_asset_id"] = _template_sample_asset_id(row["id"])
         row["render_path"] = f"/api/cutcli/templates/{row['id']}/render"
-        row.setdefault("input_modes", ["upload", "asset_id"])
+        row["render_modes"] = ["ffmpeg", "cutcli_cloud"]
+        row.setdefault("input_modes", ["upload", "asset_id", "video_url"])
         row.setdefault("preserve_source_video", True)
+        row["caption_style"] = caption_style
+        row["generation_strategy"] = {
+            "version": 1,
+            "executor": "online",
+            "stt": {
+                "provider": "sutui",
+                "model": _STT_MODEL,
+                "server_endpoint": "/api/cutcli/stt/transcribe",
+                "input": "audio_url",
+            },
+            "render_modes": row["render_modes"],
+            "cloud_render_endpoint": "/api/cutcli/cloud/render-draft",
+            "caption_style": caption_style,
+            "preserve_source_video": True,
+        }
         templates.append(TemplateListItem(**row).model_dump())
     return {"ok": True, "templates": templates}
 
