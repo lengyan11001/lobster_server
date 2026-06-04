@@ -313,7 +313,9 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
             "ass_margin_v": 300,
             "overlay_style": {
                 "layout": "top_banner",
-                "headline_font_size": 92,
+                "headline_font_size": 80,
+                "banner_height_ratio": 0.30,
+                "headline_y_ratio": 0.56,
                 "headline_color": "&H001F4A86",
                 "headline_outline": "&H00FFFFFF",
                 "banner_color": "&HA8F3E7CF",
@@ -355,7 +357,8 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
             "ass_margin_v": 340,
             "overlay_style": {
                 "layout": "center_quote",
-                "headline_font_size": 96,
+                "headline_font_size": 88,
+                "headline_y_ratio": 0.46,
                 "headline_color": "&H00FFFFFF",
                 "headline_outline": "&H00222931",
                 "subheadline_font_size": 42,
@@ -397,7 +400,8 @@ _TEMPLATES: Dict[str, Dict[str, Any]] = {
             "ass_margin_v": 340,
             "overlay_style": {
                 "layout": "market_label",
-                "headline_font_size": 92,
+                "headline_font_size": 84,
+                "headline_y_ratio": 0.57,
                 "headline_color": "&H00FFFFFF",
                 "headline_outline": "&H00111111",
                 "badge_color": "&H001B7BE6",
