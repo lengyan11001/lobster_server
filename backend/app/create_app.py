@@ -30,6 +30,7 @@ from .api.mcp_registry import router as mcp_registry_router
 # 发布/列表等主要在客户端；服务器须保留 assets（upload-temp + /api/assets/temp/*），供本机无 TOS 时中转公网 URL
 from .api.assets import router as assets_router
 from .api.creative_jobs import router as creative_jobs_router
+from .api.cutcli_templates import router as cutcli_templates_router
 # from .api.publish import router as publish_router
 from .api.logs_api import router as logs_router
 from .api.h5_chat import router as h5_chat_router
@@ -883,6 +884,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp_registry_router, prefix="")
     app.include_router(assets_router, prefix="")
     app.include_router(creative_jobs_router, prefix="")
+    app.include_router(cutcli_templates_router, prefix="")
     # app.include_router(publish_router, prefix="")
     app.include_router(logs_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
