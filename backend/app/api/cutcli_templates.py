@@ -32,9 +32,12 @@ _ROOT_DIR = Path(__file__).resolve().parents[3]
 _JOBS_DIR = _ROOT_DIR / "data" / "cutcli_templates"
 _JOBS_DIR.mkdir(parents=True, exist_ok=True)
 _PREVIEW_CATALOG_FILE = _JOBS_DIR / "template_previews.json"
-_STATIC_PREVIEW_DIR = _ROOT_DIR / "static" / "media" / "cutcli_templates"
-_STATIC_PREVIEW_PUBLIC_PREFIX = "/static/media/cutcli_templates"
+_STATIC_PREVIEW_DIR = _ROOT_DIR / "client_static" / "client_code" / "cutcli_templates"
+_STATIC_PREVIEW_PUBLIC_PREFIX = "/client/client-code/cutcli_templates"
 _AUTO_CAPTION_TEMPLATE_ID = "auto_caption_pop_huazi_v1"
+_AUTO_CAPTION_CLEAN_TEMPLATE_ID = "auto_caption_clean_fade_v1"
+_AUTO_CAPTION_NEON_TEMPLATE_ID = "auto_caption_neon_focus_v1"
+_AUTO_CAPTION_PUNCH_TEMPLATE_ID = "auto_caption_punch_big_v1"
 _STT_MODEL = "volcengine/speech-to-text/bigmodel-v2"
 _STT_API_BASE = (
     getattr(settings, "sutui_api_base", None)
@@ -52,24 +55,209 @@ _STT_RUNNING = {"pending", "queued", "running", "processing", "waiting", "create
 _SUTUI_TOKEN_POOL_LOCK = threading.Lock()
 _SUTUI_TOKEN_POOL_INDEX: Dict[str, int] = {}
 
+
+def _public_url(path: str) -> str:
+    value = str(path or "").strip()
+    if not value or re.match(r"^https?://", value, flags=re.IGNORECASE):
+        return value
+    base = (getattr(settings, "public_base_url", None) or "").strip().rstrip("/")
+    if not base:
+        return value
+    return f"{base}/{value.lstrip('/')}"
+
+
 _TEMPLATES: Dict[str, Dict[str, Any]] = {
     _AUTO_CAPTION_TEMPLATE_ID: {
         "id": _AUTO_CAPTION_TEMPLATE_ID,
-        "name": "爆款花字字幕",
-        "description": "上传视频或填写素材 ID，保留原视频比例和时长，自动识别语音并添加黄字蓝边花字字幕。",
+        "kind": "auto_caption",
+        "name": "爆点黄字弹跳",
+        "description": "短句爆点型字幕，黄字蓝边、重入场、强弹跳，适合开场钩子、卖点强调和口播重点句。",
         "aspect_ratio": "source",
         "default_duration": 0,
-        "tags": ["花字字幕", "自动识别", "生成同款"],
+        "tags": ["爆点", "黄字蓝边", "弹跳"],
         "input_modes": ["upload", "asset_id"],
         "preserve_source_video": True,
-        "quality_label": "单轨字幕、无黑底、黄字蓝边花字",
-        "sample_video_url": "https://cdn-video.51sux.com/assets/cutcli_auto_caption/20260604031403_1870c270/fallback_final.mp4",
+        "quality_label": "中下大字 + 爆点弹跳",
+        "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4",
+        "preview_captions": [
+            {"text": "别划走", "start": 80_000, "end": 1_020_000},
+            {"text": "重点来了", "start": 1_060_000, "end": 2_180_000},
+            {"text": "一句话抓住用户", "start": 2_240_000, "end": 4_150_000},
+            {"text": "爆点必须够大", "start": 4_220_000, "end": 6_200_000},
+        ],
+        "caption_style": {
+            "id": "yellow_burst",
+            "text_effect": _CAPTION_HUAZI_NAME,
+            "text_effect_id": _CAPTION_HUAZI_EFFECT_ID,
+            "in_animation": _CAPTION_IN_ANIMATION,
+            "in_animation_duration": 220_000,
+            "loop_animation": _CAPTION_LOOP_ANIMATION,
+            "loop_animation_duration": 430_000,
+            "font_size": 14,
+            "font_size_pattern": "burst",
+            "caption_max_chars": 8,
+            "text_color": "#FFFFFF",
+            "border_color": "#041B51",
+            "border_width": "0.09",
+            "has_shadow": True,
+            "shadow_color": "#000000",
+            "transform_x": "0",
+            "transform_y": "-0.55",
+            "ass_layout": "center_burst",
+            "ass_font_size": 96,
+            "ass_primary": "&H0000F7FF",
+            "ass_outline": "&H00FF3600",
+            "ass_shadow": 5,
+            "ass_border": 8,
+            "ass_alignment": 2,
+            "ass_margin_v": 250,
+        },
+    },
+    _AUTO_CAPTION_CLEAN_TEMPLATE_ID: {
+        "id": _AUTO_CAPTION_CLEAN_TEMPLATE_ID,
+        "kind": "auto_caption",
+        "name": "访谈清透字幕",
+        "description": "细描边白字，稳定放在画面下三分之一，渐显入场，不抢人物表情，适合课程、采访和员工口播。",
+        "aspect_ratio": "source",
+        "default_duration": 0,
+        "tags": ["访谈", "课程", "清透"],
+        "input_modes": ["upload", "asset_id"],
+        "preserve_source_video": True,
+        "quality_label": "下三分之一 + 轻渐显",
+        "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_clean_fade_v1.mp4",
+        "preview_captions": [
+            {"text": "干净讲清每一句", "start": 180_000, "end": 1_650_000},
+            {"text": "适合采访和课程", "start": 1_760_000, "end": 3_240_000},
+            {"text": "不抢人物表情", "start": 3_360_000, "end": 4_820_000},
+            {"text": "信息层次更舒服", "start": 4_940_000, "end": 6_520_000},
+        ],
+        "caption_style": {
+            "id": "clean_fade",
+            "text_effect": "",
+            "text_effect_id": "",
+            "in_animation": "渐显",
+            "in_animation_duration": 360_000,
+            "loop_animation": "",
+            "loop_animation_duration": 0,
+            "font_size": 11,
+            "font_size_pattern": "steady",
+            "caption_max_chars": 14,
+            "text_color": "#FFFFFF",
+            "border_color": "#111827",
+            "border_width": "0.065",
+            "has_shadow": True,
+            "shadow_color": "#000000",
+            "transform_x": "0",
+            "transform_y": "-0.72",
+            "ass_layout": "lower_clean",
+            "ass_font_size": 72,
+            "ass_primary": "&H00FFFFFF",
+            "ass_outline": "&H00231B12",
+            "ass_shadow": 2,
+            "ass_border": 5,
+            "ass_alignment": 2,
+            "ass_margin_v": 310,
+        },
+    },
+    _AUTO_CAPTION_NEON_TEMPLATE_ID: {
+        "id": _AUTO_CAPTION_NEON_TEMPLATE_ID,
+        "kind": "auto_caption",
+        "name": "科技侧标字幕",
+        "description": "字幕从画面左侧像 UI 标注一样浮出，青蓝霓虹配深色描边，适合 AI、SaaS、产品演示和科技感内容。",
+        "aspect_ratio": "source",
+        "default_duration": 0,
+        "tags": ["科技", "侧标", "霓虹"],
+        "input_modes": ["upload", "asset_id"],
+        "preserve_source_video": True,
+        "quality_label": "左侧标注 + 青蓝霓虹",
+        "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4",
+        "preview_captions": [
+            {"text": "左侧标注重点", "start": 120_000, "end": 1_360_000},
+            {"text": "科技感更强", "start": 1_480_000, "end": 2_640_000},
+            {"text": "适合 AI 产品", "start": 2_760_000, "end": 4_150_000},
+            {"text": "信息像界面浮出", "start": 4_260_000, "end": 6_260_000},
+        ],
+        "caption_style": {
+            "id": "side_neon",
+            "text_effect": "",
+            "text_effect_id": "",
+            "in_animation": "渐显",
+            "in_animation_duration": 260_000,
+            "loop_animation": _CAPTION_LOOP_ANIMATION,
+            "loop_animation_duration": 520_000,
+            "font_size": 11,
+            "font_size_pattern": "side_neon",
+            "caption_max_chars": 9,
+            "text_color": "#7CFBFF",
+            "border_color": "#062A4D",
+            "border_width": "0.085",
+            "has_shadow": True,
+            "shadow_color": "#00111F",
+            "transform_x": "-0.48",
+            "transform_y": "0.18",
+            "ass_layout": "side_neon",
+            "ass_font_size": 74,
+            "ass_primary": "&H00FFFB7C",
+            "ass_outline": "&H004D2A06",
+            "ass_shadow": 5,
+            "ass_border": 6,
+            "ass_alignment": 7,
+            "ass_margin_v": 250,
+        },
+    },
+    _AUTO_CAPTION_PUNCH_TEMPLATE_ID: {
+        "id": _AUTO_CAPTION_PUNCH_TEMPLATE_ID,
+        "kind": "auto_caption",
+        "name": "短剧重击大字",
+        "description": "一句一炸的短剧字幕，字号更大、位置更高、入场更猛，适合情绪反转、冲突句和强钩子。",
+        "aspect_ratio": "source",
+        "default_duration": 0,
+        "tags": ["短剧", "重击", "钩子"],
+        "input_modes": ["upload", "asset_id"],
+        "preserve_source_video": True,
+        "quality_label": "居中重击 + 情绪反转",
+        "sample_video_url": "/client/client-code/cutcli_templates/auto_caption_punch_big_v1.mp4",
+        "preview_captions": [
+            {"text": "不对！", "start": 100_000, "end": 920_000},
+            {"text": "你亏大了", "start": 980_000, "end": 2_000_000},
+            {"text": "这个转折", "start": 2_100_000, "end": 3_320_000},
+            {"text": "必须看完", "start": 3_420_000, "end": 4_720_000},
+            {"text": "下一秒反转", "start": 4_860_000, "end": 6_280_000},
+        ],
+        "caption_style": {
+            "id": "punch_big",
+            "text_effect": _CAPTION_HUAZI_NAME,
+            "text_effect_id": _CAPTION_HUAZI_EFFECT_ID,
+            "in_animation": _CAPTION_IN_ANIMATION,
+            "in_animation_duration": 160_000,
+            "loop_animation": _CAPTION_LOOP_ANIMATION,
+            "loop_animation_duration": 360_000,
+            "font_size": 16,
+            "font_size_pattern": "punch",
+            "caption_max_chars": 6,
+            "text_color": "#FFFFFF",
+            "border_color": "#07123F",
+            "border_width": "0.10",
+            "has_shadow": True,
+            "shadow_color": "#000000",
+            "transform_x": "0",
+            "transform_y": "-0.34",
+            "ass_layout": "dramatic_hook",
+            "ass_font_size": 118,
+            "ass_primary": "&H0000F7FF",
+            "ass_outline": "&H003F1207",
+            "ass_shadow": 7,
+            "ass_border": 9,
+            "ass_alignment": 5,
+            "ass_margin_v": 220,
+        },
     },
 }
 
 
 class TemplateListItem(BaseModel):
     id: str
+    kind: str = "auto_caption"
     name: str
     description: str
     aspect_ratio: str = "9:16"
@@ -82,6 +270,55 @@ class TemplateListItem(BaseModel):
     preview_url: str = ""
     sample_video_url: str = ""
     sample_asset_id: str = ""
+
+
+def _caption_style_for_template(template: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    base = dict((_TEMPLATES.get(_AUTO_CAPTION_TEMPLATE_ID) or {}).get("caption_style") or {})
+    if isinstance(template, dict):
+        base.update(template.get("caption_style") or {})
+    base.setdefault("text_effect", _CAPTION_HUAZI_NAME)
+    base.setdefault("text_effect_id", _CAPTION_HUAZI_EFFECT_ID)
+    base.setdefault("in_animation", _CAPTION_IN_ANIMATION)
+    base.setdefault("in_animation_duration", 280_000)
+    base.setdefault("loop_animation", _CAPTION_LOOP_ANIMATION)
+    base.setdefault("loop_animation_duration", 500_000)
+    base.setdefault("font_size", 13)
+    base.setdefault("text_color", "#FFFFFF")
+    base.setdefault("border_color", "#061A48")
+    base.setdefault("border_width", "0.08")
+    base.setdefault("has_shadow", True)
+    base.setdefault("shadow_color", "#000000")
+    base.setdefault("transform_x", "0")
+    base.setdefault("transform_y", "-0.66")
+    base.setdefault("caption_max_chars", 11)
+    base.setdefault("font_size_pattern", "steady")
+    base.setdefault("ass_layout", "center_burst")
+    base.setdefault("ass_font_size", 86)
+    base.setdefault("ass_primary", "&H0000F7FF")
+    base.setdefault("ass_outline", "&H00FF3C00")
+    base.setdefault("ass_shadow", 4)
+    base.setdefault("ass_border", 7)
+    base.setdefault("ass_alignment", 2)
+    base.setdefault("ass_margin_v", 265)
+    base.setdefault("ass_effect", "")
+    return base
+
+
+def _caption_style_public(style: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": style.get("id") or "",
+        "text_effect": style.get("text_effect") or "",
+        "text_effect_id": style.get("text_effect_id") or "",
+        "in_animation": style.get("in_animation") or "",
+        "loop_animation": style.get("loop_animation") or "",
+        "font_size": style.get("font_size") or 0,
+        "font_size_pattern": style.get("font_size_pattern") or "",
+        "text_color": style.get("text_color") or "",
+        "border_color": style.get("border_color") or "",
+        "transform_x": style.get("transform_x") or "",
+        "transform_y": style.get("transform_y") or "",
+        "ass_layout": style.get("ass_layout") or "",
+    }
 
 
 def _find_cutcli_bin() -> str:
@@ -118,16 +355,16 @@ def _template_preview_url(template_id: str) -> str:
     if isinstance(item, dict):
         url = str(item.get("preview_url") or item.get("sample_video_url") or "").strip()
         if url:
-            return url
+            return _public_url(url)
     elif isinstance(item, str) and item.strip():
-        return item.strip()
+        return _public_url(item.strip())
 
     for ext in (".mp4", ".mov", ".webm"):
         sample = _STATIC_PREVIEW_DIR / f"{template_id}{ext}"
         if sample.exists():
-            return f"{_STATIC_PREVIEW_PUBLIC_PREFIX}/{sample.name}"
+            return _public_url(f"{_STATIC_PREVIEW_PUBLIC_PREFIX}/{sample.name}")
     tpl = _TEMPLATES.get(template_id) or {}
-    return str(tpl.get("preview_url") or tpl.get("sample_video_url") or "").strip()
+    return _public_url(str(tpl.get("preview_url") or tpl.get("sample_video_url") or "").strip())
 
 
 def _template_sample_asset_id(template_id: str) -> str:
@@ -694,6 +931,116 @@ def _split_caption_text(text: str, max_chars: int = 11) -> List[str]:
     return [x for x in chunks if x]
 
 
+_CAPTION_HARD_BREAK_CHARS = set(".!?;\u3002\uff01\uff1f\uff1b")
+_CAPTION_SOFT_BREAK_CHARS = set(",:\u3001\uff0c\uff1a")
+
+
+def _caption_word_fragments(text: Any, start_ms: int, end_ms: int) -> List[Dict[str, Any]]:
+    raw = str(text or "").replace("\u3000", " ").strip()
+    raw = re.sub(r"\s+", " ", raw)
+    if not raw:
+        return []
+
+    pieces: List[Tuple[str, bool, bool]] = []
+    cur = ""
+    for ch in raw:
+        cur += ch
+        if ch in _CAPTION_HARD_BREAK_CHARS:
+            pieces.append((cur, True, False))
+            cur = ""
+        elif ch in _CAPTION_SOFT_BREAK_CHARS:
+            pieces.append((cur, False, True))
+            cur = ""
+    if cur:
+        pieces.append((cur, False, False))
+    if not pieces:
+        return []
+
+    span = max(len(pieces), end_ms - start_ms)
+    weights = [max(1, _caption_display_len(piece[0])) for piece in pieces]
+    total_weight = max(1, sum(weights))
+    cursor = start_ms
+    fragments: List[Dict[str, Any]] = []
+    for idx, (piece, sentence_end, soft_end) in enumerate(pieces):
+        if idx == len(pieces) - 1:
+            frag_end = end_ms
+        else:
+            frag_end = min(end_ms, cursor + max(1, int(span * weights[idx] / total_weight)))
+        clean = _clean_caption_text(piece)
+        if clean:
+            fragments.append(
+                {
+                    "text": clean,
+                    "start_ms": cursor,
+                    "end_ms": max(cursor + 1, frag_end),
+                    "sentence_end": sentence_end,
+                    "soft_end": soft_end,
+                }
+            )
+        elif fragments:
+            fragments[-1]["sentence_end"] = bool(fragments[-1].get("sentence_end") or sentence_end)
+            fragments[-1]["soft_end"] = bool(fragments[-1].get("soft_end") or soft_end)
+        else:
+            fragments.append(
+                {
+                    "text": "",
+                    "start_ms": cursor,
+                    "end_ms": max(cursor + 1, frag_end),
+                    "sentence_end": sentence_end,
+                    "soft_end": soft_end,
+                }
+            )
+        cursor = max(cursor + 1, frag_end)
+    return fragments
+
+
+def _caption_utterance_segments(utterances: Any) -> List[Dict[str, Any]]:
+    if not isinstance(utterances, list):
+        return []
+
+    segments: List[Dict[str, Any]] = []
+    for utt in utterances:
+        if not isinstance(utt, dict):
+            continue
+        utt_words: List[Dict[str, Any]] = []
+        for item in utt.get("words") or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                start_ms = int(float(item.get("start_time")))
+                end_ms = int(float(item.get("end_time")))
+            except Exception:
+                continue
+            if start_ms < 0 or end_ms <= start_ms:
+                continue
+            utt_words.extend(_caption_word_fragments(item.get("text"), start_ms, end_ms))
+        if utt_words:
+            utt_words.sort(key=lambda x: (x["start_ms"], x["end_ms"]))
+            segments.append(
+                {
+                    "words": utt_words,
+                    "start_ms": int(utt_words[0]["start_ms"]),
+                    "end_ms": int(utt_words[-1]["end_ms"]),
+                }
+            )
+            continue
+
+        text = _clean_caption_text(utt.get("text"))
+        if not text:
+            continue
+        try:
+            start_ms = int(float(utt.get("start_time") or 0))
+            end_ms = int(float(utt.get("end_time") or start_ms + 1200))
+        except Exception:
+            start_ms, end_ms = 0, 1200
+        if end_ms <= start_ms:
+            end_ms = start_ms + 1200
+        segments.append({"text": text, "start_ms": start_ms, "end_ms": end_ms})
+
+    segments.sort(key=lambda x: (int(x.get("start_ms") or 0), int(x.get("end_ms") or 0)))
+    return segments
+
+
 def _extract_stt_output(stt_data: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(stt_data, dict):
         return {}
@@ -707,32 +1054,42 @@ def _extract_stt_output(stt_data: Dict[str, Any]) -> Dict[str, Any]:
     return stt_data
 
 
-def _captions_from_stt(stt_data: Dict[str, Any], *, video_duration_sec: float) -> List[Dict[str, Any]]:
+def _captions_from_stt(
+    stt_data: Dict[str, Any],
+    *,
+    video_duration_sec: float,
+    caption_style: Dict[str, Any],
+) -> List[Dict[str, Any]]:
     output = _extract_stt_output(stt_data)
     utterances = output.get("utterances") if isinstance(output, dict) else None
     captions: List[Dict[str, Any]] = []
     video_end_us = max(100_000, int(max(video_duration_sec, 0.1) * 1_000_000))
+    utterance_segments = _caption_utterance_segments(utterances)
+    max_chars = int(caption_style.get("caption_max_chars") or 11)
+    font_size_pattern = str(caption_style.get("font_size_pattern") or "steady")
+    base_font_size = int(caption_style.get("font_size") or 13)
 
-    words: List[Dict[str, Any]] = []
-    if isinstance(utterances, list):
-        for utt in utterances:
-            if not isinstance(utt, dict):
-                continue
-            for item in utt.get("words") or []:
-                if not isinstance(item, dict):
-                    continue
-                text = _clean_caption_text(item.get("text"))
-                if not text:
-                    continue
-                try:
-                    start_ms = int(float(item.get("start_time")))
-                    end_ms = int(float(item.get("end_time")))
-                except Exception:
-                    continue
-                if start_ms < 0 or end_ms <= start_ms:
-                    continue
-                words.append({"text": text, "start_ms": start_ms, "end_ms": end_ms})
-    words.sort(key=lambda x: (x["start_ms"], x["end_ms"]))
+    def caption_font_size(index: int, text: str) -> int:
+        display_len = _caption_display_len(text)
+        if font_size_pattern == "punch":
+            return base_font_size + (2 if display_len <= 4 else 0)
+        if font_size_pattern == "burst":
+            return base_font_size + (1 if index % 2 == 0 else 0)
+        if font_size_pattern == "side_neon":
+            return max(9, base_font_size - (1 if display_len >= 8 else 0))
+        return base_font_size
+
+    def caption_position(index: int) -> Tuple[Optional[float], Optional[float]]:
+        layout = str(caption_style.get("ass_layout") or "")
+        if layout == "side_neon":
+            return (-0.50, 0.24 if index % 2 == 0 else 0.08)
+        if layout == "dramatic_hook":
+            return (0.0, -0.26 if index % 2 == 0 else -0.40)
+        if layout == "center_burst":
+            return (0.0, -0.52 if index % 2 == 0 else -0.64)
+        if layout == "lower_clean":
+            return (0.0, -0.72)
+        return None, None
 
     def add_caption(text: str, start_ms: int, end_ms: int) -> None:
         clean = _clean_caption_text(text)
@@ -748,60 +1105,93 @@ def _captions_from_stt(stt_data: Dict[str, Any], *, video_duration_sec: float) -
             end_us = max(end_us, start_us + 350_000)
         if end_us <= start_us:
             return
-        captions.append(
-            {
-                "text": clean,
-                "start": start_us,
-                "end": min(video_end_us, end_us),
-                "inAnimation": _CAPTION_IN_ANIMATION,
-                "inAnimationDuration": 280_000,
-                "loopAnimation": _CAPTION_LOOP_ANIMATION,
-                "loopAnimationDuration": 500_000,
-            }
-        )
+        item = {
+            "text": clean,
+            "start": start_us,
+            "end": min(video_end_us, end_us),
+        }
+        item["fontSize"] = caption_font_size(len(captions), clean)
+        pos_x, pos_y = caption_position(len(captions))
+        if pos_x is not None:
+            item["transformX"] = pos_x
+        if pos_y is not None:
+            item["transformY"] = pos_y
+        in_animation = str(caption_style.get("in_animation") or "").strip()
+        if in_animation:
+            item["inAnimation"] = in_animation
+            item["inAnimationDuration"] = int(caption_style.get("in_animation_duration") or 0)
+        loop_animation = str(caption_style.get("loop_animation") or "").strip()
+        if loop_animation:
+            item["loopAnimation"] = loop_animation
+            item["loopAnimationDuration"] = int(caption_style.get("loop_animation_duration") or 0)
+        captions.append(item)
 
-    if words:
-        cur_words: List[str] = []
-        cur_start = words[0]["start_ms"]
-        cur_end = words[0]["end_ms"]
-        for word in words:
-            candidate = _clean_caption_text("".join(cur_words) + word["text"])
-            dur_ms = int(word["end_ms"] - cur_start)
-            if cur_words and (_caption_display_len(candidate) > 11 or dur_ms > 2300):
+    def add_caption_chunks(text: str, start_ms: int, end_ms: int, *, min_step_ms: int = 500) -> None:
+        chunks = _split_caption_text(text, max_chars=max_chars)
+        if not chunks:
+            return
+        span = max(min_step_ms, end_ms - start_ms)
+        step = max(min_step_ms, int(span / len(chunks)))
+        for idx, chunk in enumerate(chunks):
+            add_caption(chunk, start_ms + idx * step, start_ms + (idx + 1) * step)
+
+    if utterance_segments:
+        for entry in utterance_segments:
+            segment = entry.get("words")
+            if not segment:
+                add_caption_chunks(
+                    str(entry.get("text") or ""),
+                    int(entry.get("start_ms") or 0),
+                    int(entry.get("end_ms") or 0),
+                    min_step_ms=500,
+                )
+                continue
+            cur_words: List[str] = []
+            cur_start: Optional[int] = None
+            cur_end = 0
+            for idx, word in enumerate(segment):
+                text = str(word.get("text") or "")
+                if not text:
+                    if cur_words and word.get("sentence_end") and cur_start is not None:
+                        add_caption("".join(cur_words), cur_start, cur_end)
+                        cur_words = []
+                        cur_start = None
+                    continue
+
+                gap_ms = int(word["start_ms"] - cur_end) if cur_words else 0
+                candidate_start = cur_start if cur_start is not None else int(word["start_ms"])
+                candidate = _clean_caption_text("".join(cur_words) + text)
+                dur_ms = int(word["end_ms"] - candidate_start)
+                if cur_words and (gap_ms >= 360 or _caption_display_len(candidate) > max_chars or dur_ms > 2300):
+                    add_caption("".join(cur_words), int(cur_start or 0), cur_end)
+                    cur_words = []
+                    cur_start = None
+
+                if cur_start is None:
+                    cur_start = int(word["start_ms"])
+                cur_words.append(text)
+                cur_end = int(word["end_ms"])
+
+                current = _clean_caption_text("".join(cur_words))
+                next_word = segment[idx + 1] if idx + 1 < len(segment) else None
+                next_gap = int(next_word["start_ms"] - cur_end) if next_word else None
+                current_ms = int(cur_end - cur_start)
+                hard_after = bool(word.get("sentence_end")) or (next_gap is not None and next_gap >= 480)
+                soft_after = bool(word.get("soft_end")) and (
+                    _caption_display_len(current) >= 6 or current_ms >= 900
+                )
+                full_enough = _caption_display_len(current) >= max_chars or current_ms >= 2300
+                if hard_after or soft_after or full_enough:
+                    add_caption("".join(cur_words), cur_start, cur_end)
+                    cur_words = []
+                    cur_start = None
+                    cur_end = 0
+
+            if cur_words and cur_start is not None:
                 add_caption("".join(cur_words), cur_start, cur_end)
-                cur_words = [word["text"]]
-                cur_start = word["start_ms"]
-            else:
-                cur_words.append(word["text"])
-            cur_end = word["end_ms"]
-        if cur_words:
-            add_caption("".join(cur_words), cur_start, cur_end)
-    elif isinstance(utterances, list):
-        for utt in utterances:
-            if not isinstance(utt, dict):
-                continue
-            text = _clean_caption_text(utt.get("text"))
-            if not text:
-                continue
-            try:
-                start_ms = int(float(utt.get("start_time") or 0))
-                end_ms = int(float(utt.get("end_time") or start_ms + 1200))
-            except Exception:
-                start_ms, end_ms = 0, 1200
-            chunks = _split_caption_text(text, max_chars=11)
-            if not chunks:
-                continue
-            span = max(700, end_ms - start_ms)
-            step = max(500, int(span / len(chunks)))
-            for idx, chunk in enumerate(chunks):
-                add_caption(chunk, start_ms + idx * step, start_ms + (idx + 1) * step)
     else:
         text = _clean_caption_text(output.get("text") if isinstance(output, dict) else "")
-        chunks = _split_caption_text(text, max_chars=11)
-        if chunks:
-            step = max(900, int((video_end_us / 1000) / len(chunks)))
-            for idx, chunk in enumerate(chunks):
-                add_caption(chunk, idx * step, (idx + 1) * step)
+        add_caption_chunks(text, 0, int(video_end_us / 1000), min_step_ms=900)
 
     deduped: List[Dict[str, Any]] = []
     prev = ""
@@ -816,7 +1206,11 @@ def _captions_from_stt(stt_data: Dict[str, Any], *, video_duration_sec: float) -
     return deduped
 
 
-def _validate_caption_quality(captions: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str], List[str]]:
+def _validate_caption_quality(
+    captions: List[Dict[str, Any]],
+    *,
+    caption_style: Dict[str, Any],
+) -> Tuple[Dict[str, Any], List[str], List[str]]:
     errors: List[str] = []
     warnings: List[str] = []
     duplicate_adjacent = 0
@@ -854,11 +1248,34 @@ def _validate_caption_quality(captions: List[Dict[str, Any]]) -> Tuple[Dict[str,
         "overlap_count": overlap_count,
         "expected_caption_tracks": 1,
         "background_enabled": False,
-        "text_effect": _CAPTION_HUAZI_NAME,
-        "text_effect_id": _CAPTION_HUAZI_EFFECT_ID,
+        "text_effect": caption_style.get("text_effect") or "",
+        "text_effect_id": caption_style.get("text_effect_id") or "",
+        "caption_style": _caption_style_public(caption_style),
         "stt_model": _STT_MODEL,
     }
     return quality, errors, sorted(set(warnings))
+
+
+def _cutcli_caption_payload(captions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    allowed = {
+        "text",
+        "start",
+        "end",
+        "keyword",
+        "keywordColor",
+        "fontSize",
+        "inAnimation",
+        "outAnimation",
+        "loopAnimation",
+        "inAnimationDuration",
+        "outAnimationDuration",
+        "loopAnimationDuration",
+    }
+    return [
+        {key: value for key, value in cap.items() if key in allowed}
+        for cap in captions
+        if _clean_caption_text(cap.get("text"))
+    ]
 
 
 def _build_auto_caption_cutcli_draft(
@@ -868,11 +1285,25 @@ def _build_auto_caption_cutcli_draft(
     source: str,
     source_info: Dict[str, Any],
     captions: List[Dict[str, Any]],
+    caption_style: Dict[str, Any],
 ) -> Tuple[str, Dict[str, Any], Dict[str, Any], List[str]]:
     warnings: List[str] = []
     draft_name = "lobster_caption_" + job_dir.name
+    draft_width = int(source_info.get("width") or 1080)
+    draft_height = int(source_info.get("height") or 1920)
     created = _json_from_cmd(
-        [cutcli, "draft", "create", "--name", draft_name, "--width", "1080", "--height", "1920", "--pretty"],
+        [
+            cutcli,
+            "draft",
+            "create",
+            "--name",
+            draft_name,
+            "--width",
+            str(draft_width),
+            "--height",
+            str(draft_height),
+            "--pretty",
+        ],
         timeout=60,
     )
     draft_id = str(created.get("draftId") or draft_name)
@@ -893,36 +1324,36 @@ def _build_auto_caption_cutcli_draft(
     )
     _run_cmd([cutcli, "videos", "add", draft_id, "--video-infos", video_json], timeout=180)
 
-    captions_json = _write_json(job_dir / "cutcli_auto_captions.json", captions)
-    _run_cmd(
-        [
-            cutcli,
-            "captions",
-            "add",
-            draft_id,
-            "--captions",
-            captions_json,
-            "--font-size",
-            "13",
-            "--bold",
-            "--alignment",
-            "0",
-            "--text-color",
-            "#FFFFFF",
-            "--border-color",
-            "#061A48",
-            "--border-width",
-            "0.08",
-            "--has-shadow",
-            "--shadow-color",
-            "#000000",
-            "--text-effect",
-            _CAPTION_HUAZI_NAME,
-            "--transform-y",
-            "-0.66",
-        ],
-        timeout=180,
-    )
+    captions_json = _write_json(job_dir / "cutcli_auto_captions.json", _cutcli_caption_payload(captions))
+    caption_cmd = [
+        cutcli,
+        "captions",
+        "add",
+        draft_id,
+        "--captions",
+        captions_json,
+        "--font-size",
+        str(caption_style.get("font_size") or 13),
+        "--bold",
+        "--alignment",
+        "0",
+        "--text-color",
+        str(caption_style.get("text_color") or "#FFFFFF"),
+        "--border-color",
+        str(caption_style.get("border_color") or "#061A48"),
+        "--border-width",
+        str(caption_style.get("border_width") or "0.08"),
+        "--transform-x",
+        str(caption_style.get("transform_x") or "0"),
+        "--transform-y",
+        str(caption_style.get("transform_y") or "-0.66"),
+    ]
+    if caption_style.get("has_shadow", True):
+        caption_cmd.extend(["--has-shadow", "--shadow-color", str(caption_style.get("shadow_color") or "#000000")])
+    text_effect = str(caption_style.get("text_effect") or "").strip()
+    if text_effect:
+        caption_cmd.extend(["--text-effect", text_effect])
+    _run_cmd(caption_cmd, timeout=180)
 
     captions_list: Any = []
     try:
@@ -951,8 +1382,9 @@ def _build_auto_caption_cutcli_draft(
         "actual_caption_count": actual_captions,
         "actual_caption_tracks": actual_tracks,
         "background_enabled": False,
-        "text_effect": _CAPTION_HUAZI_NAME,
-        "text_effect_id": _CAPTION_HUAZI_EFFECT_ID,
+        "text_effect": caption_style.get("text_effect") or "",
+        "text_effect_id": caption_style.get("text_effect_id") or "",
+        "caption_style": _caption_style_public(caption_style),
     }
     return draft_id, info, quality, warnings
 
@@ -983,6 +1415,7 @@ def _save_auto_caption_asset(
     db: Session,
     user_id: int,
     job_id: str,
+    template: Dict[str, Any],
     source_name: str,
     source_asset_id: Optional[str],
     final_url: str,
@@ -1002,11 +1435,12 @@ def _save_auto_caption_asset(
         media_type="video",
         file_size=file_size,
         source_url=final_url,
-        prompt=f"auto caption template | {source_name}",
-        model=f"cutcli:{_AUTO_CAPTION_TEMPLATE_ID}",
+        prompt=f"{template.get('name') or 'auto caption template'} | {source_name}",
+        model=f"cutcli:{template.get('id') or _AUTO_CAPTION_TEMPLATE_ID}",
         tags="cutcli_template,auto_caption,huazi,server_render",
         meta={
-            "cutcli_template_id": _AUTO_CAPTION_TEMPLATE_ID,
+            "cutcli_template_id": template.get("id") or _AUTO_CAPTION_TEMPLATE_ID,
+            "cutcli_template_name": template.get("name") or "",
             "cutcli_job_id": job_id,
             "cutcli_draft_id": draft_id,
             "cutcli_cloud_job_id": cloud_job_id,
@@ -1029,6 +1463,7 @@ def _run_auto_caption_job_sync(
     *,
     job_id: str,
     user_id: int,
+    template_id: str,
     source: str,
     source_asset_id: Optional[str],
     source_name: str,
@@ -1036,6 +1471,8 @@ def _run_auto_caption_job_sync(
 ) -> None:
     job_dir = _JOBS_DIR / job_id
     warnings: List[str] = []
+    template = _TEMPLATES.get(template_id) or _TEMPLATES[_AUTO_CAPTION_TEMPLATE_ID]
+    caption_style = _caption_style_for_template(template)
     db = SessionLocal()
     try:
         _update_job_manifest(job_id, status="running", stage="extract_audio")
@@ -1064,12 +1501,16 @@ def _run_auto_caption_job_sync(
         _update_job_manifest(job_id, stage="stt_poll", stt_task_id=task_id)
 
         stt_data = _stt_poll_task(token, task_id, job_dir=job_dir)
-        captions = _captions_from_stt(stt_data, video_duration_sec=float(source_info.get("duration") or 0.1))
+        captions = _captions_from_stt(
+            stt_data,
+            video_duration_sec=float(source_info.get("duration") or 0.1),
+            caption_style=caption_style,
+        )
         (job_dir / "generated_captions.json").write_text(
             json.dumps(captions, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        quality, quality_errors, quality_warnings = _validate_caption_quality(captions)
+        quality, quality_errors, quality_warnings = _validate_caption_quality(captions, caption_style=caption_style)
         warnings.extend(quality_warnings)
         if quality_errors:
             raise AutoCaptionJobError("caption_quality_failed", ",".join(sorted(set(quality_errors))))
@@ -1081,6 +1522,7 @@ def _run_auto_caption_job_sync(
             source=source,
             source_info=source_info,
             captions=captions,
+            caption_style=caption_style,
         )
         quality.update(draft_quality)
         warnings.extend(draft_warnings)
@@ -1118,6 +1560,8 @@ def _run_auto_caption_job_sync(
                 source=source,
                 captions=captions,
                 job_id=job_id,
+                caption_style=caption_style,
+                source_info=source_info,
             )
             warnings.extend(fallback_warnings)
             render_strategy = "ffmpeg_ass_fallback"
@@ -1126,6 +1570,7 @@ def _run_auto_caption_job_sync(
             db=db,
             user_id=user_id,
             job_id=job_id,
+            template=template,
             source_name=source_name,
             source_asset_id=source_asset_id,
             final_url=final_url,
@@ -1555,30 +2000,138 @@ def _ffmpeg_filter_path(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
 
 
-def _write_pop_caption_ass(job_dir: Path, captions: List[Dict[str, Any]]) -> Path:
+def _ass_font_name() -> str:
+    if Path("C:/Windows/Fonts/msyh.ttc").exists() or Path("C:/Windows/Fonts/msyhbd.ttc").exists():
+        return "Microsoft YaHei"
+    return "Noto Sans CJK SC"
+
+
+def _float_value(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _clamp_int(value: float, min_value: int, max_value: int) -> int:
+    return max(min_value, min(max_value, int(round(value))))
+
+
+def _ass_x_from_norm(value: Any, play_width: int = 1080) -> int:
+    margin = max(42, int(play_width * 0.065))
+    half_span = max(1, (play_width / 2) - margin)
+    return _clamp_int((play_width / 2) + _float_value(value, 0.0) * half_span, margin, play_width - margin)
+
+
+def _ass_y_from_norm(value: Any, play_height: int = 1920) -> int:
+    margin = max(80, int(play_height * 0.085))
+    half_span = max(1, (play_height / 2) - margin)
+    return _clamp_int((play_height / 2) - _float_value(value, -0.62) * half_span, margin, play_height - margin)
+
+
+def _ass_caption_font_size(cap: Dict[str, Any], caption_style: Dict[str, Any]) -> int:
+    ass_font_size = int(caption_style.get("ass_font_size") or 86)
+    base_cli_size = int(caption_style.get("font_size") or 13)
+    cap_cli_size = int(cap.get("fontSize") or base_cli_size)
+    return max(44, ass_font_size + (cap_cli_size - base_cli_size) * 7)
+
+
+def _ass_caption_override(
+    cap: Dict[str, Any],
+    caption_style: Dict[str, Any],
+    index: int,
+    *,
+    play_width: int = 1080,
+    play_height: int = 1920,
+) -> str:
+    layout = str(caption_style.get("ass_layout") or "center_burst")
+    fs = _ass_caption_font_size(cap, caption_style)
+    border = int(caption_style.get("ass_border") or 7)
+    shadow = int(caption_style.get("ass_shadow") or 4)
+
+    if layout == "lower_clean":
+        x = _ass_x_from_norm(cap.get("transformX", caption_style.get("transform_x", 0)), play_width)
+        y = _ass_y_from_norm(cap.get("transformY", caption_style.get("transform_y", -0.72)), play_height)
+        return f"{{\\an2\\pos({x},{y})\\fad(220,160)\\blur0.18\\fs{fs}\\bord{border}\\shad{shadow}\\fsp1}}"
+
+    if layout == "side_neon":
+        norm_x = _float_value(cap.get("transformX", -0.50))
+        left_side = norm_x <= 0
+        anchor = 7 if left_side else 9
+        x = int(play_width * (0.09 if left_side else 0.91))
+        y = _ass_y_from_norm(cap.get("transformY", 0.18 if left_side else 0.12), play_height)
+        slide = max(36, int(play_width * 0.067))
+        start_x = x - slide if left_side else x + slide
+        return (
+            f"{{\\an{anchor}\\move({start_x},{y},{x},{y},0,240)\\fad(70,130)"
+            f"\\blur0.45\\fs{fs}\\bord{border}\\shad{shadow}\\fsp2"
+            f"\\t(0,260,\\fscx108\\fscy108)\\t(260,520,\\fscx100\\fscy100)}}"
+        )
+
+    if layout == "dramatic_hook":
+        x = _ass_x_from_norm(cap.get("transformX", 0), play_width)
+        y = _ass_y_from_norm(cap.get("transformY", -0.30 if index % 2 == 0 else -0.42), play_height)
+        angle = -2 if index % 2 == 0 else 2
+        return (
+            f"{{\\an5\\pos({x},{y})\\fad(35,75)\\blur0.2\\fs{fs}\\bord{border}\\shad{shadow}"
+            f"\\frz{angle}\\t(0,130,\\fscx132\\fscy132)\\t(130,290,\\fscx96\\fscy96)"
+            f"\\t(290,470,\\fscx106\\fscy106)}}"
+        )
+
+    x = _ass_x_from_norm(cap.get("transformX", 0), play_width)
+    y = _ass_y_from_norm(cap.get("transformY", -0.56 if index % 2 == 0 else -0.64), play_height)
+    return (
+        f"{{\\an2\\pos({x},{y})\\fad(55,100)\\blur0.28\\fs{fs}\\bord{border}\\shad{shadow}"
+        f"\\t(0,150,\\fscx122\\fscy122)\\t(150,320,\\fscx98\\fscy98)"
+        f"\\t(320,520,\\fscx104\\fscy104)}}"
+    )
+
+
+def _write_pop_caption_ass(
+    job_dir: Path,
+    captions: List[Dict[str, Any]],
+    *,
+    caption_style: Dict[str, Any],
+    play_width: int = 1080,
+    play_height: int = 1920,
+) -> Path:
     ass_path = job_dir / "fallback_captions.ass"
+    ass_font_size = int(caption_style.get("ass_font_size") or 86)
+    ass_primary = str(caption_style.get("ass_primary") or "&H0000F7FF")
+    ass_outline = str(caption_style.get("ass_outline") or "&H00FF3C00")
+    ass_shadow = int(caption_style.get("ass_shadow") or 4)
+    ass_border = int(caption_style.get("ass_border") or 7)
+    ass_alignment = int(caption_style.get("ass_alignment") or 2)
+    ass_margin_v = int(caption_style.get("ass_margin_v") or 265)
     lines = [
         "[Script Info]",
         "ScriptType: v4.00+",
-        "PlayResX: 1080",
-        "PlayResY: 1920",
+        f"PlayResX: {play_width}",
+        f"PlayResY: {play_height}",
         "WrapStyle: 0",
         "ScaledBorderAndShadow: yes",
         "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        "Style: PopCaption,Noto Sans CJK SC,86,&H0000F7FF,&H00FFFFFF,&H00FF3C00,&H90000000,-1,0,0,0,100,100,0,0,1,7,4,2,90,90,265,1",
+        f"Style: PopCaption,{_ass_font_name()},{ass_font_size},{ass_primary},&H00FFFFFF,{ass_outline},&H90000000,-1,0,0,0,100,100,0,0,1,{ass_border},{ass_shadow},{ass_alignment},90,90,{ass_margin_v},1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
-    effect = r"{\fad(80,120)\blur0.35\t(0,220,\fscx112\fscy112)\t(220,520,\fscx100\fscy100)}"
-    for cap in captions:
+    fallback_effect = str(caption_style.get("ass_effect") or "")
+    for idx, cap in enumerate(captions):
         text = _escape_ass_text(cap.get("text"))
         if not text:
             continue
         start = int(cap.get("start") or 0)
         end = int(cap.get("end") or start + 600_000)
+        effect = fallback_effect or _ass_caption_override(
+            cap,
+            caption_style,
+            idx,
+            play_width=play_width,
+            play_height=play_height,
+        )
         lines.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},PopCaption,,0,0,0,,{effect}{text}")
     ass_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return ass_path
@@ -1591,9 +2144,20 @@ def _render_fallback_caption_video(
     source: str,
     captions: List[Dict[str, Any]],
     job_id: str,
+    caption_style: Dict[str, Any],
+    source_info: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Optional[int], List[str]]:
     warnings: List[str] = ["cutcli_cloud_render_queued_timeout", "fallback_renderer_ffmpeg_ass"]
-    ass_path = _write_pop_caption_ass(job_dir, captions)
+    source_info = source_info or {}
+    play_width = int(source_info.get("width") or 1080)
+    play_height = int(source_info.get("height") or 1920)
+    ass_path = _write_pop_caption_ass(
+        job_dir,
+        captions,
+        caption_style=caption_style,
+        play_width=play_width,
+        play_height=play_height,
+    )
     output_path = job_dir / "fallback_render.mp4"
     _run_cmd(
         [
@@ -1721,12 +2285,14 @@ async def render_cutcli_template(
     )
     source_info = _probe_video(ffprobe, source)
 
-    if tpl["id"] == _AUTO_CAPTION_TEMPLATE_ID:
+    if tpl.get("kind") == "auto_caption":
+        caption_style = _caption_style_for_template(tpl)
         quality_policy = {
             "expected_caption_tracks": 1,
             "background_enabled": False,
-            "text_effect": _CAPTION_HUAZI_NAME,
-            "text_effect_id": _CAPTION_HUAZI_EFFECT_ID,
+            "text_effect": caption_style.get("text_effect") or "",
+            "text_effect_id": caption_style.get("text_effect_id") or "",
+            "caption_style": _caption_style_public(caption_style),
             "stt_model": _STT_MODEL,
         }
         _write_job_manifest(
@@ -1753,6 +2319,7 @@ async def render_cutcli_template(
                 _run_auto_caption_job_sync,
                 job_id=job_id,
                 user_id=current_user.id,
+                template_id=tpl["id"],
                 source=source,
                 source_asset_id=source_asset_id,
                 source_name=source_name,
