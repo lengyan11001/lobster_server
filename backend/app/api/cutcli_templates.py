@@ -498,6 +498,10 @@ class TemplateListItem(BaseModel):
 
 class CutcliSttTranscribeBody(BaseModel):
     audio_url: str
+    caption_style: Optional[Dict[str, Any]] = None
+    video_duration_sec: Optional[float] = None
+    video_width: Optional[int] = None
+    return_captions: bool = False
 
 
 class CutcliCloudRenderDraftBody(BaseModel):
@@ -528,6 +532,8 @@ def _caption_style_for_template(template: Optional[Dict[str, Any]]) -> Dict[str,
     base.setdefault("shadow_color", "#000000")
     base.setdefault("transform_x", "0")
     base.setdefault("transform_y", "-0.66")
+    if not base.get("caption_max_chars") and base.get("max_chars"):
+        base["caption_max_chars"] = base.get("max_chars")
     base.setdefault("caption_max_chars", 11)
     base.setdefault("font_size_pattern", "steady")
     base.setdefault("ass_layout", "center_burst")
@@ -1561,16 +1567,17 @@ def _caption_fits_wrapped_visual_width(
     *,
     max_chars: int,
     max_visual_units: Optional[float],
-    max_lines: int = 2,
+    max_lines: int = 3,
 ) -> bool:
     lines = _caption_text_lines(text)
     if len(lines) > max_lines:
         return False
     if max((_caption_display_len(line) for line in lines), default=0) > max_chars:
         return False
-    multiplier = 2.05 if re.search(r"[A-Za-z]", text) else 1.78
-    if max_visual_units is not None and _caption_visual_units(text) > max_visual_units * multiplier:
-        return False
+    if max_visual_units is not None:
+        for line in lines:
+            if _caption_visual_units(line) > max_visual_units:
+                return False
     return True
 
 
@@ -1637,6 +1644,38 @@ def _caption_boundary_score(text: str, index: int, target_units: float) -> float
     return score
 
 
+def _caption_split_boundary_score(left: str, right: str, *, max_visual_units: Optional[float]) -> float:
+    left = _clean_caption_text(left)
+    right = _clean_caption_text(right)
+    if not left or not right:
+        return 999.0
+    left_units = _caption_visual_units(left)
+    limit = max_visual_units if max_visual_units is not None else max(1.0, left_units)
+    score = abs(left_units - limit * 0.82)
+    if _caption_display_len(left) <= 2:
+        score += 18.0
+    if _caption_display_len(right) <= 1:
+        score += 12.0
+    a = left[-1]
+    b = right[0]
+    if a in _CAPTION_HARD_BREAK_CHARS:
+        score -= 18.0
+    elif a in _CAPTION_SOFT_BREAK_CHARS:
+        score -= 9.0
+    if _is_ascii_word_char(a) and _is_ascii_word_char(b):
+        score += 80.0
+    if _is_cjk_char(a) and _is_cjk_char(b):
+        if a in "的了着过和与及或是要需把被将会能可在到对从给让就都也很更最先后中里上下一二三四五六七八九十":
+            score -= 3.0
+        if b in "的了着过和与及或是要需把被将会能可在到对从给让就都也很更最先后中里上下一二三四五六七八九十":
+            score += 3.0
+        if a in _CAPTION_BAD_LINE_END_CHARS:
+            score += 12.0
+        if b in _CAPTION_BAD_LINE_START_CHARS:
+            score += 12.0
+    return score
+
+
 def _caption_best_two_line_wrap(
     text: str,
     *,
@@ -1667,6 +1706,82 @@ def _caption_best_two_line_wrap(
         score = _caption_boundary_score(clean, plain_left_len, target_units)
         if score < best[0]:
             best = (score, candidate)
+    return best[1]
+
+
+def _caption_wrap_score(lines: List[str], *, max_chars: int, max_visual_units: Optional[float]) -> Optional[float]:
+    if not lines or any(not line for line in lines):
+        return None
+    if len(lines) > 3:
+        return None
+    units = [_caption_visual_units(line) for line in lines]
+    display_lens = [_caption_display_len(line) for line in lines]
+    visual_limit = max_visual_units if max_visual_units is not None else float(max_chars)
+    if any(length > max_chars for length in display_lens):
+        return None
+    if any(unit > visual_limit for unit in units):
+        return None
+    avg = sum(units) / len(units)
+    score = sum(abs(unit - avg) for unit in units)
+    score += (len(lines) - 1) * 0.35
+    for line in lines[:-1]:
+        if line and line[-1] in _CAPTION_BAD_LINE_END_CHARS:
+            score += 6.0
+    for line in lines[1:]:
+        if line and line[0] in _CAPTION_BAD_LINE_START_CHARS:
+            score += 6.0
+    if display_lens and display_lens[-1] <= 2 and len(lines) > 1:
+        score += 8.0
+    return score
+
+
+def _caption_best_multiline_wrap(
+    text: str,
+    *,
+    max_chars: int,
+    max_visual_units: Optional[float],
+    max_lines: int = 3,
+) -> str:
+    clean = _clean_caption_text(text)
+    if not clean or "\n" in clean:
+        return clean
+    tokens = _caption_tokens(clean)
+    if len(tokens) < 2:
+        return clean
+    best: Tuple[float, str] = (float("inf"), clean)
+
+    def joined(start: int, end: int) -> str:
+        return _join_caption_fragments(tokens[start:end])
+
+    line_counts = range(1, min(max_lines, len(tokens)) + 1)
+    for line_count in line_counts:
+        if line_count == 1:
+            lines = [clean]
+            score = _caption_wrap_score(lines, max_chars=max_chars, max_visual_units=max_visual_units)
+            if score is not None and score < best[0]:
+                best = (score, clean)
+            continue
+        if line_count == 2:
+            for a in range(1, len(tokens)):
+                lines = [joined(0, a), joined(a, len(tokens))]
+                score = _caption_wrap_score(lines, max_chars=max_chars, max_visual_units=max_visual_units)
+                if score is None:
+                    continue
+                score += _caption_boundary_score(clean, len(lines[0]), _caption_visual_units(clean) / line_count) * 0.08
+                candidate = "\n".join(lines)
+                if score < best[0]:
+                    best = (score, candidate)
+            continue
+        for a in range(1, len(tokens) - 1):
+            for b in range(a + 1, len(tokens)):
+                lines = [joined(0, a), joined(a, b), joined(b, len(tokens))]
+                score = _caption_wrap_score(lines, max_chars=max_chars, max_visual_units=max_visual_units)
+                if score is None:
+                    continue
+                score += _caption_boundary_score(clean, len(lines[0]), _caption_visual_units(clean) / line_count) * 0.05
+                candidate = "\n".join(lines)
+                if score < best[0]:
+                    best = (score, candidate)
     return best[1]
 
 
@@ -1704,6 +1819,7 @@ def _split_caption_text(
     tokens = expanded
     chunks: List[str] = []
     cur = ""
+    cur_tokens: List[str] = []
     for tok in tokens:
         candidate = _join_caption_fragments([cur, tok])
         if cur and not _caption_fits_visual_width(
@@ -1711,34 +1827,32 @@ def _split_caption_text(
             max_chars=max_chars,
             max_visual_units=max_visual_units,
         ):
-            chunks.append(_clean_caption_text(cur))
-            cur = tok
+            split_at = 0
+            best_score = float("inf")
+            for idx in range(1, len(cur_tokens)):
+                left = _join_caption_fragments(cur_tokens[:idx])
+                right = _join_caption_fragments(cur_tokens[idx:])
+                if not _caption_fits_visual_width(left, max_chars=max_chars, max_visual_units=max_visual_units):
+                    continue
+                score = _caption_split_boundary_score(left, right, max_visual_units=max_visual_units)
+                if score < best_score:
+                    best_score = score
+                    split_at = idx
+            if split_at > 0:
+                chunks.append(_clean_caption_text(_join_caption_fragments(cur_tokens[:split_at])))
+                cur_tokens = cur_tokens[split_at:] + [tok]
+                cur = _join_caption_fragments(cur_tokens)
+            else:
+                chunks.append(_clean_caption_text(cur))
+                cur_tokens = [tok]
+                cur = tok
         else:
             cur = candidate
+            cur_tokens.append(tok)
     if cur:
         chunks.append(_clean_caption_text(cur))
     chunks = [x for x in chunks if x]
-    fixed: List[str] = []
-    idx = 0
-    while idx < len(chunks):
-        if idx + 1 < len(chunks):
-            joined = _join_caption_fragments([chunks[idx], chunks[idx + 1]])
-            wrapped = _caption_best_two_line_wrap(
-                joined,
-                max_chars=max_chars,
-                max_visual_units=max_visual_units,
-            )
-            if wrapped != joined and _caption_fits_wrapped_visual_width(
-                wrapped,
-                max_chars=max_chars,
-                max_visual_units=max_visual_units,
-            ):
-                fixed.append(wrapped)
-                idx += 2
-                continue
-        fixed.append(chunks[idx])
-        idx += 1
-    return fixed
+    return chunks
 
 
 def _wrap_caption_text(
@@ -1746,7 +1860,7 @@ def _wrap_caption_text(
     *,
     max_chars: int,
     max_visual_units: Optional[float],
-    max_lines: int = 2,
+    max_lines: int = 3,
 ) -> str:
     clean = _clean_caption_text(text)
     if not clean:
@@ -1760,10 +1874,11 @@ def _wrap_caption_text(
         max_lines=1,
     ):
         return clean
-    best_wrap = _caption_best_two_line_wrap(
+    best_wrap = _caption_best_multiline_wrap(
         clean,
         max_chars=max_chars,
         max_visual_units=max_visual_units,
+        max_lines=max_lines,
     )
     if best_wrap != clean:
         return best_wrap
@@ -1925,12 +2040,377 @@ def _extract_stt_output(stt_data: Dict[str, Any]) -> Dict[str, Any]:
     return stt_data
 
 
+def _caption_alignment_text(text: Any) -> str:
+    out: List[str] = []
+    for ch in str(text or ""):
+        if ch.isspace():
+            continue
+        if ch in _EDGE_PUNCT or ch in _CAPTION_HARD_BREAK_CHARS or ch in _CAPTION_SOFT_BREAK_CHARS:
+            continue
+        out.append(ch.lower() if _is_ascii_word_char(ch) else ch)
+    return "".join(out)
+
+
+def _caption_entry_text(entry: Dict[str, Any]) -> str:
+    words = entry.get("words")
+    if isinstance(words, list) and words:
+        return _join_caption_fragments([str(w.get("text") or "") for w in words if isinstance(w, dict)])
+    return _clean_caption_text(entry.get("text"))
+
+
+def _caption_segments_fit_one_line(
+    parts: List[str],
+    *,
+    max_chars: int,
+    max_visual_units: Optional[float],
+) -> bool:
+    if not parts:
+        return False
+    for part in parts:
+        clean = _clean_caption_text(part)
+        if not clean or "\n" in clean:
+            return False
+        if not _caption_fits_visual_width(clean, max_chars=max_chars, max_visual_units=max_visual_units):
+            return False
+    return True
+
+
+def _caption_validate_segment_texts(
+    source_text: str,
+    parts: Any,
+    *,
+    max_chars: int,
+    max_visual_units: Optional[float],
+) -> Optional[List[str]]:
+    if not isinstance(parts, list):
+        return None
+    clean_parts = [_clean_caption_text(part) for part in parts]
+    clean_parts = [part for part in clean_parts if part]
+    if not clean_parts or len(clean_parts) > 40:
+        return None
+    source_norm = _caption_alignment_text(source_text)
+    parts_norm = "".join(_caption_alignment_text(part) for part in clean_parts)
+    if not source_norm or parts_norm != source_norm:
+        return None
+    if not _caption_segments_fit_one_line(
+        clean_parts,
+        max_chars=max_chars,
+        max_visual_units=max_visual_units,
+    ):
+        return None
+    return clean_parts
+
+
+def _caption_extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"\s*```$", "", raw)
+    candidates = [raw]
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(raw[start : end + 1])
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _caption_llm_model_id() -> str:
+    return (
+        (os.environ.get("CUTCLI_CAPTION_SEGMENT_MODEL") or "").strip()
+        or (os.environ.get("LOBSTER_ORCHESTRATION_SUTUI_CHAT_MODEL") or "").strip()
+        or (os.environ.get("LOBSTER_DEFAULT_SUTUI_CHAT_MODEL") or "").strip()
+        or (os.environ.get("LOBSTER_OPENCLAW_SKILL_SUTUI_CHAT_MODEL") or "").strip()
+        or (os.environ.get("SUTUI_LLM_RECOMMENDED_ID") or "").strip()
+        or (getattr(settings, "lobster_orchestration_sutui_chat_model", None) or "").strip()
+        or (getattr(settings, "lobster_default_sutui_chat_model", None) or "").strip()
+        or (getattr(settings, "lobster_openclaw_skill_sutui_chat_model", None) or "").strip()
+        or "deepseek-chat"
+    )
+
+
+def _caption_llm_attempts(token: str, model: str) -> List[Dict[str, str]]:
+    models = [model]
+    try:
+        from .sutui_chat_proxy import _get_v3_route, _sutui_chat_model_candidates
+
+        models = _sutui_chat_model_candidates(model, has_tools=False) or models
+        attempts: List[Dict[str, str]] = []
+        for mid in models:
+            route = _get_v3_route(mid, token)
+            if route:
+                endpoint_prefix = str(route.get("endpoint_prefix") or "/v3").rstrip("/")
+                attempts.append(
+                    {
+                        "model": str(route.get("model") or mid),
+                        "url": f"{str(route.get('api_base') or _STT_API_BASE).rstrip('/')}{endpoint_prefix}/chat/completions",
+                        "api_key": str(route.get("api_key") or token),
+                        "provider": str(route.get("provider") or "xskill-v3"),
+                    }
+                )
+            attempts.append(
+                {
+                    "model": mid,
+                    "url": f"{_STT_API_BASE}/v1/chat/completions",
+                    "api_key": token,
+                    "provider": "xskill-v1",
+                }
+            )
+        return attempts
+    except Exception as exc:
+        logger.debug("[cutcli-caption-segment] sutui model candidates unavailable: %s", exc)
+        return [{"model": model, "url": f"{_STT_API_BASE}/v1/chat/completions", "api_key": token, "provider": "xskill-v1"}]
+
+
+def _caption_llm_segment_utterances(
+    utterance_segments: List[Dict[str, Any]],
+    *,
+    max_chars: int,
+    max_visual_units: Optional[float],
+    sutui_token: Optional[str],
+    token_source: str = "",
+    job_dir: Optional[Path] = None,
+) -> Dict[int, List[str]]:
+    if not sutui_token:
+        return {}
+    rows: List[Dict[str, Any]] = []
+    total_chars = 0
+    for idx, entry in enumerate(utterance_segments):
+        text = _caption_entry_text(entry)
+        norm = _caption_alignment_text(text)
+        if not norm:
+            continue
+        if _caption_fits_visual_width(text, max_chars=max_chars, max_visual_units=max_visual_units):
+            continue
+        total_chars += len(text)
+        rows.append({"id": idx, "text": text})
+    if not rows:
+        return {}
+    if len(rows) > 120 or total_chars > 12000:
+        logger.info(
+            "[cutcli-caption-segment] skip llm rows=%s chars=%s reason=too_large",
+            len(rows),
+            total_chars,
+        )
+        return {}
+
+    model = _caption_llm_model_id()
+    visual_limit = max_visual_units if max_visual_units is not None else float(max_chars)
+    system_prompt = (
+        "You are a subtitle segmentation assistant. Split each input utterance into short, natural, "
+        "single-line subtitle segments. Preserve every original character in order. Do not paraphrase, "
+        "summarize, translate, add new words, or remove words. You may add normal spaces between English "
+        "words when the input is missing spaces. Avoid splitting fixed phrases, names, subject-verb-object "
+        "phrases, and Chinese compounds. Prefer 4-10 Chinese characters or 2-6 English words per segment. "
+        "Return JSON only."
+    )
+    user_payload = {
+        "max_display_chars": max_chars,
+        "max_visual_units": round(float(visual_limit), 2),
+        "utterances": rows,
+        "output_schema": {"segments": [{"id": 0, "parts": ["single line text"]}]},
+    }
+    body = {
+        "model": model,
+        "stream": False,
+        "temperature": 0.1,
+        "max_tokens": min(4096, max(512, total_chars * 2 + 256)),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+        ],
+    }
+    if job_dir is not None:
+        try:
+            (job_dir / "caption_segment_llm_request.json").write_text(
+                json.dumps({**body, "messages": body["messages"], "auth": "Bearer ***"}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+    payload: Any = {}
+    last_status = 0
+    winning_model = model
+    winning_provider = ""
+    for attempt in _caption_llm_attempts(sutui_token, model):
+        req_body = dict(body)
+        req_body["model"] = attempt["model"]
+        headers = {
+            "Authorization": f"Bearer {attempt['api_key']}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        try:
+            with httpx.Client(timeout=60.0, trust_env=False) as client:
+                resp = client.post(attempt["url"], json=req_body, headers=headers)
+            last_status = int(resp.status_code)
+            try:
+                payload = resp.json()
+            except Exception:
+                payload = {"raw": resp.text}
+        except Exception as exc:
+            logger.warning(
+                "[cutcli-caption-segment] llm request failed source=%s model=%s provider=%s: %s",
+                token_source or "-",
+                attempt.get("model") or "-",
+                attempt.get("provider") or "-",
+                exc,
+            )
+            continue
+        winning_model = attempt["model"]
+        winning_provider = attempt.get("provider") or ""
+        if resp.status_code < 400:
+            break
+        logger.warning(
+            "[cutcli-caption-segment] llm HTTP %s model=%s provider=%s body=%s",
+            resp.status_code,
+            attempt.get("model") or "-",
+            attempt.get("provider") or "-",
+            _safe_error_text(payload, 500),
+        )
+    if last_status >= 400 or not payload:
+        return {}
+    if job_dir is not None:
+        try:
+            (job_dir / "caption_segment_llm_response.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+    content = ""
+    if isinstance(payload, dict):
+        choices = payload.get("choices")
+        if isinstance(choices, list) and choices:
+            msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+            if isinstance(msg, dict):
+                content = str(msg.get("content") or "")
+            elif isinstance(choices[0], dict):
+                content = str(choices[0].get("text") or "")
+    data = _caption_extract_json_object(content)
+    if not isinstance(data, dict):
+        logger.warning("[cutcli-caption-segment] llm returned non-json model=%s provider=%s", winning_model, winning_provider or "-")
+        return {}
+    raw_segments = data.get("segments")
+    if not isinstance(raw_segments, list):
+        return {}
+    source_by_id = {int(row["id"]): str(row["text"]) for row in rows}
+    out: Dict[int, List[str]] = {}
+    for item in raw_segments:
+        if not isinstance(item, dict):
+            continue
+        try:
+            idx = int(item.get("id"))
+        except Exception:
+            continue
+        if idx not in source_by_id:
+            continue
+        parts = _caption_validate_segment_texts(
+            source_by_id[idx],
+            item.get("parts"),
+            max_chars=max_chars,
+            max_visual_units=max_visual_units,
+        )
+        if parts:
+            out[idx] = parts
+    logger.info(
+        "[cutcli-caption-segment] llm done model=%s source=%s requested=%s accepted=%s",
+        winning_model,
+        token_source or "-",
+        len(rows),
+        len(out),
+    )
+    return out
+
+
+def _caption_word_char_units(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    units: List[Dict[str, Any]] = []
+    for word in words:
+        if not isinstance(word, dict):
+            continue
+        raw_text = _clean_caption_text(word.get("text"))
+        chars = [ch for ch in str(raw_text or "") if _caption_alignment_text(ch)]
+        if not chars:
+            continue
+        start_ms = int(word.get("start_ms") or 0)
+        end_ms = int(word.get("end_ms") or start_ms + 1)
+        if end_ms <= start_ms:
+            end_ms = start_ms + max(1, len(chars) * 80)
+        duration = max(len(chars), end_ms - start_ms)
+        for idx, ch in enumerate(chars):
+            ch_start = start_ms + int(duration * idx / len(chars))
+            ch_end = start_ms + int(duration * (idx + 1) / len(chars))
+            units.append(
+                {
+                    "norm": _caption_alignment_text(ch),
+                    "start_ms": max(start_ms, ch_start),
+                    "end_ms": min(end_ms, max(ch_start + 1, ch_end)),
+                }
+            )
+    return units
+
+
+def _caption_timed_segments_from_texts(entry: Dict[str, Any], parts: List[str]) -> Optional[List[Dict[str, Any]]]:
+    words = entry.get("words")
+    start_default = int(entry.get("start_ms") or 0)
+    end_default = int(entry.get("end_ms") or max(start_default + 1, start_default + len(parts) * 500))
+    if isinstance(words, list) and words:
+        units = _caption_word_char_units(words)
+        if units:
+            source_norm = "".join(unit["norm"] for unit in units)
+            parts_norm = [_caption_alignment_text(part) for part in parts]
+            if "".join(parts_norm) != source_norm:
+                return None
+            cursor = 0
+            timed: List[Dict[str, Any]] = []
+            for part, norm in zip(parts, parts_norm):
+                if not norm:
+                    continue
+                end_cursor = cursor + len(norm)
+                if end_cursor > len(units):
+                    return None
+                timed.append(
+                    {
+                        "text": _clean_caption_text(part),
+                        "start_ms": int(units[cursor]["start_ms"]),
+                        "end_ms": int(units[end_cursor - 1]["end_ms"]),
+                    }
+                )
+                cursor = end_cursor
+            return timed if cursor == len(units) else None
+
+    total_weight = max(1, sum(max(1, _caption_display_len(part)) for part in parts))
+    span = max(len(parts), end_default - start_default)
+    cursor = start_default
+    timed = []
+    for idx, part in enumerate(parts):
+        weight = max(1, _caption_display_len(part))
+        if idx == len(parts) - 1:
+            end_ms = end_default
+        else:
+            end_ms = min(end_default, cursor + max(1, int(span * weight / total_weight)))
+        timed.append({"text": _clean_caption_text(part), "start_ms": cursor, "end_ms": max(cursor + 1, end_ms)})
+        cursor = max(cursor + 1, end_ms)
+    return timed
+
+
 def _captions_from_stt(
     stt_data: Dict[str, Any],
     *,
     video_duration_sec: float,
     caption_style: Dict[str, Any],
     video_width: Optional[int] = None,
+    sutui_token: Optional[str] = None,
+    token_source: str = "",
+    job_dir: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     output = _extract_stt_output(stt_data)
     utterances = output.get("utterances") if isinstance(output, dict) else None
@@ -1941,6 +2421,14 @@ def _captions_from_stt(
     max_visual_units = _safe_caption_visual_units(caption_style, video_width=video_width)
     font_size_pattern = str(caption_style.get("font_size_pattern") or "steady")
     base_font_size = int(caption_style.get("font_size") or 13)
+    llm_segment_texts = _caption_llm_segment_utterances(
+        utterance_segments,
+        max_chars=max_chars,
+        max_visual_units=max_visual_units,
+        sutui_token=sutui_token,
+        token_source=token_source,
+        job_dir=job_dir,
+    )
 
     def caption_font_size(index: int, text: str) -> int:
         display_len = _caption_display_len(text)
@@ -1975,14 +2463,8 @@ def _captions_from_stt(
         clean = _clean_caption_text(text)
         if not clean:
             return
-        wrapped = _wrap_caption_text(
-            clean,
-            max_chars=max_chars,
-            max_visual_units=max_visual_units,
-        )
-        if wrapped:
-            clean = wrapped
-        if not _caption_fits_wrapped_visual_width(
+        clean = _join_caption_fragments(_caption_text_lines(clean))
+        if not _caption_fits_visual_width(
             clean,
             max_chars=max_chars,
             max_visual_units=max_visual_units,
@@ -2043,7 +2525,14 @@ def _captions_from_stt(
             add_caption(chunk, start_ms + idx * step, start_ms + (idx + 1) * step)
 
     if utterance_segments:
-        for entry in utterance_segments:
+        for entry_idx, entry in enumerate(utterance_segments):
+            llm_parts = llm_segment_texts.get(entry_idx)
+            if llm_parts:
+                timed_parts = _caption_timed_segments_from_texts(entry, llm_parts)
+                if timed_parts:
+                    for part in timed_parts:
+                        add_caption(str(part.get("text") or ""), int(part.get("start_ms") or 0), int(part.get("end_ms") or 0))
+                    continue
             segment = entry.get("words")
             if not segment:
                 add_caption_chunks(
@@ -2068,15 +2557,10 @@ def _captions_from_stt(
                 gap_ms = int(word["start_ms"] - cur_end) if cur_words else 0
                 candidate_start = cur_start if cur_start is not None else int(word["start_ms"])
                 candidate = _join_caption_fragments(cur_words + [text])
-                candidate_display = _wrap_caption_text(
-                    candidate,
-                    max_chars=max_chars,
-                    max_visual_units=max_visual_units,
-                ) or candidate
                 dur_ms = int(word["end_ms"] - candidate_start)
                 if cur_words and (
                     gap_ms >= 360
-                    or not _caption_fits_wrapped_visual_width(candidate_display, max_chars=max_chars, max_visual_units=max_visual_units)
+                    or not _caption_fits_visual_width(candidate, max_chars=max_chars, max_visual_units=max_visual_units)
                     or dur_ms > 2300
                 ):
                     add_caption(_join_caption_fragments(cur_words), int(cur_start or 0), cur_end)
@@ -2097,8 +2581,8 @@ def _captions_from_stt(
                     _caption_display_len(current) >= 6 or current_ms >= 900
                 )
                 full_enough = (
-                    not _caption_fits_wrapped_visual_width(
-                        _wrap_caption_text(current, max_chars=max_chars, max_visual_units=max_visual_units) or current,
+                    not _caption_fits_visual_width(
+                        current,
                         max_chars=max_chars,
                         max_visual_units=max_visual_units,
                     )
@@ -2469,6 +2953,9 @@ def _run_auto_caption_job_sync(
             video_duration_sec=float(source_info.get("duration") or 0.1),
             caption_style=caption_style,
             video_width=int(source_info.get("width") or 0) or None,
+            sutui_token=token,
+            token_source=token_source,
+            job_dir=job_dir,
         )
         (job_dir / "generated_captions.json").write_text(
             json.dumps(captions, ensure_ascii=False, indent=2),
@@ -3634,6 +4121,18 @@ def cutcli_stt_transcribe(
         created = _stt_create_task(token, audio_url, job_dir=job_dir)
         task_id = created["task_id"]
         stt_data = _stt_poll_task(token, task_id, job_dir=job_dir)
+        captions: List[Dict[str, Any]] = []
+        if body.return_captions:
+            style = body.caption_style if isinstance(body.caption_style, dict) else _caption_style_for_template(_TEMPLATES.get(_AUTO_CAPTION_TEMPLATE_ID))
+            captions = _captions_from_stt(
+                stt_data,
+                video_duration_sec=float(body.video_duration_sec or 0.1),
+                caption_style=style,
+                video_width=int(body.video_width or 0) or None,
+                sutui_token=token,
+                token_source=token_source,
+                job_dir=job_dir,
+            )
         return {
             "ok": True,
             "job_id": job_id,
@@ -3643,6 +4142,8 @@ def cutcli_stt_transcribe(
             "token_source": token_source,
             "token_masked": _mask_token(token),
             "stt_data": stt_data,
+            "captions": captions,
+            "caption_count": len(captions),
         }
     except AutoCaptionJobError as exc:
         raise HTTPException(status_code=500, detail={"code": exc.code, "message": exc.message, "detail": exc.detail}) from exc
