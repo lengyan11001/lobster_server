@@ -1607,6 +1607,158 @@ def _is_gpt_image_2_model(model: Any) -> bool:
     return mid in _GPT_IMAGE_2_MODEL_IDS
 
 
+def _openmind_api_base() -> str:
+    return (os.environ.get("OPENMIND_API_BASE") or "https://www.openmindapi.com").strip().rstrip("/")
+
+
+def _openmind_image_model() -> str:
+    return (os.environ.get("OPENMIND_IMAGE_MODEL") or "gpt-image-2").strip() or "gpt-image-2"
+
+
+def _openmind_image_fallback_enabled() -> bool:
+    raw = (os.environ.get("OPENMIND_IMAGE_FALLBACK_ENABLED") or "1").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _openmind_images_generation_url() -> str:
+    base = _openmind_api_base()
+    if base.endswith("/v1"):
+        return f"{base}/images/generations"
+    return f"{base}/v1/images/generations"
+
+
+def _payload_has_image_reference(payload: Dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if str(payload.get("image_url") or "").strip():
+        return True
+    for key in ("image_urls", "images", "image_files", "filePaths", "media_files"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, list) and any(isinstance(x, str) and x.strip() for x in value):
+            return True
+    return False
+
+
+def _coerce_openmind_image_size(payload: Dict[str, Any]) -> str:
+    raw = str(
+        payload.get("size")
+        or payload.get("image_size")
+        or payload.get("aspect_ratio")
+        or payload.get("ratio")
+        or ""
+    ).strip()
+    low = raw.lower().replace("-", "_")
+    if re.match(r"^\d{3,5}x\d{3,5}$", low):
+        return low
+    if low in ("portrait_9_16", "portrait", "9:16"):
+        return "1024x1536"
+    if low in ("landscape_16_9", "landscape", "16:9"):
+        return "1536x1024"
+    return "1024x1024"
+
+
+def _coerce_openmind_n(payload: Dict[str, Any]) -> int:
+    raw = payload.get("n", payload.get("num_images", 1))
+    try:
+        return max(1, min(4, int(raw)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _format_openmind_image_response(resp: Dict[str, Any]) -> Dict[str, Any]:
+    data_list = resp.get("data") if isinstance(resp, dict) else None
+    if not isinstance(data_list, list):
+        data_list = []
+    images: List[Dict[str, Any]] = []
+    for item in data_list:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        b64 = str(item.get("b64_json") or "").strip()
+        if not url and b64:
+            url = b64 if b64.startswith("data:") else f"data:image/png;base64,{b64}"
+        if not url:
+            continue
+        image: Dict[str, Any] = {"url": url}
+        if b64:
+            image["b64_json"] = b64
+        images.append(image)
+    if not images:
+        return {"error": {"message": f"OpenMind 返回中未找到图片 URL: {str(resp)[:500]}"}}
+    return {
+        "status": "completed",
+        "output": {"images": images},
+        "url": images[0]["url"],
+        "_openmind": True,
+        "_fallback": "openmind",
+    }
+
+
+async def _call_openmind_image_fallback(payload: Dict[str, Any], primary_error: str) -> Optional[Dict[str, Any]]:
+    """主图片渠道失败时，用 OpenMind 的 OpenAI-compatible images API 兜底。未配置时返回 None。"""
+    if not _openmind_image_fallback_enabled():
+        return None
+    api_key = (os.environ.get("OPENMIND_API_KEY") or "").strip()
+    if not api_key:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    model = payload.get("model") or payload.get("model_id") or ""
+    if not _is_gpt_image_2_model(model):
+        return None
+    if _payload_has_image_reference(payload):
+        logger.info("[OpenMind] 跳过图片备用渠道：当前 image.generate 含参考图/编辑图，OpenMind generations 仅作文生图兜底")
+        return None
+    prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        return None
+    body: Dict[str, Any] = {
+        "model": _openmind_image_model(),
+        "prompt": prompt,
+        "size": _coerce_openmind_image_size(payload),
+        "n": _coerce_openmind_n(payload),
+    }
+    for key in ("negative_prompt", "prompt_extend", "watermark"):
+        if key in payload:
+            body[key] = payload[key]
+    url = _openmind_images_generation_url()
+    logger.warning(
+        "[OpenMind] image.generate 主渠道失败，尝试备用渠道 url=%s model=%s primary_error=%s",
+        url,
+        body["model"],
+        primary_error[:240],
+    )
+    try:
+        async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+            r = await client.post(
+                url,
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+            )
+    except httpx.HTTPError as e:
+        logger.warning("[OpenMind] 图片备用渠道网络失败: %s", e)
+        return {"error": {"message": f"OpenMind 备用渠道网络失败: {e}"}}
+    try:
+        data = r.json() if r.content else {}
+    except Exception as e:
+        return {"error": {"message": f"OpenMind 备用渠道返回非 JSON: HTTP {r.status_code} {e}"}}
+    if r.status_code >= 400:
+        err = data.get("error") if isinstance(data, dict) else None
+        msg = err.get("message") if isinstance(err, dict) else str(data)
+        logger.warning("[OpenMind] 图片备用渠道 HTTP=%s error=%s", r.status_code, str(msg)[:500])
+        return {"error": {"message": f"OpenMind 备用渠道返回 HTTP {r.status_code}: {str(msg)[:500]}"}}
+    formatted = _format_openmind_image_response(data if isinstance(data, dict) else {})
+    if not formatted.get("error"):
+        logger.info("[OpenMind] 图片备用渠道生成成功 images=%s", len((formatted.get("output") or {}).get("images") or []))
+    return formatted
+
+
 def _apply_user_price_to_result(obj: Any, credits: Decimal) -> Any:
     """Keep user-facing MCP JSON from exposing upstream raw price as the user charge."""
     if not isinstance(obj, dict):
@@ -3129,6 +3281,22 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     lobster_capability_id=capability_id,
                     brand_mark=user_brand_mark,
                 )
+            if (
+                capability_id == "image.generate"
+                and upstream_tool == "generate"
+                and isinstance(upstream_resp, dict)
+                and isinstance(upstream_resp.get("error"), dict)
+                and _is_gpt_image_2_model((payload.get("model") or payload.get("model_id") or "") if isinstance(payload, dict) else "")
+            ):
+                _primary_image_error = str((upstream_resp.get("error") or {}).get("message") or "")
+                _openmind_resp = await _call_openmind_image_fallback(payload, _primary_image_error)
+                if isinstance(_openmind_resp, dict) and not _openmind_resp.get("error"):
+                    upstream_resp = _openmind_resp
+                elif isinstance(_openmind_resp, dict) and _openmind_resp.get("error"):
+                    logger.warning(
+                        "[OpenMind] 图片备用渠道未接管，保留主渠道错误。fallback_error=%s",
+                        str((_openmind_resp.get("error") or {}).get("message") or "")[:500],
+                    )
             # get_result HTTP 层错误自动重试一次（502/503 等瞬时故障）
             if (
                 upstream_tool == "get_result"

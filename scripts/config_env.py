@@ -31,6 +31,9 @@ CONFIG_ITEMS = [
     ("SUTUI_SERVER_TOKEN", "CONFIG_SUTUI_SERVER_TOKEN", "速推 服务器 Token（做视频能力必填）", True),
     ("PUBLIC_BASE_URL", "CONFIG_PUBLIC_BASE_URL", "回调根地址（服务器填 http://公网IP:8000，本地可留空）", True),
     ("CAPABILITY_SUTUI_MCP_URL", "CONFIG_CAPABILITY_SUTUI_MCP_URL", "速推 MCP 地址（默认留空用官方）", True),
+    ("OPENMIND_API_BASE", "CONFIG_OPENMIND_API_BASE", "OpenMind 图片备用渠道 API 地址（默认 https://www.openmindapi.com）", True),
+    ("OPENMIND_API_KEY", "CONFIG_OPENMIND_API_KEY", "OpenMind 图片备用渠道 API Key", True),
+    ("OPENMIND_IMAGE_MODEL", "CONFIG_OPENMIND_IMAGE_MODEL", "OpenMind 图片备用模型（默认 gpt-image-2）", True),
 ]
 
 
