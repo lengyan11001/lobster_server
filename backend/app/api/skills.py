@@ -50,16 +50,11 @@ def _skill_store_admin(user: User) -> bool:
 
 
 DEFAULT_VISIBLE_PACKAGES: tuple[str, ...] = (
-    "sutui_mcp",
-    "xiaohongshu_publish",
-    "douyin_publish",
-    "toutiao_publish",
-    "openclaw_weixin_channel",
-    "media_edit_skill",
+    "cutcli_template_studio",
+    "comfly_ecommerce_detail_skill",
     "hifly_digital_human_skill",
-    "comfly_veo_skill",
-    "comfly_seedance_tvc_skill",
-    "create_video_pipeline_skill",
+    "wewrite_official_account_skill",
+    "create_ppt_skill",
 )
 
 
@@ -87,6 +82,23 @@ def _pkg_store_visibility(pkg: dict) -> str:
     if v in ("online", "debug"):
         return v
     return "debug"
+
+
+def _package_visible_in_public_store(pkg: dict) -> bool:
+    if pkg.get("show_in_store") is False:
+        return False
+    return _pkg_store_visibility(pkg) == "online"
+
+
+def _package_capabilities_available_to_public(pkg: dict) -> bool:
+    return _pkg_store_visibility(pkg) == "online"
+
+
+def _package_visible_to_user(pkg: dict, is_admin: bool) -> bool:
+    if pkg.get("show_in_store") is False:
+        return False
+    visibility = _pkg_store_visibility(pkg)
+    return visibility == "online" or (is_admin and visibility == "debug")
 
 
 def _load_registry() -> dict:
@@ -205,12 +217,9 @@ def list_store(current_user: User = Depends(get_current_user), db: Session = Dep
     unlocked = _user_unlocked_package_ids(db, current_user.id)
     packages = registry.get("packages", {})
     is_admin = _skill_store_admin(current_user)
-    visible = _user_visible_package_ids(db, current_user.id) if not is_admin else None
     out = []
     for pkg_id, pkg in packages.items():
-        if pkg.get("show_in_store") is False:
-            continue
-        if not is_admin and visible is not None and pkg_id not in visible:
+        if not _package_visible_to_user(pkg, is_admin):
             continue
         is_installed = (
             pkg_id in installed
@@ -256,10 +265,10 @@ def user_allowed_capability_ids(current_user: User = Depends(get_current_user), 
         for pkg in packages.values():
             cap_ids.extend((pkg.get("capabilities") or {}).keys())
         return {"is_admin": True, "capability_ids": sorted(set(cap_ids))}
-    visible = _user_visible_package_ids(db, current_user.id)
     cap_ids = []
-    for pkg_id in visible:
-        pkg = packages.get(pkg_id, {})
+    for pkg in packages.values():
+        if not _package_capabilities_available_to_public(pkg):
+            continue
         cap_ids.extend((pkg.get("capabilities") or {}).keys())
     return {"is_admin": False, "capability_ids": sorted(set(cap_ids))}
 
