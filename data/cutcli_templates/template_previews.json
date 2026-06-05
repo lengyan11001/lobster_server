@@ -16,8 +16,8 @@
     "style": "education_focus_bar"
   },
   "auto_caption_neon_focus_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4?v=ref-card-20260604f",
-    "source": "cutcli_source_f6d337.mp4",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4?v=20260605-symbols-3templates",
+    "source": "cutcli_test_f6d337.mp4",
     "caption_source": "stt",
     "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
@@ -54,5 +54,29 @@
     "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
     "style": "market_label"
+  },
+  "auto_caption_black_gold_quote_v1": {
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_black_gold_quote_v1.mp4?v=20260605-symbols-3templates",
+    "source": "cutcli_test_f6d337.mp4",
+    "caption_source": "stt",
+    "stt_model": "volcengine/speech-to-text/bigmodel-v2",
+    "duration_sec": 6.8,
+    "style": "black_gold_quote"
+  },
+  "auto_caption_tcm_waist_banner_v1": {
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_tcm_waist_banner_v1.mp4?v=20260605-symbols-3templates-b",
+    "source": "cutcli_test_f6d337.mp4",
+    "caption_source": "stt",
+    "stt_model": "volcengine/speech-to-text/bigmodel-v2",
+    "duration_sec": 6.8,
+    "style": "tcm_waist_banner"
+  },
+  "auto_caption_news_brief_v1": {
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_news_brief_v1.mp4?v=20260605-symbols-3templates",
+    "source": "cutcli_test_f6d337.mp4",
+    "caption_source": "stt",
+    "stt_model": "volcengine/speech-to-text/bigmodel-v2",
+    "duration_sec": 6.8,
+    "style": "news_brief"
   }
 }

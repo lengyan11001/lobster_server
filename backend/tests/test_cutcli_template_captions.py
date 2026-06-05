@@ -216,13 +216,17 @@ def test_caption_templates_have_distinct_design_layouts():
         for template_id, template in templates._TEMPLATES.items()
     }
 
-    assert styles[templates._AUTO_CAPTION_TEMPLATE_ID]["ass_layout"] == "center_burst"
-    assert styles[templates._AUTO_CAPTION_CLEAN_TEMPLATE_ID]["ass_layout"] == "lower_clean"
-    assert styles[templates._AUTO_CAPTION_NEON_TEMPLATE_ID]["ass_layout"] == "side_neon"
-    assert styles[templates._AUTO_CAPTION_NEON_TEMPLATE_ID]["caption_motion"] == "typewriter"
-    assert styles[templates._AUTO_CAPTION_NEON_TEMPLATE_ID]["in_animation"] == "故障打字"
-    assert styles[templates._AUTO_CAPTION_PUNCH_TEMPLATE_ID]["ass_layout"] == "dramatic_hook"
-    assert len({style["ass_layout"] for style in styles.values()}) == 4
+    assert styles[templates._AUTO_CAPTION_TEMPLATE_ID]["ass_layout"] == "right_vertical_card"
+    assert styles[templates._AUTO_CAPTION_CLEAN_TEMPLATE_ID]["ass_layout"] == "education_focus_bar"
+    assert styles[templates._AUTO_CAPTION_NEON_TEMPLATE_ID]["ass_layout"] == "tea_center_title"
+    assert styles[templates._AUTO_CAPTION_PUNCH_TEMPLATE_ID]["ass_layout"] == "red_yellow_hook"
+    assert styles[templates._AUTO_CAPTION_HEALTH_BANNER_TEMPLATE_ID]["ass_layout"] == "health_banner"
+    assert styles[templates._AUTO_CAPTION_QUOTE_FOCUS_TEMPLATE_ID]["ass_layout"] == "quote_focus"
+    assert styles[templates._AUTO_CAPTION_MARKET_LABEL_TEMPLATE_ID]["ass_layout"] == "market_label"
+    assert styles[templates._AUTO_CAPTION_BLACK_GOLD_TEMPLATE_ID]["ass_layout"] == "black_gold_quote"
+    assert styles[templates._AUTO_CAPTION_TCM_WAIST_TEMPLATE_ID]["ass_layout"] == "tcm_waist_banner"
+    assert styles[templates._AUTO_CAPTION_NEWS_BRIEF_TEMPLATE_ID]["ass_layout"] == "news_brief"
+    assert len({style["ass_layout"] for style in styles.values()}) == 10
     assert styles[templates._AUTO_CAPTION_PUNCH_TEMPLATE_ID]["font_size"] > styles[templates._AUTO_CAPTION_CLEAN_TEMPLATE_ID]["font_size"]
     assert styles[templates._AUTO_CAPTION_PUNCH_TEMPLATE_ID]["caption_max_chars"] < styles[templates._AUTO_CAPTION_CLEAN_TEMPLATE_ID]["caption_max_chars"]
 
@@ -244,15 +248,36 @@ def test_template_captions_apply_position_and_font_differences():
         }
     }
 
-    side_caps = _captions_for_template(templates._AUTO_CAPTION_NEON_TEMPLATE_ID, stt_data)
+    business_caps = _captions_for_template(templates._AUTO_CAPTION_TEMPLATE_ID, stt_data)
     punch_caps = _captions_for_template(templates._AUTO_CAPTION_PUNCH_TEMPLATE_ID, stt_data)
     clean_caps = _captions_for_template(templates._AUTO_CAPTION_CLEAN_TEMPLATE_ID, stt_data)
 
-    assert len(side_caps) == 2
-    assert all(item["transformX"] <= -0.45 for item in side_caps)
-    assert len({item["transformY"] for item in side_caps}) == 2
-    assert all(item["inAnimation"] == "故障打字" for item in side_caps)
+    assert len(business_caps) == 2
+    assert all(float(item["transformX"]) == 0.0 for item in business_caps)
+    assert all(float(item["transformY"]) <= -0.65 for item in business_caps)
     assert max(item["fontSize"] for item in punch_caps) > max(item["fontSize"] for item in clean_caps)
+
+
+def test_overlay_title_preserves_book_and_quote_marks():
+    style = templates._caption_style_for_template(
+        templates._TEMPLATES[templates._AUTO_CAPTION_NEON_TEMPLATE_ID]
+    )
+    overlay_texts = {"title": "\u300a\u6ce1\u8336\u300b", "subtitle": "\u30105\u79cd\u98df\u7269\u3011"}
+
+    assert templates._overlay_text_value(overlay_texts, style, "title") == "\u300a\u6ce1\u8336\u300b"
+    assert templates._overlay_text_value(overlay_texts, style, "subtitle") == "\u30105\u79cd\u98df\u7269\u3011"
+
+    rendered = "\n".join(
+        templates._overlay_dialogues(
+            style,
+            play_width=1080,
+            play_height=1920,
+            duration_sec=1.0,
+            overlay_texts=overlay_texts,
+        )
+    )
+    assert "\u300a\u6ce1\u8336\u300b" in rendered
+    assert "\u30105\u79cd\u98df\u7269\u3011" in rendered
 
 
 def test_large_yellow_caption_wraps_inside_one_caption():
