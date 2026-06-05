@@ -185,6 +185,41 @@ class CreativeGenerationJob(Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
 
 
+class CutcliTemplate(Base):
+    __tablename__ = "cutcli_templates"
+    __table_args__ = (
+        Index("ix_cutcli_templates_enabled_sort", "enabled", "sort_order"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), default="auto_caption", nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    aspect_ratio: Mapped[str] = mapped_column(String(32), default="source", nullable=False)
+    default_duration: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    input_modes: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    preserve_source_video: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    quality_label: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    preview_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sample_video_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sample_asset_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    render_modes: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    overlay_fields: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    caption_style: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    generation_strategy: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 class UserHiflyAvatarAsset(Base):
     __tablename__ = "user_hifly_avatar_assets"
     __table_args__ = (

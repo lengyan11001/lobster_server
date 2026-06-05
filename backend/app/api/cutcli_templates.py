@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
-from ..models import Asset, CreativeGenerationJob, User
+from ..models import Asset, CreativeGenerationJob, CutcliTemplate, User
 from .assets import ASSETS_DIR, _upload_to_tos
 from .auth import brand_mark_for_jwt_claim, get_current_user
 from ..core.config import settings
@@ -646,6 +646,116 @@ class CutcliCloudRenderDraftBody(BaseModel):
     mirror_to_tos: bool = True
 
 
+def _json_clone(value: Any) -> Any:
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False))
+    except Exception:
+        return value
+
+
+def _template_seed_row(template: Dict[str, Any], sort_order: int) -> Dict[str, Any]:
+    return {
+        "id": str(template.get("id") or ""),
+        "kind": str(template.get("kind") or "auto_caption"),
+        "name": str(template.get("name") or template.get("id") or ""),
+        "description": str(template.get("description") or ""),
+        "aspect_ratio": str(template.get("aspect_ratio") or "source"),
+        "default_duration": int(template.get("default_duration") or 0),
+        "tags": _json_clone(template.get("tags") or []),
+        "input_modes": _json_clone(template.get("input_modes") or ["upload", "asset_id"]),
+        "preserve_source_video": bool(template.get("preserve_source_video", True)),
+        "quality_label": str(template.get("quality_label") or ""),
+        "preview_url": str(template.get("preview_url") or ""),
+        "sample_video_url": str(template.get("sample_video_url") or ""),
+        "sample_asset_id": str(template.get("sample_asset_id") or ""),
+        "render_modes": _json_clone(template.get("render_modes") or ["ffmpeg", "cutcli_cloud"]),
+        "overlay_fields": _json_clone(template.get("overlay_fields") or []),
+        "caption_style": _json_clone(template.get("caption_style") or {}),
+        "generation_strategy": _json_clone(template.get("generation_strategy") or {}),
+        "meta": _json_clone(template.get("meta") or {"seeded_from_code": True}),
+        "enabled": bool(template.get("enabled", True)),
+        "sort_order": int(template.get("sort_order") or sort_order),
+    }
+
+
+def _template_from_row(row: CutcliTemplate) -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "kind": row.kind or "auto_caption",
+        "name": row.name or row.id,
+        "description": row.description or "",
+        "aspect_ratio": row.aspect_ratio or "source",
+        "default_duration": int(row.default_duration or 0),
+        "tags": _json_clone(row.tags or []),
+        "input_modes": _json_clone(row.input_modes or ["upload", "asset_id"]),
+        "preserve_source_video": bool(row.preserve_source_video),
+        "quality_label": row.quality_label or "",
+        "preview_url": row.preview_url or "",
+        "sample_video_url": row.sample_video_url or "",
+        "sample_asset_id": row.sample_asset_id or "",
+        "render_modes": _json_clone(row.render_modes or ["ffmpeg", "cutcli_cloud"]),
+        "overlay_fields": _json_clone(row.overlay_fields or []),
+        "caption_style": _json_clone(row.caption_style or {}),
+        "generation_strategy": _json_clone(row.generation_strategy or {}),
+        "meta": _json_clone(row.meta or {}),
+        "enabled": bool(row.enabled),
+        "sort_order": int(row.sort_order or 1000),
+    }
+
+
+def _ensure_cutcli_template_seeds(db: Session) -> None:
+    try:
+        existing = {row.id for row in db.query(CutcliTemplate.id).all()}
+    except Exception as exc:
+        logger.warning("[cutcli-template] seed check failed: %s", exc)
+        return
+    changed = False
+    for idx, template in enumerate(_TEMPLATES.values(), start=10):
+        tid = str(template.get("id") or "")
+        if not tid or tid in existing:
+            continue
+        db.add(CutcliTemplate(**_template_seed_row(template, idx * 10)))
+        changed = True
+    if changed:
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.warning("[cutcli-template] seed insert failed: %s", exc)
+
+
+def _list_cutcli_template_defs(db: Session) -> List[Dict[str, Any]]:
+    try:
+        _ensure_cutcli_template_seeds(db)
+        rows = (
+            db.query(CutcliTemplate)
+            .filter(CutcliTemplate.enabled.is_(True))
+            .order_by(CutcliTemplate.sort_order.asc(), CutcliTemplate.id.asc())
+            .all()
+        )
+        if rows:
+            return [_template_from_row(row) for row in rows]
+    except Exception as exc:
+        logger.warning("[cutcli-template] DB list failed, using code fallback: %s", exc)
+    return [dict(item) for item in _TEMPLATES.values()]
+
+
+def _get_cutcli_template_def(db: Optional[Session], template_id: str) -> Optional[Dict[str, Any]]:
+    tid = (template_id or "").strip()
+    if not tid:
+        return None
+    if db is not None:
+        try:
+            _ensure_cutcli_template_seeds(db)
+            row = db.get(CutcliTemplate, tid)
+            if row and row.enabled:
+                return _template_from_row(row)
+        except Exception as exc:
+            logger.warning("[cutcli-template] DB get failed template=%s: %s", tid, exc)
+    item = _TEMPLATES.get(tid)
+    return dict(item) if item else None
+
+
 def _caption_style_for_template(template: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     base = dict((_TEMPLATES.get(_AUTO_CAPTION_TEMPLATE_ID) or {}).get("caption_style") or {})
     if isinstance(template, dict):
@@ -681,6 +791,92 @@ def _caption_style_for_template(template: Optional[Dict[str, Any]]) -> Dict[str,
     base.setdefault("ass_margin_v", 265)
     base.setdefault("ass_effect", "")
     return base
+
+
+def _clamp_ratio(value: Any, default: float = 0.5) -> float:
+    try:
+        n = float(value)
+    except Exception:
+        n = float(default)
+    return max(0.03, min(0.97, n))
+
+
+def _clamp_norm(value: Any, default: float = 0.0) -> float:
+    try:
+        n = float(value)
+    except Exception:
+        n = float(default)
+    return max(-0.95, min(0.95, n))
+
+
+def _parse_position_overrides(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        data = raw
+    else:
+        text = str(raw or "").strip()
+        if not text:
+            return {}
+        try:
+            data = json.loads(text)
+        except Exception:
+            return {}
+    if not isinstance(data, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    caption = data.get("caption") if isinstance(data.get("caption"), dict) else {}
+    if caption:
+        out["caption"] = {
+            "x": _clamp_norm(caption.get("x"), 0.0),
+            "y": _clamp_norm(caption.get("y"), -0.66),
+        }
+    overlay = data.get("overlay") if isinstance(data.get("overlay"), dict) else {}
+    clean_overlay: Dict[str, Any] = {}
+    for key in ("top_text", "headline", "title", "subtitle", "subheadline", "badge"):
+        value = overlay.get(key)
+        if not isinstance(value, dict):
+            continue
+        clean_overlay[key] = {
+            "x_ratio": _clamp_ratio(value.get("x_ratio"), 0.5),
+            "y_ratio": _clamp_ratio(value.get("y_ratio"), 0.5),
+        }
+    if clean_overlay:
+        out["overlay"] = clean_overlay
+    return out
+
+
+def _apply_position_overrides(caption_style: Dict[str, Any], position_overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    style = _json_clone(caption_style or {})
+    overrides = position_overrides if isinstance(position_overrides, dict) else {}
+    caption = overrides.get("caption") if isinstance(overrides.get("caption"), dict) else {}
+    if caption:
+        style["transform_x"] = f"{_clamp_norm(caption.get('x'), 0.0):.4f}".rstrip("0").rstrip(".")
+        style["transform_y"] = f"{_clamp_norm(caption.get('y'), -0.66):.4f}".rstrip("0").rstrip(".")
+    overlay = overrides.get("overlay") if isinstance(overrides.get("overlay"), dict) else {}
+    if overlay:
+        overlay_style = dict(style.get("overlay_style") or {})
+        layout = str(overlay_style.get("layout") or "").strip()
+
+        def apply_pos(keys: Tuple[str, ...], x_key: str, y_key: str) -> None:
+            for key in keys:
+                pos = overlay.get(key)
+                if isinstance(pos, dict):
+                    overlay_style[x_key] = _clamp_ratio(pos.get("x_ratio"), overlay_style.get(x_key, 0.5))
+                    overlay_style[y_key] = _clamp_ratio(pos.get("y_ratio"), overlay_style.get(y_key, 0.5))
+                    return
+
+        apply_pos(("top_text", "headline"), "headline_x_ratio", "headline_y_ratio")
+        apply_pos(("top_text", "headline"), "top_x_ratio", "top_y_ratio")
+        apply_pos(("top_text", "headline"), "top_screen_x_ratio", "top_screen_y_ratio")
+        apply_pos(("title",), "title_x_ratio", "title_y_ratio")
+        apply_pos(("title",), "profile_x_ratio", "profile_y_ratio")
+        if layout not in {"top_banner", "education_focus_bar"}:
+            apply_pos(("title",), "headline_x_ratio", "headline_y_ratio")
+        apply_pos(("subtitle", "subheadline"), "subheadline_x_ratio", "subheadline_y_ratio")
+        apply_pos(("badge",), "badge_x_ratio", "badge_y_ratio")
+        style["overlay_style"] = overlay_style
+    if overrides:
+        style["position_overrides"] = _json_clone(overrides)
+    return style
 
 
 def _caption_style_public(style: Dict[str, Any]) -> Dict[str, Any]:
@@ -728,7 +924,7 @@ def _load_preview_catalog() -> Dict[str, Any]:
         return {}
 
 
-def _template_preview_url(template_id: str) -> str:
+def _template_preview_url(template_id: str, template: Optional[Dict[str, Any]] = None) -> str:
     catalog = _load_preview_catalog()
     item = catalog.get(template_id)
     if isinstance(item, dict):
@@ -743,15 +939,17 @@ def _template_preview_url(template_id: str) -> str:
         if sample.exists():
             version = int(sample.stat().st_mtime)
             return _public_url(f"{_STATIC_PREVIEW_PUBLIC_PREFIX}/{sample.name}?v={version}")
-    tpl = _TEMPLATES.get(template_id) or {}
+    tpl = template if isinstance(template, dict) else (_TEMPLATES.get(template_id) or {})
     return _public_url(str(tpl.get("preview_url") or tpl.get("sample_video_url") or "").strip())
 
 
-def _template_sample_asset_id(template_id: str) -> str:
+def _template_sample_asset_id(template_id: str, template: Optional[Dict[str, Any]] = None) -> str:
     catalog = _load_preview_catalog()
     item = catalog.get(template_id)
     if isinstance(item, dict):
         return str(item.get("sample_asset_id") or "").strip()
+    if isinstance(template, dict):
+        return str(template.get("sample_asset_id") or "").strip()
     return ""
 
 
@@ -1116,6 +1314,7 @@ def _create_cutcli_job(
     source_info: Dict[str, Any],
     quality_policy: Dict[str, Any],
     audio_url: str = "",
+    position_overrides: Optional[Dict[str, Any]] = None,
 ) -> CreativeGenerationJob:
     now = _utcnow()
     row = CreativeGenerationJob(
@@ -1135,6 +1334,7 @@ def _create_cutcli_job(
             "audio_url": audio_url,
             "stt_model": _STT_MODEL,
             "quality_policy": quality_policy,
+            "position_overrides": position_overrides or {},
         },
         result_payload={"audio_url": audio_url} if audio_url else {},
         asset_ids=[],
@@ -1142,6 +1342,7 @@ def _create_cutcli_job(
         meta={
             "stt_model": _STT_MODEL,
             "audio_source": "client_audio_url" if audio_url else "",
+            "position_overrides": position_overrides or {},
         },
         created_at=now,
         updated_at=now,
@@ -3050,14 +3251,15 @@ def _run_auto_caption_job_sync(
     source_name: str,
     source_info: Dict[str, Any],
     audio_url: str = "",
+    position_overrides: Optional[Dict[str, Any]] = None,
 ) -> None:
     job_dir = _JOBS_DIR / job_id
     warnings: List[str] = []
-    template = _TEMPLATES.get(template_id) or _TEMPLATES[_AUTO_CAPTION_TEMPLATE_ID]
-    caption_style = _caption_style_for_template(template)
     db = SessionLocal()
     ffmpeg: Optional[str] = None
     try:
+        template = _get_cutcli_template_def(db, template_id) or dict(_TEMPLATES[_AUTO_CAPTION_TEMPLATE_ID])
+        caption_style = _apply_position_overrides(_caption_style_for_template(template), position_overrides or {})
         cutcli = _find_cutcli_bin()
         stt_audio_url = _clean_public_http_url(audio_url)
         if stt_audio_url:
@@ -3982,6 +4184,12 @@ def _overlay_dialogues(
     end = _ass_time(int(max(0.5, duration_sec) * 1_000_000))
     width = play_width
     height = play_height
+    title_x_ratio = _float_value(overlay_style.get("headline_x_ratio"), _float_value(overlay_style.get("title_x_ratio"), 0.5))
+    title_x = int(width * title_x_ratio)
+    subtitle_x = int(width * _float_value(overlay_style.get("subheadline_x_ratio"), title_x_ratio))
+    top_x = int(width * _float_value(overlay_style.get("top_screen_x_ratio"), _float_value(overlay_style.get("top_x_ratio"), title_x_ratio)))
+    top_y_screen_ratio = _float_value(overlay_style.get("top_screen_y_ratio"), _float_value(overlay_style.get("top_y_ratio"), _float_value(overlay_style.get("headline_y_ratio"), 0.12)))
+    badge_x = int(width * _float_value(overlay_style.get("badge_x_ratio"), 0.5))
     lines: List[str] = []
 
     if layout == "right_vertical_card":
@@ -4014,13 +4222,13 @@ def _overlay_dialogues(
             fs1 = _fit_overlay_font_size(74, [first], width=int(width * 0.82), height_limit=int(height * 0.08), min_size=46)
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00000000&\\bord4\\shad1}%s"
-                % (end, width // 2, y, fs1, _escape_ass_text(first))
+                % (end, top_x, y, fs1, _escape_ass_text(first))
             )
             if rest:
                 fs2 = _fit_overlay_font_size(66, _overlay_plain_lines(rest), width=int(width * 0.92), height_limit=int(height * 0.11), min_size=42)
                 lines.append(
                     "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord5\\shad1}%s"
-                    % (end, width // 2, y + int(fs1 * 0.86), fs2, _escape_ass_text(rest))
+                    % (end, top_x, y + int(fs1 * 0.86), fs2, _escape_ass_text(rest))
                 )
         if title or subtitle:
             x = int(width * _float_value(overlay_style.get("title_x_ratio"), 0.09))
@@ -4044,7 +4252,7 @@ def _overlay_dialogues(
             fs = _fit_overlay_font_size(42, [badge], width=bar_w - 40, height_limit=bar_h - 8, min_size=30)
             lines.append(
                 "Dialogue: 8,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00000000&\\bord0\\shad0}%s"
-                % (end, width // 2, y1 + bar_h // 2, fs, _escape_ass_text(badge))
+                % (end, badge_x, y1 + bar_h // 2, fs, _escape_ass_text(badge))
             )
         return lines
 
@@ -4054,13 +4262,13 @@ def _overlay_dialogues(
             fs = _fit_overlay_font_size(int(overlay_style.get("headline_font_size") or 92), _overlay_plain_lines(title), width=int(width * 0.84), height_limit=int(height * 0.11), min_size=54)
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00111111&\\bord5\\shad2}%s"
-                % (end, width // 2, y, fs, _escape_ass_text(title))
+                % (end, title_x, y, fs, _escape_ass_text(title))
             )
         if subtitle:
             fs2 = _fit_overlay_font_size(int(overlay_style.get("subheadline_font_size") or 56), _overlay_plain_lines(subtitle), width=int(width * 0.86), height_limit=int(height * 0.09), min_size=38)
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00111111&\\bord4\\shad2}%s"
-                % (end, width // 2, y + int(fs2 * 1.05), fs2, _escape_ass_text(subtitle))
+                % (end, subtitle_x, int(height * _float_value(overlay_style.get("subheadline_y_ratio"), (y + int(fs2 * 1.05)) / max(1, height))), fs2, _escape_ass_text(subtitle))
             )
         return lines
 
@@ -4070,13 +4278,13 @@ def _overlay_dialogues(
             fs = _fit_overlay_font_size(int(overlay_style.get("headline_font_size") or 78), _overlay_plain_lines(title), width=int(width * 0.9), height_limit=int(height * 0.10), min_size=46)
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H002620D8&\\3c&H00FFFFFF&\\bord4\\shad2\\frz-2}%s"
-                % (end, width // 2, y, fs, _escape_ass_text(title))
+                % (end, title_x, y, fs, _escape_ass_text(title))
             )
         if subtitle:
             fs2 = _fit_overlay_font_size(int(overlay_style.get("subheadline_font_size") or 70), _overlay_plain_lines(subtitle), width=int(width * 0.86), height_limit=int(height * 0.09), min_size=44)
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00000000&\\bord4\\shad2\\frz-2}%s"
-                % (end, width // 2, y + int(fs2 * 0.98), fs2, _escape_ass_text(subtitle))
+                % (end, subtitle_x, int(height * _float_value(overlay_style.get("subheadline_y_ratio"), (y + int(fs2 * 0.98)) / max(1, height))), fs2, _escape_ass_text(subtitle))
             )
         return lines
 
@@ -4088,13 +4296,13 @@ def _overlay_dialogues(
             fs = _fit_overlay_font_size(int(overlay_style.get("headline_font_size") or 78), title_lines, width=int(width * 0.86), height_limit=int(height * 0.11), min_size=48)
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord5\\shad2}%s"
-                % (end, width // 2, y, fs, _escape_ass_text(title))
+                % (end, title_x, y, fs, _escape_ass_text(title))
             )
         if subtitle:
             fs2 = _fit_overlay_font_size(int(overlay_style.get("subheadline_font_size") or 86), subtitle_lines, width=int(width * 0.90), height_limit=int(height * 0.14), min_size=50)
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00000000&\\bord5\\shad3}%s"
-                % (end, width // 2, y + int(fs2 * 0.95), fs2, _escape_ass_text(subtitle))
+                % (end, subtitle_x, int(height * _float_value(overlay_style.get("subheadline_y_ratio"), (y + int(fs2 * 0.95)) / max(1, height))), fs2, _escape_ass_text(subtitle))
             )
         return lines
 
@@ -4105,7 +4313,7 @@ def _overlay_dialogues(
             fs = _fit_overlay_font_size(int(overlay_style.get("headline_font_size") or 76), title_lines, width=int(width * 0.88), height_limit=int(height * 0.11), min_size=46)
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000B8FF&\\3c&H00000000&\\bord5\\shad3}%s"
-                % (end, width // 2, y, fs, _escape_ass_text(title))
+                % (end, title_x, y, fs, _escape_ass_text(title))
             )
         if badge:
             badge_fs = _fit_overlay_font_size(int(overlay_style.get("badge_font_size") or 38), [badge], width=int(width * 0.48), height_limit=int(height * 0.052), min_size=24)
@@ -4121,7 +4329,7 @@ def _overlay_dialogues(
             lines.append(_ass_box_dialogue(end, str(overlay_style.get("waist_color") or "&H006B4A38"), points, layer=3))
             lines.append(
                 "Dialogue: 8,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord2\\shad1}%s"
-                % (end, width // 2, mid, badge_fs, _escape_ass_text(badge))
+                % (end, badge_x, mid, badge_fs, _escape_ass_text(badge))
             )
         return lines
 
@@ -4161,7 +4369,7 @@ def _overlay_dialogues(
             lines.append(_ass_box_dialogue(end, bg, [(0, 0), (width, 0), (width, box_h), (0, box_h)]))
             lines.append(
                 "Dialogue: 5,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c%s\\3c%s\\bord4\\shad1}%s"
-                % (end, width // 2, int(box_h * _float_value(overlay_style.get("headline_y_ratio"), 0.56)), fs, text_color, outline, _escape_ass_text(top_text))
+                % (end, top_x, int(height * top_y_screen_ratio), fs, text_color, outline, _escape_ass_text(top_text))
             )
         if title_lines or subtitle_lines:
             base_x = int(width * _float_value(overlay_style.get("profile_x_ratio"), 0.10))
@@ -4476,36 +4684,40 @@ def cutcli_cloud_render_draft(
 @router.get("/api/cutcli/templates", summary="CutCLI template list")
 def list_cutcli_templates(
     _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     templates: List[Dict[str, Any]] = []
-    for item in _TEMPLATES.values():
+    for item in _list_cutcli_template_defs(db):
         row = dict(item)
-        preview_url = _template_preview_url(row["id"])
+        preview_url = _template_preview_url(row["id"], row)
         caption_style = _caption_style_for_template(row)
         row["preview_url"] = preview_url
-        row["sample_video_url"] = preview_url
-        row["sample_asset_id"] = _template_sample_asset_id(row["id"])
+        row["sample_video_url"] = preview_url or _public_url(str(row.get("sample_video_url") or ""))
+        row["sample_asset_id"] = _template_sample_asset_id(row["id"], row)
         row["render_path"] = f"/api/cutcli/templates/{row['id']}/render"
-        row["render_modes"] = ["ffmpeg", "cutcli_cloud"]
-        row.setdefault("input_modes", ["upload", "asset_id", "video_url"])
+        row["render_modes"] = row.get("render_modes") or ["ffmpeg", "cutcli_cloud"]
+        row.setdefault("input_modes", ["upload", "asset_id"])
         row.setdefault("preserve_source_video", True)
         row.setdefault("overlay_fields", [])
         row["caption_style"] = caption_style
-        row["generation_strategy"] = {
-            "version": 1,
-            "executor": "online",
-            "stt": {
+        strategy = dict(row.get("generation_strategy") or {})
+        strategy.setdefault("version", 1)
+        strategy.setdefault("executor", "online")
+        strategy.setdefault(
+            "stt",
+            {
                 "provider": "sutui",
                 "model": _STT_MODEL,
                 "server_endpoint": "/api/cutcli/stt/transcribe",
                 "input": "audio_url",
             },
-            "render_modes": row["render_modes"],
-            "cloud_render_endpoint": "/api/cutcli/cloud/render-draft",
-            "caption_style": caption_style,
-            "overlay_fields": row.get("overlay_fields") or [],
-            "preserve_source_video": True,
-        }
+        )
+        strategy["render_modes"] = row["render_modes"]
+        strategy.setdefault("cloud_render_endpoint", "/api/cutcli/cloud/render-draft")
+        strategy["caption_style"] = caption_style
+        strategy["overlay_fields"] = row.get("overlay_fields") or []
+        strategy["preserve_source_video"] = bool(row.get("preserve_source_video", True))
+        row["generation_strategy"] = strategy
         templates.append(TemplateListItem(**row).model_dump())
     return {"ok": True, "templates": templates}
 
@@ -4559,13 +4771,15 @@ async def render_cutcli_template(
     asset_id: str = Form(""),
     video_url: str = Form(""),
     audio_url: str = Form(""),
+    position_overrides: str = Form(""),
     file: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    tpl = _TEMPLATES.get((template_id or "").strip())
+    tpl = _get_cutcli_template_def(db, (template_id or "").strip())
     if not tpl:
         raise HTTPException(status_code=404, detail="template not found")
+    clean_position_overrides = _parse_position_overrides(position_overrides)
     clean_audio_url = _clean_public_http_url(audio_url)
     if (audio_url or "").strip() and not clean_audio_url:
         raise HTTPException(status_code=400, detail="audio_url must be an http(s) URL")
@@ -4585,7 +4799,7 @@ async def render_cutcli_template(
     source_info = _probe_video(ffprobe, source)
 
     if tpl.get("kind") == "auto_caption":
-        caption_style = _caption_style_for_template(tpl)
+        caption_style = _apply_position_overrides(_caption_style_for_template(tpl), clean_position_overrides)
         quality_policy = {
             "expected_caption_tracks": 1,
             "background_enabled": False,
@@ -4604,6 +4818,7 @@ async def render_cutcli_template(
             source_info=source_info,
             quality_policy=quality_policy,
             audio_url=clean_audio_url,
+            position_overrides=clean_position_overrides,
         )
         asyncio.create_task(
             asyncio.to_thread(
@@ -4616,6 +4831,7 @@ async def render_cutcli_template(
                 source_name=source_name,
                 source_info=source_info,
                 audio_url=clean_audio_url,
+                position_overrides=clean_position_overrides,
             )
         )
         payload = _job_row_to_public(row)
@@ -4697,6 +4913,7 @@ async def render_cutcli_template_by_id(
     asset_id: str = Form(""),
     video_url: str = Form(""),
     audio_url: str = Form(""),
+    position_overrides: str = Form(""),
     file: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -4710,6 +4927,7 @@ async def render_cutcli_template_by_id(
         asset_id=asset_id,
         video_url=video_url,
         audio_url=audio_url,
+        position_overrides=position_overrides,
         file=file,
         current_user=current_user,
         db=db,
