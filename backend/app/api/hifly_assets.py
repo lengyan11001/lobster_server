@@ -119,6 +119,8 @@ class HiflyVoicePreviewTtsBody(BaseModel):
     pitch: str = Field("0")
     emotion: Optional[str] = None
     instructions: Optional[str] = Field(None, max_length=1600)
+    voice_provider: Optional[str] = None
+    speech_language: str = Field("Chinese", max_length=32)
 
 
 class HiflyAvatarLibraryBody(HiflyTokenBody):
@@ -206,10 +208,10 @@ def _voice_tts_provider() -> str:
     raw = (
         getattr(settings, "hifly_voice_tts_provider", None)
         or os.environ.get("HIFLY_VOICE_TTS_PROVIDER")
-        or _QWEN_PROVIDER
+        or _MINIMAX_PROVIDER
     )
     provider = str(raw or "").strip().lower()
-    return provider if provider in {_QWEN_PROVIDER, _MINIMAX_PROVIDER} else _QWEN_PROVIDER
+    return provider if provider in {_QWEN_PROVIDER, _MINIMAX_PROVIDER} else _MINIMAX_PROVIDER
 
 
 def _dashscope_base_url() -> str:
@@ -299,10 +301,19 @@ def _qwen_voice_id_from_row(row: Optional[UserHiflyVoiceAsset]) -> str:
 
 
 def _minimax_voice_id_from_row(row: Optional[UserHiflyVoiceAsset]) -> str:
-    if row and isinstance(row.meta, dict):
-        voice_id = str(row.meta.get("minimax_voice_id") or row.hifly_voice_id or "").strip()
+    meta = row.meta if row and isinstance(row.meta, dict) else {}
+    if meta:
+        voice_id = str(meta.get("minimax_voice_id") or "").strip()
         if voice_id:
             return voice_id
+        qwen_voice_id = str(meta.get("qwen_voice_id") or "").strip()
+        if qwen_voice_id:
+            raise HTTPException(status_code=400, detail="当前声音是旧版声音，请重新录制声音后再提交数字人任务")
+    fallback = str(row.hifly_voice_id if row else "").strip()
+    if fallback.lower().startswith(("qwen-", "qwen_", "qwen3-", "qwen3_")):
+        raise HTTPException(status_code=400, detail="当前声音是旧版声音，请重新录制声音后再提交数字人任务")
+    if fallback:
+        return fallback
     return _MINIMAX_DEFAULT_VOICE_ID
 
 
@@ -2202,6 +2213,9 @@ async def preview_my_voice_tts(
     if not row:
         raise HTTPException(status_code=404, detail="声音不存在或不属于当前账号")
     provider = _voice_provider(row)
+    provider_hint = _normalize_voice_provider_hint(body.voice_provider)
+    if provider not in {_QWEN_PROVIDER, _MINIMAX_PROVIDER} and provider_hint:
+        provider = provider_hint
     if provider == _QWEN_PROVIDER:
         result = await _qwen_tts_audio(
             voice_id=_qwen_voice_id_from_row(row),
@@ -2366,11 +2380,17 @@ def _qwen_voice_id_for_tts(row: Optional[UserHiflyVoiceAsset], fallback_voice: s
 
 
 def _minimax_voice_id_for_tts(row: Optional[UserHiflyVoiceAsset], fallback_voice: str) -> str:
-    if row and isinstance(row.meta, dict):
-        voice_id = str(row.meta.get("minimax_voice_id") or row.hifly_voice_id or "").strip()
+    meta = row.meta if row and isinstance(row.meta, dict) else {}
+    if meta:
+        voice_id = str(meta.get("minimax_voice_id") or "").strip()
         if voice_id:
             return voice_id
-    fallback = str(fallback_voice or "").strip()
+        qwen_voice_id = str(meta.get("qwen_voice_id") or "").strip()
+        if qwen_voice_id:
+            raise HTTPException(status_code=400, detail="当前声音是旧版声音，请重新录制声音后再提交数字人任务")
+    fallback = str(row.hifly_voice_id if row else fallback_voice or "").strip()
+    if fallback.lower().startswith(("qwen-", "qwen_", "qwen3-", "qwen3_")):
+        raise HTTPException(status_code=400, detail="当前声音是旧版声音，请重新录制声音后再提交数字人任务")
     if fallback:
         return fallback
     return _MINIMAX_DEFAULT_VOICE_ID
@@ -2733,7 +2753,7 @@ async def create_my_video_by_tts(
         )
     provider = _voice_provider(voice_row)
     provider_hint = _normalize_voice_provider_hint(body.voice_provider)
-    if provider == "hifly" and provider_hint:
+    if provider not in {_QWEN_PROVIDER, _MINIMAX_PROVIDER} and provider_hint:
         provider = provider_hint
     logger.info(
         "[hifly] create_my_video_by_tts user_id=%s voice=%s provider=%s provider_hint=%s voice_row=%s",
@@ -2777,14 +2797,8 @@ async def create_my_video_by_tts(
         volume = voice_params.get("volume") or "1.0"
         pitch = voice_params.get("pitch") or "0"
         speech_language = _normalize_qwen_language(body.speech_language)
-        translation_result: Dict[str, Any] = {
-            "text": body.text.strip(),
-            "source_text": body.text.strip(),
-            "language_type": "Chinese",
-            "translated": False,
-        }
+        translation_result = await _translate_tts_text_for_language(body.text.strip(), speech_language)
         if is_qwen_voice:
-            translation_result = await _translate_tts_text_for_language(body.text.strip(), speech_language)
             instructions = voice_params.get("instructions") or _QWEN_DEFAULT_INSTRUCTIONS
             tts_voice_id = _qwen_voice_id_for_tts(voice_row, voice_value)
             tts_result = await _qwen_tts_audio(
@@ -2799,7 +2813,7 @@ async def create_my_video_by_tts(
             tts_voice_id = _minimax_voice_id_for_tts(voice_row, voice_value)
             tts_result = await _minimax_tts_audio(
                 voice_id=tts_voice_id,
-                text=body.text.strip(),
+                text=translation_result.get("text") or body.text.strip(),
                 rate=rate,
                 volume=volume,
                 pitch=pitch,
