@@ -653,6 +653,228 @@ def _json_clone(value: Any) -> Any:
         return value
 
 
+def _deep_merge_dict(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    out = _json_clone(base) if isinstance(base, dict) else {}
+    for key, value in (patch or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge_dict(out[key], value)
+        else:
+            out[key] = _json_clone(value)
+    return out
+
+
+def _video_orientation(width: Optional[int], height: Optional[int]) -> str:
+    try:
+        w = int(width or 0)
+        h = int(height or 0)
+    except Exception:
+        w, h = 0, 0
+    return "portrait" if h > w else "landscape"
+
+
+def _apply_orientation_style(style: Dict[str, Any], *, width: Optional[int] = None, height: Optional[int] = None, orientation: str = "") -> Dict[str, Any]:
+    out = _json_clone(style or {})
+    current = (orientation or _video_orientation(width, height)).strip().lower()
+    styles = out.get("orientation_styles") if isinstance(out.get("orientation_styles"), dict) else {}
+    patch = styles.get(current) if isinstance(styles.get(current), dict) else {}
+    if patch:
+        out = _deep_merge_dict(out, patch)
+    out["current_orientation"] = current
+    return out
+
+
+def _orientation_defaults_for_style(style: Dict[str, Any]) -> Dict[str, Any]:
+    overlay = style.get("overlay_style") if isinstance(style.get("overlay_style"), dict) else {}
+    layout = str(overlay.get("layout") or style.get("ass_layout") or "").strip()
+    if layout == "right_vertical_card":
+        return {
+            "font_size": 10,
+            "ass_font_size": 50,
+            "ass_margin_v": 96,
+            "caption_position": {"x": 0.0, "y": -0.74},
+            "overlay_style": {
+                "card_width_ratio": 0.12,
+                "card_height_ratio": 0.62,
+                "title_x_ratio": 0.84,
+                "title_y_ratio": 0.34,
+                "title_font_size": 28,
+                "subtitle_font_size": 24,
+            },
+        }
+    if layout == "education_focus_bar":
+        return {
+            "font_size": 9,
+            "ass_font_size": 44,
+            "ass_margin_v": 96,
+            "caption_position": {"x": 0.0, "y": -0.78},
+            "overlay_style": {
+                "top_y_ratio": 0.20,
+                "top_screen_y_ratio": 0.20,
+                "headline_y_ratio": 0.20,
+                "top_font_size": 54,
+                "top_sub_font_size": 46,
+                "top_min_font_size": 24,
+                "top_sub_min_font_size": 22,
+                "title_font_size": 24,
+                "subtitle_font_size": 18,
+                "subtitle_gap": 29,
+                "badge_font_size": 32,
+                "badge_height_ratio": 0.10,
+                "badge_y_ratio": 0.60,
+            },
+        }
+    if layout == "tea_center_title":
+        return {
+            "font_size": 9,
+            "ass_font_size": 48,
+            "ass_margin_v": 92,
+            "caption_position": {"x": 0.0, "y": -0.78},
+            "overlay_style": {
+                "headline_y_ratio": 0.34,
+                "subheadline_y_ratio": 0.49,
+                "headline_font_size": 58,
+                "subheadline_font_size": 38,
+            },
+        }
+    if layout == "red_yellow_hook":
+        return {
+            "font_size": 10,
+            "ass_font_size": 52,
+            "ass_margin_v": 92,
+            "caption_position": {"x": 0.0, "y": -0.74},
+            "overlay_style": {
+                "headline_y_ratio": 0.18,
+                "subheadline_y_ratio": 0.32,
+                "headline_font_size": 56,
+                "subheadline_font_size": 48,
+            },
+        }
+    if layout == "top_banner":
+        return {
+            "font_size": 10,
+            "ass_font_size": 54,
+            "ass_margin_v": 98,
+            "caption_position": {"x": 0.0, "y": -0.74},
+            "overlay_style": {
+                "banner_height_ratio": 0.30,
+                "headline_y_ratio": 0.54,
+                "top_y_ratio": 0.16,
+                "top_screen_y_ratio": 0.16,
+                "headline_font_size": 54,
+                "profile_x_ratio": 0.08,
+                "profile_y_ratio": 0.66,
+                "profile_title_font_size": 24,
+                "profile_subtitle_font_size": 18,
+            },
+        }
+    if layout == "center_quote":
+        return {
+            "font_size": 9,
+            "ass_font_size": 46,
+            "ass_margin_v": 98,
+            "caption_position": {"x": 0.0, "y": -0.78},
+            "overlay_style": {
+                "headline_y_ratio": 0.41,
+                "subheadline_y_ratio": 0.55,
+                "headline_font_size": 54,
+                "subheadline_font_size": 28,
+            },
+        }
+    if layout == "market_label":
+        return {
+            "font_size": 10,
+            "ass_font_size": 50,
+            "ass_margin_v": 96,
+            "caption_position": {"x": 0.0, "y": -0.78},
+            "overlay_style": {
+                "headline_y_ratio": 0.55,
+                "badge_y_ratio": 0.40,
+                "headline_font_size": 56,
+                "badge_font_size": 28,
+            },
+        }
+    if layout == "black_gold_quote":
+        return {
+            "font_size": 9,
+            "ass_font_size": 48,
+            "ass_margin_v": 96,
+            "caption_position": {"x": 0.0, "y": -0.78},
+            "overlay_style": {
+                "headline_y_ratio": 0.42,
+                "subheadline_y_ratio": 0.58,
+                "headline_font_size": 54,
+                "subheadline_font_size": 58,
+            },
+        }
+    if layout == "tcm_waist_banner":
+        return {
+            "font_size": 9,
+            "ass_font_size": 48,
+            "ass_margin_v": 96,
+            "caption_position": {"x": 0.0, "y": -0.78},
+            "overlay_style": {
+                "headline_y_ratio": 0.43,
+                "badge_y_ratio": 0.57,
+                "headline_font_size": 52,
+                "badge_font_size": 28,
+            },
+        }
+    if layout == "news_brief":
+        return {
+            "font_size": 9,
+            "ass_font_size": 46,
+            "ass_margin_v": 96,
+            "caption_position": {"x": 0.0, "y": -0.78},
+            "overlay_style": {
+                "headline_y_ratio": 0.16,
+                "title_x_ratio": 0.43,
+                "subheadline_x_ratio": 0.58,
+                "headline_font_size": 56,
+            },
+        }
+    if layout == "side_neon":
+        return {
+            "font_size": 9,
+            "ass_font_size": 44,
+            "ass_margin_v": 96,
+            "caption_position": {"x": -0.42, "y": 0.24},
+        }
+    if layout == "dramatic_hook":
+        return {
+            "font_size": 11,
+            "ass_font_size": 62,
+            "ass_margin_v": 96,
+            "caption_position": {"x": 0.0, "y": -0.28},
+        }
+    if layout == "center_burst":
+        return {
+            "font_size": 11,
+            "ass_font_size": 58,
+            "ass_margin_v": 96,
+            "caption_position": {"x": 0.0, "y": -0.58},
+        }
+    if layout == "lower_clean":
+        return {
+            "font_size": 9,
+            "ass_font_size": 44,
+            "ass_margin_v": 96,
+            "caption_position": {"x": 0.0, "y": -0.76},
+        }
+    return {}
+
+
+def _ensure_orientation_style_defaults(style: Dict[str, Any]) -> Dict[str, Any]:
+    out = _json_clone(style or {})
+    landscape_defaults = _orientation_defaults_for_style(out)
+    if not landscape_defaults:
+        return out
+    styles = out.get("orientation_styles") if isinstance(out.get("orientation_styles"), dict) else {}
+    current_landscape = styles.get("landscape") if isinstance(styles.get("landscape"), dict) else {}
+    styles["landscape"] = _deep_merge_dict(landscape_defaults, current_landscape)
+    out["orientation_styles"] = styles
+    return out
+
+
 def _template_seed_row(template: Dict[str, Any], sort_order: int) -> Dict[str, Any]:
     return {
         "id": str(template.get("id") or ""),
@@ -712,10 +934,26 @@ def _ensure_cutcli_template_seeds(db: Session) -> None:
     changed = False
     for idx, template in enumerate(_TEMPLATES.values(), start=10):
         tid = str(template.get("id") or "")
-        if not tid or tid in existing:
+        if not tid:
             continue
-        db.add(CutcliTemplate(**_template_seed_row(template, idx * 10)))
-        changed = True
+        if tid not in existing:
+            db.add(CutcliTemplate(**_template_seed_row(template, idx * 10)))
+            changed = True
+            continue
+        try:
+            row = db.get(CutcliTemplate, tid)
+        except Exception:
+            row = None
+        if not row:
+            continue
+        seeded_style = _caption_style_for_template(template)
+        row_style = _json_clone(row.caption_style or {})
+        seeded_orientation = seeded_style.get("orientation_styles") if isinstance(seeded_style.get("orientation_styles"), dict) else {}
+        row_orientation = row_style.get("orientation_styles") if isinstance(row_style.get("orientation_styles"), dict) else {}
+        if seeded_orientation and not row_orientation.get("landscape"):
+            row_style = _ensure_orientation_style_defaults(row_style)
+            row.caption_style = row_style
+            changed = True
     if changed:
         try:
             db.commit()
@@ -790,7 +1028,7 @@ def _caption_style_for_template(template: Optional[Dict[str, Any]]) -> Dict[str,
     base.setdefault("ass_alignment", 2)
     base.setdefault("ass_margin_v", 265)
     base.setdefault("ass_effect", "")
-    return base
+    return _ensure_orientation_style_defaults(base)
 
 
 def _clamp_ratio(value: Any, default: float = 0.5) -> float:
@@ -1847,7 +2085,8 @@ def _caption_ass_font_size_value(cap: Dict[str, Any], caption_style: Dict[str, A
     ass_font_size = int(caption_style.get("ass_font_size") or 86)
     base_cli_size = int(caption_style.get("font_size") or 13)
     cap_cli_size = int(cap.get("fontSize") or base_cli_size)
-    return max(44, ass_font_size + (cap_cli_size - base_cli_size) * 7)
+    min_ass_font_size = int(caption_style.get("min_ass_font_size") or (30 if str(caption_style.get("current_orientation") or "") == "landscape" else 44))
+    return max(min_ass_font_size, ass_font_size + (cap_cli_size - base_cli_size) * 7)
 
 
 def _caption_font_unit_width(font_size: int, caption_style: Dict[str, Any]) -> float:
@@ -2789,6 +3028,9 @@ def _captions_from_stt(
         return max(9, base_font_size - wrap_adjust)
 
     def caption_position(index: int) -> Tuple[Optional[float], Optional[float]]:
+        configured = caption_style.get("caption_position") if isinstance(caption_style.get("caption_position"), dict) else {}
+        if configured:
+            return _float_value(configured.get("x"), 0.0), _float_value(configured.get("y"), _float_value(caption_style.get("transform_y"), -0.66))
         layout = str(caption_style.get("ass_layout") or "")
         if layout == "side_neon":
             return (-0.58, 0.46 if index % 2 == 0 else 0.32)
@@ -3259,7 +3501,14 @@ def _run_auto_caption_job_sync(
     ffmpeg: Optional[str] = None
     try:
         template = _get_cutcli_template_def(db, template_id) or dict(_TEMPLATES[_AUTO_CAPTION_TEMPLATE_ID])
-        caption_style = _apply_position_overrides(_caption_style_for_template(template), position_overrides or {})
+        caption_style = _apply_position_overrides(
+            _apply_orientation_style(
+                _caption_style_for_template(template),
+                width=int(source_info.get("width") or 0),
+                height=int(source_info.get("height") or 0),
+            ),
+            position_overrides or {},
+        )
         cutcli = _find_cutcli_bin()
         stt_audio_url = _clean_public_http_url(audio_url)
         if stt_audio_url:
@@ -3928,7 +4177,8 @@ def _ass_caption_font_size(
     if estimated_width <= usable_width:
         return fs
     scaled = int(fs * (usable_width / max(1.0, estimated_width)) * 0.98)
-    return max(44, min(fs, scaled))
+    min_ass_font_size = int(caption_style.get("min_ass_font_size") or (30 if str(caption_style.get("current_orientation") or "") == "landscape" else 44))
+    return max(min_ass_font_size, min(fs, scaled))
 
 
 def _ass_caption_override(
@@ -4118,7 +4368,8 @@ def _fit_overlay_font_size(raw_size: int, lines: List[str], *, width: int, heigh
     max_units = max(_caption_visual_units(line) for line in lines) or 1.0
     by_width = int(max(80, width * 0.88) / max_units)
     by_height = int(max(24, height_limit) / (max(1, len(lines)) * 1.12))
-    return max(min_size, min(int(raw_size), by_width, by_height))
+    safe_min = max(14, min(int(min_size), by_width, by_height))
+    return max(safe_min, min(int(raw_size), by_width, by_height))
 
 
 def _ass_box_dialogue(end: str, color: str, points: List[Tuple[int, int]], *, layer: int = 2) -> str:
@@ -4193,20 +4444,27 @@ def _overlay_dialogues(
     lines: List[str] = []
 
     if layout == "right_vertical_card":
-        card_w = int(width * 0.19)
-        card_h = int(height * 0.34)
-        x2 = int(width * 0.90)
-        x1 = max(0, x2 - card_w)
-        y1 = int(height * 0.10)
+        card_w_ratio = _float_value(overlay_style.get("card_width_ratio"), 0.19)
+        card_h_ratio = _float_value(overlay_style.get("card_height_ratio"), 0.34)
+        card_w = int(width * card_w_ratio)
+        card_h = int(height * card_h_ratio)
+        default_cx = 0.90 - card_w_ratio / 2
+        center_x = int(width * _float_value(overlay_style.get("title_x_ratio"), default_cx))
+        center_y = int(height * _float_value(overlay_style.get("title_y_ratio"), 0.27))
+        x1 = max(0, min(width - card_w, center_x - card_w // 2))
+        x2 = x1 + card_w
+        y1 = max(0, min(height - card_h, center_y - card_h // 2))
         y2 = y1 + card_h
         card_color = str(overlay_style.get("card_color") or "&H00E8724B")
         lines.append(_ass_box_dialogue(end, card_color, [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]))
         title_units = _vertical_units(title)
         subtitle_units = _vertical_units(subtitle)
         if title_units or subtitle_units:
-            fs = max(24, min(int(overlay_style.get("title_font_size") or 40), int(card_h / max(8.2, len(title_units) * 1.03))))
-            sub_fs = max(20, min(int(overlay_style.get("subtitle_font_size") or 28), int(card_h / max(5.8, len(subtitle_units) * 1.0))))
-            title_x = x1 + int(card_w * 0.67)
+            title_min = max(14, min(24, int(card_h / 14)))
+            sub_min = max(12, min(20, int(card_h / 16)))
+            fs = max(title_min, min(int(overlay_style.get("title_font_size") or 40), int(card_h / max(8.2, len(title_units) * 1.03))))
+            sub_fs = max(sub_min, min(int(overlay_style.get("subtitle_font_size") or 28), int(card_h / max(5.8, len(subtitle_units) * 1.0))))
+            title_x = x1 + int(card_w * 0.60)
             subtitle_x = x1 + int(card_w * 0.36)
             title_y = y1 + int(card_h * 0.52)
             subtitle_y = y1 + int(card_h * 0.55)
@@ -4219,37 +4477,41 @@ def _overlay_dialogues(
         if top_text:
             y = int(height * _float_value(overlay_style.get("top_y_ratio"), 0.08))
             first, rest = top_lines[0], "\n".join(top_lines[1:])
-            fs1 = _fit_overlay_font_size(74, [first], width=int(width * 0.82), height_limit=int(height * 0.08), min_size=46)
+            fs1 = _fit_overlay_font_size(int(overlay_style.get("top_font_size") or 74), [first], width=int(width * 0.82), height_limit=int(height * 0.12), min_size=int(overlay_style.get("top_min_font_size") or 46))
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00000000&\\bord4\\shad1}%s"
                 % (end, top_x, y, fs1, _escape_ass_text(first))
             )
             if rest:
-                fs2 = _fit_overlay_font_size(66, _overlay_plain_lines(rest), width=int(width * 0.92), height_limit=int(height * 0.11), min_size=42)
+                fs2 = _fit_overlay_font_size(int(overlay_style.get("top_sub_font_size") or 66), _overlay_plain_lines(rest), width=int(width * 0.92), height_limit=int(height * 0.14), min_size=int(overlay_style.get("top_sub_min_font_size") or 42))
                 lines.append(
                     "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord5\\shad1}%s"
-                    % (end, top_x, y + int(fs1 * 0.86), fs2, _escape_ass_text(rest))
+                    % (end, top_x, y + int(fs1 * 0.90), fs2, _escape_ass_text(rest))
                 )
         if title or subtitle:
             x = int(width * _float_value(overlay_style.get("title_x_ratio"), 0.09))
             y = int(height * _float_value(overlay_style.get("title_y_ratio"), 0.43))
+            title_fs = int(overlay_style.get("title_font_size") or 32)
+            subtitle_fs = int(overlay_style.get("subtitle_font_size") or 26)
+            subtitle_gap = int(overlay_style.get("subtitle_gap") or 42)
             if title:
                 lines.append(
-                    "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an1\\pos(%d,%d)\\fs32\\c&H0000F7FF&\\3c&H00111111&\\bord2\\shad1}%s"
-                    % (end, x, y, _escape_ass_text(title))
+                    "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an1\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00111111&\\bord2\\shad1}%s"
+                    % (end, x, y, title_fs, _escape_ass_text(title))
                 )
             if subtitle:
                 lines.append(
-                    "Dialogue: 7,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an1\\pos(%d,%d)\\fs26\\c&H00FFFFFF&\\3c&H00111111&\\bord2\\shad1}%s"
-                    % (end, x, y + 42, _escape_ass_text(subtitle))
+                    "Dialogue: 7,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an1\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00111111&\\bord2\\shad1}%s"
+                    % (end, x, y + subtitle_gap, subtitle_fs, _escape_ass_text(subtitle))
                 )
         if badge:
             bar_w = int(width * 0.84)
-            bar_h = int(height * 0.07)
+            bar_h = int(height * _float_value(overlay_style.get("badge_height_ratio"), 0.07))
             x1 = (width - bar_w) // 2
-            y1 = int(height * _float_value(overlay_style.get("badge_y_ratio"), 0.58))
+            badge_center_y = int(height * _float_value(overlay_style.get("badge_y_ratio"), 0.58))
+            y1 = _clamp_int(badge_center_y - bar_h // 2, 0, max(0, height - bar_h))
             lines.append(_ass_box_dialogue(end, "&H00FFFFFF", [(x1, y1), (x1 + bar_w, y1), (x1 + bar_w, y1 + bar_h), (x1, y1 + bar_h)], layer=4))
-            fs = _fit_overlay_font_size(42, [badge], width=bar_w - 40, height_limit=bar_h - 8, min_size=30)
+            fs = _fit_overlay_font_size(int(overlay_style.get("badge_font_size") or 42), [badge], width=bar_w - 40, height_limit=bar_h - 8, min_size=20)
             lines.append(
                 "Dialogue: 8,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00000000&\\bord0\\shad0}%s"
                 % (end, badge_x, y1 + bar_h // 2, fs, _escape_ass_text(badge))
@@ -4258,17 +4520,21 @@ def _overlay_dialogues(
 
     if layout == "tea_center_title":
         y = int(height * _float_value(overlay_style.get("headline_y_ratio"), 0.47))
+        title_fs = 0
         if title:
             fs = _fit_overlay_font_size(int(overlay_style.get("headline_font_size") or 92), _overlay_plain_lines(title), width=int(width * 0.84), height_limit=int(height * 0.11), min_size=54)
+            title_fs = fs
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00111111&\\bord5\\shad2}%s"
                 % (end, title_x, y, fs, _escape_ass_text(title))
             )
         if subtitle:
             fs2 = _fit_overlay_font_size(int(overlay_style.get("subheadline_font_size") or 56), _overlay_plain_lines(subtitle), width=int(width * 0.86), height_limit=int(height * 0.09), min_size=38)
+            default_sub_y = (y + int(max(title_fs * 0.92, fs2 * 1.70, height * 0.072))) / max(1, height)
+            sub_y = int(height * _float_value(overlay_style.get("subheadline_y_ratio"), default_sub_y))
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00111111&\\bord4\\shad2}%s"
-                % (end, subtitle_x, int(height * _float_value(overlay_style.get("subheadline_y_ratio"), (y + int(fs2 * 1.05)) / max(1, height))), fs2, _escape_ass_text(subtitle))
+                % (end, subtitle_x, sub_y, fs2, _escape_ass_text(subtitle))
             )
         return lines
 
@@ -4319,17 +4585,20 @@ def _overlay_dialogues(
             badge_fs = _fit_overlay_font_size(int(overlay_style.get("badge_font_size") or 38), [badge], width=int(width * 0.48), height_limit=int(height * 0.052), min_size=24)
             box_w = max(int(width * 0.46), int(_caption_visual_units(badge) * badge_fs * 0.78) + int(width * 0.08))
             box_h = max(int(height * 0.044), int(badge_fs * 1.28))
-            x1 = (width - box_w) // 2
+            x1 = _clamp_int(badge_x - box_w // 2, 0, max(0, width - box_w))
             x2 = x1 + box_w
-            y1 = y + int(max(48, (int(overlay_style.get("headline_font_size") or 76)) * 0.62))
+            default_badge_center = y + int(max(48, (int(overlay_style.get("headline_font_size") or 76)) * 0.62)) + box_h // 2
+            badge_center_y = int(height * _float_value(overlay_style.get("badge_y_ratio"), default_badge_center / max(1, height)))
+            y1 = _clamp_int(badge_center_y - box_h // 2, 0, max(0, height - box_h))
             y2 = y1 + box_h
             cut = max(18, int(box_h * 0.48))
             mid = (y1 + y2) // 2
             points = [(x1 + cut, y1), (x2 - cut, y1), (x2, mid), (x2 - cut, y2), (x1 + cut, y2), (x1, mid)]
             lines.append(_ass_box_dialogue(end, str(overlay_style.get("waist_color") or "&H006B4A38"), points, layer=3))
+            text_x = _clamp_int(badge_x, x1 + cut, x2 - cut)
             lines.append(
                 "Dialogue: 8,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H00000000&\\bord2\\shad1}%s"
-                % (end, badge_x, mid, badge_fs, _escape_ass_text(badge))
+                % (end, text_x, mid, badge_fs, _escape_ass_text(badge))
             )
         return lines
 
@@ -4337,8 +4606,8 @@ def _overlay_dialogues(
         y = int(height * _float_value(overlay_style.get("headline_y_ratio"), 0.11))
         combined_lines = _overlay_plain_lines((title + subtitle).strip())
         fs = _fit_overlay_font_size(int(overlay_style.get("headline_font_size") or 82), combined_lines or [title or subtitle], width=int(width * 0.86), height_limit=int(height * 0.10), min_size=48)
-        title_x = int(width * 0.41)
-        subtitle_x = int(width * 0.58)
+        title_x = int(width * _float_value(overlay_style.get("title_x_ratio"), 0.41))
+        subtitle_x = int(width * _float_value(overlay_style.get("subheadline_x_ratio"), 0.58))
         if title:
             lines.append(
                 "Dialogue: 7,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H0000F7FF&\\3c&H00000000&\\bord5\\shad2}%s"
@@ -4384,23 +4653,36 @@ def _overlay_dialogues(
         return lines
 
     if layout == "center_quote":
+        headline = title
+        subheadline = subtitle
+        headline_lines = _overlay_plain_lines(headline)
+        text_color = str(overlay_style.get("headline_color") or "&H00FFFFFF")
+        outline = str(overlay_style.get("headline_outline") or "&H00222931")
+        raw_fs = int(overlay_style.get("headline_font_size") or max(58, width * 0.09))
+        fs = _fit_overlay_font_size(raw_fs, headline_lines, width=width, height_limit=int(height * 0.24), min_size=42)
+        sub_fs = int(overlay_style.get("subheadline_font_size") or max(26, width * 0.04))
         y = int(height * _float_value(overlay_style.get("headline_y_ratio"), 0.48))
-        if title:
-            lines.append("Dialogue: 5,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c%s\\3c%s\\bord5\\shad2}%s" % (end, width // 2, y, int(overlay_style.get("headline_font_size") or 88), str(overlay_style.get("headline_color") or "&H00FFFFFF"), str(overlay_style.get("headline_outline") or "&H00222931"), _escape_ass_text(title)))
-        if subtitle:
-            lines.append("Dialogue: 5,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H001E293B&\\bord2\\shad2}%s" % (end, width // 2, y + 68, int(overlay_style.get("subheadline_font_size") or 42), _escape_ass_text(subtitle)))
+        if headline:
+            lines.append("Dialogue: 5,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c%s\\3c%s\\bord5\\shad2}%s" % (end, title_x, y, fs, text_color, outline, _escape_ass_text(headline)))
+        if subheadline:
+            sub_y = int(height * _float_value(overlay_style.get("subheadline_y_ratio"), (y + int(fs * 0.78)) / max(1, height)))
+            lines.append("Dialogue: 5,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\3c&H001E293B&\\bord2\\shad2}%s" % (end, subtitle_x, sub_y, sub_fs, _escape_ass_text(subheadline)))
         return lines
 
     if layout == "market_label":
         y = int(height * _float_value(overlay_style.get("headline_y_ratio"), 0.58))
-        fs = int(overlay_style.get("headline_font_size") or 84)
+        headline_lines = _overlay_plain_lines(title)
+        fs = _fit_overlay_font_size(int(overlay_style.get("headline_font_size") or 84), headline_lines, width=width, height_limit=int(height * 0.24), min_size=42)
         if badge:
-            x1 = int(width * 0.13)
-            x2 = int(width * 0.50)
-            y1 = y - int(fs * 0.95)
-            y2 = y - int(fs * 0.40)
+            box_w = int(width * 0.37)
+            x1 = _clamp_int(badge_x - box_w // 2, 0, max(0, width - box_w))
+            x2 = x1 + box_w
+            badge_center_y = int(height * _float_value(overlay_style.get("badge_y_ratio"), max(0.05, (y - int(fs * 0.68)) / max(1, height))))
+            box_h = max(int(height * 0.052), int(fs * 0.52))
+            y1 = _clamp_int(badge_center_y - box_h // 2, 0, max(0, height - box_h))
+            y2 = y1 + box_h
             lines.append(_ass_box_dialogue(end, str(overlay_style.get("badge_color") or "&H001B7BE6"), [(x1, y1), (x2, y1), (x2, y2), (x1, y2)], layer=3))
-            lines.append("Dialogue: 6,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\bord0\\shad0}%s" % (end, (x1 + x2) // 2, (y1 + y2) // 2, max(28, int(fs * 0.34)), _escape_ass_text(badge)))
+            lines.append("Dialogue: 6,0:00:00.00,%s,OverlaySub,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c&H00FFFFFF&\\bord0\\shad0}%s" % (end, _clamp_int(badge_x, x1 + 12, x2 - 12), (y1 + y2) // 2, max(20, int(fs * 0.34)), _escape_ass_text(badge)))
         if title:
             lines.append("Dialogue: 5,0:00:00.00,%s,OverlayTitle,,0,0,0,,{\\an5\\pos(%d,%d)\\fs%d\\c%s\\3c%s\\bord5\\shad3}%s" % (end, width // 2, y, fs, str(overlay_style.get("headline_color") or "&H00FFFFFF"), str(overlay_style.get("headline_outline") or "&H00111111"), _escape_ass_text(title)))
         return lines
@@ -4799,7 +5081,14 @@ async def render_cutcli_template(
     source_info = _probe_video(ffprobe, source)
 
     if tpl.get("kind") == "auto_caption":
-        caption_style = _apply_position_overrides(_caption_style_for_template(tpl), clean_position_overrides)
+        caption_style = _apply_position_overrides(
+            _apply_orientation_style(
+                _caption_style_for_template(tpl),
+                width=int(source_info.get("width") or 0),
+                height=int(source_info.get("height") or 0),
+            ),
+            clean_position_overrides,
+        )
         quality_policy = {
             "expected_caption_tracks": 1,
             "background_enabled": False,

@@ -43,6 +43,7 @@ from .api.privacy_policy import router as privacy_policy_router
 from .api.oauth_public_pages import router as oauth_public_pages_router
 from .api.meta_social_publish import router as meta_social_publish_router
 from .api.admin import router as admin_router
+from .api.generation_records import router as generation_records_router
 from .api.mobile_client import router as mobile_client_router
 try:
     from .api.wecom_kf import router as wecom_kf_router
@@ -896,6 +897,7 @@ def create_app() -> FastAPI:
     app.include_router(twilio_whatsapp_router, prefix="")
     app.include_router(meta_social_publish_router, prefix="")
     app.include_router(admin_router, prefix="")
+    app.include_router(generation_records_router, prefix="")
     app.include_router(mobile_client_router, prefix="")
     if wecom_kf_router is not None:
         app.include_router(wecom_kf_router, prefix="")

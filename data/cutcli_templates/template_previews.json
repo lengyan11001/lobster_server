@@ -1,7 +1,7 @@
 {
   "auto_caption_pop_huazi_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4?v=ref-card-20260604f",
-    "source": "cutcli_source_f6d337.mp4",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_pop_huazi_v1.mp4?v=202606061040_fix_layout",
+    "source": "cutcli_test_f6d337.mp4",
     "caption_source": "stt",
     "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
@@ -16,7 +16,7 @@
     "style": "education_focus_bar"
   },
   "auto_caption_neon_focus_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4?v=20260605-symbols-3templates",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_neon_focus_v1.mp4?v=202606061040_fix_layout",
     "source": "cutcli_test_f6d337.mp4",
     "caption_source": "stt",
     "stt_model": "volcengine/speech-to-text/bigmodel-v2",
@@ -40,9 +40,9 @@
     "style": "health_banner"
   },
   "auto_caption_quote_focus_v1": {
-    "preview_url": "/client/client-code/cutcli_templates/auto_caption_quote_focus_v1.mp4?v=overlay-layout-20260604b",
-    "source": "f3fb0dcfdc16.mp4",
-    "caption_source": "demo+fixed_copy",
+    "preview_url": "/client/client-code/cutcli_templates/auto_caption_quote_focus_v1.mp4?v=202606061040_fix_layout",
+    "source": "cutcli_test_f6d337.mp4",
+    "caption_source": "stt",
     "stt_model": "volcengine/speech-to-text/bigmodel-v2",
     "duration_sec": 6.8,
     "style": "quote_focus"

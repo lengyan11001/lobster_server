@@ -185,6 +185,44 @@ class CreativeGenerationJob(Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
 
 
+class GenerationRecord(Base):
+    """用户生成素材记录：只保存公网链接与生成元数据，不保存资源文件。"""
+
+    __tablename__ = "generation_records"
+    __table_args__ = (
+        UniqueConstraint("user_id", "client_asset_id", name="uq_generation_records_user_client_asset"),
+        UniqueConstraint("user_id", "dedupe_key", name="uq_generation_records_user_dedupe"),
+        Index("ix_generation_records_user_created", "user_id", "created_at"),
+        Index("ix_generation_records_media_created", "media_type", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    client_asset_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    public_url: Mapped[str] = mapped_column(Text, nullable=False)
+    original_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    dedupe_hint_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    media_type: Mapped[str] = mapped_column(String(32), default="image", nullable=False, index=True)
+    filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    tags: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    generation_task_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    dedupe_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(64), default="save-url", nullable=False, index=True)
+    report_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    last_reported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class CutcliTemplate(Base):
     __tablename__ = "cutcli_templates"
     __table_args__ = (
