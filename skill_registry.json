@@ -719,10 +719,10 @@
       ]
     },
     "goal_video_pipeline_skill": {
-      "name": "目标成片",
-      "description": "输入一个目标，自动结合用户记忆和代理商记忆生成文案，再生成图片并图生视频；返回真实素材 ID，供 OpenClaw 调用。",
+      "name": "创意成片",
+      "description": "选择记忆素材生成图片，并基于提示词生成抖音、公众号、视频号可直接发布的文案。入口和权限由服务器控制，online 只负责二级工作台执行。",
       "type": "builtin",
-      "store_visibility": "debug",
+      "store_visibility": "online",
       "default_installed": true,
       "status": "available",
       "capabilities": {
