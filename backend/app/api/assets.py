@@ -462,6 +462,8 @@ async def upload_asset(
 class TempUploadResponse(BaseModel):
     temp_id: str
     public_url: str
+    storage: str = "temp"
+    object_key: Optional[str] = None
 
 
 @router.post("/api/assets/upload-temp", summary="上传临时文件（无TOS时使用）")
@@ -481,11 +483,38 @@ async def upload_temp_file(
     logger.info("[服务器端-步骤3.1] 文件读取成功 size=%d", len(data))
     
     # 【服务器端-步骤3.2】生成临时文件ID
-    temp_id = f"temp_{uuid.uuid4().hex[:16]}"
     name = file.filename or "upload"
     ext = Path(name).suffix or ".bin"
+    content_type = (file.content_type or "").strip() or "application/octet-stream"
+
+    object_id = uuid.uuid4().hex[:16]
+    object_key = f"assets/{object_id}{ext}"
+    tos_url = _upload_to_tos(data, object_key, content_type)
+    if tos_url:
+        logger.info(
+            "[server-upload-temp] stored in TOS user_id=%s object_key=%s size=%d",
+            current_user.id if current_user else "N/A",
+            object_key,
+            len(data),
+        )
+        return TempUploadResponse(
+            temp_id=object_id,
+            public_url=tos_url,
+            storage="tos",
+            object_key=object_key,
+        )
+
+    logger.warning(
+        "[server-upload-temp] TOS unavailable, falling back to short-lived temp URL user_id=%s filename=%s size=%d",
+        current_user.id if current_user else "N/A",
+        name,
+        len(data),
+    )
+
+    temp_id = f"temp_{uuid.uuid4().hex[:16]}"
     temp_filename = f"{temp_id}{ext}"
     temp_path = TEMP_ASSETS_DIR / temp_filename
+    temp_path.write_bytes(data)
     logger.info("[服务器端-步骤3.2] 生成临时文件ID temp_id=%s filename=%s", temp_id, temp_filename)
     
     # 【服务器端-步骤3.3】保存临时文件

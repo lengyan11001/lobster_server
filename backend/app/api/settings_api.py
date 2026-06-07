@@ -19,7 +19,7 @@ _CUSTOM_CONFIGS_FILE = Path(__file__).resolve().parent.parent.parent.parent / "c
 
 
 def _read_server_tos_config_dict() -> Optional[Dict[str, Any]]:
-    """服务器 custom_configs.json 中的 TOS_CONFIG；含 AK/SK 时返回，供在线客户端下发。"""
+    """Read server-side TOS_CONFIG for status checks; never return AK/SK to clients."""
     if not _CUSTOM_CONFIGS_FILE.exists():
         return None
     try:
@@ -155,17 +155,18 @@ def list_models(current_user: User = Depends(get_current_user)):
 
 @router.get(
     "/api/settings/tos-config",
-    summary="下发 TOS 配置供 lobster_online 写入本机（需登录）",
+    summary="TOS 上传模式状态（需登录）",
 )
 def get_tos_config_for_online_client(current_user: User = Depends(get_current_user)):
-    """在线版本机未配置火山 TOS 时，由认证中心将服务器上的 TOS_CONFIG 同步到用户本机。"""
+    """Long-lived TOS credentials stay on the server; never send AK/SK to clients."""
     cfg = _read_server_tos_config_dict()
-    if not cfg:
-        raise HTTPException(
-            status_code=404,
-            detail="服务器未在 custom_configs.json 中配置有效 TOS_CONFIG（需 access_key/secret_key 等）",
-        )
-    return {"TOS_CONFIG": cfg}
+    return {
+        "ok": True,
+        "mode": "server-side-upload",
+        "tos_configured": bool(cfg),
+        "bucket_name": str((cfg or {}).get("bucket_name") or ""),
+        "public_domain": str((cfg or {}).get("public_domain") or ""),
+    }
 
 
 @router.get("/api/settings/lan-info", summary="获取局域网访问信息（需登录）")
