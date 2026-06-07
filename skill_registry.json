@@ -719,15 +719,15 @@
       ]
     },
     "goal_video_pipeline_skill": {
-      "name": "创意成片",
-      "description": "选择记忆素材生成图片，并基于提示词生成抖音、公众号、视频号可直接发布的文案。入口和权限由服务器控制，online 只负责二级工作台执行。",
+      "name": "文案+创意图片",
+      "description": "选择记忆素材生成创意图片，并基于图片提示词生成抖音、公众号、视频号可直接发布的文案。入口和权限由服务器控制，online 只负责二级工作台执行。",
       "type": "builtin",
       "store_visibility": "online",
       "default_installed": true,
       "status": "available",
       "capabilities": {
-            "goal.video.pipeline": {
-                  "description": "根据目标和记忆自动规划文案、生成图片、再用图片生成视频，并返回最终视频素材 final_asset_id。",
+            "goal.image.pipeline": {
+                  "description": "根据目标和记忆自动规划文案与创意图片，只生成图片和可发布文案；对应定时任务里的“文案+创意图片”。",
                   "upstream": "local",
                   "upstream_tool": "invoke",
                   "enabled": true,
@@ -761,10 +761,6 @@
                                     "type": "string",
                                     "default": "中文"
                               },
-                              "duration": {
-                                    "type": "integer",
-                                    "default": 6
-                              },
                               "aspect_ratio": {
                                     "type": "string",
                                     "default": "9:16"
@@ -779,9 +775,6 @@
                               "image_model": {
                                     "type": "string"
                               },
-                              "video_model": {
-                                    "type": "string"
-                              },
                               "reference_asset_ids": {
                                     "type": "array",
                                     "items": {
@@ -794,11 +787,14 @@
                                           "type": "string"
                                     }
                               },
-                              "image_retry_count": {
-                                    "type": "integer",
-                                    "default": 2
+                              "source_mode": {
+                                    "type": "string",
+                                    "enum": [
+                                          "ai_image"
+                                    ],
+                                    "default": "ai_image"
                               },
-                              "video_retry_count": {
+                              "image_retry_count": {
                                     "type": "integer",
                                     "default": 2
                               }
