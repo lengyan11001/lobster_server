@@ -396,11 +396,16 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
     for key in (
         "rank",
         "position",
+        "show_rank",
+        "real_rank",
+        "origin_rank",
         "hot_value",
         "heat",
         "view_count",
         "play_count",
         "play_cnt",
+        "publish_cnt",
+        "avg_play_cnt",
         "digg_count",
         "like_cnt",
         "comment_count",
@@ -515,22 +520,25 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         [
             "title",
             "item_title",
+            "challenge_name",
             "desc",
             "description",
             "sentence",
             "word",
+            "hotword",
             "keyword",
             "name",
             "aweme_info.desc",
             "aweme_info.caption",
         ],
     )
-    description = _first(item, ["description", "desc", "summary", "aweme_info.desc"])
+    description = _first(item, ["description", "desc", "summary", "challenge_name", "aweme_info.desc"])
     item_key = _first(
         item,
         [
             "aweme_id",
             "id",
+            "challenge_id",
             "item_id",
             "video_id",
             "sentence_id",
