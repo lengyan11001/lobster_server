@@ -223,6 +223,113 @@ class GenerationRecord(Base):
     last_reported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class TikHubQueryLog(Base):
+    """Server-side TikHub proxy audit log: request, response snapshot, and billing."""
+
+    __tablename__ = "tikhub_query_logs"
+    __table_args__ = (
+        UniqueConstraint("query_id", name="uq_tikhub_query_logs_query_id"),
+        Index("ix_tikhub_query_logs_user_created", "user_id", "created_at"),
+        Index("ix_tikhub_query_logs_user_type_created", "user_id", "query_type", "created_at"),
+        Index("ix_tikhub_query_logs_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    query_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    query_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    method: Mapped[str] = mapped_column(String(8), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    request_body: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    http_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tikhub_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tikhub_request_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    cache_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    credits_charged: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("0.0000"), nullable=False)
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    result_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    result_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    raw_response: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class TikHubSourceItem(Base):
+    """Normalized hot-list / competitor-work items extracted from TikHub responses."""
+
+    __tablename__ = "tikhub_source_items"
+    __table_args__ = (
+        UniqueConstraint("user_id", "platform", "source_type", "item_key", name="uq_tikhub_source_item_user_key"),
+        Index("ix_tikhub_source_items_user_created", "user_id", "created_at"),
+        Index("ix_tikhub_source_items_user_platform_created", "user_id", "platform", "created_at"),
+        Index("ix_tikhub_source_items_author_created", "author_key", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    query_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    item_key: Mapped[str] = mapped_column(String(191), nullable=False, index=True)
+    author_key: Mapped[Optional[str]] = mapped_column(String(191), nullable=True, index=True)
+    author_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    public_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cover_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    publish_time: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    metrics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    is_new: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class ContentCompetitorAccount(Base):
+    """Per-user competitor account seed for content inspiration sync."""
+
+    __tablename__ = "content_competitor_accounts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "platform", "account_key", name="uq_content_competitor_user_account"),
+        Index("ix_content_competitor_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    account_key: Mapped[str] = mapped_column(String(191), nullable=False, index=True)
+    homepage_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    industry_tags: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    last_seen_item_key: Mapped[Optional[str]] = mapped_column(String(191), nullable=True)
+    last_fetch_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 class CutcliTemplate(Base):
     __tablename__ = "cutcli_templates"
     __table_args__ = (

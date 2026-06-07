@@ -231,6 +231,7 @@ tr:hover{background:var(--bg)}
         <div class="nav-tab active" data-nav="stats" onclick="switchNav('stats')">统计</div>
         <div class="nav-tab" data-nav="users" onclick="switchNav('users')">用户信息</div>
         <div class="nav-tab" data-nav="generationRecords" onclick="switchNav('generationRecords')">生成记录</div>
+        <div class="nav-tab" data-nav="tikhubRecords" onclick="switchNav('tikhubRecords')">数据查询</div>
         <div class="nav-tab" data-nav="commissions" id="commissionNavTab" onclick="switchNav('commissions')" style="display:none">分润</div>
       </div>
     </div>
@@ -291,6 +292,11 @@ tr:hover{background:var(--bg)}
         <h3>生成记录</h3>
         <div id="userGenerationRecordsTable"><div class="empty">请选择用户后加载</div></div>
         <div class="pagination" id="userGenerationRecordsPagination"></div>
+      </div>
+      <div class="card" id="userTikhubRecordsCard" style="display:none">
+        <h3>数据查询记录</h3>
+        <div id="userTikhubRecordsTable"><div class="empty">请选择用户后加载</div></div>
+        <div class="pagination" id="userTikhubRecordsPagination"></div>
       </div>
       <!-- admin-only: agent toggle -->
       <div class="card" id="agentToggleCard" style="display:none">
@@ -365,6 +371,34 @@ tr:hover{background:var(--bg)}
     </div>
   </div>
 
+  <!-- Page: TikHub records -->
+  <div class="container" id="pageTikhubRecords" style="display:none">
+    <div class="card">
+      <h3>TikHub 数据查询记录</h3>
+      <div class="search-bar" style="margin-bottom:14px">
+        <input type="text" id="tikhubRecordSearch" placeholder="搜索查询ID、类型、错误信息…" onkeydown="if(event.key==='Enter')loadTikhubRecords(0)">
+        <select id="tikhubRecordPlatform" style="padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff">
+          <option value="">全部平台</option>
+          <option value="douyin">抖音</option>
+          <option value="wechat_channels">视频号</option>
+        </select>
+        <select id="tikhubRecordQueryType" style="padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff">
+          <option value="">全部类型</option>
+          <option value="douyin_billboard_video">抖音视频热榜</option>
+          <option value="douyin_billboard_topic">抖音话题榜</option>
+          <option value="douyin_billboard_search">抖音搜索榜</option>
+          <option value="douyin_hot_search">抖音热搜</option>
+          <option value="douyin_user_posts">抖音账号作品</option>
+          <option value="wechat_channels_hot_words">视频号热词</option>
+          <option value="wechat_channels_home_page">视频号主页作品</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="loadTikhubRecords(0)">查询</button>
+      </div>
+      <div id="tikhubRecordsTable"><div class="empty">加载中...</div></div>
+      <div class="pagination" id="tikhubRecordsPagination"></div>
+    </div>
+  </div>
+
   <!-- Page: Agent commissions -->
   <div class="container" id="pageCommissions" style="display:none">
     <div id="commissionOverview" class="stats-grid"></div>
@@ -408,11 +442,14 @@ let secondAgentOptionsCache = null;
 let commissionOffset = 0;
 let generationRecordOffset = 0;
 let userGenerationRecordOffset = 0;
+let tikhubRecordOffset = 0;
+let userTikhubRecordOffset = 0;
 let loginCaptchaId = '';
 let loginSmsCooldownTimer = null;
 let currentLoginTab = 'password';
 const COMMISSION_PAGE_SIZE = 100;
 const GENERATION_RECORD_PAGE_SIZE = 50;
+const TIKHUB_RECORD_PAGE_SIZE = 50;
 
 if (TOKEN) { showDashboard(); }
 
@@ -633,10 +670,13 @@ function switchNav(nav) {
   document.getElementById('pageStats').style.display = nav === 'stats' ? '' : 'none';
   const pageGenerationRecords = document.getElementById('pageGenerationRecords');
   if (pageGenerationRecords) pageGenerationRecords.style.display = nav === 'generationRecords' ? '' : 'none';
+  const pageTikhubRecords = document.getElementById('pageTikhubRecords');
+  if (pageTikhubRecords) pageTikhubRecords.style.display = nav === 'tikhubRecords' ? '' : 'none';
   const pageCommissions = document.getElementById('pageCommissions');
   if (pageCommissions) pageCommissions.style.display = nav === 'commissions' ? '' : 'none';
   if (nav === 'stats') loadStats();
   if (nav === 'generationRecords') loadGenerationRecords(generationRecordOffset || 0);
+  if (nav === 'tikhubRecords') loadTikhubRecords(tikhubRecordOffset || 0);
   if (nav === 'commissions') loadCommissions(0);
 }
 
@@ -723,6 +763,7 @@ function ensureUserDetailTabs() {
     ['overview', '概览'],
     ['billing', '积分'],
     ['generation', '生成记录'],
+    ['tikhub', '数据查询'],
     ['skills', '技能/权限'],
     ['devices', '设备/任务'],
     ['memory', 'OpenClaw 记忆'],
@@ -754,6 +795,7 @@ function ensureUserDetailTabs() {
     if (ledgerCard && panel) panel.appendChild(ledgerCard);
   }
   move('userGenerationRecordsCard', 'generation');
+  move('userTikhubRecordsCard', 'tikhub');
   move('agentToggleCard', 'skills');
   move('skillVisCard', 'skills');
   move('userDevicesTaskCard', 'devices');
@@ -766,6 +808,8 @@ function ensureUserDetailTabs() {
     root.querySelectorAll('.user-detail-panel').forEach(function(p) {
       p.classList.toggle('active', p.id === 'userDetailPanel' + name.charAt(0).toUpperCase() + name.slice(1));
     });
+    if (name === 'generation') loadUserGenerationRecords(userGenerationRecordOffset || 0);
+    if (name === 'tikhub') loadUserTikhubRecords(userTikhubRecordOffset || 0);
   });
 }
 
@@ -1152,6 +1196,116 @@ async function loadUserGenerationRecords(offset) {
   }
 }
 
+function tikhubPlatformLabel(platform) {
+  return { douyin: '抖音', wechat_channels: '视频号' }[platform] || (platform || '-');
+}
+
+function tikhubQueryTypeLabel(queryType) {
+  return {
+    douyin_billboard_video: '抖音视频热榜',
+    douyin_billboard_topic: '抖音话题榜',
+    douyin_billboard_search: '抖音搜索榜',
+    douyin_hot_search: '抖音热搜',
+    douyin_hot_total: '抖音综合榜',
+    douyin_user_posts: '抖音账号作品',
+    wechat_channels_hot_words: '视频号热词',
+    wechat_channels_home_page: '视频号主页作品',
+  }[queryType] || (queryType || '-');
+}
+
+function shortJson(value, limit) {
+  if (!value) return '-';
+  if (typeof value === 'object' && !Object.keys(value).length) return '-';
+  let text = '';
+  try {
+    text = typeof value === 'string' ? value : JSON.stringify(value);
+  } catch(e) {
+    text = String(value || '');
+  }
+  limit = limit || 120;
+  return text.length > limit ? text.slice(0, limit) + '…' : text;
+}
+
+function renderTikhubRecordsTable(items, tableId, pagerId, page, loadFnName, includeUser) {
+  const table = document.getElementById(tableId);
+  const pager = document.getElementById(pagerId);
+  if (!table) return;
+  items = items || [];
+  page = page || { total: items.length, limit: TIKHUB_RECORD_PAGE_SIZE, offset: 0 };
+  if (!items.length) {
+    table.innerHTML = '<div class="empty">暂无数据查询记录</div>';
+  } else {
+    let html = '<div class="table-wrap"><table><thead><tr><th>时间</th>' + (includeUser ? '<th>用户</th>' : '') + '<th>平台/类型</th><th>状态</th><th>结果/扣费</th><th>请求</th><th>错误/缓存</th></tr></thead><tbody>';
+    items.forEach(function(item) {
+      const success = !!item.success;
+      const badgeClass = success ? 'badge-green' : (item.status === 'pending' ? 'badge-yellow' : 'badge-red');
+      const statusLabel = success ? '成功' : (item.status || '失败');
+      const credits = Number(item.credits_charged || 0) || 0;
+      const requestText = [shortJson(item.request_params, 80), shortJson(item.request_body, 80)].filter(function(x) { return x && x !== '-'; }).join(' / ') || '-';
+      const cacheUrl = item.cache_url || '';
+      const cacheShort = cacheUrl.length > 56 ? cacheUrl.slice(0, 56) + '…' : cacheUrl;
+      const errorText = item.error_message || '';
+      const errorShort = errorText.length > 96 ? errorText.slice(0, 96) + '…' : errorText;
+      html += '<tr>'
+        + '<td style="font-size:11px;color:var(--text-secondary);white-space:nowrap">' + (item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : '-') + '</td>'
+        + (includeUser ? '<td><button class="btn btn-outline btn-sm" onclick="switchNav(&quot;users&quot;);showUserDetail(' + item.user_id + ')">#' + item.user_id + '</button><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(item.user_account || '-') + '</div></td>' : '')
+        + '<td><span class="badge ' + (item.platform === 'douyin' ? 'badge-blue' : 'badge-purple') + '">' + escapeHtml(tikhubPlatformLabel(item.platform)) + '</span><div style="font-size:12px;margin-top:6px">' + escapeHtml(tikhubQueryTypeLabel(item.query_type)) + '</div><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(item.query_id || '-') + '</div></td>'
+        + '<td><span class="badge ' + badgeClass + '">' + escapeHtml(statusLabel) + '</span><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">HTTP ' + escapeHtml(item.http_status || '-') + '</div></td>'
+        + '<td><div>结果 ' + Number(item.result_count || 0) + ' 条</div><div style="font-size:11px;color:var(--danger);margin-top:4px">扣费 ' + credits.toFixed(4) + '</div><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(item.latency_ms ? (item.latency_ms + 'ms') : '-') + '</div></td>'
+        + '<td><div style="max-width:260px;word-break:break-all;font-size:11px;color:var(--text-secondary)" title="' + escapeHtml(item.endpoint || '') + '">' + escapeHtml((item.method || 'GET') + ' ' + (item.endpoint || '-')) + '</div><div style="max-width:260px;word-break:break-all;margin-top:4px" title="' + escapeHtml(requestText) + '">' + escapeHtml(requestText) + '</div></td>'
+        + '<td><div title="' + escapeHtml(errorText) + '" style="max-width:300px;line-height:1.45;color:' + (errorText ? 'var(--danger)' : 'var(--text-secondary)') + '">' + escapeHtml(errorShort || '-') + '</div>'
+        + (cacheUrl ? '<a href="' + escapeHtml(cacheUrl) + '" target="_blank" rel="noopener" style="display:block;margin-top:4px;color:var(--primary);font-size:11px;word-break:break-all">' + escapeHtml(cacheShort) + '</a>' : '')
+        + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    table.innerHTML = html;
+  }
+  if (!pager) return;
+  const total = page.total || 0;
+  const limit = page.limit || TIKHUB_RECORD_PAGE_SIZE;
+  const offset = page.offset || 0;
+  if (total <= limit) {
+    pager.innerHTML = '';
+    return;
+  }
+  let html = '';
+  if (offset > 0) html += '<button class="btn btn-outline btn-sm" onclick="' + loadFnName + '(' + Math.max(0, offset - limit) + ')">上一页</button>';
+  html += '<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">第 ' + (Math.floor(offset / limit) + 1) + '/' + Math.ceil(total / limit) + ' 页（共 ' + total + ' 条）</span>';
+  if (page.has_next || offset + limit < total) html += '<button class="btn btn-outline btn-sm" onclick="' + loadFnName + '(' + (offset + limit) + ')">下一页</button>';
+  pager.innerHTML = html;
+}
+
+async function loadTikhubRecords(offset) {
+  tikhubRecordOffset = Math.max(0, offset || 0);
+  const q = (document.getElementById('tikhubRecordSearch') || {}).value || '';
+  const platform = (document.getElementById('tikhubRecordPlatform') || {}).value || '';
+  const queryType = (document.getElementById('tikhubRecordQueryType') || {}).value || '';
+  const table = document.getElementById('tikhubRecordsTable');
+  if (table) table.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const data = await api('/admin/api/ip-content/tikhub-records?limit=' + TIKHUB_RECORD_PAGE_SIZE + '&offset=' + tikhubRecordOffset + '&q=' + encodeURIComponent(q.trim()) + '&platform=' + encodeURIComponent(platform) + '&query_type=' + encodeURIComponent(queryType));
+    renderTikhubRecordsTable(data.items || [], 'tikhubRecordsTable', 'tikhubRecordsPagination', data.pagination, 'loadTikhubRecords', true);
+  } catch(e) {
+    toast(e.message, 'error');
+    if (table) table.innerHTML = '<div class="empty" style="color:var(--danger)">加载失败：' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function loadUserTikhubRecords(offset) {
+  if (!currentUserId) return;
+  userTikhubRecordOffset = Math.max(0, offset || 0);
+  const card = document.getElementById('userTikhubRecordsCard');
+  const table = document.getElementById('userTikhubRecordsTable');
+  if (card) card.style.display = '';
+  if (table) table.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const data = await api('/admin/api/ip-content/tikhub-records?user_id=' + currentUserId + '&limit=' + TIKHUB_RECORD_PAGE_SIZE + '&offset=' + userTikhubRecordOffset);
+    renderTikhubRecordsTable(data.items || [], 'userTikhubRecordsTable', 'userTikhubRecordsPagination', data.pagination, 'loadUserTikhubRecords', false);
+  } catch(e) {
+    if (table) table.innerHTML = '<div class="empty" style="color:var(--danger)">加载失败：' + escapeHtml(e.message) + '</div>';
+  }
+}
+
 async function loadLedgerPage(offset) {
   if (!currentUserId) return;
   currentLedgerOffset = Math.max(0, offset || 0);
@@ -1165,6 +1319,7 @@ async function showUserDetail(userId) {
   currentUserId = userId;
   currentLedgerOffset = 0;
   userGenerationRecordOffset = 0;
+  userTikhubRecordOffset = 0;
   try {
     ensureUserDetailTabs();
     resetUserDetailTab();

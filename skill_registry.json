@@ -813,6 +813,63 @@
             "workflow"
       ]
 },
+    "ip_content_daily_skill": {
+      "name": "IP日更文案",
+      "description": "先基于抖音/视频号行业榜单、热门话题与同行最新作品整理数据源，再结合记忆素材生成口播和朋友圈日更文案；TikHub 查询统一由服务器转发、记录与扣费。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "view": "ip-content-studio",
+        "server_proxy": true,
+        "query_recorded": true,
+        "default_platforms": ["douyin", "wechat_channels"]
+      },
+      "capabilities": {
+        "ip.content.tikhub_query": {
+          "description": "Server-side TikHub proxy for Douyin / WeChat Channels hot lists and competitor works. Records request, source items, and Lobster credit deduction.",
+          "upstream": "server",
+          "upstream_tool": "tikhub_proxy",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 1,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "query_type": {
+                "type": "string",
+                "enum": [
+                  "douyin_hot_search",
+                  "douyin_hot_total",
+                  "douyin_billboard_video",
+                  "douyin_billboard_topic",
+                  "douyin_billboard_search",
+                  "douyin_user_posts",
+                  "wechat_channels_hot_words",
+                  "wechat_channels_home_page"
+                ]
+              },
+              "params": {
+                "type": "object"
+              },
+              "body": {
+                "type": "object"
+              }
+            },
+            "required": ["query_type"]
+          }
+        }
+      },
+      "tags": [
+        "TikHub",
+        "douyin",
+        "wechat-channels",
+        "copywriting",
+        "memory",
+        "competitor"
+      ]
+    },
     "create_video_pipeline_skill": {
       "name": "\u901f\u63a8\u89c6\u9891\u5236\u4f5c",
       "description": "\u6839\u636e\u63d0\u793a\u8bcd\u89c4\u5212\u5206\u955c\uff0c\u8c03\u7528\u901f\u63a8 gpt-image-2 \u751f\u6210\u9996\u5e27\uff0c\u518d\u8c03\u7528 Veo 3.1 \u56fe\u751f\u89c6\u9891\u3002\u5165\u53e3\u548c\u6743\u9650\u7531\u670d\u52a1\u5668\u63a7\u5236\uff0conline \u53ea\u8d1f\u8d23\u672c\u673a\u6267\u884c\u3002",
