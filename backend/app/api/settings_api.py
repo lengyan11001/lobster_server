@@ -158,14 +158,20 @@ def list_models(current_user: User = Depends(get_current_user)):
     summary="TOS 上传模式状态（需登录）",
 )
 def get_tos_config_for_online_client(current_user: User = Depends(get_current_user)):
-    """Long-lived TOS credentials stay on the server; never send AK/SK to clients."""
+    """Return server-side upload status and keep old online clients compatible."""
     cfg = _read_server_tos_config_dict()
+    if not cfg:
+        raise HTTPException(
+            status_code=404,
+            detail="服务器未在 custom_configs.json 中配置有效 TOS_CONFIG（需 access_key/secret_key 等）",
+        )
     return {
         "ok": True,
         "mode": "server-side-upload",
-        "tos_configured": bool(cfg),
-        "bucket_name": str((cfg or {}).get("bucket_name") or ""),
-        "public_domain": str((cfg or {}).get("public_domain") or ""),
+        "tos_configured": True,
+        "bucket_name": str(cfg.get("bucket_name") or ""),
+        "public_domain": str(cfg.get("public_domain") or ""),
+        "TOS_CONFIG": cfg,
     }
 
 
