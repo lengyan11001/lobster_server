@@ -58,6 +58,7 @@ _TIMEOUT_CHAT = 120.0
 _TIMEOUT_IMAGE = 300.0
 _TIMEOUT_FILE_UPLOAD = 120.0
 _TIMEOUT_VIDEO_SUBMIT = 60.0
+_TIMEOUT_OPENMIND_VIDEO_SUBMIT = 60.0
 _TIMEOUT_VIDEO_POLL = 30.0
 
 
@@ -358,6 +359,143 @@ async def _openmind_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]
         payload.setdefault("fallback_provider", "openmind")
     return payload
 
+
+
+
+
+def _openmind_video_base_url() -> str:
+    base = (os.environ.get("OPENMIND_API_BASE") or "https://www.openmindapi.com").strip().rstrip("/")
+    return base or "https://www.openmindapi.com"
+
+
+def _openmind_video_api_key() -> str:
+    key = (os.environ.get("OPENMIND_API_KEY") or "").strip()
+    if not key:
+        raise HTTPException(503, "Server missing OPENMIND_API_KEY")
+    return key
+
+
+def _openmind_video_headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {_openmind_video_api_key()}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 Chrome/126 Safari/537.36",
+    }
+
+
+def _openmind_enabled_for_video() -> bool:
+    raw = (os.environ.get("OPENMIND_VIDEO_ENABLED") or "1").strip().lower()
+    return raw not in {"0", "false", "no", "off", "disabled"}
+
+
+def _openmind_video_model(model: str) -> str:
+    raw = (model or "").strip()
+    low = raw.lower().replace("_", "-").replace(" ", "")
+    explicit = {
+        "veo3.1": os.environ.get("OPENMIND_VEO31_MODEL") or "veo31",
+        "veo3.1-fast": os.environ.get("OPENMIND_VEO31_FAST_MODEL") or "veo31-fast",
+        "veo31": os.environ.get("OPENMIND_VEO31_MODEL") or "veo31",
+        "veo31-fast": os.environ.get("OPENMIND_VEO31_FAST_MODEL") or "veo31-fast",
+        "grok-video-3": os.environ.get("OPENMIND_GROK_VIDEO_MODEL") or "grok-imagine-video-1.5-preview",
+        "grok-imagine-video-1.5-preview": os.environ.get("OPENMIND_GROK_VIDEO_MODEL") or "grok-imagine-video-1.5-preview",
+        "doubao-seedance-2-0-260128": os.environ.get("OPENMIND_SEEDANCE_MODEL") or "doubao-seedance-2-0-260128",
+        "doubao-seedance-2-0-fast-260128": os.environ.get("OPENMIND_SEEDANCE_FAST_MODEL") or "doubao-seedance-2-0-260128",
+    }
+    if low in explicit:
+        return (explicit[low] or "").strip() or raw
+    return raw
+
+
+def _openmind_video_body(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+    forwarded = dict(body or {})
+    forwarded["model"] = _openmind_video_model(model)
+    for key in ("seconds", "duration"):
+        if key in forwarded and forwarded.get(key) is not None:
+            try:
+                val = float(forwarded.get(key))
+                forwarded[key] = int(val) if val.is_integer() else val
+            except (TypeError, ValueError):
+                forwarded.pop(key, None)
+    if "duration" not in forwarded and forwarded.get("seconds") is not None:
+        forwarded["duration"] = forwarded.get("seconds")
+    if "seconds" not in forwarded and forwarded.get("duration") is not None:
+        forwarded["seconds"] = forwarded.get("duration")
+    if not forwarded.get("aspect_ratio") and forwarded.get("ratio"):
+        forwarded["aspect_ratio"] = forwarded.get("ratio")
+    forwarded.setdefault("aspect_ratio", "9:16")
+    forwarded.setdefault("resolution", "720p")
+    if not forwarded.get("size"):
+        forwarded["size"] = "720x1280" if str(forwarded.get("aspect_ratio") or "") == "9:16" else "1280x720"
+    image_ref = forwarded.get("image") or forwarded.get("image_url")
+    images = forwarded.get("images")
+    if not isinstance(images, list):
+        images = []
+    images = [str(x).strip() for x in images if str(x or "").strip()]
+    if image_ref and not images:
+        images = [str(image_ref).strip()]
+    if images:
+        forwarded["images"] = images
+        forwarded.setdefault("image", images[0])
+        forwarded.setdefault("image_url", images[0])
+    return forwarded
+
+
+async def _openmind_video_submit(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+    if not _openmind_enabled_for_video():
+        raise RuntimeError("OpenMind video channel disabled")
+    upstream_body = _openmind_video_body(body, model, entry)
+    url = f"{_openmind_video_base_url()}/v1/videos"
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_OPENMIND_VIDEO_SUBMIT, follow_redirects=True) as client:
+            r = await client.post(url, headers=_openmind_video_headers(), json=upstream_body)
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"OpenMind videos submit timeout after {_TIMEOUT_OPENMIND_VIDEO_SUBMIT}s") from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"OpenMind videos transport error: {exc!r}") from exc
+    if r.status_code >= 400:
+        raise RuntimeError(f"OpenMind videos HTTP {r.status_code}: {(r.text or '')[:500]}")
+    try:
+        payload = r.json() if r.content else {}
+    except Exception:
+        payload = {"_raw_text": r.text}
+    if isinstance(payload, dict):
+        payload.setdefault("_provider", "openmind")
+        payload.setdefault("_requested_model", upstream_body.get("model"))
+    return payload
+
+
+async def _openmind_video_poll(task_id: str) -> Dict[str, Any]:
+    if not _openmind_enabled_for_video():
+        raise RuntimeError("OpenMind video channel disabled")
+    url = f"{_openmind_video_base_url()}/v1/videos/{task_id}"
+    async with httpx.AsyncClient(timeout=_TIMEOUT_VIDEO_POLL, follow_redirects=True) as client:
+        r = await client.get(url, headers=_openmind_video_headers())
+    if r.status_code >= 400:
+        raise RuntimeError(f"OpenMind videos poll HTTP {r.status_code}: {(r.text or '')[:500]}")
+    try:
+        payload = r.json() if r.content else {}
+    except Exception:
+        payload = {"_raw_text": r.text}
+    if isinstance(payload, dict):
+        payload.setdefault("_provider", "openmind")
+    return payload
+
+
+def _task_id_from_response(resp: Dict[str, Any]) -> str:
+    if not isinstance(resp, dict):
+        return ""
+    for key in ("id", "task_id", "video_id", "job_id", "request_id", "generation_id", "run_id"):
+        value = resp.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    data = resp.get("data")
+    if isinstance(data, dict):
+        for key in ("id", "task_id", "video_id", "job_id", "request_id", "generation_id", "run_id"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
 
 def _require_model_entry(model: str) -> Dict[str, Any]:
     entry = lookup_comfly_model(model)
@@ -678,6 +816,138 @@ async def proxy_videos_generations_poll(
                                      None, _comfly_headers(), _TIMEOUT_VIDEO_POLL)
     except Exception as e:
         raise HTTPException(502, f"Comfly videos poll 调用失败：{e}")
+    return JSONResponse(resp)
+
+
+
+
+def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
+    raw_model = (model or "").strip()
+    low_model = raw_model.lower().replace("_", "-").replace(" ", "")
+    low_channel = (channel or "").strip().lower()
+    proxy_base = "/api/comfly-proxy"
+
+    if low_channel in {"openmind", "grok"} or low_model in {"grok-video-3", "grok-imagine-video-1.5-preview", "grok-imagine-1.0-video", "yingmeng1.5plus"} or low_model.startswith("xai/grok-imagine-video/"):
+        return {
+            "ok": True,
+            "model_family": "grok",
+            "providers": [
+                {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
+                {"channel": "yunwu", "model": "grok-video-3", "base_url": proxy_base},
+                {"channel": "comfly", "model": "grok-video-3", "base_url": proxy_base},
+            ],
+        }
+
+    if low_channel in {"yunwu", "??", "??"} or low_model in {"yunwu-veo3.1-plus", "veo3.1-plus", "veo3.1", "veo31", "veo31-fast", "veo3.1-fast"}:
+        return {
+            "ok": True,
+            "model_family": "veo31",
+            "providers": [
+                {"channel": "openmind", "model": "veo3.1-fast", "base_url": proxy_base},
+                {"channel": "comfly", "model": "veo3.1-fast", "base_url": proxy_base},
+                {"channel": "yunwu", "model": "veo3.1", "base_url": proxy_base},
+            ],
+        }
+
+    if low_model in {"seedance-2-0-pro-250528", "seedance-2-0-lite-250428", "seedance-2-0-260128", "seedance-2-0-fast-260128", "doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128"}:
+        return {
+            "ok": True,
+            "model_family": "seedance20",
+            "providers": [
+                {"channel": "openmind", "model": "doubao-seedance-2-0-260128", "base_url": proxy_base},
+                {"channel": "seedance", "model": "doubao-seedance-2-0-260128", "base_url": proxy_base},
+            ],
+        }
+
+    return {
+        "ok": True,
+        "model_family": "default",
+        "providers": [
+            {"channel": "seedance", "model": raw_model or "doubao-seedance-2-0-260128", "base_url": proxy_base},
+        ],
+    }
+
+
+@router.get("/api/comfly-proxy/video/provider-policy", summary="Server-controlled video provider fallback policy")
+async def proxy_video_provider_policy(
+    request: Request,
+    model: str = "",
+    channel: str = "",
+    feature: str = "",
+    current_user: User = Depends(get_current_user),
+):
+    _check_request_authorized_for_billing(request)
+    policy = _video_provider_policy(model, channel)
+    _audit("video_provider_policy", user_id=current_user.id, model=model, channel=channel, feature=feature, family=policy.get("model_family"))
+    return JSONResponse(policy)
+
+
+@router.post("/api/comfly-proxy/openmind/v1/videos", summary="OpenMind video submit proxy")
+async def proxy_openmind_video_submit(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _check_request_authorized_for_billing(request)
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(400, "missing model")
+    entry = _require_model_entry(model)
+    upstream_body = _openmind_video_body(body, model, entry)
+
+    estimated = estimate_comfly_credits(model, body, for_user=True) or 1
+    pre = _do_pre_deduct(
+        db,
+        current_user,
+        estimated,
+        capability_id=_CAPABILITY_FOR_BILLING,
+        model=model,
+        endpoint="openmind_video_submit",
+        extra_meta={"upstream": "openmind", "openmind_model": upstream_body.get("model")},
+    )
+    _audit("openmind_video_submit_pre_deduct", user_id=current_user.id, model=model, openmind_model=upstream_body.get("model"), estimated=estimated)
+
+    try:
+        resp = await _openmind_video_submit(body, model, entry)
+    except Exception as e:
+        _do_full_refund(
+            db,
+            current_user,
+            pre=pre,
+            capability_id=_CAPABILITY_FOR_BILLING,
+            model=model,
+            endpoint="openmind_video_submit",
+            error=str(e),
+        )
+        _audit("openmind_video_submit_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        raise HTTPException(502, f"OpenMind video submit failed: {e}")
+
+    _audit(
+        "openmind_video_submit_ok",
+        user_id=current_user.id,
+        model=model,
+        openmind_model=resp.get("_requested_model") if isinstance(resp, dict) else "",
+        task_id=_task_id_from_response(resp),
+        pre=credits_json_float(pre),
+    )
+    return JSONResponse(resp)
+
+
+@router.get("/api/comfly-proxy/openmind/v1/videos/{task_id}", summary="OpenMind video poll proxy")
+async def proxy_openmind_video_poll(
+    task_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    _check_request_authorized_for_billing(request)
+    task_id = (task_id or "").strip()
+    if not task_id:
+        raise HTTPException(400, "missing task_id")
+    try:
+        resp = await _openmind_video_poll(task_id)
+    except Exception as e:
+        raise HTTPException(502, f"OpenMind video poll failed: {e}")
     return JSONResponse(resp)
 
 
