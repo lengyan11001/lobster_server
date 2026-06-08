@@ -1349,7 +1349,7 @@ async def _sync_competitor_row(
         body = {"username": row.account_key}
         if last_buffer:
             body["last_buffer"] = last_buffer
-        result = await _execute_query(
+        result = await _execute_query_with_retry(
             db=db,
             current_user=current_user,
             query_type="wechat_channels_home_page",
@@ -1357,10 +1357,12 @@ async def _sync_competitor_row(
             body=body,
             save_items=True,
             meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
+            attempts=3,
         )
     else:
         raise HTTPException(status_code=400, detail="不支持的平台")
-    row.last_fetch_at = _utcnow()
+    if result.get("ok"):
+        row.last_fetch_at = _utcnow()
     first_item = (result.get("items") or [{}])[0] if isinstance(result.get("items"), list) else {}
     if isinstance(first_item, dict) and first_item.get("item_key"):
         row.last_seen_item_key = _clean_text(first_item.get("item_key"), 191)
@@ -1809,7 +1811,7 @@ async def sync_competitor(
         payload_body = {"username": row.account_key}
         if body.last_buffer:
             payload_body["last_buffer"] = body.last_buffer
-        result = await _execute_query(
+        result = await _execute_query_with_retry(
             db=db,
             current_user=current_user,
             query_type="wechat_channels_home_page",
@@ -1817,10 +1819,12 @@ async def sync_competitor(
             body=payload_body,
             save_items=True,
             meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
+            attempts=3,
         )
     else:
         raise HTTPException(status_code=400, detail="不支持的平台")
-    row.last_fetch_at = _utcnow()
+    if result.get("ok"):
+        row.last_fetch_at = _utcnow()
     first_item = (result.get("items") or [{}])[0] if isinstance(result.get("items"), list) else {}
     if isinstance(first_item, dict) and first_item.get("item_key"):
         row.last_seen_item_key = _clean_text(first_item.get("item_key"), 191)
