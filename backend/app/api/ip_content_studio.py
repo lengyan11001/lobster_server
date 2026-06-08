@@ -91,6 +91,13 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "path": "/api/v1/douyin/creator/fetch_user_search",
         "allowed_params": {"user_name"},
     },
+    "douyin_search_user_v2": {
+        "platform": "douyin",
+        "source_type": "user_search",
+        "method": "POST",
+        "path": "/api/v1/douyin/search/fetch_user_search_v2",
+        "allowed_body": {"keyword", "cursor"},
+    },
     "douyin_user_posts": {
         "platform": "douyin",
         "source_type": "user_post",
@@ -811,17 +818,18 @@ def _normalize_douyin_user(raw: Any, idx: int) -> Optional[dict[str, Any]]:
         nested = _lookup(item, "data.user_info")
         user = nested if isinstance(nested, dict) else item
 
-    sec_uid = _first(user, ["sec_uid", "sec_user_id", "secUid"])
+    sec_uid = _first(user, ["sec_uid", "sec_user_id", "secUid", "user_id"])
     if not sec_uid:
-        sec_uid = _first(item, ["sec_uid", "sec_user_id", "user_info.sec_uid", "data.user_info.sec_uid"])
+        sec_uid = _first(item, ["sec_uid", "sec_user_id", "user_id", "user_info.sec_uid", "data.user_info.sec_uid"])
     if not sec_uid:
         return None
 
     unique_id = _first(user, ["unique_id", "short_id", "custom_verify_id"])
-    nickname = _first(user, ["nickname", "name", "display_name"]) or _first(item, ["nickname", "user_info.nickname"])
-    follower_count = _first(user, ["follower_count", "followers_count", "fans_count", "total_favorited"])
+    nickname = _first(user, ["nickname", "nick_name", "name", "display_name"]) or _first(item, ["nickname", "nick_name", "user_info.nickname"])
+    follower_count = _first(user, ["follower_count", "followers_count", "fans_count", "fans_cnt", "total_favorited"])
     following_count = _first(user, ["following_count", "follow_count"])
-    aweme_count = _first(user, ["aweme_count", "video_count", "works_count"])
+    aweme_count = _first(user, ["aweme_count", "video_count", "works_count", "publish_cnt"])
+    like_count = _first(user, ["like_cnt", "total_favorited", "favoriting_count"])
     signature = _first(user, ["signature", "desc", "description", "bio"])
     verify = _first(user, ["enterprise_verify_reason", "custom_verify", "verification_type"])
     homepage_url = _first(user, ["share_info.share_url", "homepage_url", "share_url"])
@@ -842,10 +850,29 @@ def _normalize_douyin_user(raw: Any, idx: int) -> Optional[dict[str, Any]]:
         "follower_count": follower_count,
         "following_count": following_count,
         "aweme_count": aweme_count,
+        "like_count": like_count,
         "verify_info": _clean_text(verify, 255),
         "raw_index": idx,
         "raw": _jsonable(item),
     }
+
+
+def _normalize_douyin_users_from_payload(payload: Any, limit: int = 20) -> tuple[list[dict[str, Any]], int]:
+    raw_items = _collect_items(payload or {})
+    seen: set[str] = set()
+    users: list[dict[str, Any]] = []
+    for idx, raw in enumerate(raw_items[:50]):
+        item = _normalize_douyin_user(raw, idx)
+        if not item:
+            continue
+        sec_uid = item["sec_user_id"]
+        if sec_uid in seen:
+            continue
+        seen.add(sec_uid)
+        users.append(item)
+        if len(users) >= limit:
+            break
+    return users, len(raw_items)
 
 
 def _persist_items(
@@ -1514,31 +1541,18 @@ async def search_douyin_users(
     result = await _execute_query(
         db=db,
         current_user=current_user,
-        query_type="douyin_creator_user_search",
-        params={"user_name": keyword},
-        body={},
+        query_type="douyin_search_user_v2",
+        params={},
+        body={"keyword": keyword, "cursor": 0},
         save_items=False,
         meta={"source": "competitor_user_search", "keyword": keyword},
         include_raw_response=True,
     )
-    raw_items = _collect_items(result.get("raw_response") or {})
-    seen: set[str] = set()
-    users: list[dict[str, Any]] = []
-    for idx, raw in enumerate(raw_items[:50]):
-        item = _normalize_douyin_user(raw, idx)
-        if not item:
-            continue
-        sec_uid = item["sec_user_id"]
-        if sec_uid in seen:
-            continue
-        seen.add(sec_uid)
-        users.append(item)
-        if len(users) >= 20:
-            break
+    users, raw_count = _normalize_douyin_users_from_payload(result.get("raw_response") or {})
     return {
         "ok": bool(result.get("ok")),
         "items": users,
-        "raw_item_count": len(raw_items),
+        "raw_item_count": raw_count,
         "query": result.get("query") or {},
         "balance_after": result.get("balance_after"),
     }

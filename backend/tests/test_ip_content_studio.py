@@ -117,3 +117,35 @@ def test_normalizes_douyin_user_search_candidates():
     assert candidate["follower_count"] == 7132000
     assert candidate["aweme_count"] == 424
     assert candidate["avatar_url"] == "https://example.com/avatar.jpg"
+
+
+def test_normalizes_douyin_user_search_v2_candidates():
+    from backend.app.api import ip_content_studio as studio
+
+    payload = {
+        "code": 200,
+        "data": {
+            "data": {
+                "user_list": [
+                    {
+                        "user_id": "MS4wLjABAAAA-v2-user",
+                        "nick_name": "测试账号",
+                        "avatar_url": "https://example.com/avatar-v2.jpg",
+                        "fans_cnt": 7132043,
+                        "like_cnt": 51415427,
+                        "publish_cnt": 499,
+                    }
+                ]
+            }
+        },
+    }
+
+    candidates, raw_count = studio._normalize_douyin_users_from_payload(payload)
+
+    assert raw_count == 1
+    assert candidates[0]["sec_user_id"] == "MS4wLjABAAAA-v2-user"
+    assert candidates[0]["display_name"] == "测试账号"
+    assert candidates[0]["follower_count"] == 7132043
+    assert candidates[0]["aweme_count"] == 499
+    assert candidates[0]["like_count"] == 51415427
+    assert candidates[0]["avatar_url"] == "https://example.com/avatar-v2.jpg"
