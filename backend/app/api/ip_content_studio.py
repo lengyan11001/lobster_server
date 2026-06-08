@@ -112,6 +112,20 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "path": "/api/v1/wechat_channels/fetch_hot_words",
         "allowed_params": set(),
     },
+    "wechat_channels_search_latest": {
+        "platform": "wechat_channels",
+        "source_type": "keyword_video",
+        "method": "GET",
+        "path": "/api/v1/wechat_channels/fetch_search_latest",
+        "allowed_params": {"keywords"},
+    },
+    "wechat_channels_user_search_v2": {
+        "platform": "wechat_channels",
+        "source_type": "user_search",
+        "method": "GET",
+        "path": "/api/v1/wechat_channels/fetch_user_search_v2",
+        "allowed_params": {"keywords", "page"},
+    },
     "wechat_channels_home_page": {
         "platform": "wechat_channels",
         "source_type": "home_page",
@@ -418,6 +432,7 @@ def _public_url(raw: Any) -> str:
             "aweme_url",
             "video_url",
             "web_url",
+            "finder_info_export.url",
             "share_info.share_url",
             "aweme_info.share_url",
             "aweme_info.share_info.share_url",
@@ -484,6 +499,11 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
         "follow_rate",
         "like_rate",
         "forward_count",
+        "read_count",
+        "read_cnt",
+        "replay_count",
+        "replay_cnt",
+        "fav_count",
     ):
         value = stats.get(key) if key in stats else source.get(key)
         if value not in (None, ""):
@@ -869,6 +889,79 @@ def _normalize_douyin_users_from_payload(payload: Any, limit: int = 20) -> tuple
         if sec_uid in seen:
             continue
         seen.add(sec_uid)
+        users.append(item)
+        if len(users) >= limit:
+            break
+    return users, len(raw_items)
+
+
+def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, Any]]:
+    item = raw if isinstance(raw, dict) else {"value": raw}
+    user = item.get("finder_info") if isinstance(item.get("finder_info"), dict) else {}
+    if not user:
+        user = item.get("finderUser") if isinstance(item.get("finderUser"), dict) else {}
+    if not user:
+        user = item.get("user_info") if isinstance(item.get("user_info"), dict) else {}
+    if not user:
+        user = item.get("user") if isinstance(item.get("user"), dict) else {}
+    if not user:
+        nested = _lookup(item, "data.finder_info")
+        user = nested if isinstance(nested, dict) else item
+
+    username = _first(
+        user,
+        [
+            "username",
+            "finder_username",
+            "finderUserName",
+            "user_name",
+            "openid",
+            "encrypted_username",
+            "finder_info.username",
+        ],
+    )
+    if not username:
+        username = _first(item, ["username", "finder_username", "finderUserName", "user_name", "data.username"])
+    if not username:
+        return None
+
+    nickname = _first(user, ["nickname", "nick_name", "display_name", "name"]) or _first(item, ["nickname", "nick_name", "display_name"])
+    signature = _first(user, ["signature", "desc", "description", "bio"]) or _first(item, ["signature", "desc"])
+    avatar = _first(user, ["avatar_url", "avatar", "head_image_url", "headImgUrl", "avatarUrl"]) or _avatar_url(user)
+    if isinstance(avatar, dict):
+        avatar = _first(avatar, ["url", "url_list.0", "uri"])
+    follower_count = _first(user, ["follower_count", "fans_count", "fans_cnt", "follow_cnt"]) or _first(item, ["follower_count", "fans_count", "fans_cnt"])
+    works_count = _first(user, ["feed_count", "video_count", "works_count", "publish_cnt"]) or _first(item, ["feed_count", "video_count", "works_count"])
+    homepage_url = _first(user, ["homepage_url", "finder_info_export.url", "share_url"]) or _first(item, ["homepage_url", "finder_info_export.url", "share_url"])
+
+    return {
+        "id": _clean_text(username, 191),
+        "username": _clean_text(username, 191),
+        "finder_username": _clean_text(username, 191),
+        "nickname": _clean_text(nickname, 255),
+        "display_name": _clean_text(nickname, 255) or _clean_text(username, 80),
+        "signature": _clean_long_text(signature, 1000),
+        "avatar_url": _clean_long_text(avatar, 4096),
+        "homepage_url": _clean_long_text(homepage_url, 4096),
+        "follower_count": follower_count,
+        "aweme_count": works_count,
+        "raw_index": idx,
+        "raw": _jsonable(item),
+    }
+
+
+def _normalize_wechat_channels_users_from_payload(payload: Any, limit: int = 20) -> tuple[list[dict[str, Any]], int]:
+    raw_items = _collect_items(payload or {})
+    seen: set[str] = set()
+    users: list[dict[str, Any]] = []
+    for idx, raw in enumerate(raw_items[:80]):
+        item = _normalize_wechat_channels_user(raw, idx)
+        if not item:
+            continue
+        username = item["username"]
+        if username in seen:
+            continue
+        seen.add(username)
         users.append(item)
         if len(users) >= limit:
             break
@@ -1562,6 +1655,35 @@ async def search_douyin_users(
         include_raw_response=True,
     )
     users, raw_count = _normalize_douyin_users_from_payload(result.get("raw_response") or {})
+    return {
+        "ok": bool(result.get("ok")),
+        "items": users,
+        "raw_item_count": raw_count,
+        "query": result.get("query") or {},
+        "balance_after": result.get("balance_after"),
+    }
+
+
+@router.get("/api/ip-content/wechat-channels/users/search", summary="按昵称搜索视频号用户候选")
+async def search_wechat_channels_users(
+    q: str = Query("", max_length=80),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    keyword = _clean_text(q, 80)
+    if not keyword:
+        raise HTTPException(status_code=400, detail="请填写视频号昵称或 username")
+    result = await _execute_query(
+        db=db,
+        current_user=current_user,
+        query_type="wechat_channels_user_search_v2",
+        params={"keywords": keyword, "page": 1},
+        body={},
+        save_items=False,
+        meta={"source": "competitor_user_search", "keyword": keyword},
+        include_raw_response=True,
+    )
+    users, raw_count = _normalize_wechat_channels_users_from_payload(result.get("raw_response") or {})
     return {
         "ok": bool(result.get("ok")),
         "items": users,
