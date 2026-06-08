@@ -1901,6 +1901,13 @@ def attach_draft_record_image(
             )
         if cleaned_images:
             meta["images"] = cleaned_images
+    if isinstance(body.meta, dict):
+        batch_id = _clean_text(body.meta.get("image_batch_id"), 96)
+        batch_created_at = _clean_text(body.meta.get("image_batch_created_at"), 64)
+        if batch_id:
+            meta["image_batch_id"] = batch_id
+        if batch_created_at:
+            meta["image_batch_created_at"] = batch_created_at
     meta["image_update"] = _jsonable(body.meta or {})
     meta["image_updated_at"] = _utcnow().isoformat()
     row.meta = meta

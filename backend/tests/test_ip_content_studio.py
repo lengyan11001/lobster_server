@@ -169,7 +169,11 @@ def test_draft_record_payload_includes_image_list():
         selected=True,
         source_item_ids=[],
         memory_doc_ids=[],
-        meta={"images": [{"image_url": "https://example.com/1.jpg"}, {"image_url": "https://example.com/2.jpg"}]},
+        meta={
+            "image_batch_id": "moment_img_batch_1",
+            "image_batch_created_at": "2026-06-08T10:00:00",
+            "images": [{"image_url": "https://example.com/1.jpg"}, {"image_url": "https://example.com/2.jpg"}],
+        },
         created_at=None,
         updated_at=None,
     )
@@ -178,3 +182,4 @@ def test_draft_record_payload_includes_image_list():
 
     assert len(payload["images"]) == 2
     assert payload["images"][1]["image_url"] == "https://example.com/2.jpg"
+    assert payload["meta"]["image_batch_id"] == "moment_img_batch_1"
