@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -58,6 +59,21 @@ _TIMEOUT_IMAGE = 300.0
 _TIMEOUT_FILE_UPLOAD = 120.0
 _TIMEOUT_VIDEO_SUBMIT = 60.0
 _TIMEOUT_VIDEO_POLL = 30.0
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "y"}
+
+
+def _env_int(name: str, default: int, *, min_value: int = 1, max_value: int = 5) -> int:
+    try:
+        value = int(str(os.environ.get(name) or "").strip() or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(min_value, min(max_value, value))
 
 
 def _should_deduct_credits() -> bool:
@@ -265,6 +281,84 @@ def _yunwu_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {_yunwu_api_key()}", "Accept": "application/json", "Content-Type": "application/json"}
 
 
+def _is_retryable_image_error(exc: BaseException) -> bool:
+    msg = str(exc or "").lower()
+    if "comfly http 400" in msg or "comfly http 401" in msg or "comfly http 403" in msg or "comfly http 404" in msg:
+        return False
+    retry_tokens = (
+        "comfly http 408",
+        "comfly http 409",
+        "comfly http 425",
+        "comfly http 429",
+        "comfly http 5",
+        "timeout",
+        "connect",
+        "connection",
+        "read",
+        "network",
+        "new_api_error",
+        "unknown_error",
+        "upstream",
+        "上游",
+        "未接收到上游响应内容",
+    )
+    return any(token in msg for token in retry_tokens)
+
+
+def _public_image_failure_detail() -> str:
+    return "图片生成失败，已自动重试但仍未成功，请稍后重试或切换模型。"
+
+
+def _openmind_image_fallback_enabled() -> bool:
+    return _env_bool("OPENMIND_IMAGE_FALLBACK_ENABLED", False) and bool((os.environ.get("OPENMIND_API_KEY") or "").strip())
+
+
+def _openmind_image_url() -> str:
+    base = (os.environ.get("OPENMIND_API_BASE") or "https://www.openmindapi.com").strip().rstrip("/")
+    return (base or "https://www.openmindapi.com") + "/v1/images/generations"
+
+
+def _openmind_image_headers() -> Dict[str, str]:
+    key = (os.environ.get("OPENMIND_API_KEY") or "").strip()
+    if not key:
+        raise RuntimeError("OPENMIND_API_KEY is not configured")
+    return {
+        "User-Agent": "Mozilla/5.0 Chrome/126 Safari/537.36",
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _openmind_image_body(source_body: Dict[str, Any]) -> Dict[str, Any]:
+    prompt = str(source_body.get("prompt") or "").strip()
+    if not prompt:
+        raise RuntimeError("OpenMind image fallback missing prompt")
+    return {
+        "model": (os.environ.get("OPENMIND_IMAGE_MODEL") or "gpt-image-2").strip() or "gpt-image-2",
+        "prompt": prompt,
+        "size": str(source_body.get("size") or "1024x1024").strip() or "1024x1024",
+        "n": int(source_body.get("n") or 1),
+        "response_format": str(source_body.get("response_format") or "url").strip() or "url",
+    }
+
+
+async def _openmind_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]:
+    body = _openmind_image_body(source_body)
+    async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
+        resp = await client.post(_openmind_image_url(), headers=_openmind_image_headers(), json=body)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"OpenMind HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    try:
+        payload = resp.json() if resp.content else {}
+    except Exception:
+        payload = {"_raw_text": resp.text}
+    if isinstance(payload, dict):
+        payload.setdefault("fallback_used", True)
+        payload.setdefault("fallback_provider", "openmind")
+    return payload
+
+
 def _require_model_entry(model: str) -> Dict[str, Any]:
     entry = lookup_comfly_model(model)
     if not entry:
@@ -423,18 +517,56 @@ async def proxy_images_generations(
                          capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image")
     _audit("image_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
 
+    last_error = ""
+    attempts = _env_int("COMFLY_IMAGE_RETRY_ATTEMPTS", 2, min_value=1, max_value=4)
     try:
-        resp = await _comfly_request("POST", _comfly_url("/v1/images/generations", model),
-                                     upstream_body, _comfly_headers(model), _TIMEOUT_IMAGE)
+        for attempt in range(1, attempts + 1):
+            try:
+                resp = await _comfly_request("POST", _comfly_url("/v1/images/generations", model),
+                                             upstream_body, _comfly_headers(model), _TIMEOUT_IMAGE)
+                _audit("image_ok", user_id=current_user.id, model=model, pre=credits_json_float(pre), attempt=attempt)
+                return JSONResponse(resp)
+            except Exception as e:
+                last_error = str(e)
+                _audit(
+                    "image_comfly_attempt_failed",
+                    user_id=current_user.id,
+                    model=model,
+                    attempt=attempt,
+                    attempts=attempts,
+                    error=last_error[:300],
+                )
+                if attempt >= attempts or not _is_retryable_image_error(e):
+                    break
+                await asyncio.sleep(0.8 * attempt)
+
+        if _openmind_image_fallback_enabled() and (not last_error or _is_retryable_image_error(RuntimeError(last_error))):
+            try:
+                resp = await _openmind_image_request(upstream_body)
+                _audit(
+                    "image_openmind_fallback_ok",
+                    user_id=current_user.id,
+                    model=model,
+                    pre=credits_json_float(pre),
+                    comfly_error=last_error[:300],
+                )
+                return JSONResponse(resp)
+            except Exception as fallback_error:
+                _audit(
+                    "image_openmind_fallback_failed",
+                    user_id=current_user.id,
+                    model=model,
+                    comfly_error=last_error[:300],
+                    error=str(fallback_error)[:300],
+                )
+                last_error = f"{last_error}; OpenMind fallback failed: {fallback_error}"
+
+        raise RuntimeError(last_error or "image generation failed")
     except Exception as e:
         _do_full_refund(db, current_user, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image", error=str(e))
         _audit("image_failed", user_id=current_user.id, model=model, error=str(e)[:300])
-        raise HTTPException(502, f"Comfly images 调用失败：{e}")
-
-    # per_call 估算 == 实际，无需 settle
-    _audit("image_ok", user_id=current_user.id, model=model, pre=credits_json_float(pre))
-    return JSONResponse(resp)
+        raise HTTPException(502, _public_image_failure_detail())
 
 
 @router.post("/api/comfly-proxy/v1/images/edits", summary="Comfly image edits 透明 proxy（multipart，按 per_call 计费）")
