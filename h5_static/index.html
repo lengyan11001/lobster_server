@@ -413,6 +413,44 @@
       box-shadow: 0 0 0 4px rgba(36,92,255,.1);
       flex: 0 0 auto;
     }
+    .employee-pager {
+      position: absolute;
+      top: 64px;
+      right: 14px;
+      z-index: 4;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 36px;
+      padding: 4px 6px;
+      color: #23334d;
+      background: rgba(255,255,255,.92);
+      border: 1px solid rgba(223,230,242,.95);
+      border-radius: 999px;
+      box-shadow: 0 10px 26px rgba(29,54,105,.12);
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .employee-pager button {
+      min-width: 58px;
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      color: #1e4ee8;
+      background: rgba(36,92,255,.09);
+      border: 1px solid rgba(36,92,255,.13);
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .employee-pager button:disabled {
+      opacity: .42;
+      cursor: default;
+    }
+    .employee-pager span {
+      min-width: 48px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
     .office-empty {
       grid-column: 1 / -1;
       min-height: 260px;
@@ -1120,6 +1158,7 @@
       .boss-metric strong { font-size: 15px; }
       .boss-metric span { font-size: 10px; }
       .office-filter-note { left: 10px; right: 10px; top: 58px; max-width: none; min-height: 34px; justify-content: center; padding: 0 10px; }
+      .employee-pager { top: 100px; left: 10px; right: 10px; justify-content: center; }
       .office-floor { border-radius: 22px; padding: 62px 10px 10px; min-height: 560px; }
       .company-sign { left: 10px; right: 10px; justify-content: center; }
       .employee-card { width: 126px; }
@@ -1475,6 +1514,8 @@
       historyItems: [],
       companyName: localStorage.getItem("lobster_h5_company_name") || "我的AI公司",
       officeDeviceFilter: "all",
+      officePage: 1,
+      officePageSize: 6,
       taskAbility: "goal.video.pipeline",
       taskPanelOpen: false,
       hiflyLoaded: false,
@@ -1922,6 +1963,7 @@
     function setOfficeDeviceFilter(filter) {
       const next = ["working", "idle", "offline"].includes(filter) ? filter : "all";
       state.officeDeviceFilter = state.officeDeviceFilter === next ? "all" : next;
+      state.officePage = 1;
       renderOfficeEmployees();
     }
 
@@ -1994,7 +2036,12 @@
       updateCompanySign();
       updateBossOfficeStats(onlineCount, workingCount);
       const visibleDevices = filteredOfficeDevices(devices);
-      const metrics = employeeLayoutMetrics(Math.max(visibleDevices.length, 1));
+      const pageSize = Math.max(1, Number(state.officePageSize) || 6);
+      const pageCount = Math.max(1, Math.ceil(visibleDevices.length / pageSize));
+      state.officePage = Math.min(Math.max(1, Number(state.officePage) || 1), pageCount);
+      const pageStart = (state.officePage - 1) * pageSize;
+      const pageDevices = visibleDevices.slice(pageStart, pageStart + pageSize);
+      const metrics = employeeLayoutMetrics(Math.max(pageDevices.length, 1));
       floor.style.minHeight = `${metrics.minHeight}px`;
       if (!devices.length) {
         floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="office-empty">暂未检测到 online 员工。电脑端启动并登录后，这里会出现它的办公位。</div>`;
@@ -2008,14 +2055,17 @@
       const filterNote = state.officeDeviceFilter !== "all"
         ? `<div class="office-filter-note">${escapeHtml(officeFilterLabel(state.officeDeviceFilter))}</div>`
         : "";
-      floor.innerHTML = visibleDevices.map((device, index) => {
+      const pager = pageCount > 1
+        ? `<div class="employee-pager" role="navigation" aria-label="员工分页"><button type="button" data-office-page="${state.officePage - 1}" ${state.officePage <= 1 ? "disabled" : ""}>上一页</button><span>${state.officePage}/${pageCount}</span><button type="button" data-office-page="${state.officePage + 1}" ${state.officePage >= pageCount ? "disabled" : ""}>下一页</button></div>`
+        : "";
+      floor.innerHTML = pageDevices.map((device, index) => {
         const originalIndex = Math.max(0, state.devices.indexOf(device));
         const snapshot = employeeSnapshot(device, originalIndex);
         const mode = snapshot.mode;
         const label = snapshot.label;
         const desc = mode === "working" ? `正在处理：${snapshot.title}` : snapshot.detail;
         const img = employeeAsset(device, originalIndex, mode);
-        return `<button class="employee-card ${mode} ${device.online ? "online" : "offline"}" type="button" data-employee-id="${escapeHtml(device.installation_id || "")}" style="${escapeHtml(employeePositionStyle(index, visibleDevices.length))}" aria-label="${escapeHtml(employeeName(device, originalIndex))}">
+        return `<button class="employee-card ${mode} ${device.online ? "online" : "offline"}" type="button" data-employee-id="${escapeHtml(device.installation_id || "")}" style="${escapeHtml(employeePositionStyle(index, pageDevices.length))}" aria-label="${escapeHtml(employeeName(device, originalIndex))}">
           <div class="employee-scene" aria-hidden="true">
             ${snapshot.bubble ? `<div class="employee-progress-bubble">${escapeHtml(String(snapshot.bubble).slice(0, 46))}</div>` : ""}
             <div class="screen"></div>
@@ -2029,6 +2079,7 @@
         </button>`;
       }).join("");
       floor.insertAdjacentHTML("afterbegin", `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button>`);
+      if (pager) floor.insertAdjacentHTML("afterbegin", pager);
       if (filterNote) floor.insertAdjacentHTML("afterbegin", filterNote);
     }
 
@@ -3432,6 +3483,17 @@
     $("refreshTasksBtn").addEventListener("click", loadTasks);
     $("refreshRunsBtn").addEventListener("click", loadRuns);
     $("employeeFloor").addEventListener("click", (evt) => {
+      const pageBtn = evt.target.closest("[data-office-page]");
+      if (pageBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        if (pageBtn.disabled) return;
+        const nextPage = Number(pageBtn.dataset.officePage || "1");
+        if (!Number.isFinite(nextPage)) return;
+        state.officePage = nextPage;
+        renderOfficeEmployees();
+        return;
+      }
       const metric = evt.target.closest("[data-device-filter]");
       if (metric) {
         evt.preventDefault();
