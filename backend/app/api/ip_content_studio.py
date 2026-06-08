@@ -281,6 +281,7 @@ def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
         "videos",
         "objs",
         "data_list",
+        "search_list",
     ):
         value = node.get(key)
         if isinstance(value, list):
@@ -443,6 +444,7 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
         "share_count",
         "collect_count",
         "fans_cnt",
+        "search_score",
         "score",
         "follow_cnt",
         "follow_rate",
@@ -622,6 +624,7 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "sentence",
             "word",
             "hotword",
+            "key_word",
             "keyword",
             "name",
             "aweme_info.desc",
@@ -645,7 +648,7 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         ],
     )
     if item_key in (None, ""):
-        basis = _first(item, ["share_url", "url", "title", "desc", "sentence", "word"]) or item
+        basis = _first(item, ["share_url", "url", "title", "desc", "sentence", "word", "key_word", "keyword"]) or item
         item_key = _stable_hash({"platform": platform, "source_type": source_type, "idx": idx, "basis": basis})
     author_key = _first(
         author,
