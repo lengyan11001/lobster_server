@@ -84,6 +84,13 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "path": "/api/v1/douyin/search/fetch_video_search_v2",
         "allowed_body": {"keyword", "cursor", "sort_type", "publish_time", "filter_duration", "content_type", "search_id", "backtrace"},
     },
+    "douyin_creator_user_search": {
+        "platform": "douyin",
+        "source_type": "user_search",
+        "method": "GET",
+        "path": "/api/v1/douyin/creator/fetch_user_search",
+        "allowed_params": {"user_name"},
+    },
     "douyin_user_posts": {
         "platform": "douyin",
         "source_type": "user_post",
@@ -287,6 +294,8 @@ def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
         "results",
         "records",
         "videos",
+        "user_list",
+        "users",
         "objs",
         "data_list",
         "search_list",
@@ -772,6 +781,73 @@ def _competitor_payload(row: ContentCompetitorAccount) -> dict[str, Any]:
     }
 
 
+def _avatar_url(raw: Any) -> str:
+    value = _first(
+        raw,
+        [
+            "avatar_thumb.url_list.0",
+            "avatar_medium.url_list.0",
+            "avatar_larger.url_list.0",
+            "avatar_url",
+            "avatar",
+            "head_image_url",
+        ],
+    )
+    if isinstance(value, list):
+        value = value[0] if value else ""
+    if isinstance(value, dict):
+        value = _first(value, ["url_list.0", "url", "uri"])
+    return _clean_long_text(value, 4096)
+
+
+def _normalize_douyin_user(raw: Any, idx: int) -> Optional[dict[str, Any]]:
+    item = raw if isinstance(raw, dict) else {"value": raw}
+    user = item.get("user_info") if isinstance(item.get("user_info"), dict) else {}
+    if not user:
+        user = item.get("user") if isinstance(item.get("user"), dict) else {}
+    if not user:
+        user = item.get("author") if isinstance(item.get("author"), dict) else {}
+    if not user:
+        nested = _lookup(item, "data.user_info")
+        user = nested if isinstance(nested, dict) else item
+
+    sec_uid = _first(user, ["sec_uid", "sec_user_id", "secUid"])
+    if not sec_uid:
+        sec_uid = _first(item, ["sec_uid", "sec_user_id", "user_info.sec_uid", "data.user_info.sec_uid"])
+    if not sec_uid:
+        return None
+
+    unique_id = _first(user, ["unique_id", "short_id", "custom_verify_id"])
+    nickname = _first(user, ["nickname", "name", "display_name"]) or _first(item, ["nickname", "user_info.nickname"])
+    follower_count = _first(user, ["follower_count", "followers_count", "fans_count", "total_favorited"])
+    following_count = _first(user, ["following_count", "follow_count"])
+    aweme_count = _first(user, ["aweme_count", "video_count", "works_count"])
+    signature = _first(user, ["signature", "desc", "description", "bio"])
+    verify = _first(user, ["enterprise_verify_reason", "custom_verify", "verification_type"])
+    homepage_url = _first(user, ["share_info.share_url", "homepage_url", "share_url"])
+    if not homepage_url:
+        homepage_url = f"https://www.douyin.com/user/{sec_uid}"
+
+    return {
+        "id": _clean_text(sec_uid, 191),
+        "sec_user_id": _clean_text(sec_uid, 191),
+        "sec_uid": _clean_text(sec_uid, 191),
+        "uid": _clean_text(_first(user, ["uid", "id"]), 64),
+        "nickname": _clean_text(nickname, 255),
+        "display_name": _clean_text(nickname, 255) or _clean_text(unique_id, 255) or _clean_text(sec_uid, 80),
+        "unique_id": _clean_text(unique_id, 128),
+        "signature": _clean_long_text(signature, 1000),
+        "avatar_url": _avatar_url(user),
+        "homepage_url": _clean_long_text(homepage_url, 4096),
+        "follower_count": follower_count,
+        "following_count": following_count,
+        "aweme_count": aweme_count,
+        "verify_info": _clean_text(verify, 255),
+        "raw_index": idx,
+        "raw": _jsonable(item),
+    }
+
+
 def _persist_items(
     db: Session,
     *,
@@ -885,6 +961,7 @@ async def _execute_query(
     body: dict[str, Any],
     save_items: bool = True,
     meta: Optional[dict[str, Any]] = None,
+    include_raw_response: bool = False,
 ) -> dict[str, Any]:
     spec = _ENDPOINTS.get(query_type)
     if not spec:
@@ -987,13 +1064,16 @@ async def _execute_query(
     for item in saved_items:
         db.refresh(item)
 
-    return {
+    result = {
         "ok": bool(success),
         "query": _query_log_payload(log, include_raw=False, items=saved_items[:50]),
         "items": [_item_payload(item) for item in saved_items[:50]],
         "raw_item_count": len(raw_items),
         "balance_after": credits_json_float(balance_after),
     }
+    if include_raw_response:
+        result["raw_response"] = payload
+    return result
 
 
 def _keyword_payload(row: IPContentKeyword) -> dict[str, Any]:
@@ -1420,6 +1500,48 @@ def list_competitors(
         .all()
     )
     return {"items": [_competitor_payload(row) for row in rows]}
+
+
+@router.get("/api/ip-content/douyin/users/search", summary="按昵称或抖音号搜索抖音用户候选")
+async def search_douyin_users(
+    q: str = Query("", max_length=80),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    keyword = _clean_text(q, 80)
+    if not keyword:
+        raise HTTPException(status_code=400, detail="请填写抖音昵称或抖音号")
+    result = await _execute_query(
+        db=db,
+        current_user=current_user,
+        query_type="douyin_creator_user_search",
+        params={"user_name": keyword},
+        body={},
+        save_items=False,
+        meta={"source": "competitor_user_search", "keyword": keyword},
+        include_raw_response=True,
+    )
+    raw_items = _collect_items(result.get("raw_response") or {})
+    seen: set[str] = set()
+    users: list[dict[str, Any]] = []
+    for idx, raw in enumerate(raw_items[:50]):
+        item = _normalize_douyin_user(raw, idx)
+        if not item:
+            continue
+        sec_uid = item["sec_user_id"]
+        if sec_uid in seen:
+            continue
+        seen.add(sec_uid)
+        users.append(item)
+        if len(users) >= 20:
+            break
+    return {
+        "ok": bool(result.get("ok")),
+        "items": users,
+        "raw_item_count": len(raw_items),
+        "query": result.get("query") or {},
+        "balance_after": result.get("balance_after"),
+    }
 
 
 @router.post("/api/ip-content/competitors", summary="新增同行账号")

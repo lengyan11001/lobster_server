@@ -82,3 +82,38 @@ def test_collects_tikhub_video_search_aweme_info():
     assert normalized["metrics"]["digg_count"] == 1200
     assert normalized["metrics"]["comment_count"] == 88
     assert normalized["metrics"]["collect_count"] == 300
+
+
+def test_normalizes_douyin_user_search_candidates():
+    from backend.app.api import ip_content_studio as studio
+
+    payload = {
+        "code": 200,
+        "data": {
+            "user_list": [
+                {
+                    "user_info": {
+                        "uid": "123",
+                        "sec_uid": "MS4wLjABAAAA-user",
+                        "nickname": "测试账号",
+                        "unique_id": "test_account_001",
+                        "signature": "6月9号 周二活动...",
+                        "follower_count": 7132000,
+                        "aweme_count": 424,
+                        "avatar_thumb": {"url_list": ["https://example.com/avatar.jpg"]},
+                    }
+                }
+            ]
+        },
+    }
+
+    items = studio._collect_items(payload)
+    candidate = studio._normalize_douyin_user(items[0], 0)
+
+    assert len(items) == 1
+    assert candidate["sec_user_id"] == "MS4wLjABAAAA-user"
+    assert candidate["display_name"] == "测试账号"
+    assert candidate["unique_id"] == "test_account_001"
+    assert candidate["follower_count"] == 7132000
+    assert candidate["aweme_count"] == 424
+    assert candidate["avatar_url"] == "https://example.com/avatar.jpg"
