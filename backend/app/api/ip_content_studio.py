@@ -326,6 +326,7 @@ def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
         "videos",
         "user_list",
         "users",
+        "object",
         "objs",
         "data_list",
         "search_list",
@@ -442,6 +443,9 @@ def _public_url(raw: Any) -> str:
             "video_url",
             "web_url",
             "finder_info_export.url",
+            "object_desc.media.0.url",
+            "object_desc.media.0.video_url",
+            "object_desc.media.0.full_url",
             "share_info.share_url",
             "aweme_info.share_url",
             "aweme_info.share_info.share_url",
@@ -462,7 +466,14 @@ def _cover_url(raw: Any) -> str:
             "item_cover_url",
             "cover",
             "image_url",
+            "thumbUrl",
+            "thumb_url",
             "cover.url_list.0",
+            "object_desc.media.0.cover_url",
+            "object_desc.media.0.thumb_url",
+            "object_desc.media.0.thumbUrl",
+            "object_desc.media.0.url",
+            "contact.cover_img_url",
             "video.cover.url_list.0",
             "aweme_info.video.cover.url_list.0",
         ],
@@ -497,6 +508,7 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
         "publish_cnt",
         "avg_play_cnt",
         "digg_count",
+        "like_count",
         "like_cnt",
         "comment_count",
         "share_count",
@@ -678,6 +690,8 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
     if not author:
         author = field_item.get("user") if isinstance(field_item.get("user"), dict) else {}
     if not author:
+        author = field_item.get("contact") if isinstance(field_item.get("contact"), dict) else {}
+    if not author:
         nested_author = _lookup(field_item, "aweme_info.author")
         author = nested_author if isinstance(nested_author, dict) else {}
     title = _first(
@@ -694,11 +708,12 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "key_word",
             "keyword",
             "name",
+            "object_desc.description",
             "aweme_info.desc",
             "aweme_info.caption",
         ],
     )
-    description = _first(field_item, ["description", "desc", "summary", "challenge_name", "aweme_info.desc"])
+    description = _first(field_item, ["description", "desc", "summary", "challenge_name", "object_desc.description", "aweme_info.desc"])
     item_key = _first(
         field_item,
         [
@@ -711,6 +726,7 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "word_id",
             "mid",
             "object_id",
+            "displayid",
             "aweme_info.aweme_id",
         ],
     )
@@ -721,8 +737,8 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         author,
         ["sec_uid", "uid", "id", "short_id", "unique_id", "username", "finder_username", "nickname"],
     )
-    author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "short_id"]) or _first(field_item, ["nick_name", "author_name"])
-    publish_time = _first(field_item, ["create_time", "publish_time", "timestamp", "aweme_info.create_time"])
+    author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "short_id"]) or _first(field_item, ["nick_name", "author_name", "nickname"])
+    publish_time = _first(field_item, ["create_time", "createtime", "publish_time", "timestamp", "aweme_info.create_time"])
     return {
         "user_id": user_id,
         "query_id": query_id,
@@ -1330,12 +1346,15 @@ async def _sync_competitor_row(
             meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
         )
     elif row.platform == "wechat_channels":
+        body = {"username": row.account_key}
+        if last_buffer:
+            body["last_buffer"] = last_buffer
         result = await _execute_query(
             db=db,
             current_user=current_user,
             query_type="wechat_channels_home_page",
             params={},
-            body={"username": row.account_key, "last_buffer": last_buffer or ""},
+            body=body,
             save_items=True,
             meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
         )
@@ -1619,6 +1638,8 @@ def list_my_source_items(
     source_type_clean = source_type.strip()
     if source_type_clean in {"keyword", "billboard_search"}:
         query = query.filter(TikHubSourceItem.source_type.in_(["keyword_video", "billboard_search", "billboard_topic", "billboard_video", "hot_search", "hot_total"]))
+    elif source_type_clean in {"user_post", "competitor"}:
+        query = query.filter(TikHubSourceItem.source_type.in_(["user_post", "home_page"]))
     elif source_type_clean:
         query = query.filter(TikHubSourceItem.source_type == source_type_clean)
     keyword = q.strip()
@@ -1785,12 +1806,15 @@ async def sync_competitor(
             meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
         )
     elif row.platform == "wechat_channels":
+        payload_body = {"username": row.account_key}
+        if body.last_buffer:
+            payload_body["last_buffer"] = body.last_buffer
         result = await _execute_query(
             db=db,
             current_user=current_user,
             query_type="wechat_channels_home_page",
             params={},
-            body={"username": row.account_key, "last_buffer": body.last_buffer or ""},
+            body=payload_body,
             save_items=True,
             meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
         )

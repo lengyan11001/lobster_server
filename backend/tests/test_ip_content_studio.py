@@ -180,6 +180,60 @@ def test_normalizes_wechat_channels_user_search_candidates():
     assert candidates[0]["verify_info"] == "verified company"
 
 
+def test_collects_wechat_channels_home_page_objects_as_posts():
+    from backend.app.api import ip_content_studio as studio
+
+    payload = {
+        "code": 200,
+        "data": {
+            "object": [
+                {
+                    "id": "14816524853645875504",
+                    "createtime": 1766267401,
+                    "nickname": "channels account",
+                    "username": "sph_test_user",
+                    "like_count": 33,
+                    "comment_count": 3,
+                    "forward_count": 118,
+                    "fav_count": 41,
+                    "contact": {
+                        "nickname": "channels account",
+                        "username": "sph_test_user",
+                        "cover_img_url": "https://example.com/cover.jpg",
+                    },
+                    "object_desc": {
+                        "description": "factory visit #growth",
+                        "media": [{"url": "https://example.com/video.mp4", "cover_url": "https://example.com/post-cover.jpg"}],
+                    },
+                }
+            ]
+        },
+    }
+
+    items = studio._collect_items(payload)
+    normalized = studio._normalize_item(
+        items[0],
+        user_id=1,
+        query_id="query-id",
+        platform="wechat_channels",
+        source_type="home_page",
+        idx=0,
+    )
+
+    assert len(items) == 1
+    assert normalized["item_key"] == "14816524853645875504"
+    assert normalized["author_key"] == "sph_test_user"
+    assert normalized["author_name"] == "channels account"
+    assert normalized["title"] == "factory visit #growth"
+    assert normalized["description"] == "factory visit #growth"
+    assert normalized["public_url"] == "https://example.com/video.mp4"
+    assert normalized["cover_url"] == "https://example.com/post-cover.jpg"
+    assert normalized["publish_time"] == "1766267401"
+    assert normalized["metrics"]["like_count"] == 33
+    assert normalized["metrics"]["forward_count"] == 118
+    assert normalized["metrics"]["fav_count"] == 41
+
+
 def test_draft_record_payload_includes_image_list():
     from types import SimpleNamespace
 
