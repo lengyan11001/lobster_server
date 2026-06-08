@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
 import os
 import re
@@ -209,6 +210,14 @@ def _clean_long_text(value: Any, max_len: int = 12000) -> str:
     if value is None:
         return ""
     return str(value).strip()[:max_len]
+
+
+def _strip_search_markup(value: Any, max_len: int = 255) -> str:
+    raw = _clean_long_text(value, max(max_len * 4, max_len))
+    if not raw:
+        return ""
+    raw = re.sub(r"<[^>]+>", "", raw)
+    return html.unescape(raw).strip()[:max_len]
 
 
 def _jsonable(value: Any) -> Any:
@@ -915,36 +924,53 @@ def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, An
             "finder_username",
             "finderUserName",
             "user_name",
+            "jumpInfo.userName",
+            "noticeParam.finderUsername",
             "openid",
             "encrypted_username",
             "finder_info.username",
         ],
     )
     if not username:
-        username = _first(item, ["username", "finder_username", "finderUserName", "user_name", "data.username"])
+        username = _first(
+            item,
+            [
+                "username",
+                "finder_username",
+                "finderUserName",
+                "user_name",
+                "jumpInfo.userName",
+                "noticeParam.finderUsername",
+                "data.username",
+            ],
+        )
     if not username:
         return None
 
-    nickname = _first(user, ["nickname", "nick_name", "display_name", "name"]) or _first(item, ["nickname", "nick_name", "display_name"])
+    nickname = _first(user, ["nickname", "nick_name", "display_name", "name", "title"]) or _first(item, ["nickname", "nick_name", "display_name", "title"])
     signature = _first(user, ["signature", "desc", "description", "bio"]) or _first(item, ["signature", "desc"])
-    avatar = _first(user, ["avatar_url", "avatar", "head_image_url", "headImgUrl", "avatarUrl"]) or _avatar_url(user)
+    avatar = _first(user, ["avatar_url", "avatar", "head_image_url", "headImgUrl", "avatarUrl", "thumbUrl", "thumb_url"]) or _avatar_url(user)
     if isinstance(avatar, dict):
         avatar = _first(avatar, ["url", "url_list.0", "uri"])
     follower_count = _first(user, ["follower_count", "fans_count", "fans_cnt", "follow_cnt"]) or _first(item, ["follower_count", "fans_count", "fans_cnt"])
     works_count = _first(user, ["feed_count", "video_count", "works_count", "publish_cnt"]) or _first(item, ["feed_count", "video_count", "works_count"])
     homepage_url = _first(user, ["homepage_url", "finder_info_export.url", "share_url"]) or _first(item, ["homepage_url", "finder_info_export.url", "share_url"])
+    verify = _first(user, ["verify_info", "authInfo", "auth_info", "certification"]) or _first(item, ["verify_info", "authInfo", "auth_info", "certification"])
+    nickname_text = _strip_search_markup(nickname, 255)
+    signature_text = _strip_search_markup(signature, 1000)
 
     return {
         "id": _clean_text(username, 191),
         "username": _clean_text(username, 191),
         "finder_username": _clean_text(username, 191),
-        "nickname": _clean_text(nickname, 255),
-        "display_name": _clean_text(nickname, 255) or _clean_text(username, 80),
-        "signature": _clean_long_text(signature, 1000),
+        "nickname": nickname_text,
+        "display_name": nickname_text or _clean_text(username, 80),
+        "signature": signature_text,
         "avatar_url": _clean_long_text(avatar, 4096),
         "homepage_url": _clean_long_text(homepage_url, 4096),
         "follower_count": follower_count,
         "aweme_count": works_count,
+        "verify_info": _strip_search_markup(verify, 255),
         "raw_index": idx,
         "raw": _jsonable(item),
     }
