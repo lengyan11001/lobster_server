@@ -21,11 +21,14 @@ from .admin import AdminContext, _agent_visible_user_ids, _assert_can_manage_use
 from .auth import get_current_user
 from ..core.config import settings
 from ..db import get_db
-from ..models import ContentCompetitorAccount, TikHubQueryLog, TikHubSourceItem, User
+from ..models import ContentCompetitorAccount, IPContentDraftRecord, IPContentKeyword, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 
 router = APIRouter()
+
+_SOURCE_META_KEY = "__lobster_ip_content_meta"
+_SOURCE_USAGE_KEY = "__lobster_ip_content_usage"
 
 
 _ENDPOINTS: dict[str, dict[str, Any]] = {
@@ -118,6 +121,17 @@ class CompetitorSyncBody(BaseModel):
     last_buffer: str = ""
 
 
+class KeywordCreateBody(BaseModel):
+    keyword: str
+    display_name: str = ""
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class KeywordSyncBody(BaseModel):
+    page_size: int = Field(20, ge=1, le=50)
+    date_window: int = Field(24, ge=1, le=720)
+
+
 class DraftRequestBody(BaseModel):
     task: str
     platform: str = ""
@@ -126,6 +140,23 @@ class DraftRequestBody(BaseModel):
     item_ids: list[int] = Field(default_factory=list)
     extra_requirements: str = ""
     count: int = Field(5, ge=1, le=20)
+
+
+class AutoDraftRequestBody(BaseModel):
+    memory_docs: list[dict[str, Any]] = Field(default_factory=list)
+    keyword_ids: list[int] = Field(default_factory=list)
+    competitor_ids: list[int] = Field(default_factory=list)
+    extra_requirements: str = ""
+    count: int = Field(5, ge=1, le=20)
+    sync_before: bool = True
+
+
+class DraftRecordImageBody(BaseModel):
+    image_url: str = ""
+    image_asset_id: str = ""
+    image_prompt: str = ""
+    selected: bool = True
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 def _utcnow() -> datetime:
@@ -424,6 +455,71 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
     return out
 
 
+def _source_raw(row: TikHubSourceItem) -> dict[str, Any]:
+    return dict(row.raw or {}) if isinstance(row.raw, dict) else {}
+
+
+def _source_meta(row: TikHubSourceItem) -> dict[str, Any]:
+    raw = _source_raw(row)
+    meta = raw.get(_SOURCE_META_KEY)
+    return dict(meta or {}) if isinstance(meta, dict) else {}
+
+
+def _source_usage(row: TikHubSourceItem) -> list[dict[str, Any]]:
+    raw = _source_raw(row)
+    usage = raw.get(_SOURCE_USAGE_KEY)
+    if not isinstance(usage, list):
+        return []
+    return [dict(item) for item in usage if isinstance(item, dict)]
+
+
+def _source_used_for(row: TikHubSourceItem, task: str = "") -> bool:
+    task_key = (task or "").strip()
+    usage = _source_usage(row)
+    if not task_key:
+        return bool(usage)
+    return any(str(item.get("task") or "") == task_key for item in usage)
+
+
+def _merge_source_raw(raw_value: Any, meta: Optional[dict[str, Any]] = None, usage: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+    raw = dict(raw_value or {}) if isinstance(raw_value, dict) else {"value": raw_value}
+    if meta is not None:
+        old_meta = raw.get(_SOURCE_META_KEY) if isinstance(raw.get(_SOURCE_META_KEY), dict) else {}
+        raw[_SOURCE_META_KEY] = {**old_meta, **_jsonable(meta or {})}
+    if usage is not None:
+        raw[_SOURCE_USAGE_KEY] = _jsonable(usage)
+    return raw
+
+
+def _mark_source_rows_used(db: Session, rows: list[TikHubSourceItem], *, task: str, record_id: str) -> None:
+    now_text = _utcnow().isoformat()
+    for row in rows:
+        usage = _source_usage(row)
+        if any(str(item.get("task") or "") == task and str(item.get("record_id") or "") == record_id for item in usage):
+            continue
+        usage.append({"task": task, "record_id": record_id, "used_at": now_text})
+        row.raw = _merge_source_raw(row.raw, usage=usage)
+        row.updated_at = _utcnow()
+    if rows:
+        db.flush()
+
+
+def _memory_payload_from_docs(docs: list[dict[str, Any]], *, content_limit: int = 2400) -> list[dict[str, Any]]:
+    memories: list[dict[str, Any]] = []
+    for doc in docs[:12]:
+        if not isinstance(doc, dict):
+            continue
+        doc_id = doc.get("id") or doc.get("doc_id") or doc.get("memory_id") or doc.get("filename") or doc.get("name")
+        memories.append(
+            {
+                "id": _clean_text(doc_id, 191),
+                "title": _clean_text(doc.get("title") or doc.get("name") or doc.get("filename"), 120),
+                "content": _clean_long_text(doc.get("content") or doc.get("content_text") or doc.get("text") or doc.get("summary") or doc.get("notes"), content_limit),
+            }
+        )
+    return memories
+
+
 def _item_brief(row: TikHubSourceItem, idx: int) -> dict[str, Any]:
     return {
         "序号": idx,
@@ -576,6 +672,7 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
 
 
 def _item_payload(row: TikHubSourceItem) -> dict[str, Any]:
+    usage = _source_usage(row)
     return {
         "id": row.id,
         "query_id": row.query_id,
@@ -590,6 +687,10 @@ def _item_payload(row: TikHubSourceItem) -> dict[str, Any]:
         "cover_url": row.cover_url or "",
         "publish_time": row.publish_time or "",
         "metrics": row.metrics or {},
+        "source_meta": _source_meta(row),
+        "usage": usage,
+        "used_for": sorted({str(item.get("task") or "") for item in usage if item.get("task")}),
+        "is_used": bool(usage),
         "is_new": bool(row.is_new),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -654,10 +755,13 @@ def _persist_items(
     platform: str,
     source_type: str,
     raw_items: list[Any],
+    item_meta: Optional[dict[str, Any]] = None,
 ) -> list[TikHubSourceItem]:
     saved: list[TikHubSourceItem] = []
     for idx, raw in enumerate(raw_items):
         data = _normalize_item(raw, user_id=user_id, query_id=query_id, platform=platform, source_type=source_type, idx=idx)
+        if item_meta:
+            data["raw"] = _merge_source_raw(data["raw"], meta=item_meta)
         row = (
             db.query(TikHubSourceItem)
             .filter(
@@ -681,7 +785,9 @@ def _persist_items(
             row.cover_url = data["cover_url"]
             row.publish_time = data["publish_time"]
             row.metrics = data["metrics"]
-            row.raw = data["raw"]
+            existing_meta = _source_meta(row)
+            merged_meta = item_meta if item_meta else existing_meta
+            row.raw = _merge_source_raw(data["raw"], meta=merged_meta if merged_meta else None, usage=_source_usage(row))
             row.is_new = False
             row.updated_at = _utcnow()
         saved.append(row)
@@ -775,6 +881,7 @@ async def _execute_query(
             platform=spec["platform"],
             source_type=spec["source_type"],
             raw_items=raw_items,
+            item_meta=meta or {},
         )
         db.flush()
 
@@ -829,6 +936,265 @@ async def _execute_query(
         "raw_item_count": len(raw_items),
         "balance_after": credits_json_float(balance_after),
     }
+
+
+def _keyword_payload(row: IPContentKeyword) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "keyword": row.keyword,
+        "display_name": row.display_name or row.keyword,
+        "status": row.status,
+        "last_fetch_at": row.last_fetch_at.isoformat() if row.last_fetch_at else None,
+        "meta": row.meta or {},
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _draft_record_payload(row: IPContentDraftRecord) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "record_id": row.record_id,
+        "task": row.task,
+        "platform": row.platform,
+        "title": row.title or "",
+        "body": row.content or "",
+        "content": row.content or "",
+        "image_prompt": row.image_prompt or "",
+        "image_url": row.image_url or "",
+        "image_asset_id": row.image_asset_id or "",
+        "selected": bool(row.selected),
+        "source_item_ids": row.source_item_ids or [],
+        "memory_doc_ids": row.memory_doc_ids or [],
+        "meta": row.meta or {},
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+async def _sync_keyword_row(
+    *,
+    db: Session,
+    current_user: User,
+    row: IPContentKeyword,
+    page_size: int = 20,
+    date_window: int = 24,
+) -> dict[str, Any]:
+    result = await _execute_query(
+        db=db,
+        current_user=current_user,
+        query_type="douyin_billboard_search",
+        params={},
+        body={"page_num": 1, "page_size": page_size, "date_window": date_window, "keyword": row.keyword, "tags": []},
+        save_items=True,
+        meta={"source": "keyword_sync", "keyword_id": row.id, "keyword": row.keyword},
+    )
+    row.last_fetch_at = _utcnow()
+    row.updated_at = _utcnow()
+    db.commit()
+    db.refresh(row)
+    result["keyword"] = _keyword_payload(row)
+    return result
+
+
+async def _sync_competitor_row(
+    *,
+    db: Session,
+    current_user: User,
+    row: ContentCompetitorAccount,
+    count: int = 20,
+    last_buffer: str = "",
+) -> dict[str, Any]:
+    if row.platform == "douyin":
+        result = await _execute_query(
+            db=db,
+            current_user=current_user,
+            query_type="douyin_user_posts",
+            params={"sec_user_id": row.account_key, "count": count, "sort_type": 0},
+            body={},
+            save_items=True,
+            meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
+        )
+    elif row.platform == "wechat_channels":
+        result = await _execute_query(
+            db=db,
+            current_user=current_user,
+            query_type="wechat_channels_home_page",
+            params={},
+            body={"username": row.account_key, "last_buffer": last_buffer or ""},
+            save_items=True,
+            meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
+        )
+    else:
+        raise HTTPException(status_code=400, detail="不支持的平台")
+    row.last_fetch_at = _utcnow()
+    first_item = (result.get("items") or [{}])[0] if isinstance(result.get("items"), list) else {}
+    if isinstance(first_item, dict) and first_item.get("item_key"):
+        row.last_seen_item_key = _clean_text(first_item.get("item_key"), 191)
+    row.updated_at = _utcnow()
+    db.commit()
+    db.refresh(row)
+    result["competitor"] = _competitor_payload(row)
+    return result
+
+
+def _select_keyword_source_rows(db: Session, user_id: int, keyword_ids: list[int], *, task: str, limit: int = 40) -> list[TikHubSourceItem]:
+    rows = (
+        db.query(TikHubSourceItem)
+        .filter(TikHubSourceItem.user_id == user_id, TikHubSourceItem.platform == "douyin")
+        .filter(TikHubSourceItem.source_type.in_(["billboard_search", "billboard_topic", "billboard_video", "hot_search", "hot_total"]))
+        .order_by(TikHubSourceItem.is_new.desc(), TikHubSourceItem.created_at.desc(), TikHubSourceItem.id.desc())
+        .limit(300)
+        .all()
+    )
+    wanted = {int(x) for x in keyword_ids if str(x).isdigit()}
+    out: list[TikHubSourceItem] = []
+    for row in rows:
+        meta = _source_meta(row)
+        if wanted and int(meta.get("keyword_id") or 0) not in wanted:
+            continue
+        if str(meta.get("source") or "") != "keyword_sync":
+            continue
+        if _source_used_for(row, task):
+            continue
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _select_competitor_source_rows(db: Session, user_id: int, competitor_ids: list[int], *, task: str, limit: int = 40) -> list[TikHubSourceItem]:
+    rows = (
+        db.query(TikHubSourceItem)
+        .filter(TikHubSourceItem.user_id == user_id, TikHubSourceItem.source_type.in_(["user_post", "home_page"]))
+        .order_by(TikHubSourceItem.is_new.desc(), TikHubSourceItem.created_at.desc(), TikHubSourceItem.id.desc())
+        .limit(300)
+        .all()
+    )
+    wanted = {int(x) for x in competitor_ids if str(x).isdigit()}
+    out: list[TikHubSourceItem] = []
+    for row in rows:
+        meta = _source_meta(row)
+        if wanted and int(meta.get("competitor_account_id") or 0) not in wanted:
+            continue
+        source_name = str(meta.get("source") or "")
+        if source_name and source_name != "competitor_sync":
+            continue
+        if _source_used_for(row, task):
+            continue
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+async def _call_ip_content_llm(
+    *,
+    request: Request,
+    task: str,
+    platform: str,
+    count: int,
+    rows: list[TikHubSourceItem],
+    memories: list[dict[str, Any]],
+    extra_requirements: str,
+) -> dict[str, Any]:
+    count = max(1, min(int(count or 5), 20))
+    if not rows and not any((m.get("title") or m.get("content")) for m in memories):
+        raise HTTPException(status_code=400, detail="请先同步关键词/同行数据，或选择至少一份记忆资料。")
+    task_requirements = _draft_requirements(task, platform, count)
+    source_briefs = [_item_brief(row, idx + 1) for idx, row in enumerate(rows[:30])]
+    memory_payload = [
+        {"title": m.get("title") or "", "content": (m.get("content") or "")[:1800]}
+        for m in memories
+        if m.get("content") or m.get("title")
+    ]
+    system_prompt = (
+        "你是中文短视频、朋友圈和个人专业 IP 内容策划。根据给定的数据源和记忆资料生成可审核、可直接发布的草稿。"
+        "必须返回严格 JSON，不要 Markdown 代码块。格式："
+        "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\"}]}。"
+        "不要抄袭同行原文，不要编造资料里没有的硬数据；可以提炼热点结构、选题角度和表达策略。"
+    )
+    user_prompt = json.dumps(
+        {
+            "task": task,
+            "requirements": task_requirements,
+            "extra_requirements": _clean_long_text(extra_requirements, 4000),
+            "count": count,
+            "platform": platform,
+            "tikhub_sources": source_briefs,
+            "memory_docs": memory_payload,
+            "fallback_rule": "如果未使用过的新数据不足，必须用记忆资料补足指定条数，并在内容里保持事实克制。",
+        },
+        ensure_ascii=False,
+    )
+    token = (request.headers.get("Authorization") or request.headers.get("authorization") or "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="缺少登录凭证")
+    headers = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": token}
+    xi = (request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or "").strip()
+    if xi:
+        headers["X-Installation-Id"] = xi
+    payload = {
+        "model": (os.environ.get("IP_CONTENT_STUDIO_MODEL") or "deepseek-chat").strip() or "deepseek-chat",
+        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+        "stream": False,
+        "temperature": 0.76,
+    }
+    async with httpx.AsyncClient(timeout=150.0, trust_env=False) as client:
+        resp = await client.post(f"{_internal_api_base()}/api/sutui-chat/completions", json=payload, headers=headers)
+    data = resp.json() if resp.content else {}
+    if resp.status_code >= 400:
+        detail = _response_message(data) or _clean_long_text(data, 800) or f"HTTP {resp.status_code}"
+        raise HTTPException(status_code=resp.status_code, detail=f"文案生成失败：{detail}")
+    try:
+        text = str(data["choices"][0]["message"]["content"] or "")
+    except Exception:
+        text = json.dumps(data, ensure_ascii=False)
+    drafts = _normalize_drafts(_extract_json_object(text), text, count)
+    return {
+        "requirements": task_requirements,
+        "drafts": drafts,
+        "source_items": [_item_payload(row) for row in rows],
+        "memory_docs": memories,
+        "extra_requirements": _clean_long_text(extra_requirements, 4000),
+    }
+
+
+def _save_draft_records(
+    db: Session,
+    *,
+    current_user: User,
+    task: str,
+    platform: str,
+    drafts: list[dict[str, str]],
+    rows: list[TikHubSourceItem],
+    memories: list[dict[str, Any]],
+    extra_requirements: str,
+    group_id: str,
+) -> list[IPContentDraftRecord]:
+    source_ids = [int(row.id) for row in rows]
+    memory_ids = [m.get("id") for m in memories if m.get("id")]
+    saved: list[IPContentDraftRecord] = []
+    for draft in drafts:
+        rec = IPContentDraftRecord(
+            record_id=uuid.uuid4().hex,
+            user_id=current_user.id,
+            task=task,
+            platform=platform or "douyin",
+            title=_clean_long_text(draft.get("title"), 1000) or None,
+            content=_clean_long_text(draft.get("body") or draft.get("content"), 8000) or None,
+            image_prompt=_clean_long_text(draft.get("image_prompt"), 2000) or None,
+            source_item_ids=source_ids,
+            memory_doc_ids=memory_ids,
+            meta={"group_id": group_id, "extra_requirements": _clean_long_text(extra_requirements, 4000)},
+        )
+        db.add(rec)
+        saved.append(rec)
+    _mark_source_rows_used(db, rows, task=task, record_id=group_id)
+    db.commit()
+    for rec in saved:
+        db.refresh(rec)
+    return saved
 
 
 @router.post("/api/ip-content/tikhub/query", summary="服务器代理 TikHub 查询，并记录结果与扣费")
@@ -1010,7 +1376,7 @@ async def sync_competitor(
             params={"sec_user_id": row.account_key, "count": body.count, "sort_type": 0},
             body={},
             save_items=True,
-            meta={"competitor_account_id": row.id},
+            meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
         )
     elif row.platform == "wechat_channels":
         result = await _execute_query(
@@ -1020,7 +1386,7 @@ async def sync_competitor(
             params={},
             body={"username": row.account_key, "last_buffer": body.last_buffer or ""},
             save_items=True,
-            meta={"competitor_account_id": row.id},
+            meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
         )
     else:
         raise HTTPException(status_code=400, detail="不支持的平台")
@@ -1165,3 +1531,246 @@ def admin_list_tikhub_records(
         "items": items,
         "pagination": {"total": int(total), "limit": int(limit), "offset": int(offset), "has_next": offset + limit < int(total)},
     }
+
+
+@router.get("/api/ip-content/keywords", summary="IP content keyword seeds")
+def list_keywords(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(IPContentKeyword)
+        .filter(IPContentKeyword.user_id == current_user.id)
+        .order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc())
+        .all()
+    )
+    return {"items": [_keyword_payload(row) for row in rows]}
+
+
+@router.post("/api/ip-content/keywords", summary="Add IP content keyword seed")
+def add_keyword(
+    body: KeywordCreateBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    keyword = _clean_text(body.keyword, 191)
+    if not keyword:
+        raise HTTPException(status_code=400, detail="请填写关键词")
+    row = IPContentKeyword(
+        user_id=current_user.id,
+        keyword=keyword,
+        display_name=_clean_text(body.display_name, 255) or keyword,
+        meta=_jsonable(body.meta or {}),
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="该关键词已经存在")
+    db.refresh(row)
+    return {"ok": True, "item": _keyword_payload(row)}
+
+
+@router.delete("/api/ip-content/keywords/{keyword_id}", summary="Delete IP content keyword seed")
+def delete_keyword(
+    keyword_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.id == keyword_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="关键词不存在")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/api/ip-content/keywords/{keyword_id}/sync", summary="Sync Douyin hot search list by keyword")
+async def sync_keyword(
+    keyword_id: int,
+    body: KeywordSyncBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.id == keyword_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="关键词不存在")
+    return await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=body.page_size, date_window=body.date_window)
+
+
+@router.get("/api/ip-content/draft-records", summary="List IP content AI draft records")
+def list_draft_records(
+    task: str = "",
+    limit: int = Query(80, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.user_id == current_user.id)
+    if task.strip():
+        query = query.filter(IPContentDraftRecord.task == task.strip())
+    total = query.with_entities(func.count(IPContentDraftRecord.id)).scalar() or 0
+    rows = query.order_by(IPContentDraftRecord.created_at.desc(), IPContentDraftRecord.id.desc()).offset(offset).limit(limit).all()
+    return {
+        "items": [_draft_record_payload(row) for row in rows],
+        "pagination": {"total": int(total), "limit": int(limit), "offset": int(offset), "has_next": offset + limit < int(total)},
+    }
+
+
+@router.post("/api/ip-content/draft-records/{record_id}/image", summary="Attach selected image to IP content draft record")
+def attach_draft_record_image(
+    record_id: str,
+    body: DraftRecordImageBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.user_id == current_user.id, IPContentDraftRecord.record_id == record_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="生成记录不存在")
+    row.image_url = _clean_long_text(body.image_url, 4096) or row.image_url
+    row.image_asset_id = _clean_text(body.image_asset_id, 128) or row.image_asset_id
+    row.image_prompt = _clean_long_text(body.image_prompt, 2000) or row.image_prompt
+    row.selected = bool(body.selected)
+    meta = dict(row.meta or {})
+    meta["image_update"] = _jsonable(body.meta or {})
+    meta["image_updated_at"] = _utcnow().isoformat()
+    row.meta = meta
+    row.updated_at = _utcnow()
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _draft_record_payload(row)}
+
+
+@router.post("/api/ip-content/generate/industry-hot-oral", summary="Generate keyword-based Douyin industry oral scripts")
+async def generate_industry_hot_oral(
+    body: AutoDraftRequestBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    keyword_query = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.status == "active")
+    if body.keyword_ids:
+        keyword_query = keyword_query.filter(IPContentKeyword.id.in_([int(x) for x in body.keyword_ids if str(x).isdigit()]))
+    keywords = keyword_query.order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc()).limit(8).all()
+    if not keywords:
+        raise HTTPException(status_code=400, detail="请先在配置里添加至少一个行业关键词。")
+    sync_results = []
+    if body.sync_before:
+        for row in keywords:
+            sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
+    rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="industry_hot_oral", limit=40)
+    memories = _memory_payload_from_docs(body.memory_docs)
+    generated = await _call_ip_content_llm(
+        request=request,
+        task="task1_industry",
+        platform="douyin",
+        count=min(max(int(body.count or 5), 1), 5),
+        rows=rows,
+        memories=memories,
+        extra_requirements=body.extra_requirements,
+    )
+    group_id = uuid.uuid4().hex
+    records = _save_draft_records(
+        db,
+        current_user=current_user,
+        task="industry_hot_oral",
+        platform="douyin",
+        drafts=generated["drafts"],
+        rows=rows,
+        memories=memories,
+        extra_requirements=body.extra_requirements,
+        group_id=group_id,
+    )
+    return {"ok": True, "task": "industry_hot_oral", "records": [_draft_record_payload(row) for row in records], "sync_results": sync_results, **generated}
+
+
+@router.post("/api/ip-content/generate/professional-ip-oral", summary="Generate competitor-based professional IP oral scripts")
+async def generate_professional_ip_oral(
+    body: AutoDraftRequestBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account_query = db.query(ContentCompetitorAccount).filter(ContentCompetitorAccount.user_id == current_user.id, ContentCompetitorAccount.status == "active")
+    if body.competitor_ids:
+        account_query = account_query.filter(ContentCompetitorAccount.id.in_([int(x) for x in body.competitor_ids if str(x).isdigit()]))
+    accounts = account_query.order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc()).limit(8).all()
+    sync_results = []
+    if body.sync_before:
+        for row in accounts:
+            sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
+    rows = _select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="professional_ip_oral", limit=40)
+    memories = _memory_payload_from_docs(body.memory_docs)
+    generated = await _call_ip_content_llm(
+        request=request,
+        task="task1_ip",
+        platform="douyin",
+        count=min(max(int(body.count or 5), 1), 5),
+        rows=rows,
+        memories=memories,
+        extra_requirements=body.extra_requirements,
+    )
+    group_id = uuid.uuid4().hex
+    records = _save_draft_records(
+        db,
+        current_user=current_user,
+        task="professional_ip_oral",
+        platform="douyin",
+        drafts=generated["drafts"],
+        rows=rows,
+        memories=memories,
+        extra_requirements=body.extra_requirements,
+        group_id=group_id,
+    )
+    return {"ok": True, "task": "professional_ip_oral", "records": [_draft_record_payload(row) for row in records], "sync_results": sync_results, **generated}
+
+
+@router.post("/api/ip-content/generate/moments-candidates", summary="Generate 20 WeChat Moments copy candidates")
+async def generate_moments_candidates(
+    body: AutoDraftRequestBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    keyword_query = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.status == "active")
+    if body.keyword_ids:
+        keyword_query = keyword_query.filter(IPContentKeyword.id.in_([int(x) for x in body.keyword_ids if str(x).isdigit()]))
+    keywords = keyword_query.order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc()).limit(8).all()
+    account_query = db.query(ContentCompetitorAccount).filter(ContentCompetitorAccount.user_id == current_user.id, ContentCompetitorAccount.status == "active")
+    if body.competitor_ids:
+        account_query = account_query.filter(ContentCompetitorAccount.id.in_([int(x) for x in body.competitor_ids if str(x).isdigit()]))
+    accounts = account_query.order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc()).limit(8).all()
+    sync_results = []
+    if body.sync_before:
+        for row in keywords:
+            sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
+        for row in accounts:
+            sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
+    rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="moments_candidate", limit=24)
+    rows.extend(_select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="moments_candidate", limit=24))
+    seen: set[int] = set()
+    rows = [row for row in rows if not (row.id in seen or seen.add(row.id))][:40]
+    memories = _memory_payload_from_docs(body.memory_docs)
+    generated = await _call_ip_content_llm(
+        request=request,
+        task="task2_moments",
+        platform="wechat_moments",
+        count=20,
+        rows=rows,
+        memories=memories,
+        extra_requirements=body.extra_requirements,
+    )
+    group_id = uuid.uuid4().hex
+    records = _save_draft_records(
+        db,
+        current_user=current_user,
+        task="moments_candidate",
+        platform="wechat_moments",
+        drafts=generated["drafts"],
+        rows=rows,
+        memories=memories,
+        extra_requirements=body.extra_requirements,
+        group_id=group_id,
+    )
+    return {"ok": True, "task": "moments_candidate", "records": [_draft_record_payload(row) for row in records], "sync_results": sync_results, **generated}
