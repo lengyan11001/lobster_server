@@ -1677,7 +1677,7 @@ async def search_wechat_channels_users(
         db=db,
         current_user=current_user,
         query_type="wechat_channels_user_search_v2",
-        params={"keywords": keyword, "page": 1},
+        params={"keywords": keyword, "page": 0},
         body={},
         save_items=False,
         meta={"source": "competitor_user_search", "keyword": keyword},

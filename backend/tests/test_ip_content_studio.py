@@ -151,6 +151,40 @@ def test_normalizes_douyin_user_search_v2_candidates():
     assert candidates[0]["avatar_url"] == "https://example.com/avatar-v2.jpg"
 
 
+def test_normalizes_wechat_channels_user_search_candidates():
+    from backend.app.api import ip_content_studio as studio
+
+    payload = {
+        "code": 200,
+        "data": {
+            "items": [
+                {
+                    "finder_info": {
+                        "username": "sph_test_user",
+                        "nickname": "channels account",
+                        "signature": "growth content",
+                        "avatar_url": "https://example.com/channels.jpg",
+                        "fans_count": 1234,
+                        "feed_count": 56,
+                        "finder_info_export": {"url": "https://channels.weixin.qq.com/platform/profile/sph_test_user"},
+                    }
+                }
+            ]
+        },
+    }
+
+    candidates, raw_count = studio._normalize_wechat_channels_users_from_payload(payload)
+
+    assert raw_count == 1
+    assert candidates[0]["username"] == "sph_test_user"
+    assert candidates[0]["display_name"] == "channels account"
+    assert candidates[0]["signature"] == "growth content"
+    assert candidates[0]["follower_count"] == 1234
+    assert candidates[0]["aweme_count"] == 56
+    assert candidates[0]["avatar_url"] == "https://example.com/channels.jpg"
+    assert candidates[0]["homepage_url"] == "https://channels.weixin.qq.com/platform/profile/sph_test_user"
+
+
 def test_draft_record_payload_includes_image_list():
     from types import SimpleNamespace
 
