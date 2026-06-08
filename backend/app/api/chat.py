@@ -560,16 +560,25 @@ def _raise_api_err(resp: httpx.Response, model: str = ""):
 
 
 _DSML_FC_RE = re.compile(
-    r'<\s*[\uff5c|]\s*DSML\s*[\uff5c|]\s*function_calls\s*>(.*?)<\s*/\s*[\uff5c|]\s*DSML\s*[\uff5c|]\s*function_calls\s*>',
+    r'<\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+\s*function_calls\s*>(.*?)<\s*/\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+\s*function_calls\s*>',
     re.DOTALL,
 )
 _DSML_INVOKE_RE = re.compile(
-    r'<\s*[\uff5c|]\s*DSML\s*[\uff5c|]\s*invoke\s+name="([^"]+)"\s*>(.*?)<\s*/\s*[\uff5c|]\s*DSML\s*[\uff5c|]\s*invoke\s*>',
+    r'<\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+\s*invoke\s+name="([^"]+)"\s*>(.*?)<\s*/\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+\s*invoke\s*>',
     re.DOTALL,
 )
 _DSML_PARAM_RE = re.compile(
-    r'<\s*[\uff5c|]\s*DSML\s*[\uff5c|]\s*parameter\s+name="([^"]+)"\s+string="(true|false)"\s*>(.*?)<\s*/\s*[\uff5c|]\s*DSML\s*[\uff5c|]\s*parameter\s*>',
+    r'<\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+\s*parameter\s+name="([^"]+)"\s+string="(true|false)"\s*>(.*?)<\s*/\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+\s*parameter\s*>',
     re.DOTALL,
+)
+_DSML_ANY_BLOCK_RE = re.compile(
+    r'<\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+(?:tool_calls|function_calls)?\s*>[\s\S]*?'
+    r'(?:<\s*/\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+(?:tool_calls|function_calls)?\s*>|$)',
+    re.DOTALL,
+)
+_FAKE_TEXT_TOOL_RE = re.compile(
+    r'tool\u2581call|<\|tool|<\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+|```json\s*\{[^}]*capability|function<\u2581',
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -586,6 +595,8 @@ _DSML_TOOL_NAME_MAP = {
 def _parse_text_tool_calls(content: str) -> List[Dict[str, Any]]:
     """Parse DeepSeek DSML or similar text-embedded tool calls."""
     calls: List[Dict[str, Any]] = []
+    if not _DSML_FC_RE.search(content or ""):
+        return calls
     for fc_match in _DSML_FC_RE.finditer(content):
         block = fc_match.group(1)
         for inv in _DSML_INVOKE_RE.finditer(block):
@@ -607,9 +618,13 @@ def _parse_text_tool_calls(content: str) -> List[Dict[str, Any]]:
 
 def _strip_dsml(content: str) -> str:
     """Remove DSML markup from text content, return readable portion."""
-    cleaned = _DSML_FC_RE.sub("", content).strip()
-    cleaned = re.sub(r'<\s*/?\s*[\uff5c|]\s*DSML\s*[\uff5c|]\s*[^>]*>', '', cleaned).strip()
+    cleaned = _DSML_ANY_BLOCK_RE.sub("", content).strip()
+    cleaned = re.sub(r'<\s*/?\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+\s*[^>]*>', '', cleaned).strip()
     return cleaned
+
+
+def _has_fake_text_tool_call(content: str) -> bool:
+    return bool(content and _FAKE_TEXT_TOOL_RE.search(content))
 
 
 def _reply_for_user(reply: str) -> str:
@@ -1242,13 +1257,13 @@ async def _chat_openai(
 
     _ACTION_KW = re.compile(
         r"(发布|生成|打开浏览器|帮你|开始|正在|马上|登录|查看素材|查看账号|"
-        r"invoke_capability|publish_content|open_account_browser|list_assets)",
+        r"invoke_capability|publish_content|open_account_browser|list_assets|task_id|任务进度|查询.*结果|查.*进度)",
         re.IGNORECASE,
     )
     # 仅当用户当前消息包含操作意图时才强制要求调用工具，避免对「你好」等问候误触发
     _USER_ACTION_KW = re.compile(
         r"(帮我|给我|生成.*图|发.*抖音|发布到|打开浏览器|登录|查看素材|查看账号|"
-        r"invoke_capability|publish_content|open_account_browser|list_assets|生成图片|发布内容)",
+        r"invoke_capability|publish_content|open_account_browser|list_assets|生成图片|发布内容|task_id|任务进度|查询.*结果|查.*进度)",
         re.IGNORECASE,
     )
     force_tool_retry_done = False
@@ -1622,16 +1637,17 @@ async def _chat_openai(
             oai_tools
             and rnd == 0
             and not force_tool_retry_done
-            and _ACTION_KW.search(content)
+            and (_ACTION_KW.search(content) or _has_fake_text_tool_call(content))
             and _USER_ACTION_KW.search(last_user_msg)
         ):
             logger.warning(
                 "[CHAT] LLM replied with action text but NO tool_call (user asked for action). "
-                "Retrying with tool_choice=required. Content preview: %s",
+                "Retrying with tool_choice=required. fake_tool_text=%s Content preview: %s",
+                _has_fake_text_tool_call(content),
                 content[:200],
             )
             force_tool_retry_done = True
-            cur.append({"role": "assistant", "content": content})
+            cur.append({"role": "assistant", "content": _strip_dsml(content) or "Need to call a tool."})
             cur.append({
                 "role": "user",
                 "content": (

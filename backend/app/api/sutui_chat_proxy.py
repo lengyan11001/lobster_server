@@ -769,7 +769,7 @@ def _openai_nonstream_completion_usable(data: Any, http_status: int) -> bool:
 
 
 _FAKE_TOOL_CALL_RE = __import__("re").compile(
-    r"tool\u2581call|<\|tool|<\uff5cDSML\uff5c|```json\s*\{[^}]*capability|function<\u2581",
+    r"tool\u2581call|<\|tool|<\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+|```json\s*\{[^}]*capability|function<\u2581",
 )
 
 
@@ -788,7 +788,8 @@ def _response_has_fake_tool_text(data: Any) -> bool:
 
 
 _DSML_BLOCK_RE = __import__("re").compile(
-    r"<\uff5cDSML\uff5c[\s\S]*?(?:</\uff5cDSML\uff5c>|$)",
+    r"<\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+(?:tool_calls|function_calls)?\s*>[\s\S]*?"
+    r"(?:<\s*/\s*[\uff5c|]+\s*DSML\s*[\uff5c|]+(?:tool_calls|function_calls)?\s*>|$)",
 )
 
 

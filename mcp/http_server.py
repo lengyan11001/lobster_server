@@ -2461,6 +2461,14 @@ _NO_AUTO_SAVE_CAPABILITIES = frozenset({
     "sutui.transfer_url",
 })
 
+
+_PIPELINE_JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
+
+
+def _looks_like_local_pipeline_job_id(value: str) -> bool:
+    """Pipeline jobs use local 32-char hex ids; Sutui task ids are UUIDs/other upstream ids."""
+    return bool(_PIPELINE_JOB_ID_RE.fullmatch((value or "").strip()))
+
 async def _auto_save_generated_assets(
     upstream_resp: Any, capability_id: str, payload: Dict, token: Optional[str],
     request: Optional[Request] = None,
@@ -2768,6 +2776,14 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 _emb = (payload.get("capability_id") or "").strip()
                 if _emb in ("video.generate", "image.generate"):
                     record_capability_id = _emb
+                _poll_tid_guard = str(payload.get("task_id") or payload.get("taskId") or payload.get("taskid") or "").strip()
+                if _looks_like_local_pipeline_job_id(_poll_tid_guard):
+                    msg = (
+                        f"ID {_poll_tid_guard} 看起来是本地 pipeline job_id，不是速推 task_id；"
+                        "请使用对应 pipeline 能力的 poll_pipeline + job_id 查询，禁止用 task.get_result 查询。"
+                    )
+                    logger.warning("[MCP] blocked pipeline job_id passed to task.get_result job_id=%s", _poll_tid_guard)
+                    return [{"type": "text", "text": msg}], True
 
             # ━━━ Comfly 路由预判（在预扣之前决定，以便正确计价） ━━━
             _early_use_comfly = False

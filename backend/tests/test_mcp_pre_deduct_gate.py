@@ -22,6 +22,59 @@ class _JsonResponse:
 
 
 @pytest.mark.asyncio
+async def test_task_get_result_rejects_local_pipeline_job_id(monkeypatch):
+    from mcp import http_server
+
+    monkeypatch.setattr(
+        http_server,
+        "_load_capability_catalog",
+        lambda: {
+            "task.get_result": {
+                "upstream": "sutui",
+                "upstream_tool": "get_result",
+                "enabled": True,
+            }
+        },
+    )
+    monkeypatch.setattr(http_server, "_load_upstream_urls", lambda: {"sutui": "https://sutui.test/mcp"})
+    monkeypatch.setattr(http_server, "resolve_brand_mark_for_request", lambda _auth: "bihuo")
+
+    async def _allowed(_token):
+        return None
+
+    async def _not_admin(_token):
+        return False
+
+    async def _server_token(*, brand_mark):
+        return "sutui-secret", brand_mark
+
+    upstream_calls = []
+
+    async def _call_upstream(*args, **kwargs):
+        upstream_calls.append((args, kwargs))
+        return {"unexpected": True}
+
+    monkeypatch.setattr(http_server, "_fetch_user_allowed_capability_ids", _allowed)
+    monkeypatch.setattr(http_server, "_fetch_is_skill_store_admin", _not_admin)
+    monkeypatch.setattr(http_server, "next_sutui_server_token_with_pool", _server_token)
+    monkeypatch.setattr(http_server, "_call_upstream_mcp_tool", _call_upstream)
+
+    items, is_err = await http_server._call_tool(
+        "invoke_capability",
+        {
+            "capability_id": "task.get_result",
+            "payload": {"task_id": "86cbfb322b3a481bbe29be7574ba7b12"},
+        },
+        token="user-token",
+        request=_Request(),
+    )
+
+    assert is_err is True
+    assert "pipeline job_id" in items[0]["text"]
+    assert upstream_calls == []
+
+
+@pytest.mark.asyncio
 async def test_sutui_generate_stops_when_pre_deduct_has_no_charge(monkeypatch):
     from mcp import http_server
 
