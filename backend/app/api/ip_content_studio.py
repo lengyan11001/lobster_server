@@ -76,6 +76,13 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "path": "/api/v1/douyin/billboard/fetch_hot_total_search_list",
         "allowed_body": {"page_num", "page_size", "date_window", "keyword", "tags"},
     },
+    "douyin_search_video_v2": {
+        "platform": "douyin",
+        "source_type": "keyword_video",
+        "method": "POST",
+        "path": "/api/v1/douyin/search/fetch_video_search_v2",
+        "allowed_body": {"keyword", "cursor", "sort_type", "publish_time", "filter_duration", "content_type", "search_id", "backtrace"},
+    },
     "douyin_user_posts": {
         "platform": "douyin",
         "source_type": "user_post",
@@ -282,9 +289,19 @@ def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
         "objs",
         "data_list",
         "search_list",
+        "business_data",
     ):
         value = node.get(key)
         if isinstance(value, list):
+            if key == "business_data":
+                flattened: list[Any] = []
+                for entry in value:
+                    nested = _collect_items(entry, depth=depth + 1)
+                    if nested:
+                        flattened.extend(nested)
+                    else:
+                        flattened.append(entry)
+                return flattened
             return value
         nested = _collect_items(value, depth=depth + 1)
         if nested:
@@ -607,14 +624,18 @@ def _normalize_drafts(obj: dict[str, Any], fallback_text: str, count: int) -> li
 
 def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, source_type: str, idx: int) -> dict[str, Any]:
     item = raw if isinstance(raw, dict) else {"value": raw}
-    author = item.get("author") if isinstance(item.get("author"), dict) else {}
+    aweme_info = _lookup(item, "data.aweme_info")
+    if not isinstance(aweme_info, dict):
+        aweme_info = item.get("aweme_info") if isinstance(item.get("aweme_info"), dict) else {}
+    field_item = {**item, **aweme_info, "aweme_info": aweme_info} if aweme_info else item
+    author = field_item.get("author") if isinstance(field_item.get("author"), dict) else {}
     if not author:
-        author = item.get("user") if isinstance(item.get("user"), dict) else {}
+        author = field_item.get("user") if isinstance(field_item.get("user"), dict) else {}
     if not author:
-        nested_author = _lookup(item, "aweme_info.author")
+        nested_author = _lookup(field_item, "aweme_info.author")
         author = nested_author if isinstance(nested_author, dict) else {}
     title = _first(
-        item,
+        field_item,
         [
             "title",
             "item_title",
@@ -631,9 +652,9 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "aweme_info.caption",
         ],
     )
-    description = _first(item, ["description", "desc", "summary", "challenge_name", "aweme_info.desc"])
+    description = _first(field_item, ["description", "desc", "summary", "challenge_name", "aweme_info.desc"])
     item_key = _first(
-        item,
+        field_item,
         [
             "aweme_id",
             "id",
@@ -648,14 +669,14 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         ],
     )
     if item_key in (None, ""):
-        basis = _first(item, ["share_url", "url", "title", "desc", "sentence", "word", "key_word", "keyword"]) or item
+        basis = _first(field_item, ["share_url", "url", "title", "desc", "sentence", "word", "key_word", "keyword"]) or item
         item_key = _stable_hash({"platform": platform, "source_type": source_type, "idx": idx, "basis": basis})
     author_key = _first(
         author,
         ["sec_uid", "uid", "id", "short_id", "unique_id", "username", "finder_username", "nickname"],
     )
-    author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "short_id"]) or _first(item, ["nick_name", "author_name"])
-    publish_time = _first(item, ["create_time", "publish_time", "timestamp", "aweme_info.create_time"])
+    author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "short_id"]) or _first(field_item, ["nick_name", "author_name"])
+    publish_time = _first(field_item, ["create_time", "publish_time", "timestamp", "aweme_info.create_time"])
     return {
         "user_id": user_id,
         "query_id": query_id,
@@ -666,10 +687,10 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         "author_name": _clean_text(author_name, 255) or None,
         "title": _clean_long_text(title, 4000) or None,
         "description": _clean_long_text(description, 8000) or None,
-        "public_url": _public_url(item) or None,
-        "cover_url": _cover_url(item) or None,
+        "public_url": _public_url(field_item) or None,
+        "cover_url": _cover_url(field_item) or None,
         "publish_time": _clean_text(publish_time, 64) or None,
-        "metrics": _metric_payload(item) or None,
+        "metrics": _metric_payload(field_item) or None,
         "raw": _jsonable(item),
     }
 
@@ -986,12 +1007,31 @@ async def _sync_keyword_row(
     result = await _execute_query(
         db=db,
         current_user=current_user,
-        query_type="douyin_billboard_search",
+        query_type="douyin_search_video_v2",
         params={},
-        body={"page_num": 1, "page_size": page_size, "date_window": date_window, "keyword": row.keyword, "tags": []},
+        body={
+            "keyword": row.keyword,
+            "cursor": 0,
+            "sort_type": "0",
+            "publish_time": "0",
+            "filter_duration": "0",
+            "content_type": "0",
+            "search_id": "",
+            "backtrace": "",
+        },
         save_items=True,
-        meta={"source": "keyword_sync", "keyword_id": row.id, "keyword": row.keyword},
+        meta={"source": "keyword_video_sync", "keyword_id": row.id, "keyword": row.keyword},
     )
+    if not result.get("ok") or int(result.get("raw_item_count") or 0) <= 0:
+        result = await _execute_query(
+            db=db,
+            current_user=current_user,
+            query_type="douyin_billboard_search",
+            params={},
+            body={"page_num": 1, "page_size": page_size, "date_window": date_window, "keyword": row.keyword, "tags": []},
+            save_items=True,
+            meta={"source": "keyword_sync_fallback", "keyword_id": row.id, "keyword": row.keyword},
+        )
     row.last_fetch_at = _utcnow()
     row.updated_at = _utcnow()
     db.commit()
@@ -1045,7 +1085,7 @@ def _select_keyword_source_rows(db: Session, user_id: int, keyword_ids: list[int
     rows = (
         db.query(TikHubSourceItem)
         .filter(TikHubSourceItem.user_id == user_id, TikHubSourceItem.platform == "douyin")
-        .filter(TikHubSourceItem.source_type.in_(["billboard_search", "billboard_topic", "billboard_video", "hot_search", "hot_total"]))
+        .filter(TikHubSourceItem.source_type.in_(["keyword_video", "billboard_search", "billboard_topic", "billboard_video", "hot_search", "hot_total"]))
         .order_by(TikHubSourceItem.is_new.desc(), TikHubSourceItem.created_at.desc(), TikHubSourceItem.id.desc())
         .limit(300)
         .all()
@@ -1281,8 +1321,11 @@ def list_my_source_items(
     query = db.query(TikHubSourceItem).filter(TikHubSourceItem.user_id == current_user.id)
     if platform.strip():
         query = query.filter(TikHubSourceItem.platform == platform.strip())
-    if source_type.strip():
-        query = query.filter(TikHubSourceItem.source_type == source_type.strip())
+    source_type_clean = source_type.strip()
+    if source_type_clean in {"keyword", "billboard_search"}:
+        query = query.filter(TikHubSourceItem.source_type.in_(["keyword_video", "billboard_search", "billboard_topic", "billboard_video", "hot_search", "hot_total"]))
+    elif source_type_clean:
+        query = query.filter(TikHubSourceItem.source_type == source_type_clean)
     keyword = q.strip()
     if keyword:
         like = f"%{keyword}%"
