@@ -1320,7 +1320,13 @@ async def _call_ip_content_llm(
         "必须返回严格 JSON，不要 Markdown 代码块。格式："
         "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\"}]}。"
         "不要抄袭同行原文，不要编造资料里没有的硬数据；可以提炼热点结构、选题角度和表达策略。"
-        "\nsource-first rule: For industry hot oral scripts, you must base every draft on tikhub_sources first. Use the video descriptions, hot terms, authors and engagement metrics as the topic source. Memory docs can only supplement background and style; do not replace the keyword data or write generic content unrelated to it.\n"
+        "\ncore rule: 记忆资料是账号定位、行业事实、产品服务、专业判断和表达风格的底座；"
+        "TikHub 的行业热门/同行作品是当前新选题和新内容来源。"
+        "当 tikhub_sources 存在时，口播和朋友圈文案都必须先基于这些新数据提炼选题，"
+        "再用 memory_docs 约束事实、专业口径、案例风格和表达边界，不能脱离记忆写成泛泛内容。"
+        "当 tikhub_sources 不足以生成指定条数时，才用 memory_docs 补足数量，并保持事实克制。"
+        "行业热门口播优先使用关键词/榜单数据；专业 IP 口播优先使用同行新作品；朋友圈文案也要优先承接最新数据里的选题或场景。"
+        "\n"
     )
     user_prompt = json.dumps(
         {
@@ -1331,8 +1337,12 @@ async def _call_ip_content_llm(
             "platform": platform,
             "tikhub_sources": source_briefs,
             "memory_docs": memory_payload,
-            "source_usage_rule": "Industry hot oral scripts must use tikhub_sources as the primary source. Memory docs only supplement background, product knowledge and style.",
-            "fallback_rule": "如果未使用过的新数据不足，必须用记忆资料补足指定条数，并在内容里保持事实克制。",
+            "source_usage_rule": (
+                "有 tikhub_sources 时，新数据是选题和表达角度的第一来源；每条草稿都应尽量对应一个热点、同行作品、热词或榜单条目。"
+                "memory_docs 用于让 AI 更懂账号和业务：约束事实、口径、专业度、产品服务特点和表达风格。"
+                "不能只照着记忆写，也不能只追热点而脱离记忆。"
+            ),
+            "fallback_rule": "如果未使用过的新数据不足，才用记忆资料补足指定条数；补足内容也要延续账号定位和业务事实。",
         },
         ensure_ascii=False,
     )
