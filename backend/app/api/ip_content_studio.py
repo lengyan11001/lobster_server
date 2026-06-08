@@ -155,7 +155,7 @@ class AutoDraftRequestBody(BaseModel):
     competitor_ids: list[int] = Field(default_factory=list)
     extra_requirements: str = ""
     count: int = Field(5, ge=1, le=20)
-    sync_before: bool = True
+    sync_before: bool = False
 
 
 class DraftRecordImageBody(BaseModel):
@@ -1091,19 +1091,24 @@ def _select_keyword_source_rows(db: Session, user_id: int, keyword_ids: list[int
         .all()
     )
     wanted = {int(x) for x in keyword_ids if str(x).isdigit()}
-    out: list[TikHubSourceItem] = []
+    fresh: list[TikHubSourceItem] = []
+    reused: list[TikHubSourceItem] = []
     for row in rows:
         meta = _source_meta(row)
         if wanted and int(meta.get("keyword_id") or 0) not in wanted:
             continue
-        if str(meta.get("source") or "") != "keyword_sync":
+        source_name = str(meta.get("source") or "")
+        if source_name and source_name not in {"keyword_sync", "keyword_video_sync", "keyword_sync_fallback"}:
             continue
         if _source_used_for(row, task):
+            reused.append(row)
             continue
-        out.append(row)
-        if len(out) >= limit:
+        fresh.append(row)
+        if len(fresh) >= limit:
             break
-    return out
+    if len(fresh) >= limit:
+        return fresh[:limit]
+    return (fresh + reused)[:limit]
 
 
 def _select_competitor_source_rows(db: Session, user_id: int, competitor_ids: list[int], *, task: str, limit: int = 40) -> list[TikHubSourceItem]:
@@ -1156,6 +1161,7 @@ async def _call_ip_content_llm(
         "必须返回严格 JSON，不要 Markdown 代码块。格式："
         "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\"}]}。"
         "不要抄袭同行原文，不要编造资料里没有的硬数据；可以提炼热点结构、选题角度和表达策略。"
+        "\nsource-first rule: For industry hot oral scripts, you must base every draft on tikhub_sources first. Use the video descriptions, hot terms, authors and engagement metrics as the topic source. Memory docs can only supplement background and style; do not replace the keyword data or write generic content unrelated to it.\n"
     )
     user_prompt = json.dumps(
         {
@@ -1166,6 +1172,7 @@ async def _call_ip_content_llm(
             "platform": platform,
             "tikhub_sources": source_briefs,
             "memory_docs": memory_payload,
+            "source_usage_rule": "Industry hot oral scripts must use tikhub_sources as the primary source. Memory docs only supplement background, product knowledge and style.",
             "fallback_rule": "如果未使用过的新数据不足，必须用记忆资料补足指定条数，并在内容里保持事实克制。",
         },
         ensure_ascii=False,
@@ -1702,9 +1709,6 @@ async def generate_industry_hot_oral(
     if not keywords:
         raise HTTPException(status_code=400, detail="请先在配置里添加至少一个行业关键词。")
     sync_results = []
-    if body.sync_before:
-        for row in keywords:
-            sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
     rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="industry_hot_oral", limit=40)
     memories = _memory_payload_from_docs(body.memory_docs)
     generated = await _call_ip_content_llm(
