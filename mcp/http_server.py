@@ -32,8 +32,6 @@ from mcp.sutui_error_hints import (
 )
 from mcp.jwt_brand import resolve_brand_mark_for_request
 from mcp.sutui_tokens import (
-    get_sutui_tokens_list_bihuo,
-    get_sutui_tokens_list_yingshi,
     next_sutui_server_token,
     next_sutui_server_token_with_pool,
     sutui_token_ref_from_secret,
@@ -572,7 +570,6 @@ _SUTUI_UPSTREAM_LOG_MAX = 500_000
 # 若任务终态失败，按此处记录的 task_id 向龙虾用户退款（与速推侧失败退款语义对齐）。
 _MAX_TASK_BILLED_TRACK = 3000
 _task_billed_on_create: "OrderedDict[str, Decimal]" = OrderedDict()
-_sutui_task_tokens: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 
 
 def _remember_task_billed_credits(task_id: str, credits: Decimal) -> None:
@@ -594,90 +591,6 @@ def _peek_task_billed_credits(task_id: str) -> Decimal:
     if not task_id:
         return Decimal(0)
     return quantize_credits(_task_billed_on_create.get(task_id) or 0)
-
-
-def _remember_sutui_task_token(task_id: str, token: str, pool_key: str) -> None:
-    tid = (task_id or "").strip()
-    tok = (token or "").strip()
-    if not tid or not tok:
-        return
-    pk = (pool_key or "").strip() or "unknown"
-    _sutui_task_tokens[tid] = (tok, pk)
-    _sutui_task_tokens.move_to_end(tid)
-    while len(_sutui_task_tokens) > _MAX_TASK_BILLED_TRACK:
-        _sutui_task_tokens.popitem(last=False)
-    logger.info(
-        "[MCP] 已绑定速推任务 token task_id=%s pool=%s token_ref=%s",
-        tid[:96],
-        pk,
-        sutui_token_ref_from_secret(tok) or "-",
-    )
-
-
-def _sutui_tokens_for_query_retry(
-    *,
-    task_id: str,
-    brand_mark: Optional[str],
-    current_token: Optional[str],
-    current_pool: str,
-) -> List[Tuple[str, str]]:
-    tid = (task_id or "").strip()
-    seen: set[str] = set()
-    out: List[Tuple[str, str]] = []
-
-    def add(token: Optional[str], pool: str) -> None:
-        tok = (token or "").strip()
-        if not tok or tok in seen:
-            return
-        seen.add(tok)
-        out.append((tok, (pool or "").strip() or "unknown"))
-
-    if tid:
-        bound = _sutui_task_tokens.get(tid)
-        if bound:
-            add(bound[0], bound[1])
-    add(current_token, current_pool)
-
-    bm = (brand_mark or "").strip().lower()
-    if bm == "bihuo":
-        pool_key, tokens = "bihuo", get_sutui_tokens_list_bihuo()
-    elif bm == "yingshi":
-        pool_key, tokens = "yingshi", get_sutui_tokens_list_yingshi()
-    else:
-        pool_key, tokens = "", []
-    for tok in tokens:
-        add(tok, pool_key)
-    return out
-
-
-def _looks_like_sutui_task_not_found_error(resp: Any) -> bool:
-    if not isinstance(resp, dict):
-        return False
-    chunks: List[str] = []
-
-    def walk(obj: Any, depth: int = 0) -> None:
-        if depth > 6 or obj is None:
-            return
-        if isinstance(obj, str):
-            chunks.append(obj)
-            return
-        if isinstance(obj, dict):
-            for key in ("message", "detail", "error", "body", "raw", "msg"):
-                if key in obj:
-                    walk(obj.get(key), depth + 1)
-            return
-        if isinstance(obj, list):
-            for item in obj[:8]:
-                walk(item, depth + 1)
-
-    walk(resp)
-    text = "\n".join(chunks).lower()
-    return bool(
-        ("404" in text and ("任务不存在" in text or "not found" in text or "not exist" in text))
-        or "任务不存在" in text
-        or "task not found" in text
-        or "task does not exist" in text
-    )
 
 
 async def _post_task_failure_refund_with_retries(
@@ -2855,17 +2768,6 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 _emb = (payload.get("capability_id") or "").strip()
                 if _emb in ("video.generate", "image.generate"):
                     record_capability_id = _emb
-                _poll_tid_for_token = str(payload.get("task_id") or payload.get("taskId") or payload.get("taskid") or "").strip()
-                _bound = _sutui_task_tokens.get(_poll_tid_for_token)
-                if _bound:
-                    sutui_token, sutui_pool_for_billing = _bound
-                    sutui_token_ref_for_billing = sutui_token_ref_from_secret(sutui_token)
-                    logger.info(
-                        "[MCP] task.get_result 使用创建任务绑定 token task_id=%s pool=%s token_ref=%s",
-                        _poll_tid_for_token[:96],
-                        sutui_pool_for_billing or "-",
-                        sutui_token_ref_for_billing or "-",
-                    )
 
             # ━━━ Comfly 路由预判（在预扣之前决定，以便正确计价） ━━━
             _early_use_comfly = False
@@ -3379,56 +3281,6 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     lobster_capability_id=capability_id,
                     brand_mark=user_brand_mark,
                 )
-                if (
-                    upstream_name == "sutui"
-                    and upstream_tool == "get_result"
-                    and isinstance(payload, dict)
-                    and _looks_like_sutui_task_not_found_error(upstream_resp)
-                ):
-                    _poll_tid_retry = str(
-                        payload.get("task_id") or payload.get("taskId") or payload.get("taskid") or ""
-                    ).strip()
-                    _retry_candidates = _sutui_tokens_for_query_retry(
-                        task_id=_poll_tid_retry,
-                        brand_mark=user_brand_mark,
-                        current_token=sutui_token,
-                        current_pool=sutui_pool_for_billing,
-                    )
-                    for _retry_tok, _retry_pool in _retry_candidates:
-                        if _retry_tok == (sutui_token or "").strip():
-                            continue
-                        logger.info(
-                            "[MCP] task.get_result 404/任务不存在，换同池 token 重查 task_id=%s pool=%s token_ref=%s",
-                            _poll_tid_retry[:96],
-                            _retry_pool or "-",
-                            sutui_token_ref_from_secret(_retry_tok) or "-",
-                        )
-                        _retry_resp = await _call_upstream_mcp_tool(
-                            upstream_url,
-                            upstream_tool,
-                            payload,
-                            upstream_name=upstream_name,
-                            sutui_token=_retry_tok,
-                            lobster_capability_id=capability_id,
-                            brand_mark=user_brand_mark,
-                        )
-                        if (
-                            not _looks_like_sutui_task_not_found_error(_retry_resp)
-                            and not (isinstance(_retry_resp, dict) and isinstance(_retry_resp.get("error"), dict))
-                        ):
-                            upstream_resp = _retry_resp
-                            sutui_token = _retry_tok
-                            sutui_pool_for_billing = _retry_pool
-                            sutui_token_ref_for_billing = sutui_token_ref_from_secret(_retry_tok)
-                            if _poll_tid_retry:
-                                _remember_sutui_task_token(_poll_tid_retry, _retry_tok, _retry_pool)
-                            logger.info(
-                                "[MCP] task.get_result 换 token 查询命中 task_id=%s pool=%s token_ref=%s",
-                                _poll_tid_retry[:96],
-                                _retry_pool or "-",
-                                sutui_token_ref_for_billing or "-",
-                            )
-                            break
             if (
                 capability_id == "image.generate"
                 and upstream_tool == "generate"
@@ -3488,8 +3340,6 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             if capability_id == "video.generate" and isinstance(upstream_resp, dict):
                 # 从响应中提取task_id
                 generated_task_id = _extract_task_id_from_sutui_response(upstream_resp)
-                if generated_task_id and upstream_name == "sutui" and sutui_token:
-                    _remember_sutui_task_token(generated_task_id, sutui_token, sutui_pool_for_billing)
                 if generated_task_id and temp_ids_to_register:
                     try:
                         from backend.app.api.assets import register_temp_file_for_task
@@ -3500,10 +3350,6 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         logger.debug("[临时文件] 注册失败 error=%s", e)
                 # 清空临时ID列表，避免重复注册
                 temp_ids_to_register.clear()
-            elif capability_id == "image.generate" and isinstance(upstream_resp, dict):
-                generated_task_id = _extract_task_id_from_sutui_response(upstream_resp)
-                if generated_task_id and upstream_name == "sutui" and sutui_token:
-                    _remember_sutui_task_token(generated_task_id, sutui_token, sutui_pool_for_billing)
             # get_result 终态失败：创建任务时已扣的积分退回龙虾用户（速推侧失败退款时与本机余额对齐）
             # 同时覆盖 HTTP 层错误（如 502/503）：上游不可达时用户拿不到结果，应退款
             _is_terminal_fail = (
@@ -3696,8 +3542,6 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             ):
                 created_tid = _extract_task_id_from_sutui_response(upstream_resp)
                 if created_tid:
-                    if upstream_name == "sutui" and sutui_token:
-                        _remember_sutui_task_token(created_tid, sutui_token, sutui_pool_for_billing)
                     refund_on_fail = pre_deduct_amount if pre_deduct_amount > 0 else bill_credits
                     _remember_task_billed_credits(created_tid, refund_on_fail)
                     logger.info(

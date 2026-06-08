@@ -116,10 +116,7 @@ async def next_sutui_server_token_with_pool(*, brand_mark: Optional[str] = None)
     pool_key, lst = _tokens_and_pool_key_user(brand_mark=brand_mark)
     if not lst:
         return None, pool_key
-    async with _sutui_token_lock:
-        idx = _sutui_pool_index.get(pool_key, 0) % len(lst)
-        _sutui_pool_index[pool_key] = idx + 1
-        return lst[idx], pool_key
+    return lst[0], pool_key
 
 
 async def next_sutui_server_token(*, brand_mark: Optional[str] = None) -> Optional[str]:
