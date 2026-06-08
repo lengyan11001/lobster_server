@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -13,7 +14,7 @@ from typing import Any, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -842,6 +843,39 @@ async def _call_tikhub(query_type: str, params: dict[str, Any], body: dict[str, 
     return resp.status_code, _jsonable(payload), dict(resp.headers), latency_ms
 
 
+async def _execute_query_with_retry(
+    *,
+    db: Session,
+    current_user: User,
+    query_type: str,
+    params: dict[str, Any],
+    body: dict[str, Any],
+    save_items: bool = True,
+    meta: Optional[dict[str, Any]] = None,
+    attempts: int = 3,
+) -> dict[str, Any]:
+    last_result: dict[str, Any] = {}
+    attempts = max(1, int(attempts or 1))
+    for idx in range(attempts):
+        last_result = await _execute_query(
+            db=db,
+            current_user=current_user,
+            query_type=query_type,
+            params=params,
+            body=body,
+            save_items=save_items,
+            meta={**(meta or {}), "attempt": idx + 1, "attempts": attempts},
+        )
+        if last_result.get("ok") and int(last_result.get("raw_item_count") or 0) > 0:
+            return last_result
+        query = last_result.get("query") if isinstance(last_result.get("query"), dict) else {}
+        if int(query.get("http_status") or 0) not in {400, 408, 429, 500, 502, 503, 504}:
+            return last_result
+        if idx < attempts - 1:
+            await asyncio.sleep(0.8 * (idx + 1))
+    return last_result
+
+
 async def _execute_query(
     *,
     db: Session,
@@ -1004,7 +1038,7 @@ async def _sync_keyword_row(
     page_size: int = 20,
     date_window: int = 24,
 ) -> dict[str, Any]:
-    result = await _execute_query(
+    result = await _execute_query_with_retry(
         db=db,
         current_user=current_user,
         query_type="douyin_search_video_v2",
@@ -1021,7 +1055,9 @@ async def _sync_keyword_row(
         },
         save_items=True,
         meta={"source": "keyword_video_sync", "keyword_id": row.id, "keyword": row.keyword},
+        attempts=3,
     )
+    video_result = result
     if not result.get("ok") or int(result.get("raw_item_count") or 0) <= 0:
         result = await _execute_query(
             db=db,
@@ -1032,6 +1068,12 @@ async def _sync_keyword_row(
             save_items=True,
             meta={"source": "keyword_sync_fallback", "keyword_id": row.id, "keyword": row.keyword},
         )
+        result["video_detail_status"] = {
+            "ok": bool(video_result.get("ok")),
+            "raw_item_count": int(video_result.get("raw_item_count") or 0),
+            "error_message": ((video_result.get("query") or {}).get("error_message") or ""),
+            "query_id": ((video_result.get("query") or {}).get("query_id") or ""),
+        }
     row.last_fetch_at = _utcnow()
     row.updated_at = _utcnow()
     db.commit()
@@ -1082,11 +1124,18 @@ async def _sync_competitor_row(
 
 
 def _select_keyword_source_rows(db: Session, user_id: int, keyword_ids: list[int], *, task: str, limit: int = 40) -> list[TikHubSourceItem]:
+    source_rank = case(
+        (TikHubSourceItem.source_type == "keyword_video", 0),
+        (TikHubSourceItem.source_type == "billboard_video", 1),
+        (TikHubSourceItem.source_type == "billboard_topic", 2),
+        (TikHubSourceItem.source_type == "billboard_search", 3),
+        else_=4,
+    )
     rows = (
         db.query(TikHubSourceItem)
         .filter(TikHubSourceItem.user_id == user_id, TikHubSourceItem.platform == "douyin")
         .filter(TikHubSourceItem.source_type.in_(["keyword_video", "billboard_search", "billboard_topic", "billboard_video", "hot_search", "hot_total"]))
-        .order_by(TikHubSourceItem.is_new.desc(), TikHubSourceItem.created_at.desc(), TikHubSourceItem.id.desc())
+        .order_by(source_rank.asc(), TikHubSourceItem.is_new.desc(), TikHubSourceItem.created_at.desc(), TikHubSourceItem.id.desc())
         .limit(300)
         .all()
     )
@@ -1345,7 +1394,14 @@ def list_my_source_items(
             )
         )
     total = query.with_entities(func.count(TikHubSourceItem.id)).scalar() or 0
-    rows = query.order_by(TikHubSourceItem.created_at.desc(), TikHubSourceItem.id.desc()).offset(offset).limit(limit).all()
+    source_rank = case(
+        (TikHubSourceItem.source_type == "keyword_video", 0),
+        (TikHubSourceItem.source_type == "billboard_video", 1),
+        (TikHubSourceItem.source_type == "billboard_topic", 2),
+        (TikHubSourceItem.source_type == "billboard_search", 3),
+        else_=4,
+    )
+    rows = query.order_by(source_rank.asc(), TikHubSourceItem.created_at.desc(), TikHubSourceItem.id.desc()).offset(offset).limit(limit).all()
     return {
         "items": [_item_payload(row) for row in rows],
         "pagination": {"total": int(total), "limit": int(limit), "offset": int(offset), "has_next": offset + limit < int(total)},
