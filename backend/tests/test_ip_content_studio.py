@@ -149,3 +149,32 @@ def test_normalizes_douyin_user_search_v2_candidates():
     assert candidates[0]["aweme_count"] == 499
     assert candidates[0]["like_count"] == 51415427
     assert candidates[0]["avatar_url"] == "https://example.com/avatar-v2.jpg"
+
+
+def test_draft_record_payload_includes_image_list():
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    row = SimpleNamespace(
+        id=1,
+        record_id="rec-1",
+        task="moments_candidate",
+        platform="wechat_moments",
+        title="朋友圈文案",
+        content="正文",
+        image_prompt="配图提示",
+        image_url="https://example.com/1.jpg",
+        image_asset_id="asset-1",
+        selected=True,
+        source_item_ids=[],
+        memory_doc_ids=[],
+        meta={"images": [{"image_url": "https://example.com/1.jpg"}, {"image_url": "https://example.com/2.jpg"}]},
+        created_at=None,
+        updated_at=None,
+    )
+
+    payload = studio._draft_record_payload(row)
+
+    assert len(payload["images"]) == 2
+    assert payload["images"][1]["image_url"] == "https://example.com/2.jpg"

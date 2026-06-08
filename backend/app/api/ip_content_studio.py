@@ -1117,6 +1117,8 @@ def _keyword_payload(row: IPContentKeyword) -> dict[str, Any]:
 
 
 def _draft_record_payload(row: IPContentDraftRecord) -> dict[str, Any]:
+    meta = row.meta or {}
+    images = meta.get("images") if isinstance(meta, dict) and isinstance(meta.get("images"), list) else []
     return {
         "id": row.id,
         "record_id": row.record_id,
@@ -1128,10 +1130,11 @@ def _draft_record_payload(row: IPContentDraftRecord) -> dict[str, Any]:
         "image_prompt": row.image_prompt or "",
         "image_url": row.image_url or "",
         "image_asset_id": row.image_asset_id or "",
+        "images": images,
         "selected": bool(row.selected),
         "source_item_ids": row.source_item_ids or [],
         "memory_doc_ids": row.memory_doc_ids or [],
-        "meta": row.meta or {},
+        "meta": meta,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
@@ -1878,6 +1881,26 @@ def attach_draft_record_image(
     row.image_prompt = _clean_long_text(body.image_prompt, 2000) or row.image_prompt
     row.selected = bool(body.selected)
     meta = dict(row.meta or {})
+    incoming_images = body.meta.get("images") if isinstance(body.meta, dict) else None
+    if isinstance(incoming_images, list):
+        cleaned_images = []
+        for item in incoming_images[:12]:
+            if not isinstance(item, dict):
+                continue
+            url = _clean_long_text(item.get("image_url") or item.get("url"), 4096)
+            if not url:
+                continue
+            cleaned_images.append(
+                {
+                    "image_url": url,
+                    "image_asset_id": _clean_text(item.get("image_asset_id") or item.get("asset_id"), 128),
+                    "image_prompt": _clean_long_text(item.get("image_prompt") or "", 2000),
+                    "index": int(item.get("index") or len(cleaned_images) + 1),
+                    "created_at": _clean_text(item.get("created_at") or _utcnow().isoformat(), 64),
+                }
+            )
+        if cleaned_images:
+            meta["images"] = cleaned_images
     meta["image_update"] = _jsonable(body.meta or {})
     meta["image_updated_at"] = _utcnow().isoformat()
     row.meta = meta
