@@ -53,6 +53,20 @@ def _get_tos_config() -> Optional[dict]:
     return None
 
 
+def _tos_object_headers(content_type: str, object_key: str) -> tuple[str, str]:
+    ct = (content_type or "").strip() or "application/octet-stream"
+    ct_lower = ct.lower()
+    ext = Path(object_key).suffix.lower()
+    inline_exts = {
+        ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".svg",
+        ".mp4", ".mov", ".webm", ".m4v",
+        ".mp3", ".wav", ".m4a", ".aac", ".ogg",
+    }
+    if ct_lower.startswith(("image/", "video/", "audio/")) or ext in inline_exts:
+        return ct, "inline"
+    return ct, "attachment"
+
+
 def _upload_to_tos(data: bytes, object_key: str, content_type: str) -> Optional[str]:
     """上传字节到 TOS，返回公网可访问 URL；失败返回 None。"""
     cfg = _get_tos_config()
@@ -70,7 +84,18 @@ def _upload_to_tos(data: bytes, object_key: str, content_type: str) -> Optional[
             logger.warning("[TOS] 配置不完整，跳过上传")
             return None
         client = tos.TosClientV2(ak, sk, endpoint, region)
-        client.put_object(bucket, object_key, content=data)
+        object_content_type, content_disposition = _tos_object_headers(content_type, object_key)
+        try:
+            client.put_object(
+                bucket,
+                object_key,
+                content=data,
+                content_type=object_content_type,
+                content_disposition=content_disposition,
+            )
+        except TypeError:
+            logger.warning("[TOS] SDK does not accept content_disposition; retrying object_key=%s", object_key)
+            client.put_object(bucket, object_key, content=data, content_type=object_content_type)
         url = f"{public_domain}/{object_key}"
         logger.info("[TOS] 上传成功 object_key=%s url=%s", object_key, url[:80])
         return url
