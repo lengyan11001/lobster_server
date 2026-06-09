@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="only light" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="必火AI员工" />
+  <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
   <style>
     :root {
@@ -1001,6 +1004,7 @@
     .profile-head h2 { margin: 0 0 4px; font-size: 20px; }
     .settings { padding: 16px; display: grid; gap: 12px; }
     .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border-radius: 16px; background: rgba(248,251,255,.9); border: 1px solid rgba(223,230,242,.8); }
+    .setting-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .route-switch { display: inline-grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; border-radius: 999px; background: #eef4ff; }
     .route-switch button { padding: 7px 11px; color: var(--muted); background: transparent; box-shadow: none; }
     .route-switch button.active { color: #fff; background: var(--blue); }
@@ -1455,6 +1459,15 @@
                 <button type="button" disabled data-route="openclaw">OpenClaw</button>
               </div>
             </div>
+            <div class="setting-row">
+              <div>
+                <strong>iPhone 桌面入口</strong>
+                <div class="hint">下载描述文件后，到系统设置里确认安装。</div>
+              </div>
+              <div class="setting-actions">
+                <button class="ghost" type="button" id="installIosWebclipBtn">添加到桌面</button>
+              </div>
+            </div>
             <button class="danger" type="button" id="logoutBtn">退出登录</button>
           </div>
           <div class="panel runs">
@@ -1586,6 +1599,19 @@
 
     function onIosDownloadClick() {
       if (IS_IOS && !IS_WECHAT) toast("已开始下载，可在 Safari 下载项或文件 App 的下载目录查看");
+    }
+
+    function installIosWebclip() {
+      if (IS_WECHAT) {
+        toast("请先用 Safari 打开本页，再下载描述文件");
+        return;
+      }
+      if (!IS_IOS) {
+        toast("这个入口用于 iPhone/iPad 添加桌面快捷方式");
+      } else {
+        toast("下载后请到系统设置里安装描述文件");
+      }
+      window.location.href = "/install/ios-webclip.mobileconfig";
     }
 
     function authHeaders(extra = {}) {
@@ -3480,6 +3506,7 @@
     $("createTaskBtn").addEventListener("click", () => createScheduledTask().catch((err) => toast(err.message || "下发失败")));
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
     $("refreshProfileBtn").addEventListener("click", () => Promise.all([refreshDeviceStatus(), loadTasks(), loadRuns()]));
+    $("installIosWebclipBtn").addEventListener("click", installIosWebclip);
     $("refreshTasksBtn").addEventListener("click", loadTasks);
     $("refreshRunsBtn").addEventListener("click", loadRuns);
     $("employeeFloor").addEventListener("click", (evt) => {

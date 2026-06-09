@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import html
 import ipaddress
 import json
 import logging
@@ -14,7 +16,7 @@ from urllib.parse import quote, unquote, urljoin, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
@@ -35,6 +37,8 @@ _ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _H5_INDEX = _ROOT / "h5_static" / "index.html"
 _H5_STATIC_DIR = _ROOT / "h5_static"
 _H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
+_H5_WEBCLIP_URL = "https://h5.bhzn.top/"
+_H5_WEBCLIP_LABEL = "必火AI员工"
 _VALID_MODES = {"direct"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _CHAT_TURN_BILLING_SUPPORT_HEADER = "X-Lobster-Chat-Turn-Billing"
@@ -214,6 +218,92 @@ def _image_media_type(path: Path) -> str:
     }.get(path.suffix.lower(), "application/octet-stream")
 
 
+def _plist_text(value: str) -> str:
+    return html.escape(str(value or ""), quote=True)
+
+
+def _plist_data(raw: bytes) -> str:
+    encoded = base64.b64encode(raw).decode("ascii")
+    return "\n".join(encoded[i : i + 68] for i in range(0, len(encoded), 68))
+
+
+def _webclip_icon_xml() -> str:
+    icon_path = _H5_STATIC_DIR / "bihu_256.png"
+    if not icon_path.is_file():
+        icon_path = _H5_STATIC_DIR / "bihu_32.png"
+    if not icon_path.is_file():
+        return ""
+    return f"""
+            <key>Icon</key>
+            <data>
+{_plist_data(icon_path.read_bytes())}
+            </data>"""
+
+
+def _ios_webclip_mobileconfig() -> str:
+    webclip_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{_H5_WEBCLIP_URL}#webclip"))
+    profile_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{_H5_WEBCLIP_URL}#profile"))
+    identifier = "top.bhzn.h5.webclip"
+    label = _plist_text(_H5_WEBCLIP_LABEL)
+    webclip_url = _plist_text(_H5_WEBCLIP_URL)
+    icon_xml = _webclip_icon_xml()
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>PayloadContent</key>
+    <array>
+      <dict>
+        <key>FullScreen</key>
+        <true/>
+        <key>IgnoreManifestScope</key>
+        <true/>{icon_xml}
+        <key>IsRemovable</key>
+        <true/>
+        <key>Label</key>
+        <string>{label}</string>
+        <key>Precomposed</key>
+        <false/>
+        <key>URL</key>
+        <string>{webclip_url}</string>
+        <key>PayloadDescription</key>
+        <string>将必火AI员工添加到 iPhone 桌面。</string>
+        <key>PayloadDisplayName</key>
+        <string>{label}</string>
+        <key>PayloadIdentifier</key>
+        <string>{identifier}.clip</string>
+        <key>PayloadOrganization</key>
+        <string>必火智能</string>
+        <key>PayloadType</key>
+        <string>com.apple.webClip.managed</string>
+        <key>PayloadUUID</key>
+        <string>{webclip_uuid}</string>
+        <key>PayloadVersion</key>
+        <integer>1</integer>
+      </dict>
+    </array>
+    <key>PayloadDescription</key>
+    <string>安装后会在桌面创建必火AI员工快捷方式。</string>
+    <key>PayloadDisplayName</key>
+    <string>必火AI员工桌面入口</string>
+    <key>PayloadIdentifier</key>
+    <string>{identifier}</string>
+    <key>PayloadOrganization</key>
+    <string>必火智能</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>{profile_uuid}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+  </dict>
+</plist>
+"""
+
+
 def _download_filename(value: str, url: str) -> str:
     raw = (value or "").strip()
     if not raw:
@@ -330,6 +420,19 @@ def h5_static_asset(filename: str):
     if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
         raise HTTPException(status_code=404, detail="文件不存在")
     return FileResponse(str(path), media_type=_image_media_type(path), headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/install/ios-webclip.mobileconfig", include_in_schema=False)
+def ios_webclip_mobileconfig():
+    return Response(
+        content=_ios_webclip_mobileconfig().encode("utf-8"),
+        media_type="application/x-apple-aspen-config",
+        headers={
+            "Content-Disposition": "attachment; filename=\"bihuo-ai-webclip.mobileconfig\"",
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/", include_in_schema=False)
