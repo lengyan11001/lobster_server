@@ -35,6 +35,7 @@ from .api.cutcli_templates import router as cutcli_templates_router
 from .api.logs_api import router as logs_router
 from .api.h5_chat import router as h5_chat_router
 from .api.hifly_assets import router as hifly_assets_router
+from .api.provider_balances import router as provider_balances_router
 from .api.aliyun_wan_role import router as aliyun_wan_role_router
 from .api.wechat_oa import router as wechat_oa_router
 from .api.messenger import router as messenger_router
@@ -891,6 +892,7 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
     app.include_router(hifly_assets_router, prefix="")
+    app.include_router(provider_balances_router, prefix="")
     app.include_router(aliyun_wan_role_router, prefix="")
     app.include_router(scheduled_tasks_router, prefix="")
     app.include_router(wechat_oa_router, prefix="")
