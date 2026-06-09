@@ -8,16 +8,16 @@ import io
 import json
 import os
 import sys
+import zipfile
 from pathlib import Path
 
 
 DEFAULT_CLIENT_CODE_OTA_PATHS = [
-    "CLIENT_CODE_VERSION.json",
+    "scripts",
     "backend",
     "desktop",
     "mcp",
     "static",
-    "scripts",
     "publisher",
     "skills",
     "skill_registry.json",
@@ -37,7 +37,32 @@ DEFAULT_CLIENT_CODE_OTA_PATHS = [
     "nodejs/run-npm.mjs",
     "nodejs/.gitignore",
     "nodejs/node_modules/@tencent-weixin/openclaw-weixin",
+    # Keep version last so a partially applied OTA is retried on next launch.
+    "CLIENT_CODE_VERSION.json",
 ]
+
+
+def manifest_paths_for_zip(zip_path: Path) -> list[str]:
+    paths = list(DEFAULT_CLIENT_CODE_OTA_PATHS)
+    with zipfile.ZipFile(zip_path) as zf:
+        names = set(zf.namelist())
+    runtime_dirs = [
+        "scripts/ppt_runtime_wheels",
+        "scripts/douyin_runtime_wheels",
+    ]
+    found_runtime_dirs = [
+        runtime_dir
+        for runtime_dir in runtime_dirs
+        if any(name.startswith(runtime_dir + "/") for name in names)
+    ]
+    if found_runtime_dirs:
+        version_path = "CLIENT_CODE_VERSION.json"
+        paths = [p for p in paths if p != version_path]
+        for runtime_dir in found_runtime_dirs:
+            if runtime_dir not in paths:
+                paths.append(runtime_dir)
+        paths.append(version_path)
+    return paths
 
 
 def load_deploy() -> dict[str, str]:
@@ -103,7 +128,7 @@ def main() -> int:
         "build": args.build,
         "bundle_url": bundle_url,
         "sha256": sha,
-        "paths": DEFAULT_CLIENT_CODE_OTA_PATHS,
+        "paths": manifest_paths_for_zip(z),
         "note": f"OTA {bundle_name}; ordinary client-code paths",
     }
     remote_base = f"{remote_root}/client_static/client_code"
