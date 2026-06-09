@@ -5,10 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import APIRouter, Depends
-
-from ..models import User
-from .auth import get_current_user
+from fastapi import APIRouter
 
 router = APIRouter()
 
@@ -131,7 +128,6 @@ async def query_hifly_credit(checked_at: str) -> Dict[str, Any]:
         "message": (payload or {}).get("message", "") if isinstance(payload, dict) else text,
         "request_id": (payload or {}).get("request_id", "") if isinstance(payload, dict) else "",
         "checked_at": checked_at,
-        "raw": payload if payload is not None else {"text": text},
     }
     left = (payload or {}).get("left") if isinstance(payload, dict) else None
     if isinstance(left, (int, float)):
@@ -202,7 +198,6 @@ async def query_comfly_credit(checked_at: str) -> Dict[str, Any]:
         "success": success,
         "message": message,
         "checked_at": checked_at,
-        "raw": payload if payload is not None else {"text": text},
     }
     item.update(_new_api_balance_from_payload(payload))
     if not item["ok"]:
@@ -260,7 +255,6 @@ async def query_yunwu_credit(checked_at: str) -> Dict[str, Any]:
         "success": success,
         "message": message,
         "checked_at": checked_at,
-        "raw": payload if payload is not None else {"text": text},
     }
     item.update(_new_api_balance_from_payload(payload))
     if not item["ok"]:
@@ -296,11 +290,11 @@ async def collect_provider_balances() -> Dict[str, Any]:
 
 
 @router.get("/api/provider-balances", summary="Query upstream provider balances")
-async def provider_balances(current_user: User = Depends(get_current_user)):
+async def provider_balances():
     return await collect_provider_balances()
 
 
 @router.get("/api/provider-balances/health", summary="Query upstream provider balances summary")
-async def provider_balances_health(current_user: User = Depends(get_current_user)):
+async def provider_balances_health():
     data = await collect_provider_balances()
     return {"ok": data["ok"], "checked_at": data["checked_at"], "summary": data["summary"]}
