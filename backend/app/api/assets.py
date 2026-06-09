@@ -33,7 +33,7 @@ TEMP_ASSETS_DIR.mkdir(exist_ok=True)
 _CUSTOM_CONFIGS_FILE = _BASE_DIR / "custom_configs.json"
 
 # 带签名的临时访问：用于会话里上传的图/视频生成可被速推拉取的 URL
-_ASSET_FILE_EXPIRY_SEC = 600  # 10 分钟
+_ASSET_FILE_EXPIRY_SEC = 86400  # 24 hours
 
 # 临时文件跟踪：task_id -> [temp_file_paths]，用于任务完成后清理
 _temp_files_by_task: dict[str, list[Path]] = {}
@@ -567,6 +567,7 @@ async def upload_temp_file(
 
 
 @router.get("/api/assets/temp/{temp_id}", summary="访问临时文件")
+@router.head("/api/assets/temp/{temp_id}", include_in_schema=False)
 async def get_temp_file(
     temp_id: str,
     token: str = Query(...),
@@ -593,8 +594,9 @@ async def get_temp_file(
     
     return FileResponse(
         temp_path,
-        media_type="application/octet-stream",
+        media_type=_tos_object_headers("", temp_path.name)[0],
         filename=temp_path.name,
+        content_disposition_type="inline",
     )
 
 
