@@ -217,6 +217,19 @@ function normalizeAssetItem(item) {
   }));
 }
 
+function mergeMediaRows(rows) {
+  const seen = {};
+  const out = [];
+  (rows || []).forEach((item) => {
+    if (!item) return;
+    const key = String(item.asset_id || item.id || item.playable_url || item.url || item.source_url || "").trim();
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    out.push(item);
+  });
+  return out;
+}
+
 function isHiflyVideoAsset(item) {
   const tags = String((item && item.tags) || "").toLowerCase();
   const meta = item && item.meta ? JSON.stringify(item.meta).toLowerCase() : "";
@@ -265,10 +278,27 @@ Page({
     share.showShareMenu();
     app.restoreSession();
     this.refreshAuthState();
+    const rememberedMediaTab = wx.getStorageSync("lobster_downloads_media_tab");
+    const rememberedVideoKind = wx.getStorageSync("lobster_downloads_video_kind");
+    if (rememberedMediaTab && ["video", "image", "text", "audio"].indexOf(rememberedMediaTab) >= 0) {
+      this.setData({ mediaTab: rememberedMediaTab });
+    }
+    if (rememberedVideoKind && ["digital", "super"].indexOf(rememberedVideoKind) >= 0) {
+      this.setData({ videoKind: rememberedVideoKind });
+    }
     const openSuperVideo = wx.getStorageSync("lobster_open_super_video");
     if (openSuperVideo) {
       wx.removeStorageSync("lobster_open_super_video");
       this.setData({ mediaTab: "video", videoKind: "super" });
+      wx.setStorageSync("lobster_downloads_media_tab", "video");
+      wx.setStorageSync("lobster_downloads_video_kind", "super");
+    }
+    const openMediaTab = wx.getStorageSync("lobster_open_media_tab");
+    if (openMediaTab) {
+      wx.removeStorageSync("lobster_open_media_tab");
+      const nextTab = openMediaTab === "image" ? "image" : this.data.mediaTab;
+      this.setData({ mediaTab: nextTab });
+      wx.setStorageSync("lobster_downloads_media_tab", nextTab);
     }
     const shouldRefresh = wx.getStorageSync("lobster_refresh_works");
     if (shouldRefresh) wx.removeStorageSync("lobster_refresh_works");
@@ -350,12 +380,14 @@ Page({
   setMediaTab(evt) {
     const tab = evt.currentTarget.dataset.tab || "video";
     this.setData({ mediaTab: tab });
+    wx.setStorageSync("lobster_downloads_media_tab", tab);
     if (this.data.phoneBound) this.loadWorks();
   },
 
   setVideoKind(evt) {
     const kind = evt.currentTarget.dataset.kind || "digital";
     this.setData({ videoKind: kind });
+    wx.setStorageSync("lobster_downloads_video_kind", kind);
     if (this.data.phoneBound) this.loadWorks();
   },
 
@@ -419,10 +451,29 @@ Page({
     }
     this.stopPolling();
     this.setData({ loading: true });
-    return app
-      .request({ url: `/api/mobile/downloads?device_id=${encodeURIComponent(deviceId)}&media_type=${encodeURIComponent(type)}&limit=80` })
-      .then((data) => {
-        const rows = (data.items || []).map(normalizeMediaItem).filter((item) => item.media_type === type);
+    const mobileReq = app.request({ url: `/api/mobile/downloads?device_id=${encodeURIComponent(deviceId)}&media_type=${encodeURIComponent(type)}&limit=80` });
+    const assetReq = type === "image"
+      ? app.request({ url: "/api/assets?media_type=image&limit=80" }).catch(() => ({ assets: [] }))
+      : Promise.resolve({ assets: [] });
+    return Promise.all([mobileReq, assetReq])
+      .then(([data, assetData]) => {
+        const mobileRows = (data.items || []).map(normalizeMediaItem).filter((item) => item.media_type === type);
+        const assetRows = (assetData.assets || [])
+          .filter((item) => item && item.source_url && item.media_type === type)
+          .map(normalizeAssetItem)
+          .filter((item) => item.media_type === type);
+        const cachedRows = type === "image"
+          ? (wx.getStorageSync("lobster_recent_image_assets") || []).map(normalizeMediaItem).filter((item) => item.media_type === type)
+          : [];
+        const rows = mergeMediaRows(cachedRows.concat(mobileRows).concat(assetRows));
+        if (type === "image") {
+          console.log("[downloads] image works loaded", {
+            mobile: mobileRows.length,
+            assets: assetRows.length,
+            cached: cachedRows.length,
+            total: rows.length
+          });
+        }
         this.setData({ mediaWorks: rows, authPanelVisible: false });
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))

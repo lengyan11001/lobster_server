@@ -314,13 +314,18 @@
   z-index: 20;
   height: 104rpx;
   margin: 0;
+  padding: 0;
   color: #fff;
   background: linear-gradient(180deg, #6b6b6b, #3d3d3d);
   border: 1rpx solid rgba(255,255,255,0.28);
   border-radius: 999rpx;
   box-shadow: 0 16rpx 40rpx rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 32rpx;
   font-weight: 900;
+  line-height: 104rpx;
 }
 
 .manage-top {
@@ -386,6 +391,35 @@
   font-size: 24rpx;
 }
 
+.asset-subtabs {
+  display: flex;
+  gap: 12rpx;
+  margin-top: 18rpx;
+}
+
+.asset-subtabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 116rpx;
+  height: 52rpx;
+  margin: 0;
+  padding: 0 22rpx;
+  color: rgba(255,255,255,0.62);
+  background: rgba(255,255,255,0.06);
+  border: 1rpx solid rgba(255,255,255,0.1);
+  border-radius: 999rpx;
+  font-size: 23rpx;
+  font-weight: 900;
+  line-height: 52rpx;
+}
+
+.asset-subtabs button.active {
+  color: #061312;
+  background: #10f5dd;
+  border-color: rgba(16,245,221,0.7);
+}
+
 .avatar-manage-grid,
 .voice-manage-grid {
   display: grid;
@@ -395,7 +429,8 @@
 }
 
 .manage-avatar-card,
-.manage-voice-card {
+.manage-voice-card,
+.manage-create-card {
   min-width: 0;
   overflow: hidden;
   background: rgba(255,255,255,0.06);
@@ -419,7 +454,8 @@
 }
 
 .manage-avatar-card text,
-.manage-voice-card text {
+.manage-voice-card text,
+.manage-create-card text {
   display: block;
   overflow: hidden;
   padding: 10rpx;
@@ -435,6 +471,35 @@
   height: 210rpx;
   padding-top: 36rpx;
   background: linear-gradient(180deg, #a855f7, #5b21b6 70%, rgba(255,255,255,0.06));
+}
+
+.manage-create-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 246rpx;
+  background: linear-gradient(180deg, rgba(255,255,255,0.1), rgba(255,255,255,0.04));
+}
+
+.manage-create-plus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72rpx;
+  height: 72rpx;
+  margin-bottom: 26rpx;
+  color: rgba(255,255,255,0.78);
+  border: 1rpx solid rgba(255,255,255,0.24);
+  border-radius: 999rpx;
+  font-size: 50rpx;
+  font-weight: 300;
+  line-height: 72rpx;
+}
+
+.manage-create-card text {
+  width: 100%;
+  padding: 0 10rpx;
 }
 
 .manage-play {

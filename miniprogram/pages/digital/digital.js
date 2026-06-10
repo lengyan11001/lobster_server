@@ -46,6 +46,10 @@ function uniqueBy(rows, keyName) {
   return out;
 }
 
+function isConsumerPreviewVoice(value) {
+  return String(value || "").trim().indexOf("consumer_") === 0;
+}
+
 function normalizeAvatar(row, source) {
   const avatar = String((row && row.avatar) || "").trim();
   if (!avatar) return null;
@@ -65,22 +69,29 @@ function normalizeAvatar(row, source) {
 function normalizeVoice(row, source) {
   const styles = Array.isArray(row && row.styles) && row.styles.length ? row.styles : [row || {}];
   const baseTitle = (row && (row.title || row.name || row.voice)) || "";
+  const params = (row && row.voice_params) || {};
+  const fallbackStyle = styles.find((style) => style && style.voice && !isConsumerPreviewVoice(style.voice)) || styles[0] || {};
   const rows = [];
   styles.forEach((style) => {
-    const voice = String((style && style.voice) || (row && row.voice) || "").trim();
+    const voice = String((style && style.voice) || (fallbackStyle && fallbackStyle.voice) || (row && row.voice) || "").trim();
     if (!voice) return;
+    if (source === "public" && isConsumerPreviewVoice(voice)) return;
     const label = (style && style.label && style.label !== "默认风格") ? `${baseTitle} - ${style.label}` : (baseTitle || voice);
     rows.push({
       voice,
       id: `${source}:${voice}`,
       title: label,
       demo_url: assetUrl((style && style.demo_url) || (row && (row.demo_url || row.audio_url || row.preview_url)) || ""),
+      preview_voice: (style && style.preview_voice) || "",
       section: source,
       section_label: source === "mine" ? "我的声音" : "公共声音",
       status: (row && row.status) || "success",
-      rate: (style && style.rate) || (row && row.rate) || "",
-      volume: (style && style.volume) || (row && row.volume) || "",
-      pitch: (style && style.pitch) || (row && row.pitch) || "",
+      provider: (row && row.provider) || "",
+      rate: (style && style.rate) || params.rate || (row && row.rate) || "",
+      volume: (style && style.volume) || params.volume || (row && row.volume) || "",
+      pitch: (style && style.pitch) || params.pitch || (row && row.pitch) || "",
+      emotion: (style && style.emotion) || params.emotion || (row && row.emotion) || "",
+      instructions: (style && style.instructions) || params.instructions || (row && row.instructions) || "",
       raw: row || {}
     });
   });
@@ -111,11 +122,44 @@ function selectSource(mine, publicRows) {
   return mine && mine.length ? "mine" : "public";
 }
 
+function sourceRows(source, mine, publicRows) {
+  return source === "mine" ? (mine || []) : (publicRows || []);
+}
+
 function voiceParamText(value, fallback, min, max) {
   const raw = value === undefined || value === null || value === "" ? fallback : value;
   const num = Number(raw);
   const safeNum = Math.max(min, Math.min(max, Number.isNaN(num) ? fallback : num));
   return safeNum.toFixed(2);
+}
+
+function writeAudioDataUrlToTempFile(dataUrl) {
+  const value = String(dataUrl || "").trim();
+  const match = value.match(/^data:audio\/[^;]+;base64,(.+)$/i);
+  if (!match || !match[1]) return Promise.resolve(value);
+  const filePath = `${wx.env.USER_DATA_PATH}/voice-preview-${Date.now()}.mp3`;
+  return new Promise((resolve, reject) => {
+    wx.getFileSystemManager().writeFile({
+      filePath,
+      data: match[1],
+      encoding: "base64",
+      success: () => resolve(filePath),
+      fail: reject
+    });
+  });
+}
+
+function buildVoicePreviewCacheKey(item, text, params) {
+  return JSON.stringify({
+    voice: item.voice || "",
+    provider: item.provider || "",
+    text: text || "",
+    rate: params.rate || "",
+    volume: params.volume || "",
+    pitch: params.pitch || "",
+    emotion: params.emotion || "",
+    instructions: params.instructions || ""
+  });
 }
 
 Page({
@@ -150,6 +194,7 @@ Page({
     pollingTaskId: "",
     progressText: "",
     audioPlayingId: "",
+    voicePreviewLoadingId: "",
     previewVisible: false,
     previewVideoUrl: "",
     onlineDevices: [],
@@ -160,6 +205,8 @@ Page({
 
   audio: null,
   pollTimer: null,
+  voicePreviewRequestId: 0,
+  voicePreviewCache: {},
 
   onShow() {
     share.showShareMenu();
@@ -287,28 +334,28 @@ Page({
   loadAssets() {
     this.setData({ loadingAssets: true });
     return Promise.all([
-      app.request({ url: "/api/hifly/my/avatar/list?page=1&size=100&status=success" }).catch(() => ({ items: [] })),
+      app.request({ url: "/api/hifly/my/avatar/list?page=1&size=100" }).catch(() => ({ items: [] })),
       app.request({ method: "POST", url: "/api/hifly/avatar/library", data: {} }).catch(() => ({ public: [] })),
-      app.request({ url: "/api/hifly/my/voice/list?page=1&size=100&status=success" }).catch(() => ({ items: [] })),
+      app.request({ url: "/api/hifly/my/voice/list?page=1&size=100" }).catch(() => ({ items: [] })),
       app.request({ method: "POST", url: "/api/hifly/voice/library", data: {} }).catch(() => ({ public: [] }))
     ])
       .then(([myAvatars, publicAvatars, myVoices, publicVoices]) => {
-        const avatarsMine = uniqueBy((myAvatars.items || []).map((row) => normalizeAvatar(row, "mine")).filter(Boolean), "avatar");
+        const avatarsMine = uniqueBy((myAvatars.items || []).filter((row) => row.status !== "deleted").map((row) => normalizeAvatar(row, "mine")).filter(Boolean), "avatar");
         const avatarsPublic = uniqueBy((publicAvatars.public || []).map((row) => normalizeAvatar(row, "public")).filter(Boolean), "avatar");
-        const voicesMine = uniqueBy(normalizeVoiceList(myVoices.items || [], "mine"), "voice");
+        const voicesMine = uniqueBy(normalizeVoiceList((myVoices.items || []).filter((row) => row.status !== "deleted"), "mine"), "voice");
         const voicesPublic = uniqueBy(normalizeVoiceList(publicVoices.public || [], "public"), "voice");
         const selectedAvatar = this.data.selectedAvatar || avatarsMine[0] || avatarsPublic[0] || null;
         const selectedVoice = this.data.selectedVoice || voicesMine[0] || voicesPublic[0] || null;
-        const displayAvatarSource = selectedAvatar && selectedAvatar.section ? selectedAvatar.section : selectSource(avatarsMine, avatarsPublic);
-        const displayVoiceSource = selectSource(voicesMine, voicesPublic);
+        const displayAvatarSource = this.data.avatarTab || (selectedAvatar && selectedAvatar.section) || selectSource(avatarsMine, avatarsPublic);
+        const displayVoiceSource = this.data.voiceTab || (selectedVoice && selectedVoice.section) || selectSource(voicesMine, voicesPublic);
         this.setData({
           avatarsMine,
           avatarsPublic,
           voicesMine,
           voicesPublic,
-          displayAvatars: displayAvatarSource === "mine" ? avatarsMine : avatarsPublic,
+          displayAvatars: sourceRows(displayAvatarSource, avatarsMine, avatarsPublic),
           displayAvatarSource,
-          displayVoices: displayVoiceSource === "mine" ? voicesMine : voicesPublic,
+          displayVoices: sourceRows(displayVoiceSource, voicesMine, voicesPublic),
           displayVoiceSource,
           selectedAvatar,
           selectedVoice,
@@ -330,7 +377,20 @@ Page({
   },
 
   setAssetTab(evt) {
-    this.setData({ activeAssetTab: evt.currentTarget.dataset.tab || "avatar" });
+    const tab = evt.currentTarget.dataset.tab || "avatar";
+    const data = { activeAssetTab: tab };
+    if (tab === "avatar") {
+      const source = selectSource(this.data.avatarsMine, this.data.avatarsPublic);
+      data.displayAvatarSource = source;
+      data.displayAvatars = source === "mine" ? this.data.avatarsMine : this.data.avatarsPublic;
+      data.avatarTab = source;
+    } else {
+      const source = selectSource(this.data.voicesMine, this.data.voicesPublic);
+      data.displayVoiceSource = source;
+      data.displayVoices = source === "mine" ? this.data.voicesMine : this.data.voicesPublic;
+      data.voiceTab = source;
+    }
+    this.setData(data);
   },
 
   setPageMode(evt) {
@@ -379,16 +439,165 @@ Page({
     this.setData({ pageMode: "manage", manageTab: this.data.activeAssetTab || "avatar" });
   },
 
+  cloneAvatar() {
+    if (this.showAuthPanel("克隆数字分身前需要先登录并绑定手机号。")) return;
+    wx.showActionSheet({
+      itemList: ["上传照片克隆", "上传视频克隆"],
+      success: (res) => {
+        if (res.tapIndex === 0) {
+          this.chooseAvatarCloneMedia("image");
+          return;
+        }
+        if (res.tapIndex === 1) {
+          this.chooseAvatarCloneMedia("video");
+        }
+      }
+    });
+  },
+
+  chooseAvatarCloneMedia(kind) {
+    const isVideo = kind === "video";
+    wx.chooseMedia({
+      count: 1,
+      mediaType: [isVideo ? "video" : "image"],
+      sourceType: ["album", "camera"],
+      sizeType: ["compressed"],
+      maxDuration: 60,
+      success: (res) => {
+        const file = (res.tempFiles || [])[0] || {};
+        const filePath = file.tempFilePath || file.path || "";
+        if (!filePath) {
+          wx.showToast({ title: "未选择文件", icon: "none" });
+          return;
+        }
+        this.uploadAvatarClone(filePath, kind);
+      }
+    });
+  },
+
+  uploadAvatarClone(filePath, kind) {
+    const isVideo = kind === "video";
+    const title = `${isVideo ? "视频" : "照片"}克隆分身`;
+    wx.showLoading({ title: "正在上传", mask: true });
+    api
+      .uploadFile({
+        url: isVideo ? "/api/hifly/my/avatar/create-by-video-upload" : "/api/hifly/my/avatar/create-by-image-upload",
+        filePath,
+        name: "file",
+        formData: {
+          title,
+          aigc_flag: 0,
+          model: 2
+        },
+        token: app.globalData.token || wx.getStorageSync("lobster_token") || "",
+        timeout: 180000
+      })
+      .then((data) => {
+        const item = data.item || null;
+        wx.showToast({ title: "克隆任务已创建", icon: "success" });
+        const nextMine = item ? uniqueBy([normalizeAvatar(item, "mine")].filter(Boolean).concat(this.data.avatarsMine || []), "avatar") : this.data.avatarsMine;
+        this.setData({
+          pageMode: "manage",
+          manageTab: "avatar",
+          activeAssetTab: "avatar",
+          avatarTab: "mine",
+          displayAvatarSource: "mine",
+          avatarsMine: nextMine,
+          displayAvatars: nextMine
+        });
+        this.loadAssets();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => wx.hideLoading());
+  },
+
+  cloneVoice() {
+    if (this.showAuthPanel("克隆声音前需要先登录并绑定手机号。")) return;
+    wx.chooseMessageFile({
+      count: 1,
+      type: "file",
+      extension: ["mp3", "wav", "m4a", "aac"],
+      success: (res) => {
+        const file = (res.tempFiles || [])[0] || {};
+        const filePath = file.path || file.tempFilePath || "";
+        if (!filePath) {
+          wx.showToast({ title: "未选择音频", icon: "none" });
+          return;
+        }
+        const name = String(file.name || "").replace(/\.(mp3|wav|m4a|aac)$/i, "").trim();
+        this.uploadVoiceClone(filePath, name || "我的声音");
+      }
+    });
+  },
+
+  uploadVoiceClone(filePath, title) {
+    wx.showLoading({ title: "正在克隆声音", mask: true });
+    api
+      .uploadFile({
+        url: "/api/hifly/my/voice/create-upload",
+        filePath,
+        name: "file",
+        formData: {
+          title: title || "我的声音",
+          voice_type: 8,
+          languages: "zh"
+        },
+        token: app.globalData.token || wx.getStorageSync("lobster_token") || "",
+        timeout: 180000
+      })
+      .then((data) => {
+        const rows = normalizeVoiceList(data.item ? [data.item] : [], "mine");
+        const nextMine = uniqueBy(rows.concat(this.data.voicesMine || []), "voice");
+        wx.showToast({ title: "声音已克隆", icon: "success" });
+        this.setData({
+          pageMode: "manage",
+          manageTab: "voice",
+          activeAssetTab: "voice",
+          voiceTab: "mine",
+          displayVoiceSource: "mine",
+          voicesMine: nextMine,
+          displayVoices: nextMine,
+          selectedVoice: rows[0] || this.data.selectedVoice
+        });
+        this.loadAssets();
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => wx.hideLoading());
+  },
+
   setManageTab(evt) {
-    this.setData({ manageTab: evt.currentTarget.dataset.tab || "avatar" });
+    const tab = evt.currentTarget.dataset.tab || "avatar";
+    const data = { manageTab: tab };
+    if (tab === "avatar") {
+      const source = selectSource(this.data.avatarsMine, this.data.avatarsPublic);
+      data.displayAvatarSource = source;
+      data.displayAvatars = source === "mine" ? this.data.avatarsMine : this.data.avatarsPublic;
+      data.avatarTab = source;
+    } else {
+      const source = selectSource(this.data.voicesMine, this.data.voicesPublic);
+      data.displayVoiceSource = source;
+      data.displayVoices = source === "mine" ? this.data.voicesMine : this.data.voicesPublic;
+      data.voiceTab = source;
+    }
+    this.setData(data);
   },
 
   setAvatarTab(evt) {
-    this.setData({ avatarTab: evt.currentTarget.dataset.tab || "public" });
+    const source = evt.currentTarget.dataset.tab || "public";
+    this.setData({
+      avatarTab: source,
+      displayAvatarSource: source,
+      displayAvatars: source === "mine" ? this.data.avatarsMine : this.data.avatarsPublic
+    });
   },
 
   setVoiceTab(evt) {
-    this.setData({ voiceTab: evt.currentTarget.dataset.tab || "public" });
+    const source = evt.currentTarget.dataset.tab || "public";
+    this.setData({
+      voiceTab: source,
+      displayVoiceSource: source,
+      displayVoices: source === "mine" ? this.data.voicesMine : this.data.voicesPublic
+    });
   },
 
   selectAvatar(evt) {
@@ -438,29 +647,94 @@ Page({
     const index = Number(evt.currentTarget.dataset.index || 0);
     const list = source === "mine" ? this.data.voicesMine : this.data.voicesPublic;
     const item = list[index];
-    if (!item || !item.demo_url) {
+    if (!item) {
       wx.showToast({ title: "暂无试听音频", icon: "none" });
       return;
     }
+    if (this.data.voicePreviewLoadingId === item.id) return;
     if (this.data.audioPlayingId === item.id) {
       this.stopAudio();
       return;
     }
     this.stopAudio();
-    const audio = wx.createInnerAudioContext();
-    this.audio = audio;
-    audio.src = item.demo_url;
-    audio.obeyMuteSwitch = false;
-    audio.onEnded(() => this.setData({ audioPlayingId: "" }));
-    audio.onError(() => {
-      this.setData({ audioPlayingId: "" });
-      wx.showToast({ title: "试听失败", icon: "none" });
-    });
-    audio.play();
-    this.setData({ audioPlayingId: item.id });
+    const playUrl = (url) => {
+      if (!url) {
+        wx.showToast({ title: "暂无试听音频", icon: "none" });
+        return;
+      }
+      const audio = wx.createInnerAudioContext();
+      this.audio = audio;
+      audio.src = url;
+      audio.obeyMuteSwitch = false;
+      audio.onEnded(() => this.setData({ audioPlayingId: "" }));
+      audio.onError(() => {
+        this.setData({ audioPlayingId: "" });
+        wx.showToast({ title: "试听失败", icon: "none" });
+      });
+      audio.play();
+      this.setData({ audioPlayingId: item.id });
+    };
+    const text = (this.data.text || "").trim();
+    const shouldRenderPreview = Boolean(text && item.section === "mine" && item.voice);
+    if (!shouldRenderPreview) {
+      playUrl(item.demo_url);
+      return;
+    }
+    const previewParams = {
+      rate: voiceParamText(this.data.speechRate || item.rate, 1, 0.5, 2),
+      volume: voiceParamText(item.volume, 1, 0.1, 2),
+      pitch: voiceParamText(item.pitch, item.provider === "minimax" ? 0 : 1, item.provider === "minimax" ? -12 : 0.1, item.provider === "minimax" ? 12 : 2),
+      emotion: item.emotion || "",
+      instructions: item.instructions || ""
+    };
+    const cacheKey = buildVoicePreviewCacheKey(item, text, previewParams);
+    const cachedUrl = this.voicePreviewCache[cacheKey] || "";
+    if (cachedUrl) {
+      playUrl(cachedUrl);
+      return;
+    }
+    const requestId = this.voicePreviewRequestId + 1;
+    this.voicePreviewRequestId = requestId;
+    this.setData({ voicePreviewLoadingId: item.id });
+    app
+      .request({
+        method: "POST",
+        url: "/api/hifly/my/voice/preview-tts",
+        data: {
+          voice: item.voice,
+          voice_provider: item.provider || "",
+          text,
+          rate: previewParams.rate,
+          volume: previewParams.volume,
+          pitch: previewParams.pitch,
+          emotion: previewParams.emotion,
+          instructions: previewParams.instructions
+        },
+        timeout: 60000
+      })
+      .then((data) => writeAudioDataUrlToTempFile(data.audio_url || ""))
+      .then((url) => {
+        if (this.voicePreviewRequestId !== requestId) return;
+        if (url) this.voicePreviewCache[cacheKey] = url;
+        playUrl(url || item.demo_url);
+      })
+      .catch((err) => {
+        if (this.voicePreviewRequestId !== requestId) return;
+        if (item.demo_url) {
+          playUrl(item.demo_url);
+          return;
+        }
+        wx.showToast({ title: api.errorMessage(err) || "试听生成失败", icon: "none" });
+      })
+      .finally(() => {
+        if (this.voicePreviewRequestId === requestId) {
+          this.setData({ voicePreviewLoadingId: "" });
+        }
+      });
   },
 
   stopAudio() {
+    this.voicePreviewRequestId += 1;
     if (this.audio) {
       try {
         this.audio.stop();
@@ -470,7 +744,7 @@ Page({
       }
       this.audio = null;
     }
-    this.setData({ audioPlayingId: "" });
+    this.setData({ audioPlayingId: "", voicePreviewLoadingId: "" });
   },
 
   createVideo() {
@@ -485,6 +759,10 @@ Page({
     }
     if (!voice || !voice.voice) {
       wx.showToast({ title: "请选择声音", icon: "none" });
+      return;
+    }
+    if (isConsumerPreviewVoice(voice.voice)) {
+      wx.showToast({ title: "该公共声音仅支持试听", icon: "none" });
       return;
     }
     if (!text) {
@@ -505,11 +783,13 @@ Page({
             avatar_image_url: avatar.image_url || "",
             voice: voice.voice,
             voice_title: voice.title || "",
+            voice_provider: voice.provider || "",
             text,
             st_show: this.data.stShow ? 1 : 0,
             rate: voiceParamText(this.data.speechRate || voice.rate, 1, 0.5, 2),
             volume: voiceParamText(voice.volume, 1, 0.1, 2),
-            pitch: voiceParamText(voice.pitch, 1, 0.1, 2)
+            pitch: voiceParamText(voice.pitch, voice.provider === "minimax" ? 0 : 1, voice.provider === "minimax" ? -12 : 0.1, voice.provider === "minimax" ? 12 : 2),
+            emotion: voice.emotion || ""
           },
           timeout: 60000
         })

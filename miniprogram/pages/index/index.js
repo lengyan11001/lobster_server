@@ -480,6 +480,10 @@ Page({
     wx.navigateTo({ url: "/pages/assistant/assistant" });
   },
 
+  goImageGenerate() {
+    wx.navigateTo({ url: "/pages/image-generate/image-generate" });
+  },
+
   goDigital() {
     wx.navigateTo({ url: "/pages/digital/digital" });
   },

@@ -1,0 +1,152 @@
+<view class="image-page">
+  <view class="bg-grid"></view>
+  <view class="topbar">
+    <button class="back-btn" bindtap="goBack">‹</button>
+    <text class="page-title">AI图片生成</text>
+    <view class="top-spacer"></view>
+  </view>
+
+  <view wx:if="{{authPanelVisible && !phoneBound}}" class="auth-card">
+    <text class="auth-title">登录后开始生成</text>
+    <text class="auth-text">{{authHint}}</text>
+    <view class="auth-actions">
+      <button class="ghost-btn" bindtap="login">微信登录</button>
+      <button class="primary-small" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+    </view>
+  </view>
+
+  <view class="section-title">
+    <text class="title-icon">▣</text>
+    <text>参考图</text>
+  </view>
+  <scroll-view scroll-x class="reference-scroll" show-scrollbar="{{false}}">
+    <view class="reference-row">
+      <view class="upload-card" bindtap="chooseReferenceImage">
+        <text class="upload-plus">+</text>
+        <text>{{referenceImages.length ? '继续上传' : '上传图片'}}</text>
+      </view>
+      <view class="upload-card asset-card" bindtap="openAssetPicker">
+        <text class="upload-plus">▦</text>
+        <text>选择已有</text>
+      </view>
+      <view wx:for="{{referenceImages}}" wx:key="asset_id" wx:for-index="index" class="reference-card">
+        <image src="{{item.preview_url || item.url}}" mode="aspectFill" />
+        <button class="remove-ref" data-index="{{index}}" catchtap="removeReferenceImage">×</button>
+      </view>
+    </view>
+  </scroll-view>
+
+  <view class="section-title">
+    <text class="title-icon">▤</text>
+    <text>图片描述</text>
+  </view>
+  <view class="prompt-box">
+    <view class="prompt-head">
+      <text>描述你想生成的图片</text>
+      <button bindtap="smartPrompt">AI智能写</button>
+    </view>
+    <textarea
+      class="prompt-input"
+      value="{{prompt}}"
+      maxlength="2000"
+      placeholder="请输入详细的图片描述，如：一张高级产品海报，白陶 3D 风格，柔和自然光，干净现代背景..."
+      bindinput="onPromptInput"
+    />
+    <view class="prompt-foot">
+      <text>详细描述能获得更好的生成效果</text>
+      <text>{{promptLength}} / 2000</text>
+    </view>
+  </view>
+
+  <view class="section-head">
+    <view class="section-title compact">
+      <text class="title-icon">✦</text>
+      <text>创意示例</text>
+    </view>
+    <button class="more-btn" bindtap="shuffleExamples">更多示例 ›</button>
+  </view>
+  <scroll-view scroll-x class="example-scroll" show-scrollbar="{{false}}">
+    <view class="example-row">
+      <view wx:for="{{visibleExamples}}" wx:key="title" class="example-card" data-index="{{index}}" bindtap="useExample">
+        <image src="{{item.image}}" mode="aspectFill" />
+        <text>{{item.title}}</text>
+      </view>
+    </view>
+  </scroll-view>
+
+  <view class="section-title">
+    <text class="title-icon">HD</text>
+    <text>分辨率</text>
+  </view>
+  <view class="seg-row resolution-row">
+    <button wx:for="{{resolutions}}" wx:key="value" class="{{resolution === item.value ? 'active' : ''}}" data-value="{{item.value}}" bindtap="setResolution">{{item.label}}</button>
+  </view>
+
+  <view class="section-title">
+    <text class="title-icon">▢</text>
+    <text>宽高比</text>
+  </view>
+  <view class="seg-row ratio-row">
+    <button wx:for="{{ratios}}" wx:key="value" class="{{ratio === item.value ? 'active' : ''}}" data-value="{{item.value}}" bindtap="setRatio">{{item.label}}</button>
+  </view>
+
+  <view class="section-title">
+    <text class="title-icon">123</text>
+    <text>生成数量</text>
+  </view>
+  <view class="seg-row count-row">
+    <button wx:for="{{counts}}" wx:key="value" class="{{count === item.value ? 'active pink' : ''}}" data-value="{{item.value}}" bindtap="setCount">{{item.label}}</button>
+  </view>
+
+  <button class="generate-btn" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submitGenerate">
+    {{submitting ? progressText : '立即生成'}}
+    <text>{{submitting ? '' : costHint}}</text>
+  </button>
+
+  <view wx:if="{{resultImages.length}}" class="result-section">
+    <view class="section-title">
+      <text class="title-icon">✓</text>
+      <text>生成结果</text>
+    </view>
+    <view class="result-grid">
+      <view wx:for="{{resultImages}}" wx:key="url" wx:for-index="index" class="result-card">
+        <image src="{{item.url}}" mode="aspectFill" data-url="{{item.url}}" bindtap="previewResult" />
+        <view class="result-actions">
+          <button data-index="{{index}}" bindtap="saveResult">保存</button>
+          <button data-index="{{index}}" bindtap="copyResult">复制链接</button>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="bottom-space"></view>
+
+  <view wx:if="{{assetPickerVisible}}" class="asset-picker-mask" catchtap="closeAssetPicker">
+    <view class="asset-picker" catchtap="noop">
+      <view class="asset-picker-head">
+        <text>选择素材库图片</text>
+        <button catchtap="closeAssetPicker">×</button>
+      </view>
+      <view wx:if="{{assetPickerLoading}}" class="asset-picker-empty">加载中...</view>
+      <view wx:elif="{{assetImages.length === 0}}" class="asset-picker-empty">素材库暂无图片</view>
+      <scroll-view wx:else scroll-y class="asset-picker-list">
+        <view class="asset-grid">
+          <view
+            wx:for="{{assetImages}}"
+            wx:key="asset_id"
+            class="asset-option {{item.selected ? 'selected' : ''}}"
+            data-asset-id="{{item.asset_id}}"
+            bindtap="toggleAssetImage"
+          >
+            <image src="{{item.preview_url || item.url}}" mode="aspectFill" />
+            <view class="asset-check">✓</view>
+          </view>
+        </view>
+      </scroll-view>
+      <view class="asset-picker-actions">
+        <button class="ghost-action" bindtap="chooseReferenceImage">继续上传</button>
+        <button class="primary-action" bindtap="confirmAssetPicker">添加选中</button>
+      </view>
+    </view>
+  </view>
+</view>

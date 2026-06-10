@@ -41,7 +41,7 @@
       <block wx:if="{{activeAssetTab === 'avatar'}}">
         <scroll-view scroll-x class="select-strip-scroll" show-scrollbar="{{false}}">
           <view class="select-strip">
-            <view class="create-mini-card">
+            <view class="create-mini-card" bindtap="cloneAvatar">
               <view class="plus-circle">+</view>
               <text>克隆分身</text>
             </view>
@@ -57,12 +57,12 @@
       <block wx:else>
         <scroll-view scroll-x class="select-strip-scroll" show-scrollbar="{{false}}">
           <view class="select-strip">
-            <view class="create-mini-card voice-create">
+            <view class="create-mini-card voice-create" bindtap="cloneVoice">
               <view class="plus-circle">麦</view>
-              <text>模拟声音</text>
+              <text>克隆声音</text>
             </view>
             <view wx:for="{{displayVoices}}" wx:key="id" class="mini-voice-card {{selectedVoice && selectedVoice.voice === item.voice ? 'selected' : ''}}" data-source="{{displayVoiceSource}}" data-index="{{index}}" bindtap="selectVoice">
-              <button class="play-round" catchtap="playVoice" data-source="{{displayVoiceSource}}" data-index="{{index}}">{{audioPlayingId === item.id ? 'Ⅱ' : '▶'}}</button>
+              <button class="play-round" loading="{{voicePreviewLoadingId === item.id}}" catchtap="playVoice" data-source="{{displayVoiceSource}}" data-index="{{index}}">{{voicePreviewLoadingId === item.id ? '' : (audioPlayingId === item.id ? 'Ⅱ' : '▶')}}</button>
               <text class="mini-voice-title">{{item.title}}</text>
               <text class="mini-voice-time">30秒</text>
             </view>
@@ -90,7 +90,11 @@
       <block wx:if="{{manageTab === 'avatar'}}">
         <view class="manage-head">
           <text>我的形象</text>
-          <text>{{avatarsMine.length || avatarsPublic.length}}个</text>
+          <text>{{displayAvatars.length}}个</text>
+        </view>
+        <view class="asset-subtabs">
+          <button class="{{avatarTab === 'mine' ? 'active' : ''}}" data-tab="mine" bindtap="setAvatarTab">我的</button>
+          <button class="{{avatarTab === 'public' ? 'active' : ''}}" data-tab="public" bindtap="setAvatarTab">公共</button>
         </view>
         <view wx:if="{{loadingAssets}}" class="empty">正在加载数字人...</view>
         <view wx:else class="avatar-manage-grid">
@@ -105,12 +109,20 @@
       <block wx:else>
         <view class="manage-head">
           <text>我的声音</text>
-          <text>{{voicesMine.length || voicesPublic.length}}个</text>
+          <text>{{displayVoices.length}}个</text>
+        </view>
+        <view class="asset-subtabs">
+          <button class="{{voiceTab === 'mine' ? 'active' : ''}}" data-tab="mine" bindtap="setVoiceTab">我的</button>
+          <button class="{{voiceTab === 'public' ? 'active' : ''}}" data-tab="public" bindtap="setVoiceTab">公共</button>
         </view>
         <view wx:if="{{loadingAssets}}" class="empty">正在加载声音...</view>
         <view wx:else class="voice-manage-grid">
+          <view wx:if="{{voiceTab === 'mine'}}" class="manage-create-card manage-voice-create" bindtap="cloneVoice">
+            <view class="manage-create-plus">+</view>
+            <text>克隆声音</text>
+          </view>
           <view wx:for="{{displayVoices}}" wx:key="id" class="manage-voice-card" data-source="{{displayVoiceSource}}" data-index="{{index}}" bindtap="selectVoice">
-            <button class="manage-play" catchtap="playVoice" data-source="{{displayVoiceSource}}" data-index="{{index}}">{{audioPlayingId === item.id ? 'Ⅱ' : '▶'}}</button>
+            <button class="manage-play" loading="{{voicePreviewLoadingId === item.id}}" catchtap="playVoice" data-source="{{displayVoiceSource}}" data-index="{{index}}">{{voicePreviewLoadingId === item.id ? '' : (audioPlayingId === item.id ? 'Ⅱ' : '▶')}}</button>
             <text>{{item.title}}</text>
             <text>30秒</text>
           </view>
@@ -167,7 +179,7 @@
         </view>
         <scroll-view scroll-x class="pick-scroll" show-scrollbar="{{false}}">
           <view class="pick-strip">
-            <view class="custom-card">
+            <view class="custom-card" bindtap="cloneAvatar">
               <view class="custom-plus">+</view>
               <text>自定义</text>
             </view>
@@ -193,12 +205,12 @@
         <slider class="speed-slider" min="50" max="200" step="5" value="{{speechRate * 100}}" block-size="26" activeColor="#10f5dd" backgroundColor="rgba(255,255,255,0.16)" block-color="#ffffff" bindchanging="onSpeechRateChange" bindchange="onSpeechRateChange" />
         <scroll-view scroll-x class="pick-scroll" show-scrollbar="{{false}}">
           <view class="pick-strip">
-            <view class="custom-card voice-custom">
+            <view class="custom-card voice-custom" bindtap="cloneVoice">
               <view class="custom-plus">+</view>
-              <text>自定义</text>
+              <text>克隆声音</text>
             </view>
             <view wx:for="{{displayVoices}}" wx:key="id" class="pick-voice-card {{selectedVoice && selectedVoice.voice === item.voice ? 'selected' : ''}}" data-source="{{displayVoiceSource}}" data-index="{{index}}" bindtap="selectVoice">
-              <button class="pick-play" catchtap="playVoice" data-source="{{displayVoiceSource}}" data-index="{{index}}">{{audioPlayingId === item.id ? 'Ⅱ' : '▶'}}</button>
+              <button class="pick-play" loading="{{voicePreviewLoadingId === item.id}}" catchtap="playVoice" data-source="{{displayVoiceSource}}" data-index="{{index}}">{{voicePreviewLoadingId === item.id ? '' : (audioPlayingId === item.id ? 'Ⅱ' : '▶')}}</button>
               <view wx:if="{{selectedVoice && selectedVoice.voice === item.voice}}" class="selected-check">✓</view>
               <text>{{item.title}}</text>
             </view>
