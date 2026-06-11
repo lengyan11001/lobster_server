@@ -3,6 +3,8 @@ const api = require("../../utils/api");
 const media = require("../../utils/media");
 const share = require("../../utils/share");
 
+const SUPER_VIDEO_PENDING_KEY = "lobster_super_video_pending_tasks";
+
 function videoUrl(item) {
   return item.video_url || item.asset_video_url || item.source_video_url || "";
 }
@@ -83,6 +85,10 @@ function statusLabel(status) {
   return "生成中";
 }
 
+function cleanText(value) {
+  return String(value || "").trim();
+}
+
 function formatTime(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -144,6 +150,84 @@ function normalizeWanRoleTask(item) {
     is_failed: status === "failed",
     filename,
     billing: item.meta && item.meta.billing ? item.meta.billing : null
+  });
+}
+
+function extractVideoUrl(payload) {
+  const urls = [];
+  const add = (value) => {
+    const url = cleanText(value);
+    if (!url) return;
+    if (/^https?:\/\//i.test(url) && /\.(mp4|mov|webm)(\?|#|$)/i.test(url) && urls.indexOf(url) < 0) urls.push(url);
+  };
+  const visit = (value, depth) => {
+    if (!value || depth > 7 || urls.length) return;
+    if (typeof value === "string") {
+      if (value[0] === "{" || value[0] === "[") {
+        try {
+          visit(JSON.parse(value), depth + 1);
+          return;
+        } catch (err) {}
+      }
+      add(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, depth + 1));
+      return;
+    }
+    if (typeof value !== "object") return;
+    ["url", "video_url", "video", "file_url", "download_url", "output_url", "source_url"].forEach((key) => add(value[key]));
+    Object.keys(value).forEach((key) => visit(value[key], depth + 1));
+  };
+  visit(payload, 0);
+  return urls[0] || "";
+}
+
+function isTerminalFailure(payload) {
+  const text = JSON.stringify(payload || {}).toLowerCase();
+  return text.indexOf("failed") >= 0 || text.indexOf("failure") >= 0 || text.indexOf("error") >= 0 || text.indexOf("cancel") >= 0;
+}
+
+function pendingSuperVideoTasks() {
+  const rows = wx.getStorageSync(SUPER_VIDEO_PENDING_KEY);
+  const now = Date.now();
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((item) => item && item.task_id && item.status !== "success")
+    .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000);
+}
+
+function setPendingSuperVideoTasks(rows) {
+  wx.setStorageSync(SUPER_VIDEO_PENDING_KEY, (rows || []).filter((item) => item && item.task_id).slice(0, 50));
+}
+
+function normalizeOpenMindPendingTask(item) {
+  const status = item.status || "processing";
+  const url = safeUrl(item.playable_url || item.url || "");
+  const title = item.title || "AI视频获客";
+  const filename = filenameFor(Object.assign({}, item, { title }));
+  return Object.assign({}, item, {
+    id: item.id || `openmind-${item.task_id}`,
+    work_type: "openmind_video",
+    media_type: "video",
+    work_type_label: "AI视频获客",
+    title,
+    prompt: item.prompt || "AI视频生成任务",
+    cover_url: safeUrl(item.cover_url),
+    playable_url: url,
+    preview_url: url,
+    url,
+    download_url: url ? mediaProxyUrl(url, "attachment", filename) : "",
+    proxy_download_url: url ? mediaProxyUrl(url, "attachment", filename) : "",
+    proxy_preview_url: url ? mediaProxyUrl(url, "inline", filename) : "",
+    status,
+    status_label: item.status_label || statusLabel(status),
+    created_at_text: formatTime(item.created_at || item.created_at_ms),
+    is_processing: status === "processing" || status === "waiting",
+    is_success: status === "success",
+    is_failed: status === "failed",
+    filename
   });
 }
 
@@ -251,6 +335,7 @@ function isGeneratedVideoAsset(item) {
   const meta = item && item.meta ? JSON.stringify(item.meta).toLowerCase() : "";
   if (isInputVideoAsset(item)) return false;
   if (tags.indexOf("role_transfer") >= 0 || meta.indexOf("wan_role_task_id") >= 0) return true;
+  if (tags.indexOf("video_inspiration") >= 0 || meta.indexOf("video_inspiration") >= 0) return true;
   if (tags.indexOf("auto") >= 0 || tags.indexOf("generated") >= 0 || tags.indexOf("result") >= 0) return true;
   return false;
 }
@@ -259,7 +344,7 @@ Page({
   data: {
     phoneBound: false,
     authPanelVisible: false,
-    authHint: "查看作品前需要微信登录并绑定手机号。",
+    authHint: "查看作品前需要快捷登录并绑定手机号。",
     mediaTab: "video",
     videoKind: "digital",
     loading: false,
@@ -273,6 +358,7 @@ Page({
   },
 
   pollTimer: null,
+  savingOpenMindTasks: {},
 
   onShow() {
     share.showShareMenu();
@@ -328,7 +414,7 @@ Page({
     if (this.data.phoneBound) return false;
     this.setData({
       authPanelVisible: true,
-      authHint: hint || "查看作品前需要微信登录并绑定手机号。"
+      authHint: hint || "查看作品前需要快捷登录并绑定手机号。"
     });
     return true;
   },
@@ -340,7 +426,7 @@ Page({
       .then((data) => {
         this.refreshAuthState();
         if (data.needs_phone_bind || !app.globalData.phone) {
-          wx.showToast({ title: "请授权手机号", icon: "none" });
+          wx.showToast({ title: "请手机号快捷登录", icon: "none" });
           return;
         }
         this.setData({ authPanelVisible: false });
@@ -353,7 +439,7 @@ Page({
   onGetPhoneNumber(evt) {
     const code = evt.detail && evt.detail.code;
     if (!code) {
-      wx.showToast({ title: "微信取号失败", icon: "none" });
+      wx.showToast({ title: "快捷验证失败", icon: "none" });
       return;
     }
     const bind = () => this.bindPhone(code);
@@ -430,7 +516,8 @@ Page({
           .filter((item) => isGeneratedVideoAsset(item))
           .filter((item) => !item.asset_id || !taskAssetIds[String(item.asset_id)])
           .map(normalizeAssetItem);
-        const rows = taskRows.concat(assetRows);
+        const pendingRows = pendingSuperVideoTasks().map(normalizeOpenMindPendingTask);
+        const rows = mergeMediaRows(pendingRows.concat(taskRows).concat(assetRows));
         this.setData({ mediaWorks: rows, authPanelVisible: false });
         this.refreshSuperVideoPolling();
       })
@@ -490,7 +577,7 @@ Page({
   },
 
   refreshSuperVideoPolling() {
-    const hasProcessing = this.data.mediaTab === "video" && this.data.videoKind === "super" && this.data.mediaWorks.some((item) => item.work_type === "wan_role_video" && item.is_processing);
+    const hasProcessing = this.data.mediaTab === "video" && this.data.videoKind === "super" && this.data.mediaWorks.some((item) => item.is_processing);
     if (hasProcessing) {
       this.startPolling();
       return;
@@ -514,7 +601,9 @@ Page({
     if (this.data.mediaTab === "video" && this.data.videoKind === "super") {
       if (this.data.polling) return;
       this.setData({ polling: true });
-      this.loadAssetVideos().finally(() => this.setData({ polling: false }));
+      this.pollOpenMindVideoTasks()
+        .then(() => this.loadAssetVideos())
+        .finally(() => this.setData({ polling: false }));
       return;
     }
     const targets = this.data.works.filter((item) => item.is_processing && item.task_id).slice(0, 5);
@@ -545,12 +634,79 @@ Page({
       .finally(() => this.setData({ polling: false }));
   },
 
+  pollOpenMindVideoTasks() {
+    const tasks = pendingSuperVideoTasks();
+    if (!tasks.length) return Promise.resolve();
+    return Promise.all(
+      tasks.slice(0, 5).map((task) =>
+        app
+          .request({
+            url: `/api/comfly-proxy/openmind/v1/videos/${encodeURIComponent(task.task_id)}`,
+            timeout: 60000
+          })
+          .then((data) => {
+            const url = extractVideoUrl(data);
+            if (url) {
+              return this.saveOpenMindVideoTask(task, url, data).then((saved) => (
+                saved ? null : Object.assign({}, task, {
+                  status: "waiting",
+                  status_label: "保存中",
+                  playable_url: url,
+                  preview_url: url,
+                  url
+                })
+              ));
+            }
+            if (isTerminalFailure(data)) {
+              return Object.assign({}, task, {
+                status: "failed",
+                status_label: "失败",
+                error_message: "生成失败，请重新提交"
+              });
+            }
+            return task;
+          })
+          .catch(() => task)
+      )
+    ).then((updated) => {
+      setPendingSuperVideoTasks(updated.filter(Boolean));
+    });
+  },
+
+  saveOpenMindVideoTask(task, url, payload) {
+    if (!task || !task.task_id || !url) return Promise.resolve();
+    if (this.savingOpenMindTasks[task.task_id]) return this.savingOpenMindTasks[task.task_id];
+    this.savingOpenMindTasks[task.task_id] = app
+      .request({
+        method: "POST",
+        url: "/api/assets/save-url",
+        data: {
+          url,
+          media_type: "video",
+          tags: "auto,video_inspiration,miniprogram",
+          prompt: task.prompt || "",
+          model: task.model || "grok-video-3",
+          name: `${task.title || "AI视频获客"}-${Date.now()}.mp4`
+        },
+        timeout: 180000
+      })
+      .then(() => {
+        wx.setStorageSync("lobster_refresh_works", "1");
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => {
+        delete this.savingOpenMindTasks[task.task_id];
+      });
+    return this.savingOpenMindTasks[task.task_id];
+  },
+
   openWork(evt) {
     const index = Number(evt.currentTarget.dataset.index || 0);
     const item = this.data.works[index];
     if (!item) return;
     if (item.is_processing) {
-      wx.showToast({ title: "生成中，预计5-10分钟", icon: "none" });
+      wx.showToast({ title: "生成中，可稍后刷新", icon: "none" });
       return;
     }
     const url = safeUrl(item.proxy_preview_url) || safeUrl(item.preview_url) || safeUrl(item.playable_url);

@@ -189,7 +189,7 @@ Page({
   data: {
     phoneBound: false,
     authPanelVisible: false,
-    authHint: "图片生成前需要微信登录并绑定手机号。",
+    authHint: "图片生成前需要快捷登录并绑定手机号。",
     prompt: "",
     promptLength: 0,
     referenceImages: [],
@@ -246,7 +246,7 @@ Page({
     if (this.data.phoneBound) return false;
     this.setData({
       authPanelVisible: true,
-      authHint: hint || "图片生成前需要微信登录并绑定手机号。"
+      authHint: hint || "图片生成前需要快捷登录并绑定手机号。"
     });
     return true;
   },
@@ -266,7 +266,7 @@ Page({
   onGetPhoneNumber(evt) {
     const code = evt.detail && evt.detail.code;
     if (!code) {
-      wx.showToast({ title: "手机号授权失败", icon: "none" });
+      wx.showToast({ title: "手机号快捷登录失败", icon: "none" });
       return;
     }
     const bind = () => app.bindPhone(code).then(() => {

@@ -59,7 +59,7 @@ Page({
     accountText: "点击功能时授权",
     authPanelVisible: false,
     smsBindVisible: false,
-    authHint: "使用前需要微信登录并验证手机号，新手机号会自动创建账号。",
+    authHint: "使用前需要快捷登录并验证手机号，新手机号会自动创建账号。",
     smsPhone: "",
     smsCode: "",
     smsSending: false,
@@ -148,7 +148,7 @@ Page({
     this.setData({
       authPanelVisible: true,
       smsBindVisible: this.data.smsBindVisible,
-      authHint: hint || "使用前需要微信登录并验证手机号，新手机号会自动创建账号。"
+      authHint: hint || "使用前需要快捷登录并验证手机号，新手机号会自动创建账号。"
     });
     return true;
   },
@@ -164,7 +164,7 @@ Page({
           this.loadOnlineStatus(false);
           wx.showToast({ title: "登录成功", icon: "success" });
         } else {
-          wx.showToast({ title: "请授权手机号", icon: "none" });
+          wx.showToast({ title: "请手机号快捷登录", icon: "none" });
         }
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
@@ -175,7 +175,7 @@ Page({
     const code = evt.detail && evt.detail.code;
     if (!code) {
       this.setData({ smsBindVisible: true });
-      wx.showToast({ title: "微信取号失败，可用短信绑定", icon: "none" });
+      wx.showToast({ title: "快捷验证失败，可用短信绑定", icon: "none" });
       return;
     }
     const bind = () => this.bindPhone(code);
@@ -276,7 +276,7 @@ Page({
             sms_code: code,
             device_id: app.globalData.deviceId,
             platform: "wechat_miniprogram",
-            display_name: "微信小程序",
+            display_name: "手机端小程序",
             ...app.refAgentPayload()
           }
         })
@@ -478,6 +478,10 @@ Page({
     const prompt = evt.currentTarget.dataset.prompt || "";
     if (prompt) wx.setStorageSync("lobster_message_prefill", prompt);
     wx.navigateTo({ url: "/pages/assistant/assistant" });
+  },
+
+  goVideoInspiration() {
+    wx.navigateTo({ url: "/pages/video-inspiration/video-inspiration" });
   },
 
   goImageGenerate() {

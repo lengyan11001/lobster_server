@@ -10,8 +10,8 @@
     <text class="auth-title">登录后开始生成</text>
     <text class="auth-text">{{authHint}}</text>
     <view class="auth-actions">
-      <button class="ghost-btn" bindtap="login">微信登录</button>
-      <button class="primary-small" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">授权手机号</button>
+      <button class="ghost-btn" bindtap="login">快捷登录</button>
+      <button class="primary-small" open-type="getPhoneNumber" bindgetphonenumber="onGetPhoneNumber">手机号快捷登录</button>
     </view>
   </view>
 

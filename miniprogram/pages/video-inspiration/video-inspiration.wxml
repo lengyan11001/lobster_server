@@ -1,0 +1,170 @@
+<view class="page-shell">
+  <view class="space-bg"></view>
+
+  <view class="topbar">
+    <button class="back-btn" bindtap="goBack">‹</button>
+    <text class="page-title">{{mode === 'create' ? '视频追梦' : '获客灵感'}}</text>
+    <button class="work-btn" bindtap="goWorks">作品</button>
+  </view>
+
+  <block wx:if="{{mode === 'gallery'}}">
+    <scroll-view scroll-x class="category-scroll" show-scrollbar="{{false}}">
+      <view class="category-row">
+        <button wx:for="{{categories}}" wx:key="id" class="category-btn {{activeCategory === item.id ? 'active' : ''}}" data-category="{{item.id}}" bindtap="setCategory">{{item.label}}</button>
+      </view>
+    </scroll-view>
+
+    <view class="search-box">
+      <text class="search-icon">⌕</text>
+      <input value="{{searchText}}" bindinput="onSearchInput" placeholder="搜索灵感..." placeholder-class="search-placeholder" />
+    </view>
+
+    <view class="idea-grid">
+      <view wx:for="{{filteredIdeas}}" wx:key="id" class="idea-card" data-id="{{item.id}}" bindtap="openPreview">
+        <image class="idea-cover" src="{{item.cover}}" mode="aspectFill" />
+        <view class="idea-mask"></view>
+        <view class="idea-copy">
+          <text class="idea-title">{{item.title}}</text>
+          <text class="idea-author">{{item.author}}</text>
+        </view>
+        <text class="idea-plays">{{item.plays}} 播放</text>
+        <button class="remix-pill" data-id="{{item.id}}" catchtap="createFromCard">做同款</button>
+      </view>
+    </view>
+
+    <view wx:if="{{!filteredIdeas.length}}" class="empty-state">
+      <text>没有找到匹配灵感</text>
+      <button data-category="all" bindtap="setCategory">查看全部</button>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="reference-section">
+      <view class="setting-title">参考图片</view>
+      <scroll-view scroll-x class="reference-scroll" show-scrollbar="{{false}}">
+        <view class="reference-row">
+          <view class="upload-card" bindtap="chooseReferenceImage">
+            <text class="upload-plus">+</text>
+            <text>{{referenceImages.length ? '继续上传' : '上传图片'}}</text>
+          </view>
+          <view class="upload-card asset-card" bindtap="openAssetPicker">
+            <text class="upload-plus">▦</text>
+            <text>选择已有</text>
+          </view>
+          <view wx:for="{{referenceImages}}" wx:key="url" wx:for-index="index" class="reference-card">
+            <image src="{{item.preview_url || item.url}}" mode="aspectFill" />
+            <button class="remove-ref" data-index="{{index}}" catchtap="removeReferenceImage">×</button>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+
+    <view class="dream-panel">
+      <textarea class="prompt-input" value="{{prompt}}" maxlength="2000" bindinput="onPromptInput" placeholder="输入或修改视频创意..." placeholder-class="prompt-placeholder" />
+      <view class="prompt-footer">
+        <text>{{prompt.length || 0}}/2000</text>
+        <view>
+          <button bindtap="formatPrompt">格式化</button>
+          <button bindtap="clearPrompt">清空</button>
+        </view>
+      </view>
+    </view>
+
+    <view class="sample-section">
+      <view class="section-head">
+        <text>创意示例</text>
+        <button bindtap="goBack">更多 ></button>
+      </view>
+      <scroll-view scroll-x class="sample-scroll" show-scrollbar="{{false}}">
+        <view class="sample-row">
+          <view wx:for="{{ideas}}" wx:key="id" class="sample-card" data-id="{{item.id}}" bindtap="createFromCard">
+            <image src="{{item.cover}}" mode="aspectFill" />
+            <text>{{item.title}}</text>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+
+    <view class="setting-section">
+      <view class="setting-title">视频比例</view>
+      <view class="seg-row two">
+        <button class="{{ratio === '9:16' ? 'active' : ''}}" data-ratio="9:16" bindtap="setRatio">竖屏 9:16</button>
+        <button class="{{ratio === '16:9' ? 'active' : ''}}" data-ratio="16:9" bindtap="setRatio">横屏 16:9</button>
+      </view>
+    </view>
+
+    <view class="setting-section">
+      <view class="setting-title">生成数量</view>
+      <view class="seg-row four">
+        <button wx:for="{{countOptions}}" wx:key="*this" class="{{count === item ? 'active' : ''}}" data-count="{{item}}" bindtap="setCount">{{item}}</button>
+      </view>
+    </view>
+
+    <view class="setting-section">
+      <view class="setting-title">视频时长</view>
+      <view class="seg-row two">
+        <button class="{{duration === 6 ? 'active' : ''}}" data-duration="6" bindtap="setDuration">6秒</button>
+        <button class="{{duration === 10 ? 'active' : ''}}" data-duration="10" bindtap="setDuration">10秒</button>
+      </view>
+    </view>
+
+    <view wx:if="{{resultVideoUrl}}" class="result-card">
+      <video class="result-video" src="{{resultVideoUrl}}" controls object-fit="contain"></video>
+      <button bindtap="goWorks">去作品页查看</button>
+    </view>
+
+    <view wx:if="{{progressText}}" class="progress-line">{{progressText}}</view>
+
+    <view class="bottom-actions">
+      <button class="generate-btn" loading="{{submitting}}" disabled="{{submitting}}" bindtap="submitVideo">
+        <text>立即生成</text>
+        <text>每次消耗{{costText}}</text>
+      </button>
+      <button class="vip-btn" bindtap="submitVideo" loading="{{submitting}}" disabled="{{submitting}}">
+        <text>VIP免费</text>
+        <text>今日剩余5次</text>
+      </button>
+    </view>
+  </block>
+
+  <view wx:if="{{previewVisible}}" class="preview-layer" catchtap="closePreview">
+    <view class="preview-panel" catchtap="noop">
+      <button class="preview-close" bindtap="closePreview">×</button>
+      <image class="preview-cover" src="{{previewIdea.cover}}" mode="aspectFill" />
+      <view class="preview-content">
+        <text class="preview-title">{{previewIdea.title}}</text>
+        <view class="preview-desc">{{previewIdea.desc}}</view>
+        <button class="preview-create" bindtap="createFromPreview">一键复创</button>
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{assetPickerVisible}}" class="asset-picker-layer" catchtap="closeAssetPicker">
+    <view class="asset-picker-panel" catchtap="noop">
+      <view class="asset-picker-head">
+        <text>选择素材库图片</text>
+        <button catchtap="closeAssetPicker">×</button>
+      </view>
+      <view wx:if="{{assetPickerLoading}}" class="asset-empty">加载中...</view>
+      <view wx:elif="{{assetImages.length === 0}}" class="asset-empty">素材库暂无图片</view>
+      <scroll-view wx:else scroll-y class="asset-list">
+        <view class="asset-grid">
+          <view
+            wx:for="{{assetImages}}"
+            wx:key="asset_id"
+            class="asset-option {{item.selected ? 'selected' : ''}}"
+            data-asset-id="{{item.asset_id}}"
+            bindtap="toggleAssetImage"
+          >
+            <image src="{{item.preview_url || item.url}}" mode="aspectFill" />
+            <view class="asset-check">✓</view>
+          </view>
+        </view>
+      </scroll-view>
+      <view class="asset-actions">
+        <button class="asset-secondary" bindtap="chooseReferenceImage">继续上传</button>
+        <button class="asset-primary" bindtap="confirmAssetPicker">添加选中</button>
+      </view>
+    </view>
+  </view>
+</view>
