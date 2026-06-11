@@ -10,6 +10,7 @@ const CREDITS_PER_VIDEO = 160;
 const TASK_KEY = "lobster_video_inspiration_pending_task";
 const WORKS_TASKS_KEY = "lobster_super_video_pending_tasks";
 const MAX_REFERENCES = 4;
+const PIPELINE_CLAIM_MS = 30000;
 
 const COVER_BASE = "https://images.unsplash.com";
 
@@ -314,6 +315,7 @@ Page({
   },
 
   pollTimer: null,
+  pipelineClaimTimer: null,
   pollCount: 0,
   activeTaskId: "",
 
@@ -329,6 +331,7 @@ Page({
 
   onUnload() {
     this.stopPolling();
+    this.stopPipelineClaim();
   },
 
   onHide() {
@@ -598,6 +601,33 @@ Page({
     };
   },
 
+  buildPipelineTask(taskId, status) {
+    const idea = this.data.selectedIdea || {};
+    const referenceImages = this.data.referenceImages || [];
+    const now = Date.now();
+    const statusLabel = status === "preparing_image" ? "生成参考图中" : "提交视频中";
+    return {
+      id: `openmind-${taskId}`,
+      task_id: taskId,
+      provider: "openmind_pipeline",
+      model: MODEL_ID,
+      title: idea.title || "AI视频获客",
+      prompt: this.data.prompt,
+      ratio: this.data.ratio,
+      count: this.data.count,
+      duration: this.data.duration,
+      cover_url: referenceImages[0] && (referenceImages[0].preview_url || referenceImages[0].source_url || referenceImages[0].url || ""),
+      referenceImages,
+      status,
+      status_label: statusLabel,
+      local_only: true,
+      claim_owner: "video_inspiration",
+      claim_until_ms: now + PIPELINE_CLAIM_MS,
+      created_at: new Date(now).toISOString(),
+      created_at_ms: now
+    };
+  },
+
   upsertWorksTask(task) {
     if (!task || !task.task_id) return;
     const rows = Array.isArray(wx.getStorageSync(WORKS_TASKS_KEY)) ? wx.getStorageSync(WORKS_TASKS_KEY) : [];
@@ -607,10 +637,44 @@ Page({
     wx.setStorageSync("lobster_refresh_works", "1");
   },
 
+  patchWorksTask(taskId, patch) {
+    if (!taskId) return;
+    const rows = Array.isArray(wx.getStorageSync(WORKS_TASKS_KEY)) ? wx.getStorageSync(WORKS_TASKS_KEY) : [];
+    const next = rows.map((item) => (item && item.task_id === taskId ? Object.assign({}, item, patch || {}) : item));
+    wx.setStorageSync(WORKS_TASKS_KEY, next.filter((item) => item && item.task_id).slice(0, 50));
+    wx.setStorageSync("lobster_refresh_works", "1");
+  },
+
+  startPipelineClaim(taskId) {
+    this.stopPipelineClaim();
+    const refresh = () => this.patchWorksTask(taskId, {
+      claim_owner: "video_inspiration",
+      claim_until_ms: Date.now() + PIPELINE_CLAIM_MS
+    });
+    refresh();
+    this.pipelineClaimTimer = setInterval(refresh, 8000);
+  },
+
+  stopPipelineClaim() {
+    if (this.pipelineClaimTimer) {
+      clearInterval(this.pipelineClaimTimer);
+      this.pipelineClaimTimer = null;
+    }
+  },
+
+  replaceWorksTask(oldTaskId, task) {
+    const rows = Array.isArray(wx.getStorageSync(WORKS_TASKS_KEY)) ? wx.getStorageSync(WORKS_TASKS_KEY) : [];
+    const kept = rows.filter((item) => item && item.task_id !== oldTaskId && item.task_id !== (task && task.task_id));
+    const next = task && task.task_id ? [task].concat(kept).slice(0, 50) : kept.slice(0, 50);
+    wx.setStorageSync(WORKS_TASKS_KEY, next);
+    wx.setStorageSync("lobster_open_super_video", true);
+    wx.setStorageSync("lobster_refresh_works", "1");
+  },
+
   showSubmittedModal() {
     wx.showModal({
       title: "提交完成✅",
-      content: "视频任务已提交，可以在我的作品的超级视频里等待结果。",
+      content: "任务已提交，可以在我的作品的超级视频里等待结果。",
       confirmText: "查看视频",
       cancelText: "继续创作",
       success: (res) => {
@@ -635,18 +699,43 @@ Page({
       .slice(0, MAX_REFERENCES);
     const deviceId = app.globalData.deviceId || wx.getStorageSync("lobster_device_id") || "";
     const phone = app.globalData.phone || wx.getStorageSync("lobster_phone") || "";
+    const localTaskId = `local-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const pipelineTask = this.buildPipelineTask(localTaskId, referenceUrls.length ? "submitting_video" : "preparing_image");
     this.stopPolling();
     this.setData({ submitting: true, resultVideoUrl: "", progressText: referenceUrls.length ? "正在提交视频任务" : "正在生成视频参考图" });
-    this.ensureVideoReferenceUrls(prompt, referenceUrls)
-      .then((readyReferenceUrls) => this.submitVideoTask(prompt, readyReferenceUrls, deviceId, phone))
+    this.upsertWorksTask(pipelineTask);
+    this.savePendingTask(localTaskId, pipelineTask);
+    this.startPipelineClaim(localTaskId);
+    this.showSubmittedModal();
+    this.ensureVideoReferenceUrls(prompt, referenceUrls, localTaskId)
+      .then((readyReferenceUrls) => {
+        const refs = (this.data.referenceImages || []).filter(Boolean);
+        this.patchWorksTask(localTaskId, {
+          status: "submitting_video",
+          status_label: "提交视频中",
+          referenceImages: refs,
+          cover_url: refs[0] && (refs[0].preview_url || refs[0].source_url || refs[0].url || "")
+        });
+        return this.submitVideoTask(prompt, readyReferenceUrls, deviceId, phone, {
+          placeholderTaskId: localTaskId,
+          alreadyNotified: true
+        });
+      })
+      .then(() => this.stopPipelineClaim())
       .catch((err) => {
+        this.stopPipelineClaim();
         this.clearPendingTask();
+        this.patchWorksTask(localTaskId, {
+          status: "failed",
+          status_label: "失败",
+          error_message: api.errorMessage(err) || "提交失败，请重新提交"
+        });
         this.setData({ submitting: false, progressText: "" });
         wx.showToast({ title: api.errorMessage(err) || "提交失败", icon: "none" });
       });
   },
 
-  ensureVideoReferenceUrls(prompt, referenceUrls) {
+  ensureVideoReferenceUrls(prompt, referenceUrls, placeholderTaskId) {
     if (referenceUrls.length) return Promise.resolve(referenceUrls);
     const imageSize = this.data.ratio === "16:9" ? "16:9" : "9:16";
     const imagePrompt = `${prompt}\n生成一张适合作为图生视频首帧的高清画面，主体清晰，画面干净，构图适合${imageSize}视频，不要文字水印。`;
@@ -687,11 +776,20 @@ Page({
         const recent = Array.isArray(wx.getStorageSync("lobster_recent_image_assets")) ? wx.getStorageSync("lobster_recent_image_assets") : [];
         wx.setStorageSync("lobster_recent_image_assets", uniqueRows([generatedRef].concat(recent)).slice(0, 20));
         wx.setStorageSync("lobster_refresh_works", "1");
+        if (placeholderTaskId) {
+          this.patchWorksTask(placeholderTaskId, {
+            status: "submitting_video",
+            status_label: "提交视频中",
+            cover_url: url,
+            referenceImages: uniqueRows([generatedRef].concat(this.data.referenceImages || [])).slice(0, MAX_REFERENCES)
+          });
+        }
         return [url];
       });
   },
 
-  submitVideoTask(prompt, referenceUrls, deviceId, phone) {
+  submitVideoTask(prompt, referenceUrls, deviceId, phone, options) {
+    const submitOptions = options || {};
     const refs = (referenceUrls || []).filter(Boolean).slice(0, MAX_REFERENCES);
     if (!refs.length) return Promise.reject(new Error("缺少视频参考图"));
     return app
@@ -723,17 +821,30 @@ Page({
       .then((data) => {
         const directUrl = extractVideoUrl(data);
         if (directUrl) {
-          return this.handleVideoReady(directUrl, data);
+          if (submitOptions.placeholderTaskId) {
+            this.patchWorksTask(submitOptions.placeholderTaskId, {
+              status: "success",
+              status_label: "已完成",
+              playable_url: directUrl,
+              preview_url: directUrl,
+              url: directUrl
+            });
+          }
+          return this.handleVideoReady(directUrl, data, submitOptions);
         }
         const taskId = extractTaskId(data);
         if (!taskId) throw new Error("任务提交成功但没有返回任务ID");
         const task = this.buildTaskRecord(taskId, data);
-        this.upsertWorksTask(task);
+        if (submitOptions.placeholderTaskId) {
+          this.replaceWorksTask(submitOptions.placeholderTaskId, task);
+        } else {
+          this.upsertWorksTask(task);
+        }
         this.clearPendingTask();
         this.activeTaskId = "";
         this.pollCount = 0;
         this.setData({ submitting: false, progressText: "任务已提交，可到超级视频查看进度" });
-        this.showSubmittedModal();
+        if (!submitOptions.alreadyNotified) this.showSubmittedModal();
         return null;
       });
   },
@@ -804,10 +915,12 @@ Page({
       });
   },
 
-  handleVideoReady(url, payload) {
+  handleVideoReady(url, payload, options) {
+    const readyOptions = options || {};
     this.clearPendingTask();
     this.setData({ resultVideoUrl: url, submitting: false, progressText: "视频已生成" });
     this.saveVideoAsset(url, payload);
+    if (readyOptions.alreadyNotified) return;
     wx.showModal({
       title: "视频已生成",
       content: "结果已展示在当前页面，并会保存到作品页。",

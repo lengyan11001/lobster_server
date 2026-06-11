@@ -4,6 +4,9 @@ const media = require("../../utils/media");
 const share = require("../../utils/share");
 
 const SUPER_VIDEO_PENDING_KEY = "lobster_super_video_pending_tasks";
+const SUPER_VIDEO_MODEL_ID = "grok-video-3";
+const SUPER_VIDEO_IMAGE_MODEL_ID = "gpt-image-2";
+const SUPER_VIDEO_MAX_REFERENCES = 4;
 
 function videoUrl(item) {
   return item.video_url || item.asset_video_url || item.source_video_url || "";
@@ -87,6 +90,18 @@ function statusLabel(status) {
 
 function cleanText(value) {
   return String(value || "").trim();
+}
+
+function parseJsonMaybe(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  const text = cleanText(value);
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    return null;
+  }
 }
 
 function formatTime(value) {
@@ -184,6 +199,59 @@ function extractVideoUrl(payload) {
   return urls[0] || "";
 }
 
+function normalizeGeneratedImage(item) {
+  const url = safeUrl((item && (item.url || item.source_url || item.file_url || item.image_url || item.path || item.b64_json)) || "");
+  if (!url) return null;
+  return {
+    asset_id: cleanText((item && item.asset_id) || ""),
+    url,
+    source_url: url,
+    preview_url: url,
+    media_type: cleanText((item && item.media_type) || "image") || "image"
+  };
+}
+
+function extractGeneratedImages(data) {
+  const out = [];
+  const visit = (obj, depth) => {
+    if (!obj || depth > 5) return;
+    if (typeof obj === "string") {
+      const parsed = parseJsonMaybe(obj);
+      if (parsed) visit(parsed, depth + 1);
+      return;
+    }
+    if (Array.isArray(obj)) {
+      obj.forEach((item) => visit(item, depth + 1));
+      return;
+    }
+    if (typeof obj !== "object") return;
+    const saved = obj.saved_assets || (obj.result && obj.result.saved_assets);
+    if (Array.isArray(saved)) saved.forEach((item) => {
+      const normalized = normalizeGeneratedImage(item);
+      if (normalized) out.push(normalized);
+    });
+    const images = obj.output && Array.isArray(obj.output.images) ? obj.output.images : [];
+    images.forEach((item) => {
+      const normalized = normalizeGeneratedImage(item);
+      if (normalized) out.push(normalized);
+    });
+    const mediaUrls = Array.isArray(obj.media_urls) ? obj.media_urls : [];
+    mediaUrls.forEach((url) => {
+      const normalized = normalizeGeneratedImage({ url, media_type: "image" });
+      if (normalized) out.push(normalized);
+    });
+    const dataImages = Array.isArray(obj.data) ? obj.data : [];
+    dataImages.forEach((item) => {
+      const normalized = normalizeGeneratedImage(item);
+      if (normalized) out.push(normalized);
+    });
+    const single = normalizeGeneratedImage(obj);
+    if (single && (obj.url || obj.image_url || obj.file_url || obj.b64_json)) out.push(single);
+  };
+  visit(data, 0);
+  return mergeMediaRows(out).filter((item) => item.media_type === "image" || !item.media_type);
+}
+
 function isTerminalFailure(payload) {
   const text = JSON.stringify(payload || {}).toLowerCase();
   return text.indexOf("failed") >= 0 || text.indexOf("failure") >= 0 || text.indexOf("error") >= 0 || text.indexOf("cancel") >= 0;
@@ -202,11 +270,21 @@ function setPendingSuperVideoTasks(rows) {
   wx.setStorageSync(SUPER_VIDEO_PENDING_KEY, (rows || []).filter((item) => item && item.task_id).slice(0, 50));
 }
 
+function replacePendingSuperVideoTask(oldTaskId, task) {
+  const rows = wx.getStorageSync(SUPER_VIDEO_PENDING_KEY);
+  const kept = Array.isArray(rows)
+    ? rows.filter((item) => item && item.task_id !== oldTaskId && item.task_id !== (task && task.task_id))
+    : [];
+  const next = task && task.task_id ? [task].concat(kept).slice(0, 50) : kept.slice(0, 50);
+  setPendingSuperVideoTasks(next);
+}
+
 function normalizeOpenMindPendingTask(item) {
   const status = item.status || "processing";
   const url = safeUrl(item.playable_url || item.url || "");
   const title = item.title || "AI视频获客";
   const filename = filenameFor(Object.assign({}, item, { title }));
+  const processingLabel = status === "preparing_image" ? "生成参考图中" : status === "submitting_video" ? "提交视频中" : "";
   return Object.assign({}, item, {
     id: item.id || `openmind-${item.task_id}`,
     work_type: "openmind_video",
@@ -222,9 +300,9 @@ function normalizeOpenMindPendingTask(item) {
     proxy_download_url: url ? mediaProxyUrl(url, "attachment", filename) : "",
     proxy_preview_url: url ? mediaProxyUrl(url, "inline", filename) : "",
     status,
-    status_label: item.status_label || statusLabel(status),
+    status_label: item.status_label || processingLabel || statusLabel(status),
     created_at_text: formatTime(item.created_at || item.created_at_ms),
-    is_processing: status === "processing" || status === "waiting",
+    is_processing: status === "processing" || status === "waiting" || status === "preparing_image" || status === "submitting_video",
     is_success: status === "success",
     is_failed: status === "failed",
     filename
@@ -359,6 +437,7 @@ Page({
 
   pollTimer: null,
   savingOpenMindTasks: {},
+  claimingOpenMindTasks: {},
 
   onShow() {
     share.showShareMenu();
@@ -637,8 +716,11 @@ Page({
   pollOpenMindVideoTasks() {
     const tasks = pendingSuperVideoTasks();
     if (!tasks.length) return Promise.resolve();
+    const localTasks = tasks.filter((task) => task.local_only);
+    const remoteTasks = tasks.filter((task) => !task.local_only);
     return Promise.all(
-      tasks.slice(0, 5).map((task) =>
+      localTasks.slice(0, 2).map((task) => this.processLocalSuperVideoTask(task))
+        .concat(remoteTasks.slice(0, 5).map((task) =>
         app
           .request({
             url: `/api/comfly-proxy/openmind/v1/videos/${encodeURIComponent(task.task_id)}`,
@@ -667,10 +749,155 @@ Page({
             return task;
           })
           .catch(() => task)
-      )
+      ))
     ).then((updated) => {
-      setPendingSuperVideoTasks(updated.filter(Boolean));
+      const byId = {};
+      updated.filter(Boolean).forEach((item) => {
+        byId[String(item.task_id)] = item;
+      });
+      const next = pendingSuperVideoTasks().map((item) => byId[String(item.task_id)] || item);
+      setPendingSuperVideoTasks(next.filter(Boolean));
     });
+  },
+
+  processLocalSuperVideoTask(task) {
+    if (!task || !task.task_id) return Promise.resolve(task);
+    if (Number(task.claim_until_ms || 0) > Date.now()) return Promise.resolve(task);
+    if (this.claimingOpenMindTasks[task.task_id]) return this.claimingOpenMindTasks[task.task_id];
+    replacePendingSuperVideoTask(task.task_id, Object.assign({}, task, {
+      claim_owner: "downloads",
+      claim_until_ms: Date.now() + 30000
+    }));
+    this.claimingOpenMindTasks[task.task_id] = this.ensureSuperVideoReferenceUrls(task)
+      .then((refs) => this.submitSuperVideoTaskFromWorks(task, refs))
+      .catch((err) => Object.assign({}, task, {
+        status: "failed",
+        status_label: "失败",
+        error_message: api.errorMessage(err) || "提交失败，请重新提交"
+      }))
+      .finally(() => {
+        delete this.claimingOpenMindTasks[task.task_id];
+      });
+    return this.claimingOpenMindTasks[task.task_id];
+  },
+
+  ensureSuperVideoReferenceUrls(task) {
+    const refs = (task.referenceImages || [])
+      .map((item) => safeUrl(item.source_url || item.url))
+      .filter(Boolean)
+      .slice(0, SUPER_VIDEO_MAX_REFERENCES);
+    if (refs.length) return Promise.resolve(refs);
+    const ratio = task.ratio === "16:9" ? "16:9" : "9:16";
+    const imagePrompt = `${task.prompt || ""}\n生成一张适合作为图生视频首帧的高清画面，主体清晰，画面干净，构图适合${ratio}视频，不要文字水印。`;
+    return app
+      .request({
+        method: "POST",
+        url: "/api/comfly-proxy/v1/images/generations",
+        data: {
+          model: SUPER_VIDEO_IMAGE_MODEL_ID,
+          prompt: imagePrompt,
+          image_size: ratio,
+          aspect_ratio: ratio,
+          ratio,
+          num_images: 1,
+          n: 1,
+          response_format: "url",
+          source: "miniprogram_video_inspiration_reference"
+        },
+        timeout: 240000
+      })
+      .then((data) => {
+        const images = extractGeneratedImages(data);
+        const first = images[0];
+        const url = first && safeUrl(first.source_url || first.url);
+        if (!url) throw new Error("参考图生成失败，请重新提交");
+        const generatedRef = {
+          asset_id: first.asset_id || "",
+          url,
+          source_url: url,
+          preview_url: url,
+          media_type: "image",
+          generated: true
+        };
+        replacePendingSuperVideoTask(task.task_id, Object.assign({}, task, {
+          status: "submitting_video",
+          status_label: "提交视频中",
+          cover_url: url,
+          referenceImages: [generatedRef]
+        }));
+        wx.setStorageSync("lobster_refresh_works", "1");
+        return [url];
+      });
+  },
+
+  submitSuperVideoTaskFromWorks(task, referenceUrls) {
+    const refs = (referenceUrls || []).filter(Boolean).slice(0, SUPER_VIDEO_MAX_REFERENCES);
+    if (!refs.length) return Promise.reject(new Error("缺少视频参考图"));
+    const ratio = task.ratio === "16:9" ? "16:9" : "9:16";
+    const deviceId = app.globalData.deviceId || wx.getStorageSync("lobster_device_id") || "";
+    const phone = app.globalData.phone || wx.getStorageSync("lobster_phone") || "";
+    return app
+      .request({
+        method: "POST",
+        url: "/api/comfly-proxy/openmind/v1/videos",
+        data: {
+          model: SUPER_VIDEO_MODEL_ID,
+          prompt: task.prompt || "",
+          aspect_ratio: ratio,
+          ratio,
+          duration: task.duration || 8,
+          seconds: task.duration || 8,
+          resolution: "720p",
+          size: ratio === "16:9" ? "1280x720" : "720x1280",
+          count: task.count || 1,
+          n: task.count || 1,
+          images: refs,
+          image_url: refs[0] || "",
+          image: refs[0] || "",
+          reference_image_urls: refs,
+          device_id: deviceId,
+          phone,
+          source: "miniprogram_video_inspiration",
+          title: task.title || "获客灵感"
+        },
+        timeout: 180000
+      })
+      .then((data) => {
+        const directUrl = extractVideoUrl(data);
+        if (directUrl) {
+          return this.saveOpenMindVideoTask(task, directUrl, data).then((saved) => {
+            if (saved) {
+              replacePendingSuperVideoTask(task.task_id, null);
+              return null;
+            }
+            return Object.assign({}, task, {
+              status: "waiting",
+              status_label: "保存中",
+              playable_url: directUrl,
+              preview_url: directUrl,
+              url: directUrl,
+              local_only: false
+            });
+          });
+        }
+        const taskId = cleanText(data && (data.id || data.task_id || data.video_id || data.job_id || data.request_id || data.generation_id || data.run_id));
+        const nestedTaskId = cleanText(data && data.data && (data.data.id || data.data.task_id || data.data.video_id || data.data.job_id || data.data.request_id || data.data.generation_id || data.data.run_id));
+        const realTaskId = taskId || nestedTaskId;
+        if (!realTaskId) throw new Error("任务提交成功但没有返回任务ID");
+        const next = Object.assign({}, task, {
+          id: `openmind-${realTaskId}`,
+          task_id: realTaskId,
+          provider: "openmind",
+          local_only: false,
+          status: "processing",
+          status_label: "生成中",
+          cover_url: task.cover_url || refs[0],
+          referenceImages: task.referenceImages && task.referenceImages.length ? task.referenceImages : refs.map((url) => ({ url, source_url: url, preview_url: url, media_type: "image" })),
+          submit_payload: data || null
+        });
+        replacePendingSuperVideoTask(task.task_id, next);
+        return next;
+      });
   },
 
   saveOpenMindVideoTask(task, url, payload) {
