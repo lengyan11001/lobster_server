@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import quote, urlparse
-from xml.etree import ElementTree
 
 import httpx
 from fastapi import APIRouter
@@ -57,26 +56,6 @@ async def _get_json(url: str, headers: Dict[str, str]) -> tuple[int, Dict[str, A
     except Exception:
         payload = None
     return resp.status_code, payload if isinstance(payload, dict) else None, text[:1200]
-
-
-async def _post_form(url: str, data: Dict[str, str], headers: Optional[Dict[str, str]] = None) -> tuple[int, Dict[str, Any] | None, str]:
-    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True, trust_env=False) as client:
-        resp = await client.post(url, data=data, headers=headers or {})
-    text = resp.text or ""
-    payload: Dict[str, Any] | None = None
-    try:
-        parsed = resp.json() if resp.content else {}
-        if isinstance(parsed, dict):
-            payload = parsed
-    except Exception:
-        try:
-            root = ElementTree.fromstring(resp.content)
-            payload = {child.tag: child.text for child in list(root)}
-            if root.text and not payload:
-                payload = {root.tag: root.text}
-        except Exception:
-            payload = None
-    return resp.status_code, payload, text[:1200]
 
 
 def _read_custom_configs() -> Dict[str, Any]:
@@ -657,60 +636,6 @@ async def query_tos_account_balance(checked_at: str) -> Dict[str, Any]:
     return item
 
 
-async def query_ihuyi_sms_balance(checked_at: str) -> Dict[str, Any]:
-    account = (os.environ.get("IHUYI_SMS_ACCOUNT") or "").strip()
-    password = (os.environ.get("IHUYI_SMS_PASSWORD") or "").strip()
-    base = _clean_base(os.environ.get("IHUYI_SMS_BALANCE_API_BASE") or "", "http://106.ihuyi.com")
-    url = base + "/webservice/sms.php?method=GetNum"
-    if not account or not password:
-        return _provider_error(
-            provider="sms_ihuyi",
-            name="Ihuyi SMS",
-            configured=False,
-            message="Missing IHUYI_SMS_ACCOUNT/IHUYI_SMS_PASSWORD",
-            checked_at=checked_at,
-            extra={"url": url},
-        )
-    try:
-        status_code, payload, text = await _post_form(
-            url,
-            {"account": account, "password": password, "format": "json"},
-            {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json,text/plain,*/*"},
-        )
-    except Exception as exc:
-        return _provider_error(
-            provider="sms_ihuyi",
-            name="Ihuyi SMS",
-            configured=True,
-            message=f"Request failed: {type(exc).__name__}: {exc}",
-            checked_at=checked_at,
-            extra={"url": url, "account_mask": _mask_token(account)},
-        )
-    code = (payload or {}).get("code") if isinstance(payload, dict) else None
-    msg = str((payload or {}).get("msg") or (payload or {}).get("message") or text or "")
-    num = (payload or {}).get("num") if isinstance(payload, dict) else None
-    balance = _to_float(num)
-    ok = status_code == 200 and str(code) == "2" and balance is not None
-    item: Dict[str, Any] = {
-        "provider": "sms_ihuyi",
-        "name": "Ihuyi SMS",
-        "ok": ok,
-        "configured": True,
-        "url": url,
-        "account_mask": _mask_token(account),
-        "status_code": status_code,
-        "code": code,
-        "message": msg,
-        "checked_at": checked_at,
-        "balance_unit": "sms_count",
-    }
-    if balance is not None:
-        item["balance"] = balance
-    if not ok:
-        item["error"] = msg or f"HTTP {status_code}"
-    return item
-
-
 async def query_aliyun_account_balance(checked_at: str) -> Dict[str, Any]:
     ak = (os.environ.get("ALIYUN_SMS_ACCESS_KEY_ID") or os.environ.get("ALIYUN_ACCESS_KEY_ID") or "").strip()
     sk = (os.environ.get("ALIYUN_SMS_ACCESS_KEY_SECRET") or os.environ.get("ALIYUN_ACCESS_KEY_SECRET") or "").strip()
@@ -788,18 +713,15 @@ async def query_aliyun_account_balance(checked_at: str) -> Dict[str, Any]:
 async def query_sms_balances(checked_at: str) -> list[Dict[str, Any]]:
     results: list[Dict[str, Any]] = []
     use_aliyun = bool((os.environ.get("ALIYUN_SMS_ACCESS_KEY_ID") or "").strip() and (os.environ.get("ALIYUN_SMS_ACCESS_KEY_SECRET") or "").strip())
-    use_ihuyi = bool((os.environ.get("IHUYI_SMS_ACCOUNT") or "").strip() and (os.environ.get("IHUYI_SMS_PASSWORD") or "").strip())
     if use_aliyun:
         results.append(await query_aliyun_account_balance(checked_at))
-    if use_ihuyi:
-        results.append(await query_ihuyi_sms_balance(checked_at))
     if not results:
         results.append(
             _provider_error(
                 provider="sms",
                 name="SMS Channel",
                 configured=False,
-                message="Missing SMS channel config: ALIYUN_SMS_* or IHUYI_SMS_*",
+                message="Missing SMS channel config: ALIYUN_SMS_*",
                 checked_at=checked_at,
             )
         )
