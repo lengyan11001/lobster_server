@@ -265,12 +265,117 @@ async def query_yunwu_credit(checked_at: str) -> Dict[str, Any]:
     return item
 
 
+async def query_openmind_credit(checked_at: str) -> Dict[str, Any]:
+    base = _clean_base(os.environ.get("OPENMIND_ACCOUNT_API_BASE") or os.environ.get("OPENMIND_API_BASE") or "", "https://www.openmindapi.com")
+    user_id = (os.environ.get("OPENMIND_ACCOUNT_USER_ID") or os.environ.get("OPENMIND_NEW_API_USER_ID") or "").strip()
+    token, token_env = _pick_account_token("OPENMIND_ACCOUNT_TOKEN", "OPENMIND_SYSTEM_TOKEN", "OPENMIND_NEW_API_TOKEN", "OPENMIND_USER_SELF_TOKEN")
+    api_key, api_key_env = _pick_account_token("OPENMIND_API_KEY")
+
+    if token and user_id:
+        url = base + "/api/user/self"
+        headers = {"Authorization": token, "New-Api-User": user_id}
+        try:
+            status_code, payload, text = await _get_json(url, headers)
+        except Exception as exc:
+            return _provider_error(
+                provider="openmind",
+                name="OpenMind API / New-API",
+                configured=True,
+                message=f"Request failed: {type(exc).__name__}: {exc}",
+                checked_at=checked_at,
+                extra={"url": url, "user_id": user_id, "token_env": token_env, "token_mask": _mask_token(token)},
+            )
+        success = bool(payload.get("success") is True) if isinstance(payload, dict) else False
+        message = str((payload or {}).get("message") or "") if isinstance(payload, dict) else text
+        item: Dict[str, Any] = {
+            "provider": "openmind",
+            "name": "OpenMind API / New-API",
+            "ok": status_code == 200 and success,
+            "configured": True,
+            "url": url,
+            "user_id": user_id,
+            "token_env": token_env,
+            "token_mask": _mask_token(token),
+            "status_code": status_code,
+            "success": success,
+            "message": message,
+            "checked_at": checked_at,
+        }
+        item.update(_new_api_balance_from_payload(payload))
+        if not item["ok"]:
+            item["error"] = message or f"HTTP {status_code}"
+            if "new-api-user" in message.lower() or "unauthorized" in message.lower():
+                item["needs_system_token"] = True
+                item["hint"] = "OpenMind /api/user/self requires OPENMIND_ACCOUNT_TOKEN and numeric OPENMIND_ACCOUNT_USER_ID."
+        return item
+
+    if api_key:
+        url = base + "/api/usage/token/"
+        try:
+            status_code, payload, text = await _get_json(url, {"Authorization": f"Bearer {api_key}"})
+        except Exception as exc:
+            return _provider_error(
+                provider="openmind",
+                name="OpenMind API",
+                configured=True,
+                message=f"Request failed: {type(exc).__name__}: {exc}",
+                checked_at=checked_at,
+                extra={"url": url, "token_env": api_key_env, "token_mask": _mask_token(api_key)},
+            )
+        data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else {}
+        code = payload.get("code") if isinstance(payload, dict) else None
+        ok = status_code == 200 and code is True and isinstance(data, dict)
+        item = {
+            "provider": "openmind",
+            "name": "OpenMind API",
+            "ok": ok,
+            "configured": True,
+            "url": url,
+            "token_env": api_key_env,
+            "token_mask": _mask_token(api_key),
+            "status_code": status_code,
+            "code": code,
+            "message": (payload or {}).get("message", "") if isinstance(payload, dict) else text,
+            "checked_at": checked_at,
+            "balance_unit": "site_credit",
+            "quota_unit": f"raw_quota/{_QUOTA_DIVISOR}",
+        }
+        total_available = data.get("total_available")
+        total_used = data.get("total_used")
+        total_granted = data.get("total_granted")
+        if isinstance(total_available, (int, float)):
+            item["quota"] = total_available
+            item["balance"] = total_available / _QUOTA_DIVISOR
+        if isinstance(total_used, (int, float)):
+            item["used_quota"] = total_used
+            item["used_balance"] = total_used / _QUOTA_DIVISOR
+        if isinstance(total_granted, (int, float)):
+            item["total_granted"] = total_granted
+            item["total_granted_balance"] = total_granted / _QUOTA_DIVISOR
+        for key in ("object", "name", "unlimited_quota", "expires_at", "request_count"):
+            if key in data:
+                item[key] = data.get(key)
+        if not ok:
+            item["error"] = item["message"] or f"HTTP {status_code}"
+        return item
+
+    return _provider_error(
+        provider="openmind",
+        name="OpenMind API",
+        configured=False,
+        message="Missing OPENMIND_ACCOUNT_TOKEN + OPENMIND_ACCOUNT_USER_ID or OPENMIND_API_KEY",
+        checked_at=checked_at,
+        extra={"url": base + "/api/user/self", "needs_system_token": True},
+    )
+
+
 async def collect_provider_balances() -> Dict[str, Any]:
     checked_at = _now_iso()
     results = [
         await query_hifly_credit(checked_at),
         await query_comfly_credit(checked_at),
         await query_yunwu_credit(checked_at),
+        await query_openmind_credit(checked_at),
     ]
     return {
         "ok": all(bool(item.get("ok")) for item in results),
