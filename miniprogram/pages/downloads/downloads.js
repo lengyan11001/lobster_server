@@ -7,6 +7,7 @@ const SUPER_VIDEO_PENDING_KEY = "lobster_super_video_pending_tasks";
 const SUPER_VIDEO_MODEL_ID = "grok-video-3";
 const SUPER_VIDEO_IMAGE_MODEL_ID = "gpt-image-2";
 const SUPER_VIDEO_MAX_REFERENCES = 4;
+const SUPER_VIDEO_CLAIM_MS = 5 * 60 * 1000;
 
 function videoUrl(item) {
   return item.video_url || item.asset_video_url || item.source_video_url || "";
@@ -170,10 +171,15 @@ function normalizeWanRoleTask(item) {
 
 function extractVideoUrl(payload) {
   const urls = [];
+  const isUsableVideoUrl = (url) => {
+    if (!/^https?:\/\//i.test(url)) return false;
+    if (/\.(mp4|mov|webm)(\?|#|$)/i.test(url)) return true;
+    return /\/(files\/video|v1\/files\/video)(\?|\/|$)/i.test(url);
+  };
   const add = (value) => {
     const url = cleanText(value);
     if (!url) return;
-    if (/^https?:\/\//i.test(url) && /\.(mp4|mov|webm)(\?|#|$)/i.test(url) && urls.indexOf(url) < 0) urls.push(url);
+    if (isUsableVideoUrl(url) && urls.indexOf(url) < 0) urls.push(url);
   };
   const visit = (value, depth) => {
     if (!value || depth > 7 || urls.length) return;
@@ -766,7 +772,7 @@ Page({
     if (this.claimingOpenMindTasks[task.task_id]) return this.claimingOpenMindTasks[task.task_id];
     replacePendingSuperVideoTask(task.task_id, Object.assign({}, task, {
       claim_owner: "downloads",
-      claim_until_ms: Date.now() + 30000
+      claim_until_ms: Date.now() + SUPER_VIDEO_CLAIM_MS
     }));
     this.claimingOpenMindTasks[task.task_id] = this.ensureSuperVideoReferenceUrls(task)
       .then((refs) => this.submitSuperVideoTaskFromWorks(task, refs))

@@ -10,7 +10,7 @@ const CREDITS_PER_VIDEO = 160;
 const TASK_KEY = "lobster_video_inspiration_pending_task";
 const WORKS_TASKS_KEY = "lobster_super_video_pending_tasks";
 const MAX_REFERENCES = 4;
-const PIPELINE_CLAIM_MS = 30000;
+const PIPELINE_CLAIM_MS = 5 * 60 * 1000;
 
 const COVER_BASE = "https://images.unsplash.com";
 
@@ -252,10 +252,15 @@ function extractTaskId(payload) {
 
 function extractVideoUrl(payload) {
   const urls = [];
+  const isUsableVideoUrl = (url) => {
+    if (!/^https?:\/\//i.test(url)) return false;
+    if (/\.(mp4|mov|webm)(\?|#|$)/i.test(url)) return true;
+    return /\/(files\/video|v1\/files\/video)(\?|\/|$)/i.test(url);
+  };
   const add = (value) => {
     const url = cleanText(value);
     if (!url) return;
-    if (/^https?:\/\//i.test(url) && /\.(mp4|mov|webm)(\?|#|$)/i.test(url) && urls.indexOf(url) < 0) urls.push(url);
+    if (isUsableVideoUrl(url) && urls.indexOf(url) < 0) urls.push(url);
   };
   const visit = (value, depth) => {
     if (!value || depth > 7 || urls.length) return;
