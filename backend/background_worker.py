@@ -43,6 +43,7 @@ from backend.app.services.provider_balance_monitor import (
     is_provider_balance_monitor_enabled,
     provider_balance_monitor_loop_forever,
 )
+from backend.app.services.runtime_monitor import is_runtime_monitor_enabled, runtime_monitor_loop_forever
 from backend.app.services.sutui_llm_probe import (
     is_sutui_llm_probe_enabled_for_this_instance,
     sutui_llm_probe_loop_forever,
@@ -80,6 +81,11 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
         factories.append(("provider_balance_monitor", provider_balance_monitor_loop_forever))
     else:
         logger.info("[background] provider balance monitor disabled")
+
+    if _enabled_from_env("LOBSTER_BACKGROUND_RUNTIME_MONITOR_ENABLED", True) and is_runtime_monitor_enabled():
+        factories.append(("runtime_monitor", runtime_monitor_loop_forever))
+    else:
+        logger.info("[background] runtime monitor disabled")
     return factories
 
 
