@@ -735,15 +735,19 @@ Page({
           .then((data) => {
             const url = extractVideoUrl(data);
             if (url) {
-              return this.saveOpenMindVideoTask(task, url, data).then((saved) => (
-                saved ? null : Object.assign({}, task, {
+              return this.saveOpenMindVideoTask(task, url, data).then((saved) => {
+                if (saved) {
+                  replacePendingSuperVideoTask(task.task_id, null);
+                  return null;
+                }
+                return Object.assign({}, task, {
                   status: "waiting",
                   status_label: "保存中",
                   playable_url: url,
                   preview_url: url,
                   url
-                })
-              ));
+                });
+              });
             }
             if (isTerminalFailure(data)) {
               return Object.assign({}, task, {
