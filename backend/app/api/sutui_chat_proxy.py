@@ -738,6 +738,66 @@ def _sutui_chat_model_candidates(initial_model: str, *, has_tools: bool = False)
     return filtered
 
 
+def _user_llm_model_override(current_user: User) -> str:
+    return (getattr(current_user, "llm_model_override", None) or "").strip()
+
+
+def _sutui_chat_attempts_for_models(
+    model_candidates: List[str],
+    token: str,
+    *,
+    forced_model_override: bool = False,
+) -> List[Dict[str, Any]]:
+    direct_timeout = 180.0
+    xskill_timeout = 180.0
+    attempts: List[Dict[str, Any]] = []
+    if forced_model_override:
+        forced_model = (model_candidates[0] if model_candidates else "").strip()
+        if not forced_model:
+            return []
+        return [{
+            "model": forced_model,
+            "api_base": _api_base(),
+            "api_key": token,
+            "provider": "xskill-forced",
+            "timeout": xskill_timeout,
+            "is_direct": False,
+            "forced_model": True,
+        }]
+    for mid in model_candidates:
+        dr = _get_direct_route(mid)
+        if dr:
+            attempts.append({
+                "model": mid,
+                "api_base": dr["api_base"],
+                "api_key": dr["api_key"],
+                "provider": "direct:" + dr["provider"],
+                "timeout": direct_timeout,
+                "is_direct": True,
+            })
+        v3 = _get_v3_route(mid, token)
+        if v3:
+            attempts.append({
+                "model": v3["model"],
+                "api_base": v3["api_base"],
+                "api_key": v3["api_key"],
+                "provider": v3["provider"],
+                "timeout": xskill_timeout,
+                "is_direct": False,
+                "endpoint_prefix": v3["endpoint_prefix"],
+                "v1_model": mid,
+            })
+        attempts.append({
+            "model": mid,
+            "api_base": _api_base(),
+            "api_key": token,
+            "provider": "xskill",
+            "timeout": xskill_timeout,
+            "is_direct": False,
+        })
+    return attempts
+
+
 def _openai_nonstream_completion_usable(data: Any, http_status: int) -> bool:
     """非流式：须为 200 且含非空 choices，且不应为上游业务/池错误 JSON。"""
     if http_status != 200:
@@ -1486,6 +1546,16 @@ async def sutui_chat_completions(
 
     openclaw_skill_request = _is_openclaw_skill_model_alias((body.get("model") or "").strip())
     _remap_sutui_chat_model(body)
+    llm_model_override = _user_llm_model_override(current_user)
+    if llm_model_override:
+        original_model = (body.get("model") or "").strip()
+        body["model"] = llm_model_override
+        logger.info(
+            "[sutui-chat] user-level LLM model override user_id=%s original_model=%s forced_model=%s no_fallback=true",
+            current_user.id,
+            original_model or "-",
+            llm_model_override,
+        )
     _optimize_request_body(body, preserve_local_tools=openclaw_skill_request)
     _enforce_single_search_models_tool_call(body, trace_id)
     _enforce_max_tool_call_rounds(body, trace_id)
@@ -1514,13 +1584,13 @@ async def sutui_chat_completions(
 
     model_id = (body.get("model") or "").strip()
     _req_has_tools = bool(body.get("tools")) and body.get("tool_choice") != "none"
-    model_candidates = _sutui_chat_model_candidates(model_id, has_tools=_req_has_tools)
+    model_candidates = [model_id] if llm_model_override else _sutui_chat_model_candidates(model_id, has_tools=_req_has_tools)
     _tok = (token or "").strip()
     _tok_ref = sutui_token_ref_from_secret(_tok) or "-"
     _tok_tail = _tok[-6:] if len(_tok) > 6 else "***"
     logger.info(
         "[sutui-chat] 转发速推请求：POST %s | user_id=%s brand_mark=%s sutui_pool=%s | "
-        "sutui_token_ref=%s sutui_token_tail=%s | model=%s stream=%s trace_id=%s candidates=%s",
+        "sutui_token_ref=%s sutui_token_tail=%s | model=%s stream=%s trace_id=%s candidates=%s forced_override=%s",
         url,
         current_user.id,
         bm,
@@ -1531,14 +1601,16 @@ async def sutui_chat_completions(
         stream,
         trace_id,
         model_candidates,
+        bool(llm_model_override),
     )
     logger.info(
-        "[chat_trace] trace_id=%s path=sutui_chat_completions forward brand=%s model_after_remap=%s sutui_pool=%s model_candidates=%s",
+        "[chat_trace] trace_id=%s path=sutui_chat_completions forward brand=%s model_after_remap=%s sutui_pool=%s model_candidates=%s forced_override=%s",
         trace_id,
         bm,
         model_id or "-",
         sutui_pool or "-",
         model_candidates,
+        bool(llm_model_override),
     )
 
     _require_balance_before_upstream_chat(
@@ -1555,28 +1627,12 @@ async def sutui_chat_completions(
         user_bal_str = str(user_balance_decimal(current_user))
     out_req_for_audit = clip_openai_chat_completions_json_for_audit(body)
 
-    # ── Build attempts list: direct → xskill-v3 → xskill-v1 ──
-    _DIRECT_TIMEOUT = 180.0
-    _XSKILL_TIMEOUT = 180.0
-    attempts: List[Dict[str, Any]] = []
-    for mid in model_candidates:
-        dr = _get_direct_route(mid)
-        if dr:
-            attempts.append({
-                "model": mid, "api_base": dr["api_base"], "api_key": dr["api_key"],
-                "provider": "direct:" + dr["provider"], "timeout": _DIRECT_TIMEOUT, "is_direct": True,
-            })
-        v3 = _get_v3_route(mid, token)
-        if v3:
-            attempts.append({
-                "model": v3["model"], "api_base": v3["api_base"], "api_key": v3["api_key"],
-                "provider": v3["provider"], "timeout": _XSKILL_TIMEOUT, "is_direct": False,
-                "endpoint_prefix": v3["endpoint_prefix"], "v1_model": mid,
-            })
-        attempts.append({
-            "model": mid, "api_base": _api_base(), "api_key": token,
-            "provider": "xskill", "timeout": _XSKILL_TIMEOUT, "is_direct": False,
-        })
+    # Default: direct -> xskill-v3 -> xskill-v1. Override: one exact xskill route, no fallback.
+    attempts = _sutui_chat_attempts_for_models(
+        model_candidates,
+        token,
+        forced_model_override=bool(llm_model_override),
+    )
     logger.info(
         "[chat_trace] trace_id=%s attempts=%s",
         trace_id,

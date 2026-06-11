@@ -159,6 +159,7 @@ def _user_public_payload(u: User) -> dict:
         "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
         "parent_user_id": u.parent_user_id,
         "brand_mark": getattr(u, "brand_mark", None),
+        "llm_model_override": (getattr(u, "llm_model_override", None) or ""),
         "created_at": u.created_at.isoformat() if u.created_at else None,
     }
 
@@ -406,6 +407,11 @@ class ResetPasswordBody(BaseModel):
     new_password: str
 
 
+class SetUserLlmModelBody(BaseModel):
+    user_id: int
+    model: str = ""
+
+
 @router.post("/admin/api/reset-password")
 def admin_reset_password(
     body: ResetPasswordBody,
@@ -429,6 +435,33 @@ def admin_reset_password(
     db.refresh(user)
     logger.info("[admin/reset-password] user_id=%s email=%s ok", user.id, user.email)
     return {"ok": True, "user_id": user.id, "email": user.email}
+
+
+@router.post("/admin/api/user-llm-model")
+def admin_set_user_llm_model(
+    body: SetUserLlmModelBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    model = (body.model or "").strip()
+    if len(model) > 128:
+        raise HTTPException(status_code=400, detail="模型ID长度不能超过 128")
+    if model and any(ch.isspace() for ch in model):
+        raise HTTPException(status_code=400, detail="模型ID不能包含空格或换行")
+    user = db.query(User).filter(User.id == body.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    user.llm_model_override = model or None
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    logger.info(
+        "[admin/user-llm-model] user_id=%s email=%s model_override=%s",
+        user.id,
+        user.email,
+        model or "-",
+    )
+    return {"ok": True, "user": _user_public_payload(user)}
 
 
 @router.get("/admin/api/users")

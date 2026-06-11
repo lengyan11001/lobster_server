@@ -19,6 +19,7 @@ class User(Base):
     credits: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("99999.0000"), nullable=False)
     role: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
     preferred_model: Mapped[str] = mapped_column(String(128), default="openclaw", nullable=False)
+    llm_model_override: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     """速推登录后下发的 token，用于调用速推统一接口。"""
     sutui_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     """自建微信登录：开放平台 openid，用于扫码登录关联用户。"""

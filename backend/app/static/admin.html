@@ -1346,6 +1346,32 @@ async function showUserDetail(userId) {
         <div class="stat-item"><div class="label">注册时间</div><div class="value" style="font-size:13px">${u.created_at?new Date(u.created_at).toLocaleString('zh-CN'):'-'}</div></div>
       </div>
     `;
+    if (isAdmin()) {
+      detailHtml += `
+        <div style="margin-top:12px;padding:14px;border:1px solid var(--border);border-radius:10px;background:#fff">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+            <div>
+              <div style="font-weight:700;font-size:14px">LLM模型覆盖</div>
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">设置后该用户只走指定模型，不走默认模型候选和兜底；留空恢复默认。</div>
+            </div>
+            <span class="badge ${u.llm_model_override ? 'badge-yellow' : 'badge-blue'}">${u.llm_model_override ? '已覆盖' : '默认'}</span>
+          </div>
+          <div class="recharge-row" style="margin-top:0">
+            <input id="llmModelOverrideInput" list="llmModelPresetList" style="width:320px;max-width:100%" placeholder="例如 gpt-5.4-pro / openai/gpt-4.1" value="${escapeHtml(u.llm_model_override || '')}">
+            <datalist id="llmModelPresetList">
+              <option value="gpt-5.4-pro"></option>
+              <option value="gpt-5.4"></option>
+              <option value="openai/gpt-4.1"></option>
+              <option value="openai/gpt-4.1-mini"></option>
+              <option value="deepseek/deepseek-v3.2"></option>
+              <option value="deepseek/deepseek-v3.2-speciale"></option>
+            </datalist>
+            <button class="btn btn-primary btn-sm" style="width:auto" onclick="saveUserLlmModelOverride(${u.id})">保存模型</button>
+            <button class="btn btn-outline btn-sm" onclick="clearUserLlmModelOverride(${u.id})">清空</button>
+          </div>
+        </div>
+      `;
+    }
     document.getElementById('userDetailCard').innerHTML = detailHtml;
     renderUserDevicesTaskSection(data);
     loadUserGenerationRecords(0);
@@ -1421,6 +1447,25 @@ async function toggleAgent(userId, makeAgent) {
     toast(makeAgent ? `已将 ${data.email} 设为代理商` : `已取消 ${data.email} 的代理商资格`);
     showUserDetail(userId);
   } catch(e) { toast(e.message, 'error'); }
+}
+
+async function saveUserLlmModelOverride(userId) {
+  const input = document.getElementById('llmModelOverrideInput');
+  const model = input ? input.value.trim() : '';
+  try {
+    await api('/admin/api/user-llm-model', {
+      method: 'POST',
+      body: JSON.stringify({user_id: userId, model})
+    });
+    toast(model ? '已设置用户LLM模型：' + model : '已恢复默认LLM模型');
+    showUserDetail(userId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function clearUserLlmModelOverride(userId) {
+  const input = document.getElementById('llmModelOverrideInput');
+  if (input) input.value = '';
+  await saveUserLlmModelOverride(userId);
 }
 
 async function toggleAgentOpenclawMemory(userId, enabled) {

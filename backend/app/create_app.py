@@ -345,6 +345,24 @@ def _migrate_user_wecom_userid():
         logger.warning("Migration user wecom_userid skipped: %s", e)
 
 
+def _migrate_user_llm_model_override():
+    """Add per-user LLM model override used by the server-side chat proxy."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = {c["name"] for c in insp.get_columns("users")}
+        if "llm_model_override" in cols:
+            return
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN llm_model_override VARCHAR(128) NULL"))
+        logger.info("[startup] users added column llm_model_override")
+    except Exception as e:
+        logger.warning("Migration user llm_model_override skipped: %s", e)
+
+
 def _migrate_user_agent_openclaw_memory_enabled():
     """Add agent OpenClaw memory permission flag to users if missing."""
     from sqlalchemy import inspect, text
@@ -823,6 +841,7 @@ def create_app() -> FastAPI:
         _migrate_user_wechat_openid()
         _migrate_user_brand_mark()
         _migrate_user_wecom_userid()
+        _migrate_user_llm_model_override()
         _migrate_user_agent_openclaw_memory_enabled()
         _migrate_user_agent_task_dispatch_enabled()
         _migrate_user_agent_level()
