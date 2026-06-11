@@ -32,10 +32,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import User
+from ..models import Asset, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, credits_json_float, user_balance_decimal
+from .assets import _save_bytes_or_tos
 from .auth import get_current_user
+from .mobile_identity import online_user_for_mobile_user
 
 # 让本模块能 import mcp/ 下的 comfly_upstream
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -344,6 +346,154 @@ def _openmind_image_body(source_body: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _extract_image_result_urls(payload: Any) -> List[str]:
+    result: List[str] = []
+
+    def add(value: Any) -> None:
+        url = str(value or "").strip()
+        if not url:
+            return
+        if url.startswith("data:image/") or url.startswith(("http://", "https://")):
+            if url not in result:
+                result.append(url)
+
+    def visit(value: Any, depth: int = 0) -> None:
+        if value is None or depth > 6:
+            return
+        if isinstance(value, str):
+            add(value)
+            if value.strip().startswith(("{", "[")):
+                try:
+                    visit(json.loads(value), depth + 1)
+                except Exception:
+                    pass
+            return
+        if isinstance(value, list):
+            for item in value:
+                visit(item, depth + 1)
+            return
+        if not isinstance(value, dict):
+            return
+        for key in ("url", "image_url", "source_url", "public_url", "file_url", "b64_json"):
+            if key in value:
+                val = value.get(key)
+                if key == "b64_json" and val:
+                    add(f"data:image/png;base64,{val}")
+                else:
+                    add(val)
+        for item in value.values():
+            visit(item, depth + 1)
+
+    visit(payload)
+    return result
+
+
+def _guess_image_ext(content_type: str, url: str) -> str:
+    lower_url = str(url or "").split("?", 1)[0].split("#", 1)[0].lower()
+    for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+        if lower_url.endswith(ext):
+            return ".jpg" if ext == ".jpeg" else ext
+    ct = (content_type or "").lower()
+    if "jpeg" in ct or "jpg" in ct:
+        return ".jpg"
+    if "webp" in ct:
+        return ".webp"
+    if "gif" in ct:
+        return ".gif"
+    return ".png"
+
+
+async def _download_image_bytes(url: str) -> Tuple[bytes, str, str]:
+    src = str(url or "").strip()
+    if src.startswith("data:image/"):
+        header, _, b64 = src.partition(",")
+        media = header[5:].split(";", 1)[0] if ":" in header else "image/png"
+        import base64
+        return base64.b64decode(b64), media or "image/png", ".png"
+    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True, trust_env=False) as client:
+        resp = await client.get(src, headers={"User-Agent": "Mozilla/5.0 Chrome/126 Safari/537.36"})
+    resp.raise_for_status()
+    media_type = (resp.headers.get("content-type") or "image/png").split(";", 1)[0].strip() or "image/png"
+    return resp.content, media_type, _guess_image_ext(media_type, src)
+
+
+async def _persist_generated_image_asset(
+    db: Session,
+    *,
+    user_id: int,
+    url: str,
+    prompt: str,
+    model: str,
+    job_id: str = "",
+) -> Dict[str, Any]:
+    data, media_type, ext = await _download_image_bytes(url)
+    aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(data, ext, media_type)
+    if not tos_public_url:
+        local_path = Path(__file__).resolve().parent.parent.parent.parent / "assets" / fname_or_key
+        try:
+            if local_path.exists():
+                local_path.unlink()
+        except OSError:
+            pass
+        raise RuntimeError("图片结果保存失败：TOS 公网链接不可用")
+    asset = Asset(
+        asset_id=aid,
+        user_id=user_id,
+        filename=fname_or_key,
+        media_type="image",
+        file_size=fsize,
+        source_url=tos_public_url,
+        prompt=prompt,
+        model=model,
+        tags="auto,image_generate,miniprogram",
+        meta={"source": "miniprogram_image_generate", "job_id": job_id, "origin_url": url},
+    )
+    db.add(asset)
+    db.flush()
+    return {
+        "asset_id": aid,
+        "media_type": "image",
+        "url": tos_public_url,
+        "source_url": tos_public_url,
+        "file_size": fsize,
+        "prompt": prompt,
+        "model": model,
+    }
+
+
+async def _save_generated_images_best_effort(
+    db: Session,
+    *,
+    user_id: int,
+    response_payload: Dict[str, Any],
+    prompt: str,
+    model: str,
+    limit: int,
+    exclude_urls: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    saved_assets: List[Dict[str, Any]] = []
+    excluded = {str(url or "").strip().rstrip("/") for url in (exclude_urls or []) if str(url or "").strip()}
+    for url in _extract_image_result_urls(response_payload)[: max(1, min(9, int(limit or 1)))]:
+        if str(url or "").strip().rstrip("/") in excluded:
+            logger.info("[image_generate] skip echoed reference image url=%s", str(url)[:120])
+            continue
+        try:
+            saved_assets.append(
+                await _persist_generated_image_asset(
+                    db,
+                    user_id=user_id,
+                    url=url,
+                    prompt=prompt,
+                    model=model,
+                )
+            )
+        except Exception as exc:
+            logger.warning("[image_generate] save generated image failed user_id=%s url=%s err=%s", user_id, url[:120], exc)
+    if saved_assets:
+        db.commit()
+    return saved_assets
+
+
 async def _openmind_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]:
     body = _openmind_image_body(source_body)
     async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
@@ -520,6 +670,57 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
     forwarded = dict(body)
     forwarded["model"] = upstream
     api_format = str(entry.get("api_format") or "").strip().lower()
+    model_low = str(upstream or model or "").strip().lower()
+    if api_format == "dalle" and ("gpt-image-2" in model_low or "gpt-image2" in model_low or "gptimage2" in model_low):
+        prompt = str(forwarded.get("prompt") or "").strip()
+        ratio_aliases = {
+            "portrait_9_16": "9:16",
+            "landscape_16_9": "16:9",
+            "square_hd": "1:1",
+            "square": "1:1",
+            "vertical": "9:16",
+            "portrait": "9:16",
+            "horizontal": "16:9",
+            "landscape": "16:9",
+        }
+        ratio_values = {"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}
+        raw_ratio = str(
+            forwarded.get("image_size")
+            or forwarded.get("aspect_ratio")
+            or forwarded.get("ratio")
+            or forwarded.get("size")
+            or "1:1"
+        ).strip()
+        ratio = ratio_aliases.get(raw_ratio.lower(), raw_ratio)
+        if ratio not in ratio_values:
+            ratio = "1:1"
+        try:
+            num_images = max(1, int(forwarded.get("num_images") or forwarded.get("n") or 1))
+        except (TypeError, ValueError):
+            num_images = 1
+        image_url = str(forwarded.get("image_url") or forwarded.get("image") or "").strip()
+        image_urls = forwarded.get("image_urls")
+        if isinstance(image_urls, str):
+            image_urls = [image_urls]
+        if not isinstance(image_urls, list):
+            image_urls = []
+        image_urls = [str(url or "").strip() for url in image_urls if str(url or "").strip()]
+        if not image_url and image_urls:
+            image_url = image_urls[0]
+        out: Dict[str, Any] = {
+            "model": upstream,
+            "prompt": prompt,
+            "image_size": ratio,
+            "num_images": num_images,
+            "n": num_images,
+            "response_format": str(forwarded.get("response_format") or "url"),
+        }
+        if image_url:
+            out["image_url"] = image_url
+            out["image"] = image_url
+        if image_urls:
+            out["image_urls"] = image_urls
+        return out
     if api_format == "grok":
         prompt = str(forwarded.get("prompt") or "").strip()
         grok_body: Dict[str, Any] = {"model": upstream, "prompt": prompt}
@@ -542,6 +743,23 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
         grok_body["duration"] = 10 if duration == 10 else 6
         return grok_body
     return forwarded
+
+
+def _image_reference_urls(body: Dict[str, Any]) -> List[str]:
+    refs: List[str] = []
+    for key in ("image", "image_url"):
+        value = str(body.get(key) or "").strip()
+        if value and value not in refs:
+            refs.append(value)
+    for key in ("image_urls",):
+        values = body.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            value = str(item or "").strip()
+            if value and value not in refs:
+                refs.append(value)
+    return refs
 
 
 # ---------------------------------------------------------------------------
@@ -649,26 +867,71 @@ async def proxy_images_generations(
         raise HTTPException(400, "缺少 model")
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
+    reference_urls = _image_reference_urls(body)
+    if reference_urls:
+        upstream_body.setdefault("image", reference_urls[0])
+        upstream_body.setdefault("image_url", reference_urls[0])
+        upstream_body.setdefault("image_urls", reference_urls)
+    logger.info(
+        "[image_generate] request model=%s upstream_model=%s refs=%d first_ref=%s image_size=%s num_images=%s",
+        model,
+        upstream_body.get("model"),
+        len(reference_urls),
+        (reference_urls[0][:120] if reference_urls else ""),
+        upstream_body.get("image_size") or upstream_body.get("size") or upstream_body.get("aspect_ratio"),
+        upstream_body.get("num_images") or upstream_body.get("n"),
+    )
 
+    billing_user = online_user_for_mobile_user(db, current_user)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
-    pre = _do_pre_deduct(db, current_user, estimated,
+    pre = _do_pre_deduct(db, billing_user, estimated,
                          capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image")
-    _audit("image_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
+    _audit(
+        "image_pre_deduct",
+        user_id=billing_user.id,
+        request_user_id=current_user.id,
+        model=model,
+        estimated=estimated,
+    )
 
     last_error = ""
     attempts = _env_int("COMFLY_IMAGE_RETRY_ATTEMPTS", 2, min_value=1, max_value=4)
     try:
         for attempt in range(1, attempts + 1):
             try:
-                resp = await _comfly_request("POST", _comfly_url("/v1/images/generations", model),
+                endpoint_path = "/v1/images/edits" if reference_urls else "/v1/images/generations"
+                logger.info("[image_generate] upstream endpoint=%s refs=%d", endpoint_path, len(reference_urls))
+                resp = await _comfly_request("POST", _comfly_url(endpoint_path, model),
                                              upstream_body, _comfly_headers(model), _TIMEOUT_IMAGE)
-                _audit("image_ok", user_id=current_user.id, model=model, pre=credits_json_float(pre), attempt=attempt)
+                saved_assets = await _save_generated_images_best_effort(
+                    db,
+                    user_id=billing_user.id,
+                    response_payload=resp,
+                    prompt=str(body.get("prompt") or ""),
+                    model=model,
+                    limit=int(body.get("n") or 1),
+                    exclude_urls=reference_urls,
+                )
+                if saved_assets and isinstance(resp, dict):
+                    resp = dict(resp)
+                    resp["saved_assets"] = saved_assets
+                _audit(
+                    "image_ok",
+                    user_id=billing_user.id,
+                    request_user_id=current_user.id,
+                    model=model,
+                    pre=credits_json_float(pre),
+                    attempt=attempt,
+                    saved_assets=len(saved_assets),
+                    refs=len(reference_urls),
+                )
                 return JSONResponse(resp)
             except Exception as e:
                 last_error = str(e)
                 _audit(
                     "image_comfly_attempt_failed",
-                    user_id=current_user.id,
+                    user_id=billing_user.id,
+                    request_user_id=current_user.id,
                     model=model,
                     attempt=attempt,
                     attempts=attempts,
@@ -681,18 +944,33 @@ async def proxy_images_generations(
         if _openmind_image_fallback_enabled() and (not last_error or _is_retryable_image_error(RuntimeError(last_error))):
             try:
                 resp = await _openmind_image_request(upstream_body)
+                saved_assets = await _save_generated_images_best_effort(
+                    db,
+                    user_id=billing_user.id,
+                    response_payload=resp,
+                    prompt=str(body.get("prompt") or ""),
+                    model=model,
+                    limit=int(body.get("n") or 1),
+                    exclude_urls=reference_urls,
+                )
+                if saved_assets and isinstance(resp, dict):
+                    resp = dict(resp)
+                    resp["saved_assets"] = saved_assets
                 _audit(
                     "image_openmind_fallback_ok",
-                    user_id=current_user.id,
+                    user_id=billing_user.id,
+                    request_user_id=current_user.id,
                     model=model,
                     pre=credits_json_float(pre),
                     comfly_error=last_error[:300],
+                    saved_assets=len(saved_assets),
                 )
                 return JSONResponse(resp)
             except Exception as fallback_error:
                 _audit(
                     "image_openmind_fallback_failed",
-                    user_id=current_user.id,
+                    user_id=billing_user.id,
+                    request_user_id=current_user.id,
                     model=model,
                     comfly_error=last_error[:300],
                     error=str(fallback_error)[:300],
@@ -701,9 +979,15 @@ async def proxy_images_generations(
 
         raise RuntimeError(last_error or "image generation failed")
     except Exception as e:
-        _do_full_refund(db, current_user, pre=pre,
+        _do_full_refund(db, billing_user, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image", error=str(e))
-        _audit("image_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        _audit(
+            "image_failed",
+            user_id=billing_user.id,
+            request_user_id=current_user.id,
+            model=model,
+            error=str(e)[:300],
+        )
         raise HTTPException(502, _public_image_failure_detail())
 
 
@@ -744,10 +1028,17 @@ async def proxy_images_edits(
     if not files:
         raise HTTPException(400, "缺少 image 文件")
 
+    billing_user = online_user_for_mobile_user(db, current_user)
     estimated = estimate_comfly_credits(model, data, for_user=True) or 1
-    pre = _do_pre_deduct(db, current_user, estimated,
+    pre = _do_pre_deduct(db, billing_user, estimated,
                          capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit")
-    _audit("image_edit_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
+    _audit(
+        "image_edit_pre_deduct",
+        user_id=billing_user.id,
+        request_user_id=current_user.id,
+        model=model,
+        estimated=estimated,
+    )
 
     try:
         resp = await _comfly_multipart_request(
@@ -758,12 +1049,18 @@ async def proxy_images_edits(
             _TIMEOUT_IMAGE,
         )
     except Exception as e:
-        _do_full_refund(db, current_user, pre=pre,
+        _do_full_refund(db, billing_user, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit", error=str(e))
-        _audit("image_edit_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        _audit(
+            "image_edit_failed",
+            user_id=billing_user.id,
+            request_user_id=current_user.id,
+            model=model,
+            error=str(e)[:300],
+        )
         raise HTTPException(502, f"Comfly image edits 调用失败：{e}")
 
-    _audit("image_edit_ok", user_id=current_user.id, model=model, pre=credits_json_float(pre))
+    _audit("image_edit_ok", user_id=billing_user.id, request_user_id=current_user.id, model=model, pre=credits_json_float(pre))
     return JSONResponse(resp)
 
 
@@ -896,36 +1193,51 @@ async def proxy_openmind_video_submit(
     entry = _require_model_entry(model)
     upstream_body = _openmind_video_body(body, model, entry)
 
+    billing_user = online_user_for_mobile_user(db, current_user)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
     pre = _do_pre_deduct(
         db,
-        current_user,
+        billing_user,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="openmind_video_submit",
         extra_meta={"upstream": "openmind", "openmind_model": upstream_body.get("model")},
     )
-    _audit("openmind_video_submit_pre_deduct", user_id=current_user.id, model=model, openmind_model=upstream_body.get("model"), estimated=estimated)
+    _audit(
+        "openmind_video_submit_pre_deduct",
+        user_id=billing_user.id,
+        request_user_id=current_user.id,
+        model=model,
+        openmind_model=upstream_body.get("model"),
+        estimated=estimated,
+    )
 
     try:
         resp = await _openmind_video_submit(body, model, entry)
     except Exception as e:
         _do_full_refund(
             db,
-            current_user,
+            billing_user,
             pre=pre,
             capability_id=_CAPABILITY_FOR_BILLING,
             model=model,
             endpoint="openmind_video_submit",
             error=str(e),
         )
-        _audit("openmind_video_submit_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        _audit(
+            "openmind_video_submit_failed",
+            user_id=billing_user.id,
+            request_user_id=current_user.id,
+            model=model,
+            error=str(e)[:300],
+        )
         raise HTTPException(502, f"OpenMind video submit failed: {e}")
 
     _audit(
         "openmind_video_submit_ok",
-        user_id=current_user.id,
+        user_id=billing_user.id,
+        request_user_id=current_user.id,
         model=model,
         openmind_model=resp.get("_requested_model") if isinstance(resp, dict) else "",
         task_id=_task_id_from_response(resp),
