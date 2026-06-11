@@ -448,6 +448,8 @@ def admin_set_user_llm_model(
         raise HTTPException(status_code=400, detail="模型ID长度不能超过 128")
     if model and any(ch.isspace() for ch in model):
         raise HTTPException(status_code=400, detail="模型ID不能包含空格或换行")
+    if model and model != "openai/gpt-5.5":
+        raise HTTPException(status_code=400, detail="当前只允许设置 openai/gpt-5.5；留空恢复默认")
     user = db.query(User).filter(User.id == body.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
