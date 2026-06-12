@@ -132,11 +132,13 @@ function superVideoTitleKey(item) {
 function hasCompletedSuperVideoAsset(task, assetRows) {
   const taskPrompt = superVideoPromptKey(task);
   const taskTitle = superVideoTitleKey(task);
+  const taskTime = rowCreatedAtMs(task);
   return (assetRows || []).some((asset) => {
     const assetPrompt = superVideoPromptKey(asset);
-    if (taskPrompt && assetPrompt && taskPrompt === assetPrompt) return true;
+    const assetTime = rowCreatedAtMs(asset);
+    if (taskPrompt && assetPrompt && taskPrompt === assetPrompt && taskTime && assetTime && assetTime >= taskTime - 10000) return true;
     const assetTitle = superVideoTitleKey(asset);
-    return !!taskTitle && !!assetTitle && assetTitle.indexOf(taskTitle) >= 0;
+    return !!taskTitle && !!assetTitle && assetTitle.indexOf(taskTitle) >= 0 && taskTime && assetTime && assetTime >= taskTime - 10000;
   });
 }
 
@@ -323,7 +325,7 @@ function pendingSuperVideoTasks() {
   const now = Date.now();
   if (!Array.isArray(rows)) return [];
   return rows
-    .filter((item) => item && item.task_id && item.status !== "success")
+    .filter((item) => item && item.task_id && (item.status !== "success" || videoUrl(item) || item.url || item.playable_url))
     .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000);
 }
 
@@ -931,9 +933,11 @@ Page({
     const tasks = pendingSuperVideoTasks();
     if (!tasks.length) return Promise.resolve();
     const localTasks = tasks.filter((task) => task.local_only);
-    const remoteTasks = tasks.filter((task) => !task.local_only);
+    const readyTasks = tasks.filter((task) => task.status === "success" && (videoUrl(task) || task.url || task.playable_url));
+    const remoteTasks = tasks.filter((task) => !task.local_only && !(task.status === "success" && (videoUrl(task) || task.url || task.playable_url)));
     return Promise.all(
-      localTasks.slice(0, 2).map((task) => this.processLocalSuperVideoTask(task))
+      readyTasks.slice(0, 3).map((task) => this.saveReadySuperVideoTask(task))
+        .concat(localTasks.slice(0, 2).map((task) => this.processLocalSuperVideoTask(task)))
         .concat(remoteTasks.slice(0, 5).map((task) =>
         app
           .request({
@@ -975,6 +979,18 @@ Page({
       });
       const next = pendingSuperVideoTasks().map((item) => byId[String(item.task_id)] || item);
       setPendingSuperVideoTasks(next.filter(Boolean));
+    });
+  },
+
+  saveReadySuperVideoTask(task) {
+    const url = videoUrl(task) || task.url || task.playable_url;
+    if (!url) return Promise.resolve(task);
+    return this.saveOpenMindVideoTask(task, url, task.submit_payload || null).then((saved) => {
+      if (saved) {
+        replacePendingSuperVideoTask(task.task_id, null);
+        return null;
+      }
+      return task;
     });
   },
 
