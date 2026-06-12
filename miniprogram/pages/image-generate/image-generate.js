@@ -84,6 +84,18 @@ function normalizeSavedAsset(item) {
 
 function extractSavedAssets(data) {
   const out = [];
+  const collectSaved = (obj) => {
+    const saved = obj && (obj.saved_assets || (obj.result && obj.result.saved_assets));
+    if (Array.isArray(saved) && saved.length) {
+      saved.forEach((item) => {
+        const normalized = normalizeSavedAsset(item);
+        if (normalized) out.push(Object.assign({}, normalized, { saved: true }));
+      });
+      return true;
+    }
+    return false;
+  };
+  if (collectSaved(data)) return uniqueRows(out).filter((item) => item.media_type === "image" || !item.media_type);
   const visit = (obj, depth) => {
     if (!obj || depth > 5) return;
     if (typeof obj === "string") {
@@ -96,13 +108,7 @@ function extractSavedAssets(data) {
       return;
     }
     if (typeof obj !== "object") return;
-    const saved = obj.saved_assets || (obj.result && obj.result.saved_assets);
-    if (Array.isArray(saved)) {
-      saved.forEach((item) => {
-        const normalized = normalizeSavedAsset(item);
-        if (normalized) out.push(normalized);
-      });
-    }
+    if (collectSaved(obj)) return;
     const images = obj.output && Array.isArray(obj.output.images) ? obj.output.images : [];
     images.forEach((item) => {
       const normalized = normalizeSavedAsset(item);
@@ -127,6 +133,7 @@ function extractSavedAssets(data) {
 
 function saveGeneratedAssets(rows, prompt) {
   const tasks = uniqueRows(rows || []).map((item) => {
+    if (item.saved || item.asset_id) return Promise.resolve(Object.assign({}, item, { saved: item.saved !== false }));
     if (!/^https?:\/\//i.test(item.url || "")) return Promise.resolve(item);
     return app.request({
       method: "POST",
