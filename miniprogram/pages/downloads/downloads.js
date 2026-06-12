@@ -93,6 +93,29 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+function compactKey(value) {
+  return cleanText(value).replace(/\s+/g, "").toLowerCase();
+}
+
+function superVideoPromptKey(item) {
+  return compactKey((item && item.prompt) || "").slice(0, 120);
+}
+
+function superVideoTitleKey(item) {
+  return compactKey(item && item.title).replace(/\.(mp4|mov|webm)$/i, "");
+}
+
+function hasCompletedSuperVideoAsset(task, assetRows) {
+  const taskPrompt = superVideoPromptKey(task);
+  const taskTitle = superVideoTitleKey(task);
+  return (assetRows || []).some((asset) => {
+    const assetPrompt = superVideoPromptKey(asset);
+    if (taskPrompt && assetPrompt && taskPrompt === assetPrompt) return true;
+    const assetTitle = superVideoTitleKey(asset);
+    return !!taskTitle && !!assetTitle && assetTitle.indexOf(taskTitle) >= 0;
+  });
+}
+
 function parseJsonMaybe(value) {
   if (!value) return null;
   if (typeof value === "object") return value;
@@ -274,6 +297,13 @@ function pendingSuperVideoTasks() {
 
 function setPendingSuperVideoTasks(rows) {
   wx.setStorageSync(SUPER_VIDEO_PENDING_KEY, (rows || []).filter((item) => item && item.task_id).slice(0, 50));
+}
+
+function pruneCompletedSuperVideoPendingTasks(assetRows) {
+  const rows = pendingSuperVideoTasks();
+  const next = rows.filter((task) => !hasCompletedSuperVideoAsset(task, assetRows));
+  if (next.length !== rows.length) setPendingSuperVideoTasks(next);
+  return next;
 }
 
 function replacePendingSuperVideoTask(oldTaskId, task) {
@@ -601,8 +631,8 @@ Page({
           .filter((item) => isGeneratedVideoAsset(item))
           .filter((item) => !item.asset_id || !taskAssetIds[String(item.asset_id)])
           .map(normalizeAssetItem);
-        const pendingRows = pendingSuperVideoTasks().map(normalizeOpenMindPendingTask);
-        const rows = mergeMediaRows(pendingRows.concat(taskRows).concat(assetRows));
+        const pendingRows = pruneCompletedSuperVideoPendingTasks(assetRows).map(normalizeOpenMindPendingTask);
+        const rows = mergeMediaRows(assetRows.concat(pendingRows).concat(taskRows));
         this.setData({ mediaWorks: rows, authPanelVisible: false });
         this.refreshSuperVideoPolling();
       })
