@@ -493,12 +493,25 @@ function imagePromptKey(item) {
   return compactKey((item && item.prompt) || "").slice(0, 120);
 }
 
+function timestampMs(value) {
+  if (!value) return 0;
+  if (typeof value === "number") return value;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function rowCreatedAtMs(item) {
+  return timestampMs((item && (item.created_at_ms || item.created_at || item.updated_at)) || 0);
+}
+
 function hasCompletedImageAsset(task, assetRows) {
   const taskPrompt = imagePromptKey(task);
+  const taskTime = rowCreatedAtMs(task);
   if (!taskPrompt) return false;
   return (assetRows || []).some((asset) => {
     const assetPrompt = imagePromptKey(asset);
-    return !!assetPrompt && assetPrompt === taskPrompt;
+    const assetTime = rowCreatedAtMs(asset);
+    return !!assetPrompt && assetPrompt === taskPrompt && !!taskTime && !!assetTime && assetTime >= taskTime - 10000;
   });
 }
 
