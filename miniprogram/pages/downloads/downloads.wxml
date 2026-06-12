@@ -117,7 +117,7 @@
             <text class="type-chip media-chip">{{item.work_type_label}}</text>
             <text class="status-chip media-chip {{item.status}}">{{item.status_label}}</text>
           </view>
-          <text class="media-work-title">{{item.title}}</text>
+          <text class="media-work-title">{{item.media_type === 'image' ? (item.prompt || item.title) : item.title}}</text>
           <text class="media-work-time">{{item.created_at_text || '--'}}</text>
         </view>
         <view wx:if="{{item.publish_draft}}" class="publish-row compact" catchtap="noop">

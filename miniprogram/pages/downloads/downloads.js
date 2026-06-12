@@ -266,6 +266,18 @@ function normalizeGeneratedImage(item) {
 
 function extractGeneratedImages(data) {
   const out = [];
+  const collectSaved = (obj) => {
+    const saved = obj && (obj.saved_assets || (obj.result && obj.result.saved_assets));
+    if (Array.isArray(saved) && saved.length) {
+      saved.forEach((item) => {
+        const normalized = normalizeGeneratedImage(item);
+        if (normalized) out.push(Object.assign({}, normalized, { saved: true }));
+      });
+      return true;
+    }
+    return false;
+  };
+  if (collectSaved(data)) return mergeMediaRows(out).filter((item) => item.media_type === "image" || !item.media_type);
   const visit = (obj, depth) => {
     if (!obj || depth > 5) return;
     if (typeof obj === "string") {
@@ -278,11 +290,7 @@ function extractGeneratedImages(data) {
       return;
     }
     if (typeof obj !== "object") return;
-    const saved = obj.saved_assets || (obj.result && obj.result.saved_assets);
-    if (Array.isArray(saved)) saved.forEach((item) => {
-      const normalized = normalizeGeneratedImage(item);
-      if (normalized) out.push(normalized);
-    });
+    if (collectSaved(obj)) return;
     const images = obj.output && Array.isArray(obj.output.images) ? obj.output.images : [];
     images.forEach((item) => {
       const normalized = normalizeGeneratedImage(item);
@@ -432,8 +440,9 @@ function normalizeMediaItem(item) {
   const url = safeUrl(item.url) || safeUrl(item.preview_url) || safeUrl(item.download_url) || "";
   const mediaType = item.media_type || "media";
   const rawTitle = item.title || item.prompt || "";
+  const imagePrompt = mediaType === "image" ? cleanText(item.prompt) : "";
   const rawFilename = item.filename || filenameFromUrl(url);
-  const title = rawTitle && !looksLikeStorageFilename(rawTitle) ? rawTitle : (mediaType === "video" ? "AI视频结果" : rawFilename);
+  const title = imagePrompt || (rawTitle && !looksLikeStorageFilename(rawTitle) ? rawTitle : (mediaType === "video" ? "AI视频结果" : rawFilename));
   const filename = filenameFromUrl(url || title);
   const draft = item.publish_draft && typeof item.publish_draft === "object" ? item.publish_draft : null;
   const draftStatus = String((draft && draft.status) || "").toLowerCase();
@@ -552,7 +561,7 @@ function normalizeAssetItem(item) {
   const url = safeUrl(item.source_url) || safeUrl(item.url) || "";
   return normalizeMediaItem(Object.assign({}, item, {
     id: item.id || item.asset_id || url,
-    title: item.filename || item.title || filenameFromUrl(url),
+    title: item.prompt || item.title || item.filename || filenameFromUrl(url),
     url,
     preview_url: safeUrl(item.preview_url) || url,
     download_url: safeUrl(item.download_url) || url,
