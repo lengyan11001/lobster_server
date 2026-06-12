@@ -679,12 +679,14 @@ Page({
     if (rememberedVideoKind && ["digital", "super"].indexOf(rememberedVideoKind) >= 0) {
       this.setData({ videoKind: rememberedVideoKind });
     }
+    let openedVideoTarget = false;
     const openSuperVideo = wx.getStorageSync("lobster_open_super_video");
     if (openSuperVideo) {
       wx.removeStorageSync("lobster_open_super_video");
       this.setData({ mediaTab: "video", videoKind: "super" });
       wx.setStorageSync("lobster_downloads_media_tab", "video");
       wx.setStorageSync("lobster_downloads_video_kind", "super");
+      openedVideoTarget = true;
     }
     const openDigitalVideo = wx.getStorageSync("lobster_open_digital_video");
     if (openDigitalVideo) {
@@ -692,13 +694,16 @@ Page({
       this.setData({ mediaTab: "video", videoKind: "digital" });
       wx.setStorageSync("lobster_downloads_media_tab", "video");
       wx.setStorageSync("lobster_downloads_video_kind", "digital");
+      openedVideoTarget = true;
     }
     const openMediaTab = wx.getStorageSync("lobster_open_media_tab");
     if (openMediaTab) {
       wx.removeStorageSync("lobster_open_media_tab");
-      const nextTab = openMediaTab === "image" ? "image" : this.data.mediaTab;
-      this.setData({ mediaTab: nextTab });
-      wx.setStorageSync("lobster_downloads_media_tab", nextTab);
+      if (!openedVideoTarget) {
+        const nextTab = openMediaTab === "image" ? "image" : this.data.mediaTab;
+        this.setData({ mediaTab: nextTab });
+        wx.setStorageSync("lobster_downloads_media_tab", nextTab);
+      }
     }
     const shouldRefresh = wx.getStorageSync("lobster_refresh_works");
     if (shouldRefresh) wx.removeStorageSync("lobster_refresh_works");
