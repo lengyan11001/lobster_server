@@ -4,6 +4,8 @@ const media = require("../../utils/media");
 const staticAssets = require("../../utils/static_assets");
 const share = require("../../utils/share");
 
+const DIGITAL_VIDEO_PENDING_KEY = "lobster_digital_video_pending_tasks";
+
 function assetUrl(path) {
   const value = String(path || "").trim();
   if (!value) return "";
@@ -108,6 +110,29 @@ function videoItemForSave(item) {
     preview_url: url,
     download_url: url
   };
+}
+
+function pendingDigitalVideoTasks() {
+  const rows = wx.getStorageSync(DIGITAL_VIDEO_PENDING_KEY);
+  const now = Date.now();
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((item) => item && item.task_id)
+    .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000)
+    .slice(0, 50);
+}
+
+function setPendingDigitalVideoTasks(rows) {
+  wx.setStorageSync(DIGITAL_VIDEO_PENDING_KEY, (rows || []).filter((item) => item && item.task_id).slice(0, 50));
+}
+
+function upsertPendingDigitalVideoTask(task) {
+  if (!task || !task.task_id) return;
+  const rows = pendingDigitalVideoTasks();
+  const next = [task].concat(rows.filter((item) => item && item.task_id !== task.task_id)).slice(0, 50);
+  setPendingDigitalVideoTasks(next);
+  wx.setStorageSync("lobster_open_digital_video", true);
+  wx.setStorageSync("lobster_refresh_works", "1");
 }
 
 function normalizeVoiceList(rows, source) {
@@ -794,13 +819,32 @@ Page({
           timeout: 60000
         })
         .then((data) => {
+          const taskId = data.task_id || (data.item && data.item.task_id) || "";
+          if (taskId) {
+            const now = Date.now();
+            upsertPendingDigitalVideoTask(Object.assign({
+              id: `digital-pending-${taskId}`,
+              task_id: taskId,
+              title,
+              text,
+              prompt: text,
+              avatar_image_url: avatar.image_url || "",
+              avatar_title: avatar.title || "",
+              voice_title: voice.title || "",
+              status: "processing",
+              status_label: "生成中",
+              created_at: new Date(now).toISOString(),
+              created_at_ms: now
+            }, data.item || {}));
+          }
           wx.showToast({ title: "任务已创建", icon: "success" });
           this.setData({
-            pollingTaskId: data.task_id || "",
+            pollingTaskId: taskId,
             selectedVideo: data.item || null,
             progressText: "视频生成中，请稍候",
             text: ""
           });
+          wx.setStorageSync("lobster_open_digital_video", true);
           wx.setStorageSync("lobster_refresh_works", "1");
           this.stopPolling();
           setTimeout(() => {

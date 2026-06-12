@@ -4,6 +4,7 @@ const media = require("../../utils/media");
 const share = require("../../utils/share");
 
 const SUPER_VIDEO_PENDING_KEY = "lobster_super_video_pending_tasks";
+const DIGITAL_VIDEO_PENDING_KEY = "lobster_digital_video_pending_tasks";
 const SUPER_VIDEO_MODEL_ID = "grok-video-3";
 const SUPER_VIDEO_IMAGE_MODEL_ID = "gpt-image-2";
 const SUPER_VIDEO_MAX_REFERENCES = 4;
@@ -185,6 +186,38 @@ function normalizeVideo(item) {
     is_success: status === "success",
     is_failed: status === "failed"
   });
+}
+
+function pendingDigitalVideoTasks() {
+  const rows = wx.getStorageSync(DIGITAL_VIDEO_PENDING_KEY);
+  const now = Date.now();
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((item) => item && item.task_id)
+    .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000)
+    .slice(0, 50);
+}
+
+function setPendingDigitalVideoTasks(rows) {
+  wx.setStorageSync(DIGITAL_VIDEO_PENDING_KEY, (rows || []).filter((item) => item && item.task_id).slice(0, 50));
+}
+
+function replacePendingDigitalVideoTask(oldTaskId, task) {
+  const rows = pendingDigitalVideoTasks();
+  const kept = rows.filter((item) => item && item.task_id !== oldTaskId && item.task_id !== (task && task.task_id));
+  const next = task && task.task_id ? [task].concat(kept).slice(0, 50) : kept.slice(0, 50);
+  setPendingDigitalVideoTasks(next);
+}
+
+function pruneCompletedDigitalVideoPendingTasks(serverRows) {
+  const byTaskId = {};
+  (serverRows || []).forEach((item) => {
+    if (item && item.task_id) byTaskId[String(item.task_id)] = true;
+  });
+  const rows = pendingDigitalVideoTasks();
+  const next = rows.filter((task) => !byTaskId[String(task.task_id)]);
+  if (next.length !== rows.length) setPendingDigitalVideoTasks(next);
+  return next;
 }
 
 function normalizeWanRoleTask(item) {
@@ -653,6 +686,13 @@ Page({
       wx.setStorageSync("lobster_downloads_media_tab", "video");
       wx.setStorageSync("lobster_downloads_video_kind", "super");
     }
+    const openDigitalVideo = wx.getStorageSync("lobster_open_digital_video");
+    if (openDigitalVideo) {
+      wx.removeStorageSync("lobster_open_digital_video");
+      this.setData({ mediaTab: "video", videoKind: "digital" });
+      wx.setStorageSync("lobster_downloads_media_tab", "video");
+      wx.setStorageSync("lobster_downloads_video_kind", "digital");
+    }
     const openMediaTab = wx.getStorageSync("lobster_open_media_tab");
     if (openMediaTab) {
       wx.removeStorageSync("lobster_open_media_tab");
@@ -764,7 +804,9 @@ Page({
     return app
       .request({ url: "/api/hifly/my/video/list?page=1&size=50" })
       .then((data) => {
-        const works = (data.items || []).map(normalizeVideo);
+        const serverWorks = (data.items || []).map(normalizeVideo);
+        const pendingWorks = pruneCompletedDigitalVideoPendingTasks(serverWorks).map(normalizeVideo);
+        const works = mergeMediaRows(pendingWorks.concat(serverWorks));
         this.setData({ works, authPanelVisible: false });
         this.refreshPolling();
       })
@@ -914,6 +956,14 @@ Page({
             timeout: 60000
           })
           .then((data) => normalizeVideo(data.item || item))
+          .then((updated) => {
+            if (updated.task_id && (updated.is_success || updated.is_failed)) {
+              replacePendingDigitalVideoTask(updated.task_id, null);
+            } else if (updated.task_id) {
+              replacePendingDigitalVideoTask(updated.task_id, updated);
+            }
+            return updated;
+          })
           .catch(() => item)
       )
     )
