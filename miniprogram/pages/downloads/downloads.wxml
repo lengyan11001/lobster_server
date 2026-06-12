@@ -108,7 +108,9 @@
 
     <view wx:else class="media-grid-list">
       <view wx:for="{{mediaWorks}}" wx:key="id" wx:for-index="index" class="media-work-card" data-index="{{index}}" bindtap="openMediaWork">
-        <image wx:if="{{item.media_type === 'image'}}" class="media-work-img" src="{{item.preview_url || item.url}}" mode="aspectFill" />
+        <image wx:if="{{item.media_type === 'image' && (item.preview_url || item.url)}}" class="media-work-img" src="{{item.preview_url || item.url}}" mode="aspectFill" />
+        <view wx:elif="{{item.media_type === 'image' && item.is_processing}}" class="media-work-img media-work-file">生成中</view>
+        <view wx:elif="{{item.media_type === 'image' && item.is_failed}}" class="media-work-img media-work-file">失败</view>
         <view wx:else class="media-work-img media-work-file">{{item.media_type}}</view>
         <view class="media-work-body">
           <view class="media-work-line">

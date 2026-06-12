@@ -6,6 +6,8 @@ const share = require("../../utils/share");
 const MODEL_ID = "gpt-image-2";
 const MAX_REFERENCES = 4;
 const CREDITS_PER_IMAGE = 60;
+const IMAGE_PENDING_KEY = "lobster_image_generate_pending_tasks";
+const IMAGE_CLAIM_MS = 5 * 60 * 1000;
 
 const EXAMPLES = [
   {
@@ -165,6 +167,51 @@ function cacheRecentGeneratedImages(rows) {
     .filter((item) => item && item.url)
     .slice(0, 20);
   wx.setStorageSync("lobster_recent_image_assets", merged);
+}
+
+function pendingImageTasks() {
+  const rows = wx.getStorageSync(IMAGE_PENDING_KEY);
+  const now = Date.now();
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((item) => item && item.task_id && item.status !== "success")
+    .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000);
+}
+
+function setPendingImageTasks(rows) {
+  wx.setStorageSync(IMAGE_PENDING_KEY, (rows || []).filter((item) => item && item.task_id).slice(0, 50));
+}
+
+function replacePendingImageTask(oldTaskId, task) {
+  const rows = pendingImageTasks();
+  const kept = rows.filter((item) => item && item.task_id !== oldTaskId && item.task_id !== (task && task.task_id));
+  const next = task && task.task_id ? [task].concat(kept).slice(0, 50) : kept.slice(0, 50);
+  setPendingImageTasks(next);
+}
+
+function createPendingImageTask(payload, prompt, ratio, count, referenceImages) {
+  const now = Date.now();
+  const taskId = `image-local-${now}-${Math.random().toString(16).slice(2, 8)}`;
+  return {
+    id: `pending-${taskId}`,
+    task_id: taskId,
+    media_type: "image",
+    work_type: "image_generate",
+    work_type_label: "AI图片",
+    title: "AI图片生成",
+    prompt,
+    ratio,
+    count,
+    payload,
+    referenceImages: referenceImages || [],
+    status: "processing",
+    status_label: "生成中",
+    local_only: true,
+    created_at: new Date(now).toISOString(),
+    created_at_ms: now,
+    claim_owner: "",
+    claim_until_ms: 0
+  };
 }
 
 function normalizePickerAsset(item) {
@@ -503,32 +550,70 @@ Page({
       payload.image_url = refs[0];
       payload.image_urls = refs;
     }
-    this.setData({ submitting: true, progressText: "正在生成", resultImages: [] });
+    const task = createPendingImageTask(payload, prompt, imageSize, this.data.count, this.data.referenceImages || []);
+    replacePendingImageTask(task.task_id, task);
+    wx.setStorageSync("lobster_refresh_works", "1");
+    wx.setStorageSync("lobster_open_media_tab", "image");
+    this.setData({ submitting: false, progressText: "任务已提交", resultImages: [] });
+    this.showSubmittedModal(task);
+  },
+
+  showSubmittedModal(task) {
+    wx.showModal({
+      title: "任务已提交",
+      content: "图片生成已开始，可在我的作品的图片分类查看结果。",
+      confirmText: "查看图片",
+      cancelText: "继续创作",
+      success: (res) => {
+        if (!res.confirm) {
+          const claimed = Object.assign({}, task, {
+            claim_owner: "image-generate",
+            claim_until_ms: Date.now() + IMAGE_CLAIM_MS
+          });
+          replacePendingImageTask(task.task_id, claimed);
+          this.runImageGenerationTask(claimed);
+          return;
+        }
+        wx.setStorageSync("lobster_refresh_works", "1");
+        wx.setStorageSync("lobster_open_media_tab", "image");
+        wx.switchTab({ url: "/pages/downloads/downloads" });
+      }
+    });
+  },
+
+  runImageGenerationTask(task) {
+    if (!task || !task.payload) return;
+    this.setData({ progressText: "生成中" });
     app.request({
       method: "POST",
       url: "/api/comfly-proxy/v1/images/generations",
-      data: payload,
+      data: task.payload,
       timeout: 240000
     })
       .then((data) => {
         const assets = extractSavedAssets(data);
         if (assets.length) {
           this.setData({ resultImages: assets, progressText: "正在保存" });
-          return saveGeneratedAssets(assets, prompt);
+          return saveGeneratedAssets(assets, task.prompt);
         }
         throw new Error(extractErrorMessage(data) || "图片生成失败，服务器未返回图片结果");
       })
       .then((assets) => {
         cacheRecentGeneratedImages(assets);
+        replacePendingImageTask(task.task_id, null);
         this.setData({ resultImages: assets, submitting: false, progressText: "生成完成" });
         wx.setStorageSync("lobster_refresh_works", "1");
         wx.setStorageSync("lobster_open_media_tab", "image");
-        const savedCount = assets.filter((item) => item.saved !== false && item.asset_id).length;
-        wx.showToast({ title: savedCount ? "生成完成" : "生成完成，保存稍后重试", icon: "none" });
       })
       .catch((err) => {
+        replacePendingImageTask(task.task_id, Object.assign({}, task, {
+          status: "failed",
+          status_label: "失败",
+          error_message: api.errorMessage(err) || "生成失败，请重新提交",
+          claim_until_ms: 0
+        }));
         this.setData({ submitting: false, progressText: "生成失败" });
-        wx.showToast({ title: api.errorMessage(err), icon: "none" });
+        wx.setStorageSync("lobster_refresh_works", "1");
       });
   },
 

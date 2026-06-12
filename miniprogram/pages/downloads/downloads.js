@@ -8,6 +8,9 @@ const SUPER_VIDEO_MODEL_ID = "grok-video-3";
 const SUPER_VIDEO_IMAGE_MODEL_ID = "gpt-image-2";
 const SUPER_VIDEO_MAX_REFERENCES = 4;
 const SUPER_VIDEO_CLAIM_MS = 5 * 60 * 1000;
+const IMAGE_PENDING_KEY = "lobster_image_generate_pending_tasks";
+const IMAGE_MODEL_ID = "gpt-image-2";
+const IMAGE_CLAIM_MS = 5 * 60 * 1000;
 
 function videoUrl(item) {
   return item.video_url || item.asset_video_url || item.source_video_url || "";
@@ -299,6 +302,26 @@ function setPendingSuperVideoTasks(rows) {
   wx.setStorageSync(SUPER_VIDEO_PENDING_KEY, (rows || []).filter((item) => item && item.task_id).slice(0, 50));
 }
 
+function pendingImageTasks() {
+  const rows = wx.getStorageSync(IMAGE_PENDING_KEY);
+  const now = Date.now();
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((item) => item && item.task_id && item.status !== "success")
+    .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000);
+}
+
+function setPendingImageTasks(rows) {
+  wx.setStorageSync(IMAGE_PENDING_KEY, (rows || []).filter((item) => item && item.task_id).slice(0, 50));
+}
+
+function replacePendingImageTask(oldTaskId, task) {
+  const rows = pendingImageTasks();
+  const kept = rows.filter((item) => item && item.task_id !== oldTaskId && item.task_id !== (task && task.task_id));
+  const next = task && task.task_id ? [task].concat(kept).slice(0, 50) : kept.slice(0, 50);
+  setPendingImageTasks(next);
+}
+
 function pruneCompletedSuperVideoPendingTasks(assetRows) {
   const rows = pendingSuperVideoTasks();
   const next = rows.filter((task) => !hasCompletedSuperVideoAsset(task, assetRows));
@@ -345,6 +368,27 @@ function normalizeOpenMindPendingTask(item) {
   });
 }
 
+function normalizePendingImageTask(item) {
+  const status = item.status || "processing";
+  return Object.assign({}, item, {
+    id: item.id || `pending-${item.task_id}`,
+    work_type: "image_generate",
+    media_type: "image",
+    work_type_label: "AI图片",
+    title: item.title || "AI图片生成",
+    prompt: item.prompt || "",
+    preview_url: "",
+    url: "",
+    download_url: "",
+    status,
+    status_label: item.status_label || statusLabel(status),
+    created_at_text: formatTime(item.created_at || item.created_at_ms),
+    is_processing: status === "processing" || status === "waiting",
+    is_success: status === "success",
+    is_failed: status === "failed"
+  });
+}
+
 function filenameFromUrl(url) {
   const path = String(url || "").split("?")[0].split("#")[0];
   const name = decodeURIComponent(path.split("/").pop() || "");
@@ -387,6 +431,67 @@ function normalizeMediaItem(item) {
     created_at_text: formatTime(item.created_at),
     filename
   });
+}
+
+function cacheRecentImageAssets(rows) {
+  const current = wx.getStorageSync("lobster_recent_image_assets") || [];
+  const merged = mergeMediaRows((rows || []).concat(Array.isArray(current) ? current : []))
+    .filter((item) => item && (item.url || item.source_url || item.preview_url))
+    .slice(0, 20);
+  wx.setStorageSync("lobster_recent_image_assets", merged);
+}
+
+function saveGeneratedImageAssets(rows, prompt) {
+  const tasks = mergeMediaRows(rows || []).map((item) => {
+    const url = safeUrl(item.url || item.source_url || item.preview_url);
+    if (!url) return Promise.resolve(null);
+    if (item.saved || item.asset_id) return Promise.resolve(Object.assign({}, item, { url, saved: item.saved !== false }));
+    return app.request({
+      method: "POST",
+      url: "/api/assets/save-url",
+      data: {
+        url,
+        media_type: "image",
+        tags: "auto,image_generate,miniprogram",
+        prompt,
+        model: IMAGE_MODEL_ID
+      },
+      timeout: 180000
+    }).then((saved) => ({
+      asset_id: String((saved && saved.asset_id) || ""),
+      url: String((saved && (saved.source_url || saved.url)) || url),
+      source_url: String((saved && (saved.source_url || saved.url)) || url),
+      preview_url: String((saved && (saved.preview_url || saved.source_url || saved.url)) || url),
+      media_type: "image",
+      saved: true
+    })).catch(() => Object.assign({}, item, { url, saved: false }));
+  });
+  return Promise.all(tasks).then((items) => mergeMediaRows(items.filter(Boolean)));
+}
+
+function imagePromptKey(item) {
+  return compactKey((item && item.prompt) || "").slice(0, 120);
+}
+
+function hasCompletedImageAsset(task, assetRows) {
+  const taskPrompt = imagePromptKey(task);
+  if (!taskPrompt) return false;
+  return (assetRows || []).some((asset) => {
+    const assetPrompt = imagePromptKey(asset);
+    return !!assetPrompt && assetPrompt === taskPrompt;
+  });
+}
+
+function pruneCompletedImagePendingTasks(assetRows) {
+  const rows = pendingImageTasks();
+  const next = rows.filter((task) => !hasCompletedImageAsset(task, assetRows));
+  if (next.length !== rows.length) setPendingImageTasks(next);
+  return next;
+}
+
+function hasRunnableImageTask() {
+  const now = Date.now();
+  return pendingImageTasks().some((task) => task.status !== "failed" && Number(task.claim_until_ms || 0) <= now);
 }
 
 function publishStatusLabel(status) {
@@ -474,6 +579,7 @@ Page({
   pollTimer: null,
   savingOpenMindTasks: {},
   claimingOpenMindTasks: {},
+  claimingImageTasks: {},
 
   onShow() {
     share.showShareMenu();
@@ -667,16 +773,19 @@ Page({
         const cachedRows = type === "image"
           ? (wx.getStorageSync("lobster_recent_image_assets") || []).map(normalizeMediaItem).filter((item) => item.media_type === type)
           : [];
-        const rows = mergeMediaRows(cachedRows.concat(mobileRows).concat(assetRows));
+        const pendingRows = type === "image" ? pruneCompletedImagePendingTasks(assetRows.concat(cachedRows).concat(mobileRows)).map(normalizePendingImageTask) : [];
+        const rows = mergeMediaRows(pendingRows.concat(cachedRows).concat(mobileRows).concat(assetRows));
         if (type === "image") {
           console.log("[downloads] image works loaded", {
             mobile: mobileRows.length,
             assets: assetRows.length,
             cached: cachedRows.length,
+            pending: pendingRows.length,
             total: rows.length
           });
         }
         this.setData({ mediaWorks: rows, authPanelVisible: false });
+        if (type === "image") this.refreshImagePolling();
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => this.setData({ loading: false }));
@@ -700,6 +809,16 @@ Page({
     this.stopPolling();
   },
 
+  refreshImagePolling() {
+    const hasProcessing = this.data.mediaTab === "image" && this.data.mediaWorks.some((item) => item.is_processing);
+    if (hasProcessing) {
+      this.startPolling();
+      if (hasRunnableImageTask()) setTimeout(() => this.pollProcessingWorks(), 50);
+      return;
+    }
+    this.stopPolling();
+  },
+
   startPolling() {
     if (this.pollTimer) return;
     this.pollTimer = setInterval(() => this.pollProcessingWorks(), 8000);
@@ -718,6 +837,14 @@ Page({
       this.setData({ polling: true });
       this.pollOpenMindVideoTasks()
         .then(() => this.loadAssetVideos())
+        .finally(() => this.setData({ polling: false }));
+      return;
+    }
+    if (this.data.mediaTab === "image") {
+      if (this.data.polling) return;
+      this.setData({ polling: true });
+      this.pollImageGenerateTasks()
+        .then(() => this.loadMediaWorks("image"))
         .finally(() => this.setData({ polling: false }));
       return;
     }
@@ -968,6 +1095,57 @@ Page({
     return this.savingOpenMindTasks[task.task_id];
   },
 
+  pollImageGenerateTasks() {
+    const tasks = pendingImageTasks();
+    if (!tasks.length) return Promise.resolve();
+    return Promise.all(tasks.slice(0, 2).map((task) => this.processLocalImageTask(task))).then((updated) => {
+      const byId = {};
+      updated.filter(Boolean).forEach((item) => {
+        byId[String(item.task_id)] = item;
+      });
+      const next = pendingImageTasks().map((item) => byId[String(item.task_id)] || item);
+      setPendingImageTasks(next.filter(Boolean));
+    });
+  },
+
+  processLocalImageTask(task) {
+    if (!task || !task.task_id || !task.payload) return Promise.resolve(task);
+    if (task.status === "failed") return Promise.resolve(task);
+    if (Number(task.claim_until_ms || 0) > Date.now()) return Promise.resolve(task);
+    if (this.claimingImageTasks[task.task_id]) return this.claimingImageTasks[task.task_id];
+    replacePendingImageTask(task.task_id, Object.assign({}, task, {
+      claim_owner: "downloads",
+      claim_until_ms: Date.now() + IMAGE_CLAIM_MS
+    }));
+    this.claimingImageTasks[task.task_id] = app
+      .request({
+        method: "POST",
+        url: "/api/comfly-proxy/v1/images/generations",
+        data: task.payload,
+        timeout: 240000
+      })
+      .then((data) => {
+        const images = extractGeneratedImages(data);
+        if (!images.length) throw new Error("图片生成失败，请重新提交");
+        return saveGeneratedImageAssets(images, task.prompt || "").then((assets) => {
+          cacheRecentImageAssets(assets);
+          replacePendingImageTask(task.task_id, null);
+          wx.setStorageSync("lobster_refresh_works", "1");
+          return null;
+        });
+      })
+      .catch((err) => Object.assign({}, task, {
+        status: "failed",
+        status_label: "失败",
+        error_message: api.errorMessage(err) || "生成失败，请重新提交",
+        claim_until_ms: 0
+      }))
+      .finally(() => {
+        delete this.claimingImageTasks[task.task_id];
+      });
+    return this.claimingImageTasks[task.task_id];
+  },
+
   openWork(evt) {
     const index = Number(evt.currentTarget.dataset.index || 0);
     const item = this.data.works[index];
@@ -1063,6 +1241,14 @@ Page({
     const item = this.data.mediaWorks[index];
     if (!item) return;
     if (item.media_type === "image") {
+      if (item.is_processing) {
+        wx.showToast({ title: "生成中，预计1-2分钟", icon: "none" });
+        return;
+      }
+      if (item.is_failed) {
+        wx.showToast({ title: "生成失败，请重新提交", icon: "none" });
+        return;
+      }
       this.previewMediaWork(evt);
       return;
     }
