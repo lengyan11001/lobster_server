@@ -1747,13 +1747,18 @@ async function loadSkillVisibility(userId) {
       const active = visibleIds.has(pkg.id);
       const unlocked = unlockedIds.has(pkg.id);
       const paid = !!(pkg.unlock_price_yuan || pkg.unlock_price_credits);
+      const isFeatureFlag = !!pkg.feature_key;
       const price = pkg.unlock_price_credits ? (pkg.unlock_price_credits + ' 积分') : (pkg.unlock_price_yuan ? (pkg.unlock_price_yuan + ' 元') : '免费/默认');
+      const visibleText = isFeatureFlag ? (active ? '已开放' : '未开放') : (active ? '可见' : '隐藏');
+      const permissionCell = isFeatureFlag
+        ? '<span style="font-size:12px;color:var(--text-secondary)">勾选“可见”即可开放入口</span>'
+        : '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (unlocked ? 'checked' : '') + ' onchange="toggleSkillUnlock(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"> <span>' + (paid ? (unlocked ? '已解锁' : '未解锁') : (unlocked ? '已授权' : '授权')) + '</span></label>';
       html += '<tr>'
         + '<td><div style="font-weight:600">' + escapeHtml(pkg.name || pkg.id) + '</div><div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(pkg.id) + '</div></td>'
         + '<td><span class="badge badge-blue">' + escapeHtml(pkg.store_visibility || '-') + '</span><div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(price) + '</div></td>'
         + '<td>' + (pkg.capabilities_count || 0) + '</td>'
-        + '<td><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + ' onchange="toggleSkillVisibility(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"> <span>' + (active ? '可见' : '隐藏') + '</span></label></td>'
-        + '<td><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (unlocked ? 'checked' : '') + ' onchange="toggleSkillUnlock(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"> <span>' + (paid ? (unlocked ? '已解锁' : '未解锁') : (unlocked ? '已授权' : '授权')) + '</span></label></td>'
+        + '<td><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (active ? 'checked' : '') + ' onchange="toggleSkillVisibility(' + userId + ',\'' + escapeHtml(pkg.id) + '\',this.checked)"> <span>' + visibleText + '</span></label></td>'
+        + '<td>' + permissionCell + '</td>'
         + '</tr>';
     }
     html += '</tbody></table></div>';

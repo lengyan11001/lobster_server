@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from ..core.config import settings, get_effective_public_base_url
@@ -27,6 +27,7 @@ from ..models import AuthChallenge, SkillUnlock, SmsSendLimit, User
 from ..services.credits_amount import credits_json_float
 from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
 from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
+from ..services.user_feature_flags import user_feature_flags
 from .installation_slots import (
     INSTALLATION_ID_HEADER,
     apply_installation_signup_bonus_for_new_user,
@@ -65,6 +66,7 @@ class UserOut(BaseModel):
     brand_mark: Optional[str] = None
     wecom_userid: Optional[str] = None
     is_agent: bool = False
+    features: Dict[str, bool] = Field(default_factory=dict)
 
 
 class Token(BaseModel):
@@ -602,6 +604,7 @@ def get_me(
         brand_mark=getattr(current_user, "brand_mark", None),
         wecom_userid=getattr(current_user, "wecom_userid", None),
         is_agent=bool(getattr(current_user, "is_agent", False)),
+        features=user_feature_flags(db, current_user.id),
     )
 
 
