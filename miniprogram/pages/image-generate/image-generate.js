@@ -8,6 +8,7 @@ const MAX_REFERENCES = 4;
 const CREDITS_PER_IMAGE = 60;
 const IMAGE_PENDING_KEY = "lobster_image_generate_pending_tasks";
 const IMAGE_CLAIM_MS = 5 * 60 * 1000;
+const IMAGE_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 
 const EXAMPLES = [
   {
@@ -188,9 +189,17 @@ function pendingImageTasks() {
   const rows = wx.getStorageSync(IMAGE_PENDING_KEY);
   const now = Date.now();
   if (!Array.isArray(rows)) return [];
+  const seen = {};
   return rows
     .filter((item) => item && item.task_id && item.status !== "success")
-    .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000);
+    .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000)
+    .filter((item) => {
+      const key = item.submit_fingerprint || "";
+      if (!key) return true;
+      if (seen[key] && Math.abs(Number(item.created_at_ms || 0) - Number(seen[key].created_at_ms || 0)) < IMAGE_DUPLICATE_WINDOW_MS) return false;
+      seen[key] = item;
+      return true;
+    });
 }
 
 function setPendingImageTasks(rows) {
@@ -218,6 +227,7 @@ function createPendingImageTask(payload, prompt, ratio, count, referenceImages) 
     ratio,
     count,
     payload,
+    submit_fingerprint: imageSubmitFingerprint(payload),
     referenceImages: referenceImages || [],
     status: "processing",
     status_label: "生成中",
@@ -227,6 +237,28 @@ function createPendingImageTask(payload, prompt, ratio, count, referenceImages) 
     claim_owner: "",
     claim_until_ms: 0
   };
+}
+
+function imageSubmitFingerprint(payload) {
+  const refs = Array.isArray(payload && payload.image_urls) ? payload.image_urls : [];
+  return [
+    payload && payload.model,
+    payload && payload.prompt,
+    payload && (payload.aspect_ratio || payload.ratio || payload.image_size),
+    payload && (payload.num_images || payload.n || 1),
+    refs.join("|"),
+    payload && payload.image_url
+  ].map((item) => String(item || "").trim()).join("::");
+}
+
+function recentPendingImageTask(payload) {
+  const fingerprint = imageSubmitFingerprint(payload);
+  const now = Date.now();
+  return pendingImageTasks().find((item) => (
+    item.submit_fingerprint === fingerprint &&
+    item.status !== "failed" &&
+    now - Number(item.created_at_ms || 0) < IMAGE_DUPLICATE_WINDOW_MS
+  ));
 }
 
 function normalizePickerAsset(item) {
@@ -294,6 +326,8 @@ Page({
     resultImages: [],
     costHint: costHintFor(1)
   },
+
+  imageSubmitLock: false,
 
   onLoad() {
     share.showShareMenu();
@@ -540,12 +574,17 @@ Page({
   },
 
   submitGenerate() {
+    if (this.imageSubmitLock || this.data.submitting) {
+      wx.showToast({ title: "图片任务已提交", icon: "none" });
+      return;
+    }
     if (this.showAuthPanel("图片生成前需要先登录。")) return;
     const prompt = (this.data.prompt || "").trim();
     if (!prompt) {
       wx.showToast({ title: "请输入图片描述", icon: "none" });
       return;
     }
+    this.imageSubmitLock = true;
     const refs = uniqueRows((this.data.referenceImages || [])
       .map((item) => ({ url: item.source_url || item.url }))
       .filter((item) => item.url))
@@ -565,11 +604,12 @@ Page({
       payload.image_url = refs[0];
       payload.image_urls = refs;
     }
-    const task = createPendingImageTask(payload, prompt, imageSize, this.data.count, this.data.referenceImages || []);
+    const duplicateTask = recentPendingImageTask(payload);
+    const task = duplicateTask || createPendingImageTask(payload, prompt, imageSize, this.data.count, this.data.referenceImages || []);
     replacePendingImageTask(task.task_id, task);
     wx.setStorageSync("lobster_refresh_works", "1");
     wx.setStorageSync("lobster_open_media_tab", "image");
-    this.setData({ submitting: false, progressText: "任务已提交", resultImages: [] });
+    this.setData({ submitting: true, progressText: "任务已提交", resultImages: [] });
     this.showSubmittedModal(task);
   },
 
@@ -592,6 +632,10 @@ Page({
         wx.setStorageSync("lobster_refresh_works", "1");
         wx.setStorageSync("lobster_open_media_tab", "image");
         wx.switchTab({ url: "/pages/downloads/downloads" });
+      },
+      fail: () => {
+        this.imageSubmitLock = false;
+        this.setData({ submitting: false });
       }
     });
   },
@@ -616,6 +660,7 @@ Page({
       .then((assets) => {
         cacheRecentGeneratedImages(assets);
         replacePendingImageTask(task.task_id, null);
+        this.imageSubmitLock = false;
         this.setData({ resultImages: assets, submitting: false, progressText: "生成完成" });
         wx.setStorageSync("lobster_refresh_works", "1");
         wx.setStorageSync("lobster_open_media_tab", "image");
@@ -627,6 +672,7 @@ Page({
           error_message: api.errorMessage(err) || "生成失败，请重新提交",
           claim_until_ms: 0
         }));
+        this.imageSubmitLock = false;
         this.setData({ submitting: false, progressText: "生成失败" });
         wx.setStorageSync("lobster_refresh_works", "1");
       });

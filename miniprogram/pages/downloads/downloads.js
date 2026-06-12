@@ -11,6 +11,7 @@ const SUPER_VIDEO_CLAIM_MS = 5 * 60 * 1000;
 const IMAGE_PENDING_KEY = "lobster_image_generate_pending_tasks";
 const IMAGE_MODEL_ID = "gpt-image-2";
 const IMAGE_CLAIM_MS = 5 * 60 * 1000;
+const IMAGE_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 
 function videoUrl(item) {
   return item.video_url || item.asset_video_url || item.source_video_url || "";
@@ -326,9 +327,17 @@ function pendingImageTasks() {
   const rows = wx.getStorageSync(IMAGE_PENDING_KEY);
   const now = Date.now();
   if (!Array.isArray(rows)) return [];
+  const seen = {};
   return rows
     .filter((item) => item && item.task_id && item.status !== "success")
-    .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000);
+    .filter((item) => now - Number(item.created_at_ms || 0) < 24 * 60 * 60 * 1000)
+    .filter((item) => {
+      const key = item.submit_fingerprint || "";
+      if (!key) return true;
+      if (seen[key] && Math.abs(Number(item.created_at_ms || 0) - Number(seen[key].created_at_ms || 0)) < IMAGE_DUPLICATE_WINDOW_MS) return false;
+      seen[key] = item;
+      return true;
+    });
 }
 
 function setPendingImageTasks(rows) {
