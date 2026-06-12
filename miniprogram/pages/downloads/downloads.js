@@ -96,6 +96,26 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+function canonicalUrlKey(value) {
+  let url = cleanText(value);
+  if (!url) return "";
+  const proxyMatch = url.match(/[?&]url=([^&#]+)/);
+  if (proxyMatch && proxyMatch[1]) {
+    try {
+      url = decodeURIComponent(proxyMatch[1]);
+    } catch (err) {
+      url = proxyMatch[1];
+    }
+  }
+  return url.split("#")[0].split("?")[0];
+}
+
+function imageRowKey(item) {
+  const urlKey = canonicalUrlKey(item && (item.source_url || item.url || item.preview_url || item.download_url || item.proxy_preview_url || item.proxy_download_url));
+  if (urlKey) return `image:${urlKey}`;
+  return "";
+}
+
 function compactKey(value) {
   return cleanText(value).replace(/\s+/g, "").toLowerCase();
 }
@@ -525,7 +545,7 @@ function mergeMediaRows(rows) {
   const out = [];
   (rows || []).forEach((item) => {
     if (!item) return;
-    const key = String(item.asset_id || item.id || item.playable_url || item.url || item.source_url || "").trim();
+    const key = imageRowKey(item) || String(item.asset_id || item.id || item.playable_url || item.url || item.source_url || "").trim();
     if (!key || seen[key]) return;
     seen[key] = true;
     out.push(item);

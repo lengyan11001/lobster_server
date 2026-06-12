@@ -42,11 +42,26 @@ function uniqueRows(rows) {
   const out = [];
   (rows || []).forEach((item) => {
     const url = String((item && item.url) || "").trim();
-    if (!url || seen[url]) return;
-    seen[url] = true;
+    const key = canonicalUrlKey(url);
+    if (!url || seen[key]) return;
+    seen[key] = true;
     out.push(item);
   });
   return out;
+}
+
+function canonicalUrlKey(value) {
+  let url = String(value || "").trim();
+  if (!url) return "";
+  const proxyMatch = url.match(/[?&]url=([^&#]+)/);
+  if (proxyMatch && proxyMatch[1]) {
+    try {
+      url = decodeURIComponent(proxyMatch[1]);
+    } catch (err) {
+      url = proxyMatch[1];
+    }
+  }
+  return url.split("#")[0].split("?")[0];
 }
 
 function parseJsonMaybe(value) {
