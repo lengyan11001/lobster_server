@@ -212,6 +212,34 @@ def _clean_long_text(value: Any, max_len: int = 12000) -> str:
     return str(value).strip()[:max_len]
 
 
+def _strip_embedded_image_prompt(value: Any, max_len: int = 8000) -> str:
+    text = _clean_long_text(value, max_len)
+    if not text:
+        return ""
+    lines = [line.rstrip() for line in text.splitlines()]
+    cleaned: list[str] = []
+    skip_block = False
+    image_prompt_re = re.compile(r"^\s*(?:配图提示|画面建议|可配画面建议|视觉提示|图片提示|image[_\s-]*prompt|visual[_\s-]*prompt)\s*[:：]", re.I)
+    for line in lines:
+        if image_prompt_re.match(line):
+            skip_block = True
+            continue
+        if skip_block:
+            if not line.strip():
+                skip_block = False
+                continue
+            if re.match(r"^\s*(?:标题|开场|正文|口播|收口|CTA|互动|文案)\s*[:：]", line, re.I):
+                skip_block = False
+            else:
+                continue
+        if not image_prompt_re.match(line):
+            cleaned.append(line)
+    text = "\n".join(cleaned).strip()
+    text = re.sub(r"(?:^|\n)\s*(?:配图提示|画面建议|可配画面建议|视觉提示|图片提示)\s*[:：].*(?=\n|$)", "", text, flags=re.I)
+    text = re.sub(r"\s*(?:配图提示|画面建议|可配画面建议|视觉提示|图片提示)\s*[:：].*$", "", text, flags=re.I | re.S)
+    return text.strip()[:max_len]
+
+
 def _strip_search_markup(value: Any, max_len: int = 255) -> str:
     raw = _clean_long_text(value, max(max_len * 4, max_len))
     if not raw:
@@ -613,16 +641,23 @@ def _item_brief(row: TikHubSourceItem, idx: int) -> dict[str, Any]:
 def _draft_requirements(task: str, platform: str, count: int) -> str:
     task_key = (task or "").strip().lower()
     plat = (platform or "").strip().lower()
+    current_year = _utcnow().year
     if task_key == "task1_industry":
         return (
             f"任务一：基于行业榜单/热门话题生成 {count} 条行业热门口播文案。"
             "每条要有标题、开场钩子、口播正文、转化/互动收口、可配画面建议。"
-            "口播时长控制在 30-60 秒，语气要像真实短视频创作者，不要空泛鸡汤。"
+            "暂不限制字数或口播时长，优先把观点、案例、行业判断讲透。"
+            "必须写出一个具体业务场景或案例拆解：问题是什么、判断依据是什么、给用户的启发是什么。"
+            f"涉及年份时默认使用当前年份 {current_year} 年；除非数据源明确出现其他年份，不要写 2025 年等过去年份。"
+            "语气要像真实短视频创作者，不要空泛鸡汤。"
         )
     if task_key == "task1_ip":
         return (
             f"任务一：基于同行最新作品和本地知识库生成 {count} 条个人专业 IP 口播文案。"
-            "要体现专业判断、案例感和个人观点；不能抄袭同行原文，只提炼选题结构和表达角度。"
+            "暂不限制字数或口播时长，优先写出深度。"
+            "要体现专业判断、案例感和个人观点；每条至少包含一个具体场景、案例或反常识判断，并说明为什么。"
+            "不能抄袭同行原文，只提炼选题结构和表达角度。"
+            f"涉及年份时默认使用当前年份 {current_year} 年；除非数据源明确出现其他年份，不要写 2025 年等过去年份。"
             "如果同行数据不足，用记忆资料补足到指定条数。"
         )
     if task_key == "task2_topics":
@@ -635,7 +670,9 @@ def _draft_requirements(task: str, platform: str, count: int) -> str:
         return (
             f"任务二：生成 {count} 条朋友圈文案。"
             "每条要自然、有生活场景、有专业可信度，适合个人 IP 日更；避免广告腔。"
-            "长度 120-280 字，给出可选配图提示。"
+            "正文和配图提示必须分开：body 只放朋友圈正文，不要把“配图提示/画面建议”写进 body。"
+            "image_prompt 单独给出可选配图提示。"
+            f"涉及年份时默认使用当前年份 {current_year} 年；除非数据源明确出现其他年份，不要写 2025 年等过去年份。"
         )
     if plat == "douyin":
         return f"生成 {count} 条抖音口播/标题文案，强开头、强节奏、适合评论互动。"
@@ -663,6 +700,7 @@ def _normalize_drafts(obj: dict[str, Any], fallback_text: str, count: int) -> li
             image_prompt = _clean_long_text(item.get("image_prompt") or item.get("配图提示") or item.get("visual_prompt"), 1600)
             pieces = [x for x in (hook, body, cta) if x]
             full_text = "\n\n".join(pieces) if pieces else _clean_long_text(item.get("full_text") or item.get("text"), 6000)
+            full_text = _strip_embedded_image_prompt(full_text, 6000)
             drafts.append(
                 {
                     "title": title or (full_text[:40] if full_text else "未命名文案"),
@@ -676,7 +714,8 @@ def _normalize_drafts(obj: dict[str, Any], fallback_text: str, count: int) -> li
         if len(parts) <= 1:
             parts = [text] if text else []
         for part in parts[:count]:
-            drafts.append({"title": part[:40], "body": part, "image_prompt": ""})
+            cleaned_part = _strip_embedded_image_prompt(part, 6000)
+            drafts.append({"title": cleaned_part[:40], "body": cleaned_part, "image_prompt": ""})
     return drafts[:count]
 
 
@@ -1450,6 +1489,7 @@ async def _call_ip_content_llm(
         raise HTTPException(status_code=400, detail="请先同步关键词/同行数据，或选择至少一份记忆资料。")
     task_requirements = _draft_requirements(task, platform, count)
     source_briefs = [_item_brief(row, idx + 1) for idx, row in enumerate(rows[:30])]
+    current_year = _utcnow().year
     memory_payload = [
         {"title": m.get("title") or "", "content": (m.get("content") or "")[:1800]}
         for m in memories
@@ -1466,6 +1506,9 @@ async def _call_ip_content_llm(
         "再用 memory_docs 约束事实、专业口径、案例风格和表达边界，不能脱离记忆写成泛泛内容。"
         "当 tikhub_sources 不足以生成指定条数时，才用 memory_docs 补足数量，并保持事实克制。"
         "行业热门口播优先使用关键词/榜单数据；专业 IP 口播优先使用同行新作品；朋友圈文案也要优先承接最新数据里的选题或场景。"
+        f"所有涉及年份的内容默认按当前年份 {current_year} 年表达；除非数据源原文明确提供其他年份，严禁默认写 2025 年。"
+        "口播类文案暂不限制字数和时长，要写出深度、案例、具体场景和判断链路。"
+        "朋友圈文案的 body 只能写主文案，配图提示必须放到 image_prompt，不要把“配图提示/画面建议”混入 body。"
         "\n"
     )
     user_prompt = json.dumps(
@@ -1475,6 +1518,7 @@ async def _call_ip_content_llm(
             "extra_requirements": _clean_long_text(extra_requirements, 4000),
             "count": count,
             "platform": platform,
+            "current_year": current_year,
             "tikhub_sources": source_briefs,
             "memory_docs": memory_payload,
             "source_usage_rule": (
@@ -1862,6 +1906,7 @@ async def generate_drafts(
     count = max(1, min(int(body.count or 5), 20))
     task_requirements = _draft_requirements(body.task, body.platform, count)
     source_briefs = [_item_brief(row, idx + 1) for idx, row in enumerate(rows[:30])]
+    current_year = _utcnow().year
     memory_payload = [
         {"title": m["title"], "content": m["content"][:1800]}
         for m in memories
@@ -1872,6 +1917,9 @@ async def generate_drafts(
         "必须返回严格 JSON，不要 Markdown 代码块。格式："
         "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\"}]}。"
         "不要抄袭同行原文，不要编造资料里没有的硬性数据；可以提炼热点结构、话题角度和表达策略。"
+        f"所有涉及年份的内容默认按当前年份 {current_year} 年表达；除非数据源原文明确提供其他年份，严禁默认写 2025 年。"
+        "口播类文案暂不限制字数和时长，要写出深度、案例、具体场景和判断链路。"
+        "朋友圈文案的 body 只能写主文案，配图提示必须放到 image_prompt，不要把“配图提示/画面建议”混入 body。"
     )
     user_prompt = json.dumps(
         {
@@ -1879,6 +1927,7 @@ async def generate_drafts(
             "补充要求": _clean_long_text(body.extra_requirements, 4000),
             "需要条数": count,
             "平台": body.platform,
+            "当前年份": current_year,
             "TikHub数据源": source_briefs,
             "记忆资料": memory_payload,
         },
@@ -2081,6 +2130,8 @@ def attach_draft_record_image(
                     "image_url": url,
                     "image_asset_id": _clean_text(item.get("image_asset_id") or item.get("asset_id"), 128),
                     "image_prompt": _clean_long_text(item.get("image_prompt") or "", 2000),
+                    "generated_prompt": _clean_long_text(item.get("generated_prompt") or "", 4000),
+                    "variant": _clean_text(item.get("variant") or "", 80),
                     "index": int(item.get("index") or len(cleaned_images) + 1),
                     "created_at": _clean_text(item.get("created_at") or _utcnow().isoformat(), 64),
                 }
