@@ -25,6 +25,7 @@ from ..models import BillingIdempotency, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 from ..services.daily_credit_limit import assert_daily_limit_allows
+from ..services.model_usage_monitor import log_model_usage_event
 from ..services.sutui_api_audit import clip_openai_chat_completions_json_for_audit, log_xskill_http
 from ..services.sutui_pricing import (
     credits_from_chat_usage_when_no_docs_pricing,
@@ -1583,6 +1584,7 @@ async def sutui_chat_completions(
     }
 
     model_id = (body.get("model") or "").strip()
+    requested_model_id = model_id
     _req_has_tools = bool(body.get("tools")) and body.get("tool_choice") != "none"
     model_candidates = [model_id] if llm_model_override else _sutui_chat_model_candidates(model_id, has_tools=_req_has_tools)
     _tok = (token or "").strip()
@@ -1809,6 +1811,26 @@ async def sutui_chat_completions(
             upstream_response=data if isinstance(data, dict) else (r.text or None),
             outbound_request_json=out_req_for_audit,
         )
+        log_model_usage_event(
+            db,
+            category="dialog",
+            event_kind="request",
+            success=bool(r.status_code == 200 and winning_model and _openai_nonstream_completion_usable(data, r.status_code)),
+            user_id=current_user.id,
+            requested_model=requested_model_id,
+            model=winning_model or model_id,
+            provider=winning_provider or ("direct" if winning_is_direct else "xskill"),
+            channel=_route_label,
+            route=_route_label,
+            endpoint=url,
+            request_id=trace_id,
+            error_message=_audit_err or ((r.text or "")[:1000] if r.status_code >= 400 else ""),
+            meta={
+                "stream": False,
+                "attempts": [(a["model"], a["provider"]) for a in attempts],
+                "http_status": r.status_code,
+            },
+        )
 
         if r.status_code == 200 and winning_model and _openai_nonstream_completion_usable(data, r.status_code):
             usage_raw = data.get("usage") if isinstance(data, dict) else None
@@ -1921,6 +1943,26 @@ async def sutui_chat_completions(
                                     upstream_response=txt,
                                     outbound_request_json=out_req_for_audit,
                                 )
+                                log_model_usage_event(
+                                    db,
+                                    category="dialog",
+                                    event_kind="request",
+                                    success=False,
+                                    user_id=current_user.id,
+                                    requested_model=requested_model_id,
+                                    model=mid_try,
+                                    provider=att["provider"],
+                                    channel=att["provider"],
+                                    route=att["provider"],
+                                    endpoint=att_url,
+                                    request_id=trace_id,
+                                    error_message=txt[:1000],
+                                    meta={
+                                        "stream": True,
+                                        "http_status": resp.status_code,
+                                        "stream_attempt": cand_idx,
+                                    },
+                                )
                                 if not att_is_direct and _sutui_chat_abort_model_fallback(resp.status_code, pj):
                                     yield _stream_upstream_error_sse_bytes(resp.status_code, txt)
                                     return
@@ -1962,6 +2004,24 @@ async def sutui_chat_completions(
                                 sutui_pool=sutui_pool or "",
                                 upstream_response={"note": "SSE stream started", "trace_id": trace_id},
                                 outbound_request_json=out_req_for_audit,
+                            )
+                            log_model_usage_event(
+                                db,
+                                category="dialog",
+                                event_kind="request",
+                                success=True,
+                                user_id=current_user.id,
+                                requested_model=requested_model_id,
+                                model=mid_try,
+                                provider=att["provider"] or ("direct" if att_is_direct else "xskill"),
+                                channel=att["provider"],
+                                route=att["provider"],
+                                endpoint=att_url,
+                                request_id=trace_id,
+                                meta={
+                                    "stream": True,
+                                    "http_status": 200,
+                                },
                             )
                             async for chunk in resp.aiter_bytes():
                                 yield chunk

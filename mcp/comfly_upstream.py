@@ -152,12 +152,16 @@ def get_comfly_config(token_group: str = "") -> Tuple[str, str]:
         grouped_base = (os.environ.get(base_env_name) or "").strip().rstrip("/")
         if not grouped_base and group == "YUNWU":
             grouped_base = (os.environ.get("YUNWU_API_BASE") or "").strip().rstrip("/")
+        if not grouped_base and group in {"OPENMIND", "OPENMINDAPI"}:
+            grouped_base = (os.environ.get("OPENMIND_API_BASE") or "").strip().rstrip("/")
         if grouped_base:
             base = grouped_base
             logger.debug("[Comfly] 使用 token_group=%s base_env=%s", token_group, base_env_name)
         key = (os.environ.get(key_env_name) or "").strip()
         if not key and group == "YUNWU":
             key = (os.environ.get("YUNWU_API_KEY") or "").strip()
+        if not key and group in {"OPENMIND", "OPENMINDAPI"}:
+            key = (os.environ.get("OPENMIND_API_KEY") or "").strip()
         if key:
             logger.debug("[Comfly] 使用 token_group=%s key_env=%s", token_group, key_env_name)
     if not key:

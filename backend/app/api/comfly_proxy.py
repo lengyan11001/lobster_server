@@ -37,6 +37,7 @@ from ..db import get_db
 from ..models import Asset, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, credits_json_float, user_balance_decimal
+from ..services.model_usage_monitor import log_model_usage_event
 from .assets import _save_bytes_or_tos
 from .auth import get_current_user
 from .mobile_identity import online_user_for_mobile_user
@@ -1189,6 +1190,34 @@ async def proxy_images_generations(
                     saved_assets=len(saved_assets),
                     refs=len(reference_urls),
                 )
+                log_model_usage_event(
+                    db,
+                    category="image",
+                    event_kind="attempt",
+                    success=True,
+                    user_id=billing_user.id,
+                    requested_model=model,
+                    model=attempt_model,
+                    provider=(entry.get("token_group") or "comfly"),
+                    channel=(entry.get("token_group") or "comfly"),
+                    route="comfly",
+                    endpoint=endpoint_path,
+                    meta={"attempt": index, "retry": retry_index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
+                )
+                log_model_usage_event(
+                    db,
+                    category="image",
+                    event_kind="request",
+                    success=True,
+                    user_id=billing_user.id,
+                    requested_model=model,
+                    model=attempt_model,
+                    provider=(entry.get("token_group") or "comfly"),
+                    channel=(entry.get("token_group") or "comfly"),
+                    route="comfly",
+                    endpoint=endpoint_path,
+                    meta={"attempt": index, "retry": retry_index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
+                )
                 channel_succeeded = True
                 return JSONResponse(resp)
             except Exception as e:
@@ -1204,6 +1233,21 @@ async def proxy_images_generations(
                     retry=retry_index,
                     retries=attempts_per_model,
                     error=last_error[:300],
+                )
+                log_model_usage_event(
+                    db,
+                    category="image",
+                    event_kind="attempt",
+                    success=False,
+                    user_id=billing_user.id,
+                    requested_model=model,
+                    model=attempt_model,
+                    provider=(entry.get("token_group") or "comfly"),
+                    channel=(entry.get("token_group") or "comfly"),
+                    route="comfly",
+                    endpoint=endpoint_path,
+                    error_message=last_error[:1000],
+                    meta={"attempt": index, "retry": retry_index, "retries": attempts_per_model, "refs": len(reference_urls)},
                 )
                 if retry_index >= attempts_per_model or not _is_retryable_image_error(e):
                     break
@@ -1238,6 +1282,34 @@ async def proxy_images_generations(
                     comfly_error=last_error[:300],
                     saved_assets=len(saved_assets),
                 )
+                log_model_usage_event(
+                    db,
+                    category="image",
+                    event_kind="attempt",
+                    success=True,
+                    user_id=billing_user.id,
+                    requested_model=model,
+                    model=attempt_model,
+                    provider="openmind",
+                    channel="openmind",
+                    route="openmind",
+                    endpoint="/openmind/images",
+                    meta={"attempt": index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
+                )
+                log_model_usage_event(
+                    db,
+                    category="image",
+                    event_kind="request",
+                    success=True,
+                    user_id=billing_user.id,
+                    requested_model=model,
+                    model=attempt_model,
+                    provider="openmind",
+                    channel="openmind",
+                    route="openmind",
+                    endpoint="/openmind/images",
+                    meta={"attempt": index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
+                )
                 channel_succeeded = True
                 return JSONResponse(resp)
             except Exception as fallback_error:
@@ -1249,6 +1321,21 @@ async def proxy_images_generations(
                     model=attempt_model,
                     comfly_error=last_error[:300],
                     error=str(fallback_error)[:300],
+                )
+                log_model_usage_event(
+                    db,
+                    category="image",
+                    event_kind="attempt",
+                    success=False,
+                    user_id=billing_user.id,
+                    requested_model=model,
+                    model=attempt_model,
+                    provider="openmind",
+                    channel="openmind",
+                    route="openmind",
+                    endpoint="/openmind/images",
+                    error_message=str(fallback_error)[:1000],
+                    meta={"attempt": index, "refs": len(reference_urls)},
                 )
                 last_error = f"{last_error}; OpenMind fallback failed: {fallback_error}"
                 errors.append(f"{attempt_model}/openmind: {str(fallback_error)[:300]}")
@@ -1272,6 +1359,21 @@ async def proxy_images_generations(
                 attempt=index,
                 error=last_error[:300],
             )
+            log_model_usage_event(
+                db,
+                category="image",
+                event_kind="request",
+                success=False,
+                user_id=billing_user.id,
+                requested_model=model,
+                model=attempt_model,
+                provider="all",
+                channel="all",
+                route="final",
+                endpoint="/v1/images/generations",
+                error_message=last_error[:1000],
+                meta={"attempt": index, "refs": len(reference_urls)},
+            )
 
     detail = "; ".join(errors[-3:]) or last_error or "unknown error"
     _audit(
@@ -1280,6 +1382,21 @@ async def proxy_images_generations(
         request_user_id=current_user.id,
         model=model,
         errors=errors[-5:],
+    )
+    log_model_usage_event(
+        db,
+        category="image",
+        event_kind="request",
+        success=False,
+        user_id=online_user_for_mobile_user(db, current_user).id,
+        requested_model=model,
+        model=model,
+        provider="all",
+        channel="all",
+        route="final",
+        endpoint="/v1/images/generations",
+        error_message=detail[:1000],
+        meta={"errors": errors[-5:]},
     )
     raise HTTPException(502, _public_image_failure_detail())
 
@@ -1386,6 +1503,20 @@ async def proxy_videos_generations_submit(
         _do_full_refund(db, current_user, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="video_submit", error=str(e))
         _audit("video_submit_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        log_model_usage_event(
+            db,
+            category="video",
+            event_kind="request",
+            success=False,
+            user_id=current_user.id,
+            requested_model=model,
+            model=model,
+            provider="comfly",
+            channel="comfly",
+            route="video_submit",
+            endpoint="/api/comfly-proxy/v2/videos/generations",
+            error_message=str(e)[:1000],
+        )
         raise HTTPException(502, f"Comfly videos submit 调用失败：{e}")
 
     task_id = _task_id_from_response(resp) or (
@@ -1397,6 +1528,21 @@ async def proxy_videos_generations_submit(
            task_id=task_id,
            api_kind=api_kind,
            pre=credits_json_float(pre))
+    log_model_usage_event(
+        db,
+        category="video",
+        event_kind="request",
+        success=True,
+        user_id=current_user.id,
+        requested_model=model,
+        model=model,
+        provider="comfly",
+        channel="comfly",
+        route=api_kind,
+        endpoint="/api/comfly-proxy/v2/videos/generations",
+        request_id=task_id or "",
+        meta={"api_kind": api_kind},
+    )
     return JSONResponse(resp)
 
 
@@ -1532,6 +1678,20 @@ async def proxy_openmind_video_submit(
             model=model,
             error=str(e)[:300],
         )
+        log_model_usage_event(
+            db,
+            category="video",
+            event_kind="request",
+            success=False,
+            user_id=billing_user.id,
+            requested_model=model,
+            model=model,
+            provider="openmind",
+            channel="openmind",
+            route="openmind",
+            endpoint="/api/comfly-proxy/openmind/v1/videos",
+            error_message=str(e)[:1000],
+        )
         raise HTTPException(502, f"OpenMind video submit failed: {e}")
 
     _audit(
@@ -1542,6 +1702,21 @@ async def proxy_openmind_video_submit(
         openmind_model=resp.get("_requested_model") if isinstance(resp, dict) else "",
         task_id=_task_id_from_response(resp),
         pre=credits_json_float(pre),
+    )
+    log_model_usage_event(
+        db,
+        category="video",
+        event_kind="request",
+        success=True,
+        user_id=billing_user.id,
+        requested_model=model,
+        model=model,
+        provider="openmind",
+        channel="openmind",
+        route="openmind",
+        endpoint="/api/comfly-proxy/openmind/v1/videos",
+        request_id=_task_id_from_response(resp) or "",
+        meta={"openmind_model": resp.get("_requested_model") if isinstance(resp, dict) else ""},
     )
     return JSONResponse(resp)
 
@@ -1607,9 +1782,37 @@ async def proxy_yunwu_video_create(
             error=str(e),
         )
         _audit("yunwu_video_create_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        log_model_usage_event(
+            db,
+            category="video",
+            event_kind="request",
+            success=False,
+            user_id=current_user.id,
+            requested_model=model,
+            model=model,
+            provider="yunwu",
+            channel="yunwu",
+            route="yunwu",
+            endpoint="/api/comfly-proxy/v1/video/create",
+            error_message=str(e)[:1000],
+        )
         raise HTTPException(502, f"Yunwu video create failed: {e}")
 
     _audit("yunwu_video_create_ok", user_id=current_user.id, model=model, task_id=resp.get("id"), pre=credits_json_float(pre))
+    log_model_usage_event(
+        db,
+        category="video",
+        event_kind="request",
+        success=True,
+        user_id=current_user.id,
+        requested_model=model,
+        model=model,
+        provider="yunwu",
+        channel="yunwu",
+        route="yunwu",
+        endpoint="/api/comfly-proxy/v1/video/create",
+        request_id=str(resp.get("id") or ""),
+    )
     return JSONResponse(resp)
 
 

@@ -133,6 +133,34 @@ class ChatTurnLog(Base):
 
 # ── Asset / Publish models ────────────────────────────────────────
 
+class ModelUsageEvent(Base):
+    __tablename__ = "model_usage_events"
+    __table_args__ = (
+        Index("ix_model_usage_events_category_created", "category", "created_at"),
+        Index("ix_model_usage_events_kind_created", "event_kind", "created_at"),
+        Index("ix_model_usage_events_user_created", "user_id", "created_at"),
+        Index("ix_model_usage_events_provider_created", "provider", "created_at"),
+        Index("ix_model_usage_events_model_created", "model", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    event_kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    requested_model: Mapped[Optional[str]] = mapped_column(String(191), nullable=True, index=True)
+    model: Mapped[Optional[str]] = mapped_column(String(191), nullable=True, index=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    channel: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    route: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    endpoint: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class Asset(Base):
     __tablename__ = "assets"
 

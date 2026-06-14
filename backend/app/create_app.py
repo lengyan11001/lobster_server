@@ -111,6 +111,18 @@ def _migrate_capability_configs_extra_config():
         logger.warning("Migration capability_configs.extra_config skipped: %s", e)
 
 
+def _migrate_model_usage_events_table():
+    """Ensure model_usage_events table exists for runtime monitoring."""
+    from sqlalchemy import inspect
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("model_usage_events"):
+            Base.metadata.create_all(bind=engine, tables=[models.ModelUsageEvent.__table__])
+    except Exception as e:
+        logger.warning("Migration model_usage_events skipped: %s", e)
+
+
 def _seed_capability_catalog():
     """Import capability catalog from mcp/capability_catalog.json on first run."""
     catalog_path = Path(__file__).resolve().parent.parent.parent / "mcp" / "capability_catalog.json"
@@ -854,6 +866,7 @@ def create_app() -> FastAPI:
         _backfill_installation_signup_bonus_claims()
         _migrate_sutui_recon_balance_remote_prev()
         _migrate_capability_configs_extra_config()
+        _migrate_model_usage_events_table()
         _ensure_default_user()
         _seed_capability_catalog()
         _upsert_missing_capabilities_from_catalog()

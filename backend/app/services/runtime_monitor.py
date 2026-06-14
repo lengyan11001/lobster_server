@@ -27,6 +27,7 @@ from ..models import (
     ToolCallLog,
     UserInstallation,
 )
+from ..services.model_usage_monitor import collect_model_usage_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -244,55 +245,19 @@ async def collect_runtime_monitor_snapshot() -> Dict[str, Any]:
         }
 
         capability_total = _count(db, CapabilityCallLog, CapabilityCallLog.created_at >= start, CapabilityCallLog.created_at < now)
-        capability_success = _count(
-            db,
-            CapabilityCallLog,
-            CapabilityCallLog.created_at >= start,
-            CapabilityCallLog.created_at < now,
-            CapabilityCallLog.success.is_(True),
-        )
-        capability_failed = _count(
-            db,
-            CapabilityCallLog,
-            CapabilityCallLog.created_at >= start,
-            CapabilityCallLog.created_at < now,
-            CapabilityCallLog.success.is_(False),
-        )
-        generation_capability_total = _count(
-            db,
-            CapabilityCallLog,
-            CapabilityCallLog.created_at >= start,
-            CapabilityCallLog.created_at < now,
-            _generation_capability_filter(),
-        )
-        generation_capability_failed = _count(
-            db,
-            CapabilityCallLog,
-            CapabilityCallLog.created_at >= start,
-            CapabilityCallLog.created_at < now,
-            CapabilityCallLog.success.is_(False),
-            _generation_capability_filter(),
-        )
+        capability_success = _count(db, CapabilityCallLog, CapabilityCallLog.created_at >= start, CapabilityCallLog.created_at < now, CapabilityCallLog.success.is_(True))
+        capability_failed = _count(db, CapabilityCallLog, CapabilityCallLog.created_at >= start, CapabilityCallLog.created_at < now, CapabilityCallLog.success.is_(False))
+        generation_capability_total = _count(db, CapabilityCallLog, CapabilityCallLog.created_at >= start, CapabilityCallLog.created_at < now, _generation_capability_filter())
+        generation_capability_failed = _count(db, CapabilityCallLog, CapabilityCallLog.created_at >= start, CapabilityCallLog.created_at < now, CapabilityCallLog.success.is_(False), _generation_capability_filter())
 
         creative_created = _count(db, CreativeGenerationJob, CreativeGenerationJob.created_at >= start, CreativeGenerationJob.created_at < now)
-        creative_failed = _status_count(
-            db,
-            CreativeGenerationJob,
-            ("failed", "error", "cancelled"),
-            start,
-            now,
-            CreativeGenerationJob.updated_at,
-        )
-
+        creative_failed = _status_count(db, CreativeGenerationJob, ("failed", "error", "cancelled"), start, now, CreativeGenerationJob.updated_at)
         scheduled_total = _count(db, ScheduledTaskRun, ScheduledTaskRun.created_at >= start, ScheduledTaskRun.created_at < now)
         scheduled_failed = _status_count(db, ScheduledTaskRun, ("failed", "error", "cancelled"), start, now, ScheduledTaskRun.updated_at)
-
         h5_total = _count(db, H5ChatMessage, H5ChatMessage.created_at >= start, H5ChatMessage.created_at < now)
         h5_failed = _status_count(db, H5ChatMessage, ("failed", "error", "cancelled"), start, now, H5ChatMessage.updated_at)
-
         publish_total = _count(db, PublishTask, PublishTask.created_at >= start, PublishTask.created_at < now)
         publish_failed = _status_count(db, PublishTask, ("failed", "error"), start, now, PublishTask.finished_at)
-
         generated_assets = _count(db, GenerationRecord, GenerationRecord.created_at >= start, GenerationRecord.created_at < now)
         generated_asset_users = _distinct_user_count(db, GenerationRecord, GenerationRecord.created_at >= start, GenerationRecord.created_at < now)
         asset_total = _count(db, Asset, Asset.created_at >= start, Asset.created_at < now)
@@ -300,6 +265,7 @@ async def collect_runtime_monitor_snapshot() -> Dict[str, Any]:
         tool_total = _count(db, ToolCallLog, ToolCallLog.created_at >= start, ToolCallLog.created_at < now)
         tool_failed = _count(db, ToolCallLog, ToolCallLog.created_at >= start, ToolCallLog.created_at < now, ToolCallLog.success.is_(False))
         credits_spent = _sum_negative_credits(db, start, now)
+        model_usage = collect_model_usage_snapshot(db, start=start, end=now)
     finally:
         db.close()
 
@@ -331,15 +297,8 @@ async def collect_runtime_monitor_snapshot() -> Dict[str, Any]:
         "usage": {
             "generation_events": generation_events,
             "failure_events": failure_events,
-            "capability_calls": {
-                "total": capability_total,
-                "success": capability_success,
-                "failed": capability_failed,
-            },
-            "generation_capability_calls": {
-                "total": generation_capability_total,
-                "failed": generation_capability_failed,
-            },
+            "capability_calls": {"total": capability_total, "success": capability_success, "failed": capability_failed},
+            "generation_capability_calls": {"total": generation_capability_total, "failed": generation_capability_failed},
             "creative_jobs": {"created": creative_created, "failed": creative_failed},
             "scheduled_runs": {"created": scheduled_total, "failed": scheduled_failed},
             "h5_messages": {"created": h5_total, "failed": h5_failed},
@@ -350,6 +309,7 @@ async def collect_runtime_monitor_snapshot() -> Dict[str, Any]:
             "saved_generation_users": generated_asset_users,
             "assets_created": asset_total,
             "credits_spent": credits_spent,
+            "model_usage": model_usage,
         },
         "resource": resource,
     }
@@ -370,6 +330,65 @@ def build_runtime_monitor_card(data: Dict[str, Any]) -> Dict[str, Any]:
     memory = resource.get("memory") if isinstance(resource.get("memory"), dict) else {}
     disk = resource.get("disk") if isinstance(resource.get("disk"), dict) else {}
     loadavg = resource.get("loadavg") if isinstance(resource.get("loadavg"), list) else []
+    model_usage = usage.get("model_usage") if isinstance(usage.get("model_usage"), dict) else {}
+    window = data.get("window") if isinstance(data.get("window"), dict) else {}
+
+    text_title = "\u670d\u52a1\u5668\u8fd0\u884c\u76d1\u63a7"
+    text_window = "\u65f6\u95f4\u7a97\u53e3"
+    text_online_users = "\u5728\u7ebf\u7528\u6237"
+    text_online_devices = "\u5728\u7ebf\u8bbe\u5907"
+    text_current = "\u5f53\u524d"
+    text_scope = "\u7a97\u53e3"
+    text_generation_events = "\u751f\u6210\u76f8\u5173\u4e8b\u4ef6"
+    text_failure_events = "\u5931\u8d25\u4e8b\u4ef6"
+    text_capability_calls = "\u80fd\u529b\u8c03\u7528"
+    text_success = "\u6210\u529f"
+    text_failed = "\u5931\u8d25"
+    text_saved_records = "\u5165\u5e93\u751f\u6210\u8bb0\u5f55"
+    text_related_users = "\u5173\u8054\u7528\u6237"
+    text_chat_turns = "\u5bf9\u8bdd\u8f6e\u6b21"
+    text_tool_calls = "\u5de5\u5177\u8c03\u7528"
+    text_credits = "\u6d88\u8017\u7b97\u529b"
+    text_model_usage = "\u6a21\u578b\u8c03\u7528\u7edf\u8ba1"
+    text_final_provider = "\u6700\u7ec8\u547d\u4e2d\u6e20\u9053"
+    text_attempt_provider = "\u6e20\u9053\u5c1d\u8bd5"
+    text_top_attempt_provider = "Top \u5c1d\u8bd5\u6e20\u9053"
+    text_request = "\u8bf7\u6c42"
+    text_memory = "\u5185\u5b58"
+    text_disk = "\u78c1\u76d8"
+    text_dialog = "\u5bf9\u8bdd"
+    text_image = "\u56fe\u7247"
+    text_video = "\u89c6\u9891"
+
+    def _provider_name(item: Dict[str, Any]) -> str:
+        provider = str(item.get("provider") or "").strip()
+        channel = str(item.get("channel") or "").strip()
+        if provider and channel:
+            return f"{provider}/{channel}"
+        return provider or channel or "-"
+
+    def _final_provider_summary(items: Any) -> str:
+        if not isinstance(items, list):
+            return "-"
+        winners = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            success = int(item.get("success") or 0)
+            if success <= 0:
+                continue
+            winners.append(f"{_provider_name(item)}: {success}")
+        return " / ".join(winners[:3]) or "-"
+
+    def _attempt_provider_summary(items: Any) -> str:
+        if not isinstance(items, list):
+            return "-"
+        parts = []
+        for item in items[:3]:
+            if not isinstance(item, dict):
+                continue
+            parts.append(f"{_provider_name(item)}: {int(item.get('total') or 0)}")
+        return " / ".join(parts) or "-"
 
     failure_events = int(usage.get("failure_events") or 0)
     disk_pct = disk.get("used_percent")
@@ -382,35 +401,58 @@ def build_runtime_monitor_card(data: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
 
-    window = data.get("window") if isinstance(data.get("window"), dict) else {}
-    title = "服务器运行监控"
     header_color = "red" if warn else "green"
+    capability_calls = usage.get("capability_calls") if isinstance(usage.get("capability_calls"), dict) else {}
+    tool_calls = usage.get("tool_calls") if isinstance(usage.get("tool_calls"), dict) else {}
 
     lines = [
-        f"时间窗口: {_local_time_text(str(window.get('start') or ''))} - {_local_time_text(str(window.get('end') or ''))}",
+        f"{text_window}: {_local_time_text(str(window.get('start') or ''))} - {_local_time_text(str(window.get('end') or ''))}",
         "",
-        f"- 在线用户: 当前 {online.get('current_users', 0)} 人 / 本窗口 {online.get('window_users', 0)} 人",
-        f"- 在线设备: 当前 {online.get('current_installations', 0)} 台 / 本窗口 {online.get('window_installations', 0)} 台",
-        f"- 生成调用: {usage.get('generation_events', 0)} 次",
-        f"- 失败事件: {usage.get('failure_events', 0)} 次",
-        f"- 能力调用: {usage.get('capability_calls', {}).get('total', 0)} 次，成功 {usage.get('capability_calls', {}).get('success', 0)}，失败 {usage.get('capability_calls', {}).get('failed', 0)}",
-        f"- 入库生成记录: {usage.get('saved_generation_records', 0)} 条，关联用户 {usage.get('saved_generation_users', 0)} 人",
-        f"- 对话轮次: {usage.get('chat_turns', 0)}，工具调用: {usage.get('tool_calls', {}).get('created', 0)}",
-        f"- 消耗算力: {_fmt_number(usage.get('credits_spent'), 4)}",
+        f"- {text_online_users}: {text_current} {online.get('current_users', 0)} / {text_scope} {online.get('window_users', 0)}",
+        f"- {text_online_devices}: {text_current} {online.get('current_installations', 0)} / {text_scope} {online.get('window_installations', 0)}",
+        f"- {text_generation_events}: {usage.get('generation_events', 0)}",
+        f"- {text_failure_events}: {usage.get('failure_events', 0)}",
+        f"- {text_capability_calls}: {capability_calls.get('total', 0)}；{text_success} {capability_calls.get('success', 0)}；{text_failed} {capability_calls.get('failed', 0)}",
+        f"- {text_saved_records}: {usage.get('saved_generation_records', 0)}；{text_related_users} {usage.get('saved_generation_users', 0)}",
+        f"- {text_chat_turns}: {usage.get('chat_turns', 0)}；{text_tool_calls} {tool_calls.get('created', 0)}",
+        f"- {text_credits}: {_fmt_number(usage.get('credits_spent'), 4)}",
         "",
-        f"- CPU: {_fmt_number(cpu_pct)}%",
-        f"- Load: {', '.join(_fmt_number(x) for x in loadavg) if loadavg else '-'}",
-        f"- 内存: {_fmt_number(mem_pct)}% ({_fmt_number(_bytes_gib(memory.get('used_bytes')))} / {_fmt_number(_bytes_gib(memory.get('total_bytes')))} GiB)",
-        f"- 磁盘 {disk.get('path') or '-'}: {_fmt_number(disk_pct)}% ({_fmt_number(_bytes_gib(disk.get('used_bytes')))} / {_fmt_number(_bytes_gib(disk.get('total_bytes')))} GiB)",
+        f"### {text_model_usage}",
     ]
+
+    labels = {
+        "dialog": text_dialog,
+        "image": text_image,
+        "video": text_video,
+    }
+    for category in ("dialog", "image", "video"):
+        label = labels[category]
+        cat = model_usage.get(category) if isinstance(model_usage.get(category), dict) else {}
+        request = cat.get("request") if isinstance(cat.get("request"), dict) else {}
+        attempt = cat.get("attempt") if isinstance(cat.get("attempt"), dict) else {}
+        lines.extend(
+            [
+                f"- {label}: {text_request} {request.get('total', 0)}，{text_success} {request.get('success', 0)}，{text_failed} {request.get('failed', 0)}",
+                f"  {text_final_provider}: {_final_provider_summary(request.get('top_providers'))}",
+                f"  {text_attempt_provider} {attempt.get('total', 0)} 次；{text_top_attempt_provider} {_attempt_provider_summary(attempt.get('top_providers'))}",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            f"- CPU: {_fmt_number(cpu_pct)}%",
+            f"- Load: {', '.join(_fmt_number(x) for x in loadavg) if loadavg else '-'}",
+            f"- {text_memory}: {_fmt_number(mem_pct)}% ({_fmt_number(_bytes_gib(memory.get('used_bytes')))} / {_fmt_number(_bytes_gib(memory.get('total_bytes')))} GiB)",
+            f"- {text_disk} {disk.get('path') or '-'}: {_fmt_number(disk_pct)}% ({_fmt_number(_bytes_gib(disk.get('used_bytes')))} / {_fmt_number(_bytes_gib(disk.get('total_bytes')))} GiB)",
+        ]
+    )
+
     return {
         "msg_type": "interactive",
         "card": {
             "config": {"wide_screen_mode": True},
-            "header": {
-                "template": header_color,
-                "title": {"tag": "plain_text", "content": title},
-            },
+            "header": {"template": header_color, "title": {"tag": "plain_text", "content": text_title}},
             "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines)}}],
         },
     }
