@@ -240,6 +240,29 @@ def _strip_embedded_image_prompt(value: Any, max_len: int = 8000) -> str:
     return text.strip()[:max_len]
 
 
+def _normalize_image_prompts(item: dict[str, Any], fallback: str = "") -> list[str]:
+    raw = item.get("image_prompts") or item.get("配图提示组") or item.get("visual_prompts")
+    prompts: list[str] = []
+    if isinstance(raw, list):
+        for entry in raw:
+            if isinstance(entry, dict):
+                text = _clean_long_text(entry.get("prompt") or entry.get("text") or entry.get("配图提示"), 1600)
+            else:
+                text = _clean_long_text(entry, 1600)
+            if text and text not in prompts:
+                prompts.append(text)
+    elif isinstance(raw, str):
+        parts = [p.strip() for p in re.split(r"\n\s*(?:\d+[\.\、)]|[-*])\s*|[；;]\s*", raw) if p.strip()]
+        for part in parts:
+            text = _clean_long_text(part, 1600)
+            if text and text not in prompts:
+                prompts.append(text)
+    fallback_text = _clean_long_text(fallback, 1600)
+    if fallback_text and fallback_text not in prompts:
+        prompts.insert(0, fallback_text)
+    return prompts[:3]
+
+
 def _strip_search_markup(value: Any, max_len: int = 255) -> str:
     raw = _clean_long_text(value, max(max_len * 4, max_len))
     if not raw:
@@ -671,7 +694,8 @@ def _draft_requirements(task: str, platform: str, count: int) -> str:
             f"任务二：生成 {count} 条朋友圈文案。"
             "每条要自然、有生活场景、有专业可信度，适合个人 IP 日更；避免广告腔。"
             "正文和配图提示必须分开：body 只放朋友圈正文，不要把“配图提示/画面建议”写进 body。"
-            "image_prompt 单独给出可选配图提示。"
+            "必须给出 3 条贴合该文案但创意明显不同的配图提示，放到 image_prompts 数组；image_prompt 可放第一条或整体摘要。"
+            "3 条配图提示要分别从不同场景/主体/隐喻切入，不能只是换视角或换形容词。"
             f"涉及年份时默认使用当前年份 {current_year} 年；除非数据源明确出现其他年份，不要写 2025 年等过去年份。"
         )
     if plat == "douyin":
@@ -691,13 +715,14 @@ def _normalize_drafts(obj: dict[str, Any], fallback_text: str, count: int) -> li
             if not isinstance(item, dict):
                 text = _clean_long_text(item, 6000)
                 if text:
-                    drafts.append({"title": text[:40], "body": text, "image_prompt": ""})
+                    drafts.append({"title": text[:40], "body": text, "image_prompt": "", "image_prompts": []})
                 continue
             title = _clean_text(item.get("title") or item.get("选题") or item.get("headline"), 160)
             hook = _clean_long_text(item.get("hook") or item.get("开场") or "", 1000)
             body = _clean_long_text(item.get("body") or item.get("copy") or item.get("script") or item.get("正文"), 6000)
             cta = _clean_long_text(item.get("cta") or item.get("收口") or "", 1000)
             image_prompt = _clean_long_text(item.get("image_prompt") or item.get("配图提示") or item.get("visual_prompt"), 1600)
+            image_prompts = _normalize_image_prompts(item, image_prompt)
             pieces = [x for x in (hook, body, cta) if x]
             full_text = "\n\n".join(pieces) if pieces else _clean_long_text(item.get("full_text") or item.get("text"), 6000)
             full_text = _strip_embedded_image_prompt(full_text, 6000)
@@ -705,7 +730,8 @@ def _normalize_drafts(obj: dict[str, Any], fallback_text: str, count: int) -> li
                 {
                     "title": title or (full_text[:40] if full_text else "未命名文案"),
                     "body": full_text or title or "",
-                    "image_prompt": image_prompt,
+                    "image_prompt": image_prompt or (image_prompts[0] if image_prompts else ""),
+                    "image_prompts": image_prompts,
                 }
             )
     if not drafts:
@@ -715,7 +741,7 @@ def _normalize_drafts(obj: dict[str, Any], fallback_text: str, count: int) -> li
             parts = [text] if text else []
         for part in parts[:count]:
             cleaned_part = _strip_embedded_image_prompt(part, 6000)
-            drafts.append({"title": cleaned_part[:40], "body": cleaned_part, "image_prompt": ""})
+            drafts.append({"title": cleaned_part[:40], "body": cleaned_part, "image_prompt": "", "image_prompts": []})
     return drafts[:count]
 
 
@@ -1293,6 +1319,7 @@ def _keyword_payload(row: IPContentKeyword) -> dict[str, Any]:
 def _draft_record_payload(row: IPContentDraftRecord) -> dict[str, Any]:
     meta = row.meta or {}
     images = meta.get("images") if isinstance(meta, dict) and isinstance(meta.get("images"), list) else []
+    image_prompts = meta.get("image_prompts") if isinstance(meta, dict) and isinstance(meta.get("image_prompts"), list) else []
     return {
         "id": row.id,
         "record_id": row.record_id,
@@ -1302,6 +1329,7 @@ def _draft_record_payload(row: IPContentDraftRecord) -> dict[str, Any]:
         "body": row.content or "",
         "content": row.content or "",
         "image_prompt": row.image_prompt or "",
+        "image_prompts": image_prompts,
         "image_url": row.image_url or "",
         "image_asset_id": row.image_asset_id or "",
         "images": images,
@@ -1498,7 +1526,7 @@ async def _call_ip_content_llm(
     system_prompt = (
         "你是中文短视频、朋友圈和个人专业 IP 内容策划。根据给定的数据源和记忆资料生成可审核、可直接发布的草稿。"
         "必须返回严格 JSON，不要 Markdown 代码块。格式："
-        "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\"}]}。"
+        "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\",\"image_prompts\":[\"\",\"\",\"\"]}]}。"
         "不要抄袭同行原文，不要编造资料里没有的硬数据；可以提炼热点结构、选题角度和表达策略。"
         "\ncore rule: 记忆资料是账号定位、行业事实、产品服务、专业判断和表达风格的底座；"
         "TikHub 的行业热门/同行作品是当前新选题和新内容来源。"
@@ -1509,6 +1537,7 @@ async def _call_ip_content_llm(
         f"所有涉及年份的内容默认按当前年份 {current_year} 年表达；除非数据源原文明确提供其他年份，严禁默认写 2025 年。"
         "口播类文案暂不限制字数和时长，要写出深度、案例、具体场景和判断链路。"
         "朋友圈文案的 body 只能写主文案，配图提示必须放到 image_prompt，不要把“配图提示/画面建议”混入 body。"
+        "生成朋友圈文案时，每条 items 必须额外返回 image_prompts 数组，数组内 3 条配图文案都要贴合同一条 body 的主题，但创意、主体、场景和表达隐喻必须明显不同。"
         "\n"
     )
     user_prompt = json.dumps(
@@ -1579,6 +1608,8 @@ def _save_draft_records(
     memory_ids = [m.get("id") for m in memories if m.get("id")]
     saved: list[IPContentDraftRecord] = []
     for draft in drafts:
+        image_prompts = [p for p in (draft.get("image_prompts") or []) if isinstance(p, str) and p.strip()]
+        image_prompt = _clean_long_text(draft.get("image_prompt"), 2000) or (image_prompts[0] if image_prompts else None)
         rec = IPContentDraftRecord(
             record_id=uuid.uuid4().hex,
             user_id=current_user.id,
@@ -1586,10 +1617,10 @@ def _save_draft_records(
             platform=platform or "douyin",
             title=_clean_long_text(draft.get("title"), 1000) or None,
             content=_clean_long_text(draft.get("body") or draft.get("content"), 8000) or None,
-            image_prompt=_clean_long_text(draft.get("image_prompt"), 2000) or None,
+            image_prompt=image_prompt,
             source_item_ids=source_ids,
             memory_doc_ids=memory_ids,
-            meta={"group_id": group_id, "extra_requirements": _clean_long_text(extra_requirements, 4000)},
+            meta={"group_id": group_id, "extra_requirements": _clean_long_text(extra_requirements, 4000), "image_prompts": image_prompts[:3]},
         )
         db.add(rec)
         saved.append(rec)
@@ -1915,11 +1946,12 @@ async def generate_drafts(
     system_prompt = (
         "你是中文短视频和个人专业 IP 内容策划。根据给定的数据源和记忆资料生成可审核的内容草稿。"
         "必须返回严格 JSON，不要 Markdown 代码块。格式："
-        "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\"}]}。"
+        "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\",\"image_prompts\":[\"\",\"\",\"\"]}]}。"
         "不要抄袭同行原文，不要编造资料里没有的硬性数据；可以提炼热点结构、话题角度和表达策略。"
         f"所有涉及年份的内容默认按当前年份 {current_year} 年表达；除非数据源原文明确提供其他年份，严禁默认写 2025 年。"
         "口播类文案暂不限制字数和时长，要写出深度、案例、具体场景和判断链路。"
         "朋友圈文案的 body 只能写主文案，配图提示必须放到 image_prompt，不要把“配图提示/画面建议”混入 body。"
+        "生成朋友圈文案时，每条 items 必须额外返回 image_prompts 数组，数组内 3 条配图文案都要贴合同一条 body 的主题，但创意、主体、场景和表达隐喻必须明显不同。"
     )
     user_prompt = json.dumps(
         {
@@ -2141,6 +2173,9 @@ def attach_draft_record_image(
     if isinstance(body.meta, dict):
         batch_id = _clean_text(body.meta.get("image_batch_id"), 96)
         batch_created_at = _clean_text(body.meta.get("image_batch_created_at"), 64)
+        incoming_prompts = body.meta.get("image_prompts")
+        if isinstance(incoming_prompts, list):
+            meta["image_prompts"] = [_clean_long_text(item, 1600) for item in incoming_prompts[:3] if _clean_long_text(item, 1600)]
         if batch_id:
             meta["image_batch_id"] = batch_id
         if batch_created_at:
