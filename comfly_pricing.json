@@ -9,6 +9,15 @@
       "comfly_model": "gpt-image-2",
       "sutui_equivalent": ["gpt-image2", "gpt-image-2", "gpt-image"]
     },
+    "gpt-image-2-vip": {
+      "price_type": "per_call",
+      "price_per_unit": 30,
+      "api_format": "dalle",
+      "comfly_model": "gpt-image-2-vip",
+      "token_group": "premium",
+      "sutui_equivalent": ["gpt-image2", "gpt-image-2", "gpt-image"],
+      "note": "Preferred Comfly premium channel for GPT Image 2 generation."
+    },
     "gpt-image-2-yunwu": {
       "price_type": "per_call",
       "price_per_unit": 30,
@@ -17,6 +26,15 @@
       "token_group": "yunwu",
       "sutui_equivalent": ["gpt-image2", "gpt-image-2", "gpt-image"],
       "note": "Same image model routed through Yunwu token/base as a fallback channel."
+    },
+    "gpt-image-2-openmindapi": {
+      "price_type": "per_call",
+      "price_per_unit": 30,
+      "api_format": "dalle",
+      "comfly_model": "gpt-image-2",
+      "token_group": "openmindapi",
+      "sutui_equivalent": ["gpt-image2", "gpt-image-2", "gpt-image"],
+      "note": "Same image model routed through OpenMind API token/base as a fallback channel."
     },
     "gpt-4.1-mini": {
       "price_type": "per_token",

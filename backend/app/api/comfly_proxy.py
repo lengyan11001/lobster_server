@@ -20,8 +20,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import sys
+from collections import OrderedDict
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -62,6 +64,8 @@ _TIMEOUT_FILE_UPLOAD = 120.0
 _TIMEOUT_VIDEO_SUBMIT = 60.0
 _TIMEOUT_OPENMIND_VIDEO_SUBMIT = 60.0
 _TIMEOUT_VIDEO_POLL = 30.0
+_MAX_PROXY_VIDEO_TASK_TRACK = 5000
+_proxy_video_task_meta: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -89,6 +93,18 @@ def _should_deduct_credits() -> bool:
 def _model_token_group(model_id: str) -> str:
     entry = lookup_comfly_model(model_id) or {}
     return (entry.get("token_group") or "").strip()
+
+
+def _normalized_model_id(model_id: str) -> str:
+    return (model_id or "").strip().lower().replace("_", "-")
+
+
+def _image_generation_model_attempts(model: str) -> List[str]:
+    """Return billing model ids to try for one image generation request."""
+    normalized = _normalized_model_id(model)
+    if normalized in {"gpt-image-2", "gpt-image2", "gpt-image"}:
+        return ["gpt-image-2-vip", "gpt-image-2", "gpt-image-2-openmindapi", "gpt-image-2-yunwu"]
+    return [model]
 
 
 def _audit(event: str, **kw: Any) -> None:
@@ -231,10 +247,27 @@ async def _comfly_request(
         return {"_raw_text": r.text}
 
 
+async def _yunwu_request(
+    method: str, url: str, body: Optional[Dict[str, Any]], headers: Dict[str, str], timeout: float,
+) -> Dict[str, Any]:
+    """Yunwu HTTP wrapper. Keep the provider name out of Comfly error text."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if method.upper() == "GET":
+            r = await client.get(url, headers=headers)
+        else:
+            r = await client.post(url, headers=headers, json=body or {})
+    if r.status_code >= 400:
+        raise RuntimeError(f"Yunwu HTTP {r.status_code}: {(r.text or '')[:500]}")
+    try:
+        return r.json() if r.content else {}
+    except Exception:
+        return {"_raw_text": r.text}
+
+
 async def _comfly_multipart_request(
     url: str,
     data: Dict[str, str],
-    files: List[Tuple[str, Tuple[str, bytes, str]]],
+    files: List[Tuple[str, Tuple[Any, ...]]],
     headers: Dict[str, str],
     timeout: float,
 ) -> Dict[str, Any]:
@@ -337,13 +370,34 @@ def _openmind_image_body(source_body: Dict[str, Any]) -> Dict[str, Any]:
     prompt = str(source_body.get("prompt") or "").strip()
     if not prompt:
         raise RuntimeError("OpenMind image fallback missing prompt")
-    return {
+    body: Dict[str, Any] = {
         "model": (os.environ.get("OPENMIND_IMAGE_MODEL") or "gpt-image-2").strip() or "gpt-image-2",
         "prompt": prompt,
-        "size": str(source_body.get("size") or "1024x1024").strip() or "1024x1024",
+        "size": str(
+            source_body.get("size")
+            or source_body.get("image_size")
+            or source_body.get("aspect_ratio")
+            or source_body.get("ratio")
+            or "1024x1024"
+        ).strip() or "1024x1024",
         "n": int(source_body.get("n") or 1),
         "response_format": str(source_body.get("response_format") or "url").strip() or "url",
     }
+    image_url = str(source_body.get("image_url") or source_body.get("image") or "").strip()
+    image_urls = source_body.get("image_urls")
+    if isinstance(image_urls, str):
+        image_urls = [image_urls]
+    if not isinstance(image_urls, list):
+        image_urls = []
+    image_urls = [str(url or "").strip() for url in image_urls if str(url or "").strip()]
+    if not image_url and image_urls:
+        image_url = image_urls[0]
+    if image_url:
+        body["image_url"] = image_url
+        body["image"] = image_url
+    if image_urls:
+        body["image_urls"] = image_urls
+    return body
 
 
 def _extract_image_result_urls(payload: Any) -> List[str]:
@@ -647,6 +701,19 @@ def _task_id_from_response(resp: Dict[str, Any]) -> str:
                 return value.strip()
     return ""
 
+
+def _remember_proxy_video_task(task_id: str, api_kind: str = "", model: str = "") -> None:
+    tid = (task_id or "").strip()
+    if not tid:
+        return
+    _proxy_video_task_meta[tid] = ((api_kind or "").strip(), (model or "").strip())
+    while len(_proxy_video_task_meta) > _MAX_PROXY_VIDEO_TASK_TRACK:
+        _proxy_video_task_meta.popitem(last=False)
+
+
+def _proxy_video_task_hint(task_id: str) -> Tuple[str, str]:
+    return _proxy_video_task_meta.get((task_id or "").strip(), ("", ""))
+
 def _require_model_entry(model: str) -> Dict[str, Any]:
     entry = lookup_comfly_model(model)
     if not entry:
@@ -663,6 +730,149 @@ def _coerce_grok_video_resolution(raw: Any) -> str:
     if "480" in s:
         return "480p"
     return "720p"
+
+
+def _is_grok_api_format(entry: Dict[str, Any]) -> bool:
+    return str((entry or {}).get("api_format") or "").strip().lower() == "grok"
+
+
+def _coerce_grok15_model(duration: Any) -> str:
+    try:
+        seconds = int(float(duration or 0))
+    except (TypeError, ValueError):
+        seconds = 6
+    if seconds <= 6:
+        return "grok-1.5-video-6s"
+    if seconds <= 10:
+        return "grok-1.5-video-10s"
+    return "grok-1.5-video-15s"
+
+
+def _coerce_video_size_from_ratio(raw: Any) -> str:
+    ratio = str(raw or "").strip().lower().replace(" ", "")
+    mapping = {
+        "16:9": "1280x720",
+        "9:16": "720x1280",
+        "1:1": "1024x1024",
+        "4:3": "1280x960",
+        "3:4": "960x1280",
+        "3:2": "1200x800",
+        "2:3": "800x1200",
+    }
+    return mapping.get(ratio, "720x1280")
+
+
+def _first_grok_reference(forwarded: Dict[str, Any]) -> str:
+    images = forwarded.get("images")
+    if isinstance(images, list):
+        for item in images:
+            value = str(item or "").strip()
+            if value:
+                return value
+    for key in ("image_url", "image"):
+        value = str(forwarded.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _build_comfly_grok15_multipart(
+    body: Dict[str, Any],
+    model: str,
+    entry: Dict[str, Any],
+) -> Tuple[Dict[str, str], List[Tuple[str, Tuple[Any, ...]]], str]:
+    forwarded = dict(body or {})
+    prompt = str(forwarded.get("prompt") or "").strip()
+    duration = forwarded.get("duration") or forwarded.get("seconds") or 6
+    upstream_model = _coerce_grok15_model(duration)
+    ratio = forwarded.get("ratio") or forwarded.get("aspect_ratio") or "9:16"
+    data: Dict[str, str] = {
+        "model": upstream_model,
+        "prompt": prompt,
+        "size": _coerce_video_size_from_ratio(ratio),
+    }
+    files: List[Tuple[str, Tuple[Any, ...]]] = []
+    first_ref = _first_grok_reference(forwarded)
+    if first_ref:
+        path = Path(first_ref)
+        if path.exists() and path.is_file():
+            content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            files.append(("input_reference", (path.name, path.read_bytes(), content_type)))
+        else:
+            files.append(("input_reference", (None, first_ref)))
+    return data, files, upstream_model
+
+
+async def _submit_comfly_grok15_video(
+    body: Dict[str, Any],
+    model: str,
+    entry: Dict[str, Any],
+) -> Dict[str, Any]:
+    data, files, upstream_model = _build_comfly_grok15_multipart(body, model, entry)
+    resp = await _comfly_multipart_request(
+        _comfly_url("/v1/videos", model),
+        data,
+        files,
+        _comfly_auth_headers(model),
+        _TIMEOUT_VIDEO_SUBMIT,
+    )
+    if isinstance(resp, dict):
+        resp.setdefault("_provider", "comfly")
+        resp.setdefault("_api_format", "grok_v1")
+        resp.setdefault("_requested_model", upstream_model)
+    return resp
+
+
+def _should_try_comfly_v1_poll_fallback(exc: Exception) -> bool:
+    msg = str(exc or "").lower()
+    return "http 404" in msg or "http 400" in msg
+
+
+async def _poll_comfly_video_task(task_id: str, model: str = "", api_kind: str = "") -> Dict[str, Any]:
+    tid = (task_id or "").strip()
+    if not tid:
+        raise HTTPException(400, "missing task_id")
+    kind = (api_kind or "").strip().lower()
+    route_model = (model or "").strip()
+    if kind == "grok_v1":
+        resp = await _comfly_request(
+            "GET",
+            _comfly_url(f"/v1/videos/{tid}", route_model or "grok-video-3"),
+            None,
+            _comfly_auth_headers(route_model or "grok-video-3"),
+            _TIMEOUT_VIDEO_POLL,
+        )
+        if isinstance(resp, dict):
+            resp.setdefault("_provider", "comfly")
+            resp.setdefault("_api_format", "grok_v1")
+        return resp
+    try:
+        resp = await _comfly_request(
+            "GET",
+            _comfly_url(f"/v2/videos/generations/{tid}", route_model),
+            None,
+            _comfly_headers(route_model),
+            _TIMEOUT_VIDEO_POLL,
+        )
+        if isinstance(resp, dict):
+            resp.setdefault("_provider", "comfly")
+            resp.setdefault("_api_format", "veo_v2")
+        return resp
+    except Exception as exc:
+        if not _should_try_comfly_v1_poll_fallback(exc):
+            raise
+        resp = await _comfly_request(
+            "GET",
+            _comfly_url(f"/v1/videos/{tid}", route_model or "grok-video-3"),
+            None,
+            _comfly_auth_headers(route_model or "grok-video-3"),
+            _TIMEOUT_VIDEO_POLL,
+        )
+        if isinstance(resp, dict):
+            resp.setdefault("_provider", "comfly")
+            resp.setdefault("_api_format", "grok_v1")
+        _remember_proxy_video_task(tid, "grok_v1", route_model or "grok-video-3")
+        return resp
 
 
 def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
@@ -865,81 +1075,139 @@ async def proxy_images_generations(
     model = (body.get("model") or "").strip()
     if not model:
         raise HTTPException(400, "缺少 model")
-    entry = _require_model_entry(model)
-    upstream_body = _body_for_upstream_model(body, model, entry)
-    reference_urls = _image_reference_urls(body)
-    if reference_urls:
-        upstream_body.setdefault("image", reference_urls[0])
-        upstream_body.setdefault("image_url", reference_urls[0])
-        upstream_body.setdefault("image_urls", reference_urls)
-    logger.info(
-        "[image_generate] request model=%s upstream_model=%s refs=%d first_ref=%s image_size=%s num_images=%s",
-        model,
-        upstream_body.get("model"),
-        len(reference_urls),
-        (reference_urls[0][:120] if reference_urls else ""),
-        upstream_body.get("image_size") or upstream_body.get("size") or upstream_body.get("aspect_ratio"),
-        upstream_body.get("num_images") or upstream_body.get("n"),
-    )
+    attempt_models = _image_generation_model_attempts(model)
+    if len(attempt_models) == 1:
+        _require_model_entry(model)
 
     billing_user = online_user_for_mobile_user(db, current_user)
-    estimated = estimate_comfly_credits(model, body, for_user=True) or 1
-    pre = _do_pre_deduct(db, billing_user, estimated,
-                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image")
-    _audit(
-        "image_pre_deduct",
-        user_id=billing_user.id,
-        request_user_id=current_user.id,
-        model=model,
-        estimated=estimated,
-    )
-
+    errors: List[str] = []
     last_error = ""
-    attempts = _env_int("COMFLY_IMAGE_RETRY_ATTEMPTS", 2, min_value=1, max_value=4)
-    try:
-        for attempt in range(1, attempts + 1):
+    attempts_per_model = _env_int("COMFLY_IMAGE_RETRY_ATTEMPTS", 2, min_value=1, max_value=4)
+    reference_urls = _image_reference_urls(body)
+
+    for index, attempt_model in enumerate(attempt_models, start=1):
+        try:
+            entry = _require_model_entry(attempt_model)
+        except HTTPException as e:
+            last_error = str(e.detail)
+            errors.append(f"{attempt_model}: {last_error}")
+            _audit(
+                "image_channel_skipped",
+                user_id=billing_user.id,
+                request_user_id=current_user.id,
+                requested_model=model,
+                model=attempt_model,
+                attempt=index,
+                error=last_error[:300],
+            )
+            continue
+
+        upstream_body = _body_for_upstream_model(body, attempt_model, entry)
+        if reference_urls:
+            upstream_body.setdefault("image", reference_urls[0])
+            upstream_body.setdefault("image_url", reference_urls[0])
+            upstream_body.setdefault("image_urls", reference_urls)
+        logger.info(
+            "[image_generate] request model=%s attempt_model=%s upstream_model=%s refs=%d first_ref=%s image_size=%s num_images=%s",
+            model,
+            attempt_model,
+            upstream_body.get("model"),
+            len(reference_urls),
+            (reference_urls[0][:120] if reference_urls else ""),
+            upstream_body.get("image_size") or upstream_body.get("size") or upstream_body.get("aspect_ratio"),
+            upstream_body.get("num_images") or upstream_body.get("n"),
+        )
+
+        estimated = estimate_comfly_credits(attempt_model, body, for_user=True) or 1
+        pre = _do_pre_deduct(
+            db,
+            billing_user,
+            estimated,
+            capability_id=_CAPABILITY_FOR_BILLING,
+            model=attempt_model,
+            endpoint="image",
+            extra_meta={"requested_model": model, "attempt": index},
+        )
+        _audit(
+            "image_pre_deduct",
+            user_id=billing_user.id,
+            request_user_id=current_user.id,
+            requested_model=model,
+            model=attempt_model,
+            attempt=index,
+            estimated=estimated,
+        )
+
+        channel_succeeded = False
+        for retry_index in range(1, attempts_per_model + 1):
             try:
                 endpoint_path = "/v1/images/edits" if reference_urls else "/v1/images/generations"
-                logger.info("[image_generate] upstream endpoint=%s refs=%d", endpoint_path, len(reference_urls))
-                resp = await _comfly_request("POST", _comfly_url(endpoint_path, model),
-                                             upstream_body, _comfly_headers(model), _TIMEOUT_IMAGE)
+                _audit(
+                    "image_channel_attempt",
+                    user_id=billing_user.id,
+                    request_user_id=current_user.id,
+                    requested_model=model,
+                    model=attempt_model,
+                    attempt=index,
+                    retry=retry_index,
+                    token_group=(entry.get("token_group") or ""),
+                    refs=len(reference_urls),
+                )
+                resp = await _comfly_request(
+                    "POST",
+                    _comfly_url(endpoint_path, attempt_model),
+                    upstream_body,
+                    _comfly_headers(attempt_model),
+                    _TIMEOUT_IMAGE,
+                )
                 saved_assets = await _save_generated_images_best_effort(
                     db,
                     user_id=billing_user.id,
                     response_payload=resp,
                     prompt=str(body.get("prompt") or ""),
-                    model=model,
-                    limit=int(body.get("n") or 1),
+                    model=attempt_model,
+                    limit=int(body.get("n") or body.get("num_images") or 1),
                     exclude_urls=reference_urls,
                 )
-                if saved_assets and isinstance(resp, dict):
-                    resp = dict(resp)
-                    resp["saved_assets"] = saved_assets
+                if isinstance(resp, dict):
+                    if saved_assets:
+                        resp = dict(resp)
+                        resp["saved_assets"] = saved_assets
+                    if attempt_model != model:
+                        fallback = resp.setdefault("_lobster_fallback", {})
+                        if isinstance(fallback, dict):
+                            fallback.update({"requested_model": model, "used_model": attempt_model, "attempt": index})
                 _audit(
                     "image_ok",
                     user_id=billing_user.id,
                     request_user_id=current_user.id,
-                    model=model,
+                    requested_model=model,
+                    model=attempt_model,
+                    attempt=index,
+                    retry=retry_index,
                     pre=credits_json_float(pre),
-                    attempt=attempt,
                     saved_assets=len(saved_assets),
                     refs=len(reference_urls),
                 )
+                channel_succeeded = True
                 return JSONResponse(resp)
             except Exception as e:
                 last_error = str(e)
+                errors.append(f"{attempt_model}: {last_error[:300]}")
                 _audit(
-                    "image_comfly_attempt_failed",
+                    "image_channel_attempt_failed",
                     user_id=billing_user.id,
                     request_user_id=current_user.id,
-                    model=model,
-                    attempt=attempt,
-                    attempts=attempts,
+                    requested_model=model,
+                    model=attempt_model,
+                    attempt=index,
+                    retry=retry_index,
+                    retries=attempts_per_model,
                     error=last_error[:300],
                 )
-                if attempt >= attempts or not _is_retryable_image_error(e):
+                if retry_index >= attempts_per_model or not _is_retryable_image_error(e):
                     break
-                await asyncio.sleep(0.8 * attempt)
+                await asyncio.sleep(0.8 * retry_index)
 
         if _openmind_image_fallback_enabled() and (not last_error or _is_retryable_image_error(RuntimeError(last_error))):
             try:
@@ -949,46 +1217,71 @@ async def proxy_images_generations(
                     user_id=billing_user.id,
                     response_payload=resp,
                     prompt=str(body.get("prompt") or ""),
-                    model=model,
-                    limit=int(body.get("n") or 1),
+                    model=attempt_model,
+                    limit=int(body.get("n") or body.get("num_images") or 1),
                     exclude_urls=reference_urls,
                 )
-                if saved_assets and isinstance(resp, dict):
-                    resp = dict(resp)
-                    resp["saved_assets"] = saved_assets
+                if isinstance(resp, dict):
+                    if saved_assets:
+                        resp = dict(resp)
+                        resp["saved_assets"] = saved_assets
+                    fallback = resp.setdefault("_lobster_fallback", {})
+                    if isinstance(fallback, dict):
+                        fallback.update({"requested_model": model, "used_model": attempt_model, "provider": "openmind", "attempt": index})
                 _audit(
                     "image_openmind_fallback_ok",
                     user_id=billing_user.id,
                     request_user_id=current_user.id,
-                    model=model,
+                    requested_model=model,
+                    model=attempt_model,
                     pre=credits_json_float(pre),
                     comfly_error=last_error[:300],
                     saved_assets=len(saved_assets),
                 )
+                channel_succeeded = True
                 return JSONResponse(resp)
             except Exception as fallback_error:
                 _audit(
                     "image_openmind_fallback_failed",
                     user_id=billing_user.id,
                     request_user_id=current_user.id,
-                    model=model,
+                    requested_model=model,
+                    model=attempt_model,
                     comfly_error=last_error[:300],
                     error=str(fallback_error)[:300],
                 )
                 last_error = f"{last_error}; OpenMind fallback failed: {fallback_error}"
+                errors.append(f"{attempt_model}/openmind: {str(fallback_error)[:300]}")
 
-        raise RuntimeError(last_error or "image generation failed")
-    except Exception as e:
-        _do_full_refund(db, billing_user, pre=pre,
-                        capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image", error=str(e))
-        _audit(
-            "image_failed",
-            user_id=billing_user.id,
-            request_user_id=current_user.id,
-            model=model,
-            error=str(e)[:300],
-        )
-        raise HTTPException(502, _public_image_failure_detail())
+        if not channel_succeeded:
+            _do_full_refund(
+                db,
+                billing_user,
+                pre=pre,
+                capability_id=_CAPABILITY_FOR_BILLING,
+                model=attempt_model,
+                endpoint="image",
+                error=last_error,
+            )
+            _audit(
+                "image_failed",
+                user_id=billing_user.id,
+                request_user_id=current_user.id,
+                requested_model=model,
+                model=attempt_model,
+                attempt=index,
+                error=last_error[:300],
+            )
+
+    detail = "; ".join(errors[-3:]) or last_error or "unknown error"
+    _audit(
+        "image_all_channels_failed",
+        user_id=online_user_for_mobile_user(db, current_user).id,
+        request_user_id=current_user.id,
+        model=model,
+        errors=errors[-5:],
+    )
+    raise HTTPException(502, _public_image_failure_detail())
 
 
 @router.post("/api/comfly-proxy/v1/images/edits", summary="Comfly image edits 透明 proxy（multipart，按 per_call 计费）")
@@ -1084,18 +1377,25 @@ async def proxy_videos_generations_submit(
     _audit("video_submit_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
 
     try:
-        resp = await _comfly_request("POST", _comfly_url("/v2/videos/generations", model),
-                                     upstream_body, _comfly_headers(model), _TIMEOUT_VIDEO_SUBMIT)
+        if _is_grok_api_format(entry):
+            resp = await _submit_comfly_grok15_video(body, model, entry)
+        else:
+            resp = await _comfly_request("POST", _comfly_url("/v2/videos/generations", model),
+                                         upstream_body, _comfly_headers(model), _TIMEOUT_VIDEO_SUBMIT)
     except Exception as e:
         _do_full_refund(db, current_user, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="video_submit", error=str(e))
         _audit("video_submit_failed", user_id=current_user.id, model=model, error=str(e)[:300])
         raise HTTPException(502, f"Comfly videos submit 调用失败：{e}")
 
-    # 注意：Veo submit 即扣，后续 poll 失败暂不退款（pipeline runner 自己重试，且任务通常会跑成功）
-    # 如果未来要"任务最终 failed 才退款"，需要在 poll 端点检测 status 后回填 refund，并加 task_id → pre 的映射存储
+    task_id = _task_id_from_response(resp) or (
+        (resp.get("data", {}) or {}).get("task_id") if isinstance(resp.get("data"), dict) else resp.get("task_id")
+    )
+    api_kind = "grok_v1" if _is_grok_api_format(entry) else "veo_v2"
+    _remember_proxy_video_task(task_id, api_kind, model)
     _audit("video_submit_ok", user_id=current_user.id, model=model,
-           task_id=(resp.get("data", {}) or {}).get("task_id") if isinstance(resp.get("data"), dict) else resp.get("task_id"),
+           task_id=task_id,
+           api_kind=api_kind,
            pre=credits_json_float(pre))
     return JSONResponse(resp)
 
@@ -1107,13 +1407,13 @@ async def proxy_videos_generations_poll(
     current_user: User = Depends(get_current_user),
 ):
     _check_request_authorized_for_billing(request)
-    # poll 不计费，不需要 model 路由（默认 token group），但 Comfly 实际不区分
+    remembered_kind, remembered_model = _proxy_video_task_hint(task_id)
     try:
-        resp = await _comfly_request("GET", _comfly_url(f"/v2/videos/generations/{task_id}"),
-                                     None, _comfly_headers(), _TIMEOUT_VIDEO_POLL)
+        resp = await _poll_comfly_video_task(task_id, remembered_model, remembered_kind)
     except Exception as e:
         raise HTTPException(502, f"Comfly videos poll 调用失败：{e}")
     return JSONResponse(resp)
+
 
 
 
@@ -1129,9 +1429,9 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             "ok": True,
             "model_family": "grok",
             "providers": [
-                {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
-                {"channel": "yunwu", "model": "grok-video-3", "base_url": proxy_base},
                 {"channel": "comfly", "model": "grok-video-3", "base_url": proxy_base},
+                {"channel": "yunwu", "model": "grok-video-3", "base_url": proxy_base},
+                {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
             ],
         }
 
@@ -1289,7 +1589,7 @@ async def proxy_yunwu_video_create(
     _audit("yunwu_video_create_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
 
     try:
-        resp = await _comfly_request(
+        resp = await _yunwu_request(
             "POST",
             f"{_yunwu_base_url()}/v1/video/create",
             upstream_body,
