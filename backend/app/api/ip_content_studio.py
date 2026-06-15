@@ -1600,6 +1600,50 @@ def _select_competitor_source_rows(db: Session, user_id: int, competitor_ids: li
     return out
 
 
+def _keyword_seed_briefs(keywords: list[IPContentKeyword]) -> list[dict[str, Any]]:
+    briefs: list[dict[str, Any]] = []
+    for row in keywords:
+        keyword = _clean_text(row.keyword, 191)
+        display_name = _clean_text(row.display_name, 191) or keyword
+        description = f"模板关键词：{keyword}"
+        if display_name and display_name != keyword:
+            description += f"；展示名：{display_name}"
+        briefs.append(
+            {
+                "type": "template_keyword",
+                "title": display_name or keyword,
+                "description": description,
+                "author": "",
+            }
+        )
+    return briefs
+
+
+def _competitor_seed_briefs(competitors: list[ContentCompetitorAccount]) -> list[dict[str, Any]]:
+    briefs: list[dict[str, Any]] = []
+    for row in competitors:
+        parts = [
+            f"平台：{_clean_text(row.platform, 64)}",
+            f"账号：{_clean_text(row.display_name or row.account_key, 191)}",
+        ]
+        if row.industry_tags:
+            parts.append(f"行业标签：{_clean_text(row.industry_tags, 500)}")
+        signature = ""
+        if isinstance(row.meta, dict):
+            signature = _clean_long_text(row.meta.get("signature") or row.meta.get("verify_info") or "", 500)
+        if signature:
+            parts.append(f"账号简介：{signature}")
+        briefs.append(
+            {
+                "type": "template_competitor",
+                "title": _clean_text(row.display_name or row.account_key, 191),
+                "description": "；".join([p for p in parts if p]),
+                "author": _clean_text(row.account_key, 191),
+            }
+        )
+    return briefs
+
+
 async def _call_ip_content_llm(
     *,
     request: Optional[Request] = None,
@@ -1611,12 +1655,28 @@ async def _call_ip_content_llm(
     rows: list[TikHubSourceItem],
     memories: list[dict[str, Any]],
     extra_requirements: str,
+    fallback_sources: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     count = max(1, min(int(count or 5), 20))
-    if not rows and not any((m.get("title") or m.get("content")) for m in memories):
+    fallback_sources = fallback_sources or []
+    if not rows and not fallback_sources and not any((m.get("title") or m.get("content")) for m in memories):
         raise HTTPException(status_code=400, detail="请先同步关键词/同行数据，或选择至少一份记忆资料。")
     task_requirements = _draft_requirements(task, platform, count)
     source_briefs = [_item_brief(row, idx + 1) for idx, row in enumerate(rows[:30])]
+    if not source_briefs and fallback_sources:
+        for idx, item in enumerate(fallback_sources[:30], start=1):
+            source_briefs.append(
+                {
+                    "idx": idx,
+                    "type": item.get("type") or "template_seed",
+                    "title": item.get("title") or "",
+                    "description": item.get("description") or "",
+                    "author": item.get("author") or "",
+                    "publish_time": "",
+                    "metrics": {},
+                    "url": "",
+                }
+            )
     current_year = _utcnow().year
     memory_payload = [
         {"title": m.get("title") or "", "content": (m.get("content") or "")[:1800]}
@@ -1814,6 +1874,7 @@ async def run_ip_content_daily_scheduled(
         record_task: str,
         platform: str,
         rows: list[TikHubSourceItem],
+        fallback_sources: list[dict[str, Any]],
         count: int,
         extra: str,
     ) -> None:
@@ -1827,6 +1888,7 @@ async def run_ip_content_daily_scheduled(
             rows=rows,
             memories=memories,
             extra_requirements=extra,
+            fallback_sources=fallback_sources,
         )
         records = _save_draft_records(
             db,
@@ -1856,12 +1918,16 @@ async def run_ip_content_daily_scheduled(
     moment_rows.extend(_select_competitor_source_rows(db, current_user.id, competitor_ids, task="moments_candidate", limit=24))
     seen: set[int] = set()
     moment_rows = [row for row in moment_rows if not (row.id in seen or seen.add(row.id))][:40]
+    keyword_fallback_sources = _keyword_seed_briefs(keywords)
+    competitor_fallback_sources = _competitor_seed_briefs(competitors)
+    moment_fallback_sources = (keyword_fallback_sources + competitor_fallback_sources)[:40]
 
     await generate_group(
         task_key="task1_industry",
         record_task="industry_hot_oral",
         platform="douyin",
         rows=industry_rows,
+        fallback_sources=keyword_fallback_sources,
         count=min(max(int(opts.industry_count or 5), 1), 5),
         extra=_requirements_text(requirements, "oral", "industry_oral", "industry", "common"),
     )
@@ -1870,6 +1936,7 @@ async def run_ip_content_daily_scheduled(
         record_task="professional_ip_oral",
         platform="douyin",
         rows=ip_rows,
+        fallback_sources=competitor_fallback_sources,
         count=min(max(int(opts.ip_count or 5), 1), 5),
         extra=_requirements_text(requirements, "oral", "ip_oral", "professional_ip", "common"),
     )
@@ -1878,6 +1945,7 @@ async def run_ip_content_daily_scheduled(
         record_task="moments_candidate",
         platform="wechat_moments",
         rows=moment_rows,
+        fallback_sources=moment_fallback_sources,
         count=min(max(int(opts.moments_count or 20), 1), 20),
         extra=_requirements_text(requirements, "moments", "moments_copy", "image", "common"),
     )
@@ -2580,6 +2648,7 @@ async def generate_industry_hot_oral(
         rows=rows,
         memories=memories,
         extra_requirements=body.extra_requirements,
+        fallback_sources=_keyword_seed_briefs(keywords),
     )
     group_id = uuid.uuid4().hex
     records = _save_draft_records(
@@ -2621,6 +2690,7 @@ async def generate_professional_ip_oral(
         rows=rows,
         memories=memories,
         extra_requirements=body.extra_requirements,
+        fallback_sources=_competitor_seed_briefs(accounts),
     )
     group_id = uuid.uuid4().hex
     records = _save_draft_records(
@@ -2671,6 +2741,7 @@ async def generate_moments_candidates(
         rows=rows,
         memories=memories,
         extra_requirements=body.extra_requirements,
+        fallback_sources=(_keyword_seed_briefs(keywords) + _competitor_seed_briefs(accounts))[:40],
     )
     group_id = uuid.uuid4().hex
     records = _save_draft_records(
