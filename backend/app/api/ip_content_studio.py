@@ -330,6 +330,25 @@ def _normalize_image_prompts(item: dict[str, Any], fallback: str = "") -> list[s
     return prompts[:3]
 
 
+def _is_moments_task(task: str) -> bool:
+    return (task or "").strip().lower() in {"task2_moments", "moments_candidate"}
+
+
+def _is_oral_task(task: str) -> bool:
+    return (task or "").strip().lower() in {"task1_industry", "task1_ip", "industry_hot_oral", "professional_ip_oral"}
+
+
+def _strip_moments_comment_bait(value: Any, max_len: int = 8000) -> str:
+    text = _clean_long_text(value, max_len)
+    if not text:
+        return ""
+    text = re.sub(r"[^。！？!?；;\n]*(?:评论区|留言区|评论里|留言里)[^。！？!?；;\n]*(?:告诉我|聊聊|说说|打出来|扣|回复|留言|评论)[。！？!?；;]?", "", text)
+    text = re.sub(r"[^。！？!?；;\n]*(?:你觉得|你认为|你遇到过吗|有没有同感)[^。！？!?；;\n]*(?:评论|留言)[^。！？!?；;]*[。！？!?；;]?", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()[:max_len]
+
+
 def _strip_search_markup(value: Any, max_len: int = 255) -> str:
     raw = _clean_long_text(value, max(max_len * 4, max_len))
     if not raw:
@@ -735,9 +754,11 @@ def _draft_requirements(task: str, platform: str, count: int) -> str:
     if task_key == "task1_industry":
         return (
             f"任务一：基于行业榜单/热门话题生成 {count} 条行业热门口播文案。"
-            "每条要有标题、开场钩子、口播正文、转化/互动收口、可配画面建议。"
+            "每条要有标题、开场钩子、口播正文、转化/互动收口；不要生成图片提示词、配图提示或画面建议。"
             "暂不限制字数或口播时长，优先把观点、案例、行业判断讲透。"
             "必须写出一个具体业务场景或案例拆解：问题是什么、判断依据是什么、给用户的启发是什么。"
+            "可以有评论互动收口，但要服务于口播观点，不要硬凑。"
+            "如果本轮同步到了多个关键词的新数据，5 条内容方向必须明显有差异，尽量覆盖不同关键词、不同痛点、不同案例。"
             f"涉及年份时默认使用当前年份 {current_year} 年；除非数据源明确出现其他年份，不要写 2025 年等过去年份。"
             "语气要像真实短视频创作者，不要空泛鸡汤。"
         )
@@ -747,6 +768,8 @@ def _draft_requirements(task: str, platform: str, count: int) -> str:
             "暂不限制字数或口播时长，优先写出深度。"
             "要体现专业判断、案例感和个人观点；每条至少包含一个具体场景、案例或反常识判断，并说明为什么。"
             "不能抄袭同行原文，只提炼选题结构和表达角度。"
+            "不要生成图片提示词、配图提示或画面建议。"
+            "可以有评论互动收口，但要服务于口播观点，不要硬凑。"
             f"涉及年份时默认使用当前年份 {current_year} 年；除非数据源明确出现其他年份，不要写 2025 年等过去年份。"
             "如果同行数据不足，用记忆资料补足到指定条数。"
         )
@@ -760,6 +783,7 @@ def _draft_requirements(task: str, platform: str, count: int) -> str:
         return (
             f"任务二：生成 {count} 条朋友圈文案。"
             "每条要自然、有生活场景、有专业可信度，适合个人 IP 日更；避免广告腔。"
+            "朋友圈不要写“评论区告诉我/留言告诉我/你觉得呢”这类引导评论句，收尾要像真实朋友圈表达。"
             "正文和配图提示必须分开：body 只放朋友圈正文，不要把“配图提示/画面建议”写进 body。"
             "必须给出 3 条贴合该文案但创意明显不同的配图提示，放到 image_prompts 数组；image_prompt 可放第一条或整体摘要。"
             "3 条配图提示要分别从不同场景/主体/隐喻切入，不能只是换视角或换形容词。"
@@ -1609,29 +1633,66 @@ def _select_keyword_source_rows(db: Session, user_id: int, keyword_ids: list[int
         db.query(TikHubSourceItem)
         .filter(TikHubSourceItem.user_id == user_id, TikHubSourceItem.platform == "douyin")
         .filter(TikHubSourceItem.source_type.in_(["keyword_video", "billboard_search", "billboard_topic", "billboard_video", "hot_search", "hot_total"]))
-        .order_by(source_rank.asc(), TikHubSourceItem.is_new.desc(), TikHubSourceItem.created_at.desc(), TikHubSourceItem.id.desc())
+        .order_by(TikHubSourceItem.is_new.desc(), TikHubSourceItem.created_at.desc(), source_rank.asc(), TikHubSourceItem.id.desc())
         .limit(300)
         .all()
     )
     wanted = {int(x) for x in keyword_ids if str(x).isdigit()}
-    fresh: list[TikHubSourceItem] = []
-    reused: list[TikHubSourceItem] = []
+    buckets: dict[int, dict[str, list[TikHubSourceItem]]] = {}
+    fallback_bucket = 0
     for row in rows:
         meta = _source_meta(row)
-        if wanted and int(meta.get("keyword_id") or 0) not in wanted:
+        keyword_id = int(meta.get("keyword_id") or 0)
+        if wanted and keyword_id not in wanted:
             continue
         source_name = str(meta.get("source") or "")
         if source_name and source_name not in {"keyword_sync", "keyword_video_sync", "keyword_sync_fallback"}:
             continue
+        bucket_id = keyword_id or fallback_bucket
+        bucket = buckets.setdefault(bucket_id, {"fresh": [], "reused": []})
         if _source_used_for(row, task):
-            reused.append(row)
+            bucket["reused"].append(row)
             continue
-        fresh.append(row)
-        if len(fresh) >= limit:
-            break
-    if len(fresh) >= limit:
-        return fresh[:limit]
-    return (fresh + reused)[:limit]
+        bucket["fresh"].append(row)
+
+    selected: list[TikHubSourceItem] = []
+    seen: set[int] = set()
+
+    def row_sort_value(row: TikHubSourceItem) -> float:
+        dt = row.created_at or row.updated_at
+        try:
+            return float(dt.timestamp())
+        except Exception:
+            return 0.0
+
+    def take_round(kind: str) -> None:
+        nonlocal selected
+        max_len = max((len(v[kind]) for v in buckets.values()), default=0)
+        ordered_bucket_ids = sorted(
+            buckets,
+            key=lambda bid: (
+                0 if bid in wanted else 1,
+                -row_sort_value(buckets[bid][kind][0]) if buckets[bid][kind] else 0,
+                bid,
+            ),
+        )
+        for idx in range(max_len):
+            for bucket_id in ordered_bucket_ids:
+                bucket_rows = buckets[bucket_id][kind]
+                if idx >= len(bucket_rows):
+                    continue
+                row = bucket_rows[idx]
+                if row.id in seen:
+                    continue
+                seen.add(row.id)
+                selected.append(row)
+                if len(selected) >= limit:
+                    return
+
+    take_round("fresh")
+    if len(selected) < limit:
+        take_round("reused")
+    return selected[:limit]
 
 
 def _select_competitor_source_rows(db: Session, user_id: int, competitor_ids: list[int], *, task: str, limit: int = 40) -> list[TikHubSourceItem]:
@@ -1776,10 +1837,24 @@ async def _call_ip_content_llm(
         for m in memories
         if m.get("content") or m.get("title")
     ]
+    wants_moments = _is_moments_task(task)
+    wants_oral = _is_oral_task(task)
+    json_schema = (
+        "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\",\"image_prompts\":[\"\",\"\",\"\"]}]}"
+        if wants_moments
+        else "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\"}]}"
+    )
+    format_rule = (
+        "当前任务是朋友圈文案：body 只能写朋友圈正文，配图提示必须放到 image_prompt/image_prompts；"
+        "严禁在朋友圈正文里写“评论区告诉我、留言告诉我、你觉得呢”等引导评论句。"
+        if wants_moments
+        else "当前任务是口播文案：只返回标题、开场钩子、口播正文和收口；严禁返回 image_prompt、image_prompts、配图提示、画面建议。"
+    )
     system_prompt = (
         "你是中文短视频、朋友圈和个人专业 IP 内容策划。根据给定的数据源和记忆资料生成可审核、可直接发布的草稿。"
         "必须返回严格 JSON，不要 Markdown 代码块。格式："
-        "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\",\"image_prompt\":\"\",\"image_prompts\":[\"\",\"\",\"\"]}]}。"
+        f"{json_schema}。"
+        f"{format_rule}"
         "不要抄袭同行原文，不要编造资料里没有的硬数据；可以提炼热点结构、选题角度和表达策略。"
         "\ncore rule: 记忆资料是账号定位、行业事实、产品服务、专业判断和表达风格的底座；"
         "TikHub 的行业热门/同行作品是当前新选题和新内容来源。"
@@ -1789,8 +1864,9 @@ async def _call_ip_content_llm(
         "行业热门口播优先使用关键词/榜单数据；专业 IP 口播优先使用同行新作品；朋友圈文案也要优先承接最新数据里的选题或场景。"
         f"所有涉及年份的内容默认按当前年份 {current_year} 年表达；除非数据源原文明确提供其他年份，严禁默认写 2025 年。"
         "口播类文案暂不限制字数和时长，要写出深度、案例、具体场景和判断链路。"
-        "朋友圈文案的 body 只能写主文案，配图提示必须放到 image_prompt，不要把“配图提示/画面建议”混入 body。"
-        "生成朋友圈文案时，每条 items 必须额外返回 image_prompts 数组，数组内 3 条配图文案都要贴合同一条 body 的主题，但创意、主体、场景和表达隐喻必须明显不同。"
+        "口播类文案允许使用评论互动收口；朋友圈文案不要使用引导评论的表达。"
+        "行业热门口播如果有多条关键词同步数据，必须主动做方向分散：不同条目对应不同热词、痛点、场景或案例，不能五条围绕同一个方向重复改写。"
+        "只有生成朋友圈文案时，才需要返回 image_prompt/image_prompts；每条 items 必须额外返回 image_prompts 数组，数组内 3 条配图文案都要贴合同一条 body 的主题，但创意、主体、场景和表达隐喻必须明显不同。"
         "\n"
     )
     user_prompt = json.dumps(
@@ -1808,6 +1884,7 @@ async def _call_ip_content_llm(
                 "memory_docs 用于让 AI 更懂账号和业务：约束事实、口径、专业度、产品服务特点和表达风格。"
                 "不能只照着记忆写，也不能只追热点而脱离记忆。"
             ),
+            "format_rule": format_rule,
             "fallback_rule": "如果未使用过的新数据不足，才用记忆资料补足指定条数；补足内容也要延续账号定位和业务事实。",
         },
         ensure_ascii=False,
@@ -1837,6 +1914,13 @@ async def _call_ip_content_llm(
     except Exception:
         text = json.dumps(data, ensure_ascii=False)
     drafts = _normalize_drafts(_extract_json_object(text), text, count)
+    if wants_oral:
+        for draft in drafts:
+            draft["image_prompt"] = ""
+            draft["image_prompts"] = []
+    elif wants_moments:
+        for draft in drafts:
+            draft["body"] = _strip_moments_comment_bait(_strip_embedded_image_prompt(draft.get("body") or "", 6000), 6000)
     return {
         "requirements": task_requirements,
         "drafts": drafts,
@@ -1861,16 +1945,24 @@ def _save_draft_records(
     source_ids = [int(row.id) for row in rows]
     memory_ids = [m.get("id") for m in memories if m.get("id")]
     saved: list[IPContentDraftRecord] = []
+    is_moments = _is_moments_task(task)
+    is_oral = _is_oral_task(task)
     for draft in drafts:
         image_prompts = [p for p in (draft.get("image_prompts") or []) if isinstance(p, str) and p.strip()]
         image_prompt = _clean_long_text(draft.get("image_prompt"), 2000) or (image_prompts[0] if image_prompts else None)
+        content = _clean_long_text(draft.get("body") or draft.get("content"), 8000) or None
+        if is_oral:
+            image_prompts = []
+            image_prompt = None
+        elif is_moments:
+            content = _strip_moments_comment_bait(_strip_embedded_image_prompt(content or "", 8000), 8000) or content
         rec = IPContentDraftRecord(
             record_id=uuid.uuid4().hex,
             user_id=current_user.id,
             task=task,
             platform=platform or "douyin",
             title=_clean_long_text(draft.get("title"), 1000) or None,
-            content=_clean_long_text(draft.get("body") or draft.get("content"), 8000) or None,
+            content=content,
             image_prompt=image_prompt,
             source_item_ids=source_ids,
             memory_doc_ids=memory_ids,

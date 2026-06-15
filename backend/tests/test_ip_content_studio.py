@@ -266,3 +266,86 @@ def test_draft_record_payload_includes_image_list():
     assert len(payload["images"]) == 2
     assert payload["images"][1]["image_url"] == "https://example.com/2.jpg"
     assert payload["meta"]["image_batch_id"] == "moment_img_batch_1"
+
+
+def test_oral_records_drop_image_prompts(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    saved = []
+
+    class DummyDb:
+        def add(self, row):
+            saved.append(row)
+
+        def flush(self):
+            pass
+
+        def commit(self):
+            pass
+
+        def refresh(self, row):
+            pass
+
+    monkeypatch.setattr(studio, "_mark_source_rows_used", lambda *args, **kwargs: None)
+
+    records = studio._save_draft_records(
+        DummyDb(),
+        current_user=SimpleNamespace(id=1),
+        task="industry_hot_oral",
+        platform="douyin",
+        drafts=[{"title": "口播", "body": "正文", "image_prompt": "不该保存", "image_prompts": ["不该保存"]}],
+        rows=[],
+        memories=[],
+        extra_requirements="",
+        group_id="group-1",
+    )
+
+    assert records[0].image_prompt is None
+    assert records[0].meta["image_prompts"] == []
+
+
+def test_moments_records_strip_comment_bait_and_embedded_image_prompt(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    saved = []
+
+    class DummyDb:
+        def add(self, row):
+            saved.append(row)
+
+        def flush(self):
+            pass
+
+        def commit(self):
+            pass
+
+        def refresh(self, row):
+            pass
+
+    monkeypatch.setattr(studio, "_mark_source_rows_used", lambda *args, **kwargs: None)
+
+    records = studio._save_draft_records(
+        DummyDb(),
+        current_user=SimpleNamespace(id=1),
+        task="moments_candidate",
+        platform="wechat_moments",
+        drafts=[
+            {
+                "title": "朋友圈",
+                "body": "今天聊一个真实案例。\n配图提示：办公室白板\n你的产品定价是多少？评论区告诉我。",
+                "image_prompts": ["办公室白板", "客户现场", "便签特写"],
+            }
+        ],
+        rows=[],
+        memories=[],
+        extra_requirements="",
+        group_id="group-2",
+    )
+
+    assert "配图提示" not in records[0].content
+    assert "评论区" not in records[0].content
+    assert records[0].meta["image_prompts"] == ["办公室白板", "客户现场", "便签特写"]
