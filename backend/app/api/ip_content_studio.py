@@ -1443,6 +1443,7 @@ def _draft_record_payload(row: IPContentDraftRecord) -> dict[str, Any]:
     return {
         "id": row.id,
         "record_id": row.record_id,
+        "group_id": meta.get("group_id") if isinstance(meta, dict) else "",
         "task": row.task,
         "platform": row.platform,
         "title": row.title or "",
