@@ -218,27 +218,78 @@
 
   <view class="showcase-section">
     <view class="showcase-head">
-      <text class="showcase-title">AI视频 · 创意生产</text>
-      <button bindtap="goVideoInspiration">查看灵感 ></button>
+      <view class="showcase-title-box">
+        <text class="showcase-title">AI视频 · 获客灵感 🔥</text>
+        <text class="showcase-subtitle">短视频灵感和一键复创</text>
+      </view>
+      <button bindtap="goVideoInspiration">查看全部 ></button>
     </view>
-    <view class="video-feature-grid">
-      <view class="video-feature image-gen" bindtap="goImageGenerate">
-        <image class="feature-bg" src="{{aiImageBgUrl}}" mode="aspectFill" />
-        <view class="feature-mask"></view>
-        <view class="feature-copy">
-          <text>AI图片生成</text>
-          <text>商业设计</text>
+    <scroll-view scroll-x class="showcase-scroll" show-scrollbar="{{false}}">
+      <view class="showcase-strip creative-strip">
+        <view class="start-template creative-start" bindtap="goVideoInspiration">
+          <view class="plus-circle">+</view>
+          <text>去复创</text>
+        </view>
+        <view class="template-card creative-card video-idea-card" data-idea="store-acquisition" bindtap="goVideoInspiration">
+          <image class="template-img" src="{{homeVideoCovers[0] || aiVideoBgUrl}}" mode="aspectFill" />
+          <view class="template-mask"></view>
+          <text class="template-title">线下门店获客</text>
+          <text class="template-sub">一键复创</text>
+        </view>
+        <view class="template-card creative-card video-idea-card cool" data-idea="product-seeding" bindtap="goVideoInspiration">
+          <image class="template-img" src="{{homeVideoCovers[1] || aiVideoBgUrl}}" mode="aspectFill" />
+          <view class="creative-card-tint"></view>
+          <view class="template-mask"></view>
+          <text class="template-title">产品种草</text>
+          <text class="template-sub">一键复创</text>
+        </view>
+        <view class="template-card creative-card video-idea-card warm" data-idea="factory-live-acquisition" bindtap="goVideoInspiration">
+          <image class="template-img" src="{{homeVideoCovers[2] || aiVideoBgUrl}}" mode="aspectFill" />
+          <view class="creative-card-tint"></view>
+          <view class="template-mask"></view>
+          <text class="template-title">工厂带货获客</text>
+          <text class="template-sub">一键复创</text>
         </view>
       </view>
-      <view class="video-feature video-gen" bindtap="goVideoInspiration">
-        <image class="feature-bg" src="{{aiVideoBgUrl}}" mode="aspectFill" />
-        <view class="feature-mask"></view>
-        <view class="feature-copy">
-          <text>获客灵感</text>
-          <text>一键复创</text>
+    </scroll-view>
+  </view>
+
+  <view class="showcase-section">
+    <view class="showcase-head">
+      <view class="showcase-title-box">
+        <text class="showcase-title">AI图片 · 商业设计</text>
+        <text class="showcase-subtitle">产品图、海报和获客素材</text>
+      </view>
+      <button bindtap="goImageGenerate">查看全部 ></button>
+    </view>
+    <scroll-view scroll-x class="showcase-scroll" show-scrollbar="{{false}}">
+      <view class="showcase-strip creative-strip">
+        <view class="start-template creative-start" bindtap="goImageGenerate">
+          <view class="plus-circle">+</view>
+          <text>去设计</text>
+        </view>
+        <view class="template-card creative-card" bindtap="goImageGenerate">
+          <image class="template-img" src="{{homeImageCovers[0] || aiImageBgUrl}}" mode="aspectFill" />
+          <view class="template-mask"></view>
+          <text class="template-title">品牌产品海报</text>
+          <text class="template-sub">去设计</text>
+        </view>
+        <view class="template-card creative-card creative-card-alt" bindtap="goImageGenerate">
+          <image class="template-img" src="{{homeImageCovers[1] || aiImageBgUrl}}" mode="aspectFill" />
+          <view class="creative-card-tint"></view>
+          <view class="template-mask"></view>
+          <text class="template-title">电商主图套装</text>
+          <text class="template-sub">去设计</text>
+        </view>
+        <view class="template-card creative-card creative-card-warm" bindtap="goImageGenerate">
+          <image class="template-img" src="{{homeImageCovers[2] || aiImageBgUrl}}" mode="aspectFill" />
+          <view class="creative-card-tint"></view>
+          <view class="template-mask"></view>
+          <text class="template-title">社媒获客图</text>
+          <text class="template-sub">去设计</text>
         </view>
       </view>
-    </view>
+    </scroll-view>
   </view>
 
   <view class="bottom-space"></view>

@@ -24,6 +24,7 @@ import logging
 import mimetypes
 import os
 import sys
+import tempfile
 from collections import OrderedDict
 from decimal import Decimal
 from pathlib import Path
@@ -67,6 +68,7 @@ _TIMEOUT_VIDEO_SUBMIT = 60.0
 _TIMEOUT_OPENMIND_VIDEO_SUBMIT = 60.0
 _TIMEOUT_VIDEO_POLL = 30.0
 _MAX_PROXY_VIDEO_TASK_TRACK = 5000
+_MAX_GROK_REFERENCE_BYTES = 30 * 1024 * 1024
 _proxy_video_task_meta: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 
 
@@ -885,6 +887,48 @@ def _first_grok_reference(forwarded: Dict[str, Any]) -> str:
     return primary
 
 
+def _is_http_url(value: str) -> bool:
+    lower = str(value or "").strip().lower()
+    return lower.startswith("http://") or lower.startswith("https://")
+
+
+async def _download_reference_url_to_temp_file(url: str) -> Tuple[Path, str, str]:
+    src = str(url or "").strip()
+    if not _is_http_url(src):
+        raise RuntimeError("reference image url must start with http:// or https://")
+    tmp_path = ""
+    total = 0
+    media_type = "image/jpeg"
+    suffix = ".jpg"
+    try:
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True, trust_env=False) as client:
+            async with client.stream("GET", src, headers={"User-Agent": "Mozilla/5.0 Chrome/126 Safari/537.36"}) as resp:
+                resp.raise_for_status()
+                media_type = (resp.headers.get("content-type") or "image/jpeg").split(";", 1)[0].strip() or "image/jpeg"
+                if not media_type.lower().startswith("image/"):
+                    raise RuntimeError(f"reference url is not an image: {media_type}")
+                suffix = _guess_image_ext(media_type, src)
+                with tempfile.NamedTemporaryFile(prefix="grok-reference-", suffix=suffix, delete=False) as tmp:
+                    tmp_path = tmp.name
+                    async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > _MAX_GROK_REFERENCE_BYTES:
+                            raise RuntimeError("reference image exceeds max size")
+                        tmp.write(chunk)
+        if total <= 0:
+            raise RuntimeError("reference image download is empty")
+        return Path(tmp_path), f"reference{suffix}", media_type
+    except Exception:
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        raise
+
+
 async def _reference_url_to_file_tuple(url: str) -> Tuple[str, bytes, str]:
     data, media_type, ext = await _download_image_bytes(url)
     filename = f"reference{ext or '.png'}"
@@ -933,11 +977,11 @@ async def _build_image_edit_request_parts(
     return data, files
 
 
-def _build_comfly_grok15_multipart(
+async def _build_comfly_grok15_multipart(
     body: Dict[str, Any],
     model: str,
     entry: Dict[str, Any],
-) -> Tuple[Dict[str, str], List[Tuple[str, Tuple[Any, ...]]], str]:
+) -> Tuple[Dict[str, str], List[Tuple[str, Tuple[Any, ...]]], str, List[Any], List[Path]]:
     forwarded = dict(body or {})
     prompt = str(forwarded.get("prompt") or "").strip()
     duration = forwarded.get("duration") or forwarded.get("seconds") or 6
@@ -949,15 +993,28 @@ def _build_comfly_grok15_multipart(
         "size": _coerce_video_size_from_ratio(ratio),
     }
     files: List[Tuple[str, Tuple[Any, ...]]] = []
+    open_files: List[Any] = []
+    temp_paths: List[Path] = []
     first_ref = _first_grok_reference(forwarded)
     if first_ref:
         path = Path(first_ref)
         if path.exists() and path.is_file():
             content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-            files.append(("input_reference", (path.name, path.read_bytes(), content_type)))
+            handle = path.open("rb")
+            open_files.append(handle)
+            files.append(("input_reference", (path.name, handle, content_type)))
+        elif _is_http_url(first_ref):
+            temp_path, filename, content_type = await _download_reference_url_to_temp_file(first_ref)
+            temp_paths.append(temp_path)
+            handle = temp_path.open("rb")
+            open_files.append(handle)
+            files.append(("input_reference", (filename, handle, content_type)))
+        elif str(first_ref).startswith("data:image/"):
+            filename, raw, content_type = await _reference_url_to_file_tuple(first_ref)
+            files.append(("input_reference", (filename, raw, content_type)))
         else:
-            files.append(("input_reference", (None, first_ref)))
-    return data, files, upstream_model
+            raise RuntimeError("Grok 1.5 video requires input_reference as a file, local path, data image, or http image URL")
+    return data, files, upstream_model, open_files, temp_paths
 
 
 async def _submit_comfly_grok15_video(
@@ -965,14 +1022,26 @@ async def _submit_comfly_grok15_video(
     model: str,
     entry: Dict[str, Any],
 ) -> Dict[str, Any]:
-    data, files, upstream_model = _build_comfly_grok15_multipart(body, model, entry)
-    resp = await _comfly_multipart_request(
-        _comfly_url("/v1/videos", model),
-        data,
-        files,
-        _comfly_auth_headers(model),
-        _TIMEOUT_VIDEO_SUBMIT,
-    )
+    data, files, upstream_model, open_files, temp_paths = await _build_comfly_grok15_multipart(body, model, entry)
+    try:
+        resp = await _comfly_multipart_request(
+            _comfly_url("/v1/videos", model),
+            data,
+            files,
+            _comfly_auth_headers(model),
+            _TIMEOUT_VIDEO_SUBMIT,
+        )
+    finally:
+        for handle in open_files:
+            try:
+                handle.close()
+            except Exception:
+                pass
+        for temp_path in temp_paths:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
     if isinstance(resp, dict):
         resp.setdefault("_provider", "comfly")
         resp.setdefault("_api_format", "grok_v1")

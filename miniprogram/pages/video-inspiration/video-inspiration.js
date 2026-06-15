@@ -13,8 +13,39 @@ const MAX_REFERENCES = 4;
 const PIPELINE_CLAIM_MS = 5 * 60 * 1000;
 
 const COVER_BASE = "https://images.unsplash.com";
+const SERVER_STATIC_BASE = "https://bhzn.top/client/miniprogram";
 
 const IDEAS = [
+  {
+    id: "store-acquisition",
+    category: "commerce",
+    title: "线下门店获客",
+    author: "龙虾精选",
+    plays: "8.6w",
+    cover: `${SERVER_STATIC_BASE}/home_covers/home-video-store-acquisition.jpg`,
+    prompt: "竖屏9:16，真实线下门店获客短视频。画面在明亮、有质感的本地门店内，店主自然出镜向顾客介绍产品，旁边有手机支架正在拍摄。镜头先展示门店环境和热销产品，再切到店主讲解卖点、顾客体验和到店福利。人物表情真实亲切，光线自然明亮，画面高级但不夸张，适合本地生活、零售门店、实体店获客。",
+    desc: "适合实体店、本地生活、零售门店，用真实门店和真人讲解提升到店咨询。"
+  },
+  {
+    id: "product-seeding",
+    category: "commerce",
+    title: "产品种草",
+    author: "龙虾精选",
+    plays: "7.4w",
+    cover: `${SERVER_STATIC_BASE}/home_covers/home-video-product-seeding.jpg`,
+    prompt: "竖屏9:16，真实自然的产品种草短视频。年轻女性创作者在明亮家居工作室对镜头展示产品，手持产品讲解使用感、核心卖点和适合人群。镜头包含人物口播、产品近景、使用动作和桌面细节，整体清新干净、真实可信，不要硬广感。节奏适合短视频平台种草，引导用户评论或私信咨询。",
+    desc: "适合美妆、日化、数码、小家电和消费品，用真人体验和产品细节做转化。"
+  },
+  {
+    id: "factory-live-acquisition",
+    category: "factory",
+    title: "工厂带货获客",
+    author: "龙虾精选",
+    plays: "6.9w",
+    cover: `${SERVER_STATIC_BASE}/home_covers/home-video-factory-live.jpg`,
+    prompt: "竖屏9:16，真实工厂带货获客短视频。女主播站在干净现代的工厂车间里，手拿产品样品对手机镜头讲解，背景能看到生产线、工人操作和整齐包装。镜头从产品特写开始，切到车间规模、生产细节、质检和库存，再回到主播强调厂家直供、交付稳定、支持定制。画面自然真实、明亮专业，有信任感，适合源头工厂、代工厂、批发招商获客。",
+    desc: "适合源头工厂、批发、代工和招商，用车间实力、真人讲解和产品样品建立信任。"
+  },
   {
     id: "factory-shoes",
     category: "factory",
