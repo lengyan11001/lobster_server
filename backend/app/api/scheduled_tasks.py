@@ -1039,7 +1039,16 @@ def create_scheduled_task(
         created_by_user_id=current_user.id,
         created_by_role="user",
     )
-    return {"ok": True, "task": _serialize_task(task)}
+    runs_payload = []
+    if task.last_run_id:
+        run = (
+            db.query(ScheduledTaskRun)
+            .filter(ScheduledTaskRun.id == task.last_run_id, ScheduledTaskRun.user_id == owner_user.id)
+            .first()
+        )
+        if run:
+            runs_payload.append(_serialize_run(run))
+    return {"ok": True, "task": _serialize_task(task), "runs": runs_payload}
 
 
 @router.get("/api/scheduled-tasks/tasks", summary="任务定义列表")

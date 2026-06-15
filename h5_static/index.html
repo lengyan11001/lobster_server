@@ -1772,6 +1772,7 @@
 
     function isServerSideRun(row) {
       return String((row && row.task_kind) || "").trim() === "ip_content_daily"
+        || !!(row && row.server_side)
         || !!(row && row.progress && row.progress.server_side);
     }
 
@@ -1782,7 +1783,7 @@
       const matched = activeRuns.find((row) => runInstallationId(row) && runInstallationId(row) === id);
       if (matched) return matched;
       if (state.devices.filter((d) => d.online).length === 1) {
-        return activeRuns.find((row) => !runInstallationId(row) && !isServerSideRun(row)) || null;
+        return activeRuns.find((row) => !runInstallationId(row)) || null;
       }
       return null;
     }
@@ -1796,7 +1797,7 @@
       const online = state.devices.filter((d) => d.online);
       const index = onlineDeviceIndex(device);
       if (index < 0) return null;
-      const rows = state.runs.filter((row) => isActiveRun(row) && !runInstallationId(row) && !isServerSideRun(row));
+      const rows = state.runs.filter((row) => isActiveRun(row) && !runInstallationId(row));
       return rows[index % Math.max(online.length, 1)] || null;
     }
 
@@ -1965,7 +1966,7 @@
       const mode = !device || !device.online ? "offline" : (run || msg ? "working" : "idle");
       const label = mode === "offline" ? "下班了" : mode === "working" ? "工作中" : "发呆中";
       const detail = run
-        ? (run.error || run.result_text || (run.progress && (run.progress.text || run.progress.message)) || run.content || "正在执行任务")
+        ? (run.error || run.result_text || runProgressText(run) || run.content || "正在执行任务")
         : msg
           ? (msg.content || msg.reply_text || "正在处理手机会话消息")
           : mode === "idle"
@@ -1975,7 +1976,7 @@
       const started = run ? (run.started_at || run.claimed_at || run.created_at) : (msg ? (msg.claimed_at || msg.created_at) : (device && device.last_seen_at));
       const bubble = mode === "working"
         ? (run
-          ? ((run.progress && (run.progress.text || run.progress.message || run.progress.phase || run.progress.status)) || (run.status === "pending" ? "任务提交中，等待员工领取" : title) || "正在执行任务")
+          ? runProgressText(run)
           : (latestProgressTextForMessage(msgEntry) || "生成中，正在处理手机会话"))
         : (mode === "idle" ? idleBubbleForDevice(device, index) : "");
       const steps = [];
@@ -2207,6 +2208,56 @@
       return `${capabilityName(taskCapabilityId(row) || row.task_kind)} · ${owner ? "员工 " + shortId(owner) : "等待员工领取"}`;
     }
 
+    function mergeRuns(rows) {
+      if (!Array.isArray(rows) || !rows.length) return;
+      const byId = new Map((state.runs || []).map((row) => [String(row.id || ""), row]));
+      rows.forEach((row) => {
+        if (!row || !row.id) return;
+        byId.set(String(row.id), { ...(byId.get(String(row.id)) || {}), ...row });
+      });
+      state.runs = Array.from(byId.values()).sort((a, b) => itemTimeMs(b.updated_at, b.created_at) - itemTimeMs(a.updated_at, a.created_at));
+    }
+
+    function removeRun(runId) {
+      const id = String(runId || "");
+      if (!id) return;
+      state.runs = (state.runs || []).filter((row) => String(row.id || "") !== id);
+    }
+
+    function addOptimisticRun(body, title, isIpDaily) {
+      const now = new Date().toISOString();
+      const run = {
+        id: `client_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+        task_id: "",
+        title: title || capabilityName(state.taskAbility),
+        task_kind: isIpDaily ? "ip_content_daily" : "capability",
+        payload: body && body.payload ? body.payload : {},
+        status: "processing",
+        progress: { server_side: !!isIpDaily, text: isIpDaily ? "服务器任务已提交" : "任务已提交，等待员工领取" },
+        server_side: !!isIpDaily,
+        created_at: now,
+        updated_at: now,
+      };
+      mergeRuns([run]);
+      renderOfficeEmployees();
+      renderWorkList();
+      return run.id;
+    }
+
+    function runProgressText(row) {
+      if (!row) return "";
+      if (isServerSideRun(row)) {
+        const progress = row.progress && (row.progress.text || row.progress.message || row.progress.phase || row.progress.status);
+        if (progress) return progress;
+        if (String(row.status || "").toLowerCase() === "pending") return "服务器任务已排队";
+        if (String(row.status || "").toLowerCase() === "processing") return "服务器执行中";
+        return row.title || "服务器任务";
+      }
+      return (row.progress && (row.progress.text || row.progress.message || row.progress.phase || row.progress.status))
+        || (row.status === "pending" ? "任务提交中，等待员工领取" : row.title)
+        || "正在执行任务";
+    }
+
     function renderWorkList() {
       const timeline = $("workTimeline");
       if (!timeline) return;
@@ -2346,15 +2397,28 @@
     async function runTaskNow(taskId, btn) {
       if (!taskId) return;
       const oldText = btn ? btn.textContent : "";
+      const task = (state.tasks || []).find((row) => String(row.id || "") === String(taskId)) || null;
+      const optimisticRunId = addOptimisticRun(
+        { payload: task && task.payload ? task.payload : {} },
+        task ? task.title : "",
+        task && task.task_kind === "ip_content_daily"
+      );
       if (btn) {
         btn.disabled = true;
         btn.textContent = "下发中...";
       }
       try {
-        await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(taskId)}/run-now`, { method: "POST", json: {} });
+        const data = await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(taskId)}/run-now`, { method: "POST", json: {} });
+        removeRun(optimisticRunId);
+        mergeRuns(data.runs || []);
+        renderOfficeEmployees();
+        renderWorkList();
         toast("已下发执行");
         await Promise.all([loadTasks(), loadRuns()]);
       } catch (err) {
+        removeRun(optimisticRunId);
+        renderOfficeEmployees();
+        renderWorkList();
         toast(err.message || "下发失败");
         if (btn) {
           btn.disabled = false;
@@ -2933,17 +2997,30 @@
         timezone_offset_minutes: timezoneOffsetMinutes(),
         installation_ids: isIpDaily ? [] : [installationId],
       };
+      const startAt = $("taskStartAt") ? $("taskStartAt").value : "";
+      const shouldOptimisticRun = scheduleType !== "daily_times" && !startAt;
+      const optimisticRunId = shouldOptimisticRun ? addOptimisticRun(body, title, isIpDaily) : "";
       btn.disabled = true;
       try {
-        await api("/api/scheduled-tasks/tasks", {
+        const data = await api("/api/scheduled-tasks/tasks", {
           method: "POST",
           json: body,
           headers: installationId ? { "X-Installation-Id": installationId } : {},
         });
+        removeRun(optimisticRunId);
+        if (data.task) {
+          state.tasks = [data.task].concat((state.tasks || []).filter((row) => String(row.id) !== String(data.task.id)));
+        }
+        if (Array.isArray(data.runs)) mergeRuns(data.runs);
+        renderOfficeEmployees();
+        renderWorkList();
         toast("任务已下发");
         setTaskPanelOpen(false);
         await Promise.all([loadTasks(), loadRuns()]);
       } catch (err) {
+        removeRun(optimisticRunId);
+        renderOfficeEmployees();
+        renderWorkList();
         toast(err.message || "下发失败");
       } finally {
         btn.disabled = false;
@@ -4007,7 +4084,7 @@
         if (!state.token) return;
         const activeView = document.querySelector(".view.active");
         if (activeView && (activeView.id === "officeView" || activeView.id === "workListView")) loadRuns();
-      }, 15000);
+      }, 5000);
     })();
   </script>
 </body>
