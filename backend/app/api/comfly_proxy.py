@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 import logging
 import mimetypes
@@ -98,6 +99,58 @@ def _model_token_group(model_id: str) -> str:
 
 def _normalized_model_id(model_id: str) -> str:
     return (model_id or "").strip().lower().replace("_", "-")
+
+
+def _collect_image_ref_values(value: Any, *, max_depth: int = 4) -> List[str]:
+    refs: List[str] = []
+
+    def add(item: Any) -> None:
+        text = str(item or "").strip()
+        if text and text not in refs:
+            refs.append(text)
+
+    def visit(item: Any, depth: int = 0) -> None:
+        if item is None or depth > max_depth:
+            return
+        if isinstance(item, str):
+            text = item.strip()
+            if not text:
+                return
+            if text.startswith(("[", "{")):
+                try:
+                    visit(json.loads(text), depth + 1)
+                    return
+                except Exception:
+                    try:
+                        visit(ast.literal_eval(text), depth + 1)
+                        return
+                    except Exception:
+                        pass
+            add(text)
+            return
+        if isinstance(item, (list, tuple, set)):
+            for sub in item:
+                visit(sub, depth + 1)
+            return
+        if isinstance(item, dict):
+            for key in ("url", "image_url", "image", "source_url", "public_url", "file_url"):
+                if key in item:
+                    visit(item.get(key), depth + 1)
+            return
+        add(item)
+
+    visit(value)
+    return refs
+
+
+def _normalized_image_refs_from_payload(payload: Dict[str, Any]) -> Tuple[str, List[str]]:
+    refs: List[str] = []
+    for key in ("image", "image_url", "image_urls", "images"):
+        for value in _collect_image_ref_values(payload.get(key)):
+            if value not in refs:
+                refs.append(value)
+    primary = refs[0] if refs else ""
+    return primary, refs
 
 
 def _image_generation_model_attempts(model: str) -> List[str]:
@@ -405,15 +458,7 @@ def _openmind_image_body(source_body: Dict[str, Any]) -> Dict[str, Any]:
         "n": int(source_body.get("n") or 1),
         "response_format": str(source_body.get("response_format") or "url").strip() or "url",
     }
-    image_url = str(source_body.get("image_url") or source_body.get("image") or "").strip()
-    image_urls = source_body.get("image_urls")
-    if isinstance(image_urls, str):
-        image_urls = [image_urls]
-    if not isinstance(image_urls, list):
-        image_urls = []
-    image_urls = [str(url or "").strip() for url in image_urls if str(url or "").strip()]
-    if not image_url and image_urls:
-        image_url = image_urls[0]
+    image_url, image_urls = _normalized_image_refs_from_payload(source_body)
     if image_url:
         body["image_url"] = image_url
         body["image"] = image_url
@@ -834,17 +879,10 @@ def _coerce_image_edit_size(raw: Any) -> str:
 
 
 def _first_grok_reference(forwarded: Dict[str, Any]) -> str:
-    images = forwarded.get("images")
-    if isinstance(images, list):
-        for item in images:
-            value = str(item or "").strip()
-            if value:
-                return value
-    for key in ("image_url", "image"):
-        value = str(forwarded.get(key) or "").strip()
-        if value:
-            return value
-    return ""
+    primary, refs = _normalized_image_refs_from_payload(forwarded)
+    if refs:
+        return refs[0]
+    return primary
 
 
 async def _reference_url_to_file_tuple(url: str) -> Tuple[str, bytes, str]:
@@ -1027,15 +1065,7 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
             num_images = max(1, int(forwarded.get("num_images") or forwarded.get("n") or 1))
         except (TypeError, ValueError):
             num_images = 1
-        image_url = str(forwarded.get("image_url") or forwarded.get("image") or "").strip()
-        image_urls = forwarded.get("image_urls")
-        if isinstance(image_urls, str):
-            image_urls = [image_urls]
-        if not isinstance(image_urls, list):
-            image_urls = []
-        image_urls = [str(url or "").strip() for url in image_urls if str(url or "").strip()]
-        if not image_url and image_urls:
-            image_url = image_urls[0]
+        image_url, image_urls = _normalized_image_refs_from_payload(forwarded)
         out: Dict[str, Any] = {
             "model": upstream,
             "prompt": prompt,
@@ -1053,12 +1083,7 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
     if api_format == "grok":
         prompt = str(forwarded.get("prompt") or "").strip()
         grok_body: Dict[str, Any] = {"model": upstream, "prompt": prompt}
-        images = forwarded.get("images")
-        if not isinstance(images, list):
-            images = []
-        images = [str(x).strip() for x in images if str(x or "").strip()]
-        if not images and forwarded.get("image_url"):
-            images = [str(forwarded.get("image_url")).strip()]
+        _primary_image, images = _normalized_image_refs_from_payload(forwarded)
         if images:
             grok_body["images"] = images[:1]
         if "ratio" not in forwarded and forwarded.get("aspect_ratio"):
@@ -1075,19 +1100,7 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
 
 
 def _image_reference_urls(body: Dict[str, Any]) -> List[str]:
-    refs: List[str] = []
-    for key in ("image", "image_url"):
-        value = str(body.get(key) or "").strip()
-        if value and value not in refs:
-            refs.append(value)
-    for key in ("image_urls",):
-        values = body.get(key)
-        if not isinstance(values, list):
-            continue
-        for item in values:
-            value = str(item or "").strip()
-            if value and value not in refs:
-                refs.append(value)
+    _primary, refs = _normalized_image_refs_from_payload(body)
     return refs
 
 
