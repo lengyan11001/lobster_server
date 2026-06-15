@@ -352,6 +352,8 @@ def _strip_moments_comment_bait(value: Any, max_len: int = 8000) -> str:
         return ""
     text = re.sub(r"[^。！？!?；;\n]*(?:评论区|留言区|评论里|留言里)[^。！？!?；;\n]*(?:告诉我|聊聊|说说|打出来|扣|回复|留言|评论)[。！？!?；;]?", "", text)
     text = re.sub(r"[^。！？!?；;\n]*(?:你觉得|你认为|你遇到过吗|有没有同感)[^。！？!?；;\n]*(?:评论|留言)[^。！？!?；;]*[。！？!?；;]?", "", text)
+    text = re.sub(r"(?:^|\n)\s*(?:适合发圈日更|适合个人\s*IP\s*日更|适合\s*IP\s*日更|发圈日更)\s*[。！？!?；;]?\s*$", "", text, flags=re.I)
+    text = re.sub(r"\s*(?:适合发圈日更|适合个人\s*IP\s*日更|适合\s*IP\s*日更|发圈日更)\s*[。！？!?；;]?\s*$", "", text, flags=re.I)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip()[:max_len]
@@ -790,12 +792,12 @@ def _draft_requirements(task: str, platform: str, count: int) -> str:
     if task_key == "task2_moments":
         return (
             f"任务二：生成 {count} 条朋友圈文案。"
-            "每条要自然、有生活场景、有专业可信度，适合个人 IP 日更；但表达风格要更像私域社群爆款发售体。"
+            "每条要自然、有生活场景、有专业可信度，可作为个人 IP 账号持续更新的素材；但表达风格要更像私域社群爆款发售体。"
             "排版必须规整：短句分行，2 到 4 行形成一个小段落，段落之间空一行；拒绝大段文字。"
             "允许并鼓励精准使用 Emoji，例如 💥、🔥、🎯、💯、😲、😎、🚀、👇、💸、🌟；每条正文建议 4 到 8 个，但不要堆到每一句都有。"
             "语言要短、狠、直给，用大白话打痛点、给结果、造紧迫感；围绕降本、增收、流量、获客、效率、赚钱这些老板关心的结果。"
             "结构建议：吸睛开场/反问；痛点或趋势；结合记忆资料里的产品/服务给出解决方案；最后用自然私域动作收口。"
-            "朋友圈不要写“评论区告诉我/留言告诉我/你觉得呢”这类引导评论句，收尾要像真实朋友圈表达。"
+            "朋友圈不要写“评论区告诉我/留言告诉我/你觉得呢”这类引导评论句，收尾要像真实朋友圈表达；不要把“适合发圈日更”“适合个人 IP 日更”这类用途说明写进正文或放在结尾。"
             "正文和配图提示必须分开：body 只放朋友圈正文，不要把“配图提示/画面建议”写进 body。"
             "必须给出 3 条贴合该文案但创意明显不同的配图提示，放到 image_prompts 数组；image_prompt 可放第一条或整体摘要。"
             "3 条配图提示要分别从不同场景/主体/隐喻切入，不能只是换视角或换形容词；必须让 3 张图看起来是同主题的三套创意方案。"
@@ -1435,14 +1437,17 @@ def _draft_record_payload(row: IPContentDraftRecord) -> dict[str, Any]:
     meta = row.meta or {}
     images = meta.get("images") if isinstance(meta, dict) and isinstance(meta.get("images"), list) else []
     image_prompts = meta.get("image_prompts") if isinstance(meta, dict) and isinstance(meta.get("image_prompts"), list) else []
+    body = row.content or ""
+    if _is_moments_task(row.task):
+        body = _strip_moments_comment_bait(_strip_embedded_image_prompt(body, 8000), 8000)
     return {
         "id": row.id,
         "record_id": row.record_id,
         "task": row.task,
         "platform": row.platform,
         "title": row.title or "",
-        "body": row.content or "",
-        "content": row.content or "",
+        "body": body,
+        "content": body,
         "image_prompt": row.image_prompt or "",
         "image_prompts": image_prompts,
         "image_url": row.image_url or "",
@@ -1857,7 +1862,7 @@ async def _call_ip_content_llm(
         else "{\"items\":[{\"title\":\"\",\"hook\":\"\",\"body\":\"\",\"cta\":\"\"}]}"
     )
     format_rule = (
-        "当前任务是朋友圈文案：body 只能写朋友圈正文，配图提示必须放到 image_prompt/image_prompts；"
+        "当前任务是朋友圈文案：body 只能写朋友圈正文，配图提示必须放到 image_prompt/image_prompts；严禁把“适合发圈日更”“适合个人 IP 日更”这类用途说明写进正文或结尾；"
         "严禁在朋友圈正文里写“评论区告诉我、留言告诉我、你觉得呢”等引导评论句。"
         "body 必须保留换行排版，像微信群/朋友圈可直接复制发布的短句爆款体：开场强、痛点快、结果明确、收口有动作；"
         "可以使用 Emoji，但要服务于阅读节奏和情绪，不要变成装饰堆砌。"
