@@ -258,10 +258,26 @@ class ScheduledDailyRunOptions(BaseModel):
     competitor_ids: list[int] = Field(default_factory=list)
     memory_docs: list[dict[str, Any]] = Field(default_factory=list)
     requirements: dict[str, Any] = Field(default_factory=dict)
+    tasks: list[str] = Field(default_factory=list)
     sync_before: bool = True
     industry_count: int = Field(5, ge=1, le=20)
     ip_count: int = Field(5, ge=1, le=20)
     moments_count: int = Field(20, ge=1, le=20)
+
+
+_SCHEDULED_DAILY_TASKS: tuple[str, ...] = ("industry_hot_oral", "professional_ip_oral", "moments_candidate")
+
+
+def _clean_scheduled_daily_tasks(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    allowed = set(_SCHEDULED_DAILY_TASKS)
+    out: list[str] = []
+    for item in value:
+        text = _clean_text(item, 80)
+        if text in allowed and text not in out:
+            out.append(text)
+    return out
 
 
 def _utcnow() -> datetime:
@@ -2006,6 +2022,9 @@ async def run_ip_content_daily_scheduled(
     run_id: str = "",
 ) -> dict[str, Any]:
     opts = ScheduledDailyRunOptions(**(options or {}))
+    selected_tasks = _clean_scheduled_daily_tasks(opts.tasks) or list(_SCHEDULED_DAILY_TASKS)
+    need_keywords = "industry_hot_oral" in selected_tasks or "moments_candidate" in selected_tasks
+    need_competitors = "professional_ip_oral" in selected_tasks or "moments_candidate" in selected_tasks
     template_payload: dict[str, Any] = {}
     template: Optional[IPContentScheduleTemplate] = None
     keyword_ids = _clean_int_ids(opts.keyword_ids, 50)
@@ -2061,12 +2080,12 @@ async def run_ip_content_daily_scheduled(
 
     sync_results: list[dict[str, Any]] = []
     if opts.sync_before:
-        for row in keywords:
+        for row in (keywords if need_keywords else []):
             try:
                 sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
             except Exception as exc:
                 sync_results.append(_sync_error_result(source="keyword_sync", row=row, exc=exc, attempts=3))
-        for row in competitors:
+        for row in (competitors if need_competitors else []):
             try:
                 sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
             except Exception as exc:
@@ -2119,49 +2138,66 @@ async def run_ip_content_daily_scheduled(
             }
         )
 
-    industry_rows = _select_keyword_source_rows(db, current_user.id, keyword_ids, task="industry_hot_oral", limit=40)
-    ip_rows = _select_competitor_source_rows(db, current_user.id, competitor_ids, task="professional_ip_oral", limit=40)
-    moment_rows = _select_keyword_source_rows(db, current_user.id, keyword_ids, task="moments_candidate", limit=24)
-    moment_rows.extend(_select_competitor_source_rows(db, current_user.id, competitor_ids, task="moments_candidate", limit=24))
+    industry_rows = (
+        _select_keyword_source_rows(db, current_user.id, keyword_ids, task="industry_hot_oral", limit=40)
+        if "industry_hot_oral" in selected_tasks
+        else []
+    )
+    ip_rows = (
+        _select_competitor_source_rows(db, current_user.id, competitor_ids, task="professional_ip_oral", limit=40)
+        if "professional_ip_oral" in selected_tasks
+        else []
+    )
+    moment_rows = (
+        _select_keyword_source_rows(db, current_user.id, keyword_ids, task="moments_candidate", limit=24)
+        if "moments_candidate" in selected_tasks
+        else []
+    )
+    if "moments_candidate" in selected_tasks:
+        moment_rows.extend(_select_competitor_source_rows(db, current_user.id, competitor_ids, task="moments_candidate", limit=24))
     seen: set[int] = set()
     moment_rows = [row for row in moment_rows if not (row.id in seen or seen.add(row.id))][:40]
     keyword_fallback_sources = _keyword_seed_briefs(keywords)
     competitor_fallback_sources = _competitor_seed_briefs(competitors)
     moment_fallback_sources = (keyword_fallback_sources + competitor_fallback_sources)[:40]
 
-    await generate_group(
-        task_key="task1_industry",
-        record_task="industry_hot_oral",
-        platform="douyin",
-        rows=industry_rows,
-        fallback_sources=keyword_fallback_sources,
-        count=min(max(int(opts.industry_count or 5), 1), 5),
-        extra=_requirements_text(requirements, "oral", "industry_oral", "industry", "common"),
-    )
-    await generate_group(
-        task_key="task1_ip",
-        record_task="professional_ip_oral",
-        platform="douyin",
-        rows=ip_rows,
-        fallback_sources=competitor_fallback_sources,
-        count=min(max(int(opts.ip_count or 5), 1), 5),
-        extra=_requirements_text(requirements, "oral", "ip_oral", "professional_ip", "common"),
-    )
-    await generate_group(
-        task_key="task2_moments",
-        record_task="moments_candidate",
-        platform="wechat_moments",
-        rows=moment_rows,
-        fallback_sources=moment_fallback_sources,
-        count=min(max(int(opts.moments_count or 20), 1), 20),
-        extra=_requirements_text(requirements, "moments", "moments_copy", "image", "common"),
-    )
+    if "industry_hot_oral" in selected_tasks:
+        await generate_group(
+            task_key="task1_industry",
+            record_task="industry_hot_oral",
+            platform="douyin",
+            rows=industry_rows,
+            fallback_sources=keyword_fallback_sources,
+            count=min(max(int(opts.industry_count or 5), 1), 5),
+            extra=_requirements_text(requirements, "oral", "industry_oral", "industry", "common"),
+        )
+    if "professional_ip_oral" in selected_tasks:
+        await generate_group(
+            task_key="task1_ip",
+            record_task="professional_ip_oral",
+            platform="douyin",
+            rows=ip_rows,
+            fallback_sources=competitor_fallback_sources,
+            count=min(max(int(opts.ip_count or 5), 1), 5),
+            extra=_requirements_text(requirements, "oral", "ip_oral", "professional_ip", "common"),
+        )
+    if "moments_candidate" in selected_tasks:
+        await generate_group(
+            task_key="task2_moments",
+            record_task="moments_candidate",
+            platform="wechat_moments",
+            rows=moment_rows,
+            fallback_sources=moment_fallback_sources,
+            count=min(max(int(opts.moments_count or 20), 1), 20),
+            extra=_requirements_text(requirements, "moments", "moments_copy", "image", "common"),
+        )
 
     records_by_task = {group["task"]: group["records"] for group in generated_groups}
     return {
         "ok": True,
         "ip_content_daily": True,
         "template": template_payload,
+        "tasks": selected_tasks,
         "keyword_ids": keyword_ids,
         "competitor_ids": competitor_ids,
         "memory_docs": memories,

@@ -168,6 +168,15 @@
               <text class="picker-value">{{ipTemplatesLoading ? '加载中...' : (selectedIpTemplateTitle || '请选择')}}</text>
             </view>
           </picker>
+          <view class="ip-task-checks">
+            <text class="picker-label">生成内容</text>
+            <checkbox-group bindchange="onIpDailyTaskChange">
+              <label wx:for="{{ipDailyTaskOptions}}" wx:key="value" class="ip-task-check">
+                <checkbox value="{{item.value}}" checked="{{item.checked}}" />
+                <text>{{item.label}}</text>
+              </label>
+            </checkbox-group>
+          </view>
           <textarea class="task-input" value="{{ipRequirement}}" bindinput="onIpRequirementInput" placeholder="补充要求，可选" auto-height />
         </view>
 

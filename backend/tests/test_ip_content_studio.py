@@ -349,3 +349,14 @@ def test_moments_records_strip_comment_bait_and_embedded_image_prompt(monkeypatc
     assert "配图提示" not in records[0].content
     assert "评论区" not in records[0].content
     assert records[0].meta["image_prompts"] == ["办公室白板", "客户现场", "便签特写"]
+
+
+def test_clean_scheduled_daily_tasks_keeps_allowed_unique_values():
+    from backend.app.api import ip_content_studio as studio
+
+    tasks = studio._clean_scheduled_daily_tasks(
+        ["moments_candidate", "bad", "industry_hot_oral", "moments_candidate", "professional_ip_oral"]
+    )
+
+    assert tasks == ["moments_candidate", "industry_hot_oral", "professional_ip_oral"]
+    assert studio._clean_scheduled_daily_tasks("moments_candidate") == []

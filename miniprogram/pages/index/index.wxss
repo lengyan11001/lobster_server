@@ -806,6 +806,35 @@ page {
   white-space: nowrap;
 }
 
+.ip-task-checks {
+  grid-column: 1 / -1;
+  padding: 16rpx 18rpx;
+  background: rgba(255,255,255,0.06);
+  border: 1rpx solid rgba(255,255,255,0.12);
+  border-radius: 22rpx;
+}
+
+.ip-task-checks checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 12rpx;
+}
+
+.ip-task-check {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  min-height: 58rpx;
+  padding: 0 14rpx;
+  color: rgba(255,255,255,0.86);
+  font-size: 23rpx;
+  font-weight: 800;
+  background: rgba(255,255,255,0.07);
+  border: 1rpx solid rgba(255,255,255,0.12);
+  border-radius: 18rpx;
+}
+
 .auto-btn {
   grid-column: 2;
   grid-row: 1 / 3;

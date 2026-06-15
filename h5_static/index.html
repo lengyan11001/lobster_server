@@ -1603,6 +1603,11 @@
         description: "服务器定时同步关键词和同行数据，生成行业口播、专业IP口播和朋友圈文案。",
       },
     };
+    const IP_DAILY_TASK_OPTIONS = [
+      { value: "industry_hot_oral", label: "行业热门口播" },
+      { value: "professional_ip_oral", label: "专业 IP 口播" },
+      { value: "moments_candidate", label: "朋友圈文案" },
+    ];
 
     function toast(text) {
       const el = $("toast");
@@ -2685,6 +2690,22 @@
       return `<div class="field ${full ? "full" : ""}"><label>${escapeHtml(label)}</label>${control}</div>`;
     }
 
+    function ipDailyTaskOptionsHtml() {
+      return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;">${IP_DAILY_TASK_OPTIONS.map((item) => `
+        <label class="task-checkbox" style="min-height:38px;padding:0 10px;border:1px solid rgba(255,255,255,.18);border-radius:10px;background:rgba(255,255,255,.08);">
+          <input type="checkbox" data-ip-daily-task="${escapeHtml(item.value)}" checked>
+          <span>${escapeHtml(item.label)}</span>
+        </label>
+      `).join("")}</div>`;
+    }
+
+    function selectedIpDailyTasks() {
+      return Array.from(document.querySelectorAll("[data-ip-daily-task]"))
+        .filter((el) => el.checked)
+        .map((el) => String(el.getAttribute("data-ip-daily-task") || "").trim())
+        .filter(Boolean);
+    }
+
     function taskSelectHtml(id, options) {
       return `<select id="${escapeHtml(id)}">${options}</select>`;
     }
@@ -2822,6 +2843,7 @@
       if (!host) return;
       if (state.taskAbility === "ip_content_daily") {
         host.innerHTML = taskFieldHtml("关键词和同行模板", taskSelectHtml("taskIpTemplate", optionHtml("", "模板加载中...")))
+          + taskFieldHtml("生成内容", ipDailyTaskOptionsHtml(), true)
           + taskFieldHtml("执行前同步", `<label class="task-checkbox"><input id="taskIpSyncBefore" type="checkbox" checked>每次执行前同步新数据</label>`, true)
           + taskFieldHtml("补充要求（可选）", taskTextareaHtml("taskIpRequirement", "例如：口播更有案例感；朋友圈短句分行、多段落留白、适当 Emoji、强痛点和结果导向；图片干净真实"), true);
         loadIpTemplates(true);
@@ -2931,10 +2953,13 @@
       if (state.taskAbility === "ip_content_daily") {
         const templateId = parseInt(($("taskIpTemplate") && $("taskIpTemplate").value) || "0", 10);
         if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
+        const tasks = selectedIpDailyTasks();
+        if (!tasks.length) throw new Error("请选择至少一种生成内容");
         const extra = (($("taskIpRequirement") && $("taskIpRequirement").value) || "").trim();
         const requirements = extra ? { common: extra, oral: extra, moments: extra, image: extra } : {};
         return {
           template_id: templateId,
+          tasks,
           sync_before: !!($("taskIpSyncBefore") && $("taskIpSyncBefore").checked),
           requirements,
           industry_count: 5,

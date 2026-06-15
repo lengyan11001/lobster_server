@@ -10,6 +10,12 @@ const CAPABILITIES = [
   { id: "hifly.video.create_by_tts", name: "必火数字人" }
 ];
 
+const IP_DAILY_TASK_OPTIONS = [
+  { value: "industry_hot_oral", label: "行业热门口播", checked: true },
+  { value: "professional_ip_oral", label: "专业 IP 口播", checked: true },
+  { value: "moments_candidate", label: "朋友圈文案", checked: true }
+];
+
 function uniqRows(rows, keyName) {
   const out = [];
   const seen = {};
@@ -83,6 +89,7 @@ Page({
     selectedIpTemplateTitle: "",
     ipTemplatesLoading: false,
     ipRequirement: "",
+    ipDailyTaskOptions: IP_DAILY_TASK_OPTIONS,
     avatarIndex: 0,
     voiceIndex: 0,
     selectedAvatarTitle: "",
@@ -346,6 +353,16 @@ Page({
     this.setData({ ipRequirement: evt.detail.value || "" });
   },
 
+  onIpDailyTaskChange(evt) {
+    const selected = evt.detail.value || [];
+    this.setData({
+      ipDailyTaskOptions: IP_DAILY_TASK_OPTIONS.map((item) => ({
+        ...item,
+        checked: selected.includes(item.value)
+      }))
+    });
+  },
+
   onAvatarChange(evt) {
     const index = Number(evt.detail.value || 0);
     const row = this.data.avatarRows[index] || {};
@@ -455,7 +472,13 @@ Page({
         return;
       }
       const extra = (this.data.ipRequirement || "").trim();
+      const tasks = (this.data.ipDailyTaskOptions || []).filter((item) => item.checked).map((item) => item.value);
+      if (!tasks.length) {
+        wx.showToast({ title: "请选择生成内容", icon: "none" });
+        return;
+      }
       capPayload.template_id = Number(tpl.id);
+      capPayload.tasks = tasks;
       capPayload.sync_before = true;
       capPayload.industry_count = 5;
       capPayload.ip_count = 5;
