@@ -28,9 +28,9 @@
       </view>
       <view wx:for="{{work.groups}}" wx:key="title" class="params-card">
         <text class="card-title">{{item.title}}</text>
-        <view wx:for="{{item.records}}" wx:for-item="rec" wx:key="title" class="field-box prompt-box scheduled-record-box">
+        <view wx:for="{{item.records}}" wx:for-item="rec" wx:key="title" class="field-box prompt-box scheduled-record-box {{rec.is_moments ? 'moments-record-box' : ''}}">
           <text class="field-label">{{rec.title}}</text>
-          <text>{{rec.body}}</text>
+          <text class="{{rec.is_moments ? 'moments-copy-text' : ''}}">{{rec.body}}</text>
           <view wx:if="{{rec.prompts.length}}" class="scheduled-prompts">
             <text wx:for="{{rec.prompts}}" wx:for-item="prompt" wx:key="*this">配图：{{prompt}}</text>
           </view>

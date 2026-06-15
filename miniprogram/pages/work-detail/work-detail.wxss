@@ -186,6 +186,17 @@ page {
   white-space: pre-wrap;
 }
 
+.moments-record-box {
+  background: rgba(255, 253, 249, 0.12);
+}
+
+.moments-copy-text {
+  color: #fff;
+  line-height: 1.78;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .scheduled-prompts {
   display: flex;
   flex-direction: column;

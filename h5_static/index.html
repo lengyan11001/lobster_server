@@ -1038,6 +1038,20 @@
     .task-detail-record { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
     .task-detail-record:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
     .task-detail-record strong { display: block; margin-bottom: 6px; }
+    .task-detail-moments-copy {
+      margin: 0;
+      padding: 12px;
+      border: 1px solid rgba(223,230,242,.9);
+      border-radius: 12px;
+      background: #fffdf9;
+      color: #17233d;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 14px;
+      line-height: 1.78;
+      max-height: 420px;
+      overflow: auto;
+    }
     .task-detail-prompts { display: grid; gap: 6px; margin-top: 8px; color: #66758f; font-size: 12px; }
     .task-detail-prompts span { display: block; }
     .work-shell { display: grid; gap: 14px; }
@@ -2353,9 +2367,10 @@
           const records = Array.isArray(group.records) ? group.records : [];
           return `<div class="task-detail-record"><strong>${escapeHtml(ipTaskLabel(group.task))} · ${records.length}条</strong>${records.map((rec, idx) => {
             const prompts = Array.isArray(rec.image_prompts) ? rec.image_prompts : [];
+            const isMoments = String(group.task || "") === "moments_candidate";
             return `<div class="task-detail-record">
               <strong>${escapeHtml((idx + 1) + ". " + (rec.title || "未命名文案"))}</strong>
-              <pre>${escapeHtml(rec.body || rec.content || "")}</pre>
+              ${isMoments ? `<div class="task-detail-moments-copy">${escapeHtml(rec.body || rec.content || "")}</div>` : `<pre>${escapeHtml(rec.body || rec.content || "")}</pre>`}
               ${prompts.length ? `<div class="task-detail-prompts">${prompts.map((p, pIdx) => `<span>配图 ${pIdx + 1}：${escapeHtml(p)}</span>`).join("")}</div>` : ""}
             </div>`;
           }).join("")}</div>`;
@@ -2808,7 +2823,7 @@
       if (state.taskAbility === "ip_content_daily") {
         host.innerHTML = taskFieldHtml("关键词和同行模板", taskSelectHtml("taskIpTemplate", optionHtml("", "模板加载中...")))
           + taskFieldHtml("执行前同步", `<label class="task-checkbox"><input id="taskIpSyncBefore" type="checkbox" checked>每次执行前同步新数据</label>`, true)
-          + taskFieldHtml("补充要求（可选）", taskTextareaHtml("taskIpRequirement", "例如：口播更有案例感；朋友圈更生活化；图片干净真实"), true);
+          + taskFieldHtml("补充要求（可选）", taskTextareaHtml("taskIpRequirement", "例如：口播更有案例感；朋友圈短句分行、多段落留白、适当 Emoji、强痛点和结果导向；图片干净真实"), true);
         loadIpTemplates(true);
         return;
       }

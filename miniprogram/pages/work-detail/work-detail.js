@@ -85,9 +85,12 @@ function normalizeScheduledRun(run) {
     result_text: run.error || run.result_text || "",
     groups: groups.map((group) => ({
       title: `${ipTaskLabel(group.task)} · ${(group.records || []).length}条`,
+      task: group.task || "",
+      is_moments: String(group.task || "") === "moments_candidate",
       records: (group.records || []).map((rec, idx) => ({
         title: `${idx + 1}. ${rec.title || "未命名文案"}`,
         body: rec.body || rec.content || "",
+        is_moments: String(group.task || "") === "moments_candidate",
         prompts: Array.isArray(rec.image_prompts) ? rec.image_prompts : []
       }))
     })),
