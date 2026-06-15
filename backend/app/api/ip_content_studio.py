@@ -32,6 +32,51 @@ router = APIRouter()
 
 _SOURCE_META_KEY = "__lobster_ip_content_meta"
 _SOURCE_USAGE_KEY = "__lobster_ip_content_usage"
+_RETRY_HTTP_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+
+
+def _retry_delay(attempt_index: int) -> float:
+    return min(8.0, 1.2 * (attempt_index + 1))
+
+
+def _is_retryable_detail(text: Any) -> bool:
+    raw = str(text or "").lower()
+    if not raw:
+        return False
+    return any(
+        marker in raw
+        for marker in [
+            "timeout",
+            "timed out",
+            "proxy read timeout",
+            "temporarily unavailable",
+            "connection reset",
+            "connection refused",
+            "connection aborted",
+            "remote protocol",
+            "server disconnected",
+            "too many requests",
+        ]
+    )
+
+
+def _retryable_http_exception(exc: HTTPException) -> bool:
+    try:
+        status = int(exc.status_code or 0)
+    except Exception:
+        status = 0
+    return status in _RETRY_HTTP_STATUSES or _is_retryable_detail(exc.detail)
+
+
+def _sync_error_result(*, source: str, row: Any, exc: Exception, attempts: int) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "source": source,
+        "attempts": attempts,
+        "error_message": str(getattr(exc, "detail", None) or exc)[:2000],
+        "keyword": _keyword_payload(row) if isinstance(row, IPContentKeyword) else None,
+        "competitor": _competitor_payload(row) if isinstance(row, ContentCompetitorAccount) else None,
+    }
 
 
 _ENDPOINTS: dict[str, dict[str, Any]] = {
@@ -1182,19 +1227,31 @@ async def _execute_query_with_retry(
     last_result: dict[str, Any] = {}
     attempts = max(1, int(attempts or 1))
     for idx in range(attempts):
-        last_result = await _execute_query(
-            db=db,
-            current_user=current_user,
-            query_type=query_type,
-            params=params,
-            body=body,
-            save_items=save_items,
-            meta={**(meta or {}), "attempt": idx + 1, "attempts": attempts},
-        )
+        try:
+            last_result = await _execute_query(
+                db=db,
+                current_user=current_user,
+                query_type=query_type,
+                params=params,
+                body=body,
+                save_items=save_items,
+                meta={**(meta or {}), "attempt": idx + 1, "attempts": attempts},
+            )
+        except HTTPException as exc:
+            if idx >= attempts - 1 or not _retryable_http_exception(exc):
+                raise
+            await asyncio.sleep(_retry_delay(idx))
+            continue
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            if idx >= attempts - 1:
+                raise HTTPException(status_code=502, detail=f"TikHub 同步失败：{exc}") from exc
+            await asyncio.sleep(_retry_delay(idx))
+            continue
         if last_result.get("ok") and int(last_result.get("raw_item_count") or 0) > 0:
             return last_result
         query = last_result.get("query") if isinstance(last_result.get("query"), dict) else {}
-        if int(query.get("http_status") or 0) not in {400, 408, 429, 500, 502, 503, 504}:
+        error_message = query.get("error_message") or last_result.get("error_message") or ""
+        if int(query.get("http_status") or 0) not in _RETRY_HTTP_STATUSES and not _is_retryable_detail(error_message):
             return last_result
         if idx < attempts - 1:
             await asyncio.sleep(0.8 * (idx + 1))
@@ -1469,7 +1526,7 @@ async def _sync_keyword_row(
     )
     video_result = result
     if not result.get("ok") or int(result.get("raw_item_count") or 0) <= 0:
-        result = await _execute_query(
+        result = await _execute_query_with_retry(
             db=db,
             current_user=current_user,
             query_type="douyin_billboard_search",
@@ -1477,6 +1534,7 @@ async def _sync_keyword_row(
             body={"page_num": 1, "page_size": page_size, "date_window": date_window, "keyword": row.keyword, "tags": []},
             save_items=True,
             meta={"source": "keyword_sync_fallback", "keyword_id": row.id, "keyword": row.keyword},
+            attempts=3,
         )
         result["video_detail_status"] = {
             "ok": bool(video_result.get("ok")),
@@ -1501,7 +1559,7 @@ async def _sync_competitor_row(
     last_buffer: str = "",
 ) -> dict[str, Any]:
     if row.platform == "douyin":
-        result = await _execute_query(
+        result = await _execute_query_with_retry(
             db=db,
             current_user=current_user,
             query_type="douyin_user_posts",
@@ -1509,6 +1567,7 @@ async def _sync_competitor_row(
             body={},
             save_items=True,
             meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
+            attempts=3,
         )
     elif row.platform == "wechat_channels":
         body = {"username": row.account_key}
@@ -1644,6 +1703,40 @@ def _competitor_seed_briefs(competitors: list[ContentCompetitorAccount]) -> list
     return briefs
 
 
+async def _post_llm_with_retry(
+    *,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    attempts: int = 3,
+) -> dict[str, Any]:
+    attempts = max(1, int(attempts or 1))
+    last_detail = ""
+    for idx in range(attempts):
+        try:
+            async with httpx.AsyncClient(timeout=150.0, trust_env=False) as client:
+                resp = await client.post(f"{_internal_api_base()}/api/sutui-chat/completions", json=payload, headers=headers)
+            try:
+                data = resp.json() if resp.content else {}
+            except Exception:
+                data = {"text": resp.text[:20000]}
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_detail = str(exc)
+            if idx >= attempts - 1:
+                raise HTTPException(status_code=502, detail=f"文案生成失败：{last_detail}") from exc
+            await asyncio.sleep(_retry_delay(idx))
+            continue
+        if resp.status_code < 400:
+            return data
+        detail = _response_message(data) or _clean_long_text(data, 800) or f"HTTP {resp.status_code}"
+        last_detail = detail
+        if resp.status_code not in _RETRY_HTTP_STATUSES and not _is_retryable_detail(detail):
+            raise HTTPException(status_code=resp.status_code, detail=f"文案生成失败：{detail}")
+        if idx >= attempts - 1:
+            raise HTTPException(status_code=resp.status_code, detail=f"文案生成失败：{detail}")
+        await asyncio.sleep(_retry_delay(idx))
+    raise HTTPException(status_code=502, detail=f"文案生成失败：{last_detail or '上游无响应'}")
+
+
 async def _call_ip_content_llm(
     *,
     request: Optional[Request] = None,
@@ -1738,12 +1831,7 @@ async def _call_ip_content_llm(
         "stream": False,
         "temperature": 0.76,
     }
-    async with httpx.AsyncClient(timeout=150.0, trust_env=False) as client:
-        resp = await client.post(f"{_internal_api_base()}/api/sutui-chat/completions", json=payload, headers=headers)
-    data = resp.json() if resp.content else {}
-    if resp.status_code >= 400:
-        detail = _response_message(data) or _clean_long_text(data, 800) or f"HTTP {resp.status_code}"
-        raise HTTPException(status_code=resp.status_code, detail=f"文案生成失败：{detail}")
+    data = await _post_llm_with_retry(payload=payload, headers=headers, attempts=3)
     try:
         text = str(data["choices"][0]["message"]["content"] or "")
     except Exception:
@@ -1861,9 +1949,15 @@ async def run_ip_content_daily_scheduled(
     sync_results: list[dict[str, Any]] = []
     if opts.sync_before:
         for row in keywords:
-            sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
+            try:
+                sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
+            except Exception as exc:
+                sync_results.append(_sync_error_result(source="keyword_sync", row=row, exc=exc, attempts=3))
         for row in competitors:
-            sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
+            try:
+                sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
+            except Exception as exc:
+                sync_results.append(_sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3))
 
     auth_token = _server_bearer_for_user(current_user)
     generated_groups: list[dict[str, Any]] = []
@@ -2307,42 +2401,7 @@ async def sync_competitor(
     row = db.query(ContentCompetitorAccount).filter(ContentCompetitorAccount.user_id == current_user.id, ContentCompetitorAccount.id == account_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="同行账号不存在")
-    if row.platform == "douyin":
-        result = await _execute_query(
-            db=db,
-            current_user=current_user,
-            query_type="douyin_user_posts",
-            params={"sec_user_id": row.account_key, "count": body.count, "sort_type": 0},
-            body={},
-            save_items=True,
-            meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
-        )
-    elif row.platform == "wechat_channels":
-        payload_body = {"username": row.account_key}
-        if body.last_buffer:
-            payload_body["last_buffer"] = body.last_buffer
-        result = await _execute_query_with_retry(
-            db=db,
-            current_user=current_user,
-            query_type="wechat_channels_home_page",
-            params={},
-            body=payload_body,
-            save_items=True,
-            meta={"source": "competitor_sync", "competitor_account_id": row.id, "competitor_name": row.display_name or row.account_key},
-            attempts=3,
-        )
-    else:
-        raise HTTPException(status_code=400, detail="不支持的平台")
-    if result.get("ok"):
-        row.last_fetch_at = _utcnow()
-    first_item = (result.get("items") or [{}])[0] if isinstance(result.get("items"), list) else {}
-    if isinstance(first_item, dict) and first_item.get("item_key"):
-        row.last_seen_item_key = _clean_text(first_item.get("item_key"), 191)
-    row.updated_at = _utcnow()
-    db.commit()
-    db.refresh(row)
-    result["competitor"] = _competitor_payload(row)
-    return result
+    return await _sync_competitor_row(db=db, current_user=current_user, row=row, count=body.count, last_buffer=body.last_buffer)
 
 
 @router.post("/api/ip-content/drafts", summary="根据已入库数据源和记忆生成文案草稿")
@@ -2417,12 +2476,7 @@ async def generate_drafts(
         "stream": False,
         "temperature": 0.76,
     }
-    async with httpx.AsyncClient(timeout=150.0, trust_env=False) as client:
-        resp = await client.post(f"{_internal_api_base()}/api/sutui-chat/completions", json=payload, headers=headers)
-    data = resp.json() if resp.content else {}
-    if resp.status_code >= 400:
-        detail = _response_message(data) or _clean_long_text(data, 800) or f"HTTP {resp.status_code}"
-        raise HTTPException(status_code=resp.status_code, detail=f"文案生成失败：{detail}")
+    data = await _post_llm_with_retry(payload=payload, headers=headers, attempts=3)
     try:
         text = str(data["choices"][0]["message"]["content"] or "")
     except Exception:
@@ -2638,6 +2692,12 @@ async def generate_industry_hot_oral(
     if not keywords:
         raise HTTPException(status_code=400, detail="请先在配置里添加至少一个行业关键词。")
     sync_results = []
+    if body.sync_before:
+        for row in keywords:
+            try:
+                sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
+            except Exception as exc:
+                sync_results.append(_sync_error_result(source="keyword_sync", row=row, exc=exc, attempts=3))
     rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="industry_hot_oral", limit=40)
     memories = _memory_payload_from_docs(body.memory_docs)
     generated = await _call_ip_content_llm(
@@ -2679,7 +2739,10 @@ async def generate_professional_ip_oral(
     sync_results = []
     if body.sync_before:
         for row in accounts:
-            sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
+            try:
+                sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
+            except Exception as exc:
+                sync_results.append(_sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3))
     rows = _select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="professional_ip_oral", limit=40)
     memories = _memory_payload_from_docs(body.memory_docs)
     generated = await _call_ip_content_llm(
@@ -2725,9 +2788,15 @@ async def generate_moments_candidates(
     sync_results = []
     if body.sync_before:
         for row in keywords:
-            sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
+            try:
+                sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
+            except Exception as exc:
+                sync_results.append(_sync_error_result(source="keyword_sync", row=row, exc=exc, attempts=3))
         for row in accounts:
-            sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
+            try:
+                sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
+            except Exception as exc:
+                sync_results.append(_sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3))
     rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="moments_candidate", limit=24)
     rows.extend(_select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="moments_candidate", limit=24))
     seen: set[int] = set()
