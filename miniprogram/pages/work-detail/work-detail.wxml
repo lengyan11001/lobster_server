@@ -8,6 +8,37 @@
   </view>
 
   <block wx:if="{{work}}">
+    <block wx:if="{{work.is_scheduled_run}}">
+      <view class="params-card">
+        <text class="card-title">{{work.title}}</text>
+        <view class="meta-grid">
+          <view>
+            <text>状态</text>
+            <text>{{work.status_label}}</text>
+          </view>
+          <view>
+            <text>创建时间</text>
+            <text>{{work.created_at_text || '--'}}</text>
+          </view>
+        </view>
+        <text wx:if="{{work.result_text}}" class="field-label">结果</text>
+        <view wx:if="{{work.result_text}}" class="field-box prompt-box">
+          <text>{{work.result_text}}</text>
+        </view>
+      </view>
+      <view wx:for="{{work.groups}}" wx:key="title" class="params-card">
+        <text class="card-title">{{item.title}}</text>
+        <view wx:for="{{item.records}}" wx:for-item="rec" wx:key="title" class="field-box prompt-box scheduled-record-box">
+          <text class="field-label">{{rec.title}}</text>
+          <text>{{rec.body}}</text>
+          <view wx:if="{{rec.prompts.length}}" class="scheduled-prompts">
+            <text wx:for="{{rec.prompts}}" wx:for-item="prompt" wx:key="*this">配图：{{prompt}}</text>
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <block wx:else>
     <view class="player-panel">
       <video wx:if="{{work.playable_url}}" class="work-video" src="{{work.playable_url}}" controls show-fullscreen-btn show-play-btn object-fit="contain"></video>
       <view wx:else class="video-waiting">
@@ -60,6 +91,7 @@
       <button class="action-btn primary" loading="{{loading}}" bindtap="saveVideo">⬇ 下载</button>
       <button class="action-btn" open-type="share" disabled="{{!isSharedView && !shareToken}}" bindtap="onShareTap">{{!isSharedView && !shareToken ? '准备中' : '⌯ 分享'}}</button>
     </view>
+    </block>
   </block>
 
   <view wx:else class="empty-card">

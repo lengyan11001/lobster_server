@@ -161,6 +161,16 @@
           <button class="task-ghost-btn auto-btn" bindtap="autoPickDigital">自动选择</button>
         </view>
 
+        <view wx:if="{{taskAbility === 'ip_content_daily'}}" class="digital-fields">
+          <picker mode="selector" range="{{ipTemplates}}" range-key="title" value="{{ipTemplateIndex}}" bindchange="onIpTemplateChange">
+            <view class="picker-box">
+              <text class="picker-label">关键词和同行模板</text>
+              <text class="picker-value">{{ipTemplatesLoading ? '加载中...' : (selectedIpTemplateTitle || '请选择')}}</text>
+            </view>
+          </picker>
+          <textarea class="task-input" value="{{ipRequirement}}" bindinput="onIpRequirementInput" placeholder="补充要求，可选" auto-height />
+        </view>
+
         <button class="task-submit" loading="{{submittingTask}}" bindtap="createScheduledTask">下发定时任务</button>
       </block>
     </view>

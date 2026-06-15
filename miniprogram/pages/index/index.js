@@ -6,6 +6,7 @@ const share = require("../../utils/share");
 
 const CAPABILITIES = [
   { id: "goal.video.pipeline", name: "创意成片" },
+  { id: "ip_content_daily", name: "IP日更文案" },
   { id: "hifly.video.create_by_tts", name: "必火数字人" }
 ];
 
@@ -77,6 +78,11 @@ Page({
     submittingTask: false,
     avatarRows: [],
     voiceRows: [],
+    ipTemplates: [],
+    ipTemplateIndex: 0,
+    selectedIpTemplateTitle: "",
+    ipTemplatesLoading: false,
+    ipRequirement: "",
     avatarIndex: 0,
     voiceIndex: 0,
     selectedAvatarTitle: "",
@@ -304,6 +310,7 @@ Page({
     if (this.showAuthPanel("下发定时任务前需要验证手机号，用来找到你的电脑端 online。")) return;
     this.loadOnlineStatus(true);
     if (this.data.taskAbility === "hifly.video.create_by_tts") this.loadHiflyLibraries();
+    if (this.data.taskAbility === "ip_content_daily") this.loadIpTemplates();
   },
 
   setTaskAbility(evt) {
@@ -311,6 +318,9 @@ Page({
     this.setData({ taskAbility: ability });
     if (ability === "hifly.video.create_by_tts" && this.data.phoneBound) {
       this.loadHiflyLibraries();
+    }
+    if (ability === "ip_content_daily" && this.data.phoneBound) {
+      this.loadIpTemplates();
     }
   },
 
@@ -324,6 +334,16 @@ Page({
 
   onIntervalInput(evt) {
     this.setData({ intervalMinutes: evt.detail.value || "" });
+  },
+
+  onIpTemplateChange(evt) {
+    const index = Number(evt.detail.value || 0);
+    const row = this.data.ipTemplates[index] || {};
+    this.setData({ ipTemplateIndex: index, selectedIpTemplateTitle: row.title || "" });
+  },
+
+  onIpRequirementInput(evt) {
+    this.setData({ ipRequirement: evt.detail.value || "" });
   },
 
   onAvatarChange(evt) {
@@ -395,18 +415,53 @@ Page({
       .finally(() => this.setData({ hiflyLoading: false }));
   },
 
+  loadIpTemplates() {
+    if (this.data.ipTemplatesLoading || !app.globalData.token) return Promise.resolve();
+    this.setData({ ipTemplatesLoading: true });
+    return app
+      .request({ url: "/api/ip-content/schedule-templates" })
+      .then((data) => {
+        const rows = (data.items || []).map((row) => ({
+          id: row.id,
+          title: `${row.name || "模板"} · 关键词${(row.keyword_ids || []).length} · 同行${(row.competitor_ids || []).length}`
+        }));
+        this.setData({
+          ipTemplates: rows,
+          ipTemplateIndex: 0,
+          selectedIpTemplateTitle: (rows[0] && rows[0].title) || ""
+        });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => this.setData({ ipTemplatesLoading: false }));
+  },
+
   createScheduledTask() {
     if (this.showAuthPanel("下发定时任务前需要验证手机号，用来找到你的电脑端 online。")) return;
+    const ability = this.data.taskAbility;
+    const isIpDaily = ability === "ip_content_daily";
     const installationId = this.data.selectedInstallationId;
-    if (!installationId) {
+    if (!isIpDaily && !installationId) {
       this.loadOnlineStatus(true).then(() => {
         if (!this.data.selectedInstallationId) wx.showToast({ title: "未检测到本地 online 设备", icon: "none" });
       });
       return;
     }
 
-    const ability = this.data.taskAbility;
     const capPayload = {};
+    if (isIpDaily) {
+      const tpl = this.data.ipTemplates[this.data.ipTemplateIndex];
+      if (!tpl || !tpl.id) {
+        wx.showToast({ title: "请选择IP日更模板", icon: "none" });
+        return;
+      }
+      const extra = (this.data.ipRequirement || "").trim();
+      capPayload.template_id = Number(tpl.id);
+      capPayload.sync_before = true;
+      capPayload.industry_count = 5;
+      capPayload.ip_count = 5;
+      capPayload.moments_count = 20;
+      capPayload.requirements = extra ? { common: extra, oral: extra, moments: extra, image: extra } : {};
+    }
     if (ability === "hifly.video.create_by_tts") {
       const avatar = this.data.avatarRows[this.data.avatarIndex];
       const voice = this.data.voiceRows[this.data.voiceIndex];
@@ -425,12 +480,12 @@ Page({
     const interval = parseInt(this.data.intervalMinutes || "60", 10);
     const body = {
       title: (this.data.taskTitle || "").trim() || capabilityName(ability),
-      task_kind: "capability",
-      content: `定时调用能力 ${ability}`,
-      payload: { capability_id: ability, payload: capPayload },
+      task_kind: isIpDaily ? "ip_content_daily" : "capability",
+      content: isIpDaily ? "定时生成 IP日更文案" : `定时调用能力 ${ability}`,
+      payload: isIpDaily ? capPayload : { capability_id: ability, payload: capPayload },
       schedule_type: this.data.scheduleType || "once",
       interval_seconds: Math.max(60, (Number.isNaN(interval) ? 60 : interval) * 60),
-      installation_ids: [installationId]
+      installation_ids: isIpDaily ? [] : [installationId]
     };
 
     this.setData({ submittingTask: true });
@@ -439,7 +494,7 @@ Page({
         method: "POST",
         url: "/api/scheduled-tasks/tasks",
         data: body,
-        header: { "X-Installation-Id": installationId }
+        header: installationId ? { "X-Installation-Id": installationId } : {}
       })
       .then(() => {
         wx.showToast({ title: "任务已下发", icon: "success" });

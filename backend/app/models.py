@@ -417,6 +417,33 @@ class IPContentDraftRecord(Base):
     )
 
 
+class IPContentScheduleTemplate(Base):
+    """Per-user saved IP daily content template for scheduled tasks."""
+
+    __tablename__ = "ip_content_schedule_templates"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_ip_content_schedule_template_user_name"),
+        Index("ix_ip_content_schedule_templates_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    keyword_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    competitor_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    memory_docs: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    requirements: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 class CutcliTemplate(Base):
     __tablename__ = "cutcli_templates"
     __table_args__ = (

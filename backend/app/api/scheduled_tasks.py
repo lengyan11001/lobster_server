@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 import re
 from datetime import datetime, timedelta, timezone
@@ -24,12 +25,13 @@ from ..models import (
 from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
 from .auth import get_current_user
+from .ip_content_studio import run_ip_content_daily_scheduled
 from .installation_slots import ensure_installation_slot
 from .mobile_identity import online_user_for_mobile_user
 
 router = APIRouter()
 
-_TASK_KINDS = {"openclaw_message", "chat_message", "capability"}
+_TASK_KINDS = {"openclaw_message", "chat_message", "capability", "ip_content_daily"}
 _SCHEDULE_TYPES = {"once", "interval", "daily_times"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _MAX_TARGET_DEVICES = 20
@@ -37,6 +39,7 @@ _VIDEO_EXTS = (".mp4", ".webm", ".mov", ".m4v", ".avi")
 _RUNNING_STATUSES = {"running", "processing", "pending", "queued", "waiting"}
 _GOAL_VIDEO_SOURCE_AI_IMAGE = "ai_image"
 _GOAL_VIDEO_SOURCE_ASSET_RANDOM = "asset_random"
+_DISABLED_SCHEDULED_CAPABILITIES = {"create.video.pipeline", "create.ppt.pipeline"}
 
 
 def _creative_candidate_group(meta: Optional[dict]) -> str:
@@ -255,6 +258,17 @@ def _normalize_goal_video_task_payload(payload: Dict[str, Any]) -> None:
     cap_payload["candidate_group"] = candidate_group
 
 
+def _scheduled_capability_id(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("capability_id") or "").strip()
+
+
+def _disabled_scheduled_capability(payload: Any) -> str:
+    capability_id = _scheduled_capability_id(payload)
+    return capability_id if capability_id in _DISABLED_SCHEDULED_CAPABILITIES else ""
+
+
 def _normalize_schedule_type(value: str) -> str:
     schedule_type = (value or "once").strip().lower()
     if schedule_type not in _SCHEDULE_TYPES:
@@ -266,6 +280,8 @@ def _task_title(body: ScheduledTaskCreate, task_kind: str) -> str:
     title = (body.title or "").strip()
     if title:
         return title[:160]
+    if task_kind == "ip_content_daily":
+        return "IP日更文案"
     if task_kind == "capability":
         cid = str((body.payload or {}).get("capability_id") or "").strip()
         return f"调用能力 {cid}"[:160] if cid else "能力调用任务"
@@ -323,6 +339,16 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
         "started_at": _iso(row.started_at),
         "finished_at": _iso(row.finished_at),
     }
+
+
+def _is_server_side_task(task_or_run: Any) -> bool:
+    return str(getattr(task_or_run, "task_kind", "") or "").strip() == "ip_content_daily"
+
+
+def _task_display_kind(row: Any) -> str:
+    if _is_server_side_task(row):
+        return "IP日更文案"
+    return ""
 
 
 def _is_video_url(value: Any) -> bool:
@@ -481,7 +507,7 @@ def _partial_video_resume_payload_from_run(row: ScheduledTaskRun) -> Dict[str, A
     mcp_result = payload.get("mcp_result") if isinstance(payload.get("mcp_result"), dict) else {}
     resume = dict(direct or (mcp_result.get("resume_payload") if isinstance(mcp_result.get("resume_payload"), dict) else {}) or {})
     capability_id = str(payload.get("capability_id") or resume.get("capability_id") or "").strip()
-    if capability_id not in {"goal.video.pipeline", "create.video.pipeline"}:
+    if capability_id != "goal.video.pipeline":
         raise HTTPException(status_code=400, detail="run is not a resumable video pipeline record")
     image_asset_ids = [x for x in _scheduled_asset_ids(mcp_result, media_type="image") if x]
     image_urls = _scheduled_media_urls(mcp_result, want="image")
@@ -493,12 +519,8 @@ def _partial_video_resume_payload_from_run(row: ScheduledTaskRun) -> Dict[str, A
     dedup_urls = list(dict.fromkeys(image_urls))
     if not dedup_ids and not dedup_urls:
         raise HTTPException(status_code=400, detail="run has no generated image to resume from")
-    if capability_id == "goal.video.pipeline":
-        resume.setdefault("source_mode", "reference_image")
-        resume.setdefault("goal", str((payload.get("generated") or {}).get("goal") or row.title or "").strip())
-    else:
-        resume.setdefault("prompt", str((payload.get("generated") or {}).get("goal") or row.title or "").strip())
-        resume.setdefault("scene_count", max(1, len(dedup_ids or dedup_urls)))
+    resume.setdefault("source_mode", "reference_image")
+    resume.setdefault("goal", str((payload.get("generated") or {}).get("goal") or row.title or "").strip())
     resume["reference_asset_ids"] = dedup_ids
     resume["reference_image_urls"] = dedup_urls
     resume["resume_from_image"] = True
@@ -514,7 +536,7 @@ def _normalize_scheduled_completion_error(body: ScheduledTaskCompleteIn) -> str:
     if not isinstance(payload, dict):
         return ""
     capability_id = str(payload.get("capability_id") or "").strip()
-    if capability_id not in {"goal.video.pipeline", "create.video.pipeline"}:
+    if capability_id != "goal.video.pipeline":
         return ""
     if _goal_video_payload_has_video(payload):
         return ""
@@ -597,7 +619,8 @@ def _claim_pending_run(
 
 def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Optional[str], now: datetime) -> ScheduledTaskRun:
     run_id = uuid.uuid4().hex
-    message_id = f"task_{run_id}"[:64]
+    server_side = _is_server_side_task(task)
+    message_id = None if server_side else f"task_{run_id}"[:64]
     run = ScheduledTaskRun(
         id=run_id,
         task_id=task.id,
@@ -615,20 +638,21 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
         created_at=now,
         updated_at=now,
     )
-    msg_content = task.content or task.title
-    h5 = H5ChatMessage(
-        id=message_id,
-        user_id=task.user_id,
-        installation_id=installation_id,
-        mode="scheduled_task",
-        content=f"[定时任务] {msg_content}",
-        status="pending",
-        created_at=now,
-        updated_at=now,
-    )
     db.add(run)
-    db.add(h5)
-    _add_h5_event(db, message_id, task.user_id, "queued", {"task_id": task.id, "run_id": run_id, "title": task.title})
+    if message_id:
+        msg_content = task.content or task.title
+        h5 = H5ChatMessage(
+            id=message_id,
+            user_id=task.user_id,
+            installation_id=installation_id,
+            mode="scheduled_task",
+            content=f"[定时任务] {msg_content}",
+            status="pending",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(h5)
+        _add_h5_event(db, message_id, task.user_id, "queued", {"task_id": task.id, "run_id": run_id, "title": task.title})
     task.run_count = int(task.run_count or 0) + 1
     task.last_run_at = now
     task.last_run_id = run_id
@@ -636,9 +660,101 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
     return run
 
 
+def _run_async_blocking(coro: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    raise RuntimeError("server-side scheduled task cannot be executed inside an active event loop")
+
+
+def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[datetime] = None) -> None:
+    now = now or datetime.utcnow()
+    if run.task_kind != "ip_content_daily":
+        return
+    user = db.query(User).filter(User.id == run.user_id).first()
+    if user is None:
+        run.status = "failed"
+        run.error = "用户不存在"
+        run.finished_at = now
+        run.updated_at = now
+        return
+    run.status = "processing"
+    run.started_at = now
+    run.progress = {"started_at": now.isoformat(), "server_side": True}
+    run.updated_at = now
+    db.flush()
+    db.commit()
+    try:
+        payload = run.payload if isinstance(run.payload, dict) else {}
+        result = _run_async_blocking(
+            run_ip_content_daily_scheduled(
+                db=db,
+                current_user=user,
+                options=payload,
+                run_id=run.id,
+            )
+        )
+        finished = datetime.utcnow()
+        db.refresh(run)
+        run.status = "completed"
+        run.result_text = "IP日更文案已生成，朋友圈图片请在详情里手动触发。"
+        run.result_payload = result
+        run.error = None
+        run.progress = {"completed_at": finished.isoformat(), "server_side": True}
+        run.finished_at = finished
+        run.updated_at = finished
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
+        if task:
+            task.last_error = None
+            task.updated_at = finished
+        db.commit()
+    except HTTPException as exc:
+        failed = datetime.utcnow()
+        try:
+            db.refresh(run)
+        except Exception:
+            pass
+        run.status = "failed"
+        run.error = str(exc.detail or exc)
+        run.progress = {"failed_at": failed.isoformat(), "server_side": True}
+        run.finished_at = failed
+        run.updated_at = failed
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
+        if task:
+            task.last_error = run.error
+            task.updated_at = failed
+        db.commit()
+    except Exception as exc:
+        failed = datetime.utcnow()
+        try:
+            db.refresh(run)
+        except Exception:
+            pass
+        run.status = "failed"
+        run.error = str(exc)[:2000]
+        run.progress = {"failed_at": failed.isoformat(), "server_side": True}
+        run.finished_at = failed
+        run.updated_at = failed
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
+        if task:
+            task.last_error = run.error
+            task.updated_at = failed
+        db.commit()
+
+
 def _enqueue_task(db: Session, task: ScheduledTask, now: Optional[datetime] = None) -> List[ScheduledTaskRun]:
     now = now or datetime.utcnow()
+    disabled_capability = _disabled_scheduled_capability(task.payload or {}) if task.task_kind == "capability" else ""
+    if disabled_capability:
+        task.status = "paused"
+        task.next_run_at = None
+        task.last_error = f"定时任务能力已下线：{disabled_capability}"
+        task.updated_at = now
+        return []
     targets = _clean_installation_ids(task.target_installation_ids or [])
+    if _is_server_side_task(task):
+        targets = [""]
     if not targets:
         targets = [""]
     runs = [_create_run_for_target(db, task, target or None, now) for target in targets]
@@ -657,6 +773,10 @@ def _enqueue_task(db: Session, task: ScheduledTask, now: Optional[datetime] = No
             daily_times=times,
             timezone_offset_minutes=offset,
         )
+    if _is_server_side_task(task):
+        db.flush()
+        for run in runs:
+            _execute_server_side_run(db, run, now)
     return runs
 
 
@@ -831,6 +951,13 @@ def _create_task_row(
         raise HTTPException(status_code=400, detail="消息内容不能为空")
     if task_kind == "capability" and not str(payload.get("capability_id") or "").strip():
         raise HTTPException(status_code=400, detail="能力调用任务需要 payload.capability_id")
+    disabled_capability = _disabled_scheduled_capability(payload) if task_kind == "capability" else ""
+    if disabled_capability:
+        raise HTTPException(status_code=400, detail=f"定时任务能力已下线：{disabled_capability}")
+    if task_kind == "ip_content_daily":
+        payload = dict(payload)
+        if not int(payload.get("template_id") or 0) and not payload.get("keyword_ids") and not payload.get("competitor_ids") and not payload.get("memory_docs"):
+            raise HTTPException(status_code=400, detail="IP日更文案任务需要选择模板、关键词、同行账号或记忆资料")
     if task_kind == "capability":
         payload = dict(payload)
         _normalize_goal_video_task_payload(payload)
@@ -890,11 +1017,16 @@ def create_scheduled_task(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
+    requested_kind = _normalize_task_kind(body.task_kind)
     xi = _header_installation_id(request)
-    if not xi:
+    if not xi and requested_kind != "ip_content_daily":
         raise HTTPException(status_code=400, detail="missing current installation id")
-    ensure_installation_slot(db, owner_user.id, xi)
-    body.installation_ids = [xi]
+    if xi:
+        ensure_installation_slot(db, owner_user.id, xi)
+    if requested_kind == "ip_content_daily":
+        body.installation_ids = []
+    else:
+        body.installation_ids = [xi]
     task = _create_task_row(
         db,
         body,
@@ -1059,6 +1191,17 @@ def list_scheduled_task_runs(
     return {"ok": True, "runs": [_serialize_run(r) for r in rows]}
 
 
+@router.get("/api/scheduled-tasks/runs/{run_id}", summary="执行记录详情")
+def get_scheduled_task_run(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = _run_for_user(db, run_id, owner_user.id)
+    return {"ok": True, "run": _serialize_run(row)}
+
+
 @router.delete("/api/scheduled-tasks/runs/{run_id}", summary="删除执行记录")
 def delete_scheduled_task_run(
     run_id: str,
@@ -1091,6 +1234,7 @@ def pending_scheduled_task_runs(
         .filter(
             ScheduledTaskRun.user_id == current_user.id,
             ScheduledTaskRun.status == "processing",
+            ScheduledTaskRun.task_kind != "ip_content_daily",
             ScheduledTaskRun.claimed_at.isnot(None),
             ScheduledTaskRun.claimed_at < stale_cutoff,
         )
@@ -1108,6 +1252,7 @@ def pending_scheduled_task_runs(
         db.query(ScheduledTaskRun)
         .with_for_update(skip_locked=True)
         .filter(ScheduledTaskRun.user_id == current_user.id, ScheduledTaskRun.status == "pending")
+        .filter(ScheduledTaskRun.task_kind != "ip_content_daily")
         .filter(or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == xi))
         .order_by(ScheduledTaskRun.created_at.asc())
         .limit(limit)

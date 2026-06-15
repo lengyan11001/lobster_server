@@ -9,6 +9,7 @@ import re
 import time
 import uuid
 from datetime import datetime
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -20,10 +21,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .admin import AdminContext, _agent_visible_user_ids, _assert_can_manage_user, _verify_admin_token
-from .auth import get_current_user
+from .auth import access_token_claims, create_access_token, get_current_user
 from ..core.config import settings
 from ..db import get_db
-from ..models import ContentCompetitorAccount, IPContentDraftRecord, IPContentKeyword, TikHubQueryLog, TikHubSourceItem, User
+from ..models import ContentCompetitorAccount, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 
@@ -194,6 +195,27 @@ class DraftRecordImageBody(BaseModel):
     image_prompt: str = ""
     selected: bool = True
     meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScheduleTemplateBody(BaseModel):
+    name: str = Field("", max_length=160)
+    keyword_ids: list[int] = Field(default_factory=list)
+    competitor_ids: list[int] = Field(default_factory=list)
+    memory_docs: list[dict[str, Any]] = Field(default_factory=list)
+    requirements: dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScheduledDailyRunOptions(BaseModel):
+    template_id: Optional[int] = None
+    keyword_ids: list[int] = Field(default_factory=list)
+    competitor_ids: list[int] = Field(default_factory=list)
+    memory_docs: list[dict[str, Any]] = Field(default_factory=list)
+    requirements: dict[str, Any] = Field(default_factory=dict)
+    sync_before: bool = True
+    industry_count: int = Field(5, ge=1, le=20)
+    ip_count: int = Field(5, ge=1, le=20)
+    moments_count: int = Field(20, ge=1, le=20)
 
 
 def _utcnow() -> datetime:
@@ -1342,6 +1364,82 @@ def _draft_record_payload(row: IPContentDraftRecord) -> dict[str, Any]:
     }
 
 
+def _clean_int_ids(values: Any, limit: int = 30) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    raw_values = values if isinstance(values, list) else []
+    for raw in raw_values:
+        try:
+            val = int(raw)
+        except Exception:
+            continue
+        if val <= 0 or val in seen:
+            continue
+        seen.add(val)
+        out.append(val)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _template_payload(row: IPContentScheduleTemplate) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "name": row.name,
+        "keyword_ids": _clean_int_ids(row.keyword_ids, 50),
+        "competitor_ids": _clean_int_ids(row.competitor_ids, 50),
+        "memory_docs": row.memory_docs or [],
+        "requirements": row.requirements or {},
+        "status": row.status,
+        "meta": row.meta or {},
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _validate_template_refs(db: Session, user_id: int, keyword_ids: list[int], competitor_ids: list[int]) -> tuple[list[int], list[int]]:
+    clean_keyword_ids = _clean_int_ids(keyword_ids, 50)
+    clean_competitor_ids = _clean_int_ids(competitor_ids, 50)
+    if clean_keyword_ids:
+        found = {
+            int(x)
+            for (x,) in db.query(IPContentKeyword.id)
+            .filter(IPContentKeyword.user_id == user_id, IPContentKeyword.id.in_(clean_keyword_ids))
+            .all()
+        }
+        missing = [x for x in clean_keyword_ids if x not in found]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"关键词不存在或不属于当前用户：{missing[:5]}")
+    if clean_competitor_ids:
+        found = {
+            int(x)
+            for (x,) in db.query(ContentCompetitorAccount.id)
+            .filter(ContentCompetitorAccount.user_id == user_id, ContentCompetitorAccount.id.in_(clean_competitor_ids))
+            .all()
+        }
+        missing = [x for x in clean_competitor_ids if x not in found]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"同行账号不存在或不属于当前用户：{missing[:5]}")
+    return clean_keyword_ids, clean_competitor_ids
+
+
+def _requirements_text(requirements: dict[str, Any], *keys: str) -> str:
+    if not isinstance(requirements, dict):
+        return ""
+    values: list[str] = []
+    for key in keys:
+        text = _clean_long_text(requirements.get(key), 2000)
+        if text:
+            values.append(text)
+    return "\n".join(values).strip()
+
+
+def _server_bearer_for_user(user: User) -> str:
+    token = create_access_token(access_token_claims(user), expires_delta=timedelta(minutes=30))
+    return f"Bearer {token}"
+
+
 async def _sync_keyword_row(
     *,
     db: Session,
@@ -1504,7 +1602,9 @@ def _select_competitor_source_rows(db: Session, user_id: int, competitor_ids: li
 
 async def _call_ip_content_llm(
     *,
-    request: Request,
+    request: Optional[Request] = None,
+    auth_token: str = "",
+    installation_id: str = "",
     task: str,
     platform: str,
     count: int,
@@ -1559,11 +1659,17 @@ async def _call_ip_content_llm(
         },
         ensure_ascii=False,
     )
-    token = (request.headers.get("Authorization") or request.headers.get("authorization") or "").strip()
+    token = _clean_text(auth_token, 4096)
+    if request is not None:
+        token = token or (request.headers.get("Authorization") or request.headers.get("authorization") or "").strip()
     if not token:
         raise HTTPException(status_code=401, detail="缺少登录凭证")
+    if not token.lower().startswith("bearer "):
+        token = f"Bearer {token}"
     headers = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": token}
-    xi = (request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or "").strip()
+    xi = _clean_text(installation_id, 128)
+    if request is not None:
+        xi = xi or (request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or "").strip()
     if xi:
         headers["X-Installation-Id"] = xi
     payload = {
@@ -1629,6 +1735,170 @@ def _save_draft_records(
     for rec in saved:
         db.refresh(rec)
     return saved
+
+
+async def run_ip_content_daily_scheduled(
+    *,
+    db: Session,
+    current_user: User,
+    options: dict[str, Any],
+    run_id: str = "",
+) -> dict[str, Any]:
+    opts = ScheduledDailyRunOptions(**(options or {}))
+    template_payload: dict[str, Any] = {}
+    template: Optional[IPContentScheduleTemplate] = None
+    keyword_ids = _clean_int_ids(opts.keyword_ids, 50)
+    competitor_ids = _clean_int_ids(opts.competitor_ids, 50)
+    requirements = dict(opts.requirements or {})
+    memory_docs_raw = list(opts.memory_docs or [])
+
+    if opts.template_id:
+        template = (
+            db.query(IPContentScheduleTemplate)
+            .filter(
+                IPContentScheduleTemplate.user_id == current_user.id,
+                IPContentScheduleTemplate.id == int(opts.template_id),
+                IPContentScheduleTemplate.status == "active",
+            )
+            .first()
+        )
+        if template is None:
+            raise HTTPException(status_code=404, detail="IP 日更模板不存在")
+        template_payload = _template_payload(template)
+        if not keyword_ids:
+            keyword_ids = _clean_int_ids(template.keyword_ids, 50)
+        if not competitor_ids:
+            competitor_ids = _clean_int_ids(template.competitor_ids, 50)
+        merged_requirements = dict(template.requirements or {})
+        merged_requirements.update({k: v for k, v in requirements.items() if _clean_long_text(v, 1)})
+        requirements = merged_requirements
+        if not memory_docs_raw:
+            memory_docs_raw = list(template.memory_docs or [])
+
+    keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, keyword_ids, competitor_ids)
+    keywords = (
+        db.query(IPContentKeyword)
+        .filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.status == "active")
+        .filter(IPContentKeyword.id.in_(keyword_ids))
+        .order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc())
+        .all()
+        if keyword_ids
+        else []
+    )
+    competitors = (
+        db.query(ContentCompetitorAccount)
+        .filter(ContentCompetitorAccount.user_id == current_user.id, ContentCompetitorAccount.status == "active")
+        .filter(ContentCompetitorAccount.id.in_(competitor_ids))
+        .order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc())
+        .all()
+        if competitor_ids
+        else []
+    )
+    memories = _memory_payload_from_docs(memory_docs_raw, content_limit=3200)
+    if not keywords and not competitors and not memories:
+        raise HTTPException(status_code=400, detail="请选择关键词、同行账号模板或记忆资料")
+
+    sync_results: list[dict[str, Any]] = []
+    if opts.sync_before:
+        for row in keywords:
+            sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
+        for row in competitors:
+            sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
+
+    auth_token = _server_bearer_for_user(current_user)
+    generated_groups: list[dict[str, Any]] = []
+
+    async def generate_group(
+        *,
+        task_key: str,
+        record_task: str,
+        platform: str,
+        rows: list[TikHubSourceItem],
+        count: int,
+        extra: str,
+    ) -> None:
+        group_id = uuid.uuid4().hex
+        generated = await _call_ip_content_llm(
+            auth_token=auth_token,
+            installation_id=f"server-scheduled-{run_id or 'ip-content'}",
+            task=task_key,
+            platform=platform,
+            count=count,
+            rows=rows,
+            memories=memories,
+            extra_requirements=extra,
+        )
+        records = _save_draft_records(
+            db,
+            current_user=current_user,
+            task=record_task,
+            platform=platform,
+            drafts=generated["drafts"],
+            rows=rows,
+            memories=memories,
+            extra_requirements=extra,
+            group_id=group_id,
+        )
+        generated_groups.append(
+            {
+                "task": record_task,
+                "group_id": group_id,
+                "count": len(records),
+                "requirements": generated.get("requirements") or "",
+                "records": [_draft_record_payload(row) for row in records],
+                "source_items": generated.get("source_items") or [],
+            }
+        )
+
+    industry_rows = _select_keyword_source_rows(db, current_user.id, keyword_ids, task="industry_hot_oral", limit=40)
+    ip_rows = _select_competitor_source_rows(db, current_user.id, competitor_ids, task="professional_ip_oral", limit=40)
+    moment_rows = _select_keyword_source_rows(db, current_user.id, keyword_ids, task="moments_candidate", limit=24)
+    moment_rows.extend(_select_competitor_source_rows(db, current_user.id, competitor_ids, task="moments_candidate", limit=24))
+    seen: set[int] = set()
+    moment_rows = [row for row in moment_rows if not (row.id in seen or seen.add(row.id))][:40]
+
+    await generate_group(
+        task_key="task1_industry",
+        record_task="industry_hot_oral",
+        platform="douyin",
+        rows=industry_rows,
+        count=min(max(int(opts.industry_count or 5), 1), 5),
+        extra=_requirements_text(requirements, "oral", "industry_oral", "industry", "common"),
+    )
+    await generate_group(
+        task_key="task1_ip",
+        record_task="professional_ip_oral",
+        platform="douyin",
+        rows=ip_rows,
+        count=min(max(int(opts.ip_count or 5), 1), 5),
+        extra=_requirements_text(requirements, "oral", "ip_oral", "professional_ip", "common"),
+    )
+    await generate_group(
+        task_key="task2_moments",
+        record_task="moments_candidate",
+        platform="wechat_moments",
+        rows=moment_rows,
+        count=min(max(int(opts.moments_count or 20), 1), 20),
+        extra=_requirements_text(requirements, "moments", "moments_copy", "image", "common"),
+    )
+
+    records_by_task = {group["task"]: group["records"] for group in generated_groups}
+    return {
+        "ok": True,
+        "ip_content_daily": True,
+        "template": template_payload,
+        "keyword_ids": keyword_ids,
+        "competitor_ids": competitor_ids,
+        "memory_docs": memories,
+        "requirements": requirements,
+        "sync_results": sync_results,
+        "groups": generated_groups,
+        "records_by_task": records_by_task,
+        "image_generation": {
+            "manual": True,
+            "note": "朋友圈图片不由定时任务自动生成；请在执行详情或 IP 日更工作台手动触发。",
+        },
+    }
 
 
 @router.post("/api/ip-content/tikhub/query", summary="服务器代理 TikHub 查询，并记录结果与扣费")
@@ -1757,6 +2027,103 @@ def list_competitors(
         .all()
     )
     return {"items": [_competitor_payload(row) for row in rows]}
+
+
+@router.get("/api/ip-content/schedule-templates", summary="IP 日更定时任务模板列表")
+def list_schedule_templates(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(IPContentScheduleTemplate)
+        .filter(IPContentScheduleTemplate.user_id == current_user.id, IPContentScheduleTemplate.status == "active")
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .all()
+    )
+    return {"items": [_template_payload(row) for row in rows]}
+
+
+@router.post("/api/ip-content/schedule-templates", summary="保存 IP 日更定时任务模板")
+def save_schedule_template(
+    body: ScheduleTemplateBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    name = _clean_text(body.name, 160)
+    if not name:
+        raise HTTPException(status_code=400, detail="请填写模板名称")
+    keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
+    row = IPContentScheduleTemplate(
+        user_id=current_user.id,
+        name=name,
+        keyword_ids=keyword_ids,
+        competitor_ids=competitor_ids,
+        memory_docs=_memory_payload_from_docs(body.memory_docs, content_limit=3200),
+        requirements=_jsonable(body.requirements or {}),
+        meta=_jsonable(body.meta or {}),
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="同名模板已经存在")
+    db.refresh(row)
+    return {"ok": True, "item": _template_payload(row)}
+
+
+@router.patch("/api/ip-content/schedule-templates/{template_id}", summary="更新 IP 日更定时任务模板")
+def update_schedule_template(
+    template_id: int,
+    body: ScheduleTemplateBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(IPContentScheduleTemplate.user_id == current_user.id, IPContentScheduleTemplate.id == template_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    name = _clean_text(body.name, 160)
+    if not name:
+        raise HTTPException(status_code=400, detail="请填写模板名称")
+    keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
+    row.name = name
+    row.keyword_ids = keyword_ids
+    row.competitor_ids = competitor_ids
+    row.memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
+    row.requirements = _jsonable(body.requirements or {})
+    row.meta = _jsonable(body.meta or {})
+    row.status = "active"
+    row.updated_at = _utcnow()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="同名模板已经存在")
+    db.refresh(row)
+    return {"ok": True, "item": _template_payload(row)}
+
+
+@router.delete("/api/ip-content/schedule-templates/{template_id}", summary="删除 IP 日更定时任务模板")
+def delete_schedule_template(
+    template_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(IPContentScheduleTemplate.user_id == current_user.id, IPContentScheduleTemplate.id == template_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    row.status = "deleted"
+    row.updated_at = _utcnow()
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/api/ip-content/douyin/users/search", summary="按昵称或抖音号搜索抖音用户候选")

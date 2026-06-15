@@ -1030,6 +1030,16 @@
     .task-row-title { font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .task-row-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
     .task-row-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+    .task-detail-popover { max-width: min(760px, 94vw); width: 760px; max-height: 84vh; overflow: auto; }
+    .task-detail-body { display: grid; gap: 12px; margin-top: 14px; color: #17233d; }
+    .task-detail-section { border: 1px solid rgba(223,230,242,.92); border-radius: 14px; background: rgba(248,251,255,.9); padding: 12px; }
+    .task-detail-section h4 { margin: 0 0 8px; font-size: 15px; }
+    .task-detail-section pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; color: #263858; max-height: 180px; overflow: auto; }
+    .task-detail-record { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
+    .task-detail-record:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+    .task-detail-record strong { display: block; margin-bottom: 6px; }
+    .task-detail-prompts { display: grid; gap: 6px; margin-top: 8px; color: #66758f; font-size: 12px; }
+    .task-detail-prompts span { display: block; }
     .work-shell { display: grid; gap: 14px; }
     .work-header {
       padding: 20px;
@@ -1309,6 +1319,7 @@
                   <div class="seg" id="taskAbilitySeg">
                     <button type="button" class="active" data-task-ability="goal.video.pipeline">创意成片</button>
                     <button type="button" data-task-ability="goal.image.pipeline">文案+创意图片</button>
+                    <button type="button" data-task-ability="ip_content_daily">IP日更文案</button>
                     <button type="button" data-task-ability="hifly.video.create_by_tts">必火数字人</button>
                   </div>
                   <div class="task-fields">
@@ -1510,6 +1521,21 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="taskDetailModal" data-mode="idle" role="dialog" aria-modal="true" aria-labelledby="taskDetailTitle">
+    <button class="employee-modal-backdrop" type="button" id="taskDetailBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover task-detail-popover">
+      <button class="employee-popover-close" type="button" id="taskDetailClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">详</div>
+        <div class="employee-popover-title">
+          <strong id="taskDetailTitle">任务详情</strong>
+          <span id="taskDetailSub">正在读取结果</span>
+        </div>
+      </div>
+      <div class="task-detail-body" id="taskDetailBody"></div>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
   <script>
@@ -1539,6 +1565,9 @@
       publishAccounts: [],
       publishAccountsLoaded: false,
       publishAccountsLoading: false,
+      ipTemplates: [],
+      ipTemplatesLoaded: false,
+      ipTemplatesLoading: false,
     };
     const SHOW_INTERNAL_STEPS = false;
     const IMAGE_TO_VIDEO_PROMPT = "用这个图片，提示词：";
@@ -1554,6 +1583,10 @@
       "hifly.video.create_by_tts": {
         label: "必火数字人",
         description: "选择本机已有数字人模板和声音，生成数字人口播视频。",
+      },
+      "ip_content_daily": {
+        label: "IP日更文案",
+        description: "服务器定时同步关键词和同行数据，生成行业口播、专业IP口播和朋友圈文案。",
       },
     };
 
@@ -1671,11 +1704,13 @@
         "goal.video.pipeline": "创意成片",
         "goal.image.pipeline": "文案+创意图片",
         "hifly.video.create_by_tts": "必火数字人",
+        "ip_content_daily": "IP日更文案",
       }[capabilityId] || capabilityId || "定时任务";
     }
 
     function taskCapabilityId(row) {
       const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
+      if (row && row.task_kind === "ip_content_daily") return "ip_content_daily";
       return String(payload.capability_id || "");
     }
 
@@ -2150,6 +2185,7 @@
       [...tasks, ...runs].forEach((row) => collectPlatforms(row).forEach((p) => platforms.add(p)));
       const current = runs.filter(isActiveRun).slice(0, 8).map((row) => ({
         type: "current",
+        runId: row.id || "",
         time: row.started_at || row.claimed_at || row.created_at,
         sortTime: row.updated_at || row.started_at || row.claimed_at || row.created_at,
         createdTime: row.created_at,
@@ -2160,6 +2196,7 @@
       }));
       const done = runs.filter((row) => !isActiveRun(row)).slice(0, 18).map((row) => ({
         type: String(row.status).toLowerCase() === "failed" ? "failed" : "done",
+        runId: row.id || "",
         time: row.finished_at || row.updated_at || row.created_at,
         sortTime: row.finished_at || row.updated_at || row.created_at,
         createdTime: row.created_at,
@@ -2209,12 +2246,70 @@
       }
       timeline.innerHTML = items.map((item) => `<div class="work-node">
         <div class="work-time"><strong>${escapeHtml(timeLabel(workDisplayTime(item)))}</strong><span>${escapeHtml(fmtTime(workDisplayTime(item)))}</span></div>
-        <div class="work-card ${escapeHtml(item.type)}">
+        <div class="work-card ${escapeHtml(item.type)}" ${item.runId ? `data-open-run-detail="${escapeHtml(item.runId)}"` : ""}>
           <div class="work-card-top"><div class="work-card-title">${escapeHtml(item.title)}</div><span class="work-badge">${escapeHtml(item.badge)}</span></div>
           <div class="work-meta">${escapeHtml(item.meta || "")}</div>
           ${item.actionTaskId ? `<div class="work-card-actions"><button type="button" data-run-task-now="${escapeHtml(item.actionTaskId)}">立即执行</button></div>` : ""}
         </div>
       </div>`).join("");
+    }
+
+    function ipTaskLabel(task) {
+      return {
+        industry_hot_oral: "行业热门口播",
+        professional_ip_oral: "专业 IP 口播",
+        moments_candidate: "朋友圈文案",
+      }[String(task || "")] || task || "文案";
+    }
+
+    function taskDetailHtml(run) {
+      const payload = run && run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
+      const sections = [];
+      if (payload.ip_content_daily) {
+        const groups = Array.isArray(payload.groups) ? payload.groups : [];
+        sections.push(`<div class="task-detail-section"><h4>IP日更文案</h4>${groups.map((group) => {
+          const records = Array.isArray(group.records) ? group.records : [];
+          return `<div class="task-detail-record"><strong>${escapeHtml(ipTaskLabel(group.task))} · ${records.length}条</strong>${records.map((rec, idx) => {
+            const prompts = Array.isArray(rec.image_prompts) ? rec.image_prompts : [];
+            return `<div class="task-detail-record">
+              <strong>${escapeHtml((idx + 1) + ". " + (rec.title || "未命名文案"))}</strong>
+              <pre>${escapeHtml(rec.body || rec.content || "")}</pre>
+              ${prompts.length ? `<div class="task-detail-prompts">${prompts.map((p, pIdx) => `<span>配图 ${pIdx + 1}：${escapeHtml(p)}</span>`).join("")}</div>` : ""}
+            </div>`;
+          }).join("")}</div>`;
+        }).join("")}</div>`);
+      }
+      const text = run.error || run.result_text || (run.progress && (run.progress.text || run.progress.message)) || "";
+      sections.push(`<div class="task-detail-section"><h4>结果 / 状态</h4><pre>${escapeHtml(text || statusText(run.status))}</pre></div>`);
+      if (!payload.ip_content_daily) {
+        sections.push(`<div class="task-detail-section"><h4>原始结果</h4><pre>${escapeHtml(JSON.stringify(payload || {}, null, 2))}</pre></div>`);
+      }
+      return sections.join("");
+    }
+
+    function closeTaskDetailModal() {
+      const modal = $("taskDetailModal");
+      if (modal) modal.classList.add("hidden");
+    }
+
+    async function openRunDetail(runId) {
+      if (!runId) return;
+      const modal = $("taskDetailModal");
+      const body = $("taskDetailBody");
+      if (!modal || !body) return;
+      $("taskDetailTitle").textContent = "任务详情";
+      $("taskDetailSub").textContent = "正在读取结果";
+      body.innerHTML = `<div class="hint">加载中...</div>`;
+      modal.classList.remove("hidden");
+      try {
+        const data = await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}`);
+        const run = data.run || {};
+        $("taskDetailTitle").textContent = run.title || "任务详情";
+        $("taskDetailSub").textContent = `${capabilityName(taskCapabilityId(run) || run.task_kind)} · ${statusText(run.status)}`;
+        body.innerHTML = taskDetailHtml(run);
+      } catch (err) {
+        body.innerHTML = `<div class="hint">${escapeHtml(err.message || "详情加载失败")}</div>`;
+      }
     }
 
     async function runTaskNow(taskId, btn) {
@@ -2567,6 +2662,46 @@
       }
     }
 
+    function fillIpTemplateSelect() {
+      const sel = $("taskIpTemplate");
+      if (!sel) return;
+      const current = sel.value;
+      if (state.ipTemplatesLoading) {
+        sel.innerHTML = optionHtml("", "模板加载中...");
+        return;
+      }
+      if (!state.ipTemplates.length) {
+        sel.innerHTML = optionHtml("", "暂无服务器模板");
+        return;
+      }
+      sel.innerHTML = optionHtml("", "请选择模板") + state.ipTemplates.map((row) => {
+        const k = Array.isArray(row.keyword_ids) ? row.keyword_ids.length : 0;
+        const c = Array.isArray(row.competitor_ids) ? row.competitor_ids.length : 0;
+        return optionHtml(String(row.id), `${row.name || "模板"} · 关键词${k} · 同行${c}`);
+      }).join("");
+      if (current && state.ipTemplates.some((row) => String(row.id) === current)) sel.value = current;
+    }
+
+    async function loadIpTemplates(force = false) {
+      if (!force && (state.ipTemplatesLoaded || state.ipTemplatesLoading)) {
+        fillIpTemplateSelect();
+        return;
+      }
+      state.ipTemplatesLoading = true;
+      fillIpTemplateSelect();
+      try {
+        const data = await api("/api/ip-content/schedule-templates");
+        state.ipTemplates = Array.isArray(data.items) ? data.items : [];
+        state.ipTemplatesLoaded = true;
+      } catch (err) {
+        state.ipTemplates = [];
+        toast(err.message || "IP模板加载失败");
+      } finally {
+        state.ipTemplatesLoading = false;
+        fillIpTemplateSelect();
+      }
+    }
+
     function updateGoalVideoSourceMode() {
       const mode = $("taskVideoSourceMode") ? $("taskVideoSourceMode").value : "asset_random";
       if ($("taskCandidateGroupField")) $("taskCandidateGroupField").classList.toggle("hidden", mode === "ai_image");
@@ -2575,6 +2710,13 @@
     function renderTaskParamFields() {
       const host = $("taskParamFields");
       if (!host) return;
+      if (state.taskAbility === "ip_content_daily") {
+        host.innerHTML = taskFieldHtml("关键词和同行模板", taskSelectHtml("taskIpTemplate", optionHtml("", "模板加载中...")))
+          + taskFieldHtml("执行前同步", `<label class="task-checkbox"><input id="taskIpSyncBefore" type="checkbox" checked>每次执行前同步新数据</label>`, true)
+          + taskFieldHtml("补充要求（可选）", taskTextareaHtml("taskIpRequirement", "例如：口播更有案例感；朋友圈更生活化；图片干净真实"), true);
+        loadIpTemplates(true);
+        return;
+      }
       if (state.taskAbility === "hifly.video.create_by_tts") {
         host.innerHTML = taskFieldHtml("数字人", taskSelectHtml("taskAvatar", optionHtml("", "加载中...")))
           + taskFieldHtml("声音", taskSelectHtml("taskVoice", optionHtml("", "加载中...")))
@@ -2676,6 +2818,20 @@
     }
 
     function collectCapabilityPayload() {
+      if (state.taskAbility === "ip_content_daily") {
+        const templateId = parseInt(($("taskIpTemplate") && $("taskIpTemplate").value) || "0", 10);
+        if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
+        const extra = (($("taskIpRequirement") && $("taskIpRequirement").value) || "").trim();
+        const requirements = extra ? { common: extra, oral: extra, moments: extra, image: extra } : {};
+        return {
+          template_id: templateId,
+          sync_before: !!($("taskIpSyncBefore") && $("taskIpSyncBefore").checked),
+          requirements,
+          industry_count: 5,
+          ip_count: 5,
+          moments_count: 20,
+        };
+      }
       if (state.taskAbility === "hifly.video.create_by_tts") {
         const avatar = $("taskAvatar") ? $("taskAvatar").value : "";
         const voice = $("taskVoice") ? $("taskVoice").value : "";
@@ -2723,7 +2879,7 @@
     async function createScheduledTask() {
       const btn = $("createTaskBtn");
       const installationId = currentInstallationId();
-      if (!installationId) {
+      if (state.taskAbility !== "ip_content_daily" && !installationId) {
         toast("未检测到本地 online 设备");
         return;
       }
@@ -2733,24 +2889,25 @@
       if (scheduleType === "daily_times" && !dailyTimes.length) throw new Error("请填写每天执行时间，例如 09:00、12:00、18:00");
       const interval = parseInt($("taskIntervalMinutes").value || "60", 10);
       const title = ($("taskTitle").value || "").trim() || capabilityName(state.taskAbility);
+      const isIpDaily = state.taskAbility === "ip_content_daily";
       const body = {
         title,
-        task_kind: "capability",
-        content: `定时调用能力 ${state.taskAbility}`,
-        payload: { capability_id: state.taskAbility, payload: capPayload },
+        task_kind: isIpDaily ? "ip_content_daily" : "capability",
+        content: isIpDaily ? "定时生成 IP日更文案" : `定时调用能力 ${state.taskAbility}`,
+        payload: isIpDaily ? capPayload : { capability_id: state.taskAbility, payload: capPayload },
         schedule_type: scheduleType,
         interval_seconds: Math.max(60, (Number.isNaN(interval) ? 60 : interval) * 60),
         start_at: $("taskStartAt") ? $("taskStartAt").value : "",
         daily_times: scheduleType === "daily_times" ? dailyTimes : [],
         timezone_offset_minutes: timezoneOffsetMinutes(),
-        installation_ids: [installationId],
+        installation_ids: isIpDaily ? [] : [installationId],
       };
       btn.disabled = true;
       try {
         await api("/api/scheduled-tasks/tasks", {
           method: "POST",
           json: body,
-          headers: { "X-Installation-Id": installationId },
+          headers: installationId ? { "X-Installation-Id": installationId } : {},
         });
         toast("任务已下发");
         setTaskPanelOpen(false);
@@ -2786,6 +2943,7 @@
               <div class="task-row-meta">${escapeHtml(capabilityName(taskCapabilityId(row)))} · ${escapeHtml(interval)} · ${escapeHtml(statusText(row.status))}</div>
             </div>
             <div class="task-row-actions">
+              ${row.last_run_id ? `<button class="ghost" type="button" data-open-run-detail="${escapeHtml(row.last_run_id)}">最近结果</button>` : ""}
               <button class="ghost" type="button" data-delete-task="${escapeHtml(row.id)}">删除</button>
             </div>
           </div>`;
@@ -3480,6 +3638,7 @@
             <div class="run-result">${escapeHtml(result || "等待结果")}</div>
             ${renderRunMedia(collectRunMediaUrls(row))}
             ${renderRunPublishActions(row)}
+            <div class="run-publish-actions"><button type="button" data-open-run-detail="${escapeHtml(row.id || "")}">查看详情</button></div>
           </div>`;
         }).join("");
       } catch (err) {
@@ -3562,6 +3721,16 @@
       evt.stopPropagation();
       closeEmployeeModal();
     });
+    $("taskDetailBackdrop").addEventListener("click", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      closeTaskDetailModal();
+    });
+    $("taskDetailClose").addEventListener("click", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      closeTaskDetailModal();
+    });
     ["click", "touchend", "pointerup"].forEach((type) => {
       $("employeeModalClose").addEventListener(type, (evt) => {
         evt.preventDefault();
@@ -3630,12 +3799,22 @@
     });
 
     $("taskList").addEventListener("click", (evt) => {
+      const detailBtn = evt.target.closest("[data-open-run-detail]");
+      if (detailBtn) {
+        openRunDetail(detailBtn.dataset.openRunDetail || "");
+        return;
+      }
       const btn = evt.target.closest("[data-delete-task]");
       if (!btn) return;
       deleteTask(btn.dataset.deleteTask, btn);
     });
 
     $("runList").addEventListener("click", (evt) => {
+      const detailBtn = evt.target.closest("[data-open-run-detail]");
+      if (detailBtn) {
+        openRunDetail(detailBtn.dataset.openRunDetail || "");
+        return;
+      }
       const publishBtn = evt.target.closest("[data-publish-run]");
       if (publishBtn) {
         requestRunPublish(publishBtn.dataset.publishRun || "", publishBtn);
@@ -3648,6 +3827,13 @@
       }
       const iosDownload = evt.target.closest("[data-ios-download]");
       if (iosDownload) onIosDownloadClick();
+    });
+
+    $("workTimeline").addEventListener("click", (evt) => {
+      if (evt.target.closest("[data-run-task-now]")) return;
+      const node = evt.target.closest("[data-open-run-detail]");
+      if (!node) return;
+      openRunDetail(node.dataset.openRunDetail || "");
     });
 
     $("homeQuickGrid").addEventListener("click", (evt) => {

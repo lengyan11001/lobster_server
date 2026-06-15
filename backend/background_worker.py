@@ -38,6 +38,7 @@ except Exception:
     pass
 
 from backend.app.core.config import settings
+from backend.app.services.ip_content_schedule_runner import ip_content_schedule_background_loop
 from backend.app.services.meta_social_schedule_runner import meta_social_schedule_background_loop
 from backend.app.services.provider_balance_monitor import (
     is_provider_balance_monitor_enabled,
@@ -76,6 +77,11 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
         factories.append(("meta_social_schedule", meta_social_schedule_background_loop))
     else:
         logger.info("[background] Meta Social 定时发布未启用")
+
+    if _enabled_from_env("LOBSTER_BACKGROUND_IP_CONTENT_SCHEDULE_ENABLED", True):
+        factories.append(("ip_content_schedule", ip_content_schedule_background_loop))
+    else:
+        logger.info("[background] IP日更定时任务未启用")
 
     if _enabled_from_env("LOBSTER_BACKGROUND_PROVIDER_BALANCE_MONITOR_ENABLED", True) and is_provider_balance_monitor_enabled():
         factories.append(("provider_balance_monitor", provider_balance_monitor_loop_forever))

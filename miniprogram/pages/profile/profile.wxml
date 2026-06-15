@@ -54,6 +54,22 @@
   </view>
 
   <view class="section">
+    <text class="section-title">任务结果</text>
+    <view wx:if="{{runsLoading}}" class="muted empty-line">加载中...</view>
+    <view wx:for="{{scheduledRuns}}" wx:key="id" class="device-row" data-id="{{item.id}}" bindtap="openScheduledRun">
+      <view>
+        <text class="device-name">{{item.title}}</text>
+        <text class="device-time">{{item.status_text}} · {{item.time}}</text>
+        <text wx:if="{{item.summary}}" class="device-time">{{item.summary}}</text>
+      </view>
+    </view>
+    <view wx:if="{{!runsLoading && scheduledRuns.length === 0}}" class="muted empty-line">暂无定时任务结果。</view>
+    <view class="button-row">
+      <button class="ghost-btn" bindtap="loadScheduledRuns">刷新任务结果</button>
+    </view>
+  </view>
+
+  <view class="section">
     <text class="section-title">当前手机</text>
     <text class="muted selectable">{{deviceId}}</text>
   </view>

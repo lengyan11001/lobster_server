@@ -65,10 +65,41 @@ function normalize(item) {
   });
 }
 
+function ipTaskLabel(task) {
+  return {
+    industry_hot_oral: "行业热门口播",
+    professional_ip_oral: "专业 IP 口播",
+    moments_candidate: "朋友圈文案"
+  }[String(task || "")] || task || "文案";
+}
+
+function normalizeScheduledRun(run) {
+  const payload = run && run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
+  const groups = Array.isArray(payload.groups) ? payload.groups : [];
+  return {
+    is_scheduled_run: true,
+    title: run.title || "定时任务详情",
+    status: run.status || "",
+    status_label: run.status === "completed" ? "已完成" : (run.status === "failed" ? "失败" : "执行中"),
+    created_at_text: formatTime(run.created_at),
+    result_text: run.error || run.result_text || "",
+    groups: groups.map((group) => ({
+      title: `${ipTaskLabel(group.task)} · ${(group.records || []).length}条`,
+      records: (group.records || []).map((rec, idx) => ({
+        title: `${idx + 1}. ${rec.title || "未命名文案"}`,
+        body: rec.body || rec.content || "",
+        prompts: Array.isArray(rec.image_prompts) ? rec.image_prompts : []
+      }))
+    })),
+    raw: run
+  };
+}
+
 Page({
   data: {
     id: "",
     taskId: "",
+    runId: "",
     shareToken: "",
     isSharedView: false,
     sharePath: "",
@@ -83,6 +114,11 @@ Page({
     if (query.share) {
       this.setData({ shareToken: query.share || "", isSharedView: true });
       this.loadSharedWork(query.share);
+      return;
+    }
+    if (query.run_id) {
+      this.setData({ runId: query.run_id || "" });
+      this.loadScheduledRun(query.run_id);
       return;
     }
     const cached = wx.getStorageSync("lobster_work_detail");
@@ -110,11 +146,24 @@ Page({
     app.restoreSession();
     if (this.data.isSharedView) return this.loadSharedWork(this.data.shareToken);
     if (!app.globalData.token) return Promise.resolve();
+    if (this.data.runId) return this.loadScheduledRun(this.data.runId);
     const taskId = this.data.taskId || (this.data.work && this.data.work.task_id);
     if (taskId && (!this.data.work || this.data.work.is_processing)) {
       return this.pollTask(taskId, true);
     }
     return this.loadFromList();
+  },
+
+  loadScheduledRun(runId) {
+    if (!runId || !app.globalData.token) return Promise.resolve();
+    this.setData({ loading: true });
+    return app
+      .request({ url: `/api/scheduled-tasks/runs/${encodeURIComponent(runId)}` })
+      .then((data) => {
+        this.setData({ work: normalizeScheduledRun(data.run || {}), runId });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => this.setData({ loading: false }));
   },
 
   loadFromList() {

@@ -19,7 +19,9 @@ Page({
     smsCountdown: 0,
     loginBusy: false,
     loginDebug: "",
-    lastError: ""
+    lastError: "",
+    scheduledRuns: [],
+    runsLoading: false
   },
 
   smsTimer: null,
@@ -28,7 +30,10 @@ Page({
     share.showShareMenu();
     app.restoreSession();
     this.refreshState();
-    if (app.globalData.token) this.loadDevices();
+    if (app.globalData.token) {
+      this.loadDevices();
+      this.loadScheduledRuns();
+    }
   },
 
   onUnload() {
@@ -63,6 +68,32 @@ Page({
       })
       .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
       .finally(() => wx.hideLoading());
+  },
+
+  loadScheduledRuns() {
+    if (!app.globalData.token || this.data.runsLoading) return Promise.resolve();
+    this.setData({ runsLoading: true });
+    return app
+      .request({ url: "/api/scheduled-tasks/runs?limit=30" })
+      .then((data) => {
+        const rows = (data.runs || []).map((row) => ({
+          id: row.id,
+          title: row.title || "定时任务",
+          status: row.status || "",
+          status_text: row.status === "completed" ? "完成" : (row.status === "failed" ? "失败" : "执行中"),
+          time: String(row.created_at || "").replace("T", " ").slice(0, 16),
+          summary: row.error || row.result_text || ""
+        }));
+        this.setData({ scheduledRuns: rows });
+      })
+      .catch((err) => wx.showToast({ title: api.errorMessage(err), icon: "none" }))
+      .finally(() => this.setData({ runsLoading: false }));
+  },
+
+  openScheduledRun(evt) {
+    const id = evt.currentTarget.dataset.id || "";
+    if (!id) return;
+    wx.navigateTo({ url: `/pages/work-detail/work-detail?run_id=${encodeURIComponent(id)}` });
   },
 
   setLoginDebug(text) {
