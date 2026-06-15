@@ -1682,7 +1682,7 @@
 
     function fmtTime(value) {
       if (!value) return "-";
-      const d = new Date(value);
+      const d = parseDate(value);
       if (Number.isNaN(d.getTime())) return String(value).slice(0, 16);
       return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
     }
@@ -1716,7 +1716,11 @@
 
     function parseDate(value) {
       if (!value) return null;
-      const d = new Date(value);
+      let text = String(value || "").trim();
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text) && !/[zZ]|[+-]\d{2}:\d{2}$/.test(text)) {
+        text += "Z";
+      }
+      const d = new Date(text);
       return Number.isNaN(d.getTime()) ? null : d;
     }
 
@@ -1766,6 +1770,11 @@
       return String((row && (row.claimed_by_installation_id || row.installation_id)) || "").trim();
     }
 
+    function isServerSideRun(row) {
+      return String((row && row.task_kind) || "").trim() === "ip_content_daily"
+        || !!(row && row.progress && row.progress.server_side);
+    }
+
     function activeRunForDevice(device) {
       const id = String((device && device.installation_id) || "").trim();
       const activeRuns = state.runs.filter(isActiveRun);
@@ -1773,7 +1782,7 @@
       const matched = activeRuns.find((row) => runInstallationId(row) && runInstallationId(row) === id);
       if (matched) return matched;
       if (state.devices.filter((d) => d.online).length === 1) {
-        return activeRuns.find((row) => !runInstallationId(row)) || null;
+        return activeRuns.find((row) => !runInstallationId(row) && !isServerSideRun(row)) || null;
       }
       return null;
     }
@@ -1787,7 +1796,7 @@
       const online = state.devices.filter((d) => d.online);
       const index = onlineDeviceIndex(device);
       if (index < 0) return null;
-      const rows = state.runs.filter((row) => isActiveRun(row) && !runInstallationId(row));
+      const rows = state.runs.filter((row) => isActiveRun(row) && !runInstallationId(row) && !isServerSideRun(row));
       return rows[index % Math.max(online.length, 1)] || null;
     }
 
@@ -2176,6 +2185,28 @@
       return statusText(row && row.status);
     }
 
+    function taskHasRun(task, runs) {
+      const id = String(task && task.id || "");
+      if (!id) return false;
+      return (runs || []).some((row) => String(row && row.task_id || "") === id);
+    }
+
+    function taskIsFutureWork(task, runs) {
+      const status = String((task && task.status) || "").toLowerCase();
+      if (status === "cancelled") return false;
+      if (status === "completed" && String(task && task.schedule_type || "").toLowerCase() === "once" && taskHasRun(task, runs)) return false;
+      return true;
+    }
+
+    function runWorkMeta(row) {
+      if (isServerSideRun(row)) {
+        const progress = row && row.progress && (row.progress.text || row.progress.message || row.progress.status);
+        return progress || `${capabilityName(taskCapabilityId(row) || row.task_kind)} · 服务器执行`;
+      }
+      const owner = runInstallationId(row);
+      return `${capabilityName(taskCapabilityId(row) || row.task_kind)} · ${owner ? "员工 " + shortId(owner) : "等待员工领取"}`;
+    }
+
     function renderWorkList() {
       const timeline = $("workTimeline");
       if (!timeline) return;
@@ -2191,7 +2222,7 @@
         createdTime: row.created_at,
         title: row.title || "正在执行的任务",
         badge: statusText(row.status),
-        meta: `${capabilityName(taskCapabilityId(row) || row.task_kind)} · ${runInstallationId(row) ? "员工 " + shortId(runInstallationId(row)) : "等待员工领取"}`,
+        meta: runWorkMeta(row),
         actionTaskId: "",
       }));
       const done = runs.filter((row) => !isActiveRun(row)).slice(0, 18).map((row) => ({
@@ -2221,7 +2252,7 @@
         };
       });
       const future = tasks
-        .filter((row) => String(row.status || "").toLowerCase() !== "cancelled")
+        .filter((row) => taskIsFutureWork(row, runs))
         .slice(0, 12)
         .map((row) => ({
           type: "future",

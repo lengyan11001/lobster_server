@@ -97,7 +97,11 @@ class ScheduledPublishCompleteIn(BaseModel):
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
-    return dt.isoformat() if dt else None
+    if not dt:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.isoformat(timespec="seconds") + "Z"
 
 
 def _parse_client_datetime(value: Optional[str], timezone_offset_minutes: Optional[int]) -> Optional[datetime]:
@@ -329,6 +333,7 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
         "payload": row.payload or {},
         "status": row.status,
         "progress": row.progress or {},
+        "server_side": _is_server_side_task(row),
         "result_text": row.result_text,
         "result_payload": row.result_payload or {},
         "error": row.error,
