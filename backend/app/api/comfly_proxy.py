@@ -1101,6 +1101,51 @@ async def _poll_comfly_video_task(task_id: str, model: str = "", api_kind: str =
         return resp
 
 
+_COMFLY_IMAGE_RATIO_ALIASES = {
+    "portrait_9_16": "9:16",
+    "landscape_16_9": "16:9",
+    "square_hd": "1:1",
+    "square": "1:1",
+    "vertical": "9:16",
+    "portrait": "9:16",
+    "horizontal": "16:9",
+    "landscape": "16:9",
+}
+
+_COMFLY_IMAGE_RATIO_VALUES = {"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}
+
+
+def _coerce_comfly_image_ratio_size(*values: Any) -> str:
+    for raw in values:
+        value = str(raw or "").strip().lower().replace(" ", "")
+        if not value:
+            continue
+        value = _COMFLY_IMAGE_RATIO_ALIASES.get(value, value)
+        if value in _COMFLY_IMAGE_RATIO_VALUES:
+            return value
+        if "x" in value:
+            parts = value.split("x", 1)
+            try:
+                width = int(parts[0])
+                height = int(parts[1])
+            except (TypeError, ValueError):
+                continue
+            if width <= 0 or height <= 0:
+                continue
+            known = {
+                "1:1": (1, 1),
+                "4:3": (4, 3),
+                "3:4": (3, 4),
+                "16:9": (16, 9),
+                "9:16": (9, 16),
+                "3:2": (3, 2),
+                "2:3": (2, 3),
+            }
+            ratio = width / height
+            return min(known, key=lambda key: abs(ratio - (known[key][0] / known[key][1])))
+    return "1:1"
+
+
 def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, Any]) -> Dict[str, Any]:
     upstream = _upstream_model(model, entry)
     forwarded = dict(body)
@@ -1109,27 +1154,12 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
     model_low = str(upstream or model or "").strip().lower()
     if api_format == "dalle" and ("gpt-image-2" in model_low or "gpt-image2" in model_low or "gptimage2" in model_low):
         prompt = str(forwarded.get("prompt") or "").strip()
-        ratio_aliases = {
-            "portrait_9_16": "9:16",
-            "landscape_16_9": "16:9",
-            "square_hd": "1:1",
-            "square": "1:1",
-            "vertical": "9:16",
-            "portrait": "9:16",
-            "horizontal": "16:9",
-            "landscape": "16:9",
-        }
-        ratio_values = {"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}
-        raw_ratio = str(
-            forwarded.get("image_size")
-            or forwarded.get("aspect_ratio")
-            or forwarded.get("ratio")
-            or forwarded.get("size")
-            or "1:1"
-        ).strip()
-        ratio = ratio_aliases.get(raw_ratio.lower(), raw_ratio)
-        if ratio not in ratio_values:
-            ratio = "1:1"
+        ratio = _coerce_comfly_image_ratio_size(
+            forwarded.get("aspect_ratio"),
+            forwarded.get("ratio"),
+            forwarded.get("size"),
+            forwarded.get("image_size"),
+        )
         try:
             num_images = max(1, int(forwarded.get("num_images") or forwarded.get("n") or 1))
         except (TypeError, ValueError):
@@ -1138,7 +1168,7 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
         out: Dict[str, Any] = {
             "model": upstream,
             "prompt": prompt,
-            "image_size": ratio,
+            "size": ratio,
             "num_images": num_images,
             "n": num_images,
             "response_format": str(forwarded.get("response_format") or "url"),
