@@ -10,7 +10,7 @@
 | 项 | 说明 |
 |----|------|
 | 私钥文件 | 放在你本机固定路径（例如你惯用的 `D:\maczhuji`）；路径写进 **`.env.deploy`** 的 `LOBSTER_DEPLOY_SSH_KEY`（Git Bash 可用 `/d/...`）。 |
-| 私钥口令 | **只写**在 **`.env.deploy`** 的 `LOBSTER_SSH_KEY_PASSPHRASE`；`deploy_from_local.sh`、`tail_remote_logs.sh`、`ssh_run_remote.sh` 会用它做非交互 `ssh-add`。 |
+| 私钥口令 | **只写**在 **`.env.deploy`** 的 `LOBSTER_SSH_KEY_PASSPHRASE`；Windows 优先用 `python scripts/deploy_from_local.py`，无需本机 `bash`；Git Bash/Linux 下的 `deploy_from_local.sh`、`tail_remote_logs.sh`、`ssh_run_remote.sh` 会用它做非交互 `ssh-add`。 |
 | 勿把口令写进 Markdown / 提交到 Git | 历史若曾误提交，应轮换口令或限制该密钥权限，并 `git filter-repo` 等清理历史（另议）。 |
 
 ---
@@ -52,7 +52,7 @@ ssh-add -l
 
 ```bash
 cd /path/to/lobster-server
-bash scripts/deploy_from_local.sh
+python scripts/deploy_from_local.py
 ```
 
 3. **看远端日志**（不等价于「手动 ssh」，但同一套密钥）：`bash scripts/tail_remote_logs.sh`  
