@@ -232,6 +232,7 @@ class AutoDraftRequestBody(BaseModel):
     extra_requirements: str = ""
     count: int = Field(5, ge=1, le=20)
     sync_before: bool = False
+    group_id: str = ""
 
 
 class DraftRecordImageBody(BaseModel):
@@ -277,6 +278,13 @@ def _clean_long_text(value: Any, max_len: int = 12000) -> str:
     if value is None:
         return ""
     return str(value).strip()[:max_len]
+
+
+def _clean_group_id(value: Any) -> str:
+    text = _clean_text(value, 80)
+    if re.fullmatch(r"[A-Za-z0-9_.:-]{6,80}", text or ""):
+        return text
+    return ""
 
 
 def _strip_embedded_image_prompt(value: Any, max_len: int = 8000) -> str:
@@ -2901,17 +2909,18 @@ async def generate_moments_candidates(
     seen: set[int] = set()
     rows = [row for row in rows if not (row.id in seen or seen.add(row.id))][:40]
     memories = _memory_payload_from_docs(body.memory_docs)
+    requested_count = min(max(int(body.count or 20), 1), 20)
     generated = await _call_ip_content_llm(
         request=request,
         task="task2_moments",
         platform="wechat_moments",
-        count=20,
+        count=requested_count,
         rows=rows,
         memories=memories,
         extra_requirements=body.extra_requirements,
         fallback_sources=(_keyword_seed_briefs(keywords) + _competitor_seed_briefs(accounts))[:40],
     )
-    group_id = uuid.uuid4().hex
+    group_id = _clean_group_id(body.group_id) or uuid.uuid4().hex
     records = _save_draft_records(
         db,
         current_user=current_user,
