@@ -4,6 +4,8 @@ const avatarTemplates = require("../../utils/digital_avatar_templates");
 const staticAssets = require("../../utils/static_assets");
 const share = require("../../utils/share");
 
+const SERVER_STATIC_BASE = "https://bhzn.top/client/miniprogram";
+
 const CAPABILITIES = [
   { id: "goal.video.pipeline", name: "创意成片" },
   { id: "ip_content_daily", name: "IP日更文案" },
@@ -61,6 +63,16 @@ Page({
     lobsterUrl: staticAssets.staticAssetUrl("openclaw-lobster.png"),
     aiImageBgUrl: staticAssets.staticAssetUrl("ai-image-bg.jpg"),
     aiVideoBgUrl: staticAssets.staticAssetUrl("ai-video-bg.jpg"),
+    homeVideoCovers: [
+      `${SERVER_STATIC_BASE}/home_covers/home-video-store-acquisition.jpg`,
+      `${SERVER_STATIC_BASE}/home_covers/home-video-product-seeding.jpg`,
+      `${SERVER_STATIC_BASE}/home_covers/home-video-factory-live.jpg`
+    ],
+    homeImageCovers: [
+      `${SERVER_STATIC_BASE}/home_covers/home-image-poster.jpg`,
+      `${SERVER_STATIC_BASE}/home_covers/home-image-ecommerce.jpg`,
+      `${SERVER_STATIC_BASE}/home_covers/home-image-social.jpg`
+    ],
     phoneBound: false,
     phone: "",
     accountText: "点击功能时授权",
@@ -558,8 +570,10 @@ Page({
     wx.navigateTo({ url: "/pages/assistant/assistant" });
   },
 
-  goVideoInspiration() {
-    wx.navigateTo({ url: "/pages/video-inspiration/video-inspiration" });
+  goVideoInspiration(evt) {
+    const idea = evt && evt.currentTarget ? (evt.currentTarget.dataset.idea || "") : "";
+    const suffix = idea ? `?idea=${encodeURIComponent(idea)}` : "";
+    wx.navigateTo({ url: `/pages/video-inspiration/video-inspiration${suffix}` });
   },
 
   goImageGenerate() {

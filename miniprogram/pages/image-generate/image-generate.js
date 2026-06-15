@@ -9,8 +9,24 @@ const CREDITS_PER_IMAGE = 60;
 const IMAGE_PENDING_KEY = "lobster_image_generate_pending_tasks";
 const IMAGE_CLAIM_MS = 5 * 60 * 1000;
 const IMAGE_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
+const SERVER_STATIC_BASE = "https://bhzn.top/client/miniprogram";
 
 const EXAMPLES = [
+  {
+    title: "门店获客",
+    image: `${SERVER_STATIC_BASE}/home_covers/home-video-store-acquisition.jpg`,
+    prompt: "竖屏9:16，真实自然的线下门店获客商业海报图。明亮有质感的本地门店内，店主微笑向顾客展示产品，旁边有手机支架正在拍摄短视频，货架和产品陈列干净高级。画面要像真实商业摄影，人物自然亲切，光线柔和明亮，适合实体店、本地生活、零售门店获客宣传。不要文字、不要logo、不要水印、不要夸张滤镜。"
+  },
+  {
+    title: "产品种草",
+    image: `${SERVER_STATIC_BASE}/home_covers/home-video-product-seeding.jpg`,
+    prompt: "竖屏9:16，真实自然的产品种草商业图片。年轻女性创作者在明亮家居工作室手持产品对镜头展示，桌面有精致产品陈列和手机拍摄设备，整体清新干净、真实可信，有高级生活方式摄影质感。突出人物、产品和使用场景，适合美妆、日化、数码、小家电种草。不要文字、不要logo、不要水印、不要杂乱背景。"
+  },
+  {
+    title: "工厂带货",
+    image: `${SERVER_STATIC_BASE}/home_covers/home-video-factory-live.jpg`,
+    prompt: "竖屏9:16，真实工厂带货获客商业图片。女主播站在干净现代的工厂车间里，手拿产品样品，前方有手机支架正在直播拍摄，背景能看到生产线、工人操作、整齐包装和库存。画面明亮专业、有信任感，突出源头工厂实力和产品样品，适合批发、代工、招商获客。不要文字、不要logo、不要水印、人物和产品不能变形。"
+  },
   {
     title: "鹿鹿",
     image: "https://images.unsplash.com/photo-1484406566174-9da000fda645?auto=format&fit=crop&w=320&q=80",
@@ -550,7 +566,8 @@ Page({
   },
 
   shuffleExamples() {
-    const rows = EXAMPLES.slice().sort(() => Math.random() - 0.5);
+    const featured = EXAMPLES.slice(0, 3);
+    const rows = featured.concat(EXAMPLES.slice(3).sort(() => Math.random() - 0.5));
     this.setData({ visibleExamples: rows });
   },
 
