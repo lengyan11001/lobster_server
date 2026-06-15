@@ -282,6 +282,23 @@ async def _comfly_multipart_request(
         return {"_raw_text": r.text}
 
 
+async def _yunwu_multipart_request(
+    url: str,
+    data: Dict[str, str],
+    files: List[Tuple[str, Tuple[Any, ...]]],
+    headers: Dict[str, str],
+    timeout: float,
+) -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(url, headers=headers, data=data, files=files)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Yunwu HTTP {r.status_code}: {(r.text or '')[:500]}")
+    try:
+        return r.json() if r.content else {}
+    except Exception:
+        return {"_raw_text": r.text}
+
+
 def _comfly_url(path: str, model: str = "") -> str:
     base, _ = get_comfly_config(_model_token_group(model))
     if not base:
@@ -316,6 +333,10 @@ def _yunwu_api_key() -> str:
 
 def _yunwu_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {_yunwu_api_key()}", "Accept": "application/json", "Content-Type": "application/json"}
+
+
+def _yunwu_auth_headers() -> Dict[str, str]:
+    return {"Authorization": f"Bearer {_yunwu_api_key()}", "Accept": "application/json"}
 
 
 def _is_retryable_image_error(exc: BaseException) -> bool:
@@ -374,13 +395,13 @@ def _openmind_image_body(source_body: Dict[str, Any]) -> Dict[str, Any]:
     body: Dict[str, Any] = {
         "model": (os.environ.get("OPENMIND_IMAGE_MODEL") or "gpt-image-2").strip() or "gpt-image-2",
         "prompt": prompt,
-        "size": str(
+        "size": _coerce_openmind_image_size(
             source_body.get("size")
             or source_body.get("image_size")
             or source_body.get("aspect_ratio")
             or source_body.get("ratio")
             or "1024x1024"
-        ).strip() or "1024x1024",
+        ),
         "n": int(source_body.get("n") or 1),
         "response_format": str(source_body.get("response_format") or "url").strip() or "url",
     }
@@ -763,6 +784,55 @@ def _coerce_video_size_from_ratio(raw: Any) -> str:
     return mapping.get(ratio, "720x1280")
 
 
+def _coerce_openmind_image_size(raw: Any) -> str:
+    value = str(raw or "").strip().lower().replace(" ", "")
+    if "x" in value:
+        parts = value.split("x", 1)
+        try:
+            width = int(parts[0])
+            height = int(parts[1])
+        except (TypeError, ValueError):
+            width = 0
+            height = 0
+        if width > 0 and height > 0:
+            if width % 16 == 0 and height % 16 == 0:
+                return f"{width}x{height}"
+    mapping = {
+        "1:1": "1024x1024",
+        "4:3": "1024x768",
+        "3:4": "768x1024",
+        "16:9": "1536x864",
+        "9:16": "864x1536",
+        "3:2": "1152x768",
+        "2:3": "768x1152",
+    }
+    return mapping.get(value, "1024x1024")
+
+
+def _coerce_image_edit_size(raw: Any) -> str:
+    value = str(raw or "").strip().lower().replace(" ", "")
+    if "x" in value:
+        parts = value.split("x", 1)
+        try:
+            width = int(parts[0])
+            height = int(parts[1])
+        except (TypeError, ValueError):
+            width = 0
+            height = 0
+        if width > 0 and height > 0:
+            return f"{width}x{height}"
+    mapping = {
+        "1:1": "1024x1024",
+        "4:3": "1440x1080",
+        "3:4": "1080x1440",
+        "16:9": "1920x1080",
+        "9:16": "1080x1920",
+        "3:2": "1440x960",
+        "2:3": "960x1440",
+    }
+    return mapping.get(value, "1024x1024")
+
+
 def _first_grok_reference(forwarded: Dict[str, Any]) -> str:
     images = forwarded.get("images")
     if isinstance(images, list):
@@ -775,6 +845,54 @@ def _first_grok_reference(forwarded: Dict[str, Any]) -> str:
         if value:
             return value
     return ""
+
+
+async def _reference_url_to_file_tuple(url: str) -> Tuple[str, bytes, str]:
+    data, media_type, ext = await _download_image_bytes(url)
+    filename = f"reference{ext or '.png'}"
+    return filename, data, media_type
+
+
+async def _build_image_edit_request_parts(
+    body: Dict[str, Any],
+    model: str,
+    entry: Dict[str, Any],
+    reference_urls: List[str],
+) -> Tuple[Dict[str, str], List[Tuple[str, Tuple[Any, ...]]]]:
+    forwarded = _body_for_upstream_model(body, model, entry)
+    prompt = str(forwarded.get("prompt") or body.get("prompt") or "").strip()
+    image_size = _coerce_image_edit_size(
+        forwarded.get("size")
+        or forwarded.get("image_size")
+        or forwarded.get("aspect_ratio")
+        or forwarded.get("ratio")
+        or body.get("size")
+        or body.get("image_size")
+        or body.get("aspect_ratio")
+        or body.get("ratio")
+        or "1024x1024"
+    )
+    try:
+        num_images = max(1, int(forwarded.get("num_images") or forwarded.get("n") or body.get("n") or 1))
+    except (TypeError, ValueError):
+        num_images = 1
+    data: Dict[str, str] = {
+        "model": _upstream_model(model, entry),
+        "prompt": prompt,
+        "size": image_size,
+        "n": str(num_images),
+    }
+    response_format = str(forwarded.get("response_format") or body.get("response_format") or "").strip()
+    if response_format:
+        data["response_format"] = response_format
+    files: List[Tuple[str, Tuple[Any, ...]]] = []
+    for index, ref in enumerate(reference_urls):
+        filename, raw, media_type = await _reference_url_to_file_tuple(ref)
+        field_name = "image" if index == 0 else "image[]"
+        files.append((field_name, (filename, raw, media_type)))
+    if not files:
+        raise RuntimeError("image edit request missing reference image")
+    return data, files
 
 
 def _build_comfly_grok15_multipart(
@@ -1154,13 +1272,36 @@ async def proxy_images_generations(
                     token_group=(entry.get("token_group") or ""),
                     refs=len(reference_urls),
                 )
-                resp = await _comfly_request(
-                    "POST",
-                    _comfly_url(endpoint_path, attempt_model),
-                    upstream_body,
-                    _comfly_headers(attempt_model),
-                    _TIMEOUT_IMAGE,
-                )
+                token_group = str(entry.get("token_group") or "").strip().lower()
+                if reference_urls:
+                    if token_group == "openmindapi":
+                        resp = await _openmind_image_request(upstream_body)
+                    else:
+                        edit_data, edit_files = await _build_image_edit_request_parts(body, attempt_model, entry, reference_urls)
+                        if token_group == "yunwu":
+                            resp = await _yunwu_multipart_request(
+                                f"{_yunwu_base_url()}/v1/images/edits",
+                                edit_data,
+                                edit_files,
+                                _yunwu_auth_headers(),
+                                _TIMEOUT_IMAGE,
+                            )
+                        else:
+                            resp = await _comfly_multipart_request(
+                                _comfly_url(endpoint_path, attempt_model),
+                                edit_data,
+                                edit_files,
+                                _comfly_auth_headers(attempt_model),
+                                _TIMEOUT_IMAGE,
+                            )
+                else:
+                    resp = await _comfly_request(
+                        "POST",
+                        _comfly_url(endpoint_path, attempt_model),
+                        upstream_body,
+                        _comfly_headers(attempt_model),
+                        _TIMEOUT_IMAGE,
+                    )
                 saved_assets = await _save_generated_images_best_effort(
                     db,
                     user_id=billing_user.id,
