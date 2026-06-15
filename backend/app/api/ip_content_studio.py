@@ -180,6 +180,146 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "path": "/api/v1/wechat_channels/fetch_home_page",
         "allowed_body": {"username", "last_buffer"},
     },
+    "linkedin_user_profile": {
+        "platform": "linkedin",
+        "source_type": "user_profile",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_user_profile",
+        "allowed_params": {"username"},
+    },
+    "linkedin_user_posts": {
+        "platform": "linkedin",
+        "source_type": "user_post",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_user_posts",
+        "allowed_params": {"username"},
+    },
+    "linkedin_user_comments": {
+        "platform": "linkedin",
+        "source_type": "user_comment",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_user_comments",
+        "allowed_params": {"username"},
+    },
+    "linkedin_user_contact_info": {
+        "platform": "linkedin",
+        "source_type": "user_contact",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_user_contact_info",
+        "allowed_params": {"username"},
+    },
+    "linkedin_user_follow_count": {
+        "platform": "linkedin",
+        "source_type": "user_follow_count",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_user_follower_and_connection_count",
+        "allowed_params": {"username"},
+    },
+    "linkedin_user_experiences": {
+        "platform": "linkedin",
+        "source_type": "user_experience",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_user_experiences",
+        "allowed_params": {"username"},
+    },
+    "linkedin_user_skills": {
+        "platform": "linkedin",
+        "source_type": "user_skill",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_user_skills",
+        "allowed_params": {"username"},
+    },
+    "linkedin_user_recent_activity": {
+        "platform": "linkedin",
+        "source_type": "user_recent_activity",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_user_recent_activity",
+        "allowed_params": {"username"},
+    },
+    "linkedin_discovery_user": {
+        "platform": "linkedin",
+        "source_type": "discovery_user",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_discovery_relevant_to_user",
+        "allowed_params": {"username"},
+    },
+    "linkedin_company_profile": {
+        "platform": "linkedin",
+        "source_type": "company_profile",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_company_profile",
+        "allowed_params": {"universal_name"},
+    },
+    "linkedin_company_employees": {
+        "platform": "linkedin",
+        "source_type": "company_employee",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_company_employees",
+        "allowed_params": {"universal_name"},
+    },
+    "linkedin_company_posts": {
+        "platform": "linkedin",
+        "source_type": "company_post",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_company_posts",
+        "allowed_params": {"universal_name"},
+    },
+    "linkedin_company_similar": {
+        "platform": "linkedin",
+        "source_type": "company_similar",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_company_similar_companies",
+        "allowed_params": {"universal_name"},
+    },
+    "linkedin_company_competitors": {
+        "platform": "linkedin",
+        "source_type": "company_competitor",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_company_competitors",
+        "allowed_params": {"universal_name"},
+    },
+    "linkedin_discovery_company": {
+        "platform": "linkedin",
+        "source_type": "discovery_company",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_discovery_relevant_to_company",
+        "allowed_params": {"universal_name"},
+    },
+    "linkedin_search_users": {
+        "platform": "linkedin",
+        "source_type": "user_search",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/search_users",
+        "allowed_params": {"keywords"},
+    },
+    "linkedin_hashtag_feed": {
+        "platform": "linkedin",
+        "source_type": "hashtag_feed",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_hashtag_feed",
+        "allowed_params": {"hashtag"},
+    },
+    "linkedin_post_detail": {
+        "platform": "linkedin",
+        "source_type": "post_detail",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_post_detail",
+        "allowed_params": {"post_urn"},
+    },
+    "linkedin_post_comments": {
+        "platform": "linkedin",
+        "source_type": "post_comment",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_post_comments",
+        "allowed_params": {"post_urn"},
+    },
+    "linkedin_post_reactions": {
+        "platform": "linkedin",
+        "source_type": "post_reaction",
+        "method": "GET",
+        "path": "/api/v1/linkedin/web_v2/get_post_reactions",
+        "allowed_params": {"post_urn"},
+    },
 }
 
 
@@ -1277,6 +1417,7 @@ async def _execute_query_with_retry(
     save_items: bool = True,
     meta: Optional[dict[str, Any]] = None,
     attempts: int = 3,
+    include_raw_response: bool = False,
 ) -> dict[str, Any]:
     last_result: dict[str, Any] = {}
     attempts = max(1, int(attempts or 1))
@@ -1290,6 +1431,7 @@ async def _execute_query_with_retry(
                 body=body,
                 save_items=save_items,
                 meta={**(meta or {}), "attempt": idx + 1, "attempts": attempts},
+                include_raw_response=include_raw_response,
             )
         except HTTPException as exc:
             if idx >= attempts - 1 or not _retryable_http_exception(exc):

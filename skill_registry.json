@@ -870,6 +870,65 @@
         "competitor"
       ]
     },
+    "linkedin_mining_skill": {
+      "name": "LinkedIn\u7ebf\u7d22\u6316\u6398",
+      "description": "\u8f93\u5165LinkedIn\u4e2a\u4eba\u4e3b\u9875\u3001\u516c\u53f8\u4e3b\u9875\u3001\u5173\u952e\u8bcd\u6216\u8bdd\u9898\uff0c\u670d\u52a1\u7aef\u901a\u8fc7TikHub\u540c\u6b65\u753b\u50cf\u3001\u52a8\u6001\u3001\u5458\u5de5\u3001\u76f8\u4f3c\u516c\u53f8\u548c\u4e92\u52a8\u6570\u636e\uff0c\u751f\u6210\u53ef\u7ee7\u7eed\u6267\u884c\u7684\u7ebf\u7d22\u5206\u6790\u62a5\u544a\u3002",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "view": "linkedin-mining",
+        "server_proxy": true,
+        "query_recorded": true,
+        "platform": "linkedin"
+      },
+      "capabilities": {
+        "linkedin.mining.pipeline": {
+          "description": "Server-side LinkedIn lead mining pipeline with TikHub proxy, retry/resume, step outputs, candidate scoring and LLM summary report.",
+          "upstream": "server",
+          "upstream_tool": "linkedin_mining",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "seed_profile_urls": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "seed_company_urls": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "keywords": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "hashtags": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "target_profile": {
+                "type": "string"
+              },
+              "memory_docs": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "max_people": {
+                "type": "integer",
+                "default": 30,
+                "minimum": 5,
+                "maximum": 80
+              }
+            }
+          }
+        }
+      },
+      "tags": ["TikHub", "LinkedIn", "B2B", "lead-mining", "report"]
+    },
     "create_video_pipeline_skill": {
       "name": "\u901f\u63a8\u89c6\u9891\u5236\u4f5c",
       "description": "\u6839\u636e\u63d0\u793a\u8bcd\u89c4\u5212\u5206\u955c\uff0c\u8c03\u7528\u901f\u63a8 gpt-image-2 \u751f\u6210\u9996\u5e27\uff0c\u518d\u8c03\u7528 Veo 3.1 \u56fe\u751f\u89c6\u9891\u3002\u5165\u53e3\u548c\u6743\u9650\u7531\u670d\u52a1\u5668\u63a7\u5236\uff0conline \u53ea\u8d1f\u8d23\u672c\u673a\u6267\u884c\u3002",
