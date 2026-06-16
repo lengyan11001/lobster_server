@@ -343,6 +343,41 @@ def _profile_name_from_raw(raw: Any) -> str:
     return _clean_text(name, 255)
 
 
+def _string_list(value: Any, limit: int = 8) -> list[str]:
+    raw = value if isinstance(value, list) else ([value] if value not in (None, "") else [])
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, dict):
+            text = _clean_long_text(_first_lookup(item, ("url", "value", "text", "phone", "number", "address")) or item, 1000)
+        else:
+            text = _clean_long_text(item, 1000)
+        if text and text not in out:
+            out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _contact_payload(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    websites = _string_list(_lookup(raw, "websites") or _lookup(raw, "website") or _lookup(raw, "website_url"))
+    phone_numbers = _string_list(_lookup(raw, "phone_numbers") or _lookup(raw, "phone") or _lookup(raw, "phoneNumbers"))
+    email = _clean_text(_lookup(raw, "email") or _lookup(raw, "email_address") or _lookup(raw, "emailAddress"), 255)
+    wechat = _clean_text(_lookup(raw, "wechat") or _lookup(raw, "weixin"), 255)
+    twitter = _string_list(_lookup(raw, "twitter") or _lookup(raw, "twitter_handles"))
+    address = _clean_long_text(_lookup(raw, "address"), 1000)
+    out = {
+        "email": email,
+        "websites": websites,
+        "phone_numbers": phone_numbers,
+        "wechat": wechat,
+        "twitter": twitter,
+        "address": address,
+    }
+    return {k: v for k, v in out.items() if v not in ("", [], {}, None)}
+
+
 def _brief_text(value: Any, limit: int = 500) -> str:
     if isinstance(value, dict):
         for key in ("text", "commentary", "description", "summary", "headline", "title", "content"):
@@ -412,11 +447,13 @@ def _normalize_candidate_from_row(row: TikHubSourceItem) -> Optional[dict[str, A
     headline = _lookup(body, "headline") or _lookup(body, "occupation") or row.description or ""
     company = _lookup(body, "company_name") or _lookup(body, "current_company.name") or _lookup(body, "company.name") or ""
     url = row.public_url or _lookup(body, "url") or _lookup(body, "profile_url") or ""
+    contact = _contact_payload(body)
     return {
         "candidate_key": _clean_text(key, 191),
         "name": _clean_text(name, 255),
         "headline": _clean_long_text(headline, 600),
         "company": _clean_text(company, 255),
+        "contact": contact,
         "source_type": row.source_type,
         "source_reason": meta.get("source_reason") or meta.get("source") or row.source_type,
         "url": _clean_long_text(url, 1000),
@@ -444,6 +481,18 @@ def _merge_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for field in ("name", "headline", "company", "url"):
             if not cur.get(field) and item.get(field):
                 cur[field] = item[field]
+        if item.get("contact"):
+            cur_contact = cur.setdefault("contact", {})
+            for key, value in (item.get("contact") or {}).items():
+                if not value:
+                    continue
+                if isinstance(value, list):
+                    cur_contact.setdefault(key, [])
+                    for entry in value:
+                        if entry not in cur_contact[key]:
+                            cur_contact[key].append(entry)
+                elif not cur_contact.get(key):
+                    cur_contact[key] = value
         existing_evidence = {str(x.get("source_item_id") or "") for x in cur.get("evidence") or [] if isinstance(x, dict)}
         for ev in item.get("evidence") or []:
             ev_id = str(ev.get("source_item_id") or "")
@@ -464,11 +513,13 @@ def _candidate_from_raw(raw: Any, *, source_type: str, source_reason: str) -> Op
     headline = _lookup(body, "headline") or _lookup(body, "occupation") or _lookup(body, "summary") or ""
     company = _lookup(body, "company_name") or _lookup(body, "current_company.name") or _lookup(body, "company.name") or ""
     url = _lookup(body, "url") or _lookup(body, "profile_url") or _lookup(body, "public_profile_url") or ""
+    contact = _contact_payload(body)
     return {
         "candidate_key": _clean_text(key or name, 191),
         "name": _clean_text(name or key, 255),
         "headline": _clean_long_text(headline, 600),
         "company": _clean_text(company, 255),
+        "contact": contact,
         "source_type": source_type,
         "source_reason": source_reason,
         "url": _clean_long_text(url, 1000),
@@ -620,7 +671,10 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                         params={"username": username},
                         meta={"source": "seed_profile", "source_reason": f"种子用户 {username}"},
                     )
-                    outputs.append({"username": username, "query_type": query_type, "ok": result.get("ok"), "query_id": (result.get("query") or {}).get("query_id")})
+                    item = {"username": username, "query_type": query_type, "ok": result.get("ok"), "query_id": (result.get("query") or {}).get("query_id")}
+                    if query_type == "linkedin_user_contact_info":
+                        item["contact"] = _contact_payload(_first_raw_entry(result))
+                    outputs.append(item)
                 if urn:
                     for query_type in ("linkedin_user_experiences", "linkedin_user_skills", "linkedin_user_about"):
                         result = await _run_query_step(

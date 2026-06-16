@@ -696,6 +696,24 @@ def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
     return []
 
 
+def _single_item_from_payload(payload: Any, source_type: str) -> list[Any]:
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return []
+    if source_type in {
+        "user_profile",
+        "user_contact",
+        "user_follow_count",
+        "user_about",
+        "company_profile",
+        "post_detail",
+    }:
+        return [data]
+    return []
+
+
 def _response_code(payload: Any) -> Optional[int]:
     if not isinstance(payload, dict):
         return None
@@ -1548,6 +1566,8 @@ async def _execute_query(
     ok_code = code is None or code in {0, 1, 200}
     success = 200 <= int(http_status) < 300 and ok_code and success_flag is not False
     raw_items = _collect_items(payload)
+    if success and not raw_items:
+        raw_items = _single_item_from_payload(payload, str(spec.get("source_type") or ""))
     saved_items: list[TikHubSourceItem] = []
     if success and save_items and raw_items:
         saved_items = _persist_items(
