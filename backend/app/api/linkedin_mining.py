@@ -214,6 +214,105 @@ def _post_urn(raw: Any) -> str:
     return _clean_text(value, 255)
 
 
+def _first_lookup(raw: Any, paths: tuple[str, ...]) -> Any:
+    if not isinstance(raw, dict):
+        return None
+    for path in paths:
+        value = _lookup(raw, path)
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _extract_linkedin_urn(raw: Any) -> str:
+    value = _first_lookup(
+        raw,
+        (
+            "urn",
+            "entityUrn",
+            "entity_urn",
+            "profile_urn",
+            "objectUrn",
+            "member_urn",
+            "profile.urn",
+            "mini_profile.urn",
+            "data.urn",
+            "data.entityUrn",
+        ),
+    )
+    return _clean_text(value, 255)
+
+
+def _extract_company_id(raw: Any) -> str:
+    value = _first_lookup(
+        raw,
+        (
+            "company_id",
+            "companyId",
+            "id",
+            "company.id",
+            "data.company_id",
+            "data.companyId",
+            "data.id",
+            "urn",
+            "entityUrn",
+        ),
+    )
+    text = _clean_text(value, 255)
+    if not text:
+        return ""
+    match = re.search(r"\d{3,}", text)
+    return match.group(0) if match else text
+
+
+def _post_id(raw: Any) -> str:
+    value = _first_lookup(
+        raw,
+        (
+            "post_id",
+            "postId",
+            "id",
+            "activity_id",
+            "activityId",
+            "activity",
+            "urn",
+            "entity_urn",
+            "entityUrn",
+            "activity_urn",
+            "update_urn",
+        ),
+    )
+    text = _clean_text(value, 255)
+    if not text:
+        return ""
+    match = re.search(r"urn:li:(?:activity|ugcPost|share):([^,\s]+)", text)
+    return match.group(1) if match else text
+
+
+def _first_raw_entry(result: dict[str, Any]) -> dict[str, Any]:
+    for item in _raw_entries_from_query_result(result):
+        if isinstance(item, dict):
+            return item
+    raw = result.get("raw_response")
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
+def _ensure_meta_map(row: CreativeGenerationJob, key: str) -> dict[str, Any]:
+    meta = _meta(row)
+    value = meta.get(key)
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
+
+
+def _save_meta_map(row: CreativeGenerationJob, key: str, value: dict[str, Any]) -> None:
+    meta = _meta(row)
+    meta[key] = _jsonable(value)
+    _set_meta(row, meta)
+
+
 def _profile_key_from_raw(raw: Any) -> str:
     if not isinstance(raw, dict):
         return ""
@@ -221,9 +320,15 @@ def _profile_key_from_raw(raw: Any) -> str:
         _lookup(raw, "username")
         or _lookup(raw, "public_identifier")
         or _lookup(raw, "publicIdentifier")
+        or _lookup(raw, "public_id")
+        or _lookup(raw, "profile_id")
         or _lookup(raw, "mini_profile.public_identifier")
         or _lookup(raw, "profile.public_identifier")
+        or _lookup(raw, "miniProfile.publicIdentifier")
+        or _lookup(raw, "profile.publicIdentifier")
         or _lookup(raw, "entity_urn")
+        or _lookup(raw, "entityUrn")
+        or _lookup(raw, "member_urn")
         or _lookup(raw, "urn")
     )
     return _clean_text(value, 191)
@@ -411,7 +516,7 @@ async def _run_query_step(
     params: dict[str, Any],
     meta: dict[str, Any],
     save_items: bool = True,
-    attempts: int = 3,
+    attempts: int = 5,
 ) -> dict[str, Any]:
     result = await _execute_query_with_retry(
         db=db,
@@ -428,10 +533,14 @@ async def _run_query_step(
         "linkedin_user_profile",
         "linkedin_user_posts",
         "linkedin_user_comments",
+        "linkedin_user_reactions",
         "linkedin_user_recent_activity",
         "linkedin_discovery_user",
         "linkedin_company_employees",
+        "linkedin_company_jobs",
         "linkedin_search_users",
+        "linkedin_search_posts",
+        "linkedin_hashtag_feed",
         "linkedin_post_comments",
         "linkedin_post_reactions",
     }:
@@ -485,8 +594,23 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
     try:
         if step_key == "seed_profiles":
             outputs = []
+            user_refs = _ensure_meta_map(row, "linkedin_user_refs")
             for username in req.get("seed_usernames") or []:
-                for query_type in ("linkedin_user_profile", "linkedin_user_contact_info", "linkedin_user_follow_count", "linkedin_user_experiences", "linkedin_user_skills"):
+                profile = await _run_query_step(
+                    db=db,
+                    current_user=current_user,
+                    job=row,
+                    step_key=step_key,
+                    query_type="linkedin_user_profile",
+                    params={"username": username},
+                    meta={"source": "seed_profile", "source_reason": f"种子用户 {username}"},
+                )
+                urn = _extract_linkedin_urn(_first_raw_entry(profile))
+                if urn:
+                    user_refs[username] = {"urn": urn}
+                    _save_meta_map(row, "linkedin_user_refs", user_refs)
+                outputs.append({"username": username, "query_type": "linkedin_user_profile", "ok": profile.get("ok"), "urn": urn, "query_id": (profile.get("query") or {}).get("query_id")})
+                for query_type in ("linkedin_user_contact_info", "linkedin_user_follow_count"):
                     result = await _run_query_step(
                         db=db,
                         current_user=current_user,
@@ -497,62 +621,103 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                         meta={"source": "seed_profile", "source_reason": f"种子用户 {username}"},
                     )
                     outputs.append({"username": username, "query_type": query_type, "ok": result.get("ok"), "query_id": (result.get("query") or {}).get("query_id")})
+                if urn:
+                    for query_type in ("linkedin_user_experiences", "linkedin_user_skills", "linkedin_user_about"):
+                        result = await _run_query_step(
+                            db=db,
+                            current_user=current_user,
+                            job=row,
+                            step_key=step_key,
+                            query_type=query_type,
+                            params={"urn": urn, "page": 1},
+                            meta={"source": "seed_profile", "source_reason": f"种子用户 {username}"},
+                        )
+                        outputs.append({"username": username, "query_type": query_type, "ok": result.get("ok"), "query_id": (result.get("query") or {}).get("query_id")})
+                else:
+                    outputs.append({"username": username, "query_type": "urn_dependent_profile_queries", "ok": False, "skipped": True, "reason": "missing urn"})
             _append_output(row, step_key=step_key, title="种子用户画像", kind="profile", data=outputs)
             _mark_step(row, step_key, "completed", detail=f"已完成 {len(outputs)} 次画像查询", result={"queries": outputs})
 
         elif step_key == "seed_activity":
             outputs = []
-            post_urns: list[str] = []
+            post_ids: list[str] = []
+            user_refs = _ensure_meta_map(row, "linkedin_user_refs")
             for username in req.get("seed_usernames") or []:
-                for query_type in ("linkedin_user_posts", "linkedin_user_comments", "linkedin_user_recent_activity"):
+                ref = user_refs.get(username) if isinstance(user_refs.get(username), dict) else {}
+                urn = _clean_text(ref.get("urn") if isinstance(ref, dict) else "", 255)
+                if not urn:
+                    profile = await _run_query_step(
+                        db=db,
+                        current_user=current_user,
+                        job=row,
+                        step_key=step_key,
+                        query_type="linkedin_user_profile",
+                        params={"username": username},
+                        meta={"source": "seed_activity", "source_reason": f"种子用户 {username}"},
+                    )
+                    urn = _extract_linkedin_urn(_first_raw_entry(profile))
+                    if urn:
+                        user_refs[username] = {"urn": urn}
+                        _save_meta_map(row, "linkedin_user_refs", user_refs)
+                if not urn:
+                    outputs.append({"username": username, "ok": False, "skipped": True, "reason": "missing urn"})
+                    continue
+                for query_type in ("linkedin_user_posts", "linkedin_user_comments", "linkedin_user_reactions"):
                     result = await _run_query_step(
                         db=db,
                         current_user=current_user,
                         job=row,
                         step_key=step_key,
                         query_type=query_type,
-                        params={"username": username},
+                        params={"urn": urn, "page": 1},
                         meta={"source": "seed_activity", "source_reason": f"种子用户动态 {username}"},
                     )
                     raw = result.get("raw_response")
                     for item in _collect_raw_items(raw)[:6]:
-                        urn = _post_urn(item)
-                        if urn and urn not in post_urns:
-                            post_urns.append(urn)
+                        post_id = _post_id(item)
+                        if post_id and post_id not in post_ids:
+                            post_ids.append(post_id)
                     outputs.append({"username": username, "query_type": query_type, "ok": result.get("ok"), "query_id": (result.get("query") or {}).get("query_id")})
             meta = _meta(row)
-            meta["post_urns"] = post_urns[:12]
+            meta["post_ids"] = post_ids[:12]
             _set_meta(row, meta)
-            _append_output(row, step_key=step_key, title="种子用户动态", kind="activity", data={"queries": outputs, "post_urns": post_urns[:12]})
-            _mark_step(row, step_key, "completed", detail=f"已同步动态，发现 {len(post_urns[:12])} 个可追踪帖子", result={"queries": outputs, "post_urns": post_urns[:12]})
+            _append_output(row, step_key=step_key, title="种子用户动态", kind="activity", data={"queries": outputs, "post_ids": post_ids[:12]})
+            _mark_step(row, step_key, "completed", detail=f"已同步动态，发现 {len(post_ids[:12])} 个可追踪帖子", result={"queries": outputs, "post_ids": post_ids[:12]})
 
         elif step_key == "discovery_users":
+            outputs = [{"skipped": True, "reason": "TikHub old LinkedIn web API has no stable user discovery endpoint; use keyword/company/post interaction sources instead."}]
+            _append_output(row, step_key=step_key, title="基于用户发现候选人", kind="candidates", data=outputs)
+            _mark_step(row, step_key, "skipped", detail="老 LinkedIn web 接口无稳定推荐用户接口，已跳过", result={"queries": outputs})
+
+        elif step_key == "company_profiles":
             outputs = []
-            for username in req.get("seed_usernames") or []:
-                result = await _run_query_step(
+            company_refs = _ensure_meta_map(row, "linkedin_company_refs")
+            for company in req.get("seed_companies") or []:
+                profile = await _run_query_step(
                     db=db,
                     current_user=current_user,
                     job=row,
                     step_key=step_key,
-                    query_type="linkedin_discovery_user",
-                    params={"username": username},
-                    meta={"source": "discovery_user", "source_reason": f"基于种子用户推荐 {username}"},
+                    query_type="linkedin_company_profile",
+                    params={"company": company},
+                    meta={"source": "company_profile", "source_reason": f"种子公司 {company}"},
                 )
-                outputs.append({"username": username, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
-            _append_output(row, step_key=step_key, title="基于用户发现候选人", kind="candidates", data=outputs)
-            _mark_step(row, step_key, "completed", detail=f"已完成 {len(outputs)} 个种子用户推荐", result={"queries": outputs})
-
-        elif step_key == "company_profiles":
-            outputs = []
-            for company in req.get("seed_companies") or []:
-                for query_type in ("linkedin_company_profile", "linkedin_company_posts"):
+                company_id = _extract_company_id(_first_raw_entry(profile))
+                if company_id:
+                    company_refs[company] = {"company_id": company_id}
+                    _save_meta_map(row, "linkedin_company_refs", company_refs)
+                outputs.append({"company": company, "query_type": "linkedin_company_profile", "ok": profile.get("ok"), "company_id": company_id, "query_id": (profile.get("query") or {}).get("query_id")})
+                if not company_id:
+                    outputs.append({"company": company, "query_type": "company_id_dependent_queries", "ok": False, "skipped": True, "reason": "missing company_id"})
+                    continue
+                for query_type in ("linkedin_company_posts", "linkedin_company_jobs"):
                     result = await _run_query_step(
                         db=db,
                         current_user=current_user,
                         job=row,
                         step_key=step_key,
                         query_type=query_type,
-                        params={"universal_name": company},
+                        params={"company_id": company_id, "page": 1},
                         meta={"source": "company_profile", "source_reason": f"种子公司 {company}"},
                     )
                     outputs.append({"company": company, "query_type": query_type, "ok": result.get("ok"), "query_id": (result.get("query") or {}).get("query_id")})
@@ -561,18 +726,37 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
 
         elif step_key == "company_people":
             outputs = []
+            company_refs = _ensure_meta_map(row, "linkedin_company_refs")
             for company in req.get("seed_companies") or []:
-                for query_type in ("linkedin_company_employees", "linkedin_discovery_company", "linkedin_company_similar", "linkedin_company_competitors"):
-                    result = await _run_query_step(
+                ref = company_refs.get(company) if isinstance(company_refs.get(company), dict) else {}
+                company_id = _clean_text(ref.get("company_id") if isinstance(ref, dict) else "", 255)
+                if not company_id:
+                    profile = await _run_query_step(
                         db=db,
                         current_user=current_user,
                         job=row,
                         step_key=step_key,
-                        query_type=query_type,
-                        params={"universal_name": company},
-                        meta={"source": "company_people", "source_reason": f"公司扩展 {company}"},
+                        query_type="linkedin_company_profile",
+                        params={"company": company},
+                        meta={"source": "company_people", "source_reason": f"种子公司 {company}"},
                     )
-                    outputs.append({"company": company, "query_type": query_type, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
+                    company_id = _extract_company_id(_first_raw_entry(profile))
+                    if company_id:
+                        company_refs[company] = {"company_id": company_id}
+                        _save_meta_map(row, "linkedin_company_refs", company_refs)
+                if not company_id:
+                    outputs.append({"company": company, "ok": False, "skipped": True, "reason": "missing company_id"})
+                    continue
+                result = await _run_query_step(
+                    db=db,
+                    current_user=current_user,
+                    job=row,
+                    step_key=step_key,
+                    query_type="linkedin_company_employees",
+                    params={"company_id": company_id, "page": 1},
+                    meta={"source": "company_people", "source_reason": f"公司扩展 {company}"},
+                )
+                outputs.append({"company": company, "query_type": "linkedin_company_employees", "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
             _append_output(row, step_key=step_key, title="公司员工与相似公司", kind="candidates", data=outputs)
             _mark_step(row, step_key, "completed", detail=f"已完成 {len(outputs)} 次公司扩展", result={"queries": outputs})
 
@@ -585,7 +769,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                     job=row,
                     step_key=step_key,
                     query_type="linkedin_search_users",
-                    params={"keywords": keyword},
+                    params={"name": keyword, "page": 1},
                     meta={"source": "keyword_search", "source_reason": f"关键词搜索 {keyword}"},
                 )
                 outputs.append({"keyword": keyword, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
@@ -594,7 +778,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
 
         elif step_key == "hashtag_feed":
             outputs = []
-            post_urns: list[str] = []
+            post_ids: list[str] = []
             for hashtag in req.get("hashtags") or []:
                 tag = hashtag.lstrip("#")
                 result = await _run_query_step(
@@ -603,19 +787,19 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                     job=row,
                     step_key=step_key,
                     query_type="linkedin_hashtag_feed",
-                    params={"hashtag": tag},
+                    params={"keyword": tag, "page": 1},
                     meta={"source": "hashtag_feed", "source_reason": f"话题 #{tag}"},
                 )
                 raw = result.get("raw_response")
                 for item in _collect_raw_items(raw)[:8]:
-                    urn = _post_urn(item)
-                    if urn and urn not in post_urns:
-                        post_urns.append(urn)
+                    post_id = _post_id(item)
+                    if post_id and post_id not in post_ids:
+                        post_ids.append(post_id)
                 outputs.append({"hashtag": tag, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
             interaction_outputs = []
             limit = int(req.get("max_interactions_per_post") or 0)
             if limit > 0:
-                for urn in post_urns[:8]:
+                for post_id in post_ids[:8]:
                     for query_type in ("linkedin_post_comments", "linkedin_post_reactions"):
                         result = await _run_query_step(
                             db=db,
@@ -623,11 +807,11 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                             job=row,
                             step_key=step_key,
                             query_type=query_type,
-                            params={"post_urn": urn},
-                            meta={"source": "post_interaction", "source_reason": f"话题帖子互动 {urn}"},
+                            params={"post_id": post_id, "page": 1},
+                            meta={"source": "post_interaction", "source_reason": f"话题帖子互动 {post_id}"},
                         )
-                        interaction_outputs.append({"post_urn": urn, "query_type": query_type, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
-            data = {"hashtag_queries": outputs, "post_urns": post_urns[:8], "interaction_queries": interaction_outputs}
+                        interaction_outputs.append({"post_id": post_id, "query_type": query_type, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
+            data = {"hashtag_queries": outputs, "post_ids": post_ids[:8], "interaction_queries": interaction_outputs}
             _append_output(row, step_key=step_key, title="话题内容与互动人群", kind="interactions", data=data)
             _mark_step(row, step_key, "completed", detail=f"已同步 {len(outputs)} 个话题，追踪 {len(interaction_outputs)} 次互动", result=data)
 
@@ -639,7 +823,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                 if isinstance(item, dict):
                     candidates.append(item)
             for source_row in rows:
-                if source_row.source_type in {"user_search", "company_employee", "discovery_user", "post_comment", "post_reaction", "user_profile", "user_recent_activity"}:
+                if source_row.source_type in {"user_search", "company_employee", "company_job", "discovery_user", "post_comment", "post_reaction", "user_profile", "user_recent_activity", "user_reaction", "search_post", "hashtag_feed"}:
                     c = _normalize_candidate_from_row(source_row)
                     if c:
                         candidates.append(c)
