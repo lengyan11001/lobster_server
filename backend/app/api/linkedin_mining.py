@@ -378,6 +378,58 @@ def _contact_payload(raw: Any) -> dict[str, Any]:
     return {k: v for k, v in out.items() if v not in ("", [], {}, None)}
 
 
+def _has_contact(item: dict[str, Any]) -> bool:
+    contact = item.get("contact") if isinstance(item.get("contact"), dict) else {}
+    return any(contact.get(key) for key in ("email", "websites", "phone_numbers", "wechat", "twitter", "address"))
+
+
+def _candidate_next_action(item: dict[str, Any]) -> str:
+    contact = item.get("contact") if isinstance(item.get("contact"), dict) else {}
+    if contact.get("email"):
+        return "优先邮件触达，结合其职位/发帖证据写一封短邮件。"
+    if contact.get("websites"):
+        return "先访问公开网站或个人主页，补充公司/业务背景后再触达。"
+    if contact.get("phone_numbers") or contact.get("wechat"):
+        return "可直接人工触达，先确认身份和业务相关性。"
+    if item.get("url"):
+        return "先打开 LinkedIn 主页核对背景，再通过站内互动或其他公开渠道补联系方式。"
+    return "先保留为待补充线索，后续用公司/关键词继续扩展公开联系方式。"
+
+
+def _lead_summary_payload(candidates: list[dict[str, Any]], rows: list[TikHubSourceItem]) -> dict[str, Any]:
+    contact_count = sum(1 for item in candidates if isinstance(item, dict) and _has_contact(item))
+    source_counts: dict[str, int] = {}
+    for row in rows:
+        source_counts[row.source_type] = source_counts.get(row.source_type, 0) + 1
+    top_leads = []
+    for item in candidates[:30]:
+        if not isinstance(item, dict):
+            continue
+        top_leads.append(
+            {
+                "rank": item.get("rank"),
+                "score": item.get("score"),
+                "name": item.get("name") or item.get("candidate_key") or "",
+                "headline": item.get("headline") or "",
+                "company": item.get("company") or "",
+                "url": item.get("url") or "",
+                "contact": item.get("contact") or {},
+                "source_reason": item.get("source_reason") or "",
+                "evidence_count": len(item.get("evidence") or []),
+                "next_action": _candidate_next_action(item),
+            }
+        )
+    return {
+        "summary": {
+            "candidate_count": len(candidates),
+            "with_public_contact": contact_count,
+            "source_rows": len(rows),
+            "source_counts": source_counts,
+        },
+        "top_leads": top_leads,
+    }
+
+
 def _brief_text(value: Any, limit: int = 500) -> str:
     if isinstance(value, dict):
         for key in ("text", "commentary", "description", "summary", "headline", "title", "content"):
@@ -885,8 +937,9 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
             for idx, item in enumerate(merged, start=1):
                 item["score"] = max(20, min(98, 45 + len(item.get("evidence") or []) * 12 + (8 if item.get("headline") else 0) + (8 if item.get("company") else 0)))
                 item["rank"] = idx
-            payload = {"total_source_rows": len(rows), "candidates": merged}
-            row.result_payload = {**(row.result_payload or {}), "candidates": merged}
+            lead_summary = _lead_summary_payload(merged, rows)
+            payload = {"total_source_rows": len(rows), "candidates": merged, "lead_summary": lead_summary}
+            row.result_payload = {**(row.result_payload or {}), "candidates": merged, "lead_summary": lead_summary}
             _append_output(row, step_key=step_key, title="候选人归并评分", kind="candidates", data=payload)
             _mark_step(row, step_key, "completed", detail=f"已归并 {len(merged)} 个候选人", result={"candidate_count": len(merged)})
 
@@ -920,6 +973,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
 async def _generate_summary_report(row: CreativeGenerationJob, current_user: User, db: Session) -> dict[str, Any]:
     req = row.request_payload or {}
     candidates = (row.result_payload or {}).get("candidates") if isinstance(row.result_payload, dict) else []
+    lead_summary = (row.result_payload or {}).get("lead_summary") if isinstance(row.result_payload, dict) else {}
     rows = _query_rows_for_job(db, row.user_id, row.job_id)
     source_briefs = []
     for source_row in rows[:80]:
@@ -934,11 +988,15 @@ async def _generate_summary_report(row: CreativeGenerationJob, current_user: Use
         )
     memories = _memory_payload_from_docs(req.get("memory_docs") or [], content_limit=1600)
     system_prompt = (
-        "你是LinkedIn B2B社媒线索挖掘分析师。根据TikHub已抓取的数据，输出可执行的中文分析报告。"
-        "只基于输入数据做判断；不能声称已完成点赞、关注、私信或加好友。"
+        "你是LinkedIn B2B公开线索挖掘分析师。根据TikHub已抓取的数据，输出给业务人员直接使用的中文报告。"
+        "报告目标不是解释接口数据，而是帮助用户决定先跟进谁、为什么跟进、从哪个公开联系方式或公开主页开始。"
+        "必须优先整理：可跟进线索列表、公开联系方式状态、推荐触达动作、判断依据和数据限制。"
+        "只基于输入数据做判断；不能声称已完成点赞、关注、私信、加好友或获取非公开联系方式。"
         "返回严格JSON，格式："
-        "{\"executive_summary\":\"\",\"target_profile\":\"\",\"candidate_segments\":[{\"name\":\"\",\"reason\":\"\",\"people\":[\"\"]}],"
-        "\"priority_leads\":[{\"name\":\"\",\"company\":\"\",\"score\":0,\"why\":\"\",\"opening_line\":\"\"}],"
+        "{\"executive_summary\":\"\",\"lead_overview\":{\"candidate_count\":0,\"with_public_contact\":0,\"recommendation\":\"\"},"
+        "\"contact_list\":[{\"name\":\"\",\"role\":\"\",\"company\":\"\",\"contact\":\"\",\"source\":\"\",\"next_action\":\"\"}],"
+        "\"priority_leads\":[{\"name\":\"\",\"company\":\"\",\"score\":0,\"why\":\"\",\"contact_status\":\"\",\"opening_line\":\"\",\"next_step\":\"\"}],"
+        "\"candidate_segments\":[{\"name\":\"\",\"reason\":\"\",\"people\":[\"\"]}],"
         "\"relationship_map\":[{\"from\":\"\",\"to\":\"\",\"relation\":\"\",\"evidence\":\"\"}],"
         "\"next_actions\":[\"\"],\"limitations\":[\"\"]}"
     )
@@ -955,7 +1013,8 @@ async def _generate_summary_report(row: CreativeGenerationJob, current_user: Use
             "memory_docs": memories,
             "source_briefs": source_briefs[:80],
             "candidates": candidates[:50] if isinstance(candidates, list) else [],
-            "requirements": "给出候选人分层、优先级、关系路径、建联开场白和下一步执行建议。",
+            "lead_summary": lead_summary,
+            "requirements": "给出用户能直接使用的线索列表、联系方式状态、跟进优先级、关系路径、建联开场白和下一步执行建议。",
         },
         ensure_ascii=False,
     )
