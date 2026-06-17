@@ -991,12 +991,18 @@ async def _generate_summary_report(row: CreativeGenerationJob, current_user: Use
         "你是LinkedIn B2B公开线索挖掘分析师。根据TikHub已抓取的数据，输出给业务人员直接使用的中文报告。"
         "报告目标不是解释接口数据，而是帮助用户决定先跟进谁、为什么跟进、从哪个公开联系方式或公开主页开始。"
         "必须优先整理：可跟进线索列表、公开联系方式状态、推荐触达动作、判断依据和数据限制。"
+        "下一步建议必须产品化、可执行，不能只写泛泛建议；要拆成名单分层、补资料任务、触达资产和观察任务。"
         "只基于输入数据做判断；不能声称已完成点赞、关注、私信、加好友或获取非公开联系方式。"
         "返回严格JSON，格式："
         "{\"executive_summary\":\"\",\"lead_overview\":{\"candidate_count\":0,\"with_public_contact\":0,\"recommendation\":\"\"},"
         "\"contact_list\":[{\"name\":\"\",\"role\":\"\",\"company\":\"\",\"contact\":\"\",\"source\":\"\",\"next_action\":\"\"}],"
         "\"priority_leads\":[{\"name\":\"\",\"company\":\"\",\"score\":0,\"why\":\"\",\"contact_status\":\"\",\"opening_line\":\"\",\"next_step\":\"\"}],"
         "\"candidate_segments\":[{\"name\":\"\",\"reason\":\"\",\"people\":[\"\"]}],"
+        "\"action_workbench\":{\"list_a\":[{\"name\":\"\",\"reason\":\"\",\"next_action\":\"\"}],"
+        "\"list_b\":[{\"name\":\"\",\"reason\":\"\",\"next_action\":\"\"}],"
+        "\"watch_list\":[{\"name\":\"\",\"reason\":\"\",\"next_action\":\"\"}],"
+        "\"supplement_tasks\":[{\"target\":\"\",\"missing\":\"\",\"how_to_fill\":\"\"}],"
+        "\"outreach_assets\":[{\"name\":\"\",\"channel\":\"\",\"copy\":\"\"}]},"
         "\"relationship_map\":[{\"from\":\"\",\"to\":\"\",\"relation\":\"\",\"evidence\":\"\"}],"
         "\"next_actions\":[\"\"],\"limitations\":[\"\"]}"
     )
@@ -1038,6 +1044,13 @@ async def _generate_summary_report(row: CreativeGenerationJob, current_user: Use
             "target_profile": req.get("target_profile") or "",
             "candidate_segments": [],
             "priority_leads": [],
+            "action_workbench": {
+                "list_a": [],
+                "list_b": [],
+                "watch_list": [],
+                "supplement_tasks": [],
+                "outreach_assets": [],
+            },
             "relationship_map": [],
             "next_actions": [],
             "limitations": ["LLM未返回结构化JSON，已保留原始摘要。"],

@@ -89,6 +89,20 @@ _QWEN_LANGUAGE_LABELS: Dict[str, str] = {
     "French": "法文",
     "Russian": "俄文",
 }
+
+
+def _release_db_before_hifly_upstream(db: Session, *, phase: str, task_id: str = "") -> None:
+    """Release request DB connection before slow HiFly/voice upstream calls."""
+    try:
+        if db.in_transaction():
+            db.commit()
+            logger.info("[hifly] db released before upstream phase=%s task_id=%s", phase, task_id or "-")
+    except Exception as exc:
+        logger.warning("[hifly] db release before upstream failed phase=%s task_id=%s err=%s", phase, task_id or "-", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
 _QWEN_TRANSLATE_TARGETS = {k for k in _QWEN_LANGUAGE_LABELS if k not in {"Auto", "Chinese"}}
 
 
@@ -2797,6 +2811,7 @@ async def create_my_video_by_tts(
         volume = voice_params.get("volume") or "1.0"
         pitch = voice_params.get("pitch") or "0"
         speech_language = _normalize_qwen_language(body.speech_language)
+        _release_db_before_hifly_upstream(db, phase="create_by_tts_voice_provider")
         translation_result = await _translate_tts_text_for_language(body.text.strip(), speech_language)
         if is_qwen_voice:
             instructions = voice_params.get("instructions") or _QWEN_DEFAULT_INSTRUCTIONS
@@ -2903,6 +2918,7 @@ async def create_my_video_by_tts(
             status_code=400,
             detail="当前声音是克隆声音，但服务端没有找到对应声音记录，已阻止直接提交给 HiFly。请刷新声音列表后重新选择声音，或重新创建声音。",
         )
+    _release_db_before_hifly_upstream(db, phase="create_by_tts_hifly_direct")
     billing = await _hifly_pre_deduct_tts(request, payload)
     try:
         created = await _post("/api/v2/hifly/video/create_by_tts", body.token, payload)
@@ -3046,6 +3062,8 @@ async def poll_my_video_task(
     if not row:
         raise HTTPException(status_code=404, detail="未找到该口播视频任务")
 
+    local_task_id = row.hifly_task_id
+    _release_db_before_hifly_upstream(db, phase="poll_video_task", task_id=local_task_id)
     payload = await _get("/api/v2/hifly/video/task", body.token, {"task_id": row.hifly_task_id})
     status_num = int(_pick_nested(payload, "status") or 0)
     video_url = str(

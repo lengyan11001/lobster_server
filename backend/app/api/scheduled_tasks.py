@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,7 @@ from ..models import (
     ScheduledTask,
     ScheduledTaskRun,
     User,
+    UserInstallation,
 )
 from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
@@ -40,6 +42,9 @@ _RUNNING_STATUSES = {"running", "processing", "pending", "queued", "waiting"}
 _GOAL_VIDEO_SOURCE_AI_IMAGE = "ai_image"
 _GOAL_VIDEO_SOURCE_ASSET_RANDOM = "asset_random"
 _DISABLED_SCHEDULED_CAPABILITIES = {"create.video.pipeline", "create.ppt.pipeline"}
+_PENDING_INSTALLATION_TOUCH_MIN_SECONDS = 60
+_PENDING_EMPTY_CACHE_SECONDS = 1.0
+_pending_empty_cache: Dict[str, float] = {}
 
 
 def _creative_candidate_group(meta: Optional[dict]) -> str:
@@ -205,6 +210,47 @@ def _header_installation_id(request: Request) -> str:
         or request.headers.get("x-installation-id")
         or ""
     ).strip()
+
+
+def _touch_installation_slot_lazy(db: Session, user_id: int, installation_id: str) -> None:
+    if not installation_id:
+        return
+    now = datetime.utcnow()
+    row = (
+        db.query(UserInstallation)
+        .filter(UserInstallation.user_id == user_id, UserInstallation.installation_id == installation_id)
+        .first()
+    )
+    if row:
+        last_seen_at = row.last_seen_at
+        if last_seen_at and (now - last_seen_at).total_seconds() < _PENDING_INSTALLATION_TOUCH_MIN_SECONDS:
+            return
+        row.last_seen_at = now
+        db.commit()
+        return
+    ensure_installation_slot(db, user_id, installation_id)
+
+
+def _pending_cache_key(kind: str, user_id: int, installation_id: str) -> str:
+    return f"{kind}:{user_id}:{installation_id or '-'}"
+
+
+def _pending_empty_recent(key: str) -> bool:
+    ts = _pending_empty_cache.get(key)
+    return bool(ts and (time.monotonic() - ts) < _PENDING_EMPTY_CACHE_SECONDS)
+
+
+def _mark_pending_empty(key: str) -> None:
+    _pending_empty_cache[key] = time.monotonic()
+    if len(_pending_empty_cache) > 5000:
+        cutoff = time.monotonic() - 30
+        for old_key, ts in list(_pending_empty_cache.items())[:1000]:
+            if ts < cutoff:
+                _pending_empty_cache.pop(old_key, None)
+
+
+def _clear_pending_empty(key: str) -> None:
+    _pending_empty_cache.pop(key, None)
 
 
 def _clean_installation_ids(values: Optional[List[str]]) -> List[str]:
@@ -805,6 +851,7 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     now = datetime.utcnow()
     q = db.query(ScheduledTask).filter(
         ScheduledTask.status == "active",
+        ScheduledTask.task_kind != "ip_content_daily",
         ScheduledTask.schedule_type.in_(["once", "interval", "daily_times"]),
         ScheduledTask.next_run_at.isnot(None),
         ScheduledTask.next_run_at <= now,
@@ -1007,7 +1054,7 @@ def _create_task_row(
     )
     db.add(task)
     db.flush()
-    if task.next_run_at and task.next_run_at <= now:
+    if not _is_server_side_task(task) and task.next_run_at and task.next_run_at <= now:
         _enqueue_task(db, task, now)
     db.commit()
     db.refresh(task)
@@ -1237,8 +1284,11 @@ def pending_scheduled_task_runs(
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
+    pending_key = _pending_cache_key("run", current_user.id, xi)
+    if _pending_empty_recent(pending_key):
+        return {"ok": True, "items": [], "throttled": True}
     if xi:
-        ensure_installation_slot(db, current_user.id, xi)
+        _touch_installation_slot_lazy(db, current_user.id, xi)
     _enqueue_due_tasks(db, current_user.id)
 
     now = datetime.utcnow()
@@ -1287,6 +1337,10 @@ def pending_scheduled_task_runs(
         _add_h5_event(db, row.h5_message_id, row.user_id, "claimed", {"installation_id": xi or ""})
         rows.append(row)
     db.commit()
+    if rows:
+        _clear_pending_empty(pending_key)
+    else:
+        _mark_pending_empty(pending_key)
     return {"ok": True, "items": [_serialize_run(r) for r in rows]}
 
 
@@ -1370,8 +1424,11 @@ def pending_scheduled_publish_requests(
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
+    pending_key = _pending_cache_key("publish", current_user.id, xi)
+    if _pending_empty_recent(pending_key):
+        return {"ok": True, "items": [], "throttled": True}
     if xi:
-        ensure_installation_slot(db, current_user.id, xi)
+        _touch_installation_slot_lazy(db, current_user.id, xi)
     now = datetime.utcnow()
     rows = (
         db.query(ScheduledTaskRun)
@@ -1397,6 +1454,10 @@ def pending_scheduled_publish_requests(
         if len(picked) >= limit:
             break
     db.commit()
+    if picked:
+        _clear_pending_empty(pending_key)
+    else:
+        _mark_pending_empty(pending_key)
     return {"ok": True, "items": [_serialize_run(r) for r in picked]}
 
 

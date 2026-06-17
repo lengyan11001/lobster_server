@@ -118,6 +118,29 @@ _model_timeout_history: Dict[str, List[float]] = {}
 _model_tripped_until: Dict[str, float] = {}
 
 
+def _release_db_before_upstream(db: Session, *, trace_id: str, phase: str) -> None:
+    """Release the request DB connection before waiting on slow upstream APIs."""
+    try:
+        if db.in_transaction():
+            db.commit()
+            logger.info(
+                "[chat_trace] trace_id=%s path=sutui_chat_db_release phase=%s result=commit_release",
+                trace_id or "-",
+                phase,
+            )
+    except Exception as exc:
+        logger.warning(
+            "[chat_trace] trace_id=%s path=sutui_chat_db_release phase=%s result=failed err=%s",
+            trace_id or "-",
+            phase,
+            exc,
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
 def _record_model_timeout(model: str) -> None:
     now = time.monotonic()
     hist = _model_timeout_history.setdefault(model, [])
@@ -1640,6 +1663,7 @@ async def sutui_chat_completions(
         trace_id,
         [(a["model"], a["provider"], a["timeout"]) for a in attempts],
     )
+    _release_db_before_upstream(db, trace_id=trace_id, phase="before_nonstream_or_stream_upstream")
 
     if not stream:
         r: Optional[httpx.Response] = None

@@ -14,7 +14,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -30,6 +32,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 QYAPI_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
+_KF_PROXY_ENABLED_ENV = "LOBSTER_WECOM_KF_PROXY_ENABLED"
+_KF_PROXY_ENABLE_FLAG = Path(os.environ.get("LOBSTER_WECOM_KF_PROXY_ENABLE_FLAG", "/opt/lobster-server/.runtime/wecom_kf_enabled"))
 
 # ── access_token 缓存（corp_id:secret → (token, expire_ts)）─────────────────
 _token_cache: dict[str, tuple[str, float]] = {}
@@ -40,8 +44,22 @@ _kf_event_flags: dict[str, float] = {}
 
 def notify_kf_event(callback_path: str):
     """微信回调到达时调用，标记该 callback_path 有新 KF 消息。"""
+    if not _kf_proxy_enabled():
+        logger.info("[KF] proxy disabled; ignore event flag for %s", callback_path)
+        return
     _kf_event_flags[callback_path] = time.time()
     logger.info("[KF] event flag set for %s", callback_path)
+
+
+def _kf_proxy_enabled() -> bool:
+    if (os.environ.get(_KF_PROXY_ENABLED_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    return _KF_PROXY_ENABLE_FLAG.is_file()
+
+
+def _reject_if_kf_proxy_disabled() -> None:
+    if not _kf_proxy_enabled():
+        raise HTTPException(status_code=503, detail="企业微信客服功能已临时关闭")
 
 
 async def _get_access_token(corp_id: str, secret: str) -> str:
@@ -96,6 +114,7 @@ async def proxy_kf_account_add(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, body.callback_path)
     token = await _get_access_token(cfg.corp_id, cfg.secret)
     payload: dict[str, Any] = {"name": body.name}
@@ -118,6 +137,7 @@ async def proxy_kf_account_list(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, callback_path)
     token = await _get_access_token(cfg.corp_id, cfg.secret)
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -145,6 +165,7 @@ async def proxy_kf_account_update(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, body.callback_path)
     token = await _get_access_token(cfg.corp_id, cfg.secret)
     payload: dict[str, Any] = {"open_kfid": body.open_kfid}
@@ -172,6 +193,7 @@ async def proxy_kf_account_del(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, body.callback_path)
     token = await _get_access_token(cfg.corp_id, cfg.secret)
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -200,6 +222,7 @@ async def proxy_kf_servicer_add(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, body.callback_path)
     token = await _get_access_token(cfg.corp_id, cfg.secret)
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -220,6 +243,7 @@ async def proxy_kf_servicer_del(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, body.callback_path)
     token = await _get_access_token(cfg.corp_id, cfg.secret)
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -241,6 +265,7 @@ async def proxy_kf_servicer_list(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, callback_path)
     token = await _get_access_token(cfg.corp_id, cfg.secret)
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -272,6 +297,15 @@ async def proxy_kf_sync_msg(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    if not _kf_proxy_enabled():
+        _kf_event_flags.pop(body.callback_path, None)
+        return {
+            "errcode": 0,
+            "errmsg": "企业微信客服功能已临时关闭",
+            "msg_list": [],
+            "has_more": 0,
+            "next_cursor": body.cursor or "",
+        }
     cfg = _find_config_by_callback(db, body.callback_path)
     access_token = await _get_access_token(cfg.corp_id, cfg.secret)
     payload: dict[str, Any] = {"open_kfid": body.open_kfid, "limit": body.limit}
@@ -306,6 +340,7 @@ async def proxy_kf_send_msg(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, body.callback_path)
     access_token = await _get_access_token(cfg.corp_id, cfg.secret)
     payload: dict[str, Any] = {
@@ -348,6 +383,7 @@ async def proxy_kf_service_state_trans(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, body.callback_path)
     access_token = await _get_access_token(cfg.corp_id, cfg.secret)
     payload: dict[str, Any] = {
@@ -383,6 +419,7 @@ async def proxy_kf_customer_batchget(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, body.callback_path)
     token = await _get_access_token(cfg.corp_id, cfg.secret)
     payload: dict[str, Any] = {
@@ -412,6 +449,7 @@ async def proxy_kf_account_url(
     _auth: bool = Depends(_check_forward_secret),
     db: Session = Depends(get_db),
 ):
+    _reject_if_kf_proxy_disabled()
     cfg = _find_config_by_callback(db, callback_path)
     token = await _get_access_token(cfg.corp_id, cfg.secret)
     payload: dict[str, Any] = {"open_kfid": open_kfid}
@@ -433,6 +471,12 @@ async def proxy_kf_has_events(
     callback_path: str = "",
     _auth: bool = Depends(_check_forward_secret),
 ):
+    if not _kf_proxy_enabled():
+        if callback_path:
+            _kf_event_flags.pop(callback_path, None)
+        else:
+            _kf_event_flags.clear()
+        return {"has_events": False, "callback_path": callback_path, "ts": 0, "disabled": True}
     if callback_path:
         ts = _kf_event_flags.get(callback_path, 0)
         return {"has_events": ts > 0, "callback_path": callback_path, "ts": ts}

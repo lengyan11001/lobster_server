@@ -61,7 +61,7 @@ except Exception as e:
     else:
         raise
 from .core.config import settings
-from .db import Base, engine, SessionLocal
+from .db import Base, engine, SessionLocal, reset_db_request_context, set_db_request_context
 from . import models  # noqa: F401
 
 logger = logging.getLogger(__name__)
@@ -334,6 +334,24 @@ def _migrate_user_brand_mark():
             conn.execute(text("ALTER TABLE users ADD COLUMN brand_mark VARCHAR(64) NULL"))
     except Exception as e:
         logger.warning("Migration user brand_mark skipped: %s", e)
+
+
+def _migrate_user_is_overseas_user():
+    """Add is_overseas_user column to users if missing（未标记默认国内版）。"""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        cols = [c["name"] for c in insp.get_columns("users")]
+        if "is_overseas_user" in cols:
+            return
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_overseas_user BOOLEAN NOT NULL DEFAULT 0"))
+        logger.info("[startup] users added column is_overseas_user")
+    except Exception as e:
+        logger.warning("Migration user is_overseas_user skipped: %s", e)
 
 
 def _migrate_user_wecom_userid():
@@ -853,6 +871,7 @@ def create_app() -> FastAPI:
         _migrate_user_sutui_token()
         _migrate_user_wechat_openid()
         _migrate_user_brand_mark()
+        _migrate_user_is_overseas_user()
         _migrate_user_wecom_userid()
         _migrate_user_llm_model_override()
         _migrate_user_agent_openclaw_memory_enabled()
@@ -889,6 +908,19 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def db_pool_request_context(request: Request, call_next):
+        token = set_db_request_context(
+            method=request.method,
+            path=request.url.path,
+            request_id=request.headers.get("x-request-id") or request.headers.get("x-trace-id") or "",
+            client=request.client.host if request.client else "",
+        )
+        try:
+            return await call_next(request)
+        finally:
+            reset_db_request_context(token)
 
     @app.exception_handler(Exception)
     async def catch_all(request: Request, exc: Exception):

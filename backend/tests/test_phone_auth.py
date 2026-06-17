@@ -122,6 +122,25 @@ def test_register_phone_new_user_creates_and_logs_in_without_password(db_session
         assert user.hashed_password
 
 
+def test_register_phone_can_mark_overseas_user(db_session, db_session_factory, monkeypatch):
+    from backend.app.models import User
+
+    phone = "13900139001"
+    _put_sms_code(db_session, phone)
+
+    res = _client(db_session_factory, monkeypatch).post(
+        "/auth/register-phone",
+        json={"phone": phone, "code": "123456", "is_overseas_user": True},
+    )
+
+    assert res.status_code == 200
+    assert res.json()["access_token"]
+    with db_session_factory() as s:
+        user = s.query(User).filter(User.email == f"{phone}@sms.lobster.local").first()
+        assert user is not None
+        assert bool(user.is_overseas_user) is True
+
+
 def test_set_password_then_phone_password_login(db_session, db_session_factory, monkeypatch):
     from backend.app.api.auth import create_access_token, get_password_hash
     from backend.app.models import User

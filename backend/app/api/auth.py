@@ -64,6 +64,7 @@ class UserOut(BaseModel):
     preferred_model: str
     credits: Optional[float] = None
     brand_mark: Optional[str] = None
+    is_overseas_user: bool = False
     wecom_userid: Optional[str] = None
     is_agent: bool = False
     features: Dict[str, bool] = Field(default_factory=dict)
@@ -126,6 +127,7 @@ class RegisterPhoneBody(BaseModel):
     code: str
     password: Optional[str] = None
     brand_mark: Optional[str] = None
+    is_overseas_user: bool = False
     parent_account: Optional[str] = None
 
 
@@ -551,6 +553,7 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
         role="user",
         preferred_model="sutui",
         brand_mark=_normalize_brand_mark(body.brand_mark),
+        is_overseas_user=bool(body.is_overseas_user),
         parent_user_id=parent_uid,
     )
     db.add(user)
@@ -602,6 +605,7 @@ def get_me(
         preferred_model=preferred,
         credits=credits_json_float(getattr(current_user, "credits", None) or 0),
         brand_mark=getattr(current_user, "brand_mark", None),
+        is_overseas_user=bool(getattr(current_user, "is_overseas_user", False)),
         wecom_userid=getattr(current_user, "wecom_userid", None),
         is_agent=bool(getattr(current_user, "is_agent", False)),
         features=user_feature_flags(db, current_user.id),
@@ -767,6 +771,7 @@ def sutui_login_with_token(body: LoginWithTokenBody, db: Session = Depends(get_d
             credits=DEFAULT_ONLINE_USER_CREDITS,
             role="user",
             preferred_model="sutui",
+            is_overseas_user=False,
         )
         db.add(user)
         db.flush()
@@ -962,6 +967,7 @@ def wechat_miniprogram_login(
             role="user",
             preferred_model="sutui",
             wechat_openid=openid,
+            is_overseas_user=False,
         )
         db.add(user)
         db.flush()
@@ -1034,6 +1040,7 @@ def wechat_callback(
             role="user",
             preferred_model="sutui",
             wechat_openid=openid,
+            is_overseas_user=False,
         )
         db.add(user)
         db.flush()
@@ -1111,6 +1118,7 @@ def sutui_callback(
             credits=DEFAULT_ONLINE_USER_CREDITS,
             role="user",
             preferred_model="sutui",
+            is_overseas_user=False,
         )
         db.add(user)
         db.flush()

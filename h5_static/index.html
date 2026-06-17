@@ -929,6 +929,366 @@
       border: 1px dashed rgba(148,163,184,.5);
       font-size: 13px;
     }
+    .quick-card-leads {
+      background:
+        linear-gradient(135deg, rgba(36,92,255,.12), rgba(19,183,216,.12)),
+        rgba(255,255,255,.94);
+    }
+    .douyin-shell { display: grid; gap: 14px; }
+    .douyin-hero {
+      position: relative;
+      overflow: hidden;
+      color: #fff;
+      border-radius: 24px;
+      padding: 16px;
+      background:
+        linear-gradient(135deg, rgba(11,26,58,.96) 0%, rgba(26,63,163,.88) 54%, rgba(19,183,216,.82) 100%);
+      box-shadow: 0 18px 42px rgba(24,52,120,.22);
+    }
+    .douyin-hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(rgba(255,255,255,.1) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.1) 1px, transparent 1px);
+      background-size: 34px 34px;
+      opacity: .38;
+      pointer-events: none;
+    }
+    .douyin-hero > * { position: relative; z-index: 1; }
+    .douyin-hero-title {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.2;
+    }
+    .douyin-hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .douyin-hero-actions .ghost {
+      color: #fff;
+      background: rgba(255,255,255,.12);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.24);
+    }
+    .douyin-hero-actions .hero-action { min-width: 124px; }
+    .douyin-grid-two {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+    .douyin-panel {
+      padding: 14px 16px;
+      display: grid;
+      gap: 10px;
+    }
+    .douyin-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .douyin-panel-head h3,
+    .douyin-panel-head h4 {
+      margin: 0;
+      font-size: 17px;
+    }
+    .douyin-panel-head span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .douyin-account-list,
+    .douyin-runtime-list,
+    .douyin-task-action-grid,
+    .douyin-metric-grid,
+    .douyin-detail-grid,
+    .douyin-schedule-grid { display: grid; gap: 10px; }
+    .douyin-account-item,
+    .douyin-runtime-item,
+    .douyin-task-action,
+    .douyin-metric-card {
+      border-radius: 18px;
+      border: 1px solid rgba(223,230,242,.84);
+      background: rgba(248,251,255,.92);
+    }
+    .douyin-account-item,
+    .douyin-runtime-item {
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .douyin-account-item strong,
+    .douyin-runtime-item strong {
+      display: block;
+      font-size: 14px;
+    }
+    .douyin-account-item span,
+    .douyin-runtime-item span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .douyin-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 28px;
+      padding: 0 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: #2b4ecb;
+      background: rgba(36,92,255,.1);
+      box-shadow: inset 0 0 0 1px rgba(36,92,255,.12);
+      white-space: nowrap;
+    }
+    .douyin-badge.success {
+      color: #0f8a61;
+      background: rgba(19,168,115,.1);
+      box-shadow: inset 0 0 0 1px rgba(19,168,115,.16);
+    }
+    .douyin-badge.warn {
+      color: #c76e16;
+      background: rgba(240,139,45,.12);
+      box-shadow: inset 0 0 0 1px rgba(240,139,45,.14);
+    }
+    .douyin-runtime-item.active {
+      background: rgba(19,168,115,.08);
+      border-color: rgba(19,168,115,.22);
+    }
+    .douyin-runtime-item.pending {
+      background: rgba(240,139,45,.08);
+      border-color: rgba(240,139,45,.18);
+    }
+    .douyin-runtime-item.concise strong,
+    .douyin-account-item.concise strong {
+      font-size: 15px;
+    }
+    .douyin-runtime-item.concise span,
+    .douyin-account-item.concise span {
+      margin-top: 0;
+      line-height: 1.4;
+    }
+    .douyin-metric-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .douyin-metric-card {
+      min-height: 108px;
+      padding: 14px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+    }
+    .douyin-metric-card strong {
+      font-size: 25px;
+      line-height: 1;
+    }
+    .douyin-metric-card span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .douyin-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .douyin-task-action-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .douyin-task-action {
+      min-height: 116px;
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      color: var(--ink);
+      text-align: left;
+      background: rgba(255,255,255,.92);
+      box-shadow: var(--shadow);
+    }
+    .douyin-task-action.active {
+      background: linear-gradient(135deg, rgba(36,92,255,.12), rgba(19,183,216,.12));
+      box-shadow: inset 0 0 0 1px rgba(36,92,255,.14), var(--shadow);
+    }
+    .douyin-task-action strong { font-size: 15px; }
+    .douyin-task-action span,
+    .douyin-task-action em {
+      color: var(--muted);
+      font-size: 12px;
+      font-style: normal;
+      line-height: 1.5;
+    }
+    .douyin-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .douyin-field.full { grid-column: 1 / -1; }
+    .douyin-field label {
+      display: block;
+      margin: 0 0 7px;
+      color: #46516a;
+      font-size: 13px;
+    }
+    .douyin-field textarea {
+      min-height: 96px;
+      padding: 10px 12px;
+      resize: vertical;
+      line-height: 1.6;
+    }
+    .douyin-field-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .douyin-region-select {
+      display: grid;
+      gap: 10px;
+    }
+    .douyin-region-trigger {
+      width: 100%;
+      min-height: 50px;
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-radius: 18px;
+      border: 1px solid rgba(223,230,242,.9);
+      background: rgba(255,255,255,.94);
+      color: var(--ink);
+      text-align: left;
+      box-shadow: var(--shadow);
+    }
+    .douyin-region-trigger strong {
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .douyin-region-trigger span {
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1;
+    }
+    .douyin-region-panel {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 20px;
+      border: 1px solid rgba(240,208,159,.55);
+      background: rgba(255,252,246,.96);
+      box-shadow: 0 14px 34px rgba(35,58,109,.08);
+    }
+    .douyin-region-panel.hidden {
+      display: none;
+    }
+    .douyin-region-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .douyin-region-panel-head .douyin-field-note {
+      flex: 1;
+    }
+    .douyin-region-reset {
+      min-width: 112px;
+      padding-inline: 14px;
+    }
+    .douyin-check-grid {
+      display: grid;
+      max-height: 320px;
+      overflow: auto;
+      gap: 10px;
+      padding-right: 4px;
+    }
+    .douyin-check-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 56px;
+      padding: 0 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(223,230,242,.84);
+      background: rgba(255,255,255,.94);
+      color: var(--ink);
+      font-size: 14px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.5);
+    }
+    .douyin-check-item input {
+      width: 18px;
+      height: 18px;
+      margin: 0;
+      accent-color: var(--blue);
+    }
+    .douyin-schedule-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: end;
+    }
+    .douyin-schedule-grid .field { margin: 0; }
+    .douyin-schedule-grid .field input,
+    .douyin-schedule-grid .field select {
+      width: 100%;
+      min-width: 0;
+    }
+    .douyin-task-footer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+    .douyin-task-footer-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .douyin-task-footer-actions > * {
+      min-width: 132px;
+    }
+    .douyin-inline-message {
+      min-height: 22px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .douyin-inline-message.error { color: var(--red); }
+    .douyin-empty {
+      min-height: 56px;
+      display: flex;
+      align-items: center;
+      color: var(--muted);
+      border-radius: 16px;
+      border: 1px dashed rgba(148,163,184,.5);
+      background: rgba(246,249,255,.88);
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    @media (max-width: 860px) {
+      .douyin-schedule-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .douyin-schedule-grid #douyinTaskStartAtBlock,
+      .douyin-schedule-grid #douyinTaskDailyTimesBlock {
+        grid-column: 1 / -1;
+      }
+    }
+    @media (max-width: 640px) {
+      .douyin-schedule-grid {
+        grid-template-columns: 1fr;
+      }
+      .douyin-task-footer {
+        align-items: stretch;
+      }
+      .douyin-task-footer-actions {
+        width: 100%;
+      }
+      .douyin-task-footer-actions > * {
+        flex: 1;
+        min-width: 0;
+      }
+    }
 
     .chat {
       min-height: calc(100vh - 126px);
@@ -1381,8 +1741,14 @@
             </div>
             <div class="quick-sections" id="homeQuickGrid">
               <section class="quick-section" aria-label="获客">
-                <div class="quick-section-head"><strong>获客</strong><span>待补充</span></div>
-                <div class="quick-empty">获客能力后续补充</div>
+                <div class="quick-section-head"><strong>获客</strong><span>抖音自动化</span></div>
+                <div class="quick-grid">
+                  <button class="quick-card quick-card-leads" type="button" id="openDouyinLeadsBtn" data-home-target="douyinLeads">
+                    <div class="quick-mark">获</div>
+                    <strong>抖音获客</strong>
+                    <span>查看账号状态，再安排采集客户、评论互动和私信获客任务</span>
+                  </button>
+                </div>
               </section>
               <section class="quick-section" aria-label="设计">
                 <div class="quick-section-head"><strong>设计</strong><span>内容生成</span></div>
@@ -1427,6 +1793,121 @@
           </div>
           <div class="work-timeline" id="workTimeline">
             <div class="office-empty">暂无工作记录。</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="douyinLeadsView">
+        <div class="douyin-shell">
+          <div class="douyin-hero">
+            <h2 class="douyin-hero-title">抖音获客工作台</h2>
+            <div class="douyin-hero-actions">
+              <button class="hero-action" type="button" id="openDouyinLeadsScheduleBtn">安排工作</button>
+              <button class="ghost" type="button" id="refreshDouyinLeadsBtn">刷新状态</button>
+            </div>
+          </div>
+
+          <div class="douyin-grid-two">
+            <div class="panel douyin-panel">
+              <div class="douyin-panel-head">
+                <h3>账号状态</h3>
+                <span id="douyinLeadsAccountHint">读取中</span>
+              </div>
+              <div class="douyin-account-list" id="douyinAccountList">
+                <div class="douyin-empty">正在读取当前机器上的抖音账号状态...</div>
+              </div>
+            </div>
+
+            <div class="panel douyin-panel">
+              <div class="douyin-panel-head">
+                <h3>运行状态</h3>
+                <span id="douyinRuntimeHint">待刷新</span>
+              </div>
+              <div class="douyin-runtime-list" id="douyinRuntimeList">
+                <div class="douyin-empty">正在整理评论、私信和监控任务状态...</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel douyin-panel">
+            <div class="douyin-panel-head">
+              <h3>核心数据</h3>
+              <span>安排工作前先看一眼</span>
+            </div>
+            <div class="douyin-metric-grid" id="douyinMetricGrid">
+              <div class="douyin-empty">正在加载核心指标...</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="douyinLeadsScheduleView">
+        <div class="douyin-shell">
+          <div class="douyin-hero">
+            <div class="douyin-hero-kicker">DOUYIN WORKBENCH</div>
+            <h2 class="douyin-hero-title">安排抖音获客工作</h2>
+            <p class="douyin-hero-subtitle">按当前机器的抖音账号状态，给这台设备下发获客任务。你可以先选一个任务类型，再补行业关键词、评论内容和私信内容。</p>
+            <div class="douyin-hero-actions">
+              <button class="hero-action" type="button" id="submitDouyinTaskBtn">下发任务</button>
+              <button class="ghost" type="button" id="backToDouyinStatusBtn">返回状态页</button>
+            </div>
+          </div>
+
+          <div class="panel douyin-panel">
+            <div class="douyin-panel-head">
+              <h3>任务类型</h3>
+              <span>先选一个方向</span>
+            </div>
+            <div class="douyin-task-action-grid" id="douyinTaskActionGrid"></div>
+          </div>
+
+          <div class="panel douyin-panel">
+            <div class="douyin-panel-head">
+              <h3>任务参数</h3>
+              <span id="douyinTaskActionLabel">请先选择任务类型</span>
+            </div>
+            <div class="douyin-detail-grid" id="douyinTaskDetailFields"></div>
+          </div>
+
+          <div class="panel douyin-panel">
+            <div class="douyin-panel-head">
+              <h3>执行方式</h3>
+              <span>和现有 H5 定时任务保持一致</span>
+            </div>
+            <div class="douyin-schedule-grid">
+              <div class="field">
+                <label for="douyinTaskTitle">任务名称</label>
+                <input id="douyinTaskTitle" type="text" placeholder="例如：今晚执行医美评论获客">
+              </div>
+              <div class="field">
+                <label for="douyinTaskScheduleType">执行方式</label>
+                <select id="douyinTaskScheduleType">
+                  <option value="once">执行一次</option>
+                  <option value="interval">循环间隔</option>
+                  <option value="daily_times">每天固定时间</option>
+                </select>
+              </div>
+              <div class="field" id="douyinTaskIntervalBlock">
+                <label for="douyinTaskIntervalMinutes">间隔分钟</label>
+                <input id="douyinTaskIntervalMinutes" type="number" min="1" value="60">
+              </div>
+              <div class="field" id="douyinTaskStartAtBlock">
+                <label for="douyinTaskStartAt">开始时间（可选）</label>
+                <input id="douyinTaskStartAt" type="datetime-local">
+              </div>
+              <div class="field full hidden" id="douyinTaskDailyTimesBlock">
+                <label>每天执行时间</label>
+                <div class="task-daily-times" id="douyinTaskDailyTimesList"></div>
+                <button class="ghost" type="button" id="douyinAddDailyTimeBtn">添加时间点</button>
+              </div>
+            </div>
+            <div class="douyin-task-footer">
+              <div class="douyin-inline-message" id="douyinTaskInlineMsg">任务会通过当前在线的本机设备执行。</div>
+              <div class="douyin-task-footer-actions">
+                <button class="ghost" type="button" id="douyinTaskResetBtn">重置内容</button>
+                <button class="hero-action" type="button" id="submitDouyinTaskBtnBottom">确认下发</button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1582,6 +2063,8 @@
       ipTemplates: [],
       ipTemplatesLoaded: false,
       ipTemplatesLoading: false,
+      douyinStatus: null,
+      douyinTaskAction: "search_collect",
     };
     const SHOW_INTERNAL_STEPS = false;
     const IMAGE_TO_VIDEO_PROMPT = "用这个图片，提示词：";
@@ -1608,6 +2091,25 @@
       { value: "professional_ip_oral", label: "专业 IP 口播" },
       { value: "moments_candidate", label: "朋友圈文案" },
     ];
+
+    const DOUYIN_TASK_ACTIONS = {
+      search_collect: {
+        label: "采集客户",
+        description: "按行业关键词搜索抖音内容，先把视频和客户线索沉淀下来。",
+      },
+      comment_collect: {
+        label: "视频评论",
+        description: "围绕目标视频或关键词评论，顺手采集评论区里的潜在客户。",
+      },
+      interaction: {
+        label: "私信获客",
+        description: "对已经沉淀的客户池做评论跟进、私信触达和二次转化。",
+      },
+      tasks_from_search: {
+        label: "同行监控",
+        description: "按关键词持续盯同行内容，把可跟进对象自动整理成任务。",
+      },
+    };
 
     function toast(text) {
       const el = $("toast");
@@ -2501,6 +3003,8 @@
         workList: ["工作列表", "已完成、当前和待执行的工作节点"],
         messages: ["手机会话", "消息结果和素材预览"],
         profile: ["个人中心", "账号、设置和执行记录"],
+        douyinLeads: ["抖音获客", "先看账号与机器状态，再安排采集、评论和私信任务"],
+        douyinLeadsSchedule: ["安排抖音获客", "按当前在线设备给抖音账号下发具体获客工作"],
       };
       const nextTitle = titleMap[key] || titleMap.office;
       $("pageTitle").textContent = nextTitle[0];
@@ -2514,6 +3018,14 @@
       if (key === "workList") {
         renderWorkList();
         Promise.all([loadTasks(), loadRuns()]);
+      }
+      if (key === "douyinLeads") {
+        loadDouyinStatus();
+      }
+      if (key === "douyinLeadsSchedule") {
+        renderDouyinTaskActions();
+        renderDouyinTaskDetailFields();
+        updateDouyinScheduleFields();
       }
       if (key === "messages") setTimeout(() => {
         autosizeMessageInput();
@@ -3009,6 +3521,362 @@
         return payload;
       }
       return {};
+    }
+
+    function setDouyinTaskInlineMessage(text, isError) {
+      const el = $("douyinTaskInlineMsg");
+      if (!el) return;
+      el.textContent = text || "";
+      el.classList.toggle("error", !!isError);
+    }
+
+    function addDouyinDailyTime(value = "") {
+      const list = $("douyinTaskDailyTimesList");
+      if (!list) return;
+      const row = document.createElement("div");
+      row.className = "task-daily-row";
+      row.innerHTML = `<input type="time" step="60" data-douyin-daily-time value="${escapeHtml(value)}"><button class="ghost" type="button" aria-label="删除时间点">-</button>`;
+      row.querySelector("button").addEventListener("click", () => row.remove());
+      list.appendChild(row);
+    }
+
+    function collectDouyinDailyTimes() {
+      return Array.from(document.querySelectorAll("[data-douyin-daily-time]"))
+        .map((el) => String(el.value || "").trim())
+        .filter(Boolean);
+    }
+
+    function updateDouyinScheduleFields() {
+      const type = $("douyinTaskScheduleType") ? $("douyinTaskScheduleType").value : "once";
+      if ($("douyinTaskIntervalBlock")) $("douyinTaskIntervalBlock").classList.toggle("hidden", type !== "interval");
+      if ($("douyinTaskDailyTimesBlock")) $("douyinTaskDailyTimesBlock").classList.toggle("hidden", type !== "daily_times");
+      if ($("douyinTaskStartAtBlock")) $("douyinTaskStartAtBlock").classList.toggle("hidden", type === "daily_times");
+      if (type === "daily_times" && $("douyinTaskDailyTimesList") && !$("douyinTaskDailyTimesList").children.length) addDouyinDailyTime("09:00");
+    }
+
+    function normalizeDouyinRegionSelection() {
+      const boxes = Array.from(document.querySelectorAll("[data-douyin-region]"));
+      if (!boxes.length) return;
+      const nationwide = boxes.find((el) => String(el.value || "") === "全国");
+      const custom = boxes.filter((el) => String(el.value || "") !== "全国");
+      if (!nationwide) return;
+      const customChecked = custom.filter((el) => el.checked);
+      if (customChecked.length) {
+        nationwide.checked = false;
+      } else if (!nationwide.checked) {
+        nationwide.checked = true;
+      }
+    }
+
+    function selectedDouyinRegions() {
+      return Array.from(document.querySelectorAll("[data-douyin-region]:checked"))
+        .map((el) => String(el.value || "").trim())
+        .filter(Boolean);
+    }
+
+    function refreshDouyinRegionSummary() {
+      const label = $("douyinRegionSummary");
+      if (!label) return;
+      const regions = selectedDouyinRegions();
+      if (!regions.length) {
+        label.textContent = "全国";
+      } else if (regions.includes("全国")) {
+        label.textContent = "全国";
+      } else {
+        label.textContent = regions.join("、");
+      }
+    }
+
+    function setDouyinRegionPanelOpen(open) {
+      const panel = $("douyinRegionPanel");
+      const trigger = $("douyinRegionTrigger");
+      if (!panel || !trigger) return;
+      panel.classList.toggle("hidden", !open);
+      trigger.setAttribute("aria-expanded", open ? "true" : "false");
+      const icon = trigger.querySelector("span");
+      if (icon) icon.textContent = open ? "▴" : "▾";
+    }
+
+    function renderDouyinTaskActions() {
+      const host = $("douyinTaskActionGrid");
+      if (!host) return;
+      host.innerHTML = Object.entries(DOUYIN_TASK_ACTIONS).map(([key, item]) => `
+        <button class="douyin-task-action ${state.douyinTaskAction === key ? "active" : ""}" type="button" data-douyin-task-action="${escapeHtml(key)}">
+          <strong>${escapeHtml(item.label)}</strong>
+          <span>${escapeHtml(item.description)}</span>
+          <em>${state.douyinTaskAction === key ? "当前选择" : "点击切换"}</em>
+        </button>
+      `).join("");
+      const label = $("douyinTaskActionLabel");
+      if (label) label.textContent = (DOUYIN_TASK_ACTIONS[state.douyinTaskAction] || {}).description || "请先选择一个任务类型";
+    }
+
+    function renderDouyinTaskDetailFields() {
+      const host = $("douyinTaskDetailFields");
+      if (!host) return;
+      const action = state.douyinTaskAction || "search_collect";
+      const regionOptions = ["全国", "北京", "上海", "广州", "深圳", "杭州", "成都", "重庆", "武汉", "西安"];
+      let html = ``;
+      if (action === "search_collect") {
+        html += `
+          <div class="douyin-field full">
+            <label for="douyinTaskKeyword">行业关键词</label>
+            <textarea id="douyinTaskKeyword" placeholder="例如：医美、口腔、装修、留学"></textarea>
+          </div>
+          <div class="douyin-field full">
+            <label>采集地区</label>
+            <div class="douyin-region-select">
+              <button class="douyin-region-trigger" type="button" id="douyinRegionTrigger" aria-expanded="false">
+                <strong id="douyinRegionSummary">全国</strong>
+                <span>▾</span>
+              </button>
+              <div class="douyin-region-panel hidden" id="douyinRegionPanel">
+                <div class="douyin-region-panel-head">
+                  <div class="douyin-field-note">默认选中“全国”，表示不做地区过滤。</div>
+                  <button class="ghost douyin-region-reset" type="button" id="douyinRegionResetBtn">恢复全国</button>
+                </div>
+                <div class="douyin-check-grid">
+                  ${regionOptions.map((name, index) => `<label class="douyin-check-item"><input type="checkbox" data-douyin-region value="${escapeHtml(name)}" ${index === 0 ? "checked" : ""}><span>${escapeHtml(name)}</span></label>`).join("")}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="douyin-field full">
+            <div class="douyin-field-note">筛选规则按照龙虾盒子上的设置执行。</div>
+          </div>
+        `;
+      } else if (action === "comment_collect") {
+        html += `
+          <div class="douyin-field full">
+            <label for="douyinTaskCommentMode">评论内容模式</label>
+            <select id="douyinTaskCommentMode">
+              <option value="fixed">固定评论</option>
+              <option value="ai_generate">AI 合成</option>
+              <option value="ai_rewrite">AI 同方向改编</option>
+            </select>
+          </div>
+          <div class="douyin-field full">
+            <label for="douyinTaskCommentText">评论内容</label>
+            <textarea id="douyinTaskCommentText" placeholder="填写固定评论内容，或填写 AI 合成 / 同方向改编的参考要求"></textarea>
+          </div>
+        `;
+      } else if (action === "interaction") {
+        html += `
+          <div class="douyin-field full">
+            <label for="douyinTaskDmMode">私信内容模式</label>
+            <select id="douyinTaskDmMode">
+              <option value="fixed">固定私信</option>
+              <option value="ai_generate">AI 合成</option>
+              <option value="ai_rewrite">AI 同方向改编</option>
+            </select>
+          </div>
+          <div class="douyin-field full">
+            <label for="douyinTaskDmText">私信内容</label>
+            <textarea id="douyinTaskDmText" placeholder="填写固定私信内容，或填写 AI 合成 / 同方向改编的参考要求"></textarea>
+          </div>
+        `;
+      } else if (action === "tasks_from_search") {
+        html += `
+          <div class="douyin-field full">
+            <label for="douyinTaskKeyword">行业关键词</label>
+            <textarea id="douyinTaskKeyword" placeholder="例如：医美、装修、本地服务"></textarea>
+          </div>
+          <div class="douyin-field full">
+            <label for="douyinTaskNotes">监控说明</label>
+            <input id="douyinTaskNotes" type="text" placeholder="例如：优先盯高点赞同行账号">
+          </div>
+        `;
+      }
+      host.innerHTML = html;
+      normalizeDouyinRegionSelection();
+      refreshDouyinRegionSummary();
+      setDouyinRegionPanelOpen(false);
+    }
+
+    function collectDouyinTaskPayload() {
+      const action = state.douyinTaskAction || "search_collect";
+      const keyword = (($("douyinTaskKeyword") || {}).value || "").trim();
+      const commentText = (($("douyinTaskCommentText") || {}).value || "").trim();
+      const dmText = (($("douyinTaskDmText") || {}).value || "").trim();
+      const params = {};
+      if (keyword) {
+        params.keyword = keyword;
+        params.query = keyword;
+        params.search_keyword = keyword;
+      }
+      if (commentText) {
+        params.comment_text = commentText;
+        params.reply_text = commentText;
+        params.comment_content = commentText;
+      }
+      if (dmText) {
+        params.message = dmText;
+        params.dm_text = dmText;
+        params.private_message = dmText;
+      }
+      if (action === "search_collect") {
+        if (!keyword) throw new Error("请先填写行业关键词");
+        const regions = Array.from(document.querySelectorAll("[data-douyin-region]:checked")).map((el) => String(el.value || "").trim()).filter(Boolean);
+        params.region_mode = regions.includes("全国") ? "nationwide" : "custom";
+        params.regions = regions;
+        params.region_list = params.regions;
+        params.area_list = params.regions;
+        if (!regions.length) throw new Error("请至少选择一个地区");
+      } else if (action === "comment_collect") {
+        const commentMode = (($("douyinTaskCommentMode") || {}).value || "fixed").trim();
+        params.comment_mode = commentMode;
+        params.content_mode = commentMode;
+        if (!commentText) throw new Error("请先填写评论内容或 AI 生成要求");
+      } else if (action === "interaction") {
+        const dmMode = (($("douyinTaskDmMode") || {}).value || "fixed").trim();
+        params.dm_mode = dmMode;
+        params.private_message_mode = dmMode;
+        if (!dmText) throw new Error("请先填写私信发送内容");
+      } else if (action === "tasks_from_search") {
+        params.notes = (($("douyinTaskNotes") || {}).value || "").trim();
+        if (!keyword) throw new Error("请先填写需要监控的行业关键词");
+      }
+      return { action, params };
+    }
+
+    function renderDouyinStatus() {
+      const data = state.douyinStatus || {};
+      const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+      const metrics = data.metrics && typeof data.metrics === "object" ? data.metrics : {};
+      const runtime = data.runtime && typeof data.runtime === "object" ? data.runtime : {};
+      const accountList = $("douyinAccountList");
+      const runtimeList = $("douyinRuntimeList");
+      const metricGrid = $("douyinMetricGrid");
+      const accountHint = $("douyinLeadsAccountHint");
+      const runtimeHint = $("douyinRuntimeHint");
+      if (accountHint) accountHint.textContent = accounts.length ? `在线 ${Number(data.online_accounts || 0)} / ${accounts.length}` : "暂无账号";
+      if (accountList) {
+        if (!accounts.length) {
+          accountList.innerHTML = '<div class="douyin-empty">当前还没有检测到抖音账号在线。等本机登录抖音后，这里会展示账号状态。</div>';
+        } else {
+          accountList.innerHTML = accounts.slice(0, 1).map((row) => {
+            const online = String(row.status || "").toLowerCase() === "online";
+            const active = Number(data.active_account_id || 0) && Number(row.id || 0) === Number(data.active_account_id || 0);
+            return `<div class="douyin-account-item concise">
+              <div>
+                <strong>${active ? "当前账号" : "抖音账号"} ${escapeHtml(String(row.id || "-"))}</strong>
+                <span>端口 ${escapeHtml(String(row.port || "-"))}${active ? " · 主账号" : ""}</span>
+              </div>
+              <span class="douyin-badge ${online ? "success" : "warn"}">${online ? "在线" : "离线"}</span>
+            </div>`;
+          }).join("");
+        }
+      }
+      const runtimeRows = [
+        { label: "评论采集", active: !!runtime.follow_comment_running, text: runtime.follow_comment_running ? "任务正在执行中" : "当前没有运行中的评论任务" },
+        { label: "私信互动", active: !!runtime.interaction_running, text: runtime.interaction_running ? "任务正在执行中" : "当前没有运行中的私信任务" },
+        { label: "同行监控", active: !!(runtime.monitor_message || ""), text: runtime.monitor_message || "当前没有额外的监控提示" },
+      ];
+      if (runtimeHint) runtimeHint.textContent = runtimeRows.some((row) => row.active) ? "有任务在跑" : "当前空闲";
+      if (runtimeList) {
+        runtimeList.innerHTML = runtimeRows.map((row) => `<div class="douyin-runtime-item concise ${row.active ? "active" : "pending"}"><div><strong>${escapeHtml(row.label)}</strong></div><span class="douyin-badge ${row.active ? "success" : "warn"}">${row.active ? "进行中" : "待命"}</span></div>`).join("");
+      }
+      const metricItems = [
+        ["已采集视频数量", metrics.collected_videos || 0],
+        ["全部客户数据", metrics.all_customers || 0],
+        ["精准客户数据", metrics.precise_customers || 0],
+        ["已发送评论的视频数量", metrics.commented_videos || 0],
+        ["已发送私信的用户数量", metrics.dm_users || 0],
+        ["监控同行任务数", metrics.monitor_tasks || 0],
+        ["今日新增客户数", metrics.today_new_customers || 0],
+        ["今日执行任务数", metrics.today_task_runs || 0],
+      ];
+      if (metricGrid) {
+        metricGrid.innerHTML = metricItems.map(([label, value]) => `<div class="douyin-metric-card"><strong>${escapeHtml(compactNumber(value))}</strong><span>${escapeHtml(label)}</span></div>`).join("");
+      }
+    }
+
+    async function loadDouyinStatus() {
+      const accountList = $("douyinAccountList");
+      const runtimeList = $("douyinRuntimeList");
+      const metricGrid = $("douyinMetricGrid");
+      if (accountList) accountList.innerHTML = '<div class="douyin-empty">正在读取抖音账号状态...</div>';
+      if (runtimeList) runtimeList.innerHTML = '<div class="douyin-empty">正在整理当前运行状态...</div>';
+      if (metricGrid) metricGrid.innerHTML = '<div class="douyin-empty">正在加载核心指标...</div>';
+      try {
+        const data = await api('/api/douyin/dashboard-status');
+        state.douyinStatus = data || {};
+      } catch (err) {
+        state.douyinStatus = {
+          accounts: [],
+          online_accounts: 0,
+          active_account_id: null,
+          metrics: {
+            collected_videos: 0,
+            all_customers: 0,
+            precise_customers: 0,
+            commented_videos: 0,
+            dm_users: 0,
+            monitor_tasks: 0,
+            today_new_customers: 0,
+            today_task_runs: 0,
+          },
+          runtime: {
+            follow_comment_running: false,
+            interaction_running: false,
+            monitor_message: err.message || "暂时还拿不到运行状态，先展示占位数据",
+          },
+        };
+      }
+      renderDouyinStatus();
+    }
+
+    function resetDouyinTaskForm() {
+      if ($("douyinTaskTitle")) $("douyinTaskTitle").value = "";
+      if ($("douyinTaskKeyword")) $("douyinTaskKeyword").value = "";
+      if ($("douyinTaskCommentText")) $("douyinTaskCommentText").value = "";
+      if ($("douyinTaskDmText")) $("douyinTaskDmText").value = "";
+      if ($("douyinTaskLimit")) $("douyinTaskLimit").value = "20";
+      if ($("douyinTaskAccountId")) $("douyinTaskAccountId").value = "";
+      if ($("douyinTaskScheduleType")) $("douyinTaskScheduleType").value = "once";
+      if ($("douyinTaskIntervalMinutes")) $("douyinTaskIntervalMinutes").value = "60";
+      if ($("douyinTaskStartAt")) $("douyinTaskStartAt").value = "";
+      const list = $("douyinTaskDailyTimesList");
+      if (list) list.innerHTML = "";
+      updateDouyinScheduleFields();
+      setDouyinTaskInlineMessage("任务表单已重置，可以重新选择类型后填写。", false);
+    }
+
+    async function submitDouyinTask() {
+      const installationId = currentInstallationId();
+      if (!installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
+      const douyinPayload = collectDouyinTaskPayload();
+      const scheduleType = (("douyinTaskScheduleType" && $("douyinTaskScheduleType")) ? $("douyinTaskScheduleType").value : "once") || "once";
+      const dailyTimes = collectDouyinDailyTimes();
+      if (scheduleType === "daily_times" && !dailyTimes.length) throw new Error("请至少添加一个每天执行时间");
+      const interval = parseInt((($("douyinTaskIntervalMinutes") || {}).value || "60"), 10);
+      const actionInfo = DOUYIN_TASK_ACTIONS[douyinPayload.action] || {};
+      const title = (($("douyinTaskTitle") || {}).value || "").trim() || `抖音获客 - ${actionInfo.label || douyinPayload.action}`;
+      const body = {
+        title,
+        task_kind: "chat_message",
+        content: `执行抖音获客任务：${douyinPayload.action}`,
+        payload: {
+          capability_id: "douyin.leads.pipeline",
+          payload: douyinPayload,
+        },
+        schedule_type: scheduleType,
+        interval_seconds: Math.max(60, (Number.isNaN(interval) ? 60 : interval) * 60),
+        start_at: ($("douyinTaskStartAt") || {}).value || "",
+        daily_times: scheduleType === "daily_times" ? dailyTimes : [],
+        timezone_offset_minutes: timezoneOffsetMinutes(),
+        installation_ids: [installationId],
+      };
+      setDouyinTaskInlineMessage("正在下发抖音获客任务...", false);
+      const data = await api('/api/scheduled-tasks/tasks', {
+        method: 'POST',
+        json: body,
+        headers: { 'X-Installation-Id': installationId },
+      });
+      setDouyinTaskInlineMessage("任务已经下发成功，稍后会在执行记录里看到进度。", false);
+      toast("抖音获客任务已下发");
+      await Promise.all([loadTasks(), loadRuns()]);
+      return data;
     }
 
     async function createScheduledTask() {
@@ -3984,9 +4852,71 @@
       openRunDetail(node.dataset.openRunDetail || "");
     });
 
+    $("openDouyinLeadsScheduleBtn")?.addEventListener("click", () => switchTab("douyinLeadsSchedule"));
+    $("backToDouyinStatusBtn")?.addEventListener("click", () => switchTab("douyinLeads"));
+    $("refreshDouyinLeadsBtn")?.addEventListener("click", () => loadDouyinStatus());
+    $("douyinTaskScheduleType")?.addEventListener("change", updateDouyinScheduleFields);
+    $("douyinAddDailyTimeBtn")?.addEventListener("click", () => addDouyinDailyTime());
+    $("douyinTaskResetBtn")?.addEventListener("click", () => resetDouyinTaskForm());
+    $("submitDouyinTaskBtn")?.addEventListener("click", async () => {
+      try { await submitDouyinTask(); } catch (err) { setDouyinTaskInlineMessage(err.message || "提交失败，请稍后重试", true); toast(err.message || "提交失败，请稍后重试"); }
+    });
+    $("submitDouyinTaskBtnBottom")?.addEventListener("click", async () => {
+      try { await submitDouyinTask(); } catch (err) { setDouyinTaskInlineMessage(err.message || "提交失败，请稍后重试", true); toast(err.message || "提交失败，请稍后重试"); }
+    });
+    $("douyinTaskActionGrid")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-douyin-task-action]");
+      if (!btn) return;
+      state.douyinTaskAction = btn.getAttribute("data-douyin-task-action") || "search_collect";
+      renderDouyinTaskActions();
+      renderDouyinTaskDetailFields();
+    });
+    $("douyinTaskDetailFields")?.addEventListener("change", (evt) => {
+      const target = evt.target;
+      if (!target) return;
+      if (target.matches && target.matches("[data-douyin-region]")) {
+        const value = String(target.value || "");
+        const boxes = Array.from(document.querySelectorAll("[data-douyin-region]"));
+        if (value === "全国" && target.checked) {
+          boxes.forEach((el) => {
+            if (String(el.value || "") !== "全国") el.checked = false;
+          });
+        } else if (value !== "全国" && target.checked) {
+          const nationwide = boxes.find((el) => String(el.value || "") === "全国");
+          if (nationwide) nationwide.checked = false;
+        }
+        normalizeDouyinRegionSelection();
+        refreshDouyinRegionSummary();
+      }
+    });
+    $("douyinTaskDetailFields")?.addEventListener("click", (evt) => {
+      const target = evt.target;
+      if (!target) return;
+      if (target.id === "douyinRegionTrigger" || target.closest?.("#douyinRegionTrigger")) {
+        const trigger = $("douyinRegionTrigger");
+        const expanded = trigger?.getAttribute("aria-expanded") === "true";
+        setDouyinRegionPanelOpen(!expanded);
+        return;
+      }
+      if (target.id === "douyinRegionResetBtn" || target.closest?.("#douyinRegionResetBtn")) {
+        evt.preventDefault();
+        document.querySelectorAll("[data-douyin-region]").forEach((el) => {
+          el.checked = String(el.value || "") === "全国";
+        });
+        normalizeDouyinRegionSelection();
+        refreshDouyinRegionSummary();
+        setDouyinRegionPanelOpen(false);
+      }
+    });
+
     $("homeQuickGrid").addEventListener("click", (evt) => {
       const btn = evt.target.closest("button");
       if (!btn) return;
+      const homeTarget = (btn.dataset.homeTarget || "").trim();
+      if (homeTarget) {
+        switchTab(homeTarget);
+        return;
+      }
       switchTab("messages");
       setMessageTemplate(btn.dataset.prompt || "");
       if (btn.dataset.imageVideo === "1") setTimeout(() => $("imageInput").click(), 120);

@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import socket
+import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import SessionLocal, get_db
-from ..models import H5ChatDevicePresence, H5ChatEvent, H5ChatMessage, User
+from ..models import H5ChatDevicePresence, H5ChatEvent, H5ChatMessage, User, UserInstallation
 from .auth import ALGORITHM, get_current_user
 from .installation_slots import INSTALLATION_ID_HEADER, ensure_installation_slot, optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
@@ -45,6 +46,11 @@ _CHAT_TURN_BILLING_SUPPORT_HEADER = "X-Lobster-Chat-Turn-Billing"
 _UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _MAX_H5_UPLOAD_BYTES = 15 * 1024 * 1024
 _MAX_MEDIA_PROXY_BYTES = 1024 * 1024 * 1024
+_DEVICE_ONLINE_TTL_SECONDS = 90
+_DEVICE_HEARTBEAT_WRITE_MIN_SECONDS = 20
+_PENDING_INSTALLATION_TOUCH_MIN_SECONDS = 60
+_PENDING_EMPTY_CACHE_SECONDS = 1.0
+_pending_empty_cache: Dict[str, float] = {}
 _IMAGE_EXT_BY_TYPE = {
     "image/jpeg": ".jpg",
     "image/jpg": ".jpg",
@@ -188,6 +194,47 @@ def _header_installation_id(request: Request) -> str:
         or request.headers.get("x-installation-id")
         or ""
     ).strip()
+
+
+def _touch_installation_slot_lazy(db: Session, user_id: int, installation_id: str) -> None:
+    if not installation_id:
+        return
+    now = datetime.utcnow()
+    slot = (
+        db.query(UserInstallation)
+        .filter(UserInstallation.user_id == user_id, UserInstallation.installation_id == installation_id)
+        .first()
+    )
+    if slot:
+        last_seen_at = slot.last_seen_at
+        if last_seen_at and (now - last_seen_at).total_seconds() < _PENDING_INSTALLATION_TOUCH_MIN_SECONDS:
+            return
+        slot.last_seen_at = now
+        db.commit()
+        return
+    ensure_installation_slot(db, user_id, installation_id)
+
+
+def _pending_cache_key(user_id: int, installation_id: str) -> str:
+    return f"{user_id}:{installation_id or '-'}"
+
+
+def _pending_empty_recent(key: str) -> bool:
+    ts = _pending_empty_cache.get(key)
+    return bool(ts and (time.monotonic() - ts) < _PENDING_EMPTY_CACHE_SECONDS)
+
+
+def _mark_pending_empty(key: str) -> None:
+    _pending_empty_cache[key] = time.monotonic()
+    if len(_pending_empty_cache) > 5000:
+        cutoff = time.monotonic() - 30
+        for old_key, ts in list(_pending_empty_cache.items())[:1000]:
+            if ts < cutoff:
+                _pending_empty_cache.pop(old_key, None)
+
+
+def _clear_pending_empty(key: str) -> None:
+    _pending_empty_cache.pop(key, None)
 
 
 def _public_base_url(request: Request) -> str:
@@ -492,9 +539,12 @@ async def proxy_h5_chat_media(
     disposition: str = Query("inline"),
     filename: str = Query("", max_length=200),
     token: str = Query(""),
-    db: Session = Depends(get_db),
 ):
-    _user_from_query_token(db, token)
+    db = SessionLocal()
+    try:
+        _user_from_query_token(db, token)
+    finally:
+        db.close()
     remote_url = _assert_public_remote_url(url)
     kind = "attachment" if (disposition or "").strip().lower() == "attachment" else "inline"
     safe_filename = _download_filename(filename, remote_url)
@@ -669,16 +719,35 @@ def h5_device_heartbeat(
     xi = _header_installation_id(request)
     if not xi:
         raise HTTPException(status_code=400, detail="缺少 X-Installation-Id")
-    ensure_installation_slot(db, current_user.id, xi)
     now = datetime.utcnow()
+    slot = (
+        db.query(UserInstallation)
+        .filter(UserInstallation.user_id == current_user.id, UserInstallation.installation_id == xi)
+        .first()
+    )
+    if slot:
+        slot_seen_at = slot.last_seen_at
+        if not slot_seen_at or (now - slot_seen_at).total_seconds() >= _DEVICE_HEARTBEAT_WRITE_MIN_SECONDS:
+            slot.last_seen_at = now
+            db.commit()
+    else:
+        ensure_installation_slot(db, current_user.id, xi)
     row = (
         db.query(H5ChatDevicePresence)
         .filter(H5ChatDevicePresence.user_id == current_user.id, H5ChatDevicePresence.installation_id == xi)
         .first()
     )
     if row:
+        previous_seen_at = row.last_seen_at
+        should_set_display_name = body.display_name is not None and not (row.display_name or "").strip()
+        if (
+            previous_seen_at
+            and (now - previous_seen_at).total_seconds() < _DEVICE_HEARTBEAT_WRITE_MIN_SECONDS
+            and not should_set_display_name
+        ):
+            return {"ok": True, "installation_id": xi, "last_seen_at": _iso(previous_seen_at), "throttled": True}
         row.last_seen_at = now
-        if body.display_name is not None and not (row.display_name or "").strip():
+        if should_set_display_name:
             row.display_name = body.display_name.strip()[:128] or None
     else:
         row = H5ChatDevicePresence(
@@ -723,7 +792,7 @@ def h5_update_device_display_name(
             "installation_id": row.installation_id,
             "display_name": row.display_name,
             "last_seen_at": _iso(row.last_seen_at),
-            "online": age <= 20,
+            "online": age <= _DEVICE_ONLINE_TTL_SECONDS,
         },
     }
 
@@ -750,7 +819,7 @@ def h5_devices_status(
                 "installation_id": r.installation_id,
                 "display_name": r.display_name,
                 "last_seen_at": _iso(r.last_seen_at),
-                "online": age <= 20,
+                "online": age <= _DEVICE_ONLINE_TTL_SECONDS,
             }
         )
     return {"ok": True, "online": any(d["online"] for d in devices), "devices": devices}
@@ -764,8 +833,11 @@ def h5_pending_messages(
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
+    pending_key = _pending_cache_key(current_user.id, xi)
+    if _pending_empty_recent(pending_key):
+        return {"ok": True, "items": [], "throttled": True}
     if xi:
-        ensure_installation_slot(db, current_user.id, xi)
+        _touch_installation_slot_lazy(db, current_user.id, xi)
     turn_billing_supported = (
         request.headers.get(_CHAT_TURN_BILLING_SUPPORT_HEADER)
         or request.headers.get(_CHAT_TURN_BILLING_SUPPORT_HEADER.lower())
@@ -835,6 +907,10 @@ def h5_pending_messages(
         _add_event(db, row, "claimed", claimed_payload)
         db.commit()
         claimed_rows.append(row)
+    if claimed_rows:
+        _clear_pending_empty(pending_key)
+    else:
+        _mark_pending_empty(pending_key)
     return {"ok": True, "items": [_serialize_message(r, include_reply=False, chat_turn_charged=turn_billing_supported) for r in claimed_rows]}
 
 

@@ -160,6 +160,7 @@ def _user_public_payload(u: User) -> dict:
         "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
         "parent_user_id": u.parent_user_id,
         "brand_mark": getattr(u, "brand_mark", None),
+        "is_overseas_user": bool(getattr(u, "is_overseas_user", False)),
         "llm_model_override": (getattr(u, "llm_model_override", None) or ""),
         "created_at": u.created_at.isoformat() if u.created_at else None,
     }
@@ -505,8 +506,18 @@ def admin_get_user_skill_visibility(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
-    from .skills import _user_visible_package_ids, _load_registry, _pkg_store_visibility, _skill_store_admin
-    visible = _user_visible_package_ids(db, user_id)
+    from .skills import (
+        _user_has_custom_visibility,
+        _user_visible_package_ids,
+        _load_registry,
+        _pkg_store_visibility,
+        _skill_store_admin,
+    )
+    visible = _user_visible_package_ids(
+        db,
+        user,
+        is_overseas_client=False,
+    )
     unlocked = {
         row[0]
         for row in db.query(SkillUnlock.package_id).filter(SkillUnlock.user_id == user_id).all()
@@ -531,6 +542,8 @@ def admin_get_user_skill_visibility(
     return {
         "user_id": user_id,
         "is_admin": _skill_store_admin(user),
+        "registration_is_overseas_user": bool(getattr(user, "is_overseas_user", False)),
+        "has_custom_visibility": _user_has_custom_visibility(db, user_id),
         "visible_ids": sorted(visible),
         "unlocked_ids": sorted(unlocked),
         "all_packages": all_pkgs,
@@ -556,7 +569,7 @@ def admin_update_user_skill_visibility(
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     from .skills import _ensure_user_visibility_seeded
-    _ensure_user_visibility_seeded(db, user_id)
+    _ensure_user_visibility_seeded(db, user)
     added, removed, unlocked_added, unlocked_removed = [], [], [], []
     for pkg_id in body.add:
         pkg_id = pkg_id.strip()

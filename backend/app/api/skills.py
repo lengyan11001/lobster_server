@@ -21,6 +21,7 @@ from .installation_slots import ensure_installation_slot, installation_slots_ena
 router = APIRouter()
 
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+_OVERSEAS_CLIENT_HEADER = "x-lobster-client-overseas"
 
 # 技能商店管理员：除 role=admin 外，以下登录账号（User.email 存的是账号名）视为管理员
 _SKILL_STORE_ADMIN_LOGIN_ACCOUNTS = frozenset(
@@ -49,7 +50,7 @@ def _skill_store_admin(user: User) -> bool:
     return login_account in (_SKILL_STORE_ADMIN_LOGIN_ACCOUNTS | _skill_store_admin_extra_from_env())
 
 
-DEFAULT_VISIBLE_PACKAGES: tuple[str, ...] = (
+DEFAULT_VISIBLE_PACKAGES_DOMESTIC: tuple[str, ...] = (
     "sutui_mcp",
     "xiaohongshu_publish",
     "douyin_publish",
@@ -70,21 +71,63 @@ DEFAULT_VISIBLE_PACKAGES: tuple[str, ...] = (
 )
 
 
-def _ensure_user_visibility_seeded(db: Session, user_id: int) -> None:
-    """自动给用户补齐默认可见技能包。"""
-    rows = db.query(UserSkillVisibility.package_id).filter(UserSkillVisibility.user_id == user_id).all()
-    existing_ids = {r[0] for r in rows}
-    missing_ids = [pkg_id for pkg_id in DEFAULT_VISIBLE_PACKAGES if pkg_id not in existing_ids]
-    if not missing_ids:
+DEFAULT_VISIBLE_PACKAGES_OVERSEAS: tuple[str, ...] = (
+    "sutui_mcp",
+    "youtube_publish",
+    "twilio_whatsapp",
+    "openclaw_memory_skill",
+    "comfly_ecommerce_detail_skill",
+    "hifly_digital_human_skill",
+    "cutcli_template_studio",
+    "comfly_veo_skill",
+    "comfly_seedance_tvc_skill",
+    "goal_video_pipeline_skill",
+    "ip_content_daily_skill",
+    "create_ppt_skill",
+    "create_video_pipeline_skill",
+)
+
+
+def _default_visible_packages_for_request(is_overseas_client: bool) -> tuple[str, ...]:
+    if is_overseas_client:
+        return DEFAULT_VISIBLE_PACKAGES_OVERSEAS
+    return DEFAULT_VISIBLE_PACKAGES_DOMESTIC
+
+
+def _client_is_overseas(header_value: Optional[str]) -> bool:
+    raw = str(header_value or "").strip().lower()
+    return raw in {"1", "true", "yes", "on", "overseas", "海外"}
+
+
+def _user_has_custom_visibility(db: Session, user_id: int) -> bool:
+    return db.query(UserSkillVisibility.id).filter(UserSkillVisibility.user_id == user_id).first() is not None
+
+
+def _ensure_user_visibility_seeded(db: Session, user: User) -> None:
+    """Compatibility helper for admin edits.
+
+    Skill-store runtime defaults are now derived from the client-version header.
+    For the admin panel's first manual edit on a user with no custom rows yet,
+    materialize a baseline visibility set so add/remove operations have a stable
+    row set to operate on.
+    """
+    if _user_has_custom_visibility(db, user.id):
         return
-    for pkg_id in missing_ids:
-        db.add(UserSkillVisibility(user_id=user_id, package_id=pkg_id))
+    baseline = _default_visible_packages_for_request(bool(getattr(user, "is_overseas_user", False)))
+    for pkg_id in baseline:
+        db.add(UserSkillVisibility(user_id=user.id, package_id=pkg_id))
     db.commit()
 
 
-def _user_visible_package_ids(db: Session, user_id: int) -> set:
-    _ensure_user_visibility_seeded(db, user_id)
-    rows = db.query(UserSkillVisibility.package_id).filter(UserSkillVisibility.user_id == user_id).all()
+def _user_visible_package_ids(
+    db: Session,
+    user: User,
+    *,
+    is_overseas_client: bool,
+) -> set:
+    if not _user_has_custom_visibility(db, user.id):
+        return set(_default_visible_packages_for_request(is_overseas_client))
+    rows = db.query(UserSkillVisibility.package_id).filter(UserSkillVisibility.user_id == user.id).all()
     return {r[0] for r in rows}
 
 
@@ -206,13 +249,21 @@ def _package_capabilities_already_in_catalog(db: Session, pkg: dict) -> bool:
 
 
 @router.get("/skills/store", summary="技能商店列表")
-def list_store(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_store(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    x_lobster_client_overseas: Optional[str] = Header(default=None, alias="X-Lobster-Client-Overseas"),
+):
     registry = _load_registry()
     installed = set(_load_installed().get("installed", []))
     unlocked = _user_unlocked_package_ids(db, current_user.id)
     packages = registry.get("packages", {})
     is_admin = _skill_store_admin(current_user)
-    visible = _user_visible_package_ids(db, current_user.id) if not is_admin else None
+    visible = _user_visible_package_ids(
+        db,
+        current_user,
+        is_overseas_client=_client_is_overseas(x_lobster_client_overseas),
+    ) if not is_admin else None
     out = []
     for pkg_id, pkg in packages.items():
         if pkg.get("show_in_store") is False:
@@ -253,7 +304,11 @@ def skill_store_admin_flag(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/skills/user-allowed-capability-ids", summary="当前用户可使用的 capability_id 列表（MCP 过滤用）")
-def user_allowed_capability_ids(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def user_allowed_capability_ids(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    x_lobster_client_overseas: Optional[str] = Header(default=None, alias="X-Lobster-Client-Overseas"),
+):
     """根据用户可见技能包，返回该用户允许调用的 capability_id 列表。管理员返回全部。"""
     registry = _load_registry()
     packages = registry.get("packages", {})
@@ -263,7 +318,11 @@ def user_allowed_capability_ids(current_user: User = Depends(get_current_user), 
         for pkg in packages.values():
             cap_ids.extend((pkg.get("capabilities") or {}).keys())
         return {"is_admin": True, "capability_ids": sorted(set(cap_ids))}
-    visible = _user_visible_package_ids(db, current_user.id)
+    visible = _user_visible_package_ids(
+        db,
+        current_user,
+        is_overseas_client=_client_is_overseas(x_lobster_client_overseas),
+    )
     cap_ids = []
     for pkg_id in visible:
         pkg = packages.get(pkg_id, {})

@@ -33,15 +33,17 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
-from ..db import get_db
+from ..core.config import settings
+from ..db import SessionLocal, get_db
 from ..models import Asset, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, credits_json_float, user_balance_decimal
 from ..services.model_usage_monitor import log_model_usage_event
 from .assets import _save_bytes_or_tos
-from .auth import get_current_user
+from .auth import ALGORITHM, get_current_user
 from .mobile_identity import online_user_for_mobile_user
 
 # 让本模块能 import mcp/ 下的 comfly_upstream
@@ -89,9 +91,161 @@ def _env_int(name: str, default: int, *, min_value: int = 1, max_value: int = 5)
 
 def _should_deduct_credits() -> bool:
     """与 capabilities.py / sutui_chat_proxy.py 一致：在线版独立认证才扣积分。"""
-    from ..core.config import settings
     edition = (getattr(settings, "lobster_edition", None) or "online").strip().lower()
     return edition == "online" and getattr(settings, "lobster_independent_auth", True)
+
+
+def _bearer_token_from_request(request: Request) -> str:
+    auth_header = str(request.headers.get("Authorization") or "").strip()
+    if not auth_header:
+        raise HTTPException(
+            status_code=401,
+            detail="Authorization Bearer missing",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    parts = auth_header.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return parts[1].strip()
+
+
+def _resolve_proxy_user_ids_from_request(
+    request: Request,
+    *,
+    map_to_online_user: bool = False,
+) -> Tuple[int, int]:
+    token = _bearer_token_from_request(request)
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="无法验证凭证",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        request_user_id = int(payload.get("sub"))
+    except (JWTError, ValueError, TypeError):
+        raise credentials_exception
+
+    db = SessionLocal()
+    try:
+        request_user = db.query(User).filter(User.id == request_user_id).first()
+        if request_user is None:
+            raise credentials_exception
+        billing_user = online_user_for_mobile_user(db, request_user) if map_to_online_user else request_user
+        return int(request_user.id), int(billing_user.id)
+    finally:
+        db.close()
+
+
+def _do_pre_deduct_by_user_id(
+    user_id: int,
+    credits: int,
+    *,
+    capability_id: str,
+    model: str,
+    endpoint: str,
+    extra_meta: Optional[Dict[str, Any]] = None,
+) -> Decimal:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user is None:
+            raise HTTPException(status_code=401, detail="用户不存在")
+        return _do_pre_deduct(
+            db,
+            user,
+            credits,
+            capability_id=capability_id,
+            model=model,
+            endpoint=endpoint,
+            extra_meta=extra_meta,
+        )
+    finally:
+        db.close()
+
+
+def _do_full_refund_by_user_id(
+    user_id: int,
+    *,
+    pre: Decimal,
+    capability_id: str,
+    model: str,
+    endpoint: str,
+    error: str = "",
+) -> None:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user is None:
+            raise HTTPException(status_code=401, detail="用户不存在")
+        _do_full_refund(
+            db,
+            user,
+            pre=pre,
+            capability_id=capability_id,
+            model=model,
+            endpoint=endpoint,
+            error=error,
+        )
+    finally:
+        db.close()
+
+
+def _do_settle_by_user_id(
+    user_id: int,
+    *,
+    pre: Decimal,
+    actual: int,
+    capability_id: str,
+    model: str,
+    endpoint: str,
+    extra_meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user is None:
+            raise HTTPException(status_code=401, detail="用户不存在")
+        _do_settle(
+            db,
+            user,
+            pre=pre,
+            actual=actual,
+            capability_id=capability_id,
+            model=model,
+            endpoint=endpoint,
+            extra_meta=extra_meta,
+        )
+    finally:
+        db.close()
+
+
+async def _save_generated_images_best_effort_by_user_id(
+    user_id: int,
+    *,
+    response_payload: Dict[str, Any],
+    prompt: str,
+    model: str,
+    limit: int,
+    exclude_urls: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    db = SessionLocal()
+    try:
+        return await _save_generated_images_best_effort(
+            db,
+            user_id=user_id,
+            response_payload=response_payload,
+            prompt=prompt,
+            model=model,
+            limit=limit,
+            exclude_urls=exclude_urls,
+        )
+    finally:
+        db.close()
 
 
 def _model_token_group(model_id: str) -> str:
@@ -1258,8 +1412,6 @@ async def proxy_files_upload(
 @router.post("/api/comfly-proxy/v1/chat/completions", summary="Comfly chat 透明 proxy（按 token usage 计费）")
 async def proxy_chat_completions(
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     _check_request_authorized_for_billing(request)
     body = await request.json()
@@ -1268,29 +1420,35 @@ async def proxy_chat_completions(
         raise HTTPException(400, "缺少 model")
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
 
     # 预扣（按典型 token 估算）
     estimated = estimate_comfly_credits(model, {}, for_user=True) or 1
-    pre = _do_pre_deduct(db, current_user, estimated,
-                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="chat")
-    _audit("chat_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
+    pre = _do_pre_deduct_by_user_id(
+        billing_user_id,
+        estimated,
+        capability_id=_CAPABILITY_FOR_BILLING,
+        model=model,
+        endpoint="chat",
+    )
+    _audit("chat_pre_deduct", user_id=billing_user_id, request_user_id=request_user_id, model=model, estimated=estimated)
 
     try:
         resp = await _comfly_request("POST", _comfly_url("/v1/chat/completions", model),
                                      upstream_body, _comfly_headers(model), _TIMEOUT_CHAT)
     except Exception as e:
-        _do_full_refund(db, current_user, pre=pre,
+        _do_full_refund_by_user_id(billing_user_id, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="chat", error=str(e))
-        _audit("chat_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        _audit("chat_failed", user_id=billing_user_id, request_user_id=request_user_id, model=model, error=str(e)[:300])
         raise HTTPException(502, f"Comfly chat 调用失败：{e}")
 
     # 按 usage 结算
     usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
     actual = estimate_comfly_credits(model, {"usage": usage}, for_user=True) or estimated
-    _do_settle(db, current_user, pre=pre, actual=int(actual),
+    _do_settle_by_user_id(billing_user_id, pre=pre, actual=int(actual),
                capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="chat",
                extra_meta={"usage": usage})
-    _audit("chat_settled", user_id=current_user.id, model=model,
+    _audit("chat_settled", user_id=billing_user_id, request_user_id=request_user_id, model=model,
            pre=credits_json_float(pre), actual=int(actual), usage=usage)
     return JSONResponse(resp)
 
@@ -1298,8 +1456,6 @@ async def proxy_chat_completions(
 @router.post("/api/comfly-proxy/v1/images/generations", summary="Comfly images 透明 proxy（按 per_call 计费）")
 async def proxy_images_generations(
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     _check_request_authorized_for_billing(request)
     body = await request.json()
@@ -1310,7 +1466,7 @@ async def proxy_images_generations(
     if len(attempt_models) == 1:
         _require_model_entry(model)
 
-    billing_user = online_user_for_mobile_user(db, current_user)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     errors: List[str] = []
     last_error = ""
     attempts_per_model = _env_int("COMFLY_IMAGE_RETRY_ATTEMPTS", 2, min_value=1, max_value=4)
@@ -1324,8 +1480,8 @@ async def proxy_images_generations(
             errors.append(f"{attempt_model}: {last_error}")
             _audit(
                 "image_channel_skipped",
-                user_id=billing_user.id,
-                request_user_id=current_user.id,
+                user_id=billing_user_id,
+                request_user_id=request_user_id,
                 requested_model=model,
                 model=attempt_model,
                 attempt=index,
@@ -1350,9 +1506,8 @@ async def proxy_images_generations(
         )
 
         estimated = estimate_comfly_credits(attempt_model, body, for_user=True) or 1
-        pre = _do_pre_deduct(
-            db,
-            billing_user,
+        pre = _do_pre_deduct_by_user_id(
+            billing_user_id,
             estimated,
             capability_id=_CAPABILITY_FOR_BILLING,
             model=attempt_model,
@@ -1361,8 +1516,8 @@ async def proxy_images_generations(
         )
         _audit(
             "image_pre_deduct",
-            user_id=billing_user.id,
-            request_user_id=current_user.id,
+            user_id=billing_user_id,
+            request_user_id=request_user_id,
             requested_model=model,
             model=attempt_model,
             attempt=index,
@@ -1375,8 +1530,8 @@ async def proxy_images_generations(
                 endpoint_path = "/v1/images/edits" if reference_urls else "/v1/images/generations"
                 _audit(
                     "image_channel_attempt",
-                    user_id=billing_user.id,
-                    request_user_id=current_user.id,
+                    user_id=billing_user_id,
+                    request_user_id=request_user_id,
                     requested_model=model,
                     model=attempt_model,
                     attempt=index,
@@ -1414,9 +1569,8 @@ async def proxy_images_generations(
                         _comfly_headers(attempt_model),
                         _TIMEOUT_IMAGE,
                     )
-                saved_assets = await _save_generated_images_best_effort(
-                    db,
-                    user_id=billing_user.id,
+                saved_assets = await _save_generated_images_best_effort_by_user_id(
+                    billing_user_id,
                     response_payload=resp,
                     prompt=str(body.get("prompt") or ""),
                     model=attempt_model,
@@ -1433,8 +1587,8 @@ async def proxy_images_generations(
                             fallback.update({"requested_model": model, "used_model": attempt_model, "attempt": index})
                 _audit(
                     "image_ok",
-                    user_id=billing_user.id,
-                    request_user_id=current_user.id,
+                    user_id=billing_user_id,
+                    request_user_id=request_user_id,
                     requested_model=model,
                     model=attempt_model,
                     attempt=index,
@@ -1444,11 +1598,11 @@ async def proxy_images_generations(
                     refs=len(reference_urls),
                 )
                 log_model_usage_event(
-                    db,
+                    None,
                     category="image",
                     event_kind="attempt",
                     success=True,
-                    user_id=billing_user.id,
+                    user_id=billing_user_id,
                     requested_model=model,
                     model=attempt_model,
                     provider=(entry.get("token_group") or "comfly"),
@@ -1458,11 +1612,11 @@ async def proxy_images_generations(
                     meta={"attempt": index, "retry": retry_index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
                 )
                 log_model_usage_event(
-                    db,
+                    None,
                     category="image",
                     event_kind="request",
                     success=True,
-                    user_id=billing_user.id,
+                    user_id=billing_user_id,
                     requested_model=model,
                     model=attempt_model,
                     provider=(entry.get("token_group") or "comfly"),
@@ -1478,8 +1632,8 @@ async def proxy_images_generations(
                 errors.append(f"{attempt_model}: {last_error[:300]}")
                 _audit(
                     "image_channel_attempt_failed",
-                    user_id=billing_user.id,
-                    request_user_id=current_user.id,
+                    user_id=billing_user_id,
+                    request_user_id=request_user_id,
                     requested_model=model,
                     model=attempt_model,
                     attempt=index,
@@ -1488,11 +1642,11 @@ async def proxy_images_generations(
                     error=last_error[:300],
                 )
                 log_model_usage_event(
-                    db,
+                    None,
                     category="image",
                     event_kind="attempt",
                     success=False,
-                    user_id=billing_user.id,
+                    user_id=billing_user_id,
                     requested_model=model,
                     model=attempt_model,
                     provider=(entry.get("token_group") or "comfly"),
@@ -1509,9 +1663,8 @@ async def proxy_images_generations(
         if _openmind_image_fallback_enabled() and (not last_error or _is_retryable_image_error(RuntimeError(last_error))):
             try:
                 resp = await _openmind_image_request(upstream_body)
-                saved_assets = await _save_generated_images_best_effort(
-                    db,
-                    user_id=billing_user.id,
+                saved_assets = await _save_generated_images_best_effort_by_user_id(
+                    billing_user_id,
                     response_payload=resp,
                     prompt=str(body.get("prompt") or ""),
                     model=attempt_model,
@@ -1527,8 +1680,8 @@ async def proxy_images_generations(
                         fallback.update({"requested_model": model, "used_model": attempt_model, "provider": "openmind", "attempt": index})
                 _audit(
                     "image_openmind_fallback_ok",
-                    user_id=billing_user.id,
-                    request_user_id=current_user.id,
+                    user_id=billing_user_id,
+                    request_user_id=request_user_id,
                     requested_model=model,
                     model=attempt_model,
                     pre=credits_json_float(pre),
@@ -1536,11 +1689,11 @@ async def proxy_images_generations(
                     saved_assets=len(saved_assets),
                 )
                 log_model_usage_event(
-                    db,
+                    None,
                     category="image",
                     event_kind="attempt",
                     success=True,
-                    user_id=billing_user.id,
+                    user_id=billing_user_id,
                     requested_model=model,
                     model=attempt_model,
                     provider="openmind",
@@ -1550,11 +1703,11 @@ async def proxy_images_generations(
                     meta={"attempt": index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
                 )
                 log_model_usage_event(
-                    db,
+                    None,
                     category="image",
                     event_kind="request",
                     success=True,
-                    user_id=billing_user.id,
+                    user_id=billing_user_id,
                     requested_model=model,
                     model=attempt_model,
                     provider="openmind",
@@ -1568,19 +1721,19 @@ async def proxy_images_generations(
             except Exception as fallback_error:
                 _audit(
                     "image_openmind_fallback_failed",
-                    user_id=billing_user.id,
-                    request_user_id=current_user.id,
+                    user_id=billing_user_id,
+                    request_user_id=request_user_id,
                     requested_model=model,
                     model=attempt_model,
                     comfly_error=last_error[:300],
                     error=str(fallback_error)[:300],
                 )
                 log_model_usage_event(
-                    db,
+                    None,
                     category="image",
                     event_kind="attempt",
                     success=False,
-                    user_id=billing_user.id,
+                    user_id=billing_user_id,
                     requested_model=model,
                     model=attempt_model,
                     provider="openmind",
@@ -1594,9 +1747,8 @@ async def proxy_images_generations(
                 errors.append(f"{attempt_model}/openmind: {str(fallback_error)[:300]}")
 
         if not channel_succeeded:
-            _do_full_refund(
-                db,
-                billing_user,
+            _do_full_refund_by_user_id(
+                billing_user_id,
                 pre=pre,
                 capability_id=_CAPABILITY_FOR_BILLING,
                 model=attempt_model,
@@ -1605,19 +1757,19 @@ async def proxy_images_generations(
             )
             _audit(
                 "image_failed",
-                user_id=billing_user.id,
-                request_user_id=current_user.id,
+                user_id=billing_user_id,
+                request_user_id=request_user_id,
                 requested_model=model,
                 model=attempt_model,
                 attempt=index,
                 error=last_error[:300],
             )
             log_model_usage_event(
-                db,
+                None,
                 category="image",
                 event_kind="request",
                 success=False,
-                user_id=billing_user.id,
+                user_id=billing_user_id,
                 requested_model=model,
                 model=attempt_model,
                 provider="all",
@@ -1631,17 +1783,17 @@ async def proxy_images_generations(
     detail = "; ".join(errors[-3:]) or last_error or "unknown error"
     _audit(
         "image_all_channels_failed",
-        user_id=online_user_for_mobile_user(db, current_user).id,
-        request_user_id=current_user.id,
+        user_id=billing_user_id,
+        request_user_id=request_user_id,
         model=model,
         errors=errors[-5:],
     )
     log_model_usage_event(
-        db,
+        None,
         category="image",
         event_kind="request",
         success=False,
-        user_id=online_user_for_mobile_user(db, current_user).id,
+        user_id=billing_user_id,
         requested_model=model,
         model=model,
         provider="all",
@@ -1657,8 +1809,6 @@ async def proxy_images_generations(
 @router.post("/api/comfly-proxy/v1/images/edits", summary="Comfly image edits 透明 proxy（multipart，按 per_call 计费）")
 async def proxy_images_edits(
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     _check_request_authorized_for_billing(request)
     form = await request.form()
@@ -1691,14 +1841,19 @@ async def proxy_images_edits(
     if not files:
         raise HTTPException(400, "缺少 image 文件")
 
-    billing_user = online_user_for_mobile_user(db, current_user)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     estimated = estimate_comfly_credits(model, data, for_user=True) or 1
-    pre = _do_pre_deduct(db, billing_user, estimated,
-                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit")
+    pre = _do_pre_deduct_by_user_id(
+        billing_user_id,
+        estimated,
+        capability_id=_CAPABILITY_FOR_BILLING,
+        model=model,
+        endpoint="image_edit",
+    )
     _audit(
         "image_edit_pre_deduct",
-        user_id=billing_user.id,
-        request_user_id=current_user.id,
+        user_id=billing_user_id,
+        request_user_id=request_user_id,
         model=model,
         estimated=estimated,
     )
@@ -1712,26 +1867,24 @@ async def proxy_images_edits(
             _TIMEOUT_IMAGE,
         )
     except Exception as e:
-        _do_full_refund(db, billing_user, pre=pre,
+        _do_full_refund_by_user_id(billing_user_id, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit", error=str(e))
         _audit(
             "image_edit_failed",
-            user_id=billing_user.id,
-            request_user_id=current_user.id,
+            user_id=billing_user_id,
+            request_user_id=request_user_id,
             model=model,
             error=str(e)[:300],
         )
         raise HTTPException(502, f"Comfly image edits 调用失败：{e}")
 
-    _audit("image_edit_ok", user_id=billing_user.id, request_user_id=current_user.id, model=model, pre=credits_json_float(pre))
+    _audit("image_edit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model, pre=credits_json_float(pre))
     return JSONResponse(resp)
 
 
 @router.post("/api/comfly-proxy/v2/videos/generations", summary="Comfly Veo 视频提交 proxy（按 per_call 预扣）")
 async def proxy_videos_generations_submit(
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     _check_request_authorized_for_billing(request)
     body = await request.json()
@@ -1741,10 +1894,16 @@ async def proxy_videos_generations_submit(
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
 
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
-    pre = _do_pre_deduct(db, current_user, estimated,
-                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="video_submit")
-    _audit("video_submit_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
+    pre = _do_pre_deduct_by_user_id(
+        billing_user_id,
+        estimated,
+        capability_id=_CAPABILITY_FOR_BILLING,
+        model=model,
+        endpoint="video_submit",
+    )
+    _audit("video_submit_pre_deduct", user_id=billing_user_id, request_user_id=request_user_id, model=model, estimated=estimated)
 
     try:
         if _is_grok_api_format(entry):
@@ -1753,15 +1912,21 @@ async def proxy_videos_generations_submit(
             resp = await _comfly_request("POST", _comfly_url("/v2/videos/generations", model),
                                          upstream_body, _comfly_headers(model), _TIMEOUT_VIDEO_SUBMIT)
     except Exception as e:
-        _do_full_refund(db, current_user, pre=pre,
-                        capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="video_submit", error=str(e))
-        _audit("video_submit_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        _do_full_refund_by_user_id(
+            billing_user_id,
+            pre=pre,
+            capability_id=_CAPABILITY_FOR_BILLING,
+            model=model,
+            endpoint="video_submit",
+            error=str(e),
+        )
+        _audit("video_submit_failed", user_id=billing_user_id, request_user_id=request_user_id, model=model, error=str(e)[:300])
         log_model_usage_event(
-            db,
+            None,
             category="video",
             event_kind="request",
             success=False,
-            user_id=current_user.id,
+            user_id=billing_user_id,
             requested_model=model,
             model=model,
             provider="comfly",
@@ -1777,16 +1942,16 @@ async def proxy_videos_generations_submit(
     )
     api_kind = "grok_v1" if _is_grok_api_format(entry) else "veo_v2"
     _remember_proxy_video_task(task_id, api_kind, model)
-    _audit("video_submit_ok", user_id=current_user.id, model=model,
+    _audit("video_submit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model,
            task_id=task_id,
            api_kind=api_kind,
            pre=credits_json_float(pre))
     log_model_usage_event(
-        db,
+        None,
         category="video",
         event_kind="request",
         success=True,
-        user_id=current_user.id,
+        user_id=billing_user_id,
         requested_model=model,
         model=model,
         provider="comfly",
@@ -1881,8 +2046,6 @@ async def proxy_video_provider_policy(
 @router.post("/api/comfly-proxy/openmind/v1/videos", summary="OpenMind video submit proxy")
 async def proxy_openmind_video_submit(
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     _check_request_authorized_for_billing(request)
     body = await request.json()
@@ -1892,11 +2055,10 @@ async def proxy_openmind_video_submit(
     entry = _require_model_entry(model)
     upstream_body = _openmind_video_body(body, model, entry)
 
-    billing_user = online_user_for_mobile_user(db, current_user)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
-    pre = _do_pre_deduct(
-        db,
-        billing_user,
+    pre = _do_pre_deduct_by_user_id(
+        billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
@@ -1905,8 +2067,8 @@ async def proxy_openmind_video_submit(
     )
     _audit(
         "openmind_video_submit_pre_deduct",
-        user_id=billing_user.id,
-        request_user_id=current_user.id,
+        user_id=billing_user_id,
+        request_user_id=request_user_id,
         model=model,
         openmind_model=upstream_body.get("model"),
         estimated=estimated,
@@ -1915,9 +2077,8 @@ async def proxy_openmind_video_submit(
     try:
         resp = await _openmind_video_submit(body, model, entry)
     except Exception as e:
-        _do_full_refund(
-            db,
-            billing_user,
+        _do_full_refund_by_user_id(
+            billing_user_id,
             pre=pre,
             capability_id=_CAPABILITY_FOR_BILLING,
             model=model,
@@ -1926,17 +2087,17 @@ async def proxy_openmind_video_submit(
         )
         _audit(
             "openmind_video_submit_failed",
-            user_id=billing_user.id,
-            request_user_id=current_user.id,
+            user_id=billing_user_id,
+            request_user_id=request_user_id,
             model=model,
             error=str(e)[:300],
         )
         log_model_usage_event(
-            db,
+            None,
             category="video",
             event_kind="request",
             success=False,
-            user_id=billing_user.id,
+            user_id=billing_user_id,
             requested_model=model,
             model=model,
             provider="openmind",
@@ -1949,19 +2110,19 @@ async def proxy_openmind_video_submit(
 
     _audit(
         "openmind_video_submit_ok",
-        user_id=billing_user.id,
-        request_user_id=current_user.id,
+        user_id=billing_user_id,
+        request_user_id=request_user_id,
         model=model,
         openmind_model=resp.get("_requested_model") if isinstance(resp, dict) else "",
         task_id=_task_id_from_response(resp),
         pre=credits_json_float(pre),
     )
     log_model_usage_event(
-        db,
+        None,
         category="video",
         event_kind="request",
         success=True,
-        user_id=billing_user.id,
+        user_id=billing_user_id,
         requested_model=model,
         model=model,
         provider="openmind",
@@ -1994,8 +2155,6 @@ async def proxy_openmind_video_poll(
 @router.post("/api/comfly-proxy/v1/video/create", summary="Yunwu video create proxy")
 async def proxy_yunwu_video_create(
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     _check_request_authorized_for_billing(request)
     body = await request.json()
@@ -2004,17 +2163,17 @@ async def proxy_yunwu_video_create(
         raise HTTPException(400, "missing model")
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
 
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
-    pre = _do_pre_deduct(
-        db,
-        current_user,
+    pre = _do_pre_deduct_by_user_id(
+        billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="yunwu_video_create",
     )
-    _audit("yunwu_video_create_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
+    _audit("yunwu_video_create_pre_deduct", user_id=billing_user_id, request_user_id=request_user_id, model=model, estimated=estimated)
 
     try:
         resp = await _yunwu_request(
@@ -2025,22 +2184,21 @@ async def proxy_yunwu_video_create(
             _TIMEOUT_VIDEO_SUBMIT,
         )
     except Exception as e:
-        _do_full_refund(
-            db,
-            current_user,
+        _do_full_refund_by_user_id(
+            billing_user_id,
             pre=pre,
             capability_id=_CAPABILITY_FOR_BILLING,
             model=model,
             endpoint="yunwu_video_create",
             error=str(e),
         )
-        _audit("yunwu_video_create_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        _audit("yunwu_video_create_failed", user_id=billing_user_id, request_user_id=request_user_id, model=model, error=str(e)[:300])
         log_model_usage_event(
-            db,
+            None,
             category="video",
             event_kind="request",
             success=False,
-            user_id=current_user.id,
+            user_id=billing_user_id,
             requested_model=model,
             model=model,
             provider="yunwu",
@@ -2051,13 +2209,13 @@ async def proxy_yunwu_video_create(
         )
         raise HTTPException(502, f"Yunwu video create failed: {e}")
 
-    _audit("yunwu_video_create_ok", user_id=current_user.id, model=model, task_id=resp.get("id"), pre=credits_json_float(pre))
+    _audit("yunwu_video_create_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model, task_id=resp.get("id"), pre=credits_json_float(pre))
     log_model_usage_event(
-        db,
+        None,
         category="video",
         event_kind="request",
         success=True,
-        user_id=current_user.id,
+        user_id=billing_user_id,
         requested_model=model,
         model=model,
         provider="yunwu",
@@ -2097,8 +2255,6 @@ async def proxy_yunwu_video_query(
 @router.post("/api/comfly-proxy/seedance/v3/contents/generations/tasks", summary="Comfly Seedance 视频提交 proxy（按定价表预扣）")
 async def proxy_seedance_tasks_submit(
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     _check_request_authorized_for_billing(request)
     body = await request.json()
@@ -2108,10 +2264,16 @@ async def proxy_seedance_tasks_submit(
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
 
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
-    pre = _do_pre_deduct(db, current_user, estimated,
-                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="seedance_submit")
-    _audit("seedance_submit_pre_deduct", user_id=current_user.id, model=model, estimated=estimated)
+    pre = _do_pre_deduct_by_user_id(
+        billing_user_id,
+        estimated,
+        capability_id=_CAPABILITY_FOR_BILLING,
+        model=model,
+        endpoint="seedance_submit",
+    )
+    _audit("seedance_submit_pre_deduct", user_id=billing_user_id, request_user_id=request_user_id, model=model, estimated=estimated)
 
     try:
         resp = await _comfly_request(
@@ -2122,13 +2284,13 @@ async def proxy_seedance_tasks_submit(
             _TIMEOUT_VIDEO_SUBMIT,
         )
     except Exception as e:
-        _do_full_refund(db, current_user, pre=pre,
+        _do_full_refund_by_user_id(billing_user_id, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="seedance_submit", error=str(e))
-        _audit("seedance_submit_failed", user_id=current_user.id, model=model, error=str(e)[:300])
+        _audit("seedance_submit_failed", user_id=billing_user_id, request_user_id=request_user_id, model=model, error=str(e)[:300])
         raise HTTPException(502, f"Comfly Seedance submit 调用失败：{e}")
 
     data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
-    _audit("seedance_submit_ok", user_id=current_user.id, model=model,
+    _audit("seedance_submit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model,
            task_id=resp.get("id") or resp.get("task_id") or data.get("task_id") or data.get("id"),
            pre=credits_json_float(pre))
     return JSONResponse(resp)

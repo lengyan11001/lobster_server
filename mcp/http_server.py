@@ -192,7 +192,7 @@ async def _fetch_is_skill_store_admin(token: Optional[str]) -> bool:
         return False
 
 
-async def _fetch_user_allowed_capability_ids(token: Optional[str]) -> Optional[set]:
+async def _fetch_user_allowed_capability_ids(token: Optional[str], request: Optional[Request] = None) -> Optional[set]:
     """获取用户可使用的 capability_id 集合。管理员返回 None（不限制），匿名返回空集。"""
     if not (token or "").strip():
         return set()
@@ -204,8 +204,17 @@ async def _fetch_user_allowed_capability_ids(token: Optional[str]) -> Optional[s
         auth_base = BASE_URL
     url = f"{auth_base.rstrip('/')}/skills/user-allowed-capability-ids"
     try:
+        headers = {"Authorization": auth}
+        if request is not None:
+            client_overseas = (
+                request.headers.get("X-Lobster-Client-Overseas")
+                or request.headers.get("x-lobster-client-overseas")
+                or ""
+            ).strip()
+            if client_overseas:
+                headers["X-Lobster-Client-Overseas"] = client_overseas
         async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(url, headers={"Authorization": auth})
+            r = await client.get(url, headers=headers)
         if r.status_code != 200:
             logger.warning("[MCP] user-allowed-capability-ids HTTP %s", r.status_code)
             return None
@@ -290,6 +299,13 @@ def _backend_headers(token: Optional[str], request: Optional[Request] = None) ->
             h["X-Lobster-Pipeline-Id"] = pipeline_id[:128]
         if pipeline_cap:
             h["X-Lobster-Pipeline-Capability"] = pipeline_cap[:128]
+        client_overseas = (
+            request.headers.get("X-Lobster-Client-Overseas")
+            or request.headers.get("x-lobster-client-overseas")
+            or ""
+        ).strip()
+        if client_overseas:
+            h["X-Lobster-Client-Overseas"] = client_overseas
     bk = (os.environ.get("LOBSTER_MCP_BILLING_INTERNAL_KEY") or "").strip()
     if bk:
         h["X-Lobster-Mcp-Billing"] = bk
@@ -2658,7 +2674,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
 
         if name == "list_capabilities":
             is_admin = await _fetch_is_skill_store_admin(token)
-            allowed = await _fetch_user_allowed_capability_ids(token)
+            allowed = await _fetch_user_allowed_capability_ids(token, request)
             _comfly_image_models: list[str] = []
             _comfly_video_models: list[str] = []
             try:
@@ -2820,7 +2836,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             )
             if _capability_id_is_debug_only_in_registry(capability_id) and not await _fetch_is_skill_store_admin(token):
                 return [{"type": "text", "text": "该能力为调试中技能，当前账号不可用。"}], True
-            allowed = await _fetch_user_allowed_capability_ids(token)
+            allowed = await _fetch_user_allowed_capability_ids(token, request)
             if allowed is not None and capability_id not in allowed:
                 return [{"type": "text", "text": f"当前账号未开通此能力: {capability_id}"}], True
             cfg = catalog[capability_id]
@@ -3987,7 +4003,7 @@ async def _handle_single_message(msg: Dict[str, Any], request: Request) -> Optio
         catalog = _load_capability_catalog()
         token = _get_token_from_request(request)
         is_admin = await _fetch_is_skill_store_admin(token)
-        allowed = await _fetch_user_allowed_capability_ids(token)
+        allowed = await _fetch_user_allowed_capability_ids(token, request)
         tools = _tool_definitions(
             catalog,
             is_skill_store_admin=is_admin,
