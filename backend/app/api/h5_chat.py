@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import SessionLocal, get_db
 from ..models import H5ChatDevicePresence, H5ChatEvent, H5ChatMessage, User, UserInstallation
-from .auth import ALGORITHM, get_current_user
+from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token
 from .installation_slots import INSTALLATION_ID_HEADER, ensure_installation_slot, optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
 from .sutui_chat_proxy import charge_chat_turn_once
@@ -48,9 +48,11 @@ _MAX_H5_UPLOAD_BYTES = 15 * 1024 * 1024
 _MAX_MEDIA_PROXY_BYTES = 1024 * 1024 * 1024
 _DEVICE_ONLINE_TTL_SECONDS = 90
 _DEVICE_HEARTBEAT_WRITE_MIN_SECONDS = 20
+_DEVICE_HEARTBEAT_FAST_ACK_SECONDS = 55.0
 _PENDING_INSTALLATION_TOUCH_MIN_SECONDS = 60
-_PENDING_EMPTY_CACHE_SECONDS = 1.0
+_PENDING_EMPTY_CACHE_SECONDS = 5.0
 _pending_empty_cache: Dict[str, float] = {}
+_heartbeat_ack_cache: Dict[str, float] = {}
 _IMAGE_EXT_BY_TYPE = {
     "image/jpeg": ".jpg",
     "image/jpg": ".jpg",
@@ -235,6 +237,24 @@ def _mark_pending_empty(key: str) -> None:
 
 def _clear_pending_empty(key: str) -> None:
     _pending_empty_cache.pop(key, None)
+
+
+def _heartbeat_cache_key(user_id: int, installation_id: str) -> str:
+    return f"{user_id}:{installation_id or '-'}"
+
+
+def _heartbeat_fast_ack_recent(key: str) -> bool:
+    ts = _heartbeat_ack_cache.get(key)
+    return bool(ts and (time.monotonic() - ts) < _DEVICE_HEARTBEAT_FAST_ACK_SECONDS)
+
+
+def _mark_heartbeat_fast_ack(key: str) -> None:
+    _heartbeat_ack_cache[key] = time.monotonic()
+    if len(_heartbeat_ack_cache) > 5000:
+        cutoff = time.monotonic() - (_DEVICE_HEARTBEAT_FAST_ACK_SECONDS * 2)
+        for old_key, ts in list(_heartbeat_ack_cache.items())[:1000]:
+            if ts < cutoff:
+                _heartbeat_ack_cache.pop(old_key, None)
 
 
 def _public_base_url(request: Request) -> str:
@@ -713,16 +733,20 @@ async def stream_h5_message_events(
 def h5_device_heartbeat(
     body: H5HeartbeatIn,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user_id: int = Depends(get_current_user_id_from_token),
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
     if not xi:
         raise HTTPException(status_code=400, detail="缺少 X-Installation-Id")
+    heartbeat_key = _heartbeat_cache_key(current_user_id, xi)
+    if _heartbeat_fast_ack_recent(heartbeat_key):
+        return {"ok": True, "installation_id": xi, "throttled": True}
+    _mark_heartbeat_fast_ack(heartbeat_key)
     now = datetime.utcnow()
     slot = (
         db.query(UserInstallation)
-        .filter(UserInstallation.user_id == current_user.id, UserInstallation.installation_id == xi)
+        .filter(UserInstallation.user_id == current_user_id, UserInstallation.installation_id == xi)
         .first()
     )
     if slot:
@@ -731,10 +755,10 @@ def h5_device_heartbeat(
             slot.last_seen_at = now
             db.commit()
     else:
-        ensure_installation_slot(db, current_user.id, xi)
+        ensure_installation_slot(db, current_user_id, xi)
     row = (
         db.query(H5ChatDevicePresence)
-        .filter(H5ChatDevicePresence.user_id == current_user.id, H5ChatDevicePresence.installation_id == xi)
+        .filter(H5ChatDevicePresence.user_id == current_user_id, H5ChatDevicePresence.installation_id == xi)
         .first()
     )
     if row:
@@ -751,7 +775,7 @@ def h5_device_heartbeat(
             row.display_name = body.display_name.strip()[:128] or None
     else:
         row = H5ChatDevicePresence(
-            user_id=current_user.id,
+            user_id=current_user_id,
             installation_id=xi,
             display_name=(body.display_name or "").strip()[:128] or None,
             last_seen_at=now,
@@ -829,15 +853,15 @@ def h5_devices_status(
 def h5_pending_messages(
     request: Request,
     limit: int = Query(2, ge=1, le=10),
-    current_user: User = Depends(get_current_user),
+    current_user_id: int = Depends(get_current_user_id_from_token),
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
-    pending_key = _pending_cache_key(current_user.id, xi)
+    pending_key = _pending_cache_key(current_user_id, xi)
     if _pending_empty_recent(pending_key):
         return {"ok": True, "items": [], "throttled": True}
     if xi:
-        _touch_installation_slot_lazy(db, current_user.id, xi)
+        _touch_installation_slot_lazy(db, current_user_id, xi)
     turn_billing_supported = (
         request.headers.get(_CHAT_TURN_BILLING_SUPPORT_HEADER)
         or request.headers.get(_CHAT_TURN_BILLING_SUPPORT_HEADER.lower())
@@ -849,7 +873,7 @@ def h5_pending_messages(
     stale_rows = (
         db.query(H5ChatMessage)
         .filter(
-            H5ChatMessage.user_id == current_user.id,
+            H5ChatMessage.user_id == current_user_id,
             H5ChatMessage.status == "processing",
             H5ChatMessage.claimed_at.isnot(None),
             H5ChatMessage.claimed_at < stale_cutoff,
@@ -866,16 +890,21 @@ def h5_pending_messages(
 
     q = (
         db.query(H5ChatMessage)
-        .filter(H5ChatMessage.user_id == current_user.id, H5ChatMessage.status == "pending")
+        .filter(H5ChatMessage.user_id == current_user_id, H5ChatMessage.status == "pending")
         .filter(H5ChatMessage.mode != "scheduled_task")
         .filter(or_(H5ChatMessage.installation_id.is_(None), H5ChatMessage.installation_id == xi))
         .order_by(H5ChatMessage.created_at.asc())
     )
     rows = q.limit(limit).all()
     claimed_rows: List[H5ChatMessage] = []
+    current_user: Optional[User] = None
     for row in rows:
         turn_id = f"h5:{row.id}"
         if turn_billing_supported:
+            if current_user is None:
+                current_user = db.query(User).filter(User.id == current_user_id).first()
+                if current_user is None:
+                    raise HTTPException(status_code=401, detail="无法验证凭证")
             try:
                 charge_chat_turn_once(
                     db,

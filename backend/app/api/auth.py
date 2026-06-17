@@ -375,6 +375,19 @@ async def get_current_user(
     return user
 
 
+async def get_current_user_id_from_token(token: str = Depends(oauth2_scheme)) -> int:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="无法验证凭证",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        return int(payload.get("sub"))
+    except (JWTError, ValueError, TypeError):
+        raise credentials_exception
+
+
 async def get_messenger_user_id(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),

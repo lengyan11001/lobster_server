@@ -26,7 +26,7 @@ from ..models import (
 )
 from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
-from .auth import get_current_user
+from .auth import get_current_user, get_current_user_id_from_token
 from .ip_content_studio import run_ip_content_daily_scheduled
 from .installation_slots import ensure_installation_slot
 from .mobile_identity import online_user_for_mobile_user
@@ -43,7 +43,8 @@ _GOAL_VIDEO_SOURCE_AI_IMAGE = "ai_image"
 _GOAL_VIDEO_SOURCE_ASSET_RANDOM = "asset_random"
 _DISABLED_SCHEDULED_CAPABILITIES = {"create.video.pipeline", "create.ppt.pipeline"}
 _PENDING_INSTALLATION_TOUCH_MIN_SECONDS = 60
-_PENDING_EMPTY_CACHE_SECONDS = 1.0
+_RUN_PENDING_EMPTY_CACHE_SECONDS = 20.0
+_PUBLISH_PENDING_EMPTY_CACHE_SECONDS = 20.0
 _pending_empty_cache: Dict[str, float] = {}
 
 
@@ -235,15 +236,15 @@ def _pending_cache_key(kind: str, user_id: int, installation_id: str) -> str:
     return f"{kind}:{user_id}:{installation_id or '-'}"
 
 
-def _pending_empty_recent(key: str) -> bool:
+def _pending_empty_recent(key: str, ttl_seconds: float) -> bool:
     ts = _pending_empty_cache.get(key)
-    return bool(ts and (time.monotonic() - ts) < _PENDING_EMPTY_CACHE_SECONDS)
+    return bool(ts and (time.monotonic() - ts) < ttl_seconds)
 
 
 def _mark_pending_empty(key: str) -> None:
     _pending_empty_cache[key] = time.monotonic()
     if len(_pending_empty_cache) > 5000:
-        cutoff = time.monotonic() - 30
+        cutoff = time.monotonic() - 120
         for old_key, ts in list(_pending_empty_cache.items())[:1000]:
             if ts < cutoff:
                 _pending_empty_cache.pop(old_key, None)
@@ -1280,23 +1281,23 @@ def delete_scheduled_task_run(
 def pending_scheduled_task_runs(
     request: Request,
     limit: int = Query(2, ge=1, le=10),
-    current_user: User = Depends(get_current_user),
+    current_user_id: int = Depends(get_current_user_id_from_token),
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
-    pending_key = _pending_cache_key("run", current_user.id, xi)
-    if _pending_empty_recent(pending_key):
+    pending_key = _pending_cache_key("run", current_user_id, xi)
+    if _pending_empty_recent(pending_key, _RUN_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}
     if xi:
-        _touch_installation_slot_lazy(db, current_user.id, xi)
-    _enqueue_due_tasks(db, current_user.id)
+        _touch_installation_slot_lazy(db, current_user_id, xi)
+    _enqueue_due_tasks(db, current_user_id)
 
     now = datetime.utcnow()
     stale_cutoff = now - timedelta(minutes=10)
     stale_rows = (
         db.query(ScheduledTaskRun)
         .filter(
-            ScheduledTaskRun.user_id == current_user.id,
+            ScheduledTaskRun.user_id == current_user_id,
             ScheduledTaskRun.status == "processing",
             ScheduledTaskRun.task_kind != "ip_content_daily",
             ScheduledTaskRun.claimed_at.isnot(None),
@@ -1315,7 +1316,7 @@ def pending_scheduled_task_runs(
     candidates = (
         db.query(ScheduledTaskRun)
         .with_for_update(skip_locked=True)
-        .filter(ScheduledTaskRun.user_id == current_user.id, ScheduledTaskRun.status == "pending")
+        .filter(ScheduledTaskRun.user_id == current_user_id, ScheduledTaskRun.status == "pending")
         .filter(ScheduledTaskRun.task_kind != "ip_content_daily")
         .filter(or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == xi))
         .order_by(ScheduledTaskRun.created_at.asc())
@@ -1324,7 +1325,7 @@ def pending_scheduled_task_runs(
     )
     rows: List[ScheduledTaskRun] = []
     for candidate in candidates:
-        row = _claim_pending_run(db, run_id=candidate.id, user_id=current_user.id, installation_id=xi, now=now)
+        row = _claim_pending_run(db, run_id=candidate.id, user_id=current_user_id, installation_id=xi, now=now)
         if not row:
             continue
         if row.h5_message_id:
@@ -1420,19 +1421,19 @@ def resume_scheduled_task_video_from_image(
 def pending_scheduled_publish_requests(
     request: Request,
     limit: int = Query(1, ge=1, le=5),
-    current_user: User = Depends(get_current_user),
+    current_user_id: int = Depends(get_current_user_id_from_token),
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
-    pending_key = _pending_cache_key("publish", current_user.id, xi)
-    if _pending_empty_recent(pending_key):
+    pending_key = _pending_cache_key("publish", current_user_id, xi)
+    if _pending_empty_recent(pending_key, _PUBLISH_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}
     if xi:
-        _touch_installation_slot_lazy(db, current_user.id, xi)
+        _touch_installation_slot_lazy(db, current_user_id, xi)
     now = datetime.utcnow()
     rows = (
         db.query(ScheduledTaskRun)
-        .filter(ScheduledTaskRun.user_id == current_user.id, ScheduledTaskRun.status == "completed")
+        .filter(ScheduledTaskRun.user_id == current_user_id, ScheduledTaskRun.status == "completed")
         .filter(or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == xi))
         .order_by(ScheduledTaskRun.finished_at.asc(), ScheduledTaskRun.created_at.asc())
         .limit(200)
