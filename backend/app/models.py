@@ -1027,7 +1027,6 @@ class JuheWechatContactCache(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "config_id", "contact_key", name="uq_juhe_wechat_contact_cache_user_config_key"),
         Index("ix_juhe_wechat_contact_cache_user_config", "user_id", "config_id"),
-        Index("ix_juhe_wechat_contact_cache_status", "status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
