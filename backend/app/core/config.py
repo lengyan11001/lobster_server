@@ -180,6 +180,8 @@ class Settings(BaseSettings):
     meta_app_id: Optional[str] = None
     """Facebook App Secret"""
     meta_app_secret: Optional[str] = None
+    """JuheBot/微信协议 SAAS API base. Defaults to chat-api.juhebot.com."""
+    juhe_wechat_api_base: str = "https://chat-api.juhebot.com"
 
     def cors_origins_list(self) -> List[str]:
         if self.cors_origins.strip() == "*":

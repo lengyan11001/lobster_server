@@ -1062,6 +1062,16 @@
       },
       "tags": ["wechat", "official-account", "article", "draft"]
     },
+    "juhe_wechat_skill": {
+      "name": "微信协议助手",
+      "description": "通过服务器安全调用聚合微信协议能力，支持多实例配置、在线状态检测和文本消息发送。客户端不下发 App Secret。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["wechat", "juhebot", "server-proxy"]
+    },
     "create_ppt_skill": {
       "name": "PPT",
       "description": "输入主题或大纲生成可下载的 PPTX 演示文稿，支持 AI 视觉页与结构化大纲模式。",

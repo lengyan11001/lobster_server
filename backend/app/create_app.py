@@ -49,6 +49,7 @@ from .api.generation_records import router as generation_records_router
 from .api.ip_content_studio import router as ip_content_studio_router
 from .api.linkedin_mining import router as linkedin_mining_router
 from .api.mobile_client import router as mobile_client_router
+from .api.juhe_wechat import router as juhe_wechat_router
 try:
     from .api.wecom_kf import router as wecom_kf_router
 except Exception:
@@ -971,6 +972,7 @@ def create_app() -> FastAPI:
     app.include_router(ip_content_studio_router, prefix="")
     app.include_router(linkedin_mining_router, prefix="")
     app.include_router(mobile_client_router, prefix="")
+    app.include_router(juhe_wechat_router, prefix="")
     if wecom_kf_router is not None:
         app.include_router(wecom_kf_router, prefix="")
     if wecom_router is not None:

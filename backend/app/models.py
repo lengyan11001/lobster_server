@@ -995,6 +995,53 @@ class UserSkillVisibility(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class JuheWechatConfig(Base):
+    """Server-side JuheBot/WeChat protocol instance config scoped to one user."""
+
+    __tablename__ = "juhe_wechat_configs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "guid", name="uq_juhe_wechat_user_guid"),
+        Index("ix_juhe_wechat_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    guid: Mapped[str] = mapped_column(String(96), nullable=False, index=True)
+    app_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    app_secret: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    last_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_status_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class JuheWechatCallLog(Base):
+    """Audit log for whitelisted JuheBot calls. Secrets are never stored here."""
+
+    __tablename__ = "juhe_wechat_call_logs"
+    __table_args__ = (
+        Index("ix_juhe_wechat_call_user_created", "user_id", "created_at"),
+        Index("ix_juhe_wechat_call_config_created", "config_id", "created_at"),
+        Index("ix_juhe_wechat_call_action_created", "action", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    config_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    upstream_path: Mapped[str] = mapped_column(String(128), nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    http_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    request_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    response_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class BillingIdempotency(Base):
     """预扣幂等：同一用户同一 X-Billing-Idempotency-Key 在窗口内只扣一次，避免双通道重复 pre_deduct。"""
 
