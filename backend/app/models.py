@@ -1020,6 +1020,31 @@ class JuheWechatConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class JuheWechatContactCache(Base):
+    """Last known contacts imported or synced from one server-side WeChat instance."""
+
+    __tablename__ = "juhe_wechat_contact_cache"
+    __table_args__ = (
+        UniqueConstraint("user_id", "config_id", "contact_key", name="uq_juhe_wechat_contact_cache_user_config_key"),
+        Index("ix_juhe_wechat_contact_cache_user_config", "user_id", "config_id"),
+        Index("ix_juhe_wechat_contact_cache_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    config_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    contact_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    username: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, index=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    remark: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    source: Mapped[str] = mapped_column(String(32), default="import", nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class JuheWechatCallLog(Base):
     """Audit log for whitelisted JuheBot calls. Secrets are never stored here."""
 

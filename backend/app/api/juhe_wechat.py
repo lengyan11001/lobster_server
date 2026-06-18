@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import JuheWechatCallLog, JuheWechatConfig, User
+from ..models import JuheWechatCallLog, JuheWechatConfig, JuheWechatContactCache, User
 from ..services.juhe_wechat import (
     extract_friend_add_target,
     guid_request,
@@ -230,6 +230,127 @@ def _normalize_contact_brief(item: Any) -> Dict[str, Any]:
         "avatar_url": contact.get("smallHeadImgUrl") or contact.get("bigHeadImgUrl") or "",
         "raw": item,
     }
+
+
+def _contact_cache_out(row: JuheWechatContactCache) -> Dict[str, Any]:
+    username = row.username or row.contact_key
+    return {
+        "id": row.id,
+        "username": username,
+        "contact_key": row.contact_key,
+        "nickname": row.display_name or row.remark or username,
+        "remark": row.remark or "",
+        "source": row.source,
+        "status": row.status,
+        "last_error": row.last_error or "",
+        "raw": row.raw_payload or {},
+        "_cached": True,
+    }
+
+
+def _list_cached_contacts(db: Session, *, user_id: int, config_id: int) -> List[Dict[str, Any]]:
+    rows = (
+        db.query(JuheWechatContactCache)
+        .filter(
+            JuheWechatContactCache.user_id == user_id,
+            JuheWechatContactCache.config_id == config_id,
+        )
+        .order_by(JuheWechatContactCache.updated_at.desc(), JuheWechatContactCache.id.desc())
+        .all()
+    )
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        item = _contact_cache_out(row)
+        key = (item.get("username") or item.get("contact_key") or "").strip()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        out.append(item)
+    return out
+
+
+def _upsert_contact_cache(
+    db: Session,
+    *,
+    user_id: int,
+    config_id: int,
+    contact_key: str,
+    username: str = "",
+    display_name: str = "",
+    remark: str = "",
+    source: str = "import",
+    status: str = "pending",
+    last_error: str = "",
+    raw_payload: Optional[Dict[str, Any]] = None,
+) -> JuheWechatContactCache:
+    key = (contact_key or username or "").strip()
+    if not key:
+        raise ValueError("contact_key cannot be empty")
+    row = (
+        db.query(JuheWechatContactCache)
+        .filter(
+            JuheWechatContactCache.user_id == user_id,
+            JuheWechatContactCache.config_id == config_id,
+            JuheWechatContactCache.contact_key == key,
+        )
+        .first()
+    )
+    if not row:
+        row = JuheWechatContactCache(user_id=user_id, config_id=config_id, contact_key=key)
+        db.add(row)
+    if username:
+        row.username = username[:256]
+    if display_name:
+        row.display_name = display_name[:160]
+    if remark:
+        row.remark = remark[:160]
+    row.source = source[:32] if source else row.source
+    row.status = status[:32] if status else row.status
+    row.last_error = last_error[:2000] if last_error else None
+    if raw_payload is not None:
+        row.raw_payload = raw_payload
+    row.updated_at = datetime.utcnow()
+    return row
+
+
+def _merge_contacts_with_cache(
+    db: Session,
+    *,
+    user_id: int,
+    config_id: int,
+    contacts: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    seen: set[str] = set()
+    for item in contacts:
+        username = (item.get("username") or "").strip()
+        if not username:
+            continue
+        seen.add(username)
+        _upsert_contact_cache(
+            db,
+            user_id=user_id,
+            config_id=config_id,
+            contact_key=username,
+            username=username,
+            display_name=(item.get("nickname") or item.get("remark") or username),
+            remark=item.get("remark") or "",
+            source="upstream",
+            status="synced",
+            raw_payload=item,
+        )
+    db.commit()
+
+    cached = _list_cached_contacts(db, user_id=user_id, config_id=config_id)
+    merged = list(contacts)
+    merged_keys = set(seen)
+    for item in cached:
+        key = (item.get("username") or item.get("contact_key") or "").strip()
+        if key and key not in merged_keys:
+            merged.append(item)
+            merged_keys.add(key)
+    return merged
 
 
 def _extract_data_object(data: Dict[str, Any]) -> Any:
@@ -642,32 +763,64 @@ async def refresh_contacts(
     db: Session = Depends(get_db),
 ):
     row = _get_config_or_404(db, current_user.id, body.config_id)
-    usernames, room_names, last_response = await _sync_contact_usernames(
-        db,
-        current_user=current_user,
-        row=row,
-    )
-    contacts = await _fetch_contact_briefs(
-        db,
-        current_user=current_user,
-        row=row,
-        usernames=usernames,
-        action="contacts_brief",
-    )
+    try:
+        usernames, room_names, last_response = await _sync_contact_usernames(
+            db,
+            current_user=current_user,
+            row=row,
+        )
+        contacts = await _fetch_contact_briefs(
+            db,
+            current_user=current_user,
+            row=row,
+            usernames=usernames,
+            action="contacts_brief",
+        )
+        contacts = _merge_contacts_with_cache(
+            db,
+            user_id=current_user.id,
+            config_id=row.id,
+            contacts=contacts,
+        )
+        ok = True
+        error_message = ""
+    except HTTPException as exc:
+        contacts = _list_cached_contacts(db, user_id=current_user.id, config_id=row.id)
+        room_names = []
+        last_response = {}
+        ok = False
+        error_message = str(exc.detail or exc)
     groups = [{"username": name, "nickname": name} for name in room_names]
     return {
-        "ok": True,
+        "ok": ok,
         "items": contacts + groups,
         "contacts": contacts,
         "groups": groups,
         "contact_count": len(contacts),
         "group_count": len(groups),
         "count": len(contacts) + len(groups),
+        "error": error_message,
         "sync": {
             "last_current_wxcontact_seq": _extract_int(last_response, "currentWxcontactSeq", "current_wxcontact_seq", default=0),
             "last_current_chatroom_seq": _extract_int(last_response, "currentChatRoomContactSeq", "current_chat_room_contact_seq", default=0),
             "continue_flag": _extract_int(last_response, "continueFlag", "continue_flag", default=0),
         },
+    }
+
+
+@router.get("/api/juhe-wechat/contacts/cache")
+async def contact_cache(
+    config_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, config_id)
+    contacts = _list_cached_contacts(db, user_id=current_user.id, config_id=row.id)
+    return {
+        "ok": True,
+        "contacts": contacts,
+        "items": contacts,
+        "count": len(contacts),
     }
 
 
@@ -738,6 +891,18 @@ async def send_friend_requests(
     verify_content = body.verify_content.strip()
     for item in targets:
         contact = item.contact.strip()
+        _upsert_contact_cache(
+            db,
+            user_id=current_user.id,
+            config_id=row.id,
+            contact_key=contact,
+            display_name=contact,
+            remark=item.remark or "",
+            source="import",
+            status="pending",
+            raw_payload={"contact": contact, "remark": item.remark or ""},
+        )
+        db.commit()
         search_payload = {
             "guid": row.guid,
             "username": contact,
@@ -755,17 +920,45 @@ async def send_friend_requests(
             raise_on_fail=False,
         )
         if not search.get("ok"):
+            error = _upstream_error(search.get("upstream"))
+            _upsert_contact_cache(
+                db,
+                user_id=current_user.id,
+                config_id=row.id,
+                contact_key=contact,
+                display_name=contact,
+                remark=item.remark or "",
+                source="import",
+                status="search_failed",
+                last_error=error,
+                raw_payload={"contact": contact, "search": search.get("upstream")},
+            )
+            db.commit()
             results.append({
                 "contact": contact,
                 "ok": False,
                 "stage": "search",
-                "error": _upstream_error(search.get("upstream")),
+                "error": error,
                 "search": search.get("upstream"),
             })
             continue
 
         target = extract_friend_add_target(search.get("upstream") or {})
         if not target.get("username"):
+            error = "搜索到了账号，但接口没有返回可添加凭证"
+            _upsert_contact_cache(
+                db,
+                user_id=current_user.id,
+                config_id=row.id,
+                contact_key=contact,
+                display_name=contact,
+                remark=item.remark or "",
+                source="import",
+                status="parse_failed",
+                last_error=error,
+                raw_payload={"contact": contact, "search": search.get("upstream")},
+            )
+            db.commit()
             results.append({
                 "contact": contact,
                 "ok": False,
@@ -792,12 +985,28 @@ async def send_friend_requests(
             timeout_seconds=45,
             raise_on_fail=False,
         )
+        ok = bool(add.get("ok"))
+        error = "" if ok else _upstream_error(add.get("upstream"))
+        _upsert_contact_cache(
+            db,
+            user_id=current_user.id,
+            config_id=row.id,
+            contact_key=contact,
+            username=target.get("username") or "",
+            display_name=contact,
+            remark=item.remark or "",
+            source="import",
+            status="sent" if ok else "add_failed",
+            last_error=error,
+            raw_payload={"contact": contact, "search": search.get("upstream"), "add": add.get("upstream")},
+        )
+        db.commit()
         results.append({
             "contact": contact,
             "resolved_username": target.get("username"),
-            "ok": bool(add.get("ok")),
+            "ok": ok,
             "stage": "add",
-            "error": "" if add.get("ok") else _upstream_error(add.get("upstream")),
+            "error": error,
             "search": search.get("upstream"),
             "add": add.get("upstream"),
         })
