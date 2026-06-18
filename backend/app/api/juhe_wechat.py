@@ -132,8 +132,13 @@ def _extract_items(data: Any) -> List[Any]:
         "list",
         "contacts",
         "contact_list",
+        "contactUsernameList",
+        "ContactUsernameList",
         "username_list",
+        "usernameList",
         "room_list",
+        "chatroomUsernameList",
+        "ChatroomUsernameList",
         "member_list",
         "chatroom_list",
     ):
@@ -146,6 +151,33 @@ def _extract_items(data: Any) -> List[Any]:
         if items:
             return items
     return []
+
+
+def _extract_int(data: Any, *keys: str, default: int = 0) -> int:
+    if not isinstance(data, dict):
+        return default
+    for key in keys:
+        if key in data:
+            try:
+                return int(data.get(key) or 0)
+            except Exception:
+                return default
+    for key in ("data", "result", "payload"):
+        if key in data:
+            found = _extract_int(data.get(key), *keys, default=default)
+            if found != default:
+                return found
+    return default
+
+
+def _as_username_items(items: List[Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, str):
+            out.append({"username": item, "nickname": item})
+        elif isinstance(item, dict):
+            out.append(item)
+    return out
 
 
 def _extract_data_object(data: Dict[str, Any]) -> Any:
@@ -288,6 +320,83 @@ async def _call_upstream(
         )
         db.commit()
         raise HTTPException(status_code=502, detail=f"Juhe WeChat request failed: {exc}") from exc
+
+
+async def _sync_contact_usernames(
+    db: Session,
+    *,
+    current_user: User,
+    row: JuheWechatConfig,
+    max_rounds: int = 20,
+) -> tuple[List[str], List[str], Dict[str, Any]]:
+    contact_seq = 0
+    room_seq = 0
+    usernames: List[str] = []
+    rooms: List[str] = []
+    last_response: Dict[str, Any] = {}
+    seen: set[str] = set()
+
+    for _ in range(max_rounds):
+        payload = {"guid": row.guid, "contact_seq": contact_seq, "room_seq": room_seq}
+        result = await _call_upstream(
+            db,
+            current_user=current_user,
+            row=row,
+            action="contacts_refresh",
+            upstream_path="/contact/init_contact",
+            payload=payload,
+            timeout_seconds=60,
+        )
+        last_response = result.get("upstream") or {}
+        data_obj = _extract_data_object(last_response)
+        items = _extract_items(data_obj)
+        for item in items:
+            name = item if isinstance(item, str) else _candidate_name(item)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            if "@chatroom" in name:
+                rooms.append(name)
+            else:
+                usernames.append(name)
+
+        contact_seq = _extract_int(last_response, "currentWxcontactSeq", "current_wxcontact_seq", default=contact_seq)
+        room_seq = _extract_int(last_response, "currentChatRoomContactSeq", "current_chat_room_contact_seq", default=room_seq)
+        continue_flag = _extract_int(last_response, "continueFlag", "continue_flag", default=0)
+        if not continue_flag:
+            break
+    return usernames, rooms, last_response
+
+
+async def _fetch_contact_briefs(
+    db: Session,
+    *,
+    current_user: User,
+    row: JuheWechatConfig,
+    usernames: List[str],
+    action: str,
+) -> List[Dict[str, Any]]:
+    if not usernames:
+        return []
+    details: List[Dict[str, Any]] = []
+    for start in range(0, len(usernames), 50):
+        chunk = usernames[start : start + 50]
+        result = await _call_upstream(
+            db,
+            current_user=current_user,
+            row=row,
+            action=action,
+            upstream_path="/contact/batch_get_contact_brief_info",
+            payload={"guid": row.guid, "username_list": chunk},
+            timeout_seconds=60,
+            raise_on_fail=False,
+        )
+        if result.get("ok"):
+            batch = _as_username_items(_extract_items(_extract_data_object(result.get("upstream") or {})))
+            details.extend(batch)
+        else:
+            details.extend({"username": name, "nickname": name} for name in chunk)
+    return details
 
 
 class ConfigUpsertBody(BaseModel):
@@ -474,20 +583,33 @@ async def refresh_contacts(
     db: Session = Depends(get_db),
 ):
     row = _get_config_or_404(db, current_user.id, body.config_id)
-    result = await _call_upstream(
+    usernames, room_names, last_response = await _sync_contact_usernames(
         db,
         current_user=current_user,
         row=row,
-        action="contacts_refresh",
-        upstream_path="/contact/init_contact",
-        payload={"guid": row.guid, "contact_seq": 0, "room_seq": 0},
-        timeout_seconds=60,
     )
-    data_obj = _extract_data_object(result.get("upstream") or {})
-    items = _extract_items(data_obj)
-    groups = [i for i in items if "@chatroom" in _candidate_name(i)]
-    contacts = [i for i in items if "@chatroom" not in _candidate_name(i)]
-    return {**result, "items": items, "contacts": contacts, "groups": groups, "count": len(items)}
+    contacts = await _fetch_contact_briefs(
+        db,
+        current_user=current_user,
+        row=row,
+        usernames=usernames,
+        action="contacts_brief",
+    )
+    groups = [{"username": name, "nickname": name} for name in room_names]
+    return {
+        "ok": True,
+        "items": contacts + groups,
+        "contacts": contacts,
+        "groups": groups,
+        "contact_count": len(contacts),
+        "group_count": len(groups),
+        "count": len(contacts) + len(groups),
+        "sync": {
+            "last_current_wxcontact_seq": _extract_int(last_response, "currentWxcontactSeq", "current_wxcontact_seq", default=0),
+            "last_current_chatroom_seq": _extract_int(last_response, "currentChatRoomContactSeq", "current_chat_room_contact_seq", default=0),
+            "continue_flag": _extract_int(last_response, "continueFlag", "continue_flag", default=0),
+        },
+    }
 
 
 @router.post("/api/juhe-wechat/contacts/detail")
@@ -798,18 +920,13 @@ async def list_rooms(
     db: Session = Depends(get_db),
 ):
     row = _get_config_or_404(db, current_user.id, body.config_id)
-    result = await _call_upstream(
+    _usernames, room_names, _last_response = await _sync_contact_usernames(
         db,
         current_user=current_user,
         row=row,
-        action="rooms_list",
-        upstream_path="/contact/init_contact",
-        payload={"guid": row.guid, "contact_seq": 0, "room_seq": 0},
-        timeout_seconds=60,
     )
-    items = _extract_items(_extract_data_object(result.get("upstream") or {}))
-    rooms = [i for i in items if "@chatroom" in _candidate_name(i)]
-    return {**result, "items": rooms, "count": len(rooms)}
+    rooms = [{"username": name, "nickname": name} for name in room_names]
+    return {"ok": True, "items": rooms, "count": len(rooms)}
 
 
 @router.post("/api/juhe-wechat/rooms/detail")
