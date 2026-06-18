@@ -125,6 +125,27 @@ def _migrate_model_usage_events_table():
         logger.warning("Migration model_usage_events skipped: %s", e)
 
 
+def _migrate_juhe_wechat_config_owner_columns():
+    """Add owner columns for admin/agent managed Juhe WeChat instances."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("juhe_wechat_configs"):
+            return
+        cols = [c["name"] for c in insp.get_columns("juhe_wechat_configs")]
+        with engine.begin() as conn:
+            if "owner_role" not in cols:
+                if engine.dialect.name == "sqlite":
+                    conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN owner_role VARCHAR(32) NOT NULL DEFAULT 'user'"))
+                else:
+                    conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN owner_role VARCHAR(32) NOT NULL DEFAULT 'user'"))
+            if "owner_user_id" not in cols:
+                conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN owner_user_id INTEGER"))
+    except Exception as e:
+        logger.warning("Migration juhe_wechat owner columns skipped: %s", e)
+
+
 def _seed_capability_catalog():
     """Import capability catalog from mcp/capability_catalog.json on first run."""
     catalog_path = Path(__file__).resolve().parent.parent.parent / "mcp" / "capability_catalog.json"
@@ -888,6 +909,7 @@ def create_app() -> FastAPI:
         _migrate_sutui_recon_balance_remote_prev()
         _migrate_capability_configs_extra_config()
         _migrate_model_usage_events_table()
+        _migrate_juhe_wechat_config_owner_columns()
         _ensure_default_user()
         _seed_capability_catalog()
         _upsert_missing_capabilities_from_catalog()

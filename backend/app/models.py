@@ -1010,6 +1010,8 @@ class JuheWechatConfig(Base):
     guid: Mapped[str] = mapped_column(String(96), nullable=False, index=True)
     app_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     app_secret: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    owner_role: Mapped[str] = mapped_column(String(32), default="user", nullable=False, index=True)
+    owner_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
     last_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     last_status_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -1040,6 +1042,67 @@ class JuheWechatCallLog(Base):
     response_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class JuheWechatFriendAddBatch(Base):
+    """Batch friend-add task owned by an admin/agent and bound to one server-side instance."""
+
+    __tablename__ = "juhe_wechat_friend_add_batches"
+    __table_args__ = (
+        Index("ix_juhe_friend_batch_owner_created", "owner_user_id", "created_at"),
+        Index("ix_juhe_friend_batch_target_created", "target_user_id", "created_at"),
+        Index("ix_juhe_friend_batch_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_role: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    owner_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    target_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    config_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    verify_content: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    total_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    success_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    skipped_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class JuheWechatFriendAddItem(Base):
+    """One search/add target inside a friend-add batch."""
+
+    __tablename__ = "juhe_wechat_friend_add_items"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "raw_contact", name="uq_juhe_friend_item_batch_raw"),
+        Index("ix_juhe_friend_item_batch_status", "batch_id", "status"),
+        Index("ix_juhe_friend_item_status_next", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    batch_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    raw_contact: Mapped[str] = mapped_column(String(256), nullable=False)
+    nickname: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    remark: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    search_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    add_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    response_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    resolved_username: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    resolved_ticket: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resolved_scene: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class BillingIdempotency(Base):

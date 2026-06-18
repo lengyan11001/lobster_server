@@ -127,6 +127,19 @@ tr:hover{background:var(--bg)}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .agent-action-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
 .agent-action-row select{padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-width:180px;background:#fff}
+.juhe-admin-grid{display:grid;grid-template-columns:minmax(320px,.78fr) minmax(520px,1.22fr);gap:16px;align-items:start}
+.juhe-admin-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.juhe-admin-form .form-group{margin-bottom:0}
+.juhe-admin-form textarea,.juhe-admin-form select{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff;resize:vertical}
+.juhe-admin-list{display:grid;gap:10px;max-height:560px;overflow:auto;padding-right:4px}
+.juhe-admin-item{border:1px solid var(--border);border-radius:10px;background:#fff;padding:12px;cursor:pointer}
+.juhe-admin-item.active{border-color:var(--primary);box-shadow:0 0 0 2px rgba(79,70,229,.12)}
+.juhe-admin-item-title{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:800}
+.juhe-admin-item-meta{font-size:12px;color:var(--text-secondary);line-height:1.6;margin-top:4px;word-break:break-all}
+.juhe-admin-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.juhe-admin-note{font-size:12px;line-height:1.6;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px;margin-bottom:12px}
+.juhe-admin-result{border:1px solid var(--border);border-radius:10px;background:#fff;padding:12px;min-height:120px;max-height:520px;overflow:auto}
+.juhe-admin-result pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--text-secondary)}
 
 /* Mobile responsive */
 @media(max-width:768px){
@@ -150,6 +163,8 @@ tr:hover{background:var(--bg)}
   .claim-bar input{width:100%}
   .claim-bar .btn{width:100%}
   .agent-action-row select{width:100%;min-width:0}
+  .juhe-admin-grid{grid-template-columns:1fr}
+  .juhe-admin-form{grid-template-columns:1fr}
   .recharge-row{flex-direction:column;gap:8px}
   .recharge-row input{width:100%}
   .recharge-row .btn{width:100%}
@@ -232,6 +247,7 @@ tr:hover{background:var(--bg)}
         <div class="nav-tab" data-nav="users" onclick="switchNav('users')">用户信息</div>
         <div class="nav-tab" data-nav="generationRecords" onclick="switchNav('generationRecords')">生成记录</div>
         <div class="nav-tab" data-nav="tikhubRecords" onclick="switchNav('tikhubRecords')">数据查询</div>
+        <div class="nav-tab" data-nav="juheWechat" onclick="switchNav('juheWechat')">微信协议</div>
         <div class="nav-tab" data-nav="commissions" id="commissionNavTab" onclick="switchNav('commissions')" style="display:none">分润</div>
       </div>
     </div>
@@ -399,6 +415,91 @@ tr:hover{background:var(--bg)}
     </div>
   </div>
 
+  <!-- Page: Juhe WeChat protocol -->
+  <div class="container" id="pageJuheWechat" style="display:none">
+    <div class="juhe-admin-note">
+      文档频率限制：同一设备一分钟超过 100 次调用会被限制约半小时；新设备前三天不要主动加好友、拉群或发朋友圈。批量加人默认 30 秒一条，最低 5 秒一条。
+    </div>
+    <div class="juhe-admin-grid">
+      <div class="card">
+        <h3>实例配置</h3>
+        <div class="juhe-admin-form">
+          <input type="hidden" id="juheAdminConfigId">
+          <div class="form-group">
+            <label>绑定用户ID</label>
+            <input type="number" id="juheAdminUserId" placeholder="例如 31">
+          </div>
+          <div class="form-group">
+            <label>实例名称</label>
+            <input type="text" id="juheAdminLabel" placeholder="例如 客服微信A">
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>设备 GUID</label>
+            <input type="text" id="juheAdminGuid" placeholder="208ba999-ff4b-3df8-9b2d-1433a326bb99">
+          </div>
+          <div class="form-group">
+            <label>App Key</label>
+            <input type="text" id="juheAdminAppKey" placeholder="新增必填；编辑留空保留原值">
+          </div>
+          <div class="form-group">
+            <label>App Secret</label>
+            <input type="password" id="juheAdminAppSecret" placeholder="新增必填；编辑留空保留原值">
+          </div>
+        </div>
+        <div class="juhe-admin-toolbar" style="margin-top:12px">
+          <button class="btn btn-primary btn-sm" style="width:auto" onclick="saveJuheConfig()">保存实例</button>
+          <button class="btn btn-outline btn-sm" onclick="resetJuheConfigForm()">清空</button>
+          <button class="btn btn-outline btn-sm" onclick="loadJuheConfigs()">刷新</button>
+        </div>
+        <div id="juheConfigList" class="juhe-admin-list" style="margin-top:14px"></div>
+      </div>
+      <div>
+        <div class="card">
+          <h3>批量加人</h3>
+          <div class="juhe-admin-form">
+            <div class="form-group">
+              <label>选择实例</label>
+              <select id="juheBatchConfig"></select>
+            </div>
+            <div class="form-group">
+              <label>间隔秒数</label>
+              <input type="number" id="juheBatchInterval" min="5" value="30">
+            </div>
+            <div class="form-group" style="grid-column:1/-1">
+              <label>任务名称</label>
+              <input type="text" id="juheBatchTitle" placeholder="例如 6月展会线索加人">
+            </div>
+            <div class="form-group" style="grid-column:1/-1">
+              <label>验证语</label>
+              <input type="text" id="juheBatchVerify" placeholder="你好，我是...">
+            </div>
+            <div class="form-group" style="grid-column:1/-1">
+              <label>导入文件</label>
+              <input type="file" id="juheBatchFile" accept=".txt,.csv">
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:6px">支持 TXT/CSV；每行一个手机号、微信号或 QQ。CSV 第一列为联系人，第二列可写昵称，第三列可写单条备注/验证语。</div>
+            </div>
+            <div class="form-group" style="grid-column:1/-1">
+              <label>手动粘贴</label>
+              <textarea id="juheBatchText" rows="6" placeholder="13800138000&#10;wxid_xxx,张三,你好我是..."></textarea>
+            </div>
+          </div>
+          <div class="juhe-admin-toolbar" style="margin-top:12px">
+            <button class="btn btn-success btn-sm" onclick="createJuheFriendBatch()">创建并开始执行</button>
+            <button class="btn btn-outline btn-sm" onclick="loadJuheBatches()">刷新任务</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>执行任务</h3>
+          <div id="juheBatchList" class="juhe-admin-list"></div>
+        </div>
+        <div class="card">
+          <h3>任务明细</h3>
+          <div id="juheBatchDetail" class="juhe-admin-result">请选择一条任务</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Page: Agent commissions -->
   <div class="container" id="pageCommissions" style="display:none">
     <div id="commissionOverview" class="stats-grid"></div>
@@ -444,6 +545,9 @@ let generationRecordOffset = 0;
 let userGenerationRecordOffset = 0;
 let tikhubRecordOffset = 0;
 let userTikhubRecordOffset = 0;
+let juheConfigs = [];
+let juheSelectedConfigId = null;
+let juheSelectedBatchId = null;
 let loginCaptchaId = '';
 let loginSmsCooldownTimer = null;
 let currentLoginTab = 'password';
@@ -672,11 +776,14 @@ function switchNav(nav) {
   if (pageGenerationRecords) pageGenerationRecords.style.display = nav === 'generationRecords' ? '' : 'none';
   const pageTikhubRecords = document.getElementById('pageTikhubRecords');
   if (pageTikhubRecords) pageTikhubRecords.style.display = nav === 'tikhubRecords' ? '' : 'none';
+  const pageJuheWechat = document.getElementById('pageJuheWechat');
+  if (pageJuheWechat) pageJuheWechat.style.display = nav === 'juheWechat' ? '' : 'none';
   const pageCommissions = document.getElementById('pageCommissions');
   if (pageCommissions) pageCommissions.style.display = nav === 'commissions' ? '' : 'none';
   if (nav === 'stats') loadStats();
   if (nav === 'generationRecords') loadGenerationRecords(generationRecordOffset || 0);
   if (nav === 'tikhubRecords') loadTikhubRecords(tikhubRecordOffset || 0);
+  if (nav === 'juheWechat') { loadJuheConfigs(); loadJuheBatches(); }
   if (nav === 'commissions') loadCommissions(0);
 }
 
@@ -2125,6 +2232,256 @@ function renderCommissions(data) {
   pageHtml += '<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">共 ' + (p.total || 0) + ' 笔</span>';
   if (p.has_next) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadCommissions(' + (commissionOffset + COMMISSION_PAGE_SIZE) + ')">下一页</button>';
   document.getElementById('commissionPagination').innerHTML = pageHtml;
+}
+
+function juheStatusLabel(v) {
+  if (v === 2) return '在线';
+  if (v === 1) return '运行';
+  if (v === 0) return '停止';
+  return '未检测';
+}
+
+function resetJuheConfigForm() {
+  ['juheAdminConfigId','juheAdminUserId','juheAdminLabel','juheAdminGuid','juheAdminAppKey','juheAdminAppSecret'].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  juheSelectedConfigId = null;
+  renderJuheConfigs();
+}
+
+async function loadJuheConfigs() {
+  try {
+    const data = await api('/admin/api/juhe-wechat/configs');
+    juheConfigs = data.configs || [];
+    if (!juheSelectedConfigId && juheConfigs.length) juheSelectedConfigId = juheConfigs[0].id;
+    renderJuheConfigs();
+    renderJuheConfigSelect();
+  } catch(e) {
+    const el = document.getElementById('juheConfigList');
+    if (el) el.innerHTML = '<div class="empty" style="color:var(--danger)">加载失败：' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderJuheConfigs() {
+  const el = document.getElementById('juheConfigList');
+  if (!el) return;
+  if (!juheConfigs.length) {
+    el.innerHTML = '<div class="empty">暂无实例，请先保存一个设备配置</div>';
+    return;
+  }
+  el.innerHTML = juheConfigs.map(function(c) {
+    const active = Number(c.id) === Number(juheSelectedConfigId);
+    const stCls = c.last_status === 2 ? 'badge-green' : 'badge-blue';
+    return '<div class="juhe-admin-item' + (active ? ' active' : '') + '" data-juhe-cid="' + c.id + '">'
+      + '<div class="juhe-admin-item-title"><span>' + escapeHtml(c.label || ('实例 #' + c.id)) + '</span><span class="badge ' + stCls + '">' + juheStatusLabel(c.last_status) + '</span></div>'
+      + '<div class="juhe-admin-item-meta">绑定用户：' + escapeHtml(c.user_label || ('#' + c.user_id)) + ' · 用户ID ' + c.user_id + '</div>'
+      + '<div class="juhe-admin-item-meta">GUID：' + escapeHtml(c.guid || '-') + '</div>'
+      + '<div class="juhe-admin-item-meta">App Key：' + escapeHtml(c.masked_app_key || '-') + '</div>'
+      + '<div class="juhe-admin-toolbar" style="margin-top:8px">'
+      + '<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();editJuheConfig(' + c.id + ')">编辑</button>'
+      + '<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();checkJuheConfig(' + c.id + ')">在线检测</button>'
+      + '<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteJuheConfig(' + c.id + ')">删除</button>'
+      + '</div></div>';
+  }).join('');
+  el.querySelectorAll('[data-juhe-cid]').forEach(function(node) {
+    node.addEventListener('click', function() {
+      juheSelectedConfigId = Number(node.getAttribute('data-juhe-cid'));
+      renderJuheConfigs();
+      renderJuheConfigSelect();
+      loadJuheBatches();
+    });
+  });
+}
+
+function renderJuheConfigSelect() {
+  const sel = document.getElementById('juheBatchConfig');
+  if (!sel) return;
+  sel.innerHTML = juheConfigs.map(function(c) {
+    return '<option value="' + c.id + '">' + escapeHtml(c.label || c.guid || ('实例 #' + c.id)) + ' · ' + escapeHtml(c.user_label || ('#' + c.user_id)) + '</option>';
+  }).join('');
+  if (juheSelectedConfigId) sel.value = String(juheSelectedConfigId);
+  sel.onchange = function() {
+    juheSelectedConfigId = Number(sel.value || 0) || null;
+    renderJuheConfigs();
+    loadJuheBatches();
+  };
+}
+
+function editJuheConfig(id) {
+  const c = juheConfigs.find(function(x) { return Number(x.id) === Number(id); });
+  if (!c) return;
+  juheSelectedConfigId = c.id;
+  document.getElementById('juheAdminConfigId').value = c.id;
+  document.getElementById('juheAdminUserId').value = c.user_id || '';
+  document.getElementById('juheAdminLabel').value = c.label || '';
+  document.getElementById('juheAdminGuid').value = c.guid || '';
+  document.getElementById('juheAdminAppKey').value = '';
+  document.getElementById('juheAdminAppSecret').value = '';
+  renderJuheConfigs();
+}
+
+async function saveJuheConfig() {
+  const id = document.getElementById('juheAdminConfigId').value.trim();
+  const userId = parseInt(document.getElementById('juheAdminUserId').value.trim() || '0', 10);
+  const body = {
+    user_id: userId,
+    label: document.getElementById('juheAdminLabel').value.trim(),
+    guid: document.getElementById('juheAdminGuid').value.trim(),
+    app_key: document.getElementById('juheAdminAppKey').value.trim(),
+    app_secret: document.getElementById('juheAdminAppSecret').value.trim()
+  };
+  if (id) body.id = Number(id);
+  if (!body.user_id || !body.guid) { toast('请填写绑定用户ID和设备GUID', 'error'); return; }
+  try {
+    const data = await api('/admin/api/juhe-wechat/configs', { method:'POST', body: JSON.stringify(body) });
+    juheSelectedConfigId = data.config && data.config.id;
+    toast('实例已保存');
+    resetJuheConfigForm();
+    await loadJuheConfigs();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteJuheConfig(id) {
+  if (!confirm('确认删除这个微信协议实例？')) return;
+  try {
+    await api('/admin/api/juhe-wechat/configs/' + id, { method:'DELETE' });
+    toast('实例已删除');
+    if (Number(juheSelectedConfigId) === Number(id)) juheSelectedConfigId = null;
+    await loadJuheConfigs();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function checkJuheConfig(id) {
+  try {
+    const data = await api('/admin/api/juhe-wechat/configs/' + id + '/status', { method:'POST', body:'{}' });
+    toast('检测完成：' + juheStatusLabel(data.status));
+    await loadJuheConfigs();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function parseJuheContactText(text) {
+  const rows = [];
+  const seen = new Set();
+  String(text || '').split(/\r?\n/).forEach(function(line) {
+    const raw = line.trim();
+    if (!raw || raw.startsWith('#')) return;
+    const parts = raw.split(/[,，\t]/).map(function(x) { return x.trim(); });
+    const contact = parts[0] || '';
+    if (!contact || seen.has(contact)) return;
+    seen.add(contact);
+    rows.push({ contact, nickname: parts[1] || '', remark: parts.slice(2).join(' ') || '' });
+  });
+  return rows;
+}
+
+function readJuheBatchFile() {
+  return new Promise(function(resolve, reject) {
+    const fileInput = document.getElementById('juheBatchFile');
+    const file = fileInput && fileInput.files && fileInput.files[0];
+    if (!file) { resolve(''); return; }
+    const reader = new FileReader();
+    reader.onload = function() { resolve(String(reader.result || '')); };
+    reader.onerror = function() { reject(new Error('文件读取失败')); };
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
+async function createJuheFriendBatch() {
+  const configId = parseInt((document.getElementById('juheBatchConfig').value || juheSelectedConfigId || '0'), 10);
+  if (!configId) { toast('请先选择实例', 'error'); return; }
+  try {
+    const fileText = await readJuheBatchFile();
+    const manualText = document.getElementById('juheBatchText').value || '';
+    const contacts = parseJuheContactText(fileText + '\n' + manualText);
+    if (!contacts.length) { toast('没有可导入的联系人', 'error'); return; }
+    const body = {
+      config_id: configId,
+      title: document.getElementById('juheBatchTitle').value.trim(),
+      verify_content: document.getElementById('juheBatchVerify').value.trim(),
+      interval_seconds: parseInt(document.getElementById('juheBatchInterval').value || '30', 10) || 30,
+      contacts
+    };
+    const data = await api('/admin/api/juhe-wechat/friend-add/batches', { method:'POST', body: JSON.stringify(body) });
+    juheSelectedBatchId = data.batch && data.batch.id;
+    toast('批量任务已创建');
+    document.getElementById('juheBatchText').value = '';
+    document.getElementById('juheBatchFile').value = '';
+    await loadJuheBatches();
+    if (juheSelectedBatchId) await loadJuheBatchDetail(juheSelectedBatchId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function loadJuheBatches() {
+  const el = document.getElementById('juheBatchList');
+  if (!el) return;
+  try {
+    let url = '/admin/api/juhe-wechat/friend-add/batches?limit=50';
+    if (juheSelectedConfigId) url += '&config_id=' + encodeURIComponent(juheSelectedConfigId);
+    const data = await api(url);
+    const items = data.items || [];
+    if (!items.length) {
+      el.innerHTML = '<div class="empty">暂无批量加人任务</div>';
+      return;
+    }
+    if (!juheSelectedBatchId) juheSelectedBatchId = items[0].id;
+    el.innerHTML = items.map(function(b) {
+      const active = Number(b.id) === Number(juheSelectedBatchId);
+      const badge = b.status === 'finished' ? 'badge-green' : (b.status === 'finished_with_errors' || b.status === 'failed' ? 'badge-red' : 'badge-blue');
+      return '<div class="juhe-admin-item' + (active ? ' active' : '') + '" data-juhe-bid="' + b.id + '">'
+        + '<div class="juhe-admin-item-title"><span>' + escapeHtml(b.title || ('批次 #' + b.id)) + '</span><span class="badge ' + badge + '">' + escapeHtml(b.status || '-') + '</span></div>'
+        + '<div class="juhe-admin-item-meta">总数 ' + b.total_count + ' · 成功 ' + b.success_count + ' · 失败 ' + b.failed_count + ' · 间隔 ' + b.interval_seconds + 's</div>'
+        + '<div class="juhe-admin-item-meta">' + (b.created_at ? new Date(b.created_at).toLocaleString('zh-CN') : '-') + '</div>'
+        + '<div class="juhe-admin-toolbar" style="margin-top:8px"><button class="btn btn-outline btn-sm" onclick="event.stopPropagation();retryJuheBatch(' + b.id + ')">重试失败/继续</button></div>'
+        + '</div>';
+    }).join('');
+    el.querySelectorAll('[data-juhe-bid]').forEach(function(node) {
+      node.addEventListener('click', function() {
+        juheSelectedBatchId = Number(node.getAttribute('data-juhe-bid'));
+        loadJuheBatches();
+        loadJuheBatchDetail(juheSelectedBatchId);
+      });
+    });
+  } catch(e) {
+    el.innerHTML = '<div class="empty" style="color:var(--danger)">加载失败：' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function loadJuheBatchDetail(id) {
+  const el = document.getElementById('juheBatchDetail');
+  if (!el) return;
+  try {
+    const data = await api('/admin/api/juhe-wechat/friend-add/batches/' + id);
+    const b = data.batch || {};
+    const rows = data.items || [];
+    let html = '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+      + '<div><strong>' + escapeHtml(b.title || ('批次 #' + b.id)) + '</strong><div class="juhe-admin-item-meta">状态 ' + escapeHtml(b.status || '-') + ' · 成功 ' + (b.success_count || 0) + '/' + (b.total_count || 0) + '</div></div>'
+      + '<button class="btn btn-outline btn-sm" onclick="loadJuheBatchDetail(' + b.id + ')">刷新明细</button></div>';
+    html += '<div class="table-wrap"><table><thead><tr><th>联系人</th><th>状态</th><th>解析账号</th><th>尝试</th><th>错误/响应</th></tr></thead><tbody>';
+    rows.forEach(function(r) {
+      const cls = r.status === 'success' ? 'badge-green' : (r.status === 'failed' ? 'badge-red' : 'badge-blue');
+      const msg = r.error_message || (r.response_payload ? JSON.stringify(r.response_payload).slice(0, 220) : '');
+      html += '<tr><td>' + escapeHtml(r.raw_contact || '-') + '<div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(r.nickname || '') + '</div></td>'
+        + '<td><span class="badge ' + cls + '">' + escapeHtml(r.status || '-') + '</span></td>'
+        + '<td style="font-size:12px;word-break:break-all">' + escapeHtml(r.resolved_username || '-') + '</td>'
+        + '<td>' + (r.attempt_count || 0) + '</td>'
+        + '<td style="font-size:12px;color:var(--text-secondary);max-width:360px;word-break:break-word">' + escapeHtml(msg || '-') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<div style="color:var(--danger)">加载失败：' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function retryJuheBatch(id) {
+  try {
+    await api('/admin/api/juhe-wechat/friend-add/batches/' + id + '/retry', { method:'POST', body:'{}' });
+    toast('已提交重试/继续执行');
+    juheSelectedBatchId = id;
+    await loadJuheBatches();
+    await loadJuheBatchDetail(id);
+  } catch(e) { toast(e.message, 'error'); }
 }
 
 function statCard(label, value, unit) {

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -13,7 +14,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+import httpx
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header
 from fastapi.responses import HTMLResponse, FileResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -22,10 +24,11 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import AgentCommissionLedger, CapabilityCallLog, CreditLedger, H5ChatDevicePresence, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..models import AgentCommissionLedger, CapabilityCallLog, CreditLedger, H5ChatDevicePresence, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits
 from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
+from ..services.juhe_wechat import extract_friend_add_target, guid_request, mask_secret, safe_request_snapshot
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -1128,3 +1131,502 @@ def agent_commissions(
             "has_next": offset + limit < int(total),
         },
     }
+
+
+def _juhe_owner_filter(query, ctx: AdminContext):
+    if ctx.role == "admin":
+        return query
+    return query.filter(JuheWechatConfig.owner_role == "agent", JuheWechatConfig.owner_user_id == ctx.user_id)
+
+
+def _juhe_can_bind_user(db: Session, ctx: AdminContext, user_id: int) -> None:
+    _assert_can_manage_user(db, ctx, user_id, allow_agent_self=True)
+
+
+def _juhe_config_payload(row: JuheWechatConfig, db: Session | None = None) -> dict:
+    user_label = ""
+    if db is not None:
+        u = db.query(User).filter(User.id == row.user_id).first()
+        if u:
+            user_label = u.email.replace("@sms.lobster.local", "")
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "user_label": user_label,
+        "label": row.label,
+        "guid": row.guid,
+        "masked_app_key": mask_secret(row.app_key or ""),
+        "has_app_secret": bool((row.app_secret or "").strip()),
+        "owner_role": getattr(row, "owner_role", None) or "user",
+        "owner_user_id": getattr(row, "owner_user_id", None),
+        "status": row.status,
+        "last_status": row.last_status,
+        "last_status_at": row.last_status_at.isoformat() if row.last_status_at else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+class AdminJuheConfigBody(BaseModel):
+    id: Optional[int] = None
+    user_id: int
+    label: str = ""
+    guid: str
+    app_key: str = ""
+    app_secret: str = ""
+
+
+@router.get("/admin/api/juhe-wechat/configs")
+def admin_juhe_list_configs(
+    user_id: Optional[int] = None,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    q = db.query(JuheWechatConfig).filter(JuheWechatConfig.status != "deleted")
+    q = _juhe_owner_filter(q, ctx)
+    if user_id:
+        _juhe_can_bind_user(db, ctx, int(user_id))
+        q = q.filter(JuheWechatConfig.user_id == int(user_id))
+    rows = q.order_by(JuheWechatConfig.created_at.desc()).limit(300).all()
+    return {"configs": [_juhe_config_payload(r, db) for r in rows]}
+
+
+@router.post("/admin/api/juhe-wechat/configs")
+def admin_juhe_save_config(
+    body: AdminJuheConfigBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    _juhe_can_bind_user(db, ctx, int(body.user_id))
+    guid = (body.guid or "").strip()
+    if not guid:
+        raise HTTPException(status_code=400, detail="GUID不能为空")
+    if len(guid) > 96:
+        raise HTTPException(status_code=400, detail="GUID过长")
+    label = (body.label or "").strip() or ("微信实例 " + guid[-6:])
+    app_key = (body.app_key or "").strip()
+    app_secret = (body.app_secret or "").strip()
+
+    if body.id:
+        row = db.query(JuheWechatConfig).filter(JuheWechatConfig.id == int(body.id), JuheWechatConfig.status != "deleted").first()
+        if not row:
+            raise HTTPException(status_code=404, detail="实例不存在")
+        if ctx.role != "admin" and (getattr(row, "owner_role", None) != "agent" or getattr(row, "owner_user_id", None) != ctx.user_id):
+            raise HTTPException(status_code=403, detail="无权修改该实例")
+    else:
+        row = (
+            db.query(JuheWechatConfig)
+            .filter(JuheWechatConfig.user_id == int(body.user_id), JuheWechatConfig.guid == guid)
+            .first()
+        )
+        if row and ctx.role != "admin" and (getattr(row, "owner_role", None) != "agent" or getattr(row, "owner_user_id", None) != ctx.user_id):
+            raise HTTPException(status_code=403, detail="该用户下已存在同 GUID 实例，代理无权接管")
+        if row and row.status == "deleted":
+            row.status = "active"
+        if row is None:
+            row = JuheWechatConfig(user_id=int(body.user_id), guid=guid, label=label)
+            db.add(row)
+        if not app_key or not app_secret:
+            raise HTTPException(status_code=400, detail="新增实例必须填写 App Key 和 App Secret")
+
+    row.user_id = int(body.user_id)
+    row.label = label[:120]
+    row.guid = guid
+    if app_key:
+        row.app_key = app_key
+    if app_secret:
+        row.app_secret = app_secret
+    if not (row.app_key or "").strip() or not (row.app_secret or "").strip():
+        raise HTTPException(status_code=400, detail="实例缺少 App Key 或 App Secret")
+    row.status = "active"
+    row.owner_role = ctx.role
+    row.owner_user_id = ctx.user_id if ctx.role == "agent" else None
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "config": _juhe_config_payload(row, db)}
+
+
+@router.delete("/admin/api/juhe-wechat/configs/{config_id}")
+def admin_juhe_delete_config(
+    config_id: int,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    row = db.query(JuheWechatConfig).filter(JuheWechatConfig.id == config_id, JuheWechatConfig.status != "deleted").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="实例不存在")
+    if ctx.role != "admin" and (getattr(row, "owner_role", None) != "agent" or getattr(row, "owner_user_id", None) != ctx.user_id):
+        raise HTTPException(status_code=403, detail="无权删除该实例")
+    row.status = "deleted"
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/admin/api/juhe-wechat/configs/{config_id}/status")
+async def admin_juhe_check_status(
+    config_id: int,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    row = db.query(JuheWechatConfig).filter(JuheWechatConfig.id == config_id, JuheWechatConfig.status != "deleted").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="实例不存在")
+    if ctx.role != "admin" and (getattr(row, "owner_role", None) != "agent" or getattr(row, "owner_user_id", None) != ctx.user_id):
+        raise HTTPException(status_code=403, detail="无权检测该实例")
+    payload = {"guid": row.guid}
+    try:
+        data, http_status, latency_ms = await guid_request(path="/client/get_client_status", data=payload, config=row)
+        success = http_status == 200 and int(data.get("errcode") or 0) == 0
+        status_value = None
+        if success and isinstance(data.get("data"), dict):
+            try:
+                status_value = int(data["data"].get("status"))
+            except Exception:
+                status_value = None
+        row.last_status = status_value
+        row.last_status_at = datetime.utcnow()
+        db.add(JuheWechatCallLog(
+            user_id=row.user_id,
+            config_id=row.id,
+            action="admin_status",
+            upstream_path="/client/get_client_status",
+            success=success,
+            http_status=http_status,
+            latency_ms=latency_ms,
+            request_payload=safe_request_snapshot(payload),
+            response_payload=data,
+            error_message="" if success else str(data)[:1000],
+        ))
+        db.commit()
+        return {"ok": success, "status": status_value, "upstream": data, "latency_ms": latency_ms}
+    except httpx.HTTPError as exc:
+        db.add(JuheWechatCallLog(
+            user_id=row.user_id,
+            config_id=row.id,
+            action="admin_status",
+            upstream_path="/client/get_client_status",
+            success=False,
+            request_payload=safe_request_snapshot(payload),
+            error_message=str(exc),
+        ))
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"检测失败: {exc}") from exc
+
+
+class JuheFriendAddTarget(BaseModel):
+    contact: str
+    nickname: str = ""
+    remark: str = ""
+
+
+class JuheFriendAddBatchBody(BaseModel):
+    config_id: int
+    title: str = ""
+    verify_content: str = ""
+    interval_seconds: int = 30
+    contacts: list[JuheFriendAddTarget]
+
+
+def _juhe_batch_payload(row: JuheWechatFriendAddBatch) -> dict:
+    return {
+        "id": row.id,
+        "owner_role": row.owner_role,
+        "owner_user_id": row.owner_user_id,
+        "target_user_id": row.target_user_id,
+        "config_id": row.config_id,
+        "title": row.title,
+        "verify_content": row.verify_content,
+        "interval_seconds": row.interval_seconds,
+        "status": row.status,
+        "total_count": row.total_count,
+        "success_count": row.success_count,
+        "failed_count": row.failed_count,
+        "skipped_count": row.skipped_count,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+        "error_message": row.error_message,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _juhe_item_payload(row: JuheWechatFriendAddItem) -> dict:
+    return {
+        "id": row.id,
+        "batch_id": row.batch_id,
+        "raw_contact": row.raw_contact,
+        "nickname": row.nickname,
+        "remark": row.remark,
+        "status": row.status,
+        "attempt_count": row.attempt_count,
+        "resolved_username": row.resolved_username,
+        "resolved_scene": row.resolved_scene,
+        "error_message": row.error_message,
+        "response_payload": row.response_payload,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "processed_at": row.processed_at.isoformat() if row.processed_at else None,
+    }
+
+
+def _juhe_recount_batch(db: Session, batch: JuheWechatFriendAddBatch) -> None:
+    rows = db.query(JuheWechatFriendAddItem.status, func.count(JuheWechatFriendAddItem.id)).filter(
+        JuheWechatFriendAddItem.batch_id == batch.id
+    ).group_by(JuheWechatFriendAddItem.status).all()
+    counts = {str(k): int(v) for k, v in rows}
+    batch.total_count = sum(counts.values())
+    batch.success_count = counts.get("success", 0)
+    batch.failed_count = counts.get("failed", 0)
+    batch.skipped_count = counts.get("skipped", 0)
+
+
+async def _juhe_process_friend_batch_async(batch_id: int) -> None:
+    from ..db import SessionLocal
+
+    while True:
+        db = SessionLocal()
+        try:
+            batch = db.query(JuheWechatFriendAddBatch).filter(JuheWechatFriendAddBatch.id == batch_id).first()
+            if not batch or batch.status in {"finished", "deleted"}:
+                return
+            config = db.query(JuheWechatConfig).filter(
+                JuheWechatConfig.id == batch.config_id,
+                JuheWechatConfig.status != "deleted",
+            ).first()
+            if not config:
+                batch.status = "failed"
+                batch.error_message = "实例不存在或已删除"
+                batch.finished_at = datetime.utcnow()
+                db.commit()
+                return
+            item = (
+                db.query(JuheWechatFriendAddItem)
+                .filter(
+                    JuheWechatFriendAddItem.batch_id == batch_id,
+                    JuheWechatFriendAddItem.status.in_(["pending", "retry"]),
+                )
+                .order_by(JuheWechatFriendAddItem.id.asc())
+                .first()
+            )
+            if not item:
+                _juhe_recount_batch(db, batch)
+                batch.status = "finished" if batch.failed_count == 0 else "finished_with_errors"
+                batch.finished_at = datetime.utcnow()
+                db.commit()
+                return
+            if not batch.started_at:
+                batch.started_at = datetime.utcnow()
+            batch.status = "running"
+            item.status = "running"
+            item.attempt_count = int(item.attempt_count or 0) + 1
+            db.commit()
+
+            raw_contact = (item.raw_contact or "").strip()
+            search_payload = {"guid": config.guid, "username": raw_contact, "from_scene": 0, "search_scene": 1}
+            add_payload = None
+            response_payload = None
+            error_message = ""
+            success = False
+            try:
+                search_data, search_http, search_latency = await guid_request(
+                    path="/contact/search_contact",
+                    data=search_payload,
+                    config=config,
+                    timeout_seconds=45,
+                )
+                response_payload = {"search": search_data}
+                db.add(JuheWechatCallLog(
+                    user_id=batch.target_user_id,
+                    config_id=config.id,
+                    action="friend_search",
+                    upstream_path="/contact/search_contact",
+                    success=search_http == 200 and int(search_data.get("errcode") or 0) == 0,
+                    http_status=search_http,
+                    latency_ms=search_latency,
+                    request_payload=safe_request_snapshot(search_payload),
+                    response_payload=search_data,
+                    error_message="" if search_http == 200 else str(search_data)[:1000],
+                ))
+                target = extract_friend_add_target(search_data)
+                if not target.get("username"):
+                    raise RuntimeError("未从搜索结果中解析到可添加的 username")
+                verify_text = (item.remark or "").strip() or (batch.verify_content or "").strip()
+                add_payload = {
+                    "guid": config.guid,
+                    "username": target["username"],
+                    "verify_content": verify_text,
+                    "scene": int(target.get("scene") or 3),
+                    "ticket": target.get("ticket") or "",
+                }
+                add_data, add_http, add_latency = await guid_request(
+                    path="/contact/add_friend",
+                    data=add_payload,
+                    config=config,
+                    timeout_seconds=45,
+                )
+                response_payload["add"] = add_data
+                success = add_http == 200 and int(add_data.get("errcode") or 0) == 0
+                if not success:
+                    error_message = str(add_data.get("errmsg") or add_data.get("message") or add_data)[:1000]
+                db.add(JuheWechatCallLog(
+                    user_id=batch.target_user_id,
+                    config_id=config.id,
+                    action="friend_add",
+                    upstream_path="/contact/add_friend",
+                    success=success,
+                    http_status=add_http,
+                    latency_ms=add_latency,
+                    request_payload=safe_request_snapshot(add_payload),
+                    response_payload=add_data,
+                    error_message="" if success else error_message,
+                ))
+                item.resolved_username = target["username"]
+                item.resolved_ticket = target.get("ticket") or ""
+                item.resolved_scene = int(target.get("scene") or 3)
+            except Exception as exc:
+                error_message = str(exc)[:1000]
+
+            item.search_payload = search_payload
+            item.add_payload = add_payload
+            item.response_payload = response_payload
+            item.error_message = error_message or None
+            item.status = "success" if success else "failed"
+            item.processed_at = datetime.utcnow()
+            _juhe_recount_batch(db, batch)
+            remaining = db.query(func.count(JuheWechatFriendAddItem.id)).filter(
+                JuheWechatFriendAddItem.batch_id == batch_id,
+                JuheWechatFriendAddItem.status.in_(["pending", "retry"]),
+            ).scalar() or 0
+            if not remaining:
+                batch.status = "finished" if batch.failed_count == 0 else "finished_with_errors"
+                batch.finished_at = datetime.utcnow()
+                db.commit()
+                return
+            db.commit()
+            delay = max(5, min(3600, int(batch.interval_seconds or 30)))
+        finally:
+            db.close()
+        await asyncio.sleep(delay)
+
+
+def _juhe_process_friend_batch(batch_id: int) -> None:
+    try:
+        asyncio.run(_juhe_process_friend_batch_async(batch_id))
+    except Exception:
+        logger.exception("[juhe friend batch] background task crashed batch_id=%s", batch_id)
+
+
+@router.post("/admin/api/juhe-wechat/friend-add/batches")
+def admin_juhe_create_friend_batch(
+    body: JuheFriendAddBatchBody,
+    background_tasks: BackgroundTasks,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    config = db.query(JuheWechatConfig).filter(JuheWechatConfig.id == body.config_id, JuheWechatConfig.status != "deleted").first()
+    if not config:
+        raise HTTPException(status_code=404, detail="实例不存在")
+    if ctx.role != "admin" and (getattr(config, "owner_role", None) != "agent" or getattr(config, "owner_user_id", None) != ctx.user_id):
+        raise HTTPException(status_code=403, detail="无权使用该实例")
+    _juhe_can_bind_user(db, ctx, config.user_id)
+    contacts: list[JuheFriendAddTarget] = []
+    seen: set[str] = set()
+    for item in body.contacts or []:
+        contact = (item.contact or "").strip()
+        if not contact or contact in seen:
+            continue
+        seen.add(contact)
+        contacts.append(item)
+    if not contacts:
+        raise HTTPException(status_code=400, detail="没有有效联系人")
+    if len(contacts) > 1000:
+        raise HTTPException(status_code=400, detail="单次最多导入 1000 条")
+    interval = max(5, min(3600, int(body.interval_seconds or 30)))
+    batch = JuheWechatFriendAddBatch(
+        owner_role=ctx.role,
+        owner_user_id=ctx.user_id,
+        target_user_id=config.user_id,
+        config_id=config.id,
+        title=(body.title or "").strip()[:160] or ("批量加人 " + datetime.utcnow().strftime("%Y-%m-%d %H:%M")),
+        verify_content=(body.verify_content or "").strip()[:200],
+        interval_seconds=interval,
+        status="pending",
+        total_count=len(contacts),
+        meta={"source": "admin_panel", "doc_rate_limit": "100 requests/minute/device; default interval is conservative"},
+    )
+    db.add(batch)
+    db.flush()
+    for item in contacts:
+        db.add(JuheWechatFriendAddItem(
+            batch_id=batch.id,
+            raw_contact=(item.contact or "").strip()[:256],
+            nickname=(item.nickname or "").strip()[:160] or None,
+            remark=(item.remark or "").strip()[:200] or None,
+            status="pending",
+        ))
+    db.commit()
+    db.refresh(batch)
+    background_tasks.add_task(_juhe_process_friend_batch, batch.id)
+    return {"ok": True, "batch": _juhe_batch_payload(batch)}
+
+
+@router.get("/admin/api/juhe-wechat/friend-add/batches")
+def admin_juhe_list_friend_batches(
+    config_id: Optional[int] = None,
+    limit: int = 50,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    limit = max(1, min(100, int(limit or 50)))
+    q = db.query(JuheWechatFriendAddBatch)
+    if ctx.role != "admin":
+        q = q.filter(JuheWechatFriendAddBatch.owner_role == "agent", JuheWechatFriendAddBatch.owner_user_id == ctx.user_id)
+    if config_id:
+        q = q.filter(JuheWechatFriendAddBatch.config_id == int(config_id))
+    rows = q.order_by(JuheWechatFriendAddBatch.created_at.desc()).limit(limit).all()
+    return {"items": [_juhe_batch_payload(r) for r in rows]}
+
+
+@router.get("/admin/api/juhe-wechat/friend-add/batches/{batch_id}")
+def admin_juhe_get_friend_batch(
+    batch_id: int,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    batch = db.query(JuheWechatFriendAddBatch).filter(JuheWechatFriendAddBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    if ctx.role != "admin" and (batch.owner_role != "agent" or batch.owner_user_id != ctx.user_id):
+        raise HTTPException(status_code=403, detail="无权查看该批次")
+    items = (
+        db.query(JuheWechatFriendAddItem)
+        .filter(JuheWechatFriendAddItem.batch_id == batch.id)
+        .order_by(JuheWechatFriendAddItem.id.asc())
+        .all()
+    )
+    return {"batch": _juhe_batch_payload(batch), "items": [_juhe_item_payload(i) for i in items]}
+
+
+@router.post("/admin/api/juhe-wechat/friend-add/batches/{batch_id}/retry")
+def admin_juhe_retry_friend_batch(
+    batch_id: int,
+    background_tasks: BackgroundTasks,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    batch = db.query(JuheWechatFriendAddBatch).filter(JuheWechatFriendAddBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    if ctx.role != "admin" and (batch.owner_role != "agent" or batch.owner_user_id != ctx.user_id):
+        raise HTTPException(status_code=403, detail="无权操作该批次")
+    db.query(JuheWechatFriendAddItem).filter(
+        JuheWechatFriendAddItem.batch_id == batch.id,
+        JuheWechatFriendAddItem.status.in_(["failed", "pending", "retry", "running"]),
+    ).update({"status": "retry", "error_message": None}, synchronize_session=False)
+    batch.status = "pending"
+    batch.error_message = None
+    batch.finished_at = None
+    _juhe_recount_batch(db, batch)
+    db.commit()
+    background_tasks.add_task(_juhe_process_friend_batch, batch.id)
+    return {"ok": True, "batch": _juhe_batch_payload(batch)}

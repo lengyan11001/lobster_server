@@ -6,7 +6,7 @@ proxy. Online clients only call the few product-level actions below.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import JuheWechatCallLog, JuheWechatConfig, User
 from ..services.juhe_wechat import (
+    extract_friend_add_target,
     guid_request,
-    mask_secret,
     safe_request_snapshot,
 )
 from .auth import get_current_user
@@ -61,11 +61,6 @@ def _config_out(row: JuheWechatConfig) -> Dict[str, Any]:
         "id": row.id,
         "label": row.label,
         "guid": row.guid,
-        "has_app_key": bool((row.app_key or "").strip()),
-        "has_app_secret": bool((row.app_secret or "").strip()),
-        "has_custom_app_key": bool((row.app_key or "").strip()),
-        "masked_app_key": mask_secret(row.app_key or "") if row.app_key else "",
-        "uses_server_default_key": False,
         "status": row.status,
         "last_status": row.last_status,
         "last_status_at": row.last_status_at.isoformat() if row.last_status_at else None,
@@ -104,6 +99,197 @@ def _log_call(
     )
 
 
+def _upstream_ok(data: Dict[str, Any], http_status: Optional[int]) -> bool:
+    if http_status != 200 or not isinstance(data, dict):
+        return False
+    for key in ("errcode", "code"):
+        if key in data:
+            try:
+                return int(data.get(key) or 0) == 0
+            except Exception:
+                return False
+    return True
+
+
+def _upstream_error(data: Optional[Dict[str, Any]], fallback: str = "Upstream request failed") -> str:
+    if not isinstance(data, dict):
+        return fallback
+    for key in ("errmsg", "message", "msg", "detail", "error"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return str(data)[:500] or fallback
+
+
+def _extract_items(data: Any) -> List[Any]:
+    """Best-effort list extraction across JuheBot response shapes."""
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+    for key in (
+        "items",
+        "list",
+        "contacts",
+        "contact_list",
+        "username_list",
+        "room_list",
+        "member_list",
+        "chatroom_list",
+    ):
+        val = data.get(key)
+        if isinstance(val, list):
+            return val
+    for key in ("data", "result", "payload"):
+        val = data.get(key)
+        items = _extract_items(val)
+        if items:
+            return items
+    return []
+
+
+def _extract_data_object(data: Dict[str, Any]) -> Any:
+    if not isinstance(data, dict):
+        return data
+    for key in ("data", "result", "payload"):
+        if key in data:
+            return data.get(key)
+    return data
+
+
+def _candidate_name(item: Any) -> str:
+    if not isinstance(item, dict):
+        return str(item or "")
+    for key in (
+        "username",
+        "user_name",
+        "UserName",
+        "wxid",
+        "room_username",
+        "chatroom_username",
+        "nickname",
+        "NickName",
+        "remark",
+        "RemarkName",
+    ):
+        val = item.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
+def _find_first_dict_with_keys(obj: Any, keys: set[str]) -> Dict[str, Any]:
+    if isinstance(obj, dict):
+        if any(k in obj for k in keys):
+            return obj
+        for value in obj.values():
+            found = _find_first_dict_with_keys(value, keys)
+            if found:
+                return found
+    if isinstance(obj, list):
+        for value in obj:
+            found = _find_first_dict_with_keys(value, keys)
+            if found:
+                return found
+    return {}
+
+
+def _normalize_upload_payload(raw: Optional[Dict[str, Any]], message_type: str) -> Dict[str, Any]:
+    source = _find_first_dict_with_keys(
+        raw or {},
+        {
+            "file_id",
+            "aes_key",
+            "file_size",
+            "big_file_size",
+            "thumb_file_size",
+            "file_md5",
+            "thumb_width",
+            "thumb_height",
+            "file_crc",
+            "file_name",
+            "file_key",
+        },
+    )
+    if not source:
+        return {}
+    if message_type == "image":
+        keys = (
+            "file_id",
+            "aes_key",
+            "file_size",
+            "big_file_size",
+            "thumb_file_size",
+            "file_md5",
+            "thumb_width",
+            "thumb_height",
+            "file_crc",
+        )
+    else:
+        keys = ("file_id", "aes_key", "file_size", "file_md5", "file_name", "file_crc", "file_key")
+    payload: Dict[str, Any] = {}
+    for key in keys:
+        if key in source:
+            payload[key] = source.get(key)
+    return payload
+
+
+async def _call_upstream(
+    db: Session,
+    *,
+    current_user: User,
+    row: JuheWechatConfig,
+    action: str,
+    upstream_path: str,
+    payload: Dict[str, Any],
+    timeout_seconds: float = 45.0,
+    raise_on_fail: bool = True,
+) -> Dict[str, Any]:
+    try:
+        data, http_status, latency_ms = await guid_request(
+            path=upstream_path,
+            data=payload,
+            config=row,
+            timeout_seconds=timeout_seconds,
+        )
+        success = _upstream_ok(data, http_status)
+        _log_call(
+            db,
+            user_id=current_user.id,
+            config_id=row.id,
+            action=action,
+            upstream_path=upstream_path,
+            request_payload=payload,
+            response_payload=data,
+            http_status=http_status,
+            latency_ms=latency_ms,
+            success=success,
+            error_message="" if success else _upstream_error(data),
+        )
+        db.commit()
+        if raise_on_fail and not success:
+            raise HTTPException(status_code=502, detail=_upstream_error(data))
+        return {"ok": success, "upstream": data, "latency_ms": latency_ms, "http_status": http_status}
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        _log_call(
+            db,
+            user_id=current_user.id,
+            config_id=row.id,
+            action=action,
+            upstream_path=upstream_path,
+            request_payload=payload,
+            response_payload=None,
+            http_status=None,
+            latency_ms=None,
+            success=False,
+            error_message=str(exc),
+        )
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Juhe WeChat request failed: {exc}") from exc
+
+
 class ConfigUpsertBody(BaseModel):
     id: Optional[int] = None
     label: Optional[str] = None
@@ -116,6 +302,70 @@ class SendTextBody(BaseModel):
     config_id: int
     to_username: str = Field(min_length=1, max_length=256)
     content: str = Field(min_length=1, max_length=4000)
+
+
+class ConfigOnlyBody(BaseModel):
+    config_id: int
+
+
+class ContactDetailBody(BaseModel):
+    config_id: int
+    username: str = Field(min_length=1, max_length=256)
+
+
+class ContactRemarkBody(ContactDetailBody):
+    remark: str = Field(max_length=120)
+
+
+class FriendImportItem(BaseModel):
+    contact: str = Field(min_length=1, max_length=128)
+    remark: Optional[str] = Field(default=None, max_length=120)
+
+
+class FriendRequestsBody(BaseModel):
+    config_id: int
+    verify_content: str = Field(default="", max_length=240)
+    contacts: List[FriendImportItem] = Field(default_factory=list, max_length=100)
+
+
+class SendMessageBody(BaseModel):
+    config_id: int
+    to_usernames: List[str] = Field(default_factory=list, max_length=100)
+    message_type: Literal["text", "image", "file"] = "text"
+    content: Optional[str] = Field(default=None, max_length=4000)
+    upload: Optional[Dict[str, Any]] = None
+
+
+class UploadByUrlBody(BaseModel):
+    config_id: int
+    url: str = Field(min_length=1, max_length=2000)
+    file_type: int = 2
+
+
+class RoomDetailBody(BaseModel):
+    config_id: int
+    room_username: str = Field(min_length=1, max_length=256)
+
+
+class RoomCreateBody(BaseModel):
+    config_id: int
+    username_list: List[str] = Field(default_factory=list, min_length=1, max_length=40)
+
+
+class RoomMembersBody(RoomDetailBody):
+    username_list: List[str] = Field(default_factory=list, min_length=1, max_length=100)
+
+
+class RoomRenameBody(RoomDetailBody):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class RoomAnnouncementBody(RoomDetailBody):
+    announcement: str = Field(min_length=1, max_length=2000)
+
+
+class RoomDisplayNameBody(RoomDetailBody):
+    display_name: str = Field(max_length=120)
 
 
 @router.get("/api/juhe-wechat/configs")
@@ -141,37 +391,7 @@ def save_config(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    guid = _normalize_guid(body.guid)
-    is_update = bool(body.id)
-    if is_update:
-        row = _get_config_or_404(db, current_user.id, int(body.id))
-    else:
-        row = (
-            db.query(JuheWechatConfig)
-            .filter(JuheWechatConfig.user_id == current_user.id, JuheWechatConfig.guid == guid)
-            .first()
-        )
-        if row and row.status == "deleted":
-            row.status = "active"
-        if row is None:
-            row = JuheWechatConfig(user_id=current_user.id, guid=guid, label=_normalize_label(body.label, guid))
-            db.add(row)
-    row.guid = guid
-    row.label = _normalize_label(body.label, guid)
-
-    app_key = (body.app_key or "").strip() if body.app_key is not None else ""
-    app_secret = (body.app_secret or "").strip() if body.app_secret is not None else ""
-    if not is_update or app_key:
-        row.app_key = app_key or None
-    if not is_update or app_secret:
-        row.app_secret = app_secret or None
-    if not (row.app_key or "").strip() or not (row.app_secret or "").strip():
-        raise HTTPException(status_code=400, detail="App Key/App Secret are required for this instance")
-
-    row.status = "active"
-    db.commit()
-    db.refresh(row)
-    return {"ok": True, "config": _config_out(row)}
+    raise HTTPException(status_code=403, detail="实例配置请在管理后台维护")
 
 
 @router.delete("/api/juhe-wechat/configs/{config_id}")
@@ -180,10 +400,7 @@ def delete_config(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    row = _get_config_or_404(db, current_user.id, config_id)
-    row.status = "deleted"
-    db.commit()
-    return {"ok": True}
+    raise HTTPException(status_code=403, detail="实例配置请在管理后台维护")
 
 
 @router.post("/api/juhe-wechat/configs/{config_id}/status")
@@ -250,6 +467,213 @@ async def check_status(
         raise HTTPException(status_code=502, detail=f"Juhe WeChat status query failed: {exc}") from exc
 
 
+@router.post("/api/juhe-wechat/contacts/refresh")
+async def refresh_contacts(
+    body: ConfigOnlyBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    result = await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="contacts_refresh",
+        upstream_path="/contact/init_contact",
+        payload={"guid": row.guid, "contact_seq": 0, "room_seq": 0},
+        timeout_seconds=60,
+    )
+    data_obj = _extract_data_object(result.get("upstream") or {})
+    items = _extract_items(data_obj)
+    groups = [i for i in items if "@chatroom" in _candidate_name(i)]
+    contacts = [i for i in items if "@chatroom" not in _candidate_name(i)]
+    return {**result, "items": items, "contacts": contacts, "groups": groups, "count": len(items)}
+
+
+@router.post("/api/juhe-wechat/contacts/detail")
+async def contact_detail(
+    body: ContactDetailBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    payload = {
+        "guid": row.guid,
+        "username_list": [body.username.strip()],
+        "room_username": "",
+    }
+    result = await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="contact_detail",
+        upstream_path="/contact/get_contact",
+        payload=payload,
+    )
+    return {**result, "detail": _extract_data_object(result.get("upstream") or {})}
+
+
+@router.post("/api/juhe-wechat/contacts/remark")
+async def modify_contact_remark(
+    body: ContactRemarkBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    payload = {
+        "guid": row.guid,
+        "username": body.username.strip(),
+        "remark": body.remark.strip(),
+    }
+    return await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="modify_remark",
+        upstream_path="/contact/modify_remark",
+        payload=payload,
+    )
+
+
+@router.post("/api/juhe-wechat/friend-requests")
+async def send_friend_requests(
+    body: FriendRequestsBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    seen: set[str] = set()
+    targets: List[FriendImportItem] = []
+    for item in body.contacts:
+        contact = item.contact.strip()
+        if not contact or contact in seen:
+            continue
+        seen.add(contact)
+        targets.append(item)
+    if not targets:
+        raise HTTPException(status_code=400, detail="请先导入要添加的微信号/手机号")
+
+    results: List[Dict[str, Any]] = []
+    verify_content = body.verify_content.strip()
+    for item in targets:
+        contact = item.contact.strip()
+        search_payload = {
+            "guid": row.guid,
+            "username": contact,
+            "from_scene": 0,
+            "search_scene": 1,
+        }
+        search = await _call_upstream(
+            db,
+            current_user=current_user,
+            row=row,
+            action="search_contact_for_add_friend",
+            upstream_path="/contact/search_contact",
+            payload=search_payload,
+            timeout_seconds=45,
+            raise_on_fail=False,
+        )
+        if not search.get("ok"):
+            results.append({
+                "contact": contact,
+                "ok": False,
+                "stage": "search",
+                "error": _upstream_error(search.get("upstream")),
+                "search": search.get("upstream"),
+            })
+            continue
+
+        target = extract_friend_add_target(search.get("upstream") or {})
+        if not target.get("username"):
+            results.append({
+                "contact": contact,
+                "ok": False,
+                "stage": "parse",
+                "error": "没有从搜索结果中解析到可添加的 username",
+                "search": search.get("upstream"),
+            })
+            continue
+
+        add_payload = {
+            "guid": row.guid,
+            "username": target.get("username"),
+            "verify_content": verify_content,
+            "scene": int(target.get("scene") or 3),
+            "ticket": target.get("ticket") or "",
+        }
+        add = await _call_upstream(
+            db,
+            current_user=current_user,
+            row=row,
+            action="add_friend",
+            upstream_path="/contact/add_friend",
+            payload=add_payload,
+            timeout_seconds=45,
+            raise_on_fail=False,
+        )
+        results.append({
+            "contact": contact,
+            "resolved_username": target.get("username"),
+            "ok": bool(add.get("ok")),
+            "stage": "add",
+            "error": "" if add.get("ok") else _upstream_error(add.get("upstream")),
+            "search": search.get("upstream"),
+            "add": add.get("upstream"),
+        })
+
+    success_count = sum(1 for r in results if r.get("ok"))
+    return {
+        "ok": success_count == len(results),
+        "total": len(results),
+        "success_count": success_count,
+        "failed_count": len(results) - success_count,
+        "items": results,
+    }
+
+
+@router.post("/api/juhe-wechat/media/upload-url")
+async def upload_media_by_url(
+    body: UploadByUrlBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    cdn_info = await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="cdn_info",
+        upstream_path="/cdn/get_cdn_info",
+        payload={"guid": row.guid},
+        timeout_seconds=45,
+        raise_on_fail=False,
+    )
+    cdn_obj = _find_first_dict_with_keys(
+        cdn_info.get("upstream") or {},
+        {"cdn_info", "client_version", "device_type", "username"},
+    )
+    payload = {
+        "base_request": {
+            "cdn_info": cdn_obj.get("cdn_info", "") if isinstance(cdn_obj, dict) else "",
+            "client_version": cdn_obj.get("client_version", 0) if isinstance(cdn_obj, dict) else 0,
+            "device_type": cdn_obj.get("device_type", "") if isinstance(cdn_obj, dict) else "",
+            "username": cdn_obj.get("username", row.guid) if isinstance(cdn_obj, dict) else row.guid,
+        },
+        "file_type": int(body.file_type or 2),
+        "url": body.url.strip(),
+    }
+    result = await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="cloud_upload",
+        upstream_path="/cloud/upload",
+        payload=payload,
+        timeout_seconds=120,
+    )
+    return {**result, "upload": _extract_data_object(result.get("upstream") or {})}
+
+
 @router.post("/api/juhe-wechat/send-text")
 async def send_text(
     body: SendTextBody,
@@ -305,6 +729,280 @@ async def send_text(
         )
         db.commit()
         raise HTTPException(status_code=502, detail=f"Juhe WeChat send failed: {exc}") from exc
+
+
+@router.post("/api/juhe-wechat/messages/send")
+async def send_message(
+    body: SendMessageBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    recipients = [x.strip() for x in body.to_usernames if x and x.strip()]
+    if not recipients:
+        raise HTTPException(status_code=400, detail="请选择或输入接收人")
+    if body.message_type == "text" and not (body.content or "").strip():
+        raise HTTPException(status_code=400, detail="请输入要发送的文案")
+    if body.message_type in ("image", "file") and not isinstance(body.upload, dict):
+        raise HTTPException(status_code=400, detail="图片/文件发送需要先上传生成 CDN 参数")
+
+    path_by_type = {
+        "text": "/msg/send_text",
+        "image": "/msg/send_image",
+        "file": "/msg/send_file",
+    }
+    results = []
+    for to_username in recipients:
+        if body.message_type == "text":
+            payload = {
+                "guid": row.guid,
+                "to_username": to_username,
+                "content": (body.content or "").strip(),
+            }
+        else:
+            payload = _normalize_upload_payload(body.upload, body.message_type)
+            if not payload:
+                raise HTTPException(status_code=400, detail="未解析到可发送的 CDN 文件参数")
+            payload["guid"] = row.guid
+            payload["to_username"] = to_username
+        result = await _call_upstream(
+            db,
+            current_user=current_user,
+            row=row,
+            action="send_" + body.message_type,
+            upstream_path=path_by_type[body.message_type],
+            payload=payload,
+            timeout_seconds=90,
+            raise_on_fail=False,
+        )
+        results.append({
+            "to_username": to_username,
+            "ok": bool(result.get("ok")),
+            "error": "" if result.get("ok") else _upstream_error(result.get("upstream")),
+            "upstream": result.get("upstream"),
+        })
+    success_count = sum(1 for r in results if r.get("ok"))
+    return {
+        "ok": success_count == len(results),
+        "total": len(results),
+        "success_count": success_count,
+        "failed_count": len(results) - success_count,
+        "items": results,
+    }
+
+
+@router.post("/api/juhe-wechat/rooms/list")
+async def list_rooms(
+    body: ConfigOnlyBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    result = await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="rooms_list",
+        upstream_path="/contact/init_contact",
+        payload={"guid": row.guid, "contact_seq": 0, "room_seq": 0},
+        timeout_seconds=60,
+    )
+    items = _extract_items(_extract_data_object(result.get("upstream") or {}))
+    rooms = [i for i in items if "@chatroom" in _candidate_name(i)]
+    return {**result, "items": rooms, "count": len(rooms)}
+
+
+@router.post("/api/juhe-wechat/rooms/detail")
+async def room_detail(
+    body: RoomDetailBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    result = await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="room_detail",
+        upstream_path="/room/get_chatroom_detail",
+        payload={"guid": row.guid, "room_username": body.room_username.strip()},
+        timeout_seconds=60,
+    )
+    return {**result, "detail": _extract_data_object(result.get("upstream") or {})}
+
+
+@router.post("/api/juhe-wechat/rooms/members")
+async def room_members(
+    body: RoomDetailBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    result = await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="room_members",
+        upstream_path="/room/get_chatroom_member_detail",
+        payload={"guid": row.guid, "room_username": body.room_username.strip(), "version": 0},
+        timeout_seconds=60,
+    )
+    data_obj = _extract_data_object(result.get("upstream") or {})
+    return {**result, "items": _extract_items(data_obj), "detail": data_obj}
+
+
+@router.post("/api/juhe-wechat/rooms/create")
+async def create_room(
+    body: RoomCreateBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    names = [x.strip() for x in body.username_list if x and x.strip()]
+    if not names:
+        raise HTTPException(status_code=400, detail="请选择要拉群的联系人")
+    return await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="room_create",
+        upstream_path="/room/create_chatroom",
+        payload={"guid": row.guid, "username_list": names},
+        timeout_seconds=90,
+    )
+
+
+@router.post("/api/juhe-wechat/rooms/add-members")
+async def add_room_members(
+    body: RoomMembersBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    names = [x.strip() for x in body.username_list if x and x.strip()]
+    return await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="room_add_members",
+        upstream_path="/room/add_chatroom_member",
+        payload={"guid": row.guid, "room_username": body.room_username.strip(), "username_list": names},
+        timeout_seconds=90,
+    )
+
+
+@router.post("/api/juhe-wechat/rooms/invite-members")
+async def invite_room_members(
+    body: RoomMembersBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    names = [x.strip() for x in body.username_list if x and x.strip()]
+    return await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="room_invite_members",
+        upstream_path="/room/invite_chatroom_member",
+        payload={"guid": row.guid, "room_username": body.room_username.strip(), "username_list": names},
+        timeout_seconds=90,
+    )
+
+
+@router.post("/api/juhe-wechat/rooms/remove-members")
+async def remove_room_members(
+    body: RoomMembersBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    names = [x.strip() for x in body.username_list if x and x.strip()]
+    return await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="room_remove_members",
+        upstream_path="/room/del_chatroom_member",
+        payload={"guid": row.guid, "room_username": body.room_username.strip(), "username_list": names},
+        timeout_seconds=90,
+    )
+
+
+@router.post("/api/juhe-wechat/rooms/rename")
+async def rename_room(
+    body: RoomRenameBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    return await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="room_rename",
+        upstream_path="/room/modify_chatroom_name",
+        payload={"guid": row.guid, "room_username": body.room_username.strip(), "name": body.name.strip()},
+    )
+
+
+@router.post("/api/juhe-wechat/rooms/announcement")
+async def set_room_announcement(
+    body: RoomAnnouncementBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    return await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="room_announcement",
+        upstream_path="/room/set_chatroom_announcement",
+        payload={
+            "guid": row.guid,
+            "room_username": body.room_username.strip(),
+            "announcement": body.announcement.strip(),
+        },
+    )
+
+
+@router.post("/api/juhe-wechat/rooms/display-name")
+async def set_room_display_name(
+    body: RoomDisplayNameBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    return await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="room_display_name",
+        upstream_path="/room/modify_chatroom_display_name",
+        payload={
+            "guid": row.guid,
+            "room_username": body.room_username.strip(),
+            "display_name": body.display_name.strip(),
+        },
+    )
+
+
+@router.post("/api/juhe-wechat/rooms/quit")
+async def quit_room(
+    body: RoomDetailBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, body.config_id)
+    return await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="room_quit",
+        upstream_path="/room/quit_chatroom",
+        payload={"guid": row.guid, "room_username": body.room_username.strip()},
+    )
 
 
 @router.get("/api/juhe-wechat/call-logs")
