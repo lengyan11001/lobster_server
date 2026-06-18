@@ -834,6 +834,7 @@ async def upload_media_by_url(
         {"cdn_info", "client_version", "device_type", "username"},
     )
     payload = {
+        "guid": row.guid,
         "base_request": {
             "cdn_info": cdn_obj.get("cdn_info", "") if isinstance(cdn_obj, dict) else "",
             "client_version": cdn_obj.get("client_version", 0) if isinstance(cdn_obj, dict) else 0,
