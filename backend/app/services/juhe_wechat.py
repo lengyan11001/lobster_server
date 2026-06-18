@@ -73,6 +73,7 @@ def extract_friend_add_target(search_response: Dict[str, Any]) -> Dict[str, Any]
         "username",
         "user_name",
         "userName",
+        "UserName",
         "wxid",
         "wechat_id",
         "wechatId",
@@ -80,7 +81,15 @@ def extract_friend_add_target(search_response: Dict[str, Any]) -> Dict[str, Any]
         "encryptUsername",
         "v1",
     )
-    ticket_keys = ("ticket", "antispam_ticket", "anti_spam_ticket", "verify_ticket", "v2")
+    ticket_keys = (
+        "ticket",
+        "antispam_ticket",
+        "anti_spam_ticket",
+        "antispamTicket",
+        "antiSpamTicket",
+        "verify_ticket",
+        "v2",
+    )
     scene_keys = ("scene", "from_scene", "search_scene")
     for obj in candidates:
         if not isinstance(obj, dict):
@@ -93,11 +102,21 @@ def extract_friend_add_target(search_response: Dict[str, Any]) -> Dict[str, Any]
             if isinstance(val, str) and val.strip():
                 username = val.strip()
                 break
+            if isinstance(val, dict):
+                nested = val.get("string") or val.get("String") or val.get("value") or val.get("Value")
+                if isinstance(nested, str) and nested.strip():
+                    username = nested.strip()
+                    break
         for key in ticket_keys:
             val = obj.get(key)
             if isinstance(val, str) and val.strip():
                 ticket = val.strip()
                 break
+            if isinstance(val, dict):
+                nested = val.get("string") or val.get("String") or val.get("value") or val.get("Value")
+                if isinstance(nested, str) and nested.strip():
+                    ticket = nested.strip()
+                    break
         for key in scene_keys:
             val = obj.get(key)
             try:

@@ -770,7 +770,7 @@ async def send_friend_requests(
                 "contact": contact,
                 "ok": False,
                 "stage": "parse",
-                "error": "没有从搜索结果中解析到可添加的 username",
+                "error": "搜索到了账号，但接口没有返回可添加凭证",
                 "search": search.get("upstream"),
             })
             continue
