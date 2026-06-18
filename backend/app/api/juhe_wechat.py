@@ -102,7 +102,7 @@ def _log_call(
 def _upstream_ok(data: Dict[str, Any], http_status: Optional[int]) -> bool:
     if http_status != 200 or not isinstance(data, dict):
         return False
-    for key in ("errcode", "code"):
+    for key in ("errcode", "err_code", "code"):
         if key in data:
             try:
                 return int(data.get(key) or 0) == 0
@@ -114,7 +114,7 @@ def _upstream_ok(data: Dict[str, Any], http_status: Optional[int]) -> bool:
 def _upstream_error(data: Optional[Dict[str, Any]], fallback: str = "Upstream request failed") -> str:
     if not isinstance(data, dict):
         return fallback
-    for key in ("errmsg", "message", "msg", "detail", "error"):
+    for key in ("errmsg", "err_msg", "message", "msg", "detail", "error"):
         val = data.get(key)
         if isinstance(val, str) and val.strip():
             return val.strip()
