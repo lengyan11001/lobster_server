@@ -134,6 +134,8 @@ def _extract_items(data: Any) -> List[Any]:
         "contact_list",
         "contactUsernameList",
         "ContactUsernameList",
+        "contactList",
+        "ContactList",
         "username_list",
         "usernameList",
         "room_list",
@@ -178,6 +180,56 @@ def _as_username_items(items: List[Any]) -> List[Dict[str, Any]]:
         elif isinstance(item, dict):
             out.append(item)
     return out
+
+
+def _wechat_string(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("string", "String", "value", "Value"):
+            val = value.get(key)
+            if isinstance(val, str):
+                return val
+    return ""
+
+
+def _normalize_contact_brief(item: Any) -> Dict[str, Any]:
+    if isinstance(item, str):
+        return {"username": item, "nickname": item}
+    if not isinstance(item, dict):
+        return {}
+    contact = item.get("contact") if isinstance(item.get("contact"), dict) else item
+    username = (
+        item.get("username")
+        or item.get("userName")
+        or _wechat_string(contact.get("userName"))
+        or _wechat_string(contact.get("UserName"))
+        or _candidate_name(contact)
+    )
+    nickname = (
+        item.get("nickname")
+        or item.get("nickName")
+        or _wechat_string(contact.get("nickName"))
+        or _wechat_string(contact.get("NickName"))
+        or username
+    )
+    remark = (
+        item.get("remark")
+        or _wechat_string(contact.get("remark"))
+        or _wechat_string(contact.get("Remark"))
+        or ""
+    )
+    return {
+        "username": username,
+        "nickname": nickname,
+        "remark": remark,
+        "alias": contact.get("alias") or "",
+        "signature": contact.get("signature") or "",
+        "province": contact.get("province") or "",
+        "city": contact.get("city") or "",
+        "avatar_url": contact.get("smallHeadImgUrl") or contact.get("bigHeadImgUrl") or "",
+        "raw": item,
+    }
 
 
 def _extract_data_object(data: Dict[str, Any]) -> Any:
@@ -392,7 +444,14 @@ async def _fetch_contact_briefs(
             raise_on_fail=False,
         )
         if result.get("ok"):
-            batch = _as_username_items(_extract_items(_extract_data_object(result.get("upstream") or {})))
+            batch = [
+                item
+                for item in (
+                    _normalize_contact_brief(raw)
+                    for raw in _extract_items(_extract_data_object(result.get("upstream") or {}))
+                )
+                if item.get("username")
+            ]
             details.extend(batch)
         else:
             details.extend({"username": name, "nickname": name} for name in chunk)
