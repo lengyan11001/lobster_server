@@ -182,6 +182,10 @@ class Settings(BaseSettings):
     meta_app_secret: Optional[str] = None
     """JuheBot/微信协议 SAAS API base. Defaults to chat-api.juhebot.com."""
     juhe_wechat_api_base: str = "https://chat-api.juhebot.com"
+    """JuheBot private CDN web base for /cloud/upload. Defaults to wxcdn_web on the same host."""
+    juhe_wechat_cdn_base: str = "http://127.0.0.1:35789"
+    """Backend base URL that wxcdn_web can use to download temporary media source files."""
+    juhe_wechat_media_source_base: str = "http://127.0.0.1:8000"
 
     def cors_origins_list(self) -> List[str]:
         if self.cors_origins.strip() == "*":

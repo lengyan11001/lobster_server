@@ -18,6 +18,10 @@ def juhe_api_base() -> str:
     ).strip().rstrip("/")
 
 
+def juhe_cdn_base() -> str:
+    return (getattr(settings, "juhe_wechat_cdn_base", None) or "").strip().rstrip("/")
+
+
 def resolve_app_credentials(config: Optional[JuheWechatConfig]) -> tuple[str, str]:
     key = ((getattr(config, "app_key", None) or "").strip() if config is not None else "")
     secret = ((getattr(config, "app_secret", None) or "").strip() if config is not None else "")
@@ -148,6 +152,31 @@ async def guid_request(
     }
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         resp = await client.post(url, json=payload)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    try:
+        body = resp.json()
+    except Exception:
+        body = {"raw": resp.text[:2000]}
+    return body, resp.status_code, latency_ms
+
+
+async def cdn_request(
+    *,
+    path: str,
+    data: Dict[str, Any],
+    timeout_seconds: float = 120.0,
+) -> tuple[Dict[str, Any], int, int]:
+    base = juhe_cdn_base()
+    if not base:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=400,
+            detail="微信图片/文件发送需要配置 JUHE_WECHAT_CDN_BASE（聚合微信私有化 CDN 服务地址），当前仅配置了开放平台 GuidRequest，不能调用 /cloud/upload。",
+        )
+    started = time.perf_counter()
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        resp = await client.post(base + path, json=data)
     latency_ms = int((time.perf_counter() - started) * 1000)
     try:
         body = resp.json()

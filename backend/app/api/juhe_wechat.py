@@ -5,17 +5,26 @@ proxy. Online clients only call the few product-level actions below.
 """
 from __future__ import annotations
 
+import hmac
+import hashlib
+import time
+import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ..core.config import settings
 from ..db import get_db
 from ..models import JuheWechatCallLog, JuheWechatConfig, JuheWechatContactCache, User
 from ..services.juhe_wechat import (
+    cdn_request,
     extract_friend_add_target,
     guid_request,
     safe_request_snapshot,
@@ -23,6 +32,12 @@ from ..services.juhe_wechat import (
 from .auth import get_current_user
 
 router = APIRouter()
+
+_BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+_JUHE_MEDIA_TEMP_DIR = _BASE_DIR / "temp_assets" / "juhe_wechat"
+_JUHE_MEDIA_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+_JUHE_MEDIA_TEMP_SECRET = "juhe-wechat-media-temp-v1"
+_JUHE_MEDIA_TEMP_TTL_SECONDS = 3600
 
 
 def _normalize_guid(raw: str) -> str:
@@ -39,6 +54,25 @@ def _normalize_label(raw: Optional[str], guid: str) -> str:
     if not value:
         value = "Wechat instance " + guid[-6:]
     return value[:120]
+
+
+def _media_temp_token(temp_id: str, expiry: int) -> str:
+    msg = f"{temp_id}:{expiry}".encode("utf-8")
+    return hmac.new(_JUHE_MEDIA_TEMP_SECRET.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+
+def _local_backend_base_url() -> str:
+    return (getattr(settings, "juhe_wechat_media_source_base", None) or "http://127.0.0.1:8000").strip().rstrip("/")
+
+
+def _cleanup_old_media_temp() -> None:
+    cutoff = time.time() - _JUHE_MEDIA_TEMP_TTL_SECONDS * 2
+    for path in _JUHE_MEDIA_TEMP_DIR.glob("juhe_*"):
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            pass
 
 
 def _get_config_or_404(db: Session, user_id: int, config_id: int) -> JuheWechatConfig:
@@ -631,6 +665,83 @@ class UploadByUrlBody(BaseModel):
     file_type: int = 2
 
 
+async def _upload_wechat_media_from_url(
+    *,
+    db: Session,
+    current_user: User,
+    row: JuheWechatConfig,
+    url: str,
+    file_type: int,
+) -> Dict[str, Any]:
+    cdn_info = await _call_upstream(
+        db,
+        current_user=current_user,
+        row=row,
+        action="cdn_info",
+        upstream_path="/cdn/get_cdn_info",
+        payload={"guid": row.guid},
+        timeout_seconds=45,
+        raise_on_fail=False,
+    )
+    cdn_obj = _find_first_dict_with_keys(
+        cdn_info.get("upstream") or {},
+        {"cdn_info", "client_version", "device_type", "username"},
+    )
+    payload = {
+        "guid": row.guid,
+        "base_request": {
+            "cdn_info": cdn_obj.get("cdn_info", "") if isinstance(cdn_obj, dict) else "",
+            "client_version": cdn_obj.get("client_version", 0) if isinstance(cdn_obj, dict) else 0,
+            "device_type": cdn_obj.get("device_type", "") if isinstance(cdn_obj, dict) else "",
+            "username": cdn_obj.get("username", row.guid) if isinstance(cdn_obj, dict) else row.guid,
+        },
+        "file_type": int(file_type or 2),
+        "url": url.strip(),
+    }
+    try:
+        data, http_status, latency_ms = await cdn_request(
+            path="/cloud/upload",
+            data=payload,
+            timeout_seconds=120,
+        )
+        success = _upstream_ok(data, http_status)
+        _log_call(
+            db,
+            user_id=current_user.id,
+            config_id=row.id,
+            action="cloud_upload",
+            upstream_path="/cloud/upload",
+            request_payload=payload,
+            response_payload=data,
+            http_status=http_status,
+            latency_ms=latency_ms,
+            success=success,
+            error_message="" if success else _upstream_error(data),
+        )
+        db.commit()
+        if not success:
+            raise HTTPException(status_code=502, detail=_upstream_error(data))
+        return {"ok": True, "upstream": data, "latency_ms": latency_ms, "http_status": http_status, "upload": _extract_data_object(data)}
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        _log_call(
+            db,
+            user_id=current_user.id,
+            config_id=row.id,
+            action="cloud_upload",
+            upstream_path="/cloud/upload",
+            request_payload=payload,
+            response_payload=None,
+            http_status=None,
+            latency_ms=None,
+            success=False,
+            error_message=str(exc),
+        )
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Juhe WeChat CDN upload failed: {exc}") from exc
+
+
 class RoomDetailBody(BaseModel):
     config_id: int
     room_username: str = Field(min_length=1, max_length=256)
@@ -1028,42 +1139,66 @@ async def upload_media_by_url(
     db: Session = Depends(get_db),
 ):
     row = _get_config_or_404(db, current_user.id, body.config_id)
-    cdn_info = await _call_upstream(
-        db,
+    return await _upload_wechat_media_from_url(
+        db=db,
         current_user=current_user,
         row=row,
-        action="cdn_info",
-        upstream_path="/cdn/get_cdn_info",
-        payload={"guid": row.guid},
-        timeout_seconds=45,
-        raise_on_fail=False,
+        url=body.url.strip(),
+        file_type=int(body.file_type or 2),
     )
-    cdn_obj = _find_first_dict_with_keys(
-        cdn_info.get("upstream") or {},
-        {"cdn_info", "client_version", "device_type", "username"},
-    )
-    payload = {
-        "guid": row.guid,
-        "base_request": {
-            "cdn_info": cdn_obj.get("cdn_info", "") if isinstance(cdn_obj, dict) else "",
-            "client_version": cdn_obj.get("client_version", 0) if isinstance(cdn_obj, dict) else 0,
-            "device_type": cdn_obj.get("device_type", "") if isinstance(cdn_obj, dict) else "",
-            "username": cdn_obj.get("username", row.guid) if isinstance(cdn_obj, dict) else row.guid,
-        },
-        "file_type": int(body.file_type or 2),
-        "url": body.url.strip(),
-    }
-    result = await _call_upstream(
-        db,
-        current_user=current_user,
-        row=row,
-        action="cloud_upload",
-        upstream_path="/cloud/upload",
-        payload=payload,
-        timeout_seconds=120,
-    )
-    return {**result, "upload": _extract_data_object(result.get("upstream") or {})}
 
+
+@router.post("/api/juhe-wechat/media/upload-file")
+async def upload_media_file(
+    config_id: int,
+    file_type: int = 2,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_config_or_404(db, current_user.id, config_id)
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="文件为空")
+    _cleanup_old_media_temp()
+    name = file.filename or "upload"
+    ext = Path(name).suffix or ".bin"
+    content_type = getattr(file, "content_type", "") or "application/octet-stream"
+    temp_id = f"juhe_{uuid.uuid4().hex[:16]}"
+    temp_path = _JUHE_MEDIA_TEMP_DIR / f"{temp_id}{ext}"
+    temp_path.write_bytes(data)
+    expiry = int(time.time()) + _JUHE_MEDIA_TEMP_TTL_SECONDS
+    source_url = (
+        f"{_local_backend_base_url()}/api/juhe-wechat/media/temp/{temp_id}"
+        f"?token={_media_temp_token(temp_id, expiry)}&expiry={expiry}"
+    )
+    result = await _upload_wechat_media_from_url(
+        db=db,
+        current_user=current_user,
+        row=row,
+        url=source_url,
+        file_type=int(file_type or 2),
+    )
+    return {**result, "source": {"temp_id": temp_id, "source_url": source_url, "file_size": len(data), "content_type": content_type}}
+
+
+@router.get("/api/juhe-wechat/media/temp/{temp_id}", include_in_schema=False)
+@router.head("/api/juhe-wechat/media/temp/{temp_id}", include_in_schema=False)
+async def get_juhe_media_temp_file(
+    temp_id: str,
+    token: str = Query(...),
+    expiry: int = Query(...),
+):
+    if not temp_id.startswith("juhe_"):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if int(time.time()) > int(expiry):
+        raise HTTPException(status_code=403, detail="链接已过期")
+    if not hmac.compare_digest(token, _media_temp_token(temp_id, int(expiry))):
+        raise HTTPException(status_code=403, detail="无效 token")
+    matches = list(_JUHE_MEDIA_TEMP_DIR.glob(f"{temp_id}.*"))
+    if not matches or not matches[0].is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(matches[0], filename=matches[0].name)
 
 @router.post("/api/juhe-wechat/send-text")
 async def send_text(
