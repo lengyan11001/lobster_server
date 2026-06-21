@@ -355,8 +355,24 @@ def _download_video(video_url: str, target: Path) -> None:
         raise RuntimeError("downloaded video is empty")
 
 
-def _process_one_video(db: Session, row: CreativeGenerationJob, user: User, item: dict[str, Any], index: int, total: int, job_dir: Path) -> dict[str, Any]:
+def _resolve_video_url(item: dict[str, Any]) -> str:
     video_url = _clean_url(item.get("video_url")) or _clean_url(item.get("public_url"))
+    if video_url and ("finder.video.qq.com" not in video_url or "token=" in video_url):
+        return video_url
+    raw = item.get("raw")
+    if isinstance(raw, dict):
+        normalized = _normalize_video(raw, int(item.get("raw_index") or 0))
+        if normalized:
+            candidate = _clean_url(normalized.get("video_url")) or _clean_url(normalized.get("public_url"))
+            if candidate:
+                item["video_url"] = candidate
+                item["public_url"] = _clean_url(normalized.get("public_url")) or candidate
+                return candidate
+    return video_url
+
+
+def _process_one_video(db: Session, row: CreativeGenerationJob, user: User, item: dict[str, Any], index: int, total: int, job_dir: Path) -> dict[str, Any]:
+    video_url = _resolve_video_url(item)
     if not video_url:
         raise RuntimeError("视频没有可下载链接")
     item_dir = job_dir / f"item_{index + 1:03d}"
@@ -406,7 +422,13 @@ async def _run_transcript_job(job_id: str) -> None:
             db.commit()
             return
         request = row.request_payload or {}
-        videos = request.get("videos") if isinstance(request.get("videos"), list) else []
+        request_videos = request.get("videos") if isinstance(request.get("videos"), list) else []
+        videos = []
+        for idx, video in enumerate(request_videos):
+            if not isinstance(video, dict):
+                continue
+            normalized = _normalize_video(video.get("raw") or video, idx)
+            videos.append(normalized or video)
         existing_meta = row.meta or {}
         items = _build_resume_items(videos, existing_meta.get("items") if isinstance(existing_meta, dict) else [])
         job_dir = _JOBS_DIR / row.job_id
