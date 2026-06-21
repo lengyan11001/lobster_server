@@ -10,6 +10,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from ..db import SessionLocal, get_db
 from ..models import CreativeGenerationJob, User
@@ -83,7 +84,35 @@ def _clean_url(value: Any) -> str:
     return _clean_long_text(raw, 4096)
 
 
+def _append_url_token(url: str, token: Any) -> str:
+    cleaned = _clean_url(url)
+    token_text = str(token or "").strip()
+    if not cleaned or not token_text or "token=" in cleaned:
+        return cleaned
+    if token_text.startswith("&"):
+        suffix = token_text if "?" in cleaned else "?" + token_text.lstrip("&")
+    elif token_text.startswith("?"):
+        suffix = token_text if "?" not in cleaned else "&" + token_text.lstrip("?")
+    elif token_text.startswith("token="):
+        suffix = ("&" if "?" in cleaned else "?") + token_text
+    else:
+        return cleaned
+    return _clean_url(cleaned + suffix)
+
+
 def _pick_media_url(raw: Any) -> str:
+    token_pairs = [
+        ("object_desc.media.0.url", "object_desc.media.0.url_token"),
+        ("objectDesc.media.0.url", "objectDesc.media.0.url_token"),
+        ("objectDesc.mediaList.0.url", "objectDesc.mediaList.0.url_token"),
+        ("media.0.url", "media.0.url_token"),
+        ("mediaList.0.url", "mediaList.0.url_token"),
+    ]
+    for url_path, token_path in token_pairs:
+        value = _append_url_token(_first(raw, [url_path]), _first(raw, [token_path]))
+        if value:
+            return value
+
     candidates = [
         "video_url",
         "download_url",
@@ -268,6 +297,7 @@ def _save_job(row: CreativeGenerationJob, *, items: Optional[list[dict[str, Any]
     if items is not None:
         meta["items"] = items
     row.meta = meta
+    flag_modified(row, "meta")
     if stage is not None:
         row.stage = stage
     if progress is not None:
@@ -306,7 +336,12 @@ def _download_video(video_url: str, target: Path) -> None:
     with httpx.Client(timeout=300.0, follow_redirects=True, trust_env=False) as client:
         with client.stream("GET", video_url, headers={"User-Agent": "Mozilla/5.0"}) as resp:
             if resp.status_code >= 400:
-                raise RuntimeError(f"video download failed HTTP {resp.status_code}")
+                retmsg = resp.headers.get("x-retmsg") or resp.headers.get("X-retmsg") or ""
+                errno = resp.headers.get("x-errno") or resp.headers.get("X-Errno") or resp.headers.get("x-videoerrno") or ""
+                detail = f": {retmsg}" if retmsg else ""
+                if errno:
+                    detail = f"{detail} ({errno})"
+                raise RuntimeError(f"video download failed HTTP {resp.status_code}{detail}")
             total = 0
             with target.open("wb") as fh:
                 for chunk in resp.iter_bytes(1024 * 512):
