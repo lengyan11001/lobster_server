@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import SessionLocal, get_db
 from ..models import H5ChatDevicePresence, H5ChatEvent, H5ChatMessage, User, UserInstallation
+from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token
 from .installation_slots import INSTALLATION_ID_HEADER, ensure_installation_slot, optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
@@ -218,15 +219,18 @@ def _touch_installation_slot_lazy(db: Session, user_id: int, installation_id: st
 
 
 def _pending_cache_key(user_id: int, installation_id: str) -> str:
-    return f"{user_id}:{installation_id or '-'}"
+    return f"h5:pending-empty:{user_id}:{installation_id or '-'}"
 
 
 def _pending_empty_recent(key: str) -> bool:
+    if cache_flag_recent(key):
+        return True
     ts = _pending_empty_cache.get(key)
     return bool(ts and (time.monotonic() - ts) < _PENDING_EMPTY_CACHE_SECONDS)
 
 
 def _mark_pending_empty(key: str) -> None:
+    cache_mark_flag(key, _PENDING_EMPTY_CACHE_SECONDS)
     _pending_empty_cache[key] = time.monotonic()
     if len(_pending_empty_cache) > 5000:
         cutoff = time.monotonic() - 30
@@ -236,19 +240,29 @@ def _mark_pending_empty(key: str) -> None:
 
 
 def _clear_pending_empty(key: str) -> None:
+    cache_delete(key)
     _pending_empty_cache.pop(key, None)
 
 
+def _clear_pending_empty_for_target(user_id: int, installation_id: Optional[str]) -> None:
+    _clear_pending_empty(_pending_cache_key(user_id, installation_id or ""))
+    if installation_id:
+        _clear_pending_empty(_pending_cache_key(user_id, ""))
+
+
 def _heartbeat_cache_key(user_id: int, installation_id: str) -> str:
-    return f"{user_id}:{installation_id or '-'}"
+    return f"h5:heartbeat-fast-ack:{user_id}:{installation_id or '-'}"
 
 
 def _heartbeat_fast_ack_recent(key: str) -> bool:
+    if cache_flag_recent(key):
+        return True
     ts = _heartbeat_ack_cache.get(key)
     return bool(ts and (time.monotonic() - ts) < _DEVICE_HEARTBEAT_FAST_ACK_SECONDS)
 
 
 def _mark_heartbeat_fast_ack(key: str) -> None:
+    cache_mark_flag(key, _DEVICE_HEARTBEAT_FAST_ACK_SECONDS)
     _heartbeat_ack_cache[key] = time.monotonic()
     if len(_heartbeat_ack_cache) > 5000:
         cutoff = time.monotonic() - (_DEVICE_HEARTBEAT_FAST_ACK_SECONDS * 2)
@@ -601,6 +615,7 @@ def create_h5_message(
     )
     db.add(row)
     _add_event(db, row, "queued", {"mode": mode})
+    _clear_pending_empty_for_target(owner_user.id, target_installation)
     db.commit()
     db.refresh(row)
     return {"ok": True, "message": _serialize_message(row), "events": []}

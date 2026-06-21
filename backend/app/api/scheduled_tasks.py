@@ -30,6 +30,7 @@ from .auth import get_current_user, get_current_user_id_from_token
 from .ip_content_studio import run_ip_content_daily_scheduled
 from .installation_slots import ensure_installation_slot
 from .mobile_identity import online_user_for_mobile_user
+from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 
 router = APIRouter()
 
@@ -233,15 +234,18 @@ def _touch_installation_slot_lazy(db: Session, user_id: int, installation_id: st
 
 
 def _pending_cache_key(kind: str, user_id: int, installation_id: str) -> str:
-    return f"{kind}:{user_id}:{installation_id or '-'}"
+    return f"scheduled:{kind}:pending-empty:{user_id}:{installation_id or '-'}"
 
 
 def _pending_empty_recent(key: str, ttl_seconds: float) -> bool:
+    if cache_flag_recent(key):
+        return True
     ts = _pending_empty_cache.get(key)
     return bool(ts and (time.monotonic() - ts) < ttl_seconds)
 
 
-def _mark_pending_empty(key: str) -> None:
+def _mark_pending_empty(key: str, ttl_seconds: float) -> None:
+    cache_mark_flag(key, ttl_seconds)
     _pending_empty_cache[key] = time.monotonic()
     if len(_pending_empty_cache) > 5000:
         cutoff = time.monotonic() - 120
@@ -251,7 +255,14 @@ def _mark_pending_empty(key: str) -> None:
 
 
 def _clear_pending_empty(key: str) -> None:
+    cache_delete(key)
     _pending_empty_cache.pop(key, None)
+
+
+def _clear_pending_empty_for_target(kind: str, user_id: int, installation_id: Optional[str]) -> None:
+    _clear_pending_empty(_pending_cache_key(kind, user_id, installation_id or ""))
+    if installation_id:
+        _clear_pending_empty(_pending_cache_key(kind, user_id, ""))
 
 
 def _clean_installation_ids(values: Optional[List[str]]) -> List[str]:
@@ -691,6 +702,7 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
         updated_at=now,
     )
     db.add(run)
+    _clear_pending_empty_for_target("run", task.user_id, installation_id)
     if message_id:
         msg_content = task.content or task.title
         h5 = H5ChatMessage(
@@ -1341,7 +1353,7 @@ def pending_scheduled_task_runs(
     if rows:
         _clear_pending_empty(pending_key)
     else:
-        _mark_pending_empty(pending_key)
+        _mark_pending_empty(pending_key, _RUN_PENDING_EMPTY_CACHE_SECONDS)
     return {"ok": True, "items": [_serialize_run(r) for r in rows]}
 
 
@@ -1373,6 +1385,7 @@ def request_scheduled_task_publish(
     _set_publish_draft(row, draft)
     row.updated_at = now
     _add_h5_event(db, row.h5_message_id, row.user_id, "publish_pending", _publish_event_payload(row, draft))
+    _clear_pending_empty_for_target("publish", row.user_id, row.installation_id)
     db.commit()
     db.refresh(row)
     return {"ok": True, "status": "pending", "run": _serialize_run(row)}
@@ -1412,6 +1425,7 @@ def resume_scheduled_task_video_from_image(
             msg.finished_at = None
             msg.updated_at = now
         _add_h5_event(db, row.h5_message_id, row.user_id, "queued", {"run_id": run_id, "resume_from_image": True})
+    _clear_pending_empty_for_target("run", row.user_id, row.installation_id)
     db.commit()
     db.refresh(row)
     return {"ok": True, "status": "pending", "run": _serialize_run(row)}
@@ -1458,7 +1472,7 @@ def pending_scheduled_publish_requests(
     if picked:
         _clear_pending_empty(pending_key)
     else:
-        _mark_pending_empty(pending_key)
+        _mark_pending_empty(pending_key, _PUBLISH_PENDING_EMPTY_CACHE_SECONDS)
     return {"ok": True, "items": [_serialize_run(r) for r in picked]}
 
 

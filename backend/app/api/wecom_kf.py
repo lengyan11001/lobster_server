@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from ..models import WecomConfig
+from ..services.runtime_cache import cache_delete, cache_delete_prefix, cache_flag_recent, cache_get, cache_set
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,6 +41,16 @@ _token_cache: dict[str, tuple[str, float]] = {}
 
 # ── KF 事件标记：callback_path → 最新事件时间戳 ──────────────────────────────
 _kf_event_flags: dict[str, float] = {}
+_KF_EVENT_TTL_SECONDS = 86400
+_KF_EMPTY_TTL_SECONDS = 5
+
+
+def _kf_event_key(callback_path: str) -> str:
+    return f"wecom:kf:event:{callback_path or '-'}"
+
+
+def _kf_empty_key(callback_path: str) -> str:
+    return f"wecom:kf:empty:{callback_path or '-'}"
 
 
 def notify_kf_event(callback_path: str):
@@ -47,7 +58,12 @@ def notify_kf_event(callback_path: str):
     if not _kf_proxy_enabled():
         logger.info("[KF] proxy disabled; ignore event flag for %s", callback_path)
         return
-    _kf_event_flags[callback_path] = time.time()
+    now = time.time()
+    _kf_event_flags[callback_path] = now
+    cache_set(_kf_event_key(callback_path), str(now), _KF_EVENT_TTL_SECONDS)
+    cache_set("wecom:kf:event:any", str(now), _KF_EVENT_TTL_SECONDS)
+    cache_delete(_kf_empty_key(callback_path))
+    cache_delete(_kf_empty_key(""))
     logger.info("[KF] event flag set for %s", callback_path)
 
 
@@ -474,13 +490,30 @@ async def proxy_kf_has_events(
     if not _kf_proxy_enabled():
         if callback_path:
             _kf_event_flags.pop(callback_path, None)
+            cache_delete(_kf_event_key(callback_path))
+            cache_delete(_kf_empty_key(callback_path))
         else:
             _kf_event_flags.clear()
+            cache_delete("wecom:kf:event:any")
+            cache_delete_prefix("wecom:kf:event:")
+            cache_delete_prefix("wecom:kf:empty:")
+            cache_delete(_kf_empty_key(""))
         return {"has_events": False, "callback_path": callback_path, "ts": 0, "disabled": True}
     if callback_path:
-        ts = _kf_event_flags.get(callback_path, 0)
+        cached_ts = cache_get(_kf_event_key(callback_path))
+        ts = float(cached_ts or _kf_event_flags.get(callback_path, 0) or 0)
+        if ts <= 0 and cache_flag_recent(_kf_empty_key(callback_path)):
+            return {"has_events": False, "callback_path": callback_path, "ts": 0, "throttled": True}
+        if ts <= 0:
+            cache_set(_kf_empty_key(callback_path), "1", _KF_EMPTY_TTL_SECONDS)
         return {"has_events": ts > 0, "callback_path": callback_path, "ts": ts}
-    return {"has_events": bool(_kf_event_flags), "flags": dict(_kf_event_flags)}
+    cached_any = cache_get("wecom:kf:event:any")
+    has_any = bool(cached_any or _kf_event_flags)
+    if not has_any and cache_flag_recent(_kf_empty_key("")):
+        return {"has_events": False, "flags": {}, "throttled": True}
+    if not has_any:
+        cache_set(_kf_empty_key(""), "1", _KF_EMPTY_TTL_SECONDS)
+    return {"has_events": has_any, "flags": dict(_kf_event_flags)}
 
 
 @router.post("/api/wecom/proxy/kf/ack-events", summary="[代理] 清除 KF 事件标记")
@@ -490,6 +523,12 @@ async def proxy_kf_ack_events(
 ):
     if callback_path:
         _kf_event_flags.pop(callback_path, None)
+        cache_delete(_kf_event_key(callback_path))
+        cache_delete(_kf_empty_key(callback_path))
     else:
         _kf_event_flags.clear()
+        cache_delete("wecom:kf:event:any")
+        cache_delete_prefix("wecom:kf:event:")
+        cache_delete_prefix("wecom:kf:empty:")
+        cache_delete(_kf_empty_key(""))
     return {"ok": True}

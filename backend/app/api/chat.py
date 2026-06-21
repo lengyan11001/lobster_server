@@ -279,7 +279,7 @@ async def get_customer_service_reply(
         materials.append("【常用话术】\n" + common_phrases.strip())
     materials_text = "\n\n".join(materials) if materials else "（暂无资料）"
     sys = (
-        "你是企业微信客服助手。你必须严格遵守以下规则：\n"
+        "你是智能客服助手。你必须严格遵守以下规则：\n"
         "1. 仅根据下面「公司信息」「产品介绍」「常用话术」回答与公司、产品相关的问题。\n"
         "2. 若用户问题无法从上述资料中匹配到任何内容，只可做简短、友好的闲聊（如问候、感谢、请稍候联系人工），严禁编造公司名、产品名、价格、规格等任何未在资料中出现的信息。\n"
         "3. 回复简短、使用中文。\n\n"

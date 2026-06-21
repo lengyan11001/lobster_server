@@ -1072,6 +1072,16 @@
       "capabilities": {},
       "tags": ["wechat", "juhebot", "server-proxy"]
     },
+    "wechat_channels_transcript_skill": {
+      "name": "视频号文案提取",
+      "description": "输入视频号昵称查询账号，拉取作品并批量提取口播文案，支持复制和导出。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["视频号", "TikHub", "文案提取"]
+    },
     "create_ppt_skill": {
       "name": "PPT",
       "description": "输入主题或大纲生成可下载的 PPTX 演示文稿，支持 AI 视觉页与结构化大纲模式。",

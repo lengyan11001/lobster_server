@@ -1012,6 +1012,13 @@ class JuheWechatConfig(Base):
     app_secret: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     owner_role: Mapped[str] = mapped_column(String(32), default="user", nullable=False, index=True)
     owner_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    auto_reply_memory_doc_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    auto_reply_knowledge: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    auto_reply_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    auto_reply_handoff_keywords: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    auto_reply_cooldown_seconds: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
+    auto_reply_max_context: Mapped[int] = mapped_column(Integer, default=12, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
     last_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     last_status_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -1042,6 +1049,37 @@ class JuheWechatContactCache(Base):
     raw_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class JuheWechatAiMessage(Base):
+    """Normalized message records for Juhe WeChat AI customer-service sessions."""
+
+    __tablename__ = "juhe_wechat_ai_messages"
+    __table_args__ = (
+        Index("ix_juhe_ai_msg_config_contact_created", "config_id", "contact_key", "created_at"),
+        Index("ix_juhe_ai_msg_user_status_created", "user_id", "status", "created_at"),
+        UniqueConstraint("config_id", "provider_msg_id", name="uq_juhe_ai_msg_config_provider"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    config_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    contact_key: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    provider_msg_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    direction: Mapped[str] = mapped_column(String(8), nullable=False, index=True)  # in, out
+    msg_type: Mapped[str] = mapped_column(String(32), default="text", nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="received", nullable=False, index=True)
+    action: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    reply_to_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    sent_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class JuheWechatCallLog(Base):

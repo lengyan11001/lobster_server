@@ -48,6 +48,7 @@ from .api.admin import router as admin_router
 from .api.generation_records import router as generation_records_router
 from .api.ip_content_studio import router as ip_content_studio_router
 from .api.linkedin_mining import router as linkedin_mining_router
+from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
 from .api.mobile_client import router as mobile_client_router
 from .api.juhe_wechat import router as juhe_wechat_router
 try:
@@ -126,7 +127,7 @@ def _migrate_model_usage_events_table():
 
 
 def _migrate_juhe_wechat_config_owner_columns():
-    """Add owner columns for admin/agent managed Juhe WeChat instances."""
+    """Add Juhe WeChat config columns introduced after the initial table."""
     from sqlalchemy import inspect, text
 
     try:
@@ -142,8 +143,27 @@ def _migrate_juhe_wechat_config_owner_columns():
                     conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN owner_role VARCHAR(32) NOT NULL DEFAULT 'user'"))
             if "owner_user_id" not in cols:
                 conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN owner_user_id INTEGER"))
+            if "auto_reply_enabled" not in cols:
+                if engine.dialect.name == "sqlite":
+                    conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN auto_reply_enabled BOOLEAN NOT NULL DEFAULT 0"))
+                else:
+                    conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN auto_reply_enabled BOOLEAN NOT NULL DEFAULT FALSE"))
+            if "auto_reply_knowledge" not in cols:
+                conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN auto_reply_knowledge TEXT"))
+            if "auto_reply_memory_doc_ids" not in cols:
+                conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN auto_reply_memory_doc_ids JSON"))
+            if "auto_reply_prompt" not in cols:
+                conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN auto_reply_prompt TEXT"))
+            if "auto_reply_handoff_keywords" not in cols:
+                conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN auto_reply_handoff_keywords TEXT"))
+            if "auto_reply_cooldown_seconds" not in cols:
+                conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN auto_reply_cooldown_seconds INTEGER NOT NULL DEFAULT 8"))
+            if "auto_reply_max_context" not in cols:
+                conn.execute(text("ALTER TABLE juhe_wechat_configs ADD COLUMN auto_reply_max_context INTEGER NOT NULL DEFAULT 12"))
+        if not insp.has_table("juhe_wechat_ai_messages"):
+            Base.metadata.create_all(bind=engine, tables=[models.JuheWechatAiMessage.__table__])
     except Exception as e:
-        logger.warning("Migration juhe_wechat owner columns skipped: %s", e)
+        logger.warning("Migration juhe_wechat config/AI columns skipped: %s", e)
 
 
 def _seed_capability_catalog():
@@ -993,6 +1013,7 @@ def create_app() -> FastAPI:
     app.include_router(generation_records_router, prefix="")
     app.include_router(ip_content_studio_router, prefix="")
     app.include_router(linkedin_mining_router, prefix="")
+    app.include_router(wechat_channels_transcript_router, prefix="")
     app.include_router(mobile_client_router, prefix="")
     app.include_router(juhe_wechat_router, prefix="")
     if wecom_kf_router is not None:

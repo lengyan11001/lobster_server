@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_timeout: int = 60
     db_pool_recycle: int = 280
+    redis_url: Optional[str] = None
     host: str = "0.0.0.0"
     port: int = 8000
     """微信/支付回调根地址。不填时自动用本机 LAN IP:PORT；服务器仅公网 IP 无域名时填 http://公网IP:8000。勿填 127.0.0.1 作多设备素材预览根。"""
