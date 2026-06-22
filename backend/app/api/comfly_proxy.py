@@ -313,7 +313,7 @@ def _image_generation_model_attempts(model: str) -> List[str]:
     """Return billing model ids to try for one image generation request."""
     normalized = _normalized_model_id(model)
     if normalized in {"gpt-image-2", "gpt-image2", "gpt-image"}:
-        return ["gpt-image-2-vip", "gpt-image-2", "gpt-image-2-openmindapi", "gpt-image-2-yunwu"]
+        return ["gpt-image-2", "gpt-image-2-openmindapi", "gpt-image-2-yunwu"]
     return [model]
 
 
