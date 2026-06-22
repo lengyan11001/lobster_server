@@ -2172,13 +2172,31 @@
       return state.token ? { Authorization: `Bearer ${state.token}`, ...extra } : { ...extra };
     }
 
+    const H5_API_BASE = (() => {
+      try {
+        const queryBase = new URLSearchParams(window.location.search || "").get("api_base");
+        if (queryBase) return String(queryBase).replace(/\/$/, "");
+      } catch {}
+      const host = String((window.location && window.location.hostname) || "").toLowerCase();
+      if (host === "h5.bhzn.top" || host.startsWith("h5.")) return "https://bhzn.top";
+      return String((window.location && window.location.origin) || "").replace(/\/$/, "");
+    })();
+
+    function apiUrl(path) {
+      const raw = String(path || "").trim();
+      if (!raw) return H5_API_BASE;
+      if (/^https?:\/\//i.test(raw)) return raw;
+      if (raw.startsWith("/")) return `${H5_API_BASE}${raw}`;
+      return `${H5_API_BASE}/${raw}`;
+    }
+
     function api(path, options = {}) {
       const headers = { ...(options.headers || {}), ...authHeaders() };
       if (options.json) {
         headers["Content-Type"] = "application/json";
         options.body = JSON.stringify(options.json);
       }
-      return fetch(path, { ...options, headers }).then(async (resp) => {
+      return fetch(apiUrl(path), { ...options, headers }).then(async (resp) => {
         const text = await resp.text();
         let data = {};
         try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
@@ -2226,12 +2244,14 @@
         "goal.image.pipeline": "文案+创意图片",
         "hifly.video.create_by_tts": "必火数字人",
         "ip_content_daily": "IP日更文案",
+        "douyin_leads": "抖音获客",
       }[capabilityId] || capabilityId || "定时任务";
     }
 
     function taskCapabilityId(row) {
       const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
       if (row && row.task_kind === "ip_content_daily") return "ip_content_daily";
+      if (row && row.task_kind === "douyin_leads") return "douyin_leads";
       return String(payload.capability_id || "");
     }
 
@@ -2868,6 +2888,135 @@
     function taskDetailHtml(run) {
       const payload = run && run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
       const sections = [];
+      function renderTaskDetailSection(title, rows) {
+        const normalizedRows = Array.isArray(rows)
+          ? rows.filter((row) => Array.isArray(row) && String(row[1] == null ? "" : row[1]).trim() !== "")
+          : [];
+        if (!normalizedRows.length) return "";
+        return `<div class="task-detail-section"><h4>${escapeHtml(title)}</h4>${normalizedRows.map(([label, value]) => `<div class="task-detail-record"><strong>${escapeHtml(label)}</strong><pre>${escapeHtml(String(value))}</pre></div>`).join("")}</div>`;
+      }
+      function renderTaskDetailRecord(title, lines) {
+        const normalizedLines = (Array.isArray(lines) ? lines : [lines]).map((line) => String(line == null ? "" : line).trim()).filter(Boolean);
+        if (!title && !normalizedLines.length) return "";
+        return `<div class="task-detail-record"><strong>${escapeHtml(title || "结果")}</strong>${normalizedLines.map((line) => `<pre>${escapeHtml(line)}</pre>`).join("")}</div>`;
+      }
+      function douyinLeadActionLabel(action) {
+        return ((DOUYIN_TASK_ACTIONS[action] || {}).label || action || "抖音获客");
+      }
+      function renderDouyinLeadSummary(data) {
+        const action = String(data.action || "").trim();
+        const stats = data.stats && typeof data.stats === "object" ? data.stats : {};
+        const finalStatus = data.final_status && typeof data.final_status === "object" ? data.final_status : {};
+        const finalState = finalStatus.state && typeof finalStatus.state === "object" ? finalStatus.state : {};
+        const rows = [["任务类型", douyinLeadActionLabel(action)]];
+        if (action === "search_collect") {
+          rows.push(
+            ["执行模式", data.search_mode === "script" ? "脚本模式" : (data.search_mode || "")],
+            ["执行账号", data.account_id || ""],
+            ["采集结果", data.total != null ? `${compactNumber(data.total)} 条` : ""],
+          );
+        } else if (action === "tasks_from_search") {
+          rows.push(
+            ["本次同步", data.selected_total != null ? `${compactNumber(data.selected_total)} 条` : ""],
+            ["任务池累计", data.total != null ? `${compactNumber(data.total)} 条` : ""],
+          );
+        } else if (action === "comment_collect") {
+          rows.push(
+            ["任务总数", stats.tasks_total != null ? compactNumber(stats.tasks_total) : ""],
+            ["已完成任务", stats.tasks_completed != null ? compactNumber(stats.tasks_completed) : ""],
+            ["评论采集数", stats.comments_collected != null ? compactNumber(stats.comments_collected) : ""],
+            ["高意向客户", stats.high_intent_users != null ? compactNumber(stats.high_intent_users) : ""],
+          );
+        } else if (action === "interaction") {
+          rows.push(
+            ["目标客户", stats.users_total != null ? compactNumber(stats.users_total) : ""],
+            ["已处理", finalState.processed != null ? compactNumber(finalState.processed) : ""],
+            ["成功人数", stats.users_success != null ? compactNumber(stats.users_success) : ""],
+            ["失败人数", stats.users_failed != null ? compactNumber(stats.users_failed) : ""],
+          );
+        } else {
+          rows.push(
+            ["结果数量", data.total != null ? compactNumber(data.total) : ""],
+            ["任务总数", stats.tasks_total != null ? compactNumber(stats.tasks_total) : ""],
+            ["用户总数", stats.users_total != null ? compactNumber(stats.users_total) : ""],
+          );
+        }
+        return renderTaskDetailSection("任务概览", rows);
+      }
+      function renderDouyinLeadPreview(data) {
+        const action = String(data.action || "").trim();
+        const rows = [];
+        if (action === "search_collect") {
+          const items = Array.isArray(data.items) ? data.items : [];
+          items.slice(0, 6).forEach((row, idx) => {
+            const item = row && typeof row === "object" ? row : {};
+            const title = String(item.title || item.desc || item.aweme_id || `结果 ${idx + 1}`).trim();
+            const meta = [
+              item.author_name || item.author ? `作者：${item.author_name || item.author}` : "",
+              item.likes != null ? `点赞：${compactNumber(item.likes)}` : "",
+              item.comments != null ? `评论：${compactNumber(item.comments)}` : "",
+              item.publish_time ? `发布时间：${item.publish_time}` : "",
+            ].filter(Boolean).join(" · ");
+            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title || `结果 ${idx + 1}`}`, meta));
+          });
+          if (!rows.length) return "";
+          return `<div class="task-detail-section"><h4>采集结果预览</h4>${rows.join("")}</div>`;
+        }
+        if (action === "comment_collect") {
+          const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+          tasks.slice(0, 6).forEach((row, idx) => {
+            const item = row && typeof row === "object" ? row : {};
+            const title = String(item.title || item.url || item.id || `任务 ${idx + 1}`).trim();
+            const meta = [
+              item.status ? `状态：${item.status}` : "",
+              item.comment_count != null ? `评论：${compactNumber(item.comment_count)}` : "",
+              item.high_intent_count != null ? `高意向：${compactNumber(item.high_intent_count)}` : "",
+              item.author ? `作者：${item.author}` : "",
+            ].filter(Boolean).join(" · ");
+            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title || `任务 ${idx + 1}`}`, meta));
+          });
+          if (!rows.length) return "";
+          return `<div class="task-detail-section"><h4>评论任务预览</h4>${rows.join("")}</div>`;
+        }
+        if (action === "interaction") {
+          const users = Array.isArray(data.users) ? data.users : [];
+          users.slice(0, 6).forEach((row, idx) => {
+            const item = row && typeof row === "object" ? row : {};
+            const title = String(item.nickname || item.name || item.user_name || item.uid || `客户 ${idx + 1}`).trim();
+            const meta = [
+              item.interaction_status ? `状态：${item.interaction_status}` : "",
+              item.interaction_account_id ? `执行账号：${item.interaction_account_id}` : "",
+              item.uid ? `用户ID：${item.uid}` : "",
+              item.sec_uid ? `SecUID：${item.sec_uid}` : "",
+            ].filter(Boolean).join(" · ");
+            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title || `客户 ${idx + 1}`}`, meta));
+          });
+          if (!rows.length) return "";
+          return `<div class="task-detail-section"><h4>私信结果预览</h4>${rows.join("")}</div>`;
+        }
+        if (action === "tasks_from_search") {
+          const rawResult = data.raw_result && typeof data.raw_result === "object" ? data.raw_result : {};
+          const lines = [
+            rawResult.msg || "",
+            data.selected_total != null ? `本次同步 ${compactNumber(data.selected_total)} 条` : "",
+            data.total != null ? `任务池当前累计 ${compactNumber(data.total)} 条` : "",
+          ].filter(Boolean);
+          if (!lines.length) return "";
+          return `<div class="task-detail-section"><h4>同步结果</h4>${renderTaskDetailRecord("任务池写入", lines)}</div>`;
+        }
+        const genericRows = Array.isArray(data.items) ? data.items
+          : Array.isArray(data.tasks) ? data.tasks
+          : Array.isArray(data.users) ? data.users
+          : Array.isArray(data.rows) ? data.rows
+          : [];
+        if (!genericRows.length) return "";
+        return `<div class="task-detail-section"><h4>结果预览</h4>${genericRows.slice(0, 6).map((row, idx) => {
+          const item = row && typeof row === "object" ? row : {};
+          const title = String(item.title || item.desc || item.content || item.nickname || item.name || item.aweme_id || `结果 ${idx + 1}`).trim();
+          const sub = String(item.author_name || item.author || item.user_name || item.account_name || item.uid || item.sec_uid || "").trim();
+          return renderTaskDetailRecord(`${idx + 1}. ${title || `结果 ${idx + 1}`}`, sub);
+        }).join("")}</div>`;
+      }
       if (payload.ip_content_daily) {
         const groups = Array.isArray(payload.groups) ? payload.groups : [];
         sections.push(`<div class="task-detail-section"><h4>IP日更文案</h4>${groups.map((group) => {
@@ -2885,7 +3034,12 @@
       }
       const text = run.error || run.result_text || (run.progress && (run.progress.text || run.progress.message)) || "";
       sections.push(`<div class="task-detail-section"><h4>结果 / 状态</h4><pre>${escapeHtml(text || statusText(run.status))}</pre></div>`);
-      if (!payload.ip_content_daily) {
+      if (payload.task_kind === "douyin_leads") {
+        const summaryHtml = renderDouyinLeadSummary(payload);
+        if (summaryHtml) sections.push(summaryHtml);
+        const previewHtml = renderDouyinLeadPreview(payload);
+        if (previewHtml) sections.push(previewHtml);
+      } else if (!payload.ip_content_daily) {
         sections.push(`<div class="task-detail-section"><h4>原始结果</h4><pre>${escapeHtml(JSON.stringify(payload || {}, null, 2))}</pre></div>`);
       }
       return sections.join("");
@@ -3044,7 +3198,7 @@
     }
 
     async function refreshCaptcha() {
-      const data = await fetch("/auth/captcha").then((r) => r.json());
+      const data = await fetch(apiUrl("/auth/captcha")).then((r) => r.json());
       $("captchaId").value = data.captcha_id || "";
       $("captchaImg").src = data.image || "";
       $("captcha").value = "";
@@ -3716,6 +3870,7 @@
       }
       if (action === "search_collect") {
         if (!keyword) throw new Error("请先填写行业关键词");
+        params.mode = "script";
         const regions = Array.from(document.querySelectorAll("[data-douyin-region]:checked")).map((el) => String(el.value || "").trim()).filter(Boolean);
         params.region_mode = regions.includes("全国") ? "nationwide" : "custom";
         params.regions = regions;
@@ -3749,28 +3904,56 @@
       const metricGrid = $("douyinMetricGrid");
       const accountHint = $("douyinLeadsAccountHint");
       const runtimeHint = $("douyinRuntimeHint");
-      if (accountHint) accountHint.textContent = accounts.length ? `在线 ${Number(data.online_accounts || 0)} / ${accounts.length}` : "暂无账号";
+      const normalizedAccounts = accounts.map((row) => {
+        const accountId = row && row.account_id != null ? row.account_id : row && row.id != null ? row.id : "";
+        const nickname = String((row && (row.nickname || row.name)) || "").trim();
+        const installationId = String((row && row.installation_id) || "").trim();
+        const statusText = String((row && row.status) || "").trim().toLowerCase();
+        const online = row && Object.prototype.hasOwnProperty.call(row, "online")
+          ? !!row.online
+          : statusText === "online" || statusText === "active";
+        return {
+          accountId,
+          nickname,
+          installationId,
+          statusText,
+          online,
+          lastLogin: String((row && row.last_login) || "").trim(),
+        };
+      });
+      const onlineCount = normalizedAccounts.filter((row) => row.online).length;
+      const preferredAccountId = normalizedAccounts.find((row) => row.online)?.accountId
+        || normalizedAccounts[0]?.accountId
+        || "";
+      if (accountHint) accountHint.textContent = normalizedAccounts.length ? `在线 ${onlineCount} / ${normalizedAccounts.length}` : "暂无账号";
       if (accountList) {
-        if (!accounts.length) {
+        if (!normalizedAccounts.length) {
           accountList.innerHTML = '<div class="douyin-empty">当前还没有检测到抖音账号在线。等本机登录抖音后，这里会展示账号状态。</div>';
         } else {
-          accountList.innerHTML = accounts.slice(0, 1).map((row) => {
-            const online = String(row.status || "").toLowerCase() === "online";
-            const active = Number(data.active_account_id || 0) && Number(row.id || 0) === Number(data.active_account_id || 0);
+          accountList.innerHTML = normalizedAccounts.slice(0, 1).map((row) => {
+            const active = String(row.accountId || "") === String(preferredAccountId || "");
+            const title = row.nickname || `账号 ${row.accountId || "-"}`;
+            const sublineParts = [];
+            if (row.accountId !== "") sublineParts.push(`账号 ID ${escapeHtml(String(row.accountId))}`);
+            if (row.installationId) sublineParts.push(`设备 ${escapeHtml(row.installationId.slice(0, 8))}`);
+            if (row.lastLogin) sublineParts.push(`登录 ${escapeHtml(row.lastLogin.replace("T", " ").slice(0, 16))}`);
             return `<div class="douyin-account-item concise">
               <div>
-                <strong>${active ? "当前账号" : "抖音账号"} ${escapeHtml(String(row.id || "-"))}</strong>
-                <span>端口 ${escapeHtml(String(row.port || "-"))}${active ? " · 主账号" : ""}</span>
+                <strong>${active ? "当前账号" : "抖音账号"} ${escapeHtml(title)}</strong>
+                <span>${sublineParts.join(" · ") || "等待账号状态上报"}</span>
               </div>
-              <span class="douyin-badge ${online ? "success" : "warn"}">${online ? "在线" : "离线"}</span>
+              <span class="douyin-badge ${row.online ? "success" : "warn"}">${row.online ? "在线" : "离线"}</span>
             </div>`;
           }).join("");
         }
       }
+      const commentMessage = String(runtime.comment_message || "").trim();
+      const interactionMessage = String(runtime.interaction_message || "").trim();
+      const monitorMessage = String(runtime.monitor_message || "").trim();
       const runtimeRows = [
-        { label: "评论采集", active: !!runtime.follow_comment_running, text: runtime.follow_comment_running ? "任务正在执行中" : "当前没有运行中的评论任务" },
-        { label: "私信互动", active: !!runtime.interaction_running, text: runtime.interaction_running ? "任务正在执行中" : "当前没有运行中的私信任务" },
-        { label: "同行监控", active: !!(runtime.monitor_message || ""), text: runtime.monitor_message || "当前没有额外的监控提示" },
+        { label: "评论采集", active: !!commentMessage, text: commentMessage || "当前没有运行中的评论任务" },
+        { label: "私信互动", active: !!interactionMessage, text: interactionMessage || "当前没有运行中的私信任务" },
+        { label: "同行监控", active: !!monitorMessage, text: monitorMessage || "当前没有额外的监控提示" },
       ];
       if (runtimeHint) runtimeHint.textContent = runtimeRows.some((row) => row.active) ? "有任务在跑" : "当前空闲";
       if (runtimeList) {
@@ -3781,7 +3964,7 @@
         ["全部客户数据", metrics.all_customers || 0],
         ["精准客户数据", metrics.precise_customers || 0],
         ["已发送评论的视频数量", metrics.commented_videos || 0],
-        ["已发送私信的用户数量", metrics.dm_users || 0],
+        ["已发送私信的用户数量", metrics.private_messages_sent || metrics.dm_users || 0],
         ["监控同行任务数", metrics.monitor_tasks || 0],
         ["今日新增客户数", metrics.today_new_customers || 0],
         ["今日执行任务数", metrics.today_task_runs || 0],
@@ -3804,21 +3987,19 @@
       } catch (err) {
         state.douyinStatus = {
           accounts: [],
-          online_accounts: 0,
-          active_account_id: null,
           metrics: {
             collected_videos: 0,
             all_customers: 0,
             precise_customers: 0,
             commented_videos: 0,
-            dm_users: 0,
+            private_messages_sent: 0,
             monitor_tasks: 0,
             today_new_customers: 0,
             today_task_runs: 0,
           },
           runtime: {
-            follow_comment_running: false,
-            interaction_running: false,
+            comment_message: "",
+            interaction_message: "",
             monitor_message: err.message || "暂时还拿不到运行状态，先展示占位数据",
           },
         };
@@ -3854,12 +4035,9 @@
       const title = (($("douyinTaskTitle") || {}).value || "").trim() || `抖音获客 - ${actionInfo.label || douyinPayload.action}`;
       const body = {
         title,
-        task_kind: "chat_message",
+        task_kind: "douyin_leads",
         content: `执行抖音获客任务：${douyinPayload.action}`,
-        payload: {
-          capability_id: "douyin.leads.pipeline",
-          payload: douyinPayload,
-        },
+        payload: douyinPayload,
         schedule_type: scheduleType,
         interval_seconds: Math.max(60, (Number.isNaN(interval) ? 60 : interval) * 60),
         start_at: ($("douyinTaskStartAt") || {}).value || "",
@@ -4032,7 +4210,7 @@
       const fd = new FormData();
       fd.append("file", file);
       try {
-        const resp = await fetch("/api/h5-chat/uploads", { method: "POST", headers: authHeaders(), body: fd });
+        const resp = await fetch(apiUrl("/api/h5-chat/uploads"), { method: "POST", headers: authHeaders(), body: fd });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.detail || "上传失败");
         item.url = data.url || "";
@@ -4084,7 +4262,7 @@
         filename: filename || filenameFromUrl(url, "lobster-media"),
         token: state.token || "",
       });
-      return `/api/h5-chat/media?${params.toString()}`;
+      return apiUrl(`/api/h5-chat/media?${params.toString()}`);
     }
 
     function linkAnchor(url, label) {
@@ -4527,7 +4705,7 @@
         return;
       }
       let last = 0;
-      const es = new EventSource(`/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}`);
+      const es = new EventSource(apiUrl(`/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}`));
       state.streams.set(messageId, es);
       ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error", "publish_pending", "publish_claimed", "publish_result"].forEach((type) => {
         es.addEventListener(type, (evt) => {
@@ -4793,7 +4971,7 @@
       }
       $("sendSmsBtn").disabled = true;
       try {
-        const resp = await fetch("/auth/sms/send", {
+        const resp = await fetch(apiUrl("/auth/sms/send"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -4960,7 +5138,7 @@
         const code = $("smsCode").value.trim();
         if (!phone) throw new Error("请输入有效手机号");
         if (!code) throw new Error("请输入短信验证码");
-        const resp = await fetch("/auth/register-phone", {
+        const resp = await fetch(apiUrl("/auth/register-phone"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ phone, code }),
@@ -4986,7 +5164,7 @@
         const password = $("loginPassword").value;
         if (!account) throw new Error("请输入账号或手机号");
         if (!password) throw new Error("请输入密码");
-        const resp = await fetch("/auth/login-phone-password", {
+        const resp = await fetch(apiUrl("/auth/login-phone-password"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ account, password }),
