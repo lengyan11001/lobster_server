@@ -93,6 +93,25 @@ def _is_finder_username(value: str) -> bool:
     return bool(text) and (text.startswith("v2_") or any(marker in text for marker in _FINDER_USERNAME_MARKERS))
 
 
+def _channel_id_variants(value: str) -> list[str]:
+    text = (value or "").strip()
+    if not text.lower().startswith("sph"):
+        return [text] if text else []
+    variants: list[str] = []
+    seen: set[str] = set()
+
+    def add(candidate: str) -> None:
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            variants.append(candidate)
+
+    add(text)
+    # 视频号短号区分大小写，但用户经常把大写 I 和小写 l 看混。
+    add(text.replace("I", "l"))
+    add(text.replace("l", "I"))
+    return variants
+
+
 def _looks_like_wechat_share_url(value: str) -> bool:
     text = (value or "").strip().lower()
     return text.startswith(("http://", "https://")) and any(marker in text for marker in _WECHAT_SHARE_HOST_MARKERS)
@@ -204,24 +223,35 @@ async def _resolve_account_from_channel_id(
     current_user: User,
     db: Session,
 ) -> dict[str, Any]:
-    result = await _execute_query_with_retry(
-        db=db,
-        current_user=current_user,
-        query_type="wechat_channels_channel_id_to_username_v2",
-        params={},
-        body={"channel_id": keyword, "raw": False},
-        save_items=False,
-        meta={"source": "wechat_channels_transcript_channel_id_convert", "channel_id": keyword},
-        attempts=2,
-        include_raw_response=True,
-    )
-    raw = result.get("raw_response") if isinstance(result.get("raw_response"), dict) else {}
-    username = _find_finder_username(raw)
-    if username:
-        return _account_from_username(username, raw=raw, source="channel_id", fallback_name=keyword)
-    query = result.get("query") if isinstance(result.get("query"), dict) else {}
-    detail = query.get("error_message") or "无法把视频号 ID 转换为 finder username"
-    raise HTTPException(status_code=502, detail=f"视频号 ID 解析失败：{detail}")
+    last_detail = "无法把视频号 ID 转换为 finder username"
+    tried: list[str] = []
+    for channel_id in _channel_id_variants(keyword):
+        tried.append(channel_id)
+        result = await _execute_query_with_retry(
+            db=db,
+            current_user=current_user,
+            query_type="wechat_channels_channel_id_to_username_v2",
+            params={},
+            body={"channel_id": channel_id, "raw": False},
+            save_items=False,
+            meta={
+                "source": "wechat_channels_transcript_channel_id_convert",
+                "channel_id": channel_id,
+                "original_channel_id": keyword,
+            },
+            attempts=2,
+            include_raw_response=True,
+        )
+        raw = result.get("raw_response") if isinstance(result.get("raw_response"), dict) else {}
+        username = _find_finder_username(raw)
+        if username:
+            return _account_from_username(username, raw=raw, source="channel_id", fallback_name=channel_id)
+        query = result.get("query") if isinstance(result.get("query"), dict) else {}
+        last_detail = query.get("error_message") or last_detail
+    suffix = ""
+    if len(tried) > 1:
+        suffix = f"；已尝试易混字符 I/l 变体：{', '.join(tried)}"
+    raise HTTPException(status_code=502, detail=f"视频号 ID 解析失败：{last_detail}{suffix}")
 
 
 async def _resolve_account_from_video_detail(

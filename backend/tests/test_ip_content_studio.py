@@ -287,6 +287,15 @@ def test_wechat_channels_transcript_accepts_direct_inputs():
     assert transcript._looks_like_video_detail_input("object_id:1234567890123")
 
 
+def test_wechat_channels_transcript_channel_id_variants_cover_i_l_confusion():
+    from backend.app.api import wechat_channels_transcript as transcript
+
+    variants = transcript._channel_id_variants("sphUMeQgnZCIOqr")
+
+    assert variants[0] == "sphUMeQgnZCIOqr"
+    assert "sphUMeQgnZClOqr" in variants
+
+
 def test_collects_wechat_channels_home_page_objects_as_posts():
     from backend.app.api import ip_content_studio as studio
 
