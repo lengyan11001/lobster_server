@@ -296,6 +296,44 @@ def test_wechat_channels_transcript_channel_id_variants_cover_i_l_confusion():
     assert "sphUMeQgnZClOqr" in variants
 
 
+def test_wechat_channels_transcript_normalizes_v2_user_videos_shape():
+    from backend.app.api import wechat_channels_transcript as transcript
+
+    payload = {
+        "data": {
+            "videos": [
+                {
+                    "id": "14779988301712792068",
+                    "title": [{"shortTitle": "干大健康的就是在拉人头？"}],
+                    "create_time": 1761911905,
+                    "read_count": 12,
+                    "like_count": 32,
+                    "comment_count": 7,
+                    "forward_count": 72,
+                    "media": {
+                        "url": "http://wxapp.tc.qq.com/251/20302/stodownload?encfilekey=abc",
+                        "url_token": "&token=token-value",
+                        "full_url": "http://wxapp.tc.qq.com/251/20302/stodownload?encfilekey=abc&token=token-value",
+                        "decode_key": "8667923",
+                        "cover_url": "https://example.com/cover.jpg",
+                    },
+                }
+            ],
+            "last_buffer": "next-page",
+        }
+    }
+
+    videos = transcript._normalize_videos_from_payload(payload)
+
+    assert len(videos) == 1
+    assert videos[0]["item_key"] == "14779988301712792068"
+    assert videos[0]["video_url"] == "http://wxapp.tc.qq.com/251/20302/stodownload?encfilekey=abc&token=token-value"
+    assert videos[0]["cover_url"] == "https://example.com/cover.jpg"
+    assert videos[0]["decode_key"] == "8667923"
+    assert videos[0]["metrics"]["like_count"] == 32
+    assert transcript._extract_last_buffer(payload) == "next-page"
+
+
 def test_collects_wechat_channels_home_page_objects_as_posts():
     from backend.app.api import ip_content_studio as studio
 
