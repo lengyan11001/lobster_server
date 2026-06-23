@@ -472,14 +472,34 @@ async def search_users(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    keyword = q.strip()
+    result = await _execute_query_with_retry(
+        db=db,
+        current_user=current_user,
+        query_type="wechat_search_v2",
+        params={},
+        body={"keyword": keyword, "business_type": "account", "sort": 0, "publish_time": 0, "offset": 0, "raw": True},
+        save_items=False,
+        meta={"source": "wechat_channels_transcript_user_search", "keyword": keyword, "provider": "wechat_search_v2"},
+        attempts=3,
+        include_raw_response=True,
+    )
+    users, raw_count = _normalize_wechat_channels_users_from_payload(result.get("raw_response") or {})
+    if users:
+        return {"ok": True, "items": users, "raw_count": raw_count, "query": result.get("query") or {}}
+    query = result.get("query") if isinstance(result.get("query"), dict) else {}
+    if not result.get("ok"):
+        detail = query.get("error_message") or "TikHub 微信搜一搜接口调用失败"
+        raise HTTPException(status_code=502, detail=f"视频号账号搜索失败：{detail}")
+
     result = await _execute_query_with_retry(
         db=db,
         current_user=current_user,
         query_type="wechat_channels_user_search_v2",
-        params={"keywords": q.strip(), "page": 1},
+        params={"keywords": keyword, "page": 1},
         body={},
         save_items=False,
-        meta={"source": "wechat_channels_transcript_user_search", "keyword": q.strip()},
+        meta={"source": "wechat_channels_transcript_user_search", "keyword": keyword, "provider": "wechat_channels_user_search_v2"},
         attempts=3,
         include_raw_response=True,
     )
@@ -505,9 +525,9 @@ async def fetch_videos(
         result = await _execute_query_with_retry(
             db=db,
             current_user=current_user,
-            query_type="wechat_channels_home_page",
+            query_type="wechat_channels_user_videos_v2",
             params={},
-            body=req_body,
+            body={**req_body, "raw": False},
             save_items=False,
             meta={"source": "wechat_channels_transcript_videos", "username": username, "page": page + 1},
             attempts=3,

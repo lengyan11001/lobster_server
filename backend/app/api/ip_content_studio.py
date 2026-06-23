@@ -169,6 +169,13 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "path": "/api/v1/wechat_channels/fetch_search_latest",
         "allowed_params": {"keywords"},
     },
+    "wechat_search_v2": {
+        "platform": "wechat_channels",
+        "source_type": "user_search",
+        "method": "POST",
+        "path": "/api/v1/wechat_search/v2/fetch_search",
+        "allowed_body": {"keyword", "business_type", "sort", "publish_time", "offset", "raw"},
+    },
     "wechat_channels_user_search_v2": {
         "platform": "wechat_channels",
         "source_type": "user_search",
@@ -182,6 +189,13 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "method": "POST",
         "path": "/api/v1/wechat_channels/fetch_home_page",
         "allowed_body": {"username", "last_buffer"},
+    },
+    "wechat_channels_user_videos_v2": {
+        "platform": "wechat_channels",
+        "source_type": "home_page",
+        "method": "POST",
+        "path": "/api/v1/wechat_channels/v2/fetch_user_videos",
+        "allowed_body": {"username", "last_buffer", "raw"},
     },
     "linkedin_user_profile": {
         "platform": "linkedin",
@@ -571,7 +585,9 @@ def _jsonable(value: Any) -> Any:
 
 def _tikhub_api_base() -> str:
     base = (getattr(settings, "tikhub_api_base", "") or os.environ.get("TIKHUB_API_BASE") or "").strip()
-    return (base or "https://api.tikhub.dev").rstrip("/")
+    if base == "https://api.tikhub.dev":
+        base = "https://api.tikhub.io"
+    return (base or "https://api.tikhub.io").rstrip("/")
 
 
 def _tikhub_api_key() -> str:
@@ -1305,6 +1321,9 @@ def _normalize_douyin_users_from_payload(payload: Any, limit: int = 20) -> tuple
 
 def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, Any]]:
     item = raw if isinstance(raw, dict) else {"value": raw}
+    acc_type = _strip_search_markup(_first(item, ["accTypeName", "account_type", "typeName"]), 80)
+    if acc_type and "视频号" not in acc_type and "Channels" not in acc_type:
+        return None
     user = item.get("finder_info") if isinstance(item.get("finder_info"), dict) else {}
     if not user:
         user = item.get("finderUser") if isinstance(item.get("finderUser"), dict) else {}
@@ -1376,7 +1395,7 @@ def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, An
 
 
 def _normalize_wechat_channels_users_from_payload(payload: Any, limit: int = 20) -> tuple[list[dict[str, Any]], int]:
-    raw_items = _collect_items(payload or {})
+    raw_items = _collect_wechat_channels_user_candidates(payload or {})
     seen: set[str] = set()
     users: list[dict[str, Any]] = []
     for idx, raw in enumerate(raw_items[:80]):
@@ -1391,6 +1410,42 @@ def _normalize_wechat_channels_users_from_payload(payload: Any, limit: int = 20)
         if len(users) >= limit:
             break
     return users, len(raw_items)
+
+
+def _collect_wechat_channels_user_candidates(payload: Any) -> list[Any]:
+    out: list[Any] = []
+
+    def walk(node: Any, depth: int = 0) -> None:
+        if depth > 8:
+            return
+        if isinstance(node, list):
+            for entry in node:
+                walk(entry, depth + 1)
+            return
+        if not isinstance(node, dict):
+            return
+        username = _first(
+            node,
+            [
+                "username",
+                "finder_username",
+                "finderUserName",
+                "jumpInfo.userName",
+                "noticeParam.finderUsername",
+                "data.username",
+            ],
+        )
+        acc_type = _strip_search_markup(_first(node, ["accTypeName", "account_type", "typeName"]), 80)
+        if username and (not acc_type or "视频号" in acc_type or "Channels" in acc_type):
+            out.append(node)
+        for value in node.values():
+            if isinstance(value, (dict, list)):
+                walk(value, depth + 1)
+
+    walk(payload)
+    if out:
+        return out
+    return _collect_items(payload or {})
 
 
 def _persist_items(

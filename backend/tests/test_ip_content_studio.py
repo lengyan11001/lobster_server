@@ -180,6 +180,56 @@ def test_normalizes_wechat_channels_user_search_candidates():
     assert candidates[0]["verify_info"] == "verified company"
 
 
+def test_normalizes_wechat_search_nested_channels_candidates_only():
+    from backend.app.api import ip_content_studio as studio
+
+    payload = {
+        "code": 200,
+        "data": {
+            "results": {
+                "data": [
+                    {
+                        "subBoxes": [
+                            {
+                                "items": [
+                                    {
+                                        "accTypeName": "视频号",
+                                        "authInfo": "摄影博主",
+                                        "desc": "惟有被记录的才能真正成为回忆",
+                                        "jumpInfo": {"userName": "v2_xugongzi@finder"},
+                                        "noticeParam": {"finderUsername": "v2_xugongzi@finder"},
+                                        "thumbUrl": "https://example.com/avatar.jpg",
+                                        "title": "Peri<em class=\"highlight\">徐公子</em>",
+                                    }
+                                ]
+                            },
+                            {
+                                "items": [
+                                    {
+                                        "accTypeName": "公众号",
+                                        "jumpInfo": {"userName": "gh_xugongzi"},
+                                        "title": "<em class=\"highlight\">徐公子</em>私人订阅号",
+                                    }
+                                ]
+                            },
+                        ]
+                    }
+                ]
+            }
+        },
+    }
+
+    candidates, raw_count = studio._normalize_wechat_channels_users_from_payload(payload)
+
+    assert raw_count == 1
+    assert len(candidates) == 1
+    assert candidates[0]["username"] == "v2_xugongzi@finder"
+    assert candidates[0]["display_name"] == "Peri徐公子"
+    assert candidates[0]["signature"] == "惟有被记录的才能真正成为回忆"
+    assert candidates[0]["avatar_url"] == "https://example.com/avatar.jpg"
+    assert candidates[0]["verify_info"] == "摄影博主"
+
+
 def test_collects_wechat_channels_home_page_objects_as_posts():
     from backend.app.api import ip_content_studio as studio
 
