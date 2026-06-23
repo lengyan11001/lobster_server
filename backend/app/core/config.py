@@ -172,6 +172,18 @@ class Settings(BaseSettings):
     """阿里云短信模板Code"""
     aliyun_sms_template_code: str = "SMS_333406023"
 
+    # ── H5 实时语音识别（默认接讯飞流式听写）──
+    h5_voice_asr_provider: str = "xfyun"
+    xfyun_app_id: Optional[str] = None
+    xfyun_api_key: Optional[str] = None
+    xfyun_api_secret: Optional[str] = None
+    xfyun_iat_ws_url: str = "wss://iat-api.xfyun.cn/v2/iat"
+    xfyun_iat_domain: str = "iat"
+    xfyun_iat_language: str = "zh_cn"
+    xfyun_iat_accent: str = "mandarin"
+    xfyun_iat_vad_eos: int = 1800
+    xfyun_iat_dwa: str = "wpgs"
+
     # ── 直连 LLM API（优先于 xskill.ai 中转）──
     deepseek_api_key: Optional[str] = None
     deepseek_api_base: str = "https://api.deepseek.com"

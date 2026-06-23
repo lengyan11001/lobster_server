@@ -33,7 +33,9 @@ from .api.creative_jobs import router as creative_jobs_router
 from .api.cutcli_templates import router as cutcli_templates_router
 # from .api.publish import router as publish_router
 from .api.logs_api import router as logs_router
+from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
 from .api.h5_chat import router as h5_chat_router
+from .api.h5_voice import router as h5_voice_router
 from .api.hifly_assets import router as hifly_assets_router
 from .api.provider_balances import router as provider_balances_router
 from .api.runtime_monitor import router as runtime_monitor_router
@@ -999,7 +1001,9 @@ def create_app() -> FastAPI:
     app.include_router(cutcli_templates_router, prefix="")
     # app.include_router(publish_router, prefix="")
     app.include_router(logs_router, prefix="")
+    app.include_router(douyin_dashboard_h5_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
+    app.include_router(h5_voice_router, prefix="")
     app.include_router(hifly_assets_router, prefix="")
     app.include_router(provider_balances_router, prefix="")
     app.include_router(runtime_monitor_router, prefix="")

@@ -858,6 +858,23 @@ class H5ChatDevicePresence(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class DouyinDashboardDeviceState(Base):
+    """Latest Douyin leads dashboard snapshot reported by a local online device."""
+
+    __tablename__ = "douyin_dashboard_device_state"
+    __table_args__ = (
+        UniqueConstraint("user_id", "installation_id", name="uq_douyin_dashboard_device_state"),
+        Index("ix_douyin_dashboard_device_state_user_seen", "user_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class ScheduledTask(Base):
     """Cloud-side task definition. Local online clients claim generated runs."""
 

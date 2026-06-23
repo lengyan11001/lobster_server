@@ -10,7 +10,9 @@ from fastapi.staticfiles import StaticFiles
 
 from . import models  # noqa: F401
 from .api.auth import router as auth_router
+from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
 from .api.h5_chat import router as h5_chat_router
+from .api.h5_voice import router as h5_voice_router
 from .api.hifly_assets import router as hifly_assets_router
 from .api.ip_content_studio import router as ip_content_studio_router
 from .api.scheduled_tasks import router as scheduled_tasks_router
@@ -43,7 +45,9 @@ def create_h5_app() -> FastAPI:
         return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
     app.include_router(auth_router, prefix="/auth")
+    app.include_router(douyin_dashboard_h5_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
+    app.include_router(h5_voice_router, prefix="")
     app.include_router(hifly_assets_router, prefix="")
     app.include_router(scheduled_tasks_router, prefix="")
     app.include_router(ip_content_studio_router, prefix="")

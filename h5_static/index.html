@@ -94,9 +94,41 @@
     }
     .topbar.subpage {
       justify-content: flex-start;
+      position: sticky;
     }
     .topbar.subpage .brand {
       flex: 1 1 auto;
+    }
+    .topbar.subpage.voice-page .brand {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      justify-content: center;
+      text-align: center;
+      width: max-content;
+      max-width: calc(100% - 160px);
+      pointer-events: none;
+    }
+    .topbar.subpage.voice-page .brand-title {
+      width: auto;
+    }
+    .topbar.subpage.voice-page .subtitle {
+      display: none;
+    }
+    .topbar.subpage.voice-page .logo {
+      width: 30px;
+      height: 30px;
+    }
+    .topbar.subpage.voice-page .logo img {
+      width: 24px;
+      height: 24px;
+    }
+    .topbar.subpage.voice-page h1 {
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
     }
     .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
     .brand-title { min-width: 0; }
@@ -126,6 +158,7 @@
       color: var(--ink);
       background: rgba(255,255,255,.76);
       box-shadow: inset 0 0 0 1px var(--line);
+      overflow: hidden;
     }
     .chat-entry-icon {
       position: relative;
@@ -146,6 +179,21 @@
       border-bottom: 2px solid currentColor;
       background: rgba(255,255,255,.76);
       transform: rotate(-18deg);
+    }
+    .voice-entry-icon {
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 0;
+      flex: 0 0 auto;
+    }
+    .voice-entry-icon svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      fill: currentColor;
     }
     .workbench-entry-icon {
       position: relative;
@@ -465,6 +513,54 @@
       padding: 22px;
       position: relative;
       z-index: 2;
+    }
+    .office-empty-copy {
+      text-align: center;
+    }
+    .office-voice-fab-wrap {
+      position: absolute;
+      left: 50%;
+      bottom: 26px;
+      z-index: 4;
+      display: grid;
+      justify-items: center;
+      gap: 12px;
+      transform: translateX(-50%);
+      pointer-events: none;
+    }
+    .office-voice-entry {
+      width: 82px;
+      height: 82px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      background: linear-gradient(135deg, #2563eb, #1e40af);
+      border: none;
+      border-radius: 50%;
+      box-shadow: 0 10px 30px rgba(37, 99, 235, .4), inset 0 2px 10px rgba(255,255,255,.3);
+      transition: all .2s ease;
+      pointer-events: auto;
+    }
+    .office-voice-entry.is-pressing {
+      transform: scale(.92);
+      box-shadow: 0 5px 15px rgba(37,99,235,.58), inset 0 5px 15px rgba(0,0,0,.3);
+    }
+    .office-voice-entry:active {
+      transform: scale(.92);
+      box-shadow: 0 5px 15px rgba(37,99,235,.58), inset 0 5px 15px rgba(0,0,0,.3);
+    }
+    .office-voice-entry .voice-entry-icon {
+      width: 30px;
+      height: 30px;
+      color: #fff;
+      flex: 0 0 auto;
+    }
+    .top-action .voice-entry-icon {
+      width: 18px;
+      height: 18px;
+      color: currentColor;
     }
     .employee-card {
       position: absolute;
@@ -1358,6 +1454,400 @@
     .composer.expanded textarea { min-height: 180px; max-height: min(46vh, 360px); }
     .composer-toggle { width: 58px; height: 46px; padding: 0; justify-self: end; font-size: 13px; color: var(--blue); background: rgba(36,92,255,.08); box-shadow: none; }
 
+    .voice-shell {
+      min-height: calc(100vh - 126px);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+      position: relative;
+      background:
+        radial-gradient(circle at top, rgba(17, 38, 88, 0.92) 0%, rgba(3, 6, 19, 0.98) 62%),
+        #030613;
+      color: #e2e8f0;
+    }
+    .voice-display {
+      padding: 28px 20px 248px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      overflow-y: auto;
+      min-height: 0;
+      align-content: flex-start;
+    }
+    .voice-result-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex: 0 0 auto;
+    }
+    .voice-section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .voice-section-label {
+      font-size: 12px;
+      color: rgba(148, 163, 184, 0.92);
+      letter-spacing: .04em;
+    }
+    .voice-result-meta {
+      display: none;
+      align-items: center;
+      gap: 12px;
+    }
+    .voice-result-meta.show {
+      display: flex;
+    }
+    .voice-result-toggle {
+      border: 0;
+      background: transparent;
+      color: #7cb4ff;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 0;
+      cursor: pointer;
+    }
+    .voice-text-output {
+      font-size: 24px;
+      line-height: 1.5;
+      font-weight: 300;
+      color: #94a3b8;
+      text-align: left;
+      text-indent: 4em;
+      min-height: 84px;
+      padding: 4px 8px;
+      border-radius: 22px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      transition: color .3s ease, text-shadow .3s ease, font-weight .3s ease, background .3s ease, box-shadow .3s ease;
+    }
+    .voice-text-output.active {
+      color: #fff;
+      font-weight: 500;
+      text-shadow: 0 0 15px rgba(255,255,255,0.18);
+    }
+    .voice-text-output.long-text {
+      font-size: 17px;
+      line-height: 1.8;
+      text-align: left;
+      text-indent: 4em;
+      min-height: 160px;
+      max-height: 260px;
+      overflow-y: auto;
+      padding: 18px 18px 20px;
+      background: rgba(12, 18, 40, 0.54);
+      box-shadow: inset 0 0 0 1px rgba(124, 180, 255, 0.12);
+      text-shadow: none;
+    }
+    .voice-text-output.long-text.collapsed {
+      max-height: 192px;
+      overflow: hidden;
+      mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+    }
+    .voice-action-cards {
+      margin-top: 38px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      opacity: 0;
+      transform: translateY(18px);
+      transition: all .45s cubic-bezier(0.1, 0.8, 0.2, 1);
+      pointer-events: none;
+      flex: 0 0 auto;
+    }
+    .voice-action-cards.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .voice-intent-panel {
+      margin-top: 28px;
+      display: grid;
+      gap: 16px;
+      opacity: 0;
+      transform: translateY(18px);
+      transition: all .45s cubic-bezier(0.1, 0.8, 0.2, 1);
+      pointer-events: none;
+    }
+    .voice-intent-panel.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .voice-intent-card {
+      padding: 18px;
+      border-radius: 20px;
+      background: rgba(10, 16, 32, 0.82);
+      border: 1px solid rgba(124, 180, 255, 0.18);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+      display: grid;
+      gap: 12px;
+    }
+    .voice-intent-badge {
+      min-height: 28px;
+      padding: 0 12px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      color: #cfe2ff;
+      background: rgba(59, 130, 246, 0.16);
+      border: 1px solid rgba(96, 165, 250, 0.28);
+      white-space: nowrap;
+    }
+    .voice-intent-summary {
+      color: #e2e8f0;
+      font-size: 15px;
+      line-height: 1.65;
+    }
+    .voice-slot-list,
+    .voice-missing-list,
+    .voice-secondary-card-list {
+      display: grid;
+      gap: 10px;
+    }
+    .voice-slot-row,
+    .voice-missing-row {
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .voice-slot-row strong,
+    .voice-missing-row strong {
+      font-size: 12px;
+      color: #93c5fd;
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+    .voice-slot-row span,
+    .voice-missing-row span {
+      color: #e2e8f0;
+      font-size: 13px;
+      line-height: 1.55;
+      text-align: right;
+      word-break: break-word;
+    }
+    .voice-missing-row strong {
+      color: #fbbf24;
+    }
+    .voice-primary-card {
+      width: 100%;
+      border: 1px solid rgba(74, 222, 128, 0.34);
+      background: linear-gradient(135deg, rgba(22, 101, 52, 0.58), rgba(21, 128, 61, 0.24));
+    }
+    .voice-primary-card .voice-action-icon {
+      background: rgba(74, 222, 128, 0.18);
+      color: #bbf7d0;
+    }
+    .voice-secondary-card {
+      width: 100%;
+      border-style: dashed;
+    }
+    .voice-action-card.warn {
+      border-color: rgba(251, 191, 36, 0.35);
+      background: linear-gradient(135deg, rgba(120, 53, 15, 0.36), rgba(15, 23, 42, 0.6));
+    }
+    .voice-action-card.warn .voice-action-icon {
+      background: rgba(251, 191, 36, 0.16);
+      color: #fde68a;
+    }
+    .voice-action-tip {
+      font-size: 13px;
+      color: #64748b;
+      margin: 0 0 4px;
+    }
+    .voice-action-card {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 16px;
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      backdrop-filter: blur(10px);
+      cursor: pointer;
+      transition: background .2s ease, transform .1s ease, border-color .2s ease;
+    }
+    .voice-action-card:active {
+      transform: scale(.98);
+      background: rgba(59, 130, 246, 0.2);
+    }
+    .voice-action-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex: 0 0 auto;
+      background: rgba(59, 130, 246, 0.2);
+      color: #93c5fd;
+    }
+    .voice-action-content {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      text-align: left;
+    }
+    .voice-action-content strong {
+      display: block;
+      color: #e2e8f0;
+      font-size: 15px;
+      line-height: 1.35;
+      width: 100%;
+      text-align: left;
+    }
+    .voice-action-content span {
+      display: block;
+      margin-top: 4px;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.45;
+      width: 100%;
+      text-align: left;
+    }
+    .voice-action-arrow {
+      color: #60a5fa;
+      font-size: 15px;
+    }
+    .voice-control {
+      height: 224px;
+      min-height: 224px;
+      max-height: 224px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 0 20px 16px;
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border-top: 1px solid rgba(255,255,255,0.04);
+      background: linear-gradient(180deg, rgba(3, 6, 19, 0) 0%, rgba(3, 6, 19, 0.78) 24%, rgba(3, 6, 19, 0.98) 100%);
+      z-index: 3;
+    }
+    .voice-hint {
+      position: absolute;
+      top: 18px;
+      color: #64748b;
+      font-size: 13px;
+      letter-spacing: 2px;
+      transition: opacity .3s ease;
+    }
+    .voice-mic-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .voice-ripple {
+      position: absolute;
+      width: 82px;
+      height: 82px;
+      border-radius: 50%;
+      border: 2px solid #3b82f6;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .voice-shell.is-recording .voice-ripple {
+      animation: voiceRippleAnim 1.5s infinite ease-out;
+    }
+    .voice-shell.is-recording .voice-ripple:nth-child(2) { animation-delay: .5s; }
+    .voice-wave {
+      position: absolute;
+      top: -38px;
+      display: flex;
+      gap: 6px;
+      opacity: 0;
+      transition: opacity .3s ease;
+    }
+    .voice-shell.is-recording .voice-wave { opacity: 1; }
+    .voice-wave-bar {
+      width: 4px;
+      height: 20px;
+      background: #60a5fa;
+      border-radius: 2px;
+    }
+    .voice-shell.is-recording .voice-wave-bar { animation: voiceWaveAnim .6s infinite alternate ease-in-out; }
+    .voice-wave-bar:nth-child(1) { animation-delay: .1s; }
+    .voice-wave-bar:nth-child(2) { animation-delay: .3s; }
+    .voice-wave-bar:nth-child(3) { animation-delay: 0s; }
+    .voice-wave-bar:nth-child(4) { animation-delay: .4s; }
+    .voice-wave-bar:nth-child(5) { animation-delay: .2s; }
+    .voice-mic-btn {
+      width: 82px;
+      height: 82px;
+      border-radius: 50%;
+      padding: 0;
+      border: none;
+      background: linear-gradient(135deg, #2563eb, #1e40af);
+      box-shadow: 0 10px 30px rgba(37, 99, 235, .4), inset 0 2px 10px rgba(255,255,255,.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+      transition: all .2s ease;
+      user-select: none;
+      touch-action: none;
+    }
+    .voice-mic-btn svg {
+      width: 32px;
+      height: 32px;
+      fill: #fff;
+      transition: transform .2s ease;
+    }
+    .voice-mic-btn:active,
+    .voice-shell.is-recording .voice-mic-btn {
+      transform: scale(.92);
+      box-shadow: 0 5px 15px rgba(37,99,235,.58), inset 0 5px 15px rgba(0,0,0,.3);
+    }
+    .voice-shell.is-recording .voice-mic-btn svg { transform: scale(1.08); }
+    .voice-secondary-actions {
+      margin-top: 16px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity .22s ease, transform .22s ease;
+    }
+    .voice-secondary-actions.show {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+    .voice-secondary-actions button {
+      min-height: 38px;
+      padding: 0 14px;
+      color: #cbd5e1;
+      background: rgba(255,255,255,0.08);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+    }
+    .hidden { display: none !important; }
+    @keyframes voiceRippleAnim {
+      0% { transform: scale(1); opacity: .8; }
+      100% { transform: scale(2.5); opacity: 0; }
+    }
+    @keyframes voiceWaveAnim {
+      0% { transform: scaleY(.5); background: #3b82f6; }
+      100% { transform: scaleY(1.8); background: #93c5fd; }
+    }
+
     .profile-grid { display: grid; gap: 14px; }
     .profile-head { display: flex; align-items: center; gap: 14px; padding: 18px; }
     .profile-avatar { width: 62px; height: 62px; border-radius: 22px; display: grid; place-items: center; color: #fff; font-size: 24px; font-weight: 900; background: linear-gradient(135deg, var(--dark), var(--blue)); }
@@ -1595,6 +2085,15 @@
           <span class="chat-entry-icon" aria-hidden="true"></span>
           <span class="top-action-label">消息</span>
         </button>
+        <button class="top-action" type="button" data-tab-target="voice" aria-label="语音输入">
+          <span class="voice-entry-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path>
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path>
+            </svg>
+          </span>
+          <span class="top-action-label">语音输入</span>
+        </button>
         <button class="avatar-action" type="button" data-tab-target="profile" aria-label="个人中心">
           <span class="avatar-mini" id="avatarMini">AI</span>
         </button>
@@ -1670,7 +2169,17 @@
             <button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字">
               <span id="companySignText">我的AI公司</span>
             </button>
-            <div class="office-empty">正在检查员工状态...</div>
+            <div class="office-empty"><div class="office-empty-copy">正在检查员工状态...</div></div>
+            <div class="office-voice-fab-wrap">
+              <button class="office-voice-entry" type="button" data-home-target="voice" aria-label="进入语音输入">
+                <span class="voice-entry-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path>
+                    <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path>
+                  </svg>
+                </span>
+              </button>
+            </div>
           </div>
         </div>
         <button class="hire-fab" type="button" id="hireEmployeeBtn">雇佣新员工</button>
@@ -1758,6 +2267,7 @@
                   <button class="quick-card" type="button" data-tone="upload" data-image-video="1" data-prompt="用这个图片，提示词："><div class="quick-mark">传</div><strong>图生视频</strong><span>先上传图片，再进入消息继续补充</span></button>
                   <button class="quick-card" type="button" data-tone="tvc" data-prompt="用爆款TVC生成一个视频"><div class="quick-mark">T</div><strong>爆款TVC</strong><span>填入爆款复刻视频指令</span></button>
                   <button class="quick-card" type="button" data-tone="copy" data-prompt="根据我的记忆，写一条50字以内的朋友圈文案"><div class="quick-mark">文</div><strong>朋友圈文案</strong><span>快速生成短文案</span></button>
+                  <button class="quick-card" type="button" data-home-target="voice"><div class="quick-mark">语</div><strong>语音输入</strong><span>进入语音对话子页面，用说话的方式下发任务</span></button>
                 </div>
               </section>
               <section class="quick-section" aria-label="运营">
@@ -1938,6 +2448,61 @@
         </div>
       </section>
 
+      <section class="view" id="voiceView">
+        <div class="panel voice-shell" id="voiceShell">
+          <div class="voice-display">
+            <div class="voice-result-card">
+              <div class="voice-section-head">
+                <div id="voiceResultMeta" class="voice-result-meta">
+                  <button id="voiceExpandBtn" class="voice-result-toggle" type="button">展开全文</button>
+                </div>
+              </div>
+              <div id="voiceTextOutput" class="voice-text-output">等待您的指令...</div>
+            </div>
+            <div id="voiceIntentPanel" class="voice-intent-panel">
+              <div class="voice-intent-card">
+                <div class="voice-section-head">
+                  <span class="voice-section-label">AI 理解结果</span>
+                  <span id="voiceIntentBadge" class="voice-intent-badge">待识别</span>
+                </div>
+                <div id="voiceIntentSummary" class="voice-intent-summary">识别完成后，这里会告诉你当前更像是哪一种任务。</div>
+                <div id="voiceIntentSlots" class="voice-slot-list hidden"></div>
+                <div id="voiceIntentMissing" class="voice-missing-list hidden"></div>
+              </div>
+              <div id="voiceActionCards" class="voice-action-cards">
+                <p class="voice-action-tip">建议动作</p>
+                <div id="voicePrimaryAction"></div>
+                <div id="voiceSecondaryActionsList" class="voice-secondary-card-list"></div>
+              </div>
+            </div>
+          </div>
+          <div class="voice-control">
+            <div id="voiceHintText" class="voice-hint">按住说话</div>
+            <div class="voice-mic-wrapper">
+              <div class="voice-ripple"></div>
+              <div class="voice-ripple"></div>
+              <div class="voice-wave">
+                <div class="voice-wave-bar"></div>
+                <div class="voice-wave-bar"></div>
+                <div class="voice-wave-bar"></div>
+                <div class="voice-wave-bar"></div>
+                <div class="voice-wave-bar"></div>
+              </div>
+              <button id="voiceMicBtn" class="voice-mic-btn" type="button" aria-label="按住说话">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path>
+                  <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path>
+                </svg>
+              </button>
+            </div>
+            <div class="voice-secondary-actions">
+              <button type="button" id="voiceToMessagesBtn">转到消息页编辑</button>
+              <button type="button" id="voiceClearBtn">清空内容</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="view" id="profileView">
         <div class="profile-grid">
           <div class="panel profile-head">
@@ -2065,6 +2630,22 @@
       ipTemplatesLoading: false,
       douyinStatus: null,
       douyinTaskAction: "search_collect",
+      voiceRecording: false,
+      voiceDraft: "",
+      voiceTimer: null,
+      voiceStatus: "idle",
+      voicePartial: "",
+      voiceIntent: null,
+      voiceActions: [],
+      voiceExpanded: false,
+      lastViewBeforeMessages: "",
+      voiceWs: null,
+      voiceAudioContext: null,
+      voiceMediaStream: null,
+      voiceProcessor: null,
+      voiceSourceNode: null,
+      voiceSeq: 0,
+      officeVoiceHoldActive: false,
     };
     const SHOW_INTERNAL_STEPS = false;
     const IMAGE_TO_VIDEO_PROMPT = "用这个图片，提示词：";
@@ -2172,13 +2753,35 @@
       return state.token ? { Authorization: `Bearer ${state.token}`, ...extra } : { ...extra };
     }
 
+    const H5_API_BASE = (() => {
+      try {
+        const queryBase = new URLSearchParams(window.location.search || "").get("api_base");
+        if (queryBase) return String(queryBase).replace(/\/$/, "");
+      } catch {}
+      const host = String((window.location && window.location.hostname) || "").toLowerCase();
+      const port = String((window.location && window.location.port) || "").trim();
+      if (host === "h5.bhzn.top" || host.startsWith("h5.")) {
+        return String((window.location && window.location.origin) || "").replace(/\/$/, "");
+      }
+      if ((host === "127.0.0.1" || host === "localhost") && port === "8000") return "http://127.0.0.1:8002";
+      return String((window.location && window.location.origin) || "").replace(/\/$/, "");
+    })();
+
+    function apiUrl(path) {
+      const raw = String(path || "").trim();
+      if (!raw) return H5_API_BASE;
+      if (/^https?:\/\//i.test(raw)) return raw;
+      if (raw.startsWith("/")) return `${H5_API_BASE}${raw}`;
+      return `${H5_API_BASE}/${raw}`;
+    }
+
     function api(path, options = {}) {
       const headers = { ...(options.headers || {}), ...authHeaders() };
       if (options.json) {
         headers["Content-Type"] = "application/json";
         options.body = JSON.stringify(options.json);
       }
-      return fetch(path, { ...options, headers }).then(async (resp) => {
+      return fetch(apiUrl(path), { ...options, headers }).then(async (resp) => {
         const text = await resp.text();
         let data = {};
         try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
@@ -2226,12 +2829,14 @@
         "goal.image.pipeline": "文案+创意图片",
         "hifly.video.create_by_tts": "必火数字人",
         "ip_content_daily": "IP日更文案",
+        "douyin_leads": "抖音获客",
       }[capabilityId] || capabilityId || "定时任务";
     }
 
     function taskCapabilityId(row) {
       const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
       if (row && row.task_kind === "ip_content_daily") return "ip_content_daily";
+      if (row && row.task_kind === "douyin_leads") return "douyin_leads";
       return String(payload.capability_id || "");
     }
 
@@ -2611,6 +3216,7 @@
     function renderOfficeEmployees() {
       const floor = $("employeeFloor");
       if (!floor) return;
+      const voiceFab = `<div class="office-voice-fab-wrap"><button class="office-voice-entry" type="button" data-home-target="voice" aria-label="进入语音输入"><span class="voice-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path></svg></span></button></div>`;
       const devices = state.devices || [];
       const snapshots = devices.map((device) => ({ device, snapshot: deviceSnapshot(device) }));
       const workingCount = snapshots.filter((row) => row.snapshot.mode === "working").length;
@@ -2636,12 +3242,12 @@
       const metrics = employeeLayoutMetrics(Math.max(pageDevices.length, 1));
       floor.style.minHeight = `${metrics.minHeight}px`;
       if (!devices.length) {
-        floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="office-empty">暂未检测到 online 员工。电脑端启动并登录后，这里会出现它的办公位。</div>`;
+        floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="office-empty"><div class="office-empty-copy">暂未检测到 online 员工。电脑端启动并登录后，这里会出现它的办公位。</div></div><div class="office-voice-fab-wrap"><button class="office-voice-entry" type="button" data-home-target="voice" aria-label="进入语音输入"><span class="voice-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path></svg></span></button></div>`;
         return;
       }
       if (!visibleDevices.length) {
         const label = officeFilterLabel(state.officeDeviceFilter);
-        floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="office-filter-note">${escapeHtml(label)}</div><div class="office-empty">当前没有${escapeHtml(label || "符合条件的员工")}。</div>`;
+        floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="office-filter-note">${escapeHtml(label)}</div><div class="office-empty"><div class="office-empty-copy">当前没有${escapeHtml(label || "符合条件的员工")}。</div></div><div class="office-voice-fab-wrap"><button class="office-voice-entry" type="button" data-home-target="voice" aria-label="进入语音输入"><span class="voice-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path></svg></span></button></div>`;
         return;
       }
       const filterNote = state.officeDeviceFilter !== "all"
@@ -2673,6 +3279,7 @@
       floor.insertAdjacentHTML("afterbegin", `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button>`);
       if (pager) floor.insertAdjacentHTML("afterbegin", pager);
       if (filterNote) floor.insertAdjacentHTML("afterbegin", filterNote);
+      floor.insertAdjacentHTML("beforeend", voiceFab);
     }
 
     function collectPlatforms(row) {
@@ -2868,6 +3475,147 @@
     function taskDetailHtml(run) {
       const payload = run && run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
       const sections = [];
+      function renderTaskDetailSection(title, rows) {
+        const normalizedRows = Array.isArray(rows)
+          ? rows.filter((row) => Array.isArray(row) && String(row[1] == null ? "" : row[1]).trim() !== "")
+          : [];
+        if (!normalizedRows.length) return "";
+        return `<div class="task-detail-section"><h4>${escapeHtml(title)}</h4>${normalizedRows.map(([label, value]) => `<div class="task-detail-record"><strong>${escapeHtml(label)}</strong><pre>${escapeHtml(String(value))}</pre></div>`).join("")}</div>`;
+      }
+      function renderTaskDetailRecord(title, lines) {
+        const normalizedLines = (Array.isArray(lines) ? lines : [lines]).map((line) => String(line == null ? "" : line).trim()).filter(Boolean);
+        if (!title && !normalizedLines.length) return "";
+        return `<div class="task-detail-record"><strong>${escapeHtml(title || "结果")}</strong>${normalizedLines.map((line) => `<pre>${escapeHtml(line)}</pre>`).join("")}</div>`;
+      }
+      function douyinLeadActionLabel(action) {
+        return ((DOUYIN_TASK_ACTIONS[action] || {}).label || action || "抖音获客");
+      }
+      function renderDouyinLeadSummary(data) {
+        const action = String(data.action || "").trim();
+        const stats = data.stats && typeof data.stats === "object" ? data.stats : {};
+        const finalStatus = data.final_status && typeof data.final_status === "object" ? data.final_status : {};
+        const finalState = finalStatus.state && typeof finalStatus.state === "object" ? finalStatus.state : {};
+        const rows = [["任务类型", douyinLeadActionLabel(action)]];
+        if (action === "search_collect") {
+          rows.push(
+            ["执行模式", data.search_mode === "script" ? "脚本模式" : (data.search_mode || "")],
+            ["执行账号", data.account_id || ""],
+            ["搜索视频", data.search_videos_total != null ? `${compactNumber(data.search_videos_total)} 个` : (data.total != null ? `${compactNumber(data.total)} 个` : "")],
+            ["采集客户", stats.comments_collected != null ? `${compactNumber(stats.comments_collected)} 人` : ""],
+            ["精准客户", stats.high_intent_users != null ? `${compactNumber(stats.high_intent_users)} 人` : ""],
+          );
+        } else if (action === "tasks_from_search") {
+          rows.push(
+            ["本次同步", data.selected_total != null ? `${compactNumber(data.selected_total)} 条` : ""],
+            ["任务池累计", data.total != null ? `${compactNumber(data.total)} 条` : ""],
+          );
+        } else if (action === "comment_collect") {
+          rows.push(
+            ["任务总数", stats.tasks_total != null ? compactNumber(stats.tasks_total) : ""],
+            ["已完成任务", stats.tasks_completed != null ? compactNumber(stats.tasks_completed) : ""],
+            ["评论采集数", stats.comments_collected != null ? compactNumber(stats.comments_collected) : ""],
+            ["高意向客户", stats.high_intent_users != null ? compactNumber(stats.high_intent_users) : ""],
+          );
+        } else if (action === "interaction") {
+          rows.push(
+            ["目标客户", stats.users_total != null ? compactNumber(stats.users_total) : ""],
+            ["已处理", finalState.processed != null ? compactNumber(finalState.processed) : ""],
+            ["成功人数", stats.users_success != null ? compactNumber(stats.users_success) : ""],
+            ["失败人数", stats.users_failed != null ? compactNumber(stats.users_failed) : ""],
+          );
+        } else {
+          rows.push(
+            ["结果数量", data.total != null ? compactNumber(data.total) : ""],
+            ["任务总数", stats.tasks_total != null ? compactNumber(stats.tasks_total) : ""],
+            ["用户总数", stats.users_total != null ? compactNumber(stats.users_total) : ""],
+          );
+        }
+        return renderTaskDetailSection("任务概览", rows);
+      }
+      function renderDouyinLeadPreview(data) {
+        const action = String(data.action || "").trim();
+        const rows = [];
+        if (action === "search_collect") {
+          const items = Array.isArray(data.items) ? data.items : [];
+          const selectedVideo = data.selected_video && typeof data.selected_video === "object" ? data.selected_video : {};
+          const selectedLines = [
+            selectedVideo.author ? `作者：${selectedVideo.author}` : "",
+            selectedVideo.url ? `视频链接：${selectedVideo.url}` : "",
+            stats.comments_collected != null ? `采集客户：${compactNumber(stats.comments_collected)} 人` : "",
+            stats.high_intent_users != null ? `精准客户：${compactNumber(stats.high_intent_users)} 人` : "",
+          ].filter(Boolean);
+          if (selectedLines.length || selectedVideo.title) {
+            rows.push(renderTaskDetailRecord(`首个采集视频${selectedVideo.title ? ` · ${selectedVideo.title}` : ""}`, selectedLines));
+          }
+          items.slice(0, 6).forEach((row, idx) => {
+            const item = row && typeof row === "object" ? row : {};
+            const title = String(item.title || item.desc || item.aweme_id || `结果 ${idx + 1}`).trim();
+            const meta = [
+              item.author_name || item.author ? `作者：${item.author_name || item.author}` : "",
+              item.likes != null ? `点赞：${compactNumber(item.likes)}` : "",
+              item.comments != null ? `评论：${compactNumber(item.comments)}` : "",
+              item.publish_time ? `发布时间：${item.publish_time}` : "",
+            ].filter(Boolean).join(" · ");
+            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title || `结果 ${idx + 1}`}`, meta));
+          });
+          if (!rows.length) return "";
+          return `<div class="task-detail-section"><h4>搜索结果与采集结果</h4>${rows.join("")}</div>`;
+        }
+        if (action === "comment_collect") {
+          const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+          tasks.slice(0, 6).forEach((row, idx) => {
+            const item = row && typeof row === "object" ? row : {};
+            const title = String(item.title || item.url || item.id || `任务 ${idx + 1}`).trim();
+            const meta = [
+              item.status ? `状态：${item.status}` : "",
+              item.comment_count != null ? `评论：${compactNumber(item.comment_count)}` : "",
+              item.high_intent_count != null ? `高意向：${compactNumber(item.high_intent_count)}` : "",
+              item.author ? `作者：${item.author}` : "",
+            ].filter(Boolean).join(" · ");
+            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title || `任务 ${idx + 1}`}`, meta));
+          });
+          if (!rows.length) return "";
+          return `<div class="task-detail-section"><h4>评论任务预览</h4>${rows.join("")}</div>`;
+        }
+        if (action === "interaction") {
+          const users = Array.isArray(data.users) ? data.users : [];
+          users.slice(0, 6).forEach((row, idx) => {
+            const item = row && typeof row === "object" ? row : {};
+            const title = String(item.nickname || item.name || item.user_name || item.uid || `客户 ${idx + 1}`).trim();
+            const meta = [
+              item.interaction_status ? `状态：${item.interaction_status}` : "",
+              item.interaction_account_id ? `执行账号：${item.interaction_account_id}` : "",
+              item.uid ? `用户ID：${item.uid}` : "",
+              item.sec_uid ? `SecUID：${item.sec_uid}` : "",
+            ].filter(Boolean).join(" · ");
+            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title || `客户 ${idx + 1}`}`, meta));
+          });
+          if (!rows.length) return "";
+          return `<div class="task-detail-section"><h4>私信结果预览</h4>${rows.join("")}</div>`;
+        }
+        if (action === "tasks_from_search") {
+          const rawResult = data.raw_result && typeof data.raw_result === "object" ? data.raw_result : {};
+          const lines = [
+            rawResult.msg || "",
+            data.selected_total != null ? `本次同步 ${compactNumber(data.selected_total)} 条` : "",
+            data.total != null ? `任务池当前累计 ${compactNumber(data.total)} 条` : "",
+          ].filter(Boolean);
+          if (!lines.length) return "";
+          return `<div class="task-detail-section"><h4>同步结果</h4>${renderTaskDetailRecord("任务池写入", lines)}</div>`;
+        }
+        const genericRows = Array.isArray(data.items) ? data.items
+          : Array.isArray(data.tasks) ? data.tasks
+          : Array.isArray(data.users) ? data.users
+          : Array.isArray(data.rows) ? data.rows
+          : [];
+        if (!genericRows.length) return "";
+        return `<div class="task-detail-section"><h4>结果预览</h4>${genericRows.slice(0, 6).map((row, idx) => {
+          const item = row && typeof row === "object" ? row : {};
+          const title = String(item.title || item.desc || item.content || item.nickname || item.name || item.aweme_id || `结果 ${idx + 1}`).trim();
+          const sub = String(item.author_name || item.author || item.user_name || item.account_name || item.uid || item.sec_uid || "").trim();
+          return renderTaskDetailRecord(`${idx + 1}. ${title || `结果 ${idx + 1}`}`, sub);
+        }).join("")}</div>`;
+      }
       if (payload.ip_content_daily) {
         const groups = Array.isArray(payload.groups) ? payload.groups : [];
         sections.push(`<div class="task-detail-section"><h4>IP日更文案</h4>${groups.map((group) => {
@@ -2885,7 +3633,12 @@
       }
       const text = run.error || run.result_text || (run.progress && (run.progress.text || run.progress.message)) || "";
       sections.push(`<div class="task-detail-section"><h4>结果 / 状态</h4><pre>${escapeHtml(text || statusText(run.status))}</pre></div>`);
-      if (!payload.ip_content_daily) {
+      if (payload.task_kind === "douyin_leads") {
+        const summaryHtml = renderDouyinLeadSummary(payload);
+        if (summaryHtml) sections.push(summaryHtml);
+        const previewHtml = renderDouyinLeadPreview(payload);
+        if (previewHtml) sections.push(previewHtml);
+      } else if (!payload.ip_content_daily) {
         sections.push(`<div class="task-detail-section"><h4>原始结果</h4><pre>${escapeHtml(JSON.stringify(payload || {}, null, 2))}</pre></div>`);
       }
       return sections.join("");
@@ -3002,6 +3755,7 @@
         home: ["安排工作", "远程任务、消息和执行记录"],
         workList: ["工作列表", "已完成、当前和待执行的工作节点"],
         messages: ["手机会话", "消息结果和素材预览"],
+        voice: ["龙虾AI语音助手", ""],
         profile: ["个人中心", "账号、设置和执行记录"],
         douyinLeads: ["抖音获客", "先看账号与机器状态，再安排采集、评论和私信任务"],
         douyinLeadsSchedule: ["安排抖音获客", "按当前在线设备给抖音账号下发具体获客工作"],
@@ -3012,6 +3766,7 @@
       $("topBackBtn").classList.toggle("hidden", key === "office");
       $("topActions").classList.toggle("hidden", key !== "office" || !state.token);
       $("topbar").classList.toggle("subpage", key !== "office");
+      $("topbar").classList.toggle("voice-page", key === "voice");
       if (key === "office") renderOfficeEmployees();
       if (key !== "office") closeEmployeeModal();
       if (key === "profile") Promise.all([loadTasks(), loadRuns()]);
@@ -3027,11 +3782,19 @@
         renderDouyinTaskDetailFields();
         updateDouyinScheduleFields();
       }
+      if (key !== "messages") {
+        if (key !== "voice" && state.lastViewBeforeMessages === "voice") {
+          state.lastViewBeforeMessages = "";
+        }
+      }
       if (key === "messages") setTimeout(() => {
         autosizeMessageInput();
         scrollMessagesToBottom();
         focusMessageInput();
       }, 80);
+      if (key === "voice") setTimeout(() => {
+        syncVoiceDraftDisplay();
+      }, 40);
     }
 
     function setMessageTemplate(text) {
@@ -3043,8 +3806,616 @@
       setTimeout(scrollMessagesToBottom, 80);
     }
 
+    function voiceMockText() {
+      return state.voiceDraft || "帮我分析一下第二季度的销售数据，并生成可视化报表。";
+    }
+
+    function currentVoiceText() {
+      return String(state.voiceDraft || state.voicePartial || "").trim();
+    }
+
+    function resetVoiceIntent() {
+      state.voiceIntent = null;
+      state.voiceActions = [];
+    }
+
+    function voiceIntentLabel(intent) {
+      const mapping = {
+        image_generate: "生成图片",
+        video_generate: "生成视频",
+        creative_storyboard_video: "生成创意分镜",
+        douyin_leads_task: "创建抖音获客任务",
+        copywriting: "生成文案",
+        schedule_task: "安排定时任务",
+        chat_freeform: "发送到消息页",
+        unknown: "继续补充参数",
+      };
+      return mapping[String(intent || "").trim()] || "继续补充参数";
+    }
+
+    function normalizeVoiceDouyinAction(action) {
+      const raw = String(action || "").trim();
+      if (!raw) return "search_collect";
+      if (raw === "video_comment") return "comment_collect";
+      if (raw === "direct_message") return "interaction";
+      if (raw === "monitor_peer") return "tasks_from_search";
+      return DOUYIN_TASK_ACTIONS[raw] ? raw : "search_collect";
+    }
+
+    function voiceSlotEntries(intentPayload) {
+      const payload = intentPayload && typeof intentPayload === "object" ? intentPayload : {};
+      const slots = payload.slots && typeof payload.slots === "object" ? payload.slots : {};
+      const entries = [];
+      if (slots.duration_seconds != null) entries.push(["时长", `${slots.duration_seconds} 秒`]);
+      if (slots.aspect_ratio) entries.push(["比例", String(slots.aspect_ratio)]);
+      if (slots.keyword) entries.push(["关键词", String(slots.keyword)]);
+      if (slots.action) entries.push(["获客动作", (DOUYIN_TASK_ACTIONS[normalizeVoiceDouyinAction(slots.action)] || {}).label || String(slots.action)]);
+      if (slots.comment_mode) entries.push(["评论模式", String(slots.comment_mode)]);
+      if (slots.comment_text) entries.push(["评论内容", String(slots.comment_text)]);
+      if (slots.dm_mode) entries.push(["私信模式", String(slots.dm_mode)]);
+      if (slots.dm_text) entries.push(["私信内容", String(slots.dm_text)]);
+      return entries.filter((item) => String(item[1] || "").trim());
+    }
+
+    function buildVoiceExecutionPlan() {
+      const payload = state.voiceIntent && typeof state.voiceIntent === "object" ? state.voiceIntent : null;
+      const draftText = String((payload && payload.draft_text) || state.voiceDraft || "").trim();
+      if (!draftText) return null;
+      const intent = String((payload && payload.intent) || "").trim();
+      const slots = payload && payload.slots && typeof payload.slots === "object" ? payload.slots : {};
+      const baseMissing = Array.isArray(payload && payload.missing_slots)
+        ? payload.missing_slots.map((item) => String(item || "").trim()).filter(Boolean)
+        : [];
+      if (intent === "image_generate") {
+        return {
+          kind: "image_generate",
+          direct: true,
+          title: "直接创建图片任务",
+          description: "确认后会按识别出的提示词直接下发图片生成。",
+          content: draftText,
+          payload: { prompt: draftText },
+          missing: baseMissing,
+        };
+      }
+      if (intent === "creative_storyboard_video") {
+        return {
+          kind: "creative_storyboard_video",
+          direct: true,
+          title: "直接创建创意分镜任务",
+          description: "确认后会直接走创意分镜生成链路。",
+          content: draftText,
+          payload: {
+            source_mode: "ai_image",
+            candidate_group: "",
+            prompt: draftText,
+          },
+          missing: baseMissing,
+        };
+      }
+      if (intent === "video_generate") {
+        return {
+          kind: "video_generate",
+          direct: true,
+          title: "直接创建视频任务",
+          description: "确认后会直接按当前语音内容下发视频生成任务。",
+          content: draftText,
+          payload: {
+            source_mode: "ai_image",
+            candidate_group: "",
+            prompt: draftText,
+          },
+          missing: baseMissing,
+        };
+      }
+      if (intent === "douyin_leads_task") {
+        const action = normalizeVoiceDouyinAction(slots.action);
+        const taskPayload = { action, params: {} };
+        const requiredMissing = [];
+        if (slots.keyword) {
+          taskPayload.params.keyword = String(slots.keyword).trim();
+          taskPayload.params.query = taskPayload.params.keyword;
+          taskPayload.params.search_keyword = taskPayload.params.keyword;
+        }
+        if (action === "search_collect") {
+          taskPayload.params.mode = "script";
+          const regions = Array.isArray(slots.regions) && slots.regions.length
+            ? slots.regions.map((item) => String(item || "").trim()).filter(Boolean)
+            : ["全国"];
+          taskPayload.params.regions = regions;
+          taskPayload.params.region_list = regions;
+          taskPayload.params.area_list = regions;
+          taskPayload.params.region_mode = regions.includes("全国") ? "nationwide" : "custom";
+          if (!taskPayload.params.keyword) requiredMissing.push("keyword");
+        }
+        if (action === "comment_collect") {
+          const mode = String(slots.comment_mode || "fixed").trim();
+          const text = String(slots.comment_text || "").trim();
+          taskPayload.params.comment_mode = mode;
+          taskPayload.params.content_mode = mode;
+          taskPayload.params.comment_text = text;
+          taskPayload.params.reply_text = text;
+          taskPayload.params.comment_content = text;
+          if (!text) requiredMissing.push("comment_text");
+        }
+        if (action === "interaction") {
+          const mode = String(slots.dm_mode || "fixed").trim();
+          const text = String(slots.dm_text || "").trim();
+          taskPayload.params.dm_mode = mode;
+          taskPayload.params.private_message_mode = mode;
+          taskPayload.params.message = text;
+          taskPayload.params.dm_text = text;
+          taskPayload.params.private_message = text;
+          if (!text) requiredMissing.push("dm_text");
+        }
+        if (action === "tasks_from_search" && !taskPayload.params.keyword) {
+          requiredMissing.push("keyword");
+        }
+        const missing = Array.from(new Set(requiredMissing));
+        return {
+          kind: "douyin_leads_task",
+          direct: missing.length === 0,
+          title: missing.length ? "继续补充抖音获客参数" : "直接创建抖音获客任务",
+          description: missing.length
+            ? "还缺少少量参数，去安排工作页补充后就能下发。"
+            : "确认后会直接下发到当前在线设备执行。",
+          content: draftText,
+          payload: taskPayload,
+          missing: Array.from(new Set(missing)),
+        };
+      }
+      return {
+        kind: intent || "chat_freeform",
+        direct: false,
+        title: "继续补充参数",
+        description: "这条内容更适合先进入消息页整理后再执行。",
+        content: draftText,
+        payload: null,
+        missing: baseMissing,
+      };
+    }
+
+    function renderVoiceIntentPanel() {
+      const panel = $("voiceIntentPanel");
+      const badge = $("voiceIntentBadge");
+      const summary = $("voiceIntentSummary");
+      const slotsHost = $("voiceIntentSlots");
+      const missingHost = $("voiceIntentMissing");
+      const primaryHost = $("voicePrimaryAction");
+      const secondaryHost = $("voiceSecondaryActionsList");
+      if (!panel || !badge || !summary || !slotsHost || !missingHost || !primaryHost || !secondaryHost) return;
+
+      const payload = state.voiceIntent && typeof state.voiceIntent === "object" ? state.voiceIntent : null;
+      const plan = buildVoiceExecutionPlan();
+      if (!state.voiceDraft) {
+        panel.classList.remove("show");
+        badge.textContent = "待识别";
+        summary.textContent = "识别完成后，这里会告诉你当前更像是哪一种任务。";
+        slotsHost.classList.add("hidden");
+        missingHost.classList.add("hidden");
+        primaryHost.innerHTML = "";
+        secondaryHost.innerHTML = "";
+        return;
+      }
+
+      panel.classList.add("show");
+      if (state.voiceStatus === "understanding" && !payload) {
+        badge.textContent = "AI 理解中";
+        summary.textContent = "正在分析这段语音对应的任务类型和参数，请稍等片刻。";
+        slotsHost.innerHTML = "";
+        slotsHost.classList.add("hidden");
+        missingHost.innerHTML = "";
+        missingHost.classList.add("hidden");
+        primaryHost.innerHTML = `
+          <button class="voice-action-card voice-secondary-card" type="button" disabled>
+            <div class="voice-action-icon">析</div>
+            <div class="voice-action-content">
+              <strong>AI 正在理解任务</strong>
+              <span>马上就会给出可直接执行或继续补充的建议动作</span>
+            </div>
+            <div class="voice-action-arrow">…</div>
+          </button>
+        `;
+        secondaryHost.innerHTML = "";
+        return;
+      }
+      const intent = String((payload && payload.intent) || "unknown").trim();
+      const confidence = Number((payload && payload.confidence) || 0);
+      badge.textContent = `${voiceIntentLabel(intent)}${confidence ? ` · ${Math.round(confidence * 100)}%` : ""}`;
+      summary.textContent = plan ? plan.description : "识别到了语音内容，建议继续补充参数。";
+
+      const slotRows = payload ? voiceSlotEntries(payload) : [];
+      if (slotRows.length) {
+        slotsHost.innerHTML = slotRows.map(([label, value]) => `
+          <div class="voice-slot-row">
+            <strong>${escapeHtml(label)}</strong>
+            <span>${escapeHtml(String(value || ""))}</span>
+          </div>
+        `).join("");
+        slotsHost.classList.remove("hidden");
+      } else {
+        slotsHost.innerHTML = "";
+        slotsHost.classList.add("hidden");
+      }
+
+      const missing = plan && Array.isArray(plan.missing) ? plan.missing : [];
+      if (false && missing.length) {
+        missingHost.innerHTML = missing.map((item) => `
+          <div class="voice-missing-row">
+            <strong>待补充</strong>
+            <span>${escapeHtml(String(item || ""))}</span>
+          </div>
+        `).join("");
+        missingHost.classList.remove("hidden");
+      } else {
+        missingHost.innerHTML = "";
+        missingHost.classList.add("hidden");
+      }
+
+      if (plan) {
+        primaryHost.innerHTML = `
+          <button class="voice-action-card voice-primary-card ${plan.direct ? "" : "warn"}" type="button" data-voice-plan-action="${plan.direct ? "execute" : "refine"}">
+            <div class="voice-action-icon">${escapeHtml(plan.direct ? "执" : "补")}</div>
+            <div class="voice-action-content">
+              <strong>${escapeHtml(plan.title)}</strong>
+              <span>${escapeHtml(plan.description)}</span>
+            </div>
+            <div class="voice-action-arrow">→</div>
+          </button>
+        `;
+      } else {
+        primaryHost.innerHTML = "";
+      }
+
+      const actions = Array.isArray(state.voiceActions) ? state.voiceActions : [];
+      secondaryHost.innerHTML = actions.map((item, index) => {
+        const label = escapeHtml(String(item && item.label || `动作 ${index + 1}`));
+        const kind = String(item && item.kind || "");
+        const desc = kind === "submit_message"
+          ? "会下发到龙虾盒子中执行，处理完成后再把结果回给你"
+          : "会在当前对话里继续整理和补充，适合先把内容说完整";
+        return `
+          <button class="voice-action-card voice-secondary-card" type="button" data-voice-action-index="${index}">
+            <div class="voice-action-icon">${escapeHtml(label.slice(0, 1) || "动")}</div>
+            <div class="voice-action-content">
+              <strong>${label}</strong>
+              <span>${escapeHtml(desc)}</span>
+            </div>
+            <div class="voice-action-arrow">→</div>
+          </button>
+        `;
+      }).join("");
+    }
+
+    function renderVoiceActionCards() {
+      renderVoiceIntentPanel();
+    }
+
+    function syncVoiceDraftDisplay() {
+      const output = $("voiceTextOutput");
+      const cards = $("voiceActionCards");
+      const intentPanel = $("voiceIntentPanel");
+      const shell = $("voiceShell");
+      const meta = $("voiceResultMeta");
+      const toggleBtn = $("voiceExpandBtn");
+      const secondaryActions = document.querySelector(".voice-secondary-actions");
+      if (!output || !cards || !shell || !intentPanel) return;
+      const applyVoiceTextLayout = (rawText, mode) => {
+        const text = String(rawText || "").trim();
+        const longText = text.length >= 56 || text.includes("\n");
+        const expanded = !!state.voiceExpanded;
+        if (meta) meta.classList.toggle("show", longText && mode === "draft");
+        output.classList.toggle("long-text", longText);
+        output.classList.toggle("collapsed", longText && mode === "draft" && !expanded);
+        if (toggleBtn) {
+          toggleBtn.textContent = expanded ? "收起内容" : "展开全文";
+        }
+        return { text, longText };
+      };
+      if (state.voiceRecording) {
+        shell.classList.add("is-recording");
+        const previewText = String(state.voicePartial || "").trim();
+        if (meta) meta.classList.remove("show");
+        if (secondaryActions) secondaryActions.classList.remove("show");
+        output.classList.remove("long-text", "collapsed");
+        output.textContent = previewText || "正在聆听...";
+        output.classList.toggle("active", !!previewText);
+        cards.classList.remove("show");
+        intentPanel.classList.remove("show");
+        return;
+      }
+      shell.classList.remove("is-recording");
+      if (state.voiceStatus === "recognizing") {
+        const previewText = String(state.voicePartial || "").trim();
+        if (meta) meta.classList.remove("show");
+        if (secondaryActions) secondaryActions.classList.remove("show");
+        output.classList.remove("long-text", "collapsed");
+        output.textContent = previewText || "正在识别...";
+        output.classList.toggle("active", !!previewText);
+        cards.classList.remove("show");
+        intentPanel.classList.remove("show");
+        return;
+      }
+      if (state.voiceDraft) {
+        const formatted = applyVoiceTextLayout(state.voiceDraft, "draft");
+        output.textContent = formatted.longText ? state.voiceDraft : state.voiceDraft;
+        output.classList.add("active");
+        cards.classList.add("show");
+        renderVoiceIntentPanel();
+        if (secondaryActions) secondaryActions.classList.add("show");
+      } else {
+        if (meta) meta.classList.remove("show");
+        if (secondaryActions) secondaryActions.classList.remove("show");
+        output.classList.remove("long-text", "collapsed");
+        output.textContent = "等待您的指令...";
+        output.classList.remove("active");
+        cards.classList.remove("show");
+        intentPanel.classList.remove("show");
+      }
+    }
+
+    function cleanupVoiceRuntime() {
+      if (state.voiceProcessor) {
+        try { state.voiceProcessor.disconnect(); } catch {}
+        state.voiceProcessor.onaudioprocess = null;
+        state.voiceProcessor = null;
+      }
+      if (state.voiceSourceNode) {
+        try { state.voiceSourceNode.disconnect(); } catch {}
+        state.voiceSourceNode = null;
+      }
+      if (state.voiceMediaStream) {
+        try { state.voiceMediaStream.getTracks().forEach((track) => track.stop()); } catch {}
+        state.voiceMediaStream = null;
+      }
+      if (state.voiceAudioContext) {
+        try { state.voiceAudioContext.close(); } catch {}
+        state.voiceAudioContext = null;
+      }
+      if (state.voiceWs) {
+        try { state.voiceWs.close(); } catch {}
+        state.voiceWs = null;
+      }
+    }
+
+    function downsampleBuffer(buffer, inputRate, outputRate) {
+      if (!buffer || outputRate >= inputRate) return buffer;
+      const ratio = inputRate / outputRate;
+      const newLength = Math.round(buffer.length / ratio);
+      const result = new Float32Array(newLength);
+      let offsetResult = 0;
+      let offsetBuffer = 0;
+      while (offsetResult < result.length) {
+        const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+        let accum = 0;
+        let count = 0;
+        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i += 1) {
+          accum += buffer[i];
+          count += 1;
+        }
+        result[offsetResult] = count ? accum / count : 0;
+        offsetResult += 1;
+        offsetBuffer = nextOffsetBuffer;
+      }
+      return result;
+    }
+
+    function floatTo16BitPCM(floatBuffer) {
+      const output = new Int16Array(floatBuffer.length);
+      for (let i = 0; i < floatBuffer.length; i += 1) {
+        const value = Math.max(-1, Math.min(1, floatBuffer[i]));
+        output[i] = value < 0 ? value * 0x8000 : value * 0x7fff;
+      }
+      return output;
+    }
+
+    function voiceWsUrl() {
+      const base = H5_API_BASE.replace(/^http/i, "ws").replace(/^https/i, "wss").replace(/\/$/, "");
+      const params = new URLSearchParams();
+      params.set("token", state.token || "");
+      const installationId = localStorage.getItem("installation_id") || "";
+      if (installationId) params.set("installation_id", installationId);
+      return `${base}/api/h5-chat/voice/session?${params.toString()}`;
+    }
+
+    async function openVoiceRealtimeSession() {
+      if (!state.token) throw new Error("请先登录后再使用语音输入");
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("当前浏览器不支持麦克风录音");
+      }
+      cleanupVoiceRuntime();
+      state.voiceDraft = "";
+      state.voicePartial = "";
+      state.voiceExpanded = false;
+      resetVoiceIntent();
+
+      const ws = new WebSocket(voiceWsUrl());
+      ws.binaryType = "arraybuffer";
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (fn, value) => {
+          if (settled) return;
+          settled = true;
+          fn(value);
+        };
+        ws.onopen = () => finish(resolve);
+        ws.onerror = () => finish(reject, new Error("语音会话连接失败"));
+        ws.onclose = () => {
+          if (!settled) finish(reject, new Error("语音会话已关闭"));
+        };
+      });
+      state.voiceWs = ws;
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(String(event.data || "{}"));
+          const type = String(payload.type || "");
+          if (type === "listening") {
+            state.voiceStatus = "recording";
+            syncVoiceDraftDisplay();
+            return;
+          }
+          if (type === "partial") {
+            state.voiceStatus = "recognizing";
+            state.voicePartial = String(payload.text || "").trim();
+            syncVoiceDraftDisplay();
+            return;
+          }
+          if (type === "final") {
+            state.voiceStatus = "understanding";
+            state.voicePartial = "";
+            state.voiceDraft = String(payload.text || "").trim();
+            state.voiceExpanded = false;
+            resetVoiceIntent();
+            syncVoiceDraftDisplay();
+            return;
+          }
+          if (type === "intent") {
+            state.voiceStatus = "resolved";
+            state.voiceIntent = payload;
+            state.voiceActions = Array.isArray(payload.actions) ? payload.actions : [];
+            cleanupVoiceRuntime();
+            renderVoiceActionCards();
+            syncVoiceDraftDisplay();
+            return;
+          }
+          if (type === "error") {
+            state.voiceStatus = "error";
+            cleanupVoiceRuntime();
+            toast(String(payload.message || "语音识别失败"));
+            syncVoiceDraftDisplay();
+          }
+        } catch (err) {
+          console.warn("voice message parse failed", err);
+        }
+      };
+      ws.onclose = () => {
+        state.voiceWs = null;
+      };
+      ws.send(JSON.stringify({ type: "start", format: "pcm_s16le", sample_rate: 16000, channels: 1 }));
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioContext.state === "suspended") {
+        try { await audioContext.resume(); } catch {}
+      }
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(2048, 1, 1);
+      processor.onaudioprocess = (audioEvent) => {
+        if (!state.voiceRecording || !state.voiceWs || state.voiceWs.readyState !== WebSocket.OPEN) return;
+        const input = audioEvent.inputBuffer.getChannelData(0);
+        const downsampled = downsampleBuffer(input, audioContext.sampleRate, 16000);
+        const pcm = floatTo16BitPCM(downsampled);
+        try {
+          state.voiceWs.send(pcm.buffer);
+          state.voiceSeq += 1;
+        } catch (err) {
+          console.warn("voice audio chunk send failed", err);
+        }
+      };
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      state.voiceMediaStream = stream;
+      state.voiceAudioContext = audioContext;
+      state.voiceSourceNode = source;
+      state.voiceProcessor = processor;
+      state.voiceStatus = "recording";
+    }
+
+    async function startVoiceCapture(evt) {
+      if (evt && evt.cancelable) evt.preventDefault();
+      if (state.voiceRecording) return;
+      state.voiceRecording = true;
+      if (state.voiceTimer) {
+        clearTimeout(state.voiceTimer);
+        state.voiceTimer = null;
+      }
+      try {
+        await openVoiceRealtimeSession();
+      } catch (err) {
+        state.voiceRecording = false;
+        state.voiceStatus = "error";
+        cleanupVoiceRuntime();
+        toast(err.message || "无法启动语音识别");
+      }
+      syncVoiceDraftDisplay();
+    }
+
+    function stopVoiceCapture(evt) {
+      if (!state.voiceRecording) return;
+      if (evt && evt.cancelable) evt.preventDefault();
+      state.voiceRecording = false;
+      state.voiceStatus = "recognizing";
+      if (state.voiceWs && state.voiceWs.readyState === WebSocket.OPEN) {
+        try { state.voiceWs.send(JSON.stringify({ type: "stop" })); } catch {}
+      }
+      syncVoiceDraftDisplay();
+      state.voiceTimer = setTimeout(() => {
+        if (!state.voiceDraft && !state.voicePartial) {
+          cleanupVoiceRuntime();
+          state.voiceStatus = "idle";
+        }
+        syncVoiceDraftDisplay();
+      }, 2500);
+    }
+
+    function setOfficeVoiceButtonPressed(pressed) {
+      document.querySelectorAll(".office-voice-entry").forEach((btn) => {
+        btn.classList.toggle("is-pressing", !!pressed);
+      });
+    }
+
+    async function startOfficeVoiceCapture(evt) {
+      if (evt && evt.cancelable) evt.preventDefault();
+      if (state.officeVoiceHoldActive || state.voiceRecording) return;
+      state.officeVoiceHoldActive = true;
+      setOfficeVoiceButtonPressed(true);
+      switchTab("voice");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await startVoiceCapture(evt);
+    }
+
+    function stopOfficeVoiceCapture(evt) {
+      if (!state.officeVoiceHoldActive) return;
+      state.officeVoiceHoldActive = false;
+      setOfficeVoiceButtonPressed(false);
+      stopVoiceCapture(evt);
+    }
+
+    function clearVoiceDraft() {
+      state.voiceDraft = "";
+      state.voicePartial = "";
+      state.voiceExpanded = false;
+      if (state.voiceTimer) {
+        clearTimeout(state.voiceTimer);
+        state.voiceTimer = null;
+      }
+      state.voiceRecording = false;
+      state.officeVoiceHoldActive = false;
+      setOfficeVoiceButtonPressed(false);
+      state.voiceStatus = "idle";
+      resetVoiceIntent();
+      cleanupVoiceRuntime();
+      syncVoiceDraftDisplay();
+    }
+
+    function sendVoiceDraftToMessages(submitNow = false, prefix = "", explicitContent = "") {
+      const draft = String(explicitContent || state.voiceDraft || state.voicePartial || "").trim();
+      if (!draft) {
+        toast("请先录入一段语音内容");
+        return;
+      }
+      const finalText = `${prefix || ""}${draft}`.trim();
+      state.lastViewBeforeMessages = "voice";
+      switchTab("messages");
+      setMessageTemplate(finalText);
+      if (submitNow) {
+        setTimeout(() => {
+          $("sendForm")?.requestSubmit();
+        }, 120);
+      }
+    }
+
     async function refreshCaptcha() {
-      const data = await fetch("/auth/captcha").then((r) => r.json());
+      const data = await fetch(apiUrl("/auth/captcha")).then((r) => r.json());
       $("captchaId").value = data.captcha_id || "";
       $("captchaImg").src = data.image || "";
       $("captcha").value = "";
@@ -3716,6 +5087,7 @@
       }
       if (action === "search_collect") {
         if (!keyword) throw new Error("请先填写行业关键词");
+        params.mode = "script";
         const regions = Array.from(document.querySelectorAll("[data-douyin-region]:checked")).map((el) => String(el.value || "").trim()).filter(Boolean);
         params.region_mode = regions.includes("全国") ? "nationwide" : "custom";
         params.regions = regions;
@@ -3749,28 +5121,56 @@
       const metricGrid = $("douyinMetricGrid");
       const accountHint = $("douyinLeadsAccountHint");
       const runtimeHint = $("douyinRuntimeHint");
-      if (accountHint) accountHint.textContent = accounts.length ? `在线 ${Number(data.online_accounts || 0)} / ${accounts.length}` : "暂无账号";
+      const normalizedAccounts = accounts.map((row) => {
+        const accountId = row && row.account_id != null ? row.account_id : row && row.id != null ? row.id : "";
+        const nickname = String((row && (row.nickname || row.name)) || "").trim();
+        const installationId = String((row && row.installation_id) || "").trim();
+        const statusText = String((row && row.status) || "").trim().toLowerCase();
+        const online = row && Object.prototype.hasOwnProperty.call(row, "online")
+          ? !!row.online
+          : statusText === "online" || statusText === "active";
+        return {
+          accountId,
+          nickname,
+          installationId,
+          statusText,
+          online,
+          lastLogin: String((row && row.last_login) || "").trim(),
+        };
+      });
+      const onlineCount = normalizedAccounts.filter((row) => row.online).length;
+      const preferredAccountId = normalizedAccounts.find((row) => row.online)?.accountId
+        || normalizedAccounts[0]?.accountId
+        || "";
+      if (accountHint) accountHint.textContent = normalizedAccounts.length ? `在线 ${onlineCount} / ${normalizedAccounts.length}` : "暂无账号";
       if (accountList) {
-        if (!accounts.length) {
+        if (!normalizedAccounts.length) {
           accountList.innerHTML = '<div class="douyin-empty">当前还没有检测到抖音账号在线。等本机登录抖音后，这里会展示账号状态。</div>';
         } else {
-          accountList.innerHTML = accounts.slice(0, 1).map((row) => {
-            const online = String(row.status || "").toLowerCase() === "online";
-            const active = Number(data.active_account_id || 0) && Number(row.id || 0) === Number(data.active_account_id || 0);
+          accountList.innerHTML = normalizedAccounts.slice(0, 1).map((row) => {
+            const active = String(row.accountId || "") === String(preferredAccountId || "");
+            const title = row.nickname || `账号 ${row.accountId || "-"}`;
+            const sublineParts = [];
+            if (row.accountId !== "") sublineParts.push(`账号 ID ${escapeHtml(String(row.accountId))}`);
+            if (row.installationId) sublineParts.push(`设备 ${escapeHtml(row.installationId.slice(0, 8))}`);
+            if (row.lastLogin) sublineParts.push(`登录 ${escapeHtml(row.lastLogin.replace("T", " ").slice(0, 16))}`);
             return `<div class="douyin-account-item concise">
               <div>
-                <strong>${active ? "当前账号" : "抖音账号"} ${escapeHtml(String(row.id || "-"))}</strong>
-                <span>端口 ${escapeHtml(String(row.port || "-"))}${active ? " · 主账号" : ""}</span>
+                <strong>${active ? "当前账号" : "抖音账号"} ${escapeHtml(title)}</strong>
+                <span>${sublineParts.join(" · ") || "等待账号状态上报"}</span>
               </div>
-              <span class="douyin-badge ${online ? "success" : "warn"}">${online ? "在线" : "离线"}</span>
+              <span class="douyin-badge ${row.online ? "success" : "warn"}">${row.online ? "在线" : "离线"}</span>
             </div>`;
           }).join("");
         }
       }
+      const commentMessage = String(runtime.comment_message || "").trim();
+      const interactionMessage = String(runtime.interaction_message || "").trim();
+      const monitorMessage = String(runtime.monitor_message || "").trim();
       const runtimeRows = [
-        { label: "评论采集", active: !!runtime.follow_comment_running, text: runtime.follow_comment_running ? "任务正在执行中" : "当前没有运行中的评论任务" },
-        { label: "私信互动", active: !!runtime.interaction_running, text: runtime.interaction_running ? "任务正在执行中" : "当前没有运行中的私信任务" },
-        { label: "同行监控", active: !!(runtime.monitor_message || ""), text: runtime.monitor_message || "当前没有额外的监控提示" },
+        { label: "评论采集", active: !!commentMessage, text: commentMessage || "当前没有运行中的评论任务" },
+        { label: "私信互动", active: !!interactionMessage, text: interactionMessage || "当前没有运行中的私信任务" },
+        { label: "同行监控", active: !!monitorMessage, text: monitorMessage || "当前没有额外的监控提示" },
       ];
       if (runtimeHint) runtimeHint.textContent = runtimeRows.some((row) => row.active) ? "有任务在跑" : "当前空闲";
       if (runtimeList) {
@@ -3781,7 +5181,7 @@
         ["全部客户数据", metrics.all_customers || 0],
         ["精准客户数据", metrics.precise_customers || 0],
         ["已发送评论的视频数量", metrics.commented_videos || 0],
-        ["已发送私信的用户数量", metrics.dm_users || 0],
+        ["已发送私信的用户数量", metrics.private_messages_sent || metrics.dm_users || 0],
         ["监控同行任务数", metrics.monitor_tasks || 0],
         ["今日新增客户数", metrics.today_new_customers || 0],
         ["今日执行任务数", metrics.today_task_runs || 0],
@@ -3804,21 +5204,19 @@
       } catch (err) {
         state.douyinStatus = {
           accounts: [],
-          online_accounts: 0,
-          active_account_id: null,
           metrics: {
             collected_videos: 0,
             all_customers: 0,
             precise_customers: 0,
             commented_videos: 0,
-            dm_users: 0,
+            private_messages_sent: 0,
             monitor_tasks: 0,
             today_new_customers: 0,
             today_task_runs: 0,
           },
           runtime: {
-            follow_comment_running: false,
-            interaction_running: false,
+            comment_message: "",
+            interaction_message: "",
             monitor_message: err.message || "暂时还拿不到运行状态，先展示占位数据",
           },
         };
@@ -3854,12 +5252,9 @@
       const title = (($("douyinTaskTitle") || {}).value || "").trim() || `抖音获客 - ${actionInfo.label || douyinPayload.action}`;
       const body = {
         title,
-        task_kind: "chat_message",
+        task_kind: "douyin_leads",
         content: `执行抖音获客任务：${douyinPayload.action}`,
-        payload: {
-          capability_id: "douyin.leads.pipeline",
-          payload: douyinPayload,
-        },
+        payload: douyinPayload,
         schedule_type: scheduleType,
         interval_seconds: Math.max(60, (Number.isNaN(interval) ? 60 : interval) * 60),
         start_at: ($("douyinTaskStartAt") || {}).value || "",
@@ -3877,6 +5272,112 @@
       toast("抖音获客任务已下发");
       await Promise.all([loadTasks(), loadRuns()]);
       return data;
+    }
+
+    async function submitVoiceDouyinTask(voicePayload) {
+      const installationId = currentInstallationId();
+      if (!installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
+      const actionInfo = DOUYIN_TASK_ACTIONS[voicePayload.action] || {};
+      const body = {
+        title: `抖音获客 - ${actionInfo.label || voicePayload.action}`,
+        task_kind: "douyin_leads",
+        content: `执行抖音获客任务：${voicePayload.action}`,
+        payload: voicePayload,
+        schedule_type: "once",
+        interval_seconds: 60,
+        start_at: "",
+        daily_times: [],
+        timezone_offset_minutes: timezoneOffsetMinutes(),
+        installation_ids: [installationId],
+      };
+      const data = await api('/api/scheduled-tasks/tasks', {
+        method: 'POST',
+        json: body,
+        headers: { 'X-Installation-Id': installationId },
+      });
+      await Promise.all([loadTasks(), loadRuns()]);
+      return data;
+    }
+
+    async function submitVoiceCapabilityTask(capabilityId, payload, title) {
+      const installationId = currentInstallationId();
+      if (!installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
+      const body = {
+        title: title || capabilityName(capabilityId),
+        task_kind: "capability",
+        content: `语音下发能力 ${capabilityId}`,
+        payload: { capability_id: capabilityId, payload: payload || {} },
+        schedule_type: "once",
+        interval_seconds: 60,
+        start_at: "",
+        daily_times: [],
+        timezone_offset_minutes: timezoneOffsetMinutes(),
+        installation_ids: [installationId],
+      };
+      const data = await api("/api/scheduled-tasks/tasks", {
+        method: "POST",
+        json: body,
+        headers: { "X-Installation-Id": installationId },
+      });
+      await Promise.all([loadTasks(), loadRuns()]);
+      return data;
+    }
+
+    async function executeVoicePlan() {
+      const plan = buildVoiceExecutionPlan();
+      if (!plan) {
+        toast("请先录入一段语音内容");
+        return;
+      }
+      if (!plan.direct) {
+        routeVoicePlanToRefine(plan);
+        return;
+      }
+      if (plan.kind === "image_generate") {
+        await submitVoiceCapabilityTask("goal.image.pipeline", plan.payload, "语音图片任务");
+        toast("图片任务已下发");
+        return;
+      }
+      if (plan.kind === "creative_storyboard_video") {
+        await submitVoiceCapabilityTask("goal.video.pipeline", plan.payload, "语音创意分镜任务");
+        toast("创意分镜任务已下发");
+        return;
+      }
+      if (plan.kind === "video_generate") {
+        await submitVoiceCapabilityTask("goal.video.pipeline", plan.payload, "语音视频任务");
+        toast("视频任务已下发");
+        return;
+      }
+      if (plan.kind === "douyin_leads_task") {
+        await submitVoiceDouyinTask(plan.payload);
+        toast("抖音获客任务已下发");
+        return;
+      }
+      sendVoiceDraftToMessages(true, "", plan.content);
+    }
+
+    function routeVoicePlanToRefine(plan) {
+      if (!plan) return;
+      if (plan.kind === "douyin_leads_task") {
+        const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : null;
+        state.douyinTaskAction = normalizeVoiceDouyinAction(payload && payload.action);
+        switchTab("douyinLeadsSchedule");
+        renderDouyinTaskActions();
+        renderDouyinTaskDetailFields();
+        setTimeout(() => {
+          if (!payload || !payload.params) return;
+          if ($("douyinTaskKeyword")) $("douyinTaskKeyword").value = payload.params.keyword || "";
+          if ($("douyinTaskCommentText")) $("douyinTaskCommentText").value = payload.params.comment_text || "";
+          if ($("douyinTaskDmText")) $("douyinTaskDmText").value = payload.params.dm_text || payload.params.message || "";
+          if ($("douyinTaskCommentMode")) $("douyinTaskCommentMode").value = payload.params.comment_mode || "fixed";
+          if ($("douyinTaskDmMode")) $("douyinTaskDmMode").value = payload.params.dm_mode || "fixed";
+        }, 80);
+        toast("请补充抖音获客参数后下发");
+        return;
+      }
+      switchTab("messages");
+      setMessageTemplate(plan.content || state.voiceDraft || "");
+      toast("已带入消息页，你可以继续补充要求");
     }
 
     async function createScheduledTask() {
@@ -4032,7 +5533,7 @@
       const fd = new FormData();
       fd.append("file", file);
       try {
-        const resp = await fetch("/api/h5-chat/uploads", { method: "POST", headers: authHeaders(), body: fd });
+        const resp = await fetch(apiUrl("/api/h5-chat/uploads"), { method: "POST", headers: authHeaders(), body: fd });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.detail || "上传失败");
         item.url = data.url || "";
@@ -4084,7 +5585,7 @@
         filename: filename || filenameFromUrl(url, "lobster-media"),
         token: state.token || "",
       });
-      return `/api/h5-chat/media?${params.toString()}`;
+      return apiUrl(`/api/h5-chat/media?${params.toString()}`);
     }
 
     function linkAnchor(url, label) {
@@ -4527,7 +6028,7 @@
         return;
       }
       let last = 0;
-      const es = new EventSource(`/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}`);
+      const es = new EventSource(apiUrl(`/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}`));
       state.streams.set(messageId, es);
       ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error", "publish_pending", "publish_claimed", "publish_result"].forEach((type) => {
         es.addEventListener(type, (evt) => {
@@ -4671,9 +6172,26 @@
     document.querySelectorAll("[data-auth-tab]").forEach((btn) => {
       btn.addEventListener("click", () => setAuthTab(btn.dataset.authTab));
     });
-    $("topBackBtn").addEventListener("click", () => switchTab("office"));
+    $("topBackBtn").addEventListener("click", () => {
+      const activeView = document.querySelector(".view.active");
+      const activeId = activeView ? String(activeView.id || "") : "";
+      if (activeId === "messagesView" && state.lastViewBeforeMessages) {
+        const next = state.lastViewBeforeMessages;
+        state.lastViewBeforeMessages = "";
+        switchTab(next);
+        return;
+      }
+      switchTab("office");
+    });
     document.querySelectorAll("[data-task-ability]").forEach((btn) => {
       btn.addEventListener("click", () => setTaskAbility(btn.dataset.taskAbility));
+    });
+    document.querySelectorAll("[data-home-target]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = String(btn.dataset.homeTarget || "").trim();
+        if (!target) return;
+        switchTab(target);
+      });
     });
     $("toggleTaskPanelBtn").addEventListener("click", () => setTaskPanelOpen(!state.taskPanelOpen));
     $("taskScheduleType").addEventListener("change", updateScheduleFields);
@@ -4685,6 +6203,14 @@
     $("refreshTasksBtn").addEventListener("click", loadTasks);
     $("refreshRunsBtn").addEventListener("click", loadRuns);
     $("employeeFloor").addEventListener("click", (evt) => {
+      const homeTargetBtn = evt.target.closest("[data-home-target]");
+      if (homeTargetBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        const target = String(homeTargetBtn.dataset.homeTarget || "").trim();
+        if (target) switchTab(target);
+        return;
+      }
       const pageBtn = evt.target.closest("[data-office-page]");
       if (pageBtn) {
         evt.preventDefault();
@@ -4793,7 +6319,7 @@
       }
       $("sendSmsBtn").disabled = true;
       try {
-        const resp = await fetch("/auth/sms/send", {
+        const resp = await fetch(apiUrl("/auth/sms/send"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -4934,6 +6460,84 @@
     $("toggleComposerBtn").addEventListener("click", () => {
       setComposerExpanded(!$("sendForm").classList.contains("expanded"));
     });
+    $("voiceMicBtn")?.addEventListener("mousedown", startVoiceCapture);
+    $("voiceMicBtn")?.addEventListener("touchstart", startVoiceCapture, { passive: false });
+    document.addEventListener("mousedown", (evt) => {
+      const btn = evt.target.closest(".office-voice-entry");
+      if (!btn) return;
+      startOfficeVoiceCapture(evt).catch((err) => {
+        state.officeVoiceHoldActive = false;
+        setOfficeVoiceButtonPressed(false);
+        toast(err.message || "无法启动语音识别");
+      });
+    });
+    document.addEventListener("touchstart", (evt) => {
+      const btn = evt.target.closest(".office-voice-entry");
+      if (!btn) return;
+      startOfficeVoiceCapture(evt).catch((err) => {
+        state.officeVoiceHoldActive = false;
+        setOfficeVoiceButtonPressed(false);
+        toast(err.message || "无法启动语音识别");
+      });
+    }, { passive: false });
+    window.addEventListener("mouseup", stopVoiceCapture);
+    window.addEventListener("touchend", stopVoiceCapture);
+    window.addEventListener("touchcancel", stopVoiceCapture);
+    window.addEventListener("mouseup", stopOfficeVoiceCapture);
+    window.addEventListener("touchend", stopOfficeVoiceCapture);
+    window.addEventListener("touchcancel", stopOfficeVoiceCapture);
+    $("voiceMicBtn")?.addEventListener("mouseleave", stopVoiceCapture);
+    document.addEventListener("mouseleave", stopOfficeVoiceCapture);
+    $("voiceToMessagesBtn")?.addEventListener("click", () => sendVoiceDraftToMessages(false));
+    $("voiceClearBtn")?.addEventListener("click", clearVoiceDraft);
+    $("voiceExpandBtn")?.addEventListener("click", () => {
+      state.voiceExpanded = !state.voiceExpanded;
+      syncVoiceDraftDisplay();
+    });
+    $("voiceActionCards")?.addEventListener("click", (evt) => {
+      const planAction = evt.target.closest("[data-voice-plan-action]");
+      if (planAction) {
+        const mode = String(planAction.dataset.voicePlanAction || "").trim();
+        const plan = buildVoiceExecutionPlan();
+        if (!plan) {
+          toast("请先录入一段语音内容");
+          return;
+        }
+        if (mode === "execute") {
+          executeVoicePlan().catch((err) => toast(err.message || "执行失败，请稍后重试"));
+          return;
+        }
+        routeVoicePlanToRefine(plan);
+        return;
+      }
+      const actionCard = evt.target.closest("[data-voice-action-index]");
+      if (actionCard) {
+        const index = Number(actionCard.dataset.voiceActionIndex || "-1");
+        const action = Number.isFinite(index) ? (state.voiceActions[index] || null) : null;
+        if (!action) return;
+        const kind = String(action.kind || "");
+        const payload = action.payload && typeof action.payload === "object" ? action.payload : {};
+        const content = String(payload.content || state.voiceDraft || "").trim();
+        if (!content) {
+          toast("请先录入一段语音内容");
+          return;
+        }
+        if (kind === "submit_message") {
+          sendVoiceDraftToMessages(true, "", content);
+          return;
+        }
+        switchTab("messages");
+        setMessageTemplate(content);
+        return;
+      }
+      const card = evt.target.closest("[data-voice-template], [data-voice-submit]");
+      if (!card) return;
+      if (card.dataset.voiceSubmit === "1") {
+        sendVoiceDraftToMessages(true);
+        return;
+      }
+      sendVoiceDraftToMessages(false, card.dataset.voiceTemplate || "");
+    });
 
     $("imageInput").addEventListener("change", async () => {
       const files = Array.from($("imageInput").files || []);
@@ -4960,7 +6564,7 @@
         const code = $("smsCode").value.trim();
         if (!phone) throw new Error("请输入有效手机号");
         if (!code) throw new Error("请输入短信验证码");
-        const resp = await fetch("/auth/register-phone", {
+        const resp = await fetch(apiUrl("/auth/register-phone"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ phone, code }),
@@ -4986,7 +6590,7 @@
         const password = $("loginPassword").value;
         if (!account) throw new Error("请输入账号或手机号");
         if (!password) throw new Error("请输入密码");
-        const resp = await fetch("/auth/login-phone-password", {
+        const resp = await fetch(apiUrl("/auth/login-phone-password"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ account, password }),
