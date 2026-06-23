@@ -5,6 +5,7 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import unquote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -46,6 +47,9 @@ _MAX_VIDEOS_PER_JOB = 50
 _MAX_VIDEO_BYTES = 350 * 1024 * 1024
 _TERMINAL_STATUS = {"completed", "failed", "canceled"}
 
+_FINDER_USERNAME_MARKERS = ("@finder",)
+_WECHAT_SHARE_HOST_MARKERS = ("channels.weixin.qq.com", "finder.video.qq.com", "weixin.qq.com")
+
 
 class VideoFetchBody(BaseModel):
     username: str = Field(min_length=1, max_length=256)
@@ -82,6 +86,182 @@ def _clean_url(value: Any) -> str:
     if not raw.startswith(("http://", "https://")):
         return ""
     return _clean_long_text(raw, 4096)
+
+
+def _is_finder_username(value: str) -> bool:
+    text = (value or "").strip()
+    return bool(text) and (text.startswith("v2_") or any(marker in text for marker in _FINDER_USERNAME_MARKERS))
+
+
+def _looks_like_wechat_share_url(value: str) -> bool:
+    text = (value or "").strip().lower()
+    return text.startswith(("http://", "https://")) and any(marker in text for marker in _WECHAT_SHARE_HOST_MARKERS)
+
+
+def _looks_like_video_detail_input(value: str) -> bool:
+    text = _extract_first_url(value)
+    low = text.lower()
+    if _looks_like_wechat_share_url(text):
+        return True
+    if low.startswith(("object_id:", "objectid:", "export_id:", "exportid:")):
+        return True
+    return text.isdigit() and len(text) >= 10
+
+
+def _extract_first_url(value: str) -> str:
+    text = unquote((value or "").strip())
+    for prefix in ("https://", "http://"):
+        idx = text.find(prefix)
+        if idx >= 0:
+            candidate = text[idx:].split()[0].strip(" ,.;)]}>\"'")
+            if candidate:
+                return candidate
+    return text
+
+
+def _walk_dicts(node: Any, *, depth: int = 0) -> list[dict[str, Any]]:
+    if depth > 8:
+        return []
+    if isinstance(node, dict):
+        out = [node]
+        for value in node.values():
+            if isinstance(value, (dict, list)):
+                out.extend(_walk_dicts(value, depth=depth + 1))
+        return out
+    if isinstance(node, list):
+        out: list[dict[str, Any]] = []
+        for item in node:
+            out.extend(_walk_dicts(item, depth=depth + 1))
+        return out
+    return []
+
+
+def _find_finder_username(payload: Any) -> str:
+    for node in _walk_dicts(payload):
+        username = _first(
+            node,
+            [
+                "username",
+                "finder_username",
+                "finderUserName",
+                "user_name",
+                "objectDesc.contact.username",
+                "object_desc.contact.username",
+                "contact.username",
+                "contact.finderUsername",
+                "author.username",
+                "author.finderUsername",
+                "finder_info.username",
+                "data.username",
+                "jumpInfo.userName",
+                "noticeParam.finderUsername",
+            ],
+        )
+        username = _clean_text(username, 191)
+        if _is_finder_username(username):
+            return username
+    return ""
+
+
+def _account_from_username(username: str, *, raw: Any = None, source: str = "", fallback_name: str = "") -> dict[str, Any]:
+    raw_dict = raw if isinstance(raw, dict) else {}
+    nickname = ""
+    signature = ""
+    avatar_url = ""
+    verify_info = ""
+    for node in _walk_dicts(raw_dict):
+        nickname = nickname or _clean_text(
+            _first(node, ["nickname", "nick_name", "display_name", "title", "contact.nickname", "author.nickname", "finder_info.nickname"]),
+            255,
+        )
+        signature = signature or _clean_long_text(_first(node, ["contact.signature", "author.signature", "finder_info.signature", "signature", "desc", "description"]), 1000)
+        avatar_url = avatar_url or _clean_url(_first(node, ["avatar_url", "avatar", "head_image_url", "thumbUrl", "thumb_url", "contact.headUrl", "author.avatar_url"]))
+        verify_info = verify_info or _clean_text(_first(node, ["verify_info", "authInfo", "auth_info", "certification"]), 255)
+        if nickname and (signature or avatar_url):
+            break
+    display = nickname or fallback_name or username
+    return {
+        "id": username,
+        "username": username,
+        "finder_username": username,
+        "nickname": nickname,
+        "display_name": display,
+        "signature": signature,
+        "avatar_url": avatar_url,
+        "homepage_url": "",
+        "follower_count": 0,
+        "aweme_count": 0,
+        "verify_info": verify_info,
+        "source": source,
+        "raw_index": 0,
+        "raw": _jsonable(raw_dict or {"username": username, "source": source}),
+    }
+
+
+async def _resolve_account_from_channel_id(
+    *,
+    keyword: str,
+    current_user: User,
+    db: Session,
+) -> dict[str, Any]:
+    result = await _execute_query_with_retry(
+        db=db,
+        current_user=current_user,
+        query_type="wechat_channels_channel_id_to_username_v2",
+        params={},
+        body={"channel_id": keyword, "raw": False},
+        save_items=False,
+        meta={"source": "wechat_channels_transcript_channel_id_convert", "channel_id": keyword},
+        attempts=2,
+        include_raw_response=True,
+    )
+    raw = result.get("raw_response") if isinstance(result.get("raw_response"), dict) else {}
+    username = _find_finder_username(raw)
+    if username:
+        return _account_from_username(username, raw=raw, source="channel_id", fallback_name=keyword)
+    query = result.get("query") if isinstance(result.get("query"), dict) else {}
+    detail = query.get("error_message") or "无法把视频号 ID 转换为 finder username"
+    raise HTTPException(status_code=502, detail=f"视频号 ID 解析失败：{detail}")
+
+
+async def _resolve_account_from_video_detail(
+    *,
+    keyword: str,
+    current_user: User,
+    db: Session,
+) -> Optional[dict[str, Any]]:
+    text = _extract_first_url(keyword)
+    body: dict[str, Any] = {"raw": False}
+    if _looks_like_wechat_share_url(text):
+        body["share_url"] = text
+    elif text.lower().startswith(("object_id:", "objectid:")):
+        body["object_id"] = text.split(":", 1)[1].strip()
+    elif text.lower().startswith(("export_id:", "exportid:")):
+        body["export_id"] = text.split(":", 1)[1].strip()
+    elif text.isdigit():
+        body["object_id"] = text
+    else:
+        body["export_id"] = text
+    result = await _execute_query_with_retry(
+        db=db,
+        current_user=current_user,
+        query_type="wechat_channels_video_detail_v2",
+        params={},
+        body=body,
+        save_items=False,
+        meta={"source": "wechat_channels_transcript_video_detail", "input": keyword[:200]},
+        attempts=2,
+        include_raw_response=True,
+    )
+    raw = result.get("raw_response") if isinstance(result.get("raw_response"), dict) else {}
+    username = _find_finder_username(raw)
+    if not username:
+        return None
+    video = _normalize_video(raw, 0)
+    item = _account_from_username(username, raw=raw, source="video_detail", fallback_name=keyword)
+    if video:
+        item["matched_video"] = video
+    return item
 
 
 def _append_url_token(url: str, token: Any) -> str:
@@ -468,46 +648,24 @@ async def _run_transcript_job(job_id: str) -> None:
 
 @router.get("/api/wechat-channels-transcript/users/search", summary="搜索视频号账号")
 async def search_users(
-    q: str = Query("", min_length=1, max_length=80),
+    q: str = Query("", min_length=1, max_length=2000),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     keyword = q.strip()
+    direct_username = _clean_text(keyword, 191)
+    if _is_finder_username(direct_username):
+        item = _account_from_username(direct_username, source="direct_username")
+        return {"ok": True, "items": [item], "raw_count": 1, "query": {"source": "direct_username"}}
+
     if keyword.lower().startswith("sph"):
-        result = await _execute_query_with_retry(
-            db=db,
-            current_user=current_user,
-            query_type="wechat_channels_channel_id_to_username_v2",
-            params={},
-            body={"channel_id": keyword, "raw": False},
-            save_items=False,
-            meta={"source": "wechat_channels_transcript_channel_id_convert", "channel_id": keyword},
-            attempts=2,
-            include_raw_response=True,
-        )
-        raw = result.get("raw_response") if isinstance(result.get("raw_response"), dict) else {}
-        data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
-        username = _clean_text(data.get("username") or data.get("finder_username"), 191)
-        if username:
-            item = {
-                "id": username,
-                "username": username,
-                "finder_username": username,
-                "nickname": _clean_text(data.get("nickname"), 255),
-                "display_name": _clean_text(data.get("nickname"), 255) or keyword,
-                "signature": _clean_long_text(data.get("desc"), 1000),
-                "avatar_url": "",
-                "homepage_url": "",
-                "follower_count": 0,
-                "aweme_count": 0,
-                "verify_info": "",
-                "raw_index": 0,
-                "raw": data,
-            }
-            return {"ok": True, "items": [item], "raw_count": 1, "query": result.get("query") or {}}
-        query = result.get("query") if isinstance(result.get("query"), dict) else {}
-        detail = query.get("error_message") or "无法把视频号 ID 转换为 finder username"
-        raise HTTPException(status_code=502, detail=f"视频号 ID 解析失败：{detail}")
+        item = await _resolve_account_from_channel_id(keyword=keyword, current_user=current_user, db=db)
+        return {"ok": True, "items": [item], "raw_count": 1, "query": {"source": "channel_id"}}
+
+    if _looks_like_video_detail_input(keyword):
+        item = await _resolve_account_from_video_detail(keyword=keyword, current_user=current_user, db=db)
+        if item:
+            return {"ok": True, "items": [item], "raw_count": 1, "query": {"source": "video_detail"}}
 
     result = await _execute_query_with_retry(
         db=db,

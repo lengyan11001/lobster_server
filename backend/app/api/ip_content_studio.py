@@ -204,6 +204,13 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "path": "/api/v1/wechat_channels/v2/fetch_channel_id_to_username",
         "allowed_body": {"channel_id", "raw"},
     },
+    "wechat_channels_video_detail_v2": {
+        "platform": "wechat_channels",
+        "source_type": "video_detail",
+        "method": "POST",
+        "path": "/api/v1/wechat_channels/v2/fetch_video_detail",
+        "allowed_body": {"object_id", "export_id", "share_url", "raw"},
+    },
     "linkedin_user_profile": {
         "platform": "linkedin",
         "source_type": "user_profile",

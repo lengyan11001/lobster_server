@@ -240,6 +240,53 @@ def test_has_wechat_channels_channel_id_convert_endpoint():
     assert "channel_id" in spec["allowed_body"]
 
 
+def test_has_wechat_channels_video_detail_endpoint():
+    from backend.app.api import ip_content_studio as studio
+
+    spec = studio._ENDPOINTS["wechat_channels_video_detail_v2"]
+
+    assert spec["method"] == "POST"
+    assert spec["path"] == "/api/v1/wechat_channels/v2/fetch_video_detail"
+    assert {"object_id", "export_id", "share_url"} <= spec["allowed_body"]
+
+
+def test_wechat_channels_transcript_extracts_finder_username_from_video_detail():
+    from backend.app.api import wechat_channels_transcript as transcript
+
+    payload = {
+        "data": {
+            "object": {
+                "objectDesc": {
+                    "description": "factory tour",
+                    "contact": {
+                        "username": "v2_test_user@finder",
+                        "nickname": "Factory IP",
+                        "signature": "daily videos",
+                        "headUrl": "https://example.com/avatar.jpg",
+                    },
+                }
+            }
+        }
+    }
+
+    username = transcript._find_finder_username(payload)
+    account = transcript._account_from_username(username, raw=payload, source="video_detail")
+
+    assert username == "v2_test_user@finder"
+    assert account["username"] == "v2_test_user@finder"
+    assert account["display_name"] == "Factory IP"
+    assert account["signature"] == "daily videos"
+    assert account["avatar_url"] == "https://example.com/avatar.jpg"
+
+
+def test_wechat_channels_transcript_accepts_direct_inputs():
+    from backend.app.api import wechat_channels_transcript as transcript
+
+    assert transcript._is_finder_username("v2_test_user@finder")
+    assert transcript._looks_like_video_detail_input("https://channels.weixin.qq.com/mobile-support/pages/live-notice/index?exportid=abc")
+    assert transcript._looks_like_video_detail_input("object_id:1234567890123")
+
+
 def test_collects_wechat_channels_home_page_objects_as_posts():
     from backend.app.api import ip_content_studio as studio
 
