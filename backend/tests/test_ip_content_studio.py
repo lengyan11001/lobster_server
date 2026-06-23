@@ -230,6 +230,16 @@ def test_normalizes_wechat_search_nested_channels_candidates_only():
     assert candidates[0]["verify_info"] == "摄影博主"
 
 
+def test_has_wechat_channels_channel_id_convert_endpoint():
+    from backend.app.api import ip_content_studio as studio
+
+    spec = studio._ENDPOINTS["wechat_channels_channel_id_to_username_v2"]
+
+    assert spec["method"] == "POST"
+    assert spec["path"] == "/api/v1/wechat_channels/v2/fetch_channel_id_to_username"
+    assert "channel_id" in spec["allowed_body"]
+
+
 def test_collects_wechat_channels_home_page_objects_as_posts():
     from backend.app.api import ip_content_studio as studio
 

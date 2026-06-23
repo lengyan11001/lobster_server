@@ -473,6 +473,42 @@ async def search_users(
     db: Session = Depends(get_db),
 ):
     keyword = q.strip()
+    if keyword.lower().startswith("sph"):
+        result = await _execute_query_with_retry(
+            db=db,
+            current_user=current_user,
+            query_type="wechat_channels_channel_id_to_username_v2",
+            params={},
+            body={"channel_id": keyword, "raw": False},
+            save_items=False,
+            meta={"source": "wechat_channels_transcript_channel_id_convert", "channel_id": keyword},
+            attempts=2,
+            include_raw_response=True,
+        )
+        raw = result.get("raw_response") if isinstance(result.get("raw_response"), dict) else {}
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+        username = _clean_text(data.get("username") or data.get("finder_username"), 191)
+        if username:
+            item = {
+                "id": username,
+                "username": username,
+                "finder_username": username,
+                "nickname": _clean_text(data.get("nickname"), 255),
+                "display_name": _clean_text(data.get("nickname"), 255) or keyword,
+                "signature": _clean_long_text(data.get("desc"), 1000),
+                "avatar_url": "",
+                "homepage_url": "",
+                "follower_count": 0,
+                "aweme_count": 0,
+                "verify_info": "",
+                "raw_index": 0,
+                "raw": data,
+            }
+            return {"ok": True, "items": [item], "raw_count": 1, "query": result.get("query") or {}}
+        query = result.get("query") if isinstance(result.get("query"), dict) else {}
+        detail = query.get("error_message") or "无法把视频号 ID 转换为 finder username"
+        raise HTTPException(status_code=502, detail=f"视频号 ID 解析失败：{detail}")
+
     result = await _execute_query_with_retry(
         db=db,
         current_user=current_user,
