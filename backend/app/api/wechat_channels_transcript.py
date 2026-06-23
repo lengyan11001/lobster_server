@@ -397,6 +397,19 @@ def _extract_last_buffer(payload: Any) -> str:
     return _clean_long_text(value, 4096)
 
 
+def _normalize_video_title(value: Any, fallback: str) -> str:
+    if isinstance(value, list):
+        for item in value:
+            text = _normalize_video_title(item, "")
+            if text:
+                return text
+        return fallback
+    if isinstance(value, dict):
+        text = _first(value, ["shortTitle", "title", "desc", "description", "content", "text"])
+        return _normalize_video_title(text, fallback)
+    return _clean_long_text(value, 1000) or fallback
+
+
 def _normalize_video(raw: Any, idx: int) -> Optional[dict[str, Any]]:
     item = raw if isinstance(raw, dict) else {"value": raw}
     title = _first(
@@ -461,7 +474,7 @@ def _normalize_video(raw: Any, idx: int) -> Optional[dict[str, Any]]:
         return None
     return {
         "item_key": _clean_text(item_key, 128) or f"video_{idx}",
-        "title": _clean_long_text(title, 1000) or f"视频 {idx + 1}",
+        "title": _normalize_video_title(title, f"视频 {idx + 1}"),
         "publish_time": _clean_text(publish_time, 64),
         "video_url": video_url,
         "public_url": _clean_url(public_url),

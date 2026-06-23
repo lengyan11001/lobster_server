@@ -327,6 +327,7 @@ def test_wechat_channels_transcript_normalizes_v2_user_videos_shape():
 
     assert len(videos) == 1
     assert videos[0]["item_key"] == "14779988301712792068"
+    assert videos[0]["title"] == "干大健康的就是在拉人头？"
     assert videos[0]["video_url"] == "http://wxapp.tc.qq.com/251/20302/stodownload?encfilekey=abc&token=token-value"
     assert videos[0]["cover_url"] == "https://example.com/cover.jpg"
     assert videos[0]["decode_key"] == "8667923"
