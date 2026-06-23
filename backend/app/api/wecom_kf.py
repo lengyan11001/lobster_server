@@ -43,6 +43,8 @@ _token_cache: dict[str, tuple[str, float]] = {}
 _kf_event_flags: dict[str, float] = {}
 _KF_EVENT_TTL_SECONDS = 86400
 _KF_EMPTY_TTL_SECONDS = 5
+_KF_SYNC_GRANT_TTL_SECONDS = 60
+_KF_SYNC_MIN_INTERVAL_SECONDS = 10
 
 
 def _kf_event_key(callback_path: str) -> str:
@@ -51,6 +53,14 @@ def _kf_event_key(callback_path: str) -> str:
 
 def _kf_empty_key(callback_path: str) -> str:
     return f"wecom:kf:empty:{callback_path or '-'}"
+
+
+def _kf_sync_grant_key(callback_path: str) -> str:
+    return f"wecom:kf:sync-grant:{callback_path or '-'}"
+
+
+def _kf_sync_throttle_key(callback_path: str, open_kfid: str) -> str:
+    return f"wecom:kf:sync-throttle:{callback_path or '-'}:{open_kfid or '-'}"
 
 
 def notify_kf_event(callback_path: str):
@@ -62,6 +72,8 @@ def notify_kf_event(callback_path: str):
     _kf_event_flags[callback_path] = now
     cache_set(_kf_event_key(callback_path), str(now), _KF_EVENT_TTL_SECONDS)
     cache_set("wecom:kf:event:any", str(now), _KF_EVENT_TTL_SECONDS)
+    cache_set(_kf_sync_grant_key(callback_path), str(now), _KF_SYNC_GRANT_TTL_SECONDS)
+    cache_set(_kf_sync_grant_key(""), str(now), _KF_SYNC_GRANT_TTL_SECONDS)
     cache_delete(_kf_empty_key(callback_path))
     cache_delete(_kf_empty_key(""))
     logger.info("[KF] event flag set for %s", callback_path)
@@ -322,6 +334,18 @@ async def proxy_kf_sync_msg(
             "has_more": 0,
             "next_cursor": body.cursor or "",
         }
+    has_sync_grant = bool(cache_get(_kf_sync_grant_key(body.callback_path)) or cache_get(_kf_sync_grant_key("")))
+    throttle_key = _kf_sync_throttle_key(body.callback_path, body.open_kfid)
+    if not has_sync_grant and cache_flag_recent(throttle_key):
+        return {
+            "errcode": 0,
+            "errmsg": "ok",
+            "msg_list": [],
+            "has_more": 0,
+            "next_cursor": body.cursor or "",
+            "throttled": True,
+        }
+    cache_set(throttle_key, "1", _KF_SYNC_MIN_INTERVAL_SECONDS)
     cfg = _find_config_by_callback(db, body.callback_path)
     access_token = await _get_access_token(cfg.corp_id, cfg.secret)
     payload: dict[str, Any] = {"open_kfid": body.open_kfid, "limit": body.limit}
@@ -502,6 +526,8 @@ async def proxy_kf_has_events(
     if callback_path:
         cached_ts = cache_get(_kf_event_key(callback_path))
         ts = float(cached_ts or _kf_event_flags.get(callback_path, 0) or 0)
+        if ts > 0:
+            cache_set(_kf_sync_grant_key(callback_path), str(ts), _KF_SYNC_GRANT_TTL_SECONDS)
         if ts <= 0 and cache_flag_recent(_kf_empty_key(callback_path)):
             return {"has_events": False, "callback_path": callback_path, "ts": 0, "throttled": True}
         if ts <= 0:
@@ -509,6 +535,8 @@ async def proxy_kf_has_events(
         return {"has_events": ts > 0, "callback_path": callback_path, "ts": ts}
     cached_any = cache_get("wecom:kf:event:any")
     has_any = bool(cached_any or _kf_event_flags)
+    if has_any:
+        cache_set(_kf_sync_grant_key(""), str(cached_any or time.time()), _KF_SYNC_GRANT_TTL_SECONDS)
     if not has_any and cache_flag_recent(_kf_empty_key("")):
         return {"has_events": False, "flags": {}, "throttled": True}
     if not has_any:
