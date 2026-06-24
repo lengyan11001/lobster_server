@@ -1082,6 +1082,27 @@
       "capabilities": {},
       "tags": ["视频号", "TikHub", "文案提取"]
     },
+    "ai_3d_model_skill": {
+      "name": "高质量 3D 模型",
+      "description": "上传单图、多视角图片或 zip 拆件包，自动调用 Meshy 生成 GLB/FBX/OBJ/USDZ。生产质量模式默认启用贴图、PBR 与重拓扑，适合复杂头盔、道具、产品资产进入 Blender/ZBrush 继续修模。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "provider": "meshy",
+        "default_quality": "production",
+        "default_strategy": "auto",
+        "target_formats": [
+          "glb",
+          "fbx",
+          "obj",
+          "usdz"
+        ]
+      },
+      "capabilities": {},
+      "tags": ["3D", "高质量建模", "Meshy", "多视角", "拆件包"]
+    },
     "create_ppt_skill": {
       "name": "PPT",
       "description": "输入主题或大纲生成可下载的 PPTX 演示文稿，支持 AI 视觉页与结构化大纲模式。",
