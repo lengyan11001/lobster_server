@@ -45,6 +45,7 @@ from .api.messenger import router as messenger_router
 from .api.twilio_whatsapp import router as twilio_whatsapp_router
 from .api.privacy_policy import router as privacy_policy_router
 from .api.oauth_public_pages import router as oauth_public_pages_router
+from .api.homepage import router as homepage_router
 from .api.meta_social_publish import router as meta_social_publish_router
 from .api.admin import router as admin_router
 from .api.generation_records import router as generation_records_router
@@ -980,6 +981,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router, prefix="")
     app.include_router(privacy_policy_router, prefix="")
     app.include_router(oauth_public_pages_router, prefix="")
+    app.include_router(homepage_router, prefix="")
     app.include_router(auth_router, prefix="/auth")
     app.include_router(capabilities_router, prefix="")
     app.include_router(skills_router, prefix="")
@@ -1066,11 +1068,6 @@ def create_app() -> FastAPI:
         StaticFiles(directory=str(_miniprogram_static_dir)),
         name="client_miniprogram",
     )
-
-    # 前端由 lobster_online 提供，本服务仅 API；根路径返回说明
-    @app.get("/", include_in_schema=False)
-    def index():
-        return JSONResponse(content={"message": "Lobster API. Use the online client (lobster_online) to access the UI."})
 
     logger.info("[启动] create_app 完成")
     return app
