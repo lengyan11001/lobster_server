@@ -539,9 +539,11 @@ def admin_get_user_skill_visibility(
         for k, v in packages.items()
     ]
     existing_pkg_ids = {pkg["id"] for pkg in all_pkgs}
+    feature_pkgs = []
     for feature_pkg in FEATURE_FLAG_PACKAGES:
         if feature_pkg["id"] not in existing_pkg_ids:
-            all_pkgs.append(dict(feature_pkg))
+            feature_pkgs.append(dict(feature_pkg))
+    all_pkgs = feature_pkgs + all_pkgs
     return {
         "user_id": user_id,
         "is_admin": _skill_store_admin(user),
