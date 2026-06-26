@@ -2294,37 +2294,7 @@
               </div>
             </div>
             <div class="quick-sections" id="homeQuickGrid">
-              <section class="quick-section" aria-label="获客">
-                <div class="quick-section-head"><strong>获客</strong><span>抖音自动化</span></div>
-                <div class="quick-grid">
-                  <button class="quick-card quick-card-leads" type="button" id="openDouyinLeadsBtn" data-home-target="douyinLeads">
-                    <div class="quick-mark">获</div>
-                    <strong>抖音获客</strong>
-                    <span>查看账号状态，再安排采集客户、评论互动和私信获客任务</span>
-                  </button>
-                </div>
-              </section>
-              <section class="quick-section" aria-label="设计">
-                <div class="quick-section-head"><strong>设计</strong><span>内容生成</span></div>
-                <div class="quick-grid">
-                  <button class="quick-card" type="button" data-tone="image" data-prompt="帮我生成一张图片，画面内容是："><div class="quick-mark">图</div><strong>生成图片</strong><span>跳转消息并填入图片生成指令</span></button>
-                  <button class="quick-card" type="button" data-tone="video" data-prompt="帮我生成一个8秒宣传视频，画面内容是："><div class="quick-mark">视</div><strong>生成视频</strong><span>跳转消息并填入视频生成指令</span></button>
-                  <button class="quick-card" type="button" data-tone="upload" data-image-video="1" data-prompt="用这个图片，提示词："><div class="quick-mark">传</div><strong>图生视频</strong><span>先上传图片，再进入消息继续补充</span></button>
-                  <button class="quick-card" type="button" data-tone="tvc" data-prompt="用爆款TVC生成一个视频"><div class="quick-mark">T</div><strong>爆款TVC</strong><span>填入爆款复刻视频指令</span></button>
-                  <button class="quick-card" type="button" data-tone="copy" data-prompt="根据我的记忆，写一条50字以内的朋友圈文案"><div class="quick-mark">文</div><strong>朋友圈文案</strong><span>快速生成短文案</span></button>
-                  <button class="quick-card" type="button" data-home-target="voice"><div class="quick-mark">语</div><strong>语音输入</strong><span>进入语音对话子页面，用说话的方式下发任务</span></button>
-                </div>
-              </section>
-              <section class="quick-section" aria-label="运营">
-                <div class="quick-section-head"><strong>运营</strong><span>发布执行</span></div>
-                <div class="quick-grid">
-                  <button class="quick-card" type="button" data-tone="publish" data-prompt="把某素材发布到 平台 账号"><div class="quick-mark">发</div><strong>发布素材</strong><span>填入发布任务消息</span></button>
-                </div>
-              </section>
-              <section class="quick-section" aria-label="售后">
-                <div class="quick-section-head"><strong>售后</strong><span>待补充</span></div>
-                <div class="quick-empty">售后能力后续补充</div>
-              </section>
+              <div class="quick-empty">正在读取岗位工作入口...</div>
             </div>
           </div>
         </div>
@@ -2677,6 +2647,7 @@
       taskAllowedCapabilityIds: [],
       taskSkillsLoaded: false,
       taskSkillsLoading: false,
+      taskSkillsError: "",
       douyinStatus: null,
       douyinTaskAction: "search_collect",
       voiceRecording: false,
@@ -2769,6 +2740,195 @@
       },
     };
     const TASK_DEPARTMENTS = ["市场部", "销售部", "客服部", "运营部"];
+    const SCHEDULED_TASK_CAPABILITY_IDS = [
+      "goal.image.pipeline",
+      "ip_content_daily",
+      "goal.video.pipeline",
+      "hifly.video.create_by_tts",
+    ];
+    const WORK_DEPARTMENT_HINTS = {
+      "市场部": "内容创作和增长素材",
+      "销售部": "线索获取和客户跟进",
+      "客服部": "消息接待和私域服务",
+      "运营部": "发布、文档和店铺运营",
+    };
+    const WORK_QUICK_ITEMS = [
+      {
+        key: "creative_general",
+        label: "帮我创作",
+        department: "市场部",
+        mark: "创",
+        description: "复刻 online 首页创作入口，先把需求带到手机会话",
+        prompt: "帮我写一版电商详情页文案、短视频脚本和发布标题。",
+        always: true,
+      },
+      {
+        key: "goal.image.pipeline",
+        capabilityId: "goal.image.pipeline",
+        packageId: "goal_video_pipeline_skill",
+        label: "创作图片",
+        department: "市场部",
+        mark: "图",
+        description: "生成文案和创意图片",
+        prompt: "帮我生成一张图片，画面内容是：",
+      },
+      {
+        key: "goal.video.pipeline",
+        capabilityId: "goal.video.pipeline",
+        packageId: "goal_video_pipeline_skill",
+        label: "创意成片",
+        department: "市场部",
+        mark: "片",
+        description: "按记忆或提示词生成首帧和视频",
+        prompt: "帮我生成一个8秒宣传视频，画面内容是：",
+      },
+      {
+        key: "comfly.daihuo.pipeline",
+        capabilityId: "comfly.daihuo.pipeline",
+        packageId: "comfly_veo_skill",
+        label: "爆款TVC",
+        department: "市场部",
+        mark: "T",
+        description: "用素材或公网图生成多分镜成片",
+        prompt: "用爆款TVC帮我生成一个视频，产品和要求是：",
+      },
+      {
+        key: "comfly.seedance.tvc.pipeline",
+        capabilityId: "comfly.seedance.tvc.pipeline",
+        packageId: "comfly_seedance_tvc_skill",
+        label: "创意分镜头视频",
+        department: "市场部",
+        mark: "镜",
+        description: "按分段生成连续分镜并合成视频",
+        prompt: "用创意分镜头视频帮我生成一个品牌广告视频，需求是：",
+      },
+      {
+        key: "create.video.pipeline",
+        capabilityId: "create.video.pipeline",
+        packageId: "create_video_pipeline_skill",
+        label: "速推视频制作",
+        department: "市场部",
+        mark: "速",
+        description: "根据创意要求规划分镜并制作视频",
+        prompt: "帮我制作一个速推视频，主题和要求是：",
+      },
+      {
+        key: "hifly.video.create_by_tts",
+        capabilityId: "hifly.video.create_by_tts",
+        packageId: "hifly_digital_human_skill",
+        label: "必火数字人",
+        department: "市场部",
+        mark: "H",
+        description: "选择数字人和声音生成口播视频",
+        prompt: "帮我生成一条数字人口播视频，文案是：",
+      },
+      {
+        key: "ip_content_daily",
+        capabilityId: "ip_content_daily",
+        packageId: "ip_content_daily_skill",
+        label: "IP日更文案",
+        department: "市场部",
+        mark: "日",
+        description: "结合榜单、同行和记忆生成日更文案",
+        prompt: "帮我根据行业热点生成IP日更文案，行业是：",
+      },
+      {
+        key: "wewrite.article.pipeline",
+        capabilityId: "wewrite.article.pipeline",
+        packageId: "wewrite_official_account_skill",
+        label: "微信公众号",
+        department: "市场部",
+        mark: "微",
+        description: "生成公众号文章、配图并推草稿箱",
+        prompt: "帮我写一篇公众号文章并推送到草稿箱，主题是：",
+      },
+      {
+        key: "wechat_channels_transcript",
+        packageId: "wechat_channels_transcript_skill",
+        label: "视频号文案提取",
+        department: "市场部",
+        mark: "号",
+        description: "拉取视频号作品并提取口播文案",
+        prompt: "帮我提取视频号账号的爆款视频文案，账号昵称是：",
+      },
+      {
+        key: "douyin_leads",
+        featureKey: "douyin_leads_access",
+        label: "抖音获客",
+        department: "销售部",
+        mark: "获",
+        description: "采集客户、评论互动、私信触达和同行监控",
+        homeTarget: "douyinLeads",
+        highlight: true,
+      },
+      {
+        key: "linkedin.mining.pipeline",
+        capabilityId: "linkedin.mining.pipeline",
+        packageId: "linkedin_mining_skill",
+        label: "LinkedIn线索挖掘",
+        department: "销售部",
+        mark: "Li",
+        description: "同步主页、公司和互动数据，生成线索报告",
+        prompt: "帮我做LinkedIn线索挖掘，目标主页或关键词是：",
+      },
+      {
+        key: "wecom_reply",
+        packageId: "wecom_reply",
+        label: "企业微信客服",
+        department: "客服部",
+        mark: "客",
+        description: "接收企业微信消息并生成自动回复",
+        prompt: "帮我配置企业微信客服自动回复，业务场景是：",
+      },
+      {
+        key: "juhe_wechat_skill",
+        packageId: "juhe_wechat_skill",
+        label: "微信协议助手",
+        department: "客服部",
+        mark: "信",
+        description: "微信实例在线检测、文本发送和调用记录",
+        prompt: "帮我用微信协议助手处理客户消息，需求是：",
+      },
+      {
+        key: "publish_center",
+        label: "发布中心入库",
+        department: "运营部",
+        mark: "发",
+        description: "发布账号、素材入库和发布记录",
+        prompt: "把某素材发布到 平台 账号",
+        always: true,
+      },
+      {
+        key: "ppt.create",
+        capabilityId: "ppt.create",
+        packageId: "create_ppt_skill",
+        label: "PPT",
+        department: "运营部",
+        mark: "P",
+        description: "输入主题或大纲生成可下载 PPT",
+        prompt: "帮我生成一份PPT，主题是：",
+      },
+      {
+        key: "comfly.ecommerce.detail_pipeline",
+        capabilityId: "comfly.ecommerce.detail_pipeline",
+        packageId: "comfly_ecommerce_detail_skill",
+        label: "电商详情页",
+        department: "运营部",
+        mark: "详",
+        description: "商品主图生成详情页长图并自动入库",
+        prompt: "帮我生成电商详情页长图，商品和卖点是：",
+      },
+      {
+        key: "ecommerce.publish",
+        capabilityId: "ecommerce.publish",
+        packageId: "ecommerce_publish_skill",
+        label: "商品发布",
+        department: "运营部",
+        mark: "店",
+        description: "打开电商后台并填写商品发布信息",
+        prompt: "帮我把商品发布到电商平台，平台和商品信息是：",
+      },
+    ];
     const IP_DAILY_TASK_OPTIONS = [
       { value: "industry_hot_oral", label: "行业热门口播" },
       { value: "professional_ip_oral", label: "专业 IP 口播" },
@@ -4832,23 +4992,31 @@
       return (state.taskSkillPackages || []).find((pkg) => String(pkg && pkg.id || "").trim() === id) || null;
     }
 
+    function packageVisible(packageId) {
+      const pkg = packageById(packageId);
+      return !!pkg && (pkg.status === "installed" || pkg.default_installed || pkg.unlocked);
+    }
+
+    function isScheduledTaskAbility(capabilityId) {
+      return SCHEDULED_TASK_CAPABILITY_IDS.includes(String(capabilityId || "").trim());
+    }
+
     function taskAbilityVisible(capabilityId) {
       const meta = TASK_CAPABILITIES[capabilityId];
       if (!meta) return false;
       if (!state.taskSkillsLoaded) {
-        return ["goal.video.pipeline", "goal.image.pipeline", "ip_content_daily", "hifly.video.create_by_tts"].includes(capabilityId);
+        return isScheduledTaskAbility(capabilityId);
       }
       const allowedCaps = new Set((state.taskAllowedCapabilityIds || []).map((id) => String(id || "").trim()).filter(Boolean));
       if (allowedCaps.has(capabilityId)) return true;
       if (meta.featureKey) return !!(state.user && state.user.features && state.user.features[meta.featureKey]);
-      const pkg = packageById(meta.packageId);
-      return !!pkg && (pkg.status === "installed" || pkg.default_installed || pkg.unlocked);
+      return packageVisible(meta.packageId);
     }
 
     function visibleTaskAbilities() {
-      const rows = Object.keys(TASK_CAPABILITIES).filter(taskAbilityVisible);
+      const rows = SCHEDULED_TASK_CAPABILITY_IDS.filter(taskAbilityVisible);
       if (rows.length) return rows;
-      return state.taskSkillsLoaded ? [] : ["goal.video.pipeline", "goal.image.pipeline", "ip_content_daily", "hifly.video.create_by_tts"];
+      return state.taskSkillsLoaded ? [] : SCHEDULED_TASK_CAPABILITY_IDS.slice();
     }
 
     function renderTaskAbilityBoard() {
@@ -4859,34 +5027,86 @@
         state.taskAbility = visible[0] || "goal.video.pipeline";
       }
       if (!visible.length) {
-        host.innerHTML = `<div class="task-skill-empty">当前账号暂无可安排技能，请先到技能商店开通权限。</div>`;
+        host.innerHTML = `<div class="task-skill-empty">当前账号暂无可定时下发技能，请先到技能商店开通权限。</div>`;
         return;
       }
+      host.innerHTML = `<div class="task-skill-dept">
+        <div class="task-skill-dept-title">可定时下发</div>
+        <div class="task-skill-grid">${visible.map((ability) => {
+          const meta = TASK_CAPABILITIES[ability] || {};
+          const active = ability === state.taskAbility ? " active" : "";
+          return `<button type="button" class="task-skill-card${active}" data-task-ability="${escapeHtml(ability)}">
+            <strong>${escapeHtml(meta.label || ability)}</strong>
+            <span>${escapeHtml(meta.description || "")}</span>
+          </button>`;
+        }).join("")}</div>
+      </div>`;
+    }
+
+    function workQuickItemVisible(item) {
+      if (!item) return false;
+      if (item.always) return true;
+      if (item.featureKey) return !!(state.user && state.user.features && state.user.features[item.featureKey]);
+      if (!state.taskSkillsLoaded) return false;
+      const capabilityId = String(item.capabilityId || "").trim();
+      if (capabilityId) {
+        const allowedCaps = new Set((state.taskAllowedCapabilityIds || []).map((id) => String(id || "").trim()).filter(Boolean));
+        if (allowedCaps.has(capabilityId)) return true;
+      }
+      if (item.packageId && packageVisible(item.packageId)) return true;
+      return false;
+    }
+
+    function workQuickCardHtml(item) {
+      const classes = `quick-card${item.highlight ? " quick-card-leads" : ""}`;
+      const attrs = [
+        `class="${classes}"`,
+        `type="button"`,
+        `data-work-quick="${escapeHtml(item.key || item.label || "")}"`,
+      ];
+      if (item.homeTarget) attrs.push(`data-home-target="${escapeHtml(item.homeTarget)}"`);
+      if (item.prompt) attrs.push(`data-prompt="${escapeHtml(item.prompt)}"`);
+      if (item.imageVideo) attrs.push(`data-image-video="1"`);
+      return `<button ${attrs.join(" ")}>
+        <div class="quick-mark">${escapeHtml(item.mark || (item.label || "?").slice(0, 1))}</div>
+        <strong>${escapeHtml(item.label || item.key || "工作")}</strong>
+        <span>${escapeHtml(item.description || "")}</span>
+      </button>`;
+    }
+
+    function renderHomeQuickGrid() {
+      const host = $("homeQuickGrid");
+      if (!host) return;
+      if (state.token && state.taskSkillsLoading && !state.taskSkillsLoaded) {
+        host.innerHTML = `<div class="quick-empty">正在读取岗位工作入口...</div>`;
+        return;
+      }
+      if (state.taskSkillsError && !state.taskSkillsLoaded) {
+        host.innerHTML = `<div class="quick-empty">${escapeHtml(state.taskSkillsError)}</div>`;
+        return;
+      }
+      const visible = WORK_QUICK_ITEMS.filter(workQuickItemVisible);
       const html = TASK_DEPARTMENTS.map((department) => {
-        const rows = visible.filter((ability) => (TASK_CAPABILITIES[ability].department || "运营部") === department);
+        const rows = visible.filter((item) => (item.department || "运营部") === department);
         if (!rows.length) return "";
-        return `<div class="task-skill-dept">
-          <div class="task-skill-dept-title">${escapeHtml(department)}</div>
-          <div class="task-skill-grid">${rows.map((ability) => {
-            const meta = TASK_CAPABILITIES[ability] || {};
-            const active = ability === state.taskAbility ? " active" : "";
-            return `<button type="button" class="task-skill-card${active}" data-task-ability="${escapeHtml(ability)}">
-              <strong>${escapeHtml(meta.label || ability)}</strong>
-              <span>${escapeHtml(meta.description || "")}</span>
-            </button>`;
-          }).join("")}</div>
-        </div>`;
+        return `<section class="quick-section" aria-label="${escapeHtml(department)}">
+          <div class="quick-section-head"><strong>${escapeHtml(department)}</strong><span>${escapeHtml(WORK_DEPARTMENT_HINTS[department] || "可安排工作")}</span></div>
+          <div class="quick-grid">${rows.map(workQuickCardHtml).join("")}</div>
+        </section>`;
       }).join("");
-      host.innerHTML = html || `<div class="task-skill-empty">当前账号暂无可安排技能，请先到技能商店开通权限。</div>`;
+      host.innerHTML = html || `<div class="quick-empty">当前账号暂无可安排工作入口，请先到技能商店开通权限。</div>`;
     }
 
     async function loadTaskSkills(force = false) {
       if (!state.token) return;
       if (!force && (state.taskSkillsLoaded || state.taskSkillsLoading)) {
         renderTaskAbilityBoard();
+        renderHomeQuickGrid();
         return;
       }
       state.taskSkillsLoading = true;
+      state.taskSkillsError = "";
+      renderHomeQuickGrid();
       try {
         const [store, allowed] = await Promise.all([
           api("/skills/store").catch(() => ({ packages: [] })),
@@ -4898,10 +5118,12 @@
       } catch (err) {
         state.taskSkillPackages = [];
         state.taskAllowedCapabilityIds = [];
-        toast(err.message || "可安排技能加载失败");
+        state.taskSkillsError = err.message || "岗位工作入口加载失败，请稍后重试";
+        toast(err.message || "岗位工作入口加载失败");
       } finally {
         state.taskSkillsLoading = false;
         renderTaskAbilityBoard();
+        renderHomeQuickGrid();
       }
     }
 
@@ -5013,6 +5235,11 @@
 
     function setTaskAbility(ability) {
       const next = ability || "goal.video.pipeline";
+      if (!isScheduledTaskAbility(next)) {
+        toast("这个技能不支持定时下发，请在下方岗位工作入口发起");
+        renderTaskAbilityBoard();
+        return;
+      }
       if (!taskAbilityVisible(next)) {
         toast("当前账号没有这个技能的安排权限");
         renderTaskAbilityBoard();
@@ -5036,6 +5263,7 @@
       if (state.taskPanelOpen) {
         loadTaskSkills();
         renderTaskAbilityBoard();
+        renderHomeQuickGrid();
         renderTaskParamFields();
         updateScheduleFields();
       }
@@ -5710,6 +5938,11 @@
     async function createScheduledTask() {
       const btn = $("createTaskBtn");
       const installationId = currentInstallationId();
+      if (!isScheduledTaskAbility(state.taskAbility)) {
+        toast("这个技能暂不支持定时下发，请在下方岗位工作入口发起");
+        renderTaskAbilityBoard();
+        return;
+      }
       if (state.taskSkillsLoaded && !taskAbilityVisible(state.taskAbility)) {
         toast("当前账号没有这个技能的安排权限");
         renderTaskAbilityBoard();
