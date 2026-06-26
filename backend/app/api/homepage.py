@@ -8,6 +8,11 @@ from fastapi.responses import FileResponse, HTMLResponse
 router = APIRouter()
 _ROOT = Path(__file__).resolve().parents[3]
 _H5_INDEX = _ROOT / "h5_static" / "index.html"
+_H5_INDEX_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 
 def _asset(path: str) -> str:
@@ -320,5 +325,5 @@ def homepage(request: Request):
     if host == "h5.bhzn.top" or host.startswith("h5."):
         if not _H5_INDEX.is_file():
             raise HTTPException(status_code=404, detail="H5 页面未打包")
-        return FileResponse(str(_H5_INDEX))
+        return FileResponse(str(_H5_INDEX), headers=_H5_INDEX_HEADERS)
     return HTMLResponse(content=_HOME_HTML, media_type="text/html; charset=utf-8")

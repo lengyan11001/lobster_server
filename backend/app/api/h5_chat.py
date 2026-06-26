@@ -38,6 +38,11 @@ router = APIRouter()
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _H5_INDEX = _ROOT / "h5_static" / "index.html"
 _H5_STATIC_DIR = _ROOT / "h5_static"
+_H5_INDEX_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 _H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
 _H5_WEBCLIP_URL = "https://h5.bhzn.top/"
 _H5_WEBCLIP_LABEL = "必火AI员工"
@@ -490,7 +495,7 @@ async def _remote_media_response(request: Request, url: str, disposition: str, f
 def h5_page():
     if not _H5_INDEX.is_file():
         raise HTTPException(status_code=404, detail="H5 页面未打包")
-    return FileResponse(str(_H5_INDEX))
+    return FileResponse(str(_H5_INDEX), headers=_H5_INDEX_HEADERS)
 
 
 @router.get("/h5-static/{filename}", include_in_schema=False)

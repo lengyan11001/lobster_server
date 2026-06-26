@@ -3882,6 +3882,9 @@
         renderWorkList();
         Promise.all([loadTasks(), loadRuns()]);
       }
+      if (key === "home") {
+        setTaskPanelOpen(true);
+      }
       if (key === "douyinLeads") {
         loadDouyinStatus();
       }
