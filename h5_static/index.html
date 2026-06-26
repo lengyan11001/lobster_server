@@ -957,6 +957,54 @@
       border-radius: 14px;
     }
     .seg button.active { color: #102036; background: #fff; box-shadow: 0 12px 26px rgba(0,0,0,.14); }
+    .task-skill-board { display: grid; gap: 10px; }
+    .task-skill-dept { display: grid; gap: 7px; }
+    .task-skill-dept-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: rgba(255,255,255,.88);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .task-skill-dept-title::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #72f0d4;
+      box-shadow: 0 0 0 5px rgba(114,240,212,.12);
+    }
+    .task-skill-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 8px; }
+    .task-skill-card {
+      min-height: 74px;
+      padding: 10px 12px;
+      text-align: left;
+      justify-content: flex-start;
+      align-items: flex-start;
+      display: grid;
+      gap: 5px;
+      color: rgba(255,255,255,.88);
+      background: rgba(255,255,255,.1);
+      border-radius: 16px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+    }
+    .task-skill-card strong { color: #fff; font-size: 14px; line-height: 1.35; }
+    .task-skill-card span { color: rgba(255,255,255,.66); font-size: 12px; line-height: 1.45; }
+    .task-skill-card.active {
+      color: #102036;
+      background: #fff;
+      box-shadow: 0 14px 30px rgba(0,0,0,.16);
+    }
+    .task-skill-card.active strong { color: #102036; }
+    .task-skill-card.active span { color: #5d6b82; }
+    .task-skill-empty {
+      padding: 12px;
+      color: rgba(255,255,255,.74);
+      border-radius: 16px;
+      background: rgba(255,255,255,.1);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.16);
+    }
     .task-fields { display: grid; grid-template-columns: 1.2fr .85fr .85fr; gap: 10px; align-items: end; }
     .task-fields .field { margin: 0; }
     .task-fields label { color: rgba(255,255,255,.78); }
@@ -2199,11 +2247,8 @@
                   <button class="task-toggle" type="button" id="toggleTaskPanelBtn">开始</button>
                 </div>
                 <div class="task-panel-body hidden" id="taskPanelBody">
-                  <div class="seg" id="taskAbilitySeg">
-                    <button type="button" class="active" data-task-ability="goal.video.pipeline">创意成片</button>
-                    <button type="button" data-task-ability="goal.image.pipeline">文案+创意图片</button>
-                    <button type="button" data-task-ability="ip_content_daily">IP日更文案</button>
-                    <button type="button" data-task-ability="hifly.video.create_by_tts">必火数字人</button>
+                  <div class="task-skill-board" id="taskAbilityBoard">
+                    <div class="task-skill-empty">正在读取可安排技能...</div>
                   </div>
                   <div class="task-fields">
                     <div class="field">
@@ -2628,6 +2673,10 @@
       ipTemplates: [],
       ipTemplatesLoaded: false,
       ipTemplatesLoading: false,
+      taskSkillPackages: [],
+      taskAllowedCapabilityIds: [],
+      taskSkillsLoaded: false,
+      taskSkillsLoading: false,
       douyinStatus: null,
       douyinTaskAction: "search_collect",
       voiceRecording: false,
@@ -2653,20 +2702,73 @@
       "goal.video.pipeline": {
         label: "创意成片",
         description: "根据记忆或自定义提示词生成文案，可从备选素材组随机取图，或先 AI 生成首帧再生成视频。",
+        packageId: "goal_video_pipeline_skill",
+        department: "市场部",
       },
       "goal.image.pipeline": {
         label: "文案+创意图片",
         description: "根据记忆或自定义提示词生成文案和创意图片，生成图片后结束。",
+        packageId: "goal_video_pipeline_skill",
+        department: "市场部",
       },
       "hifly.video.create_by_tts": {
         label: "必火数字人",
         description: "选择本机已有数字人模板和声音，生成数字人口播视频。",
+        packageId: "hifly_digital_human_skill",
+        department: "市场部",
       },
       "ip_content_daily": {
         label: "IP日更文案",
         description: "服务器定时同步关键词和同行数据，生成行业口播、专业IP口播和朋友圈文案。",
+        packageId: "ip_content_daily_skill",
+        department: "市场部",
+        serverTask: true,
+      },
+      "comfly.daihuo.pipeline": {
+        label: "爆款TVC",
+        description: "用素材或公网图生成多分镜成片，适合商品宣传和广告视频。",
+        packageId: "comfly_veo_skill",
+        department: "市场部",
+      },
+      "comfly.seedance.tvc.pipeline": {
+        label: "创意分镜头视频",
+        description: "按 10 秒一段生成连续分镜和视频，并合成为完整成片。",
+        packageId: "comfly_seedance_tvc_skill",
+        department: "市场部",
+      },
+      "create.video.pipeline": {
+        label: "速推视频制作",
+        description: "根据创意要求规划分镜，生成首帧并制作视频。",
+        packageId: "create_video_pipeline_skill",
+        department: "市场部",
+      },
+      "wewrite.article.pipeline": {
+        label: "微信公众号",
+        description: "输入主题，生成公众号文章、配图并推送到草稿箱。",
+        packageId: "wewrite_official_account_skill",
+        department: "市场部",
+      },
+      "ppt.create": {
+        label: "PPT",
+        description: "输入主题或大纲，生成可下载的 PPT 演示文稿。",
+        packageId: "create_ppt_skill",
+        department: "运营部",
+      },
+      "comfly.ecommerce.detail_pipeline": {
+        label: "电商详情页",
+        description: "用商品主图生成电商详情页长图并自动入库。",
+        packageId: "comfly_ecommerce_detail_skill",
+        department: "运营部",
+      },
+      "douyin_leads": {
+        label: "抖音获客",
+        description: "采集客户、评论互动、私信触达和同行监控。",
+        featureKey: "douyin_leads_access",
+        department: "销售部",
+        routeTab: "douyinLeadsSchedule",
       },
     };
+    const TASK_DEPARTMENTS = ["市场部", "销售部", "客服部", "运营部"];
     const IP_DAILY_TASK_OPTIONS = [
       { value: "industry_hot_oral", label: "行业热门口播" },
       { value: "professional_ip_oral", label: "专业 IP 口播" },
@@ -2830,6 +2932,12 @@
         "hifly.video.create_by_tts": "必火数字人",
         "ip_content_daily": "IP日更文案",
         "douyin_leads": "抖音获客",
+        "comfly.daihuo.pipeline": "爆款TVC",
+        "comfly.seedance.tvc.pipeline": "创意分镜头视频",
+        "create.video.pipeline": "速推视频制作",
+        "wewrite.article.pipeline": "微信公众号",
+        "ppt.create": "PPT",
+        "comfly.ecommerce.detail_pipeline": "电商详情页",
       }[capabilityId] || capabilityId || "定时任务";
     }
 
@@ -4492,7 +4600,7 @@
         $("loginPanel").classList.add("hidden");
         $("appPanel").classList.remove("hidden");
         switchTab("office");
-        await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks(), loadRuns()]);
+        await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks(), loadRuns(), loadTaskSkills()]);
         return true;
       } catch (err) {
         localStorage.removeItem("lobster_h5_token");
@@ -4716,6 +4824,84 @@
       }
     }
 
+    function packageById(packageId) {
+      const id = String(packageId || "").trim();
+      return (state.taskSkillPackages || []).find((pkg) => String(pkg && pkg.id || "").trim() === id) || null;
+    }
+
+    function taskAbilityVisible(capabilityId) {
+      const meta = TASK_CAPABILITIES[capabilityId];
+      if (!meta) return false;
+      if (!state.taskSkillsLoaded) {
+        return ["goal.video.pipeline", "goal.image.pipeline", "ip_content_daily", "hifly.video.create_by_tts"].includes(capabilityId);
+      }
+      const allowedCaps = new Set((state.taskAllowedCapabilityIds || []).map((id) => String(id || "").trim()).filter(Boolean));
+      if (allowedCaps.has(capabilityId)) return true;
+      if (meta.featureKey) return !!(state.user && state.user.features && state.user.features[meta.featureKey]);
+      const pkg = packageById(meta.packageId);
+      return !!pkg && (pkg.status === "installed" || pkg.default_installed || pkg.unlocked);
+    }
+
+    function visibleTaskAbilities() {
+      const rows = Object.keys(TASK_CAPABILITIES).filter(taskAbilityVisible);
+      if (rows.length) return rows;
+      return state.taskSkillsLoaded ? [] : ["goal.video.pipeline", "goal.image.pipeline", "ip_content_daily", "hifly.video.create_by_tts"];
+    }
+
+    function renderTaskAbilityBoard() {
+      const host = $("taskAbilityBoard");
+      if (!host) return;
+      const visible = visibleTaskAbilities();
+      if (!visible.includes(state.taskAbility)) {
+        state.taskAbility = visible[0] || "goal.video.pipeline";
+      }
+      if (!visible.length) {
+        host.innerHTML = `<div class="task-skill-empty">当前账号暂无可安排技能，请先到技能商店开通权限。</div>`;
+        return;
+      }
+      const html = TASK_DEPARTMENTS.map((department) => {
+        const rows = visible.filter((ability) => (TASK_CAPABILITIES[ability].department || "运营部") === department);
+        if (!rows.length) return "";
+        return `<div class="task-skill-dept">
+          <div class="task-skill-dept-title">${escapeHtml(department)}</div>
+          <div class="task-skill-grid">${rows.map((ability) => {
+            const meta = TASK_CAPABILITIES[ability] || {};
+            const active = ability === state.taskAbility ? " active" : "";
+            return `<button type="button" class="task-skill-card${active}" data-task-ability="${escapeHtml(ability)}">
+              <strong>${escapeHtml(meta.label || ability)}</strong>
+              <span>${escapeHtml(meta.description || "")}</span>
+            </button>`;
+          }).join("")}</div>
+        </div>`;
+      }).join("");
+      host.innerHTML = html || `<div class="task-skill-empty">当前账号暂无可安排技能，请先到技能商店开通权限。</div>`;
+    }
+
+    async function loadTaskSkills(force = false) {
+      if (!state.token) return;
+      if (!force && (state.taskSkillsLoaded || state.taskSkillsLoading)) {
+        renderTaskAbilityBoard();
+        return;
+      }
+      state.taskSkillsLoading = true;
+      try {
+        const [store, allowed] = await Promise.all([
+          api("/skills/store").catch(() => ({ packages: [] })),
+          api("/skills/user-allowed-capability-ids").catch(() => ({ capability_ids: [] })),
+        ]);
+        state.taskSkillPackages = Array.isArray(store.packages) ? store.packages : [];
+        state.taskAllowedCapabilityIds = Array.isArray(allowed.capability_ids) ? allowed.capability_ids : [];
+        state.taskSkillsLoaded = true;
+      } catch (err) {
+        state.taskSkillPackages = [];
+        state.taskAllowedCapabilityIds = [];
+        toast(err.message || "可安排技能加载失败");
+      } finally {
+        state.taskSkillsLoading = false;
+        renderTaskAbilityBoard();
+      }
+    }
+
     function updateGoalVideoSourceMode() {
       const mode = $("taskVideoSourceMode") ? $("taskVideoSourceMode").value : "asset_random";
       if ($("taskCandidateGroupField")) $("taskCandidateGroupField").classList.toggle("hidden", mode === "ai_image");
@@ -4750,6 +4936,48 @@
         loadPublishAccounts();
         return;
       }
+      if (state.taskAbility === "wewrite.article.pipeline") {
+        host.innerHTML = taskFieldHtml("公众号主题", taskTextareaHtml("taskArticleIdea", "例如：必火AI龙虾盒子如何帮老板搭建一人公司"), true)
+          + taskFieldHtml("文章风格", `<input id="taskArticleStyle" placeholder="例如：专业、有案例、适合老板阅读" />`)
+          + taskFieldHtml("配图数量", `<input id="taskArticleImageCount" type="number" min="0" max="6" value="3" />`)
+          + taskFieldHtml("自动配图", `<label class="task-checkbox"><input id="taskArticleIncludeImages" type="checkbox" checked>生成 16:9 横屏配图并插入</label>`, true);
+        return;
+      }
+      if (state.taskAbility === "ppt.create") {
+        host.innerHTML = taskFieldHtml("PPT主题", taskTextareaHtml("taskPptTopic", "例如：必火AI龙虾盒子招商路演PPT"), true)
+          + taskFieldHtml("页数", `<input id="taskPptSlideCount" type="number" min="1" max="80" value="10" />`)
+          + taskFieldHtml("风格要求", `<input id="taskPptInstructions" placeholder="例如：科技感、适合招商、案例更具体" />`)
+          + taskFieldHtml("生成模式", taskSelectHtml("taskPptMode", optionHtml("ai", "AI视觉页") + optionHtml("outline", "结构化大纲")));
+        return;
+      }
+      if (state.taskAbility === "create.video.pipeline") {
+        host.innerHTML = taskFieldHtml("视频主题", taskTextareaHtml("taskCreateVideoPrompt", "例如：给必火AI龙虾盒子生成一个30秒招商宣传视频"), true)
+          + taskFieldHtml("时长秒数", `<input id="taskCreateVideoDuration" type="number" min="3" max="60" value="8" />`)
+          + taskFieldHtml("分镜数量", `<input id="taskCreateVideoSceneCount" type="number" min="1" max="6" value="1" />`)
+          + taskFieldHtml("画幅", taskSelectHtml("taskCreateVideoAspect", optionHtml("16:9", "16:9 横屏") + optionHtml("9:16", "9:16 竖屏") + optionHtml("1:1", "1:1 方图")));
+        return;
+      }
+      if (state.taskAbility === "comfly.daihuo.pipeline") {
+        host.innerHTML = taskFieldHtml("素材ID或公网图", `<input id="taskComflyAsset" placeholder="填素材ID；没有可填公网图片URL" />`)
+          + taskFieldHtml("视频要求", taskTextareaHtml("taskComflyText", "例如：生成一个突出产品卖点和使用场景的爆款TVC"), true)
+          + taskFieldHtml("分镜数量", `<input id="taskComflyStoryboardCount" type="number" min="1" max="8" value="5" />`)
+          + taskFieldHtml("自动入库", `<label class="task-checkbox"><input id="taskComflyAutoSave" type="checkbox" checked>完成后保存到素材库</label>`);
+        return;
+      }
+      if (state.taskAbility === "comfly.seedance.tvc.pipeline") {
+        host.innerHTML = taskFieldHtml("素材ID或公网图", `<input id="taskSeedanceAsset" placeholder="填素材ID；没有可填公网图片URL" />`)
+          + taskFieldHtml("视频要求", taskTextareaHtml("taskSeedanceText", "例如：明亮真实的品牌广告，镜头连续，适合投放"), true)
+          + taskFieldHtml("总时长", taskSelectHtml("taskSeedanceDuration", [10,20,30,40,50,60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
+          + taskFieldHtml("画幅", taskSelectHtml("taskSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏")));
+        return;
+      }
+      if (state.taskAbility === "comfly.ecommerce.detail_pipeline") {
+        host.innerHTML = taskFieldHtml("商品素材ID或公网图", `<input id="taskEcommerceAsset" placeholder="填商品主图素材ID；没有可填公网图片URL" />`)
+          + taskFieldHtml("详情页要求", taskTextareaHtml("taskEcommerceText", "例如：突出材质、卖点、使用场景和购买理由"), true)
+          + taskFieldHtml("页面数量", `<input id="taskEcommercePageCount" type="number" min="1" max="20" value="12" />`)
+          + taskFieldHtml("自动入库", `<label class="task-checkbox"><input id="taskEcommerceAutoSave" type="checkbox" checked>完成后保存到素材库</label>`);
+        return;
+      }
       host.innerHTML = taskFieldHtml("首帧图片来源", taskSelectHtml("taskVideoSourceMode", optionHtml("asset_random", "从素材库备选组随机图片") + optionHtml("ai_image", "AI 生成图片")))
         + `<div class="field" id="taskCandidateGroupField"><label>备选素材组</label>${taskSelectHtml("taskCandidateGroup", optionHtml("", "加载中..."))}</div>`
         + taskFieldHtml("提示词（可选）", taskTextareaHtml("taskCreativePrompt", "填写后直接按这段提示词生成；留空则根据记忆资料自动生成文案和画面方向"), true);
@@ -4781,8 +5009,19 @@
     }
 
     function setTaskAbility(ability) {
-      state.taskAbility = ability || "goal.video.pipeline";
-      document.querySelectorAll("[data-task-ability]").forEach((btn) => btn.classList.toggle("active", btn.dataset.taskAbility === state.taskAbility));
+      const next = ability || "goal.video.pipeline";
+      if (!taskAbilityVisible(next)) {
+        toast("当前账号没有这个技能的安排权限");
+        renderTaskAbilityBoard();
+        return;
+      }
+      const meta = TASK_CAPABILITIES[next] || {};
+      if (meta.routeTab) {
+        switchTab(meta.routeTab);
+        return;
+      }
+      state.taskAbility = next;
+      renderTaskAbilityBoard();
       renderTaskParamFields();
       if (state.taskPanelOpen && state.taskAbility === "hifly.video.create_by_tts") loadHiflyLibraries();
     }
@@ -4792,6 +5031,8 @@
       $("taskPanelBody").classList.toggle("hidden", !state.taskPanelOpen);
       $("toggleTaskPanelBtn").textContent = state.taskPanelOpen ? "收起" : "开始";
       if (state.taskPanelOpen) {
+        loadTaskSkills();
+        renderTaskAbilityBoard();
         renderTaskParamFields();
         updateScheduleFields();
       }
@@ -4830,6 +5071,13 @@
       if ($("taskDailyTimesBlock")) $("taskDailyTimesBlock").classList.toggle("hidden", type !== "daily_times");
       if ($("taskStartAt")) $("taskStartAt").closest(".field").classList.toggle("hidden", type === "daily_times");
       if (type === "daily_times" && $("taskDailyTimesList") && !$("taskDailyTimesList").children.length) addDailyTime("09:00");
+    }
+
+    function assetOrImagePayload(raw, fieldLabel) {
+      const value = String(raw || "").trim();
+      if (!value) throw new Error(`请填写${fieldLabel}`);
+      if (/^https?:\/\//i.test(value)) return { image_url: value };
+      return { asset_id: value };
     }
 
     function collectCapabilityPayload() {
@@ -4890,6 +5138,77 @@
           payload.publish_auto = autoPublish;
         }
         return payload;
+      }
+      if (state.taskAbility === "wewrite.article.pipeline") {
+        const idea = (($("taskArticleIdea") && $("taskArticleIdea").value) || "").trim();
+        if (!idea) throw new Error("请填写公众号主题");
+        const imageCount = parseInt(($("taskArticleImageCount") && $("taskArticleImageCount").value) || "3", 10);
+        return {
+          idea,
+          style: (($("taskArticleStyle") && $("taskArticleStyle").value) || "").trim(),
+          include_images: !!($("taskArticleIncludeImages") && $("taskArticleIncludeImages").checked),
+          image_count: Number.isNaN(imageCount) ? 3 : Math.max(0, Math.min(6, imageCount)),
+          image_aspect_ratio: "16:9",
+        };
+      }
+      if (state.taskAbility === "ppt.create") {
+        const topic = (($("taskPptTopic") && $("taskPptTopic").value) || "").trim();
+        if (!topic) throw new Error("请填写 PPT 主题");
+        const slideCount = parseInt(($("taskPptSlideCount") && $("taskPptSlideCount").value) || "10", 10);
+        return {
+          mode: (($("taskPptMode") && $("taskPptMode").value) || "ai"),
+          topic,
+          slide_count: Number.isNaN(slideCount) ? 10 : Math.max(1, Math.min(80, slideCount)),
+          instructions: (($("taskPptInstructions") && $("taskPptInstructions").value) || "").trim(),
+          language: "zh-CN",
+        };
+      }
+      if (state.taskAbility === "create.video.pipeline") {
+        const prompt = (($("taskCreateVideoPrompt") && $("taskCreateVideoPrompt").value) || "").trim();
+        if (!prompt) throw new Error("请填写视频主题");
+        const duration = parseInt(($("taskCreateVideoDuration") && $("taskCreateVideoDuration").value) || "8", 10);
+        const sceneCount = parseInt(($("taskCreateVideoSceneCount") && $("taskCreateVideoSceneCount").value) || "1", 10);
+        return {
+          action: "start_pipeline",
+          prompt,
+          duration: Number.isNaN(duration) ? 8 : Math.max(3, Math.min(60, duration)),
+          scene_count: Number.isNaN(sceneCount) ? 1 : Math.max(1, Math.min(6, sceneCount)),
+          aspect_ratio: (($("taskCreateVideoAspect") && $("taskCreateVideoAspect").value) || "16:9"),
+        };
+      }
+      if (state.taskAbility === "comfly.daihuo.pipeline") {
+        const asset = assetOrImagePayload($("taskComflyAsset") && $("taskComflyAsset").value, "素材ID或公网图");
+        const storyboardCount = parseInt(($("taskComflyStoryboardCount") && $("taskComflyStoryboardCount").value) || "5", 10);
+        return {
+          action: "start_pipeline",
+          ...asset,
+          task_text: (($("taskComflyText") && $("taskComflyText").value) || "").trim(),
+          storyboard_count: Number.isNaN(storyboardCount) ? 5 : Math.max(1, Math.min(8, storyboardCount)),
+          auto_save: !!($("taskComflyAutoSave") && $("taskComflyAutoSave").checked),
+        };
+      }
+      if (state.taskAbility === "comfly.seedance.tvc.pipeline") {
+        const asset = assetOrImagePayload($("taskSeedanceAsset") && $("taskSeedanceAsset").value, "素材ID或公网图");
+        const totalDuration = parseInt(($("taskSeedanceDuration") && $("taskSeedanceDuration").value) || "20", 10);
+        return {
+          action: "start_pipeline",
+          ...asset,
+          task_text: (($("taskSeedanceText") && $("taskSeedanceText").value) || "").trim(),
+          total_duration_seconds: Number.isNaN(totalDuration) ? 20 : totalDuration,
+          aspect_ratio: (($("taskSeedanceAspect") && $("taskSeedanceAspect").value) || "9:16"),
+          auto_save: true,
+        };
+      }
+      if (state.taskAbility === "comfly.ecommerce.detail_pipeline") {
+        const asset = assetOrImagePayload($("taskEcommerceAsset") && $("taskEcommerceAsset").value, "商品素材ID或公网图");
+        const pageCount = parseInt(($("taskEcommercePageCount") && $("taskEcommercePageCount").value) || "12", 10);
+        return {
+          action: "start_pipeline",
+          ...asset,
+          task_text: (($("taskEcommerceText") && $("taskEcommerceText").value) || "").trim(),
+          page_count: Number.isNaN(pageCount) ? 12 : Math.max(1, Math.min(20, pageCount)),
+          auto_save: !!($("taskEcommerceAutoSave") && $("taskEcommerceAutoSave").checked),
+        };
       }
       return {};
     }
@@ -5388,6 +5707,11 @@
     async function createScheduledTask() {
       const btn = $("createTaskBtn");
       const installationId = currentInstallationId();
+      if (state.taskSkillsLoaded && !taskAbilityVisible(state.taskAbility)) {
+        toast("当前账号没有这个技能的安排权限");
+        renderTaskAbilityBoard();
+        return;
+      }
       if (state.taskAbility !== "ip_content_daily" && !installationId) {
         toast("未检测到本地 online 设备");
         return;
@@ -6188,9 +6512,6 @@
       }
       switchTab("office");
     });
-    document.querySelectorAll("[data-task-ability]").forEach((btn) => {
-      btn.addEventListener("click", () => setTaskAbility(btn.dataset.taskAbility));
-    });
     document.querySelectorAll("[data-home-target]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const target = String(btn.dataset.homeTarget || "").trim();
@@ -6199,6 +6520,11 @@
       });
     });
     $("toggleTaskPanelBtn").addEventListener("click", () => setTaskPanelOpen(!state.taskPanelOpen));
+    $("taskAbilityBoard")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-task-ability]");
+      if (!btn) return;
+      setTaskAbility(btn.dataset.taskAbility || "");
+    });
     $("taskScheduleType").addEventListener("change", updateScheduleFields);
     $("addDailyTimeBtn").addEventListener("click", () => addDailyTime());
     $("createTaskBtn").addEventListener("click", () => createScheduledTask().catch((err) => toast(err.message || "下发失败")));
