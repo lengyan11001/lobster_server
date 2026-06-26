@@ -1044,10 +1044,9 @@
     }
     .quick-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
     .quick-section-head strong { font-size: 16px; }
-    .quick-section-head span { color: var(--muted); font-size: 12px; }
     .quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .quick-card {
-      min-height: 98px;
+      min-height: 74px;
       display: grid;
       align-content: space-between;
       gap: 10px;
@@ -1060,7 +1059,6 @@
       border: 1px solid rgba(255,255,255,.7);
     }
     .quick-card strong { font-size: 15px; }
-    .quick-card span { color: var(--muted); font-size: 12px; line-height: 1.45; }
     .quick-mark { width: 26px; height: 26px; border-radius: 10px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--blue), var(--cyan)); font-size: 13px; font-weight: 900; }
     .quick-card.disabled,
     .quick-card:disabled {
@@ -1076,9 +1074,7 @@
       color: #f8fafc;
     }
     .quick-card.disabled strong,
-    .quick-card.disabled span,
-    .quick-card:disabled strong,
-    .quick-card:disabled span {
+    .quick-card:disabled strong {
       color: #94a3b8;
     }
     .work-dispatch-popover {
@@ -1095,15 +1091,6 @@
     .work-dispatch-fields .field { margin: 0; }
     .work-dispatch-fields .field.full { grid-column: 1 / -1; }
     .work-dispatch-fields textarea { min-height: 92px; resize: vertical; line-height: 1.55; }
-    .work-dispatch-note {
-      color: rgba(70,81,106,.82);
-      font-size: 12px;
-      line-height: 1.55;
-      padding: 10px 12px;
-      border-radius: 14px;
-      background: rgba(246,249,255,.88);
-      border: 1px solid rgba(148,163,184,.24);
-    }
     .work-dispatch-actions {
       display: flex;
       justify-content: flex-end;
@@ -2668,12 +2655,10 @@
         <div class="employee-mini-avatar" id="workDispatchMark">工</div>
         <div class="employee-popover-title">
           <strong id="workDispatchTitle">安排工作</strong>
-          <span id="workDispatchSub">填写参数后直接下发给客户端执行</span>
         </div>
       </div>
       <form class="work-dispatch-form" id="workDispatchForm">
         <div class="work-dispatch-fields" id="workDispatchFields"></div>
-        <div class="work-dispatch-note" id="workDispatchHint">这些入口会创建一次性客户端工作，不进入手机会话。</div>
         <div class="work-dispatch-actions">
           <button class="ghost" type="button" id="workDispatchCancel">取消</button>
           <button type="submit" id="workDispatchSubmit">下发任务</button>
@@ -2819,19 +2804,12 @@
       "goal.video.pipeline",
       "hifly.video.create_by_tts",
     ];
-    const WORK_DEPARTMENT_HINTS = {
-      "市场部": "内容创作和增长素材",
-      "销售部": "线索获取和客户跟进",
-      "客服部": "消息接待和私域服务",
-      "运营部": "发布、文档和店铺运营",
-    };
     const WORK_QUICK_ITEMS = [
       {
         key: "creative_general",
         label: "帮我创作",
         department: "市场部",
         mark: "创",
-        description: "复刻 online 首页创作入口，把需求带到手机会话",
         prompt: "帮我写一版电商详情页文案、短视频脚本和发布标题。",
         always: true,
       },
@@ -2840,7 +2818,6 @@
         label: "创作图片",
         department: "市场部",
         mark: "图",
-        description: "填写图片需求后直接下发到客户端生成",
         dispatchKind: "capability",
         capabilityId: "goal.image.pipeline",
         packageId: "goal_video_pipeline_skill",
@@ -2852,7 +2829,6 @@
         label: "爆款TVC",
         department: "市场部",
         mark: "▶",
-        description: "复刻 online 爆款TVC入口",
         prompt: "用爆款tvc帮我生成一个视频。",
       },
       {
@@ -2862,7 +2838,6 @@
         label: "创意分镜头视频",
         department: "市场部",
         mark: "▶",
-        description: "选择素材和分镜要求后下发客户端",
         dispatchKind: "capability",
       },
       {
@@ -2870,7 +2845,6 @@
         label: "同城爆款",
         department: "市场部",
         mark: "城",
-        description: "填写人设和城市，批量生成同城内容方案",
         dispatchKind: "client_workflow",
         workflowAction: "local_bestseller_plan",
         always: true,
@@ -2880,7 +2854,6 @@
         label: "爆款复刻",
         department: "市场部",
         mark: "R",
-        description: "提交参考视频和素材，客户端直接启动复刻",
         dispatchKind: "client_workflow",
         workflowAction: "viral_video_remix_start",
         always: true,
@@ -2892,7 +2865,6 @@
         label: "数字人",
         department: "市场部",
         mark: "H",
-        description: "选择数字人与声音后下发口播任务",
         dispatchKind: "capability",
       },
       {
@@ -2901,7 +2873,6 @@
         label: "抖音获客",
         department: "销售部",
         mark: "获",
-        description: "填写关键词，客户端采集客户线索",
         dispatchKind: "douyin_leads",
         highlight: true,
       },
@@ -2911,7 +2882,6 @@
         label: "企业微信客服",
         department: "客服部",
         mark: "微",
-        description: "下发一次企微拉取与自动回复检查",
         dispatchKind: "client_workflow",
         workflowAction: "wecom_poll_reply",
       },
@@ -2920,7 +2890,6 @@
         label: "发布中心入库",
         department: "运营部",
         mark: "发",
-        description: "填写素材和账号，客户端执行入库/发布",
         dispatchKind: "client_workflow",
         workflowAction: "publish_content",
         always: true,
@@ -2930,7 +2899,6 @@
         label: "AI店铺诊断（敬请期待）",
         department: "运营部",
         mark: "店",
-        description: "店铺经营诊断能力正在准备中",
         disabled: true,
         always: true,
       },
@@ -2939,7 +2907,6 @@
         label: "AI选品（敬请期待）",
         department: "运营部",
         mark: "品",
-        description: "选品分析能力正在准备中",
         disabled: true,
         always: true,
       },
@@ -5091,7 +5058,6 @@
       return `<button ${attrs.join(" ")}>
         <div class="quick-mark">${escapeHtml(item.mark || (item.label || "?").slice(0, 1))}</div>
         <strong>${escapeHtml(item.label || item.key || "工作")}</strong>
-        <span>${escapeHtml(item.description || "")}</span>
       </button>`;
     }
 
@@ -5111,7 +5077,7 @@
         const rows = visible.filter((item) => (item.department || "运营部") === department);
         if (!rows.length) return "";
         return `<section class="quick-section" aria-label="${escapeHtml(department)}">
-          <div class="quick-section-head"><strong>${escapeHtml(department)}</strong><span>${escapeHtml(WORK_DEPARTMENT_HINTS[department] || "可安排工作")}</span></div>
+          <div class="quick-section-head"><strong>${escapeHtml(department)}</strong></div>
           <div class="quick-grid">${rows.map(workQuickCardHtml).join("")}</div>
         </section>`;
       }).join("");
@@ -5235,11 +5201,7 @@
       state.workDispatchKey = String(item.key || item.label || "");
       $("workDispatchMark").textContent = item.mark || firstChar(item.label);
       $("workDispatchTitle").textContent = item.label || "安排工作";
-      $("workDispatchSub").textContent = item.description || "填写参数后直接下发给客户端执行";
       $("workDispatchFields").innerHTML = workDispatchFieldsHtml(item);
-      $("workDispatchHint").textContent = item.dispatchKind === "capability"
-        ? "此入口会创建一次性能力任务，由 online 客户端领取执行；不会进入手机会话。"
-        : "此入口会创建一次性客户端工作流任务；不会进入手机会话，也不会放进上方定时任务能力区。";
       modal.classList.remove("hidden");
       if (item.key === "hifly.video.create_by_tts") {
         renderWorkHiflyOptions();
