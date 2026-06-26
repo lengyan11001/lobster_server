@@ -1062,6 +1062,25 @@
     .quick-card strong { font-size: 15px; }
     .quick-card span { color: var(--muted); font-size: 12px; line-height: 1.45; }
     .quick-mark { width: 26px; height: 26px; border-radius: 10px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--blue), var(--cyan)); font-size: 13px; font-weight: 900; }
+    .quick-card.disabled,
+    .quick-card:disabled {
+      cursor: not-allowed;
+      color: #94a3b8;
+      background: rgba(241,245,249,.68);
+      box-shadow: none;
+      border: 1px dashed rgba(148,163,184,.48);
+    }
+    .quick-card.disabled .quick-mark,
+    .quick-card:disabled .quick-mark {
+      background: linear-gradient(135deg, #cbd5e1, #94a3b8);
+      color: #f8fafc;
+    }
+    .quick-card.disabled strong,
+    .quick-card.disabled span,
+    .quick-card:disabled strong,
+    .quick-card:disabled span {
+      color: #94a3b8;
+    }
     .quick-empty {
       min-height: 56px;
       display: flex;
@@ -2927,6 +2946,24 @@
         mark: "店",
         description: "打开电商后台并填写商品发布信息",
         prompt: "帮我把商品发布到电商平台，平台和商品信息是：",
+      },
+      {
+        key: "ai_shop_diagnosis",
+        label: "AI店铺诊断（敬请期待）",
+        department: "运营部",
+        mark: "店",
+        description: "店铺经营诊断能力正在准备中",
+        disabled: true,
+        always: true,
+      },
+      {
+        key: "ai_product_selection",
+        label: "AI选品（敬请期待）",
+        department: "运营部",
+        mark: "品",
+        description: "选品分析能力正在准备中",
+        disabled: true,
+        always: true,
       },
     ];
     const IP_DAILY_TASK_OPTIONS = [
@@ -5058,12 +5095,16 @@
     }
 
     function workQuickCardHtml(item) {
-      const classes = `quick-card${item.highlight ? " quick-card-leads" : ""}`;
+      const classes = `quick-card${item.highlight ? " quick-card-leads" : ""}${item.disabled ? " disabled" : ""}`;
       const attrs = [
         `class="${classes}"`,
         `type="button"`,
         `data-work-quick="${escapeHtml(item.key || item.label || "")}"`,
       ];
+      if (item.disabled) {
+        attrs.push("disabled");
+        attrs.push(`aria-disabled="true"`);
+      }
       if (item.homeTarget) attrs.push(`data-home-target="${escapeHtml(item.homeTarget)}"`);
       if (item.prompt) attrs.push(`data-prompt="${escapeHtml(item.prompt)}"`);
       if (item.imageVideo) attrs.push(`data-image-video="1"`);
