@@ -34,7 +34,7 @@ from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark
 
 router = APIRouter()
 
-_TASK_KINDS = {"openclaw_message", "chat_message", "capability", "ip_content_daily", "douyin_leads"}
+_TASK_KINDS = {"openclaw_message", "chat_message", "capability", "ip_content_daily", "douyin_leads", "client_workflow"}
 _SCHEDULE_TYPES = {"once", "interval", "daily_times"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _MAX_TARGET_DEVICES = 20
@@ -1018,6 +1018,8 @@ def _create_task_row(
         raise HTTPException(status_code=400, detail="能力调用任务需要 payload.capability_id")
     if task_kind == "douyin_leads" and not str(payload.get("action") or "").strip():
         raise HTTPException(status_code=400, detail="抖音获客任务需要 payload.action")
+    if task_kind == "client_workflow" and not str(payload.get("action") or "").strip():
+        raise HTTPException(status_code=400, detail="客户端工作流任务需要 payload.action")
     disabled_capability = _disabled_scheduled_capability(payload) if task_kind == "capability" else ""
     if disabled_capability:
         raise HTTPException(status_code=400, detail=f"定时任务能力已下线：{disabled_capability}")

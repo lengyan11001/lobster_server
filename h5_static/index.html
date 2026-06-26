@@ -1081,6 +1081,36 @@
     .quick-card:disabled span {
       color: #94a3b8;
     }
+    .work-dispatch-popover {
+      width: min(620px, calc(100vw - 28px));
+      max-height: min(78vh, 720px);
+      overflow: auto;
+    }
+    .work-dispatch-form { display: grid; gap: 13px; }
+    .work-dispatch-fields {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 11px;
+    }
+    .work-dispatch-fields .field { margin: 0; }
+    .work-dispatch-fields .field.full { grid-column: 1 / -1; }
+    .work-dispatch-fields textarea { min-height: 92px; resize: vertical; line-height: 1.55; }
+    .work-dispatch-note {
+      color: rgba(70,81,106,.82);
+      font-size: 12px;
+      line-height: 1.55;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(246,249,255,.88);
+      border: 1px solid rgba(148,163,184,.24);
+    }
+    .work-dispatch-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 9px;
+      flex-wrap: wrap;
+    }
+    .work-dispatch-actions button { min-height: 40px; padding: 0 15px; }
     .quick-empty {
       min-height: 56px;
       display: flex;
@@ -2630,6 +2660,28 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="workDispatchModal" data-mode="idle" role="dialog" aria-modal="true" aria-labelledby="workDispatchTitle">
+    <button class="employee-modal-backdrop" type="button" id="workDispatchBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover">
+      <button class="employee-popover-close" type="button" id="workDispatchClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar" id="workDispatchMark">工</div>
+        <div class="employee-popover-title">
+          <strong id="workDispatchTitle">安排工作</strong>
+          <span id="workDispatchSub">填写参数后直接下发给客户端执行</span>
+        </div>
+      </div>
+      <form class="work-dispatch-form" id="workDispatchForm">
+        <div class="work-dispatch-fields" id="workDispatchFields"></div>
+        <div class="work-dispatch-note" id="workDispatchHint">这些入口会创建一次性客户端工作，不进入手机会话。</div>
+        <div class="work-dispatch-actions">
+          <button class="ghost" type="button" id="workDispatchCancel">取消</button>
+          <button type="submit" id="workDispatchSubmit">下发任务</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
   <script>
@@ -2667,6 +2719,8 @@
       taskSkillsLoaded: false,
       taskSkillsLoading: false,
       taskSkillsError: "",
+      workDispatchKey: "",
+      workDispatchSubmitting: false,
       douyinStatus: null,
       douyinTaskAction: "search_collect",
       voiceRecording: false,
@@ -2777,7 +2831,7 @@
         label: "帮我创作",
         department: "市场部",
         mark: "创",
-        description: "复刻 online 首页创作入口，先把需求带到手机会话",
+        description: "复刻 online 首页创作入口，把需求带到手机会话",
         prompt: "帮我写一版电商详情页文案、短视频脚本和发布标题。",
         always: true,
       },
@@ -2786,9 +2840,10 @@
         label: "创作图片",
         department: "市场部",
         mark: "图",
-        description: "复刻 online 创作图片入口，先把图片需求带到手机会话",
-        prompt: "帮我生成一张图片，画面内容是：",
-        always: true,
+        description: "填写图片需求后直接下发到客户端生成",
+        dispatchKind: "capability",
+        capabilityId: "goal.image.pipeline",
+        packageId: "goal_video_pipeline_skill",
       },
       {
         key: "comfly.daihuo.pipeline",
@@ -2807,16 +2862,17 @@
         label: "创意分镜头视频",
         department: "市场部",
         mark: "▶",
-        description: "复刻 online 创意分镜头视频入口",
-        prompt: "用创意分镜头视频帮我生成一个品牌广告视频，需求是：",
+        description: "选择素材和分镜要求后下发客户端",
+        dispatchKind: "capability",
       },
       {
         key: "local_bestseller",
         label: "同城爆款",
         department: "市场部",
         mark: "城",
-        description: "批量做 30 天同城爆款内容",
-        prompt: "帮我做同城爆款内容，行业和城市是：",
+        description: "填写人设和城市，批量生成同城内容方案",
+        dispatchKind: "client_workflow",
+        workflowAction: "local_bestseller_plan",
         always: true,
       },
       {
@@ -2824,8 +2880,9 @@
         label: "爆款复刻",
         department: "市场部",
         mark: "R",
-        description: "复刻爆款视频结构和创意",
-        prompt: "帮我做爆款复刻，参考视频或产品要求是：",
+        description: "提交参考视频和素材，客户端直接启动复刻",
+        dispatchKind: "client_workflow",
+        workflowAction: "viral_video_remix_start",
         always: true,
       },
       {
@@ -2835,8 +2892,8 @@
         label: "数字人",
         department: "市场部",
         mark: "H",
-        description: "复刻 online 数字人入口",
-        prompt: "帮我生成一条数字人口播视频，文案是：",
+        description: "选择数字人与声音后下发口播任务",
+        dispatchKind: "capability",
       },
       {
         key: "douyin_leads",
@@ -2844,8 +2901,8 @@
         label: "抖音获客",
         department: "销售部",
         mark: "获",
-        description: "采集客户、评论互动、私信触达和同行监控",
-        homeTarget: "douyinLeads",
+        description: "填写关键词，客户端采集客户线索",
+        dispatchKind: "douyin_leads",
         highlight: true,
       },
       {
@@ -2854,17 +2911,18 @@
         label: "企业微信客服",
         department: "客服部",
         mark: "微",
-        description: "复刻 online 企业微信客服入口",
-        prompt: "帮我配置企业微信客服自动回复，业务场景是：",
-        always: true,
+        description: "下发一次企微拉取与自动回复检查",
+        dispatchKind: "client_workflow",
+        workflowAction: "wecom_poll_reply",
       },
       {
         key: "publish_center",
         label: "发布中心入库",
         department: "运营部",
         mark: "发",
-        description: "发布账号、素材入库和发布记录",
-        prompt: "把某素材发布到 平台 账号",
+        description: "填写素材和账号，客户端执行入库/发布",
+        dispatchKind: "client_workflow",
+        workflowAction: "publish_content",
         always: true,
       },
       {
@@ -3055,6 +3113,7 @@
         "wewrite.article.pipeline": "微信公众号",
         "ppt.create": "PPT",
         "comfly.ecommerce.detail_pipeline": "电商详情页",
+        "client_workflow": "客户端工作流",
       }[capabilityId] || capabilityId || "定时任务";
     }
 
@@ -4791,6 +4850,7 @@
           ? state.voiceRows.map((row) => `<option value="${escapeHtml(row.voice)}">${escapeHtml(row.title)}</option>`).join("")
           : `<option value="">暂无可用声音</option>`;
       }
+      renderWorkHiflyOptions();
     }
 
     function optionHtml(value, label) {
@@ -5056,6 +5116,350 @@
         </section>`;
       }).join("");
       host.innerHTML = html || `<div class="quick-empty">当前账号暂无可安排工作入口，请先到技能商店开通权限。</div>`;
+    }
+
+    function workQuickItemByKey(key) {
+      const wanted = String(key || "").trim();
+      return WORK_QUICK_ITEMS.find((item) => String(item.key || item.label || "").trim() === wanted) || null;
+    }
+
+    function workInputHtml(id, type, value = "", attrs = "") {
+      return `<input id="${escapeHtml(id)}" type="${escapeHtml(type || "text")}" value="${escapeHtml(value)}" ${attrs || ""}>`;
+    }
+
+    function workCheckboxHtml(id, label, checked = false) {
+      return `<label class="task-checkbox" style="min-height:42px;color:#46516a;"><input id="${escapeHtml(id)}" type="checkbox" ${checked ? "checked" : ""}><span>${escapeHtml(label)}</span></label>`;
+    }
+
+    function workNumber(value, fallback, min, max) {
+      const parsed = parseInt(value, 10);
+      const safe = Number.isNaN(parsed) ? fallback : parsed;
+      return Math.max(min, Math.min(max, safe));
+    }
+
+    function workSplitList(value) {
+      return String(value || "")
+        .split(/[,\s，、；;]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    function workMaterialPayload(value) {
+      const raw = String(value || "").trim();
+      if (!raw) throw new Error("请填写素材 ID 或公网链接");
+      if (/^https?:\/\//i.test(raw)) return { url: raw };
+      return { asset_id: raw };
+    }
+
+    function renderWorkHiflyOptions() {
+      const avatarSel = $("workAvatar");
+      const voiceSel = $("workVoice");
+      if (avatarSel) {
+        avatarSel.innerHTML = state.avatarRows.length
+          ? state.avatarRows.map((row) => `<option value="${escapeHtml(row.avatar)}">${escapeHtml(row.title)}</option>`).join("")
+          : `<option value="">暂无可用数字人</option>`;
+      }
+      if (voiceSel) {
+        voiceSel.innerHTML = state.voiceRows.length
+          ? state.voiceRows.map((row) => `<option value="${escapeHtml(row.voice)}">${escapeHtml(row.title)}</option>`).join("")
+          : `<option value="">暂无可用声音</option>`;
+      }
+    }
+
+    function workDispatchFieldsHtml(item) {
+      const key = String(item && item.key || "");
+      if (key === "image_composer_studio") {
+        return taskFieldHtml("任务标题", workInputHtml("workImageTitle", "text", "创作图片"))
+          + taskFieldHtml("图片需求", taskTextareaHtml("workImagePrompt", "例如：一张适合小红书封面的精致产品场景图，暖色自然光，突出卖点"), true);
+      }
+      if (key === "comfly.seedance.tvc.pipeline") {
+        return taskFieldHtml("素材 ID / 公网图", workInputHtml("workSeedanceAsset", "text", "", 'placeholder="输入素材库 asset_id 或 https:// 图片链接"'), true)
+          + taskFieldHtml("视频需求", taskTextareaHtml("workSeedanceText", "例如：围绕护肤品做 3 个高级感分镜，突出补水和通透肤感"), true)
+          + taskFieldHtml("视频时长", taskSelectHtml("workSeedanceDuration", [10, 20, 30, 40, 50, 60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
+          + taskFieldHtml("画幅", taskSelectHtml("workSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏") + optionHtml("1:1", "1:1 方图")));
+      }
+      if (key === "hifly.video.create_by_tts") {
+        return taskFieldHtml("数字人", taskSelectHtml("workAvatar", optionHtml("", "加载中...")))
+          + taskFieldHtml("声音", taskSelectHtml("workVoice", optionHtml("", "加载中...")))
+          + taskFieldHtml("任务标题", workInputHtml("workHiflyTitle", "text", "数字人口播"))
+          + taskFieldHtml("口播文案", taskTextareaHtml("workHiflyScript", "填写要让数字人口播的完整文案"), true);
+      }
+      if (key === "douyin_leads") {
+        return taskFieldHtml("采集关键词", taskTextareaHtml("workDouyinKeyword", "例如：深圳装修、口腔种植、母婴门店"), true)
+          + taskFieldHtml("地区", workInputHtml("workDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
+          + taskFieldHtml("搜索数量", workInputHtml("workDouyinMaxResults", "number", "50", 'min="10" max="100"'))
+          + taskFieldHtml("搜索方式", taskSelectHtml("workDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
+      }
+      if (key === "local_bestseller") {
+        return taskFieldHtml("生成方式", taskSelectHtml("workLocalMode", optionHtml("plan", "先生成 30 天内容方案") + optionHtml("scene_batch", "直接批量生成场景图")))
+          + taskFieldHtml("天数", workInputHtml("workLocalDays", "number", "30", 'min="1" max="30"'))
+          + taskFieldHtml("姓名", workInputHtml("workLocalName", "text", "", 'placeholder="真实姓名，可选"'))
+          + taskFieldHtml("短视频昵称", workInputHtml("workLocalNickname", "text", "", 'placeholder="不填则使用姓名或“我”"'))
+          + taskFieldHtml("性别", taskSelectHtml("workLocalGender", optionHtml("female", "女") + optionHtml("male", "男")))
+          + taskFieldHtml("人设身份", workInputHtml("workLocalIdentity", "text", "女老板"))
+          + taskFieldHtml("行业/赛道", workInputHtml("workLocalIndustry", "text", "大健康"))
+          + taskFieldHtml("城市", workInputHtml("workLocalCity", "text", "深圳"))
+          + taskFieldHtml("省份", workInputHtml("workLocalProvince", "text", "广东"))
+          + taskFieldHtml("人物照片素材 ID / URL", workInputHtml("workLocalPhoto", "text", "", 'placeholder="可选，用于保持人物身份"'), true);
+      }
+      if (key === "viral_video_remix") {
+        return taskFieldHtml("参考视频链接", workInputHtml("workViralVideoUrl", "text", "", 'placeholder="抖音/视频号解析后的直链或可下载公网视频"'), true)
+          + taskFieldHtml("人物参考图 URL", workInputHtml("workViralCharacterUrl", "text", "", 'placeholder="可选，人物图公网链接"'))
+          + taskFieldHtml("产品参考图 URL", workInputHtml("workViralProductUrl", "text", "", 'placeholder="可选，产品图公网链接"'))
+          + taskFieldHtml("复刻要求", taskTextareaHtml("workViralPrompt", "例如：保留原视频节奏，替换为我们的产品卖点，口吻更高级自然"), true)
+          + taskFieldHtml("分段时长", taskSelectHtml("workViralDuration", optionHtml("10", "10 秒/段") + optionHtml("5", "5 秒/段")))
+          + taskFieldHtml("画幅", taskSelectHtml("workViralRatio", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏") + optionHtml("1:1", "1:1 方图")))
+          + taskFieldHtml("音频", workCheckboxHtml("workViralGenerateAudio", "生成音频", true));
+      }
+      if (key === "wecom_reply") {
+        return taskFieldHtml("执行动作", taskSelectHtml("workWecomAction", optionHtml("poll_reply", "拉取待处理消息并自动回复一次")))
+          + taskFieldHtml("备注", taskTextareaHtml("workWecomNote", "可选：这次希望客服重点关注的业务场景或回复口径"), true);
+      }
+      if (key === "publish_center") {
+        return taskFieldHtml("素材 ID / 公网链接", workInputHtml("workPublishMaterial", "text", "", 'placeholder="asset_id 或 https:// 素材链接"'), true)
+          + taskFieldHtml("素材类型", taskSelectHtml("workPublishMediaType", optionHtml("video", "视频") + optionHtml("image", "图片") + optionHtml("document", "文档")))
+          + taskFieldHtml("发布账号昵称", workInputHtml("workPublishAccount", "text", "", 'placeholder="与 online 发布中心里的账号昵称一致"'))
+          + taskFieldHtml("标题", workInputHtml("workPublishTitle", "text", "", 'placeholder="可选，不填可让 AI 补全"'), true)
+          + taskFieldHtml("正文/描述", taskTextareaHtml("workPublishDescription", "可选：发布正文、卖点或备注"), true)
+          + taskFieldHtml("话题标签", workInputHtml("workPublishTags", "text", "", 'placeholder="#品牌 #同城 或逗号分隔"'), true)
+          + taskFieldHtml("AI 补全文案", workCheckboxHtml("workPublishAiCopy", "缺少标题/正文时让 AI 自动补全", true));
+      }
+      return `<div class="quick-empty">这个入口暂未配置下发表单。</div>`;
+    }
+
+    function openWorkDispatchModal(key) {
+      const item = workQuickItemByKey(key);
+      if (!item || item.disabled) return;
+      const modal = $("workDispatchModal");
+      if (!modal) return;
+      state.workDispatchKey = String(item.key || item.label || "");
+      $("workDispatchMark").textContent = item.mark || firstChar(item.label);
+      $("workDispatchTitle").textContent = item.label || "安排工作";
+      $("workDispatchSub").textContent = item.description || "填写参数后直接下发给客户端执行";
+      $("workDispatchFields").innerHTML = workDispatchFieldsHtml(item);
+      $("workDispatchHint").textContent = item.dispatchKind === "capability"
+        ? "此入口会创建一次性能力任务，由 online 客户端领取执行；不会进入手机会话。"
+        : "此入口会创建一次性客户端工作流任务；不会进入手机会话，也不会放进上方定时任务能力区。";
+      modal.classList.remove("hidden");
+      if (item.key === "hifly.video.create_by_tts") {
+        renderWorkHiflyOptions();
+        loadHiflyLibraries();
+      }
+      const first = modal.querySelector("input, textarea, select");
+      if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 80);
+    }
+
+    function closeWorkDispatchModal() {
+      const modal = $("workDispatchModal");
+      if (modal) modal.classList.add("hidden");
+      state.workDispatchKey = "";
+      state.workDispatchSubmitting = false;
+      const btn = $("workDispatchSubmit");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "下发任务";
+      }
+    }
+
+    function workValue(id) {
+      const el = $(id);
+      return ((el && el.value) || "").trim();
+    }
+
+    function collectWorkDispatchPlan(item) {
+      const key = String(item && item.key || "");
+      if (key === "image_composer_studio") {
+        const prompt = workValue("workImagePrompt");
+        if (!prompt) throw new Error("请填写图片需求");
+        return {
+          title: workValue("workImageTitle") || "创作图片",
+          taskKind: "capability",
+          content: "H5 安排工作：创作图片",
+          payload: { capability_id: "goal.image.pipeline", payload: { prompt } },
+        };
+      }
+      if (key === "comfly.seedance.tvc.pipeline") {
+        const taskText = workValue("workSeedanceText");
+        const asset = assetOrImagePayload(workValue("workSeedanceAsset"), "素材 ID 或公网图");
+        return {
+          title: "创意分镜头视频",
+          taskKind: "capability",
+          content: "H5 安排工作：创意分镜头视频",
+          payload: {
+            capability_id: "comfly.seedance.tvc.pipeline",
+            payload: {
+              action: "start_pipeline",
+              ...asset,
+              task_text: taskText,
+              total_duration_seconds: workNumber(workValue("workSeedanceDuration"), 20, 5, 120),
+              aspect_ratio: workValue("workSeedanceAspect") || "9:16",
+              auto_save: true,
+            },
+          },
+        };
+      }
+      if (key === "hifly.video.create_by_tts") {
+        const avatar = workValue("workAvatar");
+        const voice = workValue("workVoice");
+        const script = workValue("workHiflyScript");
+        if (!avatar) throw new Error("请选择数字人");
+        if (!voice) throw new Error("请选择声音");
+        if (!script) throw new Error("请填写口播文案");
+        return {
+          title: workValue("workHiflyTitle") || "数字人口播",
+          taskKind: "capability",
+          content: "H5 安排工作：数字人口播",
+          payload: { capability_id: "hifly.video.create_by_tts", payload: { avatar, voice, script, prompt: script } },
+        };
+      }
+      if (key === "douyin_leads") {
+        const keyword = workValue("workDouyinKeyword");
+        if (!keyword) throw new Error("请填写采集关键词");
+        const regions = workSplitList(workValue("workDouyinRegions"));
+        return {
+          title: `抖音获客 - ${keyword.slice(0, 24)}`,
+          taskKind: "douyin_leads",
+          content: "H5 安排工作：抖音获客采集客户",
+          payload: {
+            action: "search_collect",
+            params: {
+              keyword,
+              max_results: workNumber(workValue("workDouyinMaxResults"), 50, 10, 100),
+              regions: regions.length ? regions : ["全国"],
+              mode: workValue("workDouyinMode") || "script",
+            },
+          },
+        };
+      }
+      if (key === "local_bestseller") {
+        const photo = workValue("workLocalPhoto");
+        const profile = {
+          name: workValue("workLocalName"),
+          nickname: workValue("workLocalNickname"),
+          gender: workValue("workLocalGender") || "female",
+          identity: workValue("workLocalIdentity") || "女老板",
+          industry: workValue("workLocalIndustry") || "大健康",
+          city: workValue("workLocalCity") || "深圳",
+          province: workValue("workLocalProvince") || "广东",
+        };
+        if (/^https?:\/\//i.test(photo)) profile.photo_url = photo;
+        else if (photo) profile.photo_asset_id = photo;
+        const mode = workValue("workLocalMode") || "plan";
+        return {
+          title: `同城爆款 - ${profile.city || "本地"}`,
+          taskKind: "client_workflow",
+          content: "H5 安排工作：同城爆款",
+          payload: {
+            action: mode === "scene_batch" ? "local_bestseller_scene_batch" : "local_bestseller_plan",
+            params: { profile, days: workNumber(workValue("workLocalDays"), 30, 1, 30) },
+          },
+        };
+      }
+      if (key === "viral_video_remix") {
+        const originalVideoUrl = workValue("workViralVideoUrl");
+        const characterImageUrl = workValue("workViralCharacterUrl");
+        const productImageUrl = workValue("workViralProductUrl");
+        if (!/^https?:\/\//i.test(originalVideoUrl)) throw new Error("请填写参考视频公网链接");
+        if (!characterImageUrl && !productImageUrl) throw new Error("请至少填写人物图或产品图公网链接");
+        return {
+          title: "爆款复刻",
+          taskKind: "client_workflow",
+          content: "H5 安排工作：爆款复刻",
+          payload: {
+            action: "viral_video_remix_start",
+            params: {
+              original_video_url: originalVideoUrl,
+              character_image_url: characterImageUrl,
+              product_image_url: productImageUrl,
+              prompt: workValue("workViralPrompt"),
+              duration: workNumber(workValue("workViralDuration"), 10, 5, 10),
+              ratio: workValue("workViralRatio") || "9:16",
+              generate_audio: !!($("workViralGenerateAudio") && $("workViralGenerateAudio").checked),
+              billing_confirmed: true,
+            },
+          },
+        };
+      }
+      if (key === "wecom_reply") {
+        return {
+          title: "企业微信客服 - 拉取回复",
+          taskKind: "client_workflow",
+          content: "H5 安排工作：企业微信客服",
+          payload: { action: "wecom_poll_reply", params: { note: workValue("workWecomNote") } },
+        };
+      }
+      if (key === "publish_center") {
+        const material = workMaterialPayload(workValue("workPublishMaterial"));
+        const accountNickname = workValue("workPublishAccount");
+        if (!accountNickname) throw new Error("请填写发布账号昵称");
+        return {
+          title: "发布中心入库",
+          taskKind: "client_workflow",
+          content: "H5 安排工作：发布中心入库",
+          payload: {
+            action: "publish_content",
+            params: {
+              ...material,
+              media_type: workValue("workPublishMediaType") || "video",
+              account_nickname: accountNickname,
+              title: workValue("workPublishTitle"),
+              description: workValue("workPublishDescription"),
+              tags: workValue("workPublishTags"),
+              ai_publish_copy: !!($("workPublishAiCopy") && $("workPublishAiCopy").checked),
+            },
+          },
+        };
+      }
+      throw new Error("这个岗位入口暂不支持直接下发");
+    }
+
+    async function submitOnceClientTask(plan) {
+      const installationId = currentInstallationId();
+      if (!installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
+      const body = {
+        title: plan.title || "安排工作",
+        task_kind: plan.taskKind || "client_workflow",
+        content: plan.content || "H5 安排工作",
+        payload: plan.payload || {},
+        schedule_type: "once",
+        interval_seconds: 60,
+        start_at: "",
+        daily_times: [],
+        timezone_offset_minutes: timezoneOffsetMinutes(),
+        installation_ids: [installationId],
+      };
+      const data = await api("/api/scheduled-tasks/tasks", {
+        method: "POST",
+        json: body,
+        headers: { "X-Installation-Id": installationId },
+      });
+      await Promise.all([loadTasks(), loadRuns()]);
+      return data;
+    }
+
+    async function submitWorkDispatch() {
+      if (state.workDispatchSubmitting) return;
+      const item = workQuickItemByKey(state.workDispatchKey);
+      if (!item) throw new Error("未找到岗位入口");
+      const plan = collectWorkDispatchPlan(item);
+      state.workDispatchSubmitting = true;
+      const btn = $("workDispatchSubmit");
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "下发中...";
+      }
+      try {
+        await submitOnceClientTask(plan);
+        closeWorkDispatchModal();
+        toast("任务已下发给客户端");
+      } catch (err) {
+        state.workDispatchSubmitting = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "下发任务";
+        }
+        throw err;
+      }
     }
 
     async function loadTaskSkills(force = false) {
@@ -6966,6 +7370,11 @@
     $("homeQuickGrid").addEventListener("click", (evt) => {
       const btn = evt.target.closest("button");
       if (!btn) return;
+      const item = workQuickItemByKey(btn.dataset.workQuick || "");
+      if (item && item.dispatchKind) {
+        openWorkDispatchModal(item.key);
+        return;
+      }
       const homeTarget = (btn.dataset.homeTarget || "").trim();
       if (homeTarget) {
         switchTab(homeTarget);
@@ -6975,6 +7384,14 @@
       setMessageTemplate(btn.dataset.prompt || "");
       if (btn.dataset.imageVideo === "1") setTimeout(() => $("imageInput").click(), 120);
       setTimeout(scrollMessagesToBottom, 160);
+    });
+
+    $("workDispatchBackdrop").addEventListener("click", closeWorkDispatchModal);
+    $("workDispatchClose").addEventListener("click", closeWorkDispatchModal);
+    $("workDispatchCancel").addEventListener("click", closeWorkDispatchModal);
+    $("workDispatchForm").addEventListener("submit", (evt) => {
+      evt.preventDefault();
+      submitWorkDispatch().catch((err) => toast(err.message || "下发失败"));
     });
 
     $("messageInput").addEventListener("input", autosizeMessageInput);
