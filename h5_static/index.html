@@ -5380,6 +5380,11 @@
       toast("已带入消息页，你可以继续补充要求");
     }
 
+    function shouldRouteVoiceActionThroughPlan(kind, plan) {
+      if (kind !== "submit_message" || !plan) return false;
+      return ["image_generate", "video_generate", "creative_storyboard_video", "douyin_leads_task"].includes(String(plan.kind || "").trim());
+    }
+
     async function createScheduledTask() {
       const btn = $("createTaskBtn");
       const installationId = currentInstallationId();
@@ -6518,8 +6523,17 @@
         const kind = String(action.kind || "");
         const payload = action.payload && typeof action.payload === "object" ? action.payload : {};
         const content = String(payload.content || state.voiceDraft || "").trim();
+        const plan = buildVoiceExecutionPlan();
         if (!content) {
           toast("请先录入一段语音内容");
+          return;
+        }
+        if (shouldRouteVoiceActionThroughPlan(kind, plan)) {
+          if (plan.direct) {
+            executeVoicePlan().catch((err) => toast(err.message || "鎵ц澶辫触锛岃绋嶅悗閲嶈瘯"));
+          } else {
+            routeVoicePlanToRefine(plan);
+          }
           return;
         }
         if (kind === "submit_message") {
