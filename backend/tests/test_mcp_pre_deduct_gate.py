@@ -39,7 +39,7 @@ async def test_task_get_result_rejects_local_pipeline_job_id(monkeypatch):
     monkeypatch.setattr(http_server, "_load_upstream_urls", lambda: {"sutui": "https://sutui.test/mcp"})
     monkeypatch.setattr(http_server, "resolve_brand_mark_for_request", lambda _auth: "bihuo")
 
-    async def _allowed(_token):
+    async def _allowed(*_args, **_kwargs):
         return None
 
     async def _not_admin(_token):
@@ -93,7 +93,7 @@ async def test_sutui_generate_stops_when_pre_deduct_has_no_charge(monkeypatch):
     monkeypatch.setattr(http_server, "resolve_brand_mark_for_request", lambda _auth: "bihuo")
     monkeypatch.setattr(http_server, "sutui_token_ref_from_secret", lambda _secret: "token-ref")
 
-    async def _allowed(_token):
+    async def _allowed(*_args, **_kwargs):
         return None
 
     async def _not_admin(_token):
@@ -155,7 +155,7 @@ async def test_sutui_generate_stops_when_pre_deduct_has_no_charge(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_gpt_image_2_defaults_low_quality_and_uses_server_price(monkeypatch):
+async def test_gpt_image_2_defaults_high_quality_and_uses_server_price(monkeypatch):
     from mcp import http_server
 
     monkeypatch.setattr(
@@ -173,7 +173,7 @@ async def test_gpt_image_2_defaults_low_quality_and_uses_server_price(monkeypatc
     monkeypatch.setattr(http_server, "resolve_brand_mark_for_request", lambda _auth: "bihuo")
     monkeypatch.setattr(http_server, "sutui_token_ref_from_secret", lambda _secret: "token-ref")
 
-    async def _allowed(_token):
+    async def _allowed(*_args, **_kwargs):
         return None
 
     async def _not_admin(_token):
@@ -229,7 +229,11 @@ async def test_gpt_image_2_defaults_low_quality_and_uses_server_price(monkeypatc
     )
 
     assert is_error is False
-    assert upstream_payloads[0]["quality"] == "low"
+    assert upstream_payloads[0]["quality"] == "high"
+    assert upstream_payloads[0]["resolution"] == "4K"
+    assert upstream_payloads[0]["output_format"] == "png"
+    assert upstream_payloads[0]["image_size"] == "1:1"
+    assert upstream_payloads[0]["num_images"] == 1
     assert record_bodies
     assert record_bodies[0]["credits_charged"] == 80.0
     assert record_bodies[0]["credits_pre_deducted"] == 80.0
@@ -239,6 +243,27 @@ async def test_gpt_image_2_defaults_low_quality_and_uses_server_price(monkeypatc
     assert '"credits_used":80.0' in compact_text
     assert '"price":80.0' in compact_text
     assert '"upstream_credits_used":80.0' not in compact_text
+
+
+def test_gpt_image_2_high_quality_intent_overrides_stale_low():
+    from mcp import http_server
+
+    payload = http_server._normalize_image_generate_payload({
+        "prompt": "test image",
+        "model": "openai/gpt-image-2",
+        "image_size": {"width": 1088, "height": 608},
+        "quality": "low",
+        "quality_preset": "highest",
+        "render_quality": "production",
+        "output_quality": 100,
+        "output_format": "png",
+    })
+
+    assert payload["image_size"] == "16:9"
+    assert payload["quality"] == "high"
+    assert payload["resolution"] == "4K"
+    assert payload["output_format"] == "png"
+    assert payload["num_images"] == 1
 
 
 @pytest.mark.asyncio
@@ -260,7 +285,7 @@ async def test_comfly_generate_stops_when_pre_deduct_has_no_charge(monkeypatch):
     monkeypatch.setattr(http_server, "resolve_brand_mark_for_request", lambda _auth: "bihuo")
     monkeypatch.setattr(http_server, "sutui_token_ref_from_secret", lambda _secret: "token-ref")
 
-    async def _allowed(_token):
+    async def _allowed(*_args, **_kwargs):
         return None
 
     async def _not_admin(_token):

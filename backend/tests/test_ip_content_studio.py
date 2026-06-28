@@ -423,6 +423,56 @@ def test_draft_record_payload_includes_image_list():
     assert payload["meta"]["image_batch_id"] == "moment_img_batch_1"
 
 
+def test_schedule_template_payload_includes_memory_doc_ids():
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    row = SimpleNamespace(
+        id=1,
+        user_id=7,
+        name="daily-template",
+        keyword_ids=[1],
+        competitor_ids=[2],
+        memory_doc_ids=["doc-a", "doc-b", "doc-a", ""],
+        memory_docs=[{"id": "doc-a", "title": "A"}],
+        requirements={},
+        status="active",
+        meta={},
+        created_at=None,
+        updated_at=None,
+    )
+
+    payload = studio._template_payload(row)
+
+    assert payload["memory_doc_ids"] == ["doc-a", "doc-b"]
+
+
+def test_schedule_template_payload_falls_back_to_memory_docs_ids():
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    row = SimpleNamespace(
+        id=2,
+        user_id=7,
+        name="legacy-template",
+        keyword_ids=[],
+        competitor_ids=[],
+        memory_doc_ids=None,
+        memory_docs=[{"id": "doc-a"}, {"doc_id": "doc-b"}, {"title": "legacy title"}],
+        requirements={},
+        status="active",
+        meta={},
+        created_at=None,
+        updated_at=None,
+    )
+
+    payload = studio._template_payload(row)
+
+    assert payload["memory_doc_ids"] == ["doc-a", "doc-b", "legacy title"]
+
+
 def test_oral_records_drop_image_prompts(monkeypatch):
     from types import SimpleNamespace
 
@@ -491,7 +541,14 @@ def test_moments_records_strip_comment_bait_and_embedded_image_prompt(monkeypatc
         drafts=[
             {
                 "title": "朋友圈",
-                "body": "今天聊一个真实案例。\n配图提示：办公室白板\n你的产品定价是多少？评论区告诉我。",
+                "body": (
+                    "今天聊一个真实案例。\n"
+                    "配图提示：办公室白板\n"
+                    "你的产品定价是多少？评论区告诉我。\n\n"
+                    "想拥有你的增长系统？\n"
+                    "私信我，聊聊你的生意。🎯\n\n"
+                    "私信我，聊聊你的生意。"
+                ),
                 "image_prompts": ["办公室白板", "客户现场", "便签特写"],
             }
         ],
@@ -503,7 +560,33 @@ def test_moments_records_strip_comment_bait_and_embedded_image_prompt(monkeypatc
 
     assert "配图提示" not in records[0].content
     assert "评论区" not in records[0].content
+    assert "想拥有" not in records[0].content
+    assert "增长系统" not in records[0].content
+    assert "私信" not in records[0].content
+    assert "聊聊你的生意" not in records[0].content
     assert records[0].meta["image_prompts"] == ["办公室白板", "客户现场", "便签特写"]
+
+
+def test_moments_leadgen_sentence_filter_keeps_normal_content():
+    from backend.app.api import ip_content_studio as studio
+
+    text = (
+        "增长从来不是靠努力，而是靠系统。\n\n"
+        "我见过太多老板，每天忙到凌晨，业绩却毫无起色。\n"
+        "他们问我，AI到底怎么落地？\n\n"
+        "来找我拿一套获客方案。\n"
+        "如果你也想搭建自动增长系统，可以私信我。\n"
+        "方向对了，努力才有意义。"
+    )
+
+    cleaned = studio._strip_moments_comment_bait(text)
+
+    assert "来找我" not in cleaned
+    assert "获客方案" not in cleaned
+    assert "私信" not in cleaned
+    assert "自动增长系统" not in cleaned
+    assert "他们问我" in cleaned
+    assert "方向对了" in cleaned
 
 
 def test_clean_scheduled_daily_tasks_keeps_allowed_unique_values():

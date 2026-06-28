@@ -925,6 +925,183 @@ def _log_sutui_task_terminal_failure_for_ops(data: Any, *, tool_name: str, lobst
         logger.warning("[速推任务失败] data 序列化失败: %s", ex)
 
 
+def _collect_chat_vision_urls(params: Dict[str, Any]) -> List[str]:
+    urls = params.get("image_urls") or params.get("image_url") or []
+    if isinstance(urls, str):
+        urls = [urls]
+    if not isinstance(urls, list):
+        return []
+    out: List[str] = []
+    for item in urls[:8]:
+        url = str(item or "").strip()
+        if url.startswith(("http://", "https://", "data:image/")):
+            out.append(url)
+    return out
+
+
+def _extract_chat_completion_content(data: Dict[str, Any]) -> str:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    message = first.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: List[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                elif isinstance(item, str) and item.strip():
+                    parts.append(item.strip())
+            return "\n".join(parts).strip()
+    text = first.get("text")
+    return text.strip() if isinstance(text, str) else ""
+
+
+async def _call_apiz_chat_completions_vision(
+    api_base: str,
+    token: str,
+    params: Dict[str, Any],
+    lobster_capability_id: str = "",
+) -> Dict[str, Any]:
+    model = str(params.get("model") or "openai/gpt-5.5").strip() or "openai/gpt-5.5"
+    prompt = str(params.get("prompt") or "").strip()
+    image_urls = _collect_chat_vision_urls(params)
+    if not prompt:
+        return {"error": {"message": "chat/completions vision 缺少 prompt"}}
+    if not image_urls:
+        return {"error": {"message": "chat/completions vision 缺少 image_urls"}}
+
+    user_content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+    for url in image_urls:
+        user_content.append({"type": "image_url", "image_url": {"url": url}})
+
+    messages: List[Dict[str, Any]] = []
+    system_prompt = str(params.get("system_prompt") or "").strip()
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_content})
+
+    body: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+    }
+    if "temperature" in params:
+        try:
+            body["temperature"] = float(params.get("temperature"))
+        except (TypeError, ValueError):
+            pass
+    else:
+        body["temperature"] = 0
+    if "max_tokens" in params:
+        try:
+            body["max_tokens"] = int(params.get("max_tokens"))
+        except (TypeError, ValueError):
+            pass
+    else:
+        body["max_tokens"] = 4096
+
+    url = f"{api_base.rstrip('/')}/v3/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+            resp = await client.post(url, json=body, headers=headers)
+    except httpx.HTTPError as e:
+        logger.warning(
+            "[apiz-chat] vision network error capability=%s model=%s err=%s",
+            lobster_capability_id or "(none)",
+            model,
+            e,
+        )
+        return {"error": {"message": f"上游 chat/completions 网络不可达: {e}"}}
+
+    try:
+        raw = resp.json() if resp.content else {}
+    except Exception as e:
+        raw_text = (resp.text or "")[:_SUTUI_UPSTREAM_LOG_MAX]
+        logger.warning("[apiz-chat] vision non-json status=%s body=%s", resp.status_code, raw_text)
+        return {"error": {"message": f"上游 chat/completions 非 JSON: {e}"}}
+
+    if resp.status_code >= 400:
+        log_xskill_http(
+            phase="chat_completions.vision",
+            method="POST",
+            url=url,
+            http_status=resp.status_code,
+            capability_or_model=lobster_capability_id or model,
+            billing_snapshot=None,
+            error_message=json.dumps(_sanitize_for_json(raw), ensure_ascii=False, default=str)[:8000],
+            bearer_token=token,
+            upstream_response=_sanitize_for_json(raw),
+        )
+        msg = ""
+        if isinstance(raw, dict):
+            msg = str(raw.get("detail") or raw.get("message") or raw.get("error") or "")
+        if not msg:
+            msg = (resp.text or "")[:800]
+        return {"error": {"message": f"上游 chat/completions HTTP {resp.status_code}: {msg[:800]}"}}
+
+    if not isinstance(raw, dict):
+        return {"error": {"message": f"上游 chat/completions 返回非对象: {str(raw)[:500]}"}}
+    content = _extract_chat_completion_content(raw)
+    if not content:
+        return {"error": {"message": f"上游 chat/completions 无有效 content: {str(raw)[:500]}"}}
+
+    usage = raw.get("usage") if isinstance(raw.get("usage"), dict) else {}
+    data: Dict[str, Any] = {
+        "status": "completed",
+        "model": raw.get("model") or model,
+        "provider": "apiz.chat.completions",
+        "output": content,
+        "result": {"content": content},
+        "usage": usage,
+        "id": raw.get("id"),
+    }
+    try:
+        points = float(usage.get("points") or 0) if isinstance(usage, dict) else 0.0
+    except (TypeError, ValueError):
+        points = 0.0
+    if points > 0:
+        data["price"] = points
+
+    data = _sanitize_for_json(data)
+    log_xskill_http(
+        phase="chat_completions.vision",
+        method="POST",
+        url=url,
+        http_status=resp.status_code,
+        capability_or_model=lobster_capability_id or model,
+        billing_snapshot={
+            "price": data.get("price"),
+            "model": data.get("model"),
+            "status": data.get("status"),
+        },
+        error_message="",
+        bearer_token=token,
+        upstream_response=data,
+    )
+    logger.info(
+        "[apiz-chat] vision success capability=%s model=%s images=%s content_len=%s",
+        lobster_capability_id or "(none)",
+        model,
+        len(image_urls),
+        len(content),
+    )
+    return data
+
+
 async def _call_upstream_sutui_tasks_rest(
     api_base: str,
     tool_name: str,
@@ -933,8 +1110,6 @@ async def _call_upstream_sutui_tasks_rest(
     lobster_capability_id: str = "",
 ) -> Dict[str, Any]:
     """经 apiz SDK 调用 `/api/v3/tasks/create` 与 `/api/v3/tasks/query`。"""
-    from apiz import AsyncApiz, ApizError, ApizConnectionError, ApizTimeoutError
-
     if not isinstance(arguments, dict):
         arguments = {}
     arguments = _sanitize_for_json(arguments)
@@ -960,6 +1135,17 @@ async def _call_upstream_sutui_tasks_rest(
             logger.info("[apiz-sdk] params 摘要 %s", json.dumps(psum, ensure_ascii=False, default=str))
         except Exception as ex:
             logger.warning("[apiz-sdk] params 摘要失败: %s", ex)
+        if (
+            lobster_capability_id == "image.understand"
+            and model == "openrouter/router/vision"
+            and str(params.get("model") or "").strip() == "openai/gpt-5.5"
+        ):
+            return await _call_apiz_chat_completions_vision(
+                api_base,
+                token,
+                params,
+                lobster_capability_id=lobster_capability_id,
+            )
     elif tool_name == "get_result":
         task_id = str(arguments.get("task_id") or "").strip()
         if not task_id:
@@ -1072,6 +1258,8 @@ async def _call_upstream_sutui_tasks_rest(
             upstream_response=data,
         )
         return data
+
+    from apiz import AsyncApiz, ApizError, ApizConnectionError, ApizTimeoutError
 
     async with httpx.AsyncClient(timeout=120.0, trust_env=False) as hc:
         async with AsyncApiz(
@@ -1964,6 +2152,112 @@ def _sanitize_image_generate_prompt_for_publish_copy(prompt: str) -> str:
     return cleaned
 
 
+def _string_param(value: Any) -> str:
+    if value is None or isinstance(value, (dict, list, tuple, set)):
+        return ""
+    return str(value).strip()
+
+
+def _int_param(value: Any) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return 0
+
+
+def _ratio_from_dimensions(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    width = _int_param(value.get("width") or value.get("w"))
+    height = _int_param(value.get("height") or value.get("h"))
+    if width <= 0 or height <= 0:
+        return ""
+    candidates = {
+        "1:1": 1 / 1,
+        "4:3": 4 / 3,
+        "3:4": 3 / 4,
+        "16:9": 16 / 9,
+        "9:16": 9 / 16,
+        "3:2": 3 / 2,
+        "2:3": 2 / 3,
+    }
+    actual = width / height
+    return min(candidates, key=lambda key: abs(candidates[key] - actual))
+
+
+def _gpt_image2_resolution_from_value(value: Any) -> str:
+    raw = _string_param(value)
+    if not raw:
+        return ""
+    upper = raw.upper().replace(" ", "")
+    if upper in {"1K", "2K", "4K"}:
+        return upper
+    match = re.match(r"^(\d{3,5})\s*[xX]\s*(\d{3,5})$", raw)
+    if match:
+        longest = max(int(match.group(1)), int(match.group(2)))
+        if longest >= 3000:
+            return "4K"
+        if longest >= 1800:
+            return "2K"
+        return "1K"
+    lowered = raw.lower()
+    if "4k" in lowered or any(token in lowered for token in ("highest", "production", "ultra", "best")):
+        return "4K"
+    if "2k" in lowered:
+        return "2K"
+    if "1k" in lowered:
+        return "1K"
+    return ""
+
+
+def _normalize_gpt_image2_quality(payload: Dict[str, Any]) -> str:
+    aliases = {
+        "standard": "medium",
+        "normal": "medium",
+        "hd": "high",
+        "best": "high",
+        "highest": "high",
+        "production": "high",
+        "ultra": "high",
+    }
+
+    def _quality_from_value(value: Any) -> str:
+        if isinstance(value, (int, float)):
+            if float(value) >= 90:
+                return "high"
+            if float(value) >= 60:
+                return "medium"
+            return "low"
+        raw = _string_param(value).lower()
+        raw = aliases.get(raw, raw)
+        return raw if raw in {"low", "medium", "high"} else ""
+
+    # 旧前端可能残留 quality=low；只要同时带有最高质量意图，就以高质量意图为准。
+    for key in ("quality_preset", "render_quality", "output_quality"):
+        if _quality_from_value(payload.get(key)) == "high":
+            return "high"
+
+    explicit = _quality_from_value(payload.get("quality") or payload.get("image_quality"))
+    return explicit or "high"
+
+
+def _normalize_gpt_image2_resolution(payload: Dict[str, Any], quality: str) -> str:
+    for key in ("resolution", "resolution_level", "size", "pixel_size"):
+        resolved = _gpt_image2_resolution_from_value(payload.get(key))
+        if resolved:
+            return resolved
+    if quality == "high":
+        return "4K"
+    return "1K"
+
+
+def _normalize_gpt_image2_output_format(payload: Dict[str, Any]) -> str:
+    raw = _string_param(payload.get("output_format") or payload.get("format")).lower()
+    aliases = {"jpg": "jpeg"}
+    raw = aliases.get(raw, raw)
+    return raw if raw in {"png", "jpeg", "webp"} else "png"
+
+
 def _normalize_image_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     按图片模型把「统一 payload」转成该模型 API 需要的参数；发布账号/文案类信息会先从生图 prompt 中剥离。
@@ -1985,14 +2279,54 @@ def _normalize_image_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
             prompt[:160],
         )
         payload["prompt"] = prompt
-    image_url = (payload.get("image_url") or "").strip()
-    image_size = (payload.get("image_size") or "").strip()
+    image_url = _string_param(payload.get("image_url"))
+    image_size = _string_param(payload.get("image_size"))
     num_images = payload.get("num_images", payload.get("n", 1))
     if isinstance(num_images, (int, float)):
         num_images = max(1, int(num_images))
     num_images = _clamp_num_images_for_image_model(num_images, model)
     if _is_gpt_image_2_model(model):
-        payload["quality"] = "low"
+        image_ratio_aliases = {
+            "portrait_9_16": "9:16",
+            "landscape_16_9": "16:9",
+            "square_hd": "1:1",
+            "square": "1:1",
+            "vertical": "9:16",
+            "portrait": "9:16",
+            "horizontal": "16:9",
+            "landscape": "16:9",
+        }
+        image_ratio_values = {"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}
+        normalized_image_size = image_ratio_aliases.get(image_size.lower(), image_size)
+        ratio = (
+            _string_param(payload.get("aspect_ratio") or payload.get("ratio"))
+            or normalized_image_size
+            or _ratio_from_dimensions(payload.get("image_size"))
+            or _ratio_from_dimensions(payload.get("size"))
+            or _ratio_from_dimensions(payload.get("pixel_size"))
+            or "1:1"
+        )
+        ratio = image_ratio_aliases.get(ratio.lower(), ratio)
+        if ratio not in image_ratio_values:
+            ratio = "1:1"
+        quality = _normalize_gpt_image2_quality(payload)
+        resolution = _normalize_gpt_image2_resolution(payload, quality)
+        output_format = _normalize_gpt_image2_output_format(payload)
+        out = {
+            "model": model,
+            "prompt": prompt,
+            "image_size": ratio,
+            "resolution": resolution,
+            "quality": quality,
+            "num_images": 1,
+            "output_format": output_format,
+        }
+        if image_url:
+            out["image_url"] = image_url
+        image_urls = payload.get("image_urls")
+        if image_urls:
+            out["image_urls"] = image_urls
+        return out
 
     # jimeng-4.0 / jimeng-4.5：prompt 必填，image_url 可选，n
     if "jimeng-" in model:

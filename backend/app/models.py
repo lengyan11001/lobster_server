@@ -433,6 +433,7 @@ class IPContentScheduleTemplate(Base):
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     keyword_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     competitor_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    memory_doc_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     memory_docs: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     requirements: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)

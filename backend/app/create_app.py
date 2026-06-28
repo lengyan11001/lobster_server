@@ -169,6 +169,22 @@ def _migrate_juhe_wechat_config_owner_columns():
         logger.warning("Migration juhe_wechat config/AI columns skipped: %s", e)
 
 
+def _migrate_ip_content_schedule_template_memory_doc_ids():
+    """Add explicit memory document id storage for IP daily templates."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("ip_content_schedule_templates"):
+            return
+        cols = [c["name"] for c in insp.get_columns("ip_content_schedule_templates")]
+        if "memory_doc_ids" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE ip_content_schedule_templates ADD COLUMN memory_doc_ids JSON"))
+    except Exception as e:
+        logger.warning("Migration ip_content_schedule_templates.memory_doc_ids skipped: %s", e)
+
+
 def _seed_capability_catalog():
     """Import capability catalog from mcp/capability_catalog.json on first run."""
     catalog_path = Path(__file__).resolve().parent.parent.parent / "mcp" / "capability_catalog.json"
@@ -933,6 +949,7 @@ def create_app() -> FastAPI:
         _migrate_capability_configs_extra_config()
         _migrate_model_usage_events_table()
         _migrate_juhe_wechat_config_owner_columns()
+        _migrate_ip_content_schedule_template_memory_doc_ids()
         _ensure_default_user()
         _seed_capability_catalog()
         _upsert_missing_capabilities_from_catalog()

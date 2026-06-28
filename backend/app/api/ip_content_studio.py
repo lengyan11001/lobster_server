@@ -454,6 +454,7 @@ class ScheduleTemplateBody(BaseModel):
     name: str = Field("", max_length=160)
     keyword_ids: list[int] = Field(default_factory=list)
     competitor_ids: list[int] = Field(default_factory=list)
+    memory_doc_ids: list[str] = Field(default_factory=list)
     memory_docs: list[dict[str, Any]] = Field(default_factory=list)
     requirements: dict[str, Any] = Field(default_factory=dict)
     meta: dict[str, Any] = Field(default_factory=dict)
@@ -569,12 +570,69 @@ def _is_oral_task(task: str) -> bool:
     return (task or "").strip().lower() in {"task1_industry", "task1_ip", "industry_hot_oral", "professional_ip_oral"}
 
 
+_MOMENTS_SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;]?")
+_MOMENTS_CTA_EMOJI_RE = re.compile(r"(?:^|\n)\s*[🎯👉👇💬📩📲☎️🔥✨🚀]+\s*(?=\n|$)")
+_MOMENTS_CONTACT_INTENT_RE = re.compile(
+    r"(?:"
+    r"私信|私聊|加微|加微信|加我|微信聊|微信私聊|联系我|联系我们|来找我|找我聊|找我们|来问我|可以问我|随时问我|问我拿|问我要|咨询我|咨询我们|"
+    r"预约咨询|预约沟通|扫码|点我|戳我|后台回复|后台私信|进群|入群|DM|directmessage"
+    r")",
+    re.I,
+)
+_MOMENTS_RESOURCE_INTENT_RE = re.compile(
+    r"(?:领取|获取|拿走|带走|索取|申请|预约|领取一份|拿一份|给你一份).{0,18}(?:方案|资料|清单|模板|诊断|名额|系统|案例|工具|福利|报价|报价单)",
+    re.I,
+)
+_MOMENTS_SYSTEM_QUESTION_RE = re.compile(
+    r"(?:想|想要|想拥有|想搭建|想打造|想复制|想获得|想知道|想看看|想试试|想体验|想了解|需要|缺|想不想|要不要|如果你也|你也想)"
+    r".{0,28}(?:系统|方案|增长|获客|成交|转化|营销|私域|自动运营|自动化|AI|生意|业务|业绩|客户|流量|赚钱|降本|增收)",
+    re.I,
+)
+_MOMENTS_CHAT_INVITE_RE = re.compile(
+    r"(?:聊聊|聊一聊|交流|沟通|详聊|谈谈).{0,20}(?:你的|你们的|自己|生意|业务|项目|增长|获客|成交|转化|营销|私域|公司|门店|品牌)",
+    re.I,
+)
+
+
+def _is_moments_leadgen_sentence(sentence: str) -> bool:
+    text = re.sub(r"\s+", "", sentence or "")
+    if not text:
+        return False
+    if _MOMENTS_CONTACT_INTENT_RE.search(text):
+        return True
+    if _MOMENTS_RESOURCE_INTENT_RE.search(text):
+        return True
+    if _MOMENTS_CHAT_INVITE_RE.search(text):
+        return True
+    if len(text) <= 90 and _MOMENTS_SYSTEM_QUESTION_RE.search(text):
+        return True
+    return False
+
+
+def _strip_moments_leadgen_sentences(text: str) -> str:
+    if not text:
+        return ""
+    cleaned: list[str] = []
+    pos = 0
+    for match in _MOMENTS_SENTENCE_RE.finditer(text):
+        cleaned.append(text[pos : match.start()])
+        sentence = match.group(0)
+        if not _is_moments_leadgen_sentence(sentence):
+            cleaned.append(sentence)
+        pos = match.end()
+    cleaned.append(text[pos:])
+    return "".join(cleaned)
+
+
 def _strip_moments_comment_bait(value: Any, max_len: int = 8000) -> str:
     text = _clean_long_text(value, max_len)
     if not text:
         return ""
     text = re.sub(r"[^。！？!?；;\n]*(?:评论区|留言区|评论里|留言里)[^。！？!?；;\n]*(?:告诉我|聊聊|说说|打出来|扣|回复|留言|评论)[。！？!?；;]?", "", text)
     text = re.sub(r"[^。！？!?；;\n]*(?:你觉得|你认为|你遇到过吗|有没有同感)[^。！？!?；;\n]*(?:评论|留言)[^。！？!?；;]*[。！？!?；;]?", "", text)
+    text = _strip_moments_leadgen_sentences(text)
+    text = _MOMENTS_CTA_EMOJI_RE.sub("\n", text)
+    text = re.sub(r"\s*[🎯👉👇💬📩📲☎️🔥✨🚀]+\s*$", "", text)
     text = re.sub(r"(?:^|\n)\s*(?:适合发圈日更|适合个人\s*IP\s*日更|适合\s*IP\s*日更|发圈日更)\s*[。！？!?；;]?\s*$", "", text, flags=re.I)
     text = re.sub(r"\s*(?:适合发圈日更|适合个人\s*IP\s*日更|适合\s*IP\s*日更|发圈日更)\s*[。！？!?；;]?\s*$", "", text, flags=re.I)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -1039,8 +1097,8 @@ def _draft_requirements(task: str, platform: str, count: int) -> str:
             "排版必须规整：短句分行，2 到 4 行形成一个小段落，段落之间空一行；拒绝大段文字。"
             "允许并鼓励精准使用 Emoji，例如 💥、🔥、🎯、💯、😲、😎、🚀、👇、💸、🌟；每条正文建议 4 到 8 个，但不要堆到每一句都有。"
             "语言要短、狠、直给，用大白话打痛点、给结果、造紧迫感；围绕降本、增收、流量、获客、效率、赚钱这些老板关心的结果。"
-            "结构建议：吸睛开场/反问；痛点或趋势；结合记忆资料里的产品/服务给出解决方案；最后用自然私域动作收口。"
-            "朋友圈不要写“评论区告诉我/留言告诉我/你觉得呢”这类引导评论句，收尾要像真实朋友圈表达；不要把“适合发圈日更”“适合个人 IP 日更”这类用途说明写进正文或放在结尾。"
+            "结构建议：强开场；痛点或趋势；结合记忆资料里的产品/服务给出解决方案；最后用观点、判断或结果感自然收住，不要导流动作。"
+            "朋友圈不要写“评论区告诉我/留言告诉我/你觉得呢/私信我/加微信/联系我/聊聊你的生意/想拥有你的增长系统”等引导评论或导流成交句，收尾要像真实朋友圈表达；不要把“适合发圈日更”“适合个人 IP 日更”这类用途说明写进正文或放在结尾。"
             "正文和配图提示必须分开：body 只放朋友圈正文，不要把“配图提示/画面建议”写进 body。"
             "必须给出 3 条贴合该文案但创意明显不同的配图提示，放到 image_prompts 数组；image_prompt 可放第一条或整体摘要。"
             "3 条配图提示要分别从不同场景/主体/隐喻切入，不能只是换视角或换形容词；必须让 3 张图看起来是同主题的三套创意方案。"
@@ -1767,14 +1825,45 @@ def _clean_int_ids(values: Any, limit: int = 30) -> list[int]:
     return out
 
 
+def _clean_memory_doc_ids(values: Any, limit: int = 30) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    raw_values = values if isinstance(values, list) else []
+    for raw in raw_values:
+        val = _clean_text(raw, 191)
+        if not val or val in seen:
+            continue
+        seen.add(val)
+        out.append(val)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _memory_doc_ids_from_docs(docs: Any, limit: int = 30) -> list[str]:
+    raw_ids: list[Any] = []
+    raw_docs = docs if isinstance(docs, list) else []
+    for doc in raw_docs:
+        if isinstance(doc, str):
+            raw_ids.append(doc)
+            continue
+        if not isinstance(doc, dict):
+            continue
+        raw_ids.append(doc.get("id") or doc.get("doc_id") or doc.get("memory_id") or doc.get("filename") or doc.get("name") or doc.get("title"))
+    return _clean_memory_doc_ids(raw_ids, limit)
+
+
 def _template_payload(row: IPContentScheduleTemplate) -> dict[str, Any]:
+    memory_docs = row.memory_docs or []
+    memory_doc_ids = _clean_memory_doc_ids(row.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
     return {
         "id": row.id,
         "user_id": row.user_id,
         "name": row.name,
         "keyword_ids": _clean_int_ids(row.keyword_ids, 50),
         "competitor_ids": _clean_int_ids(row.competitor_ids, 50),
-        "memory_docs": row.memory_docs or [],
+        "memory_doc_ids": memory_doc_ids,
+        "memory_docs": memory_docs,
         "requirements": row.requirements or {},
         "status": row.status,
         "meta": row.meta or {},
@@ -2150,8 +2239,8 @@ async def _call_ip_content_llm(
     )
     format_rule = (
         "当前任务是朋友圈文案：body 只能写朋友圈正文，配图提示必须放到 image_prompt/image_prompts；严禁把“适合发圈日更”“适合个人 IP 日更”这类用途说明写进正文或结尾；"
-        "严禁在朋友圈正文里写“评论区告诉我、留言告诉我、你觉得呢”等引导评论句。"
-        "body 必须保留换行排版，像微信群/朋友圈可直接复制发布的短句爆款体：开场强、痛点快、结果明确、收口有动作；"
+        "严禁在朋友圈正文里写“评论区告诉我、留言告诉我、你觉得呢、私信我、加微信、联系我、聊聊你的生意、想拥有你的增长系统”等引导评论或导流成交句。"
+        "body 必须保留换行排版，像微信群/朋友圈可直接复制发布的短句爆款体：开场强、痛点快、结果明确、收口有观点或结果感；"
         "可以使用 Emoji，但要服务于阅读节奏和情绪，不要变成装饰堆砌。"
         if wants_moments
         else "当前任务是口播文案：只返回标题、开场钩子、口播正文和收口；严禁返回 image_prompt、image_prompts、配图提示、画面建议。"
@@ -2170,7 +2259,7 @@ async def _call_ip_content_llm(
         "行业热门口播优先使用关键词/榜单数据；专业 IP 口播优先使用同行新作品；朋友圈文案也要优先承接最新数据里的选题或场景。"
         f"所有涉及年份的内容默认按当前年份 {current_year} 年表达；除非数据源原文明确提供其他年份，严禁默认写 2025 年。"
         "口播类文案暂不限制字数和时长，要写出深度、案例、具体场景和判断链路。"
-        "口播类文案允许使用评论互动收口；朋友圈文案不要使用引导评论的表达。"
+        "口播类文案允许使用评论互动收口；朋友圈文案不要使用引导评论、私信咨询、加微信、联系我、聊业务、索取方案、想拥有某套系统等导流成交表达。"
         "行业热门口播如果有多条关键词同步数据，必须主动做方向分散：不同条目对应不同热词、痛点、场景或案例，不能五条围绕同一个方向重复改写。"
         "只有生成朋友圈文案时，才需要返回 image_prompt/image_prompts；每条 items 必须额外返回 image_prompts 数组，数组内 3 条配图文案都要贴合同一条 body 的主题，但创意、主体、场景和表达隐喻必须明显不同。"
         "朋友圈 body 的排版必须直接可复制发布：短句、多换行、段落留白、重点句可用 Emoji 强化；不要输出一整段连续长文本。"
@@ -2634,12 +2723,14 @@ def save_schedule_template(
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
     keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
+    memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
     row = IPContentScheduleTemplate(
         user_id=current_user.id,
         name=name,
         keyword_ids=keyword_ids,
         competitor_ids=competitor_ids,
-        memory_docs=_memory_payload_from_docs(body.memory_docs, content_limit=3200),
+        memory_doc_ids=_clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50),
+        memory_docs=memory_docs,
         requirements=_jsonable(body.requirements or {}),
         meta=_jsonable(body.meta or {}),
     )
@@ -2671,10 +2762,12 @@ def update_schedule_template(
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
     keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
+    memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
     row.name = name
     row.keyword_ids = keyword_ids
     row.competitor_ids = competitor_ids
-    row.memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
+    row.memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
+    row.memory_docs = memory_docs
     row.requirements = _jsonable(body.requirements or {})
     row.meta = _jsonable(body.meta or {})
     row.status = "active"
