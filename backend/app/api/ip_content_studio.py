@@ -176,20 +176,6 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "path": "/api/v1/wechat_search/v2/fetch_search",
         "allowed_body": {"keyword", "business_type", "sort", "publish_time", "offset", "raw"},
     },
-    "wechat_channels_user_search_v2": {
-        "platform": "wechat_channels",
-        "source_type": "user_search",
-        "method": "GET",
-        "path": "/api/v1/wechat_channels/fetch_user_search_v2",
-        "allowed_params": {"keywords", "page"},
-    },
-    "wechat_channels_home_page": {
-        "platform": "wechat_channels",
-        "source_type": "home_page",
-        "method": "POST",
-        "path": "/api/v1/wechat_channels/fetch_home_page",
-        "allowed_body": {"username", "last_buffer"},
-    },
     "wechat_channels_user_videos_v2": {
         "platform": "wechat_channels",
         "source_type": "home_page",
@@ -915,6 +901,8 @@ def _public_url(raw: Any) -> str:
             "aweme_url",
             "video_url",
             "web_url",
+            "media.full_url",
+            "media.url",
             "finder_info_export.url",
             "object_desc.media.0.url",
             "object_desc.media.0.video_url",
@@ -942,6 +930,12 @@ def _cover_url(raw: Any) -> str:
             "thumbUrl",
             "thumb_url",
             "cover.url_list.0",
+            "media.cover_url",
+            "media.coverUrl",
+            "media.thumb_url",
+            "media.thumbUrl",
+            "media.full_url",
+            "media.url",
             "object_desc.media.0.cover_url",
             "object_desc.media.0.thumb_url",
             "object_desc.media.0.thumbUrl",
@@ -1003,6 +997,20 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
         if value not in (None, ""):
             out[key] = value
     return out
+
+
+def _normalize_wechat_channels_video_title(value: Any) -> str:
+    if isinstance(value, list):
+        for item in value:
+            text = _normalize_wechat_channels_video_title(item)
+            if text:
+                return text
+        return ""
+    if isinstance(value, dict):
+        return _normalize_wechat_channels_video_title(
+            _first(value, ["shortTitle", "title", "desc", "description", "content", "text"])
+        )
+    return _clean_long_text(value, 1000)
 
 
 def _source_raw(row: TikHubSourceItem) -> dict[str, Any]:
@@ -1209,6 +1217,7 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "aweme_info.caption",
         ],
     )
+    title = _normalize_wechat_channels_video_title(title) or title
     description = _first(field_item, ["description", "desc", "summary", "challenge_name", "object_desc.description", "aweme_info.desc"])
     item_key = _first(
         field_item,
@@ -1233,6 +1242,8 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         author,
         ["sec_uid", "uid", "id", "short_id", "unique_id", "username", "finder_username", "nickname"],
     )
+    if not author_key:
+        author_key = _first(field_item, ["username", "finder_username", "finderUsername", "author_username"])
     author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "short_id"]) or _first(field_item, ["nick_name", "author_name", "nickname"])
     publish_time = _first(field_item, ["create_time", "createtime", "publish_time", "timestamp", "aweme_info.create_time"])
     return {
@@ -2015,10 +2026,11 @@ async def _sync_competitor_row(
         body = {"username": row.account_key}
         if last_buffer:
             body["last_buffer"] = last_buffer
+        body["raw"] = True
         result = await _execute_query_with_retry(
             db=db,
             current_user=current_user,
-            query_type="wechat_channels_home_page",
+            query_type="wechat_channels_user_videos_v2",
             params={},
             body=body,
             save_items=True,
@@ -2896,25 +2908,12 @@ async def search_wechat_channels_users(
     if not result.get("ok"):
         detail = query.get("error_message") or "TikHub 微信搜一搜接口调用失败"
         raise HTTPException(status_code=502, detail=f"视频号账号搜索失败：{detail}")
-
-    fallback = await _execute_query_with_retry(
-        db=db,
-        current_user=current_user,
-        query_type="wechat_channels_user_search_v2",
-        params={"keywords": keyword, "page": 1},
-        body={},
-        save_items=False,
-        meta={"source": "competitor_user_search", "keyword": keyword, "provider": "wechat_channels_user_search_v2"},
-        attempts=3,
-        include_raw_response=True,
-    )
-    users, raw_count = _normalize_wechat_channels_users_from_payload(fallback.get("raw_response") or {})
     return {
-        "ok": bool(fallback.get("ok")) or bool(users),
-        "items": users,
+        "ok": True,
+        "items": [],
         "raw_item_count": raw_count,
-        "query": fallback.get("query") or {},
-        "balance_after": fallback.get("balance_after"),
+        "query": result.get("query") or {},
+        "balance_after": result.get("balance_after"),
     }
 
 

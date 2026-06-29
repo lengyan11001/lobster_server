@@ -756,20 +756,7 @@ async def search_users(
     if not result.get("ok"):
         detail = query.get("error_message") or "TikHub 微信搜一搜接口调用失败"
         raise HTTPException(status_code=502, detail=f"视频号账号搜索失败：{detail}")
-
-    result = await _execute_query_with_retry(
-        db=db,
-        current_user=current_user,
-        query_type="wechat_channels_user_search_v2",
-        params={"keywords": keyword, "page": 1},
-        body={},
-        save_items=False,
-        meta={"source": "wechat_channels_transcript_user_search", "keyword": keyword, "provider": "wechat_channels_user_search_v2"},
-        attempts=3,
-        include_raw_response=True,
-    )
-    users, raw_count = _normalize_wechat_channels_users_from_payload(result.get("raw_response") or {})
-    return {"ok": True, "items": users, "raw_count": raw_count, "query": result.get("query") or {}}
+    return {"ok": True, "items": [], "raw_count": raw_count, "query": result.get("query") or {}}
 
 
 @router.post("/api/wechat-channels-transcript/videos", summary="拉取视频号作品")

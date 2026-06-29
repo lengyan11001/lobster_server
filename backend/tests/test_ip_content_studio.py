@@ -304,6 +304,59 @@ def test_ip_content_wechat_channels_user_search_prefers_wechat_search_v2(monkeyp
     assert calls[0]["body"]["raw"] is True
 
 
+def test_ip_content_wechat_channels_user_search_returns_empty_without_legacy_fallback(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+
+    async def fake_query(*, query_type, body, **kwargs):
+        calls.append({"query_type": query_type, "body": body, "kwargs": kwargs})
+        return {
+            "ok": True,
+            "raw_response": {
+                "code": 200,
+                "data": {
+                    "results": {
+                        "data": [
+                            {
+                                "subBoxes": [
+                                    {
+                                        "items": [
+                                            {
+                                                "accTypeName": "公众号",
+                                                "jumpInfo": {"userName": "gh_test"},
+                                                "title": "<em class=\"highlight\">亲爱的安先生</em>",
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                },
+            },
+            "query": {"query_type": query_type},
+            "balance_after": 9,
+        }
+
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+
+    result = asyncio.run(
+        studio.search_wechat_channels_users(
+            q="新爱的安先生",
+            current_user=SimpleNamespace(credits=10),
+            db=SimpleNamespace(),
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["items"] == []
+    assert result["raw_item_count"] == 1
+    assert [call["query_type"] for call in calls] == ["wechat_search_v2"]
+
+
 def test_has_wechat_channels_channel_id_convert_endpoint():
     from backend.app.api import ip_content_studio as studio
 
@@ -409,7 +462,52 @@ def test_wechat_channels_transcript_normalizes_v2_user_videos_shape():
     assert transcript._extract_last_buffer(payload) == "next-page"
 
 
-def test_collects_wechat_channels_home_page_objects_as_posts():
+def test_ip_content_normalizes_wechat_channels_v2_user_videos_shape():
+    from backend.app.api import ip_content_studio as studio
+
+    payload = {
+        "data": {
+            "videos": [
+                {
+                    "id": "14779988301712792068",
+                    "title": [{"shortTitle": "干大健康的就是在拉人头？"}],
+                    "create_time": 1761911905,
+                    "read_count": 12,
+                    "like_count": 32,
+                    "comment_count": 7,
+                    "forward_count": 72,
+                    "username": "v2_test_user@finder",
+                    "media": {
+                        "full_url": "http://wxapp.tc.qq.com/video.mp4?token=token-value",
+                        "cover_url": "https://example.com/cover.jpg",
+                    },
+                }
+            ]
+        }
+    }
+
+    items = studio._collect_items(payload)
+    normalized = studio._normalize_item(
+        items[0],
+        user_id=1,
+        query_id="query-id",
+        platform="wechat_channels",
+        source_type="home_page",
+        idx=0,
+    )
+
+    assert len(items) == 1
+    assert normalized["item_key"] == "14779988301712792068"
+    assert normalized["author_key"] == "v2_test_user@finder"
+    assert normalized["title"] == "干大健康的就是在拉人头？"
+    assert normalized["public_url"] == "http://wxapp.tc.qq.com/video.mp4?token=token-value"
+    assert normalized["cover_url"] == "https://example.com/cover.jpg"
+    assert normalized["publish_time"] == "1761911905"
+    assert normalized["metrics"]["like_count"] == 32
+    assert normalized["metrics"]["read_count"] == 12
+
+
+def test_collects_legacy_wechat_channels_objects_as_posts():
     from backend.app.api import ip_content_studio as studio
 
     payload = {
@@ -461,6 +559,62 @@ def test_collects_wechat_channels_home_page_objects_as_posts():
     assert normalized["metrics"]["like_count"] == 33
     assert normalized["metrics"]["forward_count"] == 118
     assert normalized["metrics"]["fav_count"] == 41
+
+
+def test_sync_wechat_channels_competitor_uses_v2_user_videos_without_legacy_fallback(monkeypatch):
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+
+    async def fake_query(**kwargs):
+        calls.append(kwargs)
+        return {
+            "ok": True,
+            "items": [{"item_key": "video-1"}],
+            "raw_item_count": 1,
+            "query": {"query_type": kwargs["query_type"]},
+        }
+
+    class DummyDb:
+        def commit(self):
+            pass
+
+        def refresh(self, row):
+            pass
+
+    row = SimpleNamespace(
+        id=9,
+        platform="wechat_channels",
+        account_key="v2_test_user@finder",
+        display_name="测试视频号",
+        homepage_url="",
+        industry_tags="",
+        status="active",
+        last_seen_item_key="",
+        last_fetch_at=None,
+        meta={},
+        created_at=datetime(2026, 1, 1),
+        updated_at=datetime(2026, 1, 1),
+    )
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+
+    result = asyncio.run(
+        studio._sync_competitor_row(
+            db=DummyDb(),
+            current_user=SimpleNamespace(id=1, credits=10),
+            row=row,
+            count=20,
+            last_buffer="next-page",
+        )
+    )
+
+    assert result["ok"] is True
+    assert row.last_seen_item_key == "video-1"
+    assert [call["query_type"] for call in calls] == ["wechat_channels_user_videos_v2"]
+    assert calls[0]["body"] == {"username": "v2_test_user@finder", "last_buffer": "next-page", "raw": True}
 
 
 def test_draft_record_payload_includes_image_list():

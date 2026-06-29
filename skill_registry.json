@@ -847,7 +847,7 @@
                   "douyin_billboard_search",
                   "douyin_user_posts",
                   "wechat_channels_hot_words",
-                  "wechat_channels_home_page"
+                  "wechat_channels_user_videos_v2"
                 ]
               },
               "params": {
