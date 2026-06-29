@@ -570,6 +570,31 @@ def _is_oral_task(task: str) -> bool:
     return (task or "").strip().lower() in {"task1_industry", "task1_ip", "industry_hot_oral", "professional_ip_oral"}
 
 
+def _is_wechat_channels_finder_username(value: str) -> bool:
+    text = (value or "").strip()
+    return bool(text) and (text.startswith("v2_") or "@finder" in text)
+
+
+def _wechat_channels_account_from_username(username: str) -> dict[str, Any]:
+    clean_username = _clean_text(username, 191)
+    return {
+        "id": clean_username,
+        "username": clean_username,
+        "finder_username": clean_username,
+        "nickname": "",
+        "display_name": clean_username,
+        "signature": "",
+        "avatar_url": "",
+        "homepage_url": "",
+        "follower_count": 0,
+        "aweme_count": 0,
+        "verify_info": "",
+        "source": "direct_username",
+        "raw_index": 0,
+        "raw": {"username": clean_username, "source": "direct_username"},
+    }
+
+
 _MOMENTS_SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;]?")
 _MOMENTS_CTA_EMOJI_RE = re.compile(r"(?:^|\n)\s*[🎯👉👇💬📩📲☎️🔥✨🚀]+\s*(?=\n|$)")
 _MOMENTS_CONTACT_INTENT_RE = re.compile(
@@ -2831,30 +2856,65 @@ async def search_douyin_users(
 
 @router.get("/api/ip-content/wechat-channels/users/search", summary="按昵称搜索视频号用户候选")
 async def search_wechat_channels_users(
-    q: str = Query("", max_length=80),
+    q: str = Query("", max_length=2000),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    keyword = _clean_text(q, 80)
+    keyword = _clean_text(q, 2000)
     if not keyword:
         raise HTTPException(status_code=400, detail="请填写视频号昵称或 username")
-    result = await _execute_query(
+    if _is_wechat_channels_finder_username(keyword):
+        return {
+            "ok": True,
+            "items": [_wechat_channels_account_from_username(keyword)],
+            "raw_item_count": 1,
+            "query": {"source": "direct_username"},
+            "balance_after": credits_json_float(user_balance_decimal(current_user)),
+        }
+
+    result = await _execute_query_with_retry(
         db=db,
         current_user=current_user,
-        query_type="wechat_channels_user_search_v2",
-        params={"keywords": keyword, "page": 0},
-        body={},
+        query_type="wechat_search_v2",
+        params={},
+        body={"keyword": keyword, "business_type": "account", "sort": 0, "publish_time": 0, "offset": 0, "raw": True},
         save_items=False,
-        meta={"source": "competitor_user_search", "keyword": keyword},
+        meta={"source": "competitor_user_search", "keyword": keyword, "provider": "wechat_search_v2"},
+        attempts=3,
         include_raw_response=True,
     )
     users, raw_count = _normalize_wechat_channels_users_from_payload(result.get("raw_response") or {})
+    if users:
+        return {
+            "ok": True,
+            "items": users,
+            "raw_item_count": raw_count,
+            "query": result.get("query") or {},
+            "balance_after": result.get("balance_after"),
+        }
+    query = result.get("query") if isinstance(result.get("query"), dict) else {}
+    if not result.get("ok"):
+        detail = query.get("error_message") or "TikHub 微信搜一搜接口调用失败"
+        raise HTTPException(status_code=502, detail=f"视频号账号搜索失败：{detail}")
+
+    fallback = await _execute_query_with_retry(
+        db=db,
+        current_user=current_user,
+        query_type="wechat_channels_user_search_v2",
+        params={"keywords": keyword, "page": 1},
+        body={},
+        save_items=False,
+        meta={"source": "competitor_user_search", "keyword": keyword, "provider": "wechat_channels_user_search_v2"},
+        attempts=3,
+        include_raw_response=True,
+    )
+    users, raw_count = _normalize_wechat_channels_users_from_payload(fallback.get("raw_response") or {})
     return {
-        "ok": bool(result.get("ok")),
+        "ok": bool(fallback.get("ok")) or bool(users),
         "items": users,
         "raw_item_count": raw_count,
-        "query": result.get("query") or {},
-        "balance_after": result.get("balance_after"),
+        "query": fallback.get("query") or {},
+        "balance_after": fallback.get("balance_after"),
     }
 
 

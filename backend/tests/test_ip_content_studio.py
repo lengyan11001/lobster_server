@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 
 def test_collects_tikhub_billboard_search_list():
     from backend.app.api import ip_content_studio as studio
@@ -228,6 +230,78 @@ def test_normalizes_wechat_search_nested_channels_candidates_only():
     assert candidates[0]["signature"] == "惟有被记录的才能真正成为回忆"
     assert candidates[0]["avatar_url"] == "https://example.com/avatar.jpg"
     assert candidates[0]["verify_info"] == "摄影博主"
+
+
+def test_ip_content_wechat_channels_user_search_accepts_direct_username(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    async def fake_query(*args, **kwargs):
+        raise AssertionError("direct finder username should not call TikHub")
+
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+
+    result = asyncio.run(
+        studio.search_wechat_channels_users(
+            q="v2_test_user@finder",
+            current_user=SimpleNamespace(credits=12),
+            db=SimpleNamespace(),
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["items"][0]["username"] == "v2_test_user@finder"
+    assert result["query"]["source"] == "direct_username"
+
+
+def test_ip_content_wechat_channels_user_search_prefers_wechat_search_v2(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+
+    async def fake_query(*, query_type, body, **kwargs):
+        calls.append({"query_type": query_type, "body": body, "kwargs": kwargs})
+        return {
+            "ok": True,
+            "raw_response": {
+                "code": 200,
+                "data": {
+                    "items": [
+                        {
+                            "accTypeName": "视频号",
+                            "authInfo": "教育自媒体",
+                            "desc": "视频号增长案例",
+                            "jumpInfo": {"userName": "v2_runyu@finder"},
+                            "noticeParam": {"finderUsername": "v2_runyu@finder"},
+                            "thumbUrl": "https://example.com/runyu.jpg",
+                            "title": "<em class=\"highlight\">润宇新流量</em>",
+                        }
+                    ]
+                },
+            },
+            "query": {"query_type": query_type},
+            "balance_after": 9,
+        }
+
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+
+    result = asyncio.run(
+        studio.search_wechat_channels_users(
+            q="润宇新流量",
+            current_user=SimpleNamespace(credits=10),
+            db=SimpleNamespace(),
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["items"][0]["username"] == "v2_runyu@finder"
+    assert result["items"][0]["display_name"] == "润宇新流量"
+    assert [call["query_type"] for call in calls] == ["wechat_search_v2"]
+    assert calls[0]["body"]["business_type"] == "account"
+    assert calls[0]["body"]["raw"] is True
 
 
 def test_has_wechat_channels_channel_id_convert_endpoint():
