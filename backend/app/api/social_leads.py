@@ -563,7 +563,7 @@ def _source_summary(rows: list[TikHubSourceItem]) -> dict[str, Any]:
 def _source_item_payload(row: TikHubSourceItem) -> dict[str, Any]:
     meta = _row_meta(row)
     raw = _raw_body(row)
-    title = row.title or _first(raw, ["title", "name", "display_name", "subreddit_name_prefixed", "full_text", "text", "body"]) or ""
+    title = row.title or _first(raw, ["title", "profile_title", "name", "display_name", "subreddit_name_prefixed", "full_text", "text", "body"]) or ""
     description = row.description or _first(raw, ["public_description", "description", "selftext", "body", "full_text", "text"]) or ""
     handle = row.author_key or _first(raw, ["author", "username", "screen_name", "legacy.screen_name"]) or ""
     display_name = row.author_name or _first(raw, ["display_name", "name", "legacy.name"]) or handle
@@ -572,7 +572,7 @@ def _source_item_payload(row: TikHubSourceItem) -> dict[str, Any]:
         url = "https://www.reddit.com" + url
     metrics = row.metrics if isinstance(row.metrics, dict) else {}
     raw_preview: dict[str, Any] = {}
-    for key in ("author", "username", "name", "display_name", "title", "subreddit", "subreddit_name_prefixed", "public_description", "description", "selftext", "body", "full_text", "text", "permalink", "url", "profile_url", "score", "ups", "num_comments", "total_karma", "post_karma", "comment_karma", "account_type", "is_verified", "is_accepting_chats", "is_accepting_followers", "is_accepting_pms", "is_nsfw", "subscribers", "followers_count", "created_utc", "created_at"):
+    for key in ("author", "username", "name", "display_name", "title", "profile_title", "subreddit", "subreddit_name_prefixed", "public_description", "description", "selftext", "body", "full_text", "text", "permalink", "url", "profile_url", "score", "ups", "num_comments", "total_karma", "post_karma", "comment_karma", "post_count", "comment_count", "subscribers_count", "account_type", "is_verified", "is_accepting_chats", "is_accepting_followers", "is_accepting_pms", "is_user_banned", "is_nsfw", "social_links", "subscribers", "followers_count", "created_utc", "created_at"):
         value = _lookup(raw, key)
         if value not in (None, "", [], {}):
             raw_preview[key] = _jsonable(value)
@@ -686,6 +686,14 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
             "karma": _lookup(body, "total_karma") or _lookup(body, "post_karma") or _lookup(body, "comment_karma"),
             "post_karma": _lookup(body, "post_karma"),
             "comment_karma": _lookup(body, "comment_karma"),
+            "post_count": _lookup(body, "post_count"),
+            "comment_count": _lookup(body, "comment_count"),
+            "subscribers_count": _lookup(body, "subscribers_count"),
+            "account_type": _lookup(body, "account_type"),
+            "is_verified": _lookup(body, "is_verified"),
+            "is_accepting_chats": _lookup(body, "is_accepting_chats"),
+            "is_accepting_pms": _lookup(body, "is_accepting_pms"),
+            "is_nsfw": _lookup(body, "is_nsfw"),
         }
     else:
         username = (

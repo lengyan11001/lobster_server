@@ -1018,12 +1018,15 @@ def _flatten_reddit_user_profile(item: dict[str, Any]) -> dict[str, Any]:
     profile = info.get("profile") if isinstance(info.get("profile"), dict) else {}
     profile_info = info.get("profileInfo") if isinstance(info.get("profileInfo"), dict) else {}
     karma = info.get("karma") if isinstance(info.get("karma"), dict) else {}
+    contribution_stats = info.get("contributionStats") if isinstance(info.get("contributionStats"), dict) else {}
     username = _clean_text(info.get("name") or info.get("displayName") or info.get("prefixedName"), 255)
     if username.startswith("u/"):
         username = username[2:]
+    profile_title = _clean_text(_first(profile, ["title"]) or _first(profile_info, ["title"]) or info.get("title"), 255)
+    display_name = profile_title or info.get("displayName") or username
     icon = (
         _first(info, ["snoovatarIcon.url", "newIcon.url", "icon.url"])
-        or _first(profile, ["snoovatarIcon.url", "newIcon.url", "icon.url", "profileIcon.url"])
+        or _first(profile, ["snoovatarIcon.url", "newIcon.url", "icon.url", "profileIcon.url", "styles.icon", "styles.legacyIcon.url"])
         or _first(profile_info, ["snoovatarIcon.url", "newIcon.url", "icon.url", "profileIcon.url", "avatar.url"])
     )
     public_description = _first(
@@ -1031,19 +1034,36 @@ def _flatten_reddit_user_profile(item: dict[str, Any]) -> dict[str, Any]:
         [
             "publicDescription",
             "description",
+            "publicDescriptionText",
             "profile.publicDescription",
+            "profile.publicDescriptionText",
             "profile.description",
             "profileInfo.publicDescription",
+            "profileInfo.publicDescriptionText",
             "profileInfo.description",
             "profileInfo.bio",
         ],
     )
+    social_links: list[dict[str, Any]] = []
+    raw_social_links = profile.get("socialLinks") if isinstance(profile.get("socialLinks"), list) else []
+    for link in raw_social_links[:10]:
+        if not isinstance(link, dict):
+            continue
+        link_payload = {
+            "type": _clean_text(link.get("type"), 80),
+            "title": _clean_text(link.get("title"), 160),
+            "handle": _clean_text(link.get("handle"), 160),
+            "url": _clean_long_text(link.get("outboundUrl") or link.get("url"), 1000),
+        }
+        social_links.append({k: v for k, v in link_payload.items() if v})
     return {
         **item,
         "id": username or info.get("id"),
         "username": username,
         "name": username,
-        "display_name": info.get("displayName") or username,
+        "display_name": display_name,
+        "title": profile_title or username,
+        "profile_title": profile_title,
         "prefixed_name": info.get("prefixedName") or (f"u/{username}" if username else ""),
         "description": public_description or "",
         "public_description": public_description or "",
@@ -1054,15 +1074,20 @@ def _flatten_reddit_user_profile(item: dict[str, Any]) -> dict[str, Any]:
         "created_at": info.get("createdAt") or info.get("created_at") or "",
         "created_utc": info.get("createdAt") or info.get("created_at") or "",
         "total_karma": karma.get("total") or info.get("totalKarma"),
-        "post_karma": karma.get("post") or info.get("postKarma"),
-        "comment_karma": karma.get("comment") or info.get("commentKarma"),
+        "post_karma": karma.get("post") or karma.get("fromPosts") or info.get("postKarma"),
+        "comment_karma": karma.get("comment") or karma.get("fromComments") or info.get("commentKarma"),
+        "post_count": contribution_stats.get("postCount"),
+        "comment_count": contribution_stats.get("commentCount"),
+        "subscribers_count": profile.get("subscribersCount"),
         "account_type": info.get("accountType") or "",
         "is_verified": info.get("isVerified"),
         "is_employee": info.get("isEmployee"),
         "is_accepting_chats": info.get("isAcceptingChats"),
         "is_accepting_followers": info.get("isAcceptingFollowers"),
         "is_accepting_pms": info.get("isAcceptingPMs"),
+        "is_user_banned": profile.get("isUserBanned"),
         "is_nsfw": _first(info, ["profile.isNsfw", "profileInfo.isNsfw", "isNsfw"]),
+        "social_links": social_links,
     }
 
 
@@ -1370,13 +1395,18 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
         "total_karma",
         "post_karma",
         "comment_karma",
+        "post_count",
+        "comment_count",
+        "subscribers_count",
         "account_type",
         "is_verified",
         "is_employee",
         "is_accepting_chats",
         "is_accepting_followers",
         "is_accepting_pms",
+        "is_user_banned",
         "is_nsfw",
+        "social_links",
         "followers",
         "followers_count",
         "friends_count",

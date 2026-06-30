@@ -151,9 +151,14 @@ def test_tikhub_normalizes_reddit_user_profile_payload():
                 "id": "t2_buyer",
                 "name": "buyer_user",
                 "displayName": "Buyer User",
-                "karma": {"total": 42, "post": 11, "comment": 31},
-                "snoovatarIcon": {"url": "https://example.com/avatar.png"},
-                "publicDescription": "Looking for automation tools.",
+                "profile": {
+                    "title": "Buyer Founder",
+                    "publicDescriptionText": "Looking for automation tools.",
+                    "styles": {"icon": "https://example.com/avatar.png"},
+                    "socialLinks": [{"type": "CUSTOM", "title": "site", "outboundUrl": "https://example.com"}],
+                },
+                "karma": {"total": 42, "fromPosts": 11, "fromComments": 31},
+                "contributionStats": {"postCount": 7, "commentCount": 13},
                 "accountType": "USER",
                 "isAcceptingChats": True,
             }
@@ -167,15 +172,18 @@ def test_tikhub_normalizes_reddit_user_profile_payload():
 
     assert row["item_key"] == "buyer_user"
     assert row["author_key"] == "buyer_user"
-    assert row["author_name"] == "Buyer User"
-    assert row["title"] == "Looking for automation tools."
+    assert row["author_name"] == "Buyer Founder"
+    assert row["title"] == "Buyer Founder"
     assert row["description"] == "Looking for automation tools."
     assert row["public_url"] == "https://www.reddit.com/user/buyer_user"
     assert row["cover_url"] == "https://example.com/avatar.png"
     assert row["metrics"]["total_karma"] == 42
     assert row["metrics"]["post_karma"] == 11
     assert row["metrics"]["comment_karma"] == 31
+    assert row["metrics"]["post_count"] == 7
+    assert row["metrics"]["comment_count"] == 13
     assert row["metrics"]["is_accepting_chats"] is True
+    assert row["metrics"]["social_links"] == [{"type": "CUSTOM", "title": "site", "url": "https://example.com"}]
 
 
 def test_social_leads_rows_for_job_reads_merged_job_ids(db_session, test_user):
