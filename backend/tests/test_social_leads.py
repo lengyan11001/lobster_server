@@ -327,6 +327,68 @@ def test_social_leads_rows_for_job_reads_merged_job_ids(db_session, test_user):
     assert [item.item_key for item in _rows_for_job(db_session, test_user.id, "reddit", "rd_old")] == ["buyer_user"]
 
 
+def test_social_leads_job_list_is_isolated_by_platform(db_session, db_session_factory, test_user):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from backend.app.api.auth import get_current_user
+    from backend.app.api.social_leads import router as social_leads_router
+    from backend.app.db import get_db
+    from backend.app.models import CreativeGenerationJob, User
+
+    rows = [
+        ("rd_history", "reddit_leads", "reddit", "Reddit history"),
+        ("x_history", "x_leads", "x", "X history"),
+        ("tt_history", "tiktok_leads", "tiktok", "TikTok history"),
+    ]
+    for job_id, feature_type, platform, title in rows:
+        db_session.add(
+            CreativeGenerationJob(
+                job_id=job_id,
+                user_id=test_user.id,
+                feature_type=feature_type,
+                provider="tikhub",
+                status="completed",
+                stage="completed",
+                progress=100,
+                title=title,
+                request_payload={"platform": platform},
+                result_payload={},
+                meta={"platform": platform, "steps": [], "outputs": []},
+            )
+        )
+    db_session.commit()
+
+    app = FastAPI()
+    app.include_router(social_leads_router, prefix="")
+
+    def _get_db_override():
+        s = db_session_factory()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    def _get_current_user_override():
+        s = db_session_factory()
+        try:
+            return s.query(User).filter(User.id == test_user.id).first()
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    app.dependency_overrides[get_current_user] = _get_current_user_override
+    client = TestClient(app)
+
+    x_resp = client.get("/api/social-leads/jobs?platform=x")
+    tiktok_resp = client.get("/api/social-leads/jobs?platform=tiktok")
+
+    assert x_resp.status_code == 200
+    assert [item["job_id"] for item in x_resp.json()["items"]] == ["x_history"]
+    assert tiktok_resp.status_code == 200
+    assert [item["job_id"] for item in tiktok_resp.json()["items"]] == ["tt_history"]
+
+
 def test_social_leads_job_payload_refreshes_old_empty_evidence(db_session, test_user):
     from backend.app.api.social_leads import _job_payload
     from backend.app.models import CreativeGenerationJob, TikHubSourceItem
@@ -580,6 +642,70 @@ def test_social_leads_tiktok_keyword_video_is_comment_candidate(db_session, test
 
     assert [item.source_type for item in rows] == ["keyword_video"]
     assert post_ids == ["7234567890123456789"]
+
+
+def test_social_leads_tiktok_profile_userinfo_is_candidate_and_sec_uid(db_session, test_user):
+    from backend.app.api import social_leads
+    from backend.app.models import TikHubSourceItem
+
+    raw = {
+        "userInfo": {
+            "user": {
+                "uniqueId": "user4588858781769",
+                "secUid": "MS4wLjABAAAAlPFwKEFI9V0aitC_qhISkKk3BKFVAQkbsiU3gDS4oX11djVQLjGOBiLufWrhbDRC",
+                "nickname": "TikTok Creator",
+                "signature": "AI video creator",
+                "stats": {"followerCount": 1234, "videoCount": 9},
+            }
+        },
+        "__lobster_ip_content_meta": {"social_leads_job_id": "tt_profile_job", "step_key": "account_profiles"},
+    }
+    row = TikHubSourceItem(
+        user_id=test_user.id,
+        query_id="q_tt_profile",
+        platform="tiktok",
+        source_type="user_profile",
+        item_key="profile",
+        author_key=None,
+        author_name=None,
+        raw=raw,
+    )
+    db_session.add(row)
+    db_session.commit()
+
+    candidate = social_leads._candidate_from_row(row)
+    sec_uid = social_leads._latest_tiktok_sec_uid_for_account(db_session, test_user.id, "user4588858781769")
+
+    assert candidate["candidate_key"] == "user4588858781769"
+    assert candidate["handle"] == "user4588858781769"
+    assert candidate["name"] == "TikTok Creator"
+    assert sec_uid == "MS4wLjABAAAAlPFwKEFI9V0aitC_qhISkKk3BKFVAQkbsiU3gDS4oX11djVQLjGOBiLufWrhbDRC"
+
+
+def test_tikhub_normalizes_tiktok_userinfo_profile():
+    from backend.app.api.ip_content_studio import _normalize_item
+
+    item = _normalize_item(
+        {
+            "userInfo": {
+                "user": {
+                    "uniqueId": "user4588858781769",
+                    "secUid": "MS4wLjABAAAAlPFwKEFI9V0aitC_qhISkKk3BKFVAQkbsiU3gDS4oX11djVQLjGOBiLufWrhbDRC",
+                    "nickname": "TikTok Creator",
+                    "signature": "AI video creator",
+                }
+            }
+        },
+        user_id=1,
+        query_id="q_tt_profile",
+        platform="tiktok",
+        source_type="user_profile",
+        idx=0,
+    )
+
+    assert item["item_key"] == "MS4wLjABAAAAlPFwKEFI9V0aitC_qhISkKk3BKFVAQkbsiU3gDS4oX11djVQLjGOBiLufWrhbDRC"
+    assert item["author_key"] == "user4588858781769"
+    assert item["author_name"] == "TikTok Creator"
 
 
 def test_social_leads_tiktok_comment_cursor_helpers():

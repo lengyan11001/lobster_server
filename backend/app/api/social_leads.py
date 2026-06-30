@@ -1047,14 +1047,17 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
         author = _lookup(body, "author") if isinstance(_lookup(body, "author"), dict) else {}
         user = _lookup(body, "user") if isinstance(_lookup(body, "user"), dict) else {}
         user_info = _lookup(body, "user_info") if isinstance(_lookup(body, "user_info"), dict) else {}
+        tiktok_user_info_user = _lookup(body, "userInfo.user") if isinstance(_lookup(body, "userInfo.user"), dict) else {}
         commenter = _lookup(body, "commenter") if isinstance(_lookup(body, "commenter"), dict) else {}
-        info = author or user or user_info or commenter
+        info = author or user or user_info or tiktok_user_info_user or commenter
         sec_uid = (
             _lookup(info, "sec_uid")
             or _lookup(info, "secUid")
             or _lookup(info, "sec_user_id")
             or _lookup(body, "sec_uid")
             or _lookup(body, "secUid")
+            or _lookup(body, "userInfo.user.secUid")
+            or _lookup(body, "userInfo.user.sec_uid")
         )
         username = (
             _lookup(info, "unique_id")
@@ -1063,6 +1066,8 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
             or _lookup(body, "unique_id")
             or _lookup(body, "uniqueId")
             or _lookup(body, "author_unique_id")
+            or _lookup(body, "userInfo.user.uniqueId")
+            or _lookup(body, "userInfo.user.unique_id")
             or sec_uid
         )
         name = _lookup(info, "nickname") or _lookup(info, "name") or username
@@ -1141,7 +1146,7 @@ def _candidate_from_row(row: TikHubSourceItem) -> Optional[dict[str, Any]]:
         if not handle or handle.lower() in _LOW_INTENT_REDDIT_USERS:
             return None
     if row.platform == "tiktok" and row.source_type in {"keyword_video", "post_comment", "user_post", "user_profile"}:
-        handle = _clean_text(row.author_key or _lookup(raw_body, "author.unique_id") or _lookup(raw_body, "user.unique_id") or _lookup(raw_body, "unique_id"), 191)
+        handle = _clean_text(row.author_key or _lookup(raw_body, "author.unique_id") or _lookup(raw_body, "user.unique_id") or _lookup(raw_body, "userInfo.user.uniqueId") or _lookup(raw_body, "unique_id"), 191)
         if not handle:
             return None
     candidate = _candidate_from_raw(raw_body, row.platform, row.source_type, str(meta.get("source_reason") or row.source_type))
@@ -1427,6 +1432,8 @@ def _latest_tiktok_sec_uid_for_account(db: Session, user_id: int, account: str) 
             or _lookup(raw, "user.secUid")
             or _lookup(raw, "author.sec_uid")
             or _lookup(raw, "author.secUid")
+            or _lookup(raw, "userInfo.user.secUid")
+            or _lookup(raw, "userInfo.user.sec_uid")
         )
         sec_uid = _clean_text(sec_uid, 255)
         if sec_uid:

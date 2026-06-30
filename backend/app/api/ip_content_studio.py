@@ -1660,6 +1660,9 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
     if not author:
         author = field_item.get("user") if isinstance(field_item.get("user"), dict) else {}
     if not author:
+        tiktok_user_info_user = _lookup(field_item, "userInfo.user")
+        author = tiktok_user_info_user if isinstance(tiktok_user_info_user, dict) else {}
+    if not author:
         author = field_item.get("contact") if isinstance(field_item.get("contact"), dict) else {}
     if not author:
         nested_author = _lookup(field_item, "aweme_info.author")
@@ -1724,6 +1727,8 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "object_id",
             "displayid",
             "aweme_info.aweme_id",
+            "userInfo.user.secUid",
+            "userInfo.user.uniqueId",
         ],
     )
     if item_key in (None, ""):
@@ -1731,11 +1736,11 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         item_key = _stable_hash({"platform": platform, "source_type": source_type, "idx": idx, "basis": basis})
     author_key = _first(
         author,
-        ["sec_uid", "uid", "id", "short_id", "unique_id", "username", "finder_username", "nickname", "name"],
+        ["unique_id", "uniqueId", "username", "sec_uid", "secUid", "sec_user_id", "uid", "id", "short_id", "finder_username", "nickname", "name"],
     )
     if not author_key:
-        author_key = _first(field_item, ["username", "finder_username", "finderUsername", "author_username", "author", "screen_name", "legacy.screen_name", "core.user_results.result.legacy.screen_name", "authorInfo.name", "redditorInfoByName.name", "data.redditorInfoByName.name"])
-    author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "short_id"]) or _first(field_item, ["nick_name", "author_name", "nickname", "display_name", "name", "legacy.name", "core.user_results.result.legacy.name", "authorInfo.name", "redditorInfoByName.name", "data.redditorInfoByName.name"])
+        author_key = _first(field_item, ["username", "finder_username", "finderUsername", "author_username", "author", "screen_name", "legacy.screen_name", "core.user_results.result.legacy.screen_name", "authorInfo.name", "redditorInfoByName.name", "data.redditorInfoByName.name", "userInfo.user.uniqueId", "userInfo.user.secUid"])
+    author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "uniqueId", "short_id"]) or _first(field_item, ["nick_name", "author_name", "nickname", "display_name", "name", "legacy.name", "core.user_results.result.legacy.name", "authorInfo.name", "redditorInfoByName.name", "data.redditorInfoByName.name", "userInfo.user.nickname", "userInfo.user.uniqueId"])
     publish_time = _first(field_item, ["create_time", "createtime", "publish_time", "timestamp", "aweme_info.create_time", "created_utc", "created_at", "legacy.created_at"])
     return {
         "user_id": user_id,
