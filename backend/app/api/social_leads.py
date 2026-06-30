@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import uuid
 from datetime import datetime
@@ -26,10 +27,12 @@ from .ip_content_studio import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _SUPPORTED_PLATFORMS = {"reddit", "x"}
 _FEATURE_BY_PLATFORM = {"reddit": "reddit_leads", "x": "x_leads"}
 _TERMINAL_STATUS = {"completed", "failed", "canceled", "stale"}
+_AUTORUN_IDLE_SECONDS = 8.0
 
 
 class SocialLeadsStartBody(BaseModel):
@@ -79,6 +82,8 @@ def _job_payload(row: CreativeGenerationJob, *, db: Optional[Session] = None, in
         "result_payload": row.result_payload or {},
         "error": row.error or "",
         "meta": meta,
+        "current_step": str(meta.get("current_step") or ""),
+        "needs_resume": _needs_autorun_resume(row),
         "steps": meta.get("steps") if isinstance(meta.get("steps"), list) else [],
         "outputs": meta.get("outputs") if isinstance(meta.get("outputs"), list) else [],
         "created_at": row.created_at.isoformat() if row.created_at else "",
@@ -597,6 +602,42 @@ def _next_pending_step(row: CreativeGenerationJob, requested: str = "") -> Optio
     return None
 
 
+def _has_unfinished_step(row: CreativeGenerationJob) -> bool:
+    return _next_pending_step(row) is not None
+
+
+def _has_running_step(row: CreativeGenerationJob) -> bool:
+    steps = (_meta(row).get("steps") if isinstance(_meta(row).get("steps"), list) else []) or []
+    return any(str(item.get("status") or "") == "running" for item in steps)
+
+
+def _job_idle_seconds(row: CreativeGenerationJob) -> float:
+    updated_at = row.updated_at or row.created_at
+    if not updated_at:
+        return 0.0
+    try:
+        return max(0.0, (_utcnow() - updated_at).total_seconds())
+    except Exception:
+        return 0.0
+
+
+def _needs_autorun_resume(row: CreativeGenerationJob, *, idle_seconds: float = _AUTORUN_IDLE_SECONDS) -> bool:
+    if row.status in _TERMINAL_STATUS:
+        return False
+    if not _has_unfinished_step(row):
+        return False
+    meta = _meta(row)
+    if str(meta.get("current_step") or "").strip():
+        return False
+    if _has_running_step(row):
+        return False
+    if row.status == "queued":
+        return _job_idle_seconds(row) >= idle_seconds
+    if row.status == "running":
+        return _job_idle_seconds(row) >= idle_seconds
+    return False
+
+
 def _user_from_job(db: Session, row: CreativeGenerationJob) -> User:
     user = db.query(User).filter(User.id == row.user_id).first()
     if user is None:
@@ -839,9 +880,11 @@ async def _auto_run_job(job_id: str) -> None:
         if row is None:
             return
         user = _user_from_job(db, row)
+        logger.info("[social_leads] auto_run start job_id=%s user_id=%s status=%s", row.job_id, row.user_id, row.status)
         while True:
             db.refresh(row)
             if row.status in _TERMINAL_STATUS:
+                logger.info("[social_leads] auto_run stop terminal job_id=%s status=%s", row.job_id, row.status)
                 return
             step = _next_pending_step(row)
             if step is None:
@@ -849,10 +892,16 @@ async def _auto_run_job(job_id: str) -> None:
                 row.progress = 100
                 row.completed_at = _utcnow()
                 db.commit()
+                logger.info("[social_leads] auto_run completed job_id=%s no_pending_step", row.job_id)
                 return
             try:
-                await _execute_step(db, row, user, str(step.get("key") or ""))
+                row = await _execute_step(db, row, user, str(step.get("key") or ""))
             except Exception:
+                logger.exception(
+                    "[social_leads] auto_run stopped by error job_id=%s step=%s",
+                    row.job_id,
+                    step.get("key"),
+                )
                 return
 
 

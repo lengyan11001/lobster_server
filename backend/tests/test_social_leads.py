@@ -161,3 +161,142 @@ async def test_social_leads_x_keyword_step_uses_twitter_search_endpoint(monkeypa
     assert row.status == "running"
     assert calls[0]["query_type"] == "x_search"
     assert calls[0]["params"] == {"keyword": "AI workflow", "search_type": "Latest"}
+
+
+def test_social_leads_payload_marks_idle_running_job_needs_resume(db_session, test_user):
+    from datetime import timedelta
+
+    from backend.app.api import social_leads
+    from backend.app.models import CreativeGenerationJob
+
+    old_time = social_leads._utcnow() - timedelta(seconds=30)
+    row = CreativeGenerationJob(
+        job_id="rd_idle",
+        user_id=test_user.id,
+        feature_type="reddit_leads",
+        provider="tikhub",
+        status="running",
+        stage="running",
+        progress=50,
+        title="Reddit线索采集",
+        request_payload={"platform": "reddit"},
+        result_payload={},
+        meta={
+            "platform": "reddit",
+            "current_step": "",
+            "steps": [
+                {"key": "community_feed", "label": "社区帖子采集", "status": "completed"},
+                {"key": "merge_leads", "label": "线索归并", "status": "pending"},
+            ],
+            "outputs": [],
+        },
+        created_at=old_time,
+        updated_at=old_time,
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+
+    payload = social_leads._job_payload(row, db=db_session, include_sources=True)
+
+    assert payload["status"] == "running"
+    assert payload["current_step"] == ""
+    assert payload["needs_resume"] is True
+
+
+@pytest.mark.asyncio
+async def test_social_leads_auto_run_completes_and_merges_sources(db_session, test_user, monkeypatch):
+    from backend.app.api import social_leads
+    from backend.app.models import CreativeGenerationJob, TikHubSourceItem
+
+    async def fake_execute_query_with_retry(**kwargs):
+        db = kwargs["db"]
+        meta = kwargs["meta"]
+        step_key = meta["step_key"]
+        row = TikHubSourceItem(
+            user_id=kwargs["current_user"].id,
+            query_id="q_" + step_key,
+            platform="reddit",
+            source_type="subreddit_post",
+            item_key="reddit_post_1",
+            author_key="founder_buyer",
+            author_name="founder_buyer",
+            title="Need better lead generation",
+            description="Looking for a tool that finds customers from Reddit communities.",
+            public_url="https://www.reddit.com/r/SaaS/comments/abc",
+            metrics={"score": 12, "num_comments": 4},
+            raw={
+                "author": "founder_buyer",
+                "title": "Need better lead generation",
+                "selftext": "Looking for a tool that finds customers from Reddit communities.",
+                "permalink": "/r/SaaS/comments/abc",
+                "score": 12,
+                "num_comments": 4,
+                "__lobster_ip_content_meta": {
+                    "source": "social_leads",
+                    "source_reason": meta["source_reason"],
+                    "social_leads_job_id": meta["social_leads_job_id"],
+                    "step_key": step_key,
+                },
+            },
+        )
+        db.add(row)
+        db.commit()
+        return {
+            "ok": True,
+            "raw_item_count": 1,
+            "query": {"query_id": row.query_id, "query_type": kwargs["query_type"]},
+            "raw_response": {"items": [row.raw]},
+        }
+
+    monkeypatch.setattr(social_leads, "_execute_query_with_retry", fake_execute_query_with_retry)
+
+    req = {
+        "platform": "reddit",
+        "keywords": [],
+        "accounts": [],
+        "post_ids": [],
+        "communities": ["SaaS"],
+        "search_type": "post",
+        "sort": "HOT",
+        "time_range": "month",
+        "max_items": 10,
+        "include_comments": False,
+        "include_account_posts": False,
+    }
+    row = CreativeGenerationJob(
+        job_id="rd_autorun",
+        user_id=test_user.id,
+        feature_type="reddit_leads",
+        provider="tikhub",
+        status="queued",
+        stage="queued",
+        progress=0,
+        title="Reddit线索采集",
+        request_payload=req,
+        result_payload={},
+        meta={"platform": "reddit", "steps": social_leads._initial_steps(req), "outputs": [], "current_step": ""},
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+
+    while True:
+        step = social_leads._next_pending_step(row)
+        if step is None:
+            break
+        row = await social_leads._execute_step(db_session, row, test_user, str(step["key"]))
+        if row.status == "completed":
+            break
+
+    assert row.status == "completed"
+    assert row.progress == 100
+    candidates = (row.result_payload or {}).get("candidates") or []
+    assert len(candidates) == 1
+    assert candidates[0]["candidate_key"] == "founder_buyer"
+
+    payload = social_leads._job_payload(row, db=db_session, include_sources=True)
+    assert payload["needs_resume"] is False
+    assert payload["source_summary"]["total"] == 1
+    assert payload["steps"][-1]["key"] == "merge_leads"
+    assert payload["steps"][-1]["status"] == "completed"
