@@ -265,6 +265,73 @@ def test_social_leads_rows_for_job_reads_merged_job_ids(db_session, test_user):
     assert [item.item_key for item in _rows_for_job(db_session, test_user.id, "reddit", "rd_old")] == ["buyer_user"]
 
 
+def test_social_leads_job_payload_refreshes_old_empty_evidence(db_session, test_user):
+    from backend.app.api.social_leads import _job_payload
+    from backend.app.models import CreativeGenerationJob, TikHubSourceItem
+
+    job = CreativeGenerationJob(
+        job_id="rd_old_evidence",
+        user_id=test_user.id,
+        feature_type="reddit_leads",
+        provider="tikhub",
+        status="completed",
+        stage="completed",
+        progress=100,
+        title="Reddit线索采集",
+        request_payload={"platform": "reddit"},
+        result_payload={
+            "candidates": [
+                {
+                    "candidate_key": "buyer_user",
+                    "handle": "buyer_user",
+                    "evidence": [
+                        {"source_type": "user_profile", "title": "", "description": ""},
+                        {"source_type": "user_profile", "title": "buyer_user", "description": ""},
+                    ],
+                }
+            ]
+        },
+        meta={"platform": "reddit", "steps": [], "outputs": []},
+    )
+    source = TikHubSourceItem(
+        user_id=test_user.id,
+        query_id="q_profile",
+        platform="reddit",
+        source_type="user_profile",
+        item_key="buyer_user",
+        author_key="buyer_user",
+        author_name="Buyer Founder",
+        title="Buyer Founder",
+        public_url="https://www.reddit.com/user/buyer_user",
+        metrics={"total_karma": 42, "post_count": 7, "is_accepting_pms": True},
+        raw={
+            "username": "buyer_user",
+            "title": "Buyer Founder",
+            "profile_url": "https://www.reddit.com/user/buyer_user",
+            "total_karma": 42,
+            "post_count": 7,
+            "is_accepting_pms": True,
+            "__lobster_ip_content_meta": {
+                "social_leads_job_id": "rd_old_evidence",
+                "source_reason": "Reddit精准用户资料 u/buyer_user",
+                "step_key": "lead_profiles",
+            },
+        },
+    )
+    db_session.add(job)
+    db_session.add(source)
+    db_session.commit()
+    db_session.refresh(job)
+
+    payload = _job_payload(job, db=db_session, include_sources=True)
+    evidence = payload["result_payload"]["candidates"][0]["evidence"]
+
+    assert len(evidence) == 1
+    assert evidence[0]["title"] == "Buyer Founder"
+    assert "总 Karma：42" in evidence[0]["description"]
+    assert "可私信：是" in evidence[0]["description"]
+
+
 def test_social_leads_reddit_feed_sort_maps_search_sort_to_hot():
     from backend.app.api.social_leads import _reddit_feed_sort
 

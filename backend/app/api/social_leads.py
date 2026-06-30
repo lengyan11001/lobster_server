@@ -104,6 +104,7 @@ def _job_payload(row: CreativeGenerationJob, *, db: Optional[Session] = None, in
     if include_sources and db is not None:
         platform = _platform(payload["platform"] or (row.request_payload or {}).get("platform"))
         rows = _rows_for_job(db, row.user_id, platform, row.job_id)
+        payload["result_payload"] = _result_payload_with_current_candidates(payload["result_payload"], rows, platform)
         payload["source_summary"] = _source_summary(rows)
         payload["source_items"] = [_source_item_payload(item) for item in rows[:500]]
     return payload
@@ -558,6 +559,33 @@ def _source_summary(rows: list[TikHubSourceItem]) -> dict[str, Any]:
             step["reasons"].append(reason)
         by_type[row.source_type] = by_type.get(row.source_type, 0) + 1
     return {"total": len(rows), "by_type": by_type, "by_step": list(by_step.values())}
+
+
+def _result_payload_with_current_candidates(result_payload: Any, rows: list[TikHubSourceItem], platform: str) -> dict[str, Any]:
+    payload = dict(result_payload or {}) if isinstance(result_payload, dict) else {}
+    if not rows:
+        return payload
+    current_candidates = _high_intent_candidates(rows, platform=platform, limit=100)
+    if not current_candidates:
+        return payload
+    payload["candidates"] = current_candidates
+    if isinstance(payload.get("intent_analysis"), dict):
+        payload["intent_analysis"] = {
+            **payload["intent_analysis"],
+            "candidates": current_candidates,
+            "candidate_count": len(current_candidates),
+            "high_intent_count": sum(1 for item in current_candidates if item.get("intent_level") == "high"),
+            "medium_intent_count": sum(1 for item in current_candidates if item.get("intent_level") == "medium"),
+        }
+    if isinstance(payload.get("lead_summary"), dict):
+        payload["lead_summary"] = {
+            **payload["lead_summary"],
+            "candidates": current_candidates,
+            "candidate_count": len(current_candidates),
+            "high_intent_count": sum(1 for item in current_candidates if item.get("intent_level") == "high"),
+            "medium_intent_count": sum(1 for item in current_candidates if item.get("intent_level") == "medium"),
+        }
+    return payload
 
 
 def _source_item_payload(row: TikHubSourceItem) -> dict[str, Any]:
