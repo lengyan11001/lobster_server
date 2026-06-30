@@ -66,9 +66,9 @@ def _feature_type(platform: str) -> str:
     return _FEATURE_BY_PLATFORM[_platform(platform)]
 
 
-def _job_payload(row: CreativeGenerationJob) -> dict[str, Any]:
+def _job_payload(row: CreativeGenerationJob, *, db: Optional[Session] = None, include_sources: bool = False) -> dict[str, Any]:
     meta = dict(row.meta or {})
-    return {
+    payload = {
         "job_id": row.job_id,
         "platform": (row.request_payload or {}).get("platform") or meta.get("platform") or "",
         "status": row.status,
@@ -85,6 +85,12 @@ def _job_payload(row: CreativeGenerationJob) -> dict[str, Any]:
         "updated_at": row.updated_at.isoformat() if row.updated_at else "",
         "completed_at": row.completed_at.isoformat() if row.completed_at else "",
     }
+    if include_sources and db is not None:
+        platform = _platform(payload["platform"] or (row.request_payload or {}).get("platform"))
+        rows = _rows_for_job(db, row.user_id, platform, row.job_id)
+        payload["source_summary"] = _source_summary(rows)
+        payload["source_items"] = [_source_item_payload(item) for item in rows[:500]]
+    return payload
 
 
 def _step(label: str, key: str) -> dict[str, Any]:
@@ -204,6 +210,13 @@ def _extract_reddit_username(value: Any) -> str:
     return _clean_text(re.sub(r"^u/", "", text, flags=re.I).lstrip("@"), 120)
 
 
+def _looks_like_reddit_subreddit(value: Any) -> bool:
+    text = _clean_text(value, 255).strip().strip("/")
+    if not text:
+        return False
+    return bool(re.search(r"(?:^|/)r/[^/?#]+", text, re.I) or re.search(r"reddit\.com/r/[^/?#]+", text, re.I))
+
+
 def _extract_subreddit(value: Any) -> str:
     text = _clean_text(value, 255).strip().strip("/")
     if not text:
@@ -212,6 +225,25 @@ def _extract_subreddit(value: Any) -> str:
     if match:
         return _clean_text(match.group(1), 120)
     return _clean_text(re.sub(r"^r/", "", text, flags=re.I), 120)
+
+
+def _split_reddit_accounts_and_communities(accounts: list[Any], communities: list[Any]) -> tuple[list[str], list[str]]:
+    account_out: list[str] = []
+    community_out: list[str] = []
+    for item in communities:
+        name = _extract_subreddit(item)
+        if name and name not in community_out:
+            community_out.append(name)
+    for item in accounts:
+        if _looks_like_reddit_subreddit(item):
+            name = _extract_subreddit(item)
+            if name and name not in community_out:
+                community_out.append(name)
+            continue
+        username = _extract_reddit_username(item)
+        if username and username not in account_out:
+            account_out.append(username)
+    return account_out, community_out
 
 
 def _extract_x_screen_name(value: Any) -> str:
@@ -310,6 +342,12 @@ def _row_meta(row: TikHubSourceItem) -> dict[str, Any]:
     return meta if isinstance(meta, dict) else {}
 
 
+def _raw_body(row: TikHubSourceItem) -> dict[str, Any]:
+    body = row.raw if isinstance(row.raw, dict) else {}
+    raw = body.get("raw") if isinstance(body.get("raw"), dict) else body
+    return raw if isinstance(raw, dict) else {}
+
+
 def _rows_for_job(db: Session, user_id: int, platform: str, job_id: str) -> list[TikHubSourceItem]:
     rows = (
         db.query(TikHubSourceItem)
@@ -325,8 +363,60 @@ def _rows_for_job(db: Session, user_id: int, platform: str, job_id: str) -> list
     return out
 
 
+def _source_summary(rows: list[TikHubSourceItem]) -> dict[str, Any]:
+    by_step: dict[str, dict[str, Any]] = {}
+    by_type: dict[str, int] = {}
+    for row in rows:
+        meta = _row_meta(row)
+        step_key = str(meta.get("step_key") or row.source_type or "unknown")
+        step = by_step.setdefault(step_key, {"step_key": step_key, "count": 0, "types": {}, "reasons": []})
+        step["count"] += 1
+        step["types"][row.source_type] = int(step["types"].get(row.source_type) or 0) + 1
+        reason = _clean_text(meta.get("source_reason") or row.source_type, 160)
+        if reason and reason not in step["reasons"]:
+            step["reasons"].append(reason)
+        by_type[row.source_type] = by_type.get(row.source_type, 0) + 1
+    return {"total": len(rows), "by_type": by_type, "by_step": list(by_step.values())}
+
+
+def _source_item_payload(row: TikHubSourceItem) -> dict[str, Any]:
+    meta = _row_meta(row)
+    raw = _raw_body(row)
+    title = row.title or _first(raw, ["title", "name", "display_name", "subreddit_name_prefixed", "full_text", "text", "body"]) or ""
+    description = row.description or _first(raw, ["public_description", "description", "selftext", "body", "full_text", "text"]) or ""
+    handle = row.author_key or _first(raw, ["author", "username", "screen_name", "legacy.screen_name"]) or ""
+    display_name = row.author_name or _first(raw, ["display_name", "name", "legacy.name"]) or handle
+    url = row.public_url or _first(raw, ["permalink", "url", "tweet_url", "twitter_url"]) or ""
+    if isinstance(url, str) and url.startswith("/"):
+        url = "https://www.reddit.com" + url
+    metrics = row.metrics if isinstance(row.metrics, dict) else {}
+    raw_preview: dict[str, Any] = {}
+    for key in ("author", "username", "name", "display_name", "title", "subreddit", "subreddit_name_prefixed", "public_description", "description", "selftext", "body", "full_text", "text", "permalink", "url", "score", "ups", "num_comments", "total_karma", "subscribers", "followers_count", "created_utc", "created_at"):
+        value = _lookup(raw, key)
+        if value not in (None, "", [], {}):
+            raw_preview[key] = _jsonable(value)
+    return {
+        "id": row.id,
+        "platform": row.platform,
+        "source_type": row.source_type,
+        "step_key": str(meta.get("step_key") or ""),
+        "source_reason": str(meta.get("source_reason") or row.source_type),
+        "item_key": row.item_key or "",
+        "handle": _clean_text(handle, 255),
+        "display_name": _clean_text(display_name, 255),
+        "title": _clean_long_text(title, 1000),
+        "description": _clean_long_text(description, 2000),
+        "url": _clean_long_text(url, 1000),
+        "metrics": _jsonable(metrics),
+        "raw_preview": raw_preview,
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+    }
+
+
 def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason: str) -> Optional[dict[str, Any]]:
     body = raw if isinstance(raw, dict) else {"value": raw}
+    if not body or all(v in (None, "", [], {}) for v in body.values()):
+        return None
     user = _lookup(body, "user") if isinstance(_lookup(body, "user"), dict) else {}
     legacy = _lookup(body, "legacy") if isinstance(_lookup(body, "legacy"), dict) else {}
     core_user = _lookup(body, "core.user_results.result.legacy")
@@ -337,10 +427,10 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
             _lookup(body, "author")
             or _lookup(body, "username")
             or _lookup(user, "username")
-            or _lookup(body, "name")
+            or (_lookup(body, "name") if source_type in {"user_profile", "user_comment", "post_comment"} else "")
             or _lookup(body, "display_name")
         )
-        name = username or _lookup(body, "title") or _lookup(body, "subreddit_name_prefixed")
+        name = username or _lookup(body, "display_name") or _lookup(body, "title") or _lookup(body, "subreddit_name_prefixed") or _lookup(body, "subreddit")
         url = _lookup(body, "permalink") or _lookup(body, "url")
         if isinstance(url, str) and url.startswith("/"):
             url = "https://www.reddit.com" + url
@@ -369,7 +459,7 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
             "replies": _lookup(legacy, "reply_count") or _lookup(body, "reply_count"),
             "retweets": _lookup(legacy, "retweet_count") or _lookup(body, "retweet_count"),
         }
-    key = _clean_text(username or name or _stable_hash(body, 16), 191)
+    key = _clean_text(username or name, 191)
     if not key:
         return None
     return {
@@ -390,12 +480,14 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
 def _candidate_from_row(row: TikHubSourceItem) -> Optional[dict[str, Any]]:
     body = row.raw if isinstance(row.raw, dict) else {}
     meta = _row_meta(row)
-    raw_body = body.get("raw") if isinstance(body.get("raw"), dict) else body
+    raw_body = _raw_body(row)
     candidate = _candidate_from_raw(raw_body, row.platform, row.source_type, str(meta.get("source_reason") or row.source_type))
     if not candidate:
         key = row.author_key or row.item_key
         name = row.author_name or row.title or key
         if not key and not name:
+            return None
+        if not (row.author_key or row.author_name or row.title or row.description or row.public_url):
             return None
         candidate = {
             "candidate_key": _clean_text(key, 191),
@@ -772,9 +864,8 @@ async def start_social_leads_job(
 ):
     platform = _platform(body.platform)
     if platform == "reddit":
-        accounts = [_extract_reddit_username(x) for x in body.accounts]
+        accounts, communities = _split_reddit_accounts_and_communities(body.accounts, body.communities)
         post_ids = [_normalize_reddit_post_id(x) for x in body.post_ids]
-        communities = [_extract_subreddit(x) for x in body.communities]
     else:
         accounts = [_extract_x_screen_name(x) for x in body.accounts]
         post_ids = [_normalize_x_tweet_id(x) for x in body.post_ids]
@@ -817,7 +908,7 @@ async def start_social_leads_job(
     db.refresh(row)
     if body.auto_run:
         asyncio.create_task(_auto_run_job(row.job_id))
-    return {"ok": True, "job": _job_payload(row)}
+    return {"ok": True, "job": _job_payload(row, db=db, include_sources=True)}
 
 
 @router.get("/api/social-leads/jobs", summary="Reddit/X 线索采集任务列表")
@@ -836,7 +927,7 @@ def list_social_leads_jobs(
     )
     total = q.count()
     rows = q.order_by(CreativeGenerationJob.created_at.desc(), CreativeGenerationJob.id.desc()).offset(offset).limit(limit).all()
-    return {"ok": True, "total": total, "items": [_job_payload(row) for row in rows]}
+    return {"ok": True, "total": total, "items": [_job_payload(row, db=db, include_sources=True) for row in rows]}
 
 
 @router.get("/api/social-leads/jobs/{job_id}", summary="Reddit/X 线索采集任务详情")
@@ -857,7 +948,7 @@ def get_social_leads_job(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return {"ok": True, "job": _job_payload(row)}
+    return {"ok": True, "job": _job_payload(row, db=db, include_sources=True)}
 
 
 @router.post("/api/social-leads/jobs/{job_id}/run-next", summary="继续执行 Reddit/X 线索采集任务")
@@ -880,7 +971,7 @@ async def run_next_social_leads_step(
     if row is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     if row.status in {"completed", "canceled", "stale"} and not body.step_key:
-        return {"ok": True, "job": _job_payload(row)}
+        return {"ok": True, "job": _job_payload(row, db=db, include_sources=True)}
     if row.status == "failed" and not body.step_key:
         row.status = "running"
         row.error = None
@@ -891,9 +982,9 @@ async def run_next_social_leads_step(
         row.completed_at = _utcnow()
         db.commit()
         db.refresh(row)
-        return {"ok": True, "job": _job_payload(row)}
+        return {"ok": True, "job": _job_payload(row, db=db, include_sources=True)}
     row = await _execute_step(db, row, current_user, str(step.get("key") or ""))
-    return {"ok": True, "job": _job_payload(row)}
+    return {"ok": True, "job": _job_payload(row, db=db, include_sources=True)}
 
 
 @router.post("/api/social-leads/jobs/{job_id}/resume", summary="自动续跑 Reddit/X 线索采集任务")
@@ -919,4 +1010,4 @@ async def resume_social_leads_job(
         row.error = None
         db.commit()
     asyncio.create_task(_auto_run_job(row.job_id))
-    return {"ok": True, "job": _job_payload(row)}
+    return {"ok": True, "job": _job_payload(row, db=db, include_sources=True)}

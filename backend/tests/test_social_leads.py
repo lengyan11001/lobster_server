@@ -83,6 +83,38 @@ def test_social_leads_merges_reddit_candidates_from_rows():
     assert merged[0]["score"] >= 10
 
 
+def test_social_leads_splits_reddit_subreddit_links_from_accounts():
+    from backend.app.api.social_leads import _split_reddit_accounts_and_communities
+
+    accounts, communities = _split_reddit_accounts_and_communities(
+        ["https://www.reddit.com/r/SaaS", "u/founder", "reddit.com/user/buyer"],
+        ["Entrepreneur"],
+    )
+
+    assert accounts == ["founder", "buyer"]
+    assert communities == ["Entrepreneur", "SaaS"]
+
+
+def test_social_leads_ignores_empty_source_rows():
+    from backend.app.api.social_leads import _candidate_from_row
+
+    class Row:
+        id = 2
+        platform = "reddit"
+        source_type = "user_profile"
+        item_key = "hash-only"
+        author_key = None
+        author_name = None
+        title = None
+        description = None
+        public_url = None
+        metrics = {}
+        created_at = None
+        raw = {"redditorInfoByName": None, "__lobster_ip_content_meta": {"source_reason": "Reddit账号 u/bad"}}
+
+    assert _candidate_from_row(Row()) is None
+
+
 @pytest.mark.asyncio
 async def test_social_leads_x_keyword_step_uses_twitter_search_endpoint(monkeypatch):
     from backend.app.api import social_leads
