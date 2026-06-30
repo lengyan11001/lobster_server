@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -34,6 +34,16 @@ _FEATURE_BY_PLATFORM = {"reddit": "reddit_leads", "x": "x_leads"}
 _TERMINAL_STATUS = {"completed", "failed", "canceled", "stale"}
 _AUTORUN_IDLE_SECONDS = 8.0
 _REDDIT_FEED_SORTS = {"HOT", "NEW", "TOP", "RISING", "CONTROVERSIAL"}
+_REDDIT_RECENT_HOURS = 24
+_REDDIT_MAX_COMMENT_PAGES_PER_POST = 100
+_REDDIT_MAX_PROFILE_FETCH = 20
+_LOW_INTENT_REDDIT_USERS = {"automoderator", "deleted", "[deleted]", "reddit", "admin"}
+_HIGH_INTENT_PATTERNS = [
+    (re.compile(r"\b(how|what|where|which|anyone|help|need|looking for|recommend|suggest|tool|app|service|solution)\b", re.I), 18, "有明确提问/求推荐表达"),
+    (re.compile(r"\b(can'?t|cannot|problem|issue|stuck|struggling|failed|wrong|error|bug|hard|difficult)\b", re.I), 16, "表达痛点或问题"),
+    (re.compile(r"\b(buy|pay|price|pricing|cost|subscribe|subscription|hire|agency|client|business|startup|lead|customer|marketing|sales)\b", re.I), 18, "出现商业/购买/获客相关词"),
+    (re.compile(r"\b(ai|automation|workflow|generate|model|gemini|chatgpt|claude|bot|image|video|content)\b", re.I), 10, "与 AI/自动化/内容生产相关"),
+]
 
 
 class SocialLeadsStartBody(BaseModel):
@@ -120,13 +130,15 @@ def _initial_steps(req: dict[str, Any]) -> list[dict[str, Any]]:
         if req.get("keywords"):
             steps.append(_step("关键词搜索", "keyword_search"))
         if req.get("communities"):
-            steps.append(_step("社区帖子采集", "community_feed"))
+            steps.append(_step("24小时社区帖子采集", "community_feed"))
         if req.get("accounts"):
             steps.append(_step("账号公开资料", "account_profiles"))
             if req.get("include_account_posts"):
                 steps.append(_step("账号发帖/评论", "account_activity"))
-        if req.get("post_ids") and req.get("include_comments"):
-            steps.append(_step("帖子评论采集", "post_comments"))
+        if (req.get("post_ids") or req.get("communities") or req.get("keywords")) and req.get("include_comments"):
+            steps.append(_step("帖子内容和评论采集", "post_comments"))
+        steps.append(_step("精准用户分析", "score_leads"))
+        steps.append(_step("精准用户资料补全", "lead_profiles"))
     else:
         if req.get("country"):
             steps.append(_step("趋势采集", "trending"))
@@ -257,13 +269,21 @@ def _reddit_feed_sort(value: Any) -> str:
     return raw if raw in _REDDIT_FEED_SORTS else "HOT"
 
 
+def _reddit_recent_feed_sort(value: Any) -> str:
+    raw = _clean_text(value, 40).strip().upper()
+    if raw in {"HOT", "TOP", "RISING", "CONTROVERSIAL"}:
+        return raw
+    return "NEW"
+
+
 def _summarize_query_outputs(outputs: list[dict[str, Any]]) -> dict[str, Any]:
-    total = len(outputs)
-    ok_count = sum(1 for item in outputs if item.get("ok"))
-    failed_count = sum(1 for item in outputs if item.get("ok") is False)
-    raw_item_count = sum(int(item.get("count") or item.get("raw_item_count") or 0) for item in outputs)
+    query_outputs = [item for item in outputs if item.get("ok") is True or item.get("ok") is False]
+    total = len(query_outputs)
+    ok_count = sum(1 for item in query_outputs if item.get("ok"))
+    failed_count = sum(1 for item in query_outputs if item.get("ok") is False)
+    raw_item_count = sum(int(item.get("count") or item.get("raw_item_count") or 0) for item in query_outputs)
     errors: list[str] = []
-    for item in outputs:
+    for item in query_outputs:
         err = _clean_text(item.get("error") or item.get("error_message"), 260)
         if err and err not in errors:
             errors.append(err)
@@ -307,6 +327,113 @@ def _normalize_x_tweet_id(value: Any) -> str:
         return match.group(1)
     match = re.search(r"\d{5,}", text)
     return match.group(0) if match else text
+
+
+def _parse_datetime(value: Any) -> Optional[datetime]:
+    if value in (None, "", [], {}):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            if value > 10_000_000_000:
+                value = value / 1000
+            return datetime.utcfromtimestamp(float(value))
+        except Exception:
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return _parse_datetime(int(text))
+    cleaned = text.replace("Z", "+00:00")
+    if re.match(r".*[+-]\d{4}$", cleaned):
+        cleaned = cleaned[:-5] + cleaned[-5:-2] + ":" + cleaned[-2:]
+    for candidate in (cleaned, cleaned.replace(" ", "T", 1)):
+        try:
+            dt = datetime.fromisoformat(candidate)
+            if dt.tzinfo is not None:
+                return dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
+        except Exception:
+            pass
+    for fmt in ("%a %b %d %H:%M:%S %z %Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(text, fmt)
+            if dt.tzinfo is not None:
+                return dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
+        except Exception:
+            pass
+    return None
+
+
+def _row_publish_datetime(row: TikHubSourceItem) -> Optional[datetime]:
+    raw = _raw_body(row)
+    return _parse_datetime(row.publish_time) or _parse_datetime(
+        _first(raw, ["created_at", "created_utc", "createdAt", "created", "timestamp"])
+    )
+
+
+def _is_recent_row(row: TikHubSourceItem, *, hours: int = _REDDIT_RECENT_HOURS) -> bool:
+    dt = _row_publish_datetime(row)
+    if dt is None:
+        return True
+    return dt >= _utcnow() - timedelta(hours=hours)
+
+
+def _recent_post_rows_for_job(db: Session, user_id: int, platform: str, job_id: str, limit: int) -> list[TikHubSourceItem]:
+    rows = _rows_for_job(db, user_id, platform, job_id)
+    out: list[TikHubSourceItem] = []
+    for row in rows:
+        if row.source_type not in {"search_result", "subreddit_post", "user_post", "trend", "post_detail"}:
+            continue
+        if platform == "reddit" and not _is_recent_row(row):
+            continue
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _analysis_rows_for_job(db: Session, user_id: int, platform: str, job_id: str) -> list[TikHubSourceItem]:
+    rows = _rows_for_job(db, user_id, platform, job_id)
+    if platform != "reddit":
+        return rows
+    out: list[TikHubSourceItem] = []
+    for row in rows:
+        if row.source_type in {"search_result", "subreddit_post", "user_post", "trend", "post_detail"}:
+            if _is_recent_row(row):
+                out.append(row)
+            continue
+        out.append(row)
+    return out
+
+
+def _keep_recent_reddit_posts_for_job(db: Session, row: CreativeGenerationJob) -> dict[str, int]:
+    rows = _rows_for_job(db, row.user_id, "reddit", row.job_id)
+    kept = 0
+    excluded = 0
+    for source_row in rows:
+        if source_row.source_type not in {"search_result", "subreddit_post", "user_post", "trend", "post_detail"}:
+            continue
+        if _is_recent_row(source_row):
+            kept += 1
+            continue
+        raw = dict(source_row.raw or {}) if isinstance(source_row.raw, dict) else {}
+        meta = raw.get("__lobster_ip_content_meta") if isinstance(raw.get("__lobster_ip_content_meta"), dict) else {}
+        if str(meta.get("social_leads_job_id") or "") == row.job_id:
+            meta = {
+                **meta,
+                "social_leads_job_id": "",
+                "excluded_social_leads_job_id": row.job_id,
+                "exclude_reason": f"older_than_{_REDDIT_RECENT_HOURS}h",
+            }
+            raw["__lobster_ip_content_meta"] = _jsonable(meta)
+            source_row.raw = _jsonable(raw)
+            source_row.updated_at = _utcnow()
+            excluded += 1
+    if excluded:
+        db.flush()
+    return {"recent_post_count": kept, "excluded_old_post_count": excluded}
 
 
 def _collect_raw_items(payload: Any) -> list[Any]:
@@ -364,6 +491,28 @@ def _first_raw(result: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, dict):
             return item
     return {}
+
+
+def _reddit_more_comment_cursors(payload: Any) -> list[str]:
+    cursors: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            more = value.get("more")
+            if isinstance(more, dict):
+                cursor = _clean_text(more.get("cursor"), 500)
+                if cursor and cursor not in cursors:
+                    cursors.append(cursor)
+            for child in value.values():
+                if isinstance(child, (dict, list)):
+                    walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                if isinstance(child, (dict, list)):
+                    walk(child)
+
+    walk(payload)
+    return cursors
 
 
 def _row_meta(row: TikHubSourceItem) -> dict[str, Any]:
@@ -443,6 +592,66 @@ def _source_item_payload(row: TikHubSourceItem) -> dict[str, Any]:
     }
 
 
+def _intent_score_from_text(text: str, source_type: str, metrics: dict[str, Any]) -> tuple[int, list[str]]:
+    haystack = _clean_long_text(text, 3000)
+    score = 20
+    reasons: list[str] = []
+    if source_type == "post_comment":
+        score += 12
+        reasons.append("来自评论互动")
+    elif source_type in {"subreddit_post", "post_detail", "search_result"}:
+        score += 8
+        reasons.append("来自主动发帖")
+    for pattern, points, reason in _HIGH_INTENT_PATTERNS:
+        if pattern.search(haystack):
+            score += points
+            if reason not in reasons:
+                reasons.append(reason)
+    try:
+        score += min(10, max(0, int(metrics.get("score") or metrics.get("ups") or 0)))
+    except Exception:
+        pass
+    if len(haystack) >= 80:
+        score += 6
+        reasons.append("内容足够具体")
+    return max(0, min(100, score)), reasons[:6]
+
+
+def _candidate_intent(candidate: dict[str, Any]) -> dict[str, Any]:
+    evidence = [item for item in (candidate.get("evidence") or []) if isinstance(item, dict)]
+    text_parts: list[str] = []
+    reasons: list[str] = []
+    best_score = 0
+    for item in evidence:
+        text = "\n".join(str(item.get(k) or "") for k in ("title", "description", "body", "text"))
+        text_parts.append(text)
+        score, item_reasons = _intent_score_from_text(text, str(item.get("source_type") or ""), candidate.get("metrics") or {})
+        best_score = max(best_score, score)
+        for reason in item_reasons:
+            if reason not in reasons:
+                reasons.append(reason)
+    profile_bonus = 0
+    source_types = {str(item.get("source_type") or "") for item in evidence}
+    if "user_profile" in source_types:
+        profile_bonus += 6
+        reasons.append("已补充公开资料")
+    if len(source_types) >= 2:
+        profile_bonus += 6
+        reasons.append("多个来源重复出现")
+    score = min(100, best_score + profile_bonus + min(12, len(evidence) * 4))
+    level = "low"
+    if score >= 72:
+        level = "high"
+    elif score >= 52:
+        level = "medium"
+    return {
+        "intent_score": score,
+        "intent_level": level,
+        "intent_reasons": reasons[:8] or ["可见公开互动"],
+        "intent_excerpt": _clean_long_text("\n".join(x for x in text_parts if x).strip(), 800),
+    }
+
+
 def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason: str) -> Optional[dict[str, Any]]:
     body = raw if isinstance(raw, dict) else {"value": raw}
     if not body or all(v in (None, "", [], {}) for v in body.values()):
@@ -456,6 +665,9 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
         username = (
             _lookup(body, "author")
             or _lookup(body, "username")
+            or _lookup(body, "authorInfo.name")
+            or _lookup(body, "redditorInfoByName.name")
+            or _lookup(body, "data.redditorInfoByName.name")
             or _lookup(user, "username")
             or (_lookup(body, "name") if source_type in {"user_profile", "user_comment", "post_comment"} else "")
             or _lookup(body, "display_name")
@@ -464,7 +676,7 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
         url = _lookup(body, "permalink") or _lookup(body, "url")
         if isinstance(url, str) and url.startswith("/"):
             url = "https://www.reddit.com" + url
-        bio = _lookup(body, "public_description") or _lookup(body, "description") or _lookup(body, "body") or _lookup(body, "selftext") or _lookup(body, "title")
+        bio = _lookup(body, "public_description") or _lookup(body, "description") or _lookup(body, "body") or _lookup(body, "text") or _lookup(body, "selftext") or _lookup(body, "title")
         metrics = {
             "score": _lookup(body, "score"),
             "ups": _lookup(body, "ups"),
@@ -502,7 +714,7 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
         "bio": _clean_long_text(bio, 1200),
         "url": _clean_long_text(url, 1000),
         "metrics": {k: v for k, v in metrics.items() if v not in (None, "", [], {})},
-        "evidence": [{"source_type": source_type, "title": _clean_text(_lookup(body, "title") or _lookup(body, "full_text") or "", 255), "description": _clean_long_text(bio, 600)}],
+        "evidence": [{"source_type": source_type, "title": _clean_text(_lookup(body, "title") or _lookup(body, "post_title") or _lookup(body, "full_text") or "", 255), "description": _clean_long_text(bio, 600), "body": _clean_long_text(_lookup(body, "body") or _lookup(body, "text") or "", 1000)}],
         "raw": body,
     }
 
@@ -538,6 +750,7 @@ def _candidate_from_row(row: TikHubSourceItem) -> Optional[dict[str, Any]]:
             "source_type": row.source_type,
             "title": row.title or "",
             "description": row.description or "",
+            "body": row.description or "",
             "url": row.public_url or "",
             "created_at": row.created_at.isoformat() if row.created_at else "",
         }
@@ -572,8 +785,29 @@ def _merge_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out.sort(key=lambda x: (len(x.get("evidence") or []), sum(1 for v in (x.get("metrics") or {}).values() if v)), reverse=True)
     for idx, item in enumerate(out, start=1):
         item["rank"] = idx
-        item["score"] = max(10, min(99, 35 + len(item.get("evidence") or []) * 10 + sum(1 for v in (item.get("metrics") or {}).values() if v) * 4))
+        intent = _candidate_intent(item)
+        item.update(intent)
+        item["score"] = max(10, min(99, item.get("intent_score") or 0))
     return out
+
+
+def _high_intent_candidates(rows: list[TikHubSourceItem], *, platform: str, limit: int) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for source_row in rows:
+        candidate = _candidate_from_row(source_row)
+        if not candidate:
+            continue
+        handle = str(candidate.get("handle") or candidate.get("candidate_key") or "").strip()
+        if platform == "reddit" and handle.lower() in _LOW_INTENT_REDDIT_USERS:
+            continue
+        candidates.append(candidate)
+    merged = _merge_candidates(candidates)
+    filtered = [
+        item
+        for item in merged
+        if item.get("intent_level") in {"high", "medium"} or int(item.get("intent_score") or 0) >= 52
+    ]
+    return (filtered or merged)[:limit]
 
 
 async def _run_query(
@@ -772,11 +1006,14 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                     job=row,
                     step_key=step_key,
                     query_type="reddit_subreddit_feed",
-                    params={"subreddit_name": community_name, "sort": _reddit_feed_sort(req.get("sort")), "need_format": False},
+                    params={"subreddit_name": community_name, "sort": _reddit_recent_feed_sort(req.get("sort")), "need_format": False},
                     source_reason=f"Reddit社区 r/{community_name}",
                 )
                 query = result.get("query") if isinstance(result.get("query"), dict) else {}
                 outputs.append({"community": community_name, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
+            if platform == "reddit":
+                recent_summary = _keep_recent_reddit_posts_for_job(db, row)
+                outputs.append({"query_type": "recent_24h_filter", "ok": None, "count": 0, **recent_summary})
 
         elif step_key == "account_profiles":
             for account in req.get("accounts") or []:
@@ -839,21 +1076,53 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
             explicit_ids = req.get("post_ids") or []
             post_ids = list(explicit_ids)
             if len(post_ids) < int(req.get("max_items") or 30):
-                rows = _rows_for_job(db, row.user_id, platform, row.job_id)
+                rows = _recent_post_rows_for_job(db, row.user_id, platform, row.job_id, int(req.get("max_items") or 30))
                 for post_id in _extract_post_ids_from_rows(rows, platform, int(req.get("max_items") or 30)):
                     if post_id not in post_ids:
                         post_ids.append(post_id)
             for post_id in post_ids[: int(req.get("max_items") or 30)]:
                 if platform == "reddit":
-                    result = await _run_query(
+                    detail_result = await _run_query(
                         db=db,
                         current_user=current_user,
                         job=row,
                         step_key=step_key,
-                        query_type="reddit_post_comments",
-                        params={"post_id": _normalize_reddit_post_id(post_id), "sort_type": "CONFIDENCE", "need_format": False},
-                        source_reason=f"Reddit帖子评论 {post_id}",
+                        query_type="reddit_post_details",
+                        params={"post_id": _normalize_reddit_post_id(post_id), "need_format": False},
+                        source_reason=f"Reddit帖子内容 {post_id}",
                     )
+                    detail_query = detail_result.get("query") if isinstance(detail_result.get("query"), dict) else {}
+                    outputs.append({"post_id": post_id, "query_type": "reddit_post_details", "ok": detail_result.get("ok"), "count": detail_result.get("raw_item_count"), "query_id": detail_query.get("query_id"), "error": detail_query.get("error_message") or detail_result.get("error_message") or ""})
+                    seen_cursors: set[str] = set()
+                    pending_cursors = [""]
+                    page_count = 0
+                    saved_comments = 0
+                    while pending_cursors and page_count < _REDDIT_MAX_COMMENT_PAGES_PER_POST:
+                        cursor = pending_cursors.pop(0)
+                        if cursor and cursor in seen_cursors:
+                            continue
+                        if cursor:
+                            seen_cursors.add(cursor)
+                        params = {"post_id": _normalize_reddit_post_id(post_id), "sort_type": "CONFIDENCE", "need_format": False}
+                        if cursor:
+                            params["after"] = cursor
+                        result = await _run_query(
+                            db=db,
+                            current_user=current_user,
+                            job=row,
+                            step_key=step_key,
+                            query_type="reddit_post_comments",
+                            params=params,
+                            source_reason=f"Reddit帖子评论 {post_id}",
+                        )
+                        page_count += 1
+                        saved_comments += int(result.get("raw_item_count") or 0)
+                        for next_cursor in _reddit_more_comment_cursors(result.get("raw_response")):
+                            if next_cursor not in seen_cursors and next_cursor not in pending_cursors:
+                                pending_cursors.append(next_cursor)
+                        query = result.get("query") if isinstance(result.get("query"), dict) else {}
+                        outputs.append({"post_id": post_id, "query_type": "reddit_post_comments", "page": page_count, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
+                    continue
                 else:
                     result = await _run_query(
                         db=db,
@@ -867,18 +1136,81 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                 query = result.get("query") if isinstance(result.get("query"), dict) else {}
                 outputs.append({"post_id": post_id, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
 
+        elif step_key == "score_leads":
+            rows = _analysis_rows_for_job(db, row.user_id, platform, row.job_id)
+            candidates = _high_intent_candidates(rows, platform=platform, limit=int(req.get("max_items") or 30))
+            analysis = {
+                "platform": platform,
+                "source_rows": len(rows),
+                "candidate_count": len(candidates),
+                "high_intent_count": sum(1 for item in candidates if item.get("intent_level") == "high"),
+                "medium_intent_count": sum(1 for item in candidates if item.get("intent_level") == "medium"),
+                "candidates": candidates,
+            }
+            row.result_payload = {**(row.result_payload or {}), "intent_analysis": analysis, "candidates": candidates}
+            _append_output(row, step_key=step_key, title="精准用户分析", kind="intent_analysis", data=analysis)
+            _mark_step(row, step_key, "completed", detail=f"筛出 {len(candidates)} 个可能精准用户", result={"candidate_count": len(candidates), "source_rows": len(rows)})
+            _update_progress(row)
+            db.commit()
+            db.refresh(row)
+            return row
+
+        elif step_key == "lead_profiles":
+            existing = (row.result_payload or {}).get("candidates") if isinstance(row.result_payload, dict) else []
+            candidates = existing if isinstance(existing, list) else []
+            fetched = 0
+            skipped = 0
+            for item in candidates[:_REDDIT_MAX_PROFILE_FETCH]:
+                handle = _clean_text(item.get("handle") or item.get("candidate_key"), 120)
+                if not handle or handle.lower() in _LOW_INTENT_REDDIT_USERS:
+                    skipped += 1
+                    continue
+                if platform == "reddit":
+                    result = await _run_query(
+                        db=db,
+                        current_user=current_user,
+                        job=row,
+                        step_key=step_key,
+                        query_type="reddit_user_profile",
+                        params={"username": handle, "need_format": False},
+                        source_reason=f"Reddit精准用户资料 u/{handle}",
+                    )
+                else:
+                    result = await _run_query(
+                        db=db,
+                        current_user=current_user,
+                        job=row,
+                        step_key=step_key,
+                        query_type="x_user_profile",
+                        params={"screen_name": handle},
+                        source_reason=f"X精准用户资料 @{handle}",
+                    )
+                fetched += 1
+                query = result.get("query") if isinstance(result.get("query"), dict) else {}
+                outputs.append({"account": handle, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
+            if not candidates:
+                _append_output(row, step_key=step_key, title="精准用户资料补全", kind="queries", data={"queries": [], "summary": {"total": 0, "ok_count": 0, "failed_count": 0, "raw_item_count": 0, "errors": []}})
+                _mark_step(row, step_key, "skipped", detail="没有可补全的精准用户", result={"candidate_count": 0})
+                _update_progress(row)
+                db.commit()
+                db.refresh(row)
+                return row
+            if fetched == 0 and skipped:
+                _mark_step(row, step_key, "skipped", detail=f"跳过 {skipped} 个无效账号", result={"skipped": skipped})
+                _update_progress(row)
+                db.commit()
+                db.refresh(row)
+                return row
+
         elif step_key == "merge_leads":
-            rows = _rows_for_job(db, row.user_id, platform, row.job_id)
-            candidates = []
-            for source_row in rows:
-                candidate = _candidate_from_row(source_row)
-                if candidate:
-                    candidates.append(candidate)
-            merged = _merge_candidates(candidates)[: int(req.get("max_items") or 30)]
+            rows = _analysis_rows_for_job(db, row.user_id, platform, row.job_id)
+            merged = _high_intent_candidates(rows, platform=platform, limit=int(req.get("max_items") or 30))
             payload = {
                 "platform": platform,
                 "total_source_rows": len(rows),
                 "candidate_count": len(merged),
+                "high_intent_count": sum(1 for item in merged if item.get("intent_level") == "high"),
+                "medium_intent_count": sum(1 for item in merged if item.get("intent_level") == "medium"),
                 "source_counts": _source_counts(rows),
                 "candidates": merged,
             }
@@ -995,7 +1327,7 @@ async def start_social_leads_job(
         "sort": _clean_text(body.sort, 40),
         "time_range": _clean_text(body.time_range, 40),
         "max_items": int(body.max_items or 30),
-        "include_comments": bool(body.include_comments),
+        "include_comments": bool(body.include_comments) or bool(platform == "reddit" and (communities or post_ids or body.keywords)),
         "include_account_posts": bool(body.include_account_posts),
     }
     has_collection_input = bool(req["keywords"] or req["accounts"] or req["post_ids"] or req["communities"] or (platform == "x" and req["country"]))

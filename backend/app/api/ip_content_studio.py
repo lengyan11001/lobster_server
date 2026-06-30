@@ -897,6 +897,118 @@ def _reddit_post_from_cell_group(node: dict[str, Any]) -> Optional[dict[str, Any
     return item
 
 
+def _reddit_post_from_post_info(post: dict[str, Any]) -> Optional[dict[str, Any]]:
+    if not isinstance(post, dict):
+        return None
+    post_id = _clean_text(post.get("id") or post.get("postId") or post.get("name"), 191)
+    if not post_id:
+        return None
+    subreddit = post.get("subreddit") if isinstance(post.get("subreddit"), dict) else {}
+    author_info = post.get("authorInfo") if isinstance(post.get("authorInfo"), dict) else {}
+    author = (
+        _first(post, ["author", "authorName", "username"])
+        or _first(author_info, ["name", "displayName", "id"])
+        or ""
+    )
+    item: dict[str, Any] = {
+        "id": post_id,
+        "post_id": post_id,
+        "title": _first(post, ["title", "name"]) or "",
+        "selftext": _first(post, ["content.markdown", "content.preview", "body", "selftext", "text"]) or "",
+        "body": _first(post, ["content.markdown", "content.preview", "body", "selftext", "text"]) or "",
+        "author": _clean_text(author, 255),
+        "username": _clean_text(author, 255),
+        "subreddit": _first(subreddit, ["name", "displayName", "prefixedName"]) or _first(post, ["subredditName", "subreddit_name_prefixed"]) or "",
+        "created_at": _first(post, ["createdAt", "created_at", "created_utc"]) or "",
+        "created_utc": _first(post, ["createdAt", "created_at", "created_utc"]) or "",
+        "score": _first(post, ["score", "ups"]),
+        "ups": _first(post, ["score", "ups"]),
+        "num_comments": _first(post, ["commentCount", "num_comments"]),
+        "raw": post,
+    }
+    if isinstance(author_info.get("newIcon"), dict):
+        item["profile_image_url"] = author_info["newIcon"].get("url") or ""
+    if post_id.startswith("t3_"):
+        item["permalink"] = f"/comments/{post_id[3:]}"
+        item["url"] = f"https://www.reddit.com/comments/{post_id[3:]}"
+    return item
+
+
+def _reddit_post_detail_items(node: Any) -> list[Any]:
+    if not isinstance(node, dict):
+        return []
+    posts = _lookup(node, "data.postsInfoByIds")
+    if not isinstance(posts, list):
+        post = _lookup(node, "data.postInfoById")
+        posts = [post] if isinstance(post, dict) else []
+    out: list[Any] = []
+    for post in posts:
+        if not isinstance(post, dict):
+            continue
+        item = _reddit_post_from_post_info(post)
+        if item:
+            out.append(item)
+    return out
+
+
+def _reddit_comment_from_tree(tree: dict[str, Any], post_info: dict[str, Any]) -> Optional[dict[str, Any]]:
+    node = tree.get("node") if isinstance(tree.get("node"), dict) else {}
+    if str(node.get("__typename") or "") != "Comment":
+        return None
+    comment_id = _clean_text(node.get("id") or node.get("name"), 191)
+    if not comment_id:
+        return None
+    author_info = node.get("authorInfo") if isinstance(node.get("authorInfo"), dict) else {}
+    author = _clean_text(author_info.get("name") or node.get("author") or node.get("username"), 255)
+    content = node.get("content") if isinstance(node.get("content"), dict) else {}
+    body = _clean_long_text(content.get("markdown") or content.get("preview") or node.get("body") or node.get("text"), 8000)
+    subreddit = post_info.get("subreddit") if isinstance(post_info.get("subreddit"), dict) else {}
+    post_id = _clean_text(post_info.get("id") or node.get("postId"), 191)
+    item: dict[str, Any] = {
+        "id": comment_id,
+        "comment_id": comment_id,
+        "post_id": post_id,
+        "parent_id": tree.get("parentId") or node.get("parentId") or "",
+        "depth": tree.get("depth"),
+        "author": author,
+        "username": author,
+        "display_name": author,
+        "body": body,
+        "text": body,
+        "created_at": node.get("createdAt") or "",
+        "created_utc": node.get("createdAt") or "",
+        "score": node.get("score"),
+        "permalink": node.get("permalink") or "",
+        "subreddit": _first(subreddit, ["name", "displayName"]) or post_info.get("subredditName") or "",
+        "post_title": post_info.get("title") or "",
+        "raw": {"tree": tree, "post": {"id": post_id, "title": post_info.get("title") or ""}},
+    }
+    if isinstance(author_info.get("newIcon"), dict):
+        item["profile_image_url"] = author_info["newIcon"].get("url") or ""
+    if isinstance(item.get("permalink"), str) and item["permalink"].startswith("/"):
+        item["url"] = "https://www.reddit.com" + item["permalink"]
+    return item
+
+
+def _reddit_comment_items(node: Any) -> list[Any]:
+    if not isinstance(node, dict):
+        return []
+    post_info = _lookup(node, "data.postInfoById")
+    if not isinstance(post_info, dict):
+        return []
+    trees = _lookup(post_info, "commentForest.trees")
+    if not isinstance(trees, list):
+        return []
+    out: list[Any] = []
+    for tree in trees:
+        if not isinstance(tree, dict):
+            continue
+        item = _reddit_comment_from_tree(tree, post_info)
+        if item:
+            out.append(item)
+    return out
+
+
 def _reddit_feed_items(node: Any) -> list[Any]:
     if not isinstance(node, dict):
         return []
@@ -923,6 +1035,12 @@ def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
         return node
     if not isinstance(node, dict):
         return []
+    reddit_comments = _reddit_comment_items(node)
+    if reddit_comments:
+        return reddit_comments
+    reddit_details = _reddit_post_detail_items(node)
+    if reddit_details:
+        return reddit_details
     reddit_items = _reddit_feed_items(node)
     if reddit_items:
         return reddit_items
@@ -1457,6 +1575,9 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "subreddit_name_prefixed",
             "post_id",
             "comment_id",
+            "authorInfo.name",
+            "redditorInfoByName.name",
+            "data.redditorInfoByName.name",
             "sentence_id",
             "word_id",
             "mid",
@@ -1470,11 +1591,11 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         item_key = _stable_hash({"platform": platform, "source_type": source_type, "idx": idx, "basis": basis})
     author_key = _first(
         author,
-        ["sec_uid", "uid", "id", "short_id", "unique_id", "username", "finder_username", "nickname"],
+        ["sec_uid", "uid", "id", "short_id", "unique_id", "username", "finder_username", "nickname", "name"],
     )
     if not author_key:
-        author_key = _first(field_item, ["username", "finder_username", "finderUsername", "author_username", "author", "screen_name", "legacy.screen_name", "core.user_results.result.legacy.screen_name"])
-    author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "short_id"]) or _first(field_item, ["nick_name", "author_name", "nickname", "display_name", "legacy.name", "core.user_results.result.legacy.name"])
+        author_key = _first(field_item, ["username", "finder_username", "finderUsername", "author_username", "author", "screen_name", "legacy.screen_name", "core.user_results.result.legacy.screen_name", "authorInfo.name", "redditorInfoByName.name", "data.redditorInfoByName.name"])
+    author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "short_id"]) or _first(field_item, ["nick_name", "author_name", "nickname", "display_name", "name", "legacy.name", "core.user_results.result.legacy.name", "authorInfo.name", "redditorInfoByName.name", "data.redditorInfoByName.name"])
     publish_time = _first(field_item, ["create_time", "createtime", "publish_time", "timestamp", "aweme_info.create_time", "created_utc", "created_at", "legacy.created_at"])
     return {
         "user_id": user_id,

@@ -22,6 +22,8 @@ def test_social_leads_reddit_initial_steps():
         "account_profiles",
         "account_activity",
         "post_comments",
+        "score_leads",
+        "lead_profiles",
         "merge_leads",
     ]
 
@@ -157,6 +159,48 @@ def test_tikhub_collects_reddit_cell_feed_posts():
     assert items[0]["author"] == "founder"
     assert items[0]["title"] == "Looking for better lead generation"
     assert items[0]["num_comments"] == 3
+
+
+def test_tikhub_collects_reddit_comment_tree_items():
+    from backend.app.api.ip_content_studio import _collect_items
+    from backend.app.api.social_leads import _reddit_more_comment_cursors
+
+    payload = {
+        "data": {
+            "postInfoById": {
+                "id": "t3_abc123",
+                "title": "Looking for better lead generation",
+                "subreddit": {"name": "SaaS"},
+                "commentForest": {
+                    "trees": [
+                        {
+                            "depth": 0,
+                            "parentId": None,
+                            "node": {
+                                "__typename": "Comment",
+                                "id": "t1_c1",
+                                "createdAt": "2026-06-30T00:00:00.000000+0000",
+                                "content": {"markdown": "What tool can find Reddit leads?"},
+                                "authorInfo": {"name": "buyer_user"},
+                                "score": 3,
+                                "permalink": "/r/SaaS/comments/abc/comment/c1/",
+                            },
+                            "more": None,
+                        },
+                        {"depth": 0, "more": {"cursor": "commenttree:next"}},
+                    ]
+                },
+            }
+        }
+    }
+
+    items = _collect_items(payload)
+
+    assert len(items) == 1
+    assert items[0]["comment_id"] == "t1_c1"
+    assert items[0]["author"] == "buyer_user"
+    assert items[0]["body"] == "What tool can find Reddit leads?"
+    assert _reddit_more_comment_cursors(payload) == ["commenttree:next"]
 
 
 @pytest.mark.asyncio
@@ -312,15 +356,27 @@ async def test_social_leads_auto_run_completes_and_merges_sources(db_session, te
         db = kwargs["db"]
         meta = kwargs["meta"]
         step_key = meta["step_key"]
-        row = TikHubSourceItem(
+        source_type = "user_profile" if kwargs["query_type"] == "reddit_user_profile" else "subreddit_post"
+        item_key = "profile_founder_buyer" if source_type == "user_profile" else "reddit_post_1"
+        existing = (
+            db.query(TikHubSourceItem)
+            .filter(
+                TikHubSourceItem.user_id == kwargs["current_user"].id,
+                TikHubSourceItem.platform == "reddit",
+                TikHubSourceItem.source_type == source_type,
+                TikHubSourceItem.item_key == item_key,
+            )
+            .first()
+        )
+        row = existing or TikHubSourceItem(
             user_id=kwargs["current_user"].id,
             query_id="q_" + step_key,
             platform="reddit",
-            source_type="subreddit_post",
-            item_key="reddit_post_1",
+            source_type=source_type,
+            item_key=item_key,
             author_key="founder_buyer",
             author_name="founder_buyer",
-            title="Need better lead generation",
+            title="Need better lead generation" if source_type != "user_profile" else "founder_buyer",
             description="Looking for a tool that finds customers from Reddit communities.",
             public_url="https://www.reddit.com/r/SaaS/comments/abc",
             metrics={"score": 12, "num_comments": 4},
@@ -339,7 +395,8 @@ async def test_social_leads_auto_run_completes_and_merges_sources(db_session, te
                 },
             },
         )
-        db.add(row)
+        if existing is None:
+            db.add(row)
         db.commit()
         return {
             "ok": True,
@@ -396,9 +453,10 @@ async def test_social_leads_auto_run_completes_and_merges_sources(db_session, te
 
     payload = social_leads._job_payload(row, db=db_session, include_sources=True)
     assert payload["needs_resume"] is False
-    assert payload["source_summary"]["total"] == 1
+    assert payload["source_summary"]["total"] == 2
     assert payload["steps"][-1]["key"] == "merge_leads"
     assert payload["steps"][-1]["status"] == "completed"
+    assert "intent_score" in candidates[0]
 
 
 @pytest.mark.asyncio
@@ -438,6 +496,8 @@ async def test_social_leads_community_feed_uses_feed_sort_and_fails_loudly(monke
         }
         meta = {"steps": [{"key": "community_feed", "label": "社区帖子采集", "status": "pending"}], "outputs": []}
 
+    monkeypatch.setattr(social_leads, "_keep_recent_reddit_posts_for_job", lambda db, row: {"recent_post_count": 0, "excluded_old_post_count": 0})
+
     class DB:
         def commit(self): pass
         def refresh(self, row): pass
@@ -448,4 +508,4 @@ async def test_social_leads_community_feed_uses_feed_sort_and_fails_loudly(monke
     assert "采集失败" in row.error
     assert calls[0]["query_type"] == "reddit_subreddit_feed"
     assert calls[0]["params"]["subreddit_name"] == "SaaS"
-    assert calls[0]["params"]["sort"] == "HOT"
+    assert calls[0]["params"]["sort"] == "NEW"
