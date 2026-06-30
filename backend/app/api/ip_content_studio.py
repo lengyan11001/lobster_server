@@ -1173,6 +1173,7 @@ def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
         "list",
         "results",
         "records",
+        "timeline",
         "videos",
         "user_list",
         "users",
@@ -1445,11 +1446,15 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
         "followers",
         "followers_count",
         "friends_count",
+        "replies",
         "reply_count",
+        "retweets",
         "retweet_count",
         "quote_count",
         "bookmark_count",
+        "favorites",
         "favorite_count",
+        "views",
         "view_count",
     ):
         value = stats.get(key) if key in stats else source.get(key)

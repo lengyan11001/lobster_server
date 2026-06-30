@@ -86,6 +86,44 @@ def test_collects_tikhub_video_search_aweme_info():
     assert normalized["metrics"]["collect_count"] == 300
 
 
+def test_collects_x_user_post_timeline_items():
+    from backend.app.api import ip_content_studio as studio
+
+    payload = {
+        "code": 200,
+        "data": {
+            "timeline": [
+                {
+                    "tweet_id": "2071760631154246086",
+                    "text": "Every angle, every position, every finish.",
+                    "created_at": "Tue Jun 30 01:00:00 +0000 2026",
+                    "replies": 3,
+                    "retweets": 240,
+                    "favorites": 78,
+                    "views": "12768",
+                }
+            ]
+        },
+    }
+
+    items = studio._collect_items(payload)
+    normalized = studio._normalize_item(
+        items[0],
+        user_id=1,
+        query_id="query-id",
+        platform="x",
+        source_type="user_post",
+        idx=0,
+    )
+
+    assert len(items) == 1
+    assert normalized["item_key"] == "2071760631154246086"
+    assert normalized["title"] == "Every angle, every position, every finish."
+    assert normalized["publish_time"] == "Tue Jun 30 01:00:00 +0000 2026"
+    assert normalized["metrics"]["replies"] == 3
+    assert normalized["metrics"]["views"] == "12768"
+
+
 def test_normalizes_douyin_user_search_candidates():
     from backend.app.api import ip_content_studio as studio
 

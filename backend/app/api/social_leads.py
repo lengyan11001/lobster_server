@@ -1434,6 +1434,45 @@ def _latest_tiktok_sec_uid_for_account(db: Session, user_id: int, account: str) 
     return ""
 
 
+def _latest_x_rest_id_for_account(db: Session, user_id: int, account: str) -> str:
+    target = _extract_x_screen_name(account).lower()
+    if not target:
+        return ""
+    rows = (
+        db.query(TikHubSourceItem)
+        .filter(
+            TikHubSourceItem.user_id == user_id,
+            TikHubSourceItem.platform == "x",
+            TikHubSourceItem.source_type == "user_profile",
+        )
+        .order_by(TikHubSourceItem.updated_at.desc(), TikHubSourceItem.id.desc())
+        .limit(200)
+        .all()
+    )
+    for row in rows:
+        raw = _raw_body(row)
+        screen_name = _clean_text(
+            _lookup(raw, "screen_name")
+            or _lookup(raw, "legacy.screen_name")
+            or _lookup(raw, "core.user_results.result.legacy.screen_name")
+            or _lookup(raw, "profile"),
+            255,
+        ).lower()
+        if screen_name != target:
+            continue
+        rest_id = _clean_text(
+            _lookup(raw, "rest_id")
+            or _lookup(raw, "id")
+            or _lookup(raw, "id_str")
+            or _lookup(raw, "core.user_results.result.rest_id")
+            or row.item_key,
+            255,
+        )
+        if rest_id and rest_id.isdigit():
+            return rest_id
+    return ""
+
+
 async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: User, step_key: str) -> CreativeGenerationJob:
     req = row.request_payload or {}
     platform = _platform(req.get("platform"))
@@ -1592,17 +1631,19 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                     query = result.get("query") if isinstance(result.get("query"), dict) else {}
                     outputs.append({"account": account, "query_type": "tiktok_user_posts", "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
                 else:
+                    rest_id = _latest_x_rest_id_for_account(db, row.user_id, account)
+                    params = {"rest_id": rest_id} if rest_id else {"screen_name": account}
                     result = await _run_query(
                         db=db,
                         current_user=current_user,
                         job=row,
                         step_key=step_key,
                         query_type="x_user_posts",
-                        params={"screen_name": account},
+                        params=params,
                         source_reason=f"X账号发帖 @{account}",
                     )
                     query = result.get("query") if isinstance(result.get("query"), dict) else {}
-                    outputs.append({"account": account, "query_type": "x_user_posts", "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
+                    outputs.append({"account": account, "rest_id": rest_id, "query_type": "x_user_posts", "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
 
         elif step_key == "post_comments":
             explicit_ids = req.get("post_ids") or []
@@ -1805,10 +1846,12 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
 
     summary = _summarize_query_outputs(outputs)
     _append_output(row, step_key=step_key, title=_step_title(row, step_key), kind="queries", data={"queries": outputs, "summary": summary})
-    if summary["total"] and summary["ok_count"] == 0:
+    if summary["total"] and (summary["ok_count"] == 0 or (step_key == "account_activity" and platform == "x" and summary["raw_item_count"] == 0)):
         detail = f"采集失败 {summary['failed_count']} 次"
         if summary["errors"]:
             detail += "：" + summary["errors"][0]
+        elif step_key == "account_activity" and platform == "x":
+            detail = "X 账号内容采集没有拿到任何推文/视频，无法继续采集评论和分析线索"
         row.status = "failed"
         row.error = detail[:4000]
         _mark_step(row, step_key, "failed", detail=detail, result={"queries": outputs, "summary": summary}, error=row.error)

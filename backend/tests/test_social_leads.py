@@ -778,6 +778,137 @@ async def test_social_leads_x_comment_step_uses_search_results(db_session, test_
 
 
 @pytest.mark.asyncio
+async def test_social_leads_x_account_activity_uses_profile_rest_id(db_session, test_user, monkeypatch):
+    from backend.app.api import social_leads
+    from backend.app.models import CreativeGenerationJob, TikHubSourceItem
+
+    calls = []
+
+    async def fake_run_query(**kwargs):
+        calls.append(kwargs)
+        return {
+            "ok": True,
+            "raw_item_count": 2,
+            "query": {"query_id": "q_x_posts", "query_type": kwargs["query_type"]},
+            "raw_response": {"data": [{"tweet_id": "1901"}, {"tweet_id": "1902"}]},
+        }
+
+    monkeypatch.setattr(social_leads, "_run_query", fake_run_query)
+
+    db_session.add(
+        TikHubSourceItem(
+            user_id=test_user.id,
+            query_id="q_x_profile",
+            platform="x",
+            source_type="user_profile",
+            item_key="1866282617517355009",
+            author_name="ourdream.ai",
+            raw={
+                "profile": "ourdreamai",
+                "rest_id": "1866282617517355009",
+                "__lobster_ip_content_meta": {"social_leads_job_id": "x_account_job", "step_key": "account_profiles"},
+            },
+        )
+    )
+    row = CreativeGenerationJob(
+        job_id="x_account_job",
+        user_id=test_user.id,
+        feature_type="x_leads",
+        provider="tikhub",
+        status="queued",
+        stage="queued",
+        progress=0,
+        title="X线索采集",
+        request_payload={
+            "platform": "x",
+            "keywords": ["AI girlfriend"],
+            "source_keywords": [],
+            "accounts": ["ourdreamai"],
+            "post_ids": [],
+            "communities": [],
+            "max_items": 10,
+            "include_comments": True,
+            "include_account_posts": True,
+        },
+        result_payload={},
+        meta={"platform": "x", "steps": [{"key": "account_activity", "label": "账号发帖", "status": "pending"}], "outputs": [], "current_step": ""},
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+
+    out = await social_leads._execute_step(db_session, row, test_user, "account_activity")
+
+    assert out.status == "running"
+    assert calls[0]["query_type"] == "x_user_posts"
+    assert calls[0]["params"] == {"rest_id": "1866282617517355009"}
+    outputs = (out.meta or {}).get("outputs") or []
+    assert outputs[-1]["data"]["queries"][0]["rest_id"] == "1866282617517355009"
+
+
+@pytest.mark.asyncio
+async def test_social_leads_x_account_activity_zero_posts_fails_loudly(db_session, test_user, monkeypatch):
+    from backend.app.api import social_leads
+    from backend.app.models import CreativeGenerationJob, TikHubSourceItem
+
+    async def fake_run_query(**kwargs):
+        return {
+            "ok": True,
+            "raw_item_count": 0,
+            "query": {"query_id": "q_x_posts", "query_type": kwargs["query_type"]},
+            "raw_response": {"data": []},
+        }
+
+    monkeypatch.setattr(social_leads, "_run_query", fake_run_query)
+
+    db_session.add(
+        TikHubSourceItem(
+            user_id=test_user.id,
+            query_id="q_x_profile",
+            platform="x",
+            source_type="user_profile",
+            item_key="1866282617517355009",
+            raw={
+                "profile": "ourdreamai",
+                "rest_id": "1866282617517355009",
+                "__lobster_ip_content_meta": {"social_leads_job_id": "x_zero_posts_job", "step_key": "account_profiles"},
+            },
+        )
+    )
+    row = CreativeGenerationJob(
+        job_id="x_zero_posts_job",
+        user_id=test_user.id,
+        feature_type="x_leads",
+        provider="tikhub",
+        status="queued",
+        stage="queued",
+        progress=0,
+        title="X线索采集",
+        request_payload={
+            "platform": "x",
+            "keywords": ["AI girlfriend"],
+            "source_keywords": [],
+            "accounts": ["ourdreamai"],
+            "post_ids": [],
+            "communities": [],
+            "max_items": 10,
+            "include_comments": True,
+            "include_account_posts": True,
+        },
+        result_payload={},
+        meta={"platform": "x", "steps": [{"key": "account_activity", "label": "账号发帖", "status": "pending"}], "outputs": [], "current_step": ""},
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+
+    out = await social_leads._execute_step(db_session, row, test_user, "account_activity")
+
+    assert out.status == "failed"
+    assert "没有拿到任何推文/视频" in out.error
+
+
+@pytest.mark.asyncio
 async def test_social_leads_x_keyword_step_uses_twitter_search_endpoint(monkeypatch):
     from backend.app.api import social_leads
 
