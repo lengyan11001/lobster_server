@@ -638,6 +638,22 @@ def _needs_autorun_resume(row: CreativeGenerationJob, *, idle_seconds: float = _
     return False
 
 
+def _mark_autorun_resume_requested(row: CreativeGenerationJob) -> None:
+    meta = _meta(row)
+    meta["autorun_resume_requested_at"] = _utcnow().isoformat()
+    _set_meta(row, meta)
+
+
+def _schedule_autorun_if_needed(row: CreativeGenerationJob, db: Session) -> bool:
+    if not _needs_autorun_resume(row):
+        return False
+    _mark_autorun_resume_requested(row)
+    db.commit()
+    logger.info("[social_leads] scheduled idle job resume job_id=%s status=%s", row.job_id, row.status)
+    asyncio.create_task(_auto_run_job(row.job_id))
+    return True
+
+
 def _user_from_job(db: Session, row: CreativeGenerationJob) -> User:
     user = db.query(User).filter(User.id == row.user_id).first()
     if user is None:
@@ -961,7 +977,7 @@ async def start_social_leads_job(
 
 
 @router.get("/api/social-leads/jobs", summary="Reddit/X 线索采集任务列表")
-def list_social_leads_jobs(
+async def list_social_leads_jobs(
     platform: str = Query(""),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -976,11 +992,14 @@ def list_social_leads_jobs(
     )
     total = q.count()
     rows = q.order_by(CreativeGenerationJob.created_at.desc(), CreativeGenerationJob.id.desc()).offset(offset).limit(limit).all()
+    for row in rows:
+        if _schedule_autorun_if_needed(row, db):
+            db.refresh(row)
     return {"ok": True, "total": total, "items": [_job_payload(row, db=db, include_sources=True) for row in rows]}
 
 
 @router.get("/api/social-leads/jobs/{job_id}", summary="Reddit/X 线索采集任务详情")
-def get_social_leads_job(
+async def get_social_leads_job(
     job_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -997,6 +1016,8 @@ def get_social_leads_job(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="任务不存在")
+    if _schedule_autorun_if_needed(row, db):
+        db.refresh(row)
     return {"ok": True, "job": _job_payload(row, db=db, include_sources=True)}
 
 

@@ -204,6 +204,61 @@ def test_social_leads_payload_marks_idle_running_job_needs_resume(db_session, te
     assert payload["needs_resume"] is True
 
 
+def test_social_leads_idle_job_is_scheduled_by_server(db_session, test_user, monkeypatch):
+    from datetime import timedelta
+
+    from backend.app.api import social_leads
+    from backend.app.models import CreativeGenerationJob
+
+    scheduled = []
+
+    async def fake_auto_run(job_id: str):
+        return None
+
+    def fake_create_task(coro):
+        scheduled.append(coro)
+        coro.close()
+        return None
+
+    monkeypatch.setattr(social_leads, "_auto_run_job", fake_auto_run)
+    monkeypatch.setattr(social_leads.asyncio, "create_task", fake_create_task)
+
+    old_time = social_leads._utcnow() - timedelta(seconds=30)
+    row = CreativeGenerationJob(
+        job_id="rd_idle_schedule",
+        user_id=test_user.id,
+        feature_type="reddit_leads",
+        provider="tikhub",
+        status="running",
+        stage="running",
+        progress=50,
+        title="Reddit线索采集",
+        request_payload={"platform": "reddit"},
+        result_payload={},
+        meta={
+            "platform": "reddit",
+            "current_step": "",
+            "steps": [
+                {"key": "community_feed", "label": "社区帖子采集", "status": "completed"},
+                {"key": "merge_leads", "label": "线索归并", "status": "pending"},
+            ],
+            "outputs": [],
+        },
+        created_at=old_time,
+        updated_at=old_time,
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+
+    assert social_leads._schedule_autorun_if_needed(row, db_session) is True
+    db_session.refresh(row)
+
+    assert len(scheduled) == 1
+    assert (row.meta or {}).get("autorun_resume_requested_at")
+    assert social_leads._needs_autorun_resume(row) is False
+
+
 @pytest.mark.asyncio
 async def test_social_leads_auto_run_completes_and_merges_sources(db_session, test_user, monkeypatch):
     from backend.app.api import social_leads
