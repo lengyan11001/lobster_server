@@ -188,7 +188,13 @@ def admin_page():
     html_path = Path(__file__).resolve().parent.parent / "static" / "admin.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="管理后台页面未找到")
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        html_path.read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
 
 @router.get("/admin/static/{filename}", include_in_schema=False)
 def admin_static(filename: str):
@@ -538,12 +544,10 @@ def admin_get_user_skill_visibility(
         }
         for k, v in packages.items()
     ]
-    existing_pkg_ids = {pkg["id"] for pkg in all_pkgs}
-    feature_pkgs = []
-    for feature_pkg in FEATURE_FLAG_PACKAGES:
-        if feature_pkg["id"] not in existing_pkg_ids:
-            feature_pkgs.append(dict(feature_pkg))
-    all_pkgs = feature_pkgs + all_pkgs
+    feature_pkg_by_id = {str(pkg.get("id") or ""): dict(pkg) for pkg in FEATURE_FLAG_PACKAGES}
+    all_pkgs = [dict(pkg) for pkg in FEATURE_FLAG_PACKAGES] + [
+        pkg for pkg in all_pkgs if pkg["id"] not in feature_pkg_by_id
+    ]
     return {
         "user_id": user_id,
         "is_admin": _skill_store_admin(user),

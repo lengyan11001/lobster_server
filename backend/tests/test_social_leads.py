@@ -17,7 +17,6 @@ def test_social_leads_reddit_initial_steps():
     )
 
     assert [step["key"] for step in steps] == [
-        "keyword_search",
         "community_feed",
         "account_profiles",
         "account_activity",
@@ -28,7 +27,31 @@ def test_social_leads_reddit_initial_steps():
     ]
 
 
-def test_social_leads_x_initial_steps_keeps_collection_only():
+def test_social_leads_tiktok_initial_steps():
+    from backend.app.api.social_leads import _initial_steps
+
+    steps = _initial_steps(
+        {
+            "platform": "tiktok",
+            "keywords": ["AI automation"],
+            "source_keywords": ["small business"],
+            "accounts": [],
+            "post_ids": [],
+            "include_comments": True,
+            "include_account_posts": True,
+        }
+    )
+
+    assert [step["key"] for step in steps] == [
+        "keyword_search",
+        "post_comments",
+        "score_leads",
+        "lead_profiles",
+        "merge_leads",
+    ]
+
+
+def test_social_leads_x_initial_steps_matches_readonly_lead_flow():
     from backend.app.api.social_leads import _initial_steps
 
     steps = _initial_steps(
@@ -36,6 +59,7 @@ def test_social_leads_x_initial_steps_keeps_collection_only():
             "platform": "x",
             "country": "UnitedStates",
             "keywords": ["ai automation"],
+            "source_keywords": ["ai automation"],
             "accounts": ["elonmusk"],
             "post_ids": ["1808168603721650364"],
             "include_comments": True,
@@ -44,11 +68,12 @@ def test_social_leads_x_initial_steps_keeps_collection_only():
     )
 
     assert [step["key"] for step in steps] == [
-        "trending",
         "keyword_search",
         "account_profiles",
         "account_activity",
         "post_comments",
+        "score_leads",
+        "lead_profiles",
         "merge_leads",
     ]
 
@@ -83,6 +108,43 @@ def test_social_leads_merges_reddit_candidates_from_rows():
     assert merged[0]["platform"] == "reddit"
     assert "Reddit" in merged[0]["source_reason"]
     assert merged[0]["score"] >= 10
+
+
+def test_social_leads_keywords_affect_candidate_relevance():
+    from backend.app.api.social_leads import _merge_candidates
+
+    candidates = [
+        {
+            "candidate_key": "matched_user",
+            "handle": "matched_user",
+            "name": "Matched",
+            "platform": "reddit",
+            "source_type": "post_comment",
+            "source_reason": "comment",
+            "bio": "",
+            "url": "",
+            "metrics": {"score": 3},
+            "evidence": [{"source_type": "post_comment", "title": "Need AI automation for lead generation", "description": ""}],
+        },
+        {
+            "candidate_key": "generic_user",
+            "handle": "generic_user",
+            "name": "Generic",
+            "platform": "reddit",
+            "source_type": "post_comment",
+            "source_reason": "comment",
+            "bio": "",
+            "url": "",
+            "metrics": {"score": 3},
+            "evidence": [{"source_type": "post_comment", "title": "Need help choosing office chairs", "description": ""}],
+        },
+    ]
+
+    merged = _merge_candidates(candidates, keywords=["AI automation"])
+
+    assert merged[0]["candidate_key"] == "matched_user"
+    assert merged[0]["keyword_relevance"]["matched"] is True
+    assert "AI automation" in merged[0]["keyword_relevance"]["matched_keywords"]
 
 
 def test_social_leads_splits_reddit_subreddit_links_from_accounts():
@@ -486,6 +548,235 @@ def test_tikhub_collects_reddit_comment_tree_items():
     assert _reddit_more_comment_cursors(payload) == ["commenttree:next"]
 
 
+def test_social_leads_tiktok_keyword_video_is_comment_candidate(db_session, test_user):
+    from datetime import timedelta
+
+    from backend.app.api import social_leads
+    from backend.app.models import TikHubSourceItem
+
+    row = TikHubSourceItem(
+        user_id=test_user.id,
+        query_id="q_tt_video",
+        platform="tiktok",
+        source_type="keyword_video",
+        item_key="7234567890123456789",
+        author_key="creator",
+        author_name="Creator",
+        title="AI lead generation workflow",
+        description="Need more customer leads",
+        publish_time=str(int((social_leads._utcnow() - timedelta(hours=1)).timestamp())),
+        raw={
+            "aweme_id": "7234567890123456789",
+            "desc": "AI lead generation workflow",
+            "create_time": int((social_leads._utcnow() - timedelta(hours=1)).timestamp()),
+            "__lobster_ip_content_meta": {"social_leads_job_id": "tt_video_job", "step_key": "keyword_search"},
+        },
+    )
+    db_session.add(row)
+    db_session.commit()
+
+    rows = social_leads._recent_post_rows_for_job(db_session, test_user.id, "tiktok", "tt_video_job", 10)
+    post_ids = social_leads._extract_post_ids_from_rows(rows, "tiktok", 10)
+
+    assert [item.source_type for item in rows] == ["keyword_video"]
+    assert post_ids == ["7234567890123456789"]
+
+
+def test_social_leads_tiktok_comment_cursor_helpers():
+    from backend.app.api.social_leads import _tiktok_has_more_comments, _tiktok_next_comment_cursor
+
+    payload = {
+        "data": {
+            "comments": [{"cid": "1", "text": "Need this AI tool"}],
+            "has_more": 1,
+            "cursor": "50",
+        }
+    }
+
+    assert _tiktok_has_more_comments(payload) is True
+    assert _tiktok_next_comment_cursor(payload) == "50"
+
+
+@pytest.mark.asyncio
+async def test_social_leads_tiktok_comment_step_paginates_keyword_videos(db_session, test_user, monkeypatch):
+    from datetime import timedelta
+
+    from backend.app.api import social_leads
+    from backend.app.models import CreativeGenerationJob, TikHubSourceItem
+
+    calls = []
+
+    async def fake_run_query(**kwargs):
+        calls.append(kwargs)
+        cursor = str(kwargs["params"].get("cursor"))
+        return {
+            "ok": True,
+            "raw_item_count": 1,
+            "query": {"query_id": "q_" + cursor, "query_type": kwargs["query_type"]},
+            "raw_response": {"data": {"comments": [{"cid": cursor}], "has_more": 1 if cursor == "0" else 0, "cursor": "50" if cursor == "0" else "50"}},
+        }
+
+    monkeypatch.setattr(social_leads, "_run_query", fake_run_query)
+
+    video = TikHubSourceItem(
+        user_id=test_user.id,
+        query_id="q_tt_video",
+        platform="tiktok",
+        source_type="keyword_video",
+        item_key="7234567890123456789",
+        author_key="creator",
+        author_name="Creator",
+        title="AI lead generation workflow",
+        description="Need more customer leads",
+        publish_time=str(int((social_leads._utcnow() - timedelta(hours=1)).timestamp())),
+        raw={
+            "aweme_id": "7234567890123456789",
+            "desc": "AI lead generation workflow",
+            "create_time": int((social_leads._utcnow() - timedelta(hours=1)).timestamp()),
+            "__lobster_ip_content_meta": {"social_leads_job_id": "tt_comments_job", "step_key": "keyword_search"},
+        },
+    )
+    db_session.add(video)
+    row = CreativeGenerationJob(
+        job_id="tt_comments_job",
+        user_id=test_user.id,
+        feature_type="tiktok_leads",
+        provider="tikhub",
+        status="queued",
+        stage="queued",
+        progress=0,
+        title="TikTok线索采集",
+        request_payload={
+            "platform": "tiktok",
+            "keywords": ["AI leads"],
+            "source_keywords": ["small business"],
+            "accounts": [],
+            "post_ids": [],
+            "communities": [],
+            "max_items": 10,
+            "include_comments": True,
+        },
+        result_payload={},
+        meta={"platform": "tiktok", "steps": [{"key": "post_comments", "label": "视频评论采集", "status": "pending"}], "outputs": [], "current_step": ""},
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+
+    out = await social_leads._execute_step(db_session, row, test_user, "post_comments")
+
+    assert out.status == "running"
+    assert [call["params"]["aweme_id"] for call in calls] == ["7234567890123456789", "7234567890123456789"]
+    assert [call["params"]["cursor"] for call in calls] == ["0", "50"]
+    outputs = (out.meta or {}).get("outputs") or []
+    assert outputs[-1]["data"]["summary"]["raw_item_count"] == 2
+
+
+def test_social_leads_x_search_result_is_comment_candidate(db_session, test_user):
+    from datetime import timedelta
+
+    from backend.app.api import social_leads
+    from backend.app.models import TikHubSourceItem
+
+    row = TikHubSourceItem(
+        user_id=test_user.id,
+        query_id="q_x_search",
+        platform="x",
+        source_type="search_result",
+        item_key="1808168603721650364",
+        author_key="buyer",
+        author_name="Buyer",
+        title="Need AI lead generation workflow",
+        description="Looking for a tool that finds customers from X.",
+        publish_time=(social_leads._utcnow() - timedelta(hours=1)).isoformat(),
+        raw={
+            "tweet_id": "1808168603721650364",
+            "full_text": "Need AI lead generation workflow",
+            "legacy": {"created_at": (social_leads._utcnow() - timedelta(hours=1)).isoformat()},
+            "__lobster_ip_content_meta": {"social_leads_job_id": "x_video_job", "step_key": "keyword_search"},
+        },
+    )
+    db_session.add(row)
+    db_session.commit()
+
+    rows = social_leads._recent_post_rows_for_job(db_session, test_user.id, "x", "x_video_job", 10)
+    post_ids = social_leads._extract_post_ids_from_rows(rows, "x", 10)
+
+    assert [item.source_type for item in rows] == ["search_result"]
+    assert post_ids == ["1808168603721650364"]
+
+
+@pytest.mark.asyncio
+async def test_social_leads_x_comment_step_uses_search_results(db_session, test_user, monkeypatch):
+    from datetime import timedelta
+
+    from backend.app.api import social_leads
+    from backend.app.models import CreativeGenerationJob, TikHubSourceItem
+
+    calls = []
+
+    async def fake_run_query(**kwargs):
+        calls.append(kwargs)
+        return {
+            "ok": True,
+            "raw_item_count": 1,
+            "query": {"query_id": "q_x_comments", "query_type": kwargs["query_type"]},
+            "raw_response": {"data": [{"screen_name": "buyer", "full_text": "Need this AI lead tool"}]},
+        }
+
+    monkeypatch.setattr(social_leads, "_run_query", fake_run_query)
+
+    item = TikHubSourceItem(
+        user_id=test_user.id,
+        query_id="q_x_search",
+        platform="x",
+        source_type="search_result",
+        item_key="1808168603721650364",
+        author_key="buyer",
+        author_name="Buyer",
+        title="Need AI lead generation workflow",
+        description="Looking for a tool that finds customers from X.",
+        publish_time=(social_leads._utcnow() - timedelta(hours=1)).isoformat(),
+        raw={
+            "tweet_id": "1808168603721650364",
+            "full_text": "Need AI lead generation workflow",
+            "__lobster_ip_content_meta": {"social_leads_job_id": "x_comments_job", "step_key": "keyword_search"},
+        },
+    )
+    db_session.add(item)
+    row = CreativeGenerationJob(
+        job_id="x_comments_job",
+        user_id=test_user.id,
+        feature_type="x_leads",
+        provider="tikhub",
+        status="queued",
+        stage="queued",
+        progress=0,
+        title="X线索采集",
+        request_payload={
+            "platform": "x",
+            "keywords": ["AI leads"],
+            "source_keywords": ["small business"],
+            "accounts": [],
+            "post_ids": [],
+            "communities": [],
+            "max_items": 10,
+            "include_comments": True,
+        },
+        result_payload={},
+        meta={"platform": "x", "steps": [{"key": "post_comments", "label": "推文评论采集", "status": "pending"}], "outputs": [], "current_step": ""},
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+
+    out = await social_leads._execute_step(db_session, row, test_user, "post_comments")
+
+    assert out.status == "running"
+    assert [call["query_type"] for call in calls] == ["x_post_comments"]
+    assert calls[0]["params"] == {"tweet_id": "1808168603721650364"}
+
+
 @pytest.mark.asyncio
 async def test_social_leads_x_keyword_step_uses_twitter_search_endpoint(monkeypatch):
     from backend.app.api import social_leads
@@ -514,7 +805,8 @@ async def test_social_leads_x_keyword_step_uses_twitter_search_endpoint(monkeypa
         result_payload = {}
         request_payload = {
             "platform": "x",
-            "keywords": ["AI workflow"],
+            "keywords": ["precision buyer direction"],
+            "source_keywords": ["AI workflow"],
             "accounts": [],
             "post_ids": [],
             "communities": [],
@@ -692,7 +984,7 @@ async def test_social_leads_auto_run_completes_and_merges_sources(db_session, te
 
     req = {
         "platform": "reddit",
-        "keywords": [],
+        "keywords": ["lead generation"],
         "accounts": [],
         "post_ids": [],
         "communities": ["SaaS"],
