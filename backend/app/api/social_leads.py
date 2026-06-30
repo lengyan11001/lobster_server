@@ -2173,3 +2173,123 @@ async def resume_social_leads_job(
         db.commit()
     asyncio.create_task(_auto_run_job(row.job_id))
     return {"ok": True, "job": _job_payload(row, db=db, include_sources=True)}
+
+
+def _schedule_social_leads_autorun(job_id: str) -> bool:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    loop.create_task(_auto_run_job(job_id))
+    return True
+
+
+def create_social_leads_job_from_payload(
+    *,
+    db: Session,
+    current_user: User,
+    payload: SocialLeadsStartBody | dict[str, Any],
+    auto_run: bool = True,
+) -> CreativeGenerationJob:
+    body = payload if isinstance(payload, SocialLeadsStartBody) else SocialLeadsStartBody(**(payload or {}))
+    platform = _platform(body.platform)
+    keywords = _clean_list(body.keywords, limit=12)
+    if not keywords:
+        raise HTTPException(status_code=400, detail="关键词不能为空，请填写要筛选的精准用户方向")
+    if platform == "reddit":
+        accounts, communities = _split_reddit_accounts_and_communities(body.accounts, body.communities)
+        post_ids: list[str] = []
+        accounts = [x for x in accounts if x][:12]
+        communities = [x for x in communities if x][:12]
+        if bool(accounts) == bool(communities):
+            raise HTTPException(status_code=400, detail="Reddit 账号和社区必须二选一填写")
+        source_keywords: list[str] = []
+    elif platform == "tiktok":
+        accounts = [_extract_tiktok_account(x) for x in body.accounts]
+        accounts = [x for x in accounts if x][:12]
+        communities = []
+        post_ids = [_normalize_tiktok_aweme_id(x) for x in body.post_ids]
+        source_keywords = _clean_list(body.source_keywords or body.communities, limit=12)
+        if bool(accounts) == bool(source_keywords):
+            raise HTTPException(status_code=400, detail="TikTok 账号和来源词必须二选一填写")
+    else:
+        accounts = [_extract_x_screen_name(x) for x in body.accounts]
+        accounts = [x for x in accounts if x][:12]
+        post_ids = [_normalize_x_tweet_id(x) for x in body.post_ids]
+        communities = []
+        source_keywords = _clean_list(body.source_keywords or body.communities, limit=12)
+        if bool(accounts) == bool(source_keywords):
+            raise HTTPException(status_code=400, detail="X 账号和搜索词必须二选一填写")
+    req = {
+        "platform": platform,
+        "keywords": keywords,
+        "source_keywords": source_keywords,
+        "accounts": [x for x in accounts if x][:12],
+        "post_ids": [x for x in post_ids if x][:30],
+        "communities": [x for x in communities if x][:12],
+        "country": _clean_text(body.country, 80),
+        "search_type": "post" if platform == "reddit" else ("Latest" if platform == "x" else _clean_text(body.search_type, 40)),
+        "sort": "NEW" if platform in {"reddit", "tiktok"} else _clean_text(body.sort, 40),
+        "time_range": "day" if platform in {"reddit", "tiktok", "x"} else _clean_text(body.time_range, 40),
+        "max_items": 100 if platform in {"reddit", "tiktok", "x"} else int(body.max_items or 30),
+        "include_comments": True if platform in {"reddit", "tiktok", "x"} else bool(body.include_comments),
+        "include_account_posts": True if platform in {"reddit", "tiktok", "x"} else bool(body.include_account_posts),
+    }
+    if not (req["accounts"] or req["post_ids"] or req["communities"] or req["source_keywords"]):
+        raise HTTPException(status_code=400, detail="请至少输入一个采集条件")
+    job_id = ({"reddit": "rd_", "x": "x_", "tiktok": "tt_"}[platform]) + uuid.uuid4().hex[:24]
+    title = _clean_text(body.title, 160) or {"reddit": "Reddit线索采集", "x": "X线索采集", "tiktok": "TikTok线索采集"}[platform]
+    row = CreativeGenerationJob(
+        job_id=job_id,
+        user_id=current_user.id,
+        feature_type=_feature_type(platform),
+        provider="tikhub",
+        status="queued",
+        stage="queued",
+        progress=0,
+        title=title,
+        prompt=json.dumps(
+            {
+                "keywords": req["keywords"],
+                "source_keywords": req["source_keywords"],
+                "accounts": req["accounts"],
+                "post_ids": req["post_ids"],
+                "communities": req["communities"],
+            },
+            ensure_ascii=False,
+        ),
+        request_payload=req,
+        result_payload={},
+        meta={"platform": platform, "steps": _initial_steps(req), "outputs": [], "current_step": ""},
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    if auto_run:
+        _schedule_social_leads_autorun(row.job_id)
+    return row
+
+
+async def run_social_leads_job_to_completion(
+    *,
+    db: Session,
+    current_user: User,
+    row: CreativeGenerationJob,
+) -> CreativeGenerationJob:
+    while True:
+        db.refresh(row)
+        if row.status in _TERMINAL_STATUS:
+            return row
+        step = _next_pending_step(row)
+        if step is None:
+            row.status = "completed"
+            row.progress = 100
+            row.completed_at = _utcnow()
+            db.commit()
+            db.refresh(row)
+            return row
+        row = await _execute_step(db, row, current_user, str(step.get("key") or ""))
+
+
+def social_leads_job_payload(row: CreativeGenerationJob, *, db: Session, include_sources: bool = True) -> dict[str, Any]:
+    return _job_payload(row, db=db, include_sources=include_sources)

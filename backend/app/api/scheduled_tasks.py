@@ -28,13 +28,15 @@ from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
 from .auth import get_current_user, get_current_user_id_from_token
 from .ip_content_studio import run_ip_content_daily_scheduled
+from .lead_collection_templates import run_lead_collection_templates_scheduled
 from .installation_slots import ensure_installation_slot
 from .mobile_identity import online_user_for_mobile_user
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 
 router = APIRouter()
 
-_TASK_KINDS = {"openclaw_message", "chat_message", "capability", "ip_content_daily", "douyin_leads", "client_workflow"}
+_TASK_KINDS = {"openclaw_message", "chat_message", "capability", "ip_content_daily", "lead_collection_templates", "douyin_leads", "client_workflow"}
+_SERVER_SIDE_TASK_KINDS = {"ip_content_daily", "lead_collection_templates"}
 _SCHEDULE_TYPES = {"once", "interval", "daily_times"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _MAX_TARGET_DEVICES = 20
@@ -342,6 +344,8 @@ def _task_title(body: ScheduledTaskCreate, task_kind: str) -> str:
     title = (body.title or "").strip()
     if title:
         return title[:160]
+    if task_kind == "lead_collection_templates":
+        return "线索采集模板定时任务"
     if task_kind == "ip_content_daily":
         return "IP日更文案"
     if task_kind == "capability":
@@ -405,11 +409,14 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
 
 
 def _is_server_side_task(task_or_run: Any) -> bool:
-    return str(getattr(task_or_run, "task_kind", "") or "").strip() == "ip_content_daily"
+    return str(getattr(task_or_run, "task_kind", "") or "").strip() in _SERVER_SIDE_TASK_KINDS
 
 
 def _task_display_kind(row: Any) -> str:
-    if _is_server_side_task(row):
+    kind = str(getattr(row, "task_kind", "") or "").strip()
+    if kind == "lead_collection_templates":
+        return "线索采集模板"
+    if kind == "ip_content_daily":
         return "IP日更文案"
     return ""
 
@@ -734,7 +741,7 @@ def _run_async_blocking(coro: Any) -> Any:
 
 def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[datetime] = None) -> None:
     now = now or datetime.utcnow()
-    if run.task_kind != "ip_content_daily":
+    if run.task_kind not in _SERVER_SIDE_TASK_KINDS:
         return
     user = db.query(User).filter(User.id == run.user_id).first()
     if user is None:
@@ -751,20 +758,37 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
     db.commit()
     try:
         payload = run.payload if isinstance(run.payload, dict) else {}
-        result = _run_async_blocking(
-            run_ip_content_daily_scheduled(
-                db=db,
-                current_user=user,
-                options=payload,
-                run_id=run.id,
+        if run.task_kind == "ip_content_daily":
+            result = _run_async_blocking(
+                run_ip_content_daily_scheduled(
+                    db=db,
+                    current_user=user,
+                    options=payload,
+                    run_id=run.id,
+                )
             )
-        )
+            result_text = "IP日更文案已生成，朋友圈图片请在详情里手动触发。"
+        elif run.task_kind == "lead_collection_templates":
+            result = _run_async_blocking(
+                run_lead_collection_templates_scheduled(
+                    db=db,
+                    current_user=user,
+                    template_ids=payload.get("template_ids") or [],
+                    title=str(payload.get("title") or run.title or "").strip(),
+                    run_id=run.id,
+                )
+            )
+            result_text = "线索采集模板已执行完成。"
+        else:
+            return
         finished = datetime.utcnow()
         db.refresh(run)
-        run.status = "completed"
-        run.result_text = "IP日更文案已生成，朋友圈图片请在详情里手动触发。"
+        failed_count = int(result.get("failed_count") or 0) if isinstance(result, dict) else 0
+        job_count = int(result.get("job_count") or 0) if isinstance(result, dict) else 0
+        run.status = "failed" if run.task_kind == "lead_collection_templates" and job_count > 0 and failed_count >= job_count else "completed"
+        run.result_text = result_text
         run.result_payload = result
-        run.error = None
+        run.error = "线索采集模板全部执行失败" if run.status == "failed" else None
         run.progress = {"completed_at": finished.isoformat(), "server_side": True}
         run.finished_at = finished
         run.updated_at = finished
@@ -864,7 +888,7 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     now = datetime.utcnow()
     q = db.query(ScheduledTask).filter(
         ScheduledTask.status == "active",
-        ScheduledTask.task_kind != "ip_content_daily",
+        ScheduledTask.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
         ScheduledTask.schedule_type.in_(["once", "interval", "daily_times"]),
         ScheduledTask.next_run_at.isnot(None),
         ScheduledTask.next_run_at <= now,
@@ -1027,6 +1051,21 @@ def _create_task_row(
         payload = dict(payload)
         if not int(payload.get("template_id") or 0) and not payload.get("keyword_ids") and not payload.get("competitor_ids") and not payload.get("memory_docs"):
             raise HTTPException(status_code=400, detail="IP日更文案任务需要选择模板、关键词、同行账号或记忆资料")
+    if task_kind == "lead_collection_templates":
+        payload = dict(payload)
+        ids = payload.get("template_ids") or []
+        valid_ids: List[int] = []
+        if isinstance(ids, list):
+            for item in ids:
+                try:
+                    tid = int(item or 0)
+                except Exception:
+                    continue
+                if tid > 0:
+                    valid_ids.append(tid)
+        if not valid_ids:
+            raise HTTPException(status_code=400, detail="线索采集定时任务需要选择至少一个采集模板")
+        payload["template_ids"] = valid_ids
     if task_kind == "capability":
         payload = dict(payload)
         _normalize_goal_video_task_payload(payload)
@@ -1088,11 +1127,11 @@ def create_scheduled_task(
     owner_user = online_user_for_mobile_user(db, current_user)
     requested_kind = _normalize_task_kind(body.task_kind)
     xi = _header_installation_id(request)
-    if not xi and requested_kind != "ip_content_daily":
+    if not xi and requested_kind not in _SERVER_SIDE_TASK_KINDS:
         raise HTTPException(status_code=400, detail="missing current installation id")
     if xi:
         ensure_installation_slot(db, owner_user.id, xi)
-    if requested_kind == "ip_content_daily":
+    if requested_kind in _SERVER_SIDE_TASK_KINDS:
         body.installation_ids = []
     else:
         body.installation_ids = [xi]
@@ -1315,7 +1354,7 @@ def pending_scheduled_task_runs(
         .filter(
             ScheduledTaskRun.user_id == current_user_id,
             ScheduledTaskRun.status == "processing",
-            ScheduledTaskRun.task_kind != "ip_content_daily",
+            ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
             ScheduledTaskRun.claimed_at.isnot(None),
             ScheduledTaskRun.claimed_at < stale_cutoff,
         )
@@ -1333,7 +1372,7 @@ def pending_scheduled_task_runs(
         db.query(ScheduledTaskRun)
         .with_for_update(skip_locked=True)
         .filter(ScheduledTaskRun.user_id == current_user_id, ScheduledTaskRun.status == "pending")
-        .filter(ScheduledTaskRun.task_kind != "ip_content_daily")
+        .filter(ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)))
         .filter(or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == xi))
         .order_by(ScheduledTaskRun.created_at.asc())
         .limit(limit)

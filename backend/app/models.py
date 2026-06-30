@@ -447,6 +447,32 @@ class IPContentScheduleTemplate(Base):
     )
 
 
+class LeadCollectionTemplate(Base):
+    """Saved lead collection input for Reddit, X, TikTok, and LinkedIn."""
+
+    __tablename__ = "lead_collection_templates"
+    __table_args__ = (
+        UniqueConstraint("user_id", "platform", "name", name="uq_lead_collection_template_user_platform_name"),
+        Index("ix_lead_collection_templates_user_platform_status", "user_id", "platform", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    title: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    request_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 class CutcliTemplate(Base):
     __tablename__ = "cutcli_templates"
     __table_args__ = (

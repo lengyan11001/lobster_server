@@ -16,6 +16,7 @@ from .api.h5_voice import router as h5_voice_router
 from .api.hifly_assets import router as hifly_assets_router
 from .api.ip_content_studio import router as ip_content_studio_router
 from .api.social_leads import router as social_leads_router
+from .api.lead_collection_templates import router as lead_collection_templates_router
 from .api.scheduled_tasks import router as scheduled_tasks_router
 from .api.skills import router as skills_router
 from .core.config import settings
@@ -54,6 +55,7 @@ def create_h5_app() -> FastAPI:
     app.include_router(scheduled_tasks_router, prefix="")
     app.include_router(ip_content_studio_router, prefix="")
     app.include_router(social_leads_router, prefix="")
+    app.include_router(lead_collection_templates_router, prefix="")
     app.include_router(skills_router, prefix="")
 
     miniprogram_static_dir = Path(__file__).resolve().parent.parent.parent / "client_static" / "miniprogram"

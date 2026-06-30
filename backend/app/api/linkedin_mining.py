@@ -1244,6 +1244,98 @@ async def resume_linkedin_mining_job(
     return {"ok": True, "job": _job_payload(row)}
 
 
+def _schedule_linkedin_mining_autorun(job_id: str) -> bool:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    loop.create_task(_auto_run_job(job_id))
+    return True
+
+
+def create_linkedin_mining_job_from_payload(
+    *,
+    db: Session,
+    current_user: User,
+    payload: LinkedInMiningStartBody | dict[str, Any],
+    auto_run: bool = True,
+) -> CreativeGenerationJob:
+    body = payload if isinstance(payload, LinkedInMiningStartBody) else LinkedInMiningStartBody(**(payload or {}))
+    seed_usernames = []
+    for value in body.seed_profile_urls:
+        username = _extract_linkedin_username(value)
+        if username and username not in seed_usernames:
+            seed_usernames.append(username)
+    seed_companies = []
+    for value in body.seed_company_urls:
+        company = _extract_linkedin_company(value)
+        if company and company not in seed_companies:
+            seed_companies.append(company)
+    keywords = _clean_list(body.keywords, limit=12)
+    hashtags = [x.lstrip("#") for x in _clean_list(body.hashtags, limit=12) if x.lstrip("#")]
+    if not seed_usernames and not seed_companies and not keywords and not hashtags:
+        raise HTTPException(status_code=400, detail="请至少输入一个LinkedIn个人主页、公司主页、关键词或话题")
+
+    job_id = "li_" + uuid.uuid4().hex[:24]
+    title = _clean_text(body.title, 160) or "LinkedIn线索挖掘"
+    request_payload = {
+        "seed_usernames": seed_usernames[:10],
+        "seed_companies": seed_companies[:10],
+        "keywords": keywords,
+        "hashtags": hashtags,
+        "target_profile": _clean_long_text(body.target_profile, 2000),
+        "memory_docs": body.memory_docs[:12],
+        "max_people": int(body.max_people or 30),
+        "max_company_employees": int(body.max_company_employees or 20),
+        "max_interactions_per_post": int(body.max_interactions_per_post or 20),
+    }
+    row = CreativeGenerationJob(
+        job_id=job_id,
+        user_id=current_user.id,
+        feature_type=_FEATURE_TYPE,
+        provider="tikhub",
+        status="queued",
+        stage="queued",
+        progress=0,
+        title=title,
+        prompt=_clean_long_text(body.target_profile, 4000) or None,
+        request_payload=request_payload,
+        result_payload={},
+        meta={"steps": _initial_steps(request_payload), "outputs": [], "current_step": ""},
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    if auto_run:
+        _schedule_linkedin_mining_autorun(row.job_id)
+    return row
+
+
+async def run_linkedin_mining_job_to_completion(
+    *,
+    db: Session,
+    current_user: User,
+    row: CreativeGenerationJob,
+) -> CreativeGenerationJob:
+    while True:
+        db.refresh(row)
+        if row.status in _TERMINAL_STATUS:
+            return row
+        step = _next_pending_step(row)
+        if step is None:
+            row.status = "completed"
+            row.progress = 100
+            row.completed_at = _utcnow()
+            db.commit()
+            db.refresh(row)
+            return row
+        row = await _execute_step(db, row, current_user, str(step.get("key") or ""))
+
+
+def linkedin_mining_job_payload(row: CreativeGenerationJob) -> dict[str, Any]:
+    return _job_payload(row)
+
+
 @router.get("/api/linkedin-mining/jobs/{job_id}/outputs/{output_id}", summary="LinkedIn线索挖掘输出详情")
 def get_linkedin_mining_output(
     job_id: str,

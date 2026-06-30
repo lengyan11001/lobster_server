@@ -1,4 +1,4 @@
-"""Background runner for server-side IP daily content scheduled tasks."""
+"""Background runner for server-side scheduled tasks."""
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +21,7 @@ def _tick_once_sync() -> int:
         rows = (
             db.query(ScheduledTask)
             .filter(
-                ScheduledTask.task_kind == "ip_content_daily",
+                ScheduledTask.task_kind.in_(["ip_content_daily", "lead_collection_templates"]),
                 ScheduledTask.status == "active",
                 ScheduledTask.next_run_at.isnot(None),
                 ScheduledTask.next_run_at <= now,
@@ -62,7 +62,7 @@ async def ip_content_schedule_background_loop() -> None:
         try:
             count = await asyncio.to_thread(_tick_once_sync)
             if count:
-                logger.info("[ip-content-schedule] executed due tasks=%s", count)
+                logger.info("[server-side-schedule] executed due tasks=%s", count)
         except Exception:
-            logger.exception("[ip-content-schedule] tick error")
+            logger.exception("[server-side-schedule] tick error")
         await asyncio.sleep(60)
