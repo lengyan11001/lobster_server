@@ -33,6 +33,7 @@ _SUPPORTED_PLATFORMS = {"reddit", "x"}
 _FEATURE_BY_PLATFORM = {"reddit": "reddit_leads", "x": "x_leads"}
 _TERMINAL_STATUS = {"completed", "failed", "canceled", "stale"}
 _AUTORUN_IDLE_SECONDS = 8.0
+_REDDIT_FEED_SORTS = {"HOT", "NEW", "TOP", "RISING", "CONTROVERSIAL"}
 
 
 class SocialLeadsStartBody(BaseModel):
@@ -249,6 +250,30 @@ def _split_reddit_accounts_and_communities(accounts: list[Any], communities: lis
         if username and username not in account_out:
             account_out.append(username)
     return account_out, community_out
+
+
+def _reddit_feed_sort(value: Any) -> str:
+    raw = _clean_text(value, 40).strip().upper()
+    return raw if raw in _REDDIT_FEED_SORTS else "HOT"
+
+
+def _summarize_query_outputs(outputs: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(outputs)
+    ok_count = sum(1 for item in outputs if item.get("ok"))
+    failed_count = sum(1 for item in outputs if item.get("ok") is False)
+    raw_item_count = sum(int(item.get("count") or item.get("raw_item_count") or 0) for item in outputs)
+    errors: list[str] = []
+    for item in outputs:
+        err = _clean_text(item.get("error") or item.get("error_message"), 260)
+        if err and err not in errors:
+            errors.append(err)
+    return {
+        "total": total,
+        "ok_count": ok_count,
+        "failed_count": failed_count,
+        "raw_item_count": raw_item_count,
+        "errors": errors[:5],
+    }
 
 
 def _extract_x_screen_name(value: Any) -> str:
@@ -700,7 +725,8 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                 params={"country": req.get("country") or "UnitedStates"},
                 source_reason=f"X趋势 {req.get('country') or 'UnitedStates'}",
             )
-            outputs.append({"query_type": "x_trending", "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
+            query = result.get("query") if isinstance(result.get("query"), dict) else {}
+            outputs.append({"query_type": "x_trending", "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
 
         elif step_key == "keyword_search":
             for keyword in req.get("keywords") or []:
@@ -732,20 +758,25 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                         params={"keyword": keyword, "search_type": req.get("search_type") or "Top"},
                         source_reason=f"X关键词 {keyword}",
                     )
-                outputs.append({"keyword": keyword, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
+                query = result.get("query") if isinstance(result.get("query"), dict) else {}
+                outputs.append({"keyword": keyword, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
 
         elif step_key == "community_feed" and platform == "reddit":
             for community in req.get("communities") or []:
+                community_name = _extract_subreddit(community)
+                if not community_name:
+                    continue
                 result = await _run_query(
                     db=db,
                     current_user=current_user,
                     job=row,
                     step_key=step_key,
                     query_type="reddit_subreddit_feed",
-                    params={"subreddit_name": community, "sort": req.get("sort") or "HOT", "need_format": False},
-                    source_reason=f"Reddit社区 r/{community}",
+                    params={"subreddit_name": community_name, "sort": _reddit_feed_sort(req.get("sort")), "need_format": False},
+                    source_reason=f"Reddit社区 r/{community_name}",
                 )
-                outputs.append({"community": community, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
+                query = result.get("query") if isinstance(result.get("query"), dict) else {}
+                outputs.append({"community": community_name, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
 
         elif step_key == "account_profiles":
             for account in req.get("accounts") or []:
@@ -770,7 +801,8 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                         source_reason=f"X账号 @{account}",
                     )
                 candidate = _candidate_from_raw(_first_raw(result), platform, "user_profile", f"账号 {account}")
-                outputs.append({"account": account, "ok": result.get("ok"), "candidate": candidate, "query_id": (result.get("query") or {}).get("query_id")})
+                query = result.get("query") if isinstance(result.get("query"), dict) else {}
+                outputs.append({"account": account, "ok": result.get("ok"), "candidate": candidate, "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
 
         elif step_key == "account_activity":
             for account in req.get("accounts") or []:
@@ -788,7 +820,8 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                             params=params,
                             source_reason=f"Reddit账号动态 u/{account}",
                         )
-                        outputs.append({"account": account, "query_type": query_type, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
+                        query = result.get("query") if isinstance(result.get("query"), dict) else {}
+                        outputs.append({"account": account, "query_type": query_type, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
                 else:
                     result = await _run_query(
                         db=db,
@@ -799,7 +832,8 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                         params={"screen_name": account},
                         source_reason=f"X账号发帖 @{account}",
                     )
-                    outputs.append({"account": account, "query_type": "x_user_posts", "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
+                    query = result.get("query") if isinstance(result.get("query"), dict) else {}
+                    outputs.append({"account": account, "query_type": "x_user_posts", "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
 
         elif step_key == "post_comments":
             explicit_ids = req.get("post_ids") or []
@@ -830,7 +864,8 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
                         params={"tweet_id": _normalize_x_tweet_id(post_id)},
                         source_reason=f"X推文评论 {post_id}",
                     )
-                outputs.append({"post_id": post_id, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": (result.get("query") or {}).get("query_id")})
+                query = result.get("query") if isinstance(result.get("query"), dict) else {}
+                outputs.append({"post_id": post_id, "ok": result.get("ok"), "count": result.get("raw_item_count"), "query_id": query.get("query_id"), "error": query.get("error_message") or result.get("error_message") or ""})
 
         elif step_key == "merge_leads":
             rows = _rows_for_job(db, row.user_id, platform, row.job_id)
@@ -866,8 +901,22 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
         db.commit()
         raise
 
-    _append_output(row, step_key=step_key, title=_step_title(row, step_key), kind="queries", data={"queries": outputs})
-    _mark_step(row, step_key, "completed", detail=f"完成 {len(outputs)} 次采集", result={"queries": outputs})
+    summary = _summarize_query_outputs(outputs)
+    _append_output(row, step_key=step_key, title=_step_title(row, step_key), kind="queries", data={"queries": outputs, "summary": summary})
+    if summary["total"] and summary["ok_count"] == 0:
+        detail = f"采集失败 {summary['failed_count']} 次"
+        if summary["errors"]:
+            detail += "：" + summary["errors"][0]
+        row.status = "failed"
+        row.error = detail[:4000]
+        _mark_step(row, step_key, "failed", detail=detail, result={"queries": outputs, "summary": summary}, error=row.error)
+        db.commit()
+        db.refresh(row)
+        return row
+    detail = f"完成 {summary['ok_count']} 次采集，保存 {summary['raw_item_count']} 条数据"
+    if summary["failed_count"]:
+        detail += f"，失败 {summary['failed_count']} 次"
+    _mark_step(row, step_key, "completed", detail=detail, result={"queries": outputs, "summary": summary})
     if row.status not in _TERMINAL_STATUS:
         _update_progress(row)
     db.commit()

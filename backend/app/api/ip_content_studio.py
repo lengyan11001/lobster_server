@@ -850,6 +850,72 @@ def _stable_hash(value: Any, length: int = 40) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:length]
 
 
+def _reddit_post_from_cell_group(node: dict[str, Any]) -> Optional[dict[str, Any]]:
+    cells = node.get("cells")
+    if not isinstance(cells, list):
+        return None
+    post_id = _clean_text(node.get("groupId") or node.get("id"), 191)
+    item: dict[str, Any] = {
+        "id": post_id,
+        "post_id": post_id,
+        "raw": node,
+    }
+    for cell in cells:
+        if not isinstance(cell, dict):
+            continue
+        typ = str(cell.get("__typename") or "")
+        if typ in {"MetadataCell", "AdMetadataCell"}:
+            author = _clean_text(cell.get("authorName") or cell.get("detailsString") or cell.get("detailsLink"), 255)
+            if author.startswith("u/"):
+                author = author[2:]
+            item["author"] = author
+            item["username"] = author
+            item["created_at"] = cell.get("createdAt") or ""
+            item["created_utc"] = cell.get("createdAt") or ""
+            item["subreddit"] = cell.get("subredditName") or ""
+            item["profile_image_url"] = cell.get("iconPath") or ""
+        elif typ == "TitleCell":
+            item["title"] = cell.get("title") or item.get("title") or ""
+        elif typ == "PreviewTextCell":
+            item["selftext"] = cell.get("text") or item.get("selftext") or ""
+            item["body"] = item["selftext"]
+        elif typ == "ActionCell":
+            item["score"] = cell.get("score")
+            item["ups"] = cell.get("score")
+            item["num_comments"] = cell.get("commentCount")
+            item["share_count"] = cell.get("shareCount")
+        elif typ in {"ImageCell", "LegacyVideoCell"}:
+            media = cell.get("media")
+            if isinstance(media, dict):
+                item["thumbnail"] = _first(media, ["url", "mediaUrl", "preview", "source.url"]) or ""
+            item.setdefault("media_type", typ)
+    if not item.get("title") and not item.get("selftext"):
+        return None
+    if post_id.startswith("t3_"):
+        item["permalink"] = f"/comments/{post_id[3:]}"
+        item["url"] = f"https://www.reddit.com/comments/{post_id[3:]}"
+    return item
+
+
+def _reddit_feed_items(node: Any) -> list[Any]:
+    if not isinstance(node, dict):
+        return []
+    edges = _lookup(node, "data.subredditV3.elements.edges")
+    if not isinstance(edges, list):
+        edges = _lookup(node, "subredditV3.elements.edges")
+    if not isinstance(edges, list):
+        return []
+    out: list[Any] = []
+    for edge in edges:
+        edge_node = edge.get("node") if isinstance(edge, dict) else None
+        if not isinstance(edge_node, dict):
+            continue
+        item = _reddit_post_from_cell_group(edge_node)
+        if item:
+            out.append(item)
+    return out
+
+
 def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
     if depth > 5:
         return []
@@ -857,6 +923,9 @@ def _collect_items(node: Any, *, depth: int = 0) -> list[Any]:
         return node
     if not isinstance(node, dict):
         return []
+    reddit_items = _reddit_feed_items(node)
+    if reddit_items:
+        return reddit_items
     for key in (
         "aweme_list",
         "object_list",

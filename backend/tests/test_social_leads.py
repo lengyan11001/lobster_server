@@ -115,6 +115,50 @@ def test_social_leads_ignores_empty_source_rows():
     assert _candidate_from_row(Row()) is None
 
 
+def test_social_leads_reddit_feed_sort_maps_search_sort_to_hot():
+    from backend.app.api.social_leads import _reddit_feed_sort
+
+    assert _reddit_feed_sort("RELEVANCE") == "HOT"
+    assert _reddit_feed_sort("") == "HOT"
+    assert _reddit_feed_sort("new") == "NEW"
+
+
+def test_tikhub_collects_reddit_cell_feed_posts():
+    from backend.app.api.ip_content_studio import _collect_items
+
+    payload = {
+        "data": {
+            "subredditV3": {
+                "elements": {
+                    "edges": [
+                        {
+                            "node": {
+                                "__typename": "CellGroup",
+                                "groupId": "t3_abc123",
+                                "cells": [
+                                    {"__typename": "MetadataCell", "authorName": "u/founder", "createdAt": "2026-06-30T00:00:00+0000"},
+                                    {"__typename": "TitleCell", "title": "Looking for better lead generation"},
+                                    {"__typename": "PreviewTextCell", "text": "Need a tool that finds customers from Reddit."},
+                                    {"__typename": "ActionCell", "score": 12, "commentCount": 3, "shareCount": 1},
+                                ],
+                            }
+                        },
+                        {"node": {"__typename": "CellGroup", "groupId": "sortcell", "cells": [{"__typename": "SortCell"}]}},
+                    ]
+                }
+            }
+        }
+    }
+
+    items = _collect_items(payload)
+
+    assert len(items) == 1
+    assert items[0]["post_id"] == "t3_abc123"
+    assert items[0]["author"] == "founder"
+    assert items[0]["title"] == "Looking for better lead generation"
+    assert items[0]["num_comments"] == 3
+
+
 @pytest.mark.asyncio
 async def test_social_leads_x_keyword_step_uses_twitter_search_endpoint(monkeypatch):
     from backend.app.api import social_leads
@@ -355,3 +399,53 @@ async def test_social_leads_auto_run_completes_and_merges_sources(db_session, te
     assert payload["source_summary"]["total"] == 1
     assert payload["steps"][-1]["key"] == "merge_leads"
     assert payload["steps"][-1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_social_leads_community_feed_uses_feed_sort_and_fails_loudly(monkeypatch):
+    from backend.app.api import social_leads
+
+    calls = []
+
+    async def fake_execute_query_with_retry(**kwargs):
+        calls.append(kwargs)
+        return {
+            "ok": False,
+            "raw_item_count": 0,
+            "error_message": "TikHub HTTP 400",
+            "query": {"query_id": "q_bad", "error_message": "TikHub HTTP 400"},
+        }
+
+    monkeypatch.setattr(social_leads, "_execute_query_with_retry", fake_execute_query_with_retry)
+
+    class Job:
+        job_id = "rd_bad_sort"
+        user_id = 1
+        status = "queued"
+        stage = "queued"
+        progress = 0
+        error = ""
+        completed_at = None
+        result_payload = {}
+        request_payload = {
+            "platform": "reddit",
+            "keywords": [],
+            "accounts": [],
+            "post_ids": [],
+            "communities": ["https://www.reddit.com/r/SaaS"],
+            "sort": "RELEVANCE",
+            "max_items": 30,
+        }
+        meta = {"steps": [{"key": "community_feed", "label": "社区帖子采集", "status": "pending"}], "outputs": []}
+
+    class DB:
+        def commit(self): pass
+        def refresh(self, row): pass
+
+    row = await social_leads._execute_step(DB(), Job(), object(), "community_feed")
+
+    assert row.status == "failed"
+    assert "采集失败" in row.error
+    assert calls[0]["query_type"] == "reddit_subreddit_feed"
+    assert calls[0]["params"]["subreddit_name"] == "SaaS"
+    assert calls[0]["params"]["sort"] == "HOT"
