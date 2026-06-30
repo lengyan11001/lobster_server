@@ -117,6 +117,95 @@ def test_social_leads_ignores_empty_source_rows():
     assert _candidate_from_row(Row()) is None
 
 
+def test_social_leads_ignores_reddit_comment_rows_without_author():
+    from backend.app.api.social_leads import _candidate_from_row
+
+    class Row:
+        id = 3
+        platform = "reddit"
+        source_type = "post_comment"
+        item_key = "post-title-used-as-comment"
+        author_key = None
+        author_name = None
+        title = "Just pure luck with 6+ different chats with Gemini"
+        description = "This is post text, not a real comment author."
+        public_url = "https://www.reddit.com/r/AIJailbreak/comments/abc"
+        metrics = {"score": 4}
+        created_at = None
+        raw = {
+            "__lobster_ip_content_meta": {"source_reason": "Reddit帖子评论 t3_abc"},
+            "title": "Just pure luck with 6+ different chats with Gemini",
+            "selftext": "This row has no comment author and must not become a profile lookup.",
+            "permalink": "/r/AIJailbreak/comments/abc/",
+        }
+
+    assert _candidate_from_row(Row()) is None
+
+
+def test_tikhub_normalizes_reddit_user_profile_payload():
+    from backend.app.api.ip_content_studio import _normalize_item
+
+    row = _normalize_item(
+        {
+            "redditorInfoByName": {
+                "id": "t2_buyer",
+                "name": "buyer_user",
+                "displayName": "Buyer User",
+                "karma": {"total": 42, "post": 11, "comment": 31},
+                "snoovatarIcon": {"url": "https://example.com/avatar.png"},
+                "publicDescription": "Looking for automation tools.",
+                "accountType": "USER",
+                "isAcceptingChats": True,
+            }
+        },
+        user_id=1,
+        query_id="q_profile",
+        platform="reddit",
+        source_type="user_profile",
+        idx=0,
+    )
+
+    assert row["item_key"] == "buyer_user"
+    assert row["author_key"] == "buyer_user"
+    assert row["author_name"] == "Buyer User"
+    assert row["title"] == "Looking for automation tools."
+    assert row["description"] == "Looking for automation tools."
+    assert row["public_url"] == "https://www.reddit.com/user/buyer_user"
+    assert row["cover_url"] == "https://example.com/avatar.png"
+    assert row["metrics"]["total_karma"] == 42
+    assert row["metrics"]["post_karma"] == 11
+    assert row["metrics"]["comment_karma"] == 31
+    assert row["metrics"]["is_accepting_chats"] is True
+
+
+def test_social_leads_rows_for_job_reads_merged_job_ids(db_session, test_user):
+    from backend.app.api.social_leads import _rows_for_job
+    from backend.app.models import TikHubSourceItem
+
+    row = TikHubSourceItem(
+        user_id=test_user.id,
+        query_id="q_profile",
+        platform="reddit",
+        source_type="user_profile",
+        item_key="buyer_user",
+        author_key="buyer_user",
+        author_name="buyer_user",
+        title="buyer_user",
+        public_url="https://www.reddit.com/user/buyer_user",
+        raw={
+            "username": "buyer_user",
+            "__lobster_ip_content_meta": {
+                "social_leads_job_id": "rd_new",
+                "social_leads_job_ids": ["rd_old", "rd_new"],
+            },
+        },
+    )
+    db_session.add(row)
+    db_session.commit()
+
+    assert [item.item_key for item in _rows_for_job(db_session, test_user.id, "reddit", "rd_old")] == ["buyer_user"]
+
+
 def test_social_leads_reddit_feed_sort_maps_search_sort_to_hot():
     from backend.app.api.social_leads import _reddit_feed_sort
 

@@ -1009,6 +1009,63 @@ def _reddit_comment_items(node: Any) -> list[Any]:
     return out
 
 
+def _flatten_reddit_user_profile(item: dict[str, Any]) -> dict[str, Any]:
+    info = item.get("redditorInfoByName")
+    if not isinstance(info, dict):
+        info = _lookup(item, "data.redditorInfoByName")
+    if not isinstance(info, dict):
+        return item
+    profile = info.get("profile") if isinstance(info.get("profile"), dict) else {}
+    profile_info = info.get("profileInfo") if isinstance(info.get("profileInfo"), dict) else {}
+    karma = info.get("karma") if isinstance(info.get("karma"), dict) else {}
+    username = _clean_text(info.get("name") or info.get("displayName") or info.get("prefixedName"), 255)
+    if username.startswith("u/"):
+        username = username[2:]
+    icon = (
+        _first(info, ["snoovatarIcon.url", "newIcon.url", "icon.url"])
+        or _first(profile, ["snoovatarIcon.url", "newIcon.url", "icon.url", "profileIcon.url"])
+        or _first(profile_info, ["snoovatarIcon.url", "newIcon.url", "icon.url", "profileIcon.url", "avatar.url"])
+    )
+    public_description = _first(
+        info,
+        [
+            "publicDescription",
+            "description",
+            "profile.publicDescription",
+            "profile.description",
+            "profileInfo.publicDescription",
+            "profileInfo.description",
+            "profileInfo.bio",
+        ],
+    )
+    return {
+        **item,
+        "id": username or info.get("id"),
+        "username": username,
+        "name": username,
+        "display_name": info.get("displayName") or username,
+        "prefixed_name": info.get("prefixedName") or (f"u/{username}" if username else ""),
+        "description": public_description or "",
+        "public_description": public_description or "",
+        "url": f"https://www.reddit.com/user/{username}" if username else "",
+        "profile_url": f"https://www.reddit.com/user/{username}" if username else "",
+        "profile_image_url": icon or "",
+        "avatar": icon or "",
+        "created_at": info.get("createdAt") or info.get("created_at") or "",
+        "created_utc": info.get("createdAt") or info.get("created_at") or "",
+        "total_karma": karma.get("total") or info.get("totalKarma"),
+        "post_karma": karma.get("post") or info.get("postKarma"),
+        "comment_karma": karma.get("comment") or info.get("commentKarma"),
+        "account_type": info.get("accountType") or "",
+        "is_verified": info.get("isVerified"),
+        "is_employee": info.get("isEmployee"),
+        "is_accepting_chats": info.get("isAcceptingChats"),
+        "is_accepting_followers": info.get("isAcceptingFollowers"),
+        "is_accepting_pms": info.get("isAcceptingPMs"),
+        "is_nsfw": _first(info, ["profile.isNsfw", "profileInfo.isNsfw", "isNsfw"]),
+    }
+
+
 def _reddit_feed_items(node: Any) -> list[Any]:
     if not isinstance(node, dict):
         return []
@@ -1204,6 +1261,7 @@ def _public_url(raw: Any) -> str:
             "aweme_info.share_info.share_url",
             "permalink",
             "url",
+            "profile_url",
             "link",
             "tweet_url",
             "twitter_url",
@@ -1251,6 +1309,8 @@ def _cover_url(raw: Any) -> str:
             "legacy.profile_image_url_https",
             "subreddit_icon",
             "thumbnail",
+            "profile_image_url",
+            "avatar",
             "media.0.url",
             "media.0.preview_url",
         ],
@@ -1310,6 +1370,13 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
         "total_karma",
         "post_karma",
         "comment_karma",
+        "account_type",
+        "is_verified",
+        "is_employee",
+        "is_accepting_chats",
+        "is_accepting_followers",
+        "is_accepting_pms",
+        "is_nsfw",
         "followers",
         "followers_count",
         "friends_count",
@@ -1513,6 +1580,8 @@ def _normalize_drafts(obj: dict[str, Any], fallback_text: str, count: int) -> li
 
 def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, source_type: str, idx: int) -> dict[str, Any]:
     item = raw if isinstance(raw, dict) else {"value": raw}
+    if platform == "reddit" and source_type == "user_profile":
+        item = _flatten_reddit_user_profile(item)
     aweme_info = _lookup(item, "data.aweme_info")
     if not isinstance(aweme_info, dict):
         aweme_info = item.get("aweme_info") if isinstance(item.get("aweme_info"), dict) else {}
@@ -1533,6 +1602,7 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "challenge_name",
             "desc",
             "description",
+            "public_description",
             "sentence",
             "word",
             "hotword",
@@ -1554,7 +1624,7 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         ],
     )
     title = _normalize_wechat_channels_video_title(title) or title
-    description = _first(field_item, ["description", "desc", "summary", "challenge_name", "object_desc.description", "aweme_info.desc"])
+    description = _first(field_item, ["description", "public_description", "desc", "summary", "challenge_name", "object_desc.description", "aweme_info.desc"])
     if not description:
         description = _first(field_item, ["full_text", "text", "body", "selftext", "legacy.full_text", "legacy.description", "public_description"])
     item_key = _first(
@@ -1587,7 +1657,7 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         ],
     )
     if item_key in (None, ""):
-        basis = _first(field_item, ["share_url", "url", "title", "desc", "sentence", "word", "key_word", "keyword"]) or item
+        basis = _first(field_item, ["share_url", "url", "profile_url", "title", "desc", "sentence", "word", "key_word", "keyword"]) or item
         item_key = _stable_hash({"platform": platform, "source_type": source_type, "idx": idx, "basis": basis})
     author_key = _first(
         author,
@@ -1918,10 +1988,29 @@ def _persist_items(
     item_meta: Optional[dict[str, Any]] = None,
 ) -> list[TikHubSourceItem]:
     saved: list[TikHubSourceItem] = []
+
+    def merge_item_meta(existing_meta: dict[str, Any], new_meta: Optional[dict[str, Any]]) -> dict[str, Any]:
+        new_meta = dict(new_meta or {})
+        merged = {**existing_meta, **new_meta}
+        job_ids: list[str] = []
+        for meta in (existing_meta, new_meta):
+            raw_job_ids = meta.get("social_leads_job_ids")
+            if isinstance(raw_job_ids, list):
+                for raw_job_id in raw_job_ids:
+                    job_id = _clean_text(raw_job_id, 80)
+                    if job_id and job_id not in job_ids:
+                        job_ids.append(job_id)
+            job_id = _clean_text(meta.get("social_leads_job_id"), 80)
+            if job_id and job_id not in job_ids:
+                job_ids.append(job_id)
+        if job_ids:
+            merged["social_leads_job_ids"] = job_ids
+        return merged
+
     for idx, raw in enumerate(raw_items):
         data = _normalize_item(raw, user_id=user_id, query_id=query_id, platform=platform, source_type=source_type, idx=idx)
         if item_meta:
-            data["raw"] = _merge_source_raw(data["raw"], meta=item_meta)
+            data["raw"] = _merge_source_raw(data["raw"], meta=merge_item_meta({}, item_meta))
         row = (
             db.query(TikHubSourceItem)
             .filter(
@@ -1946,7 +2035,7 @@ def _persist_items(
             row.publish_time = data["publish_time"]
             row.metrics = data["metrics"]
             existing_meta = _source_meta(row)
-            merged_meta = item_meta if item_meta else existing_meta
+            merged_meta = merge_item_meta(existing_meta, item_meta)
             row.raw = _merge_source_raw(data["raw"], meta=merged_meta if merged_meta else None, usage=_source_usage(row))
             row.is_new = False
             row.updated_at = _utcnow()

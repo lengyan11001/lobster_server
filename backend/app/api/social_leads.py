@@ -537,7 +537,9 @@ def _rows_for_job(db: Session, user_id: int, platform: str, job_id: str) -> list
     )
     out: list[TikHubSourceItem] = []
     for row in rows:
-        if str(_row_meta(row).get("social_leads_job_id") or "") == job_id:
+        meta = _row_meta(row)
+        job_ids = meta.get("social_leads_job_ids") if isinstance(meta.get("social_leads_job_ids"), list) else []
+        if str(meta.get("social_leads_job_id") or "") == job_id or job_id in {str(x) for x in job_ids}:
             out.append(row)
     return out
 
@@ -565,12 +567,12 @@ def _source_item_payload(row: TikHubSourceItem) -> dict[str, Any]:
     description = row.description or _first(raw, ["public_description", "description", "selftext", "body", "full_text", "text"]) or ""
     handle = row.author_key or _first(raw, ["author", "username", "screen_name", "legacy.screen_name"]) or ""
     display_name = row.author_name or _first(raw, ["display_name", "name", "legacy.name"]) or handle
-    url = row.public_url or _first(raw, ["permalink", "url", "tweet_url", "twitter_url"]) or ""
+    url = row.public_url or _first(raw, ["profile_url", "permalink", "url", "tweet_url", "twitter_url"]) or ""
     if isinstance(url, str) and url.startswith("/"):
         url = "https://www.reddit.com" + url
     metrics = row.metrics if isinstance(row.metrics, dict) else {}
     raw_preview: dict[str, Any] = {}
-    for key in ("author", "username", "name", "display_name", "title", "subreddit", "subreddit_name_prefixed", "public_description", "description", "selftext", "body", "full_text", "text", "permalink", "url", "score", "ups", "num_comments", "total_karma", "subscribers", "followers_count", "created_utc", "created_at"):
+    for key in ("author", "username", "name", "display_name", "title", "subreddit", "subreddit_name_prefixed", "public_description", "description", "selftext", "body", "full_text", "text", "permalink", "url", "profile_url", "score", "ups", "num_comments", "total_karma", "post_karma", "comment_karma", "account_type", "is_verified", "is_accepting_chats", "is_accepting_followers", "is_accepting_pms", "is_nsfw", "subscribers", "followers_count", "created_utc", "created_at"):
         value = _lookup(raw, key)
         if value not in (None, "", [], {}):
             raw_preview[key] = _jsonable(value)
@@ -673,7 +675,7 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
             or _lookup(body, "display_name")
         )
         name = username or _lookup(body, "display_name") or _lookup(body, "title") or _lookup(body, "subreddit_name_prefixed") or _lookup(body, "subreddit")
-        url = _lookup(body, "permalink") or _lookup(body, "url")
+        url = _lookup(body, "profile_url") or _lookup(body, "permalink") or _lookup(body, "url")
         if isinstance(url, str) and url.startswith("/"):
             url = "https://www.reddit.com" + url
         bio = _lookup(body, "public_description") or _lookup(body, "description") or _lookup(body, "body") or _lookup(body, "text") or _lookup(body, "selftext") or _lookup(body, "title")
@@ -682,6 +684,8 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
             "ups": _lookup(body, "ups"),
             "comments": _lookup(body, "num_comments"),
             "karma": _lookup(body, "total_karma") or _lookup(body, "post_karma") or _lookup(body, "comment_karma"),
+            "post_karma": _lookup(body, "post_karma"),
+            "comment_karma": _lookup(body, "comment_karma"),
         }
     else:
         username = (
@@ -723,6 +727,10 @@ def _candidate_from_row(row: TikHubSourceItem) -> Optional[dict[str, Any]]:
     body = row.raw if isinstance(row.raw, dict) else {}
     meta = _row_meta(row)
     raw_body = _raw_body(row)
+    if row.platform == "reddit" and row.source_type in {"subreddit_post", "post_detail", "post_comment", "user_post", "user_comment"}:
+        handle = _clean_text(row.author_key or _lookup(raw_body, "author") or _lookup(raw_body, "username"), 191)
+        if not handle or handle.lower() in _LOW_INTENT_REDDIT_USERS:
+            return None
     candidate = _candidate_from_raw(raw_body, row.platform, row.source_type, str(meta.get("source_reason") or row.source_type))
     if not candidate:
         key = row.author_key or row.item_key
