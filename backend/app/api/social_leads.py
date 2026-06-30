@@ -654,6 +654,105 @@ def _candidate_intent(candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _metric_label(key: str) -> str:
+    labels = {
+        "score": "互动分",
+        "ups": "赞同数",
+        "comments": "评论数",
+        "karma": "总 Karma",
+        "post_karma": "发帖 Karma",
+        "comment_karma": "评论 Karma",
+        "post_count": "发帖数",
+        "comment_count": "评论数",
+        "subscribers_count": "订阅者",
+        "account_type": "账号类型",
+        "is_verified": "已验证",
+        "is_accepting_chats": "可聊天",
+        "is_accepting_pms": "可私信",
+        "is_nsfw": "NSFW",
+    }
+    return labels.get(key, key)
+
+
+def _format_metric_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    return str(value)
+
+
+def _profile_evidence_text(body: dict[str, Any], metrics: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in (
+        "karma",
+        "post_karma",
+        "comment_karma",
+        "post_count",
+        "comment_count",
+        "subscribers_count",
+        "account_type",
+        "is_verified",
+        "is_accepting_chats",
+        "is_accepting_pms",
+        "is_nsfw",
+    ):
+        value = metrics.get(key)
+        if value in (None, "", [], {}):
+            continue
+        parts.append(f"{_metric_label(key)}：{_format_metric_value(value)}")
+    social_links = _lookup(body, "social_links")
+    if isinstance(social_links, list):
+        link_texts: list[str] = []
+        for link in social_links[:3]:
+            if not isinstance(link, dict):
+                continue
+            title = _clean_text(link.get("title") or link.get("type") or "链接", 80)
+            url = _clean_long_text(link.get("url"), 300)
+            if url:
+                link_texts.append(f"{title} {url}")
+        if link_texts:
+            parts.append("社交链接：" + "；".join(link_texts))
+    return "；".join(parts)
+
+
+def _candidate_evidence_from_raw(
+    body: dict[str, Any],
+    *,
+    source_type: str,
+    source_reason: str,
+    bio: Any,
+    url: Any,
+    metrics: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    title = _clean_text(
+        _lookup(body, "title")
+        or _lookup(body, "profile_title")
+        or _lookup(body, "post_title")
+        or _lookup(body, "full_text")
+        or _lookup(body, "display_name")
+        or _lookup(body, "name")
+        or _lookup(body, "username")
+        or source_reason,
+        255,
+    )
+    body_text = _clean_long_text(_lookup(body, "body") or _lookup(body, "text") or _lookup(body, "selftext") or "", 1000)
+    description = _clean_long_text(bio, 600)
+    if source_type == "user_profile":
+        profile_text = _profile_evidence_text(body, metrics)
+        if profile_text:
+            description = _clean_long_text(profile_text, 1000)
+    evidence = {
+        "source_type": source_type,
+        "source_reason": source_reason,
+        "title": title,
+        "description": description,
+        "body": body_text,
+        "url": _clean_long_text(url, 1000),
+    }
+    if not any(evidence.get(key) for key in ("title", "description", "body", "url")):
+        return None
+    return evidence
+
+
 def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason: str) -> Optional[dict[str, Any]]:
     body = raw if isinstance(raw, dict) else {"value": raw}
     if not body or all(v in (None, "", [], {}) for v in body.values()):
@@ -716,6 +815,15 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
     key = _clean_text(username or name, 191)
     if not key:
         return None
+    clean_metrics = {k: v for k, v in metrics.items() if v not in (None, "", [], {})}
+    evidence = _candidate_evidence_from_raw(
+        body,
+        source_type=source_type,
+        source_reason=source_reason,
+        bio=bio,
+        url=url,
+        metrics=clean_metrics,
+    )
     return {
         "candidate_key": key,
         "name": _clean_text(name or key, 255),
@@ -725,8 +833,8 @@ def _candidate_from_raw(raw: Any, platform: str, source_type: str, source_reason
         "source_reason": source_reason,
         "bio": _clean_long_text(bio, 1200),
         "url": _clean_long_text(url, 1000),
-        "metrics": {k: v for k, v in metrics.items() if v not in (None, "", [], {})},
-        "evidence": [{"source_type": source_type, "title": _clean_text(_lookup(body, "title") or _lookup(body, "post_title") or _lookup(body, "full_text") or "", 255), "description": _clean_long_text(bio, 600), "body": _clean_long_text(_lookup(body, "body") or _lookup(body, "text") or "", 1000)}],
+        "metrics": clean_metrics,
+        "evidence": [evidence] if evidence else [],
         "raw": body,
     }
 
@@ -760,20 +868,38 @@ def _candidate_from_row(row: TikHubSourceItem) -> Optional[dict[str, Any]]:
             "evidence": [],
             "raw": raw_body,
         }
-    candidate.setdefault("evidence", []).append(
-        {
-            "source_item_id": row.id,
-            "source_type": row.source_type,
-            "title": row.title or "",
-            "description": row.description or "",
-            "body": row.description or "",
-            "url": row.public_url or "",
-            "created_at": row.created_at.isoformat() if row.created_at else "",
-        }
-    )
+    row_evidence = {
+        "source_item_id": row.id,
+        "source_type": row.source_type,
+        "source_reason": str(meta.get("source_reason") or row.source_type),
+        "title": row.title or row.author_name or row.author_key or "",
+        "description": (
+            _profile_evidence_text(raw_body, row.metrics or {})
+            if row.source_type == "user_profile"
+            else row.description or ""
+        ),
+        "body": "" if row.source_type == "user_profile" else row.description or "",
+        "url": row.public_url or "",
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+    }
+    existing_evidence = [item for item in candidate.setdefault("evidence", []) if isinstance(item, dict)]
+    if _evidence_marker(row_evidence) not in {_evidence_marker(item) for item in existing_evidence}:
+        candidate["evidence"].append(row_evidence)
     if not candidate.get("url") and row.public_url:
         candidate["url"] = row.public_url
     return candidate
+
+
+def _evidence_marker(item: dict[str, Any]) -> str:
+    composite = "|".join(
+        [
+            str(item.get("source_type") or ""),
+            str(item.get("source_reason") or ""),
+            str(item.get("url") or ""),
+            str(item.get("title") or ""),
+        ]
+    )
+    return composite if composite.strip("|") else str(item.get("source_item_id") or "")
 
 
 def _merge_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -791,9 +917,9 @@ def _merge_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for k, v in (item.get("metrics") or {}).items():
             if v not in (None, "", [], {}) and not cur_metrics.get(k):
                 cur_metrics[k] = v
-        existing = {str(x.get("source_item_id") or x.get("title") or "") for x in cur.get("evidence") or [] if isinstance(x, dict)}
+        existing = {_evidence_marker(x) for x in cur.get("evidence") or [] if isinstance(x, dict)}
         for ev in item.get("evidence") or []:
-            marker = str(ev.get("source_item_id") or ev.get("title") or "")
+            marker = _evidence_marker(ev) if isinstance(ev, dict) else ""
             if marker and marker not in existing:
                 cur.setdefault("evidence", []).append(ev)
                 existing.add(marker)

@@ -186,6 +186,57 @@ def test_tikhub_normalizes_reddit_user_profile_payload():
     assert row["metrics"]["social_links"] == [{"type": "CUSTOM", "title": "site", "url": "https://example.com"}]
 
 
+def test_social_leads_user_profile_evidence_is_readable_and_not_duplicated():
+    from backend.app.api.social_leads import _candidate_from_row
+
+    class Row:
+        id = 4
+        platform = "reddit"
+        source_type = "user_profile"
+        item_key = "buyer_user"
+        author_key = "buyer_user"
+        author_name = "Buyer Founder"
+        title = "Buyer Founder"
+        description = None
+        public_url = "https://www.reddit.com/user/buyer_user"
+        metrics = {
+            "total_karma": 42,
+            "post_karma": 11,
+            "comment_karma": 31,
+            "post_count": 7,
+            "comment_count": 13,
+            "is_accepting_chats": True,
+            "is_accepting_pms": True,
+        }
+        created_at = None
+        raw = {
+            "username": "buyer_user",
+            "name": "buyer_user",
+            "display_name": "Buyer Founder",
+            "title": "Buyer Founder",
+            "profile_url": "https://www.reddit.com/user/buyer_user",
+            "total_karma": 42,
+            "post_karma": 11,
+            "comment_karma": 31,
+            "post_count": 7,
+            "comment_count": 13,
+            "is_accepting_chats": True,
+            "is_accepting_pms": True,
+            "__lobster_ip_content_meta": {"source_reason": "Reddit精准用户资料 u/buyer_user"},
+        }
+
+    candidate = _candidate_from_row(Row())
+
+    assert candidate["candidate_key"] == "buyer_user"
+    assert len(candidate["evidence"]) == 1
+    evidence = candidate["evidence"][0]
+    assert evidence["title"] == "Buyer Founder"
+    assert "总 Karma：42" in evidence["description"]
+    assert "发帖数：7" in evidence["description"]
+    assert "可私信：是" in evidence["description"]
+    assert evidence["url"] == "https://www.reddit.com/user/buyer_user"
+
+
 def test_social_leads_rows_for_job_reads_merged_job_ids(db_session, test_user):
     from backend.app.api.social_leads import _rows_for_job
     from backend.app.models import TikHubSourceItem
