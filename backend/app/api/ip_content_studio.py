@@ -489,7 +489,7 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "platform": "x",
         "source_type": "post_comment",
         "method": "GET",
-        "path": "/api/v1/twitter/web/fetch_post_comments",
+        "path": "/api/v1/twitter/web/fetch_latest_post_comments",
         "allowed_params": {"tweet_id", "cursor"},
     },
     "x_trending": {

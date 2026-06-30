@@ -124,6 +124,12 @@ def test_collects_x_user_post_timeline_items():
     assert normalized["metrics"]["views"] == "12768"
 
 
+def test_x_post_comments_uses_latest_comments_endpoint():
+    from backend.app.api import ip_content_studio as studio
+
+    assert studio._ENDPOINTS["x_post_comments"]["path"] == "/api/v1/twitter/web/fetch_latest_post_comments"
+
+
 def test_normalizes_douyin_user_search_candidates():
     from backend.app.api import ip_content_studio as studio
 
