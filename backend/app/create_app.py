@@ -51,6 +51,7 @@ from .api.admin import router as admin_router
 from .api.generation_records import router as generation_records_router
 from .api.ip_content_studio import router as ip_content_studio_router
 from .api.linkedin_mining import router as linkedin_mining_router
+from .api.social_leads import router as social_leads_router
 from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
 from .api.mobile_client import router as mobile_client_router
 from .api.juhe_wechat import router as juhe_wechat_router
@@ -1036,6 +1037,7 @@ def create_app() -> FastAPI:
     app.include_router(generation_records_router, prefix="")
     app.include_router(ip_content_studio_router, prefix="")
     app.include_router(linkedin_mining_router, prefix="")
+    app.include_router(social_leads_router, prefix="")
     app.include_router(wechat_channels_transcript_router, prefix="")
     app.include_router(mobile_client_router, prefix="")
     app.include_router(juhe_wechat_router, prefix="")

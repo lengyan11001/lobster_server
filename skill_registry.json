@@ -1082,6 +1082,74 @@
       "capabilities": {},
       "tags": ["视频号", "TikHub", "文案提取"]
     },
+    "reddit_leads": {
+      "name": "Reddit线索采集",
+      "description": "采集Reddit公开搜索、社区、账号、帖子评论数据。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "view": "social-leads",
+        "platform": "reddit",
+        "server_proxy": true,
+        "query_recorded": true
+      },
+      "capabilities": {
+        "reddit.leads.collect": {
+          "description": "Server-side Reddit public data collection via TikHub.",
+          "upstream": "server",
+          "upstream_tool": "social_leads",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "keywords": { "type": "array", "items": { "type": "string" } },
+              "communities": { "type": "array", "items": { "type": "string" } },
+              "accounts": { "type": "array", "items": { "type": "string" } },
+              "post_ids": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      },
+      "tags": ["Reddit", "TikHub", "leads"]
+    },
+    "x_leads": {
+      "name": "X线索采集",
+      "description": "采集X公开搜索、趋势、账号、帖子评论数据。",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "view": "social-leads",
+        "platform": "x",
+        "server_proxy": true,
+        "query_recorded": true
+      },
+      "capabilities": {
+        "x.leads.collect": {
+          "description": "Server-side X public data collection via TikHub.",
+          "upstream": "server",
+          "upstream_tool": "social_leads",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "keywords": { "type": "array", "items": { "type": "string" } },
+              "accounts": { "type": "array", "items": { "type": "string" } },
+              "post_ids": { "type": "array", "items": { "type": "string" } },
+              "country": { "type": "string" }
+            }
+          }
+        }
+      },
+      "tags": ["X", "TikHub", "leads"]
+    },
     "ai_3d_model_skill": {
       "name": "高质量 3D 模型",
       "description": "上传单图、多视角图片或 zip 拆件包，自动调用 Meshy 生成 GLB/FBX/OBJ/USDZ。生产质量模式默认启用贴图、PBR 与重拓扑，适合复杂头盔、道具、产品资产进入 Blender/ZBrush 继续修模。",

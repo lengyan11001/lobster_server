@@ -373,6 +373,111 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         "path": "/api/v1/linkedin/web/get_post_reactions",
         "allowed_params": {"post_id", "page", "type"},
     },
+    "reddit_search": {
+        "platform": "reddit",
+        "source_type": "search_result",
+        "method": "GET",
+        "path": "/api/v1/reddit/app/fetch_dynamic_search",
+        "allowed_params": {"query", "search_type", "sort", "time_range", "safe_search", "allow_nsfw", "after", "need_format"},
+    },
+    "reddit_typeahead": {
+        "platform": "reddit",
+        "source_type": "typeahead",
+        "method": "GET",
+        "path": "/api/v1/reddit/app/fetch_search_typeahead",
+        "allowed_params": {"query", "safe_search", "allow_nsfw", "need_format"},
+    },
+    "reddit_post_details": {
+        "platform": "reddit",
+        "source_type": "post_detail",
+        "method": "GET",
+        "path": "/api/v1/reddit/app/fetch_post_details",
+        "allowed_params": {"post_id", "include_comment_id", "comment_id", "need_format"},
+    },
+    "reddit_post_comments": {
+        "platform": "reddit",
+        "source_type": "post_comment",
+        "method": "GET",
+        "path": "/api/v1/reddit/app/fetch_post_comments",
+        "allowed_params": {"post_id", "sort_type", "after", "need_format"},
+    },
+    "reddit_user_profile": {
+        "platform": "reddit",
+        "source_type": "user_profile",
+        "method": "GET",
+        "path": "/api/v1/reddit/app/fetch_user_profile",
+        "allowed_params": {"username", "need_format"},
+    },
+    "reddit_user_posts": {
+        "platform": "reddit",
+        "source_type": "user_post",
+        "method": "GET",
+        "path": "/api/v1/reddit/app/fetch_user_posts",
+        "allowed_params": {"username", "sort", "after", "need_format"},
+    },
+    "reddit_user_comments": {
+        "platform": "reddit",
+        "source_type": "user_comment",
+        "method": "GET",
+        "path": "/api/v1/reddit/app/fetch_user_comments",
+        "allowed_params": {"username", "sort", "page_size", "after", "need_format"},
+    },
+    "reddit_subreddit_feed": {
+        "platform": "reddit",
+        "source_type": "subreddit_post",
+        "method": "GET",
+        "path": "/api/v1/reddit/app/fetch_subreddit_feed",
+        "allowed_params": {"subreddit_name", "sort", "filter_posts", "after", "need_format"},
+    },
+    "x_search": {
+        "platform": "x",
+        "source_type": "search_result",
+        "method": "GET",
+        "path": "/api/v1/twitter/web/fetch_search_timeline",
+        "allowed_params": {"keyword", "search_type", "cursor"},
+    },
+    "x_user_profile": {
+        "platform": "x",
+        "source_type": "user_profile",
+        "method": "GET",
+        "path": "/api/v1/twitter/web/fetch_user_profile",
+        "allowed_params": {"screen_name", "rest_id"},
+    },
+    "x_user_posts": {
+        "platform": "x",
+        "source_type": "user_post",
+        "method": "GET",
+        "path": "/api/v1/twitter/web/fetch_user_post_tweet",
+        "allowed_params": {"screen_name", "rest_id", "cursor"},
+    },
+    "x_post_comments": {
+        "platform": "x",
+        "source_type": "post_comment",
+        "method": "GET",
+        "path": "/api/v1/twitter/web/fetch_post_comments",
+        "allowed_params": {"tweet_id", "cursor"},
+    },
+    "x_trending": {
+        "platform": "x",
+        "source_type": "trend",
+        "method": "GET",
+        "path": "/api/v1/twitter/web/fetch_trending",
+        "allowed_params": {"country"},
+    },
+    "x_user_followers": {
+        "platform": "x",
+        "source_type": "user_follower",
+        "method": "GET",
+        "path": "/api/v1/twitter/web/fetch_user_followers",
+        "allowed_params": {"screen_name", "cursor"},
+    },
+    "x_user_followings": {
+        "platform": "x",
+        "source_type": "user_following",
+        "method": "GET",
+        "path": "/api/v1/twitter/web/fetch_user_followings",
+        "allowed_params": {"screen_name", "cursor"},
+    },
 }
 
 
@@ -910,12 +1015,21 @@ def _public_url(raw: Any) -> str:
             "share_info.share_url",
             "aweme_info.share_url",
             "aweme_info.share_info.share_url",
+            "permalink",
+            "url",
+            "link",
+            "tweet_url",
+            "twitter_url",
+            "legacy.url",
+            "core.user_results.result.legacy.url",
         ],
     )
     if isinstance(value, list):
         value = value[0] if value else ""
     if isinstance(value, dict):
         value = _first(value, ["url", "uri", "download_addr.url_list.0"])
+    if isinstance(value, str) and value.startswith(("/r/", "/u/", "/user/")):
+        value = "https://www.reddit.com" + value
     return _clean_long_text(value, 4096)
 
 
@@ -943,6 +1057,15 @@ def _cover_url(raw: Any) -> str:
             "contact.cover_img_url",
             "video.cover.url_list.0",
             "aweme_info.video.cover.url_list.0",
+            "avatar",
+            "icon_img",
+            "profile_image_url",
+            "profile_image_url_https",
+            "legacy.profile_image_url_https",
+            "subreddit_icon",
+            "thumbnail",
+            "media.0.url",
+            "media.0.preview_url",
         ],
     )
     if isinstance(value, list):
@@ -992,6 +1115,23 @@ def _metric_payload(raw: Any) -> dict[str, Any]:
         "replay_count",
         "replay_cnt",
         "fav_count",
+        "score",
+        "ups",
+        "downs",
+        "upvote_ratio",
+        "num_comments",
+        "total_karma",
+        "post_karma",
+        "comment_karma",
+        "followers",
+        "followers_count",
+        "friends_count",
+        "reply_count",
+        "retweet_count",
+        "quote_count",
+        "bookmark_count",
+        "favorite_count",
+        "view_count",
     ):
         value = stats.get(key) if key in stats else source.get(key)
         if value not in (None, ""):
@@ -1215,18 +1355,39 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
             "object_desc.description",
             "aweme_info.desc",
             "aweme_info.caption",
+            "full_text",
+            "text",
+            "body",
+            "selftext",
+            "screen_name",
+            "name",
+            "subreddit_name_prefixed",
+            "subreddit",
+            "community_name",
         ],
     )
     title = _normalize_wechat_channels_video_title(title) or title
     description = _first(field_item, ["description", "desc", "summary", "challenge_name", "object_desc.description", "aweme_info.desc"])
+    if not description:
+        description = _first(field_item, ["full_text", "text", "body", "selftext", "legacy.full_text", "legacy.description", "public_description"])
     item_key = _first(
         field_item,
         [
             "aweme_id",
             "id",
+            "id_str",
             "challenge_id",
             "item_id",
             "video_id",
+            "tweet_id",
+            "tweetId",
+            "rest_id",
+            "screen_name",
+            "name",
+            "subreddit_id",
+            "subreddit_name_prefixed",
+            "post_id",
+            "comment_id",
             "sentence_id",
             "word_id",
             "mid",
@@ -1243,9 +1404,9 @@ def _normalize_item(raw: Any, *, user_id: int, query_id: str, platform: str, sou
         ["sec_uid", "uid", "id", "short_id", "unique_id", "username", "finder_username", "nickname"],
     )
     if not author_key:
-        author_key = _first(field_item, ["username", "finder_username", "finderUsername", "author_username"])
-    author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "short_id"]) or _first(field_item, ["nick_name", "author_name", "nickname"])
-    publish_time = _first(field_item, ["create_time", "createtime", "publish_time", "timestamp", "aweme_info.create_time"])
+        author_key = _first(field_item, ["username", "finder_username", "finderUsername", "author_username", "author", "screen_name", "legacy.screen_name", "core.user_results.result.legacy.screen_name"])
+    author_name = _first(author, ["nickname", "name", "display_name", "unique_id", "short_id"]) or _first(field_item, ["nick_name", "author_name", "nickname", "display_name", "legacy.name", "core.user_results.result.legacy.name"])
+    publish_time = _first(field_item, ["create_time", "createtime", "publish_time", "timestamp", "aweme_info.create_time", "created_utc", "created_at", "legacy.created_at"])
     return {
         "user_id": user_id,
         "query_id": query_id,
