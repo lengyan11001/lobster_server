@@ -104,7 +104,8 @@ def _job_payload(row: CreativeGenerationJob, *, db: Optional[Session] = None, in
     if include_sources and db is not None:
         platform = _platform(payload["platform"] or (row.request_payload or {}).get("platform"))
         rows = _rows_for_job(db, row.user_id, platform, row.job_id)
-        payload["result_payload"] = _result_payload_with_current_candidates(payload["result_payload"], rows, platform)
+        candidate_rows = _rows_with_candidate_profile_supplements(db, row.user_id, platform, payload["result_payload"], rows)
+        payload["result_payload"] = _result_payload_with_current_candidates(payload["result_payload"], candidate_rows, platform)
         payload["source_summary"] = _source_summary(rows)
         payload["source_items"] = [_source_item_payload(item) for item in rows[:500]]
     return payload
@@ -559,6 +560,66 @@ def _source_summary(rows: list[TikHubSourceItem]) -> dict[str, Any]:
             step["reasons"].append(reason)
         by_type[row.source_type] = by_type.get(row.source_type, 0) + 1
     return {"total": len(rows), "by_type": by_type, "by_step": list(by_step.values())}
+
+
+def _candidate_handles_from_result_payload(result_payload: Any, platform: str) -> list[str]:
+    if not isinstance(result_payload, dict):
+        return []
+    candidates = result_payload.get("candidates")
+    if not isinstance(candidates, list):
+        return []
+    out: list[str] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        raw = item.get("handle") or item.get("candidate_key") or item.get("name") or item.get("url")
+        handle = _extract_reddit_username(raw) if platform == "reddit" else _extract_x_screen_name(raw)
+        if handle and handle.lower() not in _LOW_INTENT_REDDIT_USERS and handle not in out:
+            out.append(handle)
+        if len(out) >= 100:
+            break
+    return out
+
+
+def _rows_with_candidate_profile_supplements(
+    db: Session,
+    user_id: int,
+    platform: str,
+    result_payload: Any,
+    rows: list[TikHubSourceItem],
+) -> list[TikHubSourceItem]:
+    handles = _candidate_handles_from_result_payload(result_payload, platform)
+    if not handles:
+        return rows
+    existing = {(row.source_type, (row.author_key or row.item_key or "").lower()) for row in rows}
+    missing = [handle for handle in handles if ("user_profile", handle.lower()) not in existing]
+    if not missing:
+        return rows
+    query = (
+        db.query(TikHubSourceItem)
+        .filter(
+            TikHubSourceItem.user_id == user_id,
+            TikHubSourceItem.platform == platform,
+            TikHubSourceItem.source_type == "user_profile",
+        )
+        .order_by(TikHubSourceItem.updated_at.desc(), TikHubSourceItem.id.desc())
+        .limit(1000)
+    )
+    wanted = {handle.lower() for handle in missing}
+    supplements: list[TikHubSourceItem] = []
+    seen = set(existing)
+    for row in query.all():
+        handle = (row.author_key or row.item_key or "").lower()
+        if handle not in wanted:
+            continue
+        key = (row.source_type, handle)
+        if key in seen:
+            continue
+        supplements.append(row)
+        seen.add(key)
+        if len(supplements) >= len(wanted):
+            break
+    return rows + supplements
 
 
 def _result_payload_with_current_candidates(result_payload: Any, rows: list[TikHubSourceItem], platform: str) -> dict[str, Any]:
