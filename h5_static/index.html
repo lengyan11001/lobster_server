@@ -27,9 +27,14 @@
     html {
       color-scheme: only light;
       background: #f8fbff;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: hidden;
     }
     body {
       margin: 0;
+      width: 100%;
+      max-width: 100%;
       min-height: 100vh;
       overflow-x: hidden;
       color: var(--ink);
@@ -70,7 +75,9 @@
       min-height: 100vh;
       margin: 0 auto;
       padding: 14px 0 28px;
+      overflow-x: hidden;
     }
+    #appPanel, .view, .view.active, .panel { max-width: 100%; min-width: 0; }
     .topbar, .panel {
       border: 1px solid rgba(255, 255, 255, .74);
       background: var(--panel);
@@ -1992,9 +1999,9 @@
     .task-detail-record { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
     .task-detail-record:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
     .task-detail-record strong { display: block; margin-bottom: 6px; }
-    .moment-item { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
-    .moment-item:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
-    .moment-summary {
+    .moment-item, .copy-item { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
+    .moment-item:first-child, .copy-item:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+    .moment-summary, .copy-summary {
       width: 100%;
       display: flex;
       align-items: center;
@@ -2008,10 +2015,10 @@
       border-radius: 12px;
       box-shadow: none;
     }
-    .moment-summary span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
-    .moment-summary small { flex: 0 0 auto; color: var(--blue); }
-    .moment-detail { display: none; margin-top: 10px; }
-    .moment-item.open .moment-detail { display: grid; gap: 10px; }
+    .moment-summary span, .copy-summary span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
+    .moment-summary small, .copy-summary small { flex: 0 0 auto; color: var(--blue); }
+    .moment-detail, .copy-detail { display: none; margin-top: 10px; }
+    .moment-item.open .moment-detail, .copy-item.open .copy-detail { display: grid; gap: 10px; }
     .moment-select-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
     .moment-select-row label { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 999px; background: rgba(36,92,255,.08); color: #263858; }
     .moment-select-row input { width: auto; }
@@ -2032,6 +2039,8 @@
     .task-detail-prompts { display: grid; gap: 6px; margin-top: 8px; color: #66758f; font-size: 12px; }
     .task-detail-prompts label, .task-detail-prompts span { display: flex; gap: 6px; align-items: flex-start; }
     .task-detail-prompts input { width: auto; margin-top: 2px; }
+    .copy-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+    .copy-actions button { padding: 7px 11px; border-radius: 999px; font-size: 12px; }
     .moment-image-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .moment-image-actions button { padding: 7px 11px; border-radius: 999px; font-size: 12px; }
     .moment-image-status { color: var(--muted); font-size: 12px; }
@@ -2155,8 +2164,9 @@
     .toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); max-width: min(520px, calc(100vw - 32px)); padding: 11px 14px; border-radius: 999px; color: #fff; background: rgba(19,33,60,.9); box-shadow: 0 18px 44px rgba(19,33,60,.28); opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 100; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
     @media (max-width: 760px) {
-      .shell { width: min(100vw - 16px, 720px); padding-top: 8px; }
+      .shell { width: 100%; padding: 8px 8px 28px; }
       .topbar { top: 8px; border-radius: 18px; }
+      .settings, .list-page, .detail-page { padding-left: 12px; padding-right: 12px; }
       .subtitle { display: none; }
       .top-action-label { display: none; }
       .top-action { width: 40px; padding: 0; }
@@ -3069,6 +3079,11 @@
       toast(ok ? "链接已复制，请在外部浏览器打开后保存" : "复制失败，请长按链接复制后用外部浏览器打开");
     }
 
+    async function copyDraftText(text) {
+      const ok = await copyText(text);
+      toast(ok ? "文案已复制" : "复制失败，请长按文案手动复制");
+    }
+
     function onIosDownloadClick() {
       if (IS_IOS && !IS_WECHAT) toast("已开始下载，可在 Safari 下载项或文件 App 的下载目录查看");
     }
@@ -3885,6 +3900,24 @@
       </div>`;
     }
 
+    function copyRecordHtml(rec, idx, task) {
+      const title = String(rec.title || `${ipTaskLabel(task)} ${idx + 1}`).trim();
+      const body = String(rec.body || rec.content || "").trim();
+      const id = String(rec.record_id || rec.id || `${task || "copy"}-${idx}`).trim();
+      return `<div class="copy-item" data-copy-record="${escapeHtml(id)}">
+        <button class="copy-summary" type="button" data-toggle-copy-record="${escapeHtml(id)}">
+          <span>${escapeHtml(idx + 1)}. ${escapeHtml(title)}</span>
+          <small>展开</small>
+        </button>
+        <div class="copy-detail">
+          <div class="task-detail-moments-copy">${escapeHtml(body || "暂无正文")}</div>
+          <div class="copy-actions">
+            <button type="button" data-copy-draft="${escapeHtml(id)}">复制文案</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
     function taskDetailHtml(run) {
       const payload = run && run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
       const sections = [];
@@ -4062,12 +4095,7 @@
               ${records.map((rec, idx) => momentRecordHtml(rec, idx)).join("")}
             </div>`;
           }
-          return `<div class="task-detail-record"><strong>${escapeHtml(ipTaskLabel(group.task))} · ${records.length}条</strong>${records.map((rec, idx) => {
-            return `<div class="task-detail-record">
-              <strong>${escapeHtml((idx + 1) + ". " + (rec.title || "未命名文案"))}</strong>
-              <pre>${escapeHtml(rec.body || rec.content || "")}</pre>
-            </div>`;
-          }).join("")}</div>`;
+          return `<div class="task-detail-record"><strong>${escapeHtml(ipTaskLabel(group.task))} · ${records.length}条</strong>${records.map((rec, idx) => copyRecordHtml(rec, idx, group.task)).join("")}</div>`;
         }).join("")}</div>`);
       }
       const text = run.error || run.result_text || (run.progress && (run.progress.text || run.progress.message)) || "";
@@ -4096,9 +4124,12 @@
       const activeId = activeView ? String(activeView.id || "") : "";
       state.runDetailBackTab = backTab || (activeId === "workListView" ? "workList" : (activeId === "taskDetailView" ? "taskDetail" : "runList"));
       state.currentRunDetailId = runId;
-      $("runPageTitle").textContent = "执行详情";
-      $("runPageSubtitle").textContent = "正在读取结果";
-      body.innerHTML = `<div class="hint">加载中...</div>`;
+      const cachedRun = (state.runs || []).find((row) => String(row.id || "") === String(runId)) || null;
+      $("runPageTitle").textContent = cachedRun ? (cachedRun.title || "执行详情") : "执行详情";
+      $("runPageSubtitle").textContent = cachedRun
+        ? `${capabilityName(taskCapabilityId(cachedRun) || cachedRun.task_kind)} · ${statusText(cachedRun.status)} · ${fmtTime(cachedRun.created_at)}`
+        : "正在读取结果";
+      body.innerHTML = cachedRun ? taskDetailHtml(cachedRun) : `<div class="hint">加载中...</div>`;
       switchTab("runDetail");
       try {
         const data = await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}`);
@@ -4107,7 +4138,12 @@
         $("runPageSubtitle").textContent = `${capabilityName(taskCapabilityId(run) || run.task_kind)} · ${statusText(run.status)} · ${fmtTime(run.created_at)}`;
         body.innerHTML = taskDetailHtml(run);
       } catch (err) {
-        body.innerHTML = `<div class="hint">${escapeHtml(err.message || "详情加载失败")}</div>`;
+        if (!cachedRun) {
+          body.innerHTML = `<div class="hint">${escapeHtml(err.message || "详情加载失败")}</div>`;
+        } else {
+          $("runPageSubtitle").textContent = "详情刷新失败，已显示列表缓存";
+          toast(err.message || "详情刷新失败");
+        }
       }
     }
 
@@ -7638,6 +7674,19 @@
       if (toggle) {
         const item = toggle.closest(".moment-item");
         if (item) item.classList.toggle("open");
+        return;
+      }
+      const copyToggle = evt.target.closest("[data-toggle-copy-record]");
+      if (copyToggle) {
+        const item = copyToggle.closest(".copy-item");
+        if (item) item.classList.toggle("open");
+        return;
+      }
+      const draftCopyBtn = evt.target.closest("[data-copy-draft]");
+      if (draftCopyBtn) {
+        const item = draftCopyBtn.closest(".copy-item");
+        const text = item ? (item.querySelector(".task-detail-moments-copy")?.textContent || "").trim() : "";
+        copyDraftText(text);
         return;
       }
       const genBtn = evt.target.closest("[data-generate-selected-moment-images]");
