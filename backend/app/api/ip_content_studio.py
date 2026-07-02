@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from .admin import AdminContext, _agent_visible_user_ids, _assert_can_manage_user, _verify_admin_token
 from .auth import access_token_claims, create_access_token, get_current_user
+from .mobile_identity import online_user_for_mobile_user
 from ..core.config import settings
 from ..db import get_db
 from ..models import ContentCompetitorAccount, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, TikHubQueryLog, TikHubSourceItem, User
@@ -4129,7 +4130,8 @@ def attach_draft_record_image(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    row = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.user_id == current_user.id, IPContentDraftRecord.record_id == record_id).first()
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.user_id == owner_user.id, IPContentDraftRecord.record_id == record_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="生成记录不存在")
     row.image_url = _clean_long_text(body.image_url, 4096) or row.image_url

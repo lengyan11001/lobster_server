@@ -1943,6 +1943,26 @@
     .route-switch button { padding: 7px 11px; color: var(--muted); background: transparent; box-shadow: none; }
     .route-switch button.active { color: #fff; background: var(--blue); }
     .route-switch button:disabled { opacity: .45; }
+    .profile-entry {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px;
+      color: #17233d;
+      text-align: left;
+      background: rgba(248,251,255,.92);
+      border: 1px solid rgba(223,230,242,.86);
+      border-radius: 18px;
+      box-shadow: none;
+    }
+    .profile-entry span { display: grid; gap: 4px; min-width: 0; }
+    .profile-entry strong { font-size: 16px; }
+    .profile-entry small { color: var(--muted); line-height: 1.5; }
+    .profile-entry b { flex: 0 0 auto; color: var(--blue); font-size: 13px; }
+    .list-page, .detail-page { padding: 16px; }
+    .pager-actions { display: flex; justify-content: center; margin-top: 12px; }
     .runs { padding: 16px; }
     .run-list { display: grid; gap: 10px; }
     .run-card { padding: 12px; border-radius: 16px; background: rgba(248,251,255,.92); border: 1px solid rgba(223,230,242,.86); }
@@ -1965,13 +1985,36 @@
     .task-row-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
     .task-row-actions { display: flex; gap: 8px; flex: 0 0 auto; }
     .task-detail-popover { max-width: min(760px, 94vw); width: 760px; max-height: 84vh; overflow: auto; }
-    .task-detail-body { display: grid; gap: 12px; margin-top: 14px; color: #17233d; }
+    .task-detail-body, .detail-body { display: grid; gap: 12px; margin-top: 14px; color: #17233d; }
     .task-detail-section { border: 1px solid rgba(223,230,242,.92); border-radius: 14px; background: rgba(248,251,255,.9); padding: 12px; }
     .task-detail-section h4 { margin: 0 0 8px; font-size: 15px; }
     .task-detail-section pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; color: #263858; max-height: 180px; overflow: auto; }
     .task-detail-record { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
     .task-detail-record:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
     .task-detail-record strong { display: block; margin-bottom: 6px; }
+    .moment-item { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
+    .moment-item:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+    .moment-summary {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 11px;
+      color: #17233d;
+      text-align: left;
+      background: #fff;
+      border: 1px solid rgba(223,230,242,.9);
+      border-radius: 12px;
+      box-shadow: none;
+    }
+    .moment-summary span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
+    .moment-summary small { flex: 0 0 auto; color: var(--blue); }
+    .moment-detail { display: none; margin-top: 10px; }
+    .moment-item.open .moment-detail { display: grid; gap: 10px; }
+    .moment-select-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
+    .moment-select-row label { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 999px; background: rgba(36,92,255,.08); color: #263858; }
+    .moment-select-row input { width: auto; }
     .task-detail-moments-copy {
       margin: 0;
       padding: 12px;
@@ -1987,7 +2030,15 @@
       overflow: auto;
     }
     .task-detail-prompts { display: grid; gap: 6px; margin-top: 8px; color: #66758f; font-size: 12px; }
-    .task-detail-prompts span { display: block; }
+    .task-detail-prompts label, .task-detail-prompts span { display: flex; gap: 6px; align-items: flex-start; }
+    .task-detail-prompts input { width: auto; margin-top: 2px; }
+    .moment-image-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .moment-image-actions button { padding: 7px 11px; border-radius: 999px; font-size: 12px; }
+    .moment-image-status { color: var(--muted); font-size: 12px; }
+    .moment-image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+    .moment-image-tile { display: grid; gap: 5px; }
+    .moment-image-tile img { width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 12px; border: 1px solid var(--line); background: #f8fbff; }
+    .moment-image-tile a { font-size: 12px; color: var(--blue); }
     .work-shell { display: grid; gap: 14px; }
     .work-header {
       padding: 20px;
@@ -2592,20 +2643,71 @@
             </div>
             <button class="danger" type="button" id="logoutBtn">退出登录</button>
           </div>
-          <div class="panel runs">
-            <div class="section-title">
-              <h2>定时任务</h2>
-              <button class="ghost" type="button" id="refreshTasksBtn">刷新</button>
-            </div>
-            <div class="task-list" id="taskList"></div>
+          <div class="panel settings">
+            <button class="profile-entry" type="button" data-tab-target="taskList">
+              <span>
+                <strong>定时任务</strong>
+                <small>查看已创建的定时任务，进入后默认加载 10 条。</small>
+              </span>
+              <b>进入</b>
+            </button>
+            <button class="profile-entry" type="button" data-tab-target="runList">
+              <span>
+                <strong>执行记录</strong>
+                <small>查看任务执行结果，详情页再展示具体内容。</small>
+              </span>
+              <b>进入</b>
+            </button>
           </div>
-          <div class="panel runs">
-            <div class="section-title">
-              <h2>执行记录</h2>
-              <button class="ghost" type="button" id="refreshRunsBtn">刷新</button>
-            </div>
-            <div class="run-list" id="runList"></div>
+        </div>
+      </section>
+
+      <section class="view" id="taskListView">
+        <div class="panel list-page">
+          <div class="section-title">
+            <h2>定时任务</h2>
+            <button class="ghost" type="button" id="refreshTasksBtn">刷新</button>
           </div>
+          <div class="task-list" id="taskList"></div>
+          <div class="pager-actions">
+            <button class="ghost hidden" type="button" id="loadMoreTasksBtn">加载更多</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="taskDetailView">
+        <div class="panel detail-page">
+          <div class="section-title">
+            <h2 id="taskPageTitle">定时任务详情</h2>
+            <button class="ghost" type="button" id="backToTaskListBtn">返回列表</button>
+          </div>
+          <div class="detail-body" id="taskPageBody"></div>
+        </div>
+      </section>
+
+      <section class="view" id="runListView">
+        <div class="panel list-page">
+          <div class="section-title">
+            <h2>执行记录</h2>
+            <button class="ghost" type="button" id="refreshRunsBtn">刷新</button>
+          </div>
+          <div class="run-list" id="runList"></div>
+          <div class="pager-actions">
+            <button class="ghost hidden" type="button" id="loadMoreRunsBtn">加载更多</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="runDetailView">
+        <div class="panel detail-page">
+          <div class="section-title">
+            <div>
+              <h2 id="runPageTitle">执行详情</h2>
+              <div class="hint" id="runPageSubtitle">正在读取结果</div>
+            </div>
+            <button class="ghost" type="button" id="backFromRunDetailBtn">返回列表</button>
+          </div>
+          <div class="detail-body" id="runPageBody"></div>
         </div>
       </section>
     </div>
@@ -2629,21 +2731,6 @@
         <button class="ghost" type="button" id="employeeWorkListBtn">工作列表</button>
         <button type="button" id="employeeWorkbenchBtn">安排工作</button>
       </div>
-    </div>
-  </div>
-
-  <div class="employee-modal hidden" id="taskDetailModal" data-mode="idle" role="dialog" aria-modal="true" aria-labelledby="taskDetailTitle">
-    <button class="employee-modal-backdrop" type="button" id="taskDetailBackdrop" aria-label="关闭"></button>
-    <div class="employee-popover task-detail-popover">
-      <button class="employee-popover-close" type="button" id="taskDetailClose" aria-label="关闭">×</button>
-      <div class="employee-popover-head">
-        <div class="employee-mini-avatar">详</div>
-        <div class="employee-popover-title">
-          <strong id="taskDetailTitle">任务详情</strong>
-          <span id="taskDetailSub">正在读取结果</span>
-        </div>
-      </div>
-      <div class="task-detail-body" id="taskDetailBody"></div>
     </div>
   </div>
 
@@ -2681,6 +2768,12 @@
       devices: [],
       tasks: [],
       runs: [],
+      taskListOffset: 0,
+      taskListHasNext: false,
+      runListOffset: 0,
+      runListHasNext: false,
+      runDetailBackTab: "runList",
+      taskDetailBackTab: "taskList",
       historyItems: [],
       companyName: localStorage.getItem("lobster_h5_company_name") || "我的AI公司",
       officeDeviceFilter: "all",
@@ -3041,6 +3134,12 @@
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+    }
+
+    function cssEscape(value) {
+      const text = String(value || "");
+      if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(text);
+      return text.replace(/["\\\]\[]/g, "\\$&");
     }
 
     function firstChar(text) {
@@ -3723,6 +3822,69 @@
       }[String(task || "")] || task || "文案";
     }
 
+    function recordImages(rec) {
+      if (!rec || typeof rec !== "object") return [];
+      if (Array.isArray(rec.images) && rec.images.length) return rec.images;
+      const meta = rec.meta && typeof rec.meta === "object" ? rec.meta : {};
+      if (Array.isArray(meta.images) && meta.images.length) return meta.images;
+      if (rec.image_url) return [{ image_url: rec.image_url, image_asset_id: rec.image_asset_id || "", image_prompt: rec.image_prompt || "", index: 1 }];
+      return [];
+    }
+
+    function recordImagePrompts(rec) {
+      const prompts = [];
+      const add = (value) => {
+        const text = String(value || "").trim();
+        if (text && !prompts.includes(text)) prompts.push(text);
+      };
+      if (rec && Array.isArray(rec.image_prompts)) rec.image_prompts.forEach(add);
+      const meta = rec && rec.meta && typeof rec.meta === "object" ? rec.meta : {};
+      if (Array.isArray(meta.image_prompts)) meta.image_prompts.forEach(add);
+      add(rec && rec.image_prompt);
+      return prompts.slice(0, 3);
+    }
+
+    function momentImageTiles(images) {
+      const rows = Array.isArray(images) ? images.filter((img) => img && (img.image_url || img.url)) : [];
+      if (!rows.length) return "";
+      return `<div class="moment-image-grid">${rows.map((img, idx) => {
+        const url = img.image_url || img.url || "";
+        const safeUrl = escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, `moment-${idx + 1}.png`)));
+        return `<div class="moment-image-tile">
+          <a href="${safeUrl}" target="_blank" rel="noopener noreferrer"><img src="${safeUrl}" alt="朋友圈图片 ${escapeHtml(idx + 1)}"></a>
+          <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">打开图片</a>
+        </div>`;
+      }).join("")}</div>`;
+    }
+
+    function momentRecordHtml(rec, idx) {
+      const recordId = String(rec.record_id || "").trim();
+      const title = String(rec.title || `朋友圈文案 ${idx + 1}`).trim();
+      const body = String(rec.body || rec.content || "").trim();
+      const prompts = recordImagePrompts(rec);
+      const images = recordImages(rec);
+      const disabled = recordId ? "" : " disabled";
+      const memoryDocIds = Array.isArray(rec.memory_doc_ids) ? rec.memory_doc_ids.map((id) => String(id || "").trim()).filter(Boolean).join(",") : "";
+      return `<div class="moment-item" data-moment-record="${escapeHtml(recordId)}" data-moment-memory-doc-ids="${escapeHtml(memoryDocIds)}">
+        <button class="moment-summary" type="button" data-toggle-moment="${escapeHtml(recordId || idx)}">
+          <span>${escapeHtml(idx + 1)}. ${escapeHtml(title)}</span>
+          <small>${images.length ? `已生成 ${images.length} 张图` : "展开"}</small>
+        </button>
+        <div class="moment-detail">
+          <div class="moment-select-row">
+            <label><input type="checkbox" data-moment-select="${escapeHtml(recordId)}"${disabled}>选择这条文案出图</label>
+            ${recordId ? "" : "<span>缺少 record_id，无法回写图片</span>"}
+          </div>
+          <div class="task-detail-moments-copy">${escapeHtml(body || "暂无正文")}</div>
+          <div class="task-detail-prompts">
+            ${prompts.length ? prompts.map((p, pIdx) => `<label><input type="checkbox" data-moment-prompt="${escapeHtml(recordId)}" value="${escapeHtml(pIdx)}" checked>配图 ${escapeHtml(pIdx + 1)}：${escapeHtml(p)}</label>`).join("") : "<span>暂无配图提示词，将根据正文生成。</span>"}
+          </div>
+          <div class="moment-image-status" data-moment-status="${escapeHtml(recordId)}">${images.length ? `已生成 ${images.length} 张图片` : ""}</div>
+          <div data-moment-images="${escapeHtml(recordId)}">${momentImageTiles(images)}</div>
+        </div>
+      </div>`;
+    }
+
     function taskDetailHtml(run) {
       const payload = run && run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
       const sections = [];
@@ -3785,6 +3947,7 @@
       }
       function renderDouyinLeadPreview(data) {
         const action = String(data.action || "").trim();
+        const stats = data.stats && typeof data.stats === "object" ? data.stats : {};
         const rows = [];
         if (action === "search_collect") {
           const items = Array.isArray(data.items) ? data.items : [];
@@ -3867,56 +4030,161 @@
           return renderTaskDetailRecord(`${idx + 1}. ${title || `结果 ${idx + 1}`}`, sub);
         }).join("")}</div>`;
       }
+      function readablePayloadRows(data) {
+        const rows = [];
+        const add = (label, value) => {
+          const text = String(value == null ? "" : value).trim();
+          if (text) rows.push([label, text]);
+        };
+        if (!data || typeof data !== "object") return rows;
+        add("任务类型", data.task_kind || data.action || data.capability_id || "");
+        add("结果", data.message || data.msg || data.summary || data.result_text || data.text || "");
+        add("标题", data.title || "");
+        add("数量", data.count != null ? compactNumber(data.count) : "");
+        add("总数", data.total != null ? compactNumber(data.total) : "");
+        const refs = data.result_refs && typeof data.result_refs === "object" ? data.result_refs : {};
+        const urls = Array.isArray(data.media_urls) ? data.media_urls : (Array.isArray(refs.urls) ? refs.urls : []);
+        add("媒体文件", urls.length ? `${urls.length} 个` : "");
+        return rows;
+      }
       if (payload.ip_content_daily) {
         const groups = Array.isArray(payload.groups) ? payload.groups : [];
         sections.push(`<div class="task-detail-section"><h4>IP日更文案</h4>${groups.map((group) => {
           const records = Array.isArray(group.records) ? group.records : [];
+          const isMoments = String(group.task || "") === "moments_candidate";
+          if (isMoments) {
+            return `<div class="task-detail-record" data-moment-group="1">
+              <strong>${escapeHtml(ipTaskLabel(group.task))} · ${records.length}条</strong>
+              <div class="moment-image-actions">
+                <button type="button" data-generate-selected-moment-images="1">生成选中图片</button>
+                <span class="moment-image-status">先选择文案；每条最多使用 3 个配图提示词。</span>
+              </div>
+              ${records.map((rec, idx) => momentRecordHtml(rec, idx)).join("")}
+            </div>`;
+          }
           return `<div class="task-detail-record"><strong>${escapeHtml(ipTaskLabel(group.task))} · ${records.length}条</strong>${records.map((rec, idx) => {
-            const prompts = Array.isArray(rec.image_prompts) ? rec.image_prompts : [];
-            const isMoments = String(group.task || "") === "moments_candidate";
             return `<div class="task-detail-record">
               <strong>${escapeHtml((idx + 1) + ". " + (rec.title || "未命名文案"))}</strong>
-              ${isMoments ? `<div class="task-detail-moments-copy">${escapeHtml(rec.body || rec.content || "")}</div>` : `<pre>${escapeHtml(rec.body || rec.content || "")}</pre>`}
-              ${prompts.length ? `<div class="task-detail-prompts">${prompts.map((p, pIdx) => `<span>配图 ${pIdx + 1}：${escapeHtml(p)}</span>`).join("")}</div>` : ""}
+              <pre>${escapeHtml(rec.body || rec.content || "")}</pre>
             </div>`;
           }).join("")}</div>`;
         }).join("")}</div>`);
       }
       const text = run.error || run.result_text || (run.progress && (run.progress.text || run.progress.message)) || "";
       sections.push(`<div class="task-detail-section"><h4>结果 / 状态</h4><pre>${escapeHtml(text || statusText(run.status))}</pre></div>`);
-      if (payload.task_kind === "douyin_leads") {
+      if (payload.task_kind === "douyin_leads" || run.task_kind === "douyin_leads") {
         const summaryHtml = renderDouyinLeadSummary(payload);
         if (summaryHtml) sections.push(summaryHtml);
         const previewHtml = renderDouyinLeadPreview(payload);
         if (previewHtml) sections.push(previewHtml);
       } else if (!payload.ip_content_daily) {
-        sections.push(`<div class="task-detail-section"><h4>原始结果</h4><pre>${escapeHtml(JSON.stringify(payload || {}, null, 2))}</pre></div>`);
+        const summaryRows = readablePayloadRows(payload);
+        if (summaryRows.length) sections.push(renderTaskDetailSection("结果摘要", summaryRows));
+        const media = renderRunMedia(collectRunMediaUrls(run));
+        if (media) sections.push(`<div class="task-detail-section"><h4>媒体结果</h4>${media}</div>`);
+        const publishActions = renderRunPublishActions(run);
+        if (publishActions) sections.push(`<div class="task-detail-section"><h4>发布动作</h4>${publishActions}</div>`);
       }
       return sections.join("");
     }
 
-    function closeTaskDetailModal() {
-      const modal = $("taskDetailModal");
-      if (modal) modal.classList.add("hidden");
-    }
-
-    async function openRunDetail(runId) {
+    async function openRunDetail(runId, backTab = "") {
       if (!runId) return;
-      const modal = $("taskDetailModal");
-      const body = $("taskDetailBody");
-      if (!modal || !body) return;
-      $("taskDetailTitle").textContent = "任务详情";
-      $("taskDetailSub").textContent = "正在读取结果";
+      const body = $("runPageBody");
+      if (!body) return;
+      const activeView = document.querySelector(".view.active");
+      const activeId = activeView ? String(activeView.id || "") : "";
+      state.runDetailBackTab = backTab || (activeId === "workListView" ? "workList" : (activeId === "taskDetailView" ? "taskDetail" : "runList"));
+      state.currentRunDetailId = runId;
+      $("runPageTitle").textContent = "执行详情";
+      $("runPageSubtitle").textContent = "正在读取结果";
       body.innerHTML = `<div class="hint">加载中...</div>`;
-      modal.classList.remove("hidden");
+      switchTab("runDetail");
       try {
         const data = await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}`);
         const run = data.run || {};
-        $("taskDetailTitle").textContent = run.title || "任务详情";
-        $("taskDetailSub").textContent = `${capabilityName(taskCapabilityId(run) || run.task_kind)} · ${statusText(run.status)}`;
+        $("runPageTitle").textContent = run.title || "执行详情";
+        $("runPageSubtitle").textContent = `${capabilityName(taskCapabilityId(run) || run.task_kind)} · ${statusText(run.status)} · ${fmtTime(run.created_at)}`;
         body.innerHTML = taskDetailHtml(run);
       } catch (err) {
         body.innerHTML = `<div class="hint">${escapeHtml(err.message || "详情加载失败")}</div>`;
+      }
+    }
+
+    function setMomentStatus(recordId, text, isError = false) {
+      const el = document.querySelector(`[data-moment-status="${cssEscape(String(recordId || ""))}"]`);
+      if (!el) return;
+      el.textContent = text || "";
+      el.style.color = isError ? "var(--red)" : "var(--muted)";
+    }
+
+    function selectedMomentRecords() {
+      return Array.from(document.querySelectorAll("[data-moment-select]:checked")).map((input) => {
+        const recordId = String(input.dataset.momentSelect || "").trim();
+        const item = input.closest("[data-moment-record]");
+        const body = item ? (item.querySelector(".task-detail-moments-copy")?.textContent || "").trim() : "";
+        const promptInputs = item ? Array.from(item.querySelectorAll(`[data-moment-prompt="${cssEscape(recordId)}"]:checked`)) : [];
+        const prompts = promptInputs.map((el) => {
+          const label = el.closest("label");
+          const raw = label ? label.textContent || "" : "";
+          return raw.replace(/^配图\s*\d+\s*[:：]\s*/, "").trim();
+        }).filter(Boolean).slice(0, 3);
+        const title = item ? (item.querySelector(".moment-summary span")?.textContent || "").replace(/^\d+\.\s*/, "").trim() : "";
+        const memoryDocIds = item ? String(item.dataset.momentMemoryDocIds || "").split(",").map((id) => id.trim()).filter(Boolean) : [];
+        return { recordId, body, prompts, title, memory_doc_ids: memoryDocIds };
+      }).filter((row) => row.recordId);
+    }
+
+    async function generateSelectedMomentImages(btn) {
+      const selected = selectedMomentRecords();
+      if (!selected.length) {
+        toast("请先选择要出图的朋友圈文案");
+        return;
+      }
+      if (selected.length > 5) {
+        toast("一次最多选择 5 条朋友圈文案");
+        return;
+      }
+      const oldText = btn ? btn.textContent : "";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "下发中...";
+      }
+      const batchId = `h5_moment_img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const batchCreatedAt = new Date().toISOString();
+      try {
+        const records = selected.map((record) => {
+          const prompts = (record.prompts && record.prompts.length ? record.prompts : [record.body || record.title || "朋友圈配图"]).slice(0, 3);
+          setMomentStatus(record.recordId, "已下发到 online，等待客户端生成...");
+          return { ...record, prompts, memory_doc_ids: record.memory_doc_ids || [] };
+        });
+        await submitOnceClientTask({
+            title: "朋友圈图片生成",
+            taskKind: "client_workflow",
+            content: `生成 ${records.length} 条朋友圈配图`,
+            payload: {
+              action: "ip_moments_generate_images",
+              params: {
+                source: "h5_scheduled_run_detail",
+                source_run_id: state.currentRunDetailId || "",
+                batch_id: batchId,
+                batch_created_at: batchCreatedAt,
+                records,
+              },
+            },
+        });
+        toast("已下发到 online 客户端生成图片");
+        if (state.currentRunDetailId) {
+          setTimeout(() => openRunDetail(state.currentRunDetailId, state.runDetailBackTab || "runList"), 1200);
+        }
+      } catch (err) {
+        toast(err.message || "朋友圈出图任务下发失败");
+        selected.forEach((record) => setMomentStatus(record.recordId, err.message || "任务下发失败", true));
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText || "生成选中图片";
+        }
       }
     }
 
@@ -3940,12 +4208,13 @@
         renderOfficeEmployees();
         renderWorkList();
         toast("已下发执行");
-        await Promise.all([loadTasks(), loadRuns()]);
+        await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       } catch (err) {
         removeRun(optimisticRunId);
         renderOfficeEmployees();
         renderWorkList();
         toast(err.message || "下发失败");
+      } finally {
         if (btn) {
           btn.disabled = false;
           btn.textContent = oldText || "立即执行";
@@ -4007,7 +4276,11 @@
         workList: ["工作列表", "已完成、当前和待执行的工作节点"],
         messages: ["手机会话", "消息结果和素材预览"],
         voice: ["龙虾AI语音助手", ""],
-        profile: ["个人中心", "账号、设置和执行记录"],
+        profile: ["个人中心", "账号和功能入口"],
+        taskList: ["定时任务", "默认展示 10 条，更多用翻页加载"],
+        taskDetail: ["定时任务详情", "任务配置和最近执行入口"],
+        runList: ["执行记录", "默认展示 10 条，点开查看具体内容"],
+        runDetail: ["执行详情", "结果、文案和生成图片"],
         douyinLeads: ["抖音获客", "先看账号与机器状态，再安排采集、评论和私信任务"],
         douyinLeadsSchedule: ["安排抖音获客", "按当前在线设备给抖音账号下发具体获客工作"],
       };
@@ -4020,10 +4293,11 @@
       $("topbar").classList.toggle("voice-page", key === "voice");
       if (key === "office") renderOfficeEmployees();
       if (key !== "office") closeEmployeeModal();
-      if (key === "profile") Promise.all([loadTasks(), loadRuns()]);
+      if (key === "taskList") loadTasks({ reset: true });
+      if (key === "runList") loadRuns({ reset: true });
       if (key === "workList") {
         renderWorkList();
-        Promise.all([loadTasks(), loadRuns()]);
+        Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       }
       if (key === "home") {
         setTaskPanelOpen(true);
@@ -4746,7 +5020,7 @@
         $("loginPanel").classList.add("hidden");
         $("appPanel").classList.remove("hidden");
         switchTab("office");
-        await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks(), loadRuns(), loadTaskSkills()]);
+        await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks({ reset: true }), loadRuns({ reset: true }), loadTaskSkills()]);
         return true;
       } catch (err) {
         localStorage.removeItem("lobster_h5_token");
@@ -5395,7 +5669,7 @@
         json: body,
         headers: { "X-Installation-Id": installationId },
       });
-      await Promise.all([loadTasks(), loadRuns()]);
+      await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       return data;
     }
 
@@ -6147,7 +6421,7 @@
       });
       setDouyinTaskInlineMessage("任务已经下发成功，稍后会在执行记录里看到进度。", false);
       toast("抖音获客任务已下发");
-      await Promise.all([loadTasks(), loadRuns()]);
+      await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       return data;
     }
 
@@ -6172,7 +6446,7 @@
         json: body,
         headers: { 'X-Installation-Id': installationId },
       });
-      await Promise.all([loadTasks(), loadRuns()]);
+      await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       return data;
     }
 
@@ -6196,7 +6470,7 @@
         json: body,
         headers: { "X-Installation-Id": installationId },
       });
-      await Promise.all([loadTasks(), loadRuns()]);
+      await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       return data;
     }
 
@@ -6317,7 +6591,7 @@
         renderWorkList();
         toast("任务已下发");
         setTaskPanelOpen(false);
-        await Promise.all([loadTasks(), loadRuns()]);
+        await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       } catch (err) {
         removeRun(optimisticRunId);
         renderOfficeEmployees();
@@ -6328,21 +6602,34 @@
       }
     }
 
-    async function loadTasks() {
+    async function loadTasks(options = {}) {
+      const reset = options.reset !== false;
+      const append = !!options.append;
+      const pageSize = 10;
       const box = $("taskList");
       if (!state.token) return;
-      if (box) box.innerHTML = `<div class="hint">加载中...</div>`;
+      if (reset) {
+        state.taskListOffset = 0;
+        state.taskListHasNext = false;
+      }
+      const offset = append ? state.taskListOffset : 0;
+      if (box && !append) box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
-        const data = await api("/api/scheduled-tasks/tasks?limit=50");
+        const data = await api(`/api/scheduled-tasks/tasks?limit=${pageSize}&offset=${offset}`);
         const rows = Array.isArray(data.tasks) ? data.tasks : [];
-        state.tasks = rows;
+        const pagination = data.pagination || {};
+        state.taskListOffset = offset + rows.length;
+        state.taskListHasNext = !!pagination.has_next;
+        state.tasks = append ? (state.tasks || []).concat(rows) : rows;
         renderWorkList();
         if (!box) return;
-        if (!rows.length) {
+        const allRows = state.tasks || [];
+        if (!allRows.length) {
           box.innerHTML = `<div class="hint">暂无定时任务。</div>`;
+          $("loadMoreTasksBtn")?.classList.add("hidden");
           return;
         }
-        box.innerHTML = rows.map((row) => {
+        box.innerHTML = allRows.map((row) => {
           const interval = row.schedule_label || (row.schedule_type === "daily_times"
             ? `每天 ${(row.schedule_config && Array.isArray(row.schedule_config.daily_times) ? row.schedule_config.daily_times.join("、") : "")}`
             : (row.schedule_type === "interval" ? `每 ${Math.round((row.interval_seconds || 0) / 60)} 分钟` : "一次性"));
@@ -6352,15 +6639,19 @@
               <div class="task-row-meta">${escapeHtml(capabilityName(taskCapabilityId(row)))} · ${escapeHtml(interval)} · ${escapeHtml(statusText(row.status))}</div>
             </div>
             <div class="task-row-actions">
+              <button class="ghost" type="button" data-open-task-detail="${escapeHtml(row.id)}">详情</button>
               ${row.last_run_id ? `<button class="ghost" type="button" data-open-run-detail="${escapeHtml(row.last_run_id)}">最近结果</button>` : ""}
               <button class="ghost" type="button" data-delete-task="${escapeHtml(row.id)}">删除</button>
             </div>
           </div>`;
         }).join("");
+        $("loadMoreTasksBtn")?.classList.toggle("hidden", !state.taskListHasNext);
       } catch (err) {
         state.tasks = [];
+        state.taskListHasNext = false;
         renderWorkList();
         if (box) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "定时任务加载失败")}</div>`;
+        $("loadMoreTasksBtn")?.classList.add("hidden");
       }
     }
 
@@ -6375,7 +6666,8 @@
       try {
         await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
         toast("已停止并删除任务");
-        await Promise.all([loadTasks(), loadRuns()]);
+        await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
+        if (document.querySelector("#taskDetailView.active")) switchTab("taskList");
       } catch (err) {
         toast(err.message || "删除失败");
         if (btn) {
@@ -6383,6 +6675,40 @@
           btn.textContent = oldText || "删除";
         }
       }
+    }
+
+    function taskPageHtml(task) {
+      if (!task || !task.id) return `<div class="hint">任务不存在。</div>`;
+      const interval = task.schedule_label || (task.schedule_type === "daily_times"
+        ? `每天 ${((task.schedule_config && task.schedule_config.daily_times) || []).join("、")}`
+        : (task.schedule_type === "interval" ? `每 ${Math.round((task.interval_seconds || 0) / 60)} 分钟` : "一次性"));
+      const rows = [
+        ["任务类型", capabilityName(taskCapabilityId(task) || task.task_kind)],
+        ["执行方式", interval],
+        ["状态", statusText(task.status)],
+        ["下次执行", task.next_run_at ? fmtTime(task.next_run_at) : "无"],
+        ["最近执行", task.last_run_at ? fmtTime(task.last_run_at) : "无"],
+        ["执行次数", compactNumber(task.run_count || 0)],
+        ["创建时间", fmtTime(task.created_at)],
+        ["最后错误", task.last_error || ""],
+      ].filter((row) => String(row[1] == null ? "" : row[1]).trim() !== "");
+      return `<div class="task-detail-section">
+        <h4>${escapeHtml(task.title || "定时任务")}</h4>
+        ${rows.map(([label, value]) => `<div class="task-detail-record"><strong>${escapeHtml(label)}</strong><pre>${escapeHtml(String(value))}</pre></div>`).join("")}
+      </div>
+      <div class="run-publish-actions">
+        <button type="button" data-run-task-now="${escapeHtml(task.id)}">立即执行</button>
+        ${task.last_run_id ? `<button type="button" data-open-run-detail="${escapeHtml(task.last_run_id)}">查看最近结果</button>` : ""}
+        <button type="button" data-delete-task="${escapeHtml(task.id)}">删除任务</button>
+      </div>`;
+    }
+
+    function openTaskDetail(taskId, backTab = "taskList") {
+      const task = (state.tasks || []).find((row) => String(row.id || "") === String(taskId)) || null;
+      state.taskDetailBackTab = backTab || "taskList";
+      $("taskPageTitle").textContent = task ? (task.title || "定时任务详情") : "定时任务详情";
+      $("taskPageBody").innerHTML = taskPageHtml(task);
+      switchTab("taskDetail");
     }
 
     function renderUploads() {
@@ -6747,7 +7073,7 @@
           btn.disabled = true;
           btn.textContent = "等待发布";
         }
-        await loadRuns();
+        await loadRuns({ reset: true });
       } catch (err) {
         toast(err.message || "提交发布失败");
         if (btn) {
@@ -7024,22 +7350,35 @@
       </div>`;
     }
 
-    async function loadRuns() {
+    async function loadRuns(options = {}) {
+      const reset = options.reset !== false;
+      const append = !!options.append;
+      const pageSize = 10;
       const box = $("runList");
       if (!state.token) return;
-      if (box) box.innerHTML = `<div class="hint">加载中...</div>`;
+      if (reset) {
+        state.runListOffset = 0;
+        state.runListHasNext = false;
+      }
+      const offset = append ? state.runListOffset : 0;
+      if (box && !append) box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
-        const data = await api("/api/scheduled-tasks/runs?limit=30");
+        const data = await api(`/api/scheduled-tasks/runs?limit=${pageSize}&offset=${offset}`);
         const rows = Array.isArray(data.runs) ? data.runs : [];
-        state.runs = rows;
+        const pagination = data.pagination || {};
+        state.runListOffset = offset + rows.length;
+        state.runListHasNext = !!pagination.has_next;
+        state.runs = append ? (state.runs || []).concat(rows) : rows;
         renderOfficeEmployees();
         renderWorkList();
         if (!box) return;
-        if (!rows.length) {
+        const allRows = state.runs || [];
+        if (!allRows.length) {
           box.innerHTML = `<div class="hint">暂无执行记录。</div>`;
+          $("loadMoreRunsBtn")?.classList.add("hidden");
           return;
         }
-        box.innerHTML = rows.map((row) => {
+        box.innerHTML = allRows.map((row) => {
           const result = row.error || row.result_text || (row.progress && (row.progress.text || row.progress.message)) || "";
           return `<div class="run-card">
             <div class="run-top"><span>${escapeHtml(fmtTime(row.created_at))}</span><span>${escapeHtml(statusText(row.status))}</span></div>
@@ -7050,11 +7389,14 @@
             <div class="run-publish-actions"><button type="button" data-open-run-detail="${escapeHtml(row.id || "")}">查看详情</button></div>
           </div>`;
         }).join("");
+        $("loadMoreRunsBtn")?.classList.toggle("hidden", !state.runListHasNext);
       } catch (err) {
         state.runs = [];
+        state.runListHasNext = false;
         renderOfficeEmployees();
         renderWorkList();
         if (box) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
+        $("loadMoreRunsBtn")?.classList.add("hidden");
       }
     }
 
@@ -7071,6 +7413,18 @@
         const next = state.lastViewBeforeMessages;
         state.lastViewBeforeMessages = "";
         switchTab(next);
+        return;
+      }
+      if (activeId === "taskDetailView") {
+        switchTab(state.taskDetailBackTab || "taskList");
+        return;
+      }
+      if (activeId === "runDetailView") {
+        switchTab(state.runDetailBackTab || "runList");
+        return;
+      }
+      if (activeId === "taskListView" || activeId === "runListView") {
+        switchTab("profile");
         return;
       }
       switchTab("office");
@@ -7092,10 +7446,14 @@
     $("addDailyTimeBtn").addEventListener("click", () => addDailyTime());
     $("createTaskBtn").addEventListener("click", () => createScheduledTask().catch((err) => toast(err.message || "下发失败")));
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
-    $("refreshProfileBtn").addEventListener("click", () => Promise.all([refreshDeviceStatus(), loadTasks(), loadRuns()]));
+    $("refreshProfileBtn").addEventListener("click", refreshDeviceStatus);
     $("installIosWebclipBtn").addEventListener("click", installIosWebclip);
-    $("refreshTasksBtn").addEventListener("click", loadTasks);
-    $("refreshRunsBtn").addEventListener("click", loadRuns);
+    $("refreshTasksBtn").addEventListener("click", () => loadTasks({ reset: true }));
+    $("refreshRunsBtn").addEventListener("click", () => loadRuns({ reset: true }));
+    $("loadMoreTasksBtn")?.addEventListener("click", () => loadTasks({ append: true, reset: false }));
+    $("loadMoreRunsBtn")?.addEventListener("click", () => loadRuns({ append: true, reset: false }));
+    $("backToTaskListBtn")?.addEventListener("click", () => switchTab(state.taskDetailBackTab || "taskList"));
+    $("backFromRunDetailBtn")?.addEventListener("click", () => switchTab(state.runDetailBackTab || "runList"));
     $("employeeFloor").addEventListener("click", (evt) => {
       const homeTargetBtn = evt.target.closest("[data-home-target]");
       if (homeTargetBtn) {
@@ -7156,16 +7514,6 @@
       evt.preventDefault();
       evt.stopPropagation();
       closeEmployeeModal();
-    });
-    $("taskDetailBackdrop").addEventListener("click", (evt) => {
-      evt.preventDefault();
-      evt.stopPropagation();
-      closeTaskDetailModal();
-    });
-    $("taskDetailClose").addEventListener("click", (evt) => {
-      evt.preventDefault();
-      evt.stopPropagation();
-      closeTaskDetailModal();
     });
     ["click", "touchend", "pointerup"].forEach((type) => {
       $("employeeModalClose").addEventListener(type, (evt) => {
@@ -7235,9 +7583,14 @@
     });
 
     $("taskList").addEventListener("click", (evt) => {
+      const taskDetailBtn = evt.target.closest("[data-open-task-detail]");
+      if (taskDetailBtn) {
+        openTaskDetail(taskDetailBtn.dataset.openTaskDetail || "", "taskList");
+        return;
+      }
       const detailBtn = evt.target.closest("[data-open-run-detail]");
       if (detailBtn) {
-        openRunDetail(detailBtn.dataset.openRunDetail || "");
+        openRunDetail(detailBtn.dataset.openRunDetail || "", "taskList");
         return;
       }
       const btn = evt.target.closest("[data-delete-task]");
@@ -7248,7 +7601,48 @@
     $("runList").addEventListener("click", (evt) => {
       const detailBtn = evt.target.closest("[data-open-run-detail]");
       if (detailBtn) {
-        openRunDetail(detailBtn.dataset.openRunDetail || "");
+        openRunDetail(detailBtn.dataset.openRunDetail || "", "runList");
+        return;
+      }
+      const publishBtn = evt.target.closest("[data-publish-run]");
+      if (publishBtn) {
+        requestRunPublish(publishBtn.dataset.publishRun || "", publishBtn);
+        return;
+      }
+      const copyBtn = evt.target.closest("[data-copy-media]");
+      if (copyBtn) {
+        copyMediaLink(copyBtn.dataset.copyMedia || "");
+        return;
+      }
+      const iosDownload = evt.target.closest("[data-ios-download]");
+      if (iosDownload) onIosDownloadClick();
+    });
+
+    $("taskPageBody")?.addEventListener("click", (evt) => {
+      const runBtn = evt.target.closest("[data-run-task-now]");
+      if (runBtn) {
+        runTaskNow(runBtn.dataset.runTaskNow || "", runBtn);
+        return;
+      }
+      const detailBtn = evt.target.closest("[data-open-run-detail]");
+      if (detailBtn) {
+        openRunDetail(detailBtn.dataset.openRunDetail || "", "taskDetail");
+        return;
+      }
+      const delBtn = evt.target.closest("[data-delete-task]");
+      if (delBtn) deleteTask(delBtn.dataset.deleteTask || "", delBtn);
+    });
+
+    $("runPageBody")?.addEventListener("click", (evt) => {
+      const toggle = evt.target.closest("[data-toggle-moment]");
+      if (toggle) {
+        const item = toggle.closest(".moment-item");
+        if (item) item.classList.toggle("open");
+        return;
+      }
+      const genBtn = evt.target.closest("[data-generate-selected-moment-images]");
+      if (genBtn) {
+        generateSelectedMomentImages(genBtn);
         return;
       }
       const publishBtn = evt.target.closest("[data-publish-run]");
@@ -7269,7 +7663,7 @@
       if (evt.target.closest("[data-run-task-now]")) return;
       const node = evt.target.closest("[data-open-run-detail]");
       if (!node) return;
-      openRunDetail(node.dataset.openRunDetail || "");
+      openRunDetail(node.dataset.openRunDetail || "", "workList");
     });
 
     $("openDouyinLeadsScheduleBtn")?.addEventListener("click", () => switchTab("douyinLeadsSchedule"));
@@ -7573,7 +7967,7 @@
       setInterval(() => {
         if (!state.token) return;
         const activeView = document.querySelector(".view.active");
-        if (activeView && (activeView.id === "officeView" || activeView.id === "workListView")) loadRuns();
+        if (activeView && (activeView.id === "officeView" || activeView.id === "workListView")) loadRuns({ reset: true });
       }, 5000);
     })();
   </script>

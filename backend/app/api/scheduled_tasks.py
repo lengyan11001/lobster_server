@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, update
+from sqlalchemy import func, or_, update
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -24,11 +24,12 @@ from ..models import (
     ScheduledTaskRun,
     User,
     UserInstallation,
+    IPContentDraftRecord,
 )
 from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
 from .auth import get_current_user, get_current_user_id_from_token
-from .ip_content_studio import run_ip_content_daily_scheduled
+from .ip_content_studio import _draft_record_payload, run_ip_content_daily_scheduled
 from .lead_collection_templates import run_lead_collection_templates_scheduled
 from .installation_slots import ensure_installation_slot
 from .mobile_identity import online_user_for_mobile_user
@@ -639,6 +640,55 @@ def _normalize_scheduled_completion_error(body: ScheduledTaskCompleteIn) -> str:
 def _run_result_payload(row: ScheduledTaskRun) -> Dict[str, Any]:
     payload = row.result_payload if isinstance(row.result_payload, dict) else {}
     return dict(payload or {})
+
+
+def _refresh_ip_content_daily_payload(db: Session, row: ScheduledTaskRun) -> Dict[str, Any]:
+    payload = _run_result_payload(row)
+    if not payload.get("ip_content_daily"):
+        return payload
+    groups = payload.get("groups") if isinstance(payload.get("groups"), list) else []
+    record_ids: List[str] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        records = group.get("records") if isinstance(group.get("records"), list) else []
+        for rec in records:
+            record_id = str((rec or {}).get("record_id") or "").strip() if isinstance(rec, dict) else ""
+            if record_id and record_id not in record_ids:
+                record_ids.append(record_id)
+    if not record_ids:
+        return payload
+    rows = (
+        db.query(IPContentDraftRecord)
+        .filter(IPContentDraftRecord.user_id == row.user_id, IPContentDraftRecord.record_id.in_(record_ids))
+        .all()
+    )
+    by_id = {item.record_id: _draft_record_payload(item) for item in rows}
+    if not by_id:
+        return payload
+    changed = False
+    refreshed_groups: List[Dict[str, Any]] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            refreshed_groups.append(group)
+            continue
+        updated_group = dict(group)
+        records = group.get("records") if isinstance(group.get("records"), list) else []
+        updated_records = []
+        for rec in records:
+            if not isinstance(rec, dict):
+                updated_records.append(rec)
+                continue
+            current = by_id.get(str(rec.get("record_id") or "").strip())
+            updated_records.append(current or rec)
+            changed = changed or bool(current)
+        updated_group["records"] = updated_records
+        refreshed_groups.append(updated_group)
+    if not changed:
+        return payload
+    payload["groups"] = refreshed_groups
+    payload["records_by_task"] = {str(group.get("task") or ""): group.get("records") or [] for group in refreshed_groups if isinstance(group, dict)}
+    return payload
 
 
 def _publish_draft_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1289,18 +1339,19 @@ def create_scheduled_task(
 @router.get("/api/scheduled-tasks/tasks", summary="任务定义列表")
 def list_scheduled_tasks(
     limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
-    rows = (
-        db.query(ScheduledTask)
-        .filter(ScheduledTask.user_id == owner_user.id)
-        .order_by(ScheduledTask.created_at.desc())
-        .limit(limit)
-        .all()
-    )
-    return {"ok": True, "tasks": [_serialize_task(r) for r in rows]}
+    query = db.query(ScheduledTask).filter(ScheduledTask.user_id == owner_user.id)
+    total = query.with_entities(func.count(ScheduledTask.id)).scalar() or 0
+    rows = query.order_by(ScheduledTask.created_at.desc()).offset(offset).limit(limit).all()
+    return {
+        "ok": True,
+        "tasks": [_serialize_task(r) for r in rows],
+        "pagination": {"total": int(total), "limit": int(limit), "offset": int(offset), "has_next": offset + limit < int(total)},
+    }
 
 
 @router.get("/api/scheduled-tasks/assets/creative-candidate-groups", summary="H5 创意成片备选素材组列表")
@@ -1425,19 +1476,20 @@ def run_scheduled_task_now(
 @router.get("/api/scheduled-tasks/runs", summary="执行记录列表")
 def list_scheduled_task_runs(
     limit: int = Query(80, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
     _enqueue_due_tasks(db, owner_user.id)
-    rows = (
-        db.query(ScheduledTaskRun)
-        .filter(ScheduledTaskRun.user_id == owner_user.id)
-        .order_by(ScheduledTaskRun.created_at.desc())
-        .limit(limit)
-        .all()
-    )
-    return {"ok": True, "runs": [_serialize_run(r) for r in rows]}
+    query = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.user_id == owner_user.id)
+    total = query.with_entities(func.count(ScheduledTaskRun.id)).scalar() or 0
+    rows = query.order_by(ScheduledTaskRun.created_at.desc()).offset(offset).limit(limit).all()
+    return {
+        "ok": True,
+        "runs": [_serialize_run(r) for r in rows],
+        "pagination": {"total": int(total), "limit": int(limit), "offset": int(offset), "has_next": offset + limit < int(total)},
+    }
 
 
 @router.get("/api/scheduled-tasks/runs/{run_id}", summary="执行记录详情")
@@ -1448,7 +1500,10 @@ def get_scheduled_task_run(
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
     row = _run_for_user(db, run_id, owner_user.id)
-    return {"ok": True, "run": _serialize_run(row)}
+    data = _serialize_run(row)
+    if row.task_kind == "ip_content_daily":
+        data["result_payload"] = _refresh_ip_content_daily_payload(db, row)
+    return {"ok": True, "run": data}
 
 
 @router.delete("/api/scheduled-tasks/runs/{run_id}", summary="删除执行记录")
