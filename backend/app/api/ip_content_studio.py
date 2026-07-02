@@ -69,6 +69,26 @@ def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return min(maximum, max(minimum, value))
 
 
+def _ip_content_batch_sizes(total: int, batch_size: int) -> list[int]:
+    try:
+        clean_total = int(total or 1)
+    except (TypeError, ValueError):
+        clean_total = 1
+    try:
+        clean_batch = int(batch_size or 5)
+    except (TypeError, ValueError):
+        clean_batch = 5
+    clean_total = max(1, min(clean_total, 20))
+    clean_batch = max(1, min(clean_batch, clean_total))
+    sizes: list[int] = []
+    remaining = clean_total
+    while remaining > 0:
+        cur = min(clean_batch, remaining)
+        sizes.append(cur)
+        remaining -= cur
+    return sizes
+
+
 def _retry_delay(attempt_index: int) -> float:
     return min(8.0, 1.2 * (attempt_index + 1))
 
@@ -3000,6 +3020,172 @@ def _save_draft_records(
     return saved
 
 
+async def _generate_and_save_ip_content_records(
+    *,
+    db: Session,
+    current_user: User,
+    request: Optional[Request] = None,
+    auth_token: str = "",
+    installation_id: str = "",
+    task_key: str,
+    record_task: str,
+    platform: str,
+    rows: list[TikHubSourceItem],
+    fallback_sources: list[dict[str, Any]],
+    memories: list[dict[str, Any]],
+    extra_requirements: str,
+    count: int,
+    group_id: str = "",
+    batch_size: Optional[int] = None,
+    llm_attempts: int = 3,
+    llm_timeout_seconds: float = 150.0,
+    progress: ScheduleProgress = None,
+    task_label: str = "",
+) -> dict[str, Any]:
+    target_count = max(1, min(int(count or 5), 20))
+    clean_group_id = _clean_group_id(group_id) or uuid.uuid4().hex
+    clean_label = task_label or {
+        "industry_hot_oral": "行业热门口播文案",
+        "professional_ip_oral": "IP 日更口播文案",
+        "moments_candidate": "朋友圈文案",
+    }.get(record_task, record_task)
+    clean_batch_size = batch_size if batch_size is not None else target_count
+    batch_sizes = _ip_content_batch_sizes(target_count, clean_batch_size)
+    total_batches = len(batch_sizes)
+    all_records: list[IPContentDraftRecord] = []
+    all_drafts: list[dict[str, Any]] = []
+    source_items: list[dict[str, Any]] = []
+    requirements_text = ""
+    batch_payloads: list[dict[str, Any]] = []
+
+    _emit_schedule_progress(
+        progress,
+        "generate_start",
+        f"开始生成{clean_label}",
+        {
+            "task": record_task,
+            "source_count": len(rows),
+            "fallback_count": len(fallback_sources),
+            "target_count": target_count,
+            "batch_size": clean_batch_size,
+            "batch_count": total_batches,
+            "llm_attempts": llm_attempts,
+            "llm_timeout_seconds": llm_timeout_seconds,
+            "group_id": clean_group_id,
+        },
+    )
+    for batch_index, cur_count in enumerate(batch_sizes, start=1):
+        prior_titles = [
+            _clean_long_text((draft.get("title") or draft.get("body") or "") if isinstance(draft, dict) else "", 120)
+            for draft in all_drafts[-10:]
+        ]
+        batch_extra = extra_requirements
+        if total_batches > 1:
+            batch_extra = (
+                f"{extra_requirements}\n\n"
+                f"本次是第 {batch_index}/{total_batches} 批，需要生成 {cur_count} 条。"
+                "请主动换选题角度、开场方式和场景，不要和前面批次重复。"
+            ).strip()
+            if prior_titles:
+                batch_extra += "\n前面批次已生成过这些方向，请避开：" + "；".join(prior_titles)
+        _emit_schedule_progress(
+            progress,
+            "generate_batch_start",
+            f"开始生成{clean_label}第 {batch_index}/{total_batches} 批",
+            {
+                "task": record_task,
+                "batch_index": batch_index,
+                "batch_count": total_batches,
+                "batch_target_count": cur_count,
+                "saved_count": len(all_records),
+                "group_id": clean_group_id,
+            },
+        )
+        generated = await _call_ip_content_llm(
+            request=request,
+            auth_token=auth_token,
+            installation_id=installation_id,
+            task=task_key,
+            platform=platform,
+            count=cur_count,
+            rows=rows,
+            memories=memories,
+            extra_requirements=batch_extra,
+            fallback_sources=fallback_sources,
+            llm_attempts=llm_attempts,
+            llm_timeout_seconds=llm_timeout_seconds,
+        )
+        drafts = list(generated.get("drafts") or [])
+        all_drafts.extend(drafts)
+        if not source_items:
+            source_items = list(generated.get("source_items") or [])
+        requirements_text = str(generated.get("requirements") or requirements_text or "")
+        _emit_schedule_progress(
+            progress,
+            "save_drafts",
+            f"正在保存{clean_label}第 {batch_index}/{total_batches} 批",
+            {
+                "task": record_task,
+                "batch_index": batch_index,
+                "batch_count": total_batches,
+                "draft_count": len(drafts),
+                "saved_count": len(all_records),
+                "group_id": clean_group_id,
+            },
+        )
+        records = _save_draft_records(
+            db,
+            current_user=current_user,
+            task=record_task,
+            platform=platform,
+            drafts=drafts,
+            rows=rows,
+            memories=memories,
+            extra_requirements=extra_requirements,
+            group_id=clean_group_id,
+        )
+        all_records.extend(records)
+        batch_payloads.append(
+            {
+                "index": batch_index,
+                "count": len(records),
+                "records": [_draft_record_payload(row) for row in records],
+            }
+        )
+        _emit_schedule_progress(
+            progress,
+            "generate_batch_done",
+            f"{clean_label}第 {batch_index}/{total_batches} 批已生成",
+            {
+                "task": record_task,
+                "batch_index": batch_index,
+                "batch_count": total_batches,
+                "record_count": len(records),
+                "saved_count": len(all_records),
+                "group_id": clean_group_id,
+            },
+        )
+    records_payload = [_draft_record_payload(row) for row in all_records]
+    _emit_schedule_progress(
+        progress,
+        "generate_done",
+        f"{clean_label}已生成",
+        {"task": record_task, "record_count": len(records_payload), "group_id": clean_group_id},
+    )
+    return {
+        "task": record_task,
+        "group_id": clean_group_id,
+        "count": len(records_payload),
+        "requirements": requirements_text,
+        "records": records_payload,
+        "drafts": all_drafts[:target_count],
+        "source_items": source_items,
+        "memory_docs": memories,
+        "extra_requirements": _clean_long_text(extra_requirements, 4000),
+        "batches": batch_payloads,
+    }
+
+
 async def run_ip_content_daily_scheduled(
     *,
     db: Session,
@@ -3169,71 +3355,42 @@ async def run_ip_content_daily_scheduled(
         fallback_sources: list[dict[str, Any]],
         count: int,
         extra: str,
+        batch_size: Optional[int] = None,
     ) -> None:
-        group_id = uuid.uuid4().hex
         task_label = {
             "industry_hot_oral": "行业热门口播文案",
             "professional_ip_oral": "IP 日更口播文案",
             "moments_candidate": "朋友圈文案",
         }.get(record_task, record_task)
-        _emit_schedule_progress(
-            progress,
-            "generate_start",
-            f"开始生成{task_label}",
-            {
-                "task": record_task,
-                "source_count": len(rows),
-                "fallback_count": len(fallback_sources),
-                "target_count": count,
-                "llm_attempts": scheduled_llm_attempts,
-                "llm_timeout_seconds": scheduled_llm_timeout_seconds,
-            },
-        )
-        generated = await _call_ip_content_llm(
+        generated = await _generate_and_save_ip_content_records(
+            db=db,
+            current_user=current_user,
             auth_token=auth_token,
             installation_id=f"server-scheduled-{run_id or 'ip-content'}",
-            task=task_key,
+            task_key=task_key,
+            record_task=record_task,
             platform=platform,
-            count=count,
             rows=rows,
+            fallback_sources=fallback_sources,
             memories=memories,
             extra_requirements=extra,
-            fallback_sources=fallback_sources,
+            count=count,
+            batch_size=batch_size,
             llm_attempts=scheduled_llm_attempts,
             llm_timeout_seconds=scheduled_llm_timeout_seconds,
-        )
-        _emit_schedule_progress(
-            progress,
-            "save_drafts",
-            f"正在保存{task_label}",
-            {"task": record_task, "draft_count": len(generated.get("drafts") or [])},
-        )
-        records = _save_draft_records(
-            db,
-            current_user=current_user,
-            task=record_task,
-            platform=platform,
-            drafts=generated["drafts"],
-            rows=rows,
-            memories=memories,
-            extra_requirements=extra,
-            group_id=group_id,
+            progress=progress,
+            task_label=task_label,
         )
         generated_groups.append(
             {
                 "task": record_task,
-                "group_id": group_id,
-                "count": len(records),
+                "group_id": generated.get("group_id") or "",
+                "count": int(generated.get("count") or 0),
                 "requirements": generated.get("requirements") or "",
-                "records": [_draft_record_payload(row) for row in records],
+                "records": generated.get("records") or [],
                 "source_items": generated.get("source_items") or [],
+                "batches": generated.get("batches") or [],
             }
-        )
-        _emit_schedule_progress(
-            progress,
-            "generate_done",
-            f"{task_label}已生成",
-            {"task": record_task, "record_count": len(records), "group_id": group_id},
         )
 
     industry_rows = (
@@ -3299,6 +3456,7 @@ async def run_ip_content_daily_scheduled(
             fallback_sources=moment_fallback_sources,
             count=min(max(int(opts.moments_count or 20), 1), 20),
             extra=_requirements_text(requirements, "moments", "moments_copy", "image", "common"),
+            batch_size=_env_int("IP_CONTENT_STUDIO_MOMENTS_BATCH_SIZE", 5, minimum=1, maximum=20),
         )
 
     records_by_task = {group["task"]: group["records"] for group in generated_groups}
@@ -4042,29 +4200,21 @@ async def generate_industry_hot_oral(
                 sync_results.append(_sync_error_result(source="keyword_sync", row=row, exc=exc, attempts=3))
     rows = _select_keyword_source_rows(db, current_user.id, [row.id for row in keywords], task="industry_hot_oral", limit=40)
     memories = _memory_payload_from_docs(body.memory_docs)
-    generated = await _call_ip_content_llm(
-        request=request,
-        task="task1_industry",
-        platform="douyin",
-        count=min(max(int(body.count or 5), 1), 5),
-        rows=rows,
-        memories=memories,
-        extra_requirements=body.extra_requirements,
-        fallback_sources=_keyword_seed_briefs(keywords),
-    )
-    group_id = uuid.uuid4().hex
-    records = _save_draft_records(
-        db,
+    generated = await _generate_and_save_ip_content_records(
+        db=db,
         current_user=current_user,
-        task="industry_hot_oral",
+        request=request,
+        task_key="task1_industry",
+        record_task="industry_hot_oral",
         platform="douyin",
-        drafts=generated["drafts"],
         rows=rows,
+        fallback_sources=_keyword_seed_briefs(keywords),
         memories=memories,
         extra_requirements=body.extra_requirements,
-        group_id=group_id,
+        count=min(max(int(body.count or 5), 1), 5),
+        task_label="行业热门口播文案",
     )
-    return {"ok": True, "task": "industry_hot_oral", "records": [_draft_record_payload(row) for row in records], "sync_results": sync_results, **generated}
+    return {"ok": True, "task": "industry_hot_oral", "sync_results": sync_results, **generated}
 
 
 @router.post("/api/ip-content/generate/professional-ip-oral", summary="Generate competitor-based professional IP oral scripts")
@@ -4087,29 +4237,21 @@ async def generate_professional_ip_oral(
                 sync_results.append(_sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3))
     rows = _select_competitor_source_rows(db, current_user.id, [row.id for row in accounts], task="professional_ip_oral", limit=40)
     memories = _memory_payload_from_docs(body.memory_docs)
-    generated = await _call_ip_content_llm(
-        request=request,
-        task="task1_ip",
-        platform="douyin",
-        count=min(max(int(body.count or 5), 1), 5),
-        rows=rows,
-        memories=memories,
-        extra_requirements=body.extra_requirements,
-        fallback_sources=_competitor_seed_briefs(accounts),
-    )
-    group_id = uuid.uuid4().hex
-    records = _save_draft_records(
-        db,
+    generated = await _generate_and_save_ip_content_records(
+        db=db,
         current_user=current_user,
-        task="professional_ip_oral",
+        request=request,
+        task_key="task1_ip",
+        record_task="professional_ip_oral",
         platform="douyin",
-        drafts=generated["drafts"],
         rows=rows,
+        fallback_sources=_competitor_seed_briefs(accounts),
         memories=memories,
         extra_requirements=body.extra_requirements,
-        group_id=group_id,
+        count=min(max(int(body.count or 5), 1), 5),
+        task_label="IP 日更口播文案",
     )
-    return {"ok": True, "task": "professional_ip_oral", "records": [_draft_record_payload(row) for row in records], "sync_results": sync_results, **generated}
+    return {"ok": True, "task": "professional_ip_oral", "sync_results": sync_results, **generated}
 
 
 @router.post("/api/ip-content/generate/moments-candidates", summary="Generate 20 WeChat Moments copy candidates")
@@ -4145,26 +4287,20 @@ async def generate_moments_candidates(
     rows = [row for row in rows if not (row.id in seen or seen.add(row.id))][:40]
     memories = _memory_payload_from_docs(body.memory_docs)
     requested_count = min(max(int(body.count or 20), 1), 20)
-    generated = await _call_ip_content_llm(
-        request=request,
-        task="task2_moments",
-        platform="wechat_moments",
-        count=requested_count,
-        rows=rows,
-        memories=memories,
-        extra_requirements=body.extra_requirements,
-        fallback_sources=(_keyword_seed_briefs(keywords) + _competitor_seed_briefs(accounts))[:40],
-    )
-    group_id = _clean_group_id(body.group_id) or uuid.uuid4().hex
-    records = _save_draft_records(
-        db,
+    generated = await _generate_and_save_ip_content_records(
+        db=db,
         current_user=current_user,
-        task="moments_candidate",
+        request=request,
+        task_key="task2_moments",
+        record_task="moments_candidate",
         platform="wechat_moments",
-        drafts=generated["drafts"],
         rows=rows,
+        fallback_sources=(_keyword_seed_briefs(keywords) + _competitor_seed_briefs(accounts))[:40],
         memories=memories,
         extra_requirements=body.extra_requirements,
-        group_id=group_id,
+        count=requested_count,
+        group_id=body.group_id,
+        batch_size=_env_int("IP_CONTENT_STUDIO_MOMENTS_BATCH_SIZE", 5, minimum=1, maximum=20),
+        task_label="朋友圈文案",
     )
-    return {"ok": True, "task": "moments_candidate", "records": [_draft_record_payload(row) for row in records], "sync_results": sync_results, **generated}
+    return {"ok": True, "task": "moments_candidate", "sync_results": sync_results, **generated}

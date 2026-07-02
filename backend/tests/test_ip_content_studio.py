@@ -772,6 +772,84 @@ def test_personal_default_template_payload_marks_source():
     assert payload["meta"]["is_personal_default"] is True
 
 
+def test_ip_content_batch_sizes_split_into_stable_chunks():
+    from backend.app.api import ip_content_studio as studio
+
+    assert studio._ip_content_batch_sizes(20, 5) == [5, 5, 5, 5]
+    assert studio._ip_content_batch_sizes(12, 5) == [5, 5, 2]
+    assert studio._ip_content_batch_sizes(3, 5) == [3]
+    assert studio._ip_content_batch_sizes(99, 8) == [8, 8, 4]
+
+
+def test_generate_and_save_ip_content_records_batches_moments(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+    saved_groups = []
+
+    async def fake_call(**kwargs):
+        calls.append(kwargs["count"])
+        return {
+            "requirements": f"req-{kwargs['count']}",
+            "drafts": [
+                {"title": f"t{len(calls)}-{idx}", "body": f"body {len(calls)}-{idx}", "image_prompts": ["p"]}
+                for idx in range(kwargs["count"])
+            ],
+            "source_items": [{"id": "source"}],
+        }
+
+    def fake_save(db, *, current_user, task, platform, drafts, rows, memories, extra_requirements, group_id):
+        saved_groups.append(group_id)
+        return [
+            SimpleNamespace(
+                id=len(saved_groups) * 100 + idx,
+                record_id=f"{group_id}-{len(saved_groups)}-{idx}",
+                task=task,
+                platform=platform,
+                title=draft["title"],
+                content=draft["body"],
+                image_prompt="p",
+                image_url="",
+                image_asset_id="",
+                selected=True,
+                source_item_ids=[],
+                memory_doc_ids=[],
+                meta={"group_id": group_id, "image_prompts": ["p"]},
+                created_at=None,
+                updated_at=None,
+            )
+            for idx, draft in enumerate(drafts)
+        ]
+
+    monkeypatch.setattr(studio, "_call_ip_content_llm", fake_call)
+    monkeypatch.setattr(studio, "_save_draft_records", fake_save)
+
+    result = asyncio.run(
+        studio._generate_and_save_ip_content_records(
+            db=object(),
+            current_user=SimpleNamespace(id=1),
+            task_key="task2_moments",
+            record_task="moments_candidate",
+            platform="wechat_moments",
+            rows=[],
+            fallback_sources=[{"title": "seed"}],
+            memories=[],
+            extra_requirements="",
+            count=12,
+            group_id="group-a",
+            batch_size=5,
+        )
+    )
+
+    assert calls == [5, 5, 2]
+    assert saved_groups == ["group-a", "group-a", "group-a"]
+    assert result["count"] == 12
+    assert len(result["batches"]) == 3
+
+
 def test_oral_records_drop_image_prompts(monkeypatch):
     from types import SimpleNamespace
 
