@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -33,6 +33,40 @@ router = APIRouter()
 _SOURCE_META_KEY = "__lobster_ip_content_meta"
 _SOURCE_USAGE_KEY = "__lobster_ip_content_usage"
 _RETRY_HTTP_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+_PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
+
+
+ScheduleProgress = Optional[Callable[[str, str, Optional[dict[str, Any]]], None]]
+
+
+def _emit_schedule_progress(
+    progress: ScheduleProgress,
+    stage: str,
+    text: str,
+    extra: Optional[dict[str, Any]] = None,
+) -> None:
+    if progress is None:
+        return
+    try:
+        progress(stage, text, extra or {})
+    except Exception:
+        pass
+
+
+def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        value = default
+    return min(maximum, max(minimum, value))
+
+
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        value = default
+    return min(maximum, max(minimum, value))
 
 
 def _retry_delay(attempt_index: int) -> float:
@@ -2423,6 +2457,28 @@ def _template_payload(row: IPContentScheduleTemplate) -> dict[str, Any]:
     }
 
 
+def _personal_default_template_payload(row: Optional[IPContentScheduleTemplate]) -> dict[str, Any]:
+    if row is None:
+        return {
+            "id": None,
+            "name": _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            "keyword_ids": [],
+            "competitor_ids": [],
+            "memory_doc_ids": [],
+            "memory_docs": [],
+            "requirements": {},
+            "status": "empty",
+            "meta": {"source": "personal_settings", "is_personal_default": True},
+            "created_at": None,
+            "updated_at": None,
+        }
+    payload = _template_payload(row)
+    payload["meta"] = dict(payload.get("meta") or {})
+    payload["meta"]["source"] = "personal_settings"
+    payload["meta"]["is_personal_default"] = True
+    return payload
+
+
 def _validate_template_refs(db: Session, user_id: int, keyword_ids: list[int], competitor_ids: list[int]) -> tuple[list[int], list[int]]:
     clean_keyword_ids = _clean_int_ids(keyword_ids, 50)
     clean_competitor_ids = _clean_int_ids(competitor_ids, 50)
@@ -2714,12 +2770,24 @@ async def _post_llm_with_retry(
     payload: dict[str, Any],
     headers: dict[str, str],
     attempts: int = 3,
+    timeout_seconds: float = 150.0,
 ) -> dict[str, Any]:
     attempts = max(1, int(attempts or 1))
+    try:
+        timeout_value = max(10.0, float(timeout_seconds or 150.0))
+    except (TypeError, ValueError):
+        timeout_value = 150.0
+    timeout = httpx.Timeout(
+        timeout_value,
+        connect=min(15.0, timeout_value),
+        read=timeout_value,
+        write=min(30.0, timeout_value),
+        pool=10.0,
+    )
     last_detail = ""
     for idx in range(attempts):
         try:
-            async with httpx.AsyncClient(timeout=150.0, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
                 resp = await client.post(f"{_internal_api_base()}/api/sutui-chat/completions", json=payload, headers=headers)
             try:
                 data = resp.json() if resp.content else {}
@@ -2755,6 +2823,8 @@ async def _call_ip_content_llm(
     memories: list[dict[str, Any]],
     extra_requirements: str,
     fallback_sources: Optional[list[dict[str, Any]]] = None,
+    llm_attempts: int = 3,
+    llm_timeout_seconds: float = 150.0,
 ) -> dict[str, Any]:
     count = max(1, min(int(count or 5), 20))
     fallback_sources = fallback_sources or []
@@ -2856,7 +2926,12 @@ async def _call_ip_content_llm(
         "stream": False,
         "temperature": 0.76,
     }
-    data = await _post_llm_with_retry(payload=payload, headers=headers, attempts=3)
+    data = await _post_llm_with_retry(
+        payload=payload,
+        headers=headers,
+        attempts=llm_attempts,
+        timeout_seconds=llm_timeout_seconds,
+    )
     try:
         text = str(data["choices"][0]["message"]["content"] or "")
     except Exception:
@@ -2931,9 +3006,16 @@ async def run_ip_content_daily_scheduled(
     current_user: User,
     options: dict[str, Any],
     run_id: str = "",
+    progress: ScheduleProgress = None,
 ) -> dict[str, Any]:
     opts = ScheduledDailyRunOptions(**(options or {}))
     selected_tasks = _clean_scheduled_daily_tasks(opts.tasks) or list(_SCHEDULED_DAILY_TASKS)
+    _emit_schedule_progress(
+        progress,
+        "prepare",
+        "已读取 IP 日更定时任务配置",
+        {"tasks": selected_tasks, "template_id": opts.template_id},
+    )
     need_keywords = "industry_hot_oral" in selected_tasks or "moments_candidate" in selected_tasks
     need_competitors = "professional_ip_oral" in selected_tasks or "moments_candidate" in selected_tasks
     template_payload: dict[str, Any] = {}
@@ -2989,18 +3071,91 @@ async def run_ip_content_daily_scheduled(
     if not keywords and not competitors and not memories:
         raise HTTPException(status_code=400, detail="请选择关键词、同行账号模板或记忆资料")
 
+    _emit_schedule_progress(
+        progress,
+        "sources_ready",
+        "已准备关键词、同行账号和记忆资料",
+        {
+            "keyword_count": len(keywords),
+            "competitor_count": len(competitors),
+            "memory_count": len(memories),
+        },
+    )
+    scheduled_llm_attempts = _env_int("IP_CONTENT_STUDIO_SCHEDULE_LLM_ATTEMPTS", 1, minimum=1, maximum=3)
+    scheduled_llm_timeout_seconds = _env_float(
+        "IP_CONTENT_STUDIO_SCHEDULE_LLM_TIMEOUT_SEC",
+        120.0,
+        minimum=30.0,
+        maximum=300.0,
+    )
     sync_results: list[dict[str, Any]] = []
     if opts.sync_before:
-        for row in (keywords if need_keywords else []):
+        sync_keyword_rows = keywords if need_keywords else []
+        sync_competitor_rows = competitors if need_competitors else []
+        _emit_schedule_progress(
+            progress,
+            "sync_start",
+            "开始同步最新关键词和同行数据",
+            {"keyword_count": len(sync_keyword_rows), "competitor_count": len(sync_competitor_rows)},
+        )
+        for idx, row in enumerate(sync_keyword_rows, start=1):
+            keyword_name = _clean_text(getattr(row, "keyword", "") or getattr(row, "display_name", "") or row.id, 120)
+            _emit_schedule_progress(
+                progress,
+                "sync_keyword",
+                f"正在同步关键词：{keyword_name}",
+                {"index": idx, "total": len(sync_keyword_rows), "keyword_id": row.id},
+            )
             try:
-                sync_results.append(await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24))
+                result = await _sync_keyword_row(db=db, current_user=current_user, row=row, page_size=20, date_window=24)
+                sync_results.append(result)
+                _emit_schedule_progress(
+                    progress,
+                    "sync_keyword_done",
+                    f"关键词同步完成：{keyword_name}",
+                    {"keyword_id": row.id, "result_count": int(result.get("result_count") or 0)},
+                )
             except Exception as exc:
-                sync_results.append(_sync_error_result(source="keyword_sync", row=row, exc=exc, attempts=3))
-        for row in (competitors if need_competitors else []):
+                result = _sync_error_result(source="keyword_sync", row=row, exc=exc, attempts=3)
+                sync_results.append(result)
+                _emit_schedule_progress(
+                    progress,
+                    "sync_keyword_error",
+                    f"关键词同步失败：{keyword_name}",
+                    {"keyword_id": row.id, "error": result.get("error_message") or ""},
+                )
+        for idx, row in enumerate(sync_competitor_rows, start=1):
+            competitor_name = _clean_text(
+                getattr(row, "display_name", "")
+                or getattr(row, "nickname", "")
+                or getattr(row, "account_key", "")
+                or row.id,
+                120,
+            )
+            _emit_schedule_progress(
+                progress,
+                "sync_competitor",
+                f"正在同步同行账号：{competitor_name}",
+                {"index": idx, "total": len(sync_competitor_rows), "competitor_id": row.id},
+            )
             try:
-                sync_results.append(await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20))
+                result = await _sync_competitor_row(db=db, current_user=current_user, row=row, count=20)
+                sync_results.append(result)
+                _emit_schedule_progress(
+                    progress,
+                    "sync_competitor_done",
+                    f"同行账号同步完成：{competitor_name}",
+                    {"competitor_id": row.id, "result_count": int(result.get("result_count") or 0)},
+                )
             except Exception as exc:
-                sync_results.append(_sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3))
+                result = _sync_error_result(source="competitor_sync", row=row, exc=exc, attempts=3)
+                sync_results.append(result)
+                _emit_schedule_progress(
+                    progress,
+                    "sync_competitor_error",
+                    f"同行账号同步失败：{competitor_name}",
+                    {"competitor_id": row.id, "error": result.get("error_message") or ""},
+                )
 
     auth_token = _server_bearer_for_user(current_user)
     generated_groups: list[dict[str, Any]] = []
@@ -3016,6 +3171,24 @@ async def run_ip_content_daily_scheduled(
         extra: str,
     ) -> None:
         group_id = uuid.uuid4().hex
+        task_label = {
+            "industry_hot_oral": "行业热门口播文案",
+            "professional_ip_oral": "IP 日更口播文案",
+            "moments_candidate": "朋友圈文案",
+        }.get(record_task, record_task)
+        _emit_schedule_progress(
+            progress,
+            "generate_start",
+            f"开始生成{task_label}",
+            {
+                "task": record_task,
+                "source_count": len(rows),
+                "fallback_count": len(fallback_sources),
+                "target_count": count,
+                "llm_attempts": scheduled_llm_attempts,
+                "llm_timeout_seconds": scheduled_llm_timeout_seconds,
+            },
+        )
         generated = await _call_ip_content_llm(
             auth_token=auth_token,
             installation_id=f"server-scheduled-{run_id or 'ip-content'}",
@@ -3026,6 +3199,14 @@ async def run_ip_content_daily_scheduled(
             memories=memories,
             extra_requirements=extra,
             fallback_sources=fallback_sources,
+            llm_attempts=scheduled_llm_attempts,
+            llm_timeout_seconds=scheduled_llm_timeout_seconds,
+        )
+        _emit_schedule_progress(
+            progress,
+            "save_drafts",
+            f"正在保存{task_label}",
+            {"task": record_task, "draft_count": len(generated.get("drafts") or [])},
         )
         records = _save_draft_records(
             db,
@@ -3047,6 +3228,12 @@ async def run_ip_content_daily_scheduled(
                 "records": [_draft_record_payload(row) for row in records],
                 "source_items": generated.get("source_items") or [],
             }
+        )
+        _emit_schedule_progress(
+            progress,
+            "generate_done",
+            f"{task_label}已生成",
+            {"task": record_task, "record_count": len(records), "group_id": group_id},
         )
 
     industry_rows = (
@@ -3071,6 +3258,17 @@ async def run_ip_content_daily_scheduled(
     keyword_fallback_sources = _keyword_seed_briefs(keywords)
     competitor_fallback_sources = _competitor_seed_briefs(competitors)
     moment_fallback_sources = (keyword_fallback_sources + competitor_fallback_sources)[:40]
+    _emit_schedule_progress(
+        progress,
+        "rows_ready",
+        "已准备生成素材，开始生成文案",
+        {
+            "industry_row_count": len(industry_rows),
+            "ip_row_count": len(ip_rows),
+            "moment_row_count": len(moment_rows),
+            "memory_count": len(memories),
+        },
+    )
 
     if "industry_hot_oral" in selected_tasks:
         await generate_group(
@@ -3263,6 +3461,64 @@ def list_schedule_templates(
         .all()
     )
     return {"items": [_template_payload(row) for row in rows]}
+
+
+@router.get("/api/ip-content/personal-default", summary="读取用户个人默认 IP 日更配置")
+def get_personal_default_ip_content_config(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == current_user.id,
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+    return {"ok": True, "item": _personal_default_template_payload(row)}
+
+
+@router.put("/api/ip-content/personal-default", summary="保存用户个人默认 IP 日更配置")
+def save_personal_default_ip_content_config(
+    body: ScheduleTemplateBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
+    memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == current_user.id,
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+        )
+        .order_by(IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+    if row is None:
+        row = IPContentScheduleTemplate(
+            user_id=current_user.id,
+            name=_PERSONAL_DEFAULT_TEMPLATE_NAME,
+        )
+        db.add(row)
+    row.keyword_ids = keyword_ids
+    row.competitor_ids = competitor_ids
+    row.memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
+    row.memory_docs = memory_docs
+    row.requirements = _jsonable(body.requirements or {})
+    row.meta = _jsonable({**(body.meta or {}), "source": "personal_settings", "is_personal_default": True})
+    row.status = "active"
+    row.updated_at = _utcnow()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="个人默认配置保存冲突，请刷新后重试")
+    db.refresh(row)
+    return {"ok": True, "item": _personal_default_template_payload(row)}
 
 
 @router.post("/api/ip-content/schedule-templates", summary="保存 IP 日更定时任务模板")

@@ -7,7 +7,7 @@ from datetime import datetime
 
 from sqlalchemy import update
 
-from ..api.scheduled_tasks import _enqueue_task
+from ..api.scheduled_tasks import _enqueue_task, _fail_stale_server_side_runs
 from ..db import SessionLocal
 from ..models import ScheduledTask
 
@@ -18,6 +18,9 @@ def _tick_once_sync() -> int:
     db = SessionLocal()
     try:
         now = datetime.utcnow()
+        stale_count = _fail_stale_server_side_runs(db, now)
+        if stale_count:
+            logger.warning("[server-side-schedule] marked stale processing runs failed=%s", stale_count)
         rows = (
             db.query(ScheduledTask)
             .filter(

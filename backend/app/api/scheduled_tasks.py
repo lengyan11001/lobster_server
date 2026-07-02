@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 import re
 import time
@@ -49,6 +50,28 @@ _PENDING_INSTALLATION_TOUCH_MIN_SECONDS = 60
 _RUN_PENDING_EMPTY_CACHE_SECONDS = 20.0
 _PUBLISH_PENDING_EMPTY_CACHE_SECONDS = 20.0
 _pending_empty_cache: Dict[str, float] = {}
+
+
+def _server_side_timeout_seconds(task_kind: str) -> float:
+    defaults = {
+        "ip_content_daily": ("LOBSTER_IP_CONTENT_SCHEDULE_TIMEOUT_SEC", 600.0),
+        "lead_collection_templates": ("LOBSTER_LEAD_COLLECTION_SCHEDULE_TIMEOUT_SEC", 1800.0),
+    }
+    env_name, default_value = defaults.get(task_kind, ("LOBSTER_SERVER_SIDE_SCHEDULE_TIMEOUT_SEC", 900.0))
+    raw = os.environ.get(env_name) or os.environ.get("LOBSTER_SERVER_SIDE_SCHEDULE_TIMEOUT_SEC") or ""
+    if raw:
+        try:
+            return max(60.0, float(raw))
+        except (TypeError, ValueError):
+            pass
+    return default_value
+
+
+def _merge_run_progress(run: ScheduledTaskRun, patch: Dict[str, Any]) -> Dict[str, Any]:
+    base = run.progress if isinstance(run.progress, dict) else {}
+    merged = dict(base)
+    merged.update(patch)
+    return merged
 
 
 def _creative_candidate_group(meta: Optional[dict]) -> str:
@@ -739,6 +762,32 @@ def _run_async_blocking(coro: Any) -> Any:
     raise RuntimeError("server-side scheduled task cannot be executed inside an active event loop")
 
 
+def _set_server_side_run_progress(
+    db: Session,
+    run: ScheduledTaskRun,
+    *,
+    stage: str,
+    text: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    now = datetime.utcnow()
+    try:
+        db.refresh(run)
+        patch: Dict[str, Any] = {
+            "stage": stage,
+            "text": text,
+            "server_side": True,
+            "progress_updated_at": now.isoformat(),
+        }
+        if extra:
+            patch.update(extra)
+        run.progress = _merge_run_progress(run, patch)
+        run.updated_at = now
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
 def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[datetime] = None) -> None:
     now = now or datetime.utcnow()
     if run.task_kind not in _SERVER_SIDE_TASK_KINDS:
@@ -756,26 +805,40 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
     run.updated_at = now
     db.flush()
     db.commit()
+    timeout_seconds = _server_side_timeout_seconds(run.task_kind)
+
+    def progress(stage: str, text: str, extra: Optional[Dict[str, Any]] = None) -> None:
+        _set_server_side_run_progress(db, run, stage=stage, text=text, extra=extra)
+
     try:
         payload = run.payload if isinstance(run.payload, dict) else {}
         if run.task_kind == "ip_content_daily":
+            progress("start", "服务器开始执行 IP 日更文案", {"timeout_seconds": timeout_seconds})
             result = _run_async_blocking(
-                run_ip_content_daily_scheduled(
-                    db=db,
-                    current_user=user,
-                    options=payload,
-                    run_id=run.id,
+                asyncio.wait_for(
+                    run_ip_content_daily_scheduled(
+                        db=db,
+                        current_user=user,
+                        options=payload,
+                        run_id=run.id,
+                        progress=progress,
+                    ),
+                    timeout=timeout_seconds,
                 )
             )
             result_text = "IP日更文案已生成，朋友圈图片请在详情里手动触发。"
         elif run.task_kind == "lead_collection_templates":
+            progress("start", "服务器开始执行线索采集模板", {"timeout_seconds": timeout_seconds})
             result = _run_async_blocking(
-                run_lead_collection_templates_scheduled(
-                    db=db,
-                    current_user=user,
-                    template_ids=payload.get("template_ids") or [],
-                    title=str(payload.get("title") or run.title or "").strip(),
-                    run_id=run.id,
+                asyncio.wait_for(
+                    run_lead_collection_templates_scheduled(
+                        db=db,
+                        current_user=user,
+                        template_ids=payload.get("template_ids") or [],
+                        title=str(payload.get("title") or run.title or "").strip(),
+                        run_id=run.id,
+                    ),
+                    timeout=timeout_seconds,
                 )
             )
             result_text = "线索采集模板已执行完成。"
@@ -796,6 +859,32 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
         if task:
             task.last_error = None
             task.updated_at = finished
+        db.commit()
+    except (asyncio.TimeoutError, TimeoutError):
+        failed = datetime.utcnow()
+        try:
+            db.refresh(run)
+        except Exception:
+            pass
+        message = f"服务器执行超过 {int(timeout_seconds)} 秒，已自动停止等待，请稍后重试。"
+        run.status = "failed"
+        run.error = message
+        run.progress = _merge_run_progress(
+            run,
+            {
+                "failed_at": failed.isoformat(),
+                "server_side": True,
+                "stage": "timeout",
+                "text": message,
+                "timeout_seconds": timeout_seconds,
+            },
+        )
+        run.finished_at = failed
+        run.updated_at = failed
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
+        if task:
+            task.last_error = run.error
+            task.updated_at = failed
         db.commit()
     except HTTPException as exc:
         failed = datetime.utcnow()
@@ -829,6 +918,49 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
             task.last_error = run.error
             task.updated_at = failed
         db.commit()
+
+
+def _fail_stale_server_side_runs(db: Session, now: Optional[datetime] = None) -> int:
+    now = now or datetime.utcnow()
+    count = 0
+    for task_kind in _SERVER_SIDE_TASK_KINDS:
+        timeout_seconds = _server_side_timeout_seconds(task_kind)
+        cutoff = now - timedelta(seconds=timeout_seconds)
+        rows = (
+            db.query(ScheduledTaskRun)
+            .filter(
+                ScheduledTaskRun.task_kind == task_kind,
+                ScheduledTaskRun.status == "processing",
+                ScheduledTaskRun.started_at.isnot(None),
+                ScheduledTaskRun.started_at < cutoff,
+            )
+            .limit(50)
+            .all()
+        )
+        for row in rows:
+            message = f"服务器执行超过 {int(timeout_seconds)} 秒，已自动标记失败，请重试。"
+            row.status = "failed"
+            row.error = message
+            row.progress = _merge_run_progress(
+                row,
+                {
+                    "failed_at": now.isoformat(),
+                    "server_side": True,
+                    "stage": "stale_timeout",
+                    "text": message,
+                    "timeout_seconds": timeout_seconds,
+                },
+            )
+            row.finished_at = now
+            row.updated_at = now
+            task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
+            if task:
+                task.last_error = message
+                task.updated_at = now
+            count += 1
+    if count:
+        db.commit()
+    return count
 
 
 def _enqueue_task(db: Session, task: ScheduledTask, now: Optional[datetime] = None) -> List[ScheduledTaskRun]:

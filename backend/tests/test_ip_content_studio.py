@@ -745,6 +745,33 @@ def test_schedule_template_payload_falls_back_to_memory_docs_ids():
     assert payload["memory_doc_ids"] == ["doc-a", "doc-b", "legacy title"]
 
 
+def test_personal_default_template_payload_marks_source():
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    row = SimpleNamespace(
+        id=3,
+        user_id=7,
+        name="个人默认配置",
+        keyword_ids=[1],
+        competitor_ids=[2],
+        memory_doc_ids=["doc-a"],
+        memory_docs=[{"id": "doc-a", "title": "A"}],
+        requirements={"oral": "稳重"},
+        status="active",
+        meta={},
+        created_at=None,
+        updated_at=None,
+    )
+
+    payload = studio._personal_default_template_payload(row)
+
+    assert payload["name"] == "个人默认配置"
+    assert payload["meta"]["source"] == "personal_settings"
+    assert payload["meta"]["is_personal_default"] is True
+
+
 def test_oral_records_drop_image_prompts(monkeypatch):
     from types import SimpleNamespace
 
