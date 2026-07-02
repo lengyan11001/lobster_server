@@ -77,7 +77,7 @@
       padding: 14px 0 28px;
       overflow-x: hidden;
     }
-    #appPanel, .view, .view.active, .panel { max-width: 100%; min-width: 0; }
+    #appPanel, .view, .view.active, .panel { width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; }
     .topbar, .panel {
       border: 1px solid rgba(255, 255, 255, .74);
       background: var(--panel);
@@ -2031,6 +2031,7 @@
       color: #17233d;
       white-space: pre-wrap;
       word-break: break-word;
+      overflow-wrap: anywhere;
       font-size: 14px;
       line-height: 1.78;
       max-height: 420px;
@@ -2039,8 +2040,14 @@
     .task-detail-prompts { display: grid; gap: 6px; margin-top: 8px; color: #66758f; font-size: 12px; }
     .task-detail-prompts label, .task-detail-prompts span { display: flex; gap: 6px; align-items: flex-start; }
     .task-detail-prompts input { width: auto; margin-top: 2px; }
+    .copy-summary-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
+    .copy-summary { min-width: 0; }
+    .copy-summary span { white-space: normal; overflow-wrap: anywhere; }
     .copy-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-    .copy-actions button { padding: 7px 11px; border-radius: 999px; font-size: 12px; }
+    .copy-actions button, .copy-mini-copy { padding: 7px 11px; border-radius: 999px; font-size: 12px; }
+    .copy-mini-copy { min-width: 52px; color: var(--blue); background: rgba(36,92,255,.09); box-shadow: none; }
+    .detail-body, .task-detail-body, .task-detail-section, .task-detail-record { max-width: 100%; min-width: 0; overflow-x: hidden; }
+    .task-detail-section pre { overflow-wrap: anywhere; overflow-x: hidden; }
     .moment-image-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .moment-image-actions button { padding: 7px 11px; border-radius: 999px; font-size: 12px; }
     .moment-image-status { color: var(--muted); font-size: 12px; }
@@ -2164,8 +2171,8 @@
     .toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); max-width: min(520px, calc(100vw - 32px)); padding: 11px 14px; border-radius: 999px; color: #fff; background: rgba(19,33,60,.9); box-shadow: 0 18px 44px rgba(19,33,60,.28); opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 100; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
     @media (max-width: 760px) {
-      .shell { width: 100%; padding: 8px 8px 28px; }
-      .topbar { top: 8px; border-radius: 18px; }
+      .shell { width: 100%; padding: 14px 12px 28px; }
+      .topbar { top: 12px; border-radius: 18px; }
       .settings, .list-page, .detail-page { padding-left: 12px; padding-right: 12px; }
       .subtitle { display: none; }
       .top-action-label { display: none; }
@@ -3905,15 +3912,18 @@
       const body = String(rec.body || rec.content || "").trim();
       const id = String(rec.record_id || rec.id || `${task || "copy"}-${idx}`).trim();
       return `<div class="copy-item" data-copy-record="${escapeHtml(id)}">
-        <button class="copy-summary" type="button" data-toggle-copy-record="${escapeHtml(id)}">
-          <span>${escapeHtml(idx + 1)}. ${escapeHtml(title)}</span>
-          <small>展开</small>
-        </button>
+        <div class="copy-summary-row">
+          <button class="copy-summary" type="button" data-toggle-copy-record="${escapeHtml(id)}">
+            <span>${escapeHtml(idx + 1)}. ${escapeHtml(title)}</span>
+            <small>展开</small>
+          </button>
+          <button class="copy-mini-copy" type="button" data-copy-draft="${escapeHtml(id)}">复制</button>
+        </div>
         <div class="copy-detail">
-          <div class="task-detail-moments-copy">${escapeHtml(body || "暂无正文")}</div>
           <div class="copy-actions">
             <button type="button" data-copy-draft="${escapeHtml(id)}">复制文案</button>
           </div>
+          <div class="task-detail-moments-copy">${escapeHtml(body || "暂无正文")}</div>
         </div>
       </div>`;
     }
@@ -7679,7 +7689,11 @@
       const copyToggle = evt.target.closest("[data-toggle-copy-record]");
       if (copyToggle) {
         const item = copyToggle.closest(".copy-item");
-        if (item) item.classList.toggle("open");
+        if (item) {
+          item.classList.toggle("open");
+          const tip = copyToggle.querySelector("small");
+          if (tip) tip.textContent = item.classList.contains("open") ? "收起" : "展开";
+        }
         return;
       }
       const draftCopyBtn = evt.target.closest("[data-copy-draft]");
