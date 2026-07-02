@@ -2040,12 +2040,14 @@
     .task-detail-prompts { display: grid; gap: 6px; margin-top: 8px; color: #66758f; font-size: 12px; }
     .task-detail-prompts label, .task-detail-prompts span { display: flex; gap: 6px; align-items: flex-start; }
     .task-detail-prompts input { width: auto; margin-top: 2px; }
-    .copy-summary-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
+    .copy-summary-row, .moment-summary-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: stretch; }
+    .summary-check { display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 12px; color: #263858; background: rgba(36,92,255,.08); font-size: 12px; }
+    .summary-check input { width: auto; min-height: auto; }
     .copy-summary { min-width: 0; }
     .copy-summary span { white-space: normal; overflow-wrap: anywhere; }
-    .copy-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-    .copy-actions button, .copy-mini-copy { padding: 7px 11px; border-radius: 999px; font-size: 12px; }
-    .copy-mini-copy { min-width: 52px; color: var(--blue); background: rgba(36,92,255,.09); box-shadow: none; }
+    .copy-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 10px; }
+    .copy-toolbar button { padding: 7px 11px; border-radius: 999px; font-size: 12px; }
+    .copy-toolbar .ghost { color: var(--blue); background: rgba(36,92,255,.09); box-shadow: none; }
     .detail-body, .task-detail-body, .task-detail-section, .task-detail-record { max-width: 100%; min-width: 0; overflow-x: hidden; }
     .task-detail-section pre { overflow-wrap: anywhere; overflow-x: hidden; }
     .moment-image-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -2696,7 +2698,6 @@
         <div class="panel detail-page">
           <div class="section-title">
             <h2 id="taskPageTitle">定时任务详情</h2>
-            <button class="ghost" type="button" id="backToTaskListBtn">返回列表</button>
           </div>
           <div class="detail-body" id="taskPageBody"></div>
         </div>
@@ -2722,7 +2723,6 @@
               <h2 id="runPageTitle">执行详情</h2>
               <div class="hint" id="runPageSubtitle">正在读取结果</div>
             </div>
-            <button class="ghost" type="button" id="backFromRunDetailBtn">返回列表</button>
           </div>
           <div class="detail-body" id="runPageBody"></div>
         </div>
@@ -3086,11 +3086,6 @@
       toast(ok ? "链接已复制，请在外部浏览器打开后保存" : "复制失败，请长按链接复制后用外部浏览器打开");
     }
 
-    async function copyDraftText(text) {
-      const ok = await copyText(text);
-      toast(ok ? "文案已复制" : "复制失败，请长按文案手动复制");
-    }
-
     function onIosDownloadClick() {
       if (IS_IOS && !IS_WECHAT) toast("已开始下载，可在 Safari 下载项或文件 App 的下载目录查看");
     }
@@ -3249,6 +3244,11 @@
     function isActiveRun(row) {
       const status = String((row && row.status) || "").toLowerCase();
       return status === "pending" || status === "processing" || status === "running";
+    }
+
+    function isRunningStatus(status) {
+      const s = String(status || "").toLowerCase();
+      return s === "pending" || s === "processing" || s === "running" || s === "queued" || s === "waiting";
     }
 
     function isActiveMessageStatus(status) {
@@ -3844,6 +3844,41 @@
       }[String(task || "")] || task || "文案";
     }
 
+    function workflowAction(row) {
+      const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
+      return String(payload.action || "").trim();
+    }
+
+    function workflowParams(row) {
+      const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
+      return payload.params && typeof payload.params === "object" ? payload.params : {};
+    }
+
+    function activeMomentImageRun(sourceRunId) {
+      const source = String(sourceRunId || "").trim();
+      if (!source) return null;
+      const rows = (state.runs || []).filter((row) => {
+        if (!row || row.task_kind !== "client_workflow") return false;
+        if (workflowAction(row) !== "ip_moments_generate_images") return false;
+        if (String(workflowParams(row).source_run_id || "").trim() !== source) return false;
+        return isRunningStatus(row.status);
+      });
+      rows.sort((a, b) => itemTimeMs(b.created_at, b.updated_at) - itemTimeMs(a.created_at, a.updated_at));
+      return rows[0] || null;
+    }
+
+    function latestMomentImageRun(sourceRunId) {
+      const source = String(sourceRunId || "").trim();
+      if (!source) return null;
+      const rows = (state.runs || []).filter((row) => {
+        if (!row || row.task_kind !== "client_workflow") return false;
+        if (workflowAction(row) !== "ip_moments_generate_images") return false;
+        return String(workflowParams(row).source_run_id || "").trim() === source;
+      });
+      rows.sort((a, b) => itemTimeMs(b.created_at, b.updated_at) - itemTimeMs(a.created_at, a.updated_at));
+      return rows[0] || null;
+    }
+
     function recordImages(rec) {
       if (!rec || typeof rec !== "object") return [];
       if (Array.isArray(rec.images) && rec.images.length) return rec.images;
@@ -3879,7 +3914,7 @@
       }).join("")}</div>`;
     }
 
-    function momentRecordHtml(rec, idx) {
+    function momentRecordHtml(rec, idx, imageBusy) {
       const recordId = String(rec.record_id || "").trim();
       const title = String(rec.title || `朋友圈文案 ${idx + 1}`).trim();
       const body = String(rec.body || rec.content || "").trim();
@@ -3888,14 +3923,16 @@
       const disabled = recordId ? "" : " disabled";
       const memoryDocIds = Array.isArray(rec.memory_doc_ids) ? rec.memory_doc_ids.map((id) => String(id || "").trim()).filter(Boolean).join(",") : "";
       return `<div class="moment-item" data-moment-record="${escapeHtml(recordId)}" data-moment-memory-doc-ids="${escapeHtml(memoryDocIds)}">
-        <button class="moment-summary" type="button" data-toggle-moment="${escapeHtml(recordId || idx)}">
-          <span>${escapeHtml(idx + 1)}. ${escapeHtml(title)}</span>
-          <small>${images.length ? `已生成 ${images.length} 张图` : "展开"}</small>
-        </button>
+        <div class="moment-summary-row">
+          <label class="summary-check"><input type="checkbox" data-draft-copy-select="1" data-draft-task="moments_candidate" data-moment-select="${escapeHtml(recordId)}"${disabled}>选择</label>
+          <button class="moment-summary" type="button" data-toggle-moment="${escapeHtml(recordId || idx)}">
+            <span>${escapeHtml(idx + 1)}. ${escapeHtml(title)}</span>
+            <small>${images.length ? `已生成 ${images.length} 张图` : "展开"}</small>
+          </button>
+        </div>
         <div class="moment-detail">
           <div class="moment-select-row">
-            <label><input type="checkbox" data-moment-select="${escapeHtml(recordId)}"${disabled}>选择这条文案出图</label>
-            ${recordId ? "" : "<span>缺少 record_id，无法回写图片</span>"}
+            ${recordId ? (imageBusy ? "<span>图片生成中，暂不可重复下发。</span>" : "<span>已选择后可复制，也可生成图片。</span>") : "<span>缺少 record_id，无法回写图片</span>"}
           </div>
           <div class="task-detail-moments-copy">${escapeHtml(body || "暂无正文")}</div>
           <div class="task-detail-prompts">
@@ -3913,16 +3950,13 @@
       const id = String(rec.record_id || rec.id || `${task || "copy"}-${idx}`).trim();
       return `<div class="copy-item" data-copy-record="${escapeHtml(id)}">
         <div class="copy-summary-row">
+          <label class="summary-check"><input type="checkbox" data-draft-copy-select="1" data-draft-task="${escapeHtml(task || "")}">选择</label>
           <button class="copy-summary" type="button" data-toggle-copy-record="${escapeHtml(id)}">
             <span>${escapeHtml(idx + 1)}. ${escapeHtml(title)}</span>
             <small>展开</small>
           </button>
-          <button class="copy-mini-copy" type="button" data-copy-draft="${escapeHtml(id)}">复制</button>
         </div>
         <div class="copy-detail">
-          <div class="copy-actions">
-            <button type="button" data-copy-draft="${escapeHtml(id)}">复制文案</button>
-          </div>
           <div class="task-detail-moments-copy">${escapeHtml(body || "暂无正文")}</div>
         </div>
       </div>`;
@@ -4092,20 +4126,37 @@
       }
       if (payload.ip_content_daily) {
         const groups = Array.isArray(payload.groups) ? payload.groups : [];
+        const activeImageRun = activeMomentImageRun(run && run.id);
+        const lastImageRun = latestMomentImageRun(run && run.id);
+        const imageBusy = !!activeImageRun;
+        const imageStateText = imageBusy
+          ? `图片生成中：${statusText(activeImageRun.status)}，请等待客户端完成。`
+          : (lastImageRun ? `最近图片任务：${statusText(lastImageRun.status)}${lastImageRun.result_text ? " · " + lastImageRun.result_text : ""}` : "先选择文案；每条最多使用 3 个配图提示词。");
         sections.push(`<div class="task-detail-section"><h4>IP日更文案</h4>${groups.map((group) => {
           const records = Array.isArray(group.records) ? group.records : [];
           const isMoments = String(group.task || "") === "moments_candidate";
           if (isMoments) {
             return `<div class="task-detail-record" data-moment-group="1">
               <strong>${escapeHtml(ipTaskLabel(group.task))} · ${records.length}条</strong>
-              <div class="moment-image-actions">
-                <button type="button" data-generate-selected-moment-images="1">生成选中图片</button>
-                <span class="moment-image-status">先选择文案；每条最多使用 3 个配图提示词。</span>
+              <div class="copy-toolbar">
+                <button type="button" class="ghost" data-select-draft-group="moments_candidate">全选/取消</button>
+                <button type="button" data-copy-selected-drafts="moments_candidate">复制选中文案</button>
               </div>
-              ${records.map((rec, idx) => momentRecordHtml(rec, idx)).join("")}
+              <div class="moment-image-actions">
+                <button type="button" data-generate-selected-moment-images="1"${imageBusy ? " disabled" : ""}>${imageBusy ? "图片生成中" : "生成选中图片"}</button>
+                <span class="moment-image-status">${escapeHtml(imageStateText)}</span>
+              </div>
+              ${records.map((rec, idx) => momentRecordHtml(rec, idx, imageBusy)).join("")}
             </div>`;
           }
-          return `<div class="task-detail-record"><strong>${escapeHtml(ipTaskLabel(group.task))} · ${records.length}条</strong>${records.map((rec, idx) => copyRecordHtml(rec, idx, group.task)).join("")}</div>`;
+          return `<div class="task-detail-record" data-copy-group="${escapeHtml(group.task || "")}">
+            <strong>${escapeHtml(ipTaskLabel(group.task))} · ${records.length}条</strong>
+            <div class="copy-toolbar">
+              <button type="button" class="ghost" data-select-draft-group="${escapeHtml(group.task || "")}">全选/取消</button>
+              <button type="button" data-copy-selected-drafts="${escapeHtml(group.task || "")}">复制选中文案</button>
+            </div>
+            ${records.map((rec, idx) => copyRecordHtml(rec, idx, group.task)).join("")}
+          </div>`;
         }).join("")}</div>`);
       }
       const text = run.error || run.result_text || (run.progress && (run.progress.text || run.progress.message)) || "";
@@ -4147,6 +4198,11 @@
         $("runPageTitle").textContent = run.title || "执行详情";
         $("runPageSubtitle").textContent = `${capabilityName(taskCapabilityId(run) || run.task_kind)} · ${statusText(run.status)} · ${fmtTime(run.created_at)}`;
         body.innerHTML = taskDetailHtml(run);
+        if (run.task_kind === "ip_content_daily") {
+          loadRuns({ reset: true }).then(() => {
+            if (state.currentRunDetailId === runId) body.innerHTML = taskDetailHtml(run);
+          }).catch(() => {});
+        }
       } catch (err) {
         if (!cachedRun) {
           body.innerHTML = `<div class="hint">${escapeHtml(err.message || "详情加载失败")}</div>`;
@@ -4181,7 +4237,38 @@
       }).filter((row) => row.recordId);
     }
 
+    function selectedDraftCopies(task) {
+      const selector = `[data-draft-copy-select]:checked${task ? `[data-draft-task="${cssEscape(task)}"]` : ""}`;
+      return Array.from(document.querySelectorAll(selector)).map((input) => {
+        const item = input.closest(".copy-item, .moment-item");
+        if (!item) return "";
+        return (item.querySelector(".task-detail-moments-copy")?.textContent || "").trim();
+      }).filter(Boolean);
+    }
+
+    async function copySelectedDrafts(task) {
+      const rows = selectedDraftCopies(task);
+      if (!rows.length) {
+        toast("请先勾选要复制的文案");
+        return;
+      }
+      const ok = await copyText(rows.join("\n\n---\n\n"));
+      toast(ok ? `已复制 ${rows.length} 条文案` : "复制失败，请长按文案手动复制");
+    }
+
+    function toggleDraftGroupSelection(task) {
+      const selector = `[data-draft-copy-select]${task ? `[data-draft-task="${cssEscape(task)}"]` : ""}`;
+      const inputs = Array.from(document.querySelectorAll(selector));
+      if (!inputs.length) return;
+      const shouldCheck = inputs.some((input) => !input.checked);
+      inputs.forEach((input) => { input.checked = shouldCheck; });
+    }
+
     async function generateSelectedMomentImages(btn) {
+      if (activeMomentImageRun(state.currentRunDetailId)) {
+        toast("当前图片生成任务还在执行中，请完成后再生成");
+        return;
+      }
       const selected = selectedMomentRecords();
       if (!selected.length) {
         toast("请先选择要出图的朋友圈文案");
@@ -4204,7 +4291,7 @@
           setMomentStatus(record.recordId, "已下发到 online，等待客户端生成...");
           return { ...record, prompts, memory_doc_ids: record.memory_doc_ids || [] };
         });
-        await submitOnceClientTask({
+        const created = await submitOnceClientTask({
             title: "朋友圈图片生成",
             taskKind: "client_workflow",
             content: `生成 ${records.length} 条朋友圈配图`,
@@ -4219,6 +4306,10 @@
               },
             },
         });
+        const run = created && Array.isArray(created.runs) && created.runs[0] && typeof created.runs[0] === "object" ? created.runs[0] : null;
+        if (run && run.id && !(state.runs || []).some((row) => String(row.id || "") === String(run.id))) {
+          state.runs = [run].concat(state.runs || []);
+        }
         toast("已下发到 online 客户端生成图片");
         if (state.currentRunDetailId) {
           setTimeout(() => openRunDetail(state.currentRunDetailId, state.runDetailBackTab || "runList"), 1200);
@@ -4228,8 +4319,9 @@
         selected.forEach((record) => setMomentStatus(record.recordId, err.message || "任务下发失败", true));
       } finally {
         if (btn) {
-          btn.disabled = false;
-          btn.textContent = oldText || "生成选中图片";
+          const stillBusy = activeMomentImageRun(state.currentRunDetailId);
+          btn.disabled = !!stillBusy;
+          btn.textContent = stillBusy ? "图片生成中" : (oldText || "生成选中图片");
         }
       }
     }
@@ -7498,8 +7590,6 @@
     $("refreshRunsBtn").addEventListener("click", () => loadRuns({ reset: true }));
     $("loadMoreTasksBtn")?.addEventListener("click", () => loadTasks({ append: true, reset: false }));
     $("loadMoreRunsBtn")?.addEventListener("click", () => loadRuns({ append: true, reset: false }));
-    $("backToTaskListBtn")?.addEventListener("click", () => switchTab(state.taskDetailBackTab || "taskList"));
-    $("backFromRunDetailBtn")?.addEventListener("click", () => switchTab(state.runDetailBackTab || "runList"));
     $("employeeFloor").addEventListener("click", (evt) => {
       const homeTargetBtn = evt.target.closest("[data-home-target]");
       if (homeTargetBtn) {
@@ -7696,11 +7786,14 @@
         }
         return;
       }
-      const draftCopyBtn = evt.target.closest("[data-copy-draft]");
-      if (draftCopyBtn) {
-        const item = draftCopyBtn.closest(".copy-item");
-        const text = item ? (item.querySelector(".task-detail-moments-copy")?.textContent || "").trim() : "";
-        copyDraftText(text);
+      const selectGroupBtn = evt.target.closest("[data-select-draft-group]");
+      if (selectGroupBtn) {
+        toggleDraftGroupSelection(selectGroupBtn.dataset.selectDraftGroup || "");
+        return;
+      }
+      const copySelectedBtn = evt.target.closest("[data-copy-selected-drafts]");
+      if (copySelectedBtn) {
+        copySelectedDrafts(copySelectedBtn.dataset.copySelectedDrafts || "");
         return;
       }
       const genBtn = evt.target.closest("[data-generate-selected-moment-images]");
