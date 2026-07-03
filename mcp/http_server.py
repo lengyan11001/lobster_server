@@ -2238,7 +2238,7 @@ def _normalize_gpt_image2_quality(payload: Dict[str, Any]) -> str:
             return "high"
 
     explicit = _quality_from_value(payload.get("quality") or payload.get("image_quality"))
-    return explicit or "high"
+    return explicit or "low"
 
 
 def _normalize_gpt_image2_resolution(payload: Dict[str, Any], quality: str) -> str:
