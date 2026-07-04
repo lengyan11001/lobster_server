@@ -1330,6 +1330,47 @@
       }
     }
 
+    function departmentNodeKeys(department) {
+      const keys = new Set();
+      eachAbilityNode((department && department.children) || [], department, [], (node) => {
+        [node.key, node.capabilityId, node.packageId, node.workQuickKey].forEach((value) => {
+          const text = String(value || "").trim();
+          if (text) keys.add(text);
+        });
+      });
+      return keys;
+    }
+
+    function departmentRun(department) {
+      const keys = departmentNodeKeys(department);
+      return (state.runs || []).filter(isActiveRun).find((row) => {
+        const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
+        const candidates = [
+          row && row.task_kind,
+          row && row.title,
+          taskCapabilityId(row),
+          payload.capability_id,
+          payload.workflow_action,
+          payload.action,
+        ].map((value) => String(value || "").trim()).filter(Boolean);
+        return candidates.some((value) => keys.has(value) || value.includes(department.name || ""));
+      }) || null;
+    }
+
+    function departmentBubbleFor(department, index) {
+      const run = departmentRun(department);
+      if (run) {
+        const title = run.title || capabilityName(taskCapabilityId(run) || run.task_kind) || "任务";
+        const progress = runProgressText(run) || "执行中";
+        return `工作中：${title} · ${progress}`.slice(0, 34);
+      }
+      const minuteSlot = Math.floor(Date.now() / 60000);
+      if (minuteSlot % 4 !== 0) return "";
+      if (index !== minuteSlot % Math.max(DEPARTMENT_SKILL_TREE.length, 1)) return "";
+      const lines = ["等你安排新任务", "整理可用能力", "待命中"];
+      return lines[minuteSlot % lines.length];
+    }
+
     function renderOfficeEmployees() {
       const floor = $("employeeFloor");
       if (!floor) return;
@@ -1350,6 +1391,22 @@
       });
       updateCompanySign();
       updateBossOfficeStats(onlineCount, workingCount);
+      const roleDepartments = DEPARTMENT_SKILL_TREE;
+      floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="department-role-grid">${roleDepartments.map((department, index) => {
+        const childCount = (department.children || []).length;
+        const img = employeeAsset({ installation_id: department.id }, index, "idle");
+        const bubble = departmentBubbleFor(department, index);
+        const hue = ["rgba(19,168,115,.18)", "rgba(36,92,255,.16)", "rgba(240,139,45,.16)", "rgba(19,183,216,.16)", "rgba(126,92,255,.14)"][index % 5];
+        return `<button class="department-role-card${bubble ? " has-bubble" : ""}" type="button" data-role-department="${escapeHtml(department.id)}" style="--role-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(department.name)}">
+          ${bubble ? `<div class="department-role-bubble">${escapeHtml(bubble)}</div>` : ""}
+          <img class="department-role-avatar" src="${escapeHtml(img)}" alt="" loading="lazy">
+          <div class="department-role-meta">
+            <div class="department-role-name">${escapeHtml(department.name)}</div>
+            <div class="department-role-count">${escapeHtml(childCount + "项")}</div>
+          </div>
+        </button>`;
+      }).join("")}</div>`;
+      return;
       const departments = DEPARTMENT_SKILL_TREE;
       const metricsForDepartments = employeeLayoutMetrics(Math.max(departments.length, 1));
       floor.style.minHeight = `${metricsForDepartments.minHeight}px`;

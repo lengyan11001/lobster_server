@@ -2387,3 +2387,173 @@
       .work-node { grid-template-columns: 62px minmax(0, 1fr); gap: 10px; }
       .work-card-title { font-size: 16px; }
     }
+
+    /* H5 role lobby: do not reuse the old device-office visual shell. */
+    #officeView .office-hero,
+    #officeView .hire-fab {
+      display: none !important;
+    }
+    #officeView .office-grid {
+      display: block;
+    }
+    #officeView .office-floor {
+      min-height: auto !important;
+      display: grid;
+      gap: 14px;
+      padding: 14px !important;
+      overflow: visible;
+      border-radius: 28px;
+      background:
+        radial-gradient(circle at 12% 8%, rgba(19,168,115,.14), transparent 28%),
+        radial-gradient(circle at 88% 18%, rgba(240,139,45,.13), transparent 30%),
+        linear-gradient(150deg, rgba(247,252,248,.96), rgba(236,247,255,.92) 48%, rgba(255,249,238,.9));
+      border: 1px solid rgba(223,230,242,.86);
+      box-shadow: var(--shadow);
+    }
+    #officeView .office-floor::before,
+    #officeView .office-floor::after {
+      display: none;
+    }
+    #officeView .company-sign {
+      position: static;
+      justify-content: center;
+      max-width: none;
+      width: 100%;
+      margin: 0 0 2px;
+      background: linear-gradient(135deg, #fff7d6, #e6fff6);
+    }
+    .department-role-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .department-role-card {
+      position: relative;
+      min-height: 184px;
+      display: grid;
+      align-content: space-between;
+      justify-items: center;
+      gap: 10px;
+      padding: 14px 10px 12px;
+      color: var(--ink);
+      text-align: center;
+      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,.78);
+      background:
+        linear-gradient(160deg, rgba(255,255,255,.92), rgba(241,249,255,.84)),
+        var(--role-bg, #fff);
+      box-shadow: 0 16px 36px rgba(29,54,105,.13);
+      overflow: hidden;
+    }
+    .department-role-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 18% 14%, var(--role-glow, rgba(19,168,115,.18)), transparent 38%);
+      pointer-events: none;
+    }
+    .department-role-avatar {
+      position: relative;
+      z-index: 1;
+      width: min(96px, 30vw);
+      height: 118px;
+      object-fit: contain;
+      filter: drop-shadow(0 16px 14px rgba(22,45,84,.18));
+    }
+    .department-role-meta {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 6px;
+      justify-items: center;
+      width: 100%;
+    }
+    .department-role-name {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      max-width: 100%;
+      padding: 7px 10px;
+      border-radius: 999px;
+      color: #102036;
+      background: rgba(255,255,255,.88);
+      border: 1px solid rgba(223,230,242,.82);
+      box-shadow: 0 8px 18px rgba(29,54,105,.12);
+      font-size: 14px;
+      font-weight: 900;
+    }
+    .department-role-count {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: #0c815b;
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .department-role-count::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .department-role-bubble {
+      position: absolute;
+      z-index: 2;
+      left: 50%;
+      top: 10px;
+      max-width: calc(100% - 18px);
+      padding: 7px 9px;
+      border-radius: 14px 14px 14px 5px;
+      color: #102036;
+      background: rgba(255,255,255,.94);
+      border: 1px solid rgba(223,230,242,.9);
+      box-shadow: 0 10px 24px rgba(20,55,132,.14);
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.4;
+      transform: translateX(-50%);
+    }
+    .department-role-card.has-bubble .department-role-avatar {
+      margin-top: 32px;
+    }
+    .department-voice-entry {
+      width: 66px;
+      height: 66px;
+      justify-self: center;
+      margin-top: 2px;
+    }
+    .department-skill-grid,
+    .ability-child-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      gap: 12px;
+    }
+    .department-skill-card {
+      min-height: 132px;
+      border-color: rgba(255,255,255,.78);
+      background:
+        linear-gradient(150deg, rgba(255,255,255,.9), rgba(238,249,255,.84)),
+        radial-gradient(circle at 85% 0%, rgba(19,183,216,.13), transparent 34%);
+      box-shadow: 0 16px 34px rgba(29,54,105,.13);
+    }
+    .department-skill-card:nth-child(4n+1) {
+      background:
+        linear-gradient(150deg, rgba(255,255,255,.9), rgba(233,251,243,.88)),
+        radial-gradient(circle at 82% 0%, rgba(19,168,115,.16), transparent 36%);
+    }
+    .department-skill-card:nth-child(4n+2) {
+      background:
+        linear-gradient(150deg, rgba(255,255,255,.92), rgba(255,245,230,.88)),
+        radial-gradient(circle at 82% 0%, rgba(240,139,45,.15), transparent 36%);
+    }
+    .department-skill-card:nth-child(4n+3) {
+      background:
+        linear-gradient(150deg, rgba(255,255,255,.92), rgba(239,244,255,.9)),
+        radial-gradient(circle at 82% 0%, rgba(36,92,255,.13), transparent 36%);
+    }
+    .department-skill-title {
+      font-size: 15px;
+    }
+    .department-skill-desc {
+      font-size: 12px;
+    }
