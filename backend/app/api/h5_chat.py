@@ -512,7 +512,8 @@ def h5_static_asset(filename: str):
     root = _H5_STATIC_DIR.resolve()
     if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".css", ".js"}:
         raise HTTPException(status_code=404, detail="文件不存在")
-    return FileResponse(str(path), media_type=_h5_static_media_type(path), headers={"Cache-Control": "public, max-age=86400"})
+    cache_control = "no-store, no-cache, must-revalidate, max-age=0" if path.suffix.lower() in {".css", ".js"} else "public, max-age=86400"
+    return FileResponse(str(path), media_type=_h5_static_media_type(path), headers={"Cache-Control": cache_control})
 
 
 @router.get("/install/ios-webclip.mobileconfig", include_in_schema=False)
