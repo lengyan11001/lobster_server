@@ -304,6 +304,13 @@ def _image_media_type(path: Path) -> str:
     }.get(path.suffix.lower(), "application/octet-stream")
 
 
+def _h5_static_media_type(path: Path) -> str:
+    return {
+        ".css": "text/css; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+    }.get(path.suffix.lower(), _image_media_type(path))
+
+
 def _plist_text(value: str) -> str:
     return html.escape(str(value or ""), quote=True)
 
@@ -503,9 +510,9 @@ def h5_static_asset(filename: str):
     safe = _safe_upload_filename(filename)
     path = (_H5_STATIC_DIR / safe).resolve()
     root = _H5_STATIC_DIR.resolve()
-    if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+    if root not in path.parents or not path.is_file() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".css", ".js"}:
         raise HTTPException(status_code=404, detail="文件不存在")
-    return FileResponse(str(path), media_type=_image_media_type(path), headers={"Cache-Control": "public, max-age=86400"})
+    return FileResponse(str(path), media_type=_h5_static_media_type(path), headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/install/ios-webclip.mobileconfig", include_in_schema=False)
