@@ -2557,3 +2557,57 @@
     .department-skill-desc {
       font-size: 12px;
     }
+
+    .top-action[data-tab-target="messages"] {
+      display: none !important;
+    }
+    #homeView .home-grid {
+      display: block;
+    }
+    #homeView .home-grid > div:nth-child(2),
+    #homeView #homeQuickGrid {
+      display: none !important;
+    }
+    #abilityRouteBtn,
+    #abilityDispatchBtn {
+      display: none !important;
+    }
+    #departmentChatBtn,
+    #abilityChatBtn {
+      position: fixed !important;
+      right: max(18px, env(safe-area-inset-right));
+      bottom: max(22px, calc(env(safe-area-inset-bottom) + 18px));
+      z-index: 90;
+      width: 58px !important;
+      min-width: 58px !important;
+      height: 58px;
+      min-height: 58px;
+      padding: 0 !important;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 0;
+      background:
+        radial-gradient(circle at 28% 22%, rgba(255,255,255,.35), transparent 24%),
+        linear-gradient(135deg, #0e9f7e, #245cff);
+      box-shadow: 0 18px 34px rgba(36,92,255,.28), 0 8px 18px rgba(10,132,101,.22);
+    }
+    #departmentChatBtn::before,
+    #abilityChatBtn::before {
+      content: "";
+      width: 24px;
+      height: 18px;
+      border: 3px solid currentColor;
+      border-radius: 10px;
+    }
+    #departmentChatBtn::after,
+    #abilityChatBtn::after {
+      content: "";
+      position: absolute;
+      left: 21px;
+      bottom: 17px;
+      width: 9px;
+      height: 9px;
+      border-left: 3px solid currentColor;
+      border-bottom: 3px solid currentColor;
+      transform: rotate(-18deg);
+    }

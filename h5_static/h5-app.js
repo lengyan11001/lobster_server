@@ -1281,12 +1281,12 @@
       const routeBtn = $("abilityRouteBtn");
       const dispatchBtn = $("abilityDispatchBtn");
       if (routeBtn) {
-        routeBtn.classList.toggle("hidden", !node.routeTab);
+        routeBtn.classList.add("hidden");
         routeBtn.textContent = node.routeTab === "profile" ? "打开设置" : "打开工作台";
       }
       const quick = node.workQuickKey ? workQuickItemByKey(node.workQuickKey) : null;
       const canDispatch = !!(quick && workQuickItemVisible(quick) && !quick.disabled);
-      if (dispatchBtn) dispatchBtn.classList.toggle("hidden", !canDispatch);
+      if (dispatchBtn) dispatchBtn.classList.add("hidden");
     }
 
     function chatContextMarker() {
@@ -2248,6 +2248,7 @@
       };
       titleMap.department = ["职能中心", "按部门查看能力"];
       titleMap.ability = ["能力详情", "查看能力说明和下一级能力"];
+      titleMap.home = ["定时任务", "按时间自动执行内容任务"];
       const nextTitle = titleMap[key] || titleMap.office;
       $("pageTitle").textContent = nextTitle[0];
       $("pageSubtitle").textContent = nextTitle[1];
@@ -5368,6 +5369,18 @@
         $("loadMoreRunsBtn")?.classList.add("hidden");
       }
     }
+
+    function syncTopNavigationActions() {
+      const homeBtn = document.querySelector('.top-action[data-tab-target="home"]');
+      if (homeBtn) {
+        homeBtn.setAttribute("aria-label", "定时任务");
+        const label = homeBtn.querySelector(".top-action-label");
+        if (label) label.textContent = "定时任务";
+      }
+      document.querySelectorAll('.top-action[data-tab-target="messages"]').forEach((btn) => btn.remove());
+    }
+
+    syncTopNavigationActions();
 
     document.querySelectorAll("[data-tab-target]").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tabTarget));
