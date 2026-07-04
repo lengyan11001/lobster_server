@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260704-nav-schedule-2" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260704-ability-workbench-1" />
 </head>
 <body>
   <main class="shell">
@@ -366,6 +366,21 @@
               <button class="ghost hidden" type="button" id="abilityDispatchBtn">下发任务</button>
             </div>
           </div>
+          <div class="ability-workbench hidden" id="abilityWorkbench">
+            <div class="ability-workbench-head">
+              <div>
+                <h3 id="abilityWorkbenchTitle">能力工作台</h3>
+                <p id="abilityWorkbenchSubtitle">填写参数后直接下发到 online 客户端执行。</p>
+              </div>
+              <span class="ability-workbench-badge" id="abilityWorkbenchBadge">独立任务</span>
+            </div>
+            <form class="ability-workbench-form" id="abilityWorkbenchForm">
+              <div class="work-dispatch-fields ability-workbench-fields" id="abilityWorkbenchFields"></div>
+              <div class="ability-workbench-actions">
+                <button type="submit" id="abilityWorkbenchSubmit">下发任务</button>
+              </div>
+            </form>
+          </div>
           <div class="ability-child-grid" id="abilityChildren"></div>
         </div>
       </section>
@@ -607,6 +622,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260704-nav-schedule-2"></script>
+  <script src="/h5-static/h5-app.js?v=20260704-ability-workbench-1"></script>
 </body>
 </html>

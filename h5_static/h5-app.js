@@ -40,6 +40,7 @@
       taskSkillsError: "",
       workDispatchKey: "",
       workDispatchSubmitting: false,
+      abilityWorkSubmitting: false,
       douyinStatus: null,
       douyinTaskAction: "search_collect",
       voiceRecording: false,
@@ -1262,6 +1263,199 @@
       switchTab("ability");
     }
 
+    function hideAbilityWorkbench() {
+      const box = $("abilityWorkbench");
+      if (box) box.classList.add("hidden");
+      if ($("abilityWorkbenchFields")) $("abilityWorkbenchFields").innerHTML = "";
+      const btn = $("abilityWorkbenchSubmit");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "下发任务";
+      }
+      state.abilityWorkSubmitting = false;
+    }
+
+    function abilityValue(id) {
+      const el = $(id);
+      return ((el && el.value) || "").trim();
+    }
+
+    function abilityNumber(id, fallback, min, max) {
+      return workNumber(abilityValue(id), fallback, min, max);
+    }
+
+    function splitTextareaList(value) {
+      return String(value || "")
+        .split(/[\n,，;；、]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    function abilityIpDailyTaskOptionsHtml() {
+      return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;">${IP_DAILY_TASK_OPTIONS.map((item) => `
+        <label class="task-checkbox" style="min-height:38px;padding:0 10px;border:1px solid rgba(15,23,42,.08);border-radius:10px;background:rgba(255,255,255,.72);">
+          <input type="checkbox" data-ability-ip-daily-task="${escapeHtml(item.value)}" checked>
+          <span>${escapeHtml(item.label)}</span>
+        </label>
+      `).join("")}</div>`;
+    }
+
+    function selectedAbilityIpDailyTasks() {
+      return Array.from(document.querySelectorAll("[data-ability-ip-daily-task]"))
+        .filter((el) => el.checked)
+        .map((el) => String(el.getAttribute("data-ability-ip-daily-task") || "").trim())
+        .filter(Boolean);
+    }
+
+    function socialPlatformFromAbilityKey(key) {
+      const raw = String(key || "").trim();
+      if (raw === "reddit_leads") return "reddit";
+      if (raw === "x_leads") return "x";
+      if (raw === "tiktok_leads") return "tiktok";
+      return "";
+    }
+
+    function socialPlatformLabel(platform) {
+      return ({ reddit: "Reddit", x: "X", tiktok: "TikTok" }[String(platform || "")] || platform || "平台");
+    }
+
+    function abilitySocialFieldsHtml(platform) {
+      const sourceLabel = platform === "reddit" ? "社区" : "来源关键词";
+      const sourcePlaceholder = platform === "reddit" ? "例如：Entrepreneur、marketing、SaaS" : "例如：AI agent、marketing automation、lead generation";
+      return taskFieldHtml("任务名称", workInputHtml("abilityLeadTitle", "text", `${socialPlatformLabel(platform)}线索采集`))
+        + taskFieldHtml("精准用户方向", taskTextareaHtml("abilityLeadKeywords", "这里填写要分析筛选的用户方向，例如：需要AI获客、正在找自动化工具、询问营销方案"), true)
+        + taskFieldHtml("采集方式", taskSelectHtml("abilityLeadMode", optionHtml("source", sourceLabel) + optionHtml("account", "账号")))
+        + taskFieldHtml(`${sourceLabel}（可多行）`, taskTextareaHtml("abilityLeadSources", sourcePlaceholder), true)
+        + taskFieldHtml("账号（可多行）", taskTextareaHtml("abilityLeadAccounts", platform === "reddit" ? "例如：u/example 或 example" : "例如：@example 或主页链接"), true)
+        + taskFieldHtml("采集上限", workInputHtml("abilityLeadMaxItems", "number", "100", 'min="1" max="100"'));
+    }
+
+    function abilityLinkedinFieldsHtml() {
+      return taskFieldHtml("任务名称", workInputHtml("abilityLinkedinTitle", "text", "LinkedIn线索挖掘"))
+        + taskFieldHtml("目标画像", taskTextareaHtml("abilityLinkedinTarget", "例如：跨境电商老板、AI工具采购负责人、营销负责人"), true)
+        + taskFieldHtml("个人主页（可多行）", taskTextareaHtml("abilityLinkedinProfiles", "LinkedIn个人主页链接，可不填"), true)
+        + taskFieldHtml("公司主页（可多行）", taskTextareaHtml("abilityLinkedinCompanies", "LinkedIn公司主页链接，可不填"), true)
+        + taskFieldHtml("关键词（可多行）", taskTextareaHtml("abilityLinkedinKeywords", "例如：AI marketing、automation、lead generation"), true)
+        + taskFieldHtml("话题标签（可多行）", taskTextareaHtml("abilityLinkedinHashtags", "例如：ai、marketing、startup"), true)
+        + taskFieldHtml("人数上限", workInputHtml("abilityLinkedinMaxPeople", "number", "30", 'min="5" max="80"'));
+    }
+
+    function abilityWechatTranscriptFieldsHtml() {
+      return taskFieldHtml("视频号账号 / 链接 / 关键词", taskTextareaHtml("abilityWechatQuery", "填写视频号账号、sph开头ID、视频详情链接，或搜索关键词"), true)
+        + taskFieldHtml("拉取页数", workInputHtml("abilityWechatPages", "number", "1", 'min="1" max="20"'))
+        + taskFieldHtml("最多转写视频数", workInputHtml("abilityWechatLimit", "number", "10", 'min="1" max="50"'));
+    }
+
+    function abilityCapabilityFieldsHtml(capabilityId) {
+      const id = String(capabilityId || "").trim();
+      if (id === "ip_content_daily") {
+        return taskFieldHtml("模板", taskSelectHtml("abilityIpTemplate", optionHtml("", "模板加载中...")))
+          + taskFieldHtml("生成内容", abilityIpDailyTaskOptionsHtml(), true)
+          + taskFieldHtml("执行前同步", `<label class="task-checkbox"><input id="abilityIpSyncBefore" type="checkbox" checked>每次执行前同步新数据</label>`, true)
+          + taskFieldHtml("补充要求", taskTextareaHtml("abilityIpRequirement", "可选"), true);
+      }
+      if (id === "goal.video.pipeline") {
+        return taskFieldHtml("任务名称", workInputHtml("abilityVideoTitle", "text", "创意视频"))
+          + taskFieldHtml("视频要求", taskTextareaHtml("abilityVideoPrompt", "填写视频主题、卖点、场景、风格。不填素材组时默认用 AI 生成首帧。"), true)
+          + taskFieldHtml("首帧来源", taskSelectHtml("abilityVideoSourceMode", optionHtml("ai_image", "AI生成首帧") + optionHtml("asset_random", "素材库备选组")))
+          + taskFieldHtml("备选素材组", taskSelectHtml("abilityVideoCandidateGroup", optionHtml("", "不选择")));
+      }
+      if (id === "wewrite.article.pipeline") {
+        return taskFieldHtml("任务名称", workInputHtml("abilityArticleTitle", "text", "公众号文章"))
+          + taskFieldHtml("公众号主题", taskTextareaHtml("abilityArticleIdea", "填写文章主题、受众、核心观点"), true)
+          + taskFieldHtml("文章风格", workInputHtml("abilityArticleStyle", "text", "", 'placeholder="例如：专业、有案例、适合老板阅读"'))
+          + taskFieldHtml("配图数量", workInputHtml("abilityArticleImageCount", "number", "3", 'min="0" max="6"'))
+          + taskFieldHtml("自动配图", workCheckboxHtml("abilityArticleIncludeImages", "生成 16:9 横屏配图并插入", true), true);
+      }
+      if (id === "ppt.create") {
+        return taskFieldHtml("任务名称", workInputHtml("abilityPptTitle", "text", "PPT生成"))
+          + taskFieldHtml("PPT主题", taskTextareaHtml("abilityPptTopic", "填写PPT主题、用途、受众"), true)
+          + taskFieldHtml("页数", workInputHtml("abilityPptSlideCount", "number", "10", 'min="1" max="80"'))
+          + taskFieldHtml("风格要求", workInputHtml("abilityPptInstructions", "text", "", 'placeholder="例如：科技感、适合招商、案例更具体"'))
+          + taskFieldHtml("生成模式", taskSelectHtml("abilityPptMode", optionHtml("ai", "AI视觉页") + optionHtml("outline", "结构化大纲")));
+      }
+      if (id === "comfly.ecommerce.detail_pipeline") {
+        return taskFieldHtml("任务名称", workInputHtml("abilityEcommerceTitle", "text", "电商详情页"))
+          + taskFieldHtml("商品素材ID或公网图", workInputHtml("abilityEcommerceAsset", "text", "", 'placeholder="填商品主图素材ID；没有可填公网图片URL"'), true)
+          + taskFieldHtml("详情页要求", taskTextareaHtml("abilityEcommerceText", "突出材质、卖点、使用场景和购买理由"), true)
+          + taskFieldHtml("页面数量", workInputHtml("abilityEcommercePageCount", "number", "12", 'min="1" max="20"'))
+          + taskFieldHtml("自动入库", workCheckboxHtml("abilityEcommerceAutoSave", "完成后保存到素材库", true));
+      }
+      return taskFieldHtml("任务名称", workInputHtml("abilityGenericTitle", "text", capabilityName(id) || "能力任务"))
+        + taskFieldHtml("任务要求", taskTextareaHtml("abilityGenericPrompt", "填写要执行的任务参数和要求"), true);
+    }
+
+    function renderAbilityWorkbench(lookup) {
+      const box = $("abilityWorkbench");
+      if (!box || !lookup) return;
+      const { node } = lookup;
+      const fields = $("abilityWorkbenchFields");
+      const title = $("abilityWorkbenchTitle");
+      const subtitle = $("abilityWorkbenchSubtitle");
+      const badge = $("abilityWorkbenchBadge");
+      const submit = $("abilityWorkbenchSubmit");
+      if (!node || (node.children && node.children.length) || node.comingSoon) {
+        hideAbilityWorkbench();
+        return;
+      }
+      let html = "";
+      let submitText = "下发任务";
+      let badgeText = "独立任务";
+      if (node.workQuickKey) {
+        const quick = workQuickItemByKey(node.workQuickKey);
+        if (quick && workQuickItemVisible(quick) && !quick.disabled) {
+          html = workDispatchFieldsHtml(quick);
+          if (quick.key === "hifly.video.create_by_tts") {
+            setTimeout(() => {
+              renderWorkHiflyOptions();
+              loadHiflyLibraries();
+            }, 0);
+          }
+        }
+      } else if (node.capabilityId || node.serverTask) {
+        html = abilityCapabilityFieldsHtml(node.capabilityId || node.key);
+        if ((node.capabilityId || node.key) === "ip_content_daily") {
+          setTimeout(() => loadIpTemplates(true), 0);
+        }
+        if ((node.capabilityId || node.key) === "goal.video.pipeline") {
+          setTimeout(() => {
+            fillCandidateGroupSelect();
+            loadCandidateGroups();
+          }, 0);
+        }
+      } else if (socialPlatformFromAbilityKey(node.key)) {
+        const platform = socialPlatformFromAbilityKey(node.key);
+        html = abilitySocialFieldsHtml(platform);
+        submitText = "创建采集任务";
+        badgeText = "服务器采集";
+      } else if (node.key === "linkedin_leads") {
+        html = abilityLinkedinFieldsHtml();
+        submitText = "创建采集任务";
+        badgeText = "服务器采集";
+      } else if (node.key === "wechat_channels_transcript") {
+        html = abilityWechatTranscriptFieldsHtml();
+        submitText = "创建提取任务";
+        badgeText = "服务器转写";
+      } else if (node.routeTab) {
+        html = `<div class="field full"><button type="submit" id="abilityRouteOpenBtn">${node.routeTab === "profile" ? "打开个人设置" : "打开页面"}</button></div>`;
+        submitText = node.routeTab === "profile" ? "打开个人设置" : "打开页面";
+        badgeText = "配置入口";
+      }
+      if (!html) {
+        hideAbilityWorkbench();
+        return;
+      }
+      box.classList.remove("hidden");
+      if (title) title.textContent = `${node.label || "能力"}工作台`;
+      if (subtitle) subtitle.textContent = "填写参数后直接创建任务。";
+      if (badge) badge.textContent = badgeText;
+      if (fields) fields.innerHTML = html;
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = submitText;
+      }
+    }
+
     function renderAbilityView() {
       const lookup = activeAbilityLookup();
       if (!lookup) {
@@ -1284,9 +1478,8 @@
         routeBtn.classList.add("hidden");
         routeBtn.textContent = node.routeTab === "profile" ? "打开设置" : "打开工作台";
       }
-      const quick = node.workQuickKey ? workQuickItemByKey(node.workQuickKey) : null;
-      const canDispatch = !!(quick && workQuickItemVisible(quick) && !quick.disabled);
       if (dispatchBtn) dispatchBtn.classList.add("hidden");
+      renderAbilityWorkbench(lookup);
     }
 
     function chatContextMarker() {
@@ -3107,15 +3300,17 @@
     }
 
     function fillCandidateGroupSelect() {
-      const sel = $("taskCandidateGroup");
-      if (!sel) return;
-      const current = sel.value;
-      if (!state.candidateGroups.length) {
-        sel.innerHTML = optionHtml("", "暂无备选组，请先到素材库设置");
-        return;
-      }
-      sel.innerHTML = state.candidateGroups.map((row) => optionHtml(row.name, `${row.name}${row.count ? `（${row.count}张）` : ""}`)).join("");
-      if (current && state.candidateGroups.some((row) => row.name === current)) sel.value = current;
+      const selects = [$("taskCandidateGroup"), $("abilityVideoCandidateGroup")].filter(Boolean);
+      if (!selects.length) return;
+      selects.forEach((sel) => {
+        const current = sel.value;
+        if (!state.candidateGroups.length) {
+          sel.innerHTML = optionHtml("", "暂无备选组，请先到素材库设置");
+          return;
+        }
+        sel.innerHTML = optionHtml("", "不选择") + state.candidateGroups.map((row) => optionHtml(row.name, `${row.name}${row.count ? `（${row.count}张）` : ""}`)).join("");
+        if (current && state.candidateGroups.some((row) => row.name === current)) sel.value = current;
+      });
     }
 
     async function loadCandidateGroups() {
@@ -3176,23 +3371,25 @@
     }
 
     function fillIpTemplateSelect() {
-      const sel = $("taskIpTemplate");
-      if (!sel) return;
-      const current = sel.value;
-      if (state.ipTemplatesLoading) {
-        sel.innerHTML = optionHtml("", "模板加载中...");
-        return;
-      }
-      if (!state.ipTemplates.length) {
-        sel.innerHTML = optionHtml("", "暂无服务器模板");
-        return;
-      }
-      sel.innerHTML = optionHtml("", "请选择模板") + state.ipTemplates.map((row) => {
-        const k = Array.isArray(row.keyword_ids) ? row.keyword_ids.length : 0;
-        const c = Array.isArray(row.competitor_ids) ? row.competitor_ids.length : 0;
-        return optionHtml(String(row.id), `${row.name || "模板"} · 关键词${k} · 同行${c}`);
-      }).join("");
-      if (current && state.ipTemplates.some((row) => String(row.id) === current)) sel.value = current;
+      const selects = [$("taskIpTemplate"), $("abilityIpTemplate")].filter(Boolean);
+      if (!selects.length) return;
+      selects.forEach((sel) => {
+        const current = sel.value;
+        if (state.ipTemplatesLoading) {
+          sel.innerHTML = optionHtml("", "模板加载中...");
+          return;
+        }
+        if (!state.ipTemplates.length) {
+          sel.innerHTML = optionHtml("", "暂无服务器模板");
+          return;
+        }
+        sel.innerHTML = optionHtml("", "请选择模板") + state.ipTemplates.map((row) => {
+          const k = Array.isArray(row.keyword_ids) ? row.keyword_ids.length : 0;
+          const c = Array.isArray(row.competitor_ids) ? row.competitor_ids.length : 0;
+          return optionHtml(String(row.id), `${row.name || "模板"} · 关键词${k} · 同行${c}`);
+        }).join("");
+        if (current && state.ipTemplates.some((row) => String(row.id) === current)) sel.value = current;
+      });
     }
 
     async function loadIpTemplates(force = false) {
@@ -3388,6 +3585,12 @@
           + taskFieldHtml("视频时长", taskSelectHtml("workSeedanceDuration", [10, 20, 30, 40, 50, 60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
           + taskFieldHtml("画幅", taskSelectHtml("workSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏") + optionHtml("1:1", "1:1 方图")));
       }
+      if (key === "comfly.daihuo.pipeline") {
+        return taskFieldHtml("素材 ID / 公网图", workInputHtml("workComflyAsset", "text", "", 'placeholder="输入素材库 asset_id 或 https:// 图片链接"'), true)
+          + taskFieldHtml("视频需求", taskTextareaHtml("workComflyText", "例如：生成一个突出产品卖点和使用场景的爆款TVC"), true)
+          + taskFieldHtml("分镜数量", workInputHtml("workComflyStoryboardCount", "number", "5", 'min="1" max="8"'))
+          + taskFieldHtml("自动入库", workCheckboxHtml("workComflyAutoSave", "完成后保存到素材库", true));
+      }
       if (key === "hifly.video.create_by_tts") {
         return taskFieldHtml("数字人", taskSelectHtml("workAvatar", optionHtml("", "加载中...")))
           + taskFieldHtml("声音", taskSelectHtml("workVoice", optionHtml("", "加载中...")))
@@ -3500,6 +3703,24 @@
               total_duration_seconds: workNumber(workValue("workSeedanceDuration"), 20, 5, 120),
               aspect_ratio: workValue("workSeedanceAspect") || "9:16",
               auto_save: true,
+            },
+          },
+        };
+      }
+      if (key === "comfly.daihuo.pipeline") {
+        const asset = assetOrImagePayload(workValue("workComflyAsset"), "素材 ID 或公网图");
+        return {
+          title: "爆款TVC",
+          taskKind: "capability",
+          content: "H5 能力工作台：爆款TVC",
+          payload: {
+            capability_id: "comfly.daihuo.pipeline",
+            payload: {
+              action: "start_pipeline",
+              ...asset,
+              task_text: workValue("workComflyText"),
+              storyboard_count: workNumber(workValue("workComflyStoryboardCount"), 5, 1, 8),
+              auto_save: !!($("workComflyAutoSave") && $("workComflyAutoSave").checked),
             },
           },
         };
@@ -3619,9 +3840,244 @@
       throw new Error("这个岗位入口暂不支持直接下发");
     }
 
+    function collectAbilityCapabilityPlan(node) {
+      const capabilityId = String((node && (node.capabilityId || node.key)) || "").trim();
+      if (capabilityId === "ip_content_daily") {
+        const templateId = parseInt(abilityValue("abilityIpTemplate") || "0", 10);
+        if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
+        const tasks = selectedAbilityIpDailyTasks();
+        if (!tasks.length) throw new Error("请选择至少一种生成内容");
+        const extra = abilityValue("abilityIpRequirement");
+        const requirements = extra ? { common: extra, oral: extra, moments: extra, image: extra } : {};
+        return {
+          title: node.label || "IP日更文案",
+          taskKind: "ip_content_daily",
+          content: "H5 能力工作台：IP日更文案",
+          payload: {
+            template_id: templateId,
+            tasks,
+            sync_before: !!($("abilityIpSyncBefore") && $("abilityIpSyncBefore").checked),
+            requirements,
+            industry_count: 5,
+            ip_count: 5,
+            moments_count: 20,
+          },
+        };
+      }
+      if (capabilityId === "goal.video.pipeline") {
+        const sourceMode = abilityValue("abilityVideoSourceMode") || "ai_image";
+        const group = abilityValue("abilityVideoCandidateGroup");
+        if (sourceMode !== "ai_image" && !group) throw new Error("请选择备选素材组，或把首帧来源改成 AI生成首帧");
+        return {
+          title: abilityValue("abilityVideoTitle") || node.label || "创意视频",
+          taskKind: "capability",
+          content: "H5 能力工作台：创意视频",
+          payload: {
+            capability_id: "goal.video.pipeline",
+            payload: {
+              source_mode: sourceMode,
+              candidate_group: sourceMode === "ai_image" ? "" : group,
+              prompt: abilityValue("abilityVideoPrompt"),
+            },
+          },
+        };
+      }
+      if (capabilityId === "wewrite.article.pipeline") {
+        const idea = abilityValue("abilityArticleIdea");
+        if (!idea) throw new Error("请填写公众号主题");
+        return {
+          title: abilityValue("abilityArticleTitle") || node.label || "公众号文章",
+          taskKind: "capability",
+          content: "H5 能力工作台：公众号文章",
+          payload: {
+            capability_id: "wewrite.article.pipeline",
+            payload: {
+              idea,
+              style: abilityValue("abilityArticleStyle"),
+              include_images: !!($("abilityArticleIncludeImages") && $("abilityArticleIncludeImages").checked),
+              image_count: abilityNumber("abilityArticleImageCount", 3, 0, 6),
+              image_aspect_ratio: "16:9",
+            },
+          },
+        };
+      }
+      if (capabilityId === "ppt.create") {
+        const topic = abilityValue("abilityPptTopic");
+        if (!topic) throw new Error("请填写 PPT 主题");
+        return {
+          title: abilityValue("abilityPptTitle") || node.label || "PPT生成",
+          taskKind: "capability",
+          content: "H5 能力工作台：PPT生成",
+          payload: {
+            capability_id: "ppt.create",
+            payload: {
+              mode: abilityValue("abilityPptMode") || "ai",
+              topic,
+              slide_count: abilityNumber("abilityPptSlideCount", 10, 1, 80),
+              instructions: abilityValue("abilityPptInstructions"),
+              language: "zh-CN",
+            },
+          },
+        };
+      }
+      if (capabilityId === "comfly.ecommerce.detail_pipeline") {
+        const asset = assetOrImagePayload(abilityValue("abilityEcommerceAsset"), "商品素材ID或公网图");
+        return {
+          title: abilityValue("abilityEcommerceTitle") || node.label || "电商详情页",
+          taskKind: "capability",
+          content: "H5 能力工作台：电商详情页",
+          payload: {
+            capability_id: "comfly.ecommerce.detail_pipeline",
+            payload: {
+              action: "start_pipeline",
+              ...asset,
+              task_text: abilityValue("abilityEcommerceText"),
+              page_count: abilityNumber("abilityEcommercePageCount", 12, 1, 20),
+              auto_save: !!($("abilityEcommerceAutoSave") && $("abilityEcommerceAutoSave").checked),
+            },
+          },
+        };
+      }
+      const prompt = abilityValue("abilityGenericPrompt");
+      if (!prompt) throw new Error("请填写任务要求");
+      return {
+        title: abilityValue("abilityGenericTitle") || node.label || capabilityName(capabilityId) || "能力任务",
+        taskKind: "capability",
+        content: `H5 能力工作台：${node.label || capabilityId}`,
+        payload: { capability_id: capabilityId, payload: { prompt, task_text: prompt } },
+      };
+    }
+
+    function collectSocialLeadsPayload(platform) {
+      const keywords = splitTextareaList(abilityValue("abilityLeadKeywords"));
+      if (!keywords.length) throw new Error("请填写精准用户方向");
+      const mode = abilityValue("abilityLeadMode") || "source";
+      const accounts = splitTextareaList(abilityValue("abilityLeadAccounts"));
+      const sources = splitTextareaList(abilityValue("abilityLeadSources"));
+      const payload = {
+        platform,
+        title: abilityValue("abilityLeadTitle") || `${socialPlatformLabel(platform)}线索采集`,
+        keywords,
+        max_items: abilityNumber("abilityLeadMaxItems", 100, 1, 100),
+        include_comments: true,
+        include_account_posts: true,
+        auto_run: true,
+      };
+      if (mode === "account") {
+        if (!accounts.length) throw new Error("请填写账号");
+        payload.accounts = accounts;
+      } else if (platform === "reddit") {
+        if (!sources.length) throw new Error("请填写社区");
+        payload.communities = sources;
+      } else {
+        if (!sources.length) throw new Error("请填写来源关键词");
+        payload.source_keywords = sources;
+      }
+      return payload;
+    }
+
+    async function submitSocialLeadsWorkbench(node, platform) {
+      const payload = collectSocialLeadsPayload(platform);
+      const data = await api("/api/social-leads/jobs", { method: "POST", json: payload });
+      toast(`${node.label || socialPlatformLabel(platform)}任务已创建，正在自动执行`);
+      return data;
+    }
+
+    async function submitLinkedinWorkbench(node) {
+      const payload = {
+        title: abilityValue("abilityLinkedinTitle") || node.label || "LinkedIn线索挖掘",
+        target_profile: abilityValue("abilityLinkedinTarget"),
+        seed_profile_urls: splitTextareaList(abilityValue("abilityLinkedinProfiles")),
+        seed_company_urls: splitTextareaList(abilityValue("abilityLinkedinCompanies")),
+        keywords: splitTextareaList(abilityValue("abilityLinkedinKeywords")),
+        hashtags: splitTextareaList(abilityValue("abilityLinkedinHashtags")),
+        max_people: abilityNumber("abilityLinkedinMaxPeople", 30, 5, 80),
+        auto_run: true,
+      };
+      if (!payload.seed_profile_urls.length && !payload.seed_company_urls.length && !payload.keywords.length && !payload.hashtags.length) {
+        throw new Error("请至少填写个人主页、公司主页、关键词或话题");
+      }
+      const data = await api("/api/linkedin-mining/jobs", { method: "POST", json: payload });
+      toast("LinkedIn线索挖掘任务已创建，正在自动执行");
+      return data;
+    }
+
+    async function submitWechatTranscriptWorkbench(node) {
+      const query = abilityValue("abilityWechatQuery");
+      if (!query) throw new Error("请填写视频号账号、链接或关键词");
+      const search = await api(`/api/wechat-channels-transcript/users/search?q=${encodeURIComponent(query)}`);
+      const account = Array.isArray(search.items) ? search.items[0] : null;
+      const username = String((account && (account.username || account.finder_username || account.id)) || "").trim();
+      if (!username) throw new Error("没有找到可用的视频号账号");
+      const videos = await api("/api/wechat-channels-transcript/videos", {
+        method: "POST",
+        json: {
+          username,
+          max_pages: abilityNumber("abilityWechatPages", 1, 1, 20),
+          page_size: 20,
+        },
+      });
+      const items = (Array.isArray(videos.items) ? videos.items : []).slice(0, abilityNumber("abilityWechatLimit", 10, 1, 50));
+      if (!items.length) throw new Error("这个账号暂时没有拉到可转写的视频");
+      const data = await api("/api/wechat-channels-transcript/jobs", {
+        method: "POST",
+        json: { username, videos: items },
+      });
+      toast(`${node.label || "视频号文案提取"}任务已创建`);
+      return data;
+    }
+
+    async function submitAbilityWorkbench() {
+      if (state.abilityWorkSubmitting) return;
+      const lookup = activeAbilityLookup();
+      const node = lookup && lookup.node;
+      if (!node) throw new Error("未找到当前能力");
+      if (node.routeTab) {
+        switchTab(node.routeTab);
+        return;
+      }
+      state.abilityWorkSubmitting = true;
+      const btn = $("abilityWorkbenchSubmit");
+      const oldText = btn ? btn.textContent : "";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "提交中...";
+      }
+      try {
+        const platform = socialPlatformFromAbilityKey(node.key);
+        if (platform) {
+          await submitSocialLeadsWorkbench(node, platform);
+        } else if (node.key === "linkedin_leads") {
+          await submitLinkedinWorkbench(node);
+        } else if (node.key === "wechat_channels_transcript") {
+          await submitWechatTranscriptWorkbench(node);
+        } else if (node.workQuickKey) {
+          const quick = workQuickItemByKey(node.workQuickKey);
+          if (!quick) throw new Error("未找到对应下发入口");
+          await submitOnceClientTask(collectWorkDispatchPlan(quick));
+          toast("任务已下发");
+        } else if (node.capabilityId || node.serverTask) {
+          await submitOnceClientTask(collectAbilityCapabilityPlan(node));
+          toast("任务已下发");
+        } else {
+          throw new Error("这个能力暂未配置下发方式");
+        }
+        await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true }).catch(() => {})]);
+        renderOfficeEmployees();
+        renderWorkList();
+      } finally {
+        state.abilityWorkSubmitting = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText || "下发任务";
+        }
+      }
+    }
+
     async function submitOnceClientTask(plan) {
       const installationId = currentInstallationId();
-      if (!installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
+      const serverSide = plan.taskKind === "ip_content_daily" || plan.serverSide;
+      if (!serverSide && !installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
       const body = {
         title: plan.title || "安排工作",
         task_kind: plan.taskKind || "client_workflow",
@@ -3632,12 +4088,12 @@
         start_at: "",
         daily_times: [],
         timezone_offset_minutes: timezoneOffsetMinutes(),
-        installation_ids: [installationId],
+        installation_ids: serverSide ? [] : [installationId],
       };
       const data = await api("/api/scheduled-tasks/tasks", {
         method: "POST",
         json: body,
-        headers: { "X-Installation-Id": installationId },
+        headers: installationId ? { "X-Installation-Id": installationId } : {},
       });
       await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       return data;
@@ -5810,6 +6266,10 @@
     $("workDispatchForm").addEventListener("submit", (evt) => {
       evt.preventDefault();
       submitWorkDispatch().catch((err) => toast(err.message || "下发失败"));
+    });
+    $("abilityWorkbenchForm")?.addEventListener("submit", (evt) => {
+      evt.preventDefault();
+      submitAbilityWorkbench().catch((err) => toast(err.message || "提交失败"));
     });
 
     $("messageInput").addEventListener("input", autosizeMessageInput);
