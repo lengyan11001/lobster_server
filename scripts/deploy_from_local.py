@@ -118,12 +118,12 @@ def _connect(target: Target):
     if target.key_path:
         key = Path(target.key_path)
         if key.is_file():
-            for loader in (
-                paramiko.RSAKey,
-                paramiko.Ed25519Key,
-                paramiko.ECDSAKey,
-                paramiko.DSSKey,
-            ):
+            key_loaders = [
+                getattr(paramiko, name)
+                for name in ("RSAKey", "Ed25519Key", "ECDSAKey", "DSSKey")
+                if hasattr(paramiko, name)
+            ]
+            for loader in key_loaders:
                 try:
                     pkey = loader.from_private_key_file(str(key), password=target.key_passphrase or None)
                     client.connect(host, pkey=pkey, **base_kwargs)
