@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260704-ability-workbench-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260704-work-history-1" />
 </head>
 <body>
   <main class="shell">
@@ -393,7 +393,15 @@
                 <span class="dot" id="onlineDot"></span>
                 <span id="deviceText">正在检查设备在线状态...</span>
               </div>
-              <button class="ghost" id="refreshStatusBtn" type="button">刷新</button>
+              <div class="chat-head-actions">
+                <button class="chat-history-entry" id="chatHistoryBtn" type="button" aria-label="工作历史">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18.5v-13Zm2.5-.8a.8.8 0 0 0-.8.8v13c0 .44.36.8.8.8h11c.44 0 .8-.36.8-.8v-13a.8.8 0 0 0-.8-.8h-11ZM8 8h8v1.7H8V8Zm0 3.6h8v1.7H8v-1.7Zm0 3.6h5.2v1.7H8v-1.7Z"></path>
+                  </svg>
+                  <span>工作历史</span>
+                </button>
+                <button class="ghost" id="refreshStatusBtn" type="button">刷新</button>
+              </div>
             </div>
           </div>
           <div class="chat-context hidden" id="chatContextBar">
@@ -620,8 +628,21 @@
     </div>
   </div>
 
+  <div class="task-success-dialog hidden" id="taskSuccessDialog" role="dialog" aria-modal="true" aria-labelledby="taskSuccessTitle">
+    <button class="task-success-backdrop" type="button" id="taskSuccessBackdrop" aria-label="关闭"></button>
+    <div class="task-success-panel">
+      <div class="task-success-kicker">TASK SENT</div>
+      <h3 id="taskSuccessTitle">下发任务成功</h3>
+      <p id="taskSuccessText">任务已进入工作历史。</p>
+      <div class="task-success-actions">
+        <button class="ghost" type="button" id="taskSuccessCloseBtn">知道了</button>
+        <button type="button" id="taskSuccessHistoryBtn">查看工作历史</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260704-ability-workbench-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260704-work-history-1"></script>
 </body>
 </html>

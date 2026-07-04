@@ -16,6 +16,9 @@
       runDetailBackTab: "runList",
       taskDetailBackTab: "taskList",
       historyItems: [],
+      socialLeadJobs: [],
+      linkedinJobs: [],
+      wechatTranscriptJobs: [],
       companyName: localStorage.getItem("lobster_h5_company_name") || "我的AI公司",
       officeDeviceFilter: "all",
       officePage: 1,
@@ -599,6 +602,27 @@
       el.textContent = text;
       el.classList.add("show");
       setTimeout(() => el.classList.remove("show"), 2600);
+    }
+
+    function closeTaskSuccessDialog() {
+      const modal = $("taskSuccessDialog");
+      if (modal) modal.classList.add("hidden");
+    }
+
+    function openWorkHistory() {
+      closeTaskSuccessDialog();
+      switchTab("workList");
+    }
+
+    function showTaskSuccessDialog(detail) {
+      const modal = $("taskSuccessDialog");
+      if (!modal) {
+        toast("下发任务成功");
+        return;
+      }
+      const text = $("taskSuccessText");
+      if (text) text.textContent = detail || "任务已进入工作历史。";
+      modal.classList.remove("hidden");
     }
 
     const UA = navigator.userAgent || "";
@@ -1716,6 +1740,58 @@
       return true;
     }
 
+    function taskScheduleLabel(task) {
+      const type = String((task && task.schedule_type) || "").toLowerCase();
+      const config = task && task.schedule_config && typeof task.schedule_config === "object" ? task.schedule_config : {};
+      const dailyTimes = Array.isArray(task && task.daily_times) ? task.daily_times
+        : (Array.isArray(config.daily_times) ? config.daily_times : []);
+      if (type === "daily_times") return dailyTimes.length ? `每天 ${dailyTimes.join("、")}` : "每天定时";
+      if (type === "interval") {
+        const seconds = Number((task && task.interval_seconds) || config.interval_seconds || 0);
+        const minutes = Math.max(1, Math.round(seconds / 60) || 1);
+        return `每 ${minutes} 分钟`;
+      }
+      if (task && task.next_run_at) return `下次 ${fmtTime(task.next_run_at)}`;
+      return "一次性";
+    }
+
+    function jobStatusText(status) {
+      const s = String(status || "").toLowerCase();
+      return {
+        queued: "排队中",
+        pending: "待执行",
+        running: "执行中",
+        processing: "执行中",
+        completed: "完成",
+        failed: "失败",
+        cancelled: "已取消",
+      }[s] || statusText(s);
+    }
+
+    function workbenchJobItem(job, kind) {
+      if (!job) return null;
+      const req = job.request_payload && typeof job.request_payload === "object" ? job.request_payload : {};
+      const platform = String(job.platform || req.platform || "").trim();
+      const titlePrefix = kind === "linkedin"
+        ? "LinkedIn线索挖掘"
+        : (kind === "wechat" ? "视频号文案提取" : `${socialPlatformLabel(platform)}线索采集`);
+      const status = String(job.status || "").toLowerCase();
+      const progress = Number(job.progress || 0);
+      const stage = job.stage || job.current_step || "";
+      const progressText = Number.isFinite(progress) && progress > 0 ? `进度 ${Math.min(100, Math.max(0, progress))}%` : "";
+      const meta = String(job.error || stage || progressText || "工作台任务").slice(0, 90);
+      return {
+        type: status === "failed" ? "failed" : (isActiveMessageStatus(status) ? "current" : "done"),
+        time: job.completed_at || job.updated_at || job.created_at,
+        sortTime: job.completed_at || job.updated_at || job.created_at,
+        createdTime: job.created_at,
+        title: job.title || titlePrefix,
+        badge: jobStatusText(status),
+        meta,
+        actionTaskId: "",
+      };
+    }
+
     function runWorkMeta(row) {
       if (isServerSideRun(row)) {
         const progress = row && row.progress && (row.progress.text || row.progress.message || row.progress.status);
@@ -1782,6 +1858,12 @@
       const runs = state.runs || [];
       const platforms = new Set();
       [...tasks, ...runs].forEach((row) => collectPlatforms(row).forEach((p) => platforms.add(p)));
+      (state.socialLeadJobs || []).forEach((job) => {
+        const platform = String((job && (job.platform || (job.request_payload || {}).platform)) || "").trim();
+        if (platform) platforms.add(socialPlatformLabel(platform));
+      });
+      if ((state.linkedinJobs || []).length) platforms.add("LinkedIn");
+      if ((state.wechatTranscriptJobs || []).length) platforms.add("视频号");
       const current = runs.filter(isActiveRun).slice(0, 8).map((row) => ({
         type: "current",
         runId: row.id || "",
@@ -1819,23 +1901,30 @@
           actionTaskId: "",
         };
       });
-      const future = tasks
-        .filter((row) => taskIsFutureWork(row, runs))
-        .slice(0, 12)
-        .map((row) => ({
-          type: "future",
-          time: row.next_run_at || row.updated_at || row.created_at,
-          sortTime: row.updated_at || row.created_at,
-          createdTime: row.created_at,
-          title: row.title || capabilityName(taskCapabilityId(row)),
-          badge: row.next_run_at ? "待执行" : statusText(row.status),
-          meta: `${capabilityName(taskCapabilityId(row))} · ${row.schedule_type === "interval" ? `每 ${Math.round((row.interval_seconds || 0) / 60)} 分钟` : "一次性"}`,
-          actionTaskId: row.id || "",
-        }));
-      const items = [...current, ...future, ...done, ...messages]
+      const workbenchJobs = [
+        ...(state.socialLeadJobs || []).map((job) => workbenchJobItem(job, "social")),
+        ...(state.linkedinJobs || []).map((job) => workbenchJobItem(job, "linkedin")),
+        ...(state.wechatTranscriptJobs || []).map((job) => workbenchJobItem(job, "wechat")),
+      ].filter(Boolean);
+      const scheduled = tasks
+        .slice(0, 80)
+        .map((row) => {
+          const active = taskIsFutureWork(row, runs);
+          return {
+            type: active ? "future" : "scheduled",
+            time: row.next_run_at || row.updated_at || row.created_at,
+            sortTime: row.next_run_at || row.updated_at || row.created_at,
+            createdTime: row.created_at,
+            title: row.title || capabilityName(taskCapabilityId(row) || row.task_kind),
+            badge: row.next_run_at ? "待执行" : statusText(row.status),
+            meta: `${capabilityName(taskCapabilityId(row) || row.task_kind)} / ${taskScheduleLabel(row)}`,
+            actionTaskId: active ? (row.id || "") : "",
+          };
+        });
+      const items = [...current, ...scheduled, ...workbenchJobs, ...done, ...messages]
         .filter((item) => item.title)
         .sort((a, b) => workSortTime(b) - workSortTime(a))
-        .slice(0, 28);
+        .slice(0, 80);
       if ($("workTaskCount")) $("workTaskCount").textContent = String(items.length);
       if ($("workPlatformCount")) $("workPlatformCount").textContent = String(platforms.size);
       if ($("workListSubtitle")) $("workListSubtitle").textContent = `共 ${items.length} 个任务节点 · AI 自动执行`;
@@ -2327,7 +2416,7 @@
         if (run && run.id && !(state.runs || []).some((row) => String(row.id || "") === String(run.id))) {
           state.runs = [run].concat(state.runs || []);
         }
-        toast("已下发到 online 客户端生成图片");
+        showTaskSuccessDialog("朋友圈图片生成任务已下发，可在工作历史查看进度。");
         if (state.currentRunDetailId) {
           setTimeout(() => openRunDetail(state.currentRunDetailId, state.runDetailBackTab || "runList"), 1200);
         }
@@ -2362,7 +2451,7 @@
         mergeRuns(data.runs || []);
         renderOfficeEmployees();
         renderWorkList();
-        toast("已下发执行");
+        showTaskSuccessDialog("任务已下发执行，可在工作历史查看进度。");
         await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       } catch (err) {
         removeRun(optimisticRunId);
@@ -2457,7 +2546,11 @@
       if (key === "runList") loadRuns({ reset: true });
       if (key === "workList") {
         renderWorkList();
-        Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
+        Promise.all([
+          loadTasks({ reset: true, limit: 80 }),
+          loadRuns({ reset: true, limit: 80 }),
+          loadWorkbenchJobs({ limit: 80 }),
+        ]).then(renderWorkList);
       }
       if (key === "home") {
         setTaskPanelOpen(true);
@@ -3979,7 +4072,6 @@
     async function submitSocialLeadsWorkbench(node, platform) {
       const payload = collectSocialLeadsPayload(platform);
       const data = await api("/api/social-leads/jobs", { method: "POST", json: payload });
-      toast(`${node.label || socialPlatformLabel(platform)}任务已创建，正在自动执行`);
       return data;
     }
 
@@ -3998,7 +4090,6 @@
         throw new Error("请至少填写个人主页、公司主页、关键词或话题");
       }
       const data = await api("/api/linkedin-mining/jobs", { method: "POST", json: payload });
-      toast("LinkedIn线索挖掘任务已创建，正在自动执行");
       return data;
     }
 
@@ -4023,7 +4114,6 @@
         method: "POST",
         json: { username, videos: items },
       });
-      toast(`${node.label || "视频号文案提取"}任务已创建`);
       return data;
     }
 
@@ -4055,16 +4145,15 @@
           const quick = workQuickItemByKey(node.workQuickKey);
           if (!quick) throw new Error("未找到对应下发入口");
           await submitOnceClientTask(collectWorkDispatchPlan(quick));
-          toast("任务已下发");
         } else if (node.capabilityId || node.serverTask) {
           await submitOnceClientTask(collectAbilityCapabilityPlan(node));
-          toast("任务已下发");
         } else {
           throw new Error("这个能力暂未配置下发方式");
         }
         await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true }).catch(() => {})]);
         renderOfficeEmployees();
         renderWorkList();
+        showTaskSuccessDialog("任务已下发成功，可在工作历史查看进度。");
       } finally {
         state.abilityWorkSubmitting = false;
         if (btn) {
@@ -4113,7 +4202,7 @@
       try {
         await submitOnceClientTask(plan);
         closeWorkDispatchModal();
-        toast("任务已下发给客户端");
+        showTaskSuccessDialog("任务已下发成功，可在工作历史查看进度。");
       } catch (err) {
         state.workDispatchSubmitting = false;
         if (btn) {
@@ -4846,7 +4935,7 @@
         headers: { 'X-Installation-Id': installationId },
       });
       setDouyinTaskInlineMessage("任务已经下发成功，稍后会在执行记录里看到进度。", false);
-      toast("抖音获客任务已下发");
+      showTaskSuccessDialog("抖音获客任务已下发，可在工作历史查看进度。");
       await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       return data;
     }
@@ -4912,22 +5001,22 @@
       }
       if (plan.kind === "image_generate") {
         await submitVoiceCapabilityTask("goal.image.pipeline", plan.payload, "语音图片任务");
-        toast("图片任务已下发");
+        showTaskSuccessDialog("图片任务已下发，可在工作历史查看进度。");
         return;
       }
       if (plan.kind === "creative_storyboard_video") {
         await submitVoiceCapabilityTask("goal.video.pipeline", plan.payload, "语音创意分镜任务");
-        toast("创意分镜任务已下发");
+        showTaskSuccessDialog("创意分镜任务已下发，可在工作历史查看进度。");
         return;
       }
       if (plan.kind === "video_generate") {
         await submitVoiceCapabilityTask("goal.video.pipeline", plan.payload, "语音视频任务");
-        toast("视频任务已下发");
+        showTaskSuccessDialog("视频任务已下发，可在工作历史查看进度。");
         return;
       }
       if (plan.kind === "douyin_leads_task") {
         await submitVoiceDouyinTask(plan.payload);
-        toast("抖音获客任务已下发");
+        showTaskSuccessDialog("抖音获客任务已下发，可在工作历史查看进度。");
         return;
       }
       sendVoiceDraftToMessages(true, "", plan.content);
@@ -5015,7 +5104,7 @@
         if (Array.isArray(data.runs)) mergeRuns(data.runs);
         renderOfficeEmployees();
         renderWorkList();
-        toast("任务已下发");
+        showTaskSuccessDialog("任务已下发成功，可在工作历史查看进度。");
         setTaskPanelOpen(false);
         await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
       } catch (err) {
@@ -5031,7 +5120,7 @@
     async function loadTasks(options = {}) {
       const reset = options.reset !== false;
       const append = !!options.append;
-      const pageSize = 10;
+      const pageSize = Math.max(1, Math.min(100, parseInt(options.limit || "10", 10) || 10));
       const box = $("taskList");
       if (!state.token) return;
       if (reset) {
@@ -5101,6 +5190,26 @@
           btn.textContent = oldText || "删除";
         }
       }
+    }
+
+    async function loadWorkbenchJobs(options = {}) {
+      if (!state.token) return;
+      const limit = Math.max(1, Math.min(100, parseInt(options.limit || "80", 10) || 80));
+      const [social, linkedin, wechat] = await Promise.allSettled([
+        api(`/api/social-leads/jobs?limit=${limit}&offset=0`),
+        api(`/api/linkedin-mining/jobs?limit=${limit}&offset=0`),
+        api(`/api/wechat-channels-transcript/jobs?limit=${limit}`),
+      ]);
+      if (social.status === "fulfilled") {
+        state.socialLeadJobs = Array.isArray(social.value.items) ? social.value.items : [];
+      }
+      if (linkedin.status === "fulfilled") {
+        state.linkedinJobs = Array.isArray(linkedin.value.items) ? linkedin.value.items : [];
+      }
+      if (wechat.status === "fulfilled") {
+        state.wechatTranscriptJobs = Array.isArray(wechat.value.items) ? wechat.value.items : [];
+      }
+      renderWorkList();
     }
 
     function taskPageHtml(task) {
@@ -5779,7 +5888,7 @@
     async function loadRuns(options = {}) {
       const reset = options.reset !== false;
       const append = !!options.append;
-      const pageSize = 10;
+      const pageSize = Math.max(1, Math.min(100, parseInt(options.limit || "10", 10) || 10));
       const box = $("runList");
       if (!state.token) return;
       if (reset) {
@@ -5938,6 +6047,10 @@
     $("addDailyTimeBtn").addEventListener("click", () => addDailyTime());
     $("createTaskBtn").addEventListener("click", () => createScheduledTask().catch((err) => toast(err.message || "下发失败")));
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
+    $("chatHistoryBtn")?.addEventListener("click", openWorkHistory);
+    $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
+    $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
+    $("taskSuccessHistoryBtn")?.addEventListener("click", openWorkHistory);
     $("refreshProfileBtn").addEventListener("click", refreshDeviceStatus);
     $("installIosWebclipBtn").addEventListener("click", installIosWebclip);
     $("refreshTasksBtn").addEventListener("click", () => loadTasks({ reset: true }));
