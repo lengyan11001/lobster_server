@@ -623,9 +623,15 @@
       switchTab("workList");
     }
 
-    function openScheduleManager() {
+    function backTargetFromCurrent(defaultTab = "profile") {
+      const current = activeViewKey();
+      if (!current || ["taskList", "taskDetail", "runDetail"].includes(current)) return defaultTab;
+      return current;
+    }
+
+    function openScheduleManager(backTab = "") {
       closeTaskSuccessDialog();
-      state.taskListBackTab = "profile";
+      state.taskListBackTab = backTab || backTargetFromCurrent("profile");
       switchTab("taskList");
     }
 
@@ -6804,7 +6810,12 @@
     syncTopNavigationActions();
 
     document.querySelectorAll("[data-tab-target]").forEach((btn) => {
-      btn.addEventListener("click", () => switchTab(btn.dataset.tabTarget));
+      btn.addEventListener("click", () => {
+        const target = btn.dataset.tabTarget;
+        if (target === "taskList") state.taskListBackTab = backTargetFromCurrent("profile");
+        if (target === "workList") state.workListBackTab = backTargetFromCurrent("profile");
+        switchTab(target);
+      });
     });
     document.querySelectorAll("[data-auth-tab]").forEach((btn) => {
       btn.addEventListener("click", () => setAuthTab(btn.dataset.authTab));
