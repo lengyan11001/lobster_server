@@ -1579,7 +1579,8 @@
       state.currentDepartmentId = department.id;
       $("departmentKicker").textContent = department.alias || "DEPARTMENT";
       $("departmentTitle").textContent = department.name || "职能中心";
-      $("departmentSubtitle").textContent = department.description || "";
+      if ($("pageTitle")) $("pageTitle").textContent = department.name || "职能中心";
+      if ($("pageSubtitle")) $("pageSubtitle").textContent = "";
       $("departmentBreadcrumb").innerHTML = `<span>首页</span><span>${escapeHtml(department.name || "")}</span>`;
       $("departmentSkillGrid").innerHTML = (department.children || []).map(abilityCardHtml).join("") || `<div class="quick-empty">这个部门暂时没有配置能力。</div>`;
     }
@@ -1721,7 +1722,6 @@
       const { node } = lookup;
       const fields = $("abilityWorkbenchFields");
       const title = $("abilityWorkbenchTitle");
-      const subtitle = $("abilityWorkbenchSubtitle");
       const badge = $("abilityWorkbenchBadge");
       const submit = $("abilityWorkbenchSubmit");
       if (!node || (node.children && node.children.length) || node.comingSoon) {
@@ -1778,7 +1778,6 @@
       if (!node.routeTab) html += abilityScheduleFieldsHtml();
       box.classList.remove("hidden");
       if (title) title.textContent = `${node.label || "能力"}工作台`;
-      if (subtitle) subtitle.textContent = "填写参数后直接创建任务。";
       if (badge) badge.textContent = badgeText;
       if (fields) fields.innerHTML = html;
       if (submit) {
@@ -1797,12 +1796,10 @@
       const { node, department, trail } = lookup;
       const labels = [department.name, ...trail.map((item) => item.label || item.key)];
       $("abilityKicker").textContent = department.name || "ABILITY";
-      $("abilityTitle").textContent = node.label || "能力详情";
-      $("abilitySubtitle").textContent = node.description || "查看能力说明，继续进入下一级或发起对话。";
+      $("abilityTitle").textContent = node.label || "能力";
+      if ($("pageTitle")) $("pageTitle").textContent = node.label || "能力";
+      if ($("pageSubtitle")) $("pageSubtitle").textContent = "";
       $("abilityBreadcrumb").innerHTML = `<span>首页</span>${labels.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}`;
-      $("abilityMark").textContent = node.mark || firstChar(node.label || node.key);
-      $("abilityDetailTitle").textContent = node.label || node.key || "能力";
-      $("abilityDetailDesc").textContent = node.description || "";
       $("abilityChildren").innerHTML = (node.children || []).map(abilityCardHtml).join("");
       const routeBtn = $("abilityRouteBtn");
       const dispatchBtn = $("abilityDispatchBtn");
@@ -3160,8 +3157,10 @@
         douyinLeads: ["抖音获客", "先看账号与机器状态，再安排采集、评论和私信任务"],
         douyinLeadsSchedule: ["安排抖音获客", "按当前在线设备给抖音账号下发具体获客工作"],
       };
-      titleMap.department = ["职能中心", "按部门查看能力"];
-      titleMap.ability = ["能力详情", "查看能力说明和下一级能力"];
+      const currentDepartment = departmentById(state.currentDepartmentId);
+      const currentAbility = activeAbilityLookup();
+      titleMap.department = [currentDepartment && currentDepartment.name || "职能中心", ""];
+      titleMap.ability = [currentAbility && currentAbility.node && currentAbility.node.label || "能力", ""];
       titleMap.home = ["定时任务", "按时间自动执行内容任务"];
       const nextTitle = titleMap[key] || titleMap.office;
       $("pageTitle").textContent = nextTitle[0];
