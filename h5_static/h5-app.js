@@ -16,6 +16,10 @@
       runListHasNext: false,
       runDetailBackTab: "runList",
       taskDetailBackTab: "taskList",
+      taskListBackTab: "profile",
+      workListBackTab: "profile",
+      workListScope: { type: "all", label: "全部记录" },
+      workListScopeOptions: [],
       historyItems: [],
       socialLeadJobs: [],
       linkedinJobs: [],
@@ -610,13 +614,18 @@
       if (modal) modal.classList.add("hidden");
     }
 
-    function openWorkHistory() {
+    function openWorkHistory(scope = null, backTab = "") {
       closeTaskSuccessDialog();
+      const nextScope = scope || scopeFromActiveView();
+      const options = workScopeOptions(nextScope);
+      state.workListBackTab = backTab || activeViewKey() || "profile";
+      setWorkListScope(nextScope, options);
       switchTab("workList");
     }
 
     function openScheduleManager() {
       closeTaskSuccessDialog();
+      state.taskListBackTab = "profile";
       switchTab("taskList");
     }
 
@@ -798,6 +807,193 @@
       if (row && row.task_kind === "douyin_leads") return "douyin_leads";
       if (row && ["social_leads", "linkedin_mining", "wechat_channels_transcript"].includes(row.task_kind)) return row.task_kind;
       return String(payload.capability_id || "");
+    }
+
+    function cleanKey(value) {
+      return String(value || "").trim();
+    }
+
+    function addKey(set, value) {
+      const key = cleanKey(value);
+      if (key) set.add(key);
+    }
+
+    function quickKeysFor(key) {
+      const quick = workQuickItemByKey(key);
+      const keys = new Set();
+      if (!quick) return keys;
+      addKey(keys, quick.key);
+      addKey(keys, quick.capabilityId);
+      addKey(keys, quick.packageId);
+      addKey(keys, quick.workflowAction);
+      addKey(keys, quick.dispatchKind);
+      return keys;
+    }
+
+    function collectAbilityKeys(node, includeChildren = true) {
+      const keys = new Set();
+      const visit = (item) => {
+        if (!item) return;
+        addKey(keys, item.key);
+        addKey(keys, item.capabilityId);
+        addKey(keys, item.packageId);
+        addKey(keys, item.workQuickKey);
+        addKey(keys, item.workflowAction);
+        quickKeysFor(item.workQuickKey).forEach((key) => keys.add(key));
+        if (item.key === "reddit_leads") keys.add("reddit");
+        if (item.key === "x_leads") keys.add("x");
+        if (item.key === "tiktok_leads") keys.add("tiktok");
+        if (includeChildren && Array.isArray(item.children)) item.children.forEach(visit);
+      };
+      visit(node);
+      return keys;
+    }
+
+    function h5ContextFromPayload(payload) {
+      const data = payload && typeof payload === "object" ? payload : {};
+      const ctx = data.h5_context && typeof data.h5_context === "object" ? data.h5_context : {};
+      return ctx;
+    }
+
+    function rowMatchKeys(row) {
+      const keys = new Set();
+      const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
+      const inner = payload.payload && typeof payload.payload === "object" ? payload.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const ctx = h5ContextFromPayload(payload);
+      addKey(keys, row && row.task_kind);
+      addKey(keys, row && row.title);
+      addKey(keys, taskCapabilityId(row));
+      addKey(keys, payload.capability_id);
+      addKey(keys, payload.action);
+      addKey(keys, payload.workflow_action);
+      addKey(keys, payload.platform);
+      addKey(keys, params.action);
+      addKey(keys, inner.action);
+      addKey(keys, ctx.department_id);
+      addKey(keys, ctx.ability_key);
+      addKey(keys, ctx.capability_id);
+      const platform = cleanKey(payload.platform || params.platform);
+      if (row && row.task_kind === "social_leads" && platform) addKey(keys, `${platform}_leads`);
+      if (row && row.task_kind === "linkedin_mining") addKey(keys, "linkedin_leads");
+      if (row && row.task_kind === "wechat_channels_transcript") addKey(keys, "wechat_channels_transcript");
+      if (row && row.task_kind === "client_workflow") {
+        const action = cleanKey(payload.action || params.action);
+        if (action.startsWith("local_bestseller_")) addKey(keys, "local_bestseller");
+        if (action === "viral_video_remix_start") addKey(keys, "viral_video_remix");
+        if (action === "wecom_poll_reply") addKey(keys, "wecom_reply");
+        if (action === "publish_content") addKey(keys, "publish_center");
+      }
+      return keys;
+    }
+
+    function departmentScope(department) {
+      if (!department) return { type: "all", label: "全部记录" };
+      return { type: "department", departmentId: department.id, label: department.name || "当前部门" };
+    }
+
+    function abilityScope(lookup, trailIndex = -1) {
+      if (!lookup || !lookup.department || !Array.isArray(lookup.trail) || !lookup.trail.length) {
+        return { type: "all", label: "全部记录" };
+      }
+      const idx = trailIndex >= 0 ? Math.min(trailIndex, lookup.trail.length - 1) : lookup.trail.length - 1;
+      const node = lookup.trail[idx];
+      const includeChildren = !!(node && node.children && node.children.length);
+      return {
+        type: "ability",
+        departmentId: lookup.department.id,
+        abilityKey: node && node.key,
+        label: node && node.label || "当前能力",
+        includeChildren,
+      };
+    }
+
+    function scopeId(scope) {
+      const item = scope || {};
+      return [item.type || "all", item.departmentId || "", item.abilityKey || "", item.includeChildren ? "tree" : "one"].join(":");
+    }
+
+    function scopeFromActiveView() {
+      const active = activeViewKey();
+      if (active === "department") return departmentScope(departmentById(state.currentDepartmentId));
+      if (active === "ability") return abilityScope(activeAbilityLookup());
+      return { type: "all", label: "全部记录" };
+    }
+
+    function workScopeOptions(scope) {
+      const options = [{ type: "all", label: "全部记录" }];
+      const active = activeViewKey();
+      let department = null;
+      let lookup = null;
+      if (active === "department") department = departmentById(state.currentDepartmentId);
+      if (active === "ability") {
+        lookup = activeAbilityLookup();
+        department = lookup && lookup.department;
+      }
+      if (!department && scope && scope.departmentId) department = departmentById(scope.departmentId);
+      if (department) options.push(departmentScope(department));
+      if (lookup && Array.isArray(lookup.trail)) {
+        lookup.trail.forEach((node, idx) => {
+          const next = abilityScope(lookup, idx);
+          if (!options.some((item) => scopeId(item) === scopeId(next))) options.push(next);
+        });
+      } else if (scope && scope.abilityKey) {
+        const scopedLookup = abilityLookup(scope.abilityKey);
+        if (scopedLookup) {
+          scopedLookup.trail.forEach((node, idx) => {
+            const next = abilityScope(scopedLookup, idx);
+            if (!options.some((item) => scopeId(item) === scopeId(next))) options.push(next);
+          });
+        }
+      }
+      return options;
+    }
+
+    function recordMatchesWorkScope(row, scope) {
+      const item = scope || { type: "all" };
+      if (!row || item.type === "all") return true;
+      const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+      const ctx = h5ContextFromPayload(payload);
+      if (item.type === "department") {
+        if (ctx.department_id && ctx.department_id === item.departmentId) return true;
+        const department = departmentById(item.departmentId);
+        const keys = departmentNodeKeys(department);
+        const rowKeys = rowMatchKeys(row);
+        return Array.from(rowKeys).some((key) => keys.has(key));
+      }
+      if (item.type === "ability") {
+        if (ctx.ability_key && ctx.ability_key === item.abilityKey) return true;
+        const lookup = abilityLookup(item.abilityKey);
+        if (!lookup) return false;
+        const keys = collectAbilityKeys(lookup.node, item.includeChildren !== false);
+        const rowKeys = rowMatchKeys(row);
+        return Array.from(rowKeys).some((key) => keys.has(key));
+      }
+      return true;
+    }
+
+    function renderWorkScopeBar() {
+      const box = $("workScopeChips");
+      if (!box) return;
+      const options = state.workListScopeOptions && state.workListScopeOptions.length
+        ? state.workListScopeOptions
+        : workScopeOptions(state.workListScope);
+      const active = scopeId(state.workListScope || { type: "all" });
+      box.innerHTML = options.map((item) => `<button type="button" class="${scopeId(item) === active ? "active" : ""}" data-work-scope="${escapeHtml(scopeId(item))}">${escapeHtml(item.label || "全部记录")}</button>`).join("");
+    }
+
+    function setWorkListScope(scope, options) {
+      const next = scope || { type: "all", label: "全部记录" };
+      state.workListScope = next;
+      state.workListScopeOptions = options && options.length ? options : workScopeOptions(next);
+      renderWorkScopeBar();
+      renderWorkList();
+    }
+
+    function attachH5ContextToPayload(payload, context) {
+      const ctx = context && context.department_id ? context : null;
+      if (!ctx || !payload || typeof payload !== "object") return payload || {};
+      return { ...payload, h5_context: { ...ctx, capability_id: payload.capability_id || "" } };
     }
 
     function taskActionMenuHtml(task, options = {}) {
@@ -1842,6 +2038,55 @@
       };
     }
 
+    function workbenchJobMatchesScope(job, kind, scope) {
+      const item = scope || { type: "all" };
+      if (!job || item.type === "all") return true;
+      const req = job.request_payload && typeof job.request_payload === "object" ? job.request_payload : {};
+      const keys = new Set();
+      if (kind === "linkedin") addKey(keys, "linkedin_leads");
+      if (kind === "wechat") addKey(keys, "wechat_channels_transcript");
+      if (kind === "social") {
+        const platform = cleanKey(job.platform || req.platform);
+        addKey(keys, "social_leads");
+        addKey(keys, platform);
+        if (platform) addKey(keys, `${platform}_leads`);
+      }
+      addKey(keys, job.title);
+      addKey(keys, req.platform);
+      const fake = { task_kind: kind === "linkedin" ? "linkedin_mining" : (kind === "wechat" ? "wechat_channels_transcript" : "social_leads"), payload: req, title: job.title };
+      rowMatchKeys(fake).forEach((key) => keys.add(key));
+      if (item.type === "department") {
+        const department = departmentById(item.departmentId);
+        const departmentKeys = departmentNodeKeys(department);
+        return Array.from(keys).some((key) => departmentKeys.has(key));
+      }
+      if (item.type === "ability") {
+        const lookup = abilityLookup(item.abilityKey);
+        if (!lookup) return false;
+        const abilityKeys = collectAbilityKeys(lookup.node, item.includeChildren !== false);
+        return Array.from(keys).some((key) => abilityKeys.has(key));
+      }
+      return true;
+    }
+
+    function messageMatchesWorkScope(entry, scope) {
+      const item = scope || { type: "all" };
+      if (item.type === "all") return true;
+      const msg = entry && entry.message ? entry.message : entry;
+      const content = String((msg && msg.content) || "").trim();
+      if (!content) return false;
+      if (item.type === "department") {
+        const dept = departmentById(item.departmentId);
+        return !!dept && (content.includes(`部门：${dept.name}`) || content.includes(`department_id:${dept.id}`));
+      }
+      if (item.type === "ability") {
+        const lookup = abilityLookup(item.abilityKey);
+        const label = lookup && lookup.node && lookup.node.label;
+        return content.includes(`能力标记：${item.abilityKey}`) || (label && content.includes(label));
+      }
+      return true;
+    }
+
     function runWorkMeta(row) {
       if (isServerSideRun(row)) {
         const progress = row && row.progress && (row.progress.text || row.progress.message || row.progress.status);
@@ -1904,16 +2149,21 @@
     function renderWorkList() {
       const timeline = $("workTimeline");
       if (!timeline) return;
-      const tasks = state.tasks || [];
-      const runs = state.runs || [];
+      renderWorkScopeBar();
+      const scope = state.workListScope || { type: "all", label: "全部记录" };
+      const tasks = (state.tasks || []).filter((row) => recordMatchesWorkScope(row, scope));
+      const runs = (state.runs || []).filter((row) => recordMatchesWorkScope(row, scope));
       const platforms = new Set();
       [...tasks, ...runs].forEach((row) => collectPlatforms(row).forEach((p) => platforms.add(p)));
-      (state.socialLeadJobs || []).forEach((job) => {
+      const scopedSocialJobs = (state.socialLeadJobs || []).filter((job) => workbenchJobMatchesScope(job, "social", scope));
+      const scopedLinkedinJobs = (state.linkedinJobs || []).filter((job) => workbenchJobMatchesScope(job, "linkedin", scope));
+      const scopedWechatJobs = (state.wechatTranscriptJobs || []).filter((job) => workbenchJobMatchesScope(job, "wechat", scope));
+      scopedSocialJobs.forEach((job) => {
         const platform = String((job && (job.platform || (job.request_payload || {}).platform)) || "").trim();
         if (platform) platforms.add(socialPlatformLabel(platform));
       });
-      if ((state.linkedinJobs || []).length) platforms.add("LinkedIn");
-      if ((state.wechatTranscriptJobs || []).length) platforms.add("视频号");
+      if (scopedLinkedinJobs.length) platforms.add("LinkedIn");
+      if (scopedWechatJobs.length) platforms.add("视频号");
       const current = runs.filter(isActiveRun).slice(0, 8).map((row) => ({
         type: "current",
         runId: row.id || "",
@@ -1936,7 +2186,7 @@
         meta: (row.error || row.result_text || (row.progress && (row.progress.text || row.progress.message)) || capabilityName(taskCapabilityId(row) || row.task_kind) || "已记录").slice(0, 90),
         actionTaskId: "",
       }));
-      const messages = state.historyItems.slice(-18).map((entry) => {
+      const messages = (state.historyItems || []).filter((entry) => messageMatchesWorkScope(entry, scope)).slice(-18).map((entry) => {
         const row = entry && entry.message ? entry.message : entry;
         const status = String((row && row.status) || "").toLowerCase();
         const progress = latestProgressTextForMessage(entry);
@@ -1952,9 +2202,9 @@
         };
       });
       const workbenchJobs = [
-        ...(state.socialLeadJobs || []).map((job) => workbenchJobItem(job, "social")),
-        ...(state.linkedinJobs || []).map((job) => workbenchJobItem(job, "linkedin")),
-        ...(state.wechatTranscriptJobs || []).map((job) => workbenchJobItem(job, "wechat")),
+        ...scopedSocialJobs.map((job) => workbenchJobItem(job, "social")),
+        ...scopedLinkedinJobs.map((job) => workbenchJobItem(job, "linkedin")),
+        ...scopedWechatJobs.map((job) => workbenchJobItem(job, "wechat")),
       ].filter(Boolean);
       const scheduled = tasks
         .slice(0, 80)
@@ -1975,11 +2225,9 @@
         .filter((item) => item.title)
         .sort((a, b) => workSortTime(b) - workSortTime(a))
         .slice(0, 80);
-      if ($("workTaskCount")) $("workTaskCount").textContent = String(items.length);
-      if ($("workPlatformCount")) $("workPlatformCount").textContent = String(platforms.size);
-      if ($("workListSubtitle")) $("workListSubtitle").textContent = `共 ${items.length} 个任务节点 · AI 自动执行`;
+      if ($("workListSubtitle")) $("workListSubtitle").textContent = `查询：${(scope && scope.label) || "全部记录"} · ${items.length} 条`;
       if (!items.length) {
-        timeline.innerHTML = `<div class="office-empty">暂无工作记录。创建定时任务或从消息里下发任务后，这里会形成时间线。</div>`;
+        timeline.innerHTML = `<div class="office-empty">当前查询条件下暂无工作记录。</div>`;
         return;
       }
       timeline.innerHTML = items.map((item) => `<div class="work-node">
@@ -2118,6 +2366,82 @@
       </div>`;
     }
 
+    function valueLabel(value) {
+      if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean).join("、");
+      if (typeof value === "boolean") return value ? "是" : "否";
+      return String(value == null ? "" : value).trim();
+    }
+
+    function runTaskInputPayload(run) {
+      return run && run.payload && typeof run.payload === "object" ? run.payload : {};
+    }
+
+    function runInnerPayload(run) {
+      const payload = runTaskInputPayload(run);
+      return payload.payload && typeof payload.payload === "object" ? payload.payload : payload;
+    }
+
+    function runParameterRows(run) {
+      const payload = runTaskInputPayload(run);
+      const inner = runInnerPayload(run);
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const rows = [];
+      const add = (label, value) => {
+        const text = valueLabel(value);
+        if (text) rows.push([label, text]);
+      };
+      add("任务名称", run && run.title);
+      add("任务类型", capabilityName(taskCapabilityId(run) || (run && run.task_kind)));
+      if (payload.action) add("执行动作", payload.action);
+      if (payload.platform) add("平台", socialPlatformLabel(payload.platform));
+      if (payload.capability_id) add("能力", capabilityName(payload.capability_id));
+      const sourceTask = (state.tasks || []).find((task) => String(task.id) === String(run && run.task_id)) || null;
+      add("执行方式", taskScheduleLabel(sourceTask || { schedule_type: "once", schedule_config: payload.schedule_config || {}, next_run_at: "" }));
+      add("模板ID", payload.template_id);
+      add("生成内容", Array.isArray(payload.tasks) ? payload.tasks.map(ipTaskLabel) : "");
+      add("执行前同步", payload.sync_before);
+      const req = payload.requirements && typeof payload.requirements === "object" ? payload.requirements : {};
+      add("补充要求", req.common || req.moments || req.oral || req.image);
+      add("关键词/方向", payload.keywords || params.keyword || params.query || inner.prompt || inner.task_text);
+      add("账号", payload.accounts || params.accounts);
+      add("社区/来源", payload.communities || payload.source_keywords || params.source_keywords);
+      add("采集上限", payload.max_items || params.max_results);
+      add("目标画像", payload.target_profile);
+      add("个人主页", payload.seed_profile_urls);
+      add("公司主页", payload.seed_company_urls);
+      add("话题标签", payload.hashtags);
+      add("视频号查询", payload.query || payload.username);
+      add("拉取页数", payload.max_pages);
+      add("最多数量", payload.limit || payload.max_people);
+      add("素材/图片", inner.asset_id || inner.image_url || params.asset_id || params.image_url || params.original_video_url);
+      add("视频要求", inner.task_text || inner.prompt || params.prompt);
+      add("首帧来源", inner.source_mode);
+      add("备选素材组", inner.candidate_group);
+      add("数字人", inner.avatar || params.avatar);
+      add("声音", inner.voice || params.voice);
+      add("口播文案", inner.script || params.script);
+      add("公众号主题", inner.idea);
+      add("文章风格", inner.style);
+      add("PPT主题", inner.topic);
+      add("页数", inner.slide_count || inner.page_count);
+      add("商品要求", inner.task_text);
+      add("发布账号", params.account_nickname || params.account || params.account_id);
+      add("标题", params.title || inner.title);
+      add("正文/描述", params.description || inner.description);
+      add("标签", params.tags);
+      add("地区", params.regions || params.region_list || params.area_list);
+      add("评论内容", params.comment_text || params.reply_text || params.comment_content);
+      add("私信内容", params.message || params.dm_text || params.private_message);
+      return rows;
+    }
+
+    function runDetailActionsHtml(run) {
+      if (!run || !run.id) return "";
+      return `<div class="run-detail-actions">
+        <button type="button" data-refill-run="${escapeHtml(run.id)}">重新执行</button>
+      </div>`;
+    }
+
     function taskDetailHtml(run) {
       const payload = run && run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
       const sections = [];
@@ -2133,6 +2457,8 @@
         if (!title && !normalizedLines.length) return "";
         return `<div class="task-detail-record"><strong>${escapeHtml(title || "结果")}</strong>${normalizedLines.map((line) => `<pre>${escapeHtml(line)}</pre>`).join("")}</div>`;
       }
+      const inputRows = runParameterRows(run);
+      sections.push(`<div class="task-detail-section"><h4>创建参数</h4>${inputRows.length ? inputRows.map(([label, value]) => `<div class="task-detail-record"><strong>${escapeHtml(label)}</strong><pre>${escapeHtml(String(value))}</pre></div>`).join("") : "<div class=\"hint\">暂无可展示参数。</div>"}${runDetailActionsHtml(run)}</div>`);
       function douyinLeadActionLabel(action) {
         return ((DOUYIN_TASK_ACTIONS[action] || {}).label || action || "抖音获客");
       }
@@ -2351,6 +2677,7 @@
       try {
         const data = await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}`);
         const run = data.run || {};
+        mergeRuns([run]);
         $("runPageTitle").textContent = run.title || "执行详情";
         $("runPageSubtitle").textContent = `${capabilityName(taskCapabilityId(run) || run.task_kind)} · ${statusText(run.status)} · ${fmtTime(run.created_at)}`;
         body.innerHTML = taskDetailHtml(run);
@@ -2367,6 +2694,195 @@
           toast(err.message || "详情刷新失败");
         }
       }
+    }
+
+    function findAbilityKeyBy(match) {
+      let found = "";
+      DEPARTMENT_SKILL_TREE.forEach((department) => {
+        if (found) return;
+        eachAbilityNode(department.children || [], department, [], (node) => {
+          if (!found && match(node, department)) found = node.key || "";
+        });
+      });
+      return found;
+    }
+
+    function abilityKeyFromRun(run) {
+      const payload = runTaskInputPayload(run);
+      const ctx = h5ContextFromPayload(payload);
+      if (ctx.ability_key && abilityLookup(ctx.ability_key)) return ctx.ability_key;
+      const kind = String((run && run.task_kind) || "").trim();
+      if (kind === "ip_content_daily") return "ip_content_daily";
+      if (kind === "douyin_leads") return "douyin_leads";
+      if (kind === "linkedin_mining") return "linkedin_leads";
+      if (kind === "wechat_channels_transcript") return "wechat_channels_transcript";
+      if (kind === "social_leads") {
+        const platform = cleanKey(payload.platform);
+        if (platform === "reddit") return "reddit_leads";
+        if (platform === "x") return "x_leads";
+        if (platform === "tiktok") return "tiktok_leads";
+      }
+      if (kind === "client_workflow") {
+        const action = cleanKey(payload.action || (payload.params || {}).action);
+        if (action.startsWith("local_bestseller_")) return findAbilityKeyBy((node) => node.workQuickKey === "local_bestseller") || "local_bestseller";
+        if (action === "viral_video_remix_start") return findAbilityKeyBy((node) => node.workQuickKey === "viral_video_remix") || "viral_video_remix";
+        if (action === "wecom_poll_reply") return findAbilityKeyBy((node) => node.workQuickKey === "wecom_reply") || "wecom_reply";
+        if (action === "publish_content") return findAbilityKeyBy((node) => node.workQuickKey === "publish_center") || "publish_center";
+      }
+      const capabilityId = cleanKey(taskCapabilityId(run) || payload.capability_id);
+      if (capabilityId) {
+        return findAbilityKeyBy((node) => node.key === capabilityId || node.capabilityId === capabilityId || node.workQuickKey === capabilityId) || capabilityId;
+      }
+      return "";
+    }
+
+    function setFieldValue(id, value) {
+      const el = $(id);
+      if (!el) return;
+      if (el.type === "checkbox") {
+        el.checked = !!value;
+      } else {
+        el.value = value == null ? "" : String(value);
+      }
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function setTextareaList(id, values) {
+      setFieldValue(id, Array.isArray(values) ? values.join("\n") : values || "");
+    }
+
+    function refillAbilityScheduleFromRun(run) {
+      const task = (state.tasks || []).find((row) => String(row.id) === String(run && run.task_id)) || null;
+      const payload = runTaskInputPayload(run);
+      const cfg = task && task.schedule_config && typeof task.schedule_config === "object" ? task.schedule_config : (payload.schedule_config || {});
+      const type = task ? (task.schedule_type || "once") : "once";
+      setFieldValue("abilityScheduleType", type);
+      if (task && task.interval_seconds) setFieldValue("abilityIntervalMinutes", Math.max(1, Math.round(Number(task.interval_seconds || 60) / 60)));
+      setFieldValue("abilityStartAt", cfg.start_at || "");
+      const list = $("abilityDailyTimesList");
+      if (list) list.innerHTML = "";
+      const times = Array.isArray(cfg.daily_times) ? cfg.daily_times : [];
+      times.forEach((time) => addAbilityDailyTime(time));
+      updateAbilityScheduleFields();
+    }
+
+    function refillAbilityFieldsFromRun(run) {
+      const payload = runTaskInputPayload(run);
+      const inner = runInnerPayload(run);
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      setFieldValue("abilityGenericTitle", run && run.title || "");
+      setFieldValue("abilityGenericPrompt", inner.prompt || inner.task_text || "");
+      setFieldValue("workImageTitle", run && run.title || "创作图片");
+      setFieldValue("workImagePrompt", inner.prompt || inner.task_text || "");
+      setFieldValue("abilityVideoTitle", run && run.title || "创意视频");
+      setFieldValue("abilityVideoPrompt", inner.prompt || inner.task_text || "");
+      setFieldValue("abilityVideoSourceMode", inner.source_mode || "ai_image");
+      setFieldValue("abilityVideoCandidateGroup", inner.candidate_group || "");
+      setFieldValue("workSeedanceAsset", inner.asset_id || inner.image_url || "");
+      setFieldValue("workSeedanceText", inner.task_text || inner.prompt || "");
+      setFieldValue("workSeedanceDuration", inner.total_duration_seconds || "");
+      setFieldValue("workSeedanceAspect", inner.aspect_ratio || "");
+      setFieldValue("workComflyAsset", inner.asset_id || inner.image_url || "");
+      setFieldValue("workComflyText", inner.task_text || inner.prompt || "");
+      setFieldValue("workComflyStoryboardCount", inner.storyboard_count || "");
+      setFieldValue("workComflyAutoSave", inner.auto_save !== false);
+      setFieldValue("workAvatar", inner.avatar || "");
+      setFieldValue("workVoice", inner.voice || "");
+      setFieldValue("workHiflyTitle", run && run.title || "数字人口播");
+      setFieldValue("workHiflyScript", inner.script || inner.prompt || "");
+      setFieldValue("abilityIpTemplate", payload.template_id || "");
+      document.querySelectorAll("[data-ability-ip-daily-task]").forEach((el) => {
+        const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+        el.checked = !tasks.length || tasks.includes(el.getAttribute("data-ability-ip-daily-task"));
+      });
+      setFieldValue("abilityIpSyncBefore", payload.sync_before !== false);
+      const req = payload.requirements && typeof payload.requirements === "object" ? payload.requirements : {};
+      setFieldValue("abilityIpRequirement", req.common || req.moments || req.oral || req.image || "");
+      setFieldValue("abilityArticleTitle", run && run.title || "公众号文章");
+      setFieldValue("abilityArticleIdea", inner.idea || "");
+      setFieldValue("abilityArticleStyle", inner.style || "");
+      setFieldValue("abilityArticleImageCount", inner.image_count || "");
+      setFieldValue("abilityArticleIncludeImages", inner.include_images !== false);
+      setFieldValue("abilityPptTitle", run && run.title || "PPT生成");
+      setFieldValue("abilityPptTopic", inner.topic || "");
+      setFieldValue("abilityPptSlideCount", inner.slide_count || "");
+      setFieldValue("abilityPptInstructions", inner.instructions || "");
+      setFieldValue("abilityPptMode", inner.mode || "ai");
+      setFieldValue("abilityEcommerceTitle", run && run.title || "电商详情页");
+      setFieldValue("abilityEcommerceAsset", inner.asset_id || inner.image_url || "");
+      setFieldValue("abilityEcommerceText", inner.task_text || inner.prompt || "");
+      setFieldValue("abilityEcommercePageCount", inner.page_count || "");
+      setFieldValue("abilityEcommerceAutoSave", inner.auto_save !== false);
+      setFieldValue("abilityLeadTitle", payload.title || run && run.title || "");
+      setTextareaList("abilityLeadKeywords", payload.keywords);
+      setFieldValue("abilityLeadMode", payload.accounts && payload.accounts.length ? "account" : "source");
+      setTextareaList("abilityLeadSources", payload.communities || payload.source_keywords);
+      setTextareaList("abilityLeadAccounts", payload.accounts);
+      setFieldValue("abilityLeadMaxItems", payload.max_items || "");
+      setFieldValue("abilityLinkedinTitle", payload.title || run && run.title || "");
+      setFieldValue("abilityLinkedinTarget", payload.target_profile || "");
+      setTextareaList("abilityLinkedinProfiles", payload.seed_profile_urls);
+      setTextareaList("abilityLinkedinCompanies", payload.seed_company_urls);
+      setTextareaList("abilityLinkedinKeywords", payload.keywords);
+      setTextareaList("abilityLinkedinHashtags", payload.hashtags);
+      setFieldValue("abilityLinkedinMaxPeople", payload.max_people || "");
+      setFieldValue("abilityWechatQuery", payload.query || payload.username || "");
+      setFieldValue("abilityWechatPages", payload.max_pages || "");
+      setFieldValue("abilityWechatLimit", payload.limit || "");
+      setFieldValue("workDouyinKeyword", params.keyword || params.query || "");
+      setFieldValue("workDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
+      setFieldValue("workDouyinMaxResults", params.max_results || "");
+      setFieldValue("workDouyinMode", params.mode || "script");
+      setFieldValue("workLocalMode", payload.action === "local_bestseller_scene_batch" ? "scene_batch" : "plan");
+      const profile = params.profile && typeof params.profile === "object" ? params.profile : {};
+      setFieldValue("workLocalDays", params.days || "");
+      setFieldValue("workLocalName", profile.name || "");
+      setFieldValue("workLocalNickname", profile.nickname || "");
+      setFieldValue("workLocalGender", profile.gender || "female");
+      setFieldValue("workLocalIdentity", profile.identity || "");
+      setFieldValue("workLocalIndustry", profile.industry || "");
+      setFieldValue("workLocalCity", profile.city || "");
+      setFieldValue("workLocalProvince", profile.province || "");
+      setFieldValue("workLocalPhoto", profile.photo_asset_id || profile.photo_url || "");
+      setFieldValue("workViralVideoUrl", params.original_video_url || "");
+      setFieldValue("workViralCharacterUrl", params.character_image_url || "");
+      setFieldValue("workViralProductUrl", params.product_image_url || "");
+      setFieldValue("workViralPrompt", params.prompt || "");
+      setFieldValue("workViralDuration", params.duration || "");
+      setFieldValue("workViralRatio", params.ratio || "");
+      setFieldValue("workViralGenerateAudio", params.generate_audio !== false);
+      setFieldValue("workWecomNote", params.note || "");
+      setFieldValue("workPublishMaterial", params.asset_id || params.url || params.source_url || params.material || "");
+      setFieldValue("workPublishMediaType", params.media_type || "video");
+      setFieldValue("workPublishAccount", params.account_nickname || params.account || "");
+      setFieldValue("workPublishTitle", params.title || "");
+      setFieldValue("workPublishDescription", params.description || "");
+      setFieldValue("workPublishTags", params.tags || "");
+      setFieldValue("workPublishAiCopy", params.ai_publish_copy !== false);
+      refillAbilityScheduleFromRun(run);
+    }
+
+    async function refillRunToWorkbench(runId) {
+      let run = (state.runs || []).find((row) => String(row.id || "") === String(runId)) || null;
+      if (!run || !run.payload) {
+        const data = await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}`);
+        run = data.run || null;
+        if (run) mergeRuns([run]);
+      }
+      if (!run) {
+        toast("没有找到这条执行记录");
+        return;
+      }
+      const abilityKey = abilityKeyFromRun(run);
+      if (!abilityKey || !abilityLookup(abilityKey)) {
+        toast("这条记录暂时无法定位到对应工作台");
+        return;
+      }
+      openAbilityView(abilityKey);
+      setTimeout(() => {
+        refillAbilityFieldsFromRun(run);
+        toast("已带入上次任务参数，可修改后重新下发");
+      }, 120);
     }
 
     function setMomentStatus(recordId, text, isError = false) {
@@ -4271,6 +4787,7 @@
         } else {
           throw new Error("这个能力暂未配置下发方式");
         }
+        if (plan) plan.h5Context = contextFromAbility(lookup);
         if (!submittedDirect) await submitScheduledClientTask(plan, schedule);
         await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true }).catch(() => {})]);
         renderOfficeEmployees();
@@ -4302,7 +4819,7 @@
         title: plan.title || "安排工作",
         task_kind: plan.taskKind || "client_workflow",
         content: plan.content || "H5 安排工作",
-        payload: plan.payload || {},
+        payload: attachH5ContextToPayload(plan.payload || {}, plan.h5Context),
         schedule_type: scheduleType,
         interval_seconds: scheduleOptions.interval_seconds || 60,
         start_at: scheduleType === "daily_times" ? "" : (scheduleOptions.start_at || ""),
@@ -6323,7 +6840,15 @@
         switchTab(state.runDetailBackTab || "runList");
         return;
       }
-      if (activeId === "taskListView" || activeId === "runListView") {
+      if (activeId === "workListView") {
+        switchTab(state.workListBackTab || "profile");
+        return;
+      }
+      if (activeId === "taskListView") {
+        switchTab(state.taskListBackTab || "profile");
+        return;
+      }
+      if (activeId === "runListView") {
         switchTab("profile");
         return;
       }
@@ -6357,9 +6882,16 @@
       const lookup = activeAbilityLookup();
       if (lookup) openContextChat(contextFromAbility(lookup));
     });
-    $("departmentWorkHistoryBtn")?.addEventListener("click", openWorkHistory);
-    $("abilityWorkHistoryBtn")?.addEventListener("click", openWorkHistory);
+    $("departmentWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(departmentScope(departmentById(state.currentDepartmentId)), "department"));
+    $("abilityWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(abilityScope(activeAbilityLookup()), "ability"));
     $("floatingScheduleBtn")?.addEventListener("click", openScheduleManager);
+    $("workScopeChips")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-work-scope]");
+      if (!btn) return;
+      const id = btn.dataset.workScope || "";
+      const found = (state.workListScopeOptions || []).find((item) => scopeId(item) === id);
+      if (found) setWorkListScope(found, state.workListScopeOptions);
+    });
     $("abilityWorkbenchFields")?.addEventListener("change", (evt) => {
       if (evt.target && evt.target.id === "abilityScheduleType") updateAbilityScheduleFields();
     });
@@ -6410,7 +6942,7 @@
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
-    $("taskSuccessHistoryBtn")?.addEventListener("click", openWorkHistory);
+    $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory(scopeFromActiveView(), activeViewKey() || "profile"));
     $("refreshProfileBtn").addEventListener("click", refreshDeviceStatus);
     $("installIosWebclipBtn").addEventListener("click", installIosWebclip);
     $("refreshTasksBtn").addEventListener("click", () => loadTasks({ reset: true }));
@@ -6495,7 +7027,7 @@
     });
     $("employeeWorkListBtn").addEventListener("click", () => {
       closeEmployeeModal();
-      switchTab("workList");
+      openWorkHistory({ type: "all", label: "全部记录" }, "profile");
     });
     $("employeeRenameBtn").addEventListener("click", () => {
       renameActiveEmployee();
@@ -6630,6 +7162,11 @@
     });
 
     $("runPageBody")?.addEventListener("click", (evt) => {
+      const refillBtn = evt.target.closest("[data-refill-run]");
+      if (refillBtn) {
+        refillRunToWorkbench(refillBtn.dataset.refillRun || "").catch((err) => toast(err.message || "回填失败"));
+        return;
+      }
       const toggle = evt.target.closest("[data-toggle-moment]");
       if (toggle) {
         const item = toggle.closest(".moment-item");

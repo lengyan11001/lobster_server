@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260705-floating-history-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260706-work-scope-1" />
 </head>
 <body>
   <main class="shell">
@@ -192,19 +192,12 @@
 
       <section class="view" id="workListView">
         <div class="work-shell">
-          <div class="work-header">
-            <h2 class="work-title">24h 自动任务</h2>
-            <p class="work-subtitle" id="workListSubtitle">正在整理员工今天的工作节点...</p>
-            <div class="work-summary-grid">
-              <div class="work-summary-card">
-                <div class="work-summary-icon">工</div>
-                <div><strong id="workTaskCount">0</strong><span>任务节点</span></div>
-              </div>
-              <div class="work-summary-card">
-                <div class="work-summary-icon">台</div>
-                <div><strong id="workPlatformCount">0</strong><span>覆盖平台</span></div>
-              </div>
+          <div class="work-filter-bar">
+            <div>
+              <strong>查询条件</strong>
+              <span id="workListSubtitle">默认按入口筛选</span>
             </div>
+            <div class="work-scope-chips" id="workScopeChips"></div>
           </div>
           <div class="work-timeline" id="workTimeline">
             <div class="office-empty">暂无工作记录。</div>
@@ -685,6 +678,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260705-task-menu-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260706-work-scope-1"></script>
 </body>
 </html>
