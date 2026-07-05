@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260704-work-history-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260705-floating-history-1" />
 </head>
 <body>
   <main class="shell">
@@ -335,7 +335,8 @@
               <h2 id="departmentTitle">职能中心</h2>
               <p id="departmentSubtitle">按部门查看可用能力。</p>
             </div>
-            <button class="hero-action" type="button" id="departmentChatBtn">进入对话</button>
+            <button class="hero-action floating-work-history-btn" type="button" id="departmentWorkHistoryBtn">工作历史</button>
+            <button class="hero-action floating-chat-btn" type="button" id="departmentChatBtn">进入对话</button>
           </div>
           <div class="department-breadcrumb" id="departmentBreadcrumb"></div>
           <div class="department-skill-grid" id="departmentSkillGrid"></div>
@@ -350,7 +351,8 @@
               <h2 id="abilityTitle">能力详情</h2>
               <p id="abilitySubtitle">查看能力说明，继续进入下一级或发起对话。</p>
             </div>
-            <button class="hero-action" type="button" id="abilityChatBtn">进入对话</button>
+            <button class="hero-action floating-work-history-btn" type="button" id="abilityWorkHistoryBtn">工作历史</button>
+            <button class="hero-action floating-chat-btn" type="button" id="abilityChatBtn">进入对话</button>
           </div>
           <div class="department-breadcrumb" id="abilityBreadcrumb"></div>
           <div class="ability-detail-card">
@@ -393,23 +395,15 @@
                 <span class="dot" id="onlineDot"></span>
                 <span id="deviceText">正在检查设备在线状态...</span>
               </div>
-              <div class="chat-head-actions">
-                <button class="chat-history-entry" id="chatHistoryBtn" type="button" aria-label="工作历史">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18.5v-13Zm2.5-.8a.8.8 0 0 0-.8.8v13c0 .44.36.8.8.8h11c.44 0 .8-.36.8-.8v-13a.8.8 0 0 0-.8-.8h-11ZM8 8h8v1.7H8V8Zm0 3.6h8v1.7H8v-1.7Zm0 3.6h5.2v1.7H8v-1.7Z"></path>
-                  </svg>
-                  <span>工作历史</span>
-                </button>
-                <button class="ghost" id="refreshStatusBtn" type="button">刷新</button>
-              </div>
+              <button class="ghost" id="refreshStatusBtn" type="button">刷新</button>
             </div>
           </div>
           <div class="chat-context hidden" id="chatContextBar">
             <div>
-              <strong id="chatContextTitle">来源能力</strong>
+              <strong id="chatContextTitle">本次对话来源</strong>
               <span id="chatContextPath">部门 / 能力</span>
             </div>
-            <button class="ghost" type="button" id="clearChatContextBtn">清除</button>
+            <button class="ghost" type="button" id="clearChatContextBtn">取消来源</button>
           </div>
           <div class="messages" id="messages">
             <div class="empty" id="empty">发一条消息试试。</div>
@@ -643,6 +637,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260704-work-history-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260705-floating-history-1"></script>
 </body>
 </html>

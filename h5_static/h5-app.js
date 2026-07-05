@@ -1239,7 +1239,7 @@
       const ctx = state.chatContext;
       bar.classList.toggle("hidden", !ctx);
       if (!ctx) return;
-      $("chatContextTitle").textContent = ctx.ability || ctx.department || "来源能力";
+      $("chatContextTitle").textContent = `本次对话来源：${ctx.ability || ctx.department || "能力"}`;
       $("chatContextPath").textContent = ctx.path || ctx.department || "";
     }
 
@@ -2475,13 +2475,10 @@
     function scrollMessagesToBottom() {
       const messages = $("messages");
       if (messages) messages.scrollTop = messages.scrollHeight;
-      const composer = $("sendForm");
-      if (composer && typeof composer.scrollIntoView === "function") {
-        composer.scrollIntoView({ block: "end", behavior: "smooth" });
-      }
     }
 
     function focusMessageInput() {
+      if (window.matchMedia && !window.matchMedia("(pointer: fine)").matches) return;
       const input = $("messageInput");
       if (!input) return;
       input.focus();
@@ -2570,6 +2567,7 @@
       }
       if (key === "messages") {
         renderChatContextBar();
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
         setTimeout(() => {
           autosizeMessageInput();
           scrollMessagesToBottom();
@@ -6018,6 +6016,8 @@
       const lookup = activeAbilityLookup();
       if (lookup) openContextChat(contextFromAbility(lookup));
     });
+    $("departmentWorkHistoryBtn")?.addEventListener("click", openWorkHistory);
+    $("abilityWorkHistoryBtn")?.addEventListener("click", openWorkHistory);
     $("abilityRouteBtn")?.addEventListener("click", () => {
       const lookup = activeAbilityLookup();
       const routeTab = lookup && lookup.node && lookup.node.routeTab;
@@ -6029,7 +6029,10 @@
       if (!key) return;
       openWorkDispatchModal(key);
     });
-    $("clearChatContextBtn")?.addEventListener("click", () => setChatContext(null));
+    $("clearChatContextBtn")?.addEventListener("click", () => {
+      setChatContext(null);
+      toast("已取消来源标记");
+    });
     document.querySelectorAll("[data-home-target]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const target = String(btn.dataset.homeTarget || "").trim();
@@ -6047,7 +6050,6 @@
     $("addDailyTimeBtn").addEventListener("click", () => addDailyTime());
     $("createTaskBtn").addEventListener("click", () => createScheduledTask().catch((err) => toast(err.message || "下发失败")));
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
-    $("chatHistoryBtn")?.addEventListener("click", openWorkHistory);
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessHistoryBtn")?.addEventListener("click", openWorkHistory);
