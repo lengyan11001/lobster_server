@@ -17,7 +17,9 @@
       runDetailBackTab: "runList",
       taskDetailBackTab: "taskList",
       taskListBackTab: "profile",
+      taskListBackTarget: null,
       workListBackTab: "profile",
+      workListBackTarget: null,
       workListScope: { type: "all", label: "全部记录" },
       workListScopeOptions: [],
       historyItems: [],
@@ -614,24 +616,78 @@
       if (modal) modal.classList.add("hidden");
     }
 
-    function openWorkHistory(scope = null, backTab = "") {
+    function normalizeViewTarget(target, defaultTab = "profile") {
+      if (!target) return { tab: defaultTab };
+      if (typeof target === "string") return { tab: target || defaultTab };
+      if (typeof target === "object") return { ...target, tab: target.tab || defaultTab };
+      return { tab: defaultTab };
+    }
+
+    function viewTargetFromCurrent(defaultTab = "profile") {
+      const current = activeViewKey();
+      if (!current || ["taskList", "taskDetail", "runDetail"].includes(current)) return { tab: defaultTab };
+      const target = { tab: current };
+      if (current === "department") {
+        target.departmentId = state.currentDepartmentId || "";
+      }
+      if (current === "ability") {
+        target.departmentId = state.currentDepartmentId || "";
+        target.abilityKey = state.currentAbilityKey || "";
+        target.abilityTrail = Array.isArray(state.abilityTrail) ? [...state.abilityTrail] : [];
+      }
+      return target;
+    }
+
+    function restoreViewTarget(target, defaultTab = "profile") {
+      const next = normalizeViewTarget(target, defaultTab);
+      if (next.tab === "department") {
+        if (next.departmentId) state.currentDepartmentId = String(next.departmentId);
+        state.currentAbilityKey = "";
+        state.abilityTrail = [];
+        if (departmentById(state.currentDepartmentId)) {
+          switchTab("department");
+        } else {
+          switchTab(defaultTab);
+        }
+        return;
+      }
+      if (next.tab === "ability") {
+        const lookup = abilityLookup(next.abilityKey || state.currentAbilityKey || "");
+        if (lookup) {
+          state.currentDepartmentId = lookup.department.id;
+          state.currentAbilityKey = lookup.node.key;
+          state.abilityTrail = lookup.trail.map((node) => node.key);
+          switchTab("ability");
+          return;
+        }
+        if (next.departmentId && departmentById(next.departmentId)) {
+          openDepartmentView(next.departmentId);
+          return;
+        }
+      }
+      switchTab(next.tab || defaultTab);
+    }
+
+    function openWorkHistory(scope = null, backTarget = null) {
       closeTaskSuccessDialog();
       const nextScope = scope || scopeFromActiveView();
       const options = workScopeOptions(nextScope);
-      state.workListBackTab = backTab || activeViewKey() || "profile";
+      const target = backTarget ? normalizeViewTarget(backTarget) : viewTargetFromCurrent("profile");
+      state.workListBackTarget = target;
+      state.workListBackTab = target.tab || "profile";
       setWorkListScope(nextScope, options);
       switchTab("workList");
     }
 
     function backTargetFromCurrent(defaultTab = "profile") {
-      const current = activeViewKey();
-      if (!current || ["taskList", "taskDetail", "runDetail"].includes(current)) return defaultTab;
-      return current;
+      return viewTargetFromCurrent(defaultTab);
     }
 
-    function openScheduleManager(backTab = "") {
+    function openScheduleManager(backTarget = null) {
       closeTaskSuccessDialog();
-      state.taskListBackTab = backTab || backTargetFromCurrent("profile");
+      const target = backTarget ? normalizeViewTarget(backTarget) : backTargetFromCurrent("profile");
+      state.taskListBackTarget = target;
+      state.taskListBackTab = target.tab || "profile";
       switchTab("taskList");
     }
 
@@ -6812,8 +6868,16 @@
     document.querySelectorAll("[data-tab-target]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const target = btn.dataset.tabTarget;
-        if (target === "taskList") state.taskListBackTab = backTargetFromCurrent("profile");
-        if (target === "workList") state.workListBackTab = backTargetFromCurrent("profile");
+        if (target === "taskList") {
+          const back = backTargetFromCurrent("profile");
+          state.taskListBackTarget = back;
+          state.taskListBackTab = back.tab || "profile";
+        }
+        if (target === "workList") {
+          const back = backTargetFromCurrent("profile");
+          state.workListBackTarget = back;
+          state.workListBackTab = back.tab || "profile";
+        }
         switchTab(target);
       });
     });
@@ -6852,11 +6916,11 @@
         return;
       }
       if (activeId === "workListView") {
-        switchTab(state.workListBackTab || "profile");
+        restoreViewTarget(state.workListBackTarget || state.workListBackTab || "profile", "profile");
         return;
       }
       if (activeId === "taskListView") {
-        switchTab(state.taskListBackTab || "profile");
+        restoreViewTarget(state.taskListBackTarget || state.taskListBackTab || "profile", "profile");
         return;
       }
       if (activeId === "runListView") {
@@ -6893,9 +6957,9 @@
       const lookup = activeAbilityLookup();
       if (lookup) openContextChat(contextFromAbility(lookup));
     });
-    $("departmentWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(departmentScope(departmentById(state.currentDepartmentId)), "department"));
-    $("abilityWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(abilityScope(activeAbilityLookup()), "ability"));
-    $("floatingScheduleBtn")?.addEventListener("click", openScheduleManager);
+    $("departmentWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(departmentScope(departmentById(state.currentDepartmentId))));
+    $("abilityWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(abilityScope(activeAbilityLookup())));
+    $("floatingScheduleBtn")?.addEventListener("click", () => openScheduleManager());
     $("workScopeChips")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-work-scope]");
       if (!btn) return;
@@ -6953,7 +7017,7 @@
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
-    $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory(scopeFromActiveView(), activeViewKey() || "profile"));
+    $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory(scopeFromActiveView(), viewTargetFromCurrent("profile")));
     $("refreshProfileBtn").addEventListener("click", refreshDeviceStatus);
     $("installIosWebclipBtn").addEventListener("click", installIosWebclip);
     $("refreshTasksBtn").addEventListener("click", () => loadTasks({ reset: true }));
