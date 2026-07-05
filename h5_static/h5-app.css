@@ -2153,7 +2153,55 @@
     .task-row-main { min-width: 0; }
     .task-row-title { font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .task-row-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
-    .task-row-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+    .task-row-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+    .task-action-menu { position: relative; flex: 0 0 auto; }
+    .task-action-menu summary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 30px;
+      padding: 5px 12px;
+      border: 1px solid rgba(36,92,255,.18);
+      border-radius: 999px;
+      color: var(--blue);
+      background: rgba(36,92,255,.08);
+      box-shadow: none;
+      font-weight: 800;
+      font-size: 12px;
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+    .task-action-menu summary::-webkit-details-marker { display: none; }
+    .task-action-menu[open] summary { background: linear-gradient(135deg, var(--blue), var(--cyan)); color: #fff; }
+    .task-action-list {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      z-index: 80;
+      display: grid;
+      gap: 4px;
+      min-width: 132px;
+      padding: 8px;
+      border: 1px solid rgba(223,230,242,.95);
+      border-radius: 14px;
+      background: rgba(255,255,255,.98);
+      box-shadow: 0 16px 34px rgba(23,35,61,.16);
+    }
+    .task-action-list button {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 10px;
+      color: #17233d;
+      background: transparent;
+      box-shadow: none;
+      text-align: left;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .task-action-list button:hover { background: rgba(36,92,255,.08); color: var(--blue); }
+    .task-action-list .danger-text { color: #d9483b; }
+    .task-detail-actions .task-action-list { left: 0; right: auto; }
     .task-detail-popover { max-width: min(760px, 94vw); width: 760px; max-height: 84vh; overflow: auto; }
     .task-detail-body, .detail-body { display: grid; gap: 12px; margin-top: 14px; color: #17233d; }
     .task-detail-section { border: 1px solid rgba(223,230,242,.92); border-radius: 14px; background: rgba(248,251,255,.9); padding: 12px; }

@@ -800,6 +800,33 @@
       return String(payload.capability_id || "");
     }
 
+    function taskActionMenuHtml(task, options = {}) {
+      if (!task || !task.id) return "";
+      const id = escapeHtml(task.id);
+      const nextStatus = task.status === "paused" ? "active" : "paused";
+      const statusLabel = task.status === "paused" ? "启用任务" : "暂停任务";
+      const detailItem = options.includeDetail
+        ? `<button type="button" data-open-task-detail="${id}">查看详情</button>`
+        : "";
+      const runItem = options.includeRunNow === false
+        ? ""
+        : `<button type="button" data-run-task-now="${id}">立即执行</button>`;
+      const recentItem = task.last_run_id
+        ? `<button type="button" data-open-run-detail="${escapeHtml(task.last_run_id)}">最近结果</button>`
+        : "";
+      return `<details class="task-action-menu">
+        <summary>操作</summary>
+        <div class="task-action-list">
+          ${detailItem}
+          ${runItem}
+          ${recentItem}
+          <button type="button" data-edit-task="${id}">编辑任务</button>
+          <button type="button" data-task-status="${id}" data-next-status="${nextStatus}">${statusLabel}</button>
+          <button type="button" class="danger-text" data-delete-task="${id}">删除任务</button>
+        </div>
+      </details>`;
+    }
+
     function parseDate(value) {
       if (!value) return null;
       let text = String(value || "").trim();
@@ -5345,8 +5372,6 @@
           const interval = row.schedule_label || (row.schedule_type === "daily_times"
             ? `每天 ${(row.schedule_config && Array.isArray(row.schedule_config.daily_times) ? row.schedule_config.daily_times.join("、") : "")}`
             : (row.schedule_type === "interval" ? `每 ${Math.round((row.interval_seconds || 0) / 60)} 分钟` : "一次性"));
-          const nextStatus = row.status === "paused" ? "active" : "paused";
-          const statusLabel = row.status === "paused" ? "启用" : "暂停";
           return `<div class="task-row">
             <div class="task-row-main">
               <div class="task-row-title">${escapeHtml(row.title || capabilityName(taskCapabilityId(row)))}</div>
@@ -5354,19 +5379,10 @@
             </div>
             <div class="task-row-actions">
               <button class="ghost" type="button" data-open-task-detail="${escapeHtml(row.id)}">详情</button>
-              ${row.last_run_id ? `<button class="ghost" type="button" data-open-run-detail="${escapeHtml(row.last_run_id)}">最近结果</button>` : ""}
-              <button class="ghost" type="button" data-delete-task="${escapeHtml(row.id)}">删除</button>
+              ${taskActionMenuHtml(row)}
             </div>
           </div>`;
         }).join("");
-        box.querySelectorAll(".task-row").forEach((card, idx) => {
-          const row = allRows[idx];
-          const actions = card.querySelector(".task-row-actions");
-          if (!row || !actions) return;
-          const nextStatus = row.status === "paused" ? "active" : "paused";
-          const statusLabel = row.status === "paused" ? "启用" : "暂停";
-          actions.insertAdjacentHTML("beforeend", `<button class="ghost" type="button" data-edit-task="${escapeHtml(row.id)}">编辑</button><button class="ghost" type="button" data-task-status="${escapeHtml(row.id)}" data-next-status="${nextStatus}">${statusLabel}</button>`);
-        });
         $("loadMoreTasksBtn")?.classList.toggle("hidden", !state.taskListHasNext);
       } catch (err) {
         state.tasks = [];
@@ -5557,10 +5573,8 @@
         <h4>${escapeHtml(task.title || "定时任务")}</h4>
         ${rows.map(([label, value]) => `<div class="task-detail-record"><strong>${escapeHtml(label)}</strong><pre>${escapeHtml(String(value))}</pre></div>`).join("")}
       </div>
-      <div class="run-publish-actions">
-        <button type="button" data-run-task-now="${escapeHtml(task.id)}">立即执行</button>
-        ${task.last_run_id ? `<button type="button" data-open-run-detail="${escapeHtml(task.last_run_id)}">查看最近结果</button>` : ""}
-        <button type="button" data-delete-task="${escapeHtml(task.id)}">删除任务</button>
+      <div class="run-publish-actions task-detail-actions">
+        ${taskActionMenuHtml(task)}
       </div>`;
     }
 
@@ -5570,14 +5584,6 @@
       $("taskPageTitle").textContent = task ? (task.title || "定时任务详情") : "定时任务详情";
       const body = $("taskPageBody");
       body.innerHTML = taskPageHtml(task);
-      if (task) {
-        const actions = body.querySelector(".run-publish-actions");
-        if (actions) {
-          const nextStatus = task.status === "paused" ? "active" : "paused";
-          const statusLabel = task.status === "paused" ? "启用任务" : "暂停任务";
-          actions.insertAdjacentHTML("beforeend", `<button type="button" data-edit-task="${escapeHtml(task.id)}">编辑任务</button><button type="button" data-task-status="${escapeHtml(task.id)}" data-next-status="${nextStatus}">${statusLabel}</button>`);
-        }
-      }
       switchTab("taskDetail");
     }
 
@@ -6556,6 +6562,11 @@
       const detailBtn = evt.target.closest("[data-open-run-detail]");
       if (detailBtn) {
         openRunDetail(detailBtn.dataset.openRunDetail || "", "taskList");
+        return;
+      }
+      const runBtn = evt.target.closest("[data-run-task-now]");
+      if (runBtn) {
+        runTaskNow(runBtn.dataset.runTaskNow || "", runBtn);
         return;
       }
       const editBtn = evt.target.closest("[data-edit-task]");
