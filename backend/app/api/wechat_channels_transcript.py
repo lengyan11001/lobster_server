@@ -850,6 +850,80 @@ async def create_transcript_job(
     return {"ok": True, "job": _job_payload(row)}
 
 
+async def run_wechat_channels_transcript_payload_to_completion(
+    *,
+    db: Session,
+    current_user: User,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    body = dict(payload or {})
+    query = _clean_long_text(body.get("query") or body.get("username") or "", 2000)
+    if not query:
+        raise HTTPException(status_code=400, detail="视频号文案提取任务需要 query 或 username")
+    search = await search_users(q=query, current_user=current_user, db=db)
+    account = (search.get("items") or [None])[0] if isinstance(search, dict) else None
+    username = _clean_text(
+        (account or {}).get("username")
+        or (account or {}).get("finder_username")
+        or (account or {}).get("id")
+        or "",
+        256,
+    )
+    if not username:
+        raise HTTPException(status_code=404, detail="没有找到可用的视频号账号")
+    max_pages = max(1, min(int(body.get("max_pages") or 1), 20))
+    page_size = max(1, min(int(body.get("page_size") or 20), 50))
+    limit = max(1, min(int(body.get("limit") or 10), _MAX_VIDEOS_PER_JOB))
+    videos_resp = await fetch_videos(VideoFetchBody(username=username, max_pages=max_pages, page_size=page_size), current_user=current_user, db=db)
+    videos = (videos_resp.get("items") or [])[:limit] if isinstance(videos_resp, dict) else []
+    if not videos:
+        raise HTTPException(status_code=404, detail="这个账号暂时没有拉到可转写的视频")
+    normalized = []
+    for raw in videos[:_MAX_VIDEOS_PER_JOB]:
+        item = _normalize_video(raw.get("raw") or raw, len(normalized)) if isinstance(raw, dict) else None
+        if not item and isinstance(raw, dict):
+            item = {
+                "item_key": _clean_text(raw.get("item_key") or _stable_hash(raw, 24), 128),
+                "title": _clean_long_text(raw.get("title"), 1000) or "未命名视频",
+                "publish_time": _clean_text(raw.get("publish_time"), 64),
+                "video_url": _clean_url(raw.get("video_url")),
+                "public_url": _clean_url(raw.get("public_url")),
+                "cover_url": _clean_url(raw.get("cover_url")),
+                "metrics": raw.get("metrics") if isinstance(raw.get("metrics"), dict) else {},
+                "raw": _jsonable(raw.get("raw") or raw),
+            }
+        if item and (_clean_url(item.get("video_url")) or _clean_url(item.get("public_url"))):
+            normalized.append(item)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="请选择至少一个包含视频链接的作品")
+    job_id = "wct_" + uuid.uuid4().hex[:24]
+    row = CreativeGenerationJob(
+        job_id=job_id,
+        user_id=current_user.id,
+        feature_type=_FEATURE_TYPE,
+        provider="tikhub+stt",
+        status="queued",
+        stage="queued",
+        progress=0,
+        title=_clean_text(body.get("title"), 160) or f"视频号文案提取：{username}",
+        prompt=username,
+        request_payload={"username": username, "videos": normalized, "query": query},
+        result_payload={},
+        meta={"items": [{**v, "status": "pending", "transcript": "", "error": ""} for v in normalized]},
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    await _run_transcript_job(job_id)
+    db.expire_all()
+    refreshed = (
+        db.query(CreativeGenerationJob)
+        .filter(CreativeGenerationJob.job_id == job_id, CreativeGenerationJob.feature_type == _FEATURE_TYPE)
+        .first()
+    )
+    return _job_payload(refreshed or row)
+
+
 @router.get("/api/wechat-channels-transcript/jobs", summary="视频号文案提取任务列表")
 def list_jobs(
     limit: int = Query(30, ge=1, le=100),

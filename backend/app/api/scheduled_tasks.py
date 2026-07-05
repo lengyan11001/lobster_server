@@ -31,14 +31,25 @@ from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
 from .auth import get_current_user, get_current_user_id_from_token
 from .ip_content_studio import _draft_record_payload, run_ip_content_daily_scheduled
 from .lead_collection_templates import run_lead_collection_templates_scheduled
+from .linkedin_mining import (
+    create_linkedin_mining_job_from_payload,
+    linkedin_mining_job_payload,
+    run_linkedin_mining_job_to_completion,
+)
+from .social_leads import (
+    create_social_leads_job_from_payload,
+    run_social_leads_job_to_completion,
+    social_leads_job_payload,
+)
+from .wechat_channels_transcript import run_wechat_channels_transcript_payload_to_completion
 from .installation_slots import ensure_installation_slot
 from .mobile_identity import online_user_for_mobile_user
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 
 router = APIRouter()
 
-_TASK_KINDS = {"openclaw_message", "chat_message", "capability", "ip_content_daily", "lead_collection_templates", "douyin_leads", "client_workflow"}
-_SERVER_SIDE_TASK_KINDS = {"ip_content_daily", "lead_collection_templates"}
+_TASK_KINDS = {"openclaw_message", "chat_message", "capability", "ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript", "douyin_leads", "client_workflow"}
+_SERVER_SIDE_TASK_KINDS = {"ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript"}
 _SCHEDULE_TYPES = {"once", "interval", "daily_times"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _MAX_TARGET_DEVICES = 20
@@ -57,6 +68,9 @@ def _server_side_timeout_seconds(task_kind: str) -> float:
     defaults = {
         "ip_content_daily": ("LOBSTER_IP_CONTENT_SCHEDULE_TIMEOUT_SEC", 600.0),
         "lead_collection_templates": ("LOBSTER_LEAD_COLLECTION_SCHEDULE_TIMEOUT_SEC", 1800.0),
+        "social_leads": ("LOBSTER_SOCIAL_LEADS_SCHEDULE_TIMEOUT_SEC", 1800.0),
+        "linkedin_mining": ("LOBSTER_LINKEDIN_MINING_SCHEDULE_TIMEOUT_SEC", 1800.0),
+        "wechat_channels_transcript": ("LOBSTER_WECHAT_TRANSCRIPT_SCHEDULE_TIMEOUT_SEC", 1800.0),
     }
     env_name, default_value = defaults.get(task_kind, ("LOBSTER_SERVER_SIDE_SCHEDULE_TIMEOUT_SEC", 900.0))
     raw = os.environ.get(env_name) or os.environ.get("LOBSTER_SERVER_SIDE_SCHEDULE_TIMEOUT_SEC") or ""
@@ -111,6 +125,12 @@ class ScheduledTaskCreate(BaseModel):
 
 class ScheduledTaskPatch(BaseModel):
     status: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=160)
+    schedule_type: Optional[str] = None
+    interval_seconds: Optional[int] = None
+    start_at: Optional[str] = None
+    daily_times: Any = None
+    timezone_offset_minutes: Optional[int] = None
 
 
 class ScheduledTaskEventIn(BaseModel):
@@ -892,17 +912,52 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
                 )
             )
             result_text = "线索采集模板已执行完成。"
+        elif run.task_kind == "social_leads":
+            progress("start", "服务端开始执行社媒线索采集", {"timeout_seconds": timeout_seconds})
+            job = create_social_leads_job_from_payload(db=db, current_user=user, payload=payload, auto_run=False)
+            job = _run_async_blocking(
+                asyncio.wait_for(
+                    run_social_leads_job_to_completion(db=db, current_user=user, row=job),
+                    timeout=timeout_seconds,
+                )
+            )
+            result = social_leads_job_payload(job, db=db, include_sources=True)
+            result_text = "社媒线索采集已完成"
+        elif run.task_kind == "linkedin_mining":
+            progress("start", "服务端开始执行 LinkedIn 线索采集", {"timeout_seconds": timeout_seconds})
+            job = create_linkedin_mining_job_from_payload(db=db, current_user=user, payload=payload, auto_run=False)
+            job = _run_async_blocking(
+                asyncio.wait_for(
+                    run_linkedin_mining_job_to_completion(db=db, current_user=user, row=job),
+                    timeout=timeout_seconds,
+                )
+            )
+            result = linkedin_mining_job_payload(job)
+            result_text = "LinkedIn 线索采集已完成"
+        elif run.task_kind == "wechat_channels_transcript":
+            progress("start", "服务端开始执行视频号文案提取", {"timeout_seconds": timeout_seconds})
+            result = _run_async_blocking(
+                asyncio.wait_for(
+                    run_wechat_channels_transcript_payload_to_completion(db=db, current_user=user, payload=payload),
+                    timeout=timeout_seconds,
+                )
+            )
+            result_text = "视频号文案提取已完成"
         else:
             return
         finished = datetime.utcnow()
         db.refresh(run)
         failed_count = int(result.get("failed_count") or 0) if isinstance(result, dict) else 0
         job_count = int(result.get("job_count") or 0) if isinstance(result, dict) else 0
-        run.status = "failed" if run.task_kind == "lead_collection_templates" and job_count > 0 and failed_count >= job_count else "completed"
+        result_status = str(result.get("status") or "").strip().lower() if isinstance(result, dict) else ""
+        result_error = str(result.get("error") or "").strip() if isinstance(result, dict) else ""
+        run.status = "failed" if (run.task_kind == "lead_collection_templates" and job_count > 0 and failed_count >= job_count) or result_status == "failed" else "completed"
         run.result_text = result_text
         run.result_payload = result
         run.error = "线索采集模板全部执行失败" if run.status == "failed" else None
         run.progress = {"completed_at": finished.isoformat(), "server_side": True}
+        if run.status == "failed" and result_error:
+            run.error = result_error
         run.finished_at = finished
         run.updated_at = finished
         task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
@@ -1248,6 +1303,20 @@ def _create_task_row(
         if not valid_ids:
             raise HTTPException(status_code=400, detail="线索采集定时任务需要选择至少一个采集模板")
         payload["template_ids"] = valid_ids
+    if task_kind == "social_leads":
+        payload = dict(payload)
+        if not str(payload.get("platform") or "").strip():
+            raise HTTPException(status_code=400, detail="线索采集定时任务需要平台")
+        if not payload.get("keywords"):
+            raise HTTPException(status_code=400, detail="线索采集定时任务需要精准用户方向关键词")
+    if task_kind == "linkedin_mining":
+        payload = dict(payload)
+        if not (payload.get("seed_profile_urls") or payload.get("seed_company_urls") or payload.get("keywords") or payload.get("hashtags")):
+            raise HTTPException(status_code=400, detail="LinkedIn线索采集定时任务需要主页、公司、关键词或话题")
+    if task_kind == "wechat_channels_transcript":
+        payload = dict(payload)
+        if not str(payload.get("query") or payload.get("username") or "").strip():
+            raise HTTPException(status_code=400, detail="视频号文案提取定时任务需要账号、链接或关键词")
     if task_kind == "capability":
         payload = dict(payload)
         _normalize_goal_video_task_payload(payload)
@@ -1434,6 +1503,54 @@ def patch_scheduled_task(
                     timezone_offset_minutes=int(cfg.get("timezone_offset_minutes") if cfg.get("timezone_offset_minutes") is not None else 480),
                 )
         task.updated_at = now
+    fields_set = set(getattr(body, "__fields_set__", set()) or getattr(body, "model_fields_set", set()) or set())
+    if "title" in fields_set:
+        title = (body.title or "").strip()
+        if title:
+            task.title = title[:160]
+            task.updated_at = datetime.utcnow()
+    schedule_fields = {"schedule_type", "interval_seconds", "start_at", "daily_times", "timezone_offset_minutes"}
+    if fields_set & schedule_fields:
+        now = datetime.utcnow()
+        current_cfg = _schedule_config_from_payload(task.payload or {})
+        schedule_type = _normalize_schedule_type(body.schedule_type or task.schedule_type)
+        tz_offset = int(
+            body.timezone_offset_minutes
+            if body.timezone_offset_minutes is not None
+            else current_cfg.get("timezone_offset_minutes")
+            if current_cfg.get("timezone_offset_minutes") is not None
+            else 480
+        )
+        payload = dict(task.payload or {})
+        schedule_config: Dict[str, Any] = {"timezone_offset_minutes": tz_offset}
+        start_at_value = body.start_at if "start_at" in fields_set else str(current_cfg.get("start_at") or "")
+        start_at_utc = None if schedule_type == "daily_times" else _parse_client_datetime(start_at_value, tz_offset)
+        if start_at_utc:
+            schedule_config["start_at"] = start_at_value
+            schedule_config["start_at_utc"] = start_at_utc.isoformat()
+        interval_seconds = None
+        next_run_at = start_at_utc or now
+        if schedule_type == "interval":
+            raw_interval = body.interval_seconds if body.interval_seconds is not None else task.interval_seconds or 3600
+            interval_seconds = max(60, min(int(raw_interval or 3600), 366 * 24 * 3600))
+        elif schedule_type == "daily_times":
+            raw_times = body.daily_times if "daily_times" in fields_set else current_cfg.get("daily_times") or []
+            daily_times = _normalize_daily_times(raw_times)
+            schedule_config["daily_times"] = daily_times
+            next_run_at = _compute_next_daily_time(
+                now_utc=now,
+                daily_times=daily_times,
+                timezone_offset_minutes=tz_offset,
+            )
+        payload["schedule_config"] = schedule_config
+        _cancel_pending_runs_for_task(db, task, now)
+        task.payload = payload
+        task.schedule_type = schedule_type
+        task.interval_seconds = interval_seconds
+        task.next_run_at = next_run_at
+        task.updated_at = now
+        if task.status == "active" and task.next_run_at and task.next_run_at <= now:
+            _enqueue_task(db, task, now)
     db.commit()
     db.refresh(task)
     return {"ok": True, "task": _serialize_task(task)}

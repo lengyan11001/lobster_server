@@ -578,6 +578,7 @@
           <div class="detail-body" id="runPageBody"></div>
         </div>
       </section>
+      <button class="hero-action floating-schedule-btn hidden" type="button" id="floatingScheduleBtn">定时任务</button>
     </div>
   </main>
 
@@ -622,6 +623,53 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="taskEditModal" data-mode="idle" role="dialog" aria-modal="true" aria-labelledby="taskEditTitle">
+    <button class="employee-modal-backdrop" type="button" id="taskEditBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover">
+      <button class="employee-popover-close" type="button" id="taskEditClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">时</div>
+        <div class="employee-popover-title">
+          <strong id="taskEditTitle">编辑定时任务</strong>
+          <span>只修改执行时间和任务名称，不改变具体能力参数。</span>
+        </div>
+      </div>
+      <form class="work-dispatch-form" id="taskEditForm">
+        <div class="work-dispatch-fields">
+          <div class="field full">
+            <label for="taskEditName">任务名称</label>
+            <input id="taskEditName" type="text" maxlength="80" placeholder="任务名称">
+          </div>
+          <div class="field">
+            <label for="taskEditScheduleType">执行方式</label>
+            <select id="taskEditScheduleType">
+              <option value="once">一次性</option>
+              <option value="interval">循环间隔</option>
+              <option value="daily_times">每天固定时间</option>
+            </select>
+          </div>
+          <div class="field" id="taskEditIntervalBlock">
+            <label for="taskEditIntervalMinutes">间隔分钟</label>
+            <input id="taskEditIntervalMinutes" type="number" min="1" value="60">
+          </div>
+          <div class="field" id="taskEditStartAtBlock">
+            <label for="taskEditStartAt">开始时间（可选）</label>
+            <input id="taskEditStartAt" type="datetime-local">
+          </div>
+          <div class="field full hidden" id="taskEditDailyTimesBlock">
+            <label>每天执行时间</label>
+            <div class="task-daily-times" id="taskEditDailyTimesList"></div>
+            <button class="ghost" type="button" id="taskEditAddDailyTimeBtn">添加时间点</button>
+          </div>
+        </div>
+        <div class="work-dispatch-actions">
+          <button class="ghost" type="button" id="taskEditCancel">取消</button>
+          <button type="submit" id="taskEditSubmit">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="task-success-dialog hidden" id="taskSuccessDialog" role="dialog" aria-modal="true" aria-labelledby="taskSuccessTitle">
     <button class="task-success-backdrop" type="button" id="taskSuccessBackdrop" aria-label="关闭"></button>
     <div class="task-success-panel">
@@ -637,6 +685,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260705-floating-history-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260705-leaf-schedule-1"></script>
 </body>
 </html>

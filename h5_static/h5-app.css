@@ -2709,6 +2709,47 @@
       border-top: 3px solid currentColor;
       border-bottom: 3px solid currentColor;
     }
+    #floatingScheduleBtn {
+      position: fixed !important;
+      right: max(21px, env(safe-area-inset-right));
+      bottom: max(154px, calc(env(safe-area-inset-bottom) + 150px));
+      z-index: 89;
+      width: 52px !important;
+      min-width: 52px !important;
+      height: 52px;
+      min-height: 52px;
+      padding: 0 !important;
+      border-radius: 50%;
+      color: #9a3412;
+      font-size: 0;
+      background:
+        radial-gradient(circle at 30% 20%, rgba(255,255,255,.76), transparent 28%),
+        linear-gradient(135deg, rgba(255,247,237,.98), rgba(254,215,170,.98));
+      border: 1px solid rgba(234,88,12,.22);
+      box-shadow: 0 16px 30px rgba(124,45,18,.16), 0 8px 16px rgba(234,88,12,.16);
+    }
+    #floatingScheduleBtn::before {
+      content: "";
+      width: 24px;
+      height: 24px;
+      border: 3px solid currentColor;
+      border-radius: 50%;
+    }
+    #floatingScheduleBtn::after {
+      content: "";
+      position: absolute;
+      left: 25px;
+      top: 17px;
+      width: 9px;
+      height: 11px;
+      border-left: 3px solid currentColor;
+      border-bottom: 3px solid currentColor;
+      transform-origin: left bottom;
+      transform: rotate(-45deg);
+    }
+    #floatingScheduleBtn.hidden {
+      display: none !important;
+    }
     .ability-workbench {
       display: grid;
       gap: 16px;

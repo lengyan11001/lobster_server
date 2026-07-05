@@ -11,6 +11,7 @@
       runs: [],
       taskListOffset: 0,
       taskListHasNext: false,
+      taskEditId: "",
       runListOffset: 0,
       runListHasNext: false,
       runDetailBackTab: "runList",
@@ -614,6 +615,11 @@
       switchTab("workList");
     }
 
+    function openScheduleManager() {
+      closeTaskSuccessDialog();
+      switchTab("taskList");
+    }
+
     function showTaskSuccessDialog(detail) {
       const modal = $("taskSuccessDialog");
       if (!modal) {
@@ -743,6 +749,14 @@
       return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
     }
 
+    function datetimeLocalValue(value) {
+      if (!value) return "";
+      const d = parseDate(value);
+      if (Number.isNaN(d.getTime())) return "";
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
     function statusText(status) {
       return {
         pending: "待执行",
@@ -756,6 +770,12 @@
     }
 
     function capabilityName(capabilityId) {
+      const specialName = {
+        social_leads: "社媒线索采集",
+        linkedin_mining: "LinkedIn线索采集",
+        wechat_channels_transcript: "视频号文案提取",
+      }[capabilityId];
+      if (specialName) return specialName;
       return {
         "goal.video.pipeline": "创意成片",
         "goal.image.pipeline": "文案+创意图片",
@@ -776,6 +796,7 @@
       const payload = row && row.payload && typeof row.payload === "object" ? row.payload : {};
       if (row && row.task_kind === "ip_content_daily") return "ip_content_daily";
       if (row && row.task_kind === "douyin_leads") return "douyin_leads";
+      if (row && ["social_leads", "linkedin_mining", "wechat_channels_transcript"].includes(row.task_kind)) return row.task_kind;
       return String(payload.capability_id || "");
     }
 
@@ -1469,6 +1490,7 @@
         hideAbilityWorkbench();
         return;
       }
+      if (!node.routeTab) html += abilityScheduleFieldsHtml();
       box.classList.remove("hidden");
       if (title) title.textContent = `${node.label || "能力"}工作台`;
       if (subtitle) subtitle.textContent = "填写参数后直接创建任务。";
@@ -1478,6 +1500,7 @@
         submit.disabled = false;
         submit.textContent = submitText;
       }
+      setTimeout(updateAbilityScheduleFields, 0);
     }
 
     function renderAbilityView() {
@@ -2507,6 +2530,13 @@
       setTimeout(scrollMessagesToBottom, 60);
     }
 
+    function syncFloatingScheduleButton(key) {
+      const btn = $("floatingScheduleBtn");
+      if (!btn) return;
+      const hidden = !state.token || ["messages", "taskList", "taskDetail", "runDetail"].includes(key);
+      btn.classList.toggle("hidden", hidden);
+    }
+
     function switchTab(tab) {
       const key = tab || "office";
       document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
@@ -2535,6 +2565,7 @@
       $("topActions").classList.toggle("hidden", key !== "office" || !state.token);
       $("topbar").classList.toggle("subpage", key !== "office");
       $("topbar").classList.toggle("voice-page", key === "voice");
+      syncFloatingScheduleButton(key);
       if (key === "office") renderOfficeEmployees();
       if (key === "department") renderDepartmentView();
       if (key === "ability") renderAbilityView();
@@ -4067,6 +4098,35 @@
       return payload;
     }
 
+    function collectLinkedinPayload(node) {
+      const payload = {
+        title: abilityValue("abilityLinkedinTitle") || (node && node.label) || "LinkedIn线索采集",
+        target_profile: abilityValue("abilityLinkedinTarget"),
+        seed_profile_urls: splitTextareaList(abilityValue("abilityLinkedinProfiles")),
+        seed_company_urls: splitTextareaList(abilityValue("abilityLinkedinCompanies")),
+        keywords: splitTextareaList(abilityValue("abilityLinkedinKeywords")),
+        hashtags: splitTextareaList(abilityValue("abilityLinkedinHashtags")),
+        max_people: abilityNumber("abilityLinkedinMaxPeople", 30, 5, 80),
+        auto_run: true,
+      };
+      if (!payload.seed_profile_urls.length && !payload.seed_company_urls.length && !payload.keywords.length && !payload.hashtags.length) {
+        throw new Error("请至少填写个人主页、公司主页、关键词或话题");
+      }
+      return payload;
+    }
+
+    function collectWechatTranscriptPayload(node) {
+      const query = abilityValue("abilityWechatQuery");
+      if (!query) throw new Error("请填写视频号账号、链接或关键词");
+      return {
+        title: (node && node.label) || "视频号文案提取",
+        query,
+        max_pages: abilityNumber("abilityWechatPages", 1, 1, 20),
+        limit: abilityNumber("abilityWechatLimit", 10, 1, 50),
+        page_size: 20,
+      };
+    }
+
     async function submitSocialLeadsWorkbench(node, platform) {
       const payload = collectSocialLeadsPayload(platform);
       const data = await api("/api/social-leads/jobs", { method: "POST", json: payload });
@@ -4132,25 +4192,66 @@
         btn.textContent = "提交中...";
       }
       try {
+        const schedule = collectAbilityScheduleOptions();
         const platform = socialPlatformFromAbilityKey(node.key);
+        let plan = null;
+        let submittedDirect = false;
         if (platform) {
-          await submitSocialLeadsWorkbench(node, platform);
+          const payload = collectSocialLeadsPayload(platform);
+          if (schedule.schedule_type === "once") {
+            await submitSocialLeadsWorkbench(node, platform);
+            submittedDirect = true;
+          } else {
+            plan = {
+              title: payload.title || `${socialPlatformLabel(platform)}线索采集`,
+              taskKind: "social_leads",
+              content: `H5 ${socialPlatformLabel(platform)}线索采集`,
+              payload,
+            };
+          }
         } else if (node.key === "linkedin_leads") {
-          await submitLinkedinWorkbench(node);
+          const payload = collectLinkedinPayload(node);
+          if (schedule.schedule_type === "once") {
+            await submitLinkedinWorkbench(node);
+            submittedDirect = true;
+          } else {
+            plan = {
+              title: payload.title || "LinkedIn线索采集",
+              taskKind: "linkedin_mining",
+              content: "H5 LinkedIn线索采集",
+              payload,
+            };
+          }
         } else if (node.key === "wechat_channels_transcript") {
-          await submitWechatTranscriptWorkbench(node);
+          const payload = collectWechatTranscriptPayload(node);
+          if (schedule.schedule_type === "once") {
+            await submitWechatTranscriptWorkbench(node);
+            submittedDirect = true;
+          } else {
+            plan = {
+              title: payload.title || "视频号文案提取",
+              taskKind: "wechat_channels_transcript",
+              content: "H5 视频号文案提取",
+              payload,
+            };
+          }
         } else if (node.workQuickKey) {
           const quick = workQuickItemByKey(node.workQuickKey);
           if (!quick) throw new Error("未找到对应下发入口");
-          await submitOnceClientTask(collectWorkDispatchPlan(quick));
+          plan = collectWorkDispatchPlan(quick);
         } else if (node.capabilityId || node.serverTask) {
-          await submitOnceClientTask(collectAbilityCapabilityPlan(node));
+          plan = collectAbilityCapabilityPlan(node);
         } else {
           throw new Error("这个能力暂未配置下发方式");
         }
+        if (!submittedDirect) await submitScheduledClientTask(plan, schedule);
         await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true }).catch(() => {})]);
         renderOfficeEmployees();
         renderWorkList();
+        if (schedule.schedule_type !== "once") {
+          showTaskSuccessDialog("定时任务已创建，可在定时任务管理里暂停、启用、编辑或删除。");
+          return;
+        }
         showTaskSuccessDialog("任务已下发成功，可在工作历史查看进度。");
       } finally {
         state.abilityWorkSubmitting = false;
@@ -4161,7 +4262,42 @@
       }
     }
 
+    function isServerSideScheduledKind(kind) {
+      return ["ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript"].includes(String(kind || ""));
+    }
+
+    async function submitScheduledClientTask(plan, scheduleOptions = {}) {
+      const installationId = currentInstallationId();
+      const scheduleType = scheduleOptions.schedule_type || "once";
+      const serverSide = isServerSideScheduledKind(plan.taskKind) || plan.serverSide;
+      if (!serverSide && !installationId) throw new Error("暂未检测到在线设备，请先让本机 online 客户端保持登录");
+      const body = {
+        title: plan.title || "安排工作",
+        task_kind: plan.taskKind || "client_workflow",
+        content: plan.content || "H5 安排工作",
+        payload: plan.payload || {},
+        schedule_type: scheduleType,
+        interval_seconds: scheduleOptions.interval_seconds || 60,
+        start_at: scheduleType === "daily_times" ? "" : (scheduleOptions.start_at || ""),
+        daily_times: scheduleType === "daily_times" ? (scheduleOptions.daily_times || []) : [],
+        timezone_offset_minutes: timezoneOffsetMinutes(),
+        installation_ids: serverSide ? [] : [installationId],
+      };
+      const data = await api("/api/scheduled-tasks/tasks", {
+        method: "POST",
+        json: body,
+        headers: installationId ? { "X-Installation-Id": installationId } : {},
+      });
+      if (data.task) {
+        state.tasks = [data.task].concat((state.tasks || []).filter((row) => String(row.id) !== String(data.task.id)));
+      }
+      if (Array.isArray(data.runs)) mergeRuns(data.runs);
+      await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
+      return data;
+    }
+
     async function submitOnceClientTask(plan) {
+      return submitScheduledClientTask(plan, { schedule_type: "once" });
       const installationId = currentInstallationId();
       const serverSide = plan.taskKind === "ip_content_daily" || plan.serverSide;
       if (!serverSide && !installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
@@ -4416,6 +4552,69 @@
       if ($("taskDailyTimesBlock")) $("taskDailyTimesBlock").classList.toggle("hidden", type !== "daily_times");
       if ($("taskStartAt")) $("taskStartAt").closest(".field").classList.toggle("hidden", type === "daily_times");
       if (type === "daily_times" && $("taskDailyTimesList") && !$("taskDailyTimesList").children.length) addDailyTime("09:00");
+    }
+
+    function scheduleTypeOptionsHtml() {
+      return optionHtml("once", "一次性") + optionHtml("interval", "循环间隔") + optionHtml("daily_times", "每天固定时间");
+    }
+
+    function abilityScheduleFieldsHtml() {
+      return `<div class="field full ability-schedule-panel">
+        <div class="ability-schedule-head">
+          <strong>执行方式</strong>
+          <span>默认一次性；选择定时后按当前定时任务配置创建。</span>
+        </div>
+      </div>`
+        + taskFieldHtml("执行方式", taskSelectHtml("abilityScheduleType", scheduleTypeOptionsHtml()))
+        + taskFieldHtml("间隔分钟", workInputHtml("abilityIntervalMinutes", "number", "60", 'min="1"'))
+        + taskFieldHtml("开始时间（可选）", '<input id="abilityStartAt" type="datetime-local">')
+        + `<div class="field full hidden" id="abilityDailyTimesBlock">
+            <label>每天执行时间</label>
+            <div class="task-daily-times" id="abilityDailyTimesList"></div>
+            <button class="ghost" type="button" id="abilityAddDailyTimeBtn">添加时间点</button>
+          </div>`;
+    }
+
+    function collectAbilityDailyTimes() {
+      return Array.from(document.querySelectorAll("[data-ability-daily-time]"))
+        .map((el) => String(el.value || "").trim())
+        .filter(Boolean);
+    }
+
+    function addAbilityDailyTime(value = "") {
+      const list = $("abilityDailyTimesList");
+      if (!list) return;
+      const row = document.createElement("div");
+      row.className = "task-daily-row";
+      row.innerHTML = `<input type="time" step="60" data-ability-daily-time value="${escapeHtml(value)}"><button class="ghost" type="button" aria-label="删除时间点">-</button>`;
+      row.querySelector("button").addEventListener("click", () => row.remove());
+      list.appendChild(row);
+    }
+
+    function updateAbilityScheduleFields() {
+      const type = $("abilityScheduleType") ? $("abilityScheduleType").value : "once";
+      const interval = $("abilityIntervalMinutes");
+      const startAt = $("abilityStartAt");
+      const dailyBlock = $("abilityDailyTimesBlock");
+      if (interval) interval.closest(".field").classList.toggle("hidden", type !== "interval");
+      if (startAt) startAt.closest(".field").classList.toggle("hidden", type === "daily_times");
+      if (dailyBlock) dailyBlock.classList.toggle("hidden", type !== "daily_times");
+      if (type === "daily_times" && $("abilityDailyTimesList") && !$("abilityDailyTimesList").children.length) addAbilityDailyTime("09:00");
+      const submit = $("abilityWorkbenchSubmit");
+      if (submit && !state.abilityWorkSubmitting) submit.textContent = type === "once" ? "下发任务" : "创建定时任务";
+    }
+
+    function collectAbilityScheduleOptions() {
+      const scheduleType = $("abilityScheduleType") ? $("abilityScheduleType").value : "once";
+      const intervalMinutes = parseInt(($("abilityIntervalMinutes") && $("abilityIntervalMinutes").value) || "60", 10);
+      const dailyTimes = collectAbilityDailyTimes();
+      if (scheduleType === "daily_times" && !dailyTimes.length) throw new Error("请填写每天执行时间，例如 09:00");
+      return {
+        schedule_type: scheduleType,
+        interval_seconds: Math.max(60, (Number.isNaN(intervalMinutes) ? 60 : intervalMinutes) * 60),
+        start_at: $("abilityStartAt") ? $("abilityStartAt").value : "",
+        daily_times: scheduleType === "daily_times" ? dailyTimes : [],
+      };
     }
 
     function assetOrImagePayload(raw, fieldLabel) {
@@ -5146,6 +5345,8 @@
           const interval = row.schedule_label || (row.schedule_type === "daily_times"
             ? `每天 ${(row.schedule_config && Array.isArray(row.schedule_config.daily_times) ? row.schedule_config.daily_times.join("、") : "")}`
             : (row.schedule_type === "interval" ? `每 ${Math.round((row.interval_seconds || 0) / 60)} 分钟` : "一次性"));
+          const nextStatus = row.status === "paused" ? "active" : "paused";
+          const statusLabel = row.status === "paused" ? "启用" : "暂停";
           return `<div class="task-row">
             <div class="task-row-main">
               <div class="task-row-title">${escapeHtml(row.title || capabilityName(taskCapabilityId(row)))}</div>
@@ -5158,6 +5359,14 @@
             </div>
           </div>`;
         }).join("");
+        box.querySelectorAll(".task-row").forEach((card, idx) => {
+          const row = allRows[idx];
+          const actions = card.querySelector(".task-row-actions");
+          if (!row || !actions) return;
+          const nextStatus = row.status === "paused" ? "active" : "paused";
+          const statusLabel = row.status === "paused" ? "启用" : "暂停";
+          actions.insertAdjacentHTML("beforeend", `<button class="ghost" type="button" data-edit-task="${escapeHtml(row.id)}">编辑</button><button class="ghost" type="button" data-task-status="${escapeHtml(row.id)}" data-next-status="${nextStatus}">${statusLabel}</button>`);
+        });
         $("loadMoreTasksBtn")?.classList.toggle("hidden", !state.taskListHasNext);
       } catch (err) {
         state.tasks = [];
@@ -5186,6 +5395,125 @@
         if (btn) {
           btn.disabled = false;
           btn.textContent = oldText || "删除";
+        }
+      }
+    }
+
+    async function setTaskStatus(taskId, nextStatus, btn) {
+      if (!taskId || !nextStatus) return;
+      const oldText = btn ? btn.textContent : "";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "保存中";
+      }
+      try {
+        const data = await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(taskId)}`, {
+          method: "PATCH",
+          json: { status: nextStatus },
+        });
+        if (data.task) {
+          state.tasks = (state.tasks || []).map((row) => String(row.id) === String(taskId) ? data.task : row);
+        }
+        toast(nextStatus === "active" ? "任务已启用" : "任务已暂停");
+        await loadTasks({ reset: true });
+        if (document.querySelector("#taskDetailView.active")) openTaskDetail(taskId, state.taskDetailBackTab || "taskList");
+      } catch (err) {
+        toast(err.message || "状态更新失败");
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText;
+        }
+      }
+    }
+
+    function taskScheduleConfig(task) {
+      return task && task.schedule_config && typeof task.schedule_config === "object" ? task.schedule_config : {};
+    }
+
+    function updateTaskEditScheduleFields() {
+      const type = $("taskEditScheduleType") ? $("taskEditScheduleType").value : "once";
+      $("taskEditIntervalBlock")?.classList.toggle("hidden", type !== "interval");
+      $("taskEditStartAtBlock")?.classList.toggle("hidden", type === "daily_times");
+      $("taskEditDailyTimesBlock")?.classList.toggle("hidden", type !== "daily_times");
+      if (type === "daily_times" && $("taskEditDailyTimesList") && !$("taskEditDailyTimesList").children.length) addTaskEditDailyTime("09:00");
+    }
+
+    function collectTaskEditDailyTimes() {
+      return Array.from(document.querySelectorAll("[data-task-edit-daily-time]"))
+        .map((el) => String(el.value || "").trim())
+        .filter(Boolean);
+    }
+
+    function addTaskEditDailyTime(value = "") {
+      const list = $("taskEditDailyTimesList");
+      if (!list) return;
+      const row = document.createElement("div");
+      row.className = "task-daily-row";
+      row.innerHTML = `<input type="time" step="60" data-task-edit-daily-time value="${escapeHtml(value)}"><button class="ghost" type="button" aria-label="删除时间点">-</button>`;
+      row.querySelector("button").addEventListener("click", () => row.remove());
+      list.appendChild(row);
+    }
+
+    function openTaskEditModal(taskId) {
+      const task = (state.tasks || []).find((row) => String(row.id) === String(taskId));
+      if (!task) {
+        toast("任务不存在，请刷新后再试");
+        return;
+      }
+      state.taskEditId = String(task.id);
+      const cfg = taskScheduleConfig(task);
+      $("taskEditName").value = task.title || "";
+      $("taskEditScheduleType").value = task.schedule_type || "once";
+      $("taskEditIntervalMinutes").value = Math.max(1, Math.round((task.interval_seconds || 3600) / 60));
+      $("taskEditStartAt").value = cfg.start_at ? String(cfg.start_at).slice(0, 16) : datetimeLocalValue(task.next_run_at);
+      const list = $("taskEditDailyTimesList");
+      if (list) list.innerHTML = "";
+      const dailyTimes = Array.isArray(cfg.daily_times) ? cfg.daily_times : [];
+      dailyTimes.forEach((value) => addTaskEditDailyTime(value));
+      updateTaskEditScheduleFields();
+      $("taskEditModal")?.classList.remove("hidden");
+    }
+
+    function closeTaskEditModal() {
+      state.taskEditId = "";
+      $("taskEditModal")?.classList.add("hidden");
+    }
+
+    async function submitTaskEdit() {
+      const taskId = state.taskEditId;
+      if (!taskId) return;
+      const type = $("taskEditScheduleType").value || "once";
+      const dailyTimes = collectTaskEditDailyTimes();
+      if (type === "daily_times" && !dailyTimes.length) throw new Error("请填写每天执行时间");
+      const intervalMinutes = parseInt($("taskEditIntervalMinutes").value || "60", 10);
+      const btn = $("taskEditSubmit");
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "保存中";
+      }
+      try {
+        const data = await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(taskId)}`, {
+          method: "PATCH",
+          json: {
+            title: ($("taskEditName").value || "").trim(),
+            schedule_type: type,
+            interval_seconds: Math.max(60, (Number.isNaN(intervalMinutes) ? 60 : intervalMinutes) * 60),
+            start_at: type === "daily_times" ? "" : ($("taskEditStartAt").value || ""),
+            daily_times: type === "daily_times" ? dailyTimes : [],
+            timezone_offset_minutes: timezoneOffsetMinutes(),
+          },
+        });
+        if (data.task) {
+          state.tasks = (state.tasks || []).map((row) => String(row.id) === String(taskId) ? data.task : row);
+        }
+        closeTaskEditModal();
+        toast("定时任务已保存");
+        await loadTasks({ reset: true });
+        if (document.querySelector("#taskDetailView.active")) openTaskDetail(taskId, state.taskDetailBackTab || "taskList");
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "保存";
         }
       }
     }
@@ -5240,7 +5568,16 @@
       const task = (state.tasks || []).find((row) => String(row.id || "") === String(taskId)) || null;
       state.taskDetailBackTab = backTab || "taskList";
       $("taskPageTitle").textContent = task ? (task.title || "定时任务详情") : "定时任务详情";
-      $("taskPageBody").innerHTML = taskPageHtml(task);
+      const body = $("taskPageBody");
+      body.innerHTML = taskPageHtml(task);
+      if (task) {
+        const actions = body.querySelector(".run-publish-actions");
+        if (actions) {
+          const nextStatus = task.status === "paused" ? "active" : "paused";
+          const statusLabel = task.status === "paused" ? "启用任务" : "暂停任务";
+          actions.insertAdjacentHTML("beforeend", `<button type="button" data-edit-task="${escapeHtml(task.id)}">编辑任务</button><button type="button" data-task-status="${escapeHtml(task.id)}" data-next-status="${nextStatus}">${statusLabel}</button>`);
+        }
+      }
       switchTab("taskDetail");
     }
 
@@ -5936,9 +6273,7 @@
     function syncTopNavigationActions() {
       const homeBtn = document.querySelector('.top-action[data-tab-target="home"]');
       if (homeBtn) {
-        homeBtn.setAttribute("aria-label", "定时任务");
-        const label = homeBtn.querySelector(".top-action-label");
-        if (label) label.textContent = "定时任务";
+        homeBtn.remove();
       }
       document.querySelectorAll('.top-action[data-tab-target="messages"]').forEach((btn) => btn.remove());
     }
@@ -6018,6 +6353,14 @@
     });
     $("departmentWorkHistoryBtn")?.addEventListener("click", openWorkHistory);
     $("abilityWorkHistoryBtn")?.addEventListener("click", openWorkHistory);
+    $("floatingScheduleBtn")?.addEventListener("click", openScheduleManager);
+    $("abilityWorkbenchFields")?.addEventListener("change", (evt) => {
+      if (evt.target && evt.target.id === "abilityScheduleType") updateAbilityScheduleFields();
+    });
+    $("abilityWorkbenchFields")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("#abilityAddDailyTimeBtn");
+      if (btn) addAbilityDailyTime();
+    });
     $("abilityRouteBtn")?.addEventListener("click", () => {
       const lookup = activeAbilityLookup();
       const routeTab = lookup && lookup.node && lookup.node.routeTab;
@@ -6049,6 +6392,15 @@
     $("taskScheduleType").addEventListener("change", updateScheduleFields);
     $("addDailyTimeBtn").addEventListener("click", () => addDailyTime());
     $("createTaskBtn").addEventListener("click", () => createScheduledTask().catch((err) => toast(err.message || "下发失败")));
+    $("taskEditScheduleType")?.addEventListener("change", updateTaskEditScheduleFields);
+    $("taskEditAddDailyTimeBtn")?.addEventListener("click", () => addTaskEditDailyTime());
+    $("taskEditBackdrop")?.addEventListener("click", closeTaskEditModal);
+    $("taskEditClose")?.addEventListener("click", closeTaskEditModal);
+    $("taskEditCancel")?.addEventListener("click", closeTaskEditModal);
+    $("taskEditForm")?.addEventListener("submit", (evt) => {
+      evt.preventDefault();
+      submitTaskEdit().catch((err) => toast(err.message || "保存失败"));
+    });
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
@@ -6145,7 +6497,7 @@
     $("employeeWorkbenchBtn").addEventListener("click", () => {
       if ($("employeeWorkbenchBtn").disabled) return;
       closeEmployeeModal();
-      switchTab("home");
+      switchTab("office");
     });
     window.addEventListener("resize", () => {
       if (document.querySelector("#officeView.active")) renderOfficeEmployees();
@@ -6206,6 +6558,16 @@
         openRunDetail(detailBtn.dataset.openRunDetail || "", "taskList");
         return;
       }
+      const editBtn = evt.target.closest("[data-edit-task]");
+      if (editBtn) {
+        openTaskEditModal(editBtn.dataset.editTask || "");
+        return;
+      }
+      const statusBtn = evt.target.closest("[data-task-status]");
+      if (statusBtn) {
+        setTaskStatus(statusBtn.dataset.taskStatus || "", statusBtn.dataset.nextStatus || "", statusBtn);
+        return;
+      }
       const btn = evt.target.closest("[data-delete-task]");
       if (!btn) return;
       deleteTask(btn.dataset.deleteTask, btn);
@@ -6240,6 +6602,16 @@
       const detailBtn = evt.target.closest("[data-open-run-detail]");
       if (detailBtn) {
         openRunDetail(detailBtn.dataset.openRunDetail || "", "taskDetail");
+        return;
+      }
+      const editBtn = evt.target.closest("[data-edit-task]");
+      if (editBtn) {
+        openTaskEditModal(editBtn.dataset.editTask || "");
+        return;
+      }
+      const statusBtn = evt.target.closest("[data-task-status]");
+      if (statusBtn) {
+        setTaskStatus(statusBtn.dataset.taskStatus || "", statusBtn.dataset.nextStatus || "", statusBtn);
         return;
       }
       const delBtn = evt.target.closest("[data-delete-task]");
