@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260706-personal-settings-mobile-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260706-personal-template-list-1" />
 </head>
 <body>
   <main class="shell">
@@ -537,9 +537,20 @@
           </div>
           <div class="personal-status hidden" id="personalStatusMsg"></div>
           <div class="personal-panel active" data-personal-panel="template">
-            <div class="personal-grid">
+            <div class="personal-template-stack">
+              <div class="personal-block">
+                <strong>选择资料</strong>
+                <div class="personal-list" id="personalTemplateList"></div>
+              </div>
               <div class="personal-block personal-card-accent">
-                <strong>模板</strong>
+                <div class="personal-template-editor-head">
+                  <strong id="personalTemplateEditState">新建模板</strong>
+                  <button class="ghost" type="button" id="personalNewTemplateBtn">新建模板</button>
+                </div>
+                <div class="personal-field">
+                  <label for="personalTemplateName">模板名称</label>
+                  <input id="personalTemplateName" type="text" placeholder="模板名称">
+                </div>
                 <div class="personal-field">
                   <label for="personalOralReq">口播要求</label>
                   <textarea id="personalOralReq" rows="4" placeholder="人设、语气、禁用表达"></textarea>
@@ -555,8 +566,8 @@
                 <button type="button" id="personalSaveDefaultBtn">保存模板</button>
               </div>
               <div class="personal-block">
-                <strong>选择资料</strong>
-                <div class="personal-list" id="personalTemplateList"></div>
+                <strong>已有模板</strong>
+                <div class="personal-template-list" id="personalSavedTemplateList"></div>
               </div>
             </div>
           </div>
@@ -863,6 +874,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260706-personal-settings-mobile-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260706-personal-template-list-1"></script>
 </body>
 </html>

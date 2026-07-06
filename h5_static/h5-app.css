@@ -2261,6 +2261,29 @@
     .personal-panel { display: none; }
     .personal-panel.active { display: block; }
     .personal-grid { display: grid; grid-template-columns: minmax(0, .86fr) minmax(0, 1.14fr); gap: 12px; align-items: start; }
+    .personal-template-stack { display: grid; gap: 12px; }
+    .personal-template-editor-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .personal-template-editor-head button { flex: 0 0 auto; padding: 7px 10px; border-radius: 999px; font-size: 12px; }
+    .personal-template-list { display: grid; gap: 8px; }
+    .personal-template-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid rgba(26,48,88,.1);
+      border-radius: 16px;
+      background: rgba(255,255,255,.9);
+    }
+    .personal-template-card.active { border-color: rgba(36,92,255,.42); box-shadow: inset 3px 0 0 rgba(36,92,255,.75); }
+    .personal-template-card strong { display: block; color: #17233d; }
+    .personal-template-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .personal-template-card button { flex: 0 0 auto; padding: 7px 12px; border-radius: 999px; background: rgba(36,92,255,.08); color: var(--blue); box-shadow: none; font-size: 12px; }
     .personal-block {
       display: grid;
       gap: 11px;
@@ -2367,6 +2390,12 @@
       .personal-row { align-items: flex-start; }
       .personal-row label { flex: 1 1 auto; }
       .personal-row-actions { flex-direction: column; }
+      .personal-template-card,
+      .personal-template-editor-head {
+        align-items: flex-start;
+      }
+      .personal-template-card { flex-direction: column; }
+      .personal-template-card button { align-self: flex-start; }
       #personalSaveDefaultBtn,
       #personalSaveMemoryBtn {
         width: 100%;
