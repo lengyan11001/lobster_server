@@ -56,7 +56,6 @@ from .api.social_leads import router as social_leads_router
 from .api.lead_collection_templates import router as lead_collection_templates_router
 from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
 from .api.mobile_client import router as mobile_client_router
-from .api.juhe_wechat import router as juhe_wechat_router
 try:
     from .api.wecom_kf import router as wecom_kf_router
 except Exception:
@@ -1061,13 +1060,19 @@ def create_app() -> FastAPI:
     app.include_router(lead_collection_templates_router, prefix="")
     app.include_router(wechat_channels_transcript_router, prefix="")
     app.include_router(mobile_client_router, prefix="")
-    app.include_router(juhe_wechat_router, prefix="")
     if wecom_kf_router is not None:
         app.include_router(wecom_kf_router, prefix="")
     if wecom_router is not None:
         app.include_router(wecom_router, prefix="")
     else:
         logger.warning("企业微信回复未加载：缺少 pycryptodome 或 skills.wecom_reply")
+
+    # 微信协议助手已切到 online 本机 MsgHelper，server 不再暴露旧 JuheBot 云端代理/管理入口。
+    app.router.routes = [
+        route
+        for route in app.router.routes
+        if "juhe-wechat" not in (getattr(route, "path", "") or "")
+    ]
 
     assets_dir = Path(__file__).resolve().parent.parent.parent / "assets"
     assets_dir.mkdir(exist_ok=True)
