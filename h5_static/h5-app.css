@@ -2839,6 +2839,500 @@
     .department-role-card.has-bubble .department-role-avatar {
       margin-top: 32px;
     }
+    .secretary-role-card {
+      min-height: 210px;
+      background:
+        radial-gradient(circle at 50% 14%, rgba(78,210,255,.34), transparent 30%),
+        radial-gradient(circle at 12% 88%, rgba(19,168,115,.2), transparent 32%),
+        linear-gradient(150deg, rgba(10,22,48,.96), rgba(20,44,84,.92) 55%, rgba(10,84,92,.88));
+      color: #ecfeff;
+      border-color: rgba(137, 227, 255, .42);
+      box-shadow: 0 20px 42px rgba(8,28,64,.28), inset 0 0 0 1px rgba(255,255,255,.08);
+    }
+    .secretary-role-card::before {
+      background:
+        linear-gradient(90deg, transparent 0 48%, rgba(138,241,255,.16) 49% 51%, transparent 52%),
+        linear-gradient(0deg, transparent 0 48%, rgba(138,241,255,.12) 49% 51%, transparent 52%);
+      background-size: 28px 28px;
+      opacity: .8;
+    }
+    .secretary-role-card .department-role-name {
+      color: #ecfeff;
+      background: rgba(4,18,38,.68);
+      border-color: rgba(137,227,255,.34);
+      box-shadow: 0 12px 28px rgba(16,185,219,.22);
+    }
+    .secretary-role-card .department-role-count { color: #8ff5ff; }
+    .secretary-mini-orbit {
+      position: absolute;
+      inset: 28px 34px 62px;
+      border: 1px solid rgba(143,245,255,.36);
+      border-radius: 50%;
+      transform: rotate(-16deg);
+      animation: secretary-orbit-spin 8s linear infinite;
+    }
+    .secretary-mini-orbit::before,
+    .secretary-mini-orbit::after {
+      content: "";
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #8ff5ff;
+      box-shadow: 0 0 18px rgba(143,245,255,.9);
+    }
+    .secretary-mini-orbit::before { left: 14%; top: 10%; }
+    .secretary-mini-orbit::after { right: 12%; bottom: 16%; background: #34d399; }
+    .secretary-mini-figure {
+      position: relative;
+      z-index: 1;
+      width: 104px;
+      height: 124px;
+      margin-top: 2px;
+      filter: drop-shadow(0 18px 18px rgba(0,0,0,.28));
+      animation: secretary-float 3.2s ease-in-out infinite;
+    }
+    .secretary-mini-head {
+      position: absolute;
+      left: 34px;
+      top: 10px;
+      width: 38px;
+      height: 42px;
+      border-radius: 45% 45% 48% 48%;
+      background:
+        radial-gradient(circle at 32% 32%, #fff, transparent 18%),
+        linear-gradient(145deg, #e9fbff, #81d9ff 68%, #2f80ff);
+      box-shadow: inset 0 -8px 18px rgba(20,60,110,.22);
+    }
+    .secretary-mini-body {
+      position: absolute;
+      left: 24px;
+      top: 49px;
+      width: 58px;
+      height: 62px;
+      border-radius: 28px 28px 18px 18px;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.92), rgba(142,225,255,.9) 42%, rgba(36,92,255,.92));
+      clip-path: polygon(18% 0, 82% 0, 100% 100%, 0 100%);
+    }
+    .secretary-mini-screen {
+      position: absolute;
+      right: 4px;
+      bottom: 18px;
+      width: 38px;
+      height: 28px;
+      border-radius: 10px;
+      background: rgba(6,20,44,.74);
+      border: 1px solid rgba(143,245,255,.48);
+      box-shadow: 0 0 18px rgba(22,211,238,.28);
+    }
+    .secretary-shell {
+      display: grid;
+      gap: 14px;
+      padding: 14px;
+      border-radius: 28px;
+      color: #e8f7ff;
+      background:
+        radial-gradient(circle at 16% 0%, rgba(34,211,238,.28), transparent 34%),
+        radial-gradient(circle at 90% 12%, rgba(59,130,246,.22), transparent 32%),
+        linear-gradient(160deg, #061225, #10264b 48%, #071b2f);
+      box-shadow: 0 24px 60px rgba(5,18,44,.36), inset 0 0 0 1px rgba(173,232,255,.14);
+      overflow: hidden;
+    }
+    .secretary-command {
+      position: relative;
+      min-height: 190px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 150px;
+      gap: 10px;
+      align-items: center;
+      padding: 18px;
+      border-radius: 24px;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.1), rgba(255,255,255,.03)),
+        radial-gradient(circle at 72% 40%, rgba(143,245,255,.2), transparent 36%);
+      border: 1px solid rgba(173,232,255,.16);
+    }
+    .secretary-kicker {
+      color: #67e8f9;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .16em;
+    }
+    .secretary-command h2 {
+      margin: 6px 0 4px;
+      color: #fff;
+      font-size: clamp(28px, 7vw, 42px);
+      line-height: 1.05;
+      letter-spacing: -.04em;
+    }
+    .secretary-subtitle { color: rgba(232,247,255,.72); font-size: 13px; font-weight: 800; }
+    .secretary-avatar-stage {
+      position: relative;
+      width: 148px;
+      height: 148px;
+      justify-self: end;
+    }
+    .secretary-orbit {
+      position: absolute;
+      inset: 8px;
+      border-radius: 50%;
+      border: 1px solid rgba(143,245,255,.34);
+      animation: secretary-orbit-spin 9s linear infinite;
+    }
+    .secretary-orbit.orbit-b {
+      inset: 24px 5px;
+      transform: rotate(62deg);
+      border-color: rgba(52,211,153,.32);
+      animation-duration: 6.8s;
+      animation-direction: reverse;
+    }
+    .secretary-avatar-figure {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 96px;
+      height: 124px;
+      transform: translate(-50%, -50%);
+      animation: secretary-centered-float 3.4s ease-in-out infinite;
+    }
+    .secretary-head {
+      position: absolute;
+      left: 29px;
+      top: 10px;
+      width: 42px;
+      height: 46px;
+      border-radius: 46% 46% 50% 50%;
+      background: linear-gradient(145deg, #fff, #a5f3fc 52%, #38bdf8);
+    }
+    .secretary-body {
+      position: absolute;
+      left: 20px;
+      top: 55px;
+      width: 60px;
+      height: 66px;
+      border-radius: 30px 30px 18px 18px;
+      background: linear-gradient(135deg, #ecfeff, #67e8f9 46%, #245cff);
+      clip-path: polygon(18% 0, 82% 0, 100% 100%, 0 100%);
+    }
+    .secretary-tablet {
+      position: absolute;
+      right: 0;
+      top: 76px;
+      width: 42px;
+      height: 30px;
+      border-radius: 10px;
+      background: rgba(4,18,38,.82);
+      border: 1px solid rgba(143,245,255,.52);
+      box-shadow: 0 0 24px rgba(34,211,238,.3);
+    }
+    .secretary-metrics,
+    .secretary-focus,
+    .secretary-department-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .secretary-section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: rgba(236,254,255,.9);
+      font-size: 16px;
+      font-weight: 950;
+      letter-spacing: -.02em;
+    }
+    .secretary-section-title strong {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .secretary-section-title strong::before {
+      content: "";
+      width: 8px;
+      height: 18px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #67e8f9, #34d399);
+      box-shadow: 0 0 18px rgba(103,232,249,.6);
+    }
+    .secretary-metric,
+    .secretary-focus-card,
+    .secretary-dept-card,
+    .secretary-trend-panel {
+      position: relative;
+      border: 1px solid rgba(173,232,255,.14);
+      background: rgba(255,255,255,.08);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.04), 0 16px 38px rgba(0,0,0,.2);
+      backdrop-filter: blur(14px);
+    }
+    .secretary-metric {
+      min-height: 82px;
+      display: grid;
+      align-content: center;
+      gap: 6px;
+      padding: 13px;
+      border-radius: 20px;
+    }
+    .secretary-metric span,
+    .secretary-focus-card span { color: rgba(232,247,255,.62); font-size: 12px; font-weight: 900; }
+    .secretary-metric strong {
+      color: #fff;
+      font-size: 28px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .secretary-metric.green strong { color: #86efac; }
+    .secretary-metric.blue strong { color: #93c5fd; }
+    .secretary-metric.orange strong { color: #fdba74; }
+    .secretary-metric.cyan strong { color: #67e8f9; }
+    .secretary-metric.red strong { color: #fca5a5; }
+    .secretary-focus-card {
+      min-height: 96px;
+      display: grid;
+      gap: 6px;
+      align-content: center;
+      padding: 14px;
+      border-radius: 22px;
+      overflow: hidden;
+    }
+    .secretary-focus-card.primary { grid-column: 1 / -1; background: linear-gradient(135deg, rgba(34,211,238,.18), rgba(36,92,255,.12)); }
+    .secretary-focus-card.danger { border-color: rgba(248,113,113,.34); background: rgba(127,29,29,.24); }
+    .secretary-focus-card strong { color: #fff; font-size: 22px; line-height: 1.1; }
+    .secretary-focus-card strong.up { color: #86efac; }
+    .secretary-focus-card strong.down { color: #fca5a5; }
+    .secretary-focus-card strong.flat { color: #bfdbfe; }
+    .secretary-focus-card em { color: rgba(232,247,255,.68); font-size: 12px; font-style: normal; font-weight: 800; }
+    .secretary-map {
+      position: relative;
+      min-height: 300px;
+      border-radius: 28px;
+      overflow: hidden;
+      border: 1px solid rgba(173,232,255,.14);
+      background:
+        linear-gradient(90deg, rgba(148,163,184,.08) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(148,163,184,.08) 1px, transparent 1px),
+        radial-gradient(circle at 50% 52%, rgba(34,211,238,.22), transparent 35%),
+        rgba(2,8,23,.36);
+      background-size: 30px 30px, 30px 30px, auto, auto;
+    }
+    .secretary-map::before {
+      content: "";
+      position: absolute;
+      inset: 18px;
+      border-radius: 50%;
+      border: 1px dashed rgba(103,232,249,.25);
+      animation: secretary-radar 5s linear infinite;
+    }
+    .secretary-map-core {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 126px;
+      height: 126px;
+      display: grid;
+      place-items: center;
+      align-content: center;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(circle, rgba(34,211,238,.22), rgba(36,92,255,.12) 62%, rgba(2,8,23,.4));
+      border: 1px solid rgba(103,232,249,.36);
+      box-shadow: 0 0 44px rgba(34,211,238,.24);
+    }
+    .secretary-map-core strong { color: #fff; font-size: 32px; line-height: 1; }
+    .secretary-map-core span { color: rgba(232,247,255,.62); font-size: 12px; font-weight: 900; }
+    .secretary-core-ring {
+      position: absolute;
+      inset: -16px;
+      border-radius: 50%;
+      border: 1px solid rgba(103,232,249,.22);
+      animation: secretary-pulse 2.6s ease-in-out infinite;
+    }
+    .secretary-map-node {
+      position: absolute;
+      left: var(--sx);
+      top: var(--sy);
+      min-width: 92px;
+      min-height: 54px;
+      display: grid;
+      gap: 3px;
+      place-items: center;
+      padding: 8px 10px;
+      border-radius: 18px;
+      color: #ecfeff;
+      background: rgba(15,23,42,.66);
+      border: 1px solid rgba(103,232,249,.28);
+      box-shadow: 0 12px 28px rgba(0,0,0,.22);
+      transform: translate(-50%, -50%);
+      animation: secretary-node-in .55s ease both;
+      animation-delay: var(--delay, 0s);
+    }
+    .secretary-map-node.active { border-color: rgba(134,239,172,.58); box-shadow: 0 0 30px rgba(34,197,94,.24); }
+    .secretary-map-node.alert { border-color: rgba(252,165,165,.62); box-shadow: 0 0 30px rgba(248,113,113,.24); }
+    .secretary-map-node span { font-size: 12px; font-weight: 900; }
+    .secretary-map-node strong { color: #67e8f9; font-size: 22px; line-height: 1; }
+    .secretary-trend-panel {
+      display: grid;
+      grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+      gap: 12px;
+      align-items: end;
+      padding: 14px;
+      border-radius: 24px;
+    }
+    .secretary-trend-copy { display: grid; gap: 6px; }
+    .secretary-trend-copy strong { color: #fff; font-size: 17px; }
+    .secretary-trend-copy span { font-size: 24px; font-weight: 950; }
+    .secretary-trend-copy span.up { color: #86efac; }
+    .secretary-trend-copy span.down { color: #fca5a5; }
+    .secretary-trend-copy span.flat { color: #bfdbfe; }
+    .secretary-sparkline,
+    .secretary-dept-sparkline {
+      display: flex;
+      align-items: end;
+      gap: 6px;
+      min-height: 48px;
+    }
+    .secretary-sparkline i,
+    .secretary-dept-sparkline i {
+      flex: 1 1 0;
+      min-width: 5px;
+      border-radius: 999px 999px 4px 4px;
+      background: linear-gradient(180deg, #67e8f9, #245cff);
+      transform-origin: bottom;
+      animation: secretary-bar-in .7s ease both;
+      animation-delay: var(--bar-delay, 0s);
+    }
+    .secretary-dept-card {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 24px;
+      color: #ecfeff;
+      text-align: left;
+    }
+    .secretary-dept-card.active { border-color: rgba(134,239,172,.42); }
+    .secretary-dept-card.alert { border-color: rgba(252,165,165,.44); }
+    .secretary-dept-head {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: center;
+    }
+    .secretary-dept-head > span {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      color: #082f49;
+      background: linear-gradient(135deg, #a5f3fc, #86efac);
+      font-weight: 950;
+    }
+    .secretary-dept-head strong { color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .secretary-dept-head em { font-style: normal; font-size: 12px; font-weight: 950; }
+    .secretary-dept-head em.up { color: #86efac; }
+    .secretary-dept-head em.down { color: #fca5a5; }
+    .secretary-dept-head em.flat { color: #bfdbfe; }
+    .secretary-dept-radar {
+      position: relative;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(148,163,184,.18);
+      overflow: hidden;
+    }
+    .secretary-dept-radar i {
+      display: block;
+      width: var(--value);
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #34d399, #67e8f9, #60a5fa);
+      box-shadow: 0 0 18px rgba(103,232,249,.42);
+      animation: secretary-scan 1.2s ease both;
+    }
+    .secretary-dept-data {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .secretary-dept-data b {
+      display: grid;
+      gap: 3px;
+      padding: 8px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.08);
+      color: #fff;
+      font-size: 18px;
+      font-variant-numeric: tabular-nums;
+    }
+    .secretary-dept-data em { color: rgba(232,247,255,.58); font-size: 11px; font-style: normal; }
+    .secretary-dept-foot {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: rgba(232,247,255,.66);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .secretary-dept-sparkline { min-height: 32px; }
+    .secretary-dept-sparkline i { background: linear-gradient(180deg, #86efac, #22d3ee); }
+    @keyframes secretary-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-7px); }
+    }
+    @keyframes secretary-centered-float {
+      0%, 100% { transform: translate(-50%, -50%); }
+      50% { transform: translate(-50%, calc(-50% - 7px)); }
+    }
+    @keyframes secretary-orbit-spin {
+      to { transform: rotate(344deg); }
+    }
+    @keyframes secretary-radar {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes secretary-pulse {
+      0%, 100% { transform: scale(.92); opacity: .45; }
+      50% { transform: scale(1.08); opacity: .9; }
+    }
+    @keyframes secretary-node-in {
+      from { opacity: 0; transform: translate(-50%, -42%) scale(.86); }
+      to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+    @keyframes secretary-bar-in {
+      from { transform: scaleY(.08); opacity: .2; }
+      to { transform: scaleY(1); opacity: 1; }
+    }
+    @keyframes secretary-scan {
+      from { width: 0; }
+      to { width: var(--value); }
+    }
+    @media (max-width: 680px) {
+      .secretary-shell { padding: 10px; border-radius: 24px; }
+      .secretary-command {
+        grid-template-columns: minmax(0, 1fr) 112px;
+        min-height: 158px;
+        padding: 14px;
+      }
+      .secretary-avatar-stage { width: 112px; height: 120px; }
+      .secretary-command h2 { font-size: 30px; }
+      .secretary-subtitle { font-size: 12px; }
+      .secretary-metrics,
+      .secretary-focus,
+      .secretary-department-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .secretary-metric { min-height: 76px; padding: 11px; }
+      .secretary-metric strong { font-size: 24px; }
+      .secretary-focus-card { min-height: 88px; padding: 12px; }
+      .secretary-focus-card strong { font-size: 18px; }
+      .secretary-map { min-height: 270px; border-radius: 24px; }
+      .secretary-map-core { width: 110px; height: 110px; }
+      .secretary-map-node { min-width: 78px; padding: 7px 8px; }
+      .secretary-trend-panel { grid-template-columns: 1fr; }
+      .secretary-dept-card { padding: 12px; border-radius: 22px; }
+      .secretary-dept-data { gap: 6px; }
+      .secretary-dept-data b { padding: 7px 6px; font-size: 16px; }
+      .secretary-dept-foot { flex-direction: column; }
+    }
     .department-voice-entry {
       width: 66px;
       height: 66px;

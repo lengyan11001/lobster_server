@@ -1880,6 +1880,268 @@
       return lines[minuteSlot % lines.length];
     }
 
+    function secretaryAbilityCount(department) {
+      let count = 0;
+      eachAbilityNode((department && department.children) || [], department, [], (node) => {
+        if (!node || node.comingSoon) return;
+        if (!node.children || !node.children.length) count += 1;
+      });
+      return count;
+    }
+
+    function secretaryRunCredits(row) {
+      const payload = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
+      return numericValue(
+        row && (row.credits_used || row.credits_charged || row.price || row.cost_credits)
+        || payload.credits_used || payload.credits_charged || payload.credits_final || payload.price || payload.cost_credits
+      );
+    }
+
+    function secretaryJobRowsForDepartment(department) {
+      const scope = departmentScope(department);
+      return [
+        ...(state.socialLeadJobs || []).filter((job) => workbenchJobMatchesScope(job, "social", scope)),
+        ...(state.linkedinJobs || []).filter((job) => workbenchJobMatchesScope(job, "linkedin", scope)),
+        ...(state.wechatTranscriptJobs || []).filter((job) => workbenchJobMatchesScope(job, "wechat", scope)),
+      ];
+    }
+
+    function secretaryTimeMs(value) {
+      const d = parseDate(value);
+      return d ? d.getTime() : 0;
+    }
+
+    function secretaryRowTime(row) {
+      return itemTimeMs(row && row.finished_at, row && row.completed_at, row && row.updated_at, row && row.created_at);
+    }
+
+    function secretaryLocalDayStart(offsetDays = 0) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() + offsetDays);
+      return d.getTime();
+    }
+
+    function secretaryIsCompleted(status) {
+      const s = String(status || "").toLowerCase();
+      return s === "completed" || s === "success" || s === "done";
+    }
+
+    function secretaryTrendArrow(value) {
+      if (value > 0) return `+${value}%`;
+      if (value < 0) return `${value}%`;
+      return "0%";
+    }
+
+    function secretaryTrendClass(value) {
+      if (value > 0) return "up";
+      if (value < 0) return "down";
+      return "flat";
+    }
+
+    function secretarySparkline(values) {
+      const nums = Array.isArray(values) ? values : [];
+      const max = Math.max(1, ...nums);
+      return nums.map((value, index) => {
+        const h = Math.max(8, Math.round((Number(value || 0) / max) * 42));
+        return `<i style="height:${h}px;--bar-delay:${(index * .07).toFixed(2)}s"></i>`;
+      }).join("");
+    }
+
+    function secretaryDepartmentStats(department) {
+      const scope = departmentScope(department);
+      const runs = (state.runs || []).filter((row) => recordMatchesWorkScope(row, scope));
+      const tasks = (state.tasks || []).filter((row) => recordMatchesWorkScope(row, scope));
+      const jobs = secretaryJobRowsForDepartment(department);
+      const now = Date.now();
+      const todayStart = secretaryLocalDayStart(0);
+      const yesterdayStart = secretaryLocalDayStart(-1);
+      const weekStart = secretaryLocalDayStart(-6);
+      const prevWeekStart = secretaryLocalDayStart(-13);
+      const activeRuns = runs.filter(isActiveRun).length;
+      const activeTasks = tasks.filter((row) => isRunningStatus(row && row.status)).length;
+      const activeJobs = jobs.filter((job) => isRunningStatus(job && job.status)).length;
+      const failedRuns = runs.filter((row) => String(row && row.status || "").toLowerCase() === "failed").length;
+      const failedJobs = jobs.filter((job) => String(job && job.status || "").toLowerCase() === "failed").length;
+      const assets = runs.reduce((sum, row) => sum + collectRunMediaEntries(row).length, 0);
+      const credits = runs.reduce((sum, row) => sum + secretaryRunCredits(row), 0);
+      const completedRuns = runs.filter((row) => secretaryIsCompleted(row && row.status));
+      const completedJobs = jobs.filter((job) => secretaryIsCompleted(job && job.status));
+      const todayRuns = completedRuns.filter((row) => secretaryRowTime(row) >= todayStart);
+      const todayJobs = completedJobs.filter((job) => secretaryRowTime(job) >= todayStart);
+      const yesterdayRuns = completedRuns.filter((row) => {
+        const ms = secretaryRowTime(row);
+        return ms >= yesterdayStart && ms < todayStart;
+      });
+      const yesterdayJobs = completedJobs.filter((job) => {
+        const ms = secretaryRowTime(job);
+        return ms >= yesterdayStart && ms < todayStart;
+      });
+      const weekRows = [...completedRuns, ...completedJobs].filter((row) => secretaryRowTime(row) >= weekStart);
+      const prevWeekRows = [...completedRuns, ...completedJobs].filter((row) => {
+        const ms = secretaryRowTime(row);
+        return ms >= prevWeekStart && ms < weekStart;
+      });
+      const trend = prevWeekRows.length ? Math.round(((weekRows.length - prevWeekRows.length) / prevWeekRows.length) * 100) : (weekRows.length ? 100 : 0);
+      const daily = Array.from({ length: 7 }, (_item, index) => {
+        const start = secretaryLocalDayStart(index - 6);
+        const end = secretaryLocalDayStart(index - 5);
+        return [...completedRuns, ...completedJobs].filter((row) => {
+          const ms = secretaryRowTime(row);
+          return ms >= start && ms < end;
+        }).length;
+      });
+      const stuckRuns = runs.filter((row) => isActiveRun(row) && now - itemTimeMs(row && row.started_at, row && row.claimed_at, row && row.created_at) > 30 * 60 * 1000).length;
+      const todayAssets = todayRuns.reduce((sum, row) => sum + collectRunMediaEntries(row).length, 0);
+      const lastMs = Math.max(
+        0,
+        ...runs.map((row) => itemTimeMs(row && row.updated_at, row && row.finished_at, row && row.created_at)),
+        ...tasks.map((row) => itemTimeMs(row && row.next_run_at, row && row.updated_at, row && row.created_at)),
+        ...jobs.map((job) => itemTimeMs(job && job.updated_at, job && job.completed_at, job && job.created_at))
+      );
+      return {
+        department,
+        abilityCount: secretaryAbilityCount(department),
+        totalRuns: runs.length + jobs.length,
+        active: activeRuns + activeTasks + activeJobs,
+        failed: failedRuns + failedJobs,
+        stuck: stuckRuns,
+        risk: failedRuns + failedJobs + stuckRuns,
+        scheduled: tasks.filter((row) => String(row && row.status || "").toLowerCase() !== "deleted").length,
+        assets,
+        todayAssets,
+        credits,
+        todayDelivered: todayRuns.length + todayJobs.length,
+        yesterdayDelivered: yesterdayRuns.length + yesterdayJobs.length,
+        weekDelivered: weekRows.length,
+        prevWeekDelivered: prevWeekRows.length,
+        trend,
+        daily,
+        score: (todayRuns.length + todayJobs.length) * 6 + weekRows.length * 2 + assets + (activeRuns + activeTasks + activeJobs) * 2 - (failedRuns + failedJobs + stuckRuns) * 5,
+        lastMs,
+      };
+    }
+
+    function secretaryAllStats() {
+      return DEPARTMENT_SKILL_TREE.map(secretaryDepartmentStats);
+    }
+
+    function secretaryMetricCard(label, value, tone) {
+      return `<div class="secretary-metric ${escapeHtml(tone || "")}">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(String(value))}</strong>
+      </div>`;
+    }
+
+    function secretaryPulseClass(stat) {
+      if (stat.risk > 0) return " alert";
+      if (stat.active > 0) return " active";
+      return "";
+    }
+
+    function renderSecretaryView() {
+      const metrics = $("secretaryMetrics");
+      const focus = $("secretaryFocus");
+      const map = $("secretaryMap");
+      const trendPanel = $("secretaryTrendPanel");
+      const grid = $("secretaryDepartmentGrid");
+      if (!metrics || !focus || !map || !trendPanel || !grid) return;
+      const stats = secretaryAllStats();
+      const totals = stats.reduce((acc, item) => {
+        acc.active += item.active;
+        acc.failed += item.failed;
+        acc.stuck += item.stuck;
+        acc.risk += item.risk;
+        acc.scheduled += item.scheduled;
+        acc.assets += item.assets;
+        acc.todayAssets += item.todayAssets;
+        acc.credits += item.credits;
+        acc.runs += item.totalRuns;
+        acc.abilities += item.abilityCount;
+        acc.todayDelivered += item.todayDelivered;
+        acc.yesterdayDelivered += item.yesterdayDelivered;
+        acc.weekDelivered += item.weekDelivered;
+        acc.prevWeekDelivered += item.prevWeekDelivered;
+        item.daily.forEach((value, idx) => { acc.daily[idx] += value; });
+        return acc;
+      }, { active: 0, failed: 0, stuck: 0, risk: 0, scheduled: 0, assets: 0, todayAssets: 0, credits: 0, runs: 0, abilities: 0, todayDelivered: 0, yesterdayDelivered: 0, weekDelivered: 0, prevWeekDelivered: 0, daily: [0, 0, 0, 0, 0, 0, 0] });
+      const totalTrend = totals.prevWeekDelivered ? Math.round(((totals.weekDelivered - totals.prevWeekDelivered) / totals.prevWeekDelivered) * 100) : (totals.weekDelivered ? 100 : 0);
+      const topDept = stats.slice().sort((a, b) => b.score - a.score)[0] || stats[0];
+      const riskDept = stats.slice().sort((a, b) => b.risk - a.risk)[0] || stats[0];
+      const momentumDept = stats.slice().sort((a, b) => b.trend - a.trend)[0] || stats[0];
+      metrics.innerHTML = [
+        secretaryMetricCard("今日交付", compactNumber(totals.todayDelivered), "green"),
+        secretaryMetricCard("进行中", compactNumber(totals.active), "blue"),
+        secretaryMetricCard("风险", compactNumber(totals.risk), totals.risk ? "red" : "cyan"),
+        secretaryMetricCard("今日素材", compactNumber(totals.todayAssets), "orange"),
+      ].join("");
+      focus.innerHTML = [
+        `<div class="secretary-focus-card primary"><span>最活跃部门</span><strong>${escapeHtml(topDept ? topDept.department.name : "-")}</strong><em>${escapeHtml(topDept ? `${compactNumber(topDept.todayDelivered)} 个今日交付` : "")}</em></div>`,
+        `<div class="secretary-focus-card ${riskDept && riskDept.risk ? "danger" : ""}"><span>需要盯</span><strong>${escapeHtml(riskDept && riskDept.risk ? riskDept.department.name : "暂无风险")}</strong><em>${escapeHtml(riskDept && riskDept.risk ? `${riskDept.risk} 个风险点` : "全部正常")}</em></div>`,
+        `<div class="secretary-focus-card"><span>7日趋势</span><strong class="${escapeHtml(secretaryTrendClass(totalTrend))}">${escapeHtml(secretaryTrendArrow(totalTrend))}</strong><em>${escapeHtml(momentumDept ? `${momentumDept.department.name} ${secretaryTrendArrow(momentumDept.trend)}` : "")}</em></div>`,
+      ].join("");
+      const positions = [
+        ["18%", "28%"],
+        ["75%", "24%"],
+        ["22%", "72%"],
+        ["78%", "70%"],
+      ];
+      map.innerHTML = `<div class="secretary-map-core">
+        <div class="secretary-core-ring"></div>
+        <strong>${escapeHtml(compactNumber(totals.todayDelivered))}</strong>
+        <span>今日交付</span>
+      </div>${stats.map((stat, index) => {
+        const pos = positions[index % positions.length];
+        return `<button class="secretary-map-node${secretaryPulseClass(stat)}" type="button" data-secretary-dept="${escapeHtml(stat.department.id)}" style="--sx:${pos[0]};--sy:${pos[1]};--delay:${(index * .24).toFixed(2)}s">
+          <span>${escapeHtml(stat.department.name)}</span>
+          <strong>${escapeHtml(compactNumber(stat.todayDelivered))}</strong>
+        </button>`;
+      }).join("")}`;
+      trendPanel.innerHTML = `<div class="secretary-trend-copy">
+        <strong>7日交付趋势</strong>
+        <span class="${escapeHtml(secretaryTrendClass(totalTrend))}">${escapeHtml(secretaryTrendArrow(totalTrend))}</span>
+      </div>
+      <div class="secretary-sparkline">${secretarySparkline(totals.daily)}</div>`;
+      grid.innerHTML = stats.slice().sort((a, b) => b.score - a.score).map((stat, index) => {
+        const last = stat.lastMs ? fmtTime(new Date(stat.lastMs).toISOString()) : "暂无";
+        return `<button class="secretary-dept-card${secretaryPulseClass(stat)}" type="button" data-secretary-dept="${escapeHtml(stat.department.id)}" style="--accent:${index % 4}">
+          <div class="secretary-dept-head">
+            <span>${escapeHtml(stat.department.mark || firstChar(stat.department.name))}</span>
+            <strong>${escapeHtml(stat.department.name)}</strong>
+            <em class="${escapeHtml(secretaryTrendClass(stat.trend))}">${escapeHtml(secretaryTrendArrow(stat.trend))}</em>
+          </div>
+          <div class="secretary-dept-radar">
+            <i style="--value:${Math.min(100, Math.max(8, stat.todayDelivered * 18 + stat.active * 14 + stat.weekDelivered * 4 - stat.risk * 10))}%"></i>
+          </div>
+          <div class="secretary-dept-data">
+            <b>${escapeHtml(compactNumber(stat.todayDelivered))}<em>今日</em></b>
+            <b>${escapeHtml(compactNumber(stat.active))}<em>进行中</em></b>
+            <b>${escapeHtml(compactNumber(stat.risk))}<em>风险</em></b>
+          </div>
+          <div class="secretary-dept-sparkline">${secretarySparkline(stat.daily)}</div>
+          <div class="secretary-dept-foot">
+            <span>${escapeHtml(stat.risk ? `${stat.failed} 异常 / ${stat.stuck} 卡住` : `最近 ${last}`)}</span>
+            <span>${escapeHtml(compactNumber(stat.assets))} 素材</span>
+          </div>
+        </button>`;
+      }).join("");
+    }
+
+    function secretaryRoleCardHtml() {
+      return `<button class="department-role-card secretary-role-card" type="button" data-secretary-role="1" aria-label="秘书中枢">
+        <div class="secretary-mini-orbit"></div>
+        <div class="secretary-mini-figure" aria-hidden="true">
+          <div class="secretary-mini-head"></div>
+          <div class="secretary-mini-body"></div>
+          <div class="secretary-mini-screen"></div>
+        </div>
+        <div class="department-role-meta">
+          <div class="department-role-name">秘书</div>
+          <div class="department-role-count">工作态势</div>
+        </div>
+      </button>`;
+    }
+
     function renderOfficeEmployees() {
       const floor = $("employeeFloor");
       if (!floor) return;
@@ -1901,7 +2163,7 @@
       updateCompanySign();
       updateBossOfficeStats(onlineCount, workingCount);
       const roleDepartments = DEPARTMENT_SKILL_TREE;
-      floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="department-role-grid">${roleDepartments.map((department, index) => {
+      floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="department-role-grid">${secretaryRoleCardHtml()}${roleDepartments.map((department, index) => {
         const childCount = (department.children || []).length;
         const img = employeeAsset({ installation_id: department.id }, index, "idle");
         const bubble = departmentBubbleFor(department, index);
@@ -3164,7 +3426,7 @@
     function syncFloatingScheduleButton(key) {
       const btn = $("floatingScheduleBtn");
       if (!btn) return;
-      const hidden = !state.token || ["messages", "taskList", "taskDetail", "runDetail"].includes(key);
+      const hidden = !state.token || ["messages", "secretary", "taskList", "taskDetail", "runDetail"].includes(key);
       btn.classList.toggle("hidden", hidden);
     }
 
@@ -3174,6 +3436,7 @@
       document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
       const titleMap = {
         office: ["必火AI员工", "我的AI员工办公室"],
+        secretary: ["老板驾驶舱", "今日交付、趋势和风险"],
         home: ["安排工作", "远程任务、消息和执行记录"],
         workList: ["工作列表", "已完成、当前和待执行的工作节点"],
         messages: ["手机会话", "消息结果和素材预览"],
@@ -3201,6 +3464,14 @@
       $("topbar").classList.toggle("voice-page", key === "voice");
       syncFloatingScheduleButton(key);
       if (key === "office") renderOfficeEmployees();
+      if (key === "secretary") {
+        renderSecretaryView();
+        Promise.all([
+          loadTasks({ reset: true, limit: 80 }),
+          loadRuns({ reset: true, limit: 80 }),
+          loadWorkbenchJobs({ limit: 80 }),
+        ]).then(renderSecretaryView);
+      }
       if (key === "department") renderDepartmentView();
       if (key === "ability") renderAbilityView();
       if (key !== "office") closeEmployeeModal();
@@ -7858,6 +8129,10 @@
         switchTab("office");
         return;
       }
+      if (activeId === "secretaryView") {
+        switchTab("office");
+        return;
+      }
       if (activeId === "messagesView" && state.lastViewBeforeMessages) {
         const next = state.lastViewBeforeMessages;
         state.lastViewBeforeMessages = "";
@@ -7899,6 +8174,13 @@
         return;
       }
       openAbilityView(btn.dataset.abilityKey || "");
+    });
+    $("secretaryView")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-secretary-dept]");
+      if (!btn) return;
+      const department = departmentById(btn.dataset.secretaryDept || "");
+      if (!department) return;
+      openWorkHistory(departmentScope(department), { tab: "secretary" });
     });
     $("abilityChildren")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-ability-key]");
@@ -8090,6 +8372,13 @@
         setOfficeDeviceFilter(metric.dataset.deviceFilter || "all");
         return;
       }
+      const secretaryCard = evt.target.closest("[data-secretary-role]");
+      if (secretaryCard) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        switchTab("secretary");
+        return;
+      }
       const departmentCard = evt.target.closest("[data-role-department]");
       if (departmentCard) {
         evt.preventDefault();
@@ -8122,6 +8411,7 @@
     });
     $("employeeFloor").addEventListener("click", (evt) => {
       if (evt.target.closest("#companySignBtn")) return;
+      if (evt.target.closest("[data-secretary-role]")) return;
       if (evt.target.closest("[data-role-department]")) return;
       const card = evt.target.closest("[data-employee-id]");
       if (!card) return;

@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260706-personal-template-list-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260706-secretary-cockpit-1" />
 </head>
 <body>
   <main class="shell">
@@ -124,6 +124,34 @@
           </div>
         </div>
         <button class="hire-fab" type="button" id="hireEmployeeBtn">雇佣新员工</button>
+      </section>
+
+      <section class="view" id="secretaryView">
+        <div class="secretary-shell">
+          <div class="secretary-command">
+            <div class="secretary-command-copy">
+              <div class="secretary-kicker">BOSS COCKPIT</div>
+              <h2>老板驾驶舱</h2>
+              <div class="secretary-subtitle">今日交付、部门趋势和风险预警</div>
+            </div>
+            <div class="secretary-avatar-stage" aria-hidden="true">
+              <div class="secretary-orbit orbit-a"></div>
+              <div class="secretary-orbit orbit-b"></div>
+              <div class="secretary-avatar-figure">
+                <div class="secretary-head"></div>
+                <div class="secretary-body"></div>
+                <div class="secretary-tablet"></div>
+              </div>
+            </div>
+          </div>
+          <div class="secretary-metrics" id="secretaryMetrics"></div>
+          <div class="secretary-focus" id="secretaryFocus"></div>
+          <div class="secretary-section-title"><strong>部门态势</strong></div>
+          <div class="secretary-map" id="secretaryMap"></div>
+          <div class="secretary-trend-panel" id="secretaryTrendPanel"></div>
+          <div class="secretary-section-title"><strong>部门排行</strong></div>
+          <div class="secretary-department-grid" id="secretaryDepartmentGrid"></div>
+        </div>
       </section>
 
       <section class="view" id="homeView">
@@ -874,6 +902,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260706-personal-template-list-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260706-secretary-cockpit-1"></script>
 </body>
 </html>
