@@ -2840,7 +2840,7 @@
       margin-top: 32px;
     }
     .secretary-role-card {
-      min-height: 210px;
+      min-height: 244px;
       background:
         radial-gradient(circle at 50% 14%, rgba(78,210,255,.34), transparent 30%),
         radial-gradient(circle at 12% 88%, rgba(19,168,115,.2), transparent 32%),
@@ -2866,10 +2866,10 @@
     .secretary-role-img {
       position: relative;
       z-index: 1;
-      width: min(130px, 36vw);
-      height: 152px;
+      width: auto;
+      height: 188px;
       object-fit: contain;
-      margin: -4px 0 -2px;
+      margin: -10px 0 -4px;
       filter: drop-shadow(0 20px 20px rgba(0,0,0,.3));
       animation: secretary-float 3.2s ease-in-out infinite;
     }
@@ -3041,9 +3041,9 @@
       left: 50%;
       top: 50%;
       z-index: 1;
-      width: 190px;
+      width: auto;
       max-width: none;
-      height: auto;
+      height: 208px;
       transform: translate(-50%, -50%);
       filter: drop-shadow(0 22px 24px rgba(0,0,0,.34));
       animation: secretary-centered-float 3.4s ease-in-out infinite;
@@ -3344,7 +3344,7 @@
         padding: 14px;
       }
       .secretary-avatar-stage { width: 118px; height: 126px; }
-      .secretary-cockpit-img { width: 146px; }
+      .secretary-cockpit-img { height: 154px; }
       .secretary-command h2 { font-size: 30px; }
       .secretary-subtitle { font-size: 12px; }
       .secretary-metrics,

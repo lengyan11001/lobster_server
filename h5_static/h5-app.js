@@ -2130,7 +2130,6 @@
 
     function secretaryRoleCardHtml() {
       return `<button class="department-role-card secretary-role-card" type="button" data-secretary-role="1" aria-label="秘书中枢">
-        <div class="secretary-mini-orbit"></div>
         <img class="secretary-role-img" src="/h5-static/h5-secretary-role.png" alt="" loading="lazy">
         <div class="department-role-meta">
           <div class="department-role-name">秘书</div>
