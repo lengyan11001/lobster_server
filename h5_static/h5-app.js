@@ -53,6 +53,13 @@
       personalCompetitors: [],
       personalMemoryDocs: [],
       personalDefault: null,
+      personalUploadFiles: [],
+      personalCustomReferenceFile: null,
+      personalGeneratedDocuments: {},
+      personalGeneratedDocOrder: [],
+      personalSelectedKeywords: {},
+      personalSelectedCompetitors: {},
+      personalSelectedMemories: {},
       taskSkillPackages: [],
       taskAllowedCapabilityIds: [],
       taskSkillsLoaded: false,
@@ -4250,10 +4257,58 @@
       return String((doc && (doc.doc_id || doc.id)) || "").trim();
     }
 
+    const PERSONAL_DOC_TYPES = [
+      { key: "brand_product_intro", label: "产品介绍" },
+      { key: "product_service_faq", label: "百问百答" },
+      { key: "short_video_scripts", label: "短视频口播稿" },
+      { key: "custom_memory", label: "自定义参考文档" },
+    ];
+
+    function personalSetStatus(text, isError = false) {
+      const el = $("personalStatusMsg");
+      if (!el) return;
+      el.textContent = text || "";
+      el.classList.toggle("hidden", !text);
+      el.classList.toggle("error", !!isError);
+    }
+
+    function personalSetBusy(btn, busy, label = "处理中...") {
+      if (!btn) return;
+      if (busy) {
+        if (!btn.dataset.oldText) btn.dataset.oldText = btn.textContent || "";
+        btn.textContent = label;
+        btn.disabled = true;
+      } else {
+        btn.textContent = btn.dataset.oldText || btn.textContent || "";
+        btn.disabled = false;
+        delete btn.dataset.oldText;
+      }
+    }
+
+    function personalDocTypeLabel(key) {
+      const row = PERSONAL_DOC_TYPES.find((item) => item.key === key);
+      return row ? row.label : (key || "记忆");
+    }
+
     function selectedPersonalIds(kind) {
       return Array.from(document.querySelectorAll(`[data-personal-select="${kind}"]:checked`))
         .map((el) => String(el.value || "").trim())
         .filter(Boolean);
+    }
+
+    function personalSelectedMap(kind) {
+      if (kind === "keyword") return state.personalSelectedKeywords;
+      if (kind === "competitor") return state.personalSelectedCompetitors;
+      if (kind === "memory_doc") return state.personalSelectedMemories;
+      return {};
+    }
+
+    function personalCleanIntIds(map) {
+      return Object.keys(map || {}).filter((id) => map[id]).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0);
+    }
+
+    function personalCleanStringIds(map) {
+      return Object.keys(map || {}).filter((id) => map[id]).map((id) => String(id || "").trim()).filter(Boolean);
     }
 
     function setPersonalSettingsTab(tab) {
@@ -4265,8 +4320,32 @@
     async function loadPersonalMemoryDocs() {
       const iid = currentInstallationId();
       if (!iid) return [];
-      const data = await api("/api/openclaw-memory/sync", { headers: { "X-Installation-Id": iid } });
+      const data = await api("/api/personal-settings/memory-documents/list", { headers: { "X-Installation-Id": iid } });
       return Array.isArray(data.documents) ? data.documents : [];
+    }
+
+    function applyPersonalDefault(item) {
+      state.personalDefault = item || {};
+      state.personalSelectedKeywords = {};
+      state.personalSelectedCompetitors = {};
+      state.personalSelectedMemories = {};
+      (state.personalDefault.keyword_ids || []).forEach((id) => { if (id) state.personalSelectedKeywords[String(id)] = true; });
+      (state.personalDefault.competitor_ids || []).forEach((id) => { if (id) state.personalSelectedCompetitors[String(id)] = true; });
+      (state.personalDefault.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
+      const req = state.personalDefault.requirements || {};
+      if ($("personalOralReq")) $("personalOralReq").value = req.oral || req.industry_oral || req.ip_oral || "";
+      if ($("personalMomentsReq")) $("personalMomentsReq").value = req.moments || req.moments_copy || "";
+      if ($("personalImageReq")) $("personalImageReq").value = req.image || "";
+    }
+
+    async function refreshPersonalDataPreserveSelection(parts = {}) {
+      const jobs = [];
+      if (parts.keywords) jobs.push(api("/api/ip-content/keywords").then((data) => { state.personalKeywords = Array.isArray(data.items) ? data.items : []; }).catch(() => {}));
+      if (parts.competitors) jobs.push(api("/api/ip-content/competitors").then((data) => { state.personalCompetitors = Array.isArray(data.items) ? data.items : []; }).catch(() => {}));
+      if (parts.memories) jobs.push(loadPersonalMemoryDocs().then((rows) => { state.personalMemoryDocs = Array.isArray(rows) ? rows : []; }).catch(() => {}));
+      await Promise.all(jobs);
+      state.personalSettingsLoaded = true;
+      renderPersonalSettings();
     }
 
     async function loadPersonalSettings(force = false) {
@@ -4285,8 +4364,8 @@
         ]);
         state.personalKeywords = Array.isArray(keywords.items) ? keywords.items : [];
         state.personalCompetitors = Array.isArray(competitors.items) ? competitors.items : [];
-        state.personalDefault = defaults.item || null;
         state.personalMemoryDocs = Array.isArray(memories) ? memories : [];
+        applyPersonalDefault(defaults.item || {});
         state.personalSettingsLoaded = true;
       } finally {
         state.personalSettingsLoading = false;
@@ -4294,22 +4373,61 @@
       }
     }
 
-    function renderPersonalRows(targetId, rows, kind, titleFn, subtitleFn, deleteAttr) {
+    function renderPersonalRows(targetId, rows, kind, titleFn, subtitleFn, deleteAttr, actionLabel = "删除") {
       const el = $(targetId);
       if (!el) return;
-      const selected = new Set(((state.personalDefault || {})[`${kind}_ids`] || []).map((id) => String(id)));
       if (!rows.length) {
-        el.innerHTML = `<div class="hint">暂无数据</div>`;
+        el.innerHTML = `<div class="personal-empty">暂无数据</div>`;
         return;
       }
+      const selectedMap = personalSelectedMap(kind);
       el.innerHTML = rows.map((row) => {
         const id = kind === "memory_doc" ? personalDocId(row) : String(row.id || "");
         const title = titleFn(row);
         const subtitle = subtitleFn ? subtitleFn(row) : "";
-        const checked = selected.has(id) ? " checked" : "";
-        const del = deleteAttr ? `<button type="button" ${deleteAttr}="${escapeHtml(id)}">删除</button>` : "";
+        const checked = selectedMap[id] ? " checked" : "";
+        const del = deleteAttr ? `<button type="button" ${deleteAttr}="${escapeHtml(id)}">${escapeHtml(actionLabel)}</button>` : "";
         return `<div class="personal-row"><label><input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${checked}><span>${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span></label>${del}</div>`;
       }).join("");
+    }
+
+    function bindPersonalOptionChecks(root = document) {
+      root.querySelectorAll("[data-personal-select]").forEach((input) => {
+        input.onchange = () => {
+          const map = personalSelectedMap(input.dataset.personalSelect || "");
+          if (input.value) map[String(input.value)] = !!input.checked;
+        };
+      });
+    }
+
+    function personalMemoryTitle(doc) {
+      return (doc && (doc.title || doc.filename || personalDocId(doc))) || "未命名记忆";
+    }
+
+    function renderPersonalMemorySelect() {
+      const select = $("personalTargetMemorySelect");
+      if (!select) return;
+      const current = select.value || "";
+      select.innerHTML = `<option value="">选择已有文档</option>` + state.personalMemoryDocs.map((doc) => {
+        const id = personalDocId(doc);
+        return `<option value="${escapeHtml(id)}">${escapeHtml(personalMemoryTitle(doc))}</option>`;
+      }).join("");
+      if (current && state.personalMemoryDocs.some((doc) => personalDocId(doc) === current)) select.value = current;
+      syncPersonalSaveMode();
+    }
+
+    function syncPersonalSaveMode() {
+      const mode = (($("personalSaveMode") && $("personalSaveMode").value) || "new").trim();
+      const target = $("personalTargetMemorySelect");
+      const title = $("personalMemoryTitle");
+      if (target) {
+        target.disabled = mode !== "overwrite";
+        if (mode !== "overwrite") target.value = "";
+      }
+      if (title) {
+        title.disabled = mode === "overwrite";
+        if (mode === "overwrite") title.value = "";
+      }
     }
 
     function renderPersonalSettings() {
@@ -4319,59 +4437,79 @@
         const keywordRows = state.personalKeywords.map((row) => ({ ...row, _kind: "keyword" }));
         const competitorRows = state.personalCompetitors.map((row) => ({ ...row, _kind: "competitor" }));
         const memoryRows = state.personalMemoryDocs.map((row) => ({ ...row, _kind: "memory_doc" }));
-        const selected = state.personalDefault || {};
-        const selectedKeywords = new Set((selected.keyword_ids || []).map((id) => String(id)));
-        const selectedCompetitors = new Set((selected.competitor_ids || []).map((id) => String(id)));
-        const selectedMemories = new Set((selected.memory_doc_ids || []).map((id) => String(id)));
-        const section = (label, rows, selectedSet, kind, titleFn) => rows.length
+        const section = (label, rows, selectedMap, kind, titleFn, subtitleFn) => rows.length
           ? `<div class="hint">${escapeHtml(label)}</div>` + rows.map((row) => {
               const id = kind === "memory_doc" ? personalDocId(row) : String(row.id || "");
-              return `<div class="personal-row"><label><input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${selectedSet.has(id) ? " checked" : ""}><span>${escapeHtml(titleFn(row))}</span></label></div>`;
+              const subtitle = subtitleFn ? subtitleFn(row) : "";
+              return `<div class="personal-row"><label><input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${selectedMap[id] ? " checked" : ""}><span>${escapeHtml(titleFn(row))}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span></label></div>`;
             }).join("")
-          : `<div class="hint">${escapeHtml(label)}：暂无</div>`;
-        tpl.innerHTML = section("关键词", keywordRows, selectedKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`)
-          + section("同行账号", competitorRows, selectedCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`)
-          + section("记忆文件", memoryRows, selectedMemories, "memory_doc", (row) => row.title || row.filename || personalDocId(row));
+          : `<div class="personal-empty">${escapeHtml(label)}：暂无</div>`;
+        tpl.innerHTML = section("关键词", keywordRows, state.personalSelectedKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "")
+          + section("同行账号", competitorRows, state.personalSelectedCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "")
+          + section("记忆文件", memoryRows, state.personalSelectedMemories, "memory_doc", personalMemoryTitle, (row) => row.notes || row.filename || "");
       }
       renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "", "data-delete-personal-keyword");
       renderPersonalRows("personalCompetitorList", state.personalCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "", "data-delete-personal-competitor");
       const mem = $("personalMemoryList");
       if (mem) {
         mem.innerHTML = state.personalMemoryDocs.length
-          ? state.personalMemoryDocs.map((doc) => `<div class="personal-row"><span>${escapeHtml(doc.title || doc.filename || personalDocId(doc))}</span></div>`).join("")
-          : `<div class="hint">暂无记忆文件</div>`;
+          ? state.personalMemoryDocs.map((doc) => {
+              const id = personalDocId(doc);
+              return `<div class="personal-row personal-memory-row">
+                <span>${escapeHtml(personalMemoryTitle(doc))}</span>
+                <div class="personal-row-actions">
+                  <button type="button" data-preview-personal-memory="${escapeHtml(id)}">预览</button>
+                  <button type="button" data-delete-personal-memory="${escapeHtml(id)}">删除</button>
+                </div>
+              </div>`;
+            }).join("")
+          : `<div class="personal-empty">暂无记忆文件</div>`;
       }
+      bindPersonalOptionChecks(document);
+      renderPersonalMemorySelect();
+      renderPersonalSelectedFiles();
+      renderPersonalCustomReference();
+      renderPersonalGeneratedDocs();
     }
 
-    async function savePersonalDefault() {
-      const memoryIds = selectedPersonalIds("memory_doc");
+    async function savePersonalDefault(options = {}) {
+      const memoryIds = personalCleanStringIds(state.personalSelectedMemories);
       const selectedDocs = state.personalMemoryDocs
         .filter((doc) => memoryIds.includes(personalDocId(doc)))
         .map((doc) => ({ doc_id: personalDocId(doc), title: doc.title || doc.filename || "", content_text: doc.content_text || doc.content_preview || "" }));
       await api("/api/ip-content/personal-default", {
         method: "PUT",
         json: {
-          keyword_ids: selectedPersonalIds("keyword").map((id) => Number(id)).filter((id) => !Number.isNaN(id)),
-          competitor_ids: selectedPersonalIds("competitor").map((id) => Number(id)).filter((id) => !Number.isNaN(id)),
+          name: "个人默认模板",
+          keyword_ids: personalCleanIntIds(state.personalSelectedKeywords),
+          competitor_ids: personalCleanIntIds(state.personalSelectedCompetitors),
           memory_doc_ids: memoryIds,
           memory_docs: selectedDocs,
-          requirements: {},
+          requirements: {
+            oral: (($("personalOralReq") && $("personalOralReq").value) || "").trim(),
+            industry_oral: (($("personalOralReq") && $("personalOralReq").value) || "").trim(),
+            ip_oral: (($("personalOralReq") && $("personalOralReq").value) || "").trim(),
+            moments: (($("personalMomentsReq") && $("personalMomentsReq").value) || "").trim(),
+            image: (($("personalImageReq") && $("personalImageReq").value) || "").trim(),
+          },
           meta: { source: "h5_personal_settings" },
         },
       });
       state.personalSettingsLoaded = false;
       await loadPersonalSettings(true);
-      toast("已保存");
+      if (!options.silent) toast("已保存");
     }
 
     async function addPersonalKeyword() {
       const input = $("personalKeywordInput");
+      const displayInput = $("personalKeywordDisplayName");
       const keyword = (input && input.value || "").trim();
       if (!keyword) throw new Error("请填写关键词");
-      await api("/api/ip-content/keywords", { method: "POST", json: { keyword, display_name: keyword, meta: { source: "h5_personal_settings" } } });
+      const data = await api("/api/ip-content/keywords", { method: "POST", json: { keyword, display_name: (displayInput && displayInput.value || "").trim() || keyword, meta: { source: "h5_personal_settings" } } });
+      if (data.item && data.item.id) state.personalSelectedKeywords[String(data.item.id)] = true;
       if (input) input.value = "";
-      state.personalSettingsLoaded = false;
-      await loadPersonalSettings(true);
+      if (displayInput) displayInput.value = "";
+      await refreshPersonalDataPreserveSelection({ keywords: true });
     }
 
     async function addPersonalCompetitor() {
@@ -4379,33 +4517,281 @@
       const input = $("personalCompetitorKey");
       const accountKey = (input && input.value || "").trim();
       if (!accountKey) throw new Error("请填写账号标识");
-      await api("/api/ip-content/competitors", { method: "POST", json: { platform, account_key: accountKey, display_name: accountKey, meta: { source: "h5_personal_settings" } } });
+      const data = await api("/api/ip-content/competitors", { method: "POST", json: { platform, account_key: accountKey, display_name: accountKey, meta: { source: "h5_personal_settings" } } });
+      if (data.item && data.item.id) state.personalSelectedCompetitors[String(data.item.id)] = true;
       if (input) input.value = "";
-      state.personalSettingsLoaded = false;
-      await loadPersonalSettings(true);
+      await refreshPersonalDataPreserveSelection({ competitors: true });
     }
 
-    async function savePersonalMemory() {
-      const title = (($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim();
-      const content = (($("personalMemoryText") && $("personalMemoryText").value) || "").trim();
+    function personalUploadFileKey(file) {
+      return [file && file.name || "", file && file.size || 0, file && file.lastModified || 0, file && file.type || ""].join("|");
+    }
+
+    function selectedPersonalUploadFiles() {
+      return (state.personalUploadFiles || []).filter((file) => file && (file.name || file.size > 0));
+    }
+
+    function personalFileChip(file, idx, attr) {
+      const size = file && file.size ? ` · ${Math.ceil(file.size / 1024)}KB` : "";
+      return `<div class="personal-file-chip"><span>${escapeHtml(file.name || "未命名文件")}${escapeHtml(size)}</span><button type="button" ${attr}="${idx}">移除</button></div>`;
+    }
+
+    function renderPersonalSelectedFiles() {
+      const box = $("personalSelectedFiles");
+      if (!box) return;
+      const files = selectedPersonalUploadFiles();
+      box.innerHTML = files.length ? files.map((file, idx) => personalFileChip(file, idx, "data-remove-personal-upload")).join("") : "";
+    }
+
+    function handlePersonalUploadFilesChange() {
+      const input = $("personalMemoryFiles");
+      const picked = input && input.files ? Array.from(input.files) : [];
+      const seen = {};
+      state.personalUploadFiles = selectedPersonalUploadFiles().concat(picked).filter((file) => {
+        const key = personalUploadFileKey(file);
+        if (!key || seen[key]) return false;
+        seen[key] = true;
+        return true;
+      });
+      if (input) input.value = "";
+      renderPersonalSelectedFiles();
+    }
+
+    function renderPersonalCustomReference() {
+      const box = $("personalCustomReferenceInfo");
+      if (!box) return;
+      const file = state.personalCustomReferenceFile;
+      box.innerHTML = file ? personalFileChip(file, 0, "data-remove-personal-reference") : "";
+    }
+
+    function handlePersonalCustomReferenceChange() {
+      const input = $("personalCustomReferenceFile");
+      const file = input && input.files && input.files[0] ? input.files[0] : null;
+      state.personalCustomReferenceFile = file && (file.name || file.size > 0) ? file : null;
+      if (input) input.value = "";
+      renderPersonalCustomReference();
+    }
+
+    function selectedPersonalDocTypes() {
+      return Array.from(document.querySelectorAll("[data-personal-doc-type]:checked")).map((el) => String(el.value || "").trim()).filter(Boolean);
+    }
+
+    function formatPersonalGeneratedDocs(docs, order) {
+      docs = docs || {};
+      const keys = (order && order.length ? order : Object.keys(docs)).filter((key) => docs[key]);
+      return keys.map((key) => `# ${personalDocTypeLabel(key)}\n\n${String(docs[key] || "").trim()}`).filter(Boolean).join("\n\n---\n\n").trim();
+    }
+
+    function personalGeneratedDocsFromUi() {
+      const docs = {};
+      const order = [];
+      document.querySelectorAll("[data-personal-generated-text]").forEach((textarea) => {
+        const key = textarea.dataset.personalGeneratedText || "";
+        const keep = document.querySelector(`[data-personal-save-doc="${cssEscape(key)}"]`);
+        const text = String(textarea.value || "").trim();
+        if (key && text && (!keep || keep.checked)) {
+          docs[key] = text;
+          order.push(key);
+        }
+      });
+      return { documents: docs, order };
+    }
+
+    function renderPersonalGeneratedDocs() {
+      const box = $("personalGeneratedDocList");
+      if (!box) return;
+      const docs = state.personalGeneratedDocuments || {};
+      const order = (state.personalGeneratedDocOrder && state.personalGeneratedDocOrder.length ? state.personalGeneratedDocOrder : Object.keys(docs)).filter((key) => docs[key]);
+      if (!order.length) {
+        box.innerHTML = `<div class="personal-empty">AI 理解后在这里预览。</div>`;
+        if ($("personalMemoryReviewText")) $("personalMemoryReviewText").value = "";
+        return;
+      }
+      box.innerHTML = order.map((key) => `<article class="personal-generated-doc">
+        <div class="personal-generated-head"><strong>${escapeHtml(personalDocTypeLabel(key))}</strong><label><input type="checkbox" data-personal-save-doc="${escapeHtml(key)}" checked>保存</label></div>
+        <textarea data-personal-generated-text="${escapeHtml(key)}" rows="8">${escapeHtml(docs[key])}</textarea>
+      </article>`).join("");
+      box.querySelectorAll("[data-personal-generated-text]").forEach((textarea) => {
+        textarea.addEventListener("input", () => {
+          const key = textarea.dataset.personalGeneratedText || "";
+          if (key) state.personalGeneratedDocuments[key] = textarea.value || "";
+          if ($("personalMemoryReviewText")) $("personalMemoryReviewText").value = formatPersonalGeneratedDocs(state.personalGeneratedDocuments, state.personalGeneratedDocOrder);
+        });
+      });
+      if ($("personalMemoryReviewText")) $("personalMemoryReviewText").value = formatPersonalGeneratedDocs(docs, order);
+    }
+
+    function personalMemoryInputText() {
+      const parts = [];
+      const raw = (($("personalRawMemoryText") && $("personalRawMemoryText").value) || "").trim();
+      const urls = (($("personalMemoryUrls") && $("personalMemoryUrls").value) || "").trim();
+      if (raw) parts.push(raw);
+      if (urls) parts.push(`资料链接：\n${urls}`);
+      const files = selectedPersonalUploadFiles();
+      if (files.length) parts.push(`已上传文件：\n${files.map((file) => `- ${file.name || "upload"}`).join("\n")}`);
+      return parts.join("\n\n").trim();
+    }
+
+    async function savePersonalDefaultSilently() {
+      await savePersonalDefault({ silent: true });
+      personalSetStatus("");
+    }
+
+    async function generatePersonalMemoryDocs(btn) {
       const iid = currentInstallationId();
       if (!iid) throw new Error("请先选择在线设备");
-      if (!content) throw new Error("请填写记忆内容");
-      await api("/api/openclaw-memory/user-documents", {
-        method: "POST",
+      const files = selectedPersonalUploadFiles();
+      const raw = (($("personalRawMemoryText") && $("personalRawMemoryText").value) || "").trim();
+      const urls = (($("personalMemoryUrls") && $("personalMemoryUrls").value) || "").trim();
+      const docTypes = selectedPersonalDocTypes();
+      const reference = state.personalCustomReferenceFile;
+      if (!files.length && !raw && !urls) throw new Error("请上传资料、填写链接或粘贴资料内容。");
+      if (!docTypes.length && !reference) throw new Error("请选择生成类型，或上传自定义参考文档。");
+      const fd = new FormData();
+      files.forEach((file) => fd.append("files", file, file.name || "upload"));
+      fd.append("urls", urls);
+      fd.append("direct_intro", raw);
+      fd.append("direct_faq", "");
+      fd.append("direct_scripts", "");
+      fd.append("doc_type", docTypes[0] || "");
+      fd.append("doc_types", JSON.stringify(docTypes));
+      if (reference) fd.append("custom_reference_file", reference, reference.name || "reference");
+      fd.append("reference_doc_ids", "");
+      personalSetBusy(btn, true, "理解中...");
+      personalSetStatus("正在理解资料...");
+      try {
+        const resp = await fetch(apiUrl("/api/personal-settings/memory-documents/generate"), { method: "POST", headers: authHeaders({ "X-Installation-Id": iid }), body: fd });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.ok === false) throw new Error(data.detail || data.message || "AI 理解失败");
+        state.personalGeneratedDocuments = data.documents || {};
+        state.personalGeneratedDocOrder = Array.isArray(data.doc_types) && data.doc_types.length ? data.doc_types : docTypes;
+        renderPersonalGeneratedDocs();
+        personalSetStatus("AI 理解完成，审核后存入记忆。");
+      } finally {
+        personalSetBusy(btn, false);
+      }
+    }
+
+    async function savePersonalGeneratedDocuments(btn, title, documents) {
+      const iid = currentInstallationId();
+      personalSetBusy(btn, true, "保存中...");
+      try {
+        const data = await api("/api/personal-settings/memory-documents/save", {
+          method: "POST",
+          headers: { "X-Installation-Id": iid },
+          json: { title, notes: "个人设置 AI 理解", documents: documents || {} },
+        });
+        const docs = Array.isArray(data.documents) ? data.documents : [];
+        docs.forEach((doc) => { const id = personalDocId(doc); if (id) state.personalSelectedMemories[id] = true; });
+        await refreshPersonalDataPreserveSelection({ memories: true });
+        await savePersonalDefaultSilently();
+        personalSetStatus("已存入记忆。");
+      } finally {
+        personalSetBusy(btn, false);
+      }
+    }
+
+    async function savePersonalMemoryContent(btn, title, content, notes, mode, targetDocId) {
+      const iid = currentInstallationId();
+      personalSetBusy(btn, true, "保存中...");
+      try {
+        const data = await api("/api/personal-settings/memory-documents/save-raw", {
+          method: "POST",
+          headers: { "X-Installation-Id": iid },
+          json: { title, notes, content, mode: mode || "new", target_doc_id: targetDocId || "" },
+        });
+        const docs = Array.isArray(data.documents) ? data.documents : (data.document ? [data.document] : []);
+        docs.forEach((doc) => { const id = personalDocId(doc); if (id) state.personalSelectedMemories[id] = true; });
+        await refreshPersonalDataPreserveSelection({ memories: true });
+        await savePersonalDefaultSilently();
+        personalSetStatus("已存入记忆。");
+      } finally {
+        personalSetBusy(btn, false);
+      }
+    }
+
+    async function savePersonalUploadedMemory(btn, formData) {
+      const iid = currentInstallationId();
+      personalSetBusy(btn, true, "保存中...");
+      try {
+        const resp = await fetch(apiUrl("/api/personal-settings/memory-documents/save-upload"), { method: "POST", headers: authHeaders({ "X-Installation-Id": iid }), body: formData });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.ok === false) throw new Error(data.detail || data.message || "保存失败");
+        const docs = Array.isArray(data.documents) ? data.documents : (data.document ? [data.document] : []);
+        docs.forEach((doc) => { const id = personalDocId(doc); if (id) state.personalSelectedMemories[id] = true; });
+        state.personalGeneratedDocuments = {};
+        state.personalGeneratedDocOrder = [];
+        renderPersonalGeneratedDocs();
+        await refreshPersonalDataPreserveSelection({ memories: true });
+        await savePersonalDefaultSilently();
+        personalSetStatus("已存入记忆。");
+      } finally {
+        personalSetBusy(btn, false);
+      }
+    }
+
+    async function savePersonalRawMemory(btn) {
+      const files = selectedPersonalUploadFiles();
+      const raw = (($("personalRawMemoryText") && $("personalRawMemoryText").value) || "").trim();
+      const urls = (($("personalMemoryUrls") && $("personalMemoryUrls").value) || "").trim();
+      const mode = (($("personalSaveMode") && $("personalSaveMode").value) || "new").trim();
+      const title = mode === "new" ? (($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim() : "";
+      const targetDocId = (($("personalTargetMemorySelect") && $("personalTargetMemorySelect").value) || "").trim();
+      if (!files.length && !raw && !urls) throw new Error("请上传资料、填写链接或粘贴资料后再保存。");
+      if (mode === "new" && !title) throw new Error("新建文档需要填写文档名字。");
+      if (mode === "overwrite" && !targetDocId) throw new Error("覆盖已有文档需要先选择一个文档。");
+      const fd = new FormData();
+      files.forEach((file) => fd.append("files", file, file.name || "upload"));
+      fd.append("title", title);
+      fd.append("notes", "个人设置直接保存");
+      fd.append("raw_text", raw);
+      fd.append("urls", urls);
+      fd.append("mode", mode);
+      fd.append("target_doc_id", targetDocId);
+      await savePersonalUploadedMemory(btn, fd);
+    }
+
+    async function savePersonalMemory(btn) {
+      const generated = personalGeneratedDocsFromUi();
+      const generatedContent = formatPersonalGeneratedDocs(generated.documents, generated.order);
+      const hasPreview = document.querySelectorAll("[data-personal-generated-text]").length > 0;
+      if (hasPreview && !Object.keys(generated.documents || {}).length) throw new Error("请至少勾选一个要保存的 AI 理解结果。");
+      let content = generatedContent || (!hasPreview ? (($("personalMemoryReviewText") && $("personalMemoryReviewText").value) || "").trim() : "");
+      const mode = (($("personalSaveMode") && $("personalSaveMode").value) || "new").trim();
+      const title = mode === "new" ? (($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim() : "";
+      const targetDocId = (($("personalTargetMemorySelect") && $("personalTargetMemorySelect").value) || "").trim();
+      if (!content) {
+        content = personalMemoryInputText();
+        if ($("personalMemoryReviewText")) $("personalMemoryReviewText").value = content;
+      }
+      if (!content) throw new Error("没有可保存的记忆内容。");
+      if (mode === "new" && !title) throw new Error("新建文档需要填写文档名字。");
+      if (mode === "overwrite" && !targetDocId) throw new Error("覆盖已有文档需要先选择一个文档。");
+      if (mode === "new" && Object.keys(generated.documents || {}).length) {
+        await savePersonalGeneratedDocuments(btn, title, generated.documents);
+        return;
+      }
+      await savePersonalMemoryContent(btn, title, content, "个人设置保存", mode, targetDocId);
+    }
+
+    async function previewPersonalMemory(docId) {
+      const iid = currentInstallationId();
+      const box = $("personalMemoryPreview");
+      if (box) box.textContent = "正在读取...";
+      const data = await api(`/api/personal-settings/memory-documents/${encodeURIComponent(docId)}/preview`, { headers: { "X-Installation-Id": iid } });
+      if (box) box.textContent = data.content_text || "没有内容。";
+    }
+
+    async function deletePersonalMemory(docId) {
+      const iid = currentInstallationId();
+      await api(`/api/personal-settings/memory-documents/${encodeURIComponent(docId)}`, {
+        method: "DELETE",
         headers: { "X-Installation-Id": iid },
-        json: {
-          doc_id: "",
-          title: title || "H5记忆",
-          filename: `${title || "h5-memory"}.txt`,
-          notes: "h5_personal_settings",
-          content_text: content,
-        },
       });
-      if ($("personalMemoryText")) $("personalMemoryText").value = "";
-      state.personalSettingsLoaded = false;
-      await loadPersonalSettings(true);
-      toast("已保存");
+      delete state.personalSelectedMemories[String(docId)];
+      await refreshPersonalDataPreserveSelection({ memories: true });
+      await savePersonalDefaultSilently();
+      personalSetStatus("记忆文件已删除。");
     }
 
     function packageById(packageId) {
@@ -7536,23 +7922,58 @@
     $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().catch((err) => toast(err.message || "保存失败")));
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
     $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => toast(err.message || "添加失败")));
-    $("personalSaveMemoryBtn")?.addEventListener("click", () => savePersonalMemory().catch((err) => toast(err.message || "保存失败")));
+    $("personalGenerateMemoryBtn")?.addEventListener("click", (evt) => generatePersonalMemoryDocs(evt.currentTarget).catch((err) => personalSetStatus(err.message || "AI 理解失败", true)));
+    $("personalSaveMemoryBtn")?.addEventListener("click", (evt) => savePersonalMemory(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
+    $("personalSaveRawMemoryBtn")?.addEventListener("click", (evt) => savePersonalRawMemory(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
+    $("personalMemoryFiles")?.addEventListener("change", handlePersonalUploadFilesChange);
+    $("personalCustomReferenceFile")?.addEventListener("change", handlePersonalCustomReferenceChange);
+    $("personalSaveMode")?.addEventListener("change", syncPersonalSaveMode);
+    $("personalTargetMemorySelect")?.addEventListener("change", () => {
+      syncPersonalSaveMode();
+      const id = ($("personalTargetMemorySelect") && $("personalTargetMemorySelect").value) || "";
+      if (id) previewPersonalMemory(id).catch((err) => personalSetStatus(err.message || "读取失败", true));
+    });
     $("personalSettingsView")?.addEventListener("click", async (evt) => {
       const keywordBtn = evt.target.closest("[data-delete-personal-keyword]");
       const competitorBtn = evt.target.closest("[data-delete-personal-competitor]");
+      const uploadRemove = evt.target.closest("[data-remove-personal-upload]");
+      const referenceRemove = evt.target.closest("[data-remove-personal-reference]");
+      const previewMemoryBtn = evt.target.closest("[data-preview-personal-memory]");
+      const deleteMemoryBtn = evt.target.closest("[data-delete-personal-memory]");
       try {
+        if (uploadRemove) {
+          const idx = Number(uploadRemove.dataset.removePersonalUpload || "-1");
+          state.personalUploadFiles = selectedPersonalUploadFiles().filter((_file, fileIdx) => fileIdx !== idx);
+          renderPersonalSelectedFiles();
+          return;
+        }
+        if (referenceRemove) {
+          state.personalCustomReferenceFile = null;
+          renderPersonalCustomReference();
+          return;
+        }
+        if (previewMemoryBtn) {
+          await previewPersonalMemory(previewMemoryBtn.dataset.previewPersonalMemory || "");
+          return;
+        }
+        if (deleteMemoryBtn) {
+          await deletePersonalMemory(deleteMemoryBtn.dataset.deletePersonalMemory || "");
+          return;
+        }
         if (keywordBtn) {
           await api(`/api/ip-content/keywords/${encodeURIComponent(keywordBtn.dataset.deletePersonalKeyword || "")}`, { method: "DELETE" });
-          state.personalSettingsLoaded = false;
-          await loadPersonalSettings(true);
+          delete state.personalSelectedKeywords[String(keywordBtn.dataset.deletePersonalKeyword || "")];
+          await refreshPersonalDataPreserveSelection({ keywords: true });
+          await savePersonalDefaultSilently();
         }
         if (competitorBtn) {
           await api(`/api/ip-content/competitors/${encodeURIComponent(competitorBtn.dataset.deletePersonalCompetitor || "")}`, { method: "DELETE" });
-          state.personalSettingsLoaded = false;
-          await loadPersonalSettings(true);
+          delete state.personalSelectedCompetitors[String(competitorBtn.dataset.deletePersonalCompetitor || "")];
+          await refreshPersonalDataPreserveSelection({ competitors: true });
+          await savePersonalDefaultSilently();
         }
       } catch (err) {
-        toast(err.message || "删除失败");
+        personalSetStatus(err.message || "操作失败", true);
       }
     });
     $("installIosWebclipBtn").addEventListener("click", installIosWebclip);
