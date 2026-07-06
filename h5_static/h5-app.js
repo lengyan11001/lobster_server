@@ -2088,7 +2088,7 @@
       ];
       map.innerHTML = `<div class="secretary-map-core">
         <div class="secretary-core-ring"></div>
-        <img class="secretary-core-img" src="/h5-static/h5-secretary-badge.png" alt="" loading="lazy">
+        <img class="secretary-core-img" src="/h5-static/h5-secretary-badge.png?v=20260706-secretary-fullbody-2" alt="" loading="lazy">
         <strong>${escapeHtml(compactNumber(totals.todayDelivered))}</strong>
         <span>今日交付</span>
       </div>${stats.map((stat, index) => {
@@ -2130,7 +2130,7 @@
 
     function secretaryRoleCardHtml() {
       return `<button class="department-role-card secretary-role-card" type="button" data-secretary-role="1" aria-label="秘书中枢">
-        <img class="secretary-role-img" src="/h5-static/h5-secretary-role.png" alt="" loading="lazy">
+        <img class="secretary-role-img" src="/h5-static/h5-secretary-role.png?v=20260706-secretary-fullbody-2" alt="" loading="lazy">
         <div class="department-role-meta">
           <div class="department-role-name">秘书</div>
           <div class="department-role-count">工作态势</div>
