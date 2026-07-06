@@ -2045,6 +2045,12 @@
       return true;
     }
 
+    function taskShouldShowInWorkList(task, runs) {
+      if (!task) return false;
+      if (taskIsFutureWork(task, runs)) return true;
+      return !taskHasRun(task, runs);
+    }
+
     function taskScheduleLabel(task) {
       const type = String((task && task.schedule_type) || "").toLowerCase();
       const config = task && task.schedule_config && typeof task.schedule_config === "object" ? task.schedule_config : {};
@@ -2266,6 +2272,7 @@
         ...scopedWechatJobs.map((job) => workbenchJobItem(job, "wechat")),
       ].filter(Boolean);
       const scheduled = tasks
+        .filter((row) => taskShouldShowInWorkList(row, runs))
         .slice(0, 80)
         .map((row) => {
           const active = taskIsFutureWork(row, runs);
