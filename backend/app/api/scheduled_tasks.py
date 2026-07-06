@@ -739,6 +739,66 @@ def _publish_event_payload(row: ScheduledTaskRun, draft: Dict[str, Any], extra: 
     return payload
 
 
+def _publish_account_id_value(value: Any) -> Any:
+    text = str(value or "").strip()
+    if text.isdigit():
+        try:
+            return int(text)
+        except Exception:
+            return text
+    return text
+
+
+def _reported_publish_accounts_from_devices(
+    db: Session,
+    user_id: int,
+    *,
+    installation_id: str = "",
+) -> List[Dict[str, Any]]:
+    now = datetime.utcnow()
+    query = db.query(H5ChatDevicePresence).filter(H5ChatDevicePresence.user_id == user_id)
+    if installation_id:
+        query = query.filter(H5ChatDevicePresence.installation_id == installation_id)
+    devices = query.order_by(H5ChatDevicePresence.last_seen_at.desc()).limit(30).all()
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for device in devices:
+        payload = device.account_payload if isinstance(device.account_payload, dict) else {}
+        rows = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
+        age = (now - device.last_seen_at).total_seconds() if device.last_seen_at else 999999
+        device_online = age <= 90
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            platform = str(item.get("platform") or "").strip()
+            account_id = str(item.get("account_id") or item.get("id") or "").strip()
+            nickname = str(item.get("nickname") or "").strip()
+            if not platform or not account_id or not nickname:
+                continue
+            select_id = f"{device.installation_id}:{platform}:{account_id}"
+            if select_id in seen:
+                continue
+            seen.add(select_id)
+            out.append(
+                {
+                    "id": select_id,
+                    "select_id": select_id,
+                    "account_id": _publish_account_id_value(account_id),
+                    "platform": platform,
+                    "platform_name": str(item.get("platform_name") or SUPPORTED_PLATFORMS.get(platform, {}).get("name", platform)),
+                    "nickname": nickname,
+                    "status": str(item.get("status") or ("online" if item.get("online") else "")).strip(),
+                    "installation_id": device.installation_id,
+                    "device_name": device.display_name or device.installation_id,
+                    "device_online": device_online,
+                    "source": "device",
+                    "managed_by": str(item.get("managed_by") or "").strip(),
+                    "is_origin_slot": bool(item.get("is_origin_slot")) if item.get("is_origin_slot") is not None else False,
+                }
+            )
+    return out
+
+
 def _add_h5_event(db: Session, message_id: Optional[str], user_id: int, event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
     if not message_id:
         return
@@ -1450,28 +1510,41 @@ def list_h5_creative_candidate_groups(
 
 @router.get("/api/scheduled-tasks/publish/accounts", summary="H5 定时任务可用发布账号")
 def list_h5_scheduled_publish_accounts(
+    installation_id: str = Query("", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
+    device_accounts = _reported_publish_accounts_from_devices(
+        db,
+        owner_user.id,
+        installation_id=(installation_id or "").strip(),
+    )
     rows = (
         db.query(PublishAccount)
         .filter(PublishAccount.user_id == owner_user.id)
         .order_by(PublishAccount.created_at.desc())
         .all()
     )
+    server_accounts = [
+        {
+            "id": f"server:{row.id}",
+            "select_id": f"server:{row.id}",
+            "account_id": row.id,
+            "platform": row.platform,
+            "platform_name": SUPPORTED_PLATFORMS.get(row.platform, {}).get("name", row.platform),
+            "nickname": row.nickname,
+            "status": row.status,
+            "installation_id": "",
+            "device_name": "",
+            "device_online": False,
+            "source": "server",
+        }
+        for row in rows
+    ]
     return {
         "ok": True,
-        "accounts": [
-            {
-                "id": row.id,
-                "platform": row.platform,
-                "platform_name": SUPPORTED_PLATFORMS.get(row.platform, {}).get("name", row.platform),
-                "nickname": row.nickname,
-                "status": row.status,
-            }
-            for row in rows
-        ],
+        "accounts": device_accounts + server_accounts,
         "platforms": [{"id": key, "name": value["name"]} for key, value in SUPPORTED_PLATFORMS.items()],
     }
 
@@ -1734,6 +1807,11 @@ def request_scheduled_task_publish(
     if status == "published":
         return {"ok": True, "status": "published", "run": _serialize_run(row)}
     now = datetime.utcnow()
+    target_installation = str(draft.get("installation_id") or "").strip()
+    if target_installation:
+        draft["installation_id"] = target_installation
+        row.installation_id = target_installation
+        row.claimed_by_installation_id = None
     draft["status"] = "pending"
     draft["requested_at"] = now.isoformat()
     draft.pop("error", None)

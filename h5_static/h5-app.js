@@ -7,6 +7,7 @@
       pollers: new Map(),
       uploads: [],
       devices: [],
+      selectedInstallationId: localStorage.getItem("lobster_h5_selected_installation_id") || "",
       tasks: [],
       runs: [],
       taskListOffset: 0,
@@ -45,6 +46,13 @@
       ipTemplates: [],
       ipTemplatesLoaded: false,
       ipTemplatesLoading: false,
+      personalSettingsLoaded: false,
+      personalSettingsLoading: false,
+      personalSettingsTab: "template",
+      personalKeywords: [],
+      personalCompetitors: [],
+      personalMemoryDocs: [],
+      personalDefault: null,
       taskSkillPackages: [],
       taskAllowedCapabilityIds: [],
       taskSkillsLoaded: false,
@@ -363,14 +371,6 @@
             workQuickKey: "publish_center",
             always: true,
           },
-          {
-            key: "personal_memory",
-            label: "个人记忆（知识库）",
-            mark: "记",
-            description: "维护品牌资料、同行、关键词和可复用记忆文件。",
-            routeTab: "profile",
-            always: true,
-          },
         ],
       },
       {
@@ -420,14 +420,6 @@
             description: "生成销售提案、招商介绍和汇报 PPT。",
             capabilityId: "ppt.create",
             packageId: "create_ppt_skill",
-          },
-          {
-            key: "sales_personal_memory",
-            label: "个人记忆（知识库）",
-            mark: "记",
-            description: "沉淀客户话术、产品资料和销售案例。",
-            routeTab: "profile",
-            always: true,
           },
         ],
       },
@@ -501,14 +493,6 @@
             capabilityId: "ppt.create",
             packageId: "create_ppt_skill",
           },
-          {
-            key: "ops_personal_memory",
-            label: "个人记忆（知识库）",
-            mark: "记",
-            description: "维护运营资料、商品资料和案例库。",
-            routeTab: "profile",
-            always: true,
-          },
         ],
       },
       {
@@ -532,14 +516,6 @@
             mark: "微",
             description: "个人微信私聊和朋友圈评论区回复。",
             comingSoon: true,
-          },
-          {
-            key: "cs_personal_memory",
-            label: "个人记忆（知识库）",
-            mark: "记",
-            description: "客服标准话术、产品问答和服务规则。",
-            routeTab: "profile",
-            always: true,
           },
         ],
       },
@@ -3098,10 +3074,47 @@
       }
     }
 
-    function currentInstallationId() {
+    function ensureSelectedInstallationId() {
+      const selected = String(state.selectedInstallationId || "").trim();
+      if (selected && state.devices.some((d) => String(d.installation_id || "") === selected)) return selected;
+      const previous = state.selectedInstallationId;
       const online = state.devices.find((d) => d.online && d.installation_id);
       const any = state.devices.find((d) => d.installation_id);
-      return (online || any || {}).installation_id || "";
+      const next = String(((online || any) || {}).installation_id || "");
+      state.selectedInstallationId = next;
+      if (next) localStorage.setItem("lobster_h5_selected_installation_id", next);
+      else localStorage.removeItem("lobster_h5_selected_installation_id");
+      if (previous !== next) {
+        state.publishAccountsLoaded = false;
+        state.publishAccounts = [];
+      }
+      return next;
+    }
+
+    function setSelectedInstallationId(value) {
+      state.selectedInstallationId = String(value || "").trim();
+      if (state.selectedInstallationId) localStorage.setItem("lobster_h5_selected_installation_id", state.selectedInstallationId);
+      else localStorage.removeItem("lobster_h5_selected_installation_id");
+      state.publishAccountsLoaded = false;
+      state.publishAccounts = [];
+      renderProfileDeviceSelect();
+      fillPublishPlatformSelect();
+      fillPublishRunPlatformSelect();
+      loadPublishAccounts().catch((err) => toast(err.message || "发布账号加载失败"));
+    }
+
+    function selectedDevice() {
+      const id = ensureSelectedInstallationId();
+      return (state.devices || []).find((d) => String(d.installation_id || "") === id) || null;
+    }
+
+    function currentInstallationId() {
+      return ensureSelectedInstallationId();
+    }
+
+    function deviceDisplayName(device) {
+      if (!device) return "";
+      return String(device.display_name || device.installation_id || "").trim();
     }
 
     function scrollMessagesToBottom() {
@@ -3157,6 +3170,7 @@
         messages: ["手机会话", "消息结果和素材预览"],
         voice: ["龙虾AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
+        personalSettings: ["个人设置", "模板、关键词、同行账号和记忆文件"],
         taskList: ["定时任务", "默认展示 10 条，更多用翻页加载"],
         taskDetail: ["定时任务详情", "任务配置和最近执行入口"],
         runList: ["执行记录", "默认展示 10 条，点开查看具体内容"],
@@ -3181,6 +3195,7 @@
       if (key === "department") renderDepartmentView();
       if (key === "ability") renderAbilityView();
       if (key !== "office") closeEmployeeModal();
+      if (key === "personalSettings") loadPersonalSettings();
       if (key === "taskList") loadTasks({ reset: true });
       if (key === "runList") loadRuns({ reset: true });
       if (key === "workList") {
@@ -3925,20 +3940,46 @@
       }
     }
 
+    function renderProfileDeviceSelect() {
+      const sel = $("profileDeviceSelect");
+      if (!sel) return;
+      ensureSelectedInstallationId();
+      const rows = state.devices || [];
+      sel.innerHTML = rows.length
+        ? rows.map((device) => {
+            const id = String(device.installation_id || "");
+            const name = deviceDisplayName(device) || id;
+            const accountCount = Number(device.publish_account_count || 0);
+            const suffix = `${device.online ? "online" : "offline"}${accountCount ? ` / ${accountCount} accounts` : ""}`;
+            return optionHtml(id, `${name} (${suffix})`);
+          }).join("")
+        : optionHtml("", "No online device");
+      sel.value = state.selectedInstallationId || "";
+      const selected = selectedDevice();
+      const text = selected
+        ? `${selected.online ? "online" : "offline"} / ${deviceDisplayName(selected)}`
+        : "No device selected";
+      if ($("profileSelectedDeviceText")) $("profileSelectedDeviceText").textContent = text;
+    }
+
     async function refreshDeviceStatus() {
       if (!state.token) return;
       try {
         const data = await api("/api/h5-chat/devices/status");
         state.devices = Array.isArray(data.devices) ? data.devices : [];
+        ensureSelectedInstallationId();
+        state.publishAccountsLoaded = false;
         $("onlineDot").classList.toggle("online", !!data.online);
         const online = state.devices.filter((d) => d.online).length;
         const total = state.devices.length;
         const text = data.online ? `本地在线：${online}/${total || online} 台` : "未检测到本地 online";
         $("deviceText").textContent = text;
         $("profileDeviceText").textContent = text;
+        renderProfileDeviceSelect();
         renderOfficeEmployees();
       } catch (err) {
         $("onlineDot").classList.remove("online");
+        renderProfileDeviceSelect();
         $("deviceText").textContent = "设备状态获取失败";
         $("profileDeviceText").textContent = "设备状态获取失败";
         renderOfficeEmployees();
@@ -4056,6 +4097,24 @@
       fillCandidateGroupSelect();
     }
 
+    function publishAccountSelectId(row) {
+      return String((row && (row.select_id || row.id)) || "");
+    }
+
+    function publishAccountLocalId(row) {
+      if (!row) return "";
+      const value = row.account_id != null && row.account_id !== "" ? row.account_id : row.id;
+      const text = String(value || "").trim();
+      return /^\d+$/.test(text) ? Number(text) : text;
+    }
+
+    function publishAccountOptionLabel(row) {
+      const platform = row.platform_name || platformDisplayName(row.platform);
+      const nickname = row.nickname || `账号 #${publishAccountLocalId(row)}`;
+      const device = row.device_name ? ` / ${row.device_name}` : "";
+      return `${platform} - ${nickname}${device}`;
+    }
+
     function fillPublishPlatformSelect() {
       const sel = $("taskPublishPlatform");
       if (!sel) return;
@@ -4079,16 +4138,16 @@
       const platform = $("taskPublishPlatform") ? $("taskPublishPlatform").value : "";
       const rows = (state.publishAccounts || []).filter((row) => !platform || row.platform === platform);
       sel.innerHTML = rows.length
-        ? optionHtml("", "请选择账号") + rows.map((row) => optionHtml(String(row.id), `${row.platform_name || platformDisplayName(row.platform)} - ${row.nickname || `账号 #${row.id}`}`)).join("")
+        ? optionHtml("", "请选择账号") + rows.map((row) => optionHtml(publishAccountSelectId(row), publishAccountOptionLabel(row))).join("")
         : optionHtml("", platform ? "该平台暂无账号" : "先选择发布平台");
-      if (current && rows.some((row) => String(row.id) === current)) sel.value = current;
+      if (current && rows.some((row) => publishAccountSelectId(row) === current)) sel.value = current;
     }
 
     function fillPublishRunPlatformSelect() {
       const sel = $("publishRunPlatform");
       if (!sel) return;
       const draft = state.publishRunDraft || {};
-      const draftAccount = draft.account_id ? (state.publishAccounts || []).find((row) => String(row.id) === String(draft.account_id)) : null;
+      const draftAccount = draft.account_id ? (state.publishAccounts || []).find((row) => String(publishAccountLocalId(row)) === String(draft.account_id)) : null;
       const current = sel.value || draft.platform || (draftAccount && draftAccount.platform) || "";
       const byPlatform = new Map();
       (state.publishAccounts || []).forEach((row) => {
@@ -4112,13 +4171,13 @@
       const rows = (state.publishAccounts || []).filter((row) => !platform || row.platform === platform);
       const current = sel.value || String(draft.account_id || "");
       sel.innerHTML = rows.length
-        ? optionHtml("", "请选择账号") + rows.map((row) => optionHtml(String(row.id), `${row.platform_name || platformDisplayName(row.platform)} - ${row.nickname || `账号 #${row.id}`}`)).join("")
+        ? optionHtml("", "请选择账号") + rows.map((row) => optionHtml(publishAccountSelectId(row), publishAccountOptionLabel(row))).join("")
         : optionHtml("", "暂无账号");
-      if (current && rows.some((row) => String(row.id) === String(current))) {
+      if (current && rows.some((row) => publishAccountSelectId(row) === String(current))) {
         sel.value = String(current);
       } else if (draft.account_nickname) {
         const hit = rows.find((row) => String(row.nickname || "") === String(draft.account_nickname || ""));
-        if (hit) sel.value = String(hit.id);
+        if (hit) sel.value = publishAccountSelectId(hit);
       }
     }
 
@@ -4130,7 +4189,9 @@
       }
       state.publishAccountsLoading = true;
       try {
-        const data = await api("/api/scheduled-tasks/publish/accounts");
+        const iid = currentInstallationId();
+        const suffix = iid ? `?installation_id=${encodeURIComponent(iid)}` : "";
+        const data = await api(`/api/scheduled-tasks/publish/accounts${suffix}`);
         state.publishAccounts = Array.isArray(data.accounts) ? data.accounts : [];
         state.publishAccountsLoaded = true;
       } catch (err) {
@@ -4183,6 +4244,168 @@
         state.ipTemplatesLoading = false;
         fillIpTemplateSelect();
       }
+    }
+
+    function personalDocId(doc) {
+      return String((doc && (doc.doc_id || doc.id)) || "").trim();
+    }
+
+    function selectedPersonalIds(kind) {
+      return Array.from(document.querySelectorAll(`[data-personal-select="${kind}"]:checked`))
+        .map((el) => String(el.value || "").trim())
+        .filter(Boolean);
+    }
+
+    function setPersonalSettingsTab(tab) {
+      state.personalSettingsTab = tab || "template";
+      document.querySelectorAll("[data-personal-tab]").forEach((btn) => btn.classList.toggle("active", btn.dataset.personalTab === state.personalSettingsTab));
+      document.querySelectorAll("[data-personal-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.personalPanel === state.personalSettingsTab));
+    }
+
+    async function loadPersonalMemoryDocs() {
+      const iid = currentInstallationId();
+      if (!iid) return [];
+      const data = await api("/api/openclaw-memory/sync", { headers: { "X-Installation-Id": iid } });
+      return Array.isArray(data.documents) ? data.documents : [];
+    }
+
+    async function loadPersonalSettings(force = false) {
+      if (!state.token) return;
+      if (!force && (state.personalSettingsLoaded || state.personalSettingsLoading)) {
+        renderPersonalSettings();
+        return;
+      }
+      state.personalSettingsLoading = true;
+      try {
+        const [keywords, competitors, defaults, memories] = await Promise.all([
+          api("/api/ip-content/keywords").catch(() => ({ items: [] })),
+          api("/api/ip-content/competitors").catch(() => ({ items: [] })),
+          api("/api/ip-content/personal-default").catch(() => ({ item: null })),
+          loadPersonalMemoryDocs().catch(() => []),
+        ]);
+        state.personalKeywords = Array.isArray(keywords.items) ? keywords.items : [];
+        state.personalCompetitors = Array.isArray(competitors.items) ? competitors.items : [];
+        state.personalDefault = defaults.item || null;
+        state.personalMemoryDocs = Array.isArray(memories) ? memories : [];
+        state.personalSettingsLoaded = true;
+      } finally {
+        state.personalSettingsLoading = false;
+        renderPersonalSettings();
+      }
+    }
+
+    function renderPersonalRows(targetId, rows, kind, titleFn, subtitleFn, deleteAttr) {
+      const el = $(targetId);
+      if (!el) return;
+      const selected = new Set(((state.personalDefault || {})[`${kind}_ids`] || []).map((id) => String(id)));
+      if (!rows.length) {
+        el.innerHTML = `<div class="hint">暂无数据</div>`;
+        return;
+      }
+      el.innerHTML = rows.map((row) => {
+        const id = kind === "memory_doc" ? personalDocId(row) : String(row.id || "");
+        const title = titleFn(row);
+        const subtitle = subtitleFn ? subtitleFn(row) : "";
+        const checked = selected.has(id) ? " checked" : "";
+        const del = deleteAttr ? `<button type="button" ${deleteAttr}="${escapeHtml(id)}">删除</button>` : "";
+        return `<div class="personal-row"><label><input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${checked}><span>${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span></label>${del}</div>`;
+      }).join("");
+    }
+
+    function renderPersonalSettings() {
+      setPersonalSettingsTab(state.personalSettingsTab);
+      const tpl = $("personalTemplateList");
+      if (tpl) {
+        const keywordRows = state.personalKeywords.map((row) => ({ ...row, _kind: "keyword" }));
+        const competitorRows = state.personalCompetitors.map((row) => ({ ...row, _kind: "competitor" }));
+        const memoryRows = state.personalMemoryDocs.map((row) => ({ ...row, _kind: "memory_doc" }));
+        const selected = state.personalDefault || {};
+        const selectedKeywords = new Set((selected.keyword_ids || []).map((id) => String(id)));
+        const selectedCompetitors = new Set((selected.competitor_ids || []).map((id) => String(id)));
+        const selectedMemories = new Set((selected.memory_doc_ids || []).map((id) => String(id)));
+        const section = (label, rows, selectedSet, kind, titleFn) => rows.length
+          ? `<div class="hint">${escapeHtml(label)}</div>` + rows.map((row) => {
+              const id = kind === "memory_doc" ? personalDocId(row) : String(row.id || "");
+              return `<div class="personal-row"><label><input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${selectedSet.has(id) ? " checked" : ""}><span>${escapeHtml(titleFn(row))}</span></label></div>`;
+            }).join("")
+          : `<div class="hint">${escapeHtml(label)}：暂无</div>`;
+        tpl.innerHTML = section("关键词", keywordRows, selectedKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`)
+          + section("同行账号", competitorRows, selectedCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`)
+          + section("记忆文件", memoryRows, selectedMemories, "memory_doc", (row) => row.title || row.filename || personalDocId(row));
+      }
+      renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "", "data-delete-personal-keyword");
+      renderPersonalRows("personalCompetitorList", state.personalCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "", "data-delete-personal-competitor");
+      const mem = $("personalMemoryList");
+      if (mem) {
+        mem.innerHTML = state.personalMemoryDocs.length
+          ? state.personalMemoryDocs.map((doc) => `<div class="personal-row"><span>${escapeHtml(doc.title || doc.filename || personalDocId(doc))}</span></div>`).join("")
+          : `<div class="hint">暂无记忆文件</div>`;
+      }
+    }
+
+    async function savePersonalDefault() {
+      const memoryIds = selectedPersonalIds("memory_doc");
+      const selectedDocs = state.personalMemoryDocs
+        .filter((doc) => memoryIds.includes(personalDocId(doc)))
+        .map((doc) => ({ doc_id: personalDocId(doc), title: doc.title || doc.filename || "", content_text: doc.content_text || doc.content_preview || "" }));
+      await api("/api/ip-content/personal-default", {
+        method: "PUT",
+        json: {
+          keyword_ids: selectedPersonalIds("keyword").map((id) => Number(id)).filter((id) => !Number.isNaN(id)),
+          competitor_ids: selectedPersonalIds("competitor").map((id) => Number(id)).filter((id) => !Number.isNaN(id)),
+          memory_doc_ids: memoryIds,
+          memory_docs: selectedDocs,
+          requirements: {},
+          meta: { source: "h5_personal_settings" },
+        },
+      });
+      state.personalSettingsLoaded = false;
+      await loadPersonalSettings(true);
+      toast("已保存");
+    }
+
+    async function addPersonalKeyword() {
+      const input = $("personalKeywordInput");
+      const keyword = (input && input.value || "").trim();
+      if (!keyword) throw new Error("请填写关键词");
+      await api("/api/ip-content/keywords", { method: "POST", json: { keyword, display_name: keyword, meta: { source: "h5_personal_settings" } } });
+      if (input) input.value = "";
+      state.personalSettingsLoaded = false;
+      await loadPersonalSettings(true);
+    }
+
+    async function addPersonalCompetitor() {
+      const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
+      const input = $("personalCompetitorKey");
+      const accountKey = (input && input.value || "").trim();
+      if (!accountKey) throw new Error("请填写账号标识");
+      await api("/api/ip-content/competitors", { method: "POST", json: { platform, account_key: accountKey, display_name: accountKey, meta: { source: "h5_personal_settings" } } });
+      if (input) input.value = "";
+      state.personalSettingsLoaded = false;
+      await loadPersonalSettings(true);
+    }
+
+    async function savePersonalMemory() {
+      const title = (($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim();
+      const content = (($("personalMemoryText") && $("personalMemoryText").value) || "").trim();
+      const iid = currentInstallationId();
+      if (!iid) throw new Error("请先选择在线设备");
+      if (!content) throw new Error("请填写记忆内容");
+      await api("/api/openclaw-memory/user-documents", {
+        method: "POST",
+        headers: { "X-Installation-Id": iid },
+        json: {
+          doc_id: "",
+          title: title || "H5记忆",
+          filename: `${title || "h5-memory"}.txt`,
+          notes: "h5_personal_settings",
+          content_text: content,
+        },
+      });
+      if ($("personalMemoryText")) $("personalMemoryText").value = "";
+      state.personalSettingsLoaded = false;
+      await loadPersonalSettings(true);
+      toast("已保存");
     }
 
     function packageById(packageId) {
@@ -5317,7 +5540,7 @@
         const autoPublish = !!($("taskPublishAuto") && $("taskPublishAuto").checked);
         let account = null;
         if (publishAccountId) {
-          account = state.publishAccounts.find((row) => String(row.id) === String(publishAccountId)) || null;
+          account = state.publishAccounts.find((row) => publishAccountSelectId(row) === String(publishAccountId)) || null;
         }
         const payload = {
           prompt: $("taskCreativePrompt") ? $("taskCreativePrompt").value.trim() : "",
@@ -5325,12 +5548,13 @@
         if (publishPlatform || publishAccountId || autoPublish) {
           if (!publishPlatform) throw new Error("请选择发布平台");
           if (!publishAccountId) throw new Error("请选择发布账号");
-          const parsedId = parseInt(publishAccountId, 10);
+          const parsedId = publishAccountLocalId(account);
           if (Number.isNaN(parsedId)) throw new Error("发布账号无效");
           payload.publish_platform = publishPlatform;
           payload.publish_platform_name = account ? (account.platform_name || platformDisplayName(publishPlatform)) : platformDisplayName(publishPlatform);
           payload.publish_account_id = parsedId;
           payload.publish_account_nickname = account ? (account.nickname || "") : "";
+          payload.publish_installation_id = account ? (account.installation_id || currentInstallationId()) : currentInstallationId();
           payload.publish_auto = autoPublish;
         }
         return payload;
@@ -6659,7 +6883,7 @@
 
     function selectedPublishRunAccount() {
       const accountId = $("publishRunAccount") ? $("publishRunAccount").value : "";
-      return (state.publishAccounts || []).find((row) => String(row.id) === String(accountId)) || null;
+      return (state.publishAccounts || []).find((row) => publishAccountSelectId(row) === String(accountId)) || null;
     }
 
     async function submitPublishRunForm(evt) {
@@ -6684,8 +6908,9 @@
         media_type: $("publishRunMediaType") ? $("publishRunMediaType").value : (draft.media_type || "video"),
         platform: platform || account.platform || "",
         platform_name: account.platform_name || platformDisplayName(platform || account.platform),
-        account_id: account.id,
+        account_id: publishAccountLocalId(account),
         account_nickname: account.nickname || "",
+        installation_id: account.installation_id || currentInstallationId(),
         title: $("publishRunTitleInput") ? $("publishRunTitleInput").value.trim() : "",
         description: $("publishRunDescription") ? $("publishRunDescription").value.trim() : "",
         tags: $("publishRunTags") ? $("publishRunTags").value.trim() : "",
@@ -7201,6 +7426,10 @@
         switchTab("profile");
         return;
       }
+      if (activeId === "personalSettingsView") {
+        switchTab("profile");
+        return;
+      }
       switchTab("office");
     });
     $("departmentSkillGrid")?.addEventListener("click", (evt) => {
@@ -7298,6 +7527,34 @@
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory(scopeFromActiveView(), viewTargetFromCurrent("profile")));
     $("refreshProfileBtn").addEventListener("click", refreshDeviceStatus);
+    $("profileDeviceSelect")?.addEventListener("change", (evt) => setSelectedInstallationId(evt.target.value || ""));
+    $("personalSettingsTabs")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-personal-tab]");
+      if (btn) setPersonalSettingsTab(btn.dataset.personalTab || "template");
+    });
+    $("personalSettingsRefreshBtn")?.addEventListener("click", () => loadPersonalSettings(true));
+    $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().catch((err) => toast(err.message || "保存失败")));
+    $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
+    $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => toast(err.message || "添加失败")));
+    $("personalSaveMemoryBtn")?.addEventListener("click", () => savePersonalMemory().catch((err) => toast(err.message || "保存失败")));
+    $("personalSettingsView")?.addEventListener("click", async (evt) => {
+      const keywordBtn = evt.target.closest("[data-delete-personal-keyword]");
+      const competitorBtn = evt.target.closest("[data-delete-personal-competitor]");
+      try {
+        if (keywordBtn) {
+          await api(`/api/ip-content/keywords/${encodeURIComponent(keywordBtn.dataset.deletePersonalKeyword || "")}`, { method: "DELETE" });
+          state.personalSettingsLoaded = false;
+          await loadPersonalSettings(true);
+        }
+        if (competitorBtn) {
+          await api(`/api/ip-content/competitors/${encodeURIComponent(competitorBtn.dataset.deletePersonalCompetitor || "")}`, { method: "DELETE" });
+          state.personalSettingsLoaded = false;
+          await loadPersonalSettings(true);
+        }
+      } catch (err) {
+        toast(err.message || "删除失败");
+      }
+    });
     $("installIosWebclipBtn").addEventListener("click", installIosWebclip);
     $("refreshTasksBtn").addEventListener("click", () => loadTasks({ reset: true }));
     $("refreshRunsBtn").addEventListener("click", () => loadRuns({ reset: true }));
@@ -7854,7 +8111,7 @@
       addBubble("user", content);
       const bot = addBubble("bot", "已发送，等待本地设备处理...");
       try {
-        const data = await api("/api/h5-chat/messages", { method: "POST", json: { content: messageContent, mode: state.mode } });
+        const data = await api("/api/h5-chat/messages", { method: "POST", json: { content: messageContent, mode: state.mode, installation_id: currentInstallationId() } });
         const msg = data.message || {};
         if (msg.id) {
           state.historyItems.push({ message: msg, events: [] });

@@ -471,6 +471,13 @@
             </div>
             <div class="setting-row">
               <div>
+                <strong>控制设备</strong>
+                <div class="hint" id="profileSelectedDeviceText">未选择设备</div>
+              </div>
+              <select id="profileDeviceSelect" class="device-select"></select>
+            </div>
+            <div class="setting-row">
+              <div>
                 <strong>路由切换</strong>
                 <div class="hint">手机会话当前使用直连通道</div>
               </div>
@@ -491,6 +498,13 @@
             <button class="danger" type="button" id="logoutBtn">退出登录</button>
           </div>
           <div class="panel settings">
+            <button class="profile-entry" type="button" data-tab-target="personalSettings">
+              <span>
+                <strong>个人设置</strong>
+                <small>模板、关键词、同行账号和记忆文件</small>
+              </span>
+              <b>进入</b>
+            </button>
             <button class="profile-entry" type="button" data-tab-target="taskList">
               <span>
                 <strong>定时任务</strong>
@@ -505,6 +519,62 @@
               </span>
               <b>进入</b>
             </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="personalSettingsView">
+        <div class="panel list-page personal-settings-page">
+          <div class="section-title">
+            <h2>个人设置</h2>
+            <button class="ghost" type="button" id="personalSettingsRefreshBtn">刷新</button>
+          </div>
+          <div class="personal-tabs" id="personalSettingsTabs">
+            <button type="button" class="active" data-personal-tab="template">模板</button>
+            <button type="button" data-personal-tab="keywords">关键词</button>
+            <button type="button" data-personal-tab="competitors">同行账号</button>
+            <button type="button" data-personal-tab="memory">记忆文件</button>
+          </div>
+          <div class="personal-panel active" data-personal-panel="template">
+            <div class="personal-block">
+              <strong>模板</strong>
+              <div class="hint">选择默认关键词、同行账号和记忆文件</div>
+              <div class="personal-list" id="personalTemplateList"></div>
+              <button type="button" id="personalSaveDefaultBtn">保存模板</button>
+            </div>
+          </div>
+          <div class="personal-panel" data-personal-panel="keywords">
+            <div class="personal-block">
+              <strong>关键词</strong>
+              <div class="inline-form">
+                <input id="personalKeywordInput" type="text" placeholder="关键词">
+                <button type="button" id="personalAddKeywordBtn">添加</button>
+              </div>
+              <div class="personal-list" id="personalKeywordList"></div>
+            </div>
+          </div>
+          <div class="personal-panel" data-personal-panel="competitors">
+            <div class="personal-block">
+              <strong>同行账号</strong>
+              <div class="inline-form three">
+                <select id="personalCompetitorPlatform">
+                  <option value="douyin">抖音</option>
+                  <option value="wechat_channels">视频号</option>
+                </select>
+                <input id="personalCompetitorKey" type="text" placeholder="账号标识">
+                <button type="button" id="personalAddCompetitorBtn">添加</button>
+              </div>
+              <div class="personal-list" id="personalCompetitorList"></div>
+            </div>
+          </div>
+          <div class="personal-panel" data-personal-panel="memory">
+            <div class="personal-block">
+              <strong>记忆文件</strong>
+              <input id="personalMemoryTitle" type="text" placeholder="文档名称">
+              <textarea id="personalMemoryText" rows="6" placeholder="可直接保存到记忆的文本内容"></textarea>
+              <button type="button" id="personalSaveMemoryBtn">保存记忆</button>
+              <div class="personal-list" id="personalMemoryList"></div>
+            </div>
           </div>
         </div>
       </section>
@@ -723,6 +793,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260706-run-publish-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260706-device-publish-settings-1"></script>
 </body>
 </html>

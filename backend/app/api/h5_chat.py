@@ -103,10 +103,43 @@ class H5ChatCompleteIn(BaseModel):
 
 class H5HeartbeatIn(BaseModel):
     display_name: Optional[str] = None
+    publish_accounts: Optional[List[Dict[str, Any]]] = None
 
 
 class H5DeviceDisplayNameIn(BaseModel):
     display_name: Optional[str] = Field(default=None, max_length=128)
+
+
+def _normalize_publish_account_snapshot(accounts: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+    if accounts is None:
+        return None
+    out: List[Dict[str, Any]] = []
+    for item in accounts:
+        if not isinstance(item, dict):
+            continue
+        platform = str(item.get("platform") or "").strip()
+        nickname = str(item.get("nickname") or item.get("name") or "").strip()
+        if not platform or not nickname:
+            continue
+        account_id = item.get("account_id", item.get("id"))
+        row = {
+            "id": str(account_id or "").strip(),
+            "account_id": str(account_id or "").strip(),
+            "platform": platform[:64],
+            "platform_name": str(item.get("platform_name") or item.get("platform_label") or platform).strip()[:64],
+            "nickname": nickname[:128],
+            "status": str(item.get("status") or "").strip()[:64],
+            "online": bool(item.get("online")),
+        }
+        managed_by = str(item.get("managed_by") or "").strip()
+        if managed_by:
+            row["managed_by"] = managed_by[:64]
+        if item.get("is_origin_slot") is not None:
+            row["is_origin_slot"] = bool(item.get("is_origin_slot"))
+        out.append(row)
+        if len(out) >= 200:
+            break
+    return out
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
@@ -768,7 +801,8 @@ def h5_device_heartbeat(
     if not xi:
         raise HTTPException(status_code=400, detail="缺少 X-Installation-Id")
     heartbeat_key = _heartbeat_cache_key(current_user_id, xi)
-    if _heartbeat_fast_ack_recent(heartbeat_key):
+    account_snapshot = _normalize_publish_account_snapshot(body.publish_accounts)
+    if account_snapshot is None and _heartbeat_fast_ack_recent(heartbeat_key):
         return {"ok": True, "installation_id": xi, "throttled": True}
     _mark_heartbeat_fast_ack(heartbeat_key)
     now = datetime.utcnow()
@@ -796,16 +830,20 @@ def h5_device_heartbeat(
             previous_seen_at
             and (now - previous_seen_at).total_seconds() < _DEVICE_HEARTBEAT_WRITE_MIN_SECONDS
             and not should_set_display_name
+            and account_snapshot is None
         ):
             return {"ok": True, "installation_id": xi, "last_seen_at": _iso(previous_seen_at), "throttled": True}
         row.last_seen_at = now
         if should_set_display_name:
             row.display_name = body.display_name.strip()[:128] or None
+        if account_snapshot is not None:
+            row.account_payload = {"accounts": account_snapshot, "reported_at": now.isoformat()}
     else:
         row = H5ChatDevicePresence(
             user_id=current_user_id,
             installation_id=xi,
             display_name=(body.display_name or "").strip()[:128] or None,
+            account_payload={"accounts": account_snapshot, "reported_at": now.isoformat()} if account_snapshot is not None else None,
             last_seen_at=now,
             created_at=now,
         )
@@ -845,6 +883,7 @@ def h5_update_device_display_name(
             "display_name": row.display_name,
             "last_seen_at": _iso(row.last_seen_at),
             "online": age <= _DEVICE_ONLINE_TTL_SECONDS,
+            "publish_account_count": len((row.account_payload or {}).get("accounts") or []) if isinstance(row.account_payload, dict) else 0,
         },
     }
 
@@ -872,6 +911,7 @@ def h5_devices_status(
                 "display_name": r.display_name,
                 "last_seen_at": _iso(r.last_seen_at),
                 "online": age <= _DEVICE_ONLINE_TTL_SECONDS,
+                "publish_account_count": len((r.account_payload or {}).get("accounts") or []) if isinstance(r.account_payload, dict) else 0,
             }
         )
     return {"ok": True, "online": any(d["online"] for d in devices), "devices": devices}

@@ -2108,6 +2108,7 @@
     .profile-head h2 { margin: 0 0 4px; font-size: 20px; }
     .settings { padding: 16px; display: grid; gap: 12px; }
     .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border-radius: 16px; background: rgba(248,251,255,.9); border: 1px solid rgba(223,230,242,.8); }
+    .setting-row .device-select { max-width: min(210px, 48vw); }
     .setting-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .route-switch { display: inline-grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; border-radius: 999px; background: #eef4ff; }
     .route-switch button { padding: 7px 11px; color: var(--muted); background: transparent; box-shadow: none; }
@@ -2210,6 +2211,27 @@
     .task-detail-record { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
     .task-detail-record:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
     .task-detail-record strong { display: block; margin-bottom: 6px; }
+    .personal-settings-page { display: grid; gap: 12px; }
+    .personal-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      padding: 6px;
+      border-radius: 18px;
+      background: rgba(238,244,255,.82);
+    }
+    .personal-tabs button { padding: 9px 6px; border-radius: 14px; color: #49607f; background: transparent; box-shadow: none; font-size: 12px; }
+    .personal-tabs button.active { color: #fff; background: linear-gradient(135deg, var(--blue), var(--cyan)); }
+    .personal-panel { display: none; }
+    .personal-panel.active { display: block; }
+    .personal-block { display: grid; gap: 10px; padding: 12px; border: 1px solid rgba(223,230,242,.92); border-radius: 18px; background: rgba(248,251,255,.92); }
+    .personal-list { display: grid; gap: 8px; }
+    .personal-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border: 1px solid rgba(223,230,242,.9); border-radius: 14px; background: #fff; }
+    .personal-row label { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .personal-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .personal-row button { padding: 5px 9px; border-radius: 999px; background: rgba(36,92,255,.08); color: var(--blue); box-shadow: none; font-size: 12px; }
+    .inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+    .inline-form.three { grid-template-columns: 110px minmax(0, 1fr) auto; }
     .run-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .run-detail-actions button { padding: 8px 12px; border-radius: 999px; font-size: 12px; }
     .moment-item, .copy-item { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }

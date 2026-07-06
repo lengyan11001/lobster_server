@@ -187,6 +187,22 @@ def _migrate_ip_content_schedule_template_memory_doc_ids():
         logger.warning("Migration ip_content_schedule_templates.memory_doc_ids skipped: %s", e)
 
 
+def _migrate_h5_device_presence_account_payload():
+    """Store the latest publish-account snapshot reported by each online device."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("h5_chat_device_presence"):
+            return
+        cols = [c["name"] for c in insp.get_columns("h5_chat_device_presence")]
+        if "account_payload" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE h5_chat_device_presence ADD COLUMN account_payload JSON"))
+    except Exception as e:
+        logger.warning("Migration h5_chat_device_presence.account_payload skipped: %s", e)
+
+
 def _seed_capability_catalog():
     """Import capability catalog from mcp/capability_catalog.json on first run."""
     catalog_path = Path(__file__).resolve().parent.parent.parent / "mcp" / "capability_catalog.json"
@@ -952,6 +968,7 @@ def create_app() -> FastAPI:
         _migrate_model_usage_events_table()
         _migrate_juhe_wechat_config_owner_columns()
         _migrate_ip_content_schedule_template_memory_doc_ids()
+        _migrate_h5_device_presence_account_payload()
         _ensure_default_user()
         _seed_capability_catalog()
         _upsert_missing_capabilities_from_catalog()

@@ -881,6 +881,7 @@ class H5ChatDevicePresence(Base):
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     installation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    account_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
