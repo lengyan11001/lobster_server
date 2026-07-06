@@ -2863,6 +2863,16 @@
       box-shadow: 0 12px 28px rgba(16,185,219,.22);
     }
     .secretary-role-card .department-role-count { color: #8ff5ff; }
+    .secretary-role-img {
+      position: relative;
+      z-index: 1;
+      width: min(130px, 36vw);
+      height: 152px;
+      object-fit: contain;
+      margin: -4px 0 -2px;
+      filter: drop-shadow(0 20px 20px rgba(0,0,0,.3));
+      animation: secretary-float 3.2s ease-in-out infinite;
+    }
     .secretary-mini-orbit {
       position: absolute;
       inset: 28px 34px 62px;
@@ -2969,8 +2979,8 @@
     .secretary-subtitle { color: rgba(232,247,255,.72); font-size: 13px; font-weight: 800; }
     .secretary-avatar-stage {
       position: relative;
-      width: 148px;
-      height: 148px;
+      width: 166px;
+      height: 166px;
       justify-self: end;
     }
     .secretary-orbit {
@@ -3025,6 +3035,18 @@
       background: rgba(4,18,38,.82);
       border: 1px solid rgba(143,245,255,.52);
       box-shadow: 0 0 24px rgba(34,211,238,.3);
+    }
+    .secretary-cockpit-img {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      z-index: 1;
+      width: 190px;
+      max-width: none;
+      height: auto;
+      transform: translate(-50%, -50%);
+      filter: drop-shadow(0 22px 24px rgba(0,0,0,.34));
+      animation: secretary-centered-float 3.4s ease-in-out infinite;
     }
     .secretary-metrics,
     .secretary-focus,
@@ -3140,6 +3162,16 @@
     }
     .secretary-map-core strong { color: #fff; font-size: 32px; line-height: 1; }
     .secretary-map-core span { color: rgba(232,247,255,.62); font-size: 12px; font-weight: 900; }
+    .secretary-core-img {
+      position: relative;
+      z-index: 1;
+      width: 46px;
+      height: 46px;
+      object-fit: contain;
+      margin-bottom: 2px;
+      filter: drop-shadow(0 10px 16px rgba(34,211,238,.24));
+    }
+    .secretary-map-core .secretary-core-img + strong { font-size: 26px; }
     .secretary-core-ring {
       position: absolute;
       inset: -16px;
@@ -3311,7 +3343,8 @@
         min-height: 158px;
         padding: 14px;
       }
-      .secretary-avatar-stage { width: 112px; height: 120px; }
+      .secretary-avatar-stage { width: 118px; height: 126px; }
+      .secretary-cockpit-img { width: 146px; }
       .secretary-command h2 { font-size: 30px; }
       .secretary-subtitle { font-size: 12px; }
       .secretary-metrics,
@@ -3326,6 +3359,7 @@
       .secretary-focus-card strong { font-size: 18px; }
       .secretary-map { min-height: 270px; border-radius: 24px; }
       .secretary-map-core { width: 110px; height: 110px; }
+      .secretary-core-img { width: 38px; height: 38px; }
       .secretary-map-node { min-width: 78px; padding: 7px 8px; }
       .secretary-trend-panel { grid-template-columns: 1fr; }
       .secretary-dept-card { padding: 12px; border-radius: 22px; }
