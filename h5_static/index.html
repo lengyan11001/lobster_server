@@ -600,6 +600,67 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="publishRunModal" data-mode="idle" role="dialog" aria-modal="true" aria-labelledby="publishRunTitle">
+    <button class="employee-modal-backdrop" type="button" id="publishRunBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover">
+      <button class="employee-popover-close" type="button" id="publishRunClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">发</div>
+        <div class="employee-popover-title">
+          <strong id="publishRunTitle">发布素材</strong>
+        </div>
+      </div>
+      <form class="work-dispatch-form" id="publishRunForm">
+        <div class="work-dispatch-fields">
+          <div class="field full">
+            <label for="publishRunMaterial">素材</label>
+            <input id="publishRunMaterial" type="text" readonly>
+          </div>
+          <div class="field">
+            <label for="publishRunPlatform">平台</label>
+            <select id="publishRunPlatform"></select>
+          </div>
+          <div class="field">
+            <label for="publishRunAccount">账号</label>
+            <select id="publishRunAccount"></select>
+          </div>
+          <div class="field full">
+            <label for="publishRunTitleInput">标题</label>
+            <input id="publishRunTitleInput" type="text" maxlength="80">
+          </div>
+          <div class="field full">
+            <label for="publishRunDescription">正文</label>
+            <textarea id="publishRunDescription" rows="4"></textarea>
+          </div>
+          <details class="field full">
+            <summary>高级参数</summary>
+            <div class="work-dispatch-fields">
+              <div class="field">
+                <label for="publishRunMediaType">素材类型</label>
+                <select id="publishRunMediaType">
+                  <option value="video">视频</option>
+                  <option value="image">图片</option>
+                  <option value="document">文档</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="publishRunTags">标签</label>
+                <input id="publishRunTags" type="text">
+              </div>
+              <div class="field full">
+                <label class="task-checkbox"><input id="publishRunAiCopy" type="checkbox">AI补全文案</label>
+              </div>
+            </div>
+          </details>
+        </div>
+        <div class="work-dispatch-actions">
+          <button class="ghost" type="button" id="publishRunCancel">取消</button>
+          <button type="submit" id="publishRunSubmit">提交发布</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="employee-modal hidden" id="taskEditModal" data-mode="idle" role="dialog" aria-modal="true" aria-labelledby="taskEditTitle">
     <button class="employee-modal-backdrop" type="button" id="taskEditBackdrop" aria-label="关闭"></button>
     <div class="employee-popover work-dispatch-popover">
@@ -662,6 +723,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260706-work-dedupe-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260706-run-publish-1"></script>
 </body>
 </html>

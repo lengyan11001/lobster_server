@@ -149,6 +149,10 @@ class ScheduledPublishCompleteIn(BaseModel):
     error: Optional[str] = None
 
 
+class ScheduledPublishRequestIn(BaseModel):
+    publish_draft: Dict[str, Any] = Field(default_factory=dict)
+
+
 def _iso(dt: Optional[datetime]) -> Optional[str]:
     if not dt:
         return None
@@ -1707,6 +1711,7 @@ def pending_scheduled_task_runs(
 @router.post("/api/scheduled-tasks/runs/{run_id}/publish-request", summary="提交定时任务结果发布请求")
 def request_scheduled_task_publish(
     run_id: str,
+    body: Optional[ScheduledPublishRequestIn] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1715,7 +1720,10 @@ def request_scheduled_task_publish(
     if row.status != "completed":
         raise HTTPException(status_code=409, detail="任务完成后才能发布")
     payload = _run_result_payload(row)
-    draft = _publish_draft_from_payload(payload)
+    draft = dict(_publish_draft_from_payload(payload) or {})
+    incoming = body.publish_draft if body and isinstance(body.publish_draft, dict) else {}
+    if incoming:
+        draft.update({k: v for k, v in incoming.items() if v is not None})
     if not draft:
         raise HTTPException(status_code=400, detail="该记录没有可发布草稿")
     if not str(draft.get("asset_id") or "").strip():

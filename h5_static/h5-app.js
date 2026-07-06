@@ -40,6 +40,8 @@
       publishAccounts: [],
       publishAccountsLoaded: false,
       publishAccountsLoading: false,
+      publishRunDraft: null,
+      publishRunSubmitting: false,
       ipTemplates: [],
       ipTemplatesLoaded: false,
       ipTemplatesLoading: false,
@@ -2457,7 +2459,6 @@
         if (text) rows.push([label, text]);
       };
       add("任务名称", run && run.title);
-      add("任务类型", capabilityName(taskCapabilityId(run) || (run && run.task_kind)));
       if (payload.action) add("执行动作", payload.action);
       if (payload.platform) add("平台", socialPlatformLabel(payload.platform));
       if (payload.capability_id) add("能力", capabilityName(payload.capability_id));
@@ -2533,7 +2534,7 @@
         const stats = data.stats && typeof data.stats === "object" ? data.stats : {};
         const finalStatus = data.final_status && typeof data.final_status === "object" ? data.final_status : {};
         const finalState = finalStatus.state && typeof finalStatus.state === "object" ? finalStatus.state : {};
-        const rows = [["任务类型", douyinLeadActionLabel(action)]];
+        const rows = action ? [["执行动作", douyinLeadActionLabel(action)]] : [];
         if (action === "search_collect") {
           rows.push(
             ["执行模式", data.search_mode === "script" ? "脚本模式" : (data.search_mode || "")],
@@ -2662,7 +2663,6 @@
           if (text) rows.push([label, text]);
         };
         if (!data || typeof data !== "object") return rows;
-        add("任务类型", data.task_kind || data.action || data.capability_id || "");
         add("结果", data.message || data.msg || data.summary || data.result_text || data.text || "");
         add("标题", data.title || "");
         add("数量", data.count != null ? compactNumber(data.count) : "");
@@ -2717,7 +2717,7 @@
       } else if (!payload.ip_content_daily) {
         const summaryRows = readablePayloadRows(payload);
         if (summaryRows.length) sections.push(renderTaskDetailSection("结果摘要", summaryRows));
-        const media = renderRunMedia(collectRunMediaUrls(run));
+        const media = renderRunMedia(collectRunMediaEntries(run), run);
         if (media) sections.push(`<div class="task-detail-section"><h4>媒体结果</h4>${media}</div>`);
         const publishActions = renderRunPublishActions(run);
         if (publishActions) sections.push(`<div class="task-detail-section"><h4>发布动作</h4>${publishActions}</div>`);
@@ -2736,7 +2736,7 @@
       const cachedRun = (state.runs || []).find((row) => String(row.id || "") === String(runId)) || null;
       $("runPageTitle").textContent = cachedRun ? (cachedRun.title || "执行详情") : "执行详情";
       $("runPageSubtitle").textContent = cachedRun
-        ? `${capabilityName(taskCapabilityId(cachedRun) || cachedRun.task_kind)} · ${statusText(cachedRun.status)} · ${fmtTime(cachedRun.created_at)}`
+        ? `${statusText(cachedRun.status)} · ${fmtTime(cachedRun.created_at)}`
         : "正在读取结果";
       body.innerHTML = cachedRun ? taskDetailHtml(cachedRun) : `<div class="hint">加载中...</div>`;
       switchTab("runDetail");
@@ -2745,7 +2745,7 @@
         const run = data.run || {};
         mergeRuns([run]);
         $("runPageTitle").textContent = run.title || "执行详情";
-        $("runPageSubtitle").textContent = `${capabilityName(taskCapabilityId(run) || run.task_kind)} · ${statusText(run.status)} · ${fmtTime(run.created_at)}`;
+        $("runPageSubtitle").textContent = `${statusText(run.status)} · ${fmtTime(run.created_at)}`;
         body.innerHTML = taskDetailHtml(run);
         if (run.task_kind === "ip_content_daily") {
           loadRuns({ reset: true }).then(() => {
@@ -4084,9 +4084,48 @@
       if (current && rows.some((row) => String(row.id) === current)) sel.value = current;
     }
 
+    function fillPublishRunPlatformSelect() {
+      const sel = $("publishRunPlatform");
+      if (!sel) return;
+      const draft = state.publishRunDraft || {};
+      const draftAccount = draft.account_id ? (state.publishAccounts || []).find((row) => String(row.id) === String(draft.account_id)) : null;
+      const current = sel.value || draft.platform || (draftAccount && draftAccount.platform) || "";
+      const byPlatform = new Map();
+      (state.publishAccounts || []).forEach((row) => {
+        const platform = String(row && row.platform || "").trim();
+        if (!platform) return;
+        if (!byPlatform.has(platform)) byPlatform.set(platform, row.platform_name || platformDisplayName(platform));
+      });
+      sel.innerHTML = byPlatform.size
+        ? Array.from(byPlatform.entries()).map(([platform, label]) => optionHtml(platform, label)).join("")
+        : optionHtml("", "暂无账号");
+      if (current && byPlatform.has(current)) sel.value = current;
+      else if (byPlatform.size) sel.value = Array.from(byPlatform.keys())[0];
+      fillPublishRunAccountSelect();
+    }
+
+    function fillPublishRunAccountSelect() {
+      const sel = $("publishRunAccount");
+      if (!sel) return;
+      const draft = state.publishRunDraft || {};
+      const platform = $("publishRunPlatform") ? $("publishRunPlatform").value : "";
+      const rows = (state.publishAccounts || []).filter((row) => !platform || row.platform === platform);
+      const current = sel.value || String(draft.account_id || "");
+      sel.innerHTML = rows.length
+        ? optionHtml("", "请选择账号") + rows.map((row) => optionHtml(String(row.id), `${row.platform_name || platformDisplayName(row.platform)} - ${row.nickname || `账号 #${row.id}`}`)).join("")
+        : optionHtml("", "暂无账号");
+      if (current && rows.some((row) => String(row.id) === String(current))) {
+        sel.value = String(current);
+      } else if (draft.account_nickname) {
+        const hit = rows.find((row) => String(row.nickname || "") === String(draft.account_nickname || ""));
+        if (hit) sel.value = String(hit.id);
+      }
+    }
+
     async function loadPublishAccounts() {
       if (state.publishAccountsLoaded || state.publishAccountsLoading) {
         fillPublishPlatformSelect();
+        fillPublishRunPlatformSelect();
         return;
       }
       state.publishAccountsLoading = true;
@@ -4100,6 +4139,7 @@
       } finally {
         state.publishAccountsLoading = false;
         fillPublishPlatformSelect();
+        fillPublishRunPlatformSelect();
       }
     }
 
@@ -6145,7 +6185,6 @@
         ? `每天 ${((task.schedule_config && task.schedule_config.daily_times) || []).join("、")}`
         : (task.schedule_type === "interval" ? `每 ${Math.round((task.interval_seconds || 0) / 60)} 分钟` : "一次性"));
       const rows = [
-        ["任务类型", capabilityName(taskCapabilityId(task) || task.task_kind)],
         ["执行方式", interval],
         ["状态", statusText(task.status)],
         ["下次执行", task.next_run_at ? fmtTime(task.next_run_at) : "无"],
@@ -6505,8 +6544,8 @@
         const btn = document.createElement("button");
         btn.type = "button";
         btn.textContent = status === "failed" ? "重新发布" : "发布";
-        btn.dataset.publishRun = draft.run_id || "";
-        btn.addEventListener("click", () => requestRunPublish(btn.dataset.publishRun, btn));
+        btn.dataset.openPublishRun = draft.run_id || "";
+        btn.addEventListener("click", () => openPublishRunModal(btn.dataset.openPublishRun));
         box.appendChild(btn);
       }
       if (draft.error) {
@@ -6518,7 +6557,7 @@
       $("messages").scrollTop = $("messages").scrollHeight;
     }
 
-    async function requestRunPublish(runId, btn) {
+    async function requestRunPublish(runId, btn, draft = null) {
       if (!runId) {
         toast("缺少任务记录 ID");
         return;
@@ -6528,18 +6567,145 @@
         btn.textContent = "提交中...";
       }
       try {
-        await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}/publish-request`, { method: "POST", json: {} });
+        await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}/publish-request`, { method: "POST", json: draft ? { publish_draft: draft } : {} });
         toast("已提交发布，online 会用已绑定账号发布");
         if (btn) {
           btn.disabled = true;
           btn.textContent = "等待发布";
         }
         await loadRuns({ reset: true });
+        return true;
       } catch (err) {
         toast(err.message || "提交发布失败");
         if (btn) {
           btn.disabled = false;
-          btn.textContent = "发布";
+          btn.textContent = draft ? "提交发布" : "发布";
+        }
+        return false;
+      }
+    }
+
+    function closePublishRunModal() {
+      $("publishRunModal")?.classList.add("hidden");
+      state.publishRunDraft = null;
+      state.publishRunSubmitting = false;
+      if ($("publishRunSubmit")) {
+        $("publishRunSubmit").disabled = false;
+        $("publishRunSubmit").textContent = "提交发布";
+      }
+    }
+
+    function findRunById(runId) {
+      const id = String(runId || "");
+      return (state.runs || []).find((row) => String(row && row.id || "") === id) || null;
+    }
+
+    function buildPublishRunDraft(row, mediaIndex = -1) {
+      const payload = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
+      const existing = publishDraftFromPayload({ ...payload, run_id: row && row.id }) || {};
+      const entries = collectRunMediaEntries(row);
+      const idx = Number.isNaN(mediaIndex) ? -1 : mediaIndex;
+      const selected = idx >= 0 ? (entries[idx] || {}) : (entries[0] || {});
+      const defaults = publishDefaultsFromRun(row);
+      const draft = { ...selected, ...existing };
+      if (idx >= 0) {
+        draft.url = selected.url || selected.source_url || existing.url || existing.source_url || "";
+        draft.source_url = selected.source_url || selected.url || existing.source_url || existing.url || "";
+        draft.asset_id = selected.asset_id || existing.asset_id || "";
+        draft.media_type = selected.media_type || existing.media_type || "";
+      }
+      return {
+        ...draft,
+        run_id: (row && row.id) || existing.run_id || "",
+        title: valueLabel(draft.title || defaults.title || ""),
+        description: valueLabel(draft.description || defaults.description || ""),
+        tags: valueLabel(draft.tags || defaults.tags || ""),
+        media_type: mediaTypeFromUrl(draft.url || draft.source_url || "", draft.media_type || selected.media_type || "video"),
+      };
+    }
+
+    function setPublishRunValue(id, value) {
+      const el = $(id);
+      if (!el) return;
+      el.value = value == null ? "" : String(value);
+    }
+
+    async function openPublishRunModal(runId, mediaIndex = -1) {
+      let row = findRunById(runId);
+      if (!row) {
+        try {
+          const data = await api(`/api/scheduled-tasks/runs/${encodeURIComponent(runId)}`);
+          row = data.run || null;
+          if (row) mergeRuns([row]);
+        } catch (err) {
+          toast(err.message || "记录加载失败");
+          return;
+        }
+      }
+      if (!row) {
+        toast("记录不存在");
+        return;
+      }
+      state.publishRunDraft = buildPublishRunDraft(row, Number(mediaIndex));
+      setPublishRunValue("publishRunMaterial", state.publishRunDraft.asset_id || state.publishRunDraft.url || state.publishRunDraft.source_url || "");
+      setPublishRunValue("publishRunTitleInput", state.publishRunDraft.title || "");
+      setPublishRunValue("publishRunDescription", state.publishRunDraft.description || "");
+      setPublishRunValue("publishRunMediaType", state.publishRunDraft.media_type || "video");
+      setPublishRunValue("publishRunTags", state.publishRunDraft.tags || "");
+      if ($("publishRunAiCopy")) $("publishRunAiCopy").checked = !!state.publishRunDraft.ai_publish_copy;
+      $("publishRunModal")?.classList.remove("hidden");
+      await loadPublishAccounts();
+    }
+
+    function selectedPublishRunAccount() {
+      const accountId = $("publishRunAccount") ? $("publishRunAccount").value : "";
+      return (state.publishAccounts || []).find((row) => String(row.id) === String(accountId)) || null;
+    }
+
+    async function submitPublishRunForm(evt) {
+      if (evt) evt.preventDefault();
+      if (state.publishRunSubmitting) return;
+      const draft = state.publishRunDraft || {};
+      const runId = draft.run_id || "";
+      const account = selectedPublishRunAccount();
+      const platform = $("publishRunPlatform") ? $("publishRunPlatform").value : "";
+      if (!draft.asset_id) {
+        toast("缺少素材ID，当前发布接口需要素材库 asset_id");
+        return;
+      }
+      if (!account) {
+        toast("请选择发布账号");
+        return;
+      }
+      const body = {
+        ...draft,
+        asset_id: String(draft.asset_id || "").trim(),
+        source_url: String(draft.source_url || draft.url || "").trim(),
+        media_type: $("publishRunMediaType") ? $("publishRunMediaType").value : (draft.media_type || "video"),
+        platform: platform || account.platform || "",
+        platform_name: account.platform_name || platformDisplayName(platform || account.platform),
+        account_id: account.id,
+        account_nickname: account.nickname || "",
+        title: $("publishRunTitleInput") ? $("publishRunTitleInput").value.trim() : "",
+        description: $("publishRunDescription") ? $("publishRunDescription").value.trim() : "",
+        tags: $("publishRunTags") ? $("publishRunTags").value.trim() : "",
+        ai_publish_copy: !!($("publishRunAiCopy") && $("publishRunAiCopy").checked),
+        status: "ready",
+      };
+      state.publishRunSubmitting = true;
+      const btn = $("publishRunSubmit");
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "提交中...";
+      }
+      try {
+        const ok = await requestRunPublish(runId, btn, body);
+        if (ok) closePublishRunModal();
+      } finally {
+        state.publishRunSubmitting = false;
+        if (btn && !$("publishRunModal")?.classList.contains("hidden")) {
+          btn.disabled = false;
+          btn.textContent = "提交发布";
         }
       }
     }
@@ -6760,6 +6926,85 @@
       if (!isFinal) startSse(msg.id, bot);
     }
 
+    function mediaTypeFromUrl(url, fallback = "") {
+      const raw = String(fallback || "").trim().toLowerCase();
+      if (["image", "video", "document"].includes(raw)) return raw;
+      const low = String(url || "").split(/[?#]/)[0].toLowerCase();
+      if (/\.(mp4|webm|mov|m4v)$/.test(low)) return "video";
+      if (/\.(png|jpe?g|webp|gif|bmp)$/.test(low)) return "image";
+      return "document";
+    }
+
+    function publishDefaultsFromRun(row) {
+      const payload = runTaskInputPayload(row);
+      const inner = runInnerPayload(row);
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const result = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
+      const generated = result.generated_content && typeof result.generated_content === "object" ? result.generated_content : {};
+      return {
+        title: valueLabel(params.title || inner.title || payload.title || generated.title || result.title || ""),
+        description: valueLabel(params.description || inner.description || params.prompt || inner.prompt || inner.task_text || payload.prompt || generated.prompt || generated.caption || ""),
+        tags: valueLabel(params.tags || generated.tags || result.tags || ""),
+      };
+    }
+
+    function collectRunMediaEntries(row) {
+      const payload = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
+      const refs = payload.result_refs && typeof payload.result_refs === "object" ? payload.result_refs : {};
+      const defaults = publishDefaultsFromRun(row);
+      const out = [];
+      const seen = new Set();
+      const addEntry = (entry) => {
+        if (!entry || typeof entry !== "object") return;
+        const url = String(entry.url || entry.source_url || entry.public_url || entry.image_url || entry.video_url || entry.final_url || entry.output_url || entry.media_url || "").trim();
+        const assetId = String(entry.asset_id || entry.id || entry.final_asset_id || entry.video_asset_id || entry.image_asset_id || "").trim();
+        if (!url && !assetId) return;
+        const key = assetId || url;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({
+          ...defaults,
+          url,
+          source_url: url,
+          asset_id: assetId,
+          media_type: mediaTypeFromUrl(url, entry.media_type || entry.type || ""),
+          title: valueLabel(entry.title || entry.filename || defaults.title),
+          description: valueLabel(entry.description || entry.prompt || entry.caption || defaults.description),
+          tags: valueLabel(entry.tags || defaults.tags),
+        });
+      };
+      const addUrl = (url) => addEntry({ url });
+      const draft = publishDraftFromPayload({ ...payload, run_id: row && row.id });
+      const ids = Array.isArray(refs.asset_ids) ? refs.asset_ids : [];
+      const urls = Array.isArray(refs.urls) ? refs.urls : [];
+      urls.forEach((url, idx) => addEntry({ url, asset_id: ids[idx] || "", media_type: mediaTypeFromUrl(url) }));
+      ids.forEach((assetId, idx) => addEntry({ asset_id: assetId, url: urls[idx] || "" }));
+      const walk = (value) => {
+        if (!value) return;
+        if (Array.isArray(value)) {
+          value.forEach(walk);
+          return;
+        }
+        if (typeof value === "object") {
+          addEntry(value);
+          Object.values(value).forEach(walk);
+          return;
+        }
+        const matches = String(value || "").match(/https?:\/\/[^\s<>"'`]+/gi) || [];
+        matches.forEach((raw) => {
+          let url = raw;
+          while (/[)\].,!?，。！？、；：]$/.test(url)) url = url.slice(0, -1);
+          addUrl(url);
+        });
+      };
+      walk(payload.saved_assets);
+      walk(refs.saved_assets);
+      walk(payload.media_urls);
+      if (draft) addEntry(draft);
+      if (!out.length) collectMediaUrls(payload).forEach(addUrl);
+      return out.slice(0, 8);
+    }
+
     async function loadHistory() {
       if (!state.token) return;
       try {
@@ -6780,34 +7025,57 @@
       return collectMediaUrls(payload).slice(0, 4);
     }
 
-    function renderRunMedia(urls) {
-      if (!urls || !urls.length) return "";
-      return `<div class="run-media">${urls.map((url) => {
+    function normalizeRunMediaEntries(input) {
+      return (Array.isArray(input) ? input : []).map((item) => {
+        if (typeof item === "string") return { url: item, source_url: item, media_type: mediaTypeFromUrl(item) };
+        if (item && typeof item === "object") {
+          const url = String(item.url || item.source_url || item.public_url || item.image_url || item.video_url || "").trim();
+          return { ...item, url, source_url: item.source_url || url, media_type: mediaTypeFromUrl(url, item.media_type || item.type || "") };
+        }
+        return null;
+      }).filter(Boolean);
+    }
+
+    function runMediaPublishButton(row, index) {
+      if (!row || !row.id) return "";
+      return `<button type="button" data-open-publish-run="${escapeHtml(row.id)}" data-publish-media-index="${escapeHtml(index)}">发布</button>`;
+    }
+
+    function renderRunMedia(input, row = null) {
+      const entries = normalizeRunMediaEntries(input);
+      if (!entries.length) return "";
+      return `<div class="run-media">${entries.map((entry, index) => {
+        const url = String(entry.url || entry.source_url || "").trim();
+        if (!url && entry.asset_id) {
+          return `<div class="run-media-item"><div class="hint">asset_id: ${escapeHtml(entry.asset_id)}</div><div class="run-media-actions">${runMediaPublishButton(row, index)}</div></div>`;
+        }
+        if (!url) return "";
         const low = url.toLowerCase();
         if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}</div>`;
+          return `<div class="run-media-item"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}<div class="run-media-actions">${runMediaPublishButton(row, index)}</div></div>`;
         }
         if (/\.(png|jpe?g|webp|gif)(\?|#|$)/.test(low)) {
           const previewUrl = escapeHtml(mediaProxyUrl(url, "inline", "lobster-image.png"));
-          return `<div class="run-media-item"><a href="${previewUrl}" target="_blank" rel="noopener noreferrer"><img src="${previewUrl}" alt="预览"></a>${mediaActionHtml(url, "下载图片", "lobster-image.png")}</div>`;
+          return `<div class="run-media-item"><a href="${previewUrl}" target="_blank" rel="noopener noreferrer"><img src="${previewUrl}" alt="预览"></a>${mediaActionHtml(url, "下载图片", "lobster-image.png")}<div class="run-media-actions">${runMediaPublishButton(row, index)}</div></div>`;
         }
-        return `<div class="run-media-item"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开预览</a>${mediaActionHtml(url, "下载文件", "lobster-media")}</div>`;
+        return `<div class="run-media-item"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开预览</a>${mediaActionHtml(url, "下载文件", "lobster-media")}<div class="run-media-actions">${runMediaPublishButton(row, index)}</div></div>`;
       }).join("")}</div>`;
     }
 
     function renderRunPublishActions(row) {
       const payload = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
       const draft = publishDraftFromPayload({ ...payload, run_id: row && row.id });
-      if (!draft) return "";
-      const status = String(draft.status || "ready").toLowerCase();
-      const platform = draft.platform_name || draft.platform || "";
-      const account = draft.account_nickname || draft.account_id || "";
-      const label = `${publishDraftLabel(draft)}${platform || account ? ` · ${platform}${account ? " · " + account : ""}` : ""}`;
+      const hasMedia = collectRunMediaEntries(row).length > 0;
+      if (!draft && !hasMedia) return "";
+      const status = String((draft && draft.status) || "ready").toLowerCase();
+      const platform = (draft && (draft.platform_name || draft.platform)) || "";
+      const account = (draft && (draft.account_nickname || draft.account_id)) || "";
+      const label = draft ? `${publishDraftLabel(draft)}${platform || account ? ` · ${platform}${account ? " · " + account : ""}` : ""}` : "待发布";
       const canPublish = status !== "published" && status !== "pending" && status !== "processing";
       return `<div class="run-publish-actions">
         <span>${escapeHtml(label)}</span>
-        ${canPublish ? `<button type="button" data-publish-run="${escapeHtml(draft.run_id || (row && row.id) || "")}">${status === "failed" ? "重新发布" : "发布"}</button>` : ""}
-        ${draft.error ? `<span style="color:var(--red);">${escapeHtml(String(draft.error).slice(0, 80))}</span>` : ""}
+        ${canPublish ? `<button type="button" data-open-publish-run="${escapeHtml((draft && draft.run_id) || (row && row.id) || "")}">${status === "failed" ? "重新发布" : "发布"}</button>` : ""}
+        ${draft && draft.error ? `<span style="color:var(--red);">${escapeHtml(String(draft.error).slice(0, 80))}</span>` : ""}
       </div>`;
     }
 
@@ -6845,7 +7113,7 @@
             <div class="run-top"><span>${escapeHtml(fmtTime(row.created_at))}</span><span>${escapeHtml(statusText(row.status))}</span></div>
             <div class="run-title">${escapeHtml(row.title || "定时任务")}</div>
             <div class="run-result">${escapeHtml(result || "等待结果")}</div>
-            ${renderRunMedia(collectRunMediaUrls(row))}
+            ${renderRunMedia(collectRunMediaEntries(row), row)}
             ${renderRunPublishActions(row)}
             <div class="run-publish-actions"><button type="button" data-open-run-detail="${escapeHtml(row.id || "")}">查看详情</button></div>
           </div>`;
@@ -7020,6 +7288,11 @@
       evt.preventDefault();
       submitTaskEdit().catch((err) => toast(err.message || "保存失败"));
     });
+    $("publishRunBackdrop")?.addEventListener("click", closePublishRunModal);
+    $("publishRunClose")?.addEventListener("click", closePublishRunModal);
+    $("publishRunCancel")?.addEventListener("click", closePublishRunModal);
+    $("publishRunPlatform")?.addEventListener("change", fillPublishRunAccountSelect);
+    $("publishRunForm")?.addEventListener("submit", submitPublishRunForm);
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
@@ -7205,7 +7478,12 @@
       }
       const publishBtn = evt.target.closest("[data-publish-run]");
       if (publishBtn) {
-        requestRunPublish(publishBtn.dataset.publishRun || "", publishBtn);
+        openPublishRunModal(publishBtn.dataset.publishRun || "");
+        return;
+      }
+      const openPublishBtn = evt.target.closest("[data-open-publish-run]");
+      if (openPublishBtn) {
+        openPublishRunModal(openPublishBtn.dataset.openPublishRun || "", parseInt(openPublishBtn.dataset.publishMediaIndex || "-1", 10));
         return;
       }
       const copyBtn = evt.target.closest("[data-copy-media]");
@@ -7281,7 +7559,12 @@
       }
       const publishBtn = evt.target.closest("[data-publish-run]");
       if (publishBtn) {
-        requestRunPublish(publishBtn.dataset.publishRun || "", publishBtn);
+        openPublishRunModal(publishBtn.dataset.publishRun || "");
+        return;
+      }
+      const openPublishBtn = evt.target.closest("[data-open-publish-run]");
+      if (openPublishBtn) {
+        openPublishRunModal(openPublishBtn.dataset.openPublishRun || "", parseInt(openPublishBtn.dataset.publishMediaIndex || "-1", 10));
         return;
       }
       const copyBtn = evt.target.closest("[data-copy-media]");
