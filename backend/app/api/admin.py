@@ -27,7 +27,11 @@ from ..db import get_db
 from ..models import AgentCommissionLedger, CapabilityCallLog, CreditLedger, H5ChatDevicePresence, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits
-from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
+from ..services.user_feature_flags import (
+    FEATURE_FLAG_PACKAGES,
+    OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,
+    user_has_feature,
+)
 from ..services.juhe_wechat import extract_friend_add_target, guid_request, mask_secret, safe_request_snapshot
 
 router = APIRouter()
@@ -339,8 +343,12 @@ def admin_user_detail(
             "meta": entry.meta,
             "created_at": entry.created_at.isoformat() if entry.created_at else None,
         })
+    feature_flags = {
+        "openai_official_image_channel": user_has_feature(db, user_id, OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID),
+    }
     return {
         "user": _user_public_payload(user),
+        "feature_flags": feature_flags,
         "devices": [
             {
                 "installation_id": r.installation_id,
@@ -423,6 +431,11 @@ class SetUserLlmModelBody(BaseModel):
     model: str = ""
 
 
+class AdminUserFeatureToggleBody(BaseModel):
+    user_id: int
+    enabled: bool
+
+
 @router.post("/admin/api/reset-password")
 def admin_reset_password(
     body: ResetPasswordBody,
@@ -475,6 +488,39 @@ def admin_set_user_llm_model(
         model or "-",
     )
     return {"ok": True, "user": _user_public_payload(user)}
+
+
+@router.post("/admin/api/set-user-openai-image-channel")
+def admin_set_user_openai_image_channel(
+    body: AdminUserFeatureToggleBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == body.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    exists = db.query(UserSkillVisibility).filter(
+        UserSkillVisibility.user_id == body.user_id,
+        UserSkillVisibility.package_id == OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,
+    ).first()
+    changed = False
+    if body.enabled:
+        if not exists:
+            db.add(UserSkillVisibility(user_id=body.user_id, package_id=OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID))
+            changed = True
+    elif exists:
+        db.delete(exists)
+        changed = True
+    if changed:
+        db.commit()
+    enabled = user_has_feature(db, body.user_id, OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID)
+    return {
+        "ok": True,
+        "user_id": body.user_id,
+        "email": user.email,
+        "enabled": enabled,
+        "feature_id": OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,
+    }
 
 
 @router.get("/admin/api/users")

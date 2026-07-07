@@ -319,6 +319,10 @@ tr:hover{background:var(--bg)}
         <h3>代理商管理</h3>
         <div id="agentToggleSection"></div>
       </div>
+      <div class="card" id="imageChannelCard" style="display:none">
+        <h3>图片通道</h3>
+        <div id="imageChannelSection"><div class="empty">请选择用户后加载</div></div>
+      </div>
       <div class="card" id="openclawMemoryAdminCard" style="display:none">
         <h3>OpenClaw 记忆</h3>
         <div id="openclawMemoryAdminSection">
@@ -904,6 +908,7 @@ function ensureUserDetailTabs() {
   move('userGenerationRecordsCard', 'generation');
   move('userTikhubRecordsCard', 'tikhub');
   move('agentToggleCard', 'skills');
+  move('imageChannelCard', 'skills');
   move('skillVisCard', 'skills');
   move('userDevicesTaskCard', 'devices');
   move('openclawMemoryAdminCard', 'memory');
@@ -1437,6 +1442,7 @@ async function showUserDetail(userId) {
     document.getElementById('userDetailView').style.display = '';
 
     const u = data.user;
+    const featureFlags = data.feature_flags || {};
     const email = u.email.replace(/@sms\.lobster\.local$/, '');
     const isSms = u.email.endsWith('@sms.lobster.local');
     let detailHtml = `
@@ -1489,6 +1495,13 @@ async function showUserDetail(userId) {
     } else {
       agentCard.style.display = 'none';
     }
+    const imageChannelCard = document.getElementById('imageChannelCard');
+    if (isAdmin()) {
+      imageChannelCard.style.display = '';
+      renderImageChannelSection(u, featureFlags);
+    } else {
+      imageChannelCard.style.display = 'none';
+    }
 
     // admin / agent: skill visibility & unlock permissions
     const canManageSkills = isAdmin() || (isAgent() && !viewingSelf);
@@ -1540,6 +1553,23 @@ function renderAgentToggle(u) {
   }
 }
 
+function renderImageChannelSection(u, featureFlags) {
+  const section = document.getElementById('imageChannelSection');
+  if (!section || !u) return;
+  const enabled = !!(featureFlags && featureFlags.openai_official_image_channel);
+  section.innerHTML = `
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
+      为该用户单独开启图片合成官方通道。开启后，用户请求 <strong>gpt-image-2</strong> 时会优先走 OpenAI 官方，再回退到现有渠道。
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="btn ${enabled ? 'btn-outline' : 'btn-agent'} btn-sm" onclick="toggleOpenaiImageChannel(${u.id}, ${enabled ? 'false' : 'true'})">
+        ${enabled ? '关闭官方图片通道' : '开启官方图片通道'}
+      </button>
+      <span style="font-size:12px;color:var(--text-secondary)">当前：${enabled ? '已开启' : '未开启'}</span>
+    </div>
+  `;
+}
+
 async function toggleAgent(userId, makeAgent) {
   try {
     const data = await api('/admin/api/set-agent', {
@@ -1547,6 +1577,17 @@ async function toggleAgent(userId, makeAgent) {
       body: JSON.stringify({user_id: userId, is_agent: makeAgent})
     });
     toast(makeAgent ? `已将 ${data.email} 设为代理商` : `已取消 ${data.email} 的代理商资格`);
+    showUserDetail(userId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function toggleOpenaiImageChannel(userId, enabled) {
+  try {
+    const data = await api('/admin/api/set-user-openai-image-channel', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, enabled: !!enabled })
+    });
+    toast(data.enabled ? '已开启官方图片通道' : '已关闭官方图片通道');
     showUserDetail(userId);
   } catch(e) { toast(e.message, 'error'); }
 }
