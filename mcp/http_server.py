@@ -1124,6 +1124,21 @@ async def _call_upstream_sutui_tasks_rest(
         understand_model = params.pop("__understand_model", None)
         if model in ("openrouter/router/vision", "openrouter/router/video") and understand_model:
             params["model"] = str(understand_model).strip()
+        if lobster_capability_id == "image.understand":
+            if model.startswith("openrouter/router/"):
+                model = str(params.get("model") or "openai/gpt-5.5").strip() or "openai/gpt-5.5"
+            params["model"] = model
+            logger.info(
+                "[apiz-chat] image.understand direct chat/completions model=%s params_keys=%s",
+                model,
+                sorted(params.keys()),
+            )
+            return await _call_apiz_chat_completions_vision(
+                api_base,
+                token,
+                params,
+                lobster_capability_id=lobster_capability_id,
+            )
         logger.info(
             "[apiz-sdk] tasks.create capability=%s model=%s params_keys=%s",
             lobster_capability_id or "(无)", model, sorted(params.keys()),
@@ -1135,17 +1150,6 @@ async def _call_upstream_sutui_tasks_rest(
             logger.info("[apiz-sdk] params 摘要 %s", json.dumps(psum, ensure_ascii=False, default=str))
         except Exception as ex:
             logger.warning("[apiz-sdk] params 摘要失败: %s", ex)
-        if (
-            lobster_capability_id == "image.understand"
-            and model == "openrouter/router/vision"
-            and str(params.get("model") or "").strip() == "openai/gpt-5.5"
-        ):
-            return await _call_apiz_chat_completions_vision(
-                api_base,
-                token,
-                params,
-                lobster_capability_id=lobster_capability_id,
-            )
     elif tool_name == "get_result":
         task_id = str(arguments.get("task_id") or "").strip()
         if not task_id:
@@ -2395,7 +2399,7 @@ def _normalize_understand_payload(
     media_key: str = "image_urls",
     default_model: str = "openrouter/router/vision",
 ) -> Dict[str, Any]:
-    """将 image.understand / video.understand 的统一 payload 转成速推 generate 所需格式。"""
+    """将 image.understand / video.understand 的统一 payload 转成上游格式。"""
     if not payload or not isinstance(payload, dict):
         payload = {}
     payload = dict(payload)
@@ -2409,20 +2413,24 @@ def _normalize_understand_payload(
         or ""
     )
     raw_understand_model = str(raw_understand_model).strip()
-    # APIZ 理解能力需要两层 model：外层任务模型 openrouter/router/vision，
-    # params.model 才是实际多模态 LLM。这里用内部字段带到 tasks.create 前再落到 params.model。
-    if raw_model.startswith("openrouter/router/"):
+    if media_key == "image_urls":
+        # 图片理解不再走 openrouter/router/vision tasks.create；直接走 APIZ chat/completions。
+        if raw_model and not raw_model.startswith("openrouter/router/"):
+            capability_model = raw_model
+        else:
+            capability_model = (
+                raw_understand_model
+                or os.environ.get("LOBSTER_IMAGE_UNDERSTAND_LLM_MODEL")
+                or os.environ.get("SUTUI_IMAGE_UNDERSTAND_LLM_MODEL")
+                or "openai/gpt-5.5"
+            ).strip()
+        understand_model = ""
+    elif raw_model.startswith("openrouter/router/"):
         capability_model = raw_model
         understand_model = raw_understand_model
     else:
         understand_model = raw_model or raw_understand_model
-    if not understand_model and media_key == "image_urls":
-        understand_model = (
-            os.environ.get("LOBSTER_IMAGE_UNDERSTAND_LLM_MODEL")
-            or os.environ.get("SUTUI_IMAGE_UNDERSTAND_LLM_MODEL")
-            or "google/gemini-2.5-flash"
-        ).strip()
-    elif not understand_model and media_key == "video_urls":
+    if not understand_model and media_key == "video_urls":
         understand_model = (
             os.environ.get("LOBSTER_VIDEO_UNDERSTAND_LLM_MODEL")
             or os.environ.get("SUTUI_VIDEO_UNDERSTAND_LLM_MODEL")
