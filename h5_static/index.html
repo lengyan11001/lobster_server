@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260712-office-dashboard-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260712-h5-workflow-1" />
 </head>
 <body>
   <main class="shell">
@@ -100,21 +100,25 @@
           </button>
 
           <div class="office-shortcuts" aria-label="快捷入口">
-            <button type="button" data-home-target="home">
+            <button type="button" data-home-target="taskList">
               <span class="office-shortcut-icon">排</span>
               <strong>工作安排</strong>
             </button>
-            <button type="button" data-home-target="secretary">
-              <span class="office-shortcut-icon">报</span>
-              <strong>数据报表</strong>
+            <button type="button" data-home-target="workflow">
+              <span class="office-shortcut-icon">流</span>
+              <strong>工作流</strong>
             </button>
-            <button type="button" data-role-department="sales">
+            <button type="button" data-home-target="assetLibrary">
+              <span class="office-shortcut-icon">素</span>
+              <strong>素材库</strong>
+            </button>
+            <button type="button" data-home-target="leadCenter">
               <span class="office-shortcut-icon">客</span>
               <strong>客资线索</strong>
             </button>
-            <button type="button" data-home-target="personalSettings">
-              <span class="office-shortcut-icon">设</span>
-              <strong>个人设置</strong>
+            <button type="button" data-home-target="tutorial">
+              <span class="office-shortcut-icon">教</span>
+              <strong>教程</strong>
             </button>
           </div>
 
@@ -159,6 +163,114 @@
           <div class="secretary-trend-panel" id="secretaryTrendPanel"></div>
           <div class="secretary-section-title"><strong>部门排行</strong></div>
           <div class="secretary-department-grid" id="secretaryDepartmentGrid"></div>
+        </div>
+      </section>
+
+      <section class="view" id="workflowView">
+        <div class="workflow-shell">
+          <div class="workflow-head">
+            <div class="workflow-device-box">
+              <label for="workflowDeviceSelect">设备</label>
+              <select id="workflowDeviceSelect"></select>
+              <span id="workflowActiveText">未启用工作流</span>
+            </div>
+            <button class="ghost" type="button" id="workflowTemplateListBtn">模板列表</button>
+          </div>
+
+          <div class="workflow-editor-card">
+            <div class="workflow-template-name">
+              <label for="workflowTemplateName">模板名称</label>
+              <input id="workflowTemplateName" type="text" maxlength="80" placeholder="24小时工作流">
+            </div>
+            <div class="workflow-node-form">
+              <div class="field">
+                <label for="workflowNodeTime">时间</label>
+                <input id="workflowNodeTime" type="time" step="60" value="09:00">
+              </div>
+              <div class="field">
+                <label for="workflowNodeAbility">任务节点</label>
+                <select id="workflowNodeAbility"></select>
+              </div>
+              <div class="field full">
+                <label for="workflowNodeNote">任务要求</label>
+                <textarea id="workflowNodeNote" rows="3" placeholder="这个时间点要做什么"></textarea>
+              </div>
+              <button type="button" id="workflowAddNodeBtn">添加节点</button>
+            </div>
+          </div>
+
+          <div class="workflow-timeline" id="workflowTimeline"></div>
+
+          <div class="workflow-actions">
+            <button type="button" id="workflowSaveTemplateBtn">保存模板</button>
+            <button type="button" id="workflowActivateBtn">启用到当前设备</button>
+            <button class="ghost" type="button" id="workflowStopBtn">停用</button>
+          </div>
+
+          <div class="workflow-template-drawer hidden" id="workflowTemplateDrawer">
+            <div class="workflow-template-drawer-head">
+              <strong>模板列表</strong>
+              <button class="ghost" type="button" id="workflowTemplateCloseBtn">关闭</button>
+            </div>
+            <div class="workflow-template-list" id="workflowTemplateList"></div>
+            <div class="workflow-grant-panel hidden" id="workflowGrantPanel">
+              <strong>授权下级</strong>
+              <div class="workflow-sub-user-list" id="workflowSubUserList"></div>
+              <div class="workflow-grant-actions">
+                <button class="ghost" type="button" id="workflowGrantCancelBtn">取消</button>
+                <button type="button" id="workflowGrantSaveBtn">保存授权</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="assetLibraryView">
+        <div class="asset-library-shell">
+          <div class="asset-library-tabs" id="assetLibraryTabs">
+            <button type="button" class="active" data-asset-origin="user_upload">用户上传 <span id="assetUserUploadTotal">0</span></button>
+            <button type="button" data-asset-origin="generated">生成素材 <span id="assetGeneratedTotal">0</span></button>
+          </div>
+          <div class="asset-library-grid" id="assetLibraryList"></div>
+          <div class="asset-library-pager">
+            <button type="button" id="assetLibraryPrevBtn">上一页</button>
+            <span id="assetLibraryPageText">1 / 1</span>
+            <button type="button" id="assetLibraryNextBtn">下一页</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="leadCenterView">
+        <div class="lead-center-shell">
+          <div class="lead-center-title">累计触达客资线索</div>
+          <div class="lead-stats">
+            <div><strong id="leadTotalCustomers">0</strong><span>总触达客户</span></div>
+            <div><strong id="leadClueCount">0</strong><span>线索数</span></div>
+            <div><strong id="leadFriendCount">0</strong><span>添加好友</span></div>
+            <div><strong id="leadPullGroupCount">0</strong><span>拉群数</span></div>
+          </div>
+          <div class="lead-domain-tabs" id="leadDomainTabs">
+            <button type="button" class="active" data-lead-domain="public">公域客户 <span id="leadPublicTotal">0</span></button>
+            <button type="button" data-lead-domain="private">私域客户 <span id="leadPrivateTotal">0</span></button>
+          </div>
+          <div class="lead-platform-tabs" id="leadPlatformTabs">
+            <button type="button" class="active" data-lead-platform="all">全部</button>
+            <button type="button" data-lead-platform="redbook">小红书</button>
+            <button type="button" data-lead-platform="douyin">抖音</button>
+            <button type="button" data-lead-platform="kuaishou">快手</button>
+            <button type="button" data-lead-platform="wechat_channels">视频号</button>
+          </div>
+          <div class="lead-list" id="leadCenterList"></div>
+        </div>
+      </section>
+
+      <section class="view" id="tutorialView">
+        <div class="tutorial-shell">
+          <div class="tutorial-card">
+            <div class="tutorial-mark">?</div>
+            <h2>教程</h2>
+            <p>入口预留中</p>
+          </div>
         </div>
       </section>
 
@@ -925,6 +1037,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260712-office-dashboard-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260712-h5-workflow-1"></script>
 </body>
 </html>

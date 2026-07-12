@@ -965,6 +965,65 @@ class ScheduledTaskRun(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class H5WorkflowTemplate(Base):
+    """H5 24 小时工作流模板：一组按每天固定时间触发的任务节点。"""
+
+    __tablename__ = "h5_workflow_templates"
+    __table_args__ = (
+        Index("ix_h5_workflow_templates_owner_status", "owner_user_id", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    nodes: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class H5WorkflowTemplateGrant(Base):
+    """代理商把自己的工作流模板授权给直属下级。"""
+
+    __tablename__ = "h5_workflow_template_grants"
+    __table_args__ = (
+        UniqueConstraint("template_id", "target_user_id", name="uq_h5_workflow_grant_template_target"),
+        Index("ix_h5_workflow_grants_target_status", "target_user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    template_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    target_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class H5WorkflowActivation(Base):
+    """某台设备当前启用的工作流模板及其创建出的定时任务。"""
+
+    __tablename__ = "h5_workflow_activations"
+    __table_args__ = (
+        Index("ix_h5_workflow_activations_user_install_status", "user_id", "installation_id", "status"),
+        Index("ix_h5_workflow_activations_template_status", "template_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    template_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    template_owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    scheduled_task_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    template_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    stopped_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class InstallationSignupBonusClaim(Base):
     """在线独立认证：每个 installation_id 仅首名注册用户可获得新人积分（防同机多号刷分）。"""
 
