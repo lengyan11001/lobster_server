@@ -56,6 +56,7 @@ _MAX_TARGET_DEVICES = 20
 _VIDEO_EXTS = (".mp4", ".webm", ".mov", ".m4v", ".avi")
 _RUNNING_STATUSES = {"running", "processing", "pending", "queued", "waiting"}
 _GOAL_VIDEO_SOURCE_AI_IMAGE = "ai_image"
+_GOAL_VIDEO_SOURCE_REFERENCE_IMAGE = "reference_image"
 _GOAL_VIDEO_SOURCE_ASSET_RANDOM = "asset_random"
 _DISABLED_SCHEDULED_CAPABILITIES = {"create.video.pipeline", "create.ppt.pipeline"}
 _PENDING_INSTALLATION_TOUCH_MIN_SECONDS = 60
@@ -340,7 +341,21 @@ def _normalize_goal_video_source_mode(value: Any) -> str:
     raw = str(value or "").strip().lower()
     if raw in {"ai_image", "ai", "generated_image", "image_generate", "generate_image"}:
         return _GOAL_VIDEO_SOURCE_AI_IMAGE
+    if raw in {"reference_image", "reference", "resume_image", "resume_from_image", "existing_image"}:
+        return _GOAL_VIDEO_SOURCE_REFERENCE_IMAGE
     return _GOAL_VIDEO_SOURCE_ASSET_RANDOM
+
+
+def _goal_video_reference_present(payload: Dict[str, Any]) -> bool:
+    if str(payload.get("reference_image_url") or "").strip():
+        return True
+    if str(payload.get("reference_asset_id") or "").strip():
+        return True
+    for key in ("reference_image_urls", "reference_asset_ids"):
+        values = payload.get(key)
+        if isinstance(values, list) and any(str(item or "").strip() for item in values):
+            return True
+    return False
 
 
 def _normalize_goal_video_task_payload(payload: Dict[str, Any]) -> None:
@@ -361,6 +376,12 @@ def _normalize_goal_video_task_payload(payload: Dict[str, Any]) -> None:
     source_mode = _normalize_goal_video_source_mode(raw_source_mode)
     if source_mode == _GOAL_VIDEO_SOURCE_AI_IMAGE:
         cap_payload["source_mode"] = _GOAL_VIDEO_SOURCE_AI_IMAGE
+        cap_payload["candidate_group"] = ""
+        return
+    if source_mode == _GOAL_VIDEO_SOURCE_REFERENCE_IMAGE:
+        if not _goal_video_reference_present(cap_payload):
+            raise HTTPException(status_code=400, detail="请选择或上传素材图片")
+        cap_payload["source_mode"] = _GOAL_VIDEO_SOURCE_REFERENCE_IMAGE
         cap_payload["candidate_group"] = ""
         return
     candidate_group = str(cap_payload.get("candidate_group") or cap_payload.get("candidate_group_name") or "").strip()
