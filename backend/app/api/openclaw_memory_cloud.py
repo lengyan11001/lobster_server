@@ -22,7 +22,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import OpenClawMemoryDocument, User, UserInstallation
+from ..models import H5AgentMemoryGrant, OpenClawMemoryDocument, User, UserInstallation
 from .admin import AdminContext, _agent_sub_user_ids, _require_admin, _verify_admin_token
 from .auth import get_current_user
 from .installation_slots import (
@@ -698,17 +698,38 @@ def sync_openclaw_memory_for_installation(
             .first()
         )
         if parent:
-            agent_rows = (
-                db.query(OpenClawMemoryDocument)
-                .filter(
-                    OpenClawMemoryDocument.target_user_id == parent.id,
-                    OpenClawMemoryDocument.installation_id == _AGENT_MEMORY_INSTALLATION_ID,
-                    OpenClawMemoryDocument.origin == "agent_memory",
-                )
-                .order_by(OpenClawMemoryDocument.updated_at.desc())
-                .limit(200)
+            grants = (
+                db.query(H5AgentMemoryGrant)
+                .filter(H5AgentMemoryGrant.owner_user_id == parent.id, H5AgentMemoryGrant.target_user_id == current_user.id)
                 .all()
             )
+            active_doc_ids = [str(row.memory_doc_id or "") for row in grants if row.status == "active" and str(row.memory_doc_id or "").strip()]
+            if grants:
+                if active_doc_ids:
+                    agent_rows = (
+                        db.query(OpenClawMemoryDocument)
+                        .filter(
+                            OpenClawMemoryDocument.target_user_id == parent.id,
+                            OpenClawMemoryDocument.doc_id.in_(active_doc_ids),
+                            OpenClawMemoryDocument.status == "active",
+                        )
+                        .order_by(OpenClawMemoryDocument.updated_at.desc())
+                        .limit(200)
+                        .all()
+                    )
+            else:
+                agent_rows = (
+                    db.query(OpenClawMemoryDocument)
+                    .filter(
+                        OpenClawMemoryDocument.target_user_id == parent.id,
+                        OpenClawMemoryDocument.installation_id == _AGENT_MEMORY_INSTALLATION_ID,
+                        OpenClawMemoryDocument.origin == "agent_memory",
+                        OpenClawMemoryDocument.status == "active",
+                    )
+                    .order_by(OpenClawMemoryDocument.updated_at.desc())
+                    .limit(200)
+                    .all()
+                )
     docs = sorted([*rows, *agent_rows], key=lambda r: r.updated_at or r.created_at, reverse=True)
     return {
         "ok": True,

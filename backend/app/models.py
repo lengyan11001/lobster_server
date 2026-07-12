@@ -1001,6 +1001,44 @@ class H5WorkflowTemplateGrant(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class H5AgentTemplateGrant(Base):
+    """Agent grants an IP content template to a direct sub-user."""
+
+    __tablename__ = "h5_agent_template_grants"
+    __table_args__ = (
+        UniqueConstraint("template_id", "target_user_id", name="uq_h5_agent_template_grant_template_target"),
+        Index("ix_h5_agent_template_grants_target_status", "target_user_id", "status"),
+        Index("ix_h5_agent_template_grants_owner_target", "owner_user_id", "target_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    template_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    target_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class H5AgentMemoryGrant(Base):
+    """Agent grants a memory document to a direct sub-user."""
+
+    __tablename__ = "h5_agent_memory_grants"
+    __table_args__ = (
+        UniqueConstraint("memory_doc_id", "target_user_id", name="uq_h5_agent_memory_grant_doc_target"),
+        Index("ix_h5_agent_memory_grants_target_status", "target_user_id", "status"),
+        Index("ix_h5_agent_memory_grants_owner_target", "owner_user_id", "target_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    memory_doc_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    target_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class H5WorkflowActivation(Base):
     """某台设备当前启用的工作流模板及其创建出的定时任务。"""
 

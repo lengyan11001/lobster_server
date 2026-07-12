@@ -59,8 +59,25 @@
       workflowEditingTemplateId: "",
       workflowActive: null,
       workflowSubUsers: [],
+      workflowSubUserTotal: 0,
+      workflowSubUserOffset: 0,
+      workflowSubUserLimit: 10,
+      workflowSubUserQuery: "",
       workflowGrantTemplateId: "",
+      workflowGrantSelectedUserIds: {},
       workflowSubmitting: false,
+      agentUsers: [],
+      agentUsersTotal: 0,
+      agentUsersOffset: 0,
+      agentUsersLimit: 10,
+      agentUsersQuery: "",
+      agentSelectedUserId: "",
+      agentResources: { workflow_templates: [], ip_templates: [], memory_docs: [] },
+      agentGrantWorkflow: {},
+      agentGrantIpTemplates: {},
+      agentGrantMemories: {},
+      agentPendingIpTemplateId: "",
+      agentLoading: false,
       tikhubRecords: [],
       leadCenterDomain: "public",
       leadCenterPlatform: "all",
@@ -1767,12 +1784,24 @@
       const templateId = String(state.workflowGrantTemplateId || "");
       panel.classList.toggle("hidden", !templateId);
       if (!templateId) return;
-      const tpl = (state.workflowTemplates || []).find((item) => String(item.id) === templateId);
-      const granted = new Set(((tpl && tpl.granted_user_ids) || []).map((id) => String(id)));
       const rows = state.workflowSubUsers || [];
+      const checkedMap = state.workflowGrantSelectedUserIds || {};
       list.innerHTML = rows.length
-        ? rows.map((user) => `<label class="workflow-sub-user"><input type="checkbox" value="${escapeHtml(user.id)}" ${granted.has(String(user.id)) ? "checked" : ""}>${escapeHtml(user.email || `用户${user.id}`)}</label>`).join("")
+        ? rows.map((user) => `<label class="workflow-sub-user"><input type="checkbox" value="${escapeHtml(user.id)}" ${checkedMap[String(user.id)] ? "checked" : ""}><span>${escapeHtml(user.email || `用户${user.id}`)}</span></label>`).join("")
         : `<div class="hint">暂无下级用户</div>`;
+      const pageText = $("workflowGrantPageText");
+      if (pageText) {
+        const start = state.workflowSubUserTotal ? state.workflowSubUserOffset + 1 : 0;
+        const end = Math.min(state.workflowSubUserOffset + rows.length, state.workflowSubUserTotal);
+        pageText.textContent = `${start}-${end} / ${state.workflowSubUserTotal || 0}`;
+      }
+      const prev = $("workflowGrantPrevBtn");
+      const next = $("workflowGrantNextBtn");
+      if (prev) prev.disabled = state.workflowSubUserOffset <= 0;
+      if (next) next.disabled = state.workflowSubUserOffset + state.workflowSubUserLimit >= state.workflowSubUserTotal;
+      list.querySelectorAll("input[type='checkbox']").forEach((input) => {
+        input.onchange = () => { state.workflowGrantSelectedUserIds[String(input.value || "")] = !!input.checked; };
+      });
     }
 
     function renderWorkflow() {
@@ -1828,9 +1857,16 @@
       renderWorkflow();
     }
 
-    async function loadWorkflowSubUsers() {
-      const data = await api("/api/h5-workflows/agent/sub-users");
-      state.workflowSubUsers = Array.isArray(data.sub_users) ? data.sub_users : [];
+    async function loadWorkflowSubUsers(reset = false) {
+      if (reset) state.workflowSubUserOffset = 0;
+      const params = new URLSearchParams({
+        q: state.workflowSubUserQuery || "",
+        limit: String(state.workflowSubUserLimit || 10),
+        offset: String(state.workflowSubUserOffset || 0),
+      });
+      const data = await api(`/api/h5-agent/sub-users?${params.toString()}`);
+      state.workflowSubUsers = Array.isArray(data.items) ? data.items : [];
+      state.workflowSubUserTotal = Number(data.total || 0);
       renderWorkflowGrantPanel();
     }
 
@@ -1893,12 +1929,203 @@
     async function saveWorkflowGrant() {
       const templateId = String(state.workflowGrantTemplateId || "");
       if (!templateId) return;
-      const ids = Array.from(document.querySelectorAll("#workflowSubUserList input:checked")).map((input) => Number(input.value)).filter(Boolean);
+      const ids = Object.keys(state.workflowGrantSelectedUserIds || {}).filter((id) => state.workflowGrantSelectedUserIds[id]).map((id) => Number(id)).filter(Boolean);
       await api(`/api/h5-workflows/templates/${encodeURIComponent(templateId)}/grants`, { method: "POST", json: { target_user_ids: ids } });
       state.workflowGrantTemplateId = "";
       state.workflowTemplatesLoaded = false;
       await loadWorkflowTemplates(true);
       toast("授权已保存");
+    }
+
+    function canManageAgent() {
+      return !!(state.user && state.user.is_agent);
+    }
+
+    function syncAgentManageEntry() {
+      const btn = $("personalAgentManageBtn");
+      if (!btn) return;
+      btn.classList.toggle("hidden", !canManageAgent());
+      btn.disabled = !canManageAgent();
+    }
+
+    function agentResourceLabel(row, fallback) {
+      return String((row && (row.name || row.title || row.filename || row.email)) || fallback || "").trim();
+    }
+
+    function agentResourceMeta(row, kind) {
+      if (!row) return "";
+      if (kind === "workflow") {
+        const count = Array.isArray(row.nodes) ? row.nodes.length : 0;
+        return `${count} 个节点`;
+      }
+      if (kind === "ip") {
+        const k = Array.isArray(row.keyword_ids) ? row.keyword_ids.length : 0;
+        const c = Array.isArray(row.competitor_ids) ? row.competitor_ids.length : 0;
+        return `关键词 ${k} · 同行 ${c}`;
+      }
+      return row.source === "agent" ? "代理商记忆" : (row.filename || "");
+    }
+
+    function agentGrantMap(kind) {
+      if (kind === "workflow") return state.agentGrantWorkflow;
+      if (kind === "ip") return state.agentGrantIpTemplates;
+      return state.agentGrantMemories;
+    }
+
+    function renderAgentResourceList(targetId, rows, kind) {
+      const box = $(targetId);
+      if (!box) return;
+      const map = agentGrantMap(kind);
+      if (!rows.length) {
+        box.innerHTML = `<div class="personal-empty">暂无</div>`;
+        return;
+      }
+      box.innerHTML = rows.map((row) => {
+        const id = kind === "memory" ? personalDocId(row) : String(row.id || "");
+        const title = agentResourceLabel(row, kind === "memory" ? "记忆文档" : "模板");
+        const meta = agentResourceMeta(row, kind);
+        return `<label class="agent-resource-row">
+          <input type="checkbox" data-agent-grant="${escapeHtml(kind)}" value="${escapeHtml(id)}"${map[String(id)] ? " checked" : ""}>
+          <span class="agent-resource-main">
+            <strong>${escapeHtml(title)}</strong>
+            <span>${escapeHtml(meta)}</span>
+          </span>
+        </label>`;
+      }).join("");
+      box.querySelectorAll("[data-agent-grant]").forEach((input) => {
+        input.onchange = () => { agentGrantMap(input.dataset.agentGrant || "")[String(input.value || "")] = !!input.checked; };
+      });
+    }
+
+    function renderAgentUsers() {
+      const list = $("agentUserList");
+      if (!list) return;
+      const rows = state.agentUsers || [];
+      if (state.agentLoading && !rows.length) {
+        list.innerHTML = `<div class="personal-empty">加载中</div>`;
+      } else if (!rows.length) {
+        list.innerHTML = `<div class="personal-empty">暂无下级</div>`;
+      } else {
+        list.innerHTML = rows.map((user) => {
+          const id = String(user.id || "");
+          return `<label class="agent-user-row${id === String(state.agentSelectedUserId || "") ? " active" : ""}">
+            <input type="radio" name="agentUserPick" value="${escapeHtml(id)}"${id === String(state.agentSelectedUserId || "") ? " checked" : ""}>
+            <span class="agent-user-main">
+              <strong>${escapeHtml(user.email || `用户${id}`)}</strong>
+              <span>ID ${escapeHtml(id)} · 积分 ${escapeHtml(String(user.credits ?? ""))}</span>
+            </span>
+          </label>`;
+        }).join("");
+      }
+      list.querySelectorAll("input[name='agentUserPick']").forEach((input) => {
+        input.onchange = () => selectAgentUser(input.value).catch((err) => toast(err.message || "读取授权失败"));
+      });
+      const pageText = $("agentUserPageText");
+      if (pageText) {
+        const start = state.agentUsersTotal ? state.agentUsersOffset + 1 : 0;
+        const end = Math.min(state.agentUsersOffset + rows.length, state.agentUsersTotal);
+        pageText.textContent = `${start}-${end} / ${state.agentUsersTotal || 0}`;
+      }
+      if ($("agentUserPrevBtn")) $("agentUserPrevBtn").disabled = state.agentUsersOffset <= 0;
+      if ($("agentUserNextBtn")) $("agentUserNextBtn").disabled = state.agentUsersOffset + state.agentUsersLimit >= state.agentUsersTotal;
+    }
+
+    function renderAgentManage() {
+      syncAgentManageEntry();
+      renderAgentUsers();
+      const selected = (state.agentUsers || []).find((user) => String(user.id || "") === String(state.agentSelectedUserId || ""));
+      if ($("agentSelectedUserText")) $("agentSelectedUserText").textContent = selected ? (selected.email || `用户${selected.id}`) : "请选择下级";
+      if ($("agentSaveGrantBtn")) $("agentSaveGrantBtn").disabled = !state.agentSelectedUserId || state.agentLoading;
+      const res = state.agentResources || {};
+      renderAgentResourceList("agentWorkflowGrantList", Array.isArray(res.workflow_templates) ? res.workflow_templates : [], "workflow");
+      renderAgentResourceList("agentIpTemplateGrantList", Array.isArray(res.ip_templates) ? res.ip_templates : [], "ip");
+      renderAgentResourceList("agentMemoryGrantList", Array.isArray(res.memory_docs) ? res.memory_docs : [], "memory");
+    }
+
+    async function loadAgentResources() {
+      if (!canManageAgent()) return;
+      const data = await api("/api/h5-agent/resources");
+      state.agentResources = {
+        workflow_templates: Array.isArray(data.workflow_templates) ? data.workflow_templates : [],
+        ip_templates: Array.isArray(data.ip_templates) ? data.ip_templates : [],
+        memory_docs: Array.isArray(data.memory_docs) ? data.memory_docs : [],
+      };
+      renderAgentManage();
+    }
+
+    async function loadAgentUsers(reset = false) {
+      if (!canManageAgent()) return;
+      if (reset) state.agentUsersOffset = 0;
+      state.agentLoading = true;
+      renderAgentManage();
+      try {
+        const params = new URLSearchParams({
+          q: state.agentUsersQuery || "",
+          limit: String(state.agentUsersLimit || 10),
+          offset: String(state.agentUsersOffset || 0),
+        });
+        const data = await api(`/api/h5-agent/sub-users?${params.toString()}`);
+        state.agentUsers = Array.isArray(data.items) ? data.items : [];
+        state.agentUsersTotal = Number(data.total || 0);
+        if (!state.agentSelectedUserId && state.agentUsers.length) {
+          state.agentSelectedUserId = String(state.agentUsers[0].id || "");
+          await loadAgentUserGrants(state.agentSelectedUserId);
+        }
+      } finally {
+        state.agentLoading = false;
+        renderAgentManage();
+      }
+    }
+
+    async function loadAgentUserGrants(userId) {
+      if (!userId) return;
+      const data = await api(`/api/h5-agent/sub-users/${encodeURIComponent(userId)}/grants`);
+      state.agentGrantWorkflow = {};
+      state.agentGrantIpTemplates = {};
+      state.agentGrantMemories = {};
+      (data.workflow_template_ids || []).forEach((id) => { state.agentGrantWorkflow[String(id)] = true; });
+      (data.ip_template_ids || []).forEach((id) => { state.agentGrantIpTemplates[String(id)] = true; });
+      (data.memory_doc_ids || []).forEach((id) => { state.agentGrantMemories[String(id)] = true; });
+      if (state.agentPendingIpTemplateId) {
+        state.agentGrantIpTemplates[String(state.agentPendingIpTemplateId)] = true;
+      }
+      renderAgentManage();
+    }
+
+    async function selectAgentUser(userId) {
+      state.agentSelectedUserId = String(userId || "");
+      await loadAgentUserGrants(state.agentSelectedUserId);
+    }
+
+    async function openAgentManage(options = {}) {
+      if (!canManageAgent()) {
+        toast("仅代理商可用");
+        return;
+      }
+      if (options.ipTemplateId) state.agentPendingIpTemplateId = String(options.ipTemplateId);
+      switchTab("agentManage");
+      await Promise.all([loadAgentResources(), loadAgentUsers(!state.agentUsers.length)]);
+      if (state.agentSelectedUserId) await loadAgentUserGrants(state.agentSelectedUserId);
+    }
+
+    async function saveAgentGrants(btn) {
+      const userId = String(state.agentSelectedUserId || "");
+      if (!userId) throw new Error("请选择下级");
+      personalSetBusy(btn, true, "保存中...");
+      try {
+        const payload = {
+          workflow_template_ids: Object.keys(state.agentGrantWorkflow || {}).filter((id) => state.agentGrantWorkflow[id]).map(Number).filter(Boolean),
+          ip_template_ids: Object.keys(state.agentGrantIpTemplates || {}).filter((id) => state.agentGrantIpTemplates[id]).map(Number).filter(Boolean),
+          memory_doc_ids: Object.keys(state.agentGrantMemories || {}).filter((id) => state.agentGrantMemories[id]),
+        };
+        await api(`/api/h5-agent/sub-users/${encodeURIComponent(userId)}/grants`, { method: "POST", json: payload });
+        state.agentPendingIpTemplateId = "";
+        state.workflowTemplatesLoaded = false;
+        state.ipTemplatesLoaded = false;
+        toast("授权已保存");
+      } finally {
+        personalSetBusy(btn, false);
+      }
     }
 
     function abilityIsActionable(node) {
@@ -4112,6 +4339,7 @@
         secretary: ["老板驾驶舱", "今日交付、趋势和风险"],
         home: ["安排工作", "远程任务、消息和执行记录"],
         workflow: ["工作流", "24小时任务编排"],
+        agentManage: ["代理商管理", ""],
         workList: ["工作列表", "已完成、当前和待执行的工作节点"],
         assetLibrary: ["素材库", ""],
         leadCenter: ["客资线索", ""],
@@ -4150,6 +4378,10 @@
           loadWorkflowTemplates().catch(() => {}),
           loadWorkflowActive().catch(() => {}),
         ]).then(renderWorkflow);
+      }
+      if (key === "agentManage") {
+        renderAgentManage();
+        Promise.all([loadAgentResources().catch(() => {}), loadAgentUsers(!state.agentUsers.length).catch(() => {})]).then(renderAgentManage);
       }
       if (key === "assetLibrary") refreshAssetLibrary();
       if (key === "leadCenter") loadLeadCenterData();
@@ -4897,6 +5129,7 @@
         $("profileName").textContent = name;
         $("avatarMini").textContent = firstChar(name);
         $("profileAvatar").textContent = firstChar(name);
+        syncAgentManageEntry();
         $("loginPanel").classList.add("hidden");
         $("appPanel").classList.remove("hidden");
         switchTab("office");
@@ -5505,11 +5738,12 @@
       const select = $("personalTargetMemorySelect");
       if (!select) return;
       const current = select.value || "";
-      select.innerHTML = `<option value="">选择已有文档</option>` + state.personalMemoryDocs.map((doc) => {
+      const editableDocs = state.personalMemoryDocs.filter((doc) => !doc.read_only && doc.source !== "agent");
+      select.innerHTML = `<option value="">选择已有文档</option>` + editableDocs.map((doc) => {
         const id = personalDocId(doc);
         return `<option value="${escapeHtml(id)}">${escapeHtml(personalMemoryTitle(doc))}</option>`;
       }).join("");
-      if (current && state.personalMemoryDocs.some((doc) => personalDocId(doc) === current)) select.value = current;
+      if (current && editableDocs.some((doc) => personalDocId(doc) === current)) select.value = current;
       syncPersonalSaveMode();
     }
 
@@ -5555,21 +5789,28 @@
       const editingId = String(state.personalEditingTemplateId || "");
       list.innerHTML = rows.map((row) => {
         const id = String(row.id || "");
+        const own = row.source !== "agent";
         const keywordCount = Array.isArray(row.keyword_ids) ? row.keyword_ids.length : 0;
         const competitorCount = Array.isArray(row.competitor_ids) ? row.competitor_ids.length : 0;
         const memoryCount = Array.isArray(row.memory_doc_ids) ? row.memory_doc_ids.length : 0;
         const active = id && id === editingId ? " active" : "";
+        const source = row.source === "agent" ? `代理商：${row.owner_name || ""}` : `关键词 ${keywordCount} · 同行 ${competitorCount} · 记忆 ${memoryCount}`;
+        const grantBtn = own && canManageAgent() ? `<button type="button" data-agent-dispatch-template="${escapeHtml(id)}">下发</button>` : "";
         return `<div class="personal-template-card${active}">
           <div>
             <strong>${escapeHtml(personalTemplateName(row))}</strong>
-            <div class="personal-template-meta">关键词 ${keywordCount} · 同行 ${competitorCount} · 记忆 ${memoryCount}</div>
+            <div class="personal-template-meta">${escapeHtml(source)}</div>
           </div>
-          <button type="button" data-edit-personal-template="${escapeHtml(id)}">编辑</button>
+          <div class="personal-row-actions">
+            <button type="button" data-edit-personal-template="${escapeHtml(id)}">${own ? "编辑" : "套用"}</button>
+            ${grantBtn}
+          </div>
         </div>`;
       }).join("");
     }
 
     function renderPersonalSettings() {
+      syncAgentManageEntry();
       setPersonalSettingsTab(state.personalSettingsTab);
       const tpl = $("personalTemplateList");
       if (tpl) {
@@ -5600,11 +5841,13 @@
         mem.innerHTML = state.personalMemoryDocs.length
           ? state.personalMemoryDocs.map((doc) => {
               const id = personalDocId(doc);
+              const readOnly = !!doc.read_only || doc.source === "agent";
+              const tag = readOnly ? "代理商" : "个人";
               return `<div class="personal-row personal-memory-row">
-                <span>${escapeHtml(personalMemoryTitle(doc))}</span>
+                <span>${escapeHtml(personalMemoryTitle(doc))} · ${escapeHtml(tag)}</span>
                 <div class="personal-row-actions">
                   <button type="button" data-preview-personal-memory="${escapeHtml(id)}">预览</button>
-                  <button type="button" data-delete-personal-memory="${escapeHtml(id)}">删除</button>
+                  ${readOnly ? "" : `<button type="button" data-delete-personal-memory="${escapeHtml(id)}">删除</button>`}
                 </div>
               </div>`;
             }).join("")
@@ -9121,6 +9364,10 @@
         switchTab("profile");
         return;
       }
+      if (activeId === "agentManageView") {
+        switchTab("personalSettings");
+        return;
+      }
       switchTab("office");
     });
     $("departmentSkillGrid")?.addEventListener("click", (evt) => {
@@ -9299,13 +9546,38 @@
       }
       if (grantBtn) {
         state.workflowGrantTemplateId = grantBtn.dataset.workflowGrant || "";
+        const tpl = (state.workflowTemplates || []).find((item) => String(item.id) === String(state.workflowGrantTemplateId));
+        state.workflowGrantSelectedUserIds = {};
+        ((tpl && tpl.granted_user_ids) || []).forEach((id) => { state.workflowGrantSelectedUserIds[String(id)] = true; });
+        state.workflowSubUserQuery = "";
+        state.workflowSubUserOffset = 0;
+        if ($("workflowGrantSearchInput")) $("workflowGrantSearchInput").value = "";
         renderWorkflowGrantPanel();
-        loadWorkflowSubUsers().catch((err) => toast(err.message || "下级用户加载失败"));
+        loadWorkflowSubUsers(true).catch((err) => toast(err.message || "下级用户加载失败"));
       }
     });
     $("workflowGrantCancelBtn")?.addEventListener("click", () => {
       state.workflowGrantTemplateId = "";
+      state.workflowGrantSelectedUserIds = {};
       renderWorkflowGrantPanel();
+    });
+    $("workflowGrantSearchBtn")?.addEventListener("click", () => {
+      state.workflowSubUserQuery = (($("workflowGrantSearchInput") && $("workflowGrantSearchInput").value) || "").trim();
+      loadWorkflowSubUsers(true).catch((err) => toast(err.message || "搜索失败"));
+    });
+    $("workflowGrantSearchInput")?.addEventListener("keydown", (evt) => {
+      if (evt.key !== "Enter") return;
+      state.workflowSubUserQuery = (($("workflowGrantSearchInput") && $("workflowGrantSearchInput").value) || "").trim();
+      loadWorkflowSubUsers(true).catch((err) => toast(err.message || "搜索失败"));
+    });
+    $("workflowGrantPrevBtn")?.addEventListener("click", () => {
+      state.workflowSubUserOffset = Math.max(0, state.workflowSubUserOffset - state.workflowSubUserLimit);
+      loadWorkflowSubUsers().catch((err) => toast(err.message || "加载失败"));
+    });
+    $("workflowGrantNextBtn")?.addEventListener("click", () => {
+      if (state.workflowSubUserOffset + state.workflowSubUserLimit >= state.workflowSubUserTotal) return;
+      state.workflowSubUserOffset += state.workflowSubUserLimit;
+      loadWorkflowSubUsers().catch((err) => toast(err.message || "加载失败"));
     });
     $("workflowGrantSaveBtn")?.addEventListener("click", () => saveWorkflowGrant().catch((err) => toast(err.message || "授权失败")));
     $("leadDomainTabs")?.addEventListener("click", (evt) => {
@@ -9372,6 +9644,7 @@
       if (btn) setPersonalSettingsTab(btn.dataset.personalTab || "template");
     });
     $("personalSettingsRefreshBtn")?.addEventListener("click", () => loadPersonalSettings(true));
+    $("personalAgentManageBtn")?.addEventListener("click", () => openAgentManage().catch((err) => toast(err.message || "打开失败")));
     $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().catch((err) => toast(err.message || "保存失败")));
     $("personalNewTemplateBtn")?.addEventListener("click", resetPersonalTemplateForm);
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
@@ -9395,11 +9668,16 @@
       const previewMemoryBtn = evt.target.closest("[data-preview-personal-memory]");
       const deleteMemoryBtn = evt.target.closest("[data-delete-personal-memory]");
       const editTemplateBtn = evt.target.closest("[data-edit-personal-template]");
+      const dispatchTemplateBtn = evt.target.closest("[data-agent-dispatch-template]");
       try {
+        if (dispatchTemplateBtn) {
+          await openAgentManage({ ipTemplateId: dispatchTemplateBtn.dataset.agentDispatchTemplate || "" });
+          return;
+        }
         if (editTemplateBtn) {
           const row = (state.personalTemplates || []).find((item) => String(item.id || "") === String(editTemplateBtn.dataset.editPersonalTemplate || ""));
           if (row) {
-            applyPersonalTemplate(row, { editing: true });
+            applyPersonalTemplate(row, { editing: row.source !== "agent" });
             renderPersonalSettings();
           }
           return;
@@ -9439,6 +9717,27 @@
         personalSetStatus(err.message || "操作失败", true);
       }
     });
+    $("agentUserSearchBtn")?.addEventListener("click", () => {
+      state.agentUsersQuery = (($("agentUserSearchInput") && $("agentUserSearchInput").value) || "").trim();
+      state.agentSelectedUserId = "";
+      loadAgentUsers(true).catch((err) => toast(err.message || "搜索失败"));
+    });
+    $("agentUserSearchInput")?.addEventListener("keydown", (evt) => {
+      if (evt.key !== "Enter") return;
+      state.agentUsersQuery = (($("agentUserSearchInput") && $("agentUserSearchInput").value) || "").trim();
+      state.agentSelectedUserId = "";
+      loadAgentUsers(true).catch((err) => toast(err.message || "搜索失败"));
+    });
+    $("agentUserPrevBtn")?.addEventListener("click", () => {
+      state.agentUsersOffset = Math.max(0, state.agentUsersOffset - state.agentUsersLimit);
+      loadAgentUsers().catch((err) => toast(err.message || "加载失败"));
+    });
+    $("agentUserNextBtn")?.addEventListener("click", () => {
+      if (state.agentUsersOffset + state.agentUsersLimit >= state.agentUsersTotal) return;
+      state.agentUsersOffset += state.agentUsersLimit;
+      loadAgentUsers().catch((err) => toast(err.message || "加载失败"));
+    });
+    $("agentSaveGrantBtn")?.addEventListener("click", (evt) => saveAgentGrants(evt.currentTarget).catch((err) => toast(err.message || "授权失败")));
     $("installIosWebclipBtn").addEventListener("click", installIosWebclip);
     $("refreshTasksBtn").addEventListener("click", () => loadTasks({ reset: true }));
     $("refreshRunsBtn").addEventListener("click", () => loadRuns({ reset: true }));

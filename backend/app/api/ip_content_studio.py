@@ -25,7 +25,7 @@ from .auth import access_token_claims, create_access_token, get_current_user
 from .mobile_identity import online_user_for_mobile_user
 from ..core.config import settings
 from ..db import get_db
-from ..models import ContentCompetitorAccount, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, TikHubQueryLog, TikHubSourceItem, User
+from ..models import ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 
@@ -2459,12 +2459,20 @@ def _memory_doc_ids_from_docs(docs: Any, limit: int = 30) -> list[str]:
     return _clean_memory_doc_ids(raw_ids, limit)
 
 
-def _template_payload(row: IPContentScheduleTemplate) -> dict[str, Any]:
+def _template_payload(
+    row: IPContentScheduleTemplate,
+    *,
+    owner: Optional[User] = None,
+    source: str = "own",
+    grants: Optional[list[int]] = None,
+) -> dict[str, Any]:
     memory_docs = row.memory_docs or []
     memory_doc_ids = _clean_memory_doc_ids(row.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
     return {
         "id": row.id,
         "user_id": row.user_id,
+        "owner_user_id": row.user_id,
+        "owner_name": owner.email if owner else "",
         "name": row.name,
         "keyword_ids": _clean_int_ids(row.keyword_ids, 50),
         "competitor_ids": _clean_int_ids(row.competitor_ids, 50),
@@ -2472,6 +2480,8 @@ def _template_payload(row: IPContentScheduleTemplate) -> dict[str, Any]:
         "memory_docs": memory_docs,
         "requirements": row.requirements or {},
         "status": row.status,
+        "source": source,
+        "granted_user_ids": grants or [],
         "meta": row.meta or {},
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -3209,6 +3219,8 @@ async def run_ip_content_daily_scheduled(
     template: Optional[IPContentScheduleTemplate] = None
     keyword_ids = _clean_int_ids(opts.keyword_ids, 50)
     competitor_ids = _clean_int_ids(opts.competitor_ids, 50)
+    keyword_owner_user_id = current_user.id
+    competitor_owner_user_id = current_user.id
     requirements = dict(opts.requirements or {})
     memory_docs_raw = list(opts.memory_docs or [])
 
@@ -3216,29 +3228,44 @@ async def run_ip_content_daily_scheduled(
         template = (
             db.query(IPContentScheduleTemplate)
             .filter(
-                IPContentScheduleTemplate.user_id == current_user.id,
                 IPContentScheduleTemplate.id == int(opts.template_id),
                 IPContentScheduleTemplate.status == "active",
             )
             .first()
         )
+        if template is not None and template.user_id != current_user.id:
+            grant = (
+                db.query(H5AgentTemplateGrant)
+                .filter(
+                    H5AgentTemplateGrant.template_id == template.id,
+                    H5AgentTemplateGrant.owner_user_id == template.user_id,
+                    H5AgentTemplateGrant.target_user_id == current_user.id,
+                    H5AgentTemplateGrant.status == "active",
+                )
+                .first()
+            )
+            if not grant:
+                template = None
         if template is None:
             raise HTTPException(status_code=404, detail="IP 日更模板不存在")
         template_payload = _template_payload(template)
         if not keyword_ids:
             keyword_ids = _clean_int_ids(template.keyword_ids, 50)
+            keyword_owner_user_id = int(template.user_id)
         if not competitor_ids:
             competitor_ids = _clean_int_ids(template.competitor_ids, 50)
+            competitor_owner_user_id = int(template.user_id)
         merged_requirements = dict(template.requirements or {})
         merged_requirements.update({k: v for k, v in requirements.items() if _clean_long_text(v, 1)})
         requirements = merged_requirements
         if not memory_docs_raw:
             memory_docs_raw = list(template.memory_docs or [])
 
-    keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, keyword_ids, competitor_ids)
+    keyword_ids, _ = _validate_template_refs(db, keyword_owner_user_id, keyword_ids, [])
+    _, competitor_ids = _validate_template_refs(db, competitor_owner_user_id, [], competitor_ids)
     keywords = (
         db.query(IPContentKeyword)
-        .filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.status == "active")
+        .filter(IPContentKeyword.user_id == keyword_owner_user_id, IPContentKeyword.status == "active")
         .filter(IPContentKeyword.id.in_(keyword_ids))
         .order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc())
         .all()
@@ -3247,7 +3274,7 @@ async def run_ip_content_daily_scheduled(
     )
     competitors = (
         db.query(ContentCompetitorAccount)
-        .filter(ContentCompetitorAccount.user_id == current_user.id, ContentCompetitorAccount.status == "active")
+        .filter(ContentCompetitorAccount.user_id == competitor_owner_user_id, ContentCompetitorAccount.status == "active")
         .filter(ContentCompetitorAccount.id.in_(competitor_ids))
         .order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc())
         .all()
@@ -3619,7 +3646,47 @@ def list_schedule_templates(
         .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
         .all()
     )
-    return {"items": [_template_payload(row) for row in rows]}
+    grant_map: dict[int, list[int]] = {}
+    if rows and getattr(current_user, "is_agent", False):
+        grants = (
+            db.query(H5AgentTemplateGrant)
+            .filter(
+                H5AgentTemplateGrant.owner_user_id == current_user.id,
+                H5AgentTemplateGrant.template_id.in_([row.id for row in rows]),
+                H5AgentTemplateGrant.status == "active",
+            )
+            .all()
+        )
+        for grant in grants:
+            grant_map.setdefault(int(grant.template_id), []).append(int(grant.target_user_id))
+
+    items = [_template_payload(row, source="own", grants=grant_map.get(int(row.id), [])) for row in rows]
+
+    granted = (
+        db.query(H5AgentTemplateGrant)
+        .filter(H5AgentTemplateGrant.target_user_id == current_user.id, H5AgentTemplateGrant.status == "active")
+        .all()
+    )
+    granted_ids = [int(grant.template_id) for grant in granted if int(grant.template_id or 0) > 0]
+    own_ids = {int(row.id) for row in rows}
+    if granted_ids:
+        granted_rows = (
+            db.query(IPContentScheduleTemplate)
+            .filter(
+                IPContentScheduleTemplate.id.in_(granted_ids),
+                IPContentScheduleTemplate.status == "active",
+            )
+            .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+            .all()
+        )
+        owner_ids = {int(row.user_id) for row in granted_rows}
+        owners = {row.id: row for row in db.query(User).filter(User.id.in_(owner_ids)).all()} if owner_ids else {}
+        items.extend(
+            _template_payload(row, owner=owners.get(row.user_id), source="agent")
+            for row in granted_rows
+            if int(row.id) not in own_ids
+        )
+    return {"items": items}
 
 
 @router.get("/api/ip-content/personal-default", summary="读取用户个人默认 IP 日更配置")

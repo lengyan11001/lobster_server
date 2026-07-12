@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260712-h5-workflow-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260712-agent-manage-1" />
 </head>
 <body>
   <main class="shell">
@@ -215,7 +215,16 @@
             <div class="workflow-template-list" id="workflowTemplateList"></div>
             <div class="workflow-grant-panel hidden" id="workflowGrantPanel">
               <strong>授权下级</strong>
+              <div class="workflow-grant-search">
+                <input id="workflowGrantSearchInput" type="text" placeholder="搜索下级">
+                <button type="button" id="workflowGrantSearchBtn">搜索</button>
+              </div>
               <div class="workflow-sub-user-list" id="workflowSubUserList"></div>
+              <div class="workflow-grant-pager">
+                <button class="ghost" type="button" id="workflowGrantPrevBtn">上一页</button>
+                <span id="workflowGrantPageText">0 / 0</span>
+                <button class="ghost" type="button" id="workflowGrantNextBtn">下一页</button>
+              </div>
               <div class="workflow-grant-actions">
                 <button class="ghost" type="button" id="workflowGrantCancelBtn">取消</button>
                 <button type="button" id="workflowGrantSaveBtn">保存授权</button>
@@ -677,6 +686,7 @@
             <h2>个人设置</h2>
             <div class="section-actions">
               <button class="ghost icon-help" type="button" id="personalTemplateHelpBtn" aria-label="模板配置帮助">?</button>
+              <button class="ghost hidden" type="button" id="personalAgentManageBtn">代理商管理</button>
               <button class="ghost" type="button" id="personalSettingsRefreshBtn">刷新</button>
             </div>
           </div>
@@ -806,6 +816,48 @@
             <div class="personal-block">
               <strong>内容预览</strong>
               <pre class="personal-memory-preview" id="personalMemoryPreview">点击预览查看内容。</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="agentManageView">
+        <div class="panel list-page agent-manage-page">
+          <div class="agent-manage-layout">
+            <div class="agent-card">
+              <div class="agent-card-head">
+                <strong>下级用户</strong>
+              </div>
+              <div class="agent-search">
+                <input id="agentUserSearchInput" type="text" placeholder="搜索账号或ID">
+                <button type="button" id="agentUserSearchBtn">搜索</button>
+              </div>
+              <div class="agent-user-list" id="agentUserList"></div>
+              <div class="agent-pager">
+                <button class="ghost" type="button" id="agentUserPrevBtn">上一页</button>
+                <span id="agentUserPageText">0 / 0</span>
+                <button class="ghost" type="button" id="agentUserNextBtn">下一页</button>
+              </div>
+            </div>
+            <div class="agent-card agent-grant-card">
+              <div class="agent-card-head">
+                <strong id="agentSelectedUserText">请选择下级</strong>
+                <button type="button" id="agentSaveGrantBtn">保存授权</button>
+              </div>
+              <div class="agent-grant-grid">
+                <section>
+                  <h3>工作流模板</h3>
+                  <div class="agent-resource-list" id="agentWorkflowGrantList"></div>
+                </section>
+                <section>
+                  <h3>个人模板</h3>
+                  <div class="agent-resource-list" id="agentIpTemplateGrantList"></div>
+                </section>
+                <section>
+                  <h3>记忆文档</h3>
+                  <div class="agent-resource-list" id="agentMemoryGrantList"></div>
+                </section>
+              </div>
             </div>
           </div>
         </div>
@@ -1037,6 +1089,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260712-h5-workflow-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260712-agent-manage-1"></script>
 </body>
 </html>

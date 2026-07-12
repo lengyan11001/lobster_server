@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import OpenClawMemoryDocument, User
+from ..models import H5AgentMemoryGrant, OpenClawMemoryDocument, User
 from .auth import get_current_user
 from .installation_slots import ensure_installation_slot, optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
@@ -108,6 +108,62 @@ def _memory_row(db: Session, user_id: int, installation_id: str, doc_id: str) ->
     if not row:
         raise HTTPException(status_code=404, detail="记忆文件不存在。")
     return row
+
+
+def _agent_granted_memory_rows(db: Session, target_user: User, doc_ids: Optional[list[str]] = None) -> list[OpenClawMemoryDocument]:
+    parent_id = int(getattr(target_user, "parent_user_id", 0) or 0)
+    if not parent_id:
+        return []
+    parent = db.query(User).filter(User.id == parent_id, User.is_agent == True).first()  # noqa: E712
+    if not parent:
+        return []
+    grant_query = db.query(H5AgentMemoryGrant).filter(
+        H5AgentMemoryGrant.owner_user_id == parent.id,
+        H5AgentMemoryGrant.target_user_id == target_user.id,
+        H5AgentMemoryGrant.status == "active",
+    )
+    if doc_ids:
+        grant_query = grant_query.filter(H5AgentMemoryGrant.memory_doc_id.in_(doc_ids))
+    granted_ids = [str(row.memory_doc_id or "") for row in grant_query.all() if str(row.memory_doc_id or "").strip()]
+    if not granted_ids:
+        return []
+    return (
+        db.query(OpenClawMemoryDocument)
+        .filter(
+            OpenClawMemoryDocument.target_user_id == parent.id,
+            OpenClawMemoryDocument.doc_id.in_(granted_ids),
+            OpenClawMemoryDocument.status == "active",
+        )
+        .order_by(OpenClawMemoryDocument.updated_at.desc(), OpenClawMemoryDocument.id.desc())
+        .all()
+    )
+
+
+def _memory_summary(row: OpenClawMemoryDocument, *, include_content: bool, source: str) -> dict[str, Any]:
+    data = _doc_summary(row, include_content=include_content)
+    data["source"] = source
+    data["read_only"] = source != "own"
+    if source != "own":
+        data["memory_layer"] = "agent"
+    return data
+
+
+def _accessible_memory_row(
+    db: Session,
+    target_user: User,
+    installation_id: str,
+    doc_id: str,
+) -> tuple[OpenClawMemoryDocument, str]:
+    clean = _sanitize_doc_id(doc_id)
+    if not clean:
+        raise HTTPException(status_code=404, detail="记忆文件不存在。")
+    own = _doc_query(db, target_user.id, installation_id).filter(OpenClawMemoryDocument.doc_id == clean).first()
+    if own:
+        return own, "own"
+    for row in _agent_granted_memory_rows(db, target_user, [clean]):
+        if row.doc_id == clean:
+            return row, "agent"
+    raise HTTPException(status_code=404, detail="记忆文件不存在。")
 
 
 def _authorization_headers(request: Request, installation_id: str) -> dict[str, str]:
@@ -537,7 +593,11 @@ async def list_memory_documents(
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
     rows = _doc_query(db, target_user.id, installation_id).order_by(OpenClawMemoryDocument.updated_at.desc()).limit(200).all()
-    return {"ok": True, "documents": [_doc_summary(row, include_content=True) for row in rows]}
+    agent_rows = _agent_granted_memory_rows(db, target_user)
+    documents = [_memory_summary(row, include_content=True, source="own") for row in rows]
+    documents.extend(_memory_summary(row, include_content=True, source="agent") for row in agent_rows)
+    documents.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    return {"ok": True, "documents": documents[:300]}
 
 
 @router.get("/api/personal-settings/memory-documents/{doc_id}/preview")
@@ -549,8 +609,8 @@ async def preview_memory_document(
 ):
     installation_id = _installation_id(request)
     target_user = _owner_user(db, current_user)
-    row = _memory_row(db, target_user.id, installation_id, doc_id)
-    data = _doc_summary(row, include_content=True)
+    row, source = _accessible_memory_row(db, target_user, installation_id, doc_id)
+    data = _memory_summary(row, include_content=True, source=source)
     return {"ok": True, "document": data, "content_text": data.get("content_text") or ""}
 
 
@@ -714,6 +774,8 @@ async def generate_memory_documents(
             .order_by(OpenClawMemoryDocument.updated_at.desc())
             .all()
         )
+        own_ids = {row.doc_id for row in rows}
+        rows.extend(row for row in _agent_granted_memory_rows(db, target_user, ref_ids[:8]) if row.doc_id not in own_ids)
         if rows:
             reference_text = _limit_local(
                 reference_text
