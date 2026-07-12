@@ -834,6 +834,143 @@ def admin_stats(
 # ── 管理员专属：代理商管理 ──
 
 
+@router.get("/admin/api/agents")
+def admin_list_agents(
+    q: str = "",
+    page: int = 1,
+    page_size: int = 20,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    page = max(1, int(page or 1))
+    page_size = min(max(int(page_size or 20), 1), 100)
+    term = (q or "").strip()
+
+    def _apply_term(query):
+        if not term:
+            return query
+        filters = [User.email.ilike(f"%{term}%")]
+        if term.isdigit():
+            id_value = int(term)
+            if 0 < id_value <= 2_147_483_647:
+                filters.append(User.id == id_value)
+        return query.filter(or_(*filters))
+
+    if ctx.role == "admin":
+        base_q = db.query(User).filter(User.is_agent == True)  # noqa: E712
+        base_q = _apply_term(base_q)
+        total = int(base_q.with_entities(func.count(User.id)).scalar() or 0)
+        rows = (
+            base_q.order_by(User.agent_level.asc(), User.created_at.desc(), User.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        agent_ids = [row.id for row in rows]
+        sub_counts = {}
+        if agent_ids:
+            sub_counts = {
+                int(parent_id): int(count)
+                for parent_id, count in (
+                    db.query(User.parent_user_id, func.count(User.id))
+                    .filter(User.parent_user_id.in_(agent_ids))
+                    .group_by(User.parent_user_id)
+                    .all()
+                )
+            }
+        summary = {
+            "total_agents": int(db.query(func.count(User.id)).filter(User.is_agent == True).scalar() or 0),  # noqa: E712
+            "level1_agents": int(
+                db.query(func.count(User.id))
+                .filter(User.is_agent == True, or_(User.agent_level == 1, User.agent_level == 0))  # noqa: E712
+                .scalar()
+                or 0
+            ),
+            "level2_agents": int(
+                db.query(func.count(User.id))
+                .filter(User.is_agent == True, User.agent_level == 2)  # noqa: E712
+                .scalar()
+                or 0
+            ),
+            "sub_users": int(db.query(func.count(User.id)).filter(User.parent_user_id.isnot(None)).scalar() or 0),
+            "memory_enabled": int(
+                db.query(func.count(User.id))
+                .filter(User.is_agent == True, User.agent_openclaw_memory_enabled == True)  # noqa: E712
+                .scalar()
+                or 0
+            ),
+            "task_dispatch_enabled": int(
+                db.query(func.count(User.id))
+                .filter(User.is_agent == True, User.agent_task_dispatch_enabled == True)  # noqa: E712
+                .scalar()
+                or 0
+            ),
+        }
+        items = []
+        for row in rows:
+            payload = _user_public_payload(row)
+            payload["sub_count"] = sub_counts.get(int(row.id), 0)
+            items.append(payload)
+        return {
+            "role": "admin",
+            "summary": summary,
+            "items": items,
+            "pagination": {
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "has_prev": page > 1,
+                "has_next": page * page_size < total,
+            },
+        }
+
+    if ctx.role != "agent" or not ctx.user_id:
+        raise HTTPException(status_code=403, detail="无权访问")
+
+    agent = db.query(User).filter(User.id == ctx.user_id).first()
+    visible_ids = _agent_visible_user_ids(db, int(ctx.user_id))
+    base_q = db.query(User).filter(User.id.in_(visible_ids)) if visible_ids else db.query(User).filter(False)
+    base_q = _apply_term(base_q)
+    total = int(base_q.with_entities(func.count(User.id)).scalar() or 0)
+    rows = (
+        base_q.order_by(User.created_at.desc(), User.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    second_agent_count = (
+        int(
+            db.query(func.count(User.id))
+            .filter(User.id.in_(visible_ids), User.is_agent == True, User.agent_level == 2)  # noqa: E712
+            .scalar()
+            or 0
+        )
+        if visible_ids
+        else 0
+    )
+    summary = {
+        "total_agents": 1 if agent and getattr(agent, "is_agent", False) else 0,
+        "level1_agents": 1 if agent and _agent_level(agent) == 1 else 0,
+        "level2_agents": second_agent_count,
+        "sub_users": len(visible_ids),
+        "memory_enabled": 1 if agent and getattr(agent, "agent_openclaw_memory_enabled", False) else 0,
+        "task_dispatch_enabled": 1 if agent and getattr(agent, "agent_task_dispatch_enabled", False) else 0,
+    }
+    return {
+        "role": "agent",
+        "agent": _user_public_payload(agent) if agent else None,
+        "summary": summary,
+        "items": [_user_public_payload(row) for row in rows],
+        "pagination": {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_prev": page > 1,
+            "has_next": page * page_size < total,
+        },
+    }
+
+
 class SetAgentBody(BaseModel):
     user_id: int
     is_agent: bool
