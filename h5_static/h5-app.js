@@ -4132,7 +4132,7 @@
       const platform = state.leadCenterPlatform || "all";
       const rows = all.filter((row) => row.domain === state.leadCenterDomain)
         .filter((row) => platform === "all" || cleanKey(row.platform) === platform || (platform === "redbook" && cleanKey(row.platform) === "xiaohongshu"));
-      state.leadCenterRows = rows.slice(0, 30);
+      state.leadCenterRows = rows.slice(0, 10);
       if (state.leadCenterLoading) {
         list.innerHTML = Array.from({ length: 6 }).map(() => `<div class="lead-card lead-card-skeleton" aria-hidden="true">
           <i></i><b></b><span></span>
@@ -4161,9 +4161,9 @@
       renderLeadCenter();
       try {
         await Promise.allSettled([
-          loadRuns({ reset: true, limit: 80 }),
-          loadWorkbenchJobs({ limit: 80 }),
-          api("/api/ip-content/tikhub/records?limit=80&offset=0").then((data) => {
+          loadRuns({ reset: true, limit: 10 }),
+          loadWorkbenchJobs({ limit: 10 }),
+          api("/api/ip-content/tikhub/records?limit=10&offset=0").then((data) => {
             state.tikhubRecords = Array.isArray(data.items) ? data.items : [];
           }),
         ]);
