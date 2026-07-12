@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260712-leads-limit-10" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260712-custom-employees-1" />
 </head>
 <body>
   <main class="shell">
@@ -131,6 +131,16 @@
             </div>
           </section>
 
+          <section class="office-section custom-employee-section">
+            <div class="office-section-head">
+              <h2>自定义员工 <span id="customEmployeeTotal">(0)</span></h2>
+              <button type="button" id="customEmployeeMoreBtn">更多</button>
+            </div>
+            <div class="custom-employee-strip" id="customEmployeeStrip">
+              <div class="custom-employee-empty">暂无自定义员工</div>
+            </div>
+          </section>
+
           <section class="office-section">
             <div class="office-section-head">
               <h2>最近任务</h2>
@@ -179,8 +189,8 @@
 
           <div class="workflow-editor-card">
             <div class="workflow-template-name">
-              <label for="workflowTemplateName">模板名称</label>
-              <input id="workflowTemplateName" type="text" maxlength="80" placeholder="24小时员工定制">
+              <label for="workflowTemplateName">员工模板名称</label>
+              <input id="workflowTemplateName" type="text" maxlength="80" placeholder="给这个自定义员工取一个名字">
             </div>
             <div class="workflow-node-form">
               <div class="field">
@@ -1117,6 +1127,20 @@
     </div>
   </div>
 
+  <div class="task-success-dialog hidden" id="customEmployeeDialog" role="dialog" aria-modal="true" aria-labelledby="customEmployeeDialogTitle">
+    <button class="task-success-backdrop" type="button" id="customEmployeeBackdrop" aria-label="关闭"></button>
+    <div class="task-success-panel detail-modal-panel custom-employee-panel">
+      <div class="detail-modal-head">
+        <div>
+          <div class="task-success-kicker">CUSTOM STAFF</div>
+          <h3 id="customEmployeeDialogTitle">自定义员工</h3>
+        </div>
+        <button class="ghost" type="button" id="customEmployeeCloseBtn">关闭</button>
+      </div>
+      <div id="customEmployeeDialogBody" class="custom-employee-dialog-body"></div>
+    </div>
+  </div>
+
   <div class="task-success-dialog hidden" id="taskSuccessDialog" role="dialog" aria-modal="true" aria-labelledby="taskSuccessTitle">
     <button class="task-success-backdrop" type="button" id="taskSuccessBackdrop" aria-label="关闭"></button>
     <div class="task-success-panel">
@@ -1172,6 +1196,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260712-leads-limit-10"></script>
+  <script src="/h5-static/h5-app.js?v=20260712-custom-employees-1"></script>
 </body>
 </html>

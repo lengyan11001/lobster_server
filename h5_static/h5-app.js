@@ -2559,13 +2559,143 @@
             <span>${escapeHtml(tpl.source === "granted" ? `来自 ${tpl.owner_name || "代理商"}` : `${nodeCount} 个节点`)}</span>
           </div>
           <div class="workflow-template-actions">
-            <button type="button" data-workflow-load="${tpl.id}">编辑</button>
+            <button type="button" data-workflow-load="${tpl.id}">${own ? "编辑" : "套用"}</button>
             <button type="button" data-workflow-activate-template="${tpl.id}">启用</button>
             ${grantBtn}
             ${deleteBtn}
           </div>
         </div>`;
       }).join("");
+    }
+
+    function workflowTemplateRows() {
+      return Array.isArray(state.workflowTemplates) ? state.workflowTemplates : [];
+    }
+
+    function workflowTemplateById(id) {
+      const sid = String(id || "");
+      return workflowTemplateRows().find((tpl) => String(tpl && tpl.id || "") === sid) || null;
+    }
+
+    function workflowTemplateCanEdit(tpl) {
+      return !!tpl && tpl.source === "own";
+    }
+
+    function workflowTemplateNodeCount(tpl) {
+      return Array.isArray(tpl && tpl.nodes) ? tpl.nodes.length : 0;
+    }
+
+    function workflowTemplateSourceText(tpl) {
+      if (!tpl) return "";
+      return tpl.source === "granted" ? `代理商下发${tpl.owner_name ? ` · ${tpl.owner_name}` : ""}` : "自己创建";
+    }
+
+    function workflowTemplateInitial(tpl) {
+      const name = String(tpl && tpl.name || "员").trim();
+      return (name.slice(0, 1) || "员").toUpperCase();
+    }
+
+    function workflowTemplateNodeListHtml(tpl) {
+      const nodes = (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      if (!nodes.length) return `<div class="custom-employee-empty">暂无任务节点</div>`;
+      return `<div class="custom-employee-node-list">${nodes.map((node) => {
+        const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
+        return `<div class="custom-employee-node">
+          <span>${escapeHtml(node.time || "--:--")}</span>
+          <strong>${escapeHtml(node.ability_label || plan.title || "任务节点")}</strong>
+          ${node.note ? `<em>${escapeHtml(node.note)}</em>` : ""}
+        </div>`;
+      }).join("")}</div>`;
+    }
+
+    function customEmployeeCardHtml(tpl, options = {}) {
+      const compact = !!options.compact;
+      const nodeCount = workflowTemplateNodeCount(tpl);
+      const own = workflowTemplateCanEdit(tpl);
+      return `<button class="custom-employee-card${compact ? " compact" : ""}" type="button" data-custom-employee-detail="${escapeHtml(tpl.id || "")}">
+        <span class="custom-employee-avatar">${escapeHtml(workflowTemplateInitial(tpl))}</span>
+        <span class="custom-employee-main">
+          <strong>${escapeHtml(tpl.name || "自定义员工")}</strong>
+          <em>${escapeHtml(nodeCount ? `${nodeCount} 个节点` : "暂无节点")}</em>
+        </span>
+        <b>${own ? "我的" : "授权"}</b>
+      </button>`;
+    }
+
+    function renderCustomEmployees() {
+      const strip = $("customEmployeeStrip");
+      if (!strip) return;
+      const rows = workflowTemplateRows();
+      if ($("customEmployeeTotal")) $("customEmployeeTotal").textContent = `(${rows.length})`;
+      if (state.workflowTemplatesLoading) {
+        strip.innerHTML = `<div class="custom-employee-empty">加载中...</div>`;
+        return;
+      }
+      if (!rows.length) {
+        strip.innerHTML = `<div class="custom-employee-empty">暂无自定义员工</div>`;
+        return;
+      }
+      strip.innerHTML = rows.slice(0, 3).map((tpl) => customEmployeeCardHtml(tpl, { compact: true })).join("");
+    }
+
+    function closeCustomEmployeeDialog() {
+      $("customEmployeeDialog")?.classList.add("hidden");
+    }
+
+    function openCustomEmployeeList() {
+      const modal = $("customEmployeeDialog");
+      const body = $("customEmployeeDialogBody");
+      const title = $("customEmployeeDialogTitle");
+      if (!modal || !body) return;
+      if (title) title.textContent = "自定义员工";
+      const rows = workflowTemplateRows();
+      body.innerHTML = rows.length
+        ? `<div class="custom-employee-list">${rows.map((tpl) => customEmployeeCardHtml(tpl)).join("")}</div>`
+        : `<div class="custom-employee-empty">暂无自定义员工</div>`;
+      modal.classList.remove("hidden");
+    }
+
+    function openCustomEmployeeDetail(id) {
+      const tpl = workflowTemplateById(id);
+      const modal = $("customEmployeeDialog");
+      const body = $("customEmployeeDialogBody");
+      const title = $("customEmployeeDialogTitle");
+      if (!modal || !body || !tpl) return;
+      const own = workflowTemplateCanEdit(tpl);
+      if (title) title.textContent = tpl.name || "自定义员工";
+      body.innerHTML = `<div class="custom-employee-detail">
+        <div class="custom-employee-detail-head">
+          <span class="custom-employee-avatar large">${escapeHtml(workflowTemplateInitial(tpl))}</span>
+          <div>
+            <strong>${escapeHtml(tpl.name || "自定义员工")}</strong>
+            <em>${escapeHtml(workflowTemplateSourceText(tpl))} · ${escapeHtml(workflowTemplateNodeCount(tpl) + " 个节点")}</em>
+          </div>
+        </div>
+        ${workflowTemplateNodeListHtml(tpl)}
+        <div class="custom-employee-actions">
+          <button class="ghost" type="button" data-custom-employee-list>返回列表</button>
+          ${own ? `<button class="ghost danger-text" type="button" data-custom-employee-delete="${escapeHtml(tpl.id || "")}">删除</button>` : ""}
+          ${own ? `<button type="button" data-custom-employee-edit="${escapeHtml(tpl.id || "")}">编辑</button>` : ""}
+          <button type="button" data-custom-employee-activate="${escapeHtml(tpl.id || "")}">启用</button>
+        </div>
+      </div>`;
+      modal.classList.remove("hidden");
+    }
+
+    async function deleteWorkflowTemplateById(id) {
+      const tpl = workflowTemplateById(id);
+      if (!tpl || !workflowTemplateCanEdit(tpl)) throw new Error("只能删除自己创建的模板");
+      if (!confirm(`删除自定义员工「${tpl.name || "未命名"}」？`)) return;
+      await api(`/api/h5-workflows/templates/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (String(state.workflowEditingTemplateId) === String(id)) {
+        state.workflowEditingTemplateId = "";
+        state.workflowNodesDraft = [];
+        if ($("workflowTemplateName")) $("workflowTemplateName").value = "";
+      }
+      state.workflowTemplatesLoaded = false;
+      await loadWorkflowTemplates(true);
+      toast("模板已删除");
+      openCustomEmployeeList();
     }
 
     function renderWorkflowGrantPanel() {
@@ -2598,7 +2728,6 @@
     function renderWorkflow() {
       renderWorkflowDeviceSelect();
       renderWorkflowAbilitySelect();
-      if ($("workflowTemplateName") && !$("workflowTemplateName").value) $("workflowTemplateName").value = "24小时工作流";
       const active = state.workflowActive;
       if ($("workflowActiveText")) {
         $("workflowActiveText").textContent = active ? `已启用：${active.template_name || "工作流模板"}` : "未启用工作流";
@@ -2614,7 +2743,7 @@
       if (!tpl) return;
       state.workflowEditingTemplateId = tpl.source === "own" ? String(tpl.id || "") : "";
       state.workflowNodesDraft = Array.isArray(tpl.nodes) ? JSON.parse(JSON.stringify(tpl.nodes)) : [];
-      if ($("workflowTemplateName")) $("workflowTemplateName").value = tpl.name || "24小时工作流";
+      if ($("workflowTemplateName")) $("workflowTemplateName").value = tpl.name || "";
       renderWorkflow();
     }
 
@@ -2633,6 +2762,7 @@
       } finally {
         state.workflowTemplatesLoading = false;
         renderWorkflow();
+        renderCustomEmployees();
       }
     }
 
@@ -2663,7 +2793,10 @@
 
     async function saveWorkflowTemplate() {
       const name = ($("workflowTemplateName") && $("workflowTemplateName").value || "").trim();
-      if (!name) throw new Error("请填写模板名称");
+      if (!name) {
+        $("workflowTemplateName")?.focus();
+        throw new Error("请先给员工模板取一个名字");
+      }
       if (!state.workflowNodesDraft.length) throw new Error("请至少添加一个节点");
       const id = String(state.workflowEditingTemplateId || "");
       const data = await api(id ? `/api/h5-workflows/templates/${encodeURIComponent(id)}` : "/api/h5-workflows/templates", {
@@ -3702,6 +3835,7 @@
         </button>`;
       }).join("");
       renderOfficeRecentTasks();
+      renderCustomEmployees();
     }
 
     function assetOriginLabel(origin) {
@@ -5399,7 +5533,10 @@
       $("topbar").classList.toggle("subpage", key !== "office");
       $("topbar").classList.toggle("voice-page", key === "voice");
       syncFloatingScheduleButton(key);
-      if (key === "office") renderOfficeEmployees();
+      if (key === "office") {
+        renderOfficeEmployees();
+        loadWorkflowTemplates().catch(() => {});
+      }
       if (key === "workflow") {
         renderWorkflow();
         Promise.all([
@@ -10523,6 +10660,51 @@
       const origin = state.assetLibraryOrigin || "user_upload";
       state.assetLibraryPage[origin] = Math.max(1, Number(state.assetLibraryPage[origin] || 1) + 1);
       loadAssetLibrary(origin);
+    });
+    $("customEmployeeMoreBtn")?.addEventListener("click", () => {
+      loadWorkflowTemplates().then(openCustomEmployeeList).catch((err) => toast(err.message || "员工模板加载失败"));
+    });
+    $("customEmployeeStrip")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-custom-employee-detail]");
+      if (!btn) return;
+      openCustomEmployeeDetail(btn.dataset.customEmployeeDetail || "");
+    });
+    $("customEmployeeBackdrop")?.addEventListener("click", closeCustomEmployeeDialog);
+    $("customEmployeeCloseBtn")?.addEventListener("click", closeCustomEmployeeDialog);
+    $("customEmployeeDialogBody")?.addEventListener("click", (evt) => {
+      const listBtn = evt.target.closest("[data-custom-employee-list]");
+      const detailBtn = evt.target.closest("[data-custom-employee-detail]");
+      const editBtn = evt.target.closest("[data-custom-employee-edit]");
+      const activateBtn = evt.target.closest("[data-custom-employee-activate]");
+      const deleteBtn = evt.target.closest("[data-custom-employee-delete]");
+      if (listBtn) {
+        openCustomEmployeeList();
+        return;
+      }
+      if (detailBtn) {
+        openCustomEmployeeDetail(detailBtn.dataset.customEmployeeDetail || "");
+        return;
+      }
+      if (editBtn) {
+        const tpl = workflowTemplateById(editBtn.dataset.customEmployeeEdit || "");
+        if (!tpl || !workflowTemplateCanEdit(tpl)) {
+          toast("只能编辑自己创建的模板");
+          return;
+        }
+        applyWorkflowTemplate(tpl);
+        closeCustomEmployeeDialog();
+        switchTab("workflow");
+        return;
+      }
+      if (activateBtn) {
+        activateWorkflowTemplate(activateBtn.dataset.customEmployeeActivate || "")
+          .then(closeCustomEmployeeDialog)
+          .catch((err) => toast(err.message || "启用失败"));
+        return;
+      }
+      if (deleteBtn) {
+        deleteWorkflowTemplateById(deleteBtn.dataset.customEmployeeDelete || "").catch((err) => toast(err.message || "删除失败"));
+      }
     });
     $("workflowDeviceSelect")?.addEventListener("change", (evt) => {
       setSelectedInstallationId(evt.target.value || "");

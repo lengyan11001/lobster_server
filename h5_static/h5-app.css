@@ -4048,6 +4048,151 @@
       border-radius: 50%;
       background: currentColor;
     }
+    #officeView .custom-employee-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+      gap: 10px;
+    }
+    .custom-employee-card {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 76px;
+      padding: 12px;
+      color: #102036;
+      text-align: left;
+      border: 1px solid rgba(223,230,242,.9);
+      border-radius: 20px;
+      background:
+        radial-gradient(circle at 92% 12%, rgba(19,168,115,.14), transparent 34%),
+        rgba(255,255,255,.95);
+      box-shadow: 0 12px 28px rgba(29,54,105,.09);
+    }
+    .custom-employee-card.compact {
+      grid-template-columns: 1fr;
+      justify-items: start;
+      min-height: 108px;
+      align-content: space-between;
+    }
+    .custom-employee-avatar {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 15px;
+      color: #0c815b;
+      background: linear-gradient(135deg, #e7fff3, #edf4ff);
+      font-weight: 950;
+    }
+    .custom-employee-avatar.large {
+      width: 54px;
+      height: 54px;
+      border-radius: 20px;
+      font-size: 22px;
+    }
+    .custom-employee-main {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .custom-employee-main strong,
+    .custom-employee-detail-head strong {
+      overflow: hidden;
+      color: #102036;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 15px;
+      font-weight: 950;
+    }
+    .custom-employee-main em,
+    .custom-employee-detail-head em {
+      color: #6d7890;
+      font-size: 12px;
+      font-style: normal;
+      font-weight: 800;
+    }
+    .custom-employee-card b {
+      padding: 5px 8px;
+      border-radius: 999px;
+      color: #245cff;
+      background: rgba(36,92,255,.09);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .custom-employee-empty {
+      min-height: 74px;
+      display: grid;
+      place-items: center;
+      color: #7b879b;
+      border-radius: 20px;
+      background: rgba(255,255,255,.72);
+      border: 1px dashed rgba(124,140,168,.35);
+    }
+    .custom-employee-dialog-body {
+      display: grid;
+      gap: 12px;
+    }
+    .custom-employee-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .custom-employee-detail {
+      display: grid;
+      gap: 14px;
+    }
+    .custom-employee-detail-head {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      min-width: 0;
+    }
+    .custom-employee-detail-head > div {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+    .custom-employee-node-list {
+      display: grid;
+      gap: 8px;
+    }
+    .custom-employee-node {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr);
+      gap: 8px 10px;
+      align-items: start;
+      padding: 10px;
+      border-radius: 16px;
+      background: rgba(246,249,255,.9);
+      border: 1px solid rgba(223,230,242,.9);
+    }
+    .custom-employee-node span {
+      color: #245cff;
+      font-weight: 950;
+      font-size: 13px;
+    }
+    .custom-employee-node strong {
+      overflow: hidden;
+      color: #102036;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 950;
+    }
+    .custom-employee-node em {
+      grid-column: 2;
+      color: #6d7890;
+      font-size: 12px;
+      font-style: normal;
+      line-height: 1.45;
+    }
+    .custom-employee-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
     #officeView .office-recent-list {
       display: grid;
       gap: 10px;
@@ -5004,6 +5149,20 @@
       .workflow-param-dynamic,
       .workflow-node-card button {
         grid-column: 1 / -1;
+      }
+      #officeView .custom-employee-strip {
+        display: flex;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      #officeView .custom-employee-strip::-webkit-scrollbar {
+        display: none;
+      }
+      #officeView .custom-employee-strip .custom-employee-card {
+        flex: 0 0 72%;
+      }
+      .custom-employee-list {
+        grid-template-columns: 1fr;
       }
     }
     .tutorial-shell {
