@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260706-secretary-fullbody-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260712-office-dashboard-1" />
 </head>
 <body>
   <main class="shell">
@@ -86,44 +86,56 @@
 
     <div id="appPanel" class="hidden">
       <section class="view active" id="officeView">
-        <div class="office-grid">
-          <div class="office-hero">
-            <div class="boss-card">
-              <img class="boss-avatar" src="/h5-static/h5-boss-avatar.png" alt="" loading="lazy">
-              <div class="boss-info">
-                <div class="boss-heading">
-                  <div class="boss-kicker">老板办公室</div>
-                  <strong id="bossName">老板</strong>
-                </div>
-                <span id="bossOfficeLine">巡视员工状态，盯住投入和产出。</span>
-                <div class="boss-metrics">
-                  <div class="boss-metric"><strong id="bossCreditsSpent">0</strong><span>算力</span></div>
-                  <div class="boss-metric"><strong id="bossHarvestCount">0</strong><span>素材</span></div>
-                  <button class="boss-metric" type="button" data-device-filter="working"><strong id="officeWorkingCount">0</strong><span>工作</span></button>
-                  <button class="boss-metric" type="button" data-device-filter="idle"><strong id="officeIdleCount">0</strong><span>空闲</span></button>
-                  <button class="boss-metric" type="button" data-device-filter="offline"><strong id="officeOfflineCount">0</strong><span>下班</span></button>
-                </div>
+        <div class="office-dashboard">
+          <button class="office-secretary-hero" type="button" data-home-target="secretary" aria-label="老板驾驶舱">
+            <div class="office-hero-copy">
+              <span>AI 运营秘书</span>
+              <strong id="bossName">老板驾驶舱</strong>
+              <div class="office-hero-chips">
+                <em><b id="officeDeviceCount">0</b> 台手机 · <b id="officeEmployeeCount">0</b> 个员工</em>
+                <em><b id="officeRunningCount">0</b> 个任务运行</em>
               </div>
             </div>
-          </div>
-          <div class="office-floor" id="employeeFloor">
-            <button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字">
-              <span id="companySignText">我的AI公司</span>
+            <img src="/h5-static/h5-secretary-role.png?v=20260706-secretary-fullbody-2" alt="" loading="lazy">
+          </button>
+
+          <div class="office-shortcuts" aria-label="快捷入口">
+            <button type="button" data-home-target="home">
+              <span class="office-shortcut-icon">排</span>
+              <strong>工作安排</strong>
             </button>
-            <div class="office-empty"><div class="office-empty-copy">正在检查员工状态...</div></div>
-            <div class="office-voice-fab-wrap">
-              <button class="office-voice-entry" type="button" data-home-target="voice" aria-label="进入语音输入">
-                <span class="voice-entry-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path>
-                    <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path>
-                  </svg>
-                </span>
-              </button>
-            </div>
+            <button type="button" data-home-target="secretary">
+              <span class="office-shortcut-icon">报</span>
+              <strong>数据报表</strong>
+            </button>
+            <button type="button" data-role-department="sales">
+              <span class="office-shortcut-icon">客</span>
+              <strong>客资线索</strong>
+            </button>
+            <button type="button" data-home-target="personalSettings">
+              <span class="office-shortcut-icon">设</span>
+              <strong>个人设置</strong>
+            </button>
           </div>
+
+          <section class="office-section">
+            <div class="office-section-head">
+              <h2>我的AI员工 <span id="officeEmployeeTotal">(0)</span></h2>
+            </div>
+            <div class="office-floor office-employee-grid" id="employeeFloor">
+              <div class="office-empty"><div class="office-empty-copy">正在检查员工状态...</div></div>
+            </div>
+          </section>
+
+          <section class="office-section">
+            <div class="office-section-head">
+              <h2>最近任务</h2>
+              <button type="button" id="officeWorkHistoryBtn">全部</button>
+            </div>
+            <div class="office-recent-list" id="officeRecentTasks"></div>
+          </section>
         </div>
-        <button class="hire-fab" type="button" id="hireEmployeeBtn">雇佣新员工</button>
+        <button class="hire-fab hidden" type="button" id="hireEmployeeBtn">雇佣新员工</button>
       </section>
 
       <section class="view" id="secretaryView">
@@ -551,7 +563,10 @@
         <div class="panel list-page personal-settings-page">
           <div class="section-title">
             <h2>个人设置</h2>
-            <button class="ghost" type="button" id="personalSettingsRefreshBtn">刷新</button>
+            <div class="section-actions">
+              <button class="ghost icon-help" type="button" id="personalTemplateHelpBtn" aria-label="模板配置帮助">?</button>
+              <button class="ghost" type="button" id="personalSettingsRefreshBtn">刷新</button>
+            </div>
           </div>
           <div class="personal-tabs" id="personalSettingsTabs">
             <button type="button" class="active" data-personal-tab="template">模板</button>
@@ -896,8 +911,20 @@
     </div>
   </div>
 
+  <div class="task-success-dialog hidden" id="personalTemplateHelpDialog" role="dialog" aria-modal="true" aria-labelledby="personalTemplateHelpTitle">
+    <button class="task-success-backdrop" type="button" id="personalTemplateHelpBackdrop" aria-label="关闭"></button>
+    <div class="task-success-panel help-panel">
+      <div class="task-success-kicker">TEMPLATE HELP</div>
+      <h3 id="personalTemplateHelpTitle">模板怎么配置</h3>
+      <p>先在“关键词”“同行账号”“记忆文件”里添加资料；回到“模板”页勾选要使用的资料，填写口播、朋友圈和出图要求，保存后 IP 日更就能直接选择这个模板。</p>
+      <div class="task-success-actions">
+        <button type="button" id="personalTemplateHelpCloseBtn">知道了</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260706-secretary-fullbody-2"></script>
+  <script src="/h5-static/h5-app.js?v=20260712-office-dashboard-1"></script>
 </body>
 </html>

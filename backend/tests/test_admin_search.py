@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.api import admin as admin_api
 from backend.app.db import get_db
-from backend.app.models import User
+from backend.app.models import CreditLedger, User
 
 
 def test_admin_search_large_numeric_phone_does_not_overflow(db_session_factory, db_session, monkeypatch):
@@ -117,3 +117,61 @@ def test_admin_skill_visibility_lists_and_saves_social_leads_permissions(db_sess
     after_add = client.get(f"/admin/api/user-skill-visibility/{user.id}", headers=headers)
     assert after_add.status_code == 200
     assert "tiktok_leads" in after_add.json()["visible_ids"]
+
+
+def test_admin_add_credits_accepts_negative_adjustment(db_session_factory, db_session, monkeypatch):
+    monkeypatch.setattr(admin_api.settings, "lobster_admin_username", "admin", raising=False)
+    monkeypatch.setattr(admin_api.settings, "lobster_admin_password", "secret", raising=False)
+
+    user = User(
+        email="credit-adjust@test.local",
+        hashed_password="x",
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    app = FastAPI()
+    app.include_router(admin_api.router)
+
+    def _get_db_override():
+        s = db_session_factory()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    client = TestClient(app)
+    headers = {"X-Admin-Token": "lobster-admin-secret"}
+
+    res = client.post(
+        "/admin/api/add-credits",
+        headers=headers,
+        json={"user_id": user.id, "amount": -25, "description": "管理员手动扣减积分"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["old_credits"] == 100.0
+    assert data["new_credits"] == 75.0
+    assert data["delta"] == -25.0
+
+    with db_session_factory() as s:
+        saved = s.query(User).filter(User.id == user.id).one()
+        assert saved.credits == Decimal("75.0000")
+        ledger = s.query(CreditLedger).filter(CreditLedger.user_id == user.id).order_by(CreditLedger.id.desc()).first()
+        assert ledger.delta == Decimal("-25.0000")
+        assert ledger.entry_type == "admin_deduct"
+        assert ledger.balance_after == Decimal("75.0000")
+
+    too_much = client.post(
+        "/admin/api/add-credits",
+        headers=headers,
+        json={"user_id": user.id, "amount": -1000, "description": "测试超额下分"},
+    )
+    assert too_much.status_code == 400
+    assert "积分不足" in too_much.json()["detail"]

@@ -26,12 +26,8 @@ from ..core.config import settings
 from ..db import get_db
 from ..models import AgentCommissionLedger, CapabilityCallLog, CreditLedger, H5ChatDevicePresence, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.credit_ledger import append_credit_ledger
-from ..services.credits_amount import quantize_credits
-from ..services.user_feature_flags import (
-    FEATURE_FLAG_PACKAGES,
-    OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,
-    user_has_feature,
-)
+from ..services.credits_amount import quantize_credits, quantize_credits_signed
+from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
 from ..services.juhe_wechat import extract_friend_add_target, guid_request, mask_secret, safe_request_snapshot
 
 router = APIRouter()
@@ -343,12 +339,8 @@ def admin_user_detail(
             "meta": entry.meta,
             "created_at": entry.created_at.isoformat() if entry.created_at else None,
         })
-    feature_flags = {
-        "openai_official_image_channel": user_has_feature(db, user_id, OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID),
-    }
     return {
         "user": _user_public_payload(user),
-        "feature_flags": feature_flags,
         "devices": [
             {
                 "installation_id": r.installation_id,
@@ -373,7 +365,7 @@ def admin_user_detail(
 class AddCreditsBody(BaseModel):
     user_id: int
     amount: float
-    description: str = "管理员手动加积分"
+    description: str = "管理员手动调整积分"
 
 
 @router.post("/admin/api/add-credits")
@@ -382,8 +374,6 @@ def admin_add_credits(
     ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
-    if body.amount == 0:
-        raise HTTPException(status_code=400, detail="积分数量不能为 0")
     if ctx.role == "agent":
         sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         if body.user_id not in sub_ids:
@@ -393,20 +383,24 @@ def admin_add_credits(
         raise HTTPException(status_code=404, detail="用户不存在")
 
     old_credits = quantize_credits(user.credits or 0)
-    delta = quantize_credits(body.amount)
+    delta = quantize_credits_signed(body.amount)
+    if delta == 0:
+        raise HTTPException(status_code=400, detail="积分数量不能为 0")
     new_credits = old_credits + delta
     if new_credits < 0:
         raise HTTPException(status_code=400, detail=f"积分不足，当前 {old_credits}，操作 {delta}")
-    user.credits = new_credits
+    user.credits = quantize_credits(new_credits)
+    entry_type = "recharge" if delta > 0 else "admin_deduct"
+    description = (body.description or "").strip() or ("管理员手动加积分" if delta > 0 else "管理员手动扣减积分")
 
     append_credit_ledger(
         db,
         user.id,
         delta,
-        "recharge",
-        new_credits,
-        description=body.description[:200],
-        meta={"source": "admin_panel"},
+        entry_type,
+        user.credits,
+        description=description[:200],
+        meta={"source": "admin_panel", "admin_action": "add" if delta > 0 else "deduct"},
     )
     db.commit()
     db.refresh(user)
@@ -429,11 +423,6 @@ class ResetPasswordBody(BaseModel):
 class SetUserLlmModelBody(BaseModel):
     user_id: int
     model: str = ""
-
-
-class AdminUserFeatureToggleBody(BaseModel):
-    user_id: int
-    enabled: bool
 
 
 @router.post("/admin/api/reset-password")
@@ -488,39 +477,6 @@ def admin_set_user_llm_model(
         model or "-",
     )
     return {"ok": True, "user": _user_public_payload(user)}
-
-
-@router.post("/admin/api/set-user-openai-image-channel")
-def admin_set_user_openai_image_channel(
-    body: AdminUserFeatureToggleBody,
-    ctx: AdminContext = Depends(_require_admin),
-    db: Session = Depends(get_db),
-):
-    user = db.query(User).filter(User.id == body.user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
-    exists = db.query(UserSkillVisibility).filter(
-        UserSkillVisibility.user_id == body.user_id,
-        UserSkillVisibility.package_id == OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,
-    ).first()
-    changed = False
-    if body.enabled:
-        if not exists:
-            db.add(UserSkillVisibility(user_id=body.user_id, package_id=OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID))
-            changed = True
-    elif exists:
-        db.delete(exists)
-        changed = True
-    if changed:
-        db.commit()
-    enabled = user_has_feature(db, body.user_id, OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID)
-    return {
-        "ok": True,
-        "user_id": body.user_id,
-        "email": user.email,
-        "enabled": enabled,
-        "feature_id": OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,
-    }
 
 
 @router.get("/admin/api/users")

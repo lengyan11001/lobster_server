@@ -330,11 +330,11 @@ tr:hover{background:var(--bg)}
         </div>
       </div>
       <div class="card" id="rechargeCard">
-        <h3>充值积分</h3>
+        <h3>调整积分</h3>
         <div class="recharge-row">
-          <input type="number" id="rechargeAmount" placeholder="积分数量" step="1">
-          <input type="text" id="rechargeDesc" placeholder="备注（可选）" value="管理员手动加积分" style="flex:1;min-width:0">
-          <button class="btn btn-success btn-sm" onclick="doAddCredits()">充值</button>
+          <input type="number" id="rechargeAmount" placeholder="正数加分，负数下分" step="1">
+          <input type="text" id="rechargeDesc" placeholder="备注（可选）" value="管理员手动调整积分" style="flex:1;min-width:0">
+          <button class="btn btn-success btn-sm" onclick="doAddCredits()">确认调整</button>
           <button class="btn btn-outline btn-sm" id="resetPwdBtn" onclick="openResetPassword()" style="margin-left:8px">重置密码</button>
         </div>
       </div>
@@ -1527,6 +1527,7 @@ async function showUserDetail(userId) {
     renderLedger(data);
 
     document.getElementById('rechargeAmount').value = '';
+    document.getElementById('rechargeDesc').value = '管理员手动调整积分';
     if (canManageSkills) loadSkillVisibility(userId);
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -1736,14 +1737,17 @@ function hideDetail() {
 async function doAddCredits() {
   if (!currentUserId) return;
   const amount = parseFloat(document.getElementById('rechargeAmount').value);
-  const desc = document.getElementById('rechargeDesc').value.trim() || '管理员手动加积分';
-  if (!amount || isNaN(amount)) { toast('请输入有效的积分数量', 'error'); return; }
+  let desc = document.getElementById('rechargeDesc').value.trim();
+  if (isNaN(amount) || amount === 0) { toast('请输入非 0 的积分数量', 'error'); return; }
+  if (!desc || desc === '管理员手动调整积分' || desc === '管理员手动加积分') {
+    desc = amount > 0 ? '管理员手动加积分' : '管理员手动扣减积分';
+  }
   try {
     const data = await api('/admin/api/add-credits', {
       method: 'POST',
       body: JSON.stringify({user_id: currentUserId, amount, description: desc})
     });
-    toast(`充值成功：${data.email} ${data.delta > 0 ? '+' : ''}${data.delta} 积分，当前余额 ${data.new_credits.toFixed(2)}`);
+    toast(`调整成功：${data.email} ${data.delta > 0 ? '+' : ''}${data.delta} 积分，当前余额 ${data.new_credits.toFixed(2)}`);
     showUserDetail(currentUserId);
   } catch(e) { toast(e.message, 'error'); }
 }

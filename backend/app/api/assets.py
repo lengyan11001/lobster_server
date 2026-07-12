@@ -270,6 +270,21 @@ class SaveAssetReq(BaseModel):
     model: Optional[str] = None
 
 
+class RegisterAssetUrlReq(BaseModel):
+    url: str
+    media_type: str = "image"
+    filename: Optional[str] = None
+    file_size: Optional[int] = None
+    source_asset_id: Optional[str] = None
+    asset_origin: Optional[str] = None
+    creative_candidate_group: Optional[str] = None
+    creative_candidate_groups: Optional[list[str]] = None
+
+
+class CreativeCandidateGroupReq(BaseModel):
+    group_name: str
+
+
 def _autosave_tags_require_tos(tags: Optional[str]) -> bool:
     """MCP 对话生成后自动入库使用 tags=auto,<capability_id>，此类必须走 TOS，source_url 才稳定可预览。"""
     return (tags or "").strip().startswith("auto,")
@@ -313,6 +328,133 @@ def _find_existing_asset_by_save_url_dedupe(db: Session, user_id: int, dedupe_ke
         if a.source_url and _save_url_dedupe_key(a.source_url) == dedupe_key:
             return a
     return None
+
+
+def _safe_remote_filename(raw: Optional[str], url: str, fallback: str) -> str:
+    name = Path(str(raw or "").replace("\\", "/")).name.strip()
+    if not name:
+        path = str(url or "").split("?", 1)[0].split("#", 1)[0]
+        name = Path(path.replace("\\", "/")).name.strip()
+    if not name or "." not in name:
+        ext = Path(name).suffix or ".bin"
+        name = f"{fallback}{ext}"
+    return name[:180]
+
+
+def _clean_creative_group_name_optional(value: Optional[str]) -> str:
+    name = " ".join(str(value or "").strip().split())
+    return name[:40]
+
+
+def _incoming_creative_candidate_group(body: RegisterAssetUrlReq) -> str:
+    group = _clean_creative_group_name_optional(body.creative_candidate_group)
+    if group:
+        return group
+    groups = body.creative_candidate_groups if isinstance(body.creative_candidate_groups, list) else []
+    for item in groups:
+        group = _clean_creative_group_name_optional(str(item or ""))
+        if group:
+            return group
+    return ""
+
+
+def _register_asset_origin(body: RegisterAssetUrlReq) -> str:
+    origin = _normalize_asset_origin_filter(body.asset_origin)
+    return origin or "user_upload"
+
+
+def _apply_creative_candidate_group_meta(meta: dict, group_name: str) -> bool:
+    if not group_name:
+        return False
+    changed = False
+    if meta.get("creative_candidate_group") != group_name:
+        meta["creative_candidate_group"] = group_name
+        changed = True
+    groups = meta.get("creative_candidate_groups")
+    if not isinstance(groups, list) or groups != [group_name]:
+        meta["creative_candidate_groups"] = [group_name]
+        changed = True
+    return changed
+
+
+def _registered_asset_payload(row: Asset) -> dict:
+    group = _creative_candidate_group(row.meta)
+    return {
+        "asset_id": row.asset_id,
+        "filename": row.filename,
+        "media_type": row.media_type,
+        "file_size": row.file_size or 0,
+        "source_url": row.source_url or "",
+        "url": row.source_url or "",
+        "asset_origin": _asset_origin(row.meta),
+        "creative_candidate_group": group,
+        "creative_candidate_groups": _creative_candidate_groups(row.meta),
+    }
+
+
+@router.post("/api/assets/register-url", summary="登记公网素材为用户上传素材")
+async def register_asset_url(
+    body: RegisterAssetUrlReq,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    url = (body.url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="素材 URL 必须是公网 http/https 地址")
+    lowered = url.lower()
+    if any(bad in lowered for bad in ("localhost", "127.0.0.1", "0.0.0.0")):
+        raise HTTPException(status_code=400, detail="不能登记本机或内网素材地址")
+    media_type = (body.media_type or "image").strip().lower()
+    if media_type not in ("image", "video", "audio", "document"):
+        media_type = "image"
+    dk = _save_url_dedupe_key(url)
+    asset_origin = _register_asset_origin(body)
+    group_name = _incoming_creative_candidate_group(body)
+    existing = _find_existing_asset_by_save_url_dedupe(db, owner_user.id, dk)
+    if existing:
+        meta = dict(existing.meta or {})
+        changed = False
+        if meta.get("asset_origin") != asset_origin:
+            meta["asset_origin"] = asset_origin
+            changed = True
+        source_asset_id = (body.source_asset_id or "").strip()
+        if source_asset_id and meta.get("source_asset_id") != source_asset_id:
+            meta["source_asset_id"] = source_asset_id[:80]
+            changed = True
+        if _apply_creative_candidate_group_meta(meta, group_name):
+            changed = True
+        if changed:
+            existing.meta = meta
+            db.add(existing)
+            db.commit()
+            db.refresh(existing)
+        return _registered_asset_payload(existing)
+
+    aid = _gen_asset_id()
+    filename = _safe_remote_filename(body.filename, url, aid)
+    asset = Asset(
+        asset_id=aid,
+        user_id=owner_user.id,
+        filename=filename,
+        media_type=media_type,
+        file_size=max(int(body.file_size or 0), 0),
+        source_url=url,
+        meta={
+            "asset_origin": asset_origin,
+            "save_url_dedupe": dk,
+            "registered_from": "online",
+            "source_asset_id": (body.source_asset_id or "").strip()[:80],
+        },
+    )
+    if group_name:
+        meta = dict(asset.meta or {})
+        _apply_creative_candidate_group_meta(meta, group_name)
+        asset.meta = meta
+    db.add(asset)
+    db.commit()
+    db.refresh(asset)
+    return _registered_asset_payload(asset)
 
 
 @router.post("/api/assets/save-url", summary="从 URL 保存素材")
@@ -468,6 +610,7 @@ async def upload_asset(
         media_type=mtype,
         file_size=fsize,
         source_url=tos_public_url,
+        meta={"asset_origin": "user_upload"},
     )
     db.add(asset)
     db.commit()
@@ -479,6 +622,7 @@ async def upload_asset(
         "file_size": fsize,
         "source_url": tos_public_url,
         "url": tos_public_url,
+        "asset_origin": "user_upload",
     }
 
 
@@ -634,16 +778,67 @@ def cleanup_temp_files_for_task(task_id: str):
 
 # ── List / search ─────────────────────────────────────────────────
 
+def _asset_origin(meta: Optional[dict]) -> str:
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except Exception:
+            meta = None
+    if isinstance(meta, dict):
+        origin = str(meta.get("asset_origin") or meta.get("origin") or "").strip()
+        if origin == "user_upload":
+            return "user_upload"
+    return "generated"
+
+
+def _normalize_asset_origin_filter(value: Optional[str]) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in ("user_upload", "upload", "uploaded", "manual_upload"):
+        return "user_upload"
+    if raw in ("generated", "generate", "ai_generated"):
+        return "generated"
+    return ""
+
+
+def _creative_candidate_group(meta: Optional[dict]) -> str:
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except Exception:
+            meta = None
+    if not isinstance(meta, dict):
+        return ""
+    current = _clean_creative_group_name_optional(meta.get("creative_candidate_group"))
+    if current:
+        return current
+    raw = meta.get("creative_candidate_groups")
+    if isinstance(raw, list):
+        for item in raw:
+            name = _clean_creative_group_name_optional(item)
+            if name:
+                return name
+    return ""
+
+
+def _creative_candidate_groups(meta: Optional[dict]) -> list[str]:
+    group = _creative_candidate_group(meta)
+    return [group] if group else []
+
+
 @router.get("/api/assets", summary="列出本地素材")
 def list_assets(
     media_type: Optional[str] = None,
     q: Optional[str] = None,
+    source: Optional[str] = None,
+    origin: Optional[str] = None,
+    asset_origin: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Asset).filter(Asset.user_id == current_user.id)
+    owner_user = online_user_for_mobile_user(db, current_user)
+    query = db.query(Asset).filter(Asset.user_id == owner_user.id)
     if media_type:
         query = query.filter(Asset.media_type == media_type)
     if q:
@@ -653,8 +848,19 @@ def list_assets(
             | (Asset.prompt.ilike(pat))
             | (Asset.filename.ilike(pat))
         )
-    total = query.count()
-    rows = query.order_by(Asset.created_at.desc()).offset(offset).limit(min(limit, 200)).all()
+    max_limit = min(limit, 200)
+    origin_filter = _normalize_asset_origin_filter(origin or asset_origin or source)
+    if origin_filter:
+        matched = [
+            row
+            for row in query.order_by(Asset.created_at.desc()).all()
+            if _asset_origin(row.meta) == origin_filter
+        ]
+        total = len(matched)
+        rows = matched[offset : offset + max_limit]
+    else:
+        total = query.count()
+        rows = query.order_by(Asset.created_at.desc()).offset(offset).limit(max_limit).all()
     return {
         "total": total,
         "assets": [
@@ -667,6 +873,9 @@ def list_assets(
                 "prompt": r.prompt,
                 "model": r.model,
                 "tags": r.tags,
+                "creative_candidate_group": _creative_candidate_group(r.meta),
+                "creative_candidate_groups": _creative_candidate_groups(r.meta),
+                "asset_origin": _asset_origin(r.meta),
                 "created_at": r.created_at.isoformat() if r.created_at else "",
             }
             for r in rows
@@ -683,6 +892,52 @@ def _asset_local_path(asset: Asset) -> Optional[Path]:
     return p if p.exists() else None
 
 
+@router.get("/api/assets/creative-candidate-groups", summary="创意成片备选素材组列表")
+def list_creative_candidate_groups(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    rows = db.query(Asset).filter(Asset.user_id == owner_user.id, Asset.media_type == "image").all()
+    groups: dict[str, dict] = {}
+    for row in rows:
+        name = _creative_candidate_group(row.meta)
+        if name:
+            current = groups.setdefault(name, {"name": name, "count": 0})
+            current["count"] += 1
+    return {
+        "ok": True,
+        "groups": [
+            item
+            for item in sorted(groups.values(), key=lambda row: (-int(row.get("count") or 0), str(row.get("name") or "")))
+        ],
+    }
+
+
+@router.post("/api/assets/{asset_id}/creative-candidate-groups", summary="加入创意成片备选素材组")
+def add_asset_to_creative_candidate_group(
+    asset_id: str,
+    body: CreativeCandidateGroupReq,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user.id).first()
+    if not row:
+        raise HTTPException(404, detail="素材不存在")
+    if (row.media_type or "").strip().lower() != "image":
+        raise HTTPException(400, detail="只有图片素材可以设为创意备选素材")
+    group_name = _clean_creative_group_name_optional(body.group_name)
+    if not group_name:
+        raise HTTPException(400, detail="备选组名字不能为空")
+    meta = dict(row.meta or {})
+    _apply_creative_candidate_group_meta(meta, group_name)
+    row.meta = meta
+    db.add(row)
+    db.commit()
+    return {"ok": True, "asset_id": row.asset_id, "group_name": group_name, "groups": [group_name]}
+
+
 # ── Get single + serve file ──────────────────────────────────────
 
 @router.get("/api/assets/{asset_id}/content", summary="素材文件内容（需登录，用于前端预览）")
@@ -691,7 +946,8 @@ def get_asset_content(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    a = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == current_user.id).first()
+    owner_user = online_user_for_mobile_user(db, current_user)
+    a = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user.id).first()
     if not a:
         raise HTTPException(404, detail="素材不存在")
     local_path = _asset_local_path(a)
@@ -742,7 +998,8 @@ def get_asset(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    a = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == current_user.id).first()
+    owner_user = online_user_for_mobile_user(db, current_user)
+    a = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user.id).first()
     if not a:
         raise HTTPException(404, detail="素材不存在")
     local_path = _asset_local_path(a)
@@ -769,7 +1026,8 @@ def delete_asset(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    a = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == current_user.id).first()
+    owner_user = online_user_for_mobile_user(db, current_user)
+    a = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user.id).first()
     if not a:
         raise HTTPException(404, detail="素材不存在")
     local_path = _asset_local_path(a)

@@ -30,7 +30,7 @@
       companyName: localStorage.getItem("lobster_h5_company_name") || "我的AI公司",
       officeDeviceFilter: "all",
       officePage: 1,
-      officePageSize: 6,
+      officePageSize: 4,
       taskAbility: "goal.video.pipeline",
       taskPanelOpen: false,
       hiflyLoaded: false,
@@ -43,6 +43,8 @@
       publishAccountsLoading: false,
       publishRunDraft: null,
       publishRunSubmitting: false,
+      userUploadAssetCache: {},
+      userUploadAssetLoading: {},
       ipTemplates: [],
       ipTemplatesLoaded: false,
       ipTemplatesLoading: false,
@@ -600,6 +602,22 @@
 
     function closeTaskSuccessDialog() {
       const modal = $("taskSuccessDialog");
+      if (modal) modal.classList.add("hidden");
+    }
+
+    function openPersonalTemplateSettings() {
+      state.personalSettingsTab = "template";
+      switchTab("personalSettings");
+      loadPersonalSettings();
+    }
+
+    function openPersonalTemplateHelpDialog() {
+      const modal = $("personalTemplateHelpDialog");
+      if (modal) modal.classList.remove("hidden");
+    }
+
+    function closePersonalTemplateHelpDialog() {
+      const modal = $("personalTemplateHelpDialog");
       if (modal) modal.classList.add("hidden");
     }
 
@@ -1456,6 +1474,32 @@
       return (node && Array.isArray(node.children)) ? node.children.length : 0;
     }
 
+    function abilityLeafNodes(nodes) {
+      const leaves = [];
+      const visit = (node) => {
+        if (!node) return;
+        if (Array.isArray(node.children) && node.children.length) {
+          node.children.forEach(visit);
+          return;
+        }
+        leaves.push(node);
+      };
+      (nodes || []).forEach(visit);
+      return leaves;
+    }
+
+    function departmentLeafNodes(department) {
+      return abilityLeafNodes((department && department.children) || []);
+    }
+
+    function officeDepartments() {
+      return DEPARTMENT_SKILL_TREE;
+    }
+
+    function departmentAvailableLeafCount(department) {
+      return departmentLeafNodes(department).filter((node) => node && !node.comingSoon).length;
+    }
+
     function abilityIsActionable(node) {
       if (!node || node.comingSoon) return false;
       if (node.children && node.children.length) return true;
@@ -1491,7 +1535,6 @@
           <h3 class="department-skill-title">${escapeHtml(node.label || node.key || "能力")}</h3>
           <span class="${chipClass}">${escapeHtml(node.mark || firstChar(node.label || node.key))}</span>
         </div>
-        <p class="department-skill-desc">${escapeHtml(node.description || "")}</p>
         <div class="department-skill-foot">
           <span>${count ? "继续选择" : (actionable ? "可进入" : "需开通")}</span>
           <strong>${escapeHtml(abilityStatusText(node))}</strong>
@@ -1568,8 +1611,9 @@
       $("departmentTitle").textContent = department.name || "职能中心";
       if ($("pageTitle")) $("pageTitle").textContent = department.name || "职能中心";
       if ($("pageSubtitle")) $("pageSubtitle").textContent = "";
-      $("departmentBreadcrumb").innerHTML = `<span>首页</span><span>${escapeHtml(department.name || "")}</span>`;
-      $("departmentSkillGrid").innerHTML = (department.children || []).map(abilityCardHtml).join("") || `<div class="quick-empty">这个部门暂时没有配置能力。</div>`;
+      $("departmentBreadcrumb").innerHTML = "";
+      const leaves = departmentLeafNodes(department);
+      $("departmentSkillGrid").innerHTML = leaves.map(abilityCardHtml).join("") || `<div class="quick-empty">这个部门暂时没有配置能力。</div>`;
     }
 
     function openAbilityView(key) {
@@ -1667,16 +1711,18 @@
     function abilityCapabilityFieldsHtml(capabilityId) {
       const id = String(capabilityId || "").trim();
       if (id === "ip_content_daily") {
-        return taskFieldHtml("模板", taskSelectHtml("abilityIpTemplate", optionHtml("", "模板加载中...")))
+        return taskFieldHtml("模板", ipTemplateSelectControl("abilityIpTemplate"))
           + taskFieldHtml("生成内容", abilityIpDailyTaskOptionsHtml(), true)
           + taskFieldHtml("执行前同步", `<label class="task-checkbox"><input id="abilityIpSyncBefore" type="checkbox" checked>每次执行前同步新数据</label>`, true)
           + taskFieldHtml("补充要求", taskTextareaHtml("abilityIpRequirement", "可选"), true);
       }
       if (id === "goal.video.pipeline") {
         return taskFieldHtml("任务名称", workInputHtml("abilityVideoTitle", "text", "创意视频"))
-          + taskFieldHtml("视频要求", taskTextareaHtml("abilityVideoPrompt", "填写视频主题、卖点、场景、风格。不填素材组时默认用 AI 生成首帧。"), true)
-          + taskFieldHtml("首帧来源", taskSelectHtml("abilityVideoSourceMode", optionHtml("ai_image", "AI生成首帧") + optionHtml("asset_random", "素材库备选组")))
-          + taskFieldHtml("备选素材组", taskSelectHtml("abilityVideoCandidateGroup", optionHtml("", "不选择")));
+          + taskFieldHtml("生成模式", taskSelectHtml("abilityVideoMode", optionHtml("single_asset", "单个素材生成视频") + optionHtml("memory_image", "根据记忆先生成图片") + optionHtml("asset_group", "素材分组轮换生成")))
+          + `<div class="field full" id="abilityVideoAssetField"><label>素材图片</label>${assetPickerControlHtml("abilityVideoAsset", { mediaType: "image", output: "url", uploadText: "上传图片", selectText: "选择已上传图片" })}</div>`
+          + `<div class="field full hidden" id="abilityVideoMemoryField"><label>记忆文件</label>${videoMemorySelectControl("abilityVideoMemoryDocs")}</div>`
+          + `<div class="field hidden" id="abilityVideoCandidateGroupField"><label>素材分组</label>${taskSelectHtml("abilityVideoCandidateGroup", optionHtml("", "不选择"))}</div>`
+          + taskFieldHtml("补充提示词", taskTextareaHtml("abilityVideoPrompt", "可选"), true);
       }
       if (id === "wewrite.article.pipeline") {
         return taskFieldHtml("任务名称", workInputHtml("abilityArticleTitle", "text", "公众号文章"))
@@ -1694,7 +1740,7 @@
       }
       if (id === "comfly.ecommerce.detail_pipeline") {
         return taskFieldHtml("任务名称", workInputHtml("abilityEcommerceTitle", "text", "电商详情页"))
-          + taskFieldHtml("商品素材ID或公网图", workInputHtml("abilityEcommerceAsset", "text", "", 'placeholder="填商品主图素材ID；没有可填公网图片URL"'), true)
+          + taskFieldHtml("商品主图", assetPickerControlHtml("abilityEcommerceAsset", { mediaType: "image", output: "url", uploadText: "上传主图" }), true)
           + taskFieldHtml("详情页要求", taskTextareaHtml("abilityEcommerceText", "突出材质、卖点、使用场景和购买理由"), true)
           + taskFieldHtml("页面数量", workInputHtml("abilityEcommercePageCount", "number", "12", 'min="1" max="20"'))
           + taskFieldHtml("自动入库", workCheckboxHtml("abilityEcommerceAutoSave", "完成后保存到素材库", true));
@@ -1736,8 +1782,11 @@
         }
         if ((node.capabilityId || node.key) === "goal.video.pipeline") {
           setTimeout(() => {
+            bindGoalVideoModeControls("ability");
             fillCandidateGroupSelect();
             loadCandidateGroups();
+            fillVideoMemorySelects();
+            loadVideoMemoryDocsForSelect();
           }, 0);
         }
       } else if (socialPlatformFromAbilityKey(node.key)) {
@@ -1767,6 +1816,7 @@
       if (title) title.textContent = `${node.label || "能力"}工作台`;
       if (badge) badge.textContent = badgeText;
       if (fields) fields.innerHTML = html;
+      initAssetPickerControls(box);
       if (submit) {
         submit.disabled = false;
         submit.textContent = submitText;
@@ -2138,111 +2188,88 @@
       </button>`;
     }
 
+    function renderOfficeRecentTasks() {
+      const box = $("officeRecentTasks");
+      if (!box) return;
+      const runRows = (state.runs || []).map((row) => ({
+        kind: "run",
+        id: row && row.id,
+        title: row && (row.title || "任务"),
+        status: row && row.status,
+        time: row && (row.updated_at || row.finished_at || row.created_at),
+        sortTime: row && (row.updated_at || row.finished_at || row.created_at),
+        text: isActiveRun(row) ? (runProgressText(row) || "执行中") : (row && (row.error || row.result_text || "")),
+        active: isActiveRun(row),
+      }));
+      const taskRows = (state.tasks || [])
+        .filter((row) => String((row && row.status) || "").toLowerCase() !== "deleted")
+        .map((row) => ({
+          kind: "task",
+          id: row && row.id,
+          title: row && (row.title || capabilityName(taskCapabilityId(row)) || "定时任务"),
+          status: row && row.status,
+          time: row && (row.next_run_at || row.updated_at || row.created_at),
+          sortTime: row && (row.updated_at || row.created_at || row.next_run_at),
+          text: row && row.next_run_at ? `下次 ${fmtTime(row.next_run_at)}` : "",
+          active: String((row && row.status) || "").toLowerCase() === "active",
+        }));
+      const rows = runRows.concat(taskRows)
+        .filter((row) => row.id)
+        .sort((a, b) => itemTimeMs(b.sortTime, b.time) - itemTimeMs(a.sortTime, a.time))
+        .slice(0, 5);
+      if (!rows.length) {
+        box.innerHTML = `<div class="office-recent-empty">暂无任务</div>`;
+        return;
+      }
+      box.innerHTML = rows.map((row) => {
+        const attr = row.kind === "task" ? `data-open-task-detail="${escapeHtml(row.id || "")}"` : `data-open-run-detail="${escapeHtml(row.id || "")}"`;
+        return `<button class="office-recent-item${row.active ? " active" : ""}" type="button" ${attr}>
+          <span class="office-recent-dot"></span>
+          <span class="office-recent-main">
+            <strong>${escapeHtml(row.title || "任务")}</strong>
+            <em>${escapeHtml(fmtTime(row.time))}</em>
+          </span>
+          <span class="office-recent-status">${escapeHtml(statusText(row.status))}</span>
+          ${row.text ? `<small>${escapeHtml(String(row.text).slice(0, 46))}</small>` : ""}
+        </button>`;
+      }).join("");
+    }
+
     function renderOfficeEmployees() {
       const floor = $("employeeFloor");
       if (!floor) return;
-      const voiceFab = `<div class="office-voice-fab-wrap"><button class="office-voice-entry" type="button" data-home-target="voice" aria-label="进入语音输入"><span class="voice-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path></svg></span></button></div>`;
       const devices = state.devices || [];
       const snapshots = devices.map((device) => ({ device, snapshot: deviceSnapshot(device) }));
       const workingCount = snapshots.filter((row) => row.snapshot.mode === "working").length;
       const idleCount = snapshots.filter((row) => row.snapshot.mode === "idle").length;
       const offlineCount = snapshots.filter((row) => row.snapshot.mode === "offline").length;
       const onlineCount = workingCount + idleCount;
+      const departments = officeDepartments();
+      const runningCount = (state.runs || []).filter(isActiveRun).length;
+      if ($("officeDeviceCount")) $("officeDeviceCount").textContent = String(devices.length);
+      if ($("officeEmployeeCount")) $("officeEmployeeCount").textContent = String(departments.length);
+      if ($("officeEmployeeTotal")) $("officeEmployeeTotal").textContent = `(${departments.length})`;
+      if ($("officeRunningCount")) $("officeRunningCount").textContent = String(runningCount);
       if ($("officeTotalCount")) $("officeTotalCount").textContent = String(devices.length);
       if ($("officeOnlineCount")) $("officeOnlineCount").textContent = String(onlineCount);
       if ($("officeWorkingCount")) $("officeWorkingCount").textContent = String(workingCount);
       if ($("officeIdleCount")) $("officeIdleCount").textContent = String(idleCount);
       if ($("officeOfflineCount")) $("officeOfflineCount").textContent = String(offlineCount);
-      document.querySelectorAll("[data-device-filter]").forEach((btn) => {
-        btn.classList.toggle("active", (state.officeDeviceFilter || "all") === btn.dataset.deviceFilter);
-      });
-      updateCompanySign();
       updateBossOfficeStats(onlineCount, workingCount);
-      const roleDepartments = DEPARTMENT_SKILL_TREE;
-      floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="department-role-grid">${secretaryRoleCardHtml()}${roleDepartments.map((department, index) => {
-        const childCount = (department.children || []).length;
-        const img = employeeAsset({ installation_id: department.id }, index, "idle");
-        const bubble = departmentBubbleFor(department, index);
-        const hue = ["rgba(19,168,115,.18)", "rgba(36,92,255,.16)", "rgba(240,139,45,.16)", "rgba(19,183,216,.16)", "rgba(126,92,255,.14)"][index % 5];
-        return `<button class="department-role-card${bubble ? " has-bubble" : ""}" type="button" data-role-department="${escapeHtml(department.id)}" style="--role-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(department.name)}">
-          ${bubble ? `<div class="department-role-bubble">${escapeHtml(bubble)}</div>` : ""}
-          <img class="department-role-avatar" src="${escapeHtml(img)}" alt="" loading="lazy">
-          <div class="department-role-meta">
-            <div class="department-role-name">${escapeHtml(department.name)}</div>
-            <div class="department-role-count">${escapeHtml(childCount + "项")}</div>
-          </div>
-        </button>`;
-      }).join("")}</div>`;
-      return;
-      const departments = DEPARTMENT_SKILL_TREE;
-      const metricsForDepartments = employeeLayoutMetrics(Math.max(departments.length, 1));
-      floor.style.minHeight = `${metricsForDepartments.minHeight}px`;
+      floor.style.minHeight = "";
       floor.innerHTML = departments.map((department, index) => {
-        const childCount = (department.children || []).length;
+        const count = departmentAvailableLeafCount(department);
         const img = employeeAsset({ installation_id: department.id }, index, "idle");
-        return `<button class="employee-card idle online" type="button" data-role-department="${escapeHtml(department.id)}" style="${escapeHtml(employeePositionStyle(index, departments.length))}" aria-label="${escapeHtml(department.name)}">
-          <div class="employee-scene" aria-hidden="true">
-            <div class="employee-progress-bubble">${escapeHtml(department.alias || "职能中心")}</div>
-            <div class="screen"></div>
-            <div class="desk"></div>
-            <div class="person"><img class="employee-avatar-img" src="${escapeHtml(img)}" alt="" loading="lazy"></div>
-          </div>
-          <div class="employee-meta">
-            <div class="employee-title"><strong>${escapeHtml(department.name)}</strong><span class="employee-state">${escapeHtml(childCount + "项")}</span></div>
-            <div class="employee-desc">${escapeHtml(department.description || "")}</div>
-          </div>
+        const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
+        return `<button class="office-employee-card" type="button" data-role-department="${escapeHtml(department.id)}" style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(department.name)}">
+          <img src="${escapeHtml(img)}" alt="" loading="lazy">
+          <span class="office-employee-info">
+            <strong>${escapeHtml(department.name || "员工")}</strong>
+            <em>${escapeHtml(count + " 项")}</em>
+          </span>
         </button>`;
       }).join("");
-      floor.insertAdjacentHTML("afterbegin", `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button>`);
-      floor.insertAdjacentHTML("beforeend", voiceFab);
-      return;
-      const visibleDevices = filteredOfficeDevices(devices);
-      const pageSize = Math.max(1, Number(state.officePageSize) || 6);
-      const pageCount = Math.max(1, Math.ceil(visibleDevices.length / pageSize));
-      state.officePage = Math.min(Math.max(1, Number(state.officePage) || 1), pageCount);
-      const pageStart = (state.officePage - 1) * pageSize;
-      const pageDevices = visibleDevices.slice(pageStart, pageStart + pageSize);
-      const metrics = employeeLayoutMetrics(Math.max(pageDevices.length, 1));
-      floor.style.minHeight = `${metrics.minHeight}px`;
-      if (!devices.length) {
-        floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="office-empty"><div class="office-empty-copy">暂未检测到 online 员工。电脑端启动并登录后，这里会出现它的办公位。</div></div><div class="office-voice-fab-wrap"><button class="office-voice-entry" type="button" data-home-target="voice" aria-label="进入语音输入"><span class="voice-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path></svg></span></button></div>`;
-        return;
-      }
-      if (!visibleDevices.length) {
-        const label = officeFilterLabel(state.officeDeviceFilter);
-        floor.innerHTML = `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button><div class="office-filter-note">${escapeHtml(label)}</div><div class="office-empty"><div class="office-empty-copy">当前没有${escapeHtml(label || "符合条件的员工")}。</div></div><div class="office-voice-fab-wrap"><button class="office-voice-entry" type="button" data-home-target="voice" aria-label="进入语音输入"><span class="voice-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"></path><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path></svg></span></button></div>`;
-        return;
-      }
-      const filterNote = state.officeDeviceFilter !== "all"
-        ? `<div class="office-filter-note">${escapeHtml(officeFilterLabel(state.officeDeviceFilter))}</div>`
-        : "";
-      const pager = pageCount > 1
-        ? `<div class="employee-pager" role="navigation" aria-label="员工分页"><button type="button" data-office-page="${state.officePage - 1}" ${state.officePage <= 1 ? "disabled" : ""}>上一页</button><span>${state.officePage}/${pageCount}</span><button type="button" data-office-page="${state.officePage + 1}" ${state.officePage >= pageCount ? "disabled" : ""}>下一页</button></div>`
-        : "";
-      floor.innerHTML = pageDevices.map((device, index) => {
-        const originalIndex = Math.max(0, state.devices.indexOf(device));
-        const snapshot = employeeSnapshot(device, originalIndex);
-        const mode = snapshot.mode;
-        const label = snapshot.label;
-        const desc = mode === "working" ? `正在处理：${snapshot.title}` : snapshot.detail;
-        const img = employeeAsset(device, originalIndex, mode);
-        return `<button class="employee-card ${mode} ${device.online ? "online" : "offline"}" type="button" data-employee-id="${escapeHtml(device.installation_id || "")}" style="${escapeHtml(employeePositionStyle(index, pageDevices.length))}" aria-label="${escapeHtml(employeeName(device, originalIndex))}">
-          <div class="employee-scene" aria-hidden="true">
-            ${snapshot.bubble ? `<div class="employee-progress-bubble">${escapeHtml(String(snapshot.bubble).slice(0, 46))}</div>` : ""}
-            <div class="screen"></div>
-            <div class="desk"></div>
-            <div class="person"><img class="employee-avatar-img" src="${escapeHtml(img)}" alt="" loading="lazy"></div>
-          </div>
-          <div class="employee-meta">
-            <div class="employee-title"><strong>${escapeHtml(employeeName(device, originalIndex))}</strong><span class="employee-state">${escapeHtml(label)}</span></div>
-            <div class="employee-desc">${escapeHtml(desc)}${device.installation_id ? ` · ${escapeHtml(shortId(device.installation_id))}` : ""}</div>
-          </div>
-        </button>`;
-      }).join("");
-      floor.insertAdjacentHTML("afterbegin", `<button class="company-sign" type="button" id="companySignBtn" aria-label="设置公司名字"><span id="companySignText">${escapeHtml(state.companyName || "我的AI公司")}</span></button>`);
-      if (pager) floor.insertAdjacentHTML("afterbegin", pager);
-      if (filterNote) floor.insertAdjacentHTML("afterbegin", filterNote);
-      floor.insertAdjacentHTML("beforeend", voiceFab);
+      renderOfficeRecentTasks();
     }
 
     function collectPlatforms(row) {
@@ -2723,9 +2750,11 @@
       add("视频号查询", payload.query || payload.username);
       add("拉取页数", payload.max_pages);
       add("最多数量", payload.limit || payload.max_people);
-      add("素材/图片", inner.asset_id || inner.image_url || params.asset_id || params.image_url || params.original_video_url);
+      add("素材/图片", firstGoalVideoReference(inner) || inner.asset_id || inner.image_url || params.asset_id || params.image_url || params.original_video_url);
       add("视频要求", inner.task_text || inner.prompt || params.prompt);
+      add("生成模式", goalVideoModeFromPayload(inner));
       add("首帧来源", inner.source_mode);
+      add("记忆文件", inner.memory_doc_ids);
       add("备选素材组", inner.candidate_group);
       add("数字人", inner.avatar || params.avatar);
       add("声音", inner.voice || params.voice);
@@ -3054,6 +3083,7 @@
         el.value = value == null ? "" : String(value);
       }
       el.dispatchEvent(new Event("change", { bubbles: true }));
+      if (document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`)) renderAssetPickerControl(id);
     }
 
     function setTextareaList(id, values) {
@@ -3085,8 +3115,11 @@
       setFieldValue("workImagePrompt", inner.prompt || inner.task_text || "");
       setFieldValue("abilityVideoTitle", run && run.title || "创意视频");
       setFieldValue("abilityVideoPrompt", inner.prompt || inner.task_text || "");
-      setFieldValue("abilityVideoSourceMode", inner.source_mode || "ai_image");
+      setFieldValue("abilityVideoMode", goalVideoModeFromPayload(inner));
+      setFieldValue("abilityVideoAsset", firstGoalVideoReference(inner));
       setFieldValue("abilityVideoCandidateGroup", inner.candidate_group || "");
+      bindGoalVideoModeControls("ability");
+      loadVideoMemoryDocsForSelect().then(() => setMultiSelectValues("abilityVideoMemoryDocs", inner.memory_doc_ids || [])).catch(() => {});
       setFieldValue("workSeedanceAsset", inner.asset_id || inner.image_url || "");
       setFieldValue("workSeedanceText", inner.task_text || inner.prompt || "");
       setFieldValue("workSeedanceDuration", inner.total_duration_seconds || "");
@@ -4315,6 +4348,10 @@
       return `<div class="field ${full ? "full" : ""}"><label>${escapeHtml(label)}</label>${control}</div>`;
     }
 
+    function ipTemplateSelectControl(id) {
+      return `<div class="ip-template-select-row">${taskSelectHtml(id, optionHtml("", "模板加载中..."))}<button class="ghost" type="button" data-open-personal-template-settings>配置模板</button></div>`;
+    }
+
     function ipDailyTaskOptionsHtml() {
       return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;">${IP_DAILY_TASK_OPTIONS.map((item) => `
         <label class="task-checkbox" style="min-height:38px;padding:0 10px;border:1px solid rgba(255,255,255,.18);border-radius:10px;background:rgba(255,255,255,.08);">
@@ -4337,6 +4374,120 @@
 
     function taskTextareaHtml(id, placeholder) {
       return `<textarea id="${escapeHtml(id)}" rows="3" placeholder="${escapeHtml(placeholder || "")}"></textarea>`;
+    }
+
+    function videoMemorySelectControl(id) {
+      return `<select id="${escapeHtml(id)}" class="video-memory-select" multiple size="4"><option value="" disabled>加载中...</option></select>`;
+    }
+
+    function selectedMultiValues(id) {
+      const el = $(id);
+      if (!el) return [];
+      return Array.from(el.selectedOptions || [])
+        .map((opt) => String(opt.value || "").trim())
+        .filter(Boolean);
+    }
+
+    function setMultiSelectValues(id, values) {
+      const el = $(id);
+      if (!el) return;
+      const selected = new Set((Array.isArray(values) ? values : []).map((v) => String(v || "").trim()).filter(Boolean));
+      Array.from(el.options || []).forEach((opt) => { opt.selected = selected.has(String(opt.value || "")); });
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function fillVideoMemorySelects() {
+      const selects = [$("abilityVideoMemoryDocs"), $("taskVideoMemoryDocs")].filter(Boolean);
+      if (!selects.length) return;
+      const rows = Array.isArray(state.personalMemoryDocs) ? state.personalMemoryDocs : [];
+      selects.forEach((sel) => {
+        const selected = new Set(Array.from(sel.selectedOptions || []).map((opt) => String(opt.value || "").trim()).filter(Boolean));
+        sel.innerHTML = rows.length
+          ? rows.map((doc) => optionHtml(personalDocId(doc), personalMemoryTitle(doc))).join("")
+          : `<option value="" disabled>暂无记忆文件</option>`;
+        Array.from(sel.options || []).forEach((opt) => { opt.selected = selected.has(String(opt.value || "")); });
+      });
+    }
+
+    async function loadVideoMemoryDocsForSelect() {
+      if (Array.isArray(state.personalMemoryDocs) && state.personalMemoryDocs.length) {
+        fillVideoMemorySelects();
+        return;
+      }
+      try {
+        const rows = await loadPersonalMemoryDocs();
+        state.personalMemoryDocs = Array.isArray(rows) ? rows : [];
+      } catch {
+        state.personalMemoryDocs = [];
+      }
+      fillVideoMemorySelects();
+    }
+
+    function bindGoalVideoModeControls(scope) {
+      const isTask = scope === "task";
+      const modeId = isTask ? "taskVideoMode" : "abilityVideoMode";
+      const mode = $(modeId) ? $(modeId).value : "single_asset";
+      const assetField = $(isTask ? "taskVideoAssetField" : "abilityVideoAssetField");
+      const memoryField = $(isTask ? "taskVideoMemoryField" : "abilityVideoMemoryField");
+      const groupField = $(isTask ? "taskCandidateGroupField" : "abilityVideoCandidateGroupField");
+      if (assetField) assetField.classList.toggle("hidden", mode !== "single_asset");
+      if (memoryField) memoryField.classList.toggle("hidden", mode !== "memory_image");
+      if (groupField) groupField.classList.toggle("hidden", mode !== "asset_group");
+      const sel = $(modeId);
+      if (sel && !sel.dataset.videoModeBound) {
+        sel.dataset.videoModeBound = "1";
+        sel.addEventListener("change", () => bindGoalVideoModeControls(scope));
+      }
+    }
+
+    function collectGoalVideoPayloadFromFields(ids) {
+      const mode = ($(ids.modeId) ? $(ids.modeId).value : "single_asset") || "single_asset";
+      const prompt = ids.promptId && $(ids.promptId) ? $(ids.promptId).value.trim() : "";
+      const payload = { video_mode: mode, prompt };
+      if (mode === "single_asset") {
+        const ref = ids.assetId && $(ids.assetId) ? $(ids.assetId).value.trim() : "";
+        if (!ref) throw new Error("请选择或上传素材图片");
+        payload.source_mode = "reference_image";
+        if (/^https?:\/\//i.test(ref)) {
+          payload.reference_image_urls = [ref];
+          payload.reference_image_url = ref;
+        } else {
+          payload.reference_asset_ids = [ref];
+          payload.reference_asset_id = ref;
+        }
+        return payload;
+      }
+      if (mode === "memory_image") {
+        const memoryDocIds = selectedMultiValues(ids.memoryId);
+        if (!memoryDocIds.length) throw new Error("请选择记忆文件");
+        payload.source_mode = "ai_image";
+        payload.memory_doc_ids = memoryDocIds;
+        return payload;
+      }
+      const group = ids.groupId && $(ids.groupId) ? $(ids.groupId).value.trim() : "";
+      if (!group) throw new Error("请选择素材分组");
+      payload.source_mode = "asset_random";
+      payload.candidate_group = group;
+      return payload;
+    }
+
+    function goalVideoModeFromPayload(payload) {
+      const item = payload && typeof payload === "object" ? payload : {};
+      const explicit = String(item.video_mode || "").trim();
+      if (["single_asset", "memory_image", "asset_group"].includes(explicit)) return explicit;
+      const sourceMode = String(item.source_mode || "").trim();
+      if (sourceMode === "reference_image" || (item.reference_image_url || (Array.isArray(item.reference_image_urls) && item.reference_image_urls.length) || item.reference_asset_id || (Array.isArray(item.reference_asset_ids) && item.reference_asset_ids.length))) return "single_asset";
+      if (sourceMode === "asset_random" || item.candidate_group) return "asset_group";
+      return "memory_image";
+    }
+
+    function firstGoalVideoReference(payload) {
+      const item = payload && typeof payload === "object" ? payload : {};
+      if (item.reference_image_url) return String(item.reference_image_url || "");
+      if (Array.isArray(item.reference_image_urls) && item.reference_image_urls[0]) return String(item.reference_image_urls[0] || "");
+      if (item.reference_asset_id) return String(item.reference_asset_id || "");
+      if (Array.isArray(item.reference_asset_ids) && item.reference_asset_ids[0]) return String(item.reference_asset_ids[0] || "");
+      return "";
     }
 
     function platformDisplayName(platform) {
@@ -4365,7 +4516,7 @@
 
     async function loadCandidateGroups() {
       try {
-        const data = await api("/api/scheduled-tasks/assets/creative-candidate-groups");
+        const data = await api("/api/assets/creative-candidate-groups");
         state.candidateGroups = Array.isArray(data.groups) ? data.groups : [];
       } catch {
         state.candidateGroups = [];
@@ -5274,9 +5425,162 @@
 
     function workMaterialPayload(value) {
       const raw = String(value || "").trim();
-      if (!raw) throw new Error("请填写素材 ID 或公网链接");
+      if (!raw) throw new Error("请选择素材");
       if (/^https?:\/\//i.test(raw)) return { url: raw };
       return { asset_id: raw };
+    }
+
+    function assetPickerCacheKey(mediaType) {
+      return String(mediaType || "").trim() || "all";
+    }
+
+    function normalizeUserUploadAsset(row) {
+      const item = row && typeof row === "object" ? row : {};
+      return {
+        asset_id: String(item.asset_id || "").trim(),
+        filename: String(item.filename || item.name || "已上传素材").trim(),
+        media_type: String(item.media_type || "").trim() || "image",
+        source_url: String(item.source_url || item.url || item.open_url || item.preview_url || "").trim(),
+        preview_url: String(item.preview_url || item.local_preview_url || item.open_url || item.source_url || item.url || "").trim(),
+        asset_origin: item.asset_origin || "user_upload",
+        created_at: item.created_at || "",
+      };
+    }
+
+    function userUploadAssetRows(mediaType) {
+      return state.userUploadAssetCache[assetPickerCacheKey(mediaType)] || [];
+    }
+
+    function assetPickerOutputValue(row, output) {
+      const item = normalizeUserUploadAsset(row);
+      if (output === "url") return item.source_url || item.preview_url || "";
+      return item.asset_id || item.source_url || item.preview_url || "";
+    }
+
+    function assetPickerPreviewUrl(row) {
+      const item = normalizeUserUploadAsset(row);
+      if (item.preview_url) return item.preview_url;
+      if (item.source_url) return item.source_url;
+      return item.asset_id ? apiUrl(`/api/assets/${encodeURIComponent(item.asset_id)}/content`) : "";
+    }
+
+    function assetPickerControlHtml(id, opts = {}) {
+      const mediaType = String(opts.mediaType || "image").trim();
+      const accept = String(opts.accept || (mediaType === "video" ? "video/*" : "image/*"));
+      const output = String(opts.output || "asset_id");
+      const uploadText = String(opts.uploadText || "上传");
+      const selectText = String(opts.selectText || "选择已上传素材");
+      return `<div class="asset-picker" data-asset-picker="${escapeHtml(id)}" data-asset-media-type="${escapeHtml(mediaType)}" data-asset-output="${escapeHtml(output)}">
+        <input id="${escapeHtml(id)}" type="hidden">
+        <input id="${escapeHtml(id)}File" type="file" accept="${escapeHtml(accept)}" data-asset-upload-input="${escapeHtml(id)}" hidden>
+        <div class="asset-picker-row">
+          <button class="ghost" type="button" data-asset-upload-trigger="${escapeHtml(id)}">${escapeHtml(uploadText)}</button>
+          <select id="${escapeHtml(id)}Select" data-asset-select="${escapeHtml(id)}"><option value="">${escapeHtml(selectText)}</option></select>
+        </div>
+        <div class="asset-picker-preview" id="${escapeHtml(id)}Preview"></div>
+      </div>`;
+    }
+
+    function renderAssetPickerControl(id) {
+      const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
+      const hidden = $(id);
+      const select = $(`${id}Select`);
+      const preview = $(`${id}Preview`);
+      if (!box || !hidden || !select || !preview) return;
+      const mediaType = box.dataset.assetMediaType || "";
+      const output = box.dataset.assetOutput || "asset_id";
+      const rows = userUploadAssetRows(mediaType);
+      const loading = !!state.userUploadAssetLoading[assetPickerCacheKey(mediaType)];
+      const current = String(hidden.value || "").trim();
+      const matched = rows.find((row) => row.asset_id === current || assetPickerOutputValue(row, output) === current) || null;
+      select.innerHTML = `<option value="">${loading ? "加载中..." : "选择已上传素材"}</option>` + rows.map((row) => {
+        const item = normalizeUserUploadAsset(row);
+        return `<option value="${escapeHtml(item.asset_id)}">${escapeHtml(item.filename || item.asset_id)}</option>`;
+      }).join("");
+      select.value = matched ? matched.asset_id : "";
+      if (matched) {
+        const item = normalizeUserUploadAsset(matched);
+        const nextValue = assetPickerOutputValue(item, output);
+        if (nextValue && nextValue !== current) hidden.value = nextValue;
+        const src = assetPickerPreviewUrl(item);
+        const media = item.media_type === "video"
+          ? `<video src="${escapeHtml(src)}" muted playsinline preload="metadata"></video>`
+          : (item.media_type === "image" ? `<img src="${escapeHtml(src)}" alt="">` : `<div class="asset-picker-file">${escapeHtml((item.filename || "FILE").split(".").pop() || "FILE")}</div>`);
+        preview.innerHTML = `<div class="asset-picker-thumb">${media}</div><span>${escapeHtml(item.filename || item.asset_id)}</span>`;
+      } else if (current) {
+        preview.innerHTML = `<span>已选择素材</span>`;
+      } else {
+        preview.innerHTML = "";
+      }
+    }
+
+    function renderAssetPickerControls(mediaType = "") {
+      document.querySelectorAll("[data-asset-picker]").forEach((box) => {
+        if (!mediaType || assetPickerCacheKey(box.dataset.assetMediaType || "") === assetPickerCacheKey(mediaType)) {
+          renderAssetPickerControl(box.dataset.assetPicker || "");
+        }
+      });
+    }
+
+    async function loadUserUploadAssets(mediaType = "", force = false) {
+      const key = assetPickerCacheKey(mediaType);
+      if (!force && Object.prototype.hasOwnProperty.call(state.userUploadAssetCache, key)) return state.userUploadAssetCache[key];
+      if (state.userUploadAssetLoading[key]) return state.userUploadAssetCache[key] || [];
+      state.userUploadAssetLoading[key] = true;
+      renderAssetPickerControls(mediaType);
+      try {
+        const params = new URLSearchParams({ origin: "user_upload", limit: "120" });
+        if (mediaType) params.set("media_type", mediaType);
+        const data = await api(`/api/assets?${params.toString()}`);
+        const rows = (Array.isArray(data.assets) ? data.assets : [])
+          .map(normalizeUserUploadAsset)
+          .filter((row) => row.asset_id && row.asset_origin === "user_upload");
+        state.userUploadAssetCache[key] = rows;
+        return rows;
+      } finally {
+        state.userUploadAssetLoading[key] = false;
+        renderAssetPickerControls(mediaType);
+      }
+    }
+
+    function addUserUploadAssetToCache(row) {
+      const item = normalizeUserUploadAsset(row);
+      if (!item.asset_id) return item;
+      [assetPickerCacheKey(item.media_type), "all"].forEach((key) => {
+        const rows = state.userUploadAssetCache[key] || [];
+        state.userUploadAssetCache[key] = [item].concat(rows.filter((old) => old.asset_id !== item.asset_id));
+      });
+      return item;
+    }
+
+    function initAssetPickerControls(root = document) {
+      const host = root && root.querySelectorAll ? root : document;
+      host.querySelectorAll("[data-asset-picker]").forEach((box) => {
+        const mediaType = box.dataset.assetMediaType || "";
+        renderAssetPickerControl(box.dataset.assetPicker || "");
+        loadUserUploadAssets(mediaType).catch((err) => toast(err.message || "素材库加载失败"));
+      });
+    }
+
+    async function uploadUserAssetForPicker(id, file) {
+      if (!file) return;
+      const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
+      const hidden = $(id);
+      const preview = $(`${id}Preview`);
+      if (!box || !hidden) return;
+      if (preview) preview.innerHTML = "<span>上传中...</span>";
+      const fd = new FormData();
+      fd.append("file", file, file.name || "upload");
+      const resp = await fetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || data.message || `上传失败：HTTP ${resp.status}`);
+      const item = addUserUploadAssetToCache({ ...data, asset_origin: "user_upload" });
+      const output = box.dataset.assetOutput || "asset_id";
+      hidden.value = assetPickerOutputValue(item, output);
+      hidden.dispatchEvent(new Event("change", { bubbles: true }));
+      renderAssetPickerControls(item.media_type);
+      renderAssetPickerControls("");
+      toast("已上传，之后可直接选择");
     }
 
     function renderWorkHiflyOptions() {
@@ -5301,13 +5605,13 @@
           + taskFieldHtml("图片需求", taskTextareaHtml("workImagePrompt", "例如：一张适合小红书封面的精致产品场景图，暖色自然光，突出卖点"), true);
       }
       if (key === "comfly.seedance.tvc.pipeline") {
-        return taskFieldHtml("素材 ID / 公网图", workInputHtml("workSeedanceAsset", "text", "", 'placeholder="输入素材库 asset_id 或 https:// 图片链接"'), true)
+        return taskFieldHtml("参考图片", assetPickerControlHtml("workSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }), true)
           + taskFieldHtml("视频需求", taskTextareaHtml("workSeedanceText", "例如：围绕护肤品做 3 个高级感分镜，突出补水和通透肤感"), true)
           + taskFieldHtml("视频时长", taskSelectHtml("workSeedanceDuration", [10, 20, 30, 40, 50, 60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
           + taskFieldHtml("画幅", taskSelectHtml("workSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏") + optionHtml("1:1", "1:1 方图")));
       }
       if (key === "comfly.daihuo.pipeline") {
-        return taskFieldHtml("素材 ID / 公网图", workInputHtml("workComflyAsset", "text", "", 'placeholder="输入素材库 asset_id 或 https:// 图片链接"'), true)
+        return taskFieldHtml("参考图片", assetPickerControlHtml("workComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }), true)
           + taskFieldHtml("视频需求", taskTextareaHtml("workComflyText", "例如：生成一个突出产品卖点和使用场景的爆款TVC"), true)
           + taskFieldHtml("分镜数量", workInputHtml("workComflyStoryboardCount", "number", "5", 'min="1" max="8"'))
           + taskFieldHtml("自动入库", workCheckboxHtml("workComflyAutoSave", "完成后保存到素材库", true));
@@ -5334,12 +5638,12 @@
           + taskFieldHtml("行业/赛道", workInputHtml("workLocalIndustry", "text", "大健康"))
           + taskFieldHtml("城市", workInputHtml("workLocalCity", "text", "深圳"))
           + taskFieldHtml("省份", workInputHtml("workLocalProvince", "text", "广东"))
-          + taskFieldHtml("人物照片素材 ID / URL", workInputHtml("workLocalPhoto", "text", "", 'placeholder="可选，用于保持人物身份"'), true);
+          + taskFieldHtml("人物照片", assetPickerControlHtml("workLocalPhoto", { mediaType: "image", output: "url", uploadText: "从相册上传" }), true);
       }
       if (key === "viral_video_remix") {
-        return taskFieldHtml("参考视频链接", workInputHtml("workViralVideoUrl", "text", "", 'placeholder="抖音/视频号解析后的直链或可下载公网视频"'), true)
-          + taskFieldHtml("人物参考图 URL", workInputHtml("workViralCharacterUrl", "text", "", 'placeholder="可选，人物图公网链接"'))
-          + taskFieldHtml("产品参考图 URL", workInputHtml("workViralProductUrl", "text", "", 'placeholder="可选，产品图公网链接"'))
+        return taskFieldHtml("参考视频", assetPickerControlHtml("workViralVideoUrl", { mediaType: "video", output: "url", accept: "video/*", uploadText: "上传视频" }), true)
+          + taskFieldHtml("人物参考图", assetPickerControlHtml("workViralCharacterUrl", { mediaType: "image", output: "url", uploadText: "上传人物图" }))
+          + taskFieldHtml("产品参考图", assetPickerControlHtml("workViralProductUrl", { mediaType: "image", output: "url", uploadText: "上传产品图" }))
           + taskFieldHtml("复刻要求", taskTextareaHtml("workViralPrompt", "例如：保留原视频节奏，替换为我们的产品卖点，口吻更高级自然"), true)
           + taskFieldHtml("分段时长", taskSelectHtml("workViralDuration", optionHtml("10", "10 秒/段") + optionHtml("5", "5 秒/段")))
           + taskFieldHtml("画幅", taskSelectHtml("workViralRatio", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏") + optionHtml("1:1", "1:1 方图")))
@@ -5350,7 +5654,7 @@
           + taskFieldHtml("备注", taskTextareaHtml("workWecomNote", "可选：这次希望客服重点关注的业务场景或回复口径"), true);
       }
       if (key === "publish_center") {
-        return taskFieldHtml("素材 ID / 公网链接", workInputHtml("workPublishMaterial", "text", "", 'placeholder="asset_id 或 https:// 素材链接"'), true)
+        return taskFieldHtml("发布素材", assetPickerControlHtml("workPublishMaterial", { mediaType: "", output: "url", accept: "image/*,video/*,.pdf,.doc,.docx,.ppt,.pptx", uploadText: "上传素材" }), true)
           + taskFieldHtml("素材类型", taskSelectHtml("workPublishMediaType", optionHtml("video", "视频") + optionHtml("image", "图片") + optionHtml("document", "文档")))
           + taskFieldHtml("发布账号昵称", workInputHtml("workPublishAccount", "text", "", 'placeholder="与 online 发布中心里的账号昵称一致"'))
           + taskFieldHtml("标题", workInputHtml("workPublishTitle", "text", "", 'placeholder="可选，不填可让 AI 补全"'), true)
@@ -5371,6 +5675,7 @@
       $("workDispatchTitle").textContent = item.label || "安排工作";
       $("workDispatchFields").innerHTML = workDispatchFieldsHtml(item);
       modal.classList.remove("hidden");
+      initAssetPickerControls(modal);
       if (item.key === "hifly.video.create_by_tts") {
         renderWorkHiflyOptions();
         loadHiflyLibraries();
@@ -5410,7 +5715,7 @@
       }
       if (key === "comfly.seedance.tvc.pipeline") {
         const taskText = workValue("workSeedanceText");
-        const asset = assetOrImagePayload(workValue("workSeedanceAsset"), "素材 ID 或公网图");
+        const asset = assetOrImagePayload(workValue("workSeedanceAsset"), "参考图片");
         return {
           title: "创意分镜头视频",
           taskKind: "capability",
@@ -5429,7 +5734,7 @@
         };
       }
       if (key === "comfly.daihuo.pipeline") {
-        const asset = assetOrImagePayload(workValue("workComflyAsset"), "素材 ID 或公网图");
+        const asset = assetOrImagePayload(workValue("workComflyAsset"), "参考图片");
         return {
           title: "爆款TVC",
           taskKind: "capability",
@@ -5507,8 +5812,8 @@
         const originalVideoUrl = workValue("workViralVideoUrl");
         const characterImageUrl = workValue("workViralCharacterUrl");
         const productImageUrl = workValue("workViralProductUrl");
-        if (!/^https?:\/\//i.test(originalVideoUrl)) throw new Error("请填写参考视频公网链接");
-        if (!characterImageUrl && !productImageUrl) throw new Error("请至少填写人物图或产品图公网链接");
+        if (!/^https?:\/\//i.test(originalVideoUrl)) throw new Error("请上传或选择参考视频");
+        if (!characterImageUrl && !productImageUrl) throw new Error("请至少上传或选择人物图、产品图其中一个");
         return {
           title: "爆款复刻",
           taskKind: "client_workflow",
@@ -5586,20 +5891,20 @@
         };
       }
       if (capabilityId === "goal.video.pipeline") {
-        const sourceMode = abilityValue("abilityVideoSourceMode") || "ai_image";
-        const group = abilityValue("abilityVideoCandidateGroup");
-        if (sourceMode !== "ai_image" && !group) throw new Error("请选择备选素材组，或把首帧来源改成 AI生成首帧");
+        const payload = collectGoalVideoPayloadFromFields({
+          modeId: "abilityVideoMode",
+          assetId: "abilityVideoAsset",
+          memoryId: "abilityVideoMemoryDocs",
+          groupId: "abilityVideoCandidateGroup",
+          promptId: "abilityVideoPrompt",
+        });
         return {
           title: abilityValue("abilityVideoTitle") || node.label || "创意视频",
           taskKind: "capability",
           content: "H5 能力工作台：创意视频",
           payload: {
             capability_id: "goal.video.pipeline",
-            payload: {
-              source_mode: sourceMode,
-              candidate_group: sourceMode === "ai_image" ? "" : group,
-              prompt: abilityValue("abilityVideoPrompt"),
-            },
+            payload,
           },
         };
       }
@@ -5642,7 +5947,7 @@
         };
       }
       if (capabilityId === "comfly.ecommerce.detail_pipeline") {
-        const asset = assetOrImagePayload(abilityValue("abilityEcommerceAsset"), "商品素材ID或公网图");
+        const asset = assetOrImagePayload(abilityValue("abilityEcommerceAsset"), "商品主图");
         return {
           title: abilityValue("abilityEcommerceTitle") || node.label || "电商详情页",
           taskKind: "capability",
@@ -5977,16 +6282,11 @@
       }
     }
 
-    function updateGoalVideoSourceMode() {
-      const mode = $("taskVideoSourceMode") ? $("taskVideoSourceMode").value : "asset_random";
-      if ($("taskCandidateGroupField")) $("taskCandidateGroupField").classList.toggle("hidden", mode === "ai_image");
-    }
-
     function renderTaskParamFields() {
       const host = $("taskParamFields");
       if (!host) return;
       if (state.taskAbility === "ip_content_daily") {
-        host.innerHTML = taskFieldHtml("关键词和同行模板", taskSelectHtml("taskIpTemplate", optionHtml("", "模板加载中...")))
+        host.innerHTML = taskFieldHtml("关键词和同行模板", ipTemplateSelectControl("taskIpTemplate"))
           + taskFieldHtml("生成内容", ipDailyTaskOptionsHtml(), true)
           + taskFieldHtml("执行前同步", `<label class="task-checkbox"><input id="taskIpSyncBefore" type="checkbox" checked>每次执行前同步新数据</label>`, true)
           + taskFieldHtml("补充要求（可选）", taskTextareaHtml("taskIpRequirement", "例如：口播更有案例感；朋友圈短句分行、多段落留白、适当 Emoji、强痛点和结果导向；图片干净真实"), true);
@@ -6033,31 +6333,38 @@
         return;
       }
       if (state.taskAbility === "comfly.daihuo.pipeline") {
-        host.innerHTML = taskFieldHtml("素材ID或公网图", `<input id="taskComflyAsset" placeholder="填素材ID；没有可填公网图片URL" />`)
+        host.innerHTML = taskFieldHtml("参考图片", assetPickerControlHtml("taskComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }))
           + taskFieldHtml("视频要求", taskTextareaHtml("taskComflyText", "例如：生成一个突出产品卖点和使用场景的爆款TVC"), true)
           + taskFieldHtml("分镜数量", `<input id="taskComflyStoryboardCount" type="number" min="1" max="8" value="5" />`)
           + taskFieldHtml("自动入库", `<label class="task-checkbox"><input id="taskComflyAutoSave" type="checkbox" checked>完成后保存到素材库</label>`);
+        initAssetPickerControls(host);
         return;
       }
       if (state.taskAbility === "comfly.seedance.tvc.pipeline") {
-        host.innerHTML = taskFieldHtml("素材ID或公网图", `<input id="taskSeedanceAsset" placeholder="填素材ID；没有可填公网图片URL" />`)
+        host.innerHTML = taskFieldHtml("参考图片", assetPickerControlHtml("taskSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }))
           + taskFieldHtml("视频要求", taskTextareaHtml("taskSeedanceText", "例如：明亮真实的品牌广告，镜头连续，适合投放"), true)
           + taskFieldHtml("总时长", taskSelectHtml("taskSeedanceDuration", [10,20,30,40,50,60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
           + taskFieldHtml("画幅", taskSelectHtml("taskSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏")));
+        initAssetPickerControls(host);
         return;
       }
       if (state.taskAbility === "comfly.ecommerce.detail_pipeline") {
-        host.innerHTML = taskFieldHtml("商品素材ID或公网图", `<input id="taskEcommerceAsset" placeholder="填商品主图素材ID；没有可填公网图片URL" />`)
+        host.innerHTML = taskFieldHtml("商品主图", assetPickerControlHtml("taskEcommerceAsset", { mediaType: "image", output: "url", uploadText: "上传主图" }))
           + taskFieldHtml("详情页要求", taskTextareaHtml("taskEcommerceText", "例如：突出材质、卖点、使用场景和购买理由"), true)
           + taskFieldHtml("页面数量", `<input id="taskEcommercePageCount" type="number" min="1" max="20" value="12" />`)
           + taskFieldHtml("自动入库", `<label class="task-checkbox"><input id="taskEcommerceAutoSave" type="checkbox" checked>完成后保存到素材库</label>`);
+        initAssetPickerControls(host);
         return;
       }
-      host.innerHTML = taskFieldHtml("首帧图片来源", taskSelectHtml("taskVideoSourceMode", optionHtml("asset_random", "从素材库备选组随机图片") + optionHtml("ai_image", "AI 生成图片")))
-        + `<div class="field" id="taskCandidateGroupField"><label>备选素材组</label>${taskSelectHtml("taskCandidateGroup", optionHtml("", "加载中..."))}</div>`
-        + taskFieldHtml("提示词（可选）", taskTextareaHtml("taskCreativePrompt", "填写后直接按这段提示词生成；留空则根据记忆资料自动生成文案和画面方向"), true);
-      if ($("taskVideoSourceMode")) $("taskVideoSourceMode").addEventListener("change", updateGoalVideoSourceMode);
-      updateGoalVideoSourceMode();
+      host.innerHTML = taskFieldHtml("生成模式", taskSelectHtml("taskVideoMode", optionHtml("single_asset", "单个素材生成视频") + optionHtml("memory_image", "根据记忆先生成图片") + optionHtml("asset_group", "素材分组轮换生成")))
+        + `<div class="field full" id="taskVideoAssetField"><label>素材图片</label>${assetPickerControlHtml("taskVideoAsset", { mediaType: "image", output: "url", uploadText: "上传图片", selectText: "选择已上传图片" })}</div>`
+        + `<div class="field full hidden" id="taskVideoMemoryField"><label>记忆文件</label>${videoMemorySelectControl("taskVideoMemoryDocs")}</div>`
+        + `<div class="field hidden" id="taskCandidateGroupField"><label>素材分组</label>${taskSelectHtml("taskCandidateGroup", optionHtml("", "加载中..."))}</div>`
+        + taskFieldHtml("补充提示词", taskTextareaHtml("taskCreativePrompt", "可选"), true);
+      bindGoalVideoModeControls("task");
+      initAssetPickerControls(host);
+      fillVideoMemorySelects();
+      loadVideoMemoryDocsForSelect();
       fillCandidateGroupSelect();
       loadCandidateGroups();
     }
@@ -6250,14 +6557,13 @@
         return { avatar, voice };
       }
       if (state.taskAbility === "goal.video.pipeline") {
-        const sourceMode = $("taskVideoSourceMode") ? $("taskVideoSourceMode").value : "asset_random";
-        const group = $("taskCandidateGroup") ? $("taskCandidateGroup").value : "";
-        if (sourceMode !== "ai_image" && !group) throw new Error("请选择创意成片备选素材组");
-        return {
-          source_mode: sourceMode,
-          candidate_group: sourceMode === "ai_image" ? "" : group,
-          prompt: $("taskCreativePrompt") ? $("taskCreativePrompt").value.trim() : "",
-        };
+        return collectGoalVideoPayloadFromFields({
+          modeId: "taskVideoMode",
+          assetId: "taskVideoAsset",
+          memoryId: "taskVideoMemoryDocs",
+          groupId: "taskCandidateGroup",
+          promptId: "taskCreativePrompt",
+        });
       }
       if (state.taskAbility === "goal.image.pipeline") {
         const publishPlatform = $("taskPublishPlatform") ? $("taskPublishPlatform").value : "";
@@ -6322,7 +6628,7 @@
         };
       }
       if (state.taskAbility === "comfly.daihuo.pipeline") {
-        const asset = assetOrImagePayload($("taskComflyAsset") && $("taskComflyAsset").value, "素材ID或公网图");
+        const asset = assetOrImagePayload($("taskComflyAsset") && $("taskComflyAsset").value, "参考图片");
         const storyboardCount = parseInt(($("taskComflyStoryboardCount") && $("taskComflyStoryboardCount").value) || "5", 10);
         return {
           action: "start_pipeline",
@@ -6333,7 +6639,7 @@
         };
       }
       if (state.taskAbility === "comfly.seedance.tvc.pipeline") {
-        const asset = assetOrImagePayload($("taskSeedanceAsset") && $("taskSeedanceAsset").value, "素材ID或公网图");
+        const asset = assetOrImagePayload($("taskSeedanceAsset") && $("taskSeedanceAsset").value, "参考图片");
         const totalDuration = parseInt(($("taskSeedanceDuration") && $("taskSeedanceDuration").value) || "20", 10);
         return {
           action: "start_pipeline",
@@ -6345,7 +6651,7 @@
         };
       }
       if (state.taskAbility === "comfly.ecommerce.detail_pipeline") {
-        const asset = assetOrImagePayload($("taskEcommerceAsset") && $("taskEcommerceAsset").value, "商品素材ID或公网图");
+        const asset = assetOrImagePayload($("taskEcommerceAsset") && $("taskEcommerceAsset").value, "商品主图");
         const pageCount = parseInt(($("taskEcommercePageCount") && $("taskEcommercePageCount").value) || "12", 10);
         return {
           action: "start_pipeline",
@@ -7619,7 +7925,7 @@
       const account = selectedPublishRunAccount();
       const platform = $("publishRunPlatform") ? $("publishRunPlatform").value : "";
       if (!draft.asset_id) {
-        toast("缺少素材ID，当前发布接口需要素材库 asset_id");
+        toast("当前素材还没有入库，不能直接发布");
         return;
       }
       if (!account) {
@@ -7997,7 +8303,7 @@
       return `<div class="run-media">${entries.map((entry, index) => {
         const url = String(entry.url || entry.source_url || "").trim();
         if (!url && entry.asset_id) {
-          return `<div class="run-media-item"><div class="hint">asset_id: ${escapeHtml(entry.asset_id)}</div><div class="run-media-actions">${runMediaPublishButton(row, index)}</div></div>`;
+          return `<div class="run-media-item"><div class="hint">素材已入库</div><div class="run-media-actions">${runMediaPublishButton(row, index)}</div></div>`;
         }
         if (!url) return "";
         const low = url.toLowerCase();
@@ -8112,13 +8418,7 @@
       const activeView = document.querySelector(".view.active");
       const activeId = activeView ? String(activeView.id || "") : "";
       if (activeId === "abilityView") {
-        const lookup = activeAbilityLookup();
-        const parent = lookup && lookup.trail && lookup.trail.length > 1 ? lookup.trail[lookup.trail.length - 2] : null;
-        if (parent && parent.key) {
-          openAbilityView(parent.key);
-        } else {
-          switchTab("department");
-        }
+        switchTab("department");
         return;
       }
       if (activeId === "departmentView") {
@@ -8262,6 +8562,48 @@
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory(scopeFromActiveView(), viewTargetFromCurrent("profile")));
+    $("personalTemplateHelpBtn")?.addEventListener("click", openPersonalTemplateHelpDialog);
+    $("personalTemplateHelpBackdrop")?.addEventListener("click", closePersonalTemplateHelpDialog);
+    $("personalTemplateHelpCloseBtn")?.addEventListener("click", closePersonalTemplateHelpDialog);
+    document.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-open-personal-template-settings]");
+      if (!btn) return;
+      evt.preventDefault();
+      openPersonalTemplateSettings();
+    });
+    document.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-asset-upload-trigger]");
+      if (!btn) return;
+      evt.preventDefault();
+      const id = btn.dataset.assetUploadTrigger || "";
+      const input = id ? $(`${id}File`) : null;
+      if (input) input.click();
+    });
+    document.addEventListener("change", (evt) => {
+      const select = evt.target.closest("[data-asset-select]");
+      if (select) {
+        const id = select.dataset.assetSelect || "";
+        const box = id ? document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`) : null;
+        const hidden = id ? $(id) : null;
+        if (!box || !hidden) return;
+        const rows = userUploadAssetRows(box.dataset.assetMediaType || "");
+        const row = rows.find((item) => item.asset_id === select.value) || null;
+        hidden.value = row ? assetPickerOutputValue(row, box.dataset.assetOutput || "asset_id") : "";
+        hidden.dispatchEvent(new Event("change", { bubbles: true }));
+        renderAssetPickerControl(id);
+        return;
+      }
+      const input = evt.target.closest("[data-asset-upload-input]");
+      if (input) {
+        const id = input.dataset.assetUploadInput || "";
+        const file = input.files && input.files[0] ? input.files[0] : null;
+        input.value = "";
+        uploadUserAssetForPicker(id, file).catch((err) => {
+          toast(err.message || "上传失败");
+          renderAssetPickerControl(id);
+        });
+      }
+    });
     $("refreshProfileBtn").addEventListener("click", refreshDeviceStatus);
     $("profileDeviceSelect")?.addEventListener("change", (evt) => setSelectedInstallationId(evt.target.value || ""));
     $("personalSettingsTabs")?.addEventListener("click", (evt) => {
@@ -8341,6 +8683,26 @@
     $("refreshRunsBtn").addEventListener("click", () => loadRuns({ reset: true }));
     $("loadMoreTasksBtn")?.addEventListener("click", () => loadTasks({ append: true, reset: false }));
     $("loadMoreRunsBtn")?.addEventListener("click", () => loadRuns({ append: true, reset: false }));
+    $("officeWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory({ type: "all", label: "全部记录" }, "office"));
+    $("officeView")?.addEventListener("click", (evt) => {
+      const runBtn = evt.target.closest("[data-open-run-detail]");
+      if (runBtn) {
+        evt.preventDefault();
+        openRunDetail(runBtn.dataset.openRunDetail || "", "office");
+        return;
+      }
+      const taskBtn = evt.target.closest("[data-open-task-detail]");
+      if (taskBtn) {
+        evt.preventDefault();
+        openTaskDetail(taskBtn.dataset.openTaskDetail || "", "office");
+        return;
+      }
+      const departmentBtn = evt.target.closest("[data-role-department]");
+      if (departmentBtn && !evt.target.closest("#employeeFloor")) {
+        evt.preventDefault();
+        openDepartmentView(departmentBtn.dataset.roleDepartment || "");
+      }
+    });
     $("employeeFloor").addEventListener("click", (evt) => {
       const homeTargetBtn = evt.target.closest("[data-home-target]");
       if (homeTargetBtn) {
