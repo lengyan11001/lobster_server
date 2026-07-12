@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from .admin import AdminContext, _agent_visible_user_ids, _assert_can_manage_user, _verify_admin_token
 from .auth import access_token_claims, create_access_token, get_current_user
@@ -1874,6 +1874,28 @@ def _query_log_payload(row: TikHubQueryLog, *, include_raw: bool = False, items:
     return payload
 
 
+def _query_log_summary_payload(row: TikHubQueryLog) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "query_id": row.query_id,
+        "platform": row.platform,
+        "query_type": row.query_type,
+        "status": row.status,
+        "success": bool(row.success),
+        "http_status": row.http_status,
+        "tikhub_code": row.tikhub_code,
+        "tikhub_request_id": row.tikhub_request_id or "",
+        "credits_charged": credits_json_float(row.credits_charged or 0),
+        "latency_ms": row.latency_ms,
+        "result_count": int(row.result_count or 0),
+        "error_message": (row.error_message or "")[:240],
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "summary_only": True,
+    }
+
+
 def _competitor_payload(row: ContentCompetitorAccount) -> dict[str, Any]:
     return {
         "id": row.id,
@@ -3549,9 +3571,34 @@ def list_my_tikhub_records(
             )
         )
     total = query.with_entities(func.count(TikHubQueryLog.id)).scalar() or 0
-    rows = query.order_by(TikHubQueryLog.created_at.desc(), TikHubQueryLog.id.desc()).offset(offset).limit(limit).all()
+    rows = (
+        query.options(
+            load_only(
+                TikHubQueryLog.id,
+                TikHubQueryLog.user_id,
+                TikHubQueryLog.query_id,
+                TikHubQueryLog.platform,
+                TikHubQueryLog.query_type,
+                TikHubQueryLog.status,
+                TikHubQueryLog.success,
+                TikHubQueryLog.http_status,
+                TikHubQueryLog.tikhub_code,
+                TikHubQueryLog.tikhub_request_id,
+                TikHubQueryLog.credits_charged,
+                TikHubQueryLog.latency_ms,
+                TikHubQueryLog.result_count,
+                TikHubQueryLog.error_message,
+                TikHubQueryLog.created_at,
+                TikHubQueryLog.updated_at,
+            )
+        )
+        .order_by(TikHubQueryLog.created_at.desc(), TikHubQueryLog.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     return {
-        "items": [_query_log_payload(row) for row in rows],
+        "items": [_query_log_summary_payload(row) for row in rows],
         "pagination": {"total": int(total), "limit": int(limit), "offset": int(offset), "has_next": offset + limit < int(total)},
     }
 

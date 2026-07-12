@@ -82,6 +82,7 @@
       agentPendingIpTemplateId: "",
       agentLoading: false,
       tikhubRecords: [],
+      tikhubRecordDetails: {},
       leadCenterDomain: "public",
       leadCenterPlatform: "all",
       leadCenterRows: [],
@@ -4052,26 +4053,65 @@
       </article>`;
     }
 
-    function openLeadDetail(index) {
+    function leadDetailSummaryHtml(record, itemCount = 0) {
+      return `<div class="lead-detail-summary">
+        <div><span>平台</span><strong>${escapeHtml(leadPlatformLabel(record.platform))}</strong></div>
+        <div><span>数量</span><strong>${escapeHtml(compactNumber(record.count || itemCount || 0))}</strong></div>
+        <div><span>状态</span><strong>${escapeHtml(record.status || "-")}</strong></div>
+        <div><span>时间</span><strong>${escapeHtml(fmtTime(record.time))}</strong></div>
+      </div>`;
+    }
+
+    function leadDetailLoadingHtml(record) {
+      return `${leadDetailSummaryHtml(record)}
+        <div class="lead-detail-list">
+          ${Array.from({ length: 4 }).map(() => `<div class="lead-detail-item lead-detail-skeleton">
+            <i></i><b></b><span></span>
+          </div>`).join("")}
+        </div>`;
+    }
+
+    function leadDetailContentHtml(record, items) {
+      return `
+        ${leadDetailSummaryHtml(record, items.length)}
+        <div class="lead-detail-list">
+          ${items.length ? items.slice(0, 40).map(leadItemHtml).join("") : `<div class="lead-empty lead-detail-empty"><span>这条记录没有保存可展开的客资明细。</span></div>`}
+        </div>`;
+    }
+
+    async function hydrateLeadDetailRecord(record) {
+      if (!record || record.type !== "tikhub") return record;
+      const queryId = record.raw && record.raw.query_id;
+      if (!queryId) return record;
+      if (state.tikhubRecordDetails[queryId]) {
+        record.raw = { ...record.raw, ...state.tikhubRecordDetails[queryId], summary_only: false };
+        return record;
+      }
+      const detail = await api(`/api/ip-content/tikhub/records/${encodeURIComponent(queryId)}`);
+      state.tikhubRecordDetails[queryId] = detail || {};
+      record.raw = { ...record.raw, ...(detail || {}), summary_only: false };
+      record.count = Number((detail && detail.result_count) || record.count || 0);
+      return record;
+    }
+
+    async function openLeadDetail(index) {
       const record = (state.leadCenterRows || [])[Number(index)];
       if (!record) return;
       const modal = $("leadDetailDialog");
       const body = $("leadDetailBody");
       const title = $("leadDetailTitle");
       if (!modal || !body) return;
-      if (title) title.textContent = record.title || "客资明细";
-      const items = leadDetailItems(record);
-      body.innerHTML = `
-        <div class="lead-detail-summary">
-          <div><span>平台</span><strong>${escapeHtml(leadPlatformLabel(record.platform))}</strong></div>
-          <div><span>数量</span><strong>${escapeHtml(compactNumber(record.count || items.length || 0))}</strong></div>
-          <div><span>状态</span><strong>${escapeHtml(record.status || "-")}</strong></div>
-          <div><span>时间</span><strong>${escapeHtml(fmtTime(record.time))}</strong></div>
-        </div>
-        <div class="lead-detail-list">
-          ${items.length ? items.slice(0, 40).map(leadItemHtml).join("") : `<div class="lead-empty lead-detail-empty"><span>这条记录没有保存可展开的客资明细。</span></div>`}
-        </div>`;
       modal.classList.remove("hidden");
+      if (title) title.textContent = record.title || "客资明细";
+      body.innerHTML = leadDetailLoadingHtml(record);
+      try {
+        const hydrated = await hydrateLeadDetailRecord(record);
+        const items = leadDetailItems(hydrated);
+        body.innerHTML = leadDetailContentHtml(hydrated, items);
+      } catch (err) {
+        body.innerHTML = `${leadDetailSummaryHtml(record)}
+          <div class="lead-empty lead-detail-empty"><span>${escapeHtml((err && err.message) || "客资明细加载失败")}</span></div>`;
+      }
     }
 
     function renderLeadCenter() {
@@ -4094,7 +4134,9 @@
         .filter((row) => platform === "all" || cleanKey(row.platform) === platform || (platform === "redbook" && cleanKey(row.platform) === "xiaohongshu"));
       state.leadCenterRows = rows.slice(0, 30);
       if (state.leadCenterLoading) {
-        list.innerHTML = `<div class="lead-empty"><div class="lead-empty-box"></div><span>加载中...</span></div>`;
+        list.innerHTML = Array.from({ length: 6 }).map(() => `<div class="lead-card lead-card-skeleton" aria-hidden="true">
+          <i></i><b></b><span></span>
+        </div>`).join("");
         return;
       }
       if (!rows.length) {
