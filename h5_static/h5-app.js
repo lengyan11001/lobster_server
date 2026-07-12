@@ -68,6 +68,7 @@
       workflowGrantTemplateId: "",
       workflowGrantSelectedUserIds: {},
       workflowSubmitting: false,
+      workflowParamNodeId: "",
       agentUsers: [],
       agentUsersTotal: 0,
       agentUsersOffset: 0,
@@ -1604,6 +1605,572 @@
       return String(note || "").trim() || `执行${(node && (node.label || node.key)) || "任务"}`;
     }
 
+    function workflowParamValue(id) {
+      const el = $(id);
+      return ((el && el.value) || "").trim();
+    }
+
+    function workflowParamChecked(id) {
+      const el = $(id);
+      return !!(el && el.checked);
+    }
+
+    function workflowParamNumber(id, fallback, min, max) {
+      return workNumber(workflowParamValue(id), fallback, min, max);
+    }
+
+    function workflowParamSplitList(id) {
+      return splitTextareaList(workflowParamValue(id));
+    }
+
+    function workflowIpDailyTaskOptionsHtml() {
+      return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;">${IP_DAILY_TASK_OPTIONS.map((item) => `
+        <label class="task-checkbox" style="min-height:38px;padding:0 10px;border:1px solid rgba(15,23,42,.08);border-radius:10px;background:rgba(255,255,255,.72);">
+          <input type="checkbox" data-workflow-ip-daily-task="${escapeHtml(item.value)}" checked>
+          <span>${escapeHtml(item.label)}</span>
+        </label>
+      `).join("")}</div>`;
+    }
+
+    function selectedWorkflowIpDailyTasks() {
+      return Array.from(document.querySelectorAll("[data-workflow-ip-daily-task]"))
+        .filter((el) => el.checked)
+        .map((el) => String(el.getAttribute("data-workflow-ip-daily-task") || "").trim())
+        .filter(Boolean);
+    }
+
+    function workflowSocialFieldsHtml(platform) {
+      const sourceLabel = platform === "reddit" ? "社区" : "来源关键词";
+      const sourcePlaceholder = platform === "reddit" ? "例如：Entrepreneur、marketing、SaaS" : "例如：AI agent、marketing automation、lead generation";
+      return taskFieldHtml("任务名称", workInputHtml("workflowParamLeadTitle", "text", `${socialPlatformLabel(platform)}线索采集`))
+        + taskFieldHtml("精准用户方向", taskTextareaHtml("workflowParamLeadKeywords", "要筛选的精准用户方向"), true)
+        + taskFieldHtml("采集方式", taskSelectHtml("workflowParamLeadMode", optionHtml("source", sourceLabel) + optionHtml("account", "账号")))
+        + taskFieldHtml(sourceLabel, taskTextareaHtml("workflowParamLeadSources", sourcePlaceholder), true)
+        + taskFieldHtml("账号", taskTextareaHtml("workflowParamLeadAccounts", platform === "reddit" ? "例如：u/example 或 example" : "例如：@example 或主页链接"), true)
+        + taskFieldHtml("采集上限", workInputHtml("workflowParamLeadMaxItems", "number", "100", 'min="1" max="100"'));
+    }
+
+    function workflowLinkedinFieldsHtml() {
+      return taskFieldHtml("任务名称", workInputHtml("workflowParamLinkedinTitle", "text", "LinkedIn线索挖掘"))
+        + taskFieldHtml("目标画像", taskTextareaHtml("workflowParamLinkedinTarget", "例如：跨境电商老板、AI工具采购负责人、营销负责人"), true)
+        + taskFieldHtml("个人主页", taskTextareaHtml("workflowParamLinkedinProfiles", "LinkedIn个人主页链接，可多行"), true)
+        + taskFieldHtml("公司主页", taskTextareaHtml("workflowParamLinkedinCompanies", "LinkedIn公司主页链接，可多行"), true)
+        + taskFieldHtml("关键词", taskTextareaHtml("workflowParamLinkedinKeywords", "例如：AI marketing、automation、lead generation"), true)
+        + taskFieldHtml("话题标签", taskTextareaHtml("workflowParamLinkedinHashtags", "例如：ai、marketing、startup"), true)
+        + taskFieldHtml("人数上限", workInputHtml("workflowParamLinkedinMaxPeople", "number", "30", 'min="5" max="80"'));
+    }
+
+    function workflowWechatTranscriptFieldsHtml() {
+      return taskFieldHtml("视频号账号 / 链接 / 关键词", taskTextareaHtml("workflowParamWechatQuery", "填写视频号账号、sph开头ID、视频详情链接，或搜索关键词"), true)
+        + taskFieldHtml("拉取页数", workInputHtml("workflowParamWechatPages", "number", "1", 'min="1" max="20"'))
+        + taskFieldHtml("最多转写视频数", workInputHtml("workflowParamWechatLimit", "number", "10", 'min="1" max="50"'));
+    }
+
+    function workflowCapabilityFieldsHtml(capabilityId) {
+      const id = String(capabilityId || "").trim();
+      if (id === "ip_content_daily") {
+        return taskFieldHtml("模板", ipTemplateSelectControl("workflowParamIpTemplate"))
+          + taskFieldHtml("生成内容", workflowIpDailyTaskOptionsHtml(), true)
+          + taskFieldHtml("执行前同步", `<label class="task-checkbox"><input id="workflowParamIpSyncBefore" type="checkbox" checked>每次执行前同步新数据</label>`, true)
+          + taskFieldHtml("补充要求", taskTextareaHtml("workflowParamIpRequirement", "可选"), true);
+      }
+      if (id === "goal.image.pipeline") {
+        return taskFieldHtml("任务名称", workInputHtml("workflowParamImageTitle", "text", "创作图片"))
+          + taskFieldHtml("图片需求", taskTextareaHtml("workflowParamImagePrompt", "图片生成要求"), true);
+      }
+      if (id === "goal.video.pipeline") {
+        return taskFieldHtml("任务名称", workInputHtml("workflowParamVideoTitle", "text", "创意视频"))
+          + taskFieldHtml("生成模式", taskSelectHtml("workflowParamVideoMode", optionHtml("single_asset", "单个素材生成视频") + optionHtml("memory_image", "根据记忆先生成图片") + optionHtml("asset_group", "素材分组轮换生成")))
+          + `<div class="field full" id="workflowParamVideoAssetField"><label>素材图片</label>${assetPickerControlHtml("workflowParamVideoAsset", { mediaType: "image", output: "url", uploadText: "上传图片", selectText: "选择已上传图片" })}</div>`
+          + `<div class="field full hidden" id="workflowParamVideoMemoryField"><label>记忆文件</label>${videoMemorySelectControl("workflowParamVideoMemoryDocs")}</div>`
+          + `<div class="field hidden" id="workflowParamVideoCandidateGroupField"><label>素材分组</label>${taskSelectHtml("workflowParamVideoCandidateGroup", optionHtml("", "不选择"))}</div>`
+          + taskFieldHtml("补充提示词", taskTextareaHtml("workflowParamVideoPrompt", "可选"), true);
+      }
+      if (id === "hifly.video.create_by_tts") {
+        return taskFieldHtml("数字人", taskSelectHtml("workflowParamAvatar", optionHtml("", "加载中...")))
+          + taskFieldHtml("声音", taskSelectHtml("workflowParamVoice", optionHtml("", "加载中...")))
+          + taskFieldHtml("任务名称", workInputHtml("workflowParamHiflyTitle", "text", "数字人口播"))
+          + taskFieldHtml("口播文案", taskTextareaHtml("workflowParamHiflyScript", "填写完整口播文案"), true);
+      }
+      if (id === "comfly.daihuo.pipeline") {
+        return taskFieldHtml("参考图片", assetPickerControlHtml("workflowParamComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }), true)
+          + taskFieldHtml("视频要求", taskTextareaHtml("workflowParamComflyText", "视频生成要求"), true)
+          + taskFieldHtml("分镜数量", workInputHtml("workflowParamComflyStoryboardCount", "number", "5", 'min="1" max="8"'))
+          + taskFieldHtml("自动入库", workCheckboxHtml("workflowParamComflyAutoSave", "完成后保存到素材库", true));
+      }
+      if (id === "comfly.seedance.tvc.pipeline") {
+        return taskFieldHtml("参考图片", assetPickerControlHtml("workflowParamSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }), true)
+          + taskFieldHtml("视频要求", taskTextareaHtml("workflowParamSeedanceText", "连续分镜和视频要求"), true)
+          + taskFieldHtml("总时长", taskSelectHtml("workflowParamSeedanceDuration", [10,20,30,40,50,60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
+          + taskFieldHtml("画幅", taskSelectHtml("workflowParamSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏")));
+      }
+      if (id === "create.video.pipeline") {
+        return taskFieldHtml("视频主题", taskTextareaHtml("workflowParamCreateVideoPrompt", "视频主题和要求"), true)
+          + taskFieldHtml("时长秒数", workInputHtml("workflowParamCreateVideoDuration", "number", "8", 'min="3" max="60"'))
+          + taskFieldHtml("分镜数量", workInputHtml("workflowParamCreateVideoSceneCount", "number", "1", 'min="1" max="6"'))
+          + taskFieldHtml("画幅", taskSelectHtml("workflowParamCreateVideoAspect", optionHtml("16:9", "16:9 横屏") + optionHtml("9:16", "9:16 竖屏") + optionHtml("1:1", "1:1 方图")));
+      }
+      if (id === "wewrite.article.pipeline") {
+        return taskFieldHtml("任务名称", workInputHtml("workflowParamArticleTitle", "text", "公众号文章"))
+          + taskFieldHtml("公众号主题", taskTextareaHtml("workflowParamArticleIdea", "文章主题、受众、核心观点"), true)
+          + taskFieldHtml("文章风格", workInputHtml("workflowParamArticleStyle", "text", "", 'placeholder="例如：专业、有案例、适合老板阅读"'))
+          + taskFieldHtml("配图数量", workInputHtml("workflowParamArticleImageCount", "number", "3", 'min="0" max="6"'))
+          + taskFieldHtml("自动配图", workCheckboxHtml("workflowParamArticleIncludeImages", "生成 16:9 横屏配图并插入", true), true);
+      }
+      if (id === "ppt.create") {
+        return taskFieldHtml("任务名称", workInputHtml("workflowParamPptTitle", "text", "PPT生成"))
+          + taskFieldHtml("PPT主题", taskTextareaHtml("workflowParamPptTopic", "PPT主题、用途、受众"), true)
+          + taskFieldHtml("页数", workInputHtml("workflowParamPptSlideCount", "number", "10", 'min="1" max="80"'))
+          + taskFieldHtml("风格要求", workInputHtml("workflowParamPptInstructions", "text", "", 'placeholder="例如：科技感、适合招商、案例更具体"'))
+          + taskFieldHtml("生成模式", taskSelectHtml("workflowParamPptMode", optionHtml("ai", "AI视觉页") + optionHtml("outline", "结构化大纲")));
+      }
+      if (id === "comfly.ecommerce.detail_pipeline") {
+        return taskFieldHtml("任务名称", workInputHtml("workflowParamEcommerceTitle", "text", "电商详情页"))
+          + taskFieldHtml("商品主图", assetPickerControlHtml("workflowParamEcommerceAsset", { mediaType: "image", output: "url", uploadText: "上传主图" }), true)
+          + taskFieldHtml("详情页要求", taskTextareaHtml("workflowParamEcommerceText", "突出材质、卖点、使用场景和购买理由"), true)
+          + taskFieldHtml("页面数量", workInputHtml("workflowParamEcommercePageCount", "number", "12", 'min="1" max="20"'))
+          + taskFieldHtml("自动入库", workCheckboxHtml("workflowParamEcommerceAutoSave", "完成后保存到素材库", true));
+      }
+      return taskFieldHtml("任务名称", workInputHtml("workflowParamGenericTitle", "text", capabilityName(id) || "能力任务"))
+        + taskFieldHtml("任务要求", taskTextareaHtml("workflowParamGenericPrompt", "填写要执行的任务参数和要求"), true);
+    }
+
+    function workflowQuickFieldsHtml(item) {
+      const key = String(item && item.key || "");
+      if (key === "image_composer_studio") return workflowCapabilityFieldsHtml("goal.image.pipeline");
+      if (key === "comfly.seedance.tvc.pipeline") return workflowCapabilityFieldsHtml("comfly.seedance.tvc.pipeline");
+      if (key === "comfly.daihuo.pipeline") return workflowCapabilityFieldsHtml("comfly.daihuo.pipeline");
+      if (key === "hifly.video.create_by_tts") return workflowCapabilityFieldsHtml("hifly.video.create_by_tts");
+      if (key === "douyin_leads") {
+        return taskFieldHtml("采集关键词", taskTextareaHtml("workflowParamDouyinKeyword", "例如：深圳装修、口腔种植、母婴门店"), true)
+          + taskFieldHtml("地区", workInputHtml("workflowParamDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
+          + taskFieldHtml("搜索数量", workInputHtml("workflowParamDouyinMaxResults", "number", "50", 'min="10" max="100"'))
+          + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
+      }
+      if (key === "local_bestseller") {
+        return taskFieldHtml("生成方式", taskSelectHtml("workflowParamLocalMode", optionHtml("plan", "先生成 30 天内容方案") + optionHtml("scene_batch", "直接批量生成场景图")))
+          + taskFieldHtml("天数", workInputHtml("workflowParamLocalDays", "number", "30", 'min="1" max="30"'))
+          + taskFieldHtml("姓名", workInputHtml("workflowParamLocalName", "text", "", 'placeholder="真实姓名，可选"'))
+          + taskFieldHtml("短视频昵称", workInputHtml("workflowParamLocalNickname", "text", "", 'placeholder="不填则使用姓名或“我”"'))
+          + taskFieldHtml("性别", taskSelectHtml("workflowParamLocalGender", optionHtml("female", "女") + optionHtml("male", "男")))
+          + taskFieldHtml("人设身份", workInputHtml("workflowParamLocalIdentity", "text", "女老板"))
+          + taskFieldHtml("行业/赛道", workInputHtml("workflowParamLocalIndustry", "text", "大健康"))
+          + taskFieldHtml("城市", workInputHtml("workflowParamLocalCity", "text", "深圳"))
+          + taskFieldHtml("省份", workInputHtml("workflowParamLocalProvince", "text", "广东"))
+          + taskFieldHtml("人物照片", assetPickerControlHtml("workflowParamLocalPhoto", { mediaType: "image", output: "url", uploadText: "从相册上传" }), true);
+      }
+      if (key === "viral_video_remix") {
+        return taskFieldHtml("参考视频", assetPickerControlHtml("workflowParamViralVideoUrl", { mediaType: "video", output: "url", accept: "video/*", uploadText: "上传视频" }), true)
+          + taskFieldHtml("人物参考图", assetPickerControlHtml("workflowParamViralCharacterUrl", { mediaType: "image", output: "url", uploadText: "上传人物图" }))
+          + taskFieldHtml("产品参考图", assetPickerControlHtml("workflowParamViralProductUrl", { mediaType: "image", output: "url", uploadText: "上传产品图" }))
+          + taskFieldHtml("复刻要求", taskTextareaHtml("workflowParamViralPrompt", "复刻要求"), true)
+          + taskFieldHtml("分段时长", taskSelectHtml("workflowParamViralDuration", optionHtml("10", "10 秒/段") + optionHtml("5", "5 秒/段")))
+          + taskFieldHtml("画幅", taskSelectHtml("workflowParamViralRatio", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏") + optionHtml("1:1", "1:1 方图")))
+          + taskFieldHtml("音频", workCheckboxHtml("workflowParamViralGenerateAudio", "生成音频", true));
+      }
+      if (key === "wecom_reply") {
+        return taskFieldHtml("执行动作", taskSelectHtml("workflowParamWecomAction", optionHtml("poll_reply", "拉取待处理消息并自动回复一次")))
+          + taskFieldHtml("备注", taskTextareaHtml("workflowParamWecomNote", "可选"), true);
+      }
+      return workflowCapabilityFieldsHtml(item && (item.capabilityId || item.key));
+    }
+
+    function workflowFieldsHtmlForNode(node) {
+      if (!node) return "";
+      const platform = socialPlatformFromAbilityKey(node.key);
+      if (platform) return workflowSocialFieldsHtml(platform);
+      if (node.key === "linkedin_leads") return workflowLinkedinFieldsHtml();
+      if (node.key === "wechat_channels_transcript") return workflowWechatTranscriptFieldsHtml();
+      if (node.workQuickKey) return workflowQuickFieldsHtml(workQuickItemByKey(node.workQuickKey) || node);
+      if (node.capabilityId || node.serverTask) return workflowCapabilityFieldsHtml(node.capabilityId || node.key);
+      if (node.routeTab) return `<div class="quick-empty">这个节点是页面入口，不能加入定时工作流。</div>`;
+      return workflowCapabilityFieldsHtml(node.key);
+    }
+
+    function bindWorkflowGoalVideoModeControls() {
+      const mode = workflowParamValue("workflowParamVideoMode") || "single_asset";
+      $("workflowParamVideoAssetField")?.classList.toggle("hidden", mode !== "single_asset");
+      $("workflowParamVideoMemoryField")?.classList.toggle("hidden", mode !== "memory_image");
+      $("workflowParamVideoCandidateGroupField")?.classList.toggle("hidden", mode !== "asset_group");
+      const sel = $("workflowParamVideoMode");
+      if (sel && !sel.dataset.workflowVideoModeBound) {
+        sel.dataset.workflowVideoModeBound = "1";
+        sel.addEventListener("change", bindWorkflowGoalVideoModeControls);
+      }
+    }
+
+    function initWorkflowParamControls(node) {
+      const modal = $("workflowParamModal");
+      if (!modal) return;
+      initAssetPickerControls(modal);
+      bindWorkflowGoalVideoModeControls();
+      if ($("workflowParamVideoCandidateGroup")) {
+        fillCandidateGroupSelect();
+        loadCandidateGroups();
+      }
+      if ($("workflowParamVideoMemoryDocs")) {
+        fillVideoMemorySelects();
+        loadVideoMemoryDocsForSelect();
+      }
+      if ($("workflowParamIpTemplate")) loadIpTemplates(true);
+      if ($("workflowParamAvatar") || $("workflowParamVoice")) {
+        renderWorkHiflyOptions();
+        loadHiflyLibraries();
+      }
+    }
+
+    function workflowLookupForNode(node) {
+      const value = `${node && node.department_id || ""}@@${node && node.ability_key || ""}`;
+      return workflowLookupFromValue(value) || workflowLeafLookups().find((item) => String(item.node.key || "") === String(node && node.ability_key || "")) || null;
+    }
+
+    function collectWorkflowSocialLeadsPayload(platform) {
+      const keywords = workflowParamSplitList("workflowParamLeadKeywords");
+      if (!keywords.length) throw new Error("请填写精准用户方向");
+      const mode = workflowParamValue("workflowParamLeadMode") || "source";
+      const accounts = workflowParamSplitList("workflowParamLeadAccounts");
+      const sources = workflowParamSplitList("workflowParamLeadSources");
+      const payload = {
+        platform,
+        title: workflowParamValue("workflowParamLeadTitle") || `${socialPlatformLabel(platform)}线索采集`,
+        keywords,
+        max_items: workflowParamNumber("workflowParamLeadMaxItems", 100, 1, 100),
+        include_comments: true,
+        include_account_posts: true,
+        auto_run: true,
+      };
+      if (mode === "account") {
+        if (!accounts.length) throw new Error("请填写账号");
+        payload.accounts = accounts;
+      } else if (platform === "reddit") {
+        if (!sources.length) throw new Error("请填写社区");
+        payload.communities = sources;
+      } else {
+        if (!sources.length) throw new Error("请填写来源关键词");
+        payload.source_keywords = sources;
+      }
+      return payload;
+    }
+
+    function collectWorkflowLinkedinPayload(node) {
+      const payload = {
+        title: workflowParamValue("workflowParamLinkedinTitle") || (node && node.label) || "LinkedIn线索采集",
+        target_profile: workflowParamValue("workflowParamLinkedinTarget"),
+        seed_profile_urls: workflowParamSplitList("workflowParamLinkedinProfiles"),
+        seed_company_urls: workflowParamSplitList("workflowParamLinkedinCompanies"),
+        keywords: workflowParamSplitList("workflowParamLinkedinKeywords"),
+        hashtags: workflowParamSplitList("workflowParamLinkedinHashtags"),
+        max_people: workflowParamNumber("workflowParamLinkedinMaxPeople", 30, 5, 80),
+        auto_run: true,
+      };
+      if (!payload.seed_profile_urls.length && !payload.seed_company_urls.length && !payload.keywords.length && !payload.hashtags.length) {
+        throw new Error("请至少填写个人主页、公司主页、关键词或话题");
+      }
+      return payload;
+    }
+
+    function collectWorkflowWechatPayload(node) {
+      const query = workflowParamValue("workflowParamWechatQuery");
+      if (!query) throw new Error("请填写视频号账号、链接或关键词");
+      return {
+        title: (node && node.label) || "视频号文案提取",
+        query,
+        max_pages: workflowParamNumber("workflowParamWechatPages", 1, 1, 20),
+        limit: workflowParamNumber("workflowParamWechatLimit", 10, 1, 50),
+        page_size: 20,
+      };
+    }
+
+    function collectWorkflowCapabilityPlan(node) {
+      const capabilityId = String((node && (node.capabilityId || node.key)) || "").trim();
+      if (capabilityId === "ip_content_daily") {
+        const templateId = parseInt(workflowParamValue("workflowParamIpTemplate") || "0", 10);
+        if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
+        const tasks = selectedWorkflowIpDailyTasks();
+        if (!tasks.length) throw new Error("请选择至少一种生成内容");
+        const extra = workflowParamValue("workflowParamIpRequirement");
+        return {
+          title: node.label || "IP日更文案",
+          task_kind: "ip_content_daily",
+          content: "H5 工作流：IP日更文案",
+          payload: {
+            template_id: templateId,
+            tasks,
+            sync_before: workflowParamChecked("workflowParamIpSyncBefore"),
+            requirements: extra ? { common: extra, oral: extra, moments: extra, image: extra } : {},
+            industry_count: 5,
+            ip_count: 5,
+            moments_count: 20,
+          },
+        };
+      }
+      if (capabilityId === "goal.image.pipeline") {
+        const prompt = workflowParamValue("workflowParamImagePrompt");
+        if (!prompt) throw new Error("请填写图片需求");
+        return {
+          title: workflowParamValue("workflowParamImageTitle") || node.label || "创作图片",
+          task_kind: "capability",
+          content: "H5 工作流：创作图片",
+          payload: { capability_id: "goal.image.pipeline", payload: { prompt } },
+        };
+      }
+      if (capabilityId === "goal.video.pipeline") {
+        const payload = collectGoalVideoPayloadFromFields({
+          modeId: "workflowParamVideoMode",
+          assetId: "workflowParamVideoAsset",
+          memoryId: "workflowParamVideoMemoryDocs",
+          groupId: "workflowParamVideoCandidateGroup",
+          promptId: "workflowParamVideoPrompt",
+        });
+        return {
+          title: workflowParamValue("workflowParamVideoTitle") || node.label || "创意视频",
+          task_kind: "capability",
+          content: "H5 工作流：创意视频",
+          payload: { capability_id: "goal.video.pipeline", payload },
+        };
+      }
+      if (capabilityId === "hifly.video.create_by_tts") {
+        const avatar = workflowParamValue("workflowParamAvatar");
+        const voice = workflowParamValue("workflowParamVoice");
+        const script = workflowParamValue("workflowParamHiflyScript");
+        if (!avatar) throw new Error("请选择数字人");
+        if (!voice) throw new Error("请选择声音");
+        if (!script) throw new Error("请填写口播文案");
+        return {
+          title: workflowParamValue("workflowParamHiflyTitle") || node.label || "数字人口播",
+          task_kind: "capability",
+          content: "H5 工作流：数字人口播",
+          payload: { capability_id: "hifly.video.create_by_tts", payload: { avatar, voice, script, prompt: script } },
+        };
+      }
+      if (capabilityId === "comfly.daihuo.pipeline") {
+        const asset = assetOrImagePayload(workflowParamValue("workflowParamComflyAsset"), "参考图片");
+        return {
+          title: node.label || "爆款TVC",
+          task_kind: "capability",
+          content: "H5 工作流：爆款TVC",
+          payload: {
+            capability_id: "comfly.daihuo.pipeline",
+            payload: {
+              action: "start_pipeline",
+              ...asset,
+              task_text: workflowParamValue("workflowParamComflyText"),
+              storyboard_count: workflowParamNumber("workflowParamComflyStoryboardCount", 5, 1, 8),
+              auto_save: workflowParamChecked("workflowParamComflyAutoSave"),
+            },
+          },
+        };
+      }
+      if (capabilityId === "comfly.seedance.tvc.pipeline") {
+        const asset = assetOrImagePayload(workflowParamValue("workflowParamSeedanceAsset"), "参考图片");
+        return {
+          title: node.label || "创意分镜头视频",
+          task_kind: "capability",
+          content: "H5 工作流：创意分镜头视频",
+          payload: {
+            capability_id: "comfly.seedance.tvc.pipeline",
+            payload: {
+              action: "start_pipeline",
+              ...asset,
+              task_text: workflowParamValue("workflowParamSeedanceText"),
+              total_duration_seconds: workflowParamNumber("workflowParamSeedanceDuration", 20, 5, 120),
+              aspect_ratio: workflowParamValue("workflowParamSeedanceAspect") || "9:16",
+              auto_save: true,
+            },
+          },
+        };
+      }
+      if (capabilityId === "create.video.pipeline") {
+        const prompt = workflowParamValue("workflowParamCreateVideoPrompt");
+        if (!prompt) throw new Error("请填写视频主题");
+        return {
+          title: node.label || "速推视频制作",
+          task_kind: "capability",
+          content: "H5 工作流：速推视频制作",
+          payload: {
+            capability_id: "create.video.pipeline",
+            payload: {
+              action: "start_pipeline",
+              prompt,
+              duration: workflowParamNumber("workflowParamCreateVideoDuration", 8, 3, 60),
+              scene_count: workflowParamNumber("workflowParamCreateVideoSceneCount", 1, 1, 6),
+              aspect_ratio: workflowParamValue("workflowParamCreateVideoAspect") || "16:9",
+            },
+          },
+        };
+      }
+      if (capabilityId === "wewrite.article.pipeline") {
+        const idea = workflowParamValue("workflowParamArticleIdea");
+        if (!idea) throw new Error("请填写公众号主题");
+        return {
+          title: workflowParamValue("workflowParamArticleTitle") || node.label || "公众号文章",
+          task_kind: "capability",
+          content: "H5 工作流：公众号文章",
+          payload: {
+            capability_id: "wewrite.article.pipeline",
+            payload: {
+              idea,
+              style: workflowParamValue("workflowParamArticleStyle"),
+              include_images: workflowParamChecked("workflowParamArticleIncludeImages"),
+              image_count: workflowParamNumber("workflowParamArticleImageCount", 3, 0, 6),
+              image_aspect_ratio: "16:9",
+            },
+          },
+        };
+      }
+      if (capabilityId === "ppt.create") {
+        const topic = workflowParamValue("workflowParamPptTopic");
+        if (!topic) throw new Error("请填写 PPT 主题");
+        return {
+          title: workflowParamValue("workflowParamPptTitle") || node.label || "PPT生成",
+          task_kind: "capability",
+          content: "H5 工作流：PPT生成",
+          payload: {
+            capability_id: "ppt.create",
+            payload: {
+              mode: workflowParamValue("workflowParamPptMode") || "ai",
+              topic,
+              slide_count: workflowParamNumber("workflowParamPptSlideCount", 10, 1, 80),
+              instructions: workflowParamValue("workflowParamPptInstructions"),
+              language: "zh-CN",
+            },
+          },
+        };
+      }
+      if (capabilityId === "comfly.ecommerce.detail_pipeline") {
+        const asset = assetOrImagePayload(workflowParamValue("workflowParamEcommerceAsset"), "商品主图");
+        return {
+          title: workflowParamValue("workflowParamEcommerceTitle") || node.label || "电商详情页",
+          task_kind: "capability",
+          content: "H5 工作流：电商详情页",
+          payload: {
+            capability_id: "comfly.ecommerce.detail_pipeline",
+            payload: {
+              action: "start_pipeline",
+              ...asset,
+              task_text: workflowParamValue("workflowParamEcommerceText"),
+              page_count: workflowParamNumber("workflowParamEcommercePageCount", 12, 1, 20),
+              auto_save: workflowParamChecked("workflowParamEcommerceAutoSave"),
+            },
+          },
+        };
+      }
+      const prompt = workflowParamValue("workflowParamGenericPrompt");
+      if (!prompt) throw new Error("请填写任务要求");
+      return {
+        title: workflowParamValue("workflowParamGenericTitle") || node.label || capabilityName(capabilityId) || "能力任务",
+        task_kind: "capability",
+        content: `H5 工作流：${node.label || capabilityId}`,
+        payload: { capability_id: capabilityId, payload: { prompt, task_text: prompt } },
+      };
+    }
+
+    function collectWorkflowQuickPlan(quick) {
+      const key = String(quick && quick.key || "");
+      if (key === "image_composer_studio") return collectWorkflowCapabilityPlan({ ...quick, key: "goal.image.pipeline", capabilityId: "goal.image.pipeline", label: quick.label || "创作图片" });
+      if (key === "comfly.seedance.tvc.pipeline") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "comfly.seedance.tvc.pipeline", label: quick.label || "创意分镜头视频" });
+      if (key === "comfly.daihuo.pipeline") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "comfly.daihuo.pipeline", label: quick.label || "爆款TVC" });
+      if (key === "hifly.video.create_by_tts") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "hifly.video.create_by_tts", label: quick.label || "数字人口播" });
+      if (key === "douyin_leads") {
+        const keyword = workflowParamValue("workflowParamDouyinKeyword");
+        if (!keyword) throw new Error("请填写采集关键词");
+        const regions = workSplitList(workflowParamValue("workflowParamDouyinRegions"));
+        return {
+          title: `抖音获客 - ${keyword.slice(0, 24)}`,
+          task_kind: "douyin_leads",
+          content: "H5 工作流：抖音获客",
+          payload: {
+            action: "search_collect",
+            params: {
+              keyword,
+              max_results: workflowParamNumber("workflowParamDouyinMaxResults", 50, 10, 100),
+              regions: regions.length ? regions : ["全国"],
+              mode: workflowParamValue("workflowParamDouyinMode") || "script",
+            },
+          },
+        };
+      }
+      if (key === "local_bestseller") {
+        const photo = workflowParamValue("workflowParamLocalPhoto");
+        const profile = {
+          name: workflowParamValue("workflowParamLocalName"),
+          nickname: workflowParamValue("workflowParamLocalNickname"),
+          gender: workflowParamValue("workflowParamLocalGender") || "female",
+          identity: workflowParamValue("workflowParamLocalIdentity") || "女老板",
+          industry: workflowParamValue("workflowParamLocalIndustry") || "大健康",
+          city: workflowParamValue("workflowParamLocalCity") || "深圳",
+          province: workflowParamValue("workflowParamLocalProvince") || "广东",
+        };
+        if (/^https?:\/\//i.test(photo)) profile.photo_url = photo;
+        else if (photo) profile.photo_asset_id = photo;
+        const mode = workflowParamValue("workflowParamLocalMode") || "plan";
+        return {
+          title: `同城爆款 - ${profile.city || "本地"}`,
+          task_kind: "client_workflow",
+          content: "H5 工作流：同城爆款",
+          payload: {
+            action: mode === "scene_batch" ? "local_bestseller_scene_batch" : "local_bestseller_plan",
+            params: { profile, days: workflowParamNumber("workflowParamLocalDays", 30, 1, 30) },
+          },
+        };
+      }
+      if (key === "viral_video_remix") {
+        const originalVideoUrl = workflowParamValue("workflowParamViralVideoUrl");
+        const characterImageUrl = workflowParamValue("workflowParamViralCharacterUrl");
+        const productImageUrl = workflowParamValue("workflowParamViralProductUrl");
+        if (!/^https?:\/\//i.test(originalVideoUrl)) throw new Error("请上传或选择参考视频");
+        if (!characterImageUrl && !productImageUrl) throw new Error("请至少上传或选择人物图、产品图其中一个");
+        return {
+          title: "爆款复刻",
+          task_kind: "client_workflow",
+          content: "H5 工作流：爆款复刻",
+          payload: {
+            action: "viral_video_remix_start",
+            params: {
+              original_video_url: originalVideoUrl,
+              character_image_url: characterImageUrl,
+              product_image_url: productImageUrl,
+              prompt: workflowParamValue("workflowParamViralPrompt"),
+              duration: workflowParamNumber("workflowParamViralDuration", 10, 5, 10),
+              ratio: workflowParamValue("workflowParamViralRatio") || "9:16",
+              generate_audio: workflowParamChecked("workflowParamViralGenerateAudio"),
+              billing_confirmed: true,
+            },
+          },
+        };
+      }
+      if (key === "wecom_reply") {
+        return {
+          title: "企业微信客服 - 拉取回复",
+          task_kind: "client_workflow",
+          content: "H5 工作流：企业微信客服",
+          payload: { action: "wecom_poll_reply", params: { note: workflowParamValue("workflowParamWecomNote") } },
+        };
+      }
+      return collectWorkflowCapabilityPlan(quick || {});
+    }
+
+    function workflowPlanFromParamFields(lookup, note) {
+      const node = lookup && lookup.node;
+      if (!node) throw new Error("未找到任务节点");
+      const platform = socialPlatformFromAbilityKey(node.key);
+      if (platform) {
+        const payload = collectWorkflowSocialLeadsPayload(platform);
+        return { title: payload.title || `${socialPlatformLabel(platform)}线索采集`, task_kind: "social_leads", content: `H5 工作流：${socialPlatformLabel(platform)}线索采集`, payload };
+      }
+      if (node.key === "linkedin_leads") {
+        const payload = collectWorkflowLinkedinPayload(node);
+        return { title: payload.title || "LinkedIn线索采集", task_kind: "linkedin_mining", content: "H5 工作流：LinkedIn线索采集", payload };
+      }
+      if (node.key === "wechat_channels_transcript") {
+        const payload = collectWorkflowWechatPayload(node);
+        return { title: payload.title || "视频号文案提取", task_kind: "wechat_channels_transcript", content: "H5 工作流：视频号文案提取", payload };
+      }
+      if (node.workQuickKey) return collectWorkflowQuickPlan(workQuickItemByKey(node.workQuickKey) || node);
+      if (node.capabilityId || node.serverTask) return collectWorkflowCapabilityPlan(node);
+      return workflowPlanForLookup(lookup, note);
+    }
+
     function workflowPlanForLookup(lookup, note) {
       const node = lookup && lookup.node;
       if (!node) throw new Error("请选择任务节点");
@@ -1714,8 +2281,214 @@
         department_id: lookup.department.id,
         department_name: lookup.department.name || "",
         note,
+        param_configured: false,
         plan,
       };
+    }
+
+    function refillWorkflowParamFields(node, lookup) {
+      const plan = node && node.plan && typeof node.plan === "object" ? node.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const inner = payload.payload && typeof payload.payload === "object" ? payload.payload : payload;
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const nodeInfo = lookup && lookup.node || {};
+      const capabilityId = String(payload.capability_id || nodeInfo.capabilityId || nodeInfo.key || "").trim();
+      const platform = socialPlatformFromAbilityKey(nodeInfo.key);
+      if (platform) {
+        setFieldValue("workflowParamLeadTitle", payload.title || plan.title || `${socialPlatformLabel(platform)}线索采集`);
+        setTextareaList("workflowParamLeadKeywords", payload.keywords || (node.note ? [node.note] : []));
+        setFieldValue("workflowParamLeadMode", payload.accounts && payload.accounts.length ? "account" : "source");
+        setTextareaList("workflowParamLeadSources", payload.communities || payload.source_keywords || []);
+        setTextareaList("workflowParamLeadAccounts", payload.accounts || []);
+        setFieldValue("workflowParamLeadMaxItems", payload.max_items || 100);
+        return;
+      }
+      if (nodeInfo.key === "linkedin_leads") {
+        setFieldValue("workflowParamLinkedinTitle", payload.title || plan.title || "LinkedIn线索采集");
+        setFieldValue("workflowParamLinkedinTarget", payload.target_profile || node.note || "");
+        setTextareaList("workflowParamLinkedinProfiles", payload.seed_profile_urls || []);
+        setTextareaList("workflowParamLinkedinCompanies", payload.seed_company_urls || []);
+        setTextareaList("workflowParamLinkedinKeywords", payload.keywords || []);
+        setTextareaList("workflowParamLinkedinHashtags", payload.hashtags || []);
+        setFieldValue("workflowParamLinkedinMaxPeople", payload.max_people || 30);
+        return;
+      }
+      if (nodeInfo.key === "wechat_channels_transcript") {
+        setFieldValue("workflowParamWechatQuery", payload.query || payload.username || node.note || "");
+        setFieldValue("workflowParamWechatPages", payload.max_pages || 1);
+        setFieldValue("workflowParamWechatLimit", payload.limit || 10);
+        return;
+      }
+      if (payload.action === "search_collect" || nodeInfo.workQuickKey === "douyin_leads") {
+        setFieldValue("workflowParamDouyinKeyword", params.keyword || params.query || node.note || "");
+        setFieldValue("workflowParamDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
+        setFieldValue("workflowParamDouyinMaxResults", params.max_results || 50);
+        setFieldValue("workflowParamDouyinMode", params.mode || "script");
+        return;
+      }
+      if (payload.action === "local_bestseller_plan" || payload.action === "local_bestseller_scene_batch" || nodeInfo.workQuickKey === "local_bestseller") {
+        const profile = params.profile && typeof params.profile === "object" ? params.profile : {};
+        setFieldValue("workflowParamLocalMode", payload.action === "local_bestseller_scene_batch" ? "scene_batch" : "plan");
+        setFieldValue("workflowParamLocalDays", params.days || 30);
+        setFieldValue("workflowParamLocalName", profile.name || "");
+        setFieldValue("workflowParamLocalNickname", profile.nickname || "");
+        setFieldValue("workflowParamLocalGender", profile.gender || "female");
+        setFieldValue("workflowParamLocalIdentity", profile.identity || "女老板");
+        setFieldValue("workflowParamLocalIndustry", profile.industry || node.note || "大健康");
+        setFieldValue("workflowParamLocalCity", profile.city || "深圳");
+        setFieldValue("workflowParamLocalProvince", profile.province || "广东");
+        setFieldValue("workflowParamLocalPhoto", profile.photo_asset_id || profile.photo_url || "");
+        return;
+      }
+      if (payload.action === "viral_video_remix_start" || nodeInfo.workQuickKey === "viral_video_remix") {
+        setFieldValue("workflowParamViralVideoUrl", params.original_video_url || "");
+        setFieldValue("workflowParamViralCharacterUrl", params.character_image_url || "");
+        setFieldValue("workflowParamViralProductUrl", params.product_image_url || "");
+        setFieldValue("workflowParamViralPrompt", params.prompt || node.note || "");
+        setFieldValue("workflowParamViralDuration", params.duration || 10);
+        setFieldValue("workflowParamViralRatio", params.ratio || "9:16");
+        setFieldValue("workflowParamViralGenerateAudio", params.generate_audio !== false);
+        return;
+      }
+      if (payload.action === "wecom_poll_reply" || nodeInfo.workQuickKey === "wecom_reply") {
+        setFieldValue("workflowParamWecomNote", params.note || node.note || "");
+        return;
+      }
+      if (capabilityId === "ip_content_daily") {
+        const setTemplate = () => setFieldValue("workflowParamIpTemplate", payload.template_id || "");
+        if (state.ipTemplatesLoaded) setTemplate();
+        else loadIpTemplates(true).then(setTemplate).catch(() => {});
+        const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+        document.querySelectorAll("[data-workflow-ip-daily-task]").forEach((el) => {
+          el.checked = !tasks.length || tasks.includes(el.getAttribute("data-workflow-ip-daily-task"));
+        });
+        setFieldValue("workflowParamIpSyncBefore", payload.sync_before !== false);
+        const req = payload.requirements && typeof payload.requirements === "object" ? payload.requirements : {};
+        setFieldValue("workflowParamIpRequirement", req.common || req.moments || req.oral || req.image || node.note || "");
+        return;
+      }
+      if (capabilityId === "goal.image.pipeline") {
+        setFieldValue("workflowParamImageTitle", plan.title || nodeInfo.label || "创作图片");
+        setFieldValue("workflowParamImagePrompt", inner.prompt || inner.task_text || node.note || "");
+        return;
+      }
+      if (capabilityId === "goal.video.pipeline") {
+        setFieldValue("workflowParamVideoTitle", plan.title || nodeInfo.label || "创意视频");
+        setFieldValue("workflowParamVideoPrompt", inner.prompt || inner.task_text || node.note || "");
+        setFieldValue("workflowParamVideoMode", goalVideoModeFromPayload(inner));
+        setFieldValue("workflowParamVideoAsset", firstGoalVideoReference(inner));
+        setFieldValue("workflowParamVideoCandidateGroup", inner.candidate_group || "");
+        bindWorkflowGoalVideoModeControls();
+        loadVideoMemoryDocsForSelect().then(() => setMultiSelectValues("workflowParamVideoMemoryDocs", inner.memory_doc_ids || [])).catch(() => {});
+        return;
+      }
+      if (capabilityId === "hifly.video.create_by_tts") {
+        setFieldValue("workflowParamAvatar", inner.avatar || "");
+        setFieldValue("workflowParamVoice", inner.voice || "");
+        setFieldValue("workflowParamHiflyTitle", plan.title || nodeInfo.label || "数字人口播");
+        setFieldValue("workflowParamHiflyScript", inner.script || inner.prompt || node.note || "");
+        return;
+      }
+      if (capabilityId === "comfly.daihuo.pipeline") {
+        setFieldValue("workflowParamComflyAsset", inner.asset_id || inner.image_url || "");
+        setFieldValue("workflowParamComflyText", inner.task_text || inner.prompt || node.note || "");
+        setFieldValue("workflowParamComflyStoryboardCount", inner.storyboard_count || 5);
+        setFieldValue("workflowParamComflyAutoSave", inner.auto_save !== false);
+        return;
+      }
+      if (capabilityId === "comfly.seedance.tvc.pipeline") {
+        setFieldValue("workflowParamSeedanceAsset", inner.asset_id || inner.image_url || "");
+        setFieldValue("workflowParamSeedanceText", inner.task_text || inner.prompt || node.note || "");
+        setFieldValue("workflowParamSeedanceDuration", inner.total_duration_seconds || 20);
+        setFieldValue("workflowParamSeedanceAspect", inner.aspect_ratio || "9:16");
+        return;
+      }
+      if (capabilityId === "create.video.pipeline") {
+        setFieldValue("workflowParamCreateVideoPrompt", inner.prompt || inner.task_text || node.note || "");
+        setFieldValue("workflowParamCreateVideoDuration", inner.duration || 8);
+        setFieldValue("workflowParamCreateVideoSceneCount", inner.scene_count || 1);
+        setFieldValue("workflowParamCreateVideoAspect", inner.aspect_ratio || "16:9");
+        return;
+      }
+      if (capabilityId === "wewrite.article.pipeline") {
+        setFieldValue("workflowParamArticleTitle", plan.title || nodeInfo.label || "公众号文章");
+        setFieldValue("workflowParamArticleIdea", inner.idea || node.note || "");
+        setFieldValue("workflowParamArticleStyle", inner.style || "");
+        setFieldValue("workflowParamArticleImageCount", inner.image_count || 3);
+        setFieldValue("workflowParamArticleIncludeImages", inner.include_images !== false);
+        return;
+      }
+      if (capabilityId === "ppt.create") {
+        setFieldValue("workflowParamPptTitle", plan.title || nodeInfo.label || "PPT生成");
+        setFieldValue("workflowParamPptTopic", inner.topic || node.note || "");
+        setFieldValue("workflowParamPptSlideCount", inner.slide_count || 10);
+        setFieldValue("workflowParamPptInstructions", inner.instructions || "");
+        setFieldValue("workflowParamPptMode", inner.mode || "ai");
+        return;
+      }
+      if (capabilityId === "comfly.ecommerce.detail_pipeline") {
+        setFieldValue("workflowParamEcommerceTitle", plan.title || nodeInfo.label || "电商详情页");
+        setFieldValue("workflowParamEcommerceAsset", inner.asset_id || inner.image_url || "");
+        setFieldValue("workflowParamEcommerceText", inner.task_text || inner.prompt || node.note || "");
+        setFieldValue("workflowParamEcommercePageCount", inner.page_count || 12);
+        setFieldValue("workflowParamEcommerceAutoSave", inner.auto_save !== false);
+        return;
+      }
+      setFieldValue("workflowParamGenericTitle", plan.title || nodeInfo.label || "能力任务");
+      setFieldValue("workflowParamGenericPrompt", inner.prompt || inner.task_text || node.note || "");
+    }
+
+    function openWorkflowParamModal(nodeId) {
+      const node = (state.workflowNodesDraft || []).find((item) => String(item.id || "") === String(nodeId || ""));
+      const lookup = workflowLookupForNode(node);
+      if (!node || !lookup) {
+        toast("未找到节点");
+        return;
+      }
+      state.workflowParamNodeId = String(node.id || "");
+      const modal = $("workflowParamModal");
+      if (!modal) return;
+      $("workflowParamTitle").textContent = node.ability_label || "节点设置";
+      $("workflowParamSubTitle").textContent = `${node.department_name || ""}${node.time ? ` · ${node.time}` : ""}`;
+      $("workflowParamTime").value = node.time || "09:00";
+      $("workflowParamNote").value = node.note || "";
+      $("workflowParamFields").innerHTML = workflowFieldsHtmlForNode(lookup.node);
+      modal.classList.remove("hidden");
+      initWorkflowParamControls(lookup.node);
+      refillWorkflowParamFields(node, lookup);
+      const first = modal.querySelector("input, textarea, select");
+      if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 80);
+    }
+
+    function closeWorkflowParamModal() {
+      const modal = $("workflowParamModal");
+      if (modal) modal.classList.add("hidden");
+      state.workflowParamNodeId = "";
+      if ($("workflowParamFields")) $("workflowParamFields").innerHTML = "";
+    }
+
+    function saveWorkflowParamNode() {
+      const nodeId = String(state.workflowParamNodeId || "");
+      const idx = (state.workflowNodesDraft || []).findIndex((item) => String(item.id || "") === nodeId);
+      if (idx < 0) throw new Error("未找到节点");
+      const current = state.workflowNodesDraft[idx];
+      const lookup = workflowLookupForNode(current);
+      if (!lookup) throw new Error("未找到任务节点");
+      const time = workflowParamValue("workflowParamTime");
+      if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
+      const note = workflowParamValue("workflowParamNote");
+      const plan = workflowPlanFromParamFields(lookup, note);
+      state.workflowNodesDraft[idx] = {
+        ...current,
+        time,
+        note,
+        param_configured: true,
+        plan,
+      };
+      state.workflowNodesDraft.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      closeWorkflowParamModal();
+      renderWorkflow();
+      toast("节点参数已保存");
     }
 
     function renderWorkflowDeviceSelect() {
@@ -1747,13 +2520,17 @@
         return;
       }
       box.innerHTML = nodes.map((node, index) => `
-        <div class="workflow-node-card">
+        <div class="workflow-node-card" data-workflow-edit-node="${escapeHtml(node.id || "")}">
           <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>
           <div class="workflow-node-main">
             <strong>${escapeHtml(node.ability_label || "任务节点")}</strong>
             <span>${escapeHtml(node.department_name || "")}${node.note ? ` · ${escapeHtml(node.note)}` : ""}</span>
           </div>
-          <button class="ghost" type="button" data-workflow-remove-node="${index}">删除</button>
+          <div class="workflow-node-actions">
+            <span class="${node.param_configured ? "configured" : ""}">${node.param_configured ? "已配置" : "默认参数"}</span>
+            <button class="ghost" type="button" data-workflow-edit-node="${escapeHtml(node.id || "")}">设置</button>
+            <button class="ghost danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>
+          </div>
         </div>
       `).join("");
     }
@@ -5505,7 +6282,7 @@
     }
 
     function fillVideoMemorySelects() {
-      const selects = [$("abilityVideoMemoryDocs"), $("taskVideoMemoryDocs")].filter(Boolean);
+      const selects = Array.from(document.querySelectorAll(".video-memory-select")).filter(Boolean);
       if (!selects.length) return;
       const rows = Array.isArray(state.personalMemoryDocs) ? state.personalMemoryDocs : [];
       selects.forEach((sel) => {
@@ -5609,7 +6386,7 @@
     }
 
     function fillCandidateGroupSelect() {
-      const selects = [$("taskCandidateGroup"), $("abilityVideoCandidateGroup")].filter(Boolean);
+      const selects = [$("taskCandidateGroup"), $("abilityVideoCandidateGroup"), $("workflowParamVideoCandidateGroup")].filter(Boolean);
       if (!selects.length) return;
       selects.forEach((sel) => {
         const current = sel.value;
@@ -5740,7 +6517,7 @@
     }
 
     function fillIpTemplateSelect() {
-      const selects = [$("taskIpTemplate"), $("abilityIpTemplate")].filter(Boolean);
+      const selects = [$("taskIpTemplate"), $("abilityIpTemplate"), $("workflowParamIpTemplate")].filter(Boolean);
       if (!selects.length) return;
       selects.forEach((sel) => {
         const current = sel.value;
@@ -6702,18 +7479,18 @@
     }
 
     function renderWorkHiflyOptions() {
-      const avatarSel = $("workAvatar");
-      const voiceSel = $("workVoice");
-      if (avatarSel) {
+      const avatarSelects = [$("workAvatar"), $("workflowParamAvatar")].filter(Boolean);
+      const voiceSelects = [$("workVoice"), $("workflowParamVoice")].filter(Boolean);
+      avatarSelects.forEach((avatarSel) => {
         avatarSel.innerHTML = state.avatarRows.length
           ? state.avatarRows.map((row) => `<option value="${escapeHtml(row.avatar)}">${escapeHtml(row.title)}</option>`).join("")
           : `<option value="">暂无可用数字人</option>`;
-      }
-      if (voiceSel) {
+      });
+      voiceSelects.forEach((voiceSel) => {
         voiceSel.innerHTML = state.voiceRows.length
           ? state.voiceRows.map((row) => `<option value="${escapeHtml(row.voice)}">${escapeHtml(row.title)}</option>`).join("")
           : `<option value="">暂无可用声音</option>`;
-      }
+      });
     }
 
     function workDispatchFieldsHtml(item) {
@@ -9720,11 +10497,16 @@
       }
     });
     $("workflowTimeline")?.addEventListener("click", (evt) => {
-      const btn = evt.target.closest("[data-workflow-remove-node]");
-      if (!btn) return;
-      const idx = Number(btn.dataset.workflowRemoveNode || "-1");
-      state.workflowNodesDraft = (state.workflowNodesDraft || []).filter((_item, itemIdx) => itemIdx !== idx);
-      renderWorkflow();
+      const removeBtn = evt.target.closest("[data-workflow-remove-node]");
+      if (removeBtn) {
+        const nodeId = String(removeBtn.dataset.workflowRemoveNode || "");
+        state.workflowNodesDraft = (state.workflowNodesDraft || []).filter((item) => String(item.id || "") !== nodeId);
+        renderWorkflow();
+        return;
+      }
+      const editTarget = evt.target.closest("[data-workflow-edit-node]");
+      if (!editTarget) return;
+      openWorkflowParamModal(editTarget.dataset.workflowEditNode || "");
     });
     $("workflowSaveTemplateBtn")?.addEventListener("click", () => saveWorkflowTemplate().catch((err) => toast(err.message || "保存失败")));
     $("workflowActivateBtn")?.addEventListener("click", () => activateWorkflowTemplate().catch((err) => toast(err.message || "启用失败")));
@@ -9800,6 +10582,17 @@
       loadWorkflowSubUsers().catch((err) => toast(err.message || "加载失败"));
     });
     $("workflowGrantSaveBtn")?.addEventListener("click", () => saveWorkflowGrant().catch((err) => toast(err.message || "授权失败")));
+    $("workflowParamBackdrop")?.addEventListener("click", closeWorkflowParamModal);
+    $("workflowParamClose")?.addEventListener("click", closeWorkflowParamModal);
+    $("workflowParamCancel")?.addEventListener("click", closeWorkflowParamModal);
+    $("workflowParamForm")?.addEventListener("submit", (evt) => {
+      evt.preventDefault();
+      try {
+        saveWorkflowParamNode();
+      } catch (err) {
+        toast(err.message || "保存失败");
+      }
+    });
     $("leadDomainTabs")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-lead-domain]");
       if (!btn) return;

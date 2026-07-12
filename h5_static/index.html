@@ -1086,6 +1086,37 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="workflowParamModal" role="dialog" aria-modal="true" aria-labelledby="workflowParamTitle">
+    <button class="employee-modal-backdrop" type="button" id="workflowParamBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover workflow-param-popover">
+      <button class="employee-popover-close" type="button" id="workflowParamClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">流</div>
+        <div class="employee-popover-title">
+          <strong id="workflowParamTitle">节点设置</strong>
+          <span id="workflowParamSubTitle">设置这个时间点要执行的任务参数</span>
+        </div>
+      </div>
+      <form class="work-dispatch-form" id="workflowParamForm">
+        <div class="work-dispatch-fields workflow-param-fields">
+          <div class="field">
+            <label for="workflowParamTime">时间</label>
+            <input id="workflowParamTime" type="time" step="60">
+          </div>
+          <div class="field full">
+            <label for="workflowParamNote">任务要求</label>
+            <textarea id="workflowParamNote" rows="3" placeholder="这个时间点要做什么"></textarea>
+          </div>
+          <div class="workflow-param-dynamic" id="workflowParamFields"></div>
+        </div>
+        <div class="work-dispatch-actions">
+          <button class="ghost" type="button" id="workflowParamCancel">取消</button>
+          <button type="submit" id="workflowParamSave">保存节点</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="task-success-dialog hidden" id="taskSuccessDialog" role="dialog" aria-modal="true" aria-labelledby="taskSuccessTitle">
     <button class="task-success-backdrop" type="button" id="taskSuccessBackdrop" aria-label="关闭"></button>
     <div class="task-success-panel">

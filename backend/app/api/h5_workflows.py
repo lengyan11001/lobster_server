@@ -85,6 +85,7 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "department_id": str(raw.get("department_id") or raw.get("departmentId") or "").strip()[:64],
                 "department_name": str(raw.get("department_name") or raw.get("departmentName") or "").strip()[:80],
                 "note": str(raw.get("note") or "").strip()[:2000],
+                "param_configured": bool(raw.get("param_configured")),
                 "plan": {
                     "title": title,
                     "task_kind": task_kind,
