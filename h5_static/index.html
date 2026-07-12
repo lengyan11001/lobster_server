@@ -662,6 +662,13 @@
               </span>
               <b>进入</b>
             </button>
+            <button class="profile-entry agent-profile-entry" type="button" data-tab-target="agentManage" id="profileAgentManageEntry">
+              <span>
+                <strong>代理商管理</strong>
+                <small id="profileAgentManageMeta">查看下级用户，给下级授权员工定制、模板和记忆资料</small>
+              </span>
+              <b>进入</b>
+            </button>
             <button class="profile-entry" type="button" data-tab-target="taskList">
               <span>
                 <strong>定时任务</strong>
@@ -686,7 +693,6 @@
             <h2>个人设置</h2>
             <div class="section-actions">
               <button class="ghost icon-help" type="button" id="personalTemplateHelpBtn" aria-label="模板配置帮助">?</button>
-              <button class="ghost hidden" type="button" id="personalAgentManageBtn">代理商管理</button>
               <button class="ghost" type="button" id="personalSettingsRefreshBtn">刷新</button>
             </div>
           </div>
@@ -823,6 +829,24 @@
 
       <section class="view" id="agentManageView">
         <div class="panel list-page agent-manage-page">
+          <div class="agent-summary-grid">
+            <div>
+              <span>下级用户</span>
+              <strong id="agentSummaryUsers">0</strong>
+            </div>
+            <div>
+              <span>员工定制</span>
+              <strong id="agentSummaryWorkflows">0</strong>
+            </div>
+            <div>
+              <span>模板</span>
+              <strong id="agentSummaryTemplates">0</strong>
+            </div>
+            <div>
+              <span>记忆资料</span>
+              <strong id="agentSummaryMemories">0</strong>
+            </div>
+          </div>
           <div class="agent-manage-layout">
             <div class="agent-card">
               <div class="agent-card-head">

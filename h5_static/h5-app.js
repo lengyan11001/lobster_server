@@ -22,6 +22,7 @@
       workListBackTab: "profile",
       workListBackTarget: null,
       personalSettingsBackTab: "profile",
+      agentManageBackTab: "profile",
       workListScope: { type: "all", label: "全部记录" },
       workListScopeOptions: [],
       historyItems: [],
@@ -1955,10 +1956,17 @@
     }
 
     function syncAgentManageEntry() {
-      const btn = $("personalAgentManageBtn");
+      const btn = $("profileAgentManageEntry");
       if (!btn) return;
-      btn.classList.toggle("hidden", !canManageAgent());
-      btn.disabled = !canManageAgent();
+      const allowed = canManageAgent();
+      btn.classList.toggle("agent-locked", !allowed);
+      btn.setAttribute("aria-disabled", allowed ? "false" : "true");
+      const meta = $("profileAgentManageMeta");
+      if (meta) {
+        meta.textContent = allowed
+          ? "查看下级用户，给下级授权员工定制、模板和记忆资料"
+          : "仅代理商账号可进入";
+      }
     }
 
     function agentResourceLabel(row, fallback) {
@@ -2050,6 +2058,10 @@
       if ($("agentSelectedUserText")) $("agentSelectedUserText").textContent = selected ? (selected.email || `用户${selected.id}`) : "请选择下级";
       if ($("agentSaveGrantBtn")) $("agentSaveGrantBtn").disabled = !state.agentSelectedUserId || state.agentLoading;
       const res = state.agentResources || {};
+      if ($("agentSummaryUsers")) $("agentSummaryUsers").textContent = String(state.agentUsersTotal || 0);
+      if ($("agentSummaryWorkflows")) $("agentSummaryWorkflows").textContent = String((Array.isArray(res.workflow_templates) ? res.workflow_templates : []).length);
+      if ($("agentSummaryTemplates")) $("agentSummaryTemplates").textContent = String((Array.isArray(res.ip_templates) ? res.ip_templates : []).length);
+      if ($("agentSummaryMemories")) $("agentSummaryMemories").textContent = String((Array.isArray(res.memory_docs) ? res.memory_docs : []).length);
       renderAgentResourceList("agentWorkflowGrantList", Array.isArray(res.workflow_templates) ? res.workflow_templates : [], "workflow");
       renderAgentResourceList("agentIpTemplateGrantList", Array.isArray(res.ip_templates) ? res.ip_templates : [], "ip");
       renderAgentResourceList("agentMemoryGrantList", Array.isArray(res.memory_docs) ? res.memory_docs : [], "memory");
@@ -2115,6 +2127,7 @@
         toast("仅代理商可用");
         return;
       }
+      state.agentManageBackTab = options.backTab || activeViewKey() || "profile";
       if (options.ipTemplateId) state.agentPendingIpTemplateId = String(options.ipTemplateId);
       switchTab("agentManage");
       await Promise.all([loadAgentResources(), loadAgentUsers(!state.agentUsers.length)]);
@@ -9503,6 +9516,10 @@
     document.querySelectorAll("[data-tab-target]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const target = btn.dataset.tabTarget;
+        if (target === "agentManage") {
+          openAgentManage({ backTab: activeViewKey() || "profile" }).catch((err) => toast(err.message || "打开失败"));
+          return;
+        }
         if (target === "personalSettings") {
           state.personalSettingsBackTab = activeViewKey() === "office" ? "office" : "profile";
         }
@@ -9568,7 +9585,7 @@
         return;
       }
       if (activeId === "agentManageView") {
-        switchTab("personalSettings");
+        switchTab(state.agentManageBackTab || "profile");
         return;
       }
       switchTab("office");
@@ -9861,7 +9878,6 @@
       if (btn) setPersonalSettingsTab(btn.dataset.personalTab || "template");
     });
     $("personalSettingsRefreshBtn")?.addEventListener("click", () => loadPersonalSettings(true));
-    $("personalAgentManageBtn")?.addEventListener("click", () => openAgentManage().catch((err) => toast(err.message || "打开失败")));
     $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().catch((err) => toast(err.message || "保存失败")));
     $("personalNewTemplateBtn")?.addEventListener("click", resetPersonalTemplateForm);
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));

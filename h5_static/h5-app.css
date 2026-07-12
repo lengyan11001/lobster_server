@@ -2206,6 +2206,15 @@
     .profile-entry strong { font-size: 16px; }
     .profile-entry small { color: var(--muted); line-height: 1.5; }
     .profile-entry b { flex: 0 0 auto; color: var(--blue); font-size: 13px; }
+    .agent-profile-entry {
+      background:
+        radial-gradient(circle at 10% 20%, rgba(36,92,255,.15), transparent 38%),
+        linear-gradient(135deg, rgba(255,255,255,.96), rgba(239,248,255,.94));
+      border-color: rgba(36,92,255,.2);
+    }
+    .agent-profile-entry strong { color: #0f2d6c; }
+    .agent-profile-entry.agent-locked { opacity: .72; }
+    .agent-profile-entry.agent-locked b { color: #8b97ad; }
     .list-page, .detail-page { padding: 16px; }
     .pager-actions { display: flex; justify-content: center; margin-top: 12px; }
     .runs { padding: 16px; }
@@ -2457,6 +2466,23 @@
         radial-gradient(circle at 0 0, rgba(36,92,255,.12), transparent 34%),
         linear-gradient(150deg, rgba(244,250,255,.95), rgba(239,252,247,.94));
     }
+    .agent-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .agent-summary-grid > div {
+      display: grid;
+      gap: 3px;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.86);
+      border: 1px solid rgba(26,48,88,.09);
+      box-shadow: 0 14px 32px rgba(20,36,64,.06);
+    }
+    .agent-summary-grid span { color: #66748c; font-size: 12px; font-weight: 800; }
+    .agent-summary-grid strong { color: #1747d4; font-size: 22px; line-height: 1.1; }
     .agent-manage-layout { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.35fr); gap: 12px; align-items: start; }
     .agent-card {
       display: grid;
@@ -2523,6 +2549,7 @@
     @media (max-width: 720px) {
       .personal-settings-page { padding-left: 10px; padding-right: 10px; border-radius: 22px; }
       .personal-grid,
+      .agent-summary-grid,
       .agent-manage-layout,
       .personal-settings-page .inline-form,
       .inline-form.three,
