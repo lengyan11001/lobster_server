@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260712-agent-manage-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260712-h5-polish-1" />
 </head>
 <body>
   <main class="shell">
@@ -100,13 +100,13 @@
           </button>
 
           <div class="office-shortcuts" aria-label="快捷入口">
-            <button type="button" data-home-target="taskList">
-              <span class="office-shortcut-icon">排</span>
-              <strong>工作安排</strong>
+            <button type="button" data-home-target="personalSettings">
+              <span class="office-shortcut-icon">设</span>
+              <strong>个人设置</strong>
             </button>
             <button type="button" data-home-target="workflow">
-              <span class="office-shortcut-icon">流</span>
-              <strong>工作流</strong>
+              <span class="office-shortcut-icon">定</span>
+              <strong>员工定制</strong>
             </button>
             <button type="button" data-home-target="assetLibrary">
               <span class="office-shortcut-icon">素</span>
@@ -172,7 +172,7 @@
             <div class="workflow-device-box">
               <label for="workflowDeviceSelect">设备</label>
               <select id="workflowDeviceSelect"></select>
-              <span id="workflowActiveText">未启用工作流</span>
+              <span id="workflowActiveText">未启用员工定制</span>
             </div>
             <button class="ghost" type="button" id="workflowTemplateListBtn">模板列表</button>
           </div>
@@ -180,7 +180,7 @@
           <div class="workflow-editor-card">
             <div class="workflow-template-name">
               <label for="workflowTemplateName">模板名称</label>
-              <input id="workflowTemplateName" type="text" maxlength="80" placeholder="24小时工作流">
+              <input id="workflowTemplateName" type="text" maxlength="80" placeholder="24小时员工定制">
             </div>
             <div class="workflow-node-form">
               <div class="field">
@@ -1087,8 +1087,36 @@
     </div>
   </div>
 
+  <div class="task-success-dialog hidden" id="assetPreviewDialog" role="dialog" aria-modal="true" aria-labelledby="assetPreviewTitle">
+    <button class="task-success-backdrop" type="button" id="assetPreviewBackdrop" aria-label="关闭"></button>
+    <div class="task-success-panel detail-modal-panel asset-preview-panel">
+      <div class="detail-modal-head">
+        <div>
+          <div class="task-success-kicker">ASSET</div>
+          <h3 id="assetPreviewTitle">素材预览</h3>
+        </div>
+        <button class="ghost" type="button" id="assetPreviewCloseBtn">关闭</button>
+      </div>
+      <div id="assetPreviewBody" class="asset-preview-body"></div>
+    </div>
+  </div>
+
+  <div class="task-success-dialog hidden" id="leadDetailDialog" role="dialog" aria-modal="true" aria-labelledby="leadDetailTitle">
+    <button class="task-success-backdrop" type="button" id="leadDetailBackdrop" aria-label="关闭"></button>
+    <div class="task-success-panel detail-modal-panel lead-detail-panel">
+      <div class="detail-modal-head">
+        <div>
+          <div class="task-success-kicker">LEADS</div>
+          <h3 id="leadDetailTitle">客资明细</h3>
+        </div>
+        <button class="ghost" type="button" id="leadDetailCloseBtn">关闭</button>
+      </div>
+      <div id="leadDetailBody" class="lead-detail-body"></div>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260712-agent-manage-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260712-h5-polish-1"></script>
 </body>
 </html>

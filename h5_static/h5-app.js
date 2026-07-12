@@ -21,6 +21,7 @@
       taskListBackTarget: null,
       workListBackTab: "profile",
       workListBackTarget: null,
+      personalSettingsBackTab: "profile",
       workListScope: { type: "all", label: "全部记录" },
       workListScopeOptions: [],
       historyItems: [],
@@ -81,6 +82,7 @@
       tikhubRecords: [],
       leadCenterDomain: "public",
       leadCenterPlatform: "all",
+      leadCenterRows: [],
       leadCenterLoading: false,
       ipTemplates: [],
       ipTemplatesLoaded: false,
@@ -655,6 +657,16 @@
 
     function closePersonalTemplateHelpDialog() {
       const modal = $("personalTemplateHelpDialog");
+      if (modal) modal.classList.add("hidden");
+    }
+
+    function closeAssetPreviewDialog() {
+      const modal = $("assetPreviewDialog");
+      if (modal) modal.classList.add("hidden");
+    }
+
+    function closeLeadDetailDialog() {
+      const modal = $("leadDetailDialog");
       if (modal) modal.classList.add("hidden");
     }
 
@@ -1938,7 +1950,8 @@
     }
 
     function canManageAgent() {
-      return !!(state.user && state.user.is_agent);
+      const user = state.user || {};
+      return !!(user.is_agent || Number(user.agent_level || 0) > 0 || cleanKey(user.role) === "agent");
     }
 
     function syncAgentManageEntry() {
@@ -2927,16 +2940,66 @@
       return `<div class="asset-library-thumb asset-library-thumb-empty">${escapeHtml(type || "文件")}</div>`;
     }
 
+    function assetTitle(asset) {
+      const raw = asset && (asset.title || asset.name || asset.tags || asset.prompt || asset.filename || asset.asset_id);
+      const title = valueLabel(raw);
+      return title || "素材";
+    }
+
     function assetCardHtml(asset) {
-      const title = valueLabel((asset && (asset.tags || asset.prompt || asset.filename)) || "");
-      return `<article class="asset-library-card">
+      const title = assetTitle(asset);
+      const id = String((asset && asset.asset_id) || "");
+      return `<button class="asset-library-card" type="button" data-asset-preview-id="${escapeHtml(id)}">
         ${assetPreviewHtml(asset)}
         <div class="asset-library-card-main">
           <strong>${escapeHtml(title || "素材")}</strong>
-          <span>${escapeHtml((asset && asset.asset_id) || "")}</span>
-          <em>${escapeHtml(assetOriginLabel((asset && asset.asset_origin) || state.assetLibraryOrigin))} · ${escapeHtml((asset && asset.media_type) || "file")} · ${escapeHtml(fmtTime(asset && asset.created_at))}</em>
+          <span>${escapeHtml((asset && asset.media_type) || "file")}</span>
+          <em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>
         </div>
-      </article>`;
+      </button>`;
+    }
+
+    function assetPreviewLargeHtml(asset) {
+      const url = String((asset && asset.source_url) || "").trim();
+      const type = String((asset && asset.media_type) || mediaTypeFromUrl(url) || "").toLowerCase();
+      if (!url) return `<div class="asset-preview-large asset-preview-large-empty">暂无可预览文件</div>`;
+      const src = mediaProxyUrl(url, "inline", filenameFromUrl(url, asset && asset.filename || "asset"));
+      if (type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url)) {
+        return `<video class="asset-preview-large" src="${escapeHtml(src)}" controls playsinline preload="metadata"></video>`;
+      }
+      if (type === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(url)) {
+        return `<img class="asset-preview-large" src="${escapeHtml(src)}" alt="">`;
+      }
+      return `<div class="asset-preview-large asset-preview-large-empty">${escapeHtml(type || "文件")}</div>`;
+    }
+
+    function findAssetInLibrary(assetId) {
+      const id = String(assetId || "");
+      const rows = [].concat(state.assetLibraryRows.user_upload || [], state.assetLibraryRows.generated || []);
+      return rows.find((row) => String(row && row.asset_id || "") === id) || null;
+    }
+
+    function openAssetPreview(assetId) {
+      const asset = findAssetInLibrary(assetId);
+      if (!asset) return;
+      const modal = $("assetPreviewDialog");
+      const body = $("assetPreviewBody");
+      const title = $("assetPreviewTitle");
+      if (!modal || !body) return;
+      if (title) title.textContent = assetTitle(asset);
+      const url = String(asset.source_url || "").trim();
+      const actions = url ? mediaActionHtml(url, "下载素材", asset.filename || asset.asset_id || "asset") : "";
+      body.innerHTML = `
+        ${assetPreviewLargeHtml(asset)}
+        <div class="asset-preview-meta">
+          <div><span>来源</span><strong>${escapeHtml(assetOriginLabel(asset.asset_origin || state.assetLibraryOrigin))}</strong></div>
+          <div><span>类型</span><strong>${escapeHtml(asset.media_type || "file")}</strong></div>
+          <div><span>时间</span><strong>${escapeHtml(fmtTime(asset.created_at))}</strong></div>
+          <div><span>ID</span><strong>${escapeHtml(asset.asset_id || "-")}</strong></div>
+        </div>
+        ${asset.prompt ? `<div class="asset-preview-text">${escapeHtml(asset.prompt)}</div>` : ""}
+        ${actions}`;
+      modal.classList.remove("hidden");
     }
 
     function renderAssetLibrary() {
@@ -2949,6 +3012,7 @@
       const pageSize = Number(state.assetLibraryPageSize || 10);
       const pageCount = Math.max(1, Math.ceil(total / pageSize));
       const rows = (state.assetLibraryRows && state.assetLibraryRows[origin]) || [];
+      list.classList.toggle("loading", !!state.assetLibraryLoading);
       if (state.assetLibraryLoading) {
         list.innerHTML = `<div class="asset-library-empty">加载中...</div>`;
       } else if (!rows.length) {
@@ -3045,47 +3109,179 @@
       return /(private|message|friend|group|comment)/.test(action) ? "private" : "public";
     }
 
+    function leadSourceLabel(type) {
+      return {
+        social: "线索采集",
+        tikhub: "平台资料",
+        douyin: "获客任务",
+        linkedin: "线索采集",
+      }[type] || "线索记录";
+    }
+
     function leadRecords() {
       const social = (state.socialLeadJobs || []).map((job) => ({
+        type: "social",
         domain: "public",
         platform: cleanKey(job.platform || (job.request_payload || {}).platform || "all"),
-        source: "采集任务",
+        source: leadSourceLabel("social"),
         title: job.title || `${leadPlatformLabel(job.platform || (job.request_payload || {}).platform)}线索采集`,
         count: leadCountFromJob(job),
         status: jobStatusText(job.status),
         time: job.completed_at || job.updated_at || job.created_at,
+        raw: job,
       }));
       const tikhub = (state.tikhubRecords || []).map((row) => ({
+        type: "tikhub",
         domain: "public",
         platform: cleanKey(row.platform || "douyin"),
-        source: "TikHub",
-        title: `${leadPlatformLabel(row.platform)} · ${row.query_type || "查询"}`,
+        source: leadSourceLabel("tikhub"),
+        title: `${leadPlatformLabel(row.platform)}资料采集`,
         count: Number(row.result_count || 0),
         status: row.success ? "完成" : (row.status || "失败"),
         time: row.created_at || row.updated_at,
+        raw: row,
       }));
       const douyinRuns = (state.runs || [])
         .filter((row) => String(row && row.task_kind || "") === "douyin_leads")
         .map((row) => ({
+          type: "douyin",
           domain: leadDomainForRun(row),
           platform: "douyin",
-          source: "抖音获客",
+          source: leadSourceLabel("douyin"),
           title: row.title || "抖音获客",
           count: douyinRunLeadCount(row),
           status: statusText(row.status),
           time: row.finished_at || row.updated_at || row.created_at,
+          raw: row,
         }));
       const linkedin = (state.linkedinJobs || []).map((job) => ({
+        type: "linkedin",
         domain: "public",
         platform: "linkedin",
-        source: "采集任务",
+        source: leadSourceLabel("linkedin"),
         title: job.title || "LinkedIn线索挖掘",
         count: leadCountFromPayload(job.result_payload),
         status: jobStatusText(job.status),
         time: job.completed_at || job.updated_at || job.created_at,
+        raw: job,
       }));
       return [...douyinRuns, ...social, ...linkedin, ...tikhub]
         .sort((a, b) => itemTimeMs(b.time) - itemTimeMs(a.time));
+    }
+
+    function leadPayloads(record) {
+      const raw = record && record.raw && typeof record.raw === "object" ? record.raw : {};
+      return [
+        raw.result_payload,
+        raw.result_snapshot,
+        raw.response_payload,
+        raw.response,
+        raw.data,
+        raw.payload,
+        raw,
+      ].filter((item) => item && typeof item === "object");
+    }
+
+    function leadArraysFromObject(obj) {
+      const out = [];
+      if (!obj || typeof obj !== "object") return out;
+      ["leads", "customers", "candidates", "items", "source_items", "accounts", "users", "comments", "posts", "videos", "works"].forEach((key) => {
+        if (Array.isArray(obj[key])) out.push(obj[key]);
+      });
+      ["lead_summary", "intent_analysis", "result", "results", "detail", "details"].forEach((key) => {
+        if (obj[key] && typeof obj[key] === "object") out.push(...leadArraysFromObject(obj[key]));
+      });
+      return out;
+    }
+
+    function leadDetailItems(record) {
+      const seen = new Set();
+      const items = [];
+      leadPayloads(record).forEach((payload) => {
+        leadArraysFromObject(payload).forEach((rows) => {
+          rows.forEach((item) => {
+            if (!item || typeof item !== "object") return;
+            const key = String(item.id || item.user_id || item.uid || item.sec_uid || item.url || item.username || item.nickname || JSON.stringify(item).slice(0, 140));
+            if (seen.has(key)) return;
+            seen.add(key);
+            items.push(item);
+          });
+        });
+      });
+      return items;
+    }
+
+    function leadTextValue(item, keys) {
+      for (const key of keys) {
+        const value = item && item[key];
+        if (value == null || value === "") continue;
+        if (Array.isArray(value)) {
+          const text = value.map((entry) => typeof entry === "object" ? leadTextValue(entry, ["text", "content", "title", "name", "keyword"]) : String(entry || "")).filter(Boolean).join("、");
+          if (text) return text;
+        } else if (typeof value === "object") {
+          const text = leadTextValue(value, ["text", "content", "title", "name", "nickname", "username", "desc", "summary"]);
+          if (text) return text;
+        } else {
+          const text = String(value || "").trim();
+          if (text) return text;
+        }
+      }
+      return "";
+    }
+
+    function leadEvidenceTexts(item) {
+      const raw = [];
+      ["evidence", "evidences", "source_evidence", "proofs", "matched_keywords", "keywords"].forEach((key) => {
+        const value = item && item[key];
+        if (Array.isArray(value)) raw.push(...value);
+        else if (value) raw.push(value);
+      });
+      const reason = leadTextValue(item, ["reason", "match_reason", "analysis", "intent_reason", "summary"]);
+      if (reason) raw.unshift(reason);
+      return raw.map((entry) => {
+        if (entry == null) return "";
+        if (typeof entry === "object") return leadTextValue(entry, ["text", "content", "title", "comment", "keyword", "reason", "url"]);
+        return String(entry || "").trim();
+      }).filter(Boolean).slice(0, 4);
+    }
+
+    function leadItemHtml(item, index) {
+      const title = leadTextValue(item, ["nickname", "display_name", "username", "name", "author_name", "author", "title", "id", "user_id", "uid"]) || `客资 ${index + 1}`;
+      const body = leadTextValue(item, ["bio", "description", "desc", "summary", "text", "content", "comment", "caption", "post_text"]);
+      const account = leadTextValue(item, ["handle", "unique_id", "sec_uid", "account", "profile_url", "url"]);
+      const score = leadTextValue(item, ["score", "intent_score", "lead_score", "confidence"]);
+      const evidence = leadEvidenceTexts(item);
+      return `<article class="lead-detail-item">
+        <div class="lead-detail-item-head">
+          <strong>${escapeHtml(title)}</strong>
+          ${score ? `<span>${escapeHtml(score)}分</span>` : ""}
+        </div>
+        ${account ? `<div class="lead-detail-meta">${escapeHtml(account)}</div>` : ""}
+        ${body ? `<p>${escapeHtml(body)}</p>` : ""}
+        ${evidence.length ? `<div class="lead-evidence">${evidence.map((text) => `<em>${escapeHtml(text)}</em>`).join("")}</div>` : ""}
+      </article>`;
+    }
+
+    function openLeadDetail(index) {
+      const record = (state.leadCenterRows || [])[Number(index)];
+      if (!record) return;
+      const modal = $("leadDetailDialog");
+      const body = $("leadDetailBody");
+      const title = $("leadDetailTitle");
+      if (!modal || !body) return;
+      if (title) title.textContent = record.title || "客资明细";
+      const items = leadDetailItems(record);
+      body.innerHTML = `
+        <div class="lead-detail-summary">
+          <div><span>平台</span><strong>${escapeHtml(leadPlatformLabel(record.platform))}</strong></div>
+          <div><span>数量</span><strong>${escapeHtml(compactNumber(record.count || items.length || 0))}</strong></div>
+          <div><span>状态</span><strong>${escapeHtml(record.status || "-")}</strong></div>
+          <div><span>时间</span><strong>${escapeHtml(fmtTime(record.time))}</strong></div>
+        </div>
+        <div class="lead-detail-list">
+          ${items.length ? items.slice(0, 40).map(leadItemHtml).join("") : `<div class="lead-empty lead-detail-empty"><span>这条记录没有保存可展开的客资明细。</span></div>`}
+        </div>`;
+      modal.classList.remove("hidden");
     }
 
     function renderLeadCenter() {
@@ -3106,6 +3302,7 @@
       const platform = state.leadCenterPlatform || "all";
       const rows = all.filter((row) => row.domain === state.leadCenterDomain)
         .filter((row) => platform === "all" || cleanKey(row.platform) === platform || (platform === "redbook" && cleanKey(row.platform) === "xiaohongshu"));
+      state.leadCenterRows = rows.slice(0, 30);
       if (state.leadCenterLoading) {
         list.innerHTML = `<div class="lead-empty"><div class="lead-empty-box"></div><span>加载中...</span></div>`;
         return;
@@ -3114,14 +3311,16 @@
         list.innerHTML = `<div class="lead-empty"><div class="lead-empty-box"></div><span>暂无客资线索</span></div>`;
         return;
       }
-      list.innerHTML = rows.slice(0, 30).map((row) => `<article class="lead-card">
-        <div>
+      list.innerHTML = state.leadCenterRows.map((row, index) => `<button class="lead-card" type="button" data-lead-detail-index="${index}">
+        <div class="lead-card-main">
           <strong>${escapeHtml(row.title || "线索记录")}</strong>
-          <span>${escapeHtml(row.source || "")} · ${escapeHtml(leadPlatformLabel(row.platform))} · ${escapeHtml(fmtTime(row.time))}</span>
+          <span>${escapeHtml(leadPlatformLabel(row.platform))} · ${escapeHtml(fmtTime(row.time))}</span>
         </div>
-        <em>${escapeHtml(compactNumber(row.count || 0))}</em>
-        <b>${escapeHtml(row.status || "")}</b>
-      </article>`).join("");
+        <div class="lead-card-foot">
+          <em>${escapeHtml(compactNumber(row.count || 0))}</em>
+          <b>${escapeHtml(row.status || "")}</b>
+        </div>
+      </button>`).join("");
     }
 
     async function loadLeadCenterData() {
@@ -4338,7 +4537,7 @@
         office: ["必火AI员工", "我的AI员工办公室"],
         secretary: ["老板驾驶舱", "今日交付、趋势和风险"],
         home: ["安排工作", "远程任务、消息和执行记录"],
-        workflow: ["工作流", "24小时任务编排"],
+        workflow: ["员工定制", "24小时任务编排"],
         agentManage: ["代理商管理", ""],
         workList: ["工作列表", "已完成、当前和待执行的工作节点"],
         assetLibrary: ["素材库", ""],
@@ -4379,6 +4578,7 @@
           loadWorkflowActive().catch(() => {}),
         ]).then(renderWorkflow);
       }
+      if (key === "personalSettings" && !state.personalSettingsBackTab) state.personalSettingsBackTab = "profile";
       if (key === "agentManage") {
         renderAgentManage();
         Promise.all([loadAgentResources().catch(() => {}), loadAgentUsers(!state.agentUsers.length).catch(() => {})]).then(renderAgentManage);
@@ -9303,6 +9503,9 @@
     document.querySelectorAll("[data-tab-target]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const target = btn.dataset.tabTarget;
+        if (target === "personalSettings") {
+          state.personalSettingsBackTab = activeViewKey() === "office" ? "office" : "profile";
+        }
         if (target === "taskList") {
           const back = backTargetFromCurrent("profile");
           state.taskListBackTarget = back;
@@ -9361,7 +9564,7 @@
         return;
       }
       if (activeId === "personalSettingsView") {
-        switchTab("profile");
+        switchTab(state.personalSettingsBackTab || "profile");
         return;
       }
       if (activeId === "agentManageView") {
@@ -9592,12 +9795,26 @@
       state.leadCenterPlatform = btn.dataset.leadPlatform || "all";
       renderLeadCenter();
     });
+    $("assetLibraryList")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-asset-preview-id]");
+      if (!btn) return;
+      openAssetPreview(btn.dataset.assetPreviewId || "");
+    });
+    $("leadCenterList")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-lead-detail-index]");
+      if (!btn) return;
+      openLeadDetail(btn.dataset.leadDetailIndex || "0");
+    });
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessHistoryBtn")?.addEventListener("click", () => openWorkHistory(scopeFromActiveView(), viewTargetFromCurrent("profile")));
     $("personalTemplateHelpBtn")?.addEventListener("click", openPersonalTemplateHelpDialog);
     $("personalTemplateHelpBackdrop")?.addEventListener("click", closePersonalTemplateHelpDialog);
     $("personalTemplateHelpCloseBtn")?.addEventListener("click", closePersonalTemplateHelpDialog);
+    $("assetPreviewBackdrop")?.addEventListener("click", closeAssetPreviewDialog);
+    $("assetPreviewCloseBtn")?.addEventListener("click", closeAssetPreviewDialog);
+    $("leadDetailBackdrop")?.addEventListener("click", closeLeadDetailDialog);
+    $("leadDetailCloseBtn")?.addEventListener("click", closeLeadDetailDialog);
     document.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-open-personal-template-settings]");
       if (!btn) return;
@@ -9769,6 +9986,7 @@
         evt.preventDefault();
         evt.stopPropagation();
         const target = String(homeTargetBtn.dataset.homeTarget || "").trim();
+        if (target === "personalSettings") state.personalSettingsBackTab = "office";
         if (target) switchTab(target);
         return;
       }
@@ -10118,6 +10336,7 @@
       }
       const homeTarget = (btn.dataset.homeTarget || "").trim();
       if (homeTarget) {
+        if (homeTarget === "personalSettings") state.personalSettingsBackTab = "office";
         switchTab(homeTarget);
         return;
       }
