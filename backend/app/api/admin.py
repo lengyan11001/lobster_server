@@ -679,10 +679,9 @@ def admin_template_options(
             {
                 "id": row.id,
                 "platform": row.platform,
-                "keyword": row.keyword,
-                "display_name": row.display_name or row.keyword,
-                "sec_uid": row.sec_uid,
-                "username": row.username,
+                "account_key": row.account_key,
+                "display_name": row.display_name or row.account_key,
+                "homepage_url": row.homepage_url,
             }
             for row in competitors
         ],

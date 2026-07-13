@@ -1209,7 +1209,7 @@ async function loadTemplateOptionsForOwner(selected) {
       return '<strong>' + escapeHtml(row.display_name || row.keyword || ('#' + row.id)) + '</strong><div style="font-size:12px;color:var(--text-secondary)">#' + row.id + '</div>';
     });
     renderTemplateCheckList('templateCompetitorList', data.competitors || [], 'competitor', 'id', function(row) {
-      return '<strong>' + escapeHtml(row.display_name || row.username || row.keyword || ('#' + row.id)) + '</strong><div style="font-size:12px;color:var(--text-secondary)">#' + row.id + ' · ' + escapeHtml(row.platform || '-') + '</div>';
+      return '<strong>' + escapeHtml(row.display_name || row.account_key || ('#' + row.id)) + '</strong><div style="font-size:12px;color:var(--text-secondary)">#' + row.id + ' · ' + escapeHtml(row.platform || '-') + '</div>';
     });
     renderTemplateCheckList('templateMemoryList', data.memory_docs || [], 'memory', 'doc_id', function(row) {
       return '<strong>' + escapeHtml(row.title || row.filename || row.doc_id) + '</strong><div style="font-size:12px;color:var(--text-secondary)">' + escapeHtml(row.doc_id || '') + '</div>';
