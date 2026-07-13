@@ -530,6 +530,21 @@ class AdminTemplateGrantBody(BaseModel):
     target_user_ids: list[int] = Field(default_factory=list)
 
 
+class AdminTemplateKeywordBody(BaseModel):
+    owner_user_id: Optional[int] = None
+    keyword: str = ""
+    display_name: str = ""
+
+
+class AdminTemplateCompetitorBody(BaseModel):
+    owner_user_id: Optional[int] = None
+    platform: str = "douyin"
+    account_key: str = ""
+    display_name: str = ""
+    homepage_url: str = ""
+    industry_tags: str = ""
+
+
 def _admin_clean_text(value: object, limit: int = 200) -> str:
     return str(value or "").strip()[:limit]
 
@@ -649,14 +664,14 @@ def admin_template_options(
     owner = db.query(User).filter(User.id == owner_id).first()
     keywords = (
         db.query(IPContentKeyword)
-        .filter(IPContentKeyword.user_id == owner_id)
+        .filter(IPContentKeyword.user_id == owner_id, IPContentKeyword.status == "active")
         .order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc())
         .limit(300)
         .all()
     )
     competitors = (
         db.query(ContentCompetitorAccount)
-        .filter(ContentCompetitorAccount.user_id == owner_id)
+        .filter(ContentCompetitorAccount.user_id == owner_id, ContentCompetitorAccount.status == "active")
         .order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc())
         .limit(300)
         .all()
@@ -690,6 +705,135 @@ def admin_template_options(
             for row in memory_docs
         ],
     }
+
+
+@router.post("/admin/api/ip-content/keywords")
+def admin_create_ip_keyword(
+    body: AdminTemplateKeywordBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    owner_id = _admin_template_owner_id(db, ctx, body.owner_user_id)
+    keyword = _admin_clean_text(body.keyword, 191)
+    if not keyword:
+        raise HTTPException(status_code=400, detail="请填写关键词")
+    display_name = _admin_clean_text(body.display_name, 255)
+    row = (
+        db.query(IPContentKeyword)
+        .filter(IPContentKeyword.user_id == owner_id, IPContentKeyword.keyword == keyword)
+        .first()
+    )
+    if row:
+        row.display_name = display_name or keyword
+        row.status = "active"
+        row.updated_at = datetime.utcnow()
+    else:
+        row = IPContentKeyword(
+            user_id=owner_id,
+            keyword=keyword,
+            display_name=display_name or keyword,
+            status="active",
+            meta={"source": "admin_template_config"},
+        )
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": {"id": row.id, "keyword": row.keyword, "display_name": row.display_name}}
+
+
+@router.delete("/admin/api/ip-content/keywords/{keyword_id}")
+def admin_delete_ip_keyword(
+    keyword_id: int,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentKeyword).filter(IPContentKeyword.id == keyword_id).first()
+    if not row or row.status != "active":
+        raise HTTPException(status_code=404, detail="关键词不存在")
+    if int(row.user_id or 0) > 0:
+        _assert_can_manage_user(db, ctx, int(row.user_id), allow_agent_self=True)
+    elif ctx.role != "admin":
+        raise HTTPException(status_code=403, detail="无权删除该关键词")
+    if ctx.role == "agent" and int(row.user_id) != int(ctx.user_id or 0):
+        raise HTTPException(status_code=403, detail="无权删除该关键词")
+    row.status = "deleted"
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/admin/api/ip-content/competitors")
+def admin_create_ip_competitor(
+    body: AdminTemplateCompetitorBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    owner_id = _admin_template_owner_id(db, ctx, body.owner_user_id)
+    platform = _admin_clean_text(body.platform, 32) or "douyin"
+    account_key = _admin_clean_text(body.account_key, 191)
+    if not account_key:
+        raise HTTPException(status_code=400, detail="请填写同行账号")
+    display_name = _admin_clean_text(body.display_name, 255)
+    row = (
+        db.query(ContentCompetitorAccount)
+        .filter(
+            ContentCompetitorAccount.user_id == owner_id,
+            ContentCompetitorAccount.platform == platform,
+            ContentCompetitorAccount.account_key == account_key,
+        )
+        .first()
+    )
+    if row:
+        row.display_name = display_name or account_key
+        row.homepage_url = _admin_clean_text(body.homepage_url, 1000) or row.homepage_url
+        row.industry_tags = _admin_clean_text(body.industry_tags, 1000) or row.industry_tags
+        row.status = "active"
+        row.updated_at = datetime.utcnow()
+    else:
+        row = ContentCompetitorAccount(
+            user_id=owner_id,
+            platform=platform,
+            account_key=account_key,
+            display_name=display_name or account_key,
+            homepage_url=_admin_clean_text(body.homepage_url, 1000) or None,
+            industry_tags=_admin_clean_text(body.industry_tags, 1000) or None,
+            status="active",
+            meta={"source": "admin_template_config"},
+        )
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "item": {
+            "id": row.id,
+            "platform": row.platform,
+            "account_key": row.account_key,
+            "display_name": row.display_name,
+            "homepage_url": row.homepage_url,
+        },
+    }
+
+
+@router.delete("/admin/api/ip-content/competitors/{competitor_id}")
+def admin_delete_ip_competitor(
+    competitor_id: int,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    row = db.query(ContentCompetitorAccount).filter(ContentCompetitorAccount.id == competitor_id).first()
+    if not row or row.status != "active":
+        raise HTTPException(status_code=404, detail="同行账号不存在")
+    if int(row.user_id or 0) > 0:
+        _assert_can_manage_user(db, ctx, int(row.user_id), allow_agent_self=True)
+    elif ctx.role != "admin":
+        raise HTTPException(status_code=403, detail="无权删除该同行账号")
+    if ctx.role == "agent" and int(row.user_id) != int(ctx.user_id or 0):
+        raise HTTPException(status_code=403, detail="无权删除该同行账号")
+    row.status = "deleted"
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/admin/api/ip-content/templates")

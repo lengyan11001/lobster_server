@@ -242,19 +242,34 @@ body{background:#edf2f7}
 .agent-overview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px}
 .agent-list-card{border:1px solid var(--admin-line);border-radius:12px;background:#fff;padding:16px;box-shadow:0 8px 22px rgba(31,49,72,.06)}
 .agent-level-pill{display:inline-flex;align-items:center;padding:4px 9px;border-radius:999px;font-size:12px;font-weight:800;background:#fff7ed;color:#9a3412}
-.template-config-grid{display:grid;grid-template-columns:minmax(360px,.9fr) minmax(480px,1.1fr);gap:16px;align-items:start}
-.template-check-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;max-height:220px;overflow:auto;padding:4px}
-.template-check-list label{display:flex;align-items:flex-start;gap:8px;border:1px solid var(--border);border-radius:10px;background:#fff;padding:9px 10px;font-size:13px;line-height:1.45}
-.template-check-list input{margin-top:2px}
+.template-config-grid{display:grid;grid-template-columns:minmax(360px,.95fr) minmax(480px,1.05fr);gap:16px;align-items:start}
+.template-card{background:linear-gradient(145deg,#fff 0%,#f6fffb 100%)}
 .template-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .template-form-grid .full{grid-column:1/-1}
 .template-form-grid textarea{width:100%;min-height:92px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical}
-.template-tabs{display:flex;gap:6px;background:#eef3fb;border:1px solid var(--admin-line);border-radius:12px;padding:6px;margin-bottom:14px;overflow-x:auto}
-.template-tab{border:0;background:transparent;color:#64748b;font-weight:800;border-radius:9px;padding:9px 16px;cursor:pointer;white-space:nowrap}
-.template-tab.active{background:#fff;color:#2563eb;box-shadow:0 8px 18px rgba(31,49,72,.08)}
+.template-tabs{display:flex;gap:8px;background:#fff;border:1px solid var(--admin-line);border-radius:16px;padding:8px;margin-bottom:14px;overflow-x:auto;box-shadow:0 8px 24px rgba(31,49,72,.05)}
+.template-tab{border:0;background:transparent;color:#64748b;font-weight:800;border-radius:12px;padding:10px 18px;cursor:pointer;white-space:nowrap}
+.template-tab.active{background:#109b87;color:#fff;box-shadow:0 10px 22px rgba(16,155,135,.22)}
 .template-panel{display:none}
 .template-panel.active{display:block}
 .template-action-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.template-select-block{border:1px dashed #bfd8d2;border-radius:12px;padding:12px;margin-bottom:12px;background:rgba(255,255,255,.72)}
+.template-select-title{font-size:14px;font-weight:900;color:#172033;margin-bottom:8px}
+.template-check-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;max-height:230px;overflow:auto}
+.template-choice-card{display:flex;align-items:flex-start;gap:8px;border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px;font-size:13px;line-height:1.45}
+.template-choice-card input{margin-top:2px}
+.template-choice-card strong{display:block;color:#172033;margin-bottom:2px}
+.template-choice-meta{font-size:12px;color:var(--text-secondary)}
+.template-inline-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:10px;align-items:end;margin-bottom:14px}
+.template-inline-form .wide{grid-column:span 2}
+.template-compact-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.template-manage-item,.template-saved-card{border:1px solid var(--admin-line);border-radius:14px;background:#fff;padding:12px;box-shadow:0 8px 20px rgba(31,49,72,.05)}
+.template-manage-top,.template-saved-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.template-manage-title,.template-saved-title{font-size:14px;font-weight:900;color:#172033;line-height:1.35}
+.template-saved-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.template-saved-meta{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.template-chip{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;background:#eef7ff;color:#2457c5;font-size:12px;font-weight:800}
+.template-card-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .template-grant-modal{max-width:760px}
 .template-grant-tools{display:flex;gap:8px;margin-bottom:12px}
 .template-grant-tools input{flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px}
@@ -506,71 +521,64 @@ body{background:#edf2f7}
     </div>
     <div class="template-tabs">
       <button class="template-tab active" type="button" data-template-tab="template" onclick="setTemplateTab('template')">模板</button>
-      <button class="template-tab" type="button" data-template-tab="materials" onclick="setTemplateTab('materials')">资料</button>
-      <button class="template-tab" type="button" data-template-tab="list" onclick="setTemplateTab('list')">列表</button>
+      <button class="template-tab" type="button" data-template-tab="keywords" onclick="setTemplateTab('keywords')">关键词</button>
+      <button class="template-tab" type="button" data-template-tab="competitors" onclick="setTemplateTab('competitors')">同行账号</button>
+      <button class="template-tab" type="button" data-template-tab="memory" onclick="setTemplateTab('memory')">记忆文件</button>
     </div>
     <input type="hidden" id="templateEditId">
 
     <div class="template-panel active" data-template-panel="template">
-      <div class="card">
-        <div class="admin-card-head">
-          <h3>模板</h3>
-          <span id="templateEditState" class="badge badge-blue">新建模板</span>
+      <div class="template-config-grid">
+        <div class="card template-card">
+          <div class="admin-card-head">
+            <h3>模板</h3>
+            <span id="templateEditState" class="badge badge-blue">新建模板</span>
+          </div>
+          <div class="template-form-grid">
+            <div class="form-group full">
+              <label>模板名称</label>
+              <input type="text" id="templateNameInput" placeholder="给模板取个名字">
+            </div>
+            <div class="form-group full">
+              <label>口播要求</label>
+              <textarea id="templateOralReq" placeholder="人设、语气、禁用表达"></textarea>
+            </div>
+            <div class="form-group full">
+              <label>朋友圈文案要求</label>
+              <textarea id="templateMomentsReq" placeholder="朋友圈文案的风格、长度、禁用导流话术等"></textarea>
+            </div>
+            <div class="form-group full">
+              <label>出图要求</label>
+              <textarea id="templateImageReq" placeholder="画面主体、场景、风格"></textarea>
+            </div>
+          </div>
+          <div class="template-action-row">
+            <button class="btn btn-primary btn-sm" style="width:auto" onclick="saveTemplateConfig()">保存模板</button>
+            <button class="btn btn-outline btn-sm" onclick="resetTemplateForm()">清空</button>
+          </div>
         </div>
-        <div class="template-form-grid">
-          <div class="form-group full">
-            <label>模板名称</label>
-            <input type="text" id="templateNameInput" placeholder="给模板取个名字">
+        <div class="card template-card">
+          <div class="admin-card-head">
+            <h3>选择资料</h3>
+            <button class="btn btn-outline btn-sm" onclick="loadTemplateOptionsForOwner()">刷新资料</button>
           </div>
-          <div class="form-group full">
-            <label>口播要求</label>
-            <textarea id="templateOralReq" placeholder="人设、语气、禁用表达"></textarea>
+          <div class="template-select-block">
+            <div class="template-select-title">选择关键词</div>
+            <div id="templateKeywordList" class="template-check-list"><div class="empty">暂无关键词</div></div>
           </div>
-          <div class="form-group full">
-            <label>朋友圈要求</label>
-            <textarea id="templateMomentsReq" placeholder="风格、长度、禁用导流话术"></textarea>
+          <div class="template-select-block">
+            <div class="template-select-title">选择同行账号</div>
+            <div id="templateCompetitorList" class="template-check-list"><div class="empty">暂无同行账号</div></div>
           </div>
-          <div class="form-group full">
-            <label>出图要求</label>
-            <textarea id="templateImageReq" placeholder="画面主体、场景、风格"></textarea>
+          <div class="template-select-block">
+            <div class="template-select-title">选择记忆文件</div>
+            <div id="templateMemoryList" class="template-check-list"><div class="empty">暂无记忆文件</div></div>
           </div>
-        </div>
-        <div class="template-action-row">
-          <button class="btn btn-primary btn-sm" style="width:auto" onclick="saveTemplateConfig()">保存模板</button>
-          <button class="btn btn-outline btn-sm" onclick="setTemplateTab('materials')">选择资料</button>
         </div>
       </div>
-    </div>
-
-    <div class="template-panel" data-template-panel="materials">
-      <div class="card">
+      <div class="card" style="margin-top:16px">
         <div class="admin-card-head">
-          <h3>资料</h3>
-          <button class="btn btn-outline btn-sm" onclick="loadTemplateOptionsForOwner()">刷新资料</button>
-        </div>
-        <div>
-          <h3 style="font-size:14px;margin-bottom:8px">关键词</h3>
-          <div id="templateKeywordList" class="template-check-list"><div class="empty">暂无资料</div></div>
-        </div>
-        <div style="margin-top:12px">
-          <h3 style="font-size:14px;margin-bottom:8px">同行账号</h3>
-          <div id="templateCompetitorList" class="template-check-list"><div class="empty">暂无资料</div></div>
-        </div>
-        <div style="margin-top:12px">
-          <h3 style="font-size:14px;margin-bottom:8px">记忆文档</h3>
-          <div id="templateMemoryList" class="template-check-list"><div class="empty">暂无资料</div></div>
-        </div>
-        <div class="template-action-row">
-          <button class="btn btn-primary btn-sm" style="width:auto" onclick="saveTemplateConfig()">保存模板</button>
-          <button class="btn btn-outline btn-sm" onclick="setTemplateTab('template')">返回模板</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="template-panel" data-template-panel="list">
-      <div class="card">
-        <div class="admin-card-head">
-          <h3>列表</h3>
+          <h3>已保存模板</h3>
           <div class="admin-toolbar">
             <input type="text" id="templateSearchInput" placeholder="搜索模板名" onkeydown="if(event.key==='Enter')loadTemplates(1)">
             <button class="btn btn-primary btn-sm" onclick="loadTemplates(1)">查询</button>
@@ -578,6 +586,76 @@ body{background:#edf2f7}
         </div>
         <div id="templatesTable"><div class="empty">加载中...</div></div>
         <div class="pagination" id="templatesPagination"></div>
+      </div>
+    </div>
+
+    <div class="template-panel" data-template-panel="keywords">
+      <div class="card">
+        <div class="admin-card-head">
+          <h3>关键词</h3>
+          <button class="btn btn-outline btn-sm" onclick="loadTemplateOptionsForOwner()">刷新</button>
+        </div>
+        <div class="template-inline-form">
+          <div class="form-group wide">
+            <label>关键词</label>
+            <input type="text" id="templateKeywordInput" placeholder="例如：算力">
+          </div>
+          <div class="form-group">
+            <label>显示名称</label>
+            <input type="text" id="templateKeywordDisplayInput" placeholder="可空">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="addTemplateKeyword()">添加</button>
+        </div>
+        <div id="templateKeywordManageList" class="template-compact-list"><div class="empty">暂无关键词</div></div>
+      </div>
+    </div>
+
+    <div class="template-panel" data-template-panel="competitors">
+      <div class="card">
+        <div class="admin-card-head">
+          <h3>同行账号</h3>
+          <button class="btn btn-outline btn-sm" onclick="loadTemplateOptionsForOwner()">刷新</button>
+        </div>
+        <div class="template-inline-form">
+          <div class="form-group">
+            <label>平台</label>
+            <select id="templateCompetitorPlatform">
+              <option value="douyin">抖音</option>
+              <option value="wechat_channels">视频号</option>
+            </select>
+          </div>
+          <div class="form-group wide">
+            <label>账号</label>
+            <input type="text" id="templateCompetitorKeyInput" placeholder="昵称、主页或账号标识">
+          </div>
+          <div class="form-group">
+            <label>显示名称</label>
+            <input type="text" id="templateCompetitorNameInput" placeholder="可空">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="addTemplateCompetitor()">添加</button>
+        </div>
+        <div id="templateCompetitorManageList" class="template-compact-list"><div class="empty">暂无同行账号</div></div>
+      </div>
+    </div>
+
+    <div class="template-panel" data-template-panel="memory">
+      <div class="card">
+        <div class="admin-card-head">
+          <h3>记忆文件</h3>
+          <button class="btn btn-outline btn-sm" onclick="loadTemplateOptionsForOwner()">刷新</button>
+        </div>
+        <div class="template-inline-form">
+          <div class="form-group wide">
+            <label>文档名称</label>
+            <input type="text" id="templateMemoryTitleInput" placeholder="给记忆文件取名">
+          </div>
+          <div class="form-group wide">
+            <label>上传文件</label>
+            <input type="file" id="templateMemoryFileInput" accept=".txt,.md,.csv,.json,.yaml,.yml,.html,.pdf,.doc,.docx,.xlsx,.xlsm,.xls,.pptx">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="uploadTemplateMemory()">上传</button>
+        </div>
+        <div id="templateMemoryManageList" class="template-compact-list"><div class="empty">暂无记忆文件</div></div>
       </div>
     </div>
   </div>
@@ -698,6 +776,7 @@ let templateRows = [];
 let selectedTemplateId = null;
 let selectedTemplateOwnerId = 0;
 let currentTemplateTab = 'template';
+let templateOptions = { keywords: [], competitors: [], memory_docs: [] };
 let templateGrantTemplateId = 0;
 let templateGrantPage = 1;
 let templateGrantSelected = {};
@@ -1157,15 +1236,14 @@ function refreshTemplatePage() {
 }
 
 function setTemplateTab(tab) {
-  currentTemplateTab = ['template', 'materials', 'list'].includes(tab) ? tab : 'template';
+  currentTemplateTab = ['template', 'keywords', 'competitors', 'memory'].includes(tab) ? tab : 'template';
   document.querySelectorAll('[data-template-tab]').forEach(function(btn) {
     btn.classList.toggle('active', btn.getAttribute('data-template-tab') === currentTemplateTab);
   });
   document.querySelectorAll('[data-template-panel]').forEach(function(panel) {
     panel.classList.toggle('active', panel.getAttribute('data-template-panel') === currentTemplateTab);
   });
-  if (currentTemplateTab === 'materials') loadTemplateOptionsForOwner();
-  if (currentTemplateTab === 'list') loadTemplates(templatePage || 1);
+  if (currentTemplateTab !== 'template') loadTemplateOptionsForOwner();
 }
 
 function templateOwnerId() {
@@ -1174,12 +1252,19 @@ function templateOwnerId() {
 }
 
 function checkedTemplateValues(kind) {
-  return Array.from(document.querySelectorAll('[data-template-' + kind + ']:checked'))
+  return Array.from(new Set(Array.from(document.querySelectorAll('[data-template-' + kind + ']:checked'))
     .map(function(el) { return el.getAttribute('data-template-' + kind) || ''; })
-    .filter(Boolean);
+    .filter(Boolean)));
 }
 
-function renderTemplateCheckList(elId, items, kind, idKey, labelFn) {
+function syncTemplateChoice(kind, id, checked) {
+  const safe = String(id || '').replace(/"/g, '\\"');
+  document.querySelectorAll('[data-template-' + kind + '="' + safe + '"]').forEach(function(el) {
+    el.checked = !!checked;
+  });
+}
+
+function renderTemplateCheckList(elId, items, kind, idKey, labelFn, selectedSet) {
   const el = document.getElementById(elId);
   if (!el) return;
   if (!items || !items.length) {
@@ -1189,47 +1274,75 @@ function renderTemplateCheckList(elId, items, kind, idKey, labelFn) {
   el.innerHTML = items.map(function(item) {
     const id = String(item[idKey] || '');
     const label = labelFn(item);
-    return '<label><input type="checkbox" data-template-' + kind + '="' + escapeHtml(id) + '"><span>' + label + '</span></label>';
+    const checked = selectedSet && selectedSet.has(id);
+    return '<label class="template-choice-card"><input type="checkbox" data-template-' + kind + '="' + escapeHtml(id) + '"' + (checked ? ' checked' : '') + ' onchange="syncTemplateChoice(\'' + kind + '\', \'' + escapeHtml(id) + '\', this.checked)"><span>' + label + '</span></label>';
   }).join('');
 }
 
 async function loadTemplateOptionsForOwner(selected) {
   if (selected && selected.owner_user_id !== undefined) selectedTemplateOwnerId = parseInt(selected.owner_user_id || 0, 10) || 0;
   const ownerId = templateOwnerId();
-  if (!ownerId) {
-    ['templateKeywordList','templateCompetitorList','templateMemoryList'].forEach(function(id) {
-      const el = document.getElementById(id);
-      if (el) el.innerHTML = '<div class="empty">暂无资料</div>';
-    });
-    return;
-  }
+  const selectedKeywords = new Set((selected ? (selected.keyword_ids || []).map(String) : checkedTemplateValues('keyword')));
+  const selectedCompetitors = new Set((selected ? (selected.competitor_ids || []).map(String) : checkedTemplateValues('competitor')));
+  const selectedMemories = new Set((selected ? (selected.memory_doc_ids || []).map(String) : checkedTemplateValues('memory')));
   try {
     const data = await api('/admin/api/ip-content/template-options?owner_user_id=' + encodeURIComponent(ownerId));
-    renderTemplateCheckList('templateKeywordList', data.keywords || [], 'keyword', 'id', function(row) {
-      return '<strong>' + escapeHtml(row.display_name || row.keyword || ('#' + row.id)) + '</strong><div style="font-size:12px;color:var(--text-secondary)">#' + row.id + '</div>';
-    });
-    renderTemplateCheckList('templateCompetitorList', data.competitors || [], 'competitor', 'id', function(row) {
-      return '<strong>' + escapeHtml(row.display_name || row.account_key || ('#' + row.id)) + '</strong><div style="font-size:12px;color:var(--text-secondary)">#' + row.id + ' · ' + escapeHtml(row.platform || '-') + '</div>';
-    });
-    renderTemplateCheckList('templateMemoryList', data.memory_docs || [], 'memory', 'doc_id', function(row) {
-      return '<strong>' + escapeHtml(row.title || row.filename || row.doc_id) + '</strong><div style="font-size:12px;color:var(--text-secondary)">' + escapeHtml(row.doc_id || '') + '</div>';
-    });
-    if (selected) {
-      (selected.keyword_ids || []).forEach(function(id) {
-        const el = document.querySelector('[data-template-keyword="' + String(id) + '"]');
-        if (el) el.checked = true;
-      });
-      (selected.competitor_ids || []).forEach(function(id) {
-        const el = document.querySelector('[data-template-competitor="' + String(id) + '"]');
-        if (el) el.checked = true;
-      });
-      (selected.memory_doc_ids || []).forEach(function(id) {
-        const el = document.querySelector('[data-template-memory="' + String(id) + '"]');
-        if (el) el.checked = true;
-      });
-    }
+    templateOptions = {
+      keywords: data.keywords || [],
+      competitors: data.competitors || [],
+      memory_docs: data.memory_docs || [],
+    };
+    renderTemplateCheckList('templateKeywordList', templateOptions.keywords, 'keyword', 'id', templateKeywordLabel, selectedKeywords);
+    renderTemplateCheckList('templateCompetitorList', templateOptions.competitors, 'competitor', 'id', templateCompetitorLabel, selectedCompetitors);
+    renderTemplateCheckList('templateMemoryList', templateOptions.memory_docs, 'memory', 'doc_id', templateMemoryLabel, selectedMemories);
+    renderTemplateManageLists(selectedKeywords, selectedCompetitors, selectedMemories);
   } catch(e) {
     toast(e.message, 'error');
+  }
+}
+
+function templateKeywordLabel(row) {
+  return '<strong>' + escapeHtml(row.display_name || row.keyword || ('#' + row.id)) + '</strong><div class="template-choice-meta">' + escapeHtml(row.keyword || '') + '</div>';
+}
+
+function templateCompetitorLabel(row) {
+  return '<strong>' + escapeHtml(row.display_name || row.account_key || ('#' + row.id)) + '</strong><div class="template-choice-meta">' + escapeHtml(row.platform || '-') + ' · ' + escapeHtml(row.account_key || '') + '</div>';
+}
+
+function templateMemoryLabel(row) {
+  return '<strong>' + escapeHtml(row.title || row.filename || row.doc_id) + '</strong><div class="template-choice-meta">' + escapeHtml(row.filename || row.doc_id || '') + '</div>';
+}
+
+function renderTemplateManageLists(selectedKeywords, selectedCompetitors, selectedMemories) {
+  const keywordBox = document.getElementById('templateKeywordManageList');
+  if (keywordBox) {
+    keywordBox.innerHTML = (templateOptions.keywords || []).length ? templateOptions.keywords.map(function(row) {
+      const id = String(row.id || '');
+      return '<div class="template-manage-item"><div class="template-manage-top">'
+        + '<label class="template-choice-card" style="margin:0;flex:1"><input type="checkbox" data-template-keyword="' + escapeHtml(id) + '"' + (selectedKeywords.has(id) ? ' checked' : '') + ' onchange="syncTemplateChoice(\'keyword\', \'' + escapeHtml(id) + '\', this.checked)"><span>' + templateKeywordLabel(row) + '</span></label>'
+        + '<button class="btn btn-outline btn-sm" onclick="deleteTemplateKeyword(' + Number(row.id || 0) + ')">删除</button>'
+        + '</div></div>';
+    }).join('') : '<div class="empty">暂无关键词</div>';
+  }
+  const competitorBox = document.getElementById('templateCompetitorManageList');
+  if (competitorBox) {
+    competitorBox.innerHTML = (templateOptions.competitors || []).length ? templateOptions.competitors.map(function(row) {
+      const id = String(row.id || '');
+      return '<div class="template-manage-item"><div class="template-manage-top">'
+        + '<label class="template-choice-card" style="margin:0;flex:1"><input type="checkbox" data-template-competitor="' + escapeHtml(id) + '"' + (selectedCompetitors.has(id) ? ' checked' : '') + ' onchange="syncTemplateChoice(\'competitor\', \'' + escapeHtml(id) + '\', this.checked)"><span>' + templateCompetitorLabel(row) + '</span></label>'
+        + '<button class="btn btn-outline btn-sm" onclick="deleteTemplateCompetitor(' + Number(row.id || 0) + ')">删除</button>'
+        + '</div></div>';
+    }).join('') : '<div class="empty">暂无同行账号</div>';
+  }
+  const memoryBox = document.getElementById('templateMemoryManageList');
+  if (memoryBox) {
+    memoryBox.innerHTML = (templateOptions.memory_docs || []).length ? templateOptions.memory_docs.map(function(row) {
+      const id = String(row.doc_id || '');
+      return '<div class="template-manage-item"><div class="template-manage-top">'
+        + '<label class="template-choice-card" style="margin:0;flex:1"><input type="checkbox" data-template-memory="' + escapeHtml(id) + '"' + (selectedMemories.has(id) ? ' checked' : '') + ' onchange="syncTemplateChoice(\'memory\', \'' + escapeHtml(id) + '\', this.checked)"><span>' + templateMemoryLabel(row) + '</span></label>'
+        + '<button class="btn btn-outline btn-sm" onclick="deleteTemplateMemory(\'' + escapeHtml(id) + '\')">删除</button>'
+        + '</div></div>';
+    }).join('') : '<div class="empty">暂无记忆文件</div>';
   }
 }
 
@@ -1258,18 +1371,24 @@ function renderTemplatesTable(items, page) {
     if (pager) pager.innerHTML = '';
     return;
   }
-  let html = '<div class="table-wrap"><table><thead><tr><th>模板</th><th>资料</th><th>关联用户</th><th>更新时间</th><th></th></tr></thead><tbody>';
+  let html = '<div class="template-saved-grid">';
   items.forEach(function(row) {
     const grants = row.granted_user_ids || [];
-    html += '<tr>'
-      + '<td><strong>' + escapeHtml(row.name || '-') + '</strong><div style="font-size:11px;color:var(--text-secondary)">#' + row.id + '</div></td>'
-      + '<td>关键词 ' + (row.keyword_ids || []).length + ' · 同行 ' + (row.competitor_ids || []).length + ' · 记忆 ' + (row.memory_doc_ids || []).length + '</td>'
-      + '<td>' + (grants.length ? grants.length + ' 人' : '未关联') + '</td>'
-      + '<td style="font-size:11px;color:var(--text-secondary)">' + (row.updated_at ? new Date(row.updated_at).toLocaleString('zh-CN') : '-') + '</td>'
-      + '<td><button class="btn btn-outline btn-sm" onclick="editTemplateConfig(' + row.id + ')">编辑</button> <button class="btn btn-agent btn-sm" onclick="openTemplateGrantModal(' + row.id + ')">关联用户</button> <button class="btn btn-danger btn-sm" onclick="deleteTemplateConfig(' + row.id + ')">删除</button></td>'
-      + '</tr>';
+    html += '<article class="template-saved-card">'
+      + '<div class="template-saved-top"><div><div class="template-saved-title">' + escapeHtml(row.name || '-') + '</div><div class="template-choice-meta">' + (row.updated_at ? new Date(row.updated_at).toLocaleString('zh-CN') : '-') + '</div></div><span class="badge badge-blue">#' + row.id + '</span></div>'
+      + '<div class="template-saved-meta">'
+      + '<span class="template-chip">关键词 ' + (row.keyword_ids || []).length + '</span>'
+      + '<span class="template-chip">同行 ' + (row.competitor_ids || []).length + '</span>'
+      + '<span class="template-chip">记忆 ' + (row.memory_doc_ids || []).length + '</span>'
+      + '<span class="template-chip">关联 ' + (grants.length || 0) + '</span>'
+      + '</div>'
+      + '<div class="template-card-actions">'
+      + '<button class="btn btn-outline btn-sm" onclick="editTemplateConfig(' + row.id + ')">编辑</button>'
+      + '<button class="btn btn-agent btn-sm" onclick="openTemplateGrantModal(' + row.id + ')">关联用户</button>'
+      + '<button class="btn btn-danger btn-sm" onclick="deleteTemplateConfig(' + row.id + ')">删除</button>'
+      + '</div></article>';
   });
-  html += '</tbody></table></div>';
+  html += '</div>';
   table.innerHTML = html;
   if (!pager) return;
   const total = page.total || 0;
@@ -1282,6 +1401,109 @@ function renderTemplatesTable(items, page) {
   pageHtml += '<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">第 ' + current + '/' + pages + ' 页（共 ' + total + ' 条）</span>';
   if (page.has_next) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadTemplates(' + (current + 1) + ')">下一页</button>';
   pager.innerHTML = pageHtml;
+}
+
+async function addTemplateKeyword() {
+  const keywordEl = document.getElementById('templateKeywordInput');
+  const displayEl = document.getElementById('templateKeywordDisplayInput');
+  const keyword = keywordEl ? keywordEl.value.trim() : '';
+  if (!keyword) { toast('请填写关键词', 'error'); return; }
+  try {
+    await api('/admin/api/ip-content/keywords', {
+      method: 'POST',
+      body: JSON.stringify({
+        owner_user_id: templateOwnerId() || null,
+        keyword: keyword,
+        display_name: displayEl ? displayEl.value.trim() : '',
+      }),
+    });
+    if (keywordEl) keywordEl.value = '';
+    if (displayEl) displayEl.value = '';
+    toast('关键词已添加');
+    await loadTemplateOptionsForOwner();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function deleteTemplateKeyword(id) {
+  if (!id || !confirm('确定删除这个关键词？')) return;
+  try {
+    await api('/admin/api/ip-content/keywords/' + id, { method: 'DELETE' });
+    toast('关键词已删除');
+    await loadTemplateOptionsForOwner();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function addTemplateCompetitor() {
+  const platformEl = document.getElementById('templateCompetitorPlatform');
+  const keyEl = document.getElementById('templateCompetitorKeyInput');
+  const nameEl = document.getElementById('templateCompetitorNameInput');
+  const accountKey = keyEl ? keyEl.value.trim() : '';
+  if (!accountKey) { toast('请填写同行账号', 'error'); return; }
+  try {
+    await api('/admin/api/ip-content/competitors', {
+      method: 'POST',
+      body: JSON.stringify({
+        owner_user_id: templateOwnerId() || null,
+        platform: platformEl ? platformEl.value : 'douyin',
+        account_key: accountKey,
+        display_name: nameEl ? nameEl.value.trim() : '',
+      }),
+    });
+    if (keyEl) keyEl.value = '';
+    if (nameEl) nameEl.value = '';
+    toast('同行账号已添加');
+    await loadTemplateOptionsForOwner();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function deleteTemplateCompetitor(id) {
+  if (!id || !confirm('确定删除这个同行账号？')) return;
+  try {
+    await api('/admin/api/ip-content/competitors/' + id, { method: 'DELETE' });
+    toast('同行账号已删除');
+    await loadTemplateOptionsForOwner();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function uploadTemplateMemory() {
+  const ownerId = templateOwnerId();
+  const fileEl = document.getElementById('templateMemoryFileInput');
+  const titleEl = document.getElementById('templateMemoryTitleInput');
+  if (!ownerId) { toast('请先使用代理商账号或选择明确归属用户', 'error'); return; }
+  if (!fileEl || !fileEl.files || !fileEl.files[0]) { toast('请选择记忆文件', 'error'); return; }
+  const fd = new FormData();
+  fd.append('agent_user_id', String(ownerId));
+  fd.append('title', titleEl ? titleEl.value.trim() : '');
+  fd.append('notes', '');
+  fd.append('file', fileEl.files[0]);
+  try {
+    await apiForm('/admin/api/openclaw-memory/agent-upload', fd);
+    if (fileEl) fileEl.value = '';
+    if (titleEl) titleEl.value = '';
+    toast('记忆文件已上传');
+    await loadTemplateOptionsForOwner();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function deleteTemplateMemory(docId) {
+  if (!docId || !confirm('确定删除这个记忆文件？')) return;
+  try {
+    await api('/admin/api/openclaw-memory/documents/' + encodeURIComponent(docId), { method: 'DELETE' });
+    toast('记忆文件已删除');
+    await loadTemplateOptionsForOwner();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
 }
 
 async function editTemplateConfig(id) {
