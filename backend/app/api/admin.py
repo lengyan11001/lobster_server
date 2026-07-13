@@ -566,7 +566,7 @@ def _admin_template_owner_id(db: Session, ctx: AdminContext, requested_owner_use
         return int(ctx.user_id)
     owner_id = int(requested_owner_user_id or 0)
     if owner_id <= 0:
-        raise HTTPException(status_code=400, detail="请选择模板归属用户")
+        return 0
     owner = db.query(User).filter(User.id == owner_id).first()
     if not owner:
         raise HTTPException(status_code=404, detail="模板归属用户不存在")
@@ -733,6 +733,77 @@ def admin_list_ip_templates(
             grant_map.setdefault(int(grant.template_id), []).append(int(grant.target_user_id))
     return {
         "items": [_admin_template_payload(row, owners.get(row.user_id), grant_map.get(int(row.id), [])) for row in rows],
+        "pagination": {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_prev": page > 1,
+            "has_next": page * page_size < total,
+        },
+    }
+
+
+@router.get("/admin/api/ip-content/templates/{template_id}/grant-users")
+def admin_ip_template_grant_users(
+    template_id: int,
+    q: str = "",
+    page: int = 1,
+    page_size: int = 20,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentScheduleTemplate).filter(IPContentScheduleTemplate.id == template_id).first()
+    if not row or row.status != "active":
+        raise HTTPException(status_code=404, detail="模板不存在")
+    if ctx.role != "admin" or int(row.user_id or 0) > 0:
+        _assert_can_manage_user(db, ctx, int(row.user_id), allow_agent_self=True)
+    if ctx.role == "agent" and int(row.user_id) != int(ctx.user_id or 0):
+        raise HTTPException(status_code=403, detail="无权管理该模板")
+
+    authorized_user_ids = [
+        int(target_user_id)
+        for (target_user_id,) in (
+            db.query(H5AgentTemplateGrant.target_user_id)
+            .filter(
+                H5AgentTemplateGrant.template_id == template_id,
+                H5AgentTemplateGrant.owner_user_id == int(row.user_id or 0),
+                H5AgentTemplateGrant.status == "active",
+            )
+            .all()
+        )
+    ]
+    authorized_set = set(authorized_user_ids)
+
+    page = max(1, int(page or 1))
+    page_size = min(max(int(page_size or 20), 1), 100)
+    query = db.query(User)
+    if ctx.role == "agent":
+        visible_ids = _agent_visible_user_ids(db, int(ctx.user_id or 0))
+        query = query.filter(User.id.in_(visible_ids)) if visible_ids else query.filter(False)
+    if int(row.user_id or 0) > 0:
+        query = query.filter(User.id != int(row.user_id))
+
+    term = (q or "").strip()
+    if term:
+        like = f"%{term}%"
+        conds = [User.email.ilike(like)]
+        if term.isdigit():
+            try:
+                conds.append(User.id == int(term))
+            except Exception:
+                pass
+        query = query.filter(or_(*conds))
+
+    total = int(query.with_entities(func.count(User.id)).scalar() or 0)
+    users = query.order_by(User.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "ok": True,
+        "template_id": template_id,
+        "authorized_user_ids": authorized_user_ids,
+        "items": [
+            {**_user_public_payload(user), "authorized": int(user.id) in authorized_set}
+            for user in users
+        ],
         "pagination": {
             "total": total,
             "page": page,
