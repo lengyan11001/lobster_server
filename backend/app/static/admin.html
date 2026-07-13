@@ -322,7 +322,6 @@ body{background:#edf2f7}
       <div class="nav-tab" data-icon="代" data-nav="agents" id="agentsNavTab" onclick="switchNav('agents')">代理商管理</div>
       <div class="nav-tab" data-icon="素" data-nav="generationRecords" onclick="switchNav('generationRecords')">素材生成记录</div>
       <div class="nav-tab" data-icon="数" data-nav="tikhubRecords" onclick="switchNav('tikhubRecords')">数据查询记录</div>
-      <div class="nav-tab" data-icon="微" data-nav="juheWechat" onclick="switchNav('juheWechat')">微信协议助手</div>
       <div class="nav-tab" data-icon="润" data-nav="commissions" id="commissionNavTab" onclick="switchNav('commissions')" style="display:none">分润记录</div>
     </div>
   </aside>
@@ -355,24 +354,14 @@ body{background:#edf2f7}
     </div>
 
     <div class="search-bar">
-      <input type="text" id="searchInput" placeholder="搜索用户：输入手机号、账号、邮箱或用户ID…" onkeydown="if(event.key==='Enter')doSearch()">
-      <button class="btn btn-primary btn-sm" onclick="doSearch()">搜索</button>
+      <input type="text" id="searchInput" placeholder="搜索用户：输入手机号、账号、邮箱或用户ID…" onkeydown="if(event.key==='Enter')loadAllUsers(1)">
+      <button class="btn btn-primary btn-sm" onclick="loadAllUsers(1)">查询</button>
+      <button class="btn btn-outline btn-sm" onclick="clearUserSearch()">清空</button>
     </div>
 
-    <div class="tabs">
-      <div class="tab active" data-tab="search" onclick="switchTab('search')">搜索结果</div>
-      <div class="tab" data-tab="all" onclick="switchTab('all')">全部用户</div>
-    </div>
-
-    <div id="tabSearch">
-      <div class="card" id="searchResults">
-        <div class="empty">输入关键词搜索用户</div>
-      </div>
-    </div>
-
-    <div id="tabAll" style="display:none">
+    <div id="tabAll">
       <div class="card" id="allUsersCard">
-        <h3>全部用户</h3>
+        <h3>用户列表</h3>
         <div id="allUsersTable"></div>
         <div class="pagination" id="allUsersPagination"></div>
       </div>
@@ -453,7 +442,6 @@ body{background:#edf2f7}
       <div class="admin-module-card" onclick="switchNav('agents')"><span>代</span><strong>代理商管理</strong><em>代理商、下级和授权入口</em></div>
       <div class="admin-module-card" onclick="switchNav('generationRecords')"><span>素</span><strong>素材生成记录</strong><em>图片、视频、音频生成素材</em></div>
       <div class="admin-module-card" onclick="switchNav('tikhubRecords')"><span>数</span><strong>数据查询记录</strong><em>抖音、视频号等数据查询</em></div>
-      <div class="admin-module-card" onclick="switchNav('juheWechat')"><span>微</span><strong>微信协议助手</strong><em>实例配置、加人任务和执行明细</em></div>
     </div>
     <div id="statsOverview" class="stats-grid"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
@@ -539,91 +527,6 @@ body{background:#edf2f7}
       </div>
       <div id="tikhubRecordsTable"><div class="empty">加载中...</div></div>
       <div class="pagination" id="tikhubRecordsPagination"></div>
-    </div>
-  </div>
-
-  <!-- Page: Juhe WeChat protocol -->
-  <div class="container" id="pageJuheWechat" style="display:none">
-    <div class="juhe-admin-note">
-      文档频率限制：同一设备一分钟超过 100 次调用会被限制约半小时；新设备前三天不要主动加好友、拉群或发朋友圈。批量加人默认 30 秒一条，最低 5 秒一条。
-    </div>
-    <div class="juhe-admin-grid">
-      <div class="card">
-        <h3>实例配置</h3>
-        <div class="juhe-admin-form">
-          <input type="hidden" id="juheAdminConfigId">
-          <div class="form-group">
-            <label>绑定用户ID</label>
-            <input type="number" id="juheAdminUserId" placeholder="例如 31">
-          </div>
-          <div class="form-group">
-            <label>实例名称</label>
-            <input type="text" id="juheAdminLabel" placeholder="例如 客服微信A">
-          </div>
-          <div class="form-group" style="grid-column:1/-1">
-            <label>设备 GUID</label>
-            <input type="text" id="juheAdminGuid" placeholder="208ba999-ff4b-3df8-9b2d-1433a326bb99">
-          </div>
-          <div class="form-group">
-            <label>App Key</label>
-            <input type="text" id="juheAdminAppKey" placeholder="新增必填；编辑留空保留原值">
-          </div>
-          <div class="form-group">
-            <label>App Secret</label>
-            <input type="password" id="juheAdminAppSecret" placeholder="新增必填；编辑留空保留原值">
-          </div>
-        </div>
-        <div class="juhe-admin-toolbar" style="margin-top:12px">
-          <button class="btn btn-primary btn-sm" style="width:auto" onclick="saveJuheConfig()">保存实例</button>
-          <button class="btn btn-outline btn-sm" onclick="resetJuheConfigForm()">清空</button>
-          <button class="btn btn-outline btn-sm" onclick="loadJuheConfigs()">刷新</button>
-        </div>
-        <div id="juheConfigList" class="juhe-admin-list" style="margin-top:14px"></div>
-      </div>
-      <div>
-        <div class="card">
-          <h3>批量加人</h3>
-          <div class="juhe-admin-form">
-            <div class="form-group">
-              <label>选择实例</label>
-              <select id="juheBatchConfig"></select>
-            </div>
-            <div class="form-group">
-              <label>间隔秒数</label>
-              <input type="number" id="juheBatchInterval" min="5" value="30">
-            </div>
-            <div class="form-group" style="grid-column:1/-1">
-              <label>任务名称</label>
-              <input type="text" id="juheBatchTitle" placeholder="例如 6月展会线索加人">
-            </div>
-            <div class="form-group" style="grid-column:1/-1">
-              <label>验证语</label>
-              <input type="text" id="juheBatchVerify" placeholder="你好，我是...">
-            </div>
-            <div class="form-group" style="grid-column:1/-1">
-              <label>导入文件</label>
-              <input type="file" id="juheBatchFile" accept=".txt,.csv">
-              <div style="font-size:12px;color:var(--text-secondary);margin-top:6px">支持 TXT/CSV；每行一个手机号、微信号或 QQ。CSV 第一列为联系人，第二列可写昵称，第三列可写单条备注/验证语。</div>
-            </div>
-            <div class="form-group" style="grid-column:1/-1">
-              <label>手动粘贴</label>
-              <textarea id="juheBatchText" rows="6" placeholder="13800138000&#10;wxid_xxx,张三,你好我是..."></textarea>
-            </div>
-          </div>
-          <div class="juhe-admin-toolbar" style="margin-top:12px">
-            <button class="btn btn-success btn-sm" onclick="createJuheFriendBatch()">创建并开始执行</button>
-            <button class="btn btn-outline btn-sm" onclick="loadJuheBatches()">刷新任务</button>
-          </div>
-        </div>
-        <div class="card">
-          <h3>执行任务</h3>
-          <div id="juheBatchList" class="juhe-admin-list"></div>
-        </div>
-        <div class="card">
-          <h3>任务明细</h3>
-          <div id="juheBatchDetail" class="juhe-admin-result">请选择一条任务</div>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -911,7 +814,6 @@ function navTitle(nav) {
     agents: '代理商管理',
     generationRecords: '素材生成记录',
     tikhubRecords: '数据查询记录',
-    juheWechat: '微信协议助手',
     commissions: '分润记录',
   }[nav] || '首页数据大盘';
 }
@@ -930,41 +832,39 @@ function switchNav(nav) {
   if (pageGenerationRecords) pageGenerationRecords.style.display = nav === 'generationRecords' ? '' : 'none';
   const pageTikhubRecords = document.getElementById('pageTikhubRecords');
   if (pageTikhubRecords) pageTikhubRecords.style.display = nav === 'tikhubRecords' ? '' : 'none';
-  const pageJuheWechat = document.getElementById('pageJuheWechat');
-  if (pageJuheWechat) pageJuheWechat.style.display = nav === 'juheWechat' ? '' : 'none';
   const pageCommissions = document.getElementById('pageCommissions');
   if (pageCommissions) pageCommissions.style.display = nav === 'commissions' ? '' : 'none';
   if (nav === 'stats') loadStats();
+  if (nav === 'users') loadAllUsers(currentPage || 1);
   if (nav === 'agents') loadAgents(agentPage || 1);
   if (nav === 'generationRecords') loadGenerationRecords(generationRecordOffset || 0);
   if (nav === 'tikhubRecords') loadTikhubRecords(tikhubRecordOffset || 0);
-  if (nav === 'juheWechat') { loadJuheConfigs(); loadJuheBatches(); }
   if (nav === 'commissions') loadCommissions(0);
 }
 
 function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-  document.getElementById('tabSearch').style.display = tab === 'search' ? '' : 'none';
-  document.getElementById('tabAll').style.display = tab === 'all' ? '' : 'none';
   document.getElementById('userDetailView').style.display = 'none';
-  if (tab === 'all') loadAllUsers(1);
+  document.getElementById('tabAll').style.display = '';
+  loadAllUsers(1);
 }
 
 async function doSearch() {
-  const q = document.getElementById('searchInput').value.trim();
-  if (!q) return;
-  try {
-    const data = await api('/admin/api/search?q=' + encodeURIComponent(q));
-    renderUserTable(data.users, 'searchResults', '搜索结果');
-  } catch(e) { toast(e.message, 'error'); }
+  loadAllUsers(1);
+}
+
+function clearUserSearch() {
+  const input = document.getElementById('searchInput');
+  if (input) input.value = '';
+  loadAllUsers(1);
 }
 
 let currentPage = 1;
 async function loadAllUsers(page) {
   currentPage = page;
+  const q = (document.getElementById('searchInput') || {}).value || '';
   try {
-    const data = await api('/admin/api/users?page=' + page + '&page_size=20');
-    const title = isAgent() ? '我的下级用户' : null;
+    const data = await api('/admin/api/users?page=' + page + '&page_size=20&q=' + encodeURIComponent(q.trim()));
+    const title = (isAgent() ? '我的下级用户' : '用户列表') + (q.trim() ? ' · 搜索：' + q.trim() : '');
     renderUserTable(data.users, 'allUsersTable', title);
     renderPagination(data.total, data.page, data.page_size);
   } catch(e) { toast(e.message, 'error'); }
@@ -1678,7 +1578,6 @@ async function showUserDetail(userId) {
     resetUserDetailTab();
     const data = await api('/admin/api/user/' + userId + '?ledger_limit=' + LEDGER_PAGE_SIZE + '&ledger_offset=0');
     currentUserData = data.user;
-    document.getElementById('tabSearch').style.display = 'none';
     document.getElementById('tabAll').style.display = 'none';
     document.getElementById('userDetailView').style.display = '';
 
@@ -1970,9 +1869,7 @@ async function assignToSecondAgent(userId) {
 
 function hideDetail() {
   document.getElementById('userDetailView').style.display = 'none';
-  const activeTab = document.querySelector('.tab.active')?.dataset.tab || 'search';
-  document.getElementById('tabSearch').style.display = activeTab === 'search' ? '' : 'none';
-  document.getElementById('tabAll').style.display = activeTab === 'all' ? '' : 'none';
+  document.getElementById('tabAll').style.display = '';
 }
 
 async function doAddCredits() {
@@ -2035,10 +1932,7 @@ async function doClaimSub() {
     toast(`已成功认领下级：${data.email}`);
     secondAgentOptionsCache = null;
     if (sourceInput) sourceInput.value = '';
-    if (currentNav === 'users') {
-      const activeTab = document.querySelector('.tab.active')?.dataset.tab;
-      if (activeTab === 'all') loadAllUsers(currentPage);
-    }
+    if (currentNav === 'users') loadAllUsers(currentPage);
     if (currentNav === 'agents') loadAgents(agentPage || 1);
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -2053,8 +1947,7 @@ async function doRemoveSub(userId) {
     toast('已移除下级');
     secondAgentOptionsCache = null;
     hideDetail();
-    const activeTab = document.querySelector('.tab.active')?.dataset.tab;
-    if (activeTab === 'all') loadAllUsers(currentPage);
+    if (currentNav === 'users') loadAllUsers(currentPage);
   } catch(e) { toast(e.message, 'error'); }
 }
 

@@ -483,6 +483,7 @@ def admin_set_user_llm_model(
 def admin_list_users(
     page: int = 1,
     page_size: int = 20,
+    q: str = "",
     ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
@@ -490,6 +491,14 @@ def admin_list_users(
     if ctx.role == "agent":
         sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         base_q = base_q.filter(User.id.in_(sub_ids)) if sub_ids else base_q.filter(False)
+    term = (q or "").strip()
+    if term:
+        filters = [User.email.ilike(f"%{term}%")]
+        if term.isdigit():
+            id_value = int(term)
+            if 0 < id_value <= 2_147_483_647:
+                filters.append(User.id == id_value)
+        base_q = base_q.filter(or_(*filters))
     total = base_q.with_entities(func.count(User.id)).scalar() or 0
     offset = (max(1, page) - 1) * page_size
     users = base_q.order_by(User.id.desc()).offset(offset).limit(page_size).all()
