@@ -234,12 +234,6 @@ body{background:#edf2f7}
 .admin-page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}
 .admin-page-head h1{font-size:22px;line-height:1.2;color:#172033;margin:0}
 .admin-page-head p{font-size:13px;color:#64748b;margin-top:6px}
-.admin-module-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:18px}
-.admin-module-card{border:1px solid var(--admin-line);background:#fff;border-radius:12px;padding:16px;cursor:pointer;box-shadow:0 8px 22px rgba(31,49,72,.06);transition:transform .16s,box-shadow .16s,border-color .16s}
-.admin-module-card:hover{transform:translateY(-2px);border-color:#8fc0ff;box-shadow:0 14px 30px rgba(31,49,72,.1)}
-.admin-module-card span{display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center;border-radius:10px;background:#e8f2ff;color:#2563eb;font-weight:900;margin-bottom:12px}
-.admin-module-card strong{display:block;font-size:15px;color:#172033}
-.admin-module-card em{display:block;font-style:normal;font-size:12px;color:#64748b;margin-top:6px}
 .admin-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
 .admin-card-head h3{margin:0}
 .admin-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -248,6 +242,13 @@ body{background:#edf2f7}
 .agent-overview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px}
 .agent-list-card{border:1px solid var(--admin-line);border-radius:12px;background:#fff;padding:16px;box-shadow:0 8px 22px rgba(31,49,72,.06)}
 .agent-level-pill{display:inline-flex;align-items:center;padding:4px 9px;border-radius:999px;font-size:12px;font-weight:800;background:#fff7ed;color:#9a3412}
+.template-config-grid{display:grid;grid-template-columns:minmax(360px,.9fr) minmax(480px,1.1fr);gap:16px;align-items:start}
+.template-check-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;max-height:220px;overflow:auto;padding:4px}
+.template-check-list label{display:flex;align-items:flex-start;gap:8px;border:1px solid var(--border);border-radius:10px;background:#fff;padding:9px 10px;font-size:13px;line-height:1.45}
+.template-check-list input{margin-top:2px}
+.template-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.template-form-grid .full{grid-column:1/-1}
+.template-form-grid textarea{width:100%;min-height:92px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical}
 @media(max-width:900px){
   .dashboard{grid-template-columns:1fr!important}
   .admin-sidebar{position:relative;min-height:auto}
@@ -255,6 +256,7 @@ body{background:#edf2f7}
   .nav-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:10px}
   .topbar{height:auto;min-height:56px;padding:10px 14px}
   .container{padding:14px}
+  .template-config-grid,.template-form-grid{grid-template-columns:1fr}
 }
 </style>
 </head>
@@ -320,6 +322,7 @@ body{background:#edf2f7}
       <div class="nav-tab active" data-icon="首" data-nav="stats" onclick="switchNav('stats')">首页数据大盘</div>
       <div class="nav-tab" data-icon="用" data-nav="users" onclick="switchNav('users')">用户列表</div>
       <div class="nav-tab" data-icon="代" data-nav="agents" id="agentsNavTab" onclick="switchNav('agents')">代理商管理</div>
+      <div class="nav-tab" data-icon="模" data-nav="templates" onclick="switchNav('templates')">模板配置</div>
       <div class="nav-tab" data-icon="素" data-nav="generationRecords" onclick="switchNav('generationRecords')">素材生成记录</div>
       <div class="nav-tab" data-icon="数" data-nav="tikhubRecords" onclick="switchNav('tikhubRecords')">数据查询记录</div>
       <div class="nav-tab" data-icon="润" data-nav="commissions" id="commissionNavTab" onclick="switchNav('commissions')" style="display:none">分润记录</div>
@@ -437,12 +440,6 @@ body{background:#edf2f7}
       </div>
       <button class="btn btn-outline btn-sm" onclick="statsCache=null;loadStats()">刷新数据</button>
     </div>
-    <div class="admin-module-grid">
-      <div class="admin-module-card" onclick="switchNav('users')"><span>用</span><strong>用户列表</strong><em>查询用户、积分、技能、设备和任务</em></div>
-      <div class="admin-module-card" onclick="switchNav('agents')"><span>代</span><strong>代理商管理</strong><em>代理商、下级和授权入口</em></div>
-      <div class="admin-module-card" onclick="switchNav('generationRecords')"><span>素</span><strong>素材生成记录</strong><em>图片、视频、音频生成素材</em></div>
-      <div class="admin-module-card" onclick="switchNav('tikhubRecords')"><span>数</span><strong>数据查询记录</strong><em>抖音、视频号等数据查询</em></div>
-    </div>
     <div id="statsOverview" class="stats-grid"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
       <div class="chart-card"><h3>每日新增用户</h3><div id="chartDailyUsers"></div></div>
@@ -480,6 +477,79 @@ body{background:#edf2f7}
       </div>
       <div id="agentsTable"><div class="empty">加载中...</div></div>
       <div class="pagination" id="agentsPagination"></div>
+    </div>
+  </div>
+
+  <!-- Page: Template config -->
+  <div class="container" id="pageTemplates" style="display:none">
+    <div class="admin-page-head">
+      <div>
+        <h1>模板配置</h1>
+        <p>维护 IP 日更模板，并授权给用户使用。</p>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="loadTemplates(templatePage || 1)">刷新</button>
+    </div>
+    <div class="template-config-grid">
+      <div class="card">
+        <div class="admin-card-head">
+          <h3>模板内容</h3>
+          <button class="btn btn-outline btn-sm" onclick="resetTemplateForm()">新建</button>
+        </div>
+        <input type="hidden" id="templateEditId">
+        <div class="template-form-grid">
+          <div class="form-group">
+            <label>归属用户ID</label>
+            <input type="number" id="templateOwnerUserId" placeholder="用户ID" onchange="loadTemplateOptionsForOwner()">
+          </div>
+          <div class="form-group">
+            <label>模板名称</label>
+            <input type="text" id="templateNameInput" placeholder="例如：制造业老板IP日更">
+          </div>
+          <div class="form-group full">
+            <label>口播要求</label>
+            <textarea id="templateOralReq" placeholder="人设、语气、禁用表达"></textarea>
+          </div>
+          <div class="form-group full">
+            <label>朋友圈要求</label>
+            <textarea id="templateMomentsReq" placeholder="风格、长度、禁用导流话术"></textarea>
+          </div>
+          <div class="form-group full">
+            <label>出图要求</label>
+            <textarea id="templateImageReq" placeholder="画面主体、场景、风格"></textarea>
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="admin-card-head"><h3 style="font-size:14px">关键词</h3><button class="btn btn-outline btn-sm" onclick="loadTemplateOptionsForOwner()">刷新资料</button></div>
+          <div id="templateKeywordList" class="template-check-list"><div class="empty">先填写归属用户ID</div></div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="admin-card-head"><h3 style="font-size:14px">同行账号</h3></div>
+          <div id="templateCompetitorList" class="template-check-list"><div class="empty">先填写归属用户ID</div></div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="admin-card-head"><h3 style="font-size:14px">记忆文档</h3></div>
+          <div id="templateMemoryList" class="template-check-list"><div class="empty">先填写归属用户ID</div></div>
+        </div>
+        <div class="recharge-row">
+          <button class="btn btn-primary btn-sm" style="width:auto" onclick="saveTemplateConfig()">保存模板</button>
+          <button class="btn btn-outline btn-sm" onclick="resetTemplateForm()">清空</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="admin-card-head">
+          <h3>模板列表</h3>
+          <div class="admin-toolbar">
+            <input type="text" id="templateSearchInput" placeholder="搜索模板名" onkeydown="if(event.key==='Enter')loadTemplates(1)">
+            <button class="btn btn-primary btn-sm" onclick="loadTemplates(1)">查询</button>
+          </div>
+        </div>
+        <div class="recharge-row" style="margin-top:0;margin-bottom:12px">
+          <input type="text" id="templateGrantUserIds" placeholder="下发用户ID，多个用逗号分隔" style="flex:1;min-width:240px">
+          <button class="btn btn-agent btn-sm" onclick="saveTemplateGrants()">保存授权</button>
+        </div>
+        <div id="templatesTable"><div class="empty">加载中...</div></div>
+        <div class="pagination" id="templatesPagination"></div>
+      </div>
     </div>
   </div>
 
@@ -577,6 +647,9 @@ let userGenerationRecordOffset = 0;
 let tikhubRecordOffset = 0;
 let userTikhubRecordOffset = 0;
 let agentPage = 1;
+let templatePage = 1;
+let templateRows = [];
+let selectedTemplateId = null;
 let juheConfigs = [];
 let juheSelectedConfigId = null;
 let juheSelectedBatchId = null;
@@ -584,8 +657,9 @@ let loginCaptchaId = '';
 let loginSmsCooldownTimer = null;
 let currentLoginTab = 'password';
 const COMMISSION_PAGE_SIZE = 100;
-const GENERATION_RECORD_PAGE_SIZE = 50;
-const TIKHUB_RECORD_PAGE_SIZE = 50;
+const GENERATION_RECORD_PAGE_SIZE = 20;
+const TIKHUB_RECORD_PAGE_SIZE = 20;
+const TEMPLATE_PAGE_SIZE = 20;
 
 if (TOKEN) { showDashboard(); }
 
@@ -812,6 +886,7 @@ function navTitle(nav) {
     stats: '首页数据大盘',
     users: '用户列表',
     agents: '代理商管理',
+    templates: '模板配置',
     generationRecords: '素材生成记录',
     tikhubRecords: '数据查询记录',
     commissions: '分润记录',
@@ -828,6 +903,8 @@ function switchNav(nav) {
   document.getElementById('pageStats').style.display = nav === 'stats' ? '' : 'none';
   const pageAgents = document.getElementById('pageAgents');
   if (pageAgents) pageAgents.style.display = nav === 'agents' ? '' : 'none';
+  const pageTemplates = document.getElementById('pageTemplates');
+  if (pageTemplates) pageTemplates.style.display = nav === 'templates' ? '' : 'none';
   const pageGenerationRecords = document.getElementById('pageGenerationRecords');
   if (pageGenerationRecords) pageGenerationRecords.style.display = nav === 'generationRecords' ? '' : 'none';
   const pageTikhubRecords = document.getElementById('pageTikhubRecords');
@@ -837,6 +914,7 @@ function switchNav(nav) {
   if (nav === 'stats') loadStats();
   if (nav === 'users') loadAllUsers(currentPage || 1);
   if (nav === 'agents') loadAgents(agentPage || 1);
+  if (nav === 'templates') { ensureTemplateOwnerDefault(); loadTemplates(templatePage || 1); }
   if (nav === 'generationRecords') loadGenerationRecords(generationRecordOffset || 0);
   if (nav === 'tikhubRecords') loadTikhubRecords(tikhubRecordOffset || 0);
   if (nav === 'commissions') loadCommissions(0);
@@ -998,6 +1076,237 @@ function renderAgentsTable(items, page) {
   pageHtml += '<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">第 ' + current + '/' + pages + ' 页（共 ' + total + ' 条）</span>';
   if (page.has_next) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadAgents(' + (current + 1) + ')">下一页</button>';
   pager.innerHTML = pageHtml;
+}
+
+function ensureTemplateOwnerDefault() {
+  const ownerInput = document.getElementById('templateOwnerUserId');
+  if (!ownerInput) return;
+  if (isAgent()) {
+    ownerInput.value = MY_USER_ID || '';
+    ownerInput.disabled = true;
+    if (MY_USER_ID) loadTemplateOptionsForOwner();
+  } else {
+    ownerInput.disabled = false;
+  }
+}
+
+function templateOwnerId() {
+  const input = document.getElementById('templateOwnerUserId');
+  const raw = input ? parseInt(input.value || '0', 10) : 0;
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
+function parseIdList(text) {
+  return String(text || '')
+    .split(/[,\s\uFF0C\u3001;\uFF1B]+/)
+    .map(function(x) { return parseInt(x, 10); })
+    .filter(function(x, idx, arr) { return x > 0 && arr.indexOf(x) === idx; });
+}
+
+function checkedTemplateValues(kind) {
+  return Array.from(document.querySelectorAll('[data-template-' + kind + ']:checked'))
+    .map(function(el) { return el.getAttribute('data-template-' + kind) || ''; })
+    .filter(Boolean);
+}
+
+function renderTemplateCheckList(elId, items, kind, idKey, labelFn) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!items || !items.length) {
+    el.innerHTML = '<div class="empty">暂无可选资料</div>';
+    return;
+  }
+  el.innerHTML = items.map(function(item) {
+    const id = String(item[idKey] || '');
+    const label = labelFn(item);
+    return '<label><input type="checkbox" data-template-' + kind + '="' + escapeHtml(id) + '"><span>' + label + '</span></label>';
+  }).join('');
+}
+
+async function loadTemplateOptionsForOwner(selected) {
+  const ownerId = templateOwnerId();
+  if (!ownerId) {
+    ['templateKeywordList','templateCompetitorList','templateMemoryList'].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = '<div class="empty">先填写归属用户ID</div>';
+    });
+    return;
+  }
+  try {
+    const data = await api('/admin/api/ip-content/template-options?owner_user_id=' + encodeURIComponent(ownerId));
+    renderTemplateCheckList('templateKeywordList', data.keywords || [], 'keyword', 'id', function(row) {
+      return '<strong>' + escapeHtml(row.display_name || row.keyword || ('#' + row.id)) + '</strong><div style="font-size:12px;color:var(--text-secondary)">#' + row.id + '</div>';
+    });
+    renderTemplateCheckList('templateCompetitorList', data.competitors || [], 'competitor', 'id', function(row) {
+      return '<strong>' + escapeHtml(row.display_name || row.username || row.keyword || ('#' + row.id)) + '</strong><div style="font-size:12px;color:var(--text-secondary)">#' + row.id + ' · ' + escapeHtml(row.platform || '-') + '</div>';
+    });
+    renderTemplateCheckList('templateMemoryList', data.memory_docs || [], 'memory', 'doc_id', function(row) {
+      return '<strong>' + escapeHtml(row.title || row.filename || row.doc_id) + '</strong><div style="font-size:12px;color:var(--text-secondary)">' + escapeHtml(row.doc_id || '') + '</div>';
+    });
+    if (selected) {
+      (selected.keyword_ids || []).forEach(function(id) {
+        const el = document.querySelector('[data-template-keyword="' + String(id) + '"]');
+        if (el) el.checked = true;
+      });
+      (selected.competitor_ids || []).forEach(function(id) {
+        const el = document.querySelector('[data-template-competitor="' + String(id) + '"]');
+        if (el) el.checked = true;
+      });
+      (selected.memory_doc_ids || []).forEach(function(id) {
+        const el = document.querySelector('[data-template-memory="' + String(id) + '"]');
+        if (el) el.checked = true;
+      });
+    }
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function loadTemplates(page) {
+  templatePage = Math.max(1, page || 1);
+  const ownerId = templateOwnerId();
+  const q = (document.getElementById('templateSearchInput') || {}).value || '';
+  const table = document.getElementById('templatesTable');
+  if (table) table.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    let url = '/admin/api/ip-content/templates?page=' + templatePage + '&page_size=' + TEMPLATE_PAGE_SIZE + '&q=' + encodeURIComponent(q.trim());
+    if (ownerId) url += '&owner_user_id=' + encodeURIComponent(ownerId);
+    const data = await api(url);
+    templateRows = data.items || [];
+    renderTemplatesTable(templateRows, data.pagination || {});
+  } catch(e) {
+    toast(e.message, 'error');
+    if (table) table.innerHTML = '<div class="empty" style="color:var(--danger)">加载失败：' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderTemplatesTable(items, page) {
+  const table = document.getElementById('templatesTable');
+  const pager = document.getElementById('templatesPagination');
+  if (!table) return;
+  if (!items.length) {
+    table.innerHTML = '<div class="empty">暂无模板</div>';
+    if (pager) pager.innerHTML = '';
+    return;
+  }
+  let html = '<div class="table-wrap"><table><thead><tr><th>模板</th><th>归属</th><th>资料</th><th>已授权</th><th>更新时间</th><th></th></tr></thead><tbody>';
+  items.forEach(function(row) {
+    const grants = row.granted_user_ids || [];
+    html += '<tr>'
+      + '<td><strong>' + escapeHtml(row.name || '-') + '</strong><div style="font-size:11px;color:var(--text-secondary)">#' + row.id + '</div></td>'
+      + '<td>#' + row.owner_user_id + '<div style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(accountLabel(row.owner_name || '')) + '</div></td>'
+      + '<td>关键词 ' + (row.keyword_ids || []).length + ' · 同行 ' + (row.competitor_ids || []).length + ' · 记忆 ' + (row.memory_doc_ids || []).length + '</td>'
+      + '<td>' + (grants.length ? grants.join(', ') : '-') + '</td>'
+      + '<td style="font-size:11px;color:var(--text-secondary)">' + (row.updated_at ? new Date(row.updated_at).toLocaleString('zh-CN') : '-') + '</td>'
+      + '<td><button class="btn btn-outline btn-sm" onclick="editTemplateConfig(' + row.id + ')">编辑</button> <button class="btn btn-danger btn-sm" onclick="deleteTemplateConfig(' + row.id + ')">删除</button></td>'
+      + '</tr>';
+  });
+  html += '</tbody></table></div>';
+  table.innerHTML = html;
+  if (!pager) return;
+  const total = page.total || 0;
+  const pageSize = page.page_size || TEMPLATE_PAGE_SIZE;
+  const current = page.page || templatePage || 1;
+  const pages = Math.ceil(total / pageSize);
+  if (pages <= 1) { pager.innerHTML = ''; return; }
+  let pageHtml = '';
+  if (page.has_prev) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadTemplates(' + Math.max(1, current - 1) + ')">上一页</button>';
+  pageHtml += '<span style="padding:6px 12px;font-size:13px;color:var(--text-secondary)">第 ' + current + '/' + pages + ' 页（共 ' + total + ' 条）</span>';
+  if (page.has_next) pageHtml += '<button class="btn btn-outline btn-sm" onclick="loadTemplates(' + (current + 1) + ')">下一页</button>';
+  pager.innerHTML = pageHtml;
+}
+
+async function editTemplateConfig(id) {
+  const row = templateRows.find(function(item) { return Number(item.id) === Number(id); });
+  if (!row) return;
+  selectedTemplateId = Number(row.id);
+  document.getElementById('templateEditId').value = String(row.id);
+  document.getElementById('templateOwnerUserId').value = String(row.owner_user_id || '');
+  document.getElementById('templateNameInput').value = row.name || '';
+  const req = row.requirements || {};
+  document.getElementById('templateOralReq').value = req.oral || req.industry_oral || req.ip_oral || '';
+  document.getElementById('templateMomentsReq').value = req.moments || req.moments_copy || '';
+  document.getElementById('templateImageReq').value = req.image || '';
+  document.getElementById('templateGrantUserIds').value = (row.granted_user_ids || []).join(', ');
+  await loadTemplateOptionsForOwner(row);
+}
+
+function resetTemplateForm() {
+  selectedTemplateId = null;
+  ['templateEditId','templateNameInput','templateOralReq','templateMomentsReq','templateImageReq','templateGrantUserIds'].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  if (isAgent()) ensureTemplateOwnerDefault();
+  document.querySelectorAll('[data-template-keyword],[data-template-competitor],[data-template-memory]').forEach(function(el) { el.checked = false; });
+}
+
+function buildTemplateBody() {
+  const ownerId = templateOwnerId();
+  const name = (document.getElementById('templateNameInput') || {}).value || '';
+  const oral = (document.getElementById('templateOralReq') || {}).value || '';
+  const moments = (document.getElementById('templateMomentsReq') || {}).value || '';
+  const image = (document.getElementById('templateImageReq') || {}).value || '';
+  return {
+    owner_user_id: ownerId || null,
+    name: name.trim(),
+    keyword_ids: checkedTemplateValues('keyword').map(function(x) { return parseInt(x, 10); }).filter(Boolean),
+    competitor_ids: checkedTemplateValues('competitor').map(function(x) { return parseInt(x, 10); }).filter(Boolean),
+    memory_doc_ids: checkedTemplateValues('memory'),
+    requirements: {
+      oral: oral.trim(),
+      industry_oral: oral.trim(),
+      ip_oral: oral.trim(),
+      moments: moments.trim(),
+      image: image.trim(),
+    },
+    meta: { source: 'admin_template_config' },
+  };
+}
+
+async function saveTemplateConfig() {
+  const body = buildTemplateBody();
+  if (!body.owner_user_id) { toast('请填写归属用户ID', 'error'); return; }
+  if (!body.name) { toast('请填写模板名称', 'error'); return; }
+  const id = parseInt((document.getElementById('templateEditId') || {}).value || '0', 10);
+  try {
+    await api(id ? '/admin/api/ip-content/templates/' + id : '/admin/api/ip-content/templates', {
+      method: id ? 'PATCH' : 'POST',
+      body: JSON.stringify(body),
+    });
+    toast('模板已保存');
+    await loadTemplates(templatePage || 1);
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function deleteTemplateConfig(id) {
+  if (!confirm('确定删除这个模板？')) return;
+  try {
+    await api('/admin/api/ip-content/templates/' + id, { method: 'DELETE' });
+    toast('模板已删除');
+    if (selectedTemplateId === Number(id)) resetTemplateForm();
+    await loadTemplates(templatePage || 1);
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function saveTemplateGrants() {
+  const id = parseInt((document.getElementById('templateEditId') || {}).value || String(selectedTemplateId || 0), 10);
+  if (!id) { toast('请先选择一个模板', 'error'); return; }
+  const targetUserIds = parseIdList((document.getElementById('templateGrantUserIds') || {}).value || '');
+  try {
+    await api('/admin/api/ip-content/templates/' + id + '/grants', {
+      method: 'POST',
+      body: JSON.stringify({ target_user_ids: targetUserIds }),
+    });
+    toast('授权已保存');
+    await loadTemplates(templatePage || 1);
+  } catch(e) {
+    toast(e.message, 'error');
+  }
 }
 
 let currentUserId = null;

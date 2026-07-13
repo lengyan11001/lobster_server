@@ -18,13 +18,13 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header
 from fastapi.responses import HTMLResponse, FileResponse
 from jose import JWTError, jwt
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import AgentCommissionLedger, CapabilityCallLog, CreditLedger, H5ChatDevicePresence, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..models import AgentCommissionLedger, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
 from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
@@ -511,6 +511,361 @@ def admin_list_users(
             for u in users
         ],
     }
+
+
+# ── 模板配置：IP 日更模板与下发 ──
+
+
+class AdminTemplateBody(BaseModel):
+    owner_user_id: Optional[int] = None
+    name: str = ""
+    keyword_ids: list[int] = Field(default_factory=list)
+    competitor_ids: list[int] = Field(default_factory=list)
+    memory_doc_ids: list[str] = Field(default_factory=list)
+    requirements: dict = Field(default_factory=dict)
+    meta: dict = Field(default_factory=dict)
+
+
+class AdminTemplateGrantBody(BaseModel):
+    target_user_ids: list[int] = Field(default_factory=list)
+
+
+def _admin_clean_text(value: object, limit: int = 200) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def _admin_clean_int_ids(values: list[int], limit: int = 100) -> list[int]:
+    out: list[int] = []
+    for raw in values or []:
+        try:
+            val = int(raw)
+        except Exception:
+            continue
+        if val > 0 and val not in out:
+            out.append(val)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _admin_clean_doc_ids(values: list[str], limit: int = 100) -> list[str]:
+    out: list[str] = []
+    for raw in values or []:
+        val = "".join(ch for ch in str(raw or "").strip() if ch.isalnum() or ch in "_-")[:64]
+        if val and val not in out:
+            out.append(val)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _admin_template_owner_id(db: Session, ctx: AdminContext, requested_owner_user_id: Optional[int]) -> int:
+    if ctx.role == "agent":
+        if not ctx.user_id:
+            raise HTTPException(status_code=403, detail="代理商账号无效")
+        return int(ctx.user_id)
+    owner_id = int(requested_owner_user_id or 0)
+    if owner_id <= 0:
+        raise HTTPException(status_code=400, detail="请选择模板归属用户")
+    owner = db.query(User).filter(User.id == owner_id).first()
+    if not owner:
+        raise HTTPException(status_code=404, detail="模板归属用户不存在")
+    return owner_id
+
+
+def _admin_validate_template_refs(
+    db: Session,
+    owner_user_id: int,
+    keyword_ids: list[int],
+    competitor_ids: list[int],
+    memory_doc_ids: list[str],
+) -> tuple[list[int], list[int], list[str]]:
+    clean_keywords = _admin_clean_int_ids(keyword_ids, 50)
+    clean_competitors = _admin_clean_int_ids(competitor_ids, 50)
+    clean_memory_docs = _admin_clean_doc_ids(memory_doc_ids, 50)
+    if clean_keywords:
+        found = {
+            int(x)
+            for (x,) in db.query(IPContentKeyword.id)
+            .filter(IPContentKeyword.user_id == owner_user_id, IPContentKeyword.id.in_(clean_keywords))
+            .all()
+        }
+        missing = [x for x in clean_keywords if x not in found]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"关键词不存在或不属于归属用户：{missing[:5]}")
+    if clean_competitors:
+        found = {
+            int(x)
+            for (x,) in db.query(ContentCompetitorAccount.id)
+            .filter(ContentCompetitorAccount.user_id == owner_user_id, ContentCompetitorAccount.id.in_(clean_competitors))
+            .all()
+        }
+        missing = [x for x in clean_competitors if x not in found]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"同行账号不存在或不属于归属用户：{missing[:5]}")
+    if clean_memory_docs:
+        found = {
+            str(x)
+            for (x,) in db.query(OpenClawMemoryDocument.doc_id)
+            .filter(
+                OpenClawMemoryDocument.target_user_id == owner_user_id,
+                OpenClawMemoryDocument.status == "active",
+                OpenClawMemoryDocument.doc_id.in_(clean_memory_docs),
+            )
+            .all()
+        }
+        missing = [x for x in clean_memory_docs if x not in found]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"记忆文档不存在或不属于归属用户：{missing[:5]}")
+    return clean_keywords, clean_competitors, clean_memory_docs
+
+
+def _admin_template_payload(row: IPContentScheduleTemplate, owner: Optional[User] = None, grants: Optional[list[int]] = None) -> dict:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "owner_user_id": row.user_id,
+        "owner_name": (owner.email if owner else "") or "",
+        "name": row.name,
+        "keyword_ids": _admin_clean_int_ids(row.keyword_ids or [], 50),
+        "competitor_ids": _admin_clean_int_ids(row.competitor_ids or [], 50),
+        "memory_doc_ids": _admin_clean_doc_ids(row.memory_doc_ids or [], 50),
+        "requirements": row.requirements or {},
+        "status": row.status,
+        "granted_user_ids": grants or [],
+        "meta": row.meta or {},
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/admin/api/ip-content/template-options")
+def admin_template_options(
+    owner_user_id: Optional[int] = None,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    owner_id = _admin_template_owner_id(db, ctx, owner_user_id)
+    owner = db.query(User).filter(User.id == owner_id).first()
+    keywords = (
+        db.query(IPContentKeyword)
+        .filter(IPContentKeyword.user_id == owner_id)
+        .order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc())
+        .limit(300)
+        .all()
+    )
+    competitors = (
+        db.query(ContentCompetitorAccount)
+        .filter(ContentCompetitorAccount.user_id == owner_id)
+        .order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc())
+        .limit(300)
+        .all()
+    )
+    memory_docs = (
+        db.query(OpenClawMemoryDocument)
+        .filter(OpenClawMemoryDocument.target_user_id == owner_id, OpenClawMemoryDocument.status == "active")
+        .order_by(OpenClawMemoryDocument.updated_at.desc(), OpenClawMemoryDocument.id.desc())
+        .limit(300)
+        .all()
+    )
+    return {
+        "ok": True,
+        "owner": _user_public_payload(owner) if owner else None,
+        "keywords": [
+            {"id": row.id, "keyword": row.keyword, "display_name": row.display_name or row.keyword}
+            for row in keywords
+        ],
+        "competitors": [
+            {
+                "id": row.id,
+                "platform": row.platform,
+                "keyword": row.keyword,
+                "display_name": row.display_name or row.keyword,
+                "sec_uid": row.sec_uid,
+                "username": row.username,
+            }
+            for row in competitors
+        ],
+        "memory_docs": [
+            {"doc_id": row.doc_id, "title": row.title, "filename": row.filename}
+            for row in memory_docs
+        ],
+    }
+
+
+@router.get("/admin/api/ip-content/templates")
+def admin_list_ip_templates(
+    owner_user_id: Optional[int] = None,
+    q: str = "",
+    page: int = 1,
+    page_size: int = 20,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    page = max(1, int(page or 1))
+    page_size = min(max(int(page_size or 20), 1), 100)
+    query = db.query(IPContentScheduleTemplate).filter(IPContentScheduleTemplate.status == "active")
+    if ctx.role == "agent":
+        query = query.filter(IPContentScheduleTemplate.user_id == int(ctx.user_id or 0))
+    elif owner_user_id:
+        query = query.filter(IPContentScheduleTemplate.user_id == int(owner_user_id))
+    term = (q or "").strip()
+    if term:
+        query = query.filter(IPContentScheduleTemplate.name.ilike(f"%{term}%"))
+    total = int(query.with_entities(func.count(IPContentScheduleTemplate.id)).scalar() or 0)
+    rows = (
+        query.order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    owner_ids = sorted({int(row.user_id) for row in rows})
+    owners = {row.id: row for row in db.query(User).filter(User.id.in_(owner_ids)).all()} if owner_ids else {}
+    template_ids = [int(row.id) for row in rows]
+    grant_map: dict[int, list[int]] = {}
+    if template_ids:
+        grants = (
+            db.query(H5AgentTemplateGrant)
+            .filter(H5AgentTemplateGrant.template_id.in_(template_ids), H5AgentTemplateGrant.status == "active")
+            .all()
+        )
+        for grant in grants:
+            grant_map.setdefault(int(grant.template_id), []).append(int(grant.target_user_id))
+    return {
+        "items": [_admin_template_payload(row, owners.get(row.user_id), grant_map.get(int(row.id), [])) for row in rows],
+        "pagination": {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_prev": page > 1,
+            "has_next": page * page_size < total,
+        },
+    }
+
+
+@router.post("/admin/api/ip-content/templates")
+def admin_save_ip_template(
+    body: AdminTemplateBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    owner_id = _admin_template_owner_id(db, ctx, body.owner_user_id)
+    name = _admin_clean_text(body.name, 160)
+    if not name:
+        raise HTTPException(status_code=400, detail="请填写模板名称")
+    keyword_ids, competitor_ids, memory_doc_ids = _admin_validate_template_refs(
+        db, owner_id, body.keyword_ids, body.competitor_ids, body.memory_doc_ids
+    )
+    row = IPContentScheduleTemplate(
+        user_id=owner_id,
+        name=name,
+        keyword_ids=keyword_ids,
+        competitor_ids=competitor_ids,
+        memory_doc_ids=memory_doc_ids,
+        memory_docs=[],
+        requirements=body.requirements or {},
+        meta={**(body.meta or {}), "source": "admin_template_config"},
+        status="active",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _admin_template_payload(row)}
+
+
+@router.patch("/admin/api/ip-content/templates/{template_id}")
+def admin_update_ip_template(
+    template_id: int,
+    body: AdminTemplateBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentScheduleTemplate).filter(IPContentScheduleTemplate.id == template_id).first()
+    if not row or row.status != "active":
+        raise HTTPException(status_code=404, detail="模板不存在")
+    _assert_can_manage_user(db, ctx, int(row.user_id), allow_agent_self=True)
+    if ctx.role == "agent" and int(row.user_id) != int(ctx.user_id or 0):
+        raise HTTPException(status_code=403, detail="无权修改该模板")
+    name = _admin_clean_text(body.name, 160)
+    if not name:
+        raise HTTPException(status_code=400, detail="请填写模板名称")
+    keyword_ids, competitor_ids, memory_doc_ids = _admin_validate_template_refs(
+        db, int(row.user_id), body.keyword_ids, body.competitor_ids, body.memory_doc_ids
+    )
+    row.name = name
+    row.keyword_ids = keyword_ids
+    row.competitor_ids = competitor_ids
+    row.memory_doc_ids = memory_doc_ids
+    row.memory_docs = []
+    row.requirements = body.requirements or {}
+    row.meta = {**(body.meta or {}), "source": "admin_template_config"}
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _admin_template_payload(row)}
+
+
+@router.delete("/admin/api/ip-content/templates/{template_id}")
+def admin_delete_ip_template(
+    template_id: int,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentScheduleTemplate).filter(IPContentScheduleTemplate.id == template_id).first()
+    if not row or row.status != "active":
+        raise HTTPException(status_code=404, detail="模板不存在")
+    _assert_can_manage_user(db, ctx, int(row.user_id), allow_agent_self=True)
+    if ctx.role == "agent" and int(row.user_id) != int(ctx.user_id or 0):
+        raise HTTPException(status_code=403, detail="无权删除该模板")
+    row.status = "deleted"
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/admin/api/ip-content/templates/{template_id}/grants")
+def admin_save_ip_template_grants(
+    template_id: int,
+    body: AdminTemplateGrantBody,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    row = db.query(IPContentScheduleTemplate).filter(IPContentScheduleTemplate.id == template_id).first()
+    if not row or row.status != "active":
+        raise HTTPException(status_code=404, detail="模板不存在")
+    _assert_can_manage_user(db, ctx, int(row.user_id), allow_agent_self=True)
+    if ctx.role == "agent" and int(row.user_id) != int(ctx.user_id or 0):
+        raise HTTPException(status_code=403, detail="无权下发该模板")
+    requested = _admin_clean_int_ids(body.target_user_ids, 500)
+    for target_user_id in requested:
+        _assert_can_manage_user(db, ctx, target_user_id)
+        if target_user_id == int(row.user_id):
+            raise HTTPException(status_code=400, detail="不能把模板下发给归属用户自己")
+    now = datetime.utcnow()
+    existing = (
+        db.query(H5AgentTemplateGrant)
+        .filter(H5AgentTemplateGrant.template_id == template_id, H5AgentTemplateGrant.owner_user_id == int(row.user_id))
+        .all()
+    )
+    remaining = set(requested)
+    requested_set = set(requested)
+    for grant in existing:
+        grant.status = "active" if int(grant.target_user_id) in requested_set else "revoked"
+        grant.updated_at = now
+        remaining.discard(int(grant.target_user_id))
+    for target_user_id in remaining:
+        db.add(
+            H5AgentTemplateGrant(
+                template_id=template_id,
+                owner_user_id=int(row.user_id),
+                target_user_id=target_user_id,
+                status="active",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    db.commit()
+    return {"ok": True, "template_id": template_id, "target_user_ids": requested}
 
 
 # ── 技能可见性管理 ──
