@@ -138,7 +138,7 @@ def _mark_step(row: CreativeGenerationJob, key: str, status: str, *, detail: str
         item["attempts"] = int(item.get("attempts") or 0) + (1 if status == "running" else 0)
         break
     meta["steps"] = steps
-    meta["current_step"] = key if status == "running" else meta.get("current_step", "")
+    meta["current_step"] = key if status == "running" else ""
     _set_meta(row, meta)
 
 
@@ -970,6 +970,85 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
     return row
 
 
+def _fallback_summary_report(row: CreativeGenerationJob, *, reason: str = "") -> dict[str, Any]:
+    req = row.request_payload or {}
+    result = row.result_payload if isinstance(row.result_payload, dict) else {}
+    candidates = result.get("candidates") if isinstance(result.get("candidates"), list) else []
+    lead_summary = result.get("lead_summary") if isinstance(result.get("lead_summary"), dict) else {}
+    priority_leads: list[dict[str, Any]] = []
+    contact_list: list[dict[str, Any]] = []
+    for item in candidates[:30]:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or item.get("candidate_key") or item.get("handle") or ""
+        contact = item.get("contact") if isinstance(item.get("contact"), dict) else {}
+        url = item.get("url") or item.get("profile_url") or ""
+        public_contact = contact.get("email") or contact.get("phone") or contact.get("url") or url
+        priority_leads.append(
+            {
+                "name": name,
+                "company": item.get("company") or "",
+                "score": int(item.get("score") or 0),
+                "why": item.get("source_reason") or item.get("headline") or "",
+                "contact_status": "has_public_contact" if public_contact else "profile_only",
+                "opening_line": "",
+                "next_step": _candidate_next_action(item),
+                "profile_url": url,
+                "evidence": item.get("evidence") or [],
+            }
+        )
+        contact_list.append(
+            {
+                "name": name,
+                "role": item.get("headline") or item.get("role") or "",
+                "company": item.get("company") or "",
+                "contact": public_contact or "",
+                "source": url,
+                "next_action": _candidate_next_action(item),
+            }
+        )
+    candidate_count = len(candidates)
+    source_summary = lead_summary.get("summary") if isinstance(lead_summary.get("summary"), dict) else {}
+    with_public_contact = int(source_summary.get("with_public_contact") or 0)
+    limitations = ["LLM report generation timed out; generated a structured report from collected LinkedIn data."]
+    if reason:
+        limitations.append(reason[:300])
+    return _jsonable(
+        {
+            "executive_summary": f"Collected {candidate_count} LinkedIn candidate(s).",
+            "lead_overview": {
+                "candidate_count": candidate_count,
+                "with_public_contact": with_public_contact,
+                "recommendation": "Review high-score leads first, then supplement missing public contact details.",
+            },
+            "contact_list": contact_list,
+            "priority_leads": priority_leads,
+            "candidate_segments": [
+                {
+                    "name": "High priority",
+                    "reason": "Sorted by collected evidence and score.",
+                    "people": [str(x.get("name") or "") for x in priority_leads[:10] if x.get("name")],
+                }
+            ],
+            "action_workbench": {
+                "list_a": [{"name": x.get("name") or "", "reason": x.get("why") or "", "next_action": x.get("next_step") or ""} for x in priority_leads[:10]],
+                "list_b": [],
+                "watch_list": [],
+                "supplement_tasks": [
+                    {"target": x.get("name") or "", "missing": "public contact", "how_to_fill": "Open public profile or company site."}
+                    for x in priority_leads[:10]
+                    if x.get("contact_status") == "profile_only"
+                ],
+                "outreach_assets": [],
+            },
+            "relationship_map": [],
+            "next_actions": ["Open CRM leads and follow up from the highest score contacts."],
+            "limitations": limitations,
+            "target_profile": req.get("target_profile") or "",
+        }
+    )
+
+
 async def _generate_summary_report(row: CreativeGenerationJob, current_user: User, db: Session) -> dict[str, Any]:
     req = row.request_payload or {}
     candidates = (row.result_payload or {}).get("candidates") if isinstance(row.result_payload, dict) else []
@@ -1032,7 +1111,23 @@ async def _generate_summary_report(row: CreativeGenerationJob, current_user: Use
         "stream": False,
         "temperature": 0.35,
     }
-    data = await _post_llm_with_retry(payload=payload, headers=headers, attempts=3)
+    try:
+        timeout_seconds = float(os.environ.get("LINKEDIN_MINING_LLM_TIMEOUT_SEC") or "45")
+    except (TypeError, ValueError):
+        timeout_seconds = 45.0
+    try:
+        attempts = int(os.environ.get("LINKEDIN_MINING_LLM_ATTEMPTS") or "1")
+    except (TypeError, ValueError):
+        attempts = 1
+    try:
+        data = await _post_llm_with_retry(
+            payload=payload,
+            headers=headers,
+            attempts=max(1, min(3, attempts)),
+            timeout_seconds=max(10.0, min(180.0, timeout_seconds)),
+        )
+    except Exception as exc:
+        return _fallback_summary_report(row, reason=str(getattr(exc, "detail", None) or exc))
     try:
         text = str(data["choices"][0]["message"]["content"] or "")
     except Exception:
