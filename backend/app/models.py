@@ -473,6 +473,85 @@ class LeadCollectionTemplate(Base):
     )
 
 
+class GlobalLeadJob(Base):
+    """Unified company lead acquisition job."""
+
+    __tablename__ = "global_lead_jobs"
+    __table_args__ = (
+        UniqueConstraint("job_id", name="uq_global_lead_jobs_job_id"),
+        Index("ix_global_lead_jobs_user_status_created", "user_id", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    job_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
+    stage: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    title: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
+    company_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    domain: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    region: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    target_profile: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    request_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    source_plan: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    child_jobs: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    result_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class GlobalLeadCrmContact(Base):
+    """Normalized CRM lead discovered by global lead jobs."""
+
+    __tablename__ = "global_lead_crm_contacts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "dedupe_key", name="uq_global_lead_crm_user_dedupe"),
+        Index("ix_global_lead_crm_user_created", "user_id", "created_at"),
+        Index("ix_global_lead_crm_user_source", "user_id", "source_platform", "created_at"),
+        Index("ix_global_lead_crm_user_job", "user_id", "job_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    entity_type: Mapped[str] = mapped_column(String(32), default="person", nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    company: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    role: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    domain: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    region: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    social_handle: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    profile_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_platform: Mapped[str] = mapped_column(String(64), default="", nullable=False, index=True)
+    source_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="new", nullable=False, index=True)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    evidence: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    raw: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+
+
 class CutcliTemplate(Base):
     __tablename__ = "cutcli_templates"
     __table_args__ = (

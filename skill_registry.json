@@ -1184,8 +1184,8 @@
       "tags": ["TikTok", "TikHub", "leads"]
     },
     "global_trade_leads_skill": {
-      "name": "全球客户开发",
-      "description": "搜客、模板、周期更新和线索明细。",
+      "name": "全球获客",
+      "description": "按企业、域名、区域发起跨来源获客任务，结果统一进入 CRM。",
       "type": "builtin",
       "store_visibility": "online",
       "default_installed": true,
@@ -1194,6 +1194,7 @@
         "view": "global-leads",
         "server_proxy": true,
         "uses": [
+          "global_leads",
           "lead_collection_templates",
           "social_leads",
           "linkedin_mining",
@@ -1202,24 +1203,25 @@
       },
       "capabilities": {
         "global.leads.workspace": {
-          "description": "Unified global customer development workspace using existing lead collection templates, social leads, LinkedIn mining and scheduled tasks.",
+          "description": "Company/domain/region based global lead acquisition workspace with unified CRM output.",
           "upstream": "server",
-          "upstream_tool": "lead_collection_templates",
+          "upstream_tool": "global_leads",
           "enabled": true,
           "is_default": false,
           "unit_credits": 0,
           "arg_schema": {
             "type": "object",
             "properties": {
+              "company_name": { "type": "string" },
+              "domain": { "type": "string" },
+              "region": { "type": "string" },
               "keywords": { "type": "array", "items": { "type": "string" } },
-              "platforms": { "type": "array", "items": { "type": "string" } },
-              "country": { "type": "string" },
-              "cycle_days": { "type": "integer" }
+              "sources": { "type": "array", "items": { "type": "string" } }
             }
           }
         }
       },
-      "tags": ["外贸获客", "LinkedIn", "X", "TikTok", "Reddit"]
+      "tags": ["全球获客", "CRM", "企业搜索", "LinkedIn", "X", "TikTok"]
     },
     "ai_3d_model_skill": {
       "name": "高质量 3D 模型",
