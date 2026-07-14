@@ -208,6 +208,68 @@ def _domain_from_url(value: Any) -> str:
     return host[:255]
 
 
+def _has_cjk(value: Any) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", str(value or "")))
+
+
+def _compact_match_text(value: Any) -> str:
+    return re.sub(r"[\s\"'`·\-_/|:：,，.。()（）\[\]【】]+", "", str(value or "").lower())
+
+
+def _company_match_terms(company: Any) -> list[str]:
+    text = _clean_text(company, 255)
+    compact = _compact_match_text(text)
+    if not compact:
+        return []
+    terms = [compact]
+    suffixes = [
+        "有限责任公司",
+        "股份有限公司",
+        "科技有限公司",
+        "信息技术有限公司",
+        "网络科技有限公司",
+        "有限公司",
+        "科技",
+        "公司",
+        "集团",
+    ]
+    for suffix in suffixes:
+        if compact.endswith(suffix) and len(compact) > len(suffix) + 1:
+            core = compact[: -len(suffix)]
+            if len(core) >= 2:
+                terms.append(core)
+    out: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        if term and term not in seen:
+            seen.add(term)
+            out.append(term)
+    return out
+
+
+def _web_result_is_relevant(row: GlobalLeadJob, result: dict[str, str], query: str = "") -> bool:
+    payload = row.request_payload or {}
+    company = _clean_text(row.company_name or payload.get("company_name"), 255)
+    domain = _normalize_domain(row.domain or payload.get("domain"))
+    keywords = _clean_list(payload.get("keywords"), limit=8)
+    url = result.get("url") or ""
+    result_domain = _domain_from_url(url)
+    text = " ".join([result.get("title") or "", result.get("snippet") or "", result_domain, url])
+    compact_text = _compact_match_text(text)
+    lower_text = text.lower()
+    if domain:
+        return result_domain == domain or result_domain.endswith("." + domain) or domain in lower_text
+    if company:
+        return any(term in compact_text for term in _company_match_terms(company))
+    keyword_terms = [_compact_match_text(x) for x in keywords if _compact_match_text(x)]
+    if keyword_terms:
+        return any(term in compact_text for term in keyword_terms if len(term) >= 2)
+    query_terms = [_compact_match_text(x) for x in re.findall(r"\"([^\"]+)\"", query or "")]
+    if query_terms:
+        return any(term in compact_text for term in query_terms if len(term) >= 2)
+    return False
+
+
 def _parse_bing_results(html: str, limit: int) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     blocks = re.findall(r"<li[^>]+class=\"[^\"]*b_algo[^\"]*\".*?</li>", html or "", flags=re.I | re.S)
@@ -282,7 +344,10 @@ def _web_search_queries(payload: dict[str, Any]) -> list[str]:
     if domain:
         queries.append(f"site:{domain} contact OR team OR about")
     elif company:
-        queries.append(f"\"{company}\" contact OR team OR company")
+        if _has_cjk(company):
+            queries.append(f"\"{company}\" 联系 官网 介绍")
+        else:
+            queries.append(f"\"{company}\" contact OR team OR company")
     return _clean_list(queries, limit=2)
 
 
@@ -380,6 +445,7 @@ async def _run_web_search_sources(db: Session, row: GlobalLeadJob) -> int:
         imported = 0
         errors: list[str] = []
         seen: set[str] = set()
+        filtered = 0
         for query in queries:
             results, error = await _fetch_web_search_results(source_id, query, per_query_limit)
             if error:
@@ -389,6 +455,9 @@ async def _run_web_search_sources(db: Session, row: GlobalLeadJob) -> int:
                 if not url or url in seen:
                     continue
                 seen.add(url)
+                if not _web_result_is_relevant(row, result, query):
+                    filtered += 1
+                    continue
                 _upsert_contact(db, row.user_id, _web_result_contact(row, source_id, result, query))
                 imported += 1
         total_imported += imported
@@ -397,11 +466,13 @@ async def _run_web_search_sources(db: Session, row: GlobalLeadJob) -> int:
             item["lead_count"] = int(item.get("lead_count") or 0) + imported
             item["message"] = f"已搜索并入库 {imported} 条公开网页线索" if imported else ("未搜索到结果" if not errors else "搜索失败：" + errors[0])
             item["updated_at"] = _now().isoformat()
+            if not imported and filtered:
+                item["message"] = "未搜索到相关结果"
         row.source_plan = [dict(x) for x in plan_map.values()]
         flag_modified(row, "source_plan")
         result_payload = dict(row.result_payload or {})
         web_summary = result_payload.get("web_search") if isinstance(result_payload.get("web_search"), dict) else {}
-        web_summary[source_id] = {"imported": imported, "errors": errors[:3], "queries": queries}
+        web_summary[source_id] = {"imported": imported, "filtered": filtered, "errors": errors[:3], "queries": queries}
         result_payload["web_search"] = web_summary
         result_payload["imported_contacts"] = int(result_payload.get("imported_contacts") or 0) + imported
         row.result_payload = result_payload
