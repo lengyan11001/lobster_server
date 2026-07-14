@@ -12,6 +12,7 @@ from . import models  # noqa: F401
 from .api.auth import router as auth_router
 from .api.assets import router as assets_router
 from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
+from .api.global_leads import router as global_leads_router
 from .api.h5_chat import router as h5_chat_router
 from .api.h5_agent_management import router as h5_agent_management_router
 from .api.h5_personal_settings import router as h5_personal_settings_router
@@ -56,6 +57,7 @@ def create_h5_app() -> FastAPI:
     app.include_router(auth_router, prefix="/auth")
     app.include_router(assets_router, prefix="")
     app.include_router(douyin_dashboard_h5_router, prefix="")
+    app.include_router(global_leads_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
     app.include_router(h5_agent_management_router, prefix="")
     app.include_router(h5_personal_settings_router, prefix="")
