@@ -296,18 +296,31 @@ async def _fetch_web_search_results(source_id: str, query: str, limit: int) -> t
         return [], "unsupported search source"
     try:
         async with httpx.AsyncClient(headers=SEARCH_HTTP_HEADERS, follow_redirects=True, timeout=10.0) as client:
-            resp = await client.get(url)
-            if resp.status_code >= 400:
-                return [], f"{source_id} returned HTTP {resp.status_code}"
-            html = resp.text or ""
-            rows = _parse_google_results(html, limit) if source_id == "google" else _parse_rss_results(html, limit)
-            if source_id == "bing" and not rows:
-                rows = _parse_bing_results(html, limit)
-            if source_id == "google" and not rows:
+            errors: list[str] = []
+            if source_id == "google":
+                try:
+                    resp = await client.get(url, timeout=4.0)
+                    if resp.status_code < 400:
+                        rows = _parse_google_results(resp.text or "", limit)
+                        if rows:
+                            return rows, ""
+                    else:
+                        errors.append(f"google returned HTTP {resp.status_code}")
+                except Exception as exc:
+                    errors.append(str(exc)[:180])
                 fallback = f"https://www.bing.com/search?q={encoded}&count={min(10, max(1, limit))}&format=rss"
                 fallback_resp = await client.get(fallback)
                 if fallback_resp.status_code < 400:
                     rows = _parse_rss_results(fallback_resp.text or "", limit)
+                    return rows, "" if rows else "; ".join(x for x in errors if x)[:500]
+                return [], (f"fallback returned HTTP {fallback_resp.status_code}; " + "; ".join(x for x in errors if x))[:500]
+            resp = await client.get(url)
+            if resp.status_code >= 400:
+                return [], f"{source_id} returned HTTP {resp.status_code}"
+            html = resp.text or ""
+            rows = _parse_rss_results(html, limit)
+            if not rows:
+                rows = _parse_bing_results(html, limit)
             return rows, ""
     except Exception as exc:
         return [], str(exc)[:500]
