@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 import httpx
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -360,6 +361,8 @@ async def _run_web_search_sources(db: Session, row: GlobalLeadJob) -> int:
             item["status"] = "running"
             item["message"] = "正在搜索公开网页"
             item["updated_at"] = _now().isoformat()
+            row.source_plan = [dict(x) for x in plan_map.values()]
+            flag_modified(row, "source_plan")
         db.commit()
         imported = 0
         errors: list[str] = []
@@ -381,13 +384,15 @@ async def _run_web_search_sources(db: Session, row: GlobalLeadJob) -> int:
             item["lead_count"] = int(item.get("lead_count") or 0) + imported
             item["message"] = f"已搜索并入库 {imported} 条公开网页线索" if imported else ("未搜索到结果" if not errors else "搜索失败：" + errors[0])
             item["updated_at"] = _now().isoformat()
-        row.source_plan = list(plan_map.values())
+        row.source_plan = [dict(x) for x in plan_map.values()]
+        flag_modified(row, "source_plan")
         result_payload = dict(row.result_payload or {})
         web_summary = result_payload.get("web_search") if isinstance(result_payload.get("web_search"), dict) else {}
         web_summary[source_id] = {"imported": imported, "errors": errors[:3], "queries": queries}
         result_payload["web_search"] = web_summary
         result_payload["imported_contacts"] = int(result_payload.get("imported_contacts") or 0) + imported
         row.result_payload = result_payload
+        flag_modified(row, "result_payload")
         row.updated_at = _now()
         db.commit()
     return total_imported
@@ -644,7 +649,8 @@ def _maybe_resume_child_job(child_row: CreativeGenerationJob, platform: str) -> 
         except Exception:
             pass
     meta["global_leads_resume_requested_at"] = _now().isoformat()
-    child_row.meta = meta
+    child_row.meta = dict(meta)
+    flag_modified(child_row, "meta")
     if platform == "linkedin":
         return _schedule_linkedin_mining_autorun(child_row.job_id)
     if platform in {"x", "tiktok", "reddit"}:
@@ -705,8 +711,8 @@ def _refresh_global_job(db: Session, row: GlobalLeadJob, *, resume_stale_childre
         else:
             running += 1
 
-    row.child_jobs = child_jobs
-    row.source_plan = list(plan_map.values()) if plan_map else plan
+    row.child_jobs = [dict(item) for item in child_jobs]
+    row.source_plan = [dict(item) for item in (list(plan_map.values()) if plan_map else plan)]
     row.result_payload = {
         **(row.result_payload or {}),
         "synced_child_jobs": sorted(synced),
@@ -715,6 +721,9 @@ def _refresh_global_job(db: Session, row: GlobalLeadJob, *, resume_stale_childre
         "completed_child_jobs": completed,
         "failed_child_jobs": failed,
     }
+    flag_modified(row, "child_jobs")
+    flag_modified(row, "source_plan")
+    flag_modified(row, "result_payload")
     if child_jobs:
         if running:
             row.status = "running"
