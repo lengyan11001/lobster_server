@@ -40,6 +40,8 @@ from .api.h5_personal_settings import router as h5_personal_settings_router
 from .api.h5_agent_management import router as h5_agent_management_router
 from .api.h5_voice import router as h5_voice_router
 from .api.hifly_assets import router as hifly_assets_router
+from .api.shanjian_smart_clip import router as shanjian_smart_clip_router
+from .api.shanjian_digital_human import router as shanjian_digital_human_router
 from .api.provider_balances import router as provider_balances_router
 from .api.runtime_monitor import router as runtime_monitor_router
 from .api.aliyun_wan_role import router as aliyun_wan_role_router
@@ -1049,6 +1051,8 @@ def create_app() -> FastAPI:
     app.include_router(h5_agent_management_router, prefix="")
     app.include_router(h5_voice_router, prefix="")
     app.include_router(hifly_assets_router, prefix="")
+    app.include_router(shanjian_smart_clip_router, prefix="")
+    app.include_router(shanjian_digital_human_router, prefix="")
     app.include_router(provider_balances_router, prefix="")
     app.include_router(runtime_monitor_router, prefix="")
     app.include_router(aliyun_wan_role_router, prefix="")
