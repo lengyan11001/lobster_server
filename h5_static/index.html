@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260716-h5-flow-4" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260716-personal-sync-1" />
 </head>
 <body>
   <main class="shell">
@@ -737,61 +737,34 @@
           <div class="personal-status hidden" id="personalStatusMsg"></div>
           <div class="personal-panel active" data-personal-panel="profile">
             <div class="personal-template-stack">
-              <div class="personal-block personal-card-accent">
-                <strong>人设信息</strong>
-                <div class="personal-form-grid">
-                  <div class="personal-field">
-                    <label for="personalProfileName">名字</label>
-                    <input id="personalProfileName" type="text">
-                  </div>
-                  <div class="personal-field">
-                    <label for="personalBirthEra">出生年代</label>
-                    <input id="personalBirthEra" type="text" placeholder="例如：80后">
-                  </div>
-                  <div class="personal-field">
-                    <label for="personalCurrentCity">现居城市</label>
-                    <input id="personalCurrentCity" type="text">
-                  </div>
-                  <div class="personal-field">
-                    <label for="personalHometown">籍贯</label>
-                    <input id="personalHometown" type="text">
-                  </div>
-                  <div class="personal-field">
-                    <label for="personalRole">你是做什么的</label>
-                    <input id="personalRole" type="text">
-                  </div>
-                  <div class="personal-field">
-                    <label for="personalShareTopic">主要分享什么</label>
-                    <input id="personalShareTopic" type="text">
-                  </div>
-                  <div class="personal-field">
-                    <label for="personalVideoStyle">视频风格</label>
-                    <input id="personalVideoStyle" type="text">
-                  </div>
-                  <div class="personal-field">
-                    <label for="personalAfterViewAction">看完后希望用户做什么</label>
-                    <input id="personalAfterViewAction" type="text">
-                  </div>
+              <div class="personal-survey-wizard">
+                <div class="personal-survey-top">
+                  <span id="personalSurveyStepText">1/11</span>
+                  <div class="personal-survey-bar"><i id="personalSurveyProgress"></i></div>
+                </div>
+                <div class="personal-survey-card">
+                  <strong id="personalSurveyQuestionTitle">名字</strong>
+                  <div id="personalSurveyAnswerHost" class="personal-survey-answer"></div>
+                </div>
+                <div class="personal-survey-actions">
+                  <button class="ghost" type="button" id="personalSurveyPrevBtn">上一步</button>
+                  <button type="button" id="personalSurveyNextBtn">下一步</button>
+                  <button type="button" id="personalSaveProfileBtn">保存资料调查</button>
+                </div>
+                <div class="personal-survey-hidden" aria-hidden="true">
+                  <input id="personalProfileName" type="hidden">
+                  <input id="personalBirthEra" type="hidden">
+                  <input id="personalCurrentCity" type="hidden">
+                  <input id="personalHometown" type="hidden">
+                  <input id="personalRole" type="hidden">
+                  <input id="personalShareTopic" type="hidden">
+                  <input id="personalVideoStyle" type="hidden">
+                  <input id="personalAfterViewAction" type="hidden">
+                  <textarea id="personalBusinessProduct"></textarea>
+                  <textarea id="personalTargetCustomer"></textarea>
+                  <textarea id="personalAdvantages"></textarea>
                 </div>
               </div>
-              <div class="personal-block">
-                <strong>业务描述</strong>
-                <div class="personal-form-grid">
-                  <div class="personal-field full">
-                    <label for="personalBusinessProduct">你在做什么/什么产品</label>
-                    <textarea id="personalBusinessProduct" rows="3"></textarea>
-                  </div>
-                  <div class="personal-field full">
-                    <label for="personalTargetCustomer">想卖给谁/哪些年代的人</label>
-                    <textarea id="personalTargetCustomer" rows="3"></textarea>
-                  </div>
-                  <div class="personal-field full">
-                    <label for="personalAdvantages">优势/比同行好在哪</label>
-                    <textarea id="personalAdvantages" rows="3"></textarea>
-                  </div>
-                </div>
-              </div>
-              <button type="button" id="personalSaveProfileBtn">保存资料调查</button>
             </div>
           </div>
           <div class="personal-panel" data-personal-panel="competitors">
@@ -1266,6 +1239,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260716-h5-flow-4"></script>
+  <script src="/h5-static/h5-app.js?v=20260716-personal-sync-1"></script>
 </body>
 </html>

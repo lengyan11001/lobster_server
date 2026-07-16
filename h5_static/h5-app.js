@@ -99,6 +99,7 @@
       personalSettingsLoaded: false,
       personalSettingsLoading: false,
       personalSettingsTab: "profile",
+      personalSurveyIndex: 0,
       personalKeywords: [],
       personalCompetitors: [],
       personalMemoryDocs: [],
@@ -7005,6 +7006,7 @@
       state.personalSettingsTab = next;
       document.querySelectorAll("[data-personal-tab]").forEach((btn) => btn.classList.toggle("active", btn.dataset.personalTab === state.personalSettingsTab));
       document.querySelectorAll("[data-personal-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.personalPanel === state.personalSettingsTab));
+      if (next === "profile") renderPersonalSurveyWizard();
     }
 
     function personalFieldValue(id) {
@@ -7014,6 +7016,71 @@
     function setPersonalFieldValue(id, value) {
       const el = $(id);
       if (el) el.value = value || "";
+    }
+
+    function personalSurveyQuestions() {
+      return [
+        { field: "personalProfileName", label: "名字", type: "input" },
+        { field: "personalBirthEra", label: "出生年代", type: "input" },
+        { field: "personalCurrentCity", label: "现居城市", type: "input" },
+        { field: "personalHometown", label: "籍贯", type: "input" },
+        { field: "personalRole", label: "你是做什么的", type: "input" },
+        { field: "personalShareTopic", label: "主要分享什么", type: "input" },
+        { field: "personalVideoStyle", label: "视频风格", type: "input" },
+        { field: "personalAfterViewAction", label: "看完后希望用户做什么", type: "input" },
+        { field: "personalBusinessProduct", label: "你在做什么/什么产品", type: "textarea" },
+        { field: "personalTargetCustomer", label: "想卖给谁/哪些年代的人", type: "textarea" },
+        { field: "personalAdvantages", label: "优势/比同行好在哪", type: "textarea" },
+      ];
+    }
+
+    function syncPersonalSurveyAnswerToField() {
+      const questions = personalSurveyQuestions();
+      const idx = Math.max(0, Math.min(Number(state.personalSurveyIndex || 0), questions.length - 1));
+      const question = questions[idx];
+      const answer = $("personalSurveyAnswer");
+      if (question && answer) setPersonalFieldValue(question.field, answer.value || "");
+    }
+
+    function renderPersonalSurveyWizard() {
+      const host = $("personalSurveyAnswerHost");
+      const title = $("personalSurveyQuestionTitle");
+      const step = $("personalSurveyStepText");
+      const progress = $("personalSurveyProgress");
+      const prev = $("personalSurveyPrevBtn");
+      const next = $("personalSurveyNextBtn");
+      const save = $("personalSaveProfileBtn");
+      if (!host || !title) return;
+      const questions = personalSurveyQuestions();
+      const maxIdx = Math.max(0, questions.length - 1);
+      const idx = Math.max(0, Math.min(Number(state.personalSurveyIndex || 0), maxIdx));
+      state.personalSurveyIndex = idx;
+      const question = questions[idx];
+      title.textContent = question.label;
+      if (step) step.textContent = `${idx + 1}/${questions.length}`;
+      if (progress) progress.style.width = `${Math.round(((idx + 1) / questions.length) * 100)}%`;
+      const value = personalFieldValue(question.field);
+      const tag = question.type === "textarea" ? "textarea" : "input";
+      host.innerHTML = tag === "textarea"
+        ? `<textarea id="personalSurveyAnswer" rows="5"></textarea>`
+        : `<input id="personalSurveyAnswer" type="text">`;
+      const answer = $("personalSurveyAnswer");
+      if (answer) {
+        answer.value = value;
+        answer.addEventListener("input", syncPersonalSurveyAnswerToField);
+        setTimeout(() => answer.focus(), 0);
+      }
+      if (prev) prev.disabled = idx <= 0;
+      if (next) next.hidden = idx >= maxIdx;
+      if (save) save.hidden = idx < maxIdx;
+    }
+
+    function movePersonalSurvey(delta) {
+      syncPersonalSurveyAnswerToField();
+      const questions = personalSurveyQuestions();
+      const maxIdx = Math.max(0, questions.length - 1);
+      state.personalSurveyIndex = Math.max(0, Math.min(Number(state.personalSurveyIndex || 0) + delta, maxIdx));
+      renderPersonalSurveyWizard();
     }
 
     function personalProfileRequirements() {
@@ -7089,6 +7156,7 @@
       setPersonalFieldValue("personalBusinessProduct", req.product || business.product || "");
       setPersonalFieldValue("personalTargetCustomer", req.target_customer || business.target_customer || "");
       setPersonalFieldValue("personalAdvantages", req.advantages || business.advantages || "");
+      renderPersonalSurveyWizard();
     }
 
     function applyPersonalSurvey(item) {
@@ -7305,17 +7373,20 @@
     }
 
     async function savePersonalProfile(btn = null) {
+      syncPersonalSurveyAnswerToField();
       personalSetBusy(btn, true, "保存中...");
       try {
+        const existing = state.personalDefault || {};
         const data = await api("/api/ip-content/personal-default", {
           method: "PUT",
           json: {
-            keyword_ids: [],
-            competitor_ids: [],
-            memory_doc_ids: [],
-            memory_docs: [],
+            name: existing.name || "个人默认模板",
+            keyword_ids: Array.isArray(existing.keyword_ids) ? existing.keyword_ids : [],
+            competitor_ids: Array.isArray(existing.competitor_ids) ? existing.competitor_ids : [],
+            memory_doc_ids: Array.isArray(existing.memory_doc_ids) ? existing.memory_doc_ids : [],
+            memory_docs: Array.isArray(existing.memory_docs) ? existing.memory_docs : [],
             requirements: personalSurveyRequirements(),
-            meta: { source: "h5_personal_profile" },
+            meta: { ...(existing.meta || {}), source: "h5_personal_profile" },
           },
         });
         state.personalDefault = data.item || { requirements: personalSurveyRequirements() };
@@ -11239,6 +11310,8 @@
       if (btn) setPersonalSettingsTab(btn.dataset.personalTab || "template");
     });
     $("personalSettingsRefreshBtn")?.addEventListener("click", () => loadPersonalSettings(true));
+    $("personalSurveyPrevBtn")?.addEventListener("click", () => movePersonalSurvey(-1));
+    $("personalSurveyNextBtn")?.addEventListener("click", () => movePersonalSurvey(1));
     $("personalSaveProfileBtn")?.addEventListener("click", (evt) => savePersonalProfile(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
     $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().catch((err) => toast(err.message || "保存失败")));
     $("personalNewTemplateBtn")?.addEventListener("click", resetPersonalTemplateForm);
