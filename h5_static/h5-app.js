@@ -53,6 +53,12 @@
       assetLibraryRows: { user_upload: [], generated: [] },
       assetLibraryTotals: { user_upload: 0, generated: 0 },
       assetLibraryLoading: false,
+      contentRecordMediaType: "",
+      contentRecordPage: 1,
+      contentRecordPageSize: 10,
+      contentRecordRows: [],
+      contentRecordTotal: 0,
+      contentRecordLoading: false,
       workflowTemplates: [],
       workflowTemplatesLoaded: false,
       workflowTemplatesLoading: false,
@@ -92,7 +98,7 @@
       ipTemplatesLoading: false,
       personalSettingsLoaded: false,
       personalSettingsLoading: false,
-      personalSettingsTab: "template",
+      personalSettingsTab: "profile",
       personalKeywords: [],
       personalCompetitors: [],
       personalMemoryDocs: [],
@@ -648,6 +654,10 @@
       ["22:30", "wecom_reply", "自动加好友"],
       ["23:00", "wecom_reply", "私信接管"],
     ];
+    const SALES_WORKFLOW_NODE_OPTIONS = Array.from(new Map(SALES_WORKFLOW_PRESET.map((row) => {
+      const key = `${row[1]}@@${row[2]}`;
+      return [key, { key: row[1], label: row[2], note: row[2] }];
+    })).values());
 
     const DOUYIN_TASK_ACTIONS = {
       search_collect: {
@@ -1598,41 +1608,44 @@
     }
 
     function workflowOptionValue(lookup) {
+      if (lookup && lookup.optionId != null) return `sales@@${lookup.optionId}`;
       return `${lookup.department.id}@@${lookup.node.key || ""}`;
     }
 
+    function workflowSalesNodeLookups() {
+      return SALES_WORKFLOW_NODE_OPTIONS.map((item, index) => {
+        const lookup = abilityLookup(item.key);
+        if (!lookup || !lookup.node || lookup.node.comingSoon || isPublishCenterNode(lookup.node)) return null;
+        return {
+          ...lookup,
+          optionId: index,
+          optionLabel: item.label,
+          defaultNote: item.note,
+        };
+      }).filter(Boolean);
+    }
+
     function workflowLeafLookups() {
-      const rows = [];
-      DEPARTMENT_SKILL_TREE.forEach((department) => {
-        eachAbilityNode(department.children, department, [], (node, dept, trail) => {
-          if (!node || isPublishCenterNode(node) || node.comingSoon) return;
-          if (Array.isArray(node.children) && node.children.length) return;
-          rows.push({ node, department: dept, trail });
-        });
-      });
-      return rows;
+      return workflowSalesNodeLookups();
     }
 
     function workflowLookupFromValue(value) {
       const raw = String(value || "");
+      if (raw.startsWith("sales@@")) {
+        const index = Number(raw.split("@@")[1]);
+        return workflowSalesNodeLookups().find((item) => Number(item.optionId) === index) || null;
+      }
       const [departmentId, key] = raw.split("@@");
       return workflowLeafLookups().find((item) => item.department.id === departmentId && String(item.node.key || "") === key) || null;
     }
 
     function workflowAbilityOptionsHtml() {
-      const grouped = new Map();
-      workflowLeafLookups().forEach((lookup) => {
-        if (!grouped.has(lookup.department.id)) grouped.set(lookup.department.id, { department: lookup.department, rows: [] });
-        grouped.get(lookup.department.id).rows.push(lookup);
-      });
-      return Array.from(grouped.values()).map((group) => {
-        const options = group.rows.map((lookup) => {
-          const disabled = abilityIsActionable(lookup.node) ? "" : " disabled";
-          const label = `${lookup.node.label || lookup.node.key}`;
-          return `<option value="${escapeHtml(workflowOptionValue(lookup))}"${disabled}>${escapeHtml(label)}</option>`;
-        }).join("");
-        return `<optgroup label="${escapeHtml(group.department.name || "")}">${options}</optgroup>`;
+      const options = workflowLeafLookups().map((lookup) => {
+        const disabled = abilityIsActionable(lookup.node) ? "" : " disabled";
+        const label = lookup.optionLabel || lookup.node.label || lookup.node.key;
+        return `<option value="${escapeHtml(workflowOptionValue(lookup))}"${disabled}>${escapeHtml(label)}</option>`;
       }).join("");
+      return `<optgroup label="销售员工">${options}</optgroup>`;
     }
 
     function workflowPrompt(note, node) {
@@ -2305,13 +2318,13 @@
       if (!lookup) throw new Error("请选择任务节点");
       const time = ($("workflowNodeTime") && $("workflowNodeTime").value || "").trim();
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
-      const note = ($("workflowNodeNote") && $("workflowNodeNote").value || "").trim();
+      const note = (($("workflowNodeNote") && $("workflowNodeNote").value) || lookup.defaultNote || "").trim();
       const plan = workflowPlanForLookup(lookup, note);
       return {
         id: `wf_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
         time,
         ability_key: lookup.node.key || "",
-        ability_label: lookup.node.label || lookup.node.key || "",
+        ability_label: lookup.optionLabel || lookup.node.label || lookup.node.key || "",
         department_id: lookup.department.id,
         department_name: lookup.department.name || "",
         note,
@@ -2350,6 +2363,16 @@
       if ((state.workflowNodesDraft || []).length) return;
       state.workflowNodesDraft = buildSalesWorkflowPresetNodes();
       if ($("workflowTemplateName")) $("workflowTemplateName").value = "销售24小时员工";
+    }
+
+    function resetWorkflowDraft() {
+      state.workflowEditingTemplateId = "";
+      state.workflowNodesDraft = [];
+      state.workflowParamNodeId = "";
+      if ($("workflowTemplateName")) $("workflowTemplateName").value = "";
+      if ($("workflowNodeTime")) $("workflowNodeTime").value = "09:00";
+      if ($("workflowNodeNote")) $("workflowNodeNote").value = "";
+      renderWorkflow();
     }
 
     function refillWorkflowParamFields(node, lookup) {
@@ -3910,7 +3933,7 @@
     }
 
     function assetOriginLabel(origin) {
-      return origin === "user_upload" ? "用户上传" : "生成素材";
+      return origin === "user_upload" ? "用户上传" : "内容记录";
     }
 
     function renderAssetLibraryTabs() {
@@ -3918,9 +3941,7 @@
         const active = btn.dataset.assetOrigin === state.assetLibraryOrigin;
         btn.classList.toggle("active", active);
       });
-      if (activeViewKey() === "assetLibrary" && $("pageTitle")) {
-        $("pageTitle").textContent = state.assetLibraryOrigin === "generated" ? "内容记录" : "素材库";
-      }
+      if (activeViewKey() === "assetLibrary" && $("pageTitle")) $("pageTitle").textContent = "素材库";
       if ($("assetUserUploadTotal")) $("assetUserUploadTotal").textContent = compactNumber(state.assetLibraryTotals.user_upload || 0);
       if ($("assetGeneratedTotal")) $("assetGeneratedTotal").textContent = compactNumber(state.assetLibraryTotals.generated || 0);
     }
@@ -3974,7 +3995,7 @@
 
     function findAssetInLibrary(assetId) {
       const id = String(assetId || "");
-      const rows = [].concat(state.assetLibraryRows.user_upload || [], state.assetLibraryRows.generated || []);
+      const rows = [].concat(state.assetLibraryRows.user_upload || [], state.assetLibraryRows.generated || [], state.contentRecordRows || []);
       return rows.find((row) => String(row && row.asset_id || "") === id) || null;
     }
 
@@ -4046,15 +4067,92 @@
     }
 
     async function refreshAssetLibrary() {
-      await loadAssetLibrary(state.assetLibraryOrigin || "user_upload");
-      const other = state.assetLibraryOrigin === "user_upload" ? "generated" : "user_upload";
-      if (!state.assetLibraryTotals[other]) {
-        const page = state.assetLibraryPage[other] || 1;
-        try {
-          const data = await api(`/api/assets?origin=${encodeURIComponent(other)}&limit=1&offset=${(page - 1)}`);
-          state.assetLibraryTotals[other] = Number(data.total || 0);
-          renderAssetLibraryTabs();
-        } catch {}
+      state.assetLibraryOrigin = "user_upload";
+      await loadAssetLibrary("user_upload");
+    }
+
+    function renderContentRecordTabs() {
+      document.querySelectorAll("[data-content-record-media]").forEach((btn) => {
+        btn.classList.toggle("active", String(btn.dataset.contentRecordMedia || "") === String(state.contentRecordMediaType || ""));
+      });
+    }
+
+    function renderContentRecords() {
+      const list = $("contentRecordList");
+      if (!list) return;
+      renderContentRecordTabs();
+      const page = Math.max(1, Number(state.contentRecordPage || 1));
+      const total = Number(state.contentRecordTotal || 0);
+      const pageSize = Number(state.contentRecordPageSize || 10);
+      const pageCount = Math.max(1, Math.ceil(total / pageSize));
+      const rows = state.contentRecordRows || [];
+      list.classList.toggle("loading", !!state.contentRecordLoading);
+      if (state.contentRecordLoading) {
+        list.innerHTML = `<div class="asset-library-empty">加载中...</div>`;
+      } else if (!rows.length) {
+        list.innerHTML = `<div class="asset-library-empty">暂无内容记录</div>`;
+      } else {
+        list.innerHTML = rows.map(assetCardHtml).join("");
+      }
+      if ($("contentRecordPageText")) $("contentRecordPageText").textContent = `${page} / ${pageCount}`;
+      if ($("contentRecordPrevBtn")) $("contentRecordPrevBtn").disabled = page <= 1 || state.contentRecordLoading;
+      if ($("contentRecordNextBtn")) $("contentRecordNextBtn").disabled = page >= pageCount || state.contentRecordLoading;
+    }
+
+    async function loadContentRecords() {
+      if (!state.token) return;
+      const pageSize = Number(state.contentRecordPageSize || 10);
+      const page = Math.max(1, Number(state.contentRecordPage || 1));
+      const offset = (page - 1) * pageSize;
+      const params = new URLSearchParams({ origin: "generated", limit: String(pageSize), offset: String(offset) });
+      if (state.contentRecordMediaType) params.set("media_type", state.contentRecordMediaType);
+      state.contentRecordLoading = true;
+      renderContentRecords();
+      try {
+        const data = await api(`/api/assets?${params.toString()}`);
+        state.contentRecordRows = Array.isArray(data.assets) ? data.assets : [];
+        state.contentRecordTotal = Number(data.total || 0);
+        state.assetLibraryRows.generated = state.contentRecordRows;
+        state.assetLibraryTotals.generated = state.contentRecordTotal;
+      } catch (err) {
+        state.contentRecordRows = [];
+        toast(err.message || "内容记录加载失败");
+      } finally {
+        state.contentRecordLoading = false;
+        renderContentRecords();
+      }
+    }
+
+    async function uploadAssetLibraryFiles(btn) {
+      const input = $("assetLibraryUploadInput");
+      const files = input && input.files ? Array.from(input.files).filter(Boolean) : [];
+      if (!files.length) return;
+      const status = $("assetLibraryUploadStatus");
+      const oldText = btn ? btn.textContent : "";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "上传中...";
+      }
+      if (status) status.textContent = `0/${files.length}`;
+      try {
+        for (let i = 0; i < files.length; i += 1) {
+          const fd = new FormData();
+          fd.append("file", files[i], files[i].name || "upload");
+          const resp = await fetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(data.detail || data.message || `上传失败：HTTP ${resp.status}`);
+          addUserUploadAssetToCache({ ...data, asset_origin: "user_upload" });
+          if (status) status.textContent = `${i + 1}/${files.length}`;
+        }
+        if (input) input.value = "";
+        state.assetLibraryPage.user_upload = 1;
+        await refreshAssetLibrary();
+        toast("上传完成");
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText || "上传图片/视频";
+        }
       }
     }
 
@@ -5574,6 +5672,7 @@
       if (!key) return;
       if (key === "personalSettings") {
         state.personalSettingsBackTab = backTab || "office";
+        state.personalSettingsTab = "profile";
         switchTab("personalSettings");
         return;
       }
@@ -5583,8 +5682,12 @@
         return;
       }
       if (key === "contentRecords") {
-        state.assetLibraryOrigin = "generated";
-        switchTab("assetLibrary");
+        switchTab("contentRecords");
+        return;
+      }
+      if (key === "workflowNew") {
+        resetWorkflowDraft();
+        switchTab("workflow");
         return;
       }
       if (key === "salesWorkflow") {
@@ -5606,7 +5709,8 @@
         workflow: ["员工定制", "24小时任务编排"],
         agentManage: ["代理商管理", ""],
         workList: ["工作列表", "已完成、当前和待执行的工作节点"],
-        assetLibrary: [state.assetLibraryOrigin === "generated" ? "内容记录" : "素材库", ""],
+        assetLibrary: ["素材库", ""],
+        contentRecords: ["内容记录", ""],
         leadCenter: ["客资线索", ""],
         tutorial: ["教程", ""],
         messages: ["手机会话", "消息结果和素材预览"],
@@ -5653,6 +5757,7 @@
         Promise.all([loadAgentResources().catch(() => {}), loadAgentUsers(!state.agentUsers.length).catch(() => {})]).then(renderAgentManage);
       }
       if (key === "assetLibrary") refreshAssetLibrary();
+      if (key === "contentRecords") loadContentRecords();
       if (key === "leadCenter") loadLeadCenterData();
       if (key === "secretary") {
         renderSecretaryView();
@@ -6896,9 +7001,40 @@
     }
 
     function setPersonalSettingsTab(tab) {
-      state.personalSettingsTab = tab || "template";
+      const next = ["profile", "memory", "template"].includes(String(tab || "")) ? String(tab || "") : "profile";
+      state.personalSettingsTab = next;
       document.querySelectorAll("[data-personal-tab]").forEach((btn) => btn.classList.toggle("active", btn.dataset.personalTab === state.personalSettingsTab));
       document.querySelectorAll("[data-personal-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.personalPanel === state.personalSettingsTab));
+    }
+
+    function personalFieldValue(id) {
+      return (($(`${id}`) && $(`${id}`).value) || "").trim();
+    }
+
+    function setPersonalFieldValue(id, value) {
+      const el = $(id);
+      if (el) el.value = value || "";
+    }
+
+    function personalProfileRequirements() {
+      return {
+        name: personalFieldValue("personalProfileName"),
+        birth_era: personalFieldValue("personalBirthEra"),
+        current_city: personalFieldValue("personalCurrentCity"),
+        hometown: personalFieldValue("personalHometown"),
+        role: personalFieldValue("personalRole"),
+        share_topic: personalFieldValue("personalShareTopic"),
+        video_style: personalFieldValue("personalVideoStyle"),
+        after_view_action: personalFieldValue("personalAfterViewAction"),
+      };
+    }
+
+    function personalBusinessRequirements() {
+      return {
+        product: personalFieldValue("personalBusinessProduct"),
+        target_customer: personalFieldValue("personalTargetCustomer"),
+        advantages: personalFieldValue("personalAdvantages"),
+      };
     }
 
     async function loadPersonalMemoryDocs() {
@@ -6928,6 +7064,19 @@
       if ($("personalOralReq")) $("personalOralReq").value = req.oral || req.industry_oral || req.ip_oral || "";
       if ($("personalMomentsReq")) $("personalMomentsReq").value = req.moments || req.moments_copy || "";
       if ($("personalImageReq")) $("personalImageReq").value = req.image || "";
+      const profile = req.basic_profile && typeof req.basic_profile === "object" ? req.basic_profile : req.profile || {};
+      const business = req.business_description && typeof req.business_description === "object" ? req.business_description : req.business || {};
+      setPersonalFieldValue("personalProfileName", req.profile_name || profile.name || "");
+      setPersonalFieldValue("personalBirthEra", req.birth_era || profile.birth_era || "");
+      setPersonalFieldValue("personalCurrentCity", req.current_city || profile.current_city || "");
+      setPersonalFieldValue("personalHometown", req.hometown || profile.hometown || "");
+      setPersonalFieldValue("personalRole", req.role || profile.role || "");
+      setPersonalFieldValue("personalShareTopic", req.share_topic || profile.share_topic || "");
+      setPersonalFieldValue("personalVideoStyle", req.video_style || profile.video_style || "");
+      setPersonalFieldValue("personalAfterViewAction", req.after_view_action || profile.after_view_action || "");
+      setPersonalFieldValue("personalBusinessProduct", req.product || business.product || "");
+      setPersonalFieldValue("personalTargetCustomer", req.target_customer || business.target_customer || "");
+      setPersonalFieldValue("personalAdvantages", req.advantages || business.advantages || "");
     }
 
     function applyPersonalDefault(item) {
@@ -7043,6 +7192,19 @@
       if ($("personalOralReq")) $("personalOralReq").value = "";
       if ($("personalMomentsReq")) $("personalMomentsReq").value = "";
       if ($("personalImageReq")) $("personalImageReq").value = "";
+      [
+        "personalProfileName",
+        "personalBirthEra",
+        "personalCurrentCity",
+        "personalHometown",
+        "personalRole",
+        "personalShareTopic",
+        "personalVideoStyle",
+        "personalAfterViewAction",
+        "personalBusinessProduct",
+        "personalTargetCustomer",
+        "personalAdvantages",
+      ].forEach((id) => setPersonalFieldValue(id, ""));
       personalSetStatus("");
       renderPersonalSettings();
     }
@@ -7136,6 +7298,8 @@
       const selectedDocs = state.personalMemoryDocs
         .filter((doc) => memoryIds.includes(personalDocId(doc)))
         .map((doc) => ({ doc_id: personalDocId(doc), title: doc.title || doc.filename || "", content_text: doc.content_text || doc.content_preview || "" }));
+      const basicProfile = personalProfileRequirements();
+      const businessDescription = personalBusinessRequirements();
       const payload = {
         name,
         keyword_ids: personalCleanIntIds(state.personalSelectedKeywords),
@@ -7148,6 +7312,19 @@
           ip_oral: (($("personalOralReq") && $("personalOralReq").value) || "").trim(),
           moments: (($("personalMomentsReq") && $("personalMomentsReq").value) || "").trim(),
           image: (($("personalImageReq") && $("personalImageReq").value) || "").trim(),
+          basic_profile: basicProfile,
+          business_description: businessDescription,
+          profile_name: basicProfile.name,
+          birth_era: basicProfile.birth_era,
+          current_city: basicProfile.current_city,
+          hometown: basicProfile.hometown,
+          role: basicProfile.role,
+          share_topic: basicProfile.share_topic,
+          video_style: basicProfile.video_style,
+          after_view_action: basicProfile.after_view_action,
+          product: businessDescription.product,
+          target_customer: businessDescription.target_customer,
+          advantages: businessDescription.advantages,
         },
         meta: { source: "h5_personal_settings" },
       };
@@ -7329,6 +7506,7 @@
         if (!resp.ok || data.ok === false) throw new Error(data.detail || data.message || "AI 理解失败");
         state.personalGeneratedDocuments = data.documents || {};
         state.personalGeneratedDocOrder = Array.isArray(data.doc_types) && data.doc_types.length ? data.doc_types : docTypes;
+        setPersonalSettingsTab("memory");
         renderPersonalGeneratedDocs();
         personalSetStatus("AI 理解完成，审核后存入记忆。");
       } finally {
@@ -7399,7 +7577,8 @@
       const raw = (($("personalRawMemoryText") && $("personalRawMemoryText").value) || "").trim();
       const urls = (($("personalMemoryUrls") && $("personalMemoryUrls").value) || "").trim();
       const mode = (($("personalSaveMode") && $("personalSaveMode").value) || "new").trim();
-      const title = mode === "new" ? (($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim() : "";
+      const quickTitle = (($("personalQuickMemoryTitle") && $("personalQuickMemoryTitle").value) || "").trim();
+      const title = mode === "new" ? ((($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim() || quickTitle) : "";
       const targetDocId = (($("personalTargetMemorySelect") && $("personalTargetMemorySelect").value) || "").trim();
       if (!files.length && !raw && !urls) throw new Error("请上传资料、填写链接或粘贴资料后再保存。");
       if (mode === "new" && !title) throw new Error("新建文档需要填写文档名字。");
@@ -10747,9 +10926,13 @@
     $("assetLibraryTabs")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-asset-origin]");
       if (!btn) return;
-      state.assetLibraryOrigin = btn.dataset.assetOrigin === "generated" ? "generated" : "user_upload";
+      state.assetLibraryOrigin = "user_upload";
       renderAssetLibrary();
-      loadAssetLibrary(state.assetLibraryOrigin);
+      loadAssetLibrary("user_upload");
+    });
+    $("assetLibraryUploadBtn")?.addEventListener("click", () => $("assetLibraryUploadInput")?.click());
+    $("assetLibraryUploadInput")?.addEventListener("change", (evt) => {
+      uploadAssetLibraryFiles($("assetLibraryUploadBtn")).catch((err) => toast(err.message || "上传失败"));
     });
     $("assetLibraryPrevBtn")?.addEventListener("click", () => {
       const origin = state.assetLibraryOrigin || "user_upload";
@@ -10761,6 +10944,27 @@
       state.assetLibraryPage[origin] = Math.max(1, Number(state.assetLibraryPage[origin] || 1) + 1);
       loadAssetLibrary(origin);
     });
+    $("contentRecordTabs")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-content-record-media]");
+      if (!btn) return;
+      state.contentRecordMediaType = String(btn.dataset.contentRecordMedia || "");
+      state.contentRecordPage = 1;
+      loadContentRecords();
+    });
+    $("contentRecordPrevBtn")?.addEventListener("click", () => {
+      state.contentRecordPage = Math.max(1, Number(state.contentRecordPage || 1) - 1);
+      loadContentRecords();
+    });
+    $("contentRecordNextBtn")?.addEventListener("click", () => {
+      state.contentRecordPage = Math.max(1, Number(state.contentRecordPage || 1) + 1);
+      loadContentRecords();
+    });
+    $("contentRecordList")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-asset-preview-id]");
+      if (!btn) return;
+      openAssetPreview(btn.dataset.assetPreviewId || "");
+    });
+    $("customEmployeeCreateBtn")?.addEventListener("click", () => openHomeTarget("workflowNew", "office"));
     $("customEmployeeMoreBtn")?.addEventListener("click", () => {
       loadWorkflowTemplates().then(openCustomEmployeeList).catch((err) => toast(err.message || "员工模板加载失败"));
     });

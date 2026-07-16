@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260712-custom-employees-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260716-h5-flow-1" />
 </head>
 <body>
   <main class="shell">
@@ -125,7 +125,7 @@
           <section class="office-section">
             <div class="office-section-head">
               <h2>我的AI员工 <span id="officeEmployeeTotal">(0)</span></h2>
-              <button type="button" data-tab-target="workflow">+定制员工</button>
+              <button type="button" id="customEmployeeCreateBtn">+定制员工</button>
             </div>
             <div class="office-floor office-employee-grid" id="employeeFloor">
               <div class="office-empty"><div class="office-empty-copy">正在检查员工状态...</div></div>
@@ -247,15 +247,35 @@
 
       <section class="view" id="assetLibraryView">
         <div class="asset-library-shell">
+          <div class="asset-library-upload">
+            <input id="assetLibraryUploadInput" type="file" multiple accept="image/*,video/*" hidden>
+            <button type="button" id="assetLibraryUploadBtn">上传图片/视频</button>
+            <span id="assetLibraryUploadStatus"></span>
+          </div>
           <div class="asset-library-tabs" id="assetLibraryTabs">
             <button type="button" class="active" data-asset-origin="user_upload">用户上传 <span id="assetUserUploadTotal">0</span></button>
-            <button type="button" data-asset-origin="generated">生成素材 <span id="assetGeneratedTotal">0</span></button>
           </div>
           <div class="asset-library-grid" id="assetLibraryList"></div>
           <div class="asset-library-pager">
             <button type="button" id="assetLibraryPrevBtn">上一页</button>
             <span id="assetLibraryPageText">1 / 1</span>
             <button type="button" id="assetLibraryNextBtn">下一页</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="contentRecordsView">
+        <div class="asset-library-shell content-record-shell">
+          <div class="content-record-tabs" id="contentRecordTabs">
+            <button type="button" class="active" data-content-record-media="">全部</button>
+            <button type="button" data-content-record-media="image">图片</button>
+            <button type="button" data-content-record-media="video">视频</button>
+          </div>
+          <div class="asset-library-grid" id="contentRecordList"></div>
+          <div class="asset-library-pager">
+            <button type="button" id="contentRecordPrevBtn">上一页</button>
+            <span id="contentRecordPageText">1 / 1</span>
+            <button type="button" id="contentRecordNextBtn">下一页</button>
           </div>
         </div>
       </section>
@@ -708,76 +728,90 @@
             </div>
           </div>
           <div class="personal-tabs" id="personalSettingsTabs">
-            <button type="button" class="active" data-personal-tab="template">模板</button>
-            <button type="button" data-personal-tab="keywords">关键词</button>
-            <button type="button" data-personal-tab="competitors">同行账号</button>
+            <button type="button" class="active" data-personal-tab="profile">资料调查</button>
             <button type="button" data-personal-tab="memory">记忆文件</button>
+            <button type="button" data-personal-tab="template">模板</button>
           </div>
           <div class="personal-status hidden" id="personalStatusMsg"></div>
-          <div class="personal-panel active" data-personal-panel="template">
+          <div class="personal-panel active" data-personal-panel="profile">
             <div class="personal-template-stack">
               <div class="personal-block">
-                <strong>选择资料</strong>
-                <div class="personal-list" id="personalTemplateList"></div>
-              </div>
-              <div class="personal-block personal-card-accent">
-                <div class="personal-template-editor-head">
-                  <strong id="personalTemplateEditState">新建模板</strong>
-                  <button class="ghost" type="button" id="personalNewTemplateBtn">新建模板</button>
+                <strong>行业关键词</strong>
+                <div class="inline-form three">
+                  <input id="personalKeywordInput" type="text" placeholder="关键词">
+                  <input id="personalKeywordDisplayName" type="text" placeholder="显示名，可空">
+                  <button type="button" id="personalAddKeywordBtn">添加</button>
                 </div>
-                <div class="personal-field">
-                  <label for="personalTemplateName">模板名称</label>
-                  <input id="personalTemplateName" type="text" placeholder="模板名称">
-                </div>
-                <div class="personal-field">
-                  <label for="personalOralReq">口播要求</label>
-                  <textarea id="personalOralReq" rows="4" placeholder="人设、语气、禁用表达"></textarea>
-                </div>
-                <div class="personal-field">
-                  <label for="personalMomentsReq">朋友圈要求</label>
-                  <textarea id="personalMomentsReq" rows="4" placeholder="风格、长度、禁用导流话术"></textarea>
-                </div>
-                <div class="personal-field">
-                  <label for="personalImageReq">出图要求</label>
-                  <textarea id="personalImageReq" rows="4" placeholder="画面主体、场景、风格"></textarea>
-                </div>
-                <button type="button" id="personalSaveDefaultBtn">保存模板</button>
+                <div class="personal-list" id="personalKeywordList"></div>
               </div>
               <div class="personal-block">
-                <strong>已有模板</strong>
-                <div class="personal-template-list" id="personalSavedTemplateList"></div>
+                <strong>同行账号</strong>
+                <div class="inline-form three">
+                  <select id="personalCompetitorPlatform">
+                    <option value="douyin">抖音</option>
+                    <option value="wechat_channels">视频号</option>
+                  </select>
+                  <input id="personalCompetitorKey" type="text" placeholder="账号标识">
+                  <button type="button" id="personalAddCompetitorBtn">添加</button>
+                </div>
+                <div class="personal-list" id="personalCompetitorList"></div>
               </div>
-            </div>
-          </div>
-          <div class="personal-panel" data-personal-panel="keywords">
-            <div class="personal-block">
-              <strong>关键词</strong>
-              <div class="inline-form three">
-                <input id="personalKeywordInput" type="text" placeholder="关键词">
-                <input id="personalKeywordDisplayName" type="text" placeholder="显示名，可空">
-                <button type="button" id="personalAddKeywordBtn">添加</button>
+              <div class="personal-block personal-card-accent">
+                <strong>人设信息</strong>
+                <div class="personal-form-grid">
+                  <div class="personal-field">
+                    <label for="personalProfileName">名字</label>
+                    <input id="personalProfileName" type="text">
+                  </div>
+                  <div class="personal-field">
+                    <label for="personalBirthEra">出生年代</label>
+                    <input id="personalBirthEra" type="text" placeholder="例如：80后">
+                  </div>
+                  <div class="personal-field">
+                    <label for="personalCurrentCity">现居城市</label>
+                    <input id="personalCurrentCity" type="text">
+                  </div>
+                  <div class="personal-field">
+                    <label for="personalHometown">籍贯</label>
+                    <input id="personalHometown" type="text">
+                  </div>
+                  <div class="personal-field">
+                    <label for="personalRole">你是做什么的</label>
+                    <input id="personalRole" type="text">
+                  </div>
+                  <div class="personal-field">
+                    <label for="personalShareTopic">主要分享什么</label>
+                    <input id="personalShareTopic" type="text">
+                  </div>
+                  <div class="personal-field">
+                    <label for="personalVideoStyle">视频风格</label>
+                    <input id="personalVideoStyle" type="text">
+                  </div>
+                  <div class="personal-field">
+                    <label for="personalAfterViewAction">看完后希望用户做什么</label>
+                    <input id="personalAfterViewAction" type="text">
+                  </div>
+                </div>
               </div>
-              <div class="personal-list" id="personalKeywordList"></div>
-            </div>
-          </div>
-          <div class="personal-panel" data-personal-panel="competitors">
-            <div class="personal-block">
-              <strong>同行账号</strong>
-              <div class="inline-form three">
-                <select id="personalCompetitorPlatform">
-                  <option value="douyin">抖音</option>
-                  <option value="wechat_channels">视频号</option>
-                </select>
-                <input id="personalCompetitorKey" type="text" placeholder="账号标识">
-                <button type="button" id="personalAddCompetitorBtn">添加</button>
+              <div class="personal-block">
+                <strong>业务描述</strong>
+                <div class="personal-form-grid">
+                  <div class="personal-field full">
+                    <label for="personalBusinessProduct">你在做什么/什么产品</label>
+                    <textarea id="personalBusinessProduct" rows="3"></textarea>
+                  </div>
+                  <div class="personal-field full">
+                    <label for="personalTargetCustomer">想卖给谁/哪些年代的人</label>
+                    <textarea id="personalTargetCustomer" rows="3"></textarea>
+                  </div>
+                  <div class="personal-field full">
+                    <label for="personalAdvantages">优势/比同行好在哪</label>
+                    <textarea id="personalAdvantages" rows="3"></textarea>
+                  </div>
+                </div>
               </div>
-              <div class="personal-list" id="personalCompetitorList"></div>
-            </div>
-          </div>
-          <div class="personal-panel" data-personal-panel="memory">
-            <div class="personal-grid">
               <div class="personal-block personal-upload-block">
-                <strong>上传资料</strong>
+                <strong>补充资料</strong>
                 <div class="personal-upload-zone">
                   <label class="personal-field">
                     <span>文件</span>
@@ -806,11 +840,54 @@
                   <input id="personalCustomReferenceFile" type="file" accept=".txt,.md,.csv,.json,.yaml,.yml,.html,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.pptx">
                   <div class="personal-file-list" id="personalCustomReferenceInfo"></div>
                 </div>
+                <div class="personal-field">
+                  <label for="personalQuickMemoryTitle">直接保存文档名</label>
+                  <input id="personalQuickMemoryTitle" type="text" placeholder="不理解直接保存时填写">
+                </div>
                 <div class="personal-actions">
                   <button type="button" id="personalGenerateMemoryBtn">AI 理解</button>
                   <button class="ghost" type="button" id="personalSaveRawMemoryBtn">不理解，直接存入记忆</button>
                 </div>
               </div>
+            </div>
+          </div>
+          <div class="personal-panel" data-personal-panel="template">
+            <div class="personal-template-stack">
+              <div class="personal-block personal-card-accent">
+                <div class="personal-template-editor-head">
+                  <strong id="personalTemplateEditState">新建模板</strong>
+                  <button class="ghost" type="button" id="personalNewTemplateBtn">新建模板</button>
+                </div>
+                <div class="personal-field">
+                  <label for="personalTemplateName">模板名称</label>
+                  <input id="personalTemplateName" type="text" placeholder="模板名称">
+                </div>
+                <div class="personal-field">
+                  <label for="personalOralReq">口播要求</label>
+                  <textarea id="personalOralReq" rows="4" placeholder="人设、语气、禁用表达"></textarea>
+                </div>
+                <div class="personal-field">
+                  <label for="personalMomentsReq">朋友圈要求</label>
+                  <textarea id="personalMomentsReq" rows="4" placeholder="风格、长度、禁用导流话术"></textarea>
+                </div>
+                <div class="personal-field">
+                  <label for="personalImageReq">出图要求</label>
+                  <textarea id="personalImageReq" rows="4" placeholder="画面主体、场景、风格"></textarea>
+                </div>
+                <button type="button" id="personalSaveDefaultBtn">保存模板</button>
+              </div>
+              <div class="personal-block">
+                <strong>选择关键词、同行和记忆文件</strong>
+                <div class="personal-list" id="personalTemplateList"></div>
+              </div>
+              <div class="personal-block">
+                <strong>已有模板</strong>
+                <div class="personal-template-list" id="personalSavedTemplateList"></div>
+              </div>
+            </div>
+          </div>
+          <div class="personal-panel" data-personal-panel="memory">
+            <div class="personal-grid">
               <div class="personal-block">
                 <strong>审核后存入记忆</strong>
                 <div class="personal-generated-list" id="personalGeneratedDocList"></div>
@@ -1197,6 +1274,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260712-custom-employees-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260716-h5-flow-1"></script>
 </body>
 </html>

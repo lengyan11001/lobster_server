@@ -2317,7 +2317,7 @@
     }
     .personal-tabs {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 6px;
       padding: 6px;
       width: 100%;
@@ -2345,6 +2345,14 @@
     .personal-panel.active { display: block; }
     .personal-grid { display: grid; grid-template-columns: minmax(0, .86fr) minmax(0, 1.14fr); gap: 12px; align-items: start; }
     .personal-template-stack { display: grid; gap: 12px; }
+    .personal-form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .personal-form-grid .full {
+      grid-column: 1 / -1;
+    }
     .personal-template-editor-head {
       display: flex;
       align-items: center;
@@ -2549,6 +2557,7 @@
     @media (max-width: 720px) {
       .personal-settings-page { padding-left: 10px; padding-right: 10px; border-radius: 22px; }
       .personal-grid,
+      .personal-form-grid,
       .agent-summary-grid,
       .agent-manage-layout,
       .personal-settings-page .inline-form,
@@ -4335,7 +4344,9 @@
       min-height: calc(100dvh - 96px);
       padding: 10px 0 24px;
     }
+    .asset-library-upload,
     .asset-library-tabs,
+    .content-record-tabs,
     .lead-domain-tabs,
     .lead-platform-tabs {
       display: flex;
@@ -4344,11 +4355,13 @@
       scrollbar-width: none;
     }
     .asset-library-tabs::-webkit-scrollbar,
+    .content-record-tabs::-webkit-scrollbar,
     .lead-domain-tabs::-webkit-scrollbar,
     .lead-platform-tabs::-webkit-scrollbar {
       display: none;
     }
     .asset-library-tabs button,
+    .content-record-tabs button,
     .lead-domain-tabs button,
     .lead-platform-tabs button {
       flex: 0 0 auto;
@@ -4360,7 +4373,28 @@
       background: rgba(255,255,255,.9);
       box-shadow: 0 10px 22px rgba(24,50,105,.08);
     }
-    .asset-library-tabs {
+    .asset-library-upload {
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.9);
+      border: 1px solid rgba(223,230,242,.9);
+      box-shadow: 0 12px 26px rgba(24,50,105,.07);
+    }
+    .asset-library-upload button {
+      min-height: 36px;
+      padding: 0 14px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+    .asset-library-upload span {
+      color: #6d7890;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .asset-library-tabs,
+    .content-record-tabs {
       padding: 7px;
       border-radius: 24px;
       background:
@@ -4369,7 +4403,8 @@
       border: 1px solid rgba(223,230,242,.86);
       box-shadow: 0 16px 34px rgba(24,50,105,.08);
     }
-    .asset-library-tabs button {
+    .asset-library-tabs button,
+    .content-record-tabs button {
       min-width: 138px;
       min-height: 52px;
       justify-content: center;
@@ -4385,6 +4420,7 @@
       font-size: 12px;
     }
     .asset-library-tabs button.active,
+    .content-record-tabs button.active,
     .lead-domain-tabs button.active,
     .lead-platform-tabs button.active {
       color: #fff;
