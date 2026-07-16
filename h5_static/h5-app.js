@@ -6931,7 +6931,7 @@
       fillIpTemplateSelect();
       try {
         const data = await api("/api/ip-content/schedule-templates");
-        state.ipTemplates = Array.isArray(data.items) ? data.items : [];
+        state.ipTemplates = (Array.isArray(data.items) ? data.items : []).filter((row) => !isPersonalDefaultTemplate(row));
         state.ipTemplatesLoaded = true;
       } catch (err) {
         state.ipTemplates = [];
@@ -7001,7 +7001,7 @@
     }
 
     function setPersonalSettingsTab(tab) {
-      const next = ["profile", "memory", "template"].includes(String(tab || "")) ? String(tab || "") : "profile";
+      const next = ["profile", "competitors", "keywords", "memory", "template"].includes(String(tab || "")) ? String(tab || "") : "profile";
       state.personalSettingsTab = next;
       document.querySelectorAll("[data-personal-tab]").forEach((btn) => btn.classList.toggle("active", btn.dataset.personalTab === state.personalSettingsTab));
       document.querySelectorAll("[data-personal-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.personalPanel === state.personalSettingsTab));
@@ -7037,6 +7037,31 @@
       };
     }
 
+    function personalSurveyRequirements() {
+      const basicProfile = personalProfileRequirements();
+      const businessDescription = personalBusinessRequirements();
+      return {
+        basic_profile: basicProfile,
+        business_description: businessDescription,
+        profile_name: basicProfile.name,
+        birth_era: basicProfile.birth_era,
+        current_city: basicProfile.current_city,
+        hometown: basicProfile.hometown,
+        role: basicProfile.role,
+        share_topic: basicProfile.share_topic,
+        video_style: basicProfile.video_style,
+        after_view_action: basicProfile.after_view_action,
+        product: businessDescription.product,
+        target_customer: businessDescription.target_customer,
+        advantages: businessDescription.advantages,
+      };
+    }
+
+    function isPersonalDefaultTemplate(row) {
+      const meta = row && row.meta && typeof row.meta === "object" ? row.meta : {};
+      return !!meta.is_personal_default || String((row && row.name) || "") === "个人默认配置";
+    }
+
     async function loadPersonalMemoryDocs() {
       const iid = currentInstallationId();
       if (!iid) return [];
@@ -7046,24 +7071,11 @@
 
     async function loadPersonalTemplateRows() {
       const data = await api("/api/ip-content/schedule-templates").catch(() => ({ items: [] }));
-      return Array.isArray(data.items) ? data.items : [];
+      return (Array.isArray(data.items) ? data.items : []).filter((row) => !isPersonalDefaultTemplate(row));
     }
 
-    function applyPersonalTemplate(item, options = {}) {
-      const editing = !!options.editing;
-      state.personalDefault = item || {};
-      state.personalEditingTemplateId = editing && item && item.id ? String(item.id) : "";
-      state.personalSelectedKeywords = {};
-      state.personalSelectedCompetitors = {};
-      state.personalSelectedMemories = {};
-      (state.personalDefault.keyword_ids || []).forEach((id) => { if (id) state.personalSelectedKeywords[String(id)] = true; });
-      (state.personalDefault.competitor_ids || []).forEach((id) => { if (id) state.personalSelectedCompetitors[String(id)] = true; });
-      (state.personalDefault.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
-      const req = state.personalDefault.requirements || {};
-      if ($("personalTemplateName")) $("personalTemplateName").value = state.personalDefault.name || "";
-      if ($("personalOralReq")) $("personalOralReq").value = req.oral || req.industry_oral || req.ip_oral || "";
-      if ($("personalMomentsReq")) $("personalMomentsReq").value = req.moments || req.moments_copy || "";
-      if ($("personalImageReq")) $("personalImageReq").value = req.image || "";
+    function fillPersonalSurveyFields(item) {
+      const req = (item && item.requirements) || {};
       const profile = req.basic_profile && typeof req.basic_profile === "object" ? req.basic_profile : req.profile || {};
       const business = req.business_description && typeof req.business_description === "object" ? req.business_description : req.business || {};
       setPersonalFieldValue("personalProfileName", req.profile_name || profile.name || "");
@@ -7079,8 +7091,26 @@
       setPersonalFieldValue("personalAdvantages", req.advantages || business.advantages || "");
     }
 
-    function applyPersonalDefault(item) {
-      applyPersonalTemplate(item || {}, { editing: !!(item && item.id) });
+    function applyPersonalSurvey(item) {
+      state.personalDefault = item || {};
+      fillPersonalSurveyFields(state.personalDefault);
+    }
+
+    function applyPersonalTemplate(item, options = {}) {
+      item = item || {};
+      const editing = !!options.editing;
+      state.personalEditingTemplateId = editing && item && item.id ? String(item.id) : "";
+      state.personalSelectedKeywords = {};
+      state.personalSelectedCompetitors = {};
+      state.personalSelectedMemories = {};
+      (item.keyword_ids || []).forEach((id) => { if (id) state.personalSelectedKeywords[String(id)] = true; });
+      (item.competitor_ids || []).forEach((id) => { if (id) state.personalSelectedCompetitors[String(id)] = true; });
+      (item.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
+      const req = item.requirements || {};
+      if ($("personalTemplateName")) $("personalTemplateName").value = item.name || "";
+      if ($("personalOralReq")) $("personalOralReq").value = req.oral || req.industry_oral || req.ip_oral || "";
+      if ($("personalMomentsReq")) $("personalMomentsReq").value = req.moments || req.moments_copy || "";
+      if ($("personalImageReq")) $("personalImageReq").value = req.image || "";
     }
 
     async function refreshPersonalDataPreserveSelection(parts = {}) {
@@ -7113,7 +7143,7 @@
         state.personalCompetitors = Array.isArray(competitors.items) ? competitors.items : [];
         state.personalMemoryDocs = Array.isArray(memories) ? memories : [];
         state.personalTemplates = Array.isArray(templates) ? templates : [];
-        applyPersonalDefault(defaults.item || {});
+        applyPersonalSurvey(defaults.item || {});
         state.personalSettingsLoaded = true;
       } finally {
         state.personalSettingsLoading = false;
@@ -7135,6 +7165,9 @@
         const subtitle = subtitleFn ? subtitleFn(row) : "";
         const checked = selectedMap[id] ? " checked" : "";
         const del = deleteAttr ? `<button type="button" ${deleteAttr}="${escapeHtml(id)}">${escapeHtml(actionLabel)}</button>` : "";
+        if (deleteAttr) {
+          return `<div class="personal-row"><span>${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span>${del}</div>`;
+        }
         return `<div class="personal-row"><label><input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${checked}><span>${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span></label>${del}</div>`;
       }).join("");
     }
@@ -7192,19 +7225,6 @@
       if ($("personalOralReq")) $("personalOralReq").value = "";
       if ($("personalMomentsReq")) $("personalMomentsReq").value = "";
       if ($("personalImageReq")) $("personalImageReq").value = "";
-      [
-        "personalProfileName",
-        "personalBirthEra",
-        "personalCurrentCity",
-        "personalHometown",
-        "personalRole",
-        "personalShareTopic",
-        "personalVideoStyle",
-        "personalAfterViewAction",
-        "personalBusinessProduct",
-        "personalTargetCustomer",
-        "personalAdvantages",
-      ].forEach((id) => setPersonalFieldValue(id, ""));
       personalSetStatus("");
       renderPersonalSettings();
     }
@@ -7291,6 +7311,27 @@
       renderPersonalGeneratedDocs();
     }
 
+    async function savePersonalProfile(btn = null) {
+      personalSetBusy(btn, true, "保存中...");
+      try {
+        const data = await api("/api/ip-content/personal-default", {
+          method: "PUT",
+          json: {
+            keyword_ids: [],
+            competitor_ids: [],
+            memory_doc_ids: [],
+            memory_docs: [],
+            requirements: personalSurveyRequirements(),
+            meta: { source: "h5_personal_profile" },
+          },
+        });
+        state.personalDefault = data.item || { requirements: personalSurveyRequirements() };
+        personalSetStatus("资料调查已保存。");
+      } finally {
+        personalSetBusy(btn, false);
+      }
+    }
+
     async function savePersonalDefault(options = {}) {
       const name = (($("personalTemplateName") && $("personalTemplateName").value) || "").trim();
       if (!name) throw new Error("请填写模板名称");
@@ -7298,8 +7339,6 @@
       const selectedDocs = state.personalMemoryDocs
         .filter((doc) => memoryIds.includes(personalDocId(doc)))
         .map((doc) => ({ doc_id: personalDocId(doc), title: doc.title || doc.filename || "", content_text: doc.content_text || doc.content_preview || "" }));
-      const basicProfile = personalProfileRequirements();
-      const businessDescription = personalBusinessRequirements();
       const payload = {
         name,
         keyword_ids: personalCleanIntIds(state.personalSelectedKeywords),
@@ -7312,19 +7351,7 @@
           ip_oral: (($("personalOralReq") && $("personalOralReq").value) || "").trim(),
           moments: (($("personalMomentsReq") && $("personalMomentsReq").value) || "").trim(),
           image: (($("personalImageReq") && $("personalImageReq").value) || "").trim(),
-          basic_profile: basicProfile,
-          business_description: businessDescription,
-          profile_name: basicProfile.name,
-          birth_era: basicProfile.birth_era,
-          current_city: basicProfile.current_city,
-          hometown: basicProfile.hometown,
-          role: basicProfile.role,
-          share_topic: basicProfile.share_topic,
-          video_style: basicProfile.video_style,
-          after_view_action: basicProfile.after_view_action,
-          product: businessDescription.product,
-          target_customer: businessDescription.target_customer,
-          advantages: businessDescription.advantages,
+          ...personalSurveyRequirements(),
         },
         meta: { source: "h5_personal_settings" },
       };
@@ -7335,7 +7362,6 @@
       });
       if (data.item && data.item.id) {
         state.personalEditingTemplateId = String(data.item.id);
-        state.personalDefault = data.item;
       }
       await refreshPersonalDataPreserveSelection({ templates: true });
       if (!options.silent) toast("已保存");
@@ -7346,8 +7372,7 @@
       const displayInput = $("personalKeywordDisplayName");
       const keyword = (input && input.value || "").trim();
       if (!keyword) throw new Error("请填写关键词");
-      const data = await api("/api/ip-content/keywords", { method: "POST", json: { keyword, display_name: (displayInput && displayInput.value || "").trim() || keyword, meta: { source: "h5_personal_settings" } } });
-      if (data.item && data.item.id) state.personalSelectedKeywords[String(data.item.id)] = true;
+      await api("/api/ip-content/keywords", { method: "POST", json: { keyword, display_name: (displayInput && displayInput.value || "").trim() || keyword, meta: { source: "h5_personal_settings" } } });
       if (input) input.value = "";
       if (displayInput) displayInput.value = "";
       await refreshPersonalDataPreserveSelection({ keywords: true });
@@ -7358,8 +7383,7 @@
       const input = $("personalCompetitorKey");
       const accountKey = (input && input.value || "").trim();
       if (!accountKey) throw new Error("请填写账号标识");
-      const data = await api("/api/ip-content/competitors", { method: "POST", json: { platform, account_key: accountKey, display_name: accountKey, meta: { source: "h5_personal_settings" } } });
-      if (data.item && data.item.id) state.personalSelectedCompetitors[String(data.item.id)] = true;
+      await api("/api/ip-content/competitors", { method: "POST", json: { platform, account_key: accountKey, display_name: accountKey, meta: { source: "h5_personal_settings" } } });
       if (input) input.value = "";
       await refreshPersonalDataPreserveSelection({ competitors: true });
     }
@@ -7473,6 +7497,35 @@
       return parts.join("\n\n").trim();
     }
 
+    function personalMemoryContextText() {
+      const req = personalSurveyRequirements();
+      const profile = req.basic_profile || {};
+      const business = req.business_description || {};
+      const profileLines = [
+        ["名字", profile.name],
+        ["出生年代", profile.birth_era],
+        ["现居城市", profile.current_city],
+        ["籍贯", profile.hometown],
+        ["职业/身份", profile.role],
+        ["主要分享", profile.share_topic],
+        ["视频风格", profile.video_style],
+        ["看完后动作", profile.after_view_action],
+      ].filter((item) => String(item[1] || "").trim()).map((item) => `${item[0]}：${item[1]}`);
+      const businessLines = [
+        ["产品/业务", business.product],
+        ["目标客户", business.target_customer],
+        ["优势", business.advantages],
+      ].filter((item) => String(item[1] || "").trim()).map((item) => `${item[0]}：${item[1]}`);
+      const keywordLines = (state.personalKeywords || []).map((row) => row.display_name || row.keyword).filter(Boolean);
+      const competitorLines = (state.personalCompetitors || []).map((row) => `${row.platform || ""} ${row.display_name || row.account_key || ""}`.trim()).filter(Boolean);
+      const sections = [];
+      if (profileLines.length) sections.push(`资料调查：\n${profileLines.join("\n")}`);
+      if (businessLines.length) sections.push(`业务描述：\n${businessLines.join("\n")}`);
+      if (keywordLines.length) sections.push(`关键词：\n${keywordLines.join("\n")}`);
+      if (competitorLines.length) sections.push(`同行账号：\n${competitorLines.join("\n")}`);
+      return sections.join("\n\n").trim();
+    }
+
     async function savePersonalDefaultSilently() {
       personalSetStatus("");
       renderPersonalSettings();
@@ -7486,12 +7539,13 @@
       const urls = (($("personalMemoryUrls") && $("personalMemoryUrls").value) || "").trim();
       const docTypes = selectedPersonalDocTypes();
       const reference = state.personalCustomReferenceFile;
-      if (!files.length && !raw && !urls) throw new Error("请上传资料、填写链接或粘贴资料内容。");
+      const contextText = personalMemoryContextText();
+      if (!files.length && !raw && !urls && !contextText) throw new Error("请上传资料、填写链接、粘贴资料内容，或先保存资料调查。");
       if (!docTypes.length && !reference) throw new Error("请选择生成类型，或上传自定义参考文档。");
       const fd = new FormData();
       files.forEach((file) => fd.append("files", file, file.name || "upload"));
       fd.append("urls", urls);
-      fd.append("direct_intro", raw);
+      fd.append("direct_intro", [contextText, raw].filter(Boolean).join("\n\n"));
       fd.append("direct_faq", "");
       fd.append("direct_scripts", "");
       fd.append("doc_type", docTypes[0] || "");
@@ -11199,6 +11253,7 @@
       if (btn) setPersonalSettingsTab(btn.dataset.personalTab || "template");
     });
     $("personalSettingsRefreshBtn")?.addEventListener("click", () => loadPersonalSettings(true));
+    $("personalSaveProfileBtn")?.addEventListener("click", (evt) => savePersonalProfile(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
     $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().catch((err) => toast(err.message || "保存失败")));
     $("personalNewTemplateBtn")?.addEventListener("click", resetPersonalTemplateForm);
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
