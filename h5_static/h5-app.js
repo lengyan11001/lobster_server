@@ -7370,7 +7370,7 @@
       }
       renderPersonalCurrentTemplate();
       renderPersonalSavedTemplates();
-      renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "", "data-delete-personal-keyword", "删除", "data-sync-personal-keyword");
+      renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "", "data-delete-personal-keyword", "删除");
       renderPersonalRows("personalCompetitorList", state.personalCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "", "data-delete-personal-competitor", "删除", "data-sync-personal-competitor");
       const mem = $("personalMemoryList");
       if (mem) {
@@ -7483,7 +7483,6 @@
       if (input) input.value = "";
       if (displayInput) displayInput.value = "";
       await refreshPersonalDataPreserveSelection({ keywords: true });
-      if (data.item && data.item.id) await syncPersonalKeyword(data.item.id);
     }
 
     async function addPersonalCompetitor() {
@@ -7495,22 +7494,6 @@
       if (input) input.value = "";
       await refreshPersonalDataPreserveSelection({ competitors: true });
       if (data.item && data.item.id) await syncPersonalCompetitor(data.item.id);
-    }
-
-    async function syncPersonalKeyword(keywordId, btn = null) {
-      if (!keywordId) return;
-      personalSetBusy(btn, true, "同步中...");
-      try {
-        const data = await api(`/api/ip-content/keywords/${encodeURIComponent(keywordId)}/sync`, {
-          method: "POST",
-          json: { page_size: 20, date_window: 24 },
-        });
-        const count = Array.isArray(data.items) ? data.items.length : 0;
-        personalSetStatus(`关键词已同步，入库 ${count} 条。`);
-        await refreshPersonalDataPreserveSelection({ keywords: true });
-      } finally {
-        personalSetBusy(btn, false);
-      }
     }
 
     async function syncPersonalCompetitor(competitorId, btn = null) {
@@ -7667,6 +7650,41 @@
       return sections.join("\n\n").trim();
     }
 
+    function personalMetricText(metrics) {
+      if (!metrics || typeof metrics !== "object") return "";
+      return [
+        ["点赞", metrics.like_count || metrics.digg_count || metrics.likes],
+        ["评论", metrics.comment_count || metrics.comments],
+        ["分享", metrics.share_count || metrics.shares],
+        ["收藏", metrics.collect_count || metrics.favorite_count || metrics.favorites],
+        ["播放", metrics.play_count || metrics.view_count || metrics.views],
+      ].filter((item) => item[1] !== undefined && item[1] !== null && String(item[1]) !== "").map((item) => `${item[0]}${item[1]}`).join("，");
+    }
+
+    async function personalCompetitorSourceText() {
+      const selected = personalCleanIntIds(state.personalSelectedCompetitors);
+      const wanted = new Set(selected.map((id) => String(id)));
+      const data = await api("/api/ip-content/source-items?source_type=competitor&limit=80").catch(() => ({ items: [] }));
+      const rows = (Array.isArray(data.items) ? data.items : []).filter((row) => {
+        const meta = row && row.source_meta && typeof row.source_meta === "object" ? row.source_meta : {};
+        const cid = String(meta.competitor_account_id || "");
+        return !wanted.size || wanted.has(cid);
+      }).slice(0, 40);
+      if (!rows.length) return "";
+      const text = rows.map((row, idx) => {
+        const metrics = personalMetricText(row.metrics || {});
+        const parts = [
+          `${idx + 1}. ${row.author_name || ""}${row.title ? `《${row.title}》` : ""}`.trim(),
+          row.description ? `内容：${row.description}` : "",
+          row.publish_time ? `时间：${row.publish_time}` : "",
+          metrics ? `数据：${metrics}` : "",
+          row.public_url ? `链接：${row.public_url}` : "",
+        ].filter(Boolean);
+        return parts.join("\n");
+      }).join("\n\n");
+      return `同行同步数据：\n${text}`;
+    }
+
     function personalUniqueIds(ids) {
       const seen = {};
       return (ids || []).map((id) => String(id || "").trim()).filter((id) => {
@@ -7721,18 +7739,20 @@
       const docTypes = selectedPersonalDocTypes();
       const reference = state.personalCustomReferenceFile;
       const contextText = personalMemoryContextText();
-      if (!files.length && !raw && !urls && !contextText) throw new Error("请上传资料、填写链接、粘贴资料内容，或先保存资料调查。");
+      const competitorText = await personalCompetitorSourceText();
+      const referenceDocIds = personalCleanStringIds(state.personalSelectedMemories);
+      if (!files.length && !raw && !urls && !contextText && !competitorText && !referenceDocIds.length) throw new Error("请上传资料、填写链接、粘贴资料内容，或先保存资料调查。");
       if (!docTypes.length && !reference) throw new Error("请选择生成类型，或上传自定义参考文档。");
       const fd = new FormData();
       files.forEach((file) => fd.append("files", file, file.name || "upload"));
       fd.append("urls", urls);
-      fd.append("direct_intro", [contextText, raw].filter(Boolean).join("\n\n"));
+      fd.append("direct_intro", [contextText, competitorText, raw].filter(Boolean).join("\n\n"));
       fd.append("direct_faq", "");
       fd.append("direct_scripts", "");
       fd.append("doc_type", docTypes[0] || "");
       fd.append("doc_types", JSON.stringify(docTypes));
       if (reference) fd.append("custom_reference_file", reference, reference.name || "reference");
-      fd.append("reference_doc_ids", "");
+      fd.append("reference_doc_ids", referenceDocIds.join(","));
       personalSetBusy(btn, true, "理解中...");
       personalSetStatus("正在理解资料...");
       try {
@@ -7741,7 +7761,7 @@
         if (!resp.ok || data.ok === false) throw new Error(data.detail || data.message || "AI 理解失败");
         state.personalGeneratedDocuments = data.documents || {};
         state.personalGeneratedDocOrder = Array.isArray(data.doc_types) && data.doc_types.length ? data.doc_types : docTypes;
-        setPersonalSettingsTab("upload");
+        setPersonalSettingsTab("memory");
         renderPersonalGeneratedDocs();
         personalSetStatus("AI 理解完成，审核后存入记忆。");
       } finally {
@@ -7811,10 +7831,10 @@
       const files = selectedPersonalUploadFiles();
       const raw = (($("personalRawMemoryText") && $("personalRawMemoryText").value) || "").trim();
       const urls = (($("personalMemoryUrls") && $("personalMemoryUrls").value) || "").trim();
-      const mode = (($("personalSaveMode") && $("personalSaveMode").value) || "new").trim();
+      const mode = "new";
       const quickTitle = (($("personalQuickMemoryTitle") && $("personalQuickMemoryTitle").value) || "").trim();
-      const title = mode === "new" ? ((($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim() || quickTitle) : "";
-      const targetDocId = (($("personalTargetMemorySelect") && $("personalTargetMemorySelect").value) || "").trim();
+      const title = quickTitle || (($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim();
+      const targetDocId = "";
       if (!files.length && !raw && !urls) throw new Error("请上传资料、填写链接或粘贴资料后再保存。");
       if (mode === "new" && !title) throw new Error("新建文档需要填写文档名字。");
       if (mode === "overwrite" && !targetDocId) throw new Error("覆盖已有文档需要先选择一个文档。");
@@ -11456,7 +11476,6 @@
     $("personalSettingsView")?.addEventListener("click", async (evt) => {
       const keywordBtn = evt.target.closest("[data-delete-personal-keyword]");
       const competitorBtn = evt.target.closest("[data-delete-personal-competitor]");
-      const keywordSyncBtn = evt.target.closest("[data-sync-personal-keyword]");
       const competitorSyncBtn = evt.target.closest("[data-sync-personal-competitor]");
       const uploadRemove = evt.target.closest("[data-remove-personal-upload]");
       const referenceRemove = evt.target.closest("[data-remove-personal-reference]");
@@ -11499,10 +11518,6 @@
         }
         if (deleteMemoryBtn) {
           await deletePersonalMemory(deleteMemoryBtn.dataset.deletePersonalMemory || "");
-          return;
-        }
-        if (keywordSyncBtn) {
-          await syncPersonalKeyword(keywordSyncBtn.dataset.syncPersonalKeyword || "", keywordSyncBtn);
           return;
         }
         if (competitorSyncBtn) {

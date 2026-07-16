@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260716-ip-profile-flow-2" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260716-ip-profile-flow-3" />
 </head>
 <body>
   <main class="shell">
@@ -834,8 +834,22 @@
                 </div>
                 <div class="personal-field">
                   <label for="personalRawMemoryText">粘贴资料</label>
-                  <textarea id="personalRawMemoryText" rows="7" placeholder="产品介绍、问答、口播稿、客户资料"></textarea>
+                  <textarea id="personalRawMemoryText" rows="7" placeholder="文字资料"></textarea>
                 </div>
+                <div class="personal-field">
+                  <label for="personalQuickMemoryTitle">资料名称</label>
+                  <input id="personalQuickMemoryTitle" type="text" placeholder="资料名称">
+                </div>
+                <div class="personal-actions">
+                  <button class="ghost" type="button" id="personalSaveRawMemoryBtn">存入资料</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="personal-panel" data-personal-panel="memory">
+            <div class="personal-grid">
+              <div class="personal-block">
+                <strong>生成记忆文件</strong>
                 <div class="personal-field">
                   <label>AI 生成类型</label>
                   <div class="personal-doc-types" id="personalGenerateDocTypes">
@@ -849,14 +863,7 @@
                   <input id="personalCustomReferenceFile" type="file" accept=".txt,.md,.csv,.json,.yaml,.yml,.html,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.pptx">
                   <div class="personal-file-list" id="personalCustomReferenceInfo"></div>
                 </div>
-                <div class="personal-field">
-                  <label for="personalQuickMemoryTitle">直接保存文档名</label>
-                  <input id="personalQuickMemoryTitle" type="text" placeholder="不理解直接保存时填写">
-                </div>
-                <div class="personal-actions">
-                  <button type="button" id="personalGenerateMemoryBtn">AI 理解</button>
-                  <button class="ghost" type="button" id="personalSaveRawMemoryBtn">不理解，直接存入记忆</button>
-                </div>
+                <button type="button" id="personalGenerateMemoryBtn">生成记忆文件</button>
               </div>
               <div class="personal-block">
                 <strong>审核后存入记忆</strong>
@@ -875,8 +882,6 @@
                 <button type="button" id="personalSaveMemoryBtn">存入记忆</button>
               </div>
             </div>
-          </div>
-          <div class="personal-panel" data-personal-panel="memory">
             <div class="personal-block">
               <strong>已保存记忆文件</strong>
               <div class="personal-list" id="personalMemoryList"></div>
@@ -1248,6 +1253,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260716-ip-profile-flow-2"></script>
+  <script src="/h5-static/h5-app.js?v=20260716-ip-profile-flow-3"></script>
 </body>
 </html>
