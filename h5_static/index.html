@@ -89,8 +89,8 @@
         <div class="office-dashboard">
           <button class="office-secretary-hero" type="button" data-home-target="secretary" aria-label="老板驾驶舱">
             <div class="office-hero-copy">
-              <span>AI 运营秘书</span>
-              <strong id="bossName">老板驾驶舱</strong>
+              <span>企业AI数字化运营</span>
+              <strong id="bossName">让AI员工24小时为我工作</strong>
               <div class="office-hero-chips">
                 <em><b id="officeDeviceCount">0</b> 台手机 · <b id="officeEmployeeCount">0</b> 个员工</em>
                 <em><b id="officeRunningCount">0</b> 个任务运行</em>
@@ -102,15 +102,15 @@
           <div class="office-shortcuts" aria-label="快捷入口">
             <button type="button" data-home-target="personalSettings">
               <span class="office-shortcut-icon">设</span>
-              <strong>个人设置</strong>
-            </button>
-            <button type="button" data-home-target="workflow">
-              <span class="office-shortcut-icon">定</span>
-              <strong>员工定制</strong>
+              <strong>IP人设定位</strong>
             </button>
             <button type="button" data-home-target="assetLibrary">
               <span class="office-shortcut-icon">素</span>
               <strong>素材库</strong>
+            </button>
+            <button type="button" data-home-target="contentRecords">
+              <span class="office-shortcut-icon">记</span>
+              <strong>内容记录</strong>
             </button>
             <button type="button" data-home-target="leadCenter">
               <span class="office-shortcut-icon">客</span>
@@ -125,6 +125,7 @@
           <section class="office-section">
             <div class="office-section-head">
               <h2>我的AI员工 <span id="officeEmployeeTotal">(0)</span></h2>
+              <button type="button" data-tab-target="workflow">+定制员工</button>
             </div>
             <div class="office-floor office-employee-grid" id="employeeFloor">
               <div class="office-empty"><div class="office-empty-copy">正在检查员工状态...</div></div>
@@ -667,7 +668,7 @@
           <div class="panel settings">
             <button class="profile-entry" type="button" data-tab-target="personalSettings">
               <span>
-                <strong>个人设置</strong>
+                <strong>IP人设定位</strong>
                 <small>模板、关键词、同行账号和记忆文件</small>
               </span>
               <b>进入</b>
@@ -700,7 +701,7 @@
       <section class="view" id="personalSettingsView">
         <div class="panel list-page personal-settings-page">
           <div class="section-title">
-            <h2>个人设置</h2>
+            <h2>IP人设定位</h2>
             <div class="section-actions">
               <button class="ghost icon-help" type="button" id="personalTemplateHelpBtn" aria-label="模板配置帮助">?</button>
               <button class="ghost" type="button" id="personalSettingsRefreshBtn">刷新</button>
@@ -780,7 +781,7 @@
                 <div class="personal-upload-zone">
                   <label class="personal-field">
                     <span>文件</span>
-                    <input id="personalMemoryFiles" type="file" multiple accept=".txt,.md,.csv,.json,.yaml,.yml,.html,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.pptx,.jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.m4v,.avi,.mkv,.webm">
+                    <input id="personalMemoryFiles" type="file" multiple accept=".txt,.md,.csv,.json,.yaml,.yml,.html,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.pptx,.jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.m4v,.avi,.mkv,.webm,.mp3,.wav,.m4a,.aac,.ogg,.flac,.amr,.wma,audio/*">
                   </label>
                   <div class="personal-file-list" id="personalSelectedFiles"></div>
                 </div>
@@ -1158,8 +1159,8 @@
     <button class="task-success-backdrop" type="button" id="personalTemplateHelpBackdrop" aria-label="关闭"></button>
     <div class="task-success-panel help-panel">
       <div class="task-success-kicker">TEMPLATE HELP</div>
-      <h3 id="personalTemplateHelpTitle">模板怎么配置</h3>
-      <p>先在“关键词”“同行账号”“记忆文件”里添加资料；回到“模板”页勾选要使用的资料，填写口播、朋友圈和出图要求，保存后 IP 日更就能直接选择这个模板。</p>
+      <h3 id="personalTemplateHelpTitle">IP人设定位怎么配置</h3>
+      <p>先添加关键词和同行账号；在“记忆文件”里上传文字、图片、视频、音频或文档生成记忆；最后回到“模板”选择要使用的资料并保存。</p>
       <div class="task-success-actions">
         <button type="button" id="personalTemplateHelpCloseBtn">知道了</button>
       </div>

@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -21,6 +22,16 @@ from ..core.config import settings
 from ..db import get_db
 from ..models import H5AgentMemoryGrant, OpenClawMemoryDocument, User
 from .auth import get_current_user
+from .cutcli_templates import (
+    AutoCaptionJobError,
+    _extract_audio_wav,
+    _extract_stt_output,
+    _find_ffmpeg_bin,
+    _load_sutui_token_for_stt,
+    _stt_create_task,
+    _stt_poll_task,
+    _upload_job_file_to_tos,
+)
 from .installation_slots import ensure_installation_slot, optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
 from .openclaw_memory_cloud import (
@@ -44,8 +55,10 @@ DOC_TYPE_LABELS: dict[str, str] = {
 PRESET_DOC_TYPES = {"brand_product_intro", "product_service_faq", "short_video_scripts"}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".amr", ".wma"}
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_VIDEO_BYTES = 80 * 1024 * 1024
+MAX_AUDIO_BYTES = 80 * 1024 * 1024
 MAX_VISUAL_BLOCKS = 8
 URL_RE = re.compile(r"https?://[^\s,，]+", re.I)
 
@@ -266,7 +279,7 @@ async def _read_upload(file: UploadFile) -> tuple[str, str, bytes]:
     filename = os.path.basename(file.filename or "upload")
     suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     data = await file.read()
-    limit = MAX_VIDEO_BYTES if suffix in VIDEO_SUFFIXES else _MAX_UPLOAD_BYTES
+    limit = MAX_VIDEO_BYTES if suffix in VIDEO_SUFFIXES else (MAX_AUDIO_BYTES if suffix in AUDIO_SUFFIXES else _MAX_UPLOAD_BYTES)
     if len(data) > limit:
         limit_mb = max(1, limit // (1024 * 1024))
         raise HTTPException(status_code=413, detail=f"{filename} 超过 {limit_mb}MB。")
@@ -274,7 +287,7 @@ async def _read_upload(file: UploadFile) -> tuple[str, str, bytes]:
 
 
 def _media_text(filename: str, suffix: str, data: bytes) -> str:
-    kind = "图片" if suffix in IMAGE_SUFFIXES else "视频"
+    kind = "图片" if suffix in IMAGE_SUFFIXES else ("音频" if suffix in AUDIO_SUFFIXES else "视频")
     size_kb = max(1, len(data) // 1024)
     return f"{kind}文件：{filename}，大小 {size_kb}KB。"
 
@@ -355,6 +368,11 @@ def _looks_like_video_url(url: str) -> bool:
     return any(clean.endswith(suffix) for suffix in VIDEO_SUFFIXES)
 
 
+def _looks_like_audio_url(url: str) -> bool:
+    clean = (url or "").split("?", 1)[0].split("#", 1)[0].lower()
+    return any(clean.endswith(suffix) for suffix in AUDIO_SUFFIXES)
+
+
 async def _download_media_url(url: str, *, max_bytes: int) -> bytes:
     async with httpx.AsyncClient(timeout=45.0, follow_redirects=True, trust_env=False) as client:
         async with client.stream("GET", url) as resp:
@@ -373,7 +391,7 @@ async def _download_media_url(url: str, *, max_bytes: int) -> bytes:
 
 
 def _file_to_text(filename: str, suffix: str, data: bytes) -> str:
-    if suffix in IMAGE_SUFFIXES or suffix in VIDEO_SUFFIXES:
+    if suffix in IMAGE_SUFFIXES or suffix in VIDEO_SUFFIXES or suffix in AUDIO_SUFFIXES:
         return _media_text(filename, suffix, data)
     return _decode_text_payload(data, filename)
 
@@ -391,12 +409,76 @@ def _append_visual_block(visual_blocks: list[dict[str, Any]], filename: str, dat
     return True
 
 
+def _extract_stt_text(stt_data: dict[str, Any]) -> str:
+    output = _extract_stt_output(stt_data)
+    for key in ("text", "transcript", "content", "result_text"):
+        value = output.get(key) if isinstance(output, dict) else None
+        if isinstance(value, str) and value.strip():
+            return _limit_local(value, 100_000)
+    utterances = output.get("utterances") if isinstance(output, dict) else None
+    if isinstance(utterances, list):
+        parts: list[str] = []
+        for item in utterances:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text") or item.get("words")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+        if parts:
+            return _limit_local("\n".join(parts), 100_000)
+    return ""
+
+
+def _safe_object_segment(value: str) -> str:
+    clean = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(value or "").strip()).strip("-")
+    return clean[:80] or "default"
+
+
+def _transcribe_audio_attachment(
+    *,
+    db: Session,
+    user: User,
+    installation_id: str,
+    filename: str,
+    suffix: str,
+    data: bytes,
+) -> str:
+    with tempfile.TemporaryDirectory(prefix="lobster-h5-audio-") as tmp:
+        tmp_dir = Path(tmp)
+        src = tmp_dir / ("source" + (suffix if suffix in AUDIO_SUFFIXES else ".audio"))
+        wav = tmp_dir / "audio.wav"
+        src.write_bytes(data)
+        try:
+            _extract_audio_wav(ffmpeg=_find_ffmpeg_bin(), source=str(src), out_path=wav)
+            object_key = (
+                f"assets/h5_personal_memory_audio/"
+                f"{_safe_object_segment(installation_id)}/{uuid.uuid4().hex}.wav"
+            )
+            audio_url = _upload_job_file_to_tos(wav, object_key=object_key, content_type="audio/wav")
+            token, _token_source = _load_sutui_token_for_stt(db, user.id)
+            created = _stt_create_task(token, audio_url, job_dir=tmp_dir)
+            stt_data = _stt_poll_task(token, created["task_id"], job_dir=tmp_dir, timeout_seconds=900)
+        except AutoCaptionJobError as exc:
+            raise HTTPException(status_code=502, detail=f"音频理解失败：{exc.message}") from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"音频理解失败：{str(exc)[:300]}") from exc
+    text = _extract_stt_text(stt_data)
+    if not text.strip():
+        raise HTTPException(status_code=502, detail=f"音频理解失败：{filename} 没有识别到文本。")
+    return text
+
+
 async def _collect_sources(
     request: Request,
     installation_id: str,
     files: Optional[list[UploadFile]],
     raw_text: str,
     urls: str,
+    *,
+    db: Session,
+    stt_user: User,
 ) -> tuple[str, list[dict[str, Any]]]:
     parts: list[str] = []
     visual_blocks: list[dict[str, Any]] = []
@@ -426,6 +508,23 @@ async def _collect_sources(
                         parts.append(f"【视频链接】{url}\n关键帧抽取失败。")
                 except Exception as exc:
                     parts.append(f"【视频链接】{url}\n下载或抽帧失败：{exc}")
+            elif _looks_like_audio_url(url):
+                try:
+                    data = await _download_media_url(url, max_bytes=MAX_AUDIO_BYTES)
+                    suffix = Path(url.split("?", 1)[0]).suffix.lower()
+                    text = _transcribe_audio_attachment(
+                        db=db,
+                        user=stt_user,
+                        installation_id=installation_id,
+                        filename=Path(url).name or "audio-url",
+                        suffix=suffix,
+                        data=data,
+                    )
+                    parts.append(f"【音频链接】{url}\n{text}")
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    parts.append(f"【音频链接】{url}\n下载或理解失败：{exc}")
     for file in files or []:
         if not file or not file.filename:
             continue
@@ -441,6 +540,17 @@ async def _collect_sources(
                     _append_visual_block(visual_blocks, f"{filename}-{frame_name}", frame_data)
             else:
                 parts.append(_media_text(filename, suffix, data) + "\n关键帧抽取失败。")
+            continue
+        if suffix in AUDIO_SUFFIXES:
+            text = _transcribe_audio_attachment(
+                db=db,
+                user=stt_user,
+                installation_id=installation_id,
+                filename=filename,
+                suffix=suffix,
+                data=data,
+            )
+            parts.append(f"【音频：{filename}】\n{text}")
             continue
         text = _file_to_text(filename, suffix, data)
         parts.append(f"【文件：{filename}】\n{text}")
@@ -648,7 +758,7 @@ async def save_raw_memory_document(
             db,
             row,
             content_text=body.content,
-            notes=body.notes or "个人设置保存",
+            notes=body.notes or "IP人设定位保存",
             meta={"save_mode": "overwrite"},
         )
     else:
@@ -660,7 +770,7 @@ async def save_raw_memory_document(
             installation_id=installation_id,
             title=title,
             filename=f"{title}.txt",
-            notes=body.notes or "个人设置保存",
+            notes=body.notes or "IP人设定位保存",
             content_text=body.content,
             meta={"save_mode": "new"},
         )
@@ -691,7 +801,7 @@ async def save_generated_memory_documents(
             installation_id=installation_id,
             title=title,
             filename=f"{title}.txt",
-            notes=body.notes or "个人设置 AI 理解",
+            notes=body.notes or "IP人设定位 AI 理解",
             content_text=text,
             meta={"doc_type": key, "doc_type_label": DOC_TYPE_LABELS.get(key, key)},
         )
@@ -715,11 +825,19 @@ async def save_uploaded_memory_document(
     installation_id = _installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
-    source_text, _visual_blocks = await _collect_sources(request, installation_id, files, raw_text, urls)
+    source_text, _visual_blocks = await _collect_sources(
+        request,
+        installation_id,
+        files,
+        raw_text,
+        urls,
+        db=db,
+        stt_user=target_user,
+    )
     mode = (mode or "new").strip().lower()
     if mode == "overwrite":
         row = _memory_row(db, target_user.id, installation_id, target_doc_id)
-        row = _overwrite_document(db, row, content_text=source_text, notes=notes or "个人设置上传资料", meta={"save_mode": "overwrite"})
+        row = _overwrite_document(db, row, content_text=source_text, notes=notes or "IP人设定位上传资料", meta={"save_mode": "overwrite"})
     else:
         clean_title = _short_title(title, "个人记忆")
         row = _create_document(
@@ -729,7 +847,7 @@ async def save_uploaded_memory_document(
             installation_id=installation_id,
             title=clean_title,
             filename=f"{clean_title}.txt",
-            notes=notes or "个人设置上传资料",
+            notes=notes or "IP人设定位上传资料",
             content_text=source_text,
             meta={"save_mode": "new"},
         )
@@ -764,7 +882,15 @@ async def generate_memory_documents(
 
     raw_parts = [direct_intro.strip(), direct_faq.strip(), direct_scripts.strip()]
     raw_text = "\n\n".join(part for part in raw_parts if part)
-    source_text, visual_blocks = await _collect_sources(request, installation_id, files, raw_text, urls)
+    source_text, visual_blocks = await _collect_sources(
+        request,
+        installation_id,
+        files,
+        raw_text,
+        urls,
+        db=db,
+        stt_user=target_user,
+    )
 
     ref_ids = [_sanitize_doc_id(x) for x in (reference_doc_ids or "").split(",") if _sanitize_doc_id(x)]
     if ref_ids:

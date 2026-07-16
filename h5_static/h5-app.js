@@ -615,6 +615,39 @@
       { value: "professional_ip_oral", label: "专业 IP 口播" },
       { value: "moments_candidate", label: "朋友圈文案" },
     ];
+    const SALES_WORKFLOW_PRESET = [
+      ["06:00", "local_bestseller", "自动创作一条同城爆款视频"],
+      ["07:00", "hifly.video.create_by_tts", "自动创作一条数字人口播视频"],
+      ["08:00", "wecom_reply", "私信接管"],
+      ["08:30", "douyin_leads", "自动养号"],
+      ["09:00", "douyin_leads", "视频发布后采集互动线索"],
+      ["09:30", "wecom_reply", "私信接管"],
+      ["09:45", "wecom_reply", "自动加好友"],
+      ["10:00", "ip_content_daily", "朋友圈发布文案准备"],
+      ["10:30", "wecom_reply", "朋友圈点赞评论"],
+      ["11:00", "wecom_reply", "私信接管"],
+      ["11:30", "douyin_leads", "自动养号"],
+      ["12:00", "douyin_leads", "关键词抓取精准客户"],
+      ["12:30", "douyin_leads", "回复10个精准客户评论"],
+      ["13:00", "douyin_leads", "评论上午发布的视频并@精准客户"],
+      ["13:30", "douyin_leads", "关注精准客户并评论首条作品"],
+      ["14:00", "wecom_reply", "私信接管"],
+      ["14:30", "douyin_leads", "抖音私信10个精准客户"],
+      ["15:00", "douyin_leads", "抖音私信引流接管"],
+      ["15:30", "douyin_leads", "自动养号"],
+      ["16:30", "wecom_reply", "自动加好友"],
+      ["17:00", "wecom_reply", "私信接管"],
+      ["17:30", "douyin_leads", "关键词抓取精准客户"],
+      ["18:30", "douyin_leads", "回复10个精准客户评论"],
+      ["19:00", "douyin_leads", "评论上午发布的视频并@精准客户"],
+      ["19:30", "douyin_leads", "关注精准客户并评论首条作品"],
+      ["20:00", "wecom_reply", "私信接管"],
+      ["20:30", "douyin_leads", "抖音私信10个精准客户"],
+      ["21:00", "wecom_reply", "朋友圈点赞评论"],
+      ["21:30", "douyin_leads", "抖音私信引流接管"],
+      ["22:30", "wecom_reply", "自动加好友"],
+      ["23:00", "wecom_reply", "私信接管"],
+    ];
 
     const DOUYIN_TASK_ACTIONS = {
       search_collect: {
@@ -1373,7 +1406,7 @@
       const stats = officeOutcomeStats();
       if ($("bossCreditsSpent")) $("bossCreditsSpent").textContent = compactNumber(stats.spent, stats.spent > 0 && stats.spent < 10 ? 1 : 0);
       if ($("bossHarvestCount")) $("bossHarvestCount").textContent = compactNumber(stats.harvest);
-      if ($("bossName")) $("bossName").textContent = `${state.companyName || "我的AI公司"}老板`;
+      if ($("bossName")) $("bossName").textContent = "让AI员工24小时为我工作";
       const line = workingCount > 0
         ? `${workingCount} 位员工正在干活，老板盯着交付进度。`
         : (onlineCount > 0 ? `${onlineCount} 位员工已到岗，等待安排。` : "员工还没到岗，办公室先亮着灯。");
@@ -2285,6 +2318,38 @@
         param_configured: false,
         plan,
       };
+    }
+
+    function buildSalesWorkflowPresetNodes() {
+      const nodes = [];
+      SALES_WORKFLOW_PRESET.forEach(([time, key, note], index) => {
+        const lookup = abilityLookup(key);
+        if (!lookup || !lookup.node || lookup.node.comingSoon || isPublishCenterNode(lookup.node)) return;
+        try {
+          const plan = workflowPlanForLookup(lookup, note);
+          nodes.push({
+            id: `sales_${String(time).replace(":", "")}_${index}`,
+            time,
+            ability_key: lookup.node.key || "",
+            ability_label: note || lookup.node.label || lookup.node.key || "",
+            department_id: lookup.department.id,
+            department_name: lookup.department.name || "",
+            note,
+            param_configured: false,
+            plan,
+          });
+        } catch (_err) {
+          // Some nodes need user-owned templates before they can be scheduled.
+        }
+      });
+      return nodes.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+    }
+
+    function prepareSalesWorkflowDraft() {
+      if (String(state.workflowEditingTemplateId || "").trim()) return;
+      if ((state.workflowNodesDraft || []).length) return;
+      state.workflowNodesDraft = buildSalesWorkflowPresetNodes();
+      if ($("workflowTemplateName")) $("workflowTemplateName").value = "销售24小时员工";
     }
 
     function refillWorkflowParamFields(node, lookup) {
@@ -3368,8 +3433,8 @@
         submitText = "创建提取任务";
         badgeText = "服务器转写";
       } else if (node.routeTab) {
-        html = `<div class="field full"><button type="submit" id="abilityRouteOpenBtn">${node.routeTab === "profile" ? "打开个人设置" : "打开页面"}</button></div>`;
-        submitText = node.routeTab === "profile" ? "打开个人设置" : "打开页面";
+        html = `<div class="field full"><button type="submit" id="abilityRouteOpenBtn">${node.routeTab === "profile" ? "打开IP人设定位" : "打开页面"}</button></div>`;
+        submitText = node.routeTab === "profile" ? "打开IP人设定位" : "打开页面";
         badgeText = "配置入口";
       }
       if (!html) {
@@ -3809,11 +3874,16 @@
       const idleCount = snapshots.filter((row) => row.snapshot.mode === "idle").length;
       const offlineCount = snapshots.filter((row) => row.snapshot.mode === "offline").length;
       const onlineCount = workingCount + idleCount;
-      const departments = officeDepartments();
+      const roles = [
+        { id: "sales", name: "销售", status: "24小时工作流", target: "salesWorkflow" },
+        { id: "customer_service", name: "客服", status: "敬请期待", comingSoon: true },
+        { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true },
+        { id: "hr", name: "HR", status: "敬请期待", comingSoon: true },
+      ];
       const runningCount = (state.runs || []).filter(isActiveRun).length;
       if ($("officeDeviceCount")) $("officeDeviceCount").textContent = String(devices.length);
-      if ($("officeEmployeeCount")) $("officeEmployeeCount").textContent = String(departments.length);
-      if ($("officeEmployeeTotal")) $("officeEmployeeTotal").textContent = `(${departments.length})`;
+      if ($("officeEmployeeCount")) $("officeEmployeeCount").textContent = String(roles.length);
+      if ($("officeEmployeeTotal")) $("officeEmployeeTotal").textContent = `(${roles.length})`;
       if ($("officeRunningCount")) $("officeRunningCount").textContent = String(runningCount);
       if ($("officeTotalCount")) $("officeTotalCount").textContent = String(devices.length);
       if ($("officeOnlineCount")) $("officeOnlineCount").textContent = String(onlineCount);
@@ -3822,15 +3892,16 @@
       if ($("officeOfflineCount")) $("officeOfflineCount").textContent = String(offlineCount);
       updateBossOfficeStats(onlineCount, workingCount);
       floor.style.minHeight = "";
-      floor.innerHTML = departments.map((department, index) => {
-        const count = departmentAvailableLeafCount(department);
-        const img = employeeAsset({ installation_id: department.id }, index, "idle");
+      floor.innerHTML = roles.map((role, index) => {
+        const img = employeeAsset({ installation_id: role.id }, index, role.comingSoon ? "offline" : "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
-        return `<button class="office-employee-card" type="button" data-role-department="${escapeHtml(department.id)}" style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(department.name)}">
+        const targetAttr = role.target ? ` data-home-target="${escapeHtml(role.target)}"` : "";
+        const soonAttr = role.comingSoon ? ` data-role-coming-soon="1"` : "";
+        return `<button class="office-employee-card${role.comingSoon ? " coming-soon" : ""}" type="button"${targetAttr}${soonAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
           <img src="${escapeHtml(img)}" alt="" loading="lazy">
           <span class="office-employee-info">
-            <strong>${escapeHtml(department.name || "员工")}</strong>
-            <em>${escapeHtml(count + " 项")}</em>
+            <strong>${escapeHtml(role.name || "员工")}</strong>
+            <em>${escapeHtml(role.status || "")}</em>
           </span>
         </button>`;
       }).join("");
@@ -3847,6 +3918,9 @@
         const active = btn.dataset.assetOrigin === state.assetLibraryOrigin;
         btn.classList.toggle("active", active);
       });
+      if (activeViewKey() === "assetLibrary" && $("pageTitle")) {
+        $("pageTitle").textContent = state.assetLibraryOrigin === "generated" ? "内容记录" : "素材库";
+      }
       if ($("assetUserUploadTotal")) $("assetUserUploadTotal").textContent = compactNumber(state.assetLibraryTotals.user_upload || 0);
       if ($("assetGeneratedTotal")) $("assetGeneratedTotal").textContent = compactNumber(state.assetLibraryTotals.generated || 0);
     }
@@ -5495,6 +5569,32 @@
       btn.classList.toggle("hidden", hidden);
     }
 
+    function openHomeTarget(target, backTab = "office") {
+      const key = String(target || "").trim();
+      if (!key) return;
+      if (key === "personalSettings") {
+        state.personalSettingsBackTab = backTab || "office";
+        switchTab("personalSettings");
+        return;
+      }
+      if (key === "assetLibrary") {
+        state.assetLibraryOrigin = "user_upload";
+        switchTab("assetLibrary");
+        return;
+      }
+      if (key === "contentRecords") {
+        state.assetLibraryOrigin = "generated";
+        switchTab("assetLibrary");
+        return;
+      }
+      if (key === "salesWorkflow") {
+        prepareSalesWorkflowDraft();
+        switchTab("workflow");
+        return;
+      }
+      switchTab(key);
+    }
+
     function switchTab(tab) {
       const key = tab || "office";
       document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
@@ -5506,13 +5606,13 @@
         workflow: ["员工定制", "24小时任务编排"],
         agentManage: ["代理商管理", ""],
         workList: ["工作列表", "已完成、当前和待执行的工作节点"],
-        assetLibrary: ["素材库", ""],
+        assetLibrary: [state.assetLibraryOrigin === "generated" ? "内容记录" : "素材库", ""],
         leadCenter: ["客资线索", ""],
         tutorial: ["教程", ""],
         messages: ["手机会话", "消息结果和素材预览"],
         voice: ["龙虾AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
-        personalSettings: ["个人设置", "模板、关键词、同行账号和记忆文件"],
+        personalSettings: ["IP人设定位", "模板、关键词、同行账号和记忆文件"],
         taskList: ["定时任务", "默认展示 10 条，更多用翻页加载"],
         taskDetail: ["定时任务详情", "任务配置和最近执行入口"],
         runList: ["执行记录", "默认展示 10 条，点开查看具体内容"],
@@ -7243,7 +7343,7 @@
         const data = await api("/api/personal-settings/memory-documents/save", {
           method: "POST",
           headers: { "X-Installation-Id": iid },
-          json: { title, notes: "个人设置 AI 理解", documents: documents || {} },
+          json: { title, notes: "IP人设定位 AI 理解", documents: documents || {} },
         });
         const docs = Array.isArray(data.documents) ? data.documents : [];
         docs.forEach((doc) => { const id = personalDocId(doc); if (id) state.personalSelectedMemories[id] = true; });
@@ -7307,7 +7407,7 @@
       const fd = new FormData();
       files.forEach((file) => fd.append("files", file, file.name || "upload"));
       fd.append("title", title);
-      fd.append("notes", "个人设置直接保存");
+      fd.append("notes", "IP人设定位直接保存");
       fd.append("raw_text", raw);
       fd.append("urls", urls);
       fd.append("mode", mode);
@@ -7335,7 +7435,7 @@
         await savePersonalGeneratedDocuments(btn, title, generated.documents);
         return;
       }
-      await savePersonalMemoryContent(btn, title, content, "个人设置保存", mode, targetDocId);
+      await savePersonalMemoryContent(btn, title, content, "IP人设定位保存", mode, targetDocId);
     }
 
     async function previewPersonalMemory(docId) {
@@ -10617,7 +10717,7 @@
       btn.addEventListener("click", () => {
         const target = String(btn.dataset.homeTarget || "").trim();
         if (!target) return;
-        switchTab(target);
+        openHomeTarget(target, activeViewKey() || "office");
       });
     });
     $("toggleTaskPanelBtn").addEventListener("click", () => setTaskPanelOpen(!state.taskPanelOpen));
@@ -11019,8 +11119,7 @@
         evt.preventDefault();
         evt.stopPropagation();
         const target = String(homeTargetBtn.dataset.homeTarget || "").trim();
-        if (target === "personalSettings") state.personalSettingsBackTab = "office";
-        if (target) switchTab(target);
+        openHomeTarget(target, "office");
         return;
       }
       const pageBtn = evt.target.closest("[data-office-page]");
@@ -11032,6 +11131,13 @@
         if (!Number.isFinite(nextPage)) return;
         state.officePage = nextPage;
         renderOfficeEmployees();
+        return;
+      }
+      const comingSoonRole = evt.target.closest("[data-role-coming-soon]");
+      if (comingSoonRole) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        toast("敬请期待");
         return;
       }
       const metric = evt.target.closest("[data-device-filter]");
@@ -11369,8 +11475,7 @@
       }
       const homeTarget = (btn.dataset.homeTarget || "").trim();
       if (homeTarget) {
-        if (homeTarget === "personalSettings") state.personalSettingsBackTab = "office";
-        switchTab(homeTarget);
+        openHomeTarget(homeTarget, "office");
         return;
       }
       switchTab("messages");

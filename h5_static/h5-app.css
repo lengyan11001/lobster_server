@@ -4023,6 +4023,13 @@
       object-fit: contain;
       filter: drop-shadow(0 14px 16px rgba(24,50,105,.18));
     }
+    #officeView .office-employee-card.coming-soon {
+      opacity: .68;
+      filter: grayscale(.15);
+    }
+    #officeView .office-employee-card.coming-soon .office-employee-info em {
+      color: #8a94a8;
+    }
     #officeView .office-employee-info {
       display: grid;
       gap: 5px;
