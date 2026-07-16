@@ -98,7 +98,7 @@
       ipTemplatesLoading: false,
       personalSettingsLoaded: false,
       personalSettingsLoading: false,
-      personalSettingsTab: "profile",
+      personalSettingsTab: "keywords",
       personalSurveyIndex: 0,
       personalKeywords: [],
       personalCompetitors: [],
@@ -7002,7 +7002,7 @@
     }
 
     function setPersonalSettingsTab(tab) {
-      const next = ["profile", "competitors", "keywords", "memory", "template"].includes(String(tab || "")) ? String(tab || "") : "profile";
+      const next = ["keywords", "competitors", "profile", "upload", "memory", "template"].includes(String(tab || "")) ? String(tab || "") : "keywords";
       state.personalSettingsTab = next;
       document.querySelectorAll("[data-personal-tab]").forEach((btn) => btn.classList.toggle("active", btn.dataset.personalTab === state.personalSettingsTab));
       document.querySelectorAll("[data-personal-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.personalPanel === state.personalSettingsTab));
@@ -7175,6 +7175,7 @@
       (item.competitor_ids || []).forEach((id) => { if (id) state.personalSelectedCompetitors[String(id)] = true; });
       (item.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
       if ($("personalTemplateName")) $("personalTemplateName").value = item.name || "";
+      if (item.requirements && typeof item.requirements === "object") fillPersonalSurveyFields(item);
     }
 
     async function refreshPersonalDataPreserveSelection(parts = {}) {
@@ -7215,7 +7216,7 @@
       }
     }
 
-    function renderPersonalRows(targetId, rows, kind, titleFn, subtitleFn, deleteAttr, actionLabel = "删除") {
+    function renderPersonalRows(targetId, rows, kind, titleFn, subtitleFn, deleteAttr, actionLabel = "删除", syncAttr = "") {
       const el = $(targetId);
       if (!el) return;
       if (!rows.length) {
@@ -7229,10 +7230,12 @@
         const subtitle = subtitleFn ? subtitleFn(row) : "";
         const checked = selectedMap[id] ? " checked" : "";
         const del = deleteAttr ? `<button type="button" ${deleteAttr}="${escapeHtml(id)}">${escapeHtml(actionLabel)}</button>` : "";
+        const sync = syncAttr ? `<button type="button" ${syncAttr}="${escapeHtml(id)}">同步数据</button>` : "";
+        const actions = (sync || del) ? `<div class="personal-row-actions">${sync}${del}</div>` : "";
         if (deleteAttr) {
-          return `<div class="personal-row"><span>${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span>${del}</div>`;
+          return `<div class="personal-row"><span>${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span>${actions}</div>`;
         }
-        return `<div class="personal-row"><label><input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${checked}><span>${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span></label>${del}</div>`;
+        return `<div class="personal-row"><label><input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${checked}><span>${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span></label>${actions}</div>`;
       }).join("");
     }
 
@@ -7314,11 +7317,31 @@
             <div class="personal-template-meta">${escapeHtml(source)}</div>
           </div>
           <div class="personal-row-actions">
+            <button type="button" data-use-personal-template="${escapeHtml(id)}">设为当前</button>
             <button type="button" data-edit-personal-template="${escapeHtml(id)}">${own ? "编辑" : "套用"}</button>
             ${grantBtn}
           </div>
         </div>`;
       }).join("");
+    }
+
+    function renderPersonalCurrentTemplate() {
+      const box = $("personalCurrentTemplateBox");
+      if (!box) return;
+      const current = state.personalDefault || {};
+      const keywordCount = Array.isArray(current.keyword_ids) ? current.keyword_ids.length : 0;
+      const competitorCount = Array.isArray(current.competitor_ids) ? current.competitor_ids.length : 0;
+      const memoryCount = Array.isArray(current.memory_doc_ids) ? current.memory_doc_ids.length : 0;
+      const meta = current.meta && typeof current.meta === "object" ? current.meta : {};
+      const sourceId = String(meta.current_template_id || "").trim();
+      const sourceTemplate = sourceId ? (state.personalTemplates || []).find((row) => String(row.id || "") === sourceId) : null;
+      const title = sourceTemplate ? personalTemplateName(sourceTemplate) : (current.name && !isPersonalDefaultTemplate(current) ? personalTemplateName(current) : "未指定模板");
+      box.innerHTML = `<div class="personal-template-card active">
+        <div>
+          <strong>${escapeHtml(title)}</strong>
+          <div class="personal-template-meta">关键词 ${keywordCount} · 同行 ${competitorCount} · 记忆 ${memoryCount}</div>
+        </div>
+      </div>`;
     }
 
     function renderPersonalSettings() {
@@ -7345,9 +7368,10 @@
         const current = (state.personalTemplates || []).find((row) => String(row.id || "") === String(state.personalEditingTemplateId || ""));
         editingLabel.textContent = current ? `编辑：${personalTemplateName(current)}` : "新建模板";
       }
+      renderPersonalCurrentTemplate();
       renderPersonalSavedTemplates();
-      renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "", "data-delete-personal-keyword");
-      renderPersonalRows("personalCompetitorList", state.personalCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "", "data-delete-personal-competitor");
+      renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "", "data-delete-personal-keyword", "删除", "data-sync-personal-keyword");
+      renderPersonalRows("personalCompetitorList", state.personalCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "", "data-delete-personal-competitor", "删除", "data-sync-personal-competitor");
       const mem = $("personalMemoryList");
       if (mem) {
         mem.innerHTML = state.personalMemoryDocs.length
@@ -7424,15 +7448,42 @@
       if (!options.silent) toast("已保存");
     }
 
+    async function usePersonalTemplate(templateId, btn = null) {
+      const row = (state.personalTemplates || []).find((item) => String(item.id || "") === String(templateId || ""));
+      if (!row) throw new Error("模板不存在");
+      personalSetBusy(btn, true, "保存中...");
+      try {
+        const data = await api("/api/ip-content/personal-default", {
+          method: "PUT",
+          json: {
+            name: personalTemplateName(row),
+            keyword_ids: Array.isArray(row.keyword_ids) ? row.keyword_ids : [],
+            competitor_ids: Array.isArray(row.competitor_ids) ? row.competitor_ids : [],
+            memory_doc_ids: Array.isArray(row.memory_doc_ids) ? row.memory_doc_ids : [],
+            memory_docs: Array.isArray(row.memory_docs) ? row.memory_docs : [],
+            requirements: { ...(((state.personalDefault || {}).requirements && typeof (state.personalDefault || {}).requirements === "object") ? state.personalDefault.requirements : personalSurveyRequirements()), ...((row.requirements && typeof row.requirements === "object") ? row.requirements : {}) },
+            meta: { ...(row.meta || {}), source: "h5_personal_current_template", current_template_id: row.id },
+          },
+        });
+        state.personalDefault = data.item || {};
+        applyPersonalSurvey(state.personalDefault);
+        renderPersonalSettings();
+        personalSetStatus("当前使用模板已更新。");
+      } finally {
+        personalSetBusy(btn, false);
+      }
+    }
+
     async function addPersonalKeyword() {
       const input = $("personalKeywordInput");
       const displayInput = $("personalKeywordDisplayName");
       const keyword = (input && input.value || "").trim();
       if (!keyword) throw new Error("请填写关键词");
-      await api("/api/ip-content/keywords", { method: "POST", json: { keyword, display_name: (displayInput && displayInput.value || "").trim() || keyword, meta: { source: "h5_personal_settings" } } });
+      const data = await api("/api/ip-content/keywords", { method: "POST", json: { keyword, display_name: (displayInput && displayInput.value || "").trim() || keyword, meta: { source: "h5_personal_settings" } } });
       if (input) input.value = "";
       if (displayInput) displayInput.value = "";
       await refreshPersonalDataPreserveSelection({ keywords: true });
+      if (data.item && data.item.id) await syncPersonalKeyword(data.item.id);
     }
 
     async function addPersonalCompetitor() {
@@ -7440,9 +7491,42 @@
       const input = $("personalCompetitorKey");
       const accountKey = (input && input.value || "").trim();
       if (!accountKey) throw new Error("请填写账号标识");
-      await api("/api/ip-content/competitors", { method: "POST", json: { platform, account_key: accountKey, display_name: accountKey, meta: { source: "h5_personal_settings" } } });
+      const data = await api("/api/ip-content/competitors", { method: "POST", json: { platform, account_key: accountKey, display_name: accountKey, meta: { source: "h5_personal_settings" } } });
       if (input) input.value = "";
       await refreshPersonalDataPreserveSelection({ competitors: true });
+      if (data.item && data.item.id) await syncPersonalCompetitor(data.item.id);
+    }
+
+    async function syncPersonalKeyword(keywordId, btn = null) {
+      if (!keywordId) return;
+      personalSetBusy(btn, true, "同步中...");
+      try {
+        const data = await api(`/api/ip-content/keywords/${encodeURIComponent(keywordId)}/sync`, {
+          method: "POST",
+          json: { page_size: 20, date_window: 24 },
+        });
+        const count = Array.isArray(data.items) ? data.items.length : 0;
+        personalSetStatus(`关键词已同步，入库 ${count} 条。`);
+        await refreshPersonalDataPreserveSelection({ keywords: true });
+      } finally {
+        personalSetBusy(btn, false);
+      }
+    }
+
+    async function syncPersonalCompetitor(competitorId, btn = null) {
+      if (!competitorId) return;
+      personalSetBusy(btn, true, "同步中...");
+      try {
+        const data = await api(`/api/ip-content/competitors/${encodeURIComponent(competitorId)}/sync`, {
+          method: "POST",
+          json: { count: 20 },
+        });
+        const count = Array.isArray(data.items) ? data.items.length : 0;
+        personalSetStatus(`同行账号已同步，入库 ${count} 条。`);
+        await refreshPersonalDataPreserveSelection({ competitors: true });
+      } finally {
+        personalSetBusy(btn, false);
+      }
     }
 
     function personalUploadFileKey(file) {
@@ -7583,7 +7667,47 @@
       return sections.join("\n\n").trim();
     }
 
+    function personalUniqueIds(ids) {
+      const seen = {};
+      return (ids || []).map((id) => String(id || "").trim()).filter((id) => {
+        if (!id || seen[id]) return false;
+        seen[id] = true;
+        return true;
+      });
+    }
+
+    function removePersonalDefaultId(kind, id) {
+      const item = state.personalDefault || {};
+      const key = kind === "keyword" ? "keyword_ids" : (kind === "competitor" ? "competitor_ids" : "memory_doc_ids");
+      const strId = String(id || "");
+      item[key] = (Array.isArray(item[key]) ? item[key] : []).filter((value) => String(value || "") !== strId);
+      if (kind === "memory") {
+        item.memory_docs = (Array.isArray(item.memory_docs) ? item.memory_docs : []).filter((doc) => String((doc && (doc.doc_id || doc.id)) || "") !== strId);
+      }
+      state.personalDefault = item;
+    }
+
     async function savePersonalDefaultSilently() {
+      const existing = state.personalDefault || {};
+      const keywordIds = personalUniqueIds([...(Array.isArray(existing.keyword_ids) ? existing.keyword_ids : []), ...personalCleanIntIds(state.personalSelectedKeywords)]).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0);
+      const competitorIds = personalUniqueIds([...(Array.isArray(existing.competitor_ids) ? existing.competitor_ids : []), ...personalCleanIntIds(state.personalSelectedCompetitors)]).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0);
+      const memoryIds = personalUniqueIds([...(Array.isArray(existing.memory_doc_ids) ? existing.memory_doc_ids : []), ...personalCleanStringIds(state.personalSelectedMemories)]);
+      const selectedDocs = state.personalMemoryDocs
+        .filter((doc) => memoryIds.includes(personalDocId(doc)))
+        .map((doc) => ({ doc_id: personalDocId(doc), title: doc.title || doc.filename || "", content_text: doc.content_text || doc.content_preview || "" }));
+      const data = await api("/api/ip-content/personal-default", {
+        method: "PUT",
+        json: {
+          name: existing.name || "个人默认模板",
+          keyword_ids: keywordIds,
+          competitor_ids: competitorIds,
+          memory_doc_ids: memoryIds,
+          memory_docs: selectedDocs,
+          requirements: { ...((existing.requirements && typeof existing.requirements === "object") ? existing.requirements : {}), ...personalSurveyRequirements() },
+          meta: { ...((existing.meta && typeof existing.meta === "object") ? existing.meta : {}), source: "h5_personal_settings" },
+        },
+      });
+      state.personalDefault = data.item || existing;
       personalSetStatus("");
       renderPersonalSettings();
     }
@@ -7617,7 +7741,7 @@
         if (!resp.ok || data.ok === false) throw new Error(data.detail || data.message || "AI 理解失败");
         state.personalGeneratedDocuments = data.documents || {};
         state.personalGeneratedDocOrder = Array.isArray(data.doc_types) && data.doc_types.length ? data.doc_types : docTypes;
-        setPersonalSettingsTab("memory");
+        setPersonalSettingsTab("upload");
         renderPersonalGeneratedDocs();
         personalSetStatus("AI 理解完成，审核后存入记忆。");
       } finally {
@@ -7743,6 +7867,7 @@
         headers: { "X-Installation-Id": iid },
       });
       delete state.personalSelectedMemories[String(docId)];
+      removePersonalDefaultId("memory", docId);
       await refreshPersonalDataPreserveSelection({ memories: true });
       await savePersonalDefaultSilently();
       personalSetStatus("记忆文件已删除。");
@@ -11331,13 +11456,20 @@
     $("personalSettingsView")?.addEventListener("click", async (evt) => {
       const keywordBtn = evt.target.closest("[data-delete-personal-keyword]");
       const competitorBtn = evt.target.closest("[data-delete-personal-competitor]");
+      const keywordSyncBtn = evt.target.closest("[data-sync-personal-keyword]");
+      const competitorSyncBtn = evt.target.closest("[data-sync-personal-competitor]");
       const uploadRemove = evt.target.closest("[data-remove-personal-upload]");
       const referenceRemove = evt.target.closest("[data-remove-personal-reference]");
       const previewMemoryBtn = evt.target.closest("[data-preview-personal-memory]");
       const deleteMemoryBtn = evt.target.closest("[data-delete-personal-memory]");
       const editTemplateBtn = evt.target.closest("[data-edit-personal-template]");
+      const useTemplateBtn = evt.target.closest("[data-use-personal-template]");
       const dispatchTemplateBtn = evt.target.closest("[data-agent-dispatch-template]");
       try {
+        if (useTemplateBtn) {
+          await usePersonalTemplate(useTemplateBtn.dataset.usePersonalTemplate || "", useTemplateBtn);
+          return;
+        }
         if (dispatchTemplateBtn) {
           await openAgentManage({ ipTemplateId: dispatchTemplateBtn.dataset.agentDispatchTemplate || "" });
           return;
@@ -11369,15 +11501,25 @@
           await deletePersonalMemory(deleteMemoryBtn.dataset.deletePersonalMemory || "");
           return;
         }
+        if (keywordSyncBtn) {
+          await syncPersonalKeyword(keywordSyncBtn.dataset.syncPersonalKeyword || "", keywordSyncBtn);
+          return;
+        }
+        if (competitorSyncBtn) {
+          await syncPersonalCompetitor(competitorSyncBtn.dataset.syncPersonalCompetitor || "", competitorSyncBtn);
+          return;
+        }
         if (keywordBtn) {
           await api(`/api/ip-content/keywords/${encodeURIComponent(keywordBtn.dataset.deletePersonalKeyword || "")}`, { method: "DELETE" });
           delete state.personalSelectedKeywords[String(keywordBtn.dataset.deletePersonalKeyword || "")];
+          removePersonalDefaultId("keyword", keywordBtn.dataset.deletePersonalKeyword || "");
           await refreshPersonalDataPreserveSelection({ keywords: true });
           await savePersonalDefaultSilently();
         }
         if (competitorBtn) {
           await api(`/api/ip-content/competitors/${encodeURIComponent(competitorBtn.dataset.deletePersonalCompetitor || "")}`, { method: "DELETE" });
           delete state.personalSelectedCompetitors[String(competitorBtn.dataset.deletePersonalCompetitor || "")];
+          removePersonalDefaultId("competitor", competitorBtn.dataset.deletePersonalCompetitor || "");
           await refreshPersonalDataPreserveSelection({ competitors: true });
           await savePersonalDefaultSilently();
         }

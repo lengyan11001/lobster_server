@@ -2317,7 +2317,7 @@
     }
     .personal-tabs {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 6px;
       padding: 6px;
       width: 100%;
@@ -2453,6 +2453,10 @@
     .personal-template-card strong { display: block; color: #17233d; }
     .personal-template-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
     .personal-template-card button { flex: 0 0 auto; padding: 7px 12px; border-radius: 999px; background: rgba(36,92,255,.08); color: var(--blue); box-shadow: none; font-size: 12px; }
+    .personal-current-template {
+      display: grid;
+      gap: 8px;
+    }
     .personal-block {
       display: grid;
       gap: 11px;

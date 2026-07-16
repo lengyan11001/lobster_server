@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260716-personal-sync-1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260716-ip-profile-flow-2" />
 </head>
 <body>
   <main class="shell">
@@ -728,14 +728,15 @@
             </div>
           </div>
           <div class="personal-tabs" id="personalSettingsTabs">
-            <button type="button" class="active" data-personal-tab="profile">资料调查</button>
+            <button type="button" class="active" data-personal-tab="keywords">关键词</button>
             <button type="button" data-personal-tab="competitors">同行账号</button>
-            <button type="button" data-personal-tab="keywords">关键词</button>
+            <button type="button" data-personal-tab="profile">资料调查</button>
+            <button type="button" data-personal-tab="upload">上传资料</button>
             <button type="button" data-personal-tab="memory">记忆文件</button>
             <button type="button" data-personal-tab="template">模板</button>
           </div>
           <div class="personal-status hidden" id="personalStatusMsg"></div>
-          <div class="personal-panel active" data-personal-panel="profile">
+          <div class="personal-panel" data-personal-panel="profile">
             <div class="personal-template-stack">
               <div class="personal-survey-wizard">
                 <div class="personal-survey-top">
@@ -794,6 +795,10 @@
           </div>
           <div class="personal-panel" data-personal-panel="template">
             <div class="personal-template-stack">
+              <div class="personal-block">
+                <strong>当前使用模板</strong>
+                <div class="personal-current-template" id="personalCurrentTemplateBox"></div>
+              </div>
               <div class="personal-block personal-card-accent">
                 <div class="personal-template-editor-head">
                   <strong id="personalTemplateEditState">新建模板</strong>
@@ -812,7 +817,7 @@
               </div>
             </div>
           </div>
-          <div class="personal-panel" data-personal-panel="memory">
+          <div class="personal-panel" data-personal-panel="upload">
             <div class="personal-grid">
               <div class="personal-block personal-upload-block">
                 <strong>上传资料</strong>
@@ -868,9 +873,13 @@
                 </div>
                 <input id="personalMemoryTitle" type="text" placeholder="新文档名字">
                 <button type="button" id="personalSaveMemoryBtn">存入记忆</button>
-                <strong>已保存记忆文件</strong>
-                <div class="personal-list" id="personalMemoryList"></div>
               </div>
+            </div>
+          </div>
+          <div class="personal-panel" data-personal-panel="memory">
+            <div class="personal-block">
+              <strong>已保存记忆文件</strong>
+              <div class="personal-list" id="personalMemoryList"></div>
             </div>
             <div class="personal-block">
               <strong>内容预览</strong>
@@ -1239,6 +1248,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260716-personal-sync-1"></script>
+  <script src="/h5-static/h5-app.js?v=20260716-ip-profile-flow-2"></script>
 </body>
 </html>
