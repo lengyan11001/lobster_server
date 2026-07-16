@@ -7106,11 +7106,7 @@
       (item.keyword_ids || []).forEach((id) => { if (id) state.personalSelectedKeywords[String(id)] = true; });
       (item.competitor_ids || []).forEach((id) => { if (id) state.personalSelectedCompetitors[String(id)] = true; });
       (item.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
-      const req = item.requirements || {};
       if ($("personalTemplateName")) $("personalTemplateName").value = item.name || "";
-      if ($("personalOralReq")) $("personalOralReq").value = req.oral || req.industry_oral || req.ip_oral || "";
-      if ($("personalMomentsReq")) $("personalMomentsReq").value = req.moments || req.moments_copy || "";
-      if ($("personalImageReq")) $("personalImageReq").value = req.image || "";
     }
 
     async function refreshPersonalDataPreserveSelection(parts = {}) {
@@ -7222,9 +7218,6 @@
       state.personalSelectedCompetitors = {};
       state.personalSelectedMemories = {};
       if ($("personalTemplateName")) $("personalTemplateName").value = "";
-      if ($("personalOralReq")) $("personalOralReq").value = "";
-      if ($("personalMomentsReq")) $("personalMomentsReq").value = "";
-      if ($("personalImageReq")) $("personalImageReq").value = "";
       personalSetStatus("");
       renderPersonalSettings();
     }
@@ -7345,14 +7338,7 @@
         competitor_ids: personalCleanIntIds(state.personalSelectedCompetitors),
         memory_doc_ids: memoryIds,
         memory_docs: selectedDocs,
-        requirements: {
-          oral: (($("personalOralReq") && $("personalOralReq").value) || "").trim(),
-          industry_oral: (($("personalOralReq") && $("personalOralReq").value) || "").trim(),
-          ip_oral: (($("personalOralReq") && $("personalOralReq").value) || "").trim(),
-          moments: (($("personalMomentsReq") && $("personalMomentsReq").value) || "").trim(),
-          image: (($("personalImageReq") && $("personalImageReq").value) || "").trim(),
-          ...personalSurveyRequirements(),
-        },
+        requirements: personalSurveyRequirements(),
         meta: { source: "h5_personal_settings" },
       };
       const editingId = String(state.personalEditingTemplateId || "").trim();
