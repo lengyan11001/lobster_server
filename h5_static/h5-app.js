@@ -4151,10 +4151,10 @@
       const offlineCount = snapshots.filter((row) => row.snapshot.mode === "offline").length;
       const onlineCount = workingCount + idleCount;
       const roles = [
-        { id: "sales", departmentId: "sales", name: "销售", status: "待命", target: "salesWorkflow" },
-        { id: "customer_service", departmentId: "customer_service", name: "客服", status: "待命", comingSoon: true },
-        { id: "overseas", departmentId: "overseas", name: "海外员工", status: "待命", comingSoon: true },
-        { id: "hr", departmentId: "operations", name: "HR", status: "待命", comingSoon: true },
+        { id: "sales", departmentId: "sales", name: "销售", status: "待命" },
+        { id: "customer_service", departmentId: "customer_service", name: "客服", status: "待命" },
+        { id: "overseas", departmentId: "overseas", name: "海外员工", status: "待命" },
+        { id: "hr", departmentId: "operations", name: "HR", status: "待命" },
       ];
       const runningCount = (state.runs || []).filter(isActiveRun).length;
       if ($("officeDeviceCount")) $("officeDeviceCount").textContent = String(devices.length);
@@ -4169,11 +4169,10 @@
       updateBossOfficeStats(onlineCount, workingCount);
       floor.style.minHeight = "";
       floor.innerHTML = roles.map((role, index) => {
-        const img = employeeAsset({ installation_id: role.id }, index, role.comingSoon ? "offline" : "idle");
+        const img = employeeAsset({ installation_id: role.id }, index, "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
-        const targetAttr = role.target ? ` data-home-target="${escapeHtml(role.target)}"` : "";
-        const soonAttr = role.comingSoon ? ` data-role-coming-soon="1"` : "";
-        return `<button class="office-employee-card${role.comingSoon ? " coming-soon" : ""}" type="button"${targetAttr}${soonAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
+        const departmentAttr = role.departmentId ? ` data-role-department="${escapeHtml(role.departmentId)}"` : "";
+        return `<button class="office-employee-card" type="button"${departmentAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
           <img src="${escapeHtml(img)}" alt="" loading="lazy">
           <span class="office-employee-info">
             <strong>${escapeHtml(role.name || "员工")}</strong>

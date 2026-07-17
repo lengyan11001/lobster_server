@@ -4618,16 +4618,18 @@
     .lead-center-shell,
     .tutorial-shell {
       display: grid;
-      gap: 14px;
+      gap: 8px;
       min-height: calc(100dvh - 96px);
-      padding: 10px 0 24px;
+      align-content: start;
+      padding: 6px 0 16px;
     }
     .asset-library-head,
     .personal-list-page-head {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: 8px;
     }
     .asset-library-head .asset-library-tabs {
       flex: 1 1 auto;
@@ -4636,8 +4638,8 @@
     .asset-library-head > button,
     .personal-list-page-head button {
       flex: 0 0 auto;
-      min-height: 40px;
-      padding: 0 14px;
+      min-height: 34px;
+      padding: 0 12px;
       border-radius: 999px;
       font-size: 12px;
     }
@@ -4659,7 +4661,7 @@
     .lead-domain-tabs,
     .lead-platform-tabs {
       display: flex;
-      gap: 8px;
+      gap: 6px;
       overflow-x: auto;
       scrollbar-width: none;
     }
@@ -4674,8 +4676,8 @@
     .lead-domain-tabs button,
     .lead-platform-tabs button {
       flex: 0 0 auto;
-      min-height: 42px;
-      padding: 0 16px;
+      min-height: 36px;
+      padding: 0 12px;
       color: #17233d;
       border: 1px solid rgba(223,230,242,.9);
       border-radius: 999px;
@@ -4704,8 +4706,10 @@
     }
     .asset-library-tabs,
     .content-record-tabs {
-      padding: 7px;
-      border-radius: 24px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      padding: 4px;
+      border-radius: 18px;
       background:
         radial-gradient(circle at 12% 20%, rgba(36,92,255,.16), transparent 38%),
         linear-gradient(135deg, rgba(255,255,255,.9), rgba(235,246,255,.72));
@@ -4714,19 +4718,21 @@
     }
     .asset-library-tabs button,
     .content-record-tabs button {
-      min-width: 138px;
-      min-height: 52px;
+      min-width: 0;
+      min-height: 34px;
+      padding: 0 6px;
       justify-content: center;
-      border-radius: 18px;
+      border-radius: 14px;
+      font-size: 12px;
       font-weight: 950;
     }
     .asset-library-tabs button span {
-      margin-left: 5px;
-      padding: 2px 8px;
+      margin-left: 3px;
+      padding: 1px 5px;
       border-radius: 999px;
       color: #245cff;
       background: rgba(36,92,255,.09);
-      font-size: 12px;
+      font-size: 10px;
     }
     .asset-library-tabs button.active,
     .content-record-tabs button.active,
@@ -4742,17 +4748,17 @@
     }
     .asset-library-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 7px;
     }
     .asset-library-card {
       display: grid;
-      gap: 8px;
+      gap: 6px;
       align-content: start;
       min-width: 0;
-      min-height: 184px;
-      padding: 9px;
-      border-radius: 20px;
+      min-height: 128px;
+      padding: 7px;
+      border-radius: 16px;
       border: 1px solid rgba(223,230,242,.9);
       background:
         radial-gradient(circle at 20% 0%, rgba(19,168,115,.12), transparent 36%),
@@ -4769,12 +4775,12 @@
     .asset-library-thumb {
       width: 100%;
       height: auto;
-      aspect-ratio: 1 / 1;
+      aspect-ratio: 4 / 3;
       display: grid;
       place-items: center;
       overflow: hidden;
       object-fit: cover;
-      border-radius: 16px;
+      border-radius: 12px;
       color: #6d7890;
       background: linear-gradient(135deg, #eef5ff, #eafdf7);
       border: 1px solid rgba(223,230,242,.9);
@@ -4789,14 +4795,14 @@
     .asset-library-card-main {
       min-width: 0;
       display: grid;
-      gap: 4px;
+      gap: 2px;
     }
     .asset-library-card-main strong {
       overflow: hidden;
       color: #102036;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 950;
     }
     .asset-library-card-main span,
@@ -4805,7 +4811,7 @@
       color: #6d7890;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: 11px;
+      font-size: 10px;
       font-style: normal;
     }
     .asset-library-card-main .asset-status {
@@ -4816,16 +4822,16 @@
       color: #b42318;
     }
     .asset-audio-thumb {
-      aspect-ratio: 1 / 1;
+      aspect-ratio: 4 / 3;
       display: grid;
       place-items: center;
-      border-radius: 16px;
+      border-radius: 12px;
       color: #0f4767;
       background:
         radial-gradient(circle at 22% 20%, rgba(19,183,216,.22), transparent 34%),
         linear-gradient(135deg, #e7f7ff, #f2fff8);
       border: 1px solid rgba(223,230,242,.9);
-      font-size: 36px;
+      font-size: 28px;
       font-weight: 950;
     }
     .asset-upload-status {
@@ -4845,7 +4851,7 @@
     .asset-library-pager {
       display: grid;
       grid-template-columns: auto 1fr auto;
-      gap: 10px;
+      gap: 8px;
       align-items: center;
     }
     .asset-library-pager span {
@@ -4855,12 +4861,12 @@
       font-weight: 900;
     }
     .asset-library-pager button {
-      min-height: 38px;
-      padding: 0 14px;
+      min-height: 32px;
+      padding: 0 12px;
       border-radius: 999px;
     }
     .asset-library-empty {
-      min-height: 220px;
+      min-height: 150px;
       grid-column: 1 / -1;
       display: grid;
       place-items: center;
