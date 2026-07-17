@@ -4023,6 +4023,12 @@
       color: #9effd7;
       font-size: 14px;
     }
+    #officeView .office-hero-chips .office-active-workflow-chip {
+      color: #06351f;
+      background: linear-gradient(135deg, #9effd7, #d9fff0);
+      box-shadow: 0 10px 22px rgba(19,168,115,.25);
+      font-weight: 950;
+    }
     #officeView .office-secretary-hero img {
       position: relative;
       z-index: 1;

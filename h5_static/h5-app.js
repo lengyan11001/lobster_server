@@ -2907,6 +2907,15 @@
       return String((state.workflowActive && state.workflowActive.template_key) || "").trim();
     }
 
+    function activeWorkflowTemplateRow() {
+      return workflowTemplateRows().find((tpl) => workflowTemplateIsActive(tpl)) || null;
+    }
+
+    function activeWorkflowTemplateName() {
+      const tpl = activeWorkflowTemplateRow();
+      return String((tpl && tpl.name) || (state.workflowActive && state.workflowActive.template_name) || "").trim();
+    }
+
     function workflowTemplateIsActive(tpl) {
       if (tpl && tpl.source === "system") {
         return !!activeWorkflowTemplateKey() && activeWorkflowTemplateKey() === String(tpl.id || "");
@@ -4527,9 +4536,16 @@
       if ($("officeWorkingCount")) $("officeWorkingCount").textContent = String(workingCount);
       if ($("officeIdleCount")) $("officeIdleCount").textContent = String(idleCount);
       if ($("officeOfflineCount")) $("officeOfflineCount").textContent = String(offlineCount);
+      const activeName = activeWorkflowTemplateName();
+      const activeChip = $("officeActiveWorkflowChip");
+      if (activeChip) {
+        activeChip.textContent = activeName ? `启用中：${activeName}` : "";
+        activeChip.title = activeName ? `当前启用：${activeName}` : "";
+        activeChip.classList.toggle("hidden", !activeName);
+      }
       updateBossOfficeStats(onlineCount, workingCount);
       floor.style.minHeight = "";
-      const roleHtml = roles.map((role, index) => {
+      const roleHtml = roles.sort((a, b) => Number(!!b.active) - Number(!!a.active)).map((role, index) => {
         const img = employeeAsset({ installation_id: role.id }, index, "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
         const targetAttr = role.target ? ` data-home-target="${escapeHtml(role.target)}"` : "";
@@ -4543,7 +4559,7 @@
           </span>
         </button>`;
       }).join("");
-      const templateHtml = customEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, roles.length + index)).join("");
+      const templateHtml = sortWorkflowTemplatesForDisplay(customEmployees).map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, roles.length + index)).join("");
       floor.innerHTML = roleHtml + templateHtml;
       renderOfficeRecentTasks();
       renderCustomEmployees();
