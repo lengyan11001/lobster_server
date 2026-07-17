@@ -2847,7 +2847,7 @@
         list.innerHTML = `<div class="hint">加载中...</div>`;
         return;
       }
-      const rows = workflowTemplateRows();
+      const rows = sortWorkflowTemplatesForDisplay(workflowTemplateRows());
       if (!rows.length) {
         list.innerHTML = `<div class="hint">暂无模板</div>`;
         return;
@@ -2855,14 +2855,18 @@
       list.innerHTML = rows.map((tpl) => {
         const own = tpl.source === "own";
         const system = tpl.source === "system";
+        const active = workflowTemplateIsActive(tpl);
         const nodeCount = Array.isArray(tpl.nodes) ? tpl.nodes.length : 0;
-        const sourceText = system ? "系统提供 · 全员可见" : (tpl.source === "granted" ? `来自 ${tpl.owner_name || "代理商"}` : `${nodeCount} 个节点`);
+        const baseSourceText = system ? "系统提供 · 全员可见" : (tpl.source === "granted" ? `来自 ${tpl.owner_name || "代理商"}` : `${nodeCount} 个节点`);
+        const sourceText = active ? `启用中 · ${baseSourceText}` : baseSourceText;
         const copyBtn = `<button class="ghost" type="button" data-workflow-copy="${escapeHtml(tpl.id)}">复制</button>`;
-        const activateBtn = `<button type="button" data-workflow-activate-template="${escapeHtml(tpl.id)}">启用</button>`;
+        const activateBtn = active
+          ? `<button class="ghost danger-text" type="button" data-workflow-stop-template="${escapeHtml(tpl.id)}">停用</button>`
+          : `<button type="button" data-workflow-activate-template="${escapeHtml(tpl.id)}">启用</button>`;
         const deleteBtn = own ? `<button class="ghost" type="button" data-workflow-delete="${tpl.id}">删除</button>` : "";
-        return `<div class="workflow-template-item">
+        return `<div class="workflow-template-item${active ? " active" : ""}">
           <div>
-            <strong>${escapeHtml(tpl.name || "工作流模板")}</strong>
+            <strong>${escapeHtml(tpl.name || "工作流模板")}${active ? `<b class="workflow-active-badge">启用中</b>` : ""}</strong>
             <span>${escapeHtml(sourceText)}${system ? ` · ${escapeHtml(nodeCount + " 个节点")}` : ""}</span>
           </div>
           <div class="workflow-template-actions">
@@ -2893,6 +2897,30 @@
 
     function workflowTemplateCanEdit(tpl) {
       return !!tpl && tpl.source === "own";
+    }
+
+    function activeWorkflowTemplateId() {
+      return String((state.workflowActive && state.workflowActive.template_id) || "").trim();
+    }
+
+    function activeWorkflowTemplateKey() {
+      return String((state.workflowActive && state.workflowActive.template_key) || "").trim();
+    }
+
+    function workflowTemplateIsActive(tpl) {
+      if (tpl && tpl.source === "system") {
+        return !!activeWorkflowTemplateKey() && activeWorkflowTemplateKey() === String(tpl.id || "");
+      }
+      const id = activeWorkflowTemplateId();
+      return !!id && String(tpl && tpl.id || "") === id;
+    }
+
+    function sortWorkflowTemplatesForDisplay(rows) {
+      return (Array.isArray(rows) ? rows : []).slice().sort((a, b) => {
+        const activeDelta = Number(workflowTemplateIsActive(b)) - Number(workflowTemplateIsActive(a));
+        if (activeDelta) return activeDelta;
+        return 0;
+      });
     }
 
     function workflowTemplateNodeCount(tpl) {
@@ -2930,13 +2958,14 @@
       const nodeCount = workflowTemplateNodeCount(tpl);
       const own = workflowTemplateCanEdit(tpl);
       const system = tpl && tpl.source === "system";
-      return `<button class="custom-employee-card${compact ? " compact" : ""}" type="button" data-custom-employee-detail="${escapeHtml(tpl.id || "")}">
+      const active = workflowTemplateIsActive(tpl);
+      return `<button class="custom-employee-card${compact ? " compact" : ""}${active ? " active" : ""}" type="button" data-custom-employee-detail="${escapeHtml(tpl.id || "")}">
         <span class="custom-employee-avatar">${escapeHtml(workflowTemplateInitial(tpl))}</span>
         <span class="custom-employee-main">
           <strong>${escapeHtml(tpl.name || "自定义员工")}</strong>
           <em>${escapeHtml(nodeCount ? `${nodeCount} 个节点` : "暂无节点")}</em>
         </span>
-        <b>${system ? "系统" : (own ? "我的" : "授权")}</b>
+        <b>${active ? "启用中" : (system ? "系统" : (own ? "我的" : "授权"))}</b>
       </button>`;
     }
 
@@ -2944,21 +2973,22 @@
       const nodeCount = workflowTemplateNodeCount(tpl);
       const own = workflowTemplateCanEdit(tpl);
       const system = tpl && tpl.source === "system";
+      const active = workflowTemplateIsActive(tpl);
       const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
-      return `<button class="office-employee-card custom-template" type="button" data-custom-employee-detail="${escapeHtml(tpl.id || "")}" style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(tpl.name || "定制员工")}">
+      return `<button class="office-employee-card custom-template${active ? " active" : ""}" type="button" data-custom-employee-detail="${escapeHtml(tpl.id || "")}" style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(tpl.name || "定制员工")}">
         <span class="office-custom-employee-avatar">${escapeHtml(workflowTemplateInitial(tpl))}</span>
         <span class="office-employee-info">
           <strong>${escapeHtml(tpl.name || "定制员工")}</strong>
           <em>${escapeHtml(nodeCount ? `${nodeCount} 个节点` : "暂无节点")}</em>
         </span>
-        <b class="office-custom-employee-tag">${system ? "系统" : (own ? "我的" : "授权")}</b>
+        <b class="office-custom-employee-tag">${active ? "启用中" : (system ? "系统" : (own ? "我的" : "授权"))}</b>
       </button>`;
     }
 
     function renderCustomEmployees() {
       const strip = $("customEmployeeStrip");
       if (!strip) return;
-      const rows = userWorkflowTemplateRows();
+      const rows = sortWorkflowTemplatesForDisplay(userWorkflowTemplateRows());
       if ($("customEmployeeTotal")) $("customEmployeeTotal").textContent = `(${rows.length})`;
       if (state.workflowTemplatesLoading) {
         strip.innerHTML = `<div class="custom-employee-empty">加载中...</div>`;
@@ -2981,7 +3011,7 @@
       const title = $("customEmployeeDialogTitle");
       if (!modal || !body) return;
       if (title) title.textContent = "自定义员工";
-      const rows = workflowTemplateRows();
+      const rows = sortWorkflowTemplatesForDisplay(workflowTemplateRows());
       body.innerHTML = rows.length
         ? `<div class="custom-employee-list">${rows.map((tpl) => customEmployeeCardHtml(tpl)).join("")}</div>`
         : `<div class="custom-employee-empty">暂无自定义员工</div>`;
@@ -3010,7 +3040,7 @@
           <button class="ghost" type="button" data-custom-employee-copy="${escapeHtml(tpl.id || "")}">复制</button>
           ${own ? `<button class="ghost danger-text" type="button" data-custom-employee-delete="${escapeHtml(tpl.id || "")}">删除</button>` : ""}
           ${own ? `<button type="button" data-custom-employee-edit="${escapeHtml(tpl.id || "")}">编辑</button>` : ""}
-          ${tpl.source === "system" ? "" : `<button type="button" data-custom-employee-activate="${escapeHtml(tpl.id || "")}">启用</button>`}
+          ${workflowTemplateIsActive(tpl) ? `<button class="ghost danger-text" type="button" data-custom-employee-stop="${escapeHtml(tpl.id || "")}">停用</button>` : `<button type="button" data-custom-employee-activate="${escapeHtml(tpl.id || "")}">启用</button>`}
         </div>
       </div>`;
       modal.classList.remove("hidden");
@@ -3125,6 +3155,7 @@
       const data = await api(`/api/h5-workflows/active?installation_id=${encodeURIComponent(iid)}`);
       state.workflowActive = data.activation || null;
       renderWorkflow();
+      if (document.querySelector("#officeView.active")) renderOfficeEmployees();
     }
 
     async function loadWorkflowSubUsers(reset = false) {
@@ -3172,16 +3203,26 @@
       try {
         const tpl = workflowTemplateById(id);
         if (tpl && tpl.source === "system") {
-          const copied = await copyWorkflowTemplateById(id, { openEditor: false, toast: false });
-          id = String((copied && copied.id) || "");
-          if (!id) throw new Error("系统模板启用失败");
+          const data = await api("/api/h5-workflows/activate-inline", {
+            method: "POST",
+            json: {
+              template_key: String(tpl.id || ""),
+              name: tpl.name || "系统员工模板",
+              nodes: cloneWorkflowNodes(tpl.nodes),
+              installation_id: iid,
+              timezone_offset_minutes: timezoneOffsetMinutes(),
+            },
+          });
+          state.workflowActive = data.activation || null;
+        } else {
+          const data = await api("/api/h5-workflows/activate", {
+            method: "POST",
+            json: { template_id: Number(id), installation_id: iid, timezone_offset_minutes: timezoneOffsetMinutes() },
+          });
+          state.workflowActive = data.activation || null;
         }
-        const data = await api("/api/h5-workflows/activate", {
-          method: "POST",
-          json: { template_id: Number(id), installation_id: iid, timezone_offset_minutes: timezoneOffsetMinutes() },
-        });
-        state.workflowActive = data.activation || null;
         await Promise.all([loadTasks({ reset: true }), loadWorkflowActive()]);
+        if (document.querySelector("#officeView.active")) renderOfficeEmployees();
         toast("工作流已启用");
       } finally {
         state.workflowSubmitting = false;
@@ -3198,6 +3239,7 @@
         await api(`/api/h5-workflows/activations/${encodeURIComponent(active.id)}/stop`, { method: "POST", json: {} });
         state.workflowActive = null;
         await Promise.all([loadTasks({ reset: true }), loadWorkflowActive()]);
+        if (document.querySelector("#officeView.active")) renderOfficeEmployees();
         toast("工作流已停用");
       } finally {
         state.workflowSubmitting = false;
@@ -4465,11 +4507,14 @@
       const offlineCount = snapshots.filter((row) => row.snapshot.mode === "offline").length;
       const onlineCount = workingCount + idleCount;
       const roles = [
-        { id: "sales", name: "销售", status: "待命", target: "salesWorkflow" },
-        { id: "customer_service", name: "客服", status: "敬请期待", comingSoon: true },
-        { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true },
-        { id: "hr", name: "HR", status: "敬请期待", comingSoon: true },
-      ];
+        { id: "sales", name: "销售", status: "待命", target: "salesWorkflow", systemTemplateId: "system_sales" },
+        { id: "customer_service", name: "客服", status: "敬请期待", comingSoon: true, systemTemplateId: "system_customer_service" },
+        { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true, systemTemplateId: "system_overseas" },
+        { id: "hr", name: "HR", status: "敬请期待", comingSoon: true, systemTemplateId: "system_hr" },
+      ].map((role) => {
+        const active = activeWorkflowTemplateKey() === String(role.systemTemplateId || "");
+        return active ? { ...role, status: "启用中", active } : role;
+      });
       const customEmployees = userWorkflowTemplateRows();
       const totalEmployees = roles.length + customEmployees.length;
       const runningCount = (state.runs || []).filter(isActiveRun).length;
@@ -4490,7 +4535,7 @@
         const targetAttr = role.target ? ` data-home-target="${escapeHtml(role.target)}"` : "";
         const departmentAttr = !role.target && role.departmentId ? ` data-role-department="${escapeHtml(role.departmentId)}"` : "";
         const disabledAttr = role.comingSoon ? ' disabled aria-disabled="true"' : "";
-        return `<button class="office-employee-card${role.comingSoon ? " coming-soon" : ""}" type="button"${targetAttr}${departmentAttr}${disabledAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
+        return `<button class="office-employee-card${role.comingSoon ? " coming-soon" : ""}${role.active ? " active" : ""}" type="button"${targetAttr}${departmentAttr}${disabledAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
           <img src="${escapeHtml(img)}" alt="" loading="lazy">
           <span class="office-employee-info">
             <strong>${escapeHtml(role.name || "员工")}</strong>
@@ -12315,6 +12360,7 @@
       const detailBtn = evt.target.closest("[data-custom-employee-detail]");
       const editBtn = evt.target.closest("[data-custom-employee-edit]");
       const activateBtn = evt.target.closest("[data-custom-employee-activate]");
+      const stopBtn = evt.target.closest("[data-custom-employee-stop]");
       const deleteBtn = evt.target.closest("[data-custom-employee-delete]");
       const copyBtn = evt.target.closest("[data-custom-employee-copy]");
       const demoBtn = evt.target.closest("[data-custom-employee-demo-node]");
@@ -12351,6 +12397,12 @@
         activateWorkflowTemplate(activateBtn.dataset.customEmployeeActivate || "")
           .then(closeCustomEmployeeDialog)
           .catch((err) => toast(err.message || "启用失败"));
+        return;
+      }
+      if (stopBtn) {
+        stopWorkflowActive()
+          .then(closeCustomEmployeeDialog)
+          .catch((err) => toast(err.message || "停用失败"));
         return;
       }
       if (deleteBtn) {
@@ -12424,6 +12476,7 @@
     $("workflowTemplateList")?.addEventListener("click", (evt) => {
       const loadBtn = evt.target.closest("[data-workflow-load]");
       const activateBtn = evt.target.closest("[data-workflow-activate-template]");
+      const stopBtn = evt.target.closest("[data-workflow-stop-template]");
       const deleteBtn = evt.target.closest("[data-workflow-delete]");
       const copyBtn = evt.target.closest("[data-workflow-copy]");
       if (loadBtn) {
@@ -12442,6 +12495,10 @@
       }
       if (activateBtn) {
         activateWorkflowTemplate(activateBtn.dataset.workflowActivateTemplate || "").catch((err) => toast(err.message || "启用失败"));
+        return;
+      }
+      if (stopBtn) {
+        stopWorkflowActive().catch((err) => toast(err.message || "停用失败"));
         return;
       }
       if (deleteBtn) {

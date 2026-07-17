@@ -49,6 +49,14 @@ class WorkflowActivateIn(BaseModel):
     timezone_offset_minutes: Optional[int] = None
 
 
+class WorkflowActivateInlineIn(BaseModel):
+    template_key: str = Field("", max_length=128)
+    name: str = Field("", max_length=160)
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    installation_id: str = Field("", max_length=128)
+    timezone_offset_minutes: Optional[int] = None
+
+
 def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat(timespec="seconds") + "Z" if dt else None
 
@@ -125,6 +133,8 @@ def _activation_payload(row: H5WorkflowActivation, template: Optional[H5Workflow
         "user_id": row.user_id,
         "installation_id": row.installation_id,
         "template_id": row.template_id,
+        "template_key": snapshot.get("template_key") or "",
+        "template_source": snapshot.get("source") or "",
         "template_name": template.name if template else snapshot.get("name", ""),
         "template_nodes": template_nodes or [],
         "status": row.status,
@@ -200,6 +210,90 @@ def _stop_active_for_device(db: Session, user_id: int, installation_id: str, now
         stopped_ids.append(row.id)
         _pause_task_ids(db, [int(x) for x in (row.scheduled_task_ids or []) if str(x).isdigit()], now)
     return stopped_ids
+
+
+def _activate_nodes_for_device(
+    *,
+    db: Session,
+    current_user: User,
+    owner: User,
+    installation_id: str,
+    template_id: int,
+    template_owner_user_id: int,
+    template_name: str,
+    nodes: list[dict[str, Any]],
+    timezone_offset_minutes: Optional[int],
+    snapshot_extra: Optional[dict[str, Any]] = None,
+):
+    now = datetime.utcnow()
+    stopped_ids = _stop_active_for_device(db, owner.id, installation_id, now)
+    db.commit()
+    created_task_ids: list[int] = []
+    try:
+        for node in nodes:
+            plan = node.get("plan") or {}
+            task_kind = str(plan.get("task_kind") or "").strip().lower()
+            payload = dict(plan.get("payload") or {})
+            payload["h5_context"] = {
+                **(payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}),
+                "workflow_template_id": template_id,
+                "workflow_template_name": template_name,
+                "workflow_template_key": (snapshot_extra or {}).get("template_key") or "",
+                "workflow_node_id": node.get("id"),
+                "workflow_node_time": node.get("time"),
+                "ability_key": node.get("ability_key"),
+                "ability_label": node.get("ability_label"),
+                "department_id": node.get("department_id"),
+                "department_name": node.get("department_name"),
+            }
+            scheduled = _create_task_row(
+                db,
+                ScheduledTaskCreate(
+                    title=str(plan.get("title") or node.get("ability_label") or template_name),
+                    task_kind=task_kind,
+                    content=str(plan.get("content") or f"H5 工作流：{node.get('ability_label') or template_name}"),
+                    payload=payload,
+                    schedule_type="daily_times",
+                    daily_times=[node["time"]],
+                    timezone_offset_minutes=timezone_offset_minutes if timezone_offset_minutes is not None else 480,
+                    installation_ids=[] if task_kind in _SERVER_SIDE_TASK_KINDS else [installation_id],
+                ),
+                target_user_id=owner.id,
+                created_by_user_id=current_user.id,
+                created_by_role="workflow",
+            )
+            created_task_ids.append(int(scheduled.id))
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        for tid in created_task_ids:
+            task = db.query(ScheduledTask).filter(ScheduledTask.id == tid).first()
+            if task:
+                _delete_task_row(db, task)
+        db.commit()
+        raise
+    snapshot = {"name": template_name, "nodes": nodes}
+    if snapshot_extra:
+        snapshot.update(snapshot_extra)
+    activation = H5WorkflowActivation(
+        user_id=owner.id,
+        installation_id=installation_id,
+        template_id=template_id,
+        template_owner_user_id=template_owner_user_id,
+        status="active",
+        scheduled_task_ids=created_task_ids,
+        template_snapshot=snapshot,
+        started_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(activation)
+    db.commit()
+    db.refresh(activation)
+    tasks = db.query(ScheduledTask).filter(ScheduledTask.id.in_(created_task_ids)).all() if created_task_ids else []
+    return activation, stopped_ids, tasks
 
 
 @router.get("/api/h5-workflows/templates", summary="H5 工作流模板列表")
@@ -424,73 +518,55 @@ def activate_workflow_template(
         raise HTTPException(status_code=400, detail="请选择设备")
     template = _accessible_template(db, body.template_id, owner.id)
     nodes = _clean_nodes(template.nodes or [])
-    now = datetime.utcnow()
-    stopped_ids = _stop_active_for_device(db, owner.id, iid, now)
-    db.commit()
-    created_task_ids: list[int] = []
-    try:
-        for node in nodes:
-            plan = node.get("plan") or {}
-            task_kind = str(plan.get("task_kind") or "").strip().lower()
-            payload = dict(plan.get("payload") or {})
-            payload["h5_context"] = {
-                **(payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}),
-                "workflow_template_id": template.id,
-                "workflow_template_name": template.name,
-                "workflow_node_id": node.get("id"),
-                "workflow_node_time": node.get("time"),
-                "ability_key": node.get("ability_key"),
-                "ability_label": node.get("ability_label"),
-                "department_id": node.get("department_id"),
-                "department_name": node.get("department_name"),
-            }
-            scheduled = _create_task_row(
-                db,
-                ScheduledTaskCreate(
-                    title=str(plan.get("title") or node.get("ability_label") or template.name),
-                    task_kind=task_kind,
-                    content=str(plan.get("content") or f"H5 工作流：{node.get('ability_label') or template.name}"),
-                    payload=payload,
-                    schedule_type="daily_times",
-                    daily_times=[node["time"]],
-                    timezone_offset_minutes=body.timezone_offset_minutes if body.timezone_offset_minutes is not None else 480,
-                    installation_ids=[] if task_kind in _SERVER_SIDE_TASK_KINDS else [iid],
-                ),
-                target_user_id=owner.id,
-                created_by_user_id=current_user.id,
-                created_by_role="workflow",
-            )
-            created_task_ids.append(int(scheduled.id))
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        for tid in created_task_ids:
-            task = db.query(ScheduledTask).filter(ScheduledTask.id == tid).first()
-            if task:
-                _delete_task_row(db, task)
-        db.commit()
-        raise
-    activation = H5WorkflowActivation(
-        user_id=owner.id,
+    activation, stopped_ids, tasks = _activate_nodes_for_device(
+        db=db,
+        current_user=current_user,
+        owner=owner,
         installation_id=iid,
         template_id=template.id,
         template_owner_user_id=template.owner_user_id,
-        status="active",
-        scheduled_task_ids=created_task_ids,
-        template_snapshot={"name": template.name, "nodes": nodes},
-        started_at=now,
-        created_at=now,
-        updated_at=now,
+        template_name=template.name,
+        nodes=nodes,
+        timezone_offset_minutes=body.timezone_offset_minutes,
     )
-    db.add(activation)
-    db.commit()
-    db.refresh(activation)
-    tasks = db.query(ScheduledTask).filter(ScheduledTask.id.in_(created_task_ids)).all() if created_task_ids else []
     return {
         "ok": True,
         "activation": _activation_payload(activation, template),
+        "stopped_activation_ids": stopped_ids,
+        "tasks": [_serialize_task(task) for task in tasks],
+    }
+
+
+@router.post("/api/h5-workflows/activate-inline", summary="启用 H5 工作流快照")
+def activate_inline_workflow_template(
+    body: WorkflowActivateInlineIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    iid = (body.installation_id or "").strip()
+    if not iid:
+        raise HTTPException(status_code=400, detail="请选择设备")
+    template_key = (body.template_key or "").strip()[:128]
+    if not template_key:
+        raise HTTPException(status_code=400, detail="缺少系统模板标识")
+    name = (body.name or "系统员工模板").strip()[:160] or "系统员工模板"
+    nodes = _clean_nodes(body.nodes or [])
+    activation, stopped_ids, tasks = _activate_nodes_for_device(
+        db=db,
+        current_user=current_user,
+        owner=owner,
+        installation_id=iid,
+        template_id=0,
+        template_owner_user_id=owner.id,
+        template_name=name,
+        nodes=nodes,
+        timezone_offset_minutes=body.timezone_offset_minutes,
+        snapshot_extra={"template_key": template_key, "source": "system"},
+    )
+    return {
+        "ok": True,
+        "activation": _activation_payload(activation),
         "stopped_activation_ids": stopped_ids,
         "tasks": [_serialize_task(task) for task in tasks],
     }
