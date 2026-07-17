@@ -6400,7 +6400,7 @@
           loadWorkflowTemplates().catch(() => {}),
           loadWorkflowActive().catch(() => {}),
           loadTasks({ reset: true, limit: 80 }).catch(() => {}),
-          loadRuns({ reset: true, limit: 80 }).catch(() => {}),
+          loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}),
         ]).then(renderWorkflow);
       }
       if (key === "personalSettings" && !state.personalSettingsBackTab) state.personalSettingsBackTab = "profile";
@@ -6414,16 +6414,16 @@
       if (key === "secretary") {
         renderSecretaryView();
         Promise.all([
-          loadTasks({ reset: true, limit: 80 }),
-          loadRuns({ reset: true, limit: 80 }),
+          loadTasks({ reset: true, limit: 40 }),
+          loadRuns({ reset: true, limit: 20, compact: true }),
           loadWorkbenchJobs({ limit: 80 }),
         ]).then(renderSecretaryView);
       }
       if (key === "department") {
         renderDepartmentView();
         Promise.all([
-          loadTasks({ reset: true, limit: 80 }).catch(() => {}),
-          loadRuns({ reset: true, limit: 80 }).catch(() => {}),
+          loadTasks({ reset: true, limit: 40 }).catch(() => {}),
+          loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}),
         ]).then(renderDepartmentDayBoard);
       }
       if (key === "ability") renderAbilityView();
@@ -6434,8 +6434,8 @@
       if (key === "workList") {
         renderWorkList();
         Promise.all([
-          loadTasks({ reset: true, limit: 80 }),
-          loadRuns({ reset: true, limit: 80 }),
+          loadTasks({ reset: true, limit: 40 }),
+          loadRuns({ reset: true, limit: 20, compact: true }),
           loadWorkbenchJobs({ limit: 80 }),
         ]).then(renderWorkList);
       }
@@ -7165,7 +7165,7 @@
         $("loginPanel").classList.add("hidden");
         $("appPanel").classList.remove("hidden");
         switchTab("office");
-        await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks({ reset: true }), loadRuns({ reset: true, limit: 80 }), loadTaskSkills()]);
+        await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks({ reset: true }), loadRuns({ reset: true, limit: 20, compact: true }), loadTaskSkills()]);
         return true;
       } catch (err) {
         localStorage.removeItem("lobster_h5_token");
@@ -11809,6 +11809,7 @@
       const reset = options.reset !== false;
       const append = !!options.append;
       const pageSize = Math.max(1, Math.min(100, parseInt(options.limit || "10", 10) || 10));
+      const compact = !!options.compact;
       const box = $("runList");
       if (!state.token) return;
       if (reset) {
@@ -11818,7 +11819,7 @@
       const offset = append ? state.runListOffset : 0;
       if (box && !append) box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
-        const data = await api(`/api/scheduled-tasks/runs?limit=${pageSize}&offset=${offset}`);
+        const data = await api(`/api/scheduled-tasks/runs?limit=${pageSize}&offset=${offset}${compact ? "&compact=1" : ""}`);
         const rows = Array.isArray(data.runs) ? data.runs : [];
         const pagination = data.pagination || {};
         state.runListOffset = offset + rows.length;
@@ -13147,10 +13148,4 @@
         $("topActions").classList.add("hidden");
         await refreshCaptcha();
       }
-      setInterval(refreshDeviceStatus, 7000);
-      setInterval(() => {
-        if (!state.token) return;
-        const activeView = document.querySelector(".view.active");
-        if (activeView && (activeView.id === "officeView" || activeView.id === "workListView" || activeView.id === "departmentView")) loadRuns({ reset: true, limit: 80 });
-      }, 5000);
     })();

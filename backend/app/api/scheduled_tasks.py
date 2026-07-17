@@ -477,6 +477,27 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
     }
 
 
+def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "task_id": row.task_id,
+        "created_by_role": row.created_by_role,
+        "installation_id": row.installation_id,
+        "claimed_by_installation_id": row.claimed_by_installation_id,
+        "title": row.title,
+        "task_kind": row.task_kind,
+        "payload": row.payload or {},
+        "status": row.status,
+        "progress": row.progress or {},
+        "error": row.error,
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+        "claimed_at": _iso(row.claimed_at),
+        "started_at": _iso(row.started_at),
+        "finished_at": _iso(row.finished_at),
+    }
+
+
 def _is_server_side_task(task_or_run: Any) -> bool:
     return str(getattr(task_or_run, "task_kind", "") or "").strip() in _SERVER_SIDE_TASK_KINDS
 
@@ -1692,6 +1713,7 @@ def run_scheduled_task_now(
 def list_scheduled_task_runs(
     limit: int = Query(80, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    compact: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1700,9 +1722,10 @@ def list_scheduled_task_runs(
     query = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.user_id == owner_user.id)
     total = query.with_entities(func.count(ScheduledTaskRun.id)).scalar() or 0
     rows = query.order_by(ScheduledTaskRun.created_at.desc()).offset(offset).limit(limit).all()
+    serializer = _serialize_run_compact if compact else _serialize_run
     return {
         "ok": True,
-        "runs": [_serialize_run(r) for r in rows],
+        "runs": [serializer(r) for r in rows],
         "pagination": {"total": int(total), "limit": int(limit), "offset": int(offset), "has_next": offset + limit < int(total)},
     }
 
