@@ -31,7 +31,7 @@
       wechatTranscriptJobs: [],
       companyName: localStorage.getItem("lobster_h5_company_name") || "我的AI公司",
       officeDeviceFilter: "all",
-      officeSelectedDate: "",
+      departmentSelectedDate: "",
       officePage: 1,
       officePageSize: 4,
       taskAbility: "goal.video.pipeline",
@@ -2620,6 +2620,72 @@
       toast("节点参数已保存");
     }
 
+    function workflowDemoPlan(node) {
+      const lookup = workflowLookupForNode(node);
+      if (!node || !lookup) throw new Error("未找到节点");
+      const raw = node.plan && typeof node.plan === "object" ? node.plan : workflowPlanForLookup(lookup, node.note || "");
+      return {
+        title: `演示-${raw.title || node.ability_label || "员工节点"}`,
+        taskKind: raw.taskKind || raw.task_kind || "client_workflow",
+        content: raw.content || `H5 员工节点演示：${node.ability_label || "任务节点"}`,
+        payload: raw.payload || {},
+        serverSide: raw.serverSide,
+        h5Context: contextFromAbility(lookup),
+      };
+    }
+
+    async function demoWorkflowNode(nodeId, btn) {
+      const node = (state.workflowNodesDraft || []).find((item) => String(item.id || "") === String(nodeId || ""));
+      if (!node) {
+        toast("未找到节点");
+        return;
+      }
+      const oldText = btn ? btn.textContent : "";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "演示中";
+      }
+      try {
+        await submitScheduledClientTask(workflowDemoPlan(node), { schedule_type: "once" });
+        renderWorkflow();
+        showTaskSuccessDialog("演示任务已下发，可在工作历史查看效果。");
+      } catch (err) {
+        toast(err.message || "演示失败");
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText || "演示";
+        }
+      }
+    }
+
+    async function demoWorkflowTemplateNode(key, btn) {
+      const [tplId, nodeId] = String(key || "").split("@@");
+      const tpl = workflowTemplateById(tplId || "");
+      const nodes = (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      const node = nodes.find((item) => String(item.id || "") === String(nodeId || "")) || nodes[Number(nodeId)];
+      if (!node) {
+        toast("未找到节点");
+        return;
+      }
+      const oldText = btn ? btn.textContent : "";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "演示中";
+      }
+      try {
+        await submitScheduledClientTask(workflowDemoPlan(node), { schedule_type: "once" });
+        showTaskSuccessDialog("演示任务已下发，可在工作历史查看效果。");
+      } catch (err) {
+        toast(err.message || "演示失败");
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText || "演示";
+        }
+      }
+    }
+
     function renderWorkflowDeviceSelect() {
       const sel = $("workflowDeviceSelect");
       if (!sel) return;
@@ -2657,6 +2723,7 @@
           </div>
           <div class="workflow-node-actions">
             <span class="${node.param_configured ? "configured" : ""}">${node.param_configured ? "已配置" : "默认参数"}</span>
+            <button class="ghost" type="button" data-workflow-demo-node="${escapeHtml(node.id || "")}">演示</button>
             <button class="ghost" type="button" data-workflow-edit-node="${escapeHtml(node.id || "")}">设置</button>
             <button class="ghost danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>
           </div>
@@ -2726,11 +2793,13 @@
     function workflowTemplateNodeListHtml(tpl) {
       const nodes = (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
       if (!nodes.length) return `<div class="custom-employee-empty">暂无任务节点</div>`;
-      return `<div class="custom-employee-node-list">${nodes.map((node) => {
+      return `<div class="custom-employee-node-list">${nodes.map((node, index) => {
         const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
+        const nodeKey = `${tpl.id || ""}@@${node.id || index}`;
         return `<div class="custom-employee-node">
           <span>${escapeHtml(node.time || "--:--")}</span>
           <strong>${escapeHtml(node.ability_label || plan.title || "任务节点")}</strong>
+          <button class="ghost" type="button" data-custom-employee-demo-node="${escapeHtml(nodeKey)}">演示</button>
           ${node.note ? `<em>${escapeHtml(node.note)}</em>` : ""}
         </div>`;
       }).join("")}</div>`;
@@ -3305,6 +3374,7 @@
       if ($("pageTitle")) $("pageTitle").textContent = department.name || "职能中心";
       if ($("pageSubtitle")) $("pageSubtitle").textContent = "";
       $("departmentBreadcrumb").innerHTML = "";
+      renderDepartmentDayBoard();
       const leaves = departmentLeafNodes(department);
       $("departmentSkillGrid").innerHTML = leaves.map(abilityCardHtml).join("") || `<div class="quick-empty">这个部门暂时没有配置能力。</div>`;
     }
@@ -3648,46 +3718,45 @@
       return d;
     }
 
-    function officeSelectedDateKey() {
-      if (!state.officeSelectedDate) state.officeSelectedDate = todayDateKey();
-      return state.officeSelectedDate;
+    function departmentSelectedDateKey() {
+      if (!state.departmentSelectedDate) state.departmentSelectedDate = todayDateKey();
+      return state.departmentSelectedDate;
     }
 
-    function officeRunDateKey(row) {
+    function workDateKey(row) {
       return localDateKey(row && (row.finished_at || row.updated_at || row.started_at || row.claimed_at || row.created_at));
     }
 
-    function officeRunsForDate(dateKey) {
-      const key = dateKey || officeSelectedDateKey();
-      return (state.runs || []).filter((row) => officeRunDateKey(row) === key);
+    function runsForDate(dateKey) {
+      const key = dateKey || todayDateKey();
+      return (state.runs || []).filter((row) => workDateKey(row) === key);
     }
 
-    function officeRoleRuns(role, dateKey) {
-      const rows = officeRunsForDate(dateKey);
-      if (!role || !role.departmentId) return [];
-      const scope = departmentScope(departmentById(role.departmentId));
+    function departmentRunsForDate(department, dateKey) {
+      const rows = runsForDate(dateKey || departmentSelectedDateKey());
+      const scope = departmentScope(department);
       return rows.filter((row) => recordMatchesWorkScope(row, scope));
     }
 
-    function officeRunSucceeded(row) {
+    function runSucceeded(row) {
       const s = String((row && row.status) || "").toLowerCase();
       return ["completed", "success", "done"].includes(s);
     }
 
-    function officeRunFailed(row) {
+    function runFailed(row) {
       const s = String((row && row.status) || "").toLowerCase();
       return ["failed", "error", "cancelled", "canceled"].includes(s);
     }
 
-    function officeRunStats(rows) {
+    function runStats(rows) {
       const list = rows || [];
       const running = list.filter(isActiveRun).length;
-      const failed = list.filter(officeRunFailed).length;
-      const completed = list.filter(officeRunSucceeded).length;
+      const failed = list.filter(runFailed).length;
+      const completed = list.filter(runSucceeded).length;
       return { total: list.length, running, failed, completed };
     }
 
-    function officeDateLabel(date) {
+    function dayShortLabel(date) {
       const today = todayDateKey();
       const key = localDateKey(date);
       if (key === today) return "今天";
@@ -3695,30 +3764,88 @@
       return names[date.getDay()] || "";
     }
 
-    function renderOfficeCalendar() {
-      const box = $("officeCalendarDays");
-      const summary = $("officeDaySummary");
-      if (!box) return;
-      const selected = parseDateKey(officeSelectedDateKey());
+    function taskDailyTimes(task) {
+      const config = task && task.schedule_config && typeof task.schedule_config === "object" ? task.schedule_config : {};
+      return Array.isArray(task && task.daily_times) ? task.daily_times
+        : (Array.isArray(config.daily_times) ? config.daily_times : []);
+    }
+
+    function taskScheduledOnDate(task, dateKey) {
+      if (!task) return false;
+      const status = String(task.status || "").toLowerCase();
+      if (status === "deleted" || status === "cancelled" || status === "canceled") return false;
+      const type = String(task.schedule_type || "").toLowerCase();
+      if (type === "daily_times") {
+        const createdKey = localDateKey(task.created_at || task.updated_at || new Date());
+        return !createdKey || dateKey >= createdKey;
+      }
+      if (type === "interval") {
+        return localDateKey(task.next_run_at || task.start_at || task.created_at) === dateKey;
+      }
+      if (type === "once" && status === "completed" && taskHasRun(task, state.runs || [])) return false;
+      return localDateKey(task.next_run_at || task.start_at || task.created_at) === dateKey;
+    }
+
+    function departmentTasksForDate(department, dateKey) {
+      const scope = departmentScope(department);
+      return (state.tasks || []).filter((task) => recordMatchesWorkScope(task, scope) && taskScheduledOnDate(task, dateKey || departmentSelectedDateKey()));
+    }
+
+    function dayBoardEmpty(text) {
+      return `<div class="department-day-empty">${escapeHtml(text || "暂无")}</div>`;
+    }
+
+    function departmentRunItemHtml(row) {
+      return `<button class="department-day-item" type="button" data-open-run-detail="${escapeHtml(row && row.id || "")}">
+        <span>${escapeHtml(timeLabel(row && (row.finished_at || row.updated_at || row.started_at || row.created_at)))}</span>
+        <strong>${escapeHtml(row && (row.title || "任务") || "任务")}</strong>
+        <em>${escapeHtml(statusText(row && row.status))}</em>
+      </button>`;
+    }
+
+    function departmentTaskItemHtml(task) {
+      const daily = taskDailyTimes(task);
+      const timeText = daily.length ? daily.join("、") : timeLabel(task && (task.next_run_at || task.start_at || task.created_at));
+      return `<div class="department-day-item">
+        <span>${escapeHtml(timeText || "--:--")}</span>
+        <strong>${escapeHtml(task && (task.title || capabilityName(taskCapabilityId(task))) || "任务安排")}</strong>
+        <em>${escapeHtml(statusText(task && task.status))}</em>
+      </div>`;
+    }
+
+    function renderDepartmentDayBoard() {
+      const department = departmentById(state.currentDepartmentId);
+      const daysBox = $("departmentCalendarDays");
+      if (!department || !daysBox) return;
+      const selected = parseDateKey(departmentSelectedDateKey());
       const start = addDateDays(selected, -((selected.getDay() + 6) % 7));
       const today = todayDateKey();
-      const selectedKey = officeSelectedDateKey();
-      box.innerHTML = Array.from({ length: 7 }, (_item, idx) => {
+      const selectedKey = departmentSelectedDateKey();
+      daysBox.innerHTML = Array.from({ length: 7 }, (_item, idx) => {
         const d = addDateDays(start, idx);
         const key = localDateKey(d);
-        const count = officeRunsForDate(key).length;
-        return `<button class="office-calendar-day${key === selectedKey ? " active" : ""}${key === today ? " today" : ""}" type="button" data-office-date="${escapeHtml(key)}">
-          <span>${escapeHtml(officeDateLabel(d))}</span>
+        const count = departmentRunsForDate(department, key).length + departmentTasksForDate(department, key).length;
+        return `<button class="department-calendar-day${key === selectedKey ? " active" : ""}${key === today ? " today" : ""}" type="button" data-department-date="${escapeHtml(key)}">
+          <span>${escapeHtml(dayShortLabel(d))}</span>
           <strong>${escapeHtml(String(d.getDate()))}</strong>
           <em>${escapeHtml(count ? `${count}个` : "")}</em>
         </button>`;
       }).join("");
+      const runs = departmentRunsForDate(department, selectedKey)
+        .sort((a, b) => itemTimeMs(b.finished_at, b.updated_at, b.created_at) - itemTimeMs(a.finished_at, a.updated_at, a.created_at));
+      const tasks = departmentTasksForDate(department, selectedKey)
+        .sort((a, b) => String(a.next_run_at || a.created_at || "").localeCompare(String(b.next_run_at || b.created_at || "")));
+      const stats = runStats(runs);
+      const summary = $("departmentDaySummary");
       if (summary) {
-        const stats = officeRunStats(officeRunsForDate(selectedKey));
         summary.innerHTML = `<span>${escapeHtml(selectedKey === today ? "今天" : selectedKey)}</span>
-          <strong>${stats.total} 个执行</strong>
+          <strong>${escapeHtml(department.name || "部门")} · ${stats.total} 个执行 · ${tasks.length} 个安排</strong>
           <em>完成 ${stats.completed} · 执行中 ${stats.running} · 失败 ${stats.failed}</em>`;
       }
+      const runBox = $("departmentDayRuns");
+      if (runBox) runBox.innerHTML = runs.length ? runs.slice(0, 6).map(departmentRunItemHtml).join("") : dayBoardEmpty("当天暂无执行");
+      const taskBox = $("departmentDaySchedules");
+      if (taskBox) taskBox.innerHTML = tasks.length ? tasks.slice(0, 6).map(departmentTaskItemHtml).join("") : dayBoardEmpty("当天暂无安排");
     }
 
     function secretaryAbilityCount(department) {
@@ -3982,8 +4109,7 @@
     function renderOfficeRecentTasks() {
       const box = $("officeRecentTasks");
       if (!box) return;
-      const dateKey = officeSelectedDateKey();
-      const runRows = officeRunsForDate(dateKey).map((row) => ({
+      const runRows = (state.runs || []).map((row) => ({
         kind: "run",
         id: row && row.id,
         title: row && (row.title || "任务"),
@@ -3998,7 +4124,7 @@
         .sort((a, b) => itemTimeMs(b.sortTime, b.time) - itemTimeMs(a.sortTime, a.time))
         .slice(0, 5);
       if (!rows.length) {
-        box.innerHTML = `<div class="office-recent-empty">当天暂无执行记录</div>`;
+        box.innerHTML = `<div class="office-recent-empty">暂无执行记录</div>`;
         return;
       }
       box.innerHTML = rows.map((row) => {
@@ -4018,7 +4144,6 @@
     function renderOfficeEmployees() {
       const floor = $("employeeFloor");
       if (!floor) return;
-      renderOfficeCalendar();
       const devices = state.devices || [];
       const snapshots = devices.map((device) => ({ device, snapshot: deviceSnapshot(device) }));
       const workingCount = snapshots.filter((row) => row.snapshot.mode === "working").length;
@@ -4043,25 +4168,16 @@
       if ($("officeOfflineCount")) $("officeOfflineCount").textContent = String(offlineCount);
       updateBossOfficeStats(onlineCount, workingCount);
       floor.style.minHeight = "";
-      const selectedDate = officeSelectedDateKey();
       floor.innerHTML = roles.map((role, index) => {
         const img = employeeAsset({ installation_id: role.id }, index, role.comingSoon ? "offline" : "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
         const targetAttr = role.target ? ` data-home-target="${escapeHtml(role.target)}"` : "";
         const soonAttr = role.comingSoon ? ` data-role-coming-soon="1"` : "";
-        const stats = officeRunStats(officeRoleRuns(role, selectedDate));
-        const status = stats.running ? `执行中 ${stats.running}` : (stats.total ? `完成 ${stats.completed}` : role.status);
         return `<button class="office-employee-card${role.comingSoon ? " coming-soon" : ""}" type="button"${targetAttr}${soonAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
           <img src="${escapeHtml(img)}" alt="" loading="lazy">
           <span class="office-employee-info">
             <strong>${escapeHtml(role.name || "员工")}</strong>
-            <em>${escapeHtml(status || "")}</em>
-            <span class="office-employee-stats">
-              <b>总 ${escapeHtml(String(stats.total))}</b>
-              <b>成 ${escapeHtml(String(stats.completed))}</b>
-              <b>中 ${escapeHtml(String(stats.running))}</b>
-              <b>败 ${escapeHtml(String(stats.failed))}</b>
-            </span>
+            <em>${escapeHtml(role.status || "")}</em>
           </span>
         </button>`;
       }).join("");
@@ -6168,7 +6284,13 @@
           loadWorkbenchJobs({ limit: 80 }),
         ]).then(renderSecretaryView);
       }
-      if (key === "department") renderDepartmentView();
+      if (key === "department") {
+        renderDepartmentView();
+        Promise.all([
+          loadTasks({ reset: true, limit: 80 }).catch(() => {}),
+          loadRuns({ reset: true, limit: 80 }).catch(() => {}),
+        ]).then(renderDepartmentDayBoard);
+      }
       if (key === "ability") renderAbilityView();
       if (key !== "office") closeEmployeeModal();
       if (key === "personalSettings") loadPersonalSettings();
@@ -6908,7 +7030,7 @@
         $("loginPanel").classList.add("hidden");
         $("appPanel").classList.remove("hidden");
         switchTab("office");
-        await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks({ reset: true }), loadRuns({ reset: true }), loadTaskSkills()]);
+        await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks({ reset: true }), loadRuns({ reset: true, limit: 80 }), loadTaskSkills()]);
         return true;
       } catch (err) {
         localStorage.removeItem("lobster_h5_token");
@@ -10450,6 +10572,7 @@
         state.taskListHasNext = !!pagination.has_next;
         state.tasks = append ? (state.tasks || []).concat(rows) : rows;
         renderWorkList();
+        if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
         if (!box) return;
         const allRows = state.tasks || [];
         if (!allRows.length) {
@@ -10477,6 +10600,7 @@
         state.tasks = [];
         state.taskListHasNext = false;
         renderWorkList();
+        if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
         if (box) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "定时任务加载失败")}</div>`;
         $("loadMoreTasksBtn")?.classList.add("hidden");
       }
@@ -11565,6 +11689,7 @@
         state.runs = append ? (state.runs || []).concat(rows) : rows;
         renderOfficeEmployees();
         renderWorkList();
+        if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
         if (!box) return;
         const allRows = state.runs || [];
         if (!allRows.length) {
@@ -11589,6 +11714,7 @@
         state.runListHasNext = false;
         renderOfficeEmployees();
         renderWorkList();
+        if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
         if (box) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
         $("loadMoreRunsBtn")?.classList.add("hidden");
       }
@@ -11690,6 +11816,12 @@
         return;
       }
       openAbilityView(btn.dataset.abilityKey || "");
+    });
+    $("departmentView")?.addEventListener("click", (evt) => {
+      const runBtn = evt.target.closest("[data-open-run-detail]");
+      if (!runBtn) return;
+      evt.preventDefault();
+      openRunDetail(runBtn.dataset.openRunDetail || "", "department");
     });
     $("secretaryView")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-secretary-dept]");
@@ -11854,6 +11986,13 @@
       const editBtn = evt.target.closest("[data-custom-employee-edit]");
       const activateBtn = evt.target.closest("[data-custom-employee-activate]");
       const deleteBtn = evt.target.closest("[data-custom-employee-delete]");
+      const demoBtn = evt.target.closest("[data-custom-employee-demo-node]");
+      if (demoBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        demoWorkflowTemplateNode(demoBtn.dataset.customEmployeeDemoNode || "", demoBtn);
+        return;
+      }
       if (listBtn) {
         openCustomEmployeeList();
         return;
@@ -11900,6 +12039,13 @@
       }
     });
     $("workflowTimeline")?.addEventListener("click", (evt) => {
+      const demoBtn = evt.target.closest("[data-workflow-demo-node]");
+      if (demoBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        demoWorkflowNode(demoBtn.dataset.workflowDemoNode || "", demoBtn);
+        return;
+      }
       const removeBtn = evt.target.closest("[data-workflow-remove-node]");
       if (removeBtn) {
         const nodeId = String(removeBtn.dataset.workflowRemoveNode || "");
@@ -12220,23 +12366,11 @@
     $("loadMoreTasksBtn")?.addEventListener("click", () => loadTasks({ append: true, reset: false }));
     $("loadMoreRunsBtn")?.addEventListener("click", () => loadRuns({ append: true, reset: false }));
     $("officeWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory({ type: "all", label: "全部记录" }, "office"));
-    $("officeCalendarDays")?.addEventListener("click", (evt) => {
-      const btn = evt.target.closest("[data-office-date]");
+    $("departmentCalendarDays")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-department-date]");
       if (!btn) return;
-      state.officeSelectedDate = btn.dataset.officeDate || todayDateKey();
-      renderOfficeEmployees();
-    });
-    $("officeCalendarPrev")?.addEventListener("click", () => {
-      state.officeSelectedDate = localDateKey(addDateDays(parseDateKey(officeSelectedDateKey()), -7));
-      renderOfficeEmployees();
-    });
-    $("officeCalendarNext")?.addEventListener("click", () => {
-      state.officeSelectedDate = localDateKey(addDateDays(parseDateKey(officeSelectedDateKey()), 7));
-      renderOfficeEmployees();
-    });
-    $("officeCalendarToday")?.addEventListener("click", () => {
-      state.officeSelectedDate = todayDateKey();
-      renderOfficeEmployees();
+      state.departmentSelectedDate = btn.dataset.departmentDate || todayDateKey();
+      renderDepartmentDayBoard();
     });
     $("officeView")?.addEventListener("click", (evt) => {
       const runBtn = evt.target.closest("[data-open-run-detail]");
@@ -12857,6 +12991,6 @@
       setInterval(() => {
         if (!state.token) return;
         const activeView = document.querySelector(".view.active");
-        if (activeView && (activeView.id === "officeView" || activeView.id === "workListView")) loadRuns({ reset: true });
+        if (activeView && (activeView.id === "officeView" || activeView.id === "workListView" || activeView.id === "departmentView")) loadRuns({ reset: true, limit: 80 });
       }, 5000);
     })();

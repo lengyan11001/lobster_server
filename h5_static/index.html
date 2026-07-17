@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260717-office-calendar" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260717-department-calendar-demo" />
 </head>
 <body>
   <main class="shell">
@@ -127,13 +127,6 @@
               <h2>我的AI员工 <span id="officeEmployeeTotal">(0)</span></h2>
               <button type="button" id="customEmployeeCreateBtn">+定制员工</button>
             </div>
-            <div class="office-calendar">
-              <button class="ghost" type="button" id="officeCalendarPrev">上一周</button>
-              <div class="office-calendar-days" id="officeCalendarDays"></div>
-              <button class="ghost" type="button" id="officeCalendarNext">下一周</button>
-              <button type="button" id="officeCalendarToday">今天</button>
-            </div>
-            <div class="office-day-summary" id="officeDaySummary"></div>
             <div class="office-floor office-employee-grid" id="employeeFloor">
               <div class="office-empty"><div class="office-empty-copy">正在检查员工状态...</div></div>
             </div>
@@ -512,6 +505,22 @@
             </div>
             <button class="hero-action floating-work-history-btn" type="button" id="departmentWorkHistoryBtn">工作历史</button>
             <button class="hero-action floating-chat-btn" type="button" id="departmentChatBtn">进入对话</button>
+          </div>
+          <div class="department-day-board">
+            <div class="department-calendar">
+              <div class="department-calendar-days" id="departmentCalendarDays"></div>
+            </div>
+            <div class="department-day-summary" id="departmentDaySummary"></div>
+            <div class="department-day-grid">
+              <div class="department-day-card">
+                <strong>执行</strong>
+                <div id="departmentDayRuns"></div>
+              </div>
+              <div class="department-day-card">
+                <strong>安排</strong>
+                <div id="departmentDaySchedules"></div>
+              </div>
+            </div>
           </div>
           <div class="department-breadcrumb" id="departmentBreadcrumb"></div>
           <div class="department-skill-grid" id="departmentSkillGrid"></div>
@@ -1428,6 +1437,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260717-office-calendar"></script>
+  <script src="/h5-static/h5-app.js?v=20260717-department-calendar-demo"></script>
 </body>
 </html>

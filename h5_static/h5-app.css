@@ -4107,9 +4107,12 @@
       padding: 0 14px;
       border-radius: 999px;
     }
-    #officeView .office-calendar {
+    #departmentView .department-day-board {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      gap: 10px;
+    }
+    #departmentView .department-calendar {
+      display: grid;
       gap: 8px;
       align-items: center;
       padding: 10px;
@@ -4120,19 +4123,19 @@
         rgba(255,255,255,.86);
       box-shadow: 0 12px 28px rgba(29,54,105,.08);
     }
-    #officeView .office-calendar button {
+    #departmentView .department-calendar button {
       min-height: 34px;
       padding: 0 11px;
       border-radius: 999px;
       white-space: nowrap;
     }
-    #officeView .office-calendar-days {
+    #departmentView .department-calendar-days {
       display: grid;
       grid-template-columns: repeat(7, minmax(44px, 1fr));
       gap: 6px;
       min-width: 0;
     }
-    #officeView .office-calendar-day {
+    #departmentView .department-calendar-day {
       display: grid;
       justify-items: center;
       gap: 2px;
@@ -4145,36 +4148,36 @@
       background: rgba(255,255,255,.74);
       box-shadow: none;
     }
-    #officeView .office-calendar-day span {
+    #departmentView .department-calendar-day span {
       font-size: 11px;
       font-weight: 900;
     }
-    #officeView .office-calendar-day strong {
+    #departmentView .department-calendar-day strong {
       color: #102036;
       font-size: 17px;
       line-height: 1;
     }
-    #officeView .office-calendar-day em {
+    #departmentView .department-calendar-day em {
       min-height: 13px;
       color: #245cff;
       font-size: 10px;
       font-style: normal;
       font-weight: 900;
     }
-    #officeView .office-calendar-day.today {
+    #departmentView .department-calendar-day.today {
       border-color: rgba(19,168,115,.36);
     }
-    #officeView .office-calendar-day.active {
+    #departmentView .department-calendar-day.active {
       color: #fff;
       border-color: transparent;
       background: linear-gradient(145deg, #245cff, #13a873);
       box-shadow: 0 12px 24px rgba(36,92,255,.2);
     }
-    #officeView .office-calendar-day.active strong,
-    #officeView .office-calendar-day.active em {
+    #departmentView .department-calendar-day.active strong,
+    #departmentView .department-calendar-day.active em {
       color: #fff;
     }
-    #officeView .office-day-summary {
+    #departmentView .department-day-summary {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -4185,17 +4188,75 @@
       border-radius: 18px;
       background: linear-gradient(135deg, rgba(232,244,255,.9), rgba(235,255,245,.9));
     }
-    #officeView .office-day-summary span,
-    #officeView .office-day-summary em {
+    #departmentView .department-day-summary span,
+    #departmentView .department-day-summary em {
       color: #6d7890;
       font-size: 12px;
       font-style: normal;
       font-weight: 800;
       white-space: nowrap;
     }
-    #officeView .office-day-summary strong {
+    #departmentView .department-day-summary strong {
       font-size: 15px;
       font-weight: 950;
+    }
+    #departmentView .department-day-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    #departmentView .department-day-card {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid rgba(223,230,242,.9);
+      border-radius: 20px;
+      background: rgba(255,255,255,.92);
+      box-shadow: 0 12px 26px rgba(24,50,105,.08);
+    }
+    #departmentView .department-day-card > strong {
+      color: #102036;
+      font-size: 14px;
+      font-weight: 950;
+    }
+    #departmentView .department-day-item {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 38px;
+      width: 100%;
+      padding: 8px;
+      color: #102036;
+      text-align: left;
+      border-radius: 14px;
+      background: rgba(246,249,255,.92);
+      box-shadow: none;
+    }
+    #departmentView .department-day-item span,
+    #departmentView .department-day-item em {
+      color: #6d7890;
+      font-size: 11px;
+      font-style: normal;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    #departmentView .department-day-item strong {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      font-weight: 950;
+    }
+    #departmentView .department-day-empty {
+      min-height: 40px;
+      display: grid;
+      place-items: center;
+      color: #7b879b;
+      border-radius: 14px;
+      background: rgba(246,249,255,.72);
+      font-size: 12px;
+      font-weight: 800;
     }
     #officeView .office-employee-grid {
       min-height: 0 !important;
@@ -4274,21 +4335,6 @@
       height: 7px;
       border-radius: 50%;
       background: currentColor;
-    }
-    #officeView .office-employee-stats {
-      display: grid;
-      grid-template-columns: repeat(4, auto);
-      gap: 5px;
-      justify-content: center;
-    }
-    #officeView .office-employee-stats b {
-      padding: 4px 6px;
-      color: #4a5a73;
-      border-radius: 999px;
-      background: rgba(255,255,255,.72);
-      font-size: 10px;
-      font-weight: 900;
-      white-space: nowrap;
     }
     #officeView .custom-employee-strip {
       display: grid;
@@ -4401,7 +4447,7 @@
     }
     .custom-employee-node {
       display: grid;
-      grid-template-columns: 54px minmax(0, 1fr);
+      grid-template-columns: 54px minmax(0, 1fr) auto;
       gap: 8px 10px;
       align-items: start;
       padding: 10px;
@@ -4428,6 +4474,12 @@
       font-size: 12px;
       font-style: normal;
       line-height: 1.45;
+    }
+    .custom-employee-node button {
+      min-height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      font-size: 12px;
     }
     .custom-employee-actions {
       display: flex;
@@ -5507,31 +5559,28 @@
         height: 36px;
         border-radius: 14px;
       }
-      #officeView .office-calendar {
-        grid-template-columns: auto auto auto;
+      #departmentView .department-calendar {
         padding: 8px;
       }
-      #officeView .office-calendar-days {
-        grid-column: 1 / -1;
-        grid-row: 2;
+      #departmentView .department-calendar-days {
         display: flex;
         overflow-x: auto;
         scrollbar-width: none;
       }
-      #officeView .office-calendar-days::-webkit-scrollbar {
+      #departmentView .department-calendar-days::-webkit-scrollbar {
         display: none;
       }
-      #officeView .office-calendar-day {
+      #departmentView .department-calendar-day {
         flex: 0 0 52px;
       }
-      #officeView .office-day-summary {
+      #departmentView .department-day-summary {
         align-items: flex-start;
         flex-direction: column;
         gap: 3px;
         padding: 9px 12px;
       }
-      #officeView .office-employee-stats {
-        grid-template-columns: repeat(2, auto);
+      #departmentView .department-day-grid {
+        grid-template-columns: 1fr;
       }
       .workflow-node-card {
         grid-template-columns: 54px minmax(0, 1fr);
