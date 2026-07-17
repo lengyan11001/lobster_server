@@ -5404,22 +5404,20 @@
     }
     .workflow-day-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      gap: 8px;
     }
     .workflow-day-card {
       display: grid;
-      gap: 8px;
-      padding: 12px;
+      gap: 6px;
+      padding: 0;
       border: 1px solid rgba(223,230,242,.9);
       border-radius: 20px;
       background: rgba(255,255,255,.92);
       box-shadow: 0 12px 26px rgba(24,50,105,.08);
+      overflow: hidden;
     }
-    .workflow-day-card > strong {
-      color: #102036;
-      font-size: 14px;
-      font-weight: 950;
+    .workflow-day-card:empty {
+      display: none;
     }
     .workflow-day-item {
       display: grid;
@@ -5428,14 +5426,17 @@
       align-items: center;
       min-height: 38px;
       width: 100%;
-      padding: 8px;
+      padding: 9px 10px;
       color: #102036;
       text-align: left;
       border: 0;
-      border-radius: 14px;
-      background: rgba(246,249,255,.92);
+      border-radius: 0;
+      background: transparent;
       box-shadow: none;
       appearance: none;
+    }
+    .workflow-day-item + .workflow-day-item {
+      border-top: 1px solid rgba(223,230,242,.68);
     }
     .workflow-day-item span,
     .workflow-day-item em {
@@ -5456,9 +5457,10 @@
       min-height: 40px;
       display: grid;
       place-items: center;
+      padding: 0 10px;
       color: #7b879b;
-      border-radius: 14px;
-      background: rgba(246,249,255,.72);
+      border-radius: 0;
+      background: transparent;
       font-size: 12px;
       font-weight: 800;
     }

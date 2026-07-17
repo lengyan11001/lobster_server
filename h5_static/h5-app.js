@@ -2715,6 +2715,8 @@
         box.innerHTML = `<div class="workflow-empty">还没有节点</div>`;
         return;
       }
+      const tasks = state.tasks || [];
+      const runs = state.runs || [];
       box.innerHTML = nodes.map((node, index) => `
         <div class="workflow-node-card" data-workflow-edit-node="${escapeHtml(node.id || "")}">
           <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>
@@ -2723,9 +2725,8 @@
             <span>${escapeHtml(node.department_name || "")}${node.note ? ` · ${escapeHtml(node.note)}` : ""}</span>
           </div>
           <div class="workflow-node-actions">
-            <span class="${node.param_configured ? "configured" : ""}">${node.param_configured ? "已配置" : "默认参数"}</span>
+            <span class="workflow-node-status">${escapeHtml(workflowNodeStatusText(node, tasks, runs))}</span>
             <button class="ghost" type="button" data-workflow-demo-node="${escapeHtml(node.id || "")}">演示</button>
-            <button class="ghost" type="button" data-workflow-edit-node="${escapeHtml(node.id || "")}">设置</button>
             <button class="ghost danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>
           </div>
         </div>
@@ -3906,6 +3907,30 @@
         if (nodeKey && String(ctx.ability_key || "") === nodeKey && taskDailyTimes(task).includes(nodeTime)) return true;
         return false;
       }) || null;
+    }
+
+    function workflowLatestRunForNode(node, runs) {
+      const nodeId = String((node && node.id) || "");
+      const nodeKey = String((node && node.ability_key) || "");
+      const nodeTime = String((node && node.time) || "");
+      const matched = (runs || []).filter((run) => {
+        const payload = run && run.payload && typeof run.payload === "object" ? run.payload : {};
+        const ctx = h5ContextFromPayload(payload);
+        if (nodeId && String(ctx.workflow_node_id || "") === nodeId) return true;
+        if (nodeKey && String(ctx.ability_key || "") === nodeKey && String(ctx.workflow_node_time || "") === nodeTime) return true;
+        return false;
+      });
+      return matched.sort((a, b) => itemTimeMs(b.finished_at, b.updated_at, b.created_at) - itemTimeMs(a.finished_at, a.updated_at, a.created_at))[0] || null;
+    }
+
+    function workflowNodeStatusText(node, tasks, runs) {
+      const run = workflowLatestRunForNode(node, runs || state.runs || []);
+      if (run && isActiveRun(run)) return "执行中";
+      if (run && runFailed(run)) return "失败";
+      if (run && runSucceeded(run)) return "完成";
+      const task = workflowTaskForNode(node, tasks || state.tasks || []);
+      if (task) return statusText(task.status);
+      return state.workflowActive ? "已安排" : "未启用";
     }
 
     function workflowSchedulesForDate(dateKey) {
