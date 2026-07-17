@@ -1238,6 +1238,124 @@ def _refresh_voice_asset_from_hifly(row: UserHiflyVoiceAsset) -> bool:
     return changed
 
 
+def _refresh_avatar_asset_from_hifly(
+    row: UserHiflyAvatarAsset,
+    token: Optional[str] = None,
+    *,
+    min_interval_seconds: int = 30,
+) -> bool:
+    """Refresh one visible avatar task without adding frontend polling."""
+    task_id = str(row.hifly_task_id or "").strip()
+    if not task_id:
+        return False
+
+    now_ts = time.time()
+    meta = dict(row.meta or {})
+    if str(row.status or "") in {"waiting", "processing"} and min_interval_seconds > 0:
+        try:
+            last_refresh_ts = float(meta.get("last_status_refresh_ts") or 0)
+        except (TypeError, ValueError):
+            last_refresh_ts = 0.0
+        if last_refresh_ts and now_ts - last_refresh_ts < min_interval_seconds:
+            return False
+
+    try:
+        headers = {"Authorization": f"Bearer {_resolved_token(token)}"}
+        with httpx.Client(timeout=30.0, trust_env=False) as client:
+            resp = client.get(_url("/api/v2/hifly/avatar/task"), headers=headers, params={"task_id": task_id})
+        if resp.status_code == 401:
+            logger.warning("[hifly_assets] refresh avatar task unauthorized task_id=%s", task_id)
+            return False
+        if resp.status_code >= 400:
+            logger.warning("[hifly_assets] refresh avatar task http=%s task_id=%s", resp.status_code, task_id)
+            return False
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            return False
+        _raise_for_hifly_business_error(payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[hifly_assets] refresh avatar task failed task_id=%s err=%s", task_id, exc)
+        return False
+
+    status_num = int(_pick_field(payload, "status") or 0)
+    next_status = _local_status(status_num)
+    next_title = _safe_title(str(_pick_field(payload, "title") or row.title or "未命名数字人"), "未命名数字人", 128)
+    next_avatar_id = str(_pick_field(payload, "avatar", "avatar_id") or row.hifly_avatar_id or "").strip() or None
+    next_cover_url = _pick_cover(payload) or row.cover_url
+    next_error = str(_pick_field(payload, "message") or "").strip() or None
+    if status_num == 4 and not next_error:
+        next_error = "形象训练失败"
+    next_meta = dict(row.meta or {})
+    next_meta["task_raw"] = payload
+    next_meta["last_status_refresh_ts"] = now_ts
+    next_meta["last_status_refresh_at"] = datetime.utcnow().isoformat()
+
+    changed = False
+    if row.status != next_status:
+        row.status = next_status
+        changed = True
+    if row.title != next_title:
+        row.title = next_title
+        changed = True
+    if row.hifly_avatar_id != next_avatar_id:
+        row.hifly_avatar_id = next_avatar_id
+        changed = True
+    if row.cover_url != next_cover_url:
+        row.cover_url = next_cover_url
+        changed = True
+    if row.error_message != next_error:
+        row.error_message = next_error
+        changed = True
+    if row.meta != next_meta:
+        row.meta = next_meta
+        changed = True
+    return changed
+
+
+def _persist_failed_voice_clone(
+    db: Session,
+    *,
+    user_id: int,
+    title: str,
+    provider: str,
+    uploaded: Dict[str, Any],
+    source_asset: Optional[Asset],
+    voice_type: int,
+    languages: str,
+    error_message: str,
+) -> Optional[UserHiflyVoiceAsset]:
+    task_id = f"{provider or 'voice'}_failed_{uuid.uuid4().hex}"
+    meta = {
+        "provider": provider,
+        "upload_meta": _upload_meta_for_store(uploaded),
+        "create_error": error_message,
+    }
+    if source_asset:
+        meta["source_asset_id"] = source_asset.asset_id
+    row = UserHiflyVoiceAsset(
+        user_id=user_id,
+        title=title,
+        status="failed",
+        hifly_task_id=task_id,
+        hifly_voice_id=None,
+        file_id=str(uploaded.get("file_id") or ""),
+        demo_url=str(uploaded.get("source_url") or ""),
+        voice_type=int(voice_type or 8),
+        languages=languages,
+        error_message=error_message or "声音克隆失败",
+        meta=meta,
+    )
+    try:
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("[hifly_assets] persist failed voice clone row failed provider=%s", provider)
+        return None
+
+
 def _normalize_avatar_asset(row: UserHiflyAvatarAsset, request: Optional[Request] = None) -> Dict[str, Any]:
     meta = dict(row.meta or {})
     detail_asset_id = str(meta.get("source_asset_id") or "").strip()
@@ -1847,83 +1965,112 @@ async def create_my_voice_upload(
     title_value = _safe_title(title, "未命名声音")
     language_value = (languages or "zh").strip() or "zh"
     provider = _voice_tts_provider()
-    default_params: Dict[str, Any]
-    meta: Dict[str, Any]
+    default_params: Dict[str, Any] = {}
+    meta: Dict[str, Any] = {}
     demo_url = ""
     demo_asset: Dict[str, Any] = {}
-    if provider == _QWEN_PROVIDER:
-        cloned = await _qwen_clone_voice(raw=uploaded["raw_bytes"], filename=str(uploaded.get("filename") or "voice.mp3"), title=title_value)
-        task_id = f"qwen_voice_{uuid.uuid4().hex}"
-        voice_id = str(cloned.get("voice_id") or "").strip()
-        clone_raw = cloned.get("clone_raw") if isinstance(cloned.get("clone_raw"), dict) else {}
-        default_params = {
-            "rate": "1.0",
-            "volume": "1.0",
-            "pitch": "0",
-            "emotion": "",
-            "instructions": _QWEN_DEFAULT_INSTRUCTIONS,
-        }
-        try:
-            preview = await _qwen_tts_audio(
-                voice_id=voice_id,
-                text=f"你好，这是{_safe_title(title_value, '当前声音', 20)}的声音试听。",
-                instructions=default_params["instructions"],
-            )
-            demo_asset = await _persist_voice_demo_asset(
-                db,
-                current_user.id,
-                raw=preview.get("audio_bytes") or b"",
-                title=f"{title_value} 克隆试听",
-                voice_id=voice_id,
-                params=default_params,
-                provider=_QWEN_PROVIDER,
-                model=_qwen_tts_model(),
-            )
-            demo_url = str(demo_asset.get("source_url") or "")
-        except Exception:  # noqa: BLE001
-            logger.exception("[hifly] Qwen 克隆试听音频转存失败 voice_id=%s", voice_id)
-        meta = {
-            "provider": _QWEN_PROVIDER,
-            "qwen_voice_id": voice_id,
-            "qwen_tts_model": _qwen_tts_model(),
-            "qwen_voice_enroll_model": _qwen_voice_enroll_model(),
-            "create_raw": clone_raw,
-            "demo_asset": demo_asset,
-            "upload_meta": _upload_meta_for_store(uploaded),
-            "voice_params": default_params,
-        }
-        file_id_value = str(uploaded["file_id"])
-    else:
-        cloned = await _minimax_clone_voice(raw=uploaded["raw_bytes"], filename=str(uploaded.get("filename") or "voice.mp3"), title=title_value)
-        task_id = f"minimax_voice_{uuid.uuid4().hex}"
-        voice_id = str(cloned.get("voice_id") or "").strip()
-        clone_raw = cloned.get("clone_raw") if isinstance(cloned.get("clone_raw"), dict) else {}
-        demo_url = _pick_demo(clone_raw)
-        default_params = {"rate": "1.0", "volume": "1.0", "pitch": "0", "emotion": _MINIMAX_DEFAULT_EMOTION}
-        if demo_url:
+    file_id_value = str(uploaded["file_id"])
+    try:
+        if provider == _QWEN_PROVIDER:
+            cloned = await _qwen_clone_voice(raw=uploaded["raw_bytes"], filename=str(uploaded.get("filename") or "voice.mp3"), title=title_value)
+            task_id = f"qwen_voice_{uuid.uuid4().hex}"
+            voice_id = str(cloned.get("voice_id") or "").strip()
+            clone_raw = cloned.get("clone_raw") if isinstance(cloned.get("clone_raw"), dict) else {}
+            default_params = {
+                "rate": "1.0",
+                "volume": "1.0",
+                "pitch": "0",
+                "emotion": "",
+                "instructions": _QWEN_DEFAULT_INSTRUCTIONS,
+            }
             try:
+                preview = await _qwen_tts_audio(
+                    voice_id=voice_id,
+                    text=f"你好，这是{_safe_title(title_value, '当前声音', 20)}的声音试听。",
+                    instructions=default_params["instructions"],
+                )
                 demo_asset = await _persist_voice_demo_asset(
                     db,
                     current_user.id,
-                    source_url=demo_url,
+                    raw=preview.get("audio_bytes") or b"",
                     title=f"{title_value} 克隆试听",
                     voice_id=voice_id,
                     params=default_params,
-                    provider=_MINIMAX_PROVIDER,
-                    model=_minimax_tts_model(),
+                    provider=_QWEN_PROVIDER,
+                    model=_qwen_tts_model(),
                 )
+                demo_url = str(demo_asset.get("source_url") or "")
             except Exception:  # noqa: BLE001
-                logger.exception("[hifly] MiniMax 克隆试听音频转存失败 voice_id=%s", voice_id)
-        meta = {
-            "provider": _MINIMAX_PROVIDER,
-            "minimax_voice_id": voice_id,
-            "create_raw": clone_raw,
-            "minimax_upload_raw": cloned.get("upload_raw"),
-            "demo_asset": demo_asset,
-            "upload_meta": _upload_meta_for_store(uploaded),
-            "voice_params": default_params,
-        }
-        file_id_value = str(cloned.get("file_id") or uploaded["file_id"])
+                logger.exception("[hifly] Qwen 克隆试听音频转存失败 voice_id=%s", voice_id)
+            meta = {
+                "provider": _QWEN_PROVIDER,
+                "qwen_voice_id": voice_id,
+                "qwen_tts_model": _qwen_tts_model(),
+                "qwen_voice_enroll_model": _qwen_voice_enroll_model(),
+                "create_raw": clone_raw,
+                "demo_asset": demo_asset,
+                "upload_meta": _upload_meta_for_store(uploaded),
+                "voice_params": default_params,
+            }
+        else:
+            cloned = await _minimax_clone_voice(raw=uploaded["raw_bytes"], filename=str(uploaded.get("filename") or "voice.mp3"), title=title_value)
+            task_id = f"minimax_voice_{uuid.uuid4().hex}"
+            voice_id = str(cloned.get("voice_id") or "").strip()
+            clone_raw = cloned.get("clone_raw") if isinstance(cloned.get("clone_raw"), dict) else {}
+            demo_url = _pick_demo(clone_raw)
+            default_params = {"rate": "1.0", "volume": "1.0", "pitch": "0", "emotion": _MINIMAX_DEFAULT_EMOTION}
+            if demo_url:
+                try:
+                    demo_asset = await _persist_voice_demo_asset(
+                        db,
+                        current_user.id,
+                        source_url=demo_url,
+                        title=f"{title_value} 克隆试听",
+                        voice_id=voice_id,
+                        params=default_params,
+                        provider=_MINIMAX_PROVIDER,
+                        model=_minimax_tts_model(),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("[hifly] MiniMax 克隆试听音频转存失败 voice_id=%s", voice_id)
+            meta = {
+                "provider": _MINIMAX_PROVIDER,
+                "minimax_voice_id": voice_id,
+                "create_raw": clone_raw,
+                "minimax_upload_raw": cloned.get("upload_raw"),
+                "demo_asset": demo_asset,
+                "upload_meta": _upload_meta_for_store(uploaded),
+                "voice_params": default_params,
+            }
+            file_id_value = str(cloned.get("file_id") or uploaded["file_id"])
+    except HTTPException as exc:
+        detail = str(exc.detail or "声音克隆失败")
+        _persist_failed_voice_clone(
+            db,
+            user_id=current_user.id,
+            title=title_value,
+            provider=provider,
+            uploaded=uploaded,
+            source_asset=source_asset,
+            voice_type=int(voice_type or 8),
+            languages=language_value,
+            error_message=detail,
+        )
+        raise
+    except Exception as exc:
+        detail = f"声音克隆失败：{exc}"
+        _persist_failed_voice_clone(
+            db,
+            user_id=current_user.id,
+            title=title_value,
+            provider=provider,
+            uploaded=uploaded,
+            source_asset=source_asset,
+            voice_type=int(voice_type or 8),
+            languages=language_value,
+            error_message=detail,
+        )
+        raise HTTPException(status_code=502, detail=detail) from exc
 
     row = UserHiflyVoiceAsset(
         user_id=current_user.id,
@@ -2284,6 +2431,16 @@ def list_my_avatars(
         .limit(size)
         .all()
     )
+    changed = False
+    for row in rows:
+        if row.status in {"waiting", "processing"} and str(row.hifly_task_id or "").strip():
+            if _refresh_avatar_asset_from_hifly(row):
+                db.add(row)
+                changed = True
+    if changed:
+        db.commit()
+        for row in rows:
+            db.refresh(row)
     return {
         "ok": True,
         "items": [_normalize_avatar_asset(row, request) for row in rows],
@@ -3242,7 +3399,12 @@ def list_my_voices(
     for row in rows:
         missing_preview = not str(row.demo_url or "").strip()
         missing_voice_id = not str(row.hifly_voice_id or "").strip()
-        if row.status == "success" and (missing_preview or missing_voice_id):
+        provider = _voice_provider(row)
+        should_refresh_hifly = provider == "hifly" and (
+            row.status in {"waiting", "processing"}
+            or (row.status == "success" and (missing_preview or missing_voice_id))
+        )
+        if should_refresh_hifly:
             if _refresh_voice_asset_from_hifly(row):
                 db.add(row)
                 changed = True
@@ -3257,4 +3419,3 @@ def list_my_voices(
         "size": size,
         "total": total,
     }
-

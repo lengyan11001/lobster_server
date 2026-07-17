@@ -4780,7 +4780,11 @@
       try {
         const resp = await fetch(apiUrl("/api/hifly/my/voice/create-upload"), { method: "POST", headers: authHeaders(), body: fd });
         const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data.detail || data.message || `提交失败：HTTP ${resp.status}`);
+        if (!resp.ok || data.ok === false) {
+          state.assetLibraryVoicePage = 1;
+          await loadAssetLibraryVoices().catch(() => {});
+          throw new Error(data.detail || data.message || `提交失败：HTTP ${resp.status}`);
+        }
         state.assetLibraryVoicePage = 1;
         closeAssetVoiceModal();
         await loadAssetLibraryVoices();
