@@ -7485,12 +7485,29 @@
       return String((pref && pref.installation_id) || "").trim();
     }
 
+    function mountedDefaultAccountKey(scope) {
+      const pref = mountedDefault(scope);
+      return String((pref && pref.account_key) || "").trim();
+    }
+
     function defaultDouyinInstallationId() {
-      return mountedDefaultInstallationId("douyin") || String((state.douyinStatus && state.douyinStatus.default_installation_id) || "").trim();
+      return mountedDefaultInstallationId("douyin");
     }
 
     function defaultPublishAccount() {
       return (state.publishAccounts || []).find((row) => row && row.is_default) || null;
+    }
+
+    function applyPublishAccountDefaults(rows) {
+      const defaultKey = mountedDefaultAccountKey("publish");
+      return (Array.isArray(rows) ? rows : []).map((row) => {
+        const key = String((row && (row.select_id || row.id || row.account_key)) || "").trim();
+        return {
+          ...row,
+          account_key: key,
+          is_default: !!(defaultKey && key === defaultKey),
+        };
+      });
     }
 
     function renderMountedAccounts() {
@@ -7553,6 +7570,7 @@
         const data = await api("/api/h5-chat/mounted-accounts");
         state.mountedAccounts = Array.isArray(data.accounts) ? data.accounts : [];
         state.mountedAccountDefaults = data.defaults || {};
+        if (state.publishAccountsLoaded) state.publishAccounts = applyPublishAccountDefaults(state.publishAccounts);
         state.mountedAccountsLoaded = true;
       } catch (err) {
         state.mountedAccounts = [];
@@ -7573,6 +7591,7 @@
       });
       state.mountedAccounts = Array.isArray(data.accounts) ? data.accounts : state.mountedAccounts;
       state.mountedAccountDefaults = data.defaults || state.mountedAccountDefaults || {};
+      state.publishAccounts = applyPublishAccountDefaults(state.publishAccounts);
       state.publishAccountsLoaded = false;
       state.douyinStatus = null;
       renderMountedAccounts();
@@ -7936,10 +7955,13 @@
         fillPublishRunPlatformSelect();
         return;
       }
+      if (!state.mountedAccountsLoaded && !state.mountedAccountsLoading) {
+        await loadMountedAccounts(true).catch(() => {});
+      }
       state.publishAccountsLoading = true;
       try {
         const data = await api("/api/scheduled-tasks/publish/accounts");
-        state.publishAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+        state.publishAccounts = applyPublishAccountDefaults(data.accounts);
         state.publishAccountsLoaded = true;
       } catch (err) {
         state.publishAccounts = [];
@@ -10724,7 +10746,7 @@
       const commentText = (($("douyinTaskCommentText") || {}).value || "").trim();
       const dmText = (($("douyinTaskDmText") || {}).value || "").trim();
       const params = {};
-      const defaultKey = String((state.douyinStatus && state.douyinStatus.default_account_key) || "").trim();
+      const defaultKey = mountedDefaultAccountKey("douyin");
       const defaultAccount = ((state.douyinStatus && state.douyinStatus.accounts) || []).find((row) => String((row && (row.account_key || row.select_id)) || "") === defaultKey) || null;
       if (defaultAccount) {
         params.account_key = defaultKey;
@@ -10803,7 +10825,7 @@
         };
       });
       const onlineCount = normalizedAccounts.filter((row) => row.online).length;
-      const preferredAccountKey = String(data.default_account_key || "").trim()
+      const preferredAccountKey = mountedDefaultAccountKey("douyin")
         || normalizedAccounts.find((row) => row.isDefault)?.accountKey
         || "";
       if (accountHint) accountHint.textContent = normalizedAccounts.length ? `在线 ${onlineCount} / ${normalizedAccounts.length}` : "暂无账号";
@@ -10866,6 +10888,9 @@
       if (runtimeList) runtimeList.innerHTML = '<div class="douyin-empty">正在整理当前运行状态...</div>';
       if (metricGrid) metricGrid.innerHTML = '<div class="douyin-empty">正在加载核心指标...</div>';
       try {
+        if (!state.mountedAccountsLoaded && !state.mountedAccountsLoading) {
+          await loadMountedAccounts(true).catch(() => {});
+        }
         const data = await api('/api/douyin/dashboard-status');
         state.douyinStatus = data || {};
       } catch (err) {
