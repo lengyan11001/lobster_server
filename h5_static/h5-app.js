@@ -2866,7 +2866,7 @@
             <span>${escapeHtml(sourceText)}${system ? ` · ${escapeHtml(nodeCount + " 个节点")}` : ""}</span>
           </div>
           <div class="workflow-template-actions">
-            <button type="button" data-workflow-load="${escapeHtml(tpl.id)}">${own ? "编辑" : "套用"}</button>
+            ${own ? `<button type="button" data-workflow-load="${escapeHtml(tpl.id)}">编辑</button>` : ""}
             ${copyBtn}
             ${activateBtn}
             ${deleteBtn}
@@ -12422,6 +12422,10 @@
       const copyBtn = evt.target.closest("[data-workflow-copy]");
       if (loadBtn) {
         const tpl = workflowTemplateById(loadBtn.dataset.workflowLoad || "");
+        if (!workflowTemplateCanEdit(tpl)) {
+          toast("请先复制后再编辑");
+          return;
+        }
         applyWorkflowTemplate(tpl);
         $("workflowTemplateDrawer")?.classList.add("hidden");
         return;
