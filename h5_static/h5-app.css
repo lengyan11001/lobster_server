@@ -4157,13 +4157,6 @@
       font-size: 17px;
       line-height: 1;
     }
-    #departmentView .department-calendar-day em {
-      min-height: 13px;
-      color: #245cff;
-      font-size: 10px;
-      font-style: normal;
-      font-weight: 900;
-    }
     #departmentView .department-calendar-day.today {
       border-color: rgba(19,168,115,.36);
     }
@@ -4173,8 +4166,7 @@
       background: linear-gradient(145deg, #245cff, #13a873);
       box-shadow: 0 12px 24px rgba(36,92,255,.2);
     }
-    #departmentView .department-calendar-day.active strong,
-    #departmentView .department-calendar-day.active em {
+    #departmentView .department-calendar-day.active strong {
       color: #fff;
     }
     #departmentView .department-day-summary {
@@ -5356,13 +5348,6 @@
       font-size: 17px;
       line-height: 1;
     }
-    .workflow-calendar-day em {
-      min-height: 13px;
-      color: #245cff;
-      font-size: 10px;
-      font-style: normal;
-      font-weight: 900;
-    }
     .workflow-calendar-day.today {
       border-color: rgba(19,168,115,.36);
     }
@@ -5372,60 +5357,8 @@
       background: linear-gradient(145deg, #245cff, #13a873);
       box-shadow: 0 12px 24px rgba(36,92,255,.2);
     }
-    .workflow-calendar-day.active strong,
-    .workflow-calendar-day.active em {
+    .workflow-calendar-day.active strong {
       color: #fff;
-    }
-    .workflow-day-grid {
-      display: grid;
-      gap: 8px;
-    }
-    .workflow-day-card {
-      display: grid;
-      gap: 6px;
-      padding: 0;
-      border: 1px solid rgba(223,230,242,.9);
-      border-radius: 20px;
-      background: rgba(255,255,255,.92);
-      box-shadow: 0 12px 26px rgba(24,50,105,.08);
-      overflow: hidden;
-    }
-    .workflow-day-card:empty {
-      display: none;
-    }
-    .workflow-day-item {
-      display: grid;
-      grid-template-columns: 52px minmax(0, 1fr) auto;
-      gap: 8px;
-      align-items: center;
-      min-height: 38px;
-      width: 100%;
-      padding: 9px 10px;
-      color: #102036;
-      text-align: left;
-      border: 0;
-      border-radius: 0;
-      background: transparent;
-      box-shadow: none;
-      appearance: none;
-    }
-    .workflow-day-item + .workflow-day-item {
-      border-top: 1px solid rgba(223,230,242,.68);
-    }
-    .workflow-day-item span,
-    .workflow-day-item em {
-      color: #6d7890;
-      font-size: 11px;
-      font-style: normal;
-      font-weight: 900;
-      white-space: nowrap;
-    }
-    .workflow-day-item strong {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 12px;
-      font-weight: 950;
     }
     .workflow-status-pill {
       display: inline-flex;
@@ -5772,9 +5705,6 @@
       }
       .workflow-calendar-day {
         flex: 0 0 52px;
-      }
-      .workflow-day-grid {
-        grid-template-columns: 1fr;
       }
       #departmentView .department-day-summary {
         align-items: flex-start;

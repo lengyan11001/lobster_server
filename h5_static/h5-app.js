@@ -2715,8 +2715,9 @@
         box.innerHTML = `<div class="workflow-empty">还没有节点</div>`;
         return;
       }
-      const tasks = state.tasks || [];
-      const runs = state.runs || [];
+      const selectedKey = workflowSelectedDateKey();
+      const tasks = workflowTasksForDate(selectedKey);
+      const runs = workflowRunsForDate(selectedKey);
       box.innerHTML = nodes.map((node, index) => `
         <div class="workflow-node-card" data-workflow-edit-node="${escapeHtml(node.id || "")}">
           <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>
@@ -2725,7 +2726,7 @@
             <span>${escapeHtml(node.department_name || "")}${node.note ? ` · ${escapeHtml(node.note)}` : ""}</span>
           </div>
           <div class="workflow-node-actions">
-            <span class="workflow-node-status">${escapeHtml(workflowNodeStatusText(node, tasks, runs))}</span>
+            ${workflowStatusPillHtml(workflowStatusInfo(node, workflowTaskForNode(node, tasks), workflowLatestRunForNode(node, runs), selectedKey))}
             <button class="ghost" type="button" data-workflow-demo-node="${escapeHtml(node.id || "")}">演示</button>
             <button class="ghost danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>
           </div>
@@ -3827,11 +3828,9 @@
       daysBox.innerHTML = Array.from({ length: 7 }, (_item, idx) => {
         const d = addDateDays(start, idx);
         const key = localDateKey(d);
-        const count = departmentRunsForDate(department, key).length + departmentTasksForDate(department, key).length;
         return `<button class="department-calendar-day${key === selectedKey ? " active" : ""}${key === today ? " today" : ""}" type="button" data-department-date="${escapeHtml(key)}">
           <span>${escapeHtml(dayShortLabel(d))}</span>
           <strong>${escapeHtml(String(d.getDate()))}</strong>
-          <em>${escapeHtml(count ? `${count}个` : "")}</em>
         </button>`;
       }).join("");
       const runs = departmentRunsForDate(department, selectedKey)
@@ -3930,25 +3929,6 @@
       return false;
     }
 
-    function workflowNodeStatusText(node, tasks, runs) {
-      const run = workflowLatestRunForNode(node, runs || state.runs || []);
-      if (run && isActiveRun(run)) return "执行中";
-      if (run && runFailed(run)) return "失败";
-      if (run && runSucceeded(run)) return "完成";
-      const task = workflowTaskForNode(node, tasks || state.tasks || []);
-      if (task) return statusText(task.status);
-      return state.workflowActive ? "已安排" : "未启用";
-    }
-
-    function workflowSchedulesForDate(dateKey) {
-      const tasks = workflowTasksForDate(dateKey);
-      const nodes = workflowTemplateNodesForSchedule();
-      if (nodes.length) {
-        return nodes.map((node) => ({ ...node, _workflowNode: true, _task: workflowTaskForNode(node, tasks) }));
-      }
-      return tasks;
-    }
-
     function workflowNodeDueAt(node, dateKey) {
       const time = String((node && node.time) || "").trim();
       if (!dateKey || !/^\d{2}:\d{2}$/.test(time)) return null;
@@ -3984,52 +3964,6 @@
       return `<span class="${escapeHtml(cls)}">${escapeHtml(info && info.label || "-")}</span>`;
     }
 
-    function workflowScheduleMatchesRun(item, run) {
-      if (!item || !run) return false;
-      if (item._workflowNode) return workflowRunMatchesNode(run, item);
-      const taskId = String(item.id || "");
-      const rowTaskId = String((run.task_id !== undefined && run.task_id !== null) ? run.task_id : "");
-      return !!taskId && rowTaskId === taskId;
-    }
-
-    function workflowOrphanRuns(runs, schedules) {
-      return (runs || []).filter((run) => !(schedules || []).some((item) => workflowScheduleMatchesRun(item, run)));
-    }
-
-    function workflowDayItemCount(dateKey) {
-      const runs = workflowRunsForDate(dateKey);
-      const schedules = workflowSchedulesForDate(dateKey);
-      return schedules.length + workflowOrphanRuns(runs, schedules).length;
-    }
-
-    function workflowRunItemHtml(row) {
-      return `<div class="workflow-day-item">
-        <span>${escapeHtml(timeLabel(row && (row.finished_at || row.updated_at || row.started_at || row.created_at)))}</span>
-        <strong>${escapeHtml(row && (row.title || "任务") || "任务")}</strong>
-        ${workflowStatusPillHtml({ label: statusText(row && row.status), kind: isActiveRun(row) ? "running" : (runFailed(row) ? "failed" : (runSucceeded(row) ? "completed" : "pending")), runId: row && row.id || "" })}
-      </div>`;
-    }
-
-    function workflowScheduleItemHtml(item, dateKey, runs) {
-      if (item && item._workflowNode) {
-        const activeTask = item._task || null;
-        const latestRun = workflowLatestRunForNode(item, runs || []);
-        const plan = item.plan && typeof item.plan === "object" ? item.plan : {};
-        return `<div class="workflow-day-item">
-          <span>${escapeHtml(item.time || "--:--")}</span>
-          <strong>${escapeHtml(item.ability_label || plan.title || "任务节点")}</strong>
-          ${workflowStatusPillHtml(workflowStatusInfo(item, activeTask, latestRun, dateKey))}
-        </div>`;
-      }
-      const daily = taskDailyTimes(item);
-      const timeText = daily.length ? daily.join("、") : timeLabel(item && (item.next_run_at || item.start_at || item.created_at));
-      return `<div class="workflow-day-item">
-        <span>${escapeHtml(timeText || "--:--")}</span>
-        <strong>${escapeHtml(item && (item.title || capabilityName(taskCapabilityId(item))) || "任务安排")}</strong>
-        ${workflowStatusPillHtml({ label: statusText(item && item.status), kind: isRunningStatus(item && item.status) ? "running" : "pending", taskId: item && item.id || "" })}
-      </div>`;
-    }
-
     function renderWorkflowDayBoard() {
       const daysBox = $("workflowCalendarDays");
       if (!daysBox) return;
@@ -4040,24 +3974,11 @@
       daysBox.innerHTML = Array.from({ length: 7 }, (_item, idx) => {
         const d = addDateDays(start, idx);
         const key = localDateKey(d);
-        const count = workflowDayItemCount(key);
         return `<button class="workflow-calendar-day${key === selectedKey ? " active" : ""}${key === today ? " today" : ""}" type="button" data-workflow-date="${escapeHtml(key)}">
           <span>${escapeHtml(dayShortLabel(d))}</span>
           <strong>${escapeHtml(String(d.getDate()))}</strong>
-          <em>${escapeHtml(count ? `${count}个` : "")}</em>
         </button>`;
       }).join("");
-      const runs = workflowRunsForDate(selectedKey)
-        .sort((a, b) => itemTimeMs(b.finished_at, b.updated_at, b.created_at) - itemTimeMs(a.finished_at, a.updated_at, a.created_at));
-      const schedules = workflowSchedulesForDate(selectedKey)
-        .sort((a, b) => String((a && (a.time || a.next_run_at || a.created_at)) || "").localeCompare(String((b && (b.time || b.next_run_at || b.created_at)) || "")));
-      const orphanRuns = workflowOrphanRuns(runs, schedules);
-      const itemsHtml = [
-        ...schedules.map((item) => workflowScheduleItemHtml(item, selectedKey, runs)),
-        ...orphanRuns.map(workflowRunItemHtml),
-      ].join("");
-      const itemBox = $("workflowDayItems");
-      if (itemBox) itemBox.innerHTML = itemsHtml || dayBoardEmpty("当天暂无节点");
     }
 
     function secretaryAbilityCount(department) {
@@ -12261,21 +12182,23 @@
       if (!btn) return;
       state.workflowSelectedDate = btn.dataset.workflowDate || todayDateKey();
       renderWorkflowDayBoard();
+      renderWorkflowTimeline();
     });
-    $("workflowView")?.addEventListener("click", (evt) => {
+    $("workflowTimeline")?.addEventListener("click", (evt) => {
       const runBtn = evt.target.closest("[data-open-run-detail]");
-      if (runBtn && runBtn.closest(".workflow-day-board")) {
+      if (runBtn) {
         evt.preventDefault();
+        evt.stopPropagation();
         openRunDetail(runBtn.dataset.openRunDetail || "", "workflow");
         return;
       }
       const taskBtn = evt.target.closest("[data-open-task-detail]");
-      if (taskBtn && taskBtn.closest(".workflow-day-board")) {
+      if (taskBtn) {
         evt.preventDefault();
+        evt.stopPropagation();
         openTaskDetail(taskBtn.dataset.openTaskDetail || "", "workflow");
+        return;
       }
-    });
-    $("workflowTimeline")?.addEventListener("click", (evt) => {
       const demoBtn = evt.target.closest("[data-workflow-demo-node]");
       if (demoBtn) {
         evt.preventDefault();
