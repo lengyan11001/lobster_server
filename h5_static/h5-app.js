@@ -49,6 +49,7 @@
       mountedAccountDefaults: {},
       mountedAccountsLoaded: false,
       mountedAccountsLoading: false,
+      mountedAccountTab: "wechat",
       publishRunDraft: null,
       publishRunSubmitting: false,
       userUploadAssetCache: {},
@@ -6487,11 +6488,10 @@
 
     function ensureSelectedInstallationId() {
       const selected = String(state.selectedInstallationId || "").trim();
-      if (selected && state.devices.some((d) => String(d.installation_id || "") === selected)) return selected;
+      if (selected && state.devices.some((d) => d.online && String(d.installation_id || "") === selected)) return selected;
       const previous = state.selectedInstallationId;
       const online = state.devices.find((d) => d.online && d.installation_id);
-      const any = state.devices.find((d) => d.installation_id);
-      const next = String(((online || any) || {}).installation_id || "");
+      const next = String((online || {}).installation_id || "");
       state.selectedInstallationId = next;
       if (next) localStorage.setItem("lobster_h5_selected_installation_id", next);
       else localStorage.removeItem("lobster_h5_selected_installation_id");
@@ -6503,7 +6503,9 @@
     }
 
     function setSelectedInstallationId(value) {
-      state.selectedInstallationId = String(value || "").trim();
+      const next = String(value || "").trim();
+      const hit = next ? (state.devices || []).find((d) => d.online && String(d.installation_id || "") === next) : null;
+      state.selectedInstallationId = hit ? next : "";
       if (state.selectedInstallationId) localStorage.setItem("lobster_h5_selected_installation_id", state.selectedInstallationId);
       else localStorage.removeItem("lobster_h5_selected_installation_id");
       state.publishAccountsLoaded = false;
@@ -6621,6 +6623,7 @@
         messages: ["手机会话", "消息结果和素材预览"],
         voice: ["龙虾AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
+        mountedAccounts: ["平台账号", ""],
         personalSettings: ["IP人设定位", "模板、关键词、同行账号和记忆文件"],
         taskList: ["定时任务", "默认展示 10 条，更多用翻页加载"],
         taskDetail: ["定时任务详情", "任务配置和最近执行入口"],
@@ -6658,7 +6661,10 @@
           loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}),
         ]).then(renderWorkflow);
       }
-      if (key === "profile") loadMountedAccounts(true).catch(() => {});
+      if (key === "mountedAccounts") {
+        renderProfileDeviceSelect();
+        refreshDeviceStatus().catch(() => loadMountedAccounts(true).catch(() => {}));
+      }
       if (key === "personalSettings" && !state.personalSettingsBackTab) state.personalSettingsBackTab = "profile";
       if (key === "agentManage") {
         renderAgentManage();
@@ -7434,21 +7440,21 @@
       const sel = $("profileDeviceSelect");
       if (!sel) return;
       ensureSelectedInstallationId();
-      const rows = state.devices || [];
+      const rows = (state.devices || []).filter((device) => device.online && device.installation_id);
       sel.innerHTML = rows.length
         ? rows.map((device) => {
             const id = String(device.installation_id || "");
             const name = deviceDisplayName(device) || id;
             const accountCount = Number(device.publish_account_count || 0);
-            const suffix = `${device.online ? "online" : "offline"}${accountCount ? ` / ${accountCount} accounts` : ""}`;
-            return optionHtml(id, `${name} (${suffix})`);
+            const suffix = accountCount ? ` / ${accountCount}个账号` : "";
+            return optionHtml(id, `${name}${suffix}`);
           }).join("")
-        : optionHtml("", "No online device");
+        : optionHtml("", "暂无在线设备");
       sel.value = state.selectedInstallationId || "";
       const selected = selectedDevice();
       const text = selected
-        ? `${selected.online ? "online" : "offline"} / ${deviceDisplayName(selected)}`
-        : "No device selected";
+        ? `在线 / ${deviceDisplayName(selected)}`
+        : "暂无在线设备";
       if ($("profileSelectedDeviceText")) $("profileSelectedDeviceText").textContent = text;
     }
 
@@ -7482,7 +7488,10 @@
 
     function mountedDefaultInstallationId(scope) {
       const pref = mountedDefault(scope);
-      return String((pref && pref.installation_id) || "").trim();
+      const installationId = String((pref && pref.installation_id) || "").trim();
+      if (!installationId) return "";
+      if ((state.devices || []).length && !(state.devices || []).some((device) => device.online && String(device.installation_id || "") === installationId)) return "";
+      return installationId;
     }
 
     function mountedDefaultAccountKey(scope) {
@@ -7495,7 +7504,16 @@
     }
 
     function defaultPublishAccount() {
-      return (state.publishAccounts || []).find((row) => row && row.is_default) || null;
+      return (state.publishAccounts || []).find((row) => row && row.is_default && mountedAccountDeviceOnline(row)) || null;
+    }
+
+    function mountedAccountDeviceOnline(row) {
+      if (!row) return false;
+      const installationId = String(row.installation_id || "").trim();
+      if (!installationId) return false;
+      if (row.device_online === false || row.online === false) return false;
+      if (!(state.devices || []).length) return true;
+      return (state.devices || []).some((device) => device.online && String(device.installation_id || "") === installationId);
     }
 
     function applyPublishAccountDefaults(rows) {
@@ -7505,27 +7523,55 @@
         return {
           ...row,
           account_key: key,
-          is_default: !!(defaultKey && key === defaultKey),
+          is_default: !!(defaultKey && key === defaultKey && mountedAccountDeviceOnline(row)),
         };
+      });
+    }
+
+    function onlineMountedDeviceIds() {
+      return new Set((state.devices || []).filter((device) => device.online).map((device) => String(device.installation_id || "").trim()).filter(Boolean));
+    }
+
+    function mountedAccountRowsForTab(scope) {
+      const activeScope = String(scope || state.mountedAccountTab || "wechat");
+      const onlineIds = onlineMountedDeviceIds();
+      return (Array.isArray(state.mountedAccounts) ? state.mountedAccounts : [])
+        .filter((row) => {
+          if (!row || row.scope !== activeScope || !row.online) return false;
+          const installationId = String(row.installation_id || "").trim();
+          if (activeScope === "wechat") return !installationId || onlineIds.has(installationId);
+          return !!installationId && onlineIds.has(installationId);
+        });
+    }
+
+    function renderMountedAccountTabs() {
+      const host = $("mountedAccountTabs");
+      if (!host) return;
+      host.querySelectorAll("[data-mounted-account-tab]").forEach((btn) => {
+        const scope = btn.dataset.mountedAccountTab || "wechat";
+        btn.classList.toggle("active", scope === state.mountedAccountTab);
+        const count = mountedAccountRowsForTab(scope).length;
+        btn.textContent = `${mountedScopeLabel(scope)}${count ? ` ${count}` : ""}`;
       });
     }
 
     function renderMountedAccounts() {
       const list = $("mountedAccountList");
       const summary = $("mountedAccountSummary");
+      if (summary) {
+        const onlineCount = ["wechat", "publish", "douyin"].reduce((sum, scope) => sum + mountedAccountRowsForTab(scope).length, 0);
+        summary.textContent = state.mountedAccountsLoaded ? `${onlineCount}个在线账号` : "微信、发布中心、抖音获客";
+      }
+      renderMountedAccountTabs();
       if (!list) return;
       if (state.mountedAccountsLoading) {
         list.innerHTML = '<div class="mounted-account-empty">正在加载...</div>';
         if (summary) summary.textContent = "正在读取账号状态";
         return;
       }
-      const rows = Array.isArray(state.mountedAccounts) ? state.mountedAccounts.slice() : [];
-      if (summary) {
-        const online = rows.filter((row) => row.online).length;
-        summary.textContent = rows.length ? `${online}/${rows.length} 在线` : "暂无挂载账号";
-      }
+      const rows = mountedAccountRowsForTab().slice();
       if (!rows.length) {
-        list.innerHTML = '<div class="mounted-account-empty">暂无挂载账号</div>';
+        list.innerHTML = `<div class="mounted-account-empty">暂无在线${escapeHtml(mountedScopeLabel(state.mountedAccountTab))}账号</div>`;
         return;
       }
       const scopeOrder = { wechat: 0, publish: 1, douyin: 2 };
@@ -7616,7 +7662,7 @@
         renderProfileDeviceSelect();
         renderWorkflowDeviceSelect();
         renderOfficeEmployees();
-        loadMountedAccounts(true).catch(() => {});
+        if (activeViewKey() === "mountedAccounts") loadMountedAccounts(true).catch(() => {});
       } catch (err) {
         $("onlineDot").classList.remove("online");
         renderProfileDeviceSelect();
@@ -7624,7 +7670,7 @@
         $("deviceText").textContent = "设备状态获取失败";
         $("profileDeviceText").textContent = "设备状态获取失败";
         renderOfficeEmployees();
-        loadMountedAccounts(true).catch(() => {});
+        if (activeViewKey() === "mountedAccounts") loadMountedAccounts(true).catch(() => {});
       }
     }
 
@@ -10746,7 +10792,7 @@
       const commentText = (($("douyinTaskCommentText") || {}).value || "").trim();
       const dmText = (($("douyinTaskDmText") || {}).value || "").trim();
       const params = {};
-      const defaultKey = mountedDefaultAccountKey("douyin");
+      const defaultKey = defaultDouyinInstallationId() ? mountedDefaultAccountKey("douyin") : "";
       const defaultAccount = ((state.douyinStatus && state.douyinStatus.accounts) || []).find((row) => String((row && (row.account_key || row.select_id)) || "") === defaultKey) || null;
       if (defaultAccount) {
         params.account_key = defaultKey;
@@ -10825,7 +10871,7 @@
         };
       });
       const onlineCount = normalizedAccounts.filter((row) => row.online).length;
-      const preferredAccountKey = mountedDefaultAccountKey("douyin")
+      const preferredAccountKey = (defaultDouyinInstallationId() ? mountedDefaultAccountKey("douyin") : "")
         || normalizedAccounts.find((row) => row.isDefault)?.accountKey
         || "";
       if (accountHint) accountHint.textContent = normalizedAccounts.length ? `在线 ${onlineCount} / ${normalizedAccounts.length}` : "暂无账号";
@@ -12399,6 +12445,10 @@
         switchTab("profile");
         return;
       }
+      if (activeId === "mountedAccountsView") {
+        switchTab("profile");
+        return;
+      }
       if (activeId === "personalSettingsView") {
         switchTab(state.personalSettingsBackTab || "profile");
         return;
@@ -12862,6 +12912,15 @@
     });
     $("refreshProfileBtn").addEventListener("click", refreshDeviceStatus);
     $("profileDeviceSelect")?.addEventListener("change", (evt) => setSelectedInstallationId(evt.target.value || ""));
+    $("mountedAccountRefreshBtn")?.addEventListener("click", () => {
+      refreshDeviceStatus().catch((err) => toast(err.message || "刷新失败"));
+    });
+    $("mountedAccountTabs")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-mounted-account-tab]");
+      if (!btn) return;
+      state.mountedAccountTab = btn.dataset.mountedAccountTab || "wechat";
+      renderMountedAccounts();
+    });
     $("mountedAccountList")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-mounted-default-key]");
       if (!btn) return;

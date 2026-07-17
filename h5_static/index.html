@@ -654,22 +654,6 @@
             </div>
             <div class="setting-row">
               <div>
-                <strong>控制设备</strong>
-                <div class="hint" id="profileSelectedDeviceText">未选择设备</div>
-              </div>
-              <select id="profileDeviceSelect" class="device-select"></select>
-            </div>
-            <div class="setting-row account-mount-row">
-              <div>
-                <strong>已挂载账号</strong>
-                <div class="hint" id="mountedAccountSummary">正在读取账号状态</div>
-              </div>
-              <div class="mounted-account-list" id="mountedAccountList">
-                <div class="mounted-account-empty">正在加载...</div>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div>
                 <strong>iPhone 桌面入口</strong>
                 <div class="hint">下载描述文件后，到系统设置里确认安装。</div>
               </div>
@@ -680,6 +664,13 @@
             <button class="danger" type="button" id="logoutBtn">退出登录</button>
           </div>
           <div class="panel settings">
+            <button class="profile-entry" type="button" data-tab-target="mountedAccounts">
+              <span>
+                <strong>平台账号</strong>
+                <small id="mountedAccountSummary">微信、发布中心、抖音获客</small>
+              </span>
+              <b>进入</b>
+            </button>
             <button class="profile-entry" type="button" data-tab-target="personalSettings">
               <span>
                 <strong>IP人设定位</strong>
@@ -708,6 +699,32 @@
               </span>
               <b>进入</b>
             </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="mountedAccountsView">
+        <div class="panel list-page mounted-account-page">
+          <div class="section-title">
+            <h2>平台账号</h2>
+            <div class="section-actions">
+              <button class="ghost" type="button" id="mountedAccountRefreshBtn">刷新</button>
+            </div>
+          </div>
+          <div class="mounted-device-row">
+            <div>
+              <strong>控制设备</strong>
+              <div class="hint" id="profileSelectedDeviceText">未选择设备</div>
+            </div>
+            <select id="profileDeviceSelect" class="device-select"></select>
+          </div>
+          <div class="mounted-account-tabs" id="mountedAccountTabs">
+            <button type="button" class="active" data-mounted-account-tab="wechat">微信</button>
+            <button type="button" data-mounted-account-tab="publish">发布中心</button>
+            <button type="button" data-mounted-account-tab="douyin">抖音获客</button>
+          </div>
+          <div class="mounted-account-list" id="mountedAccountList">
+            <div class="mounted-account-empty">正在加载...</div>
           </div>
         </div>
       </section>

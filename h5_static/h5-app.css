@@ -2195,6 +2195,45 @@
     .settings { padding: 16px; display: grid; gap: 12px; }
     .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border-radius: 16px; background: rgba(248,251,255,.9); border: 1px solid rgba(223,230,242,.8); }
     .setting-row .device-select { max-width: min(210px, 48vw); }
+    .mounted-account-page {
+      display: grid;
+      gap: 14px;
+    }
+    .mounted-device-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid rgba(223,230,242,.86);
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(248,251,255,.96), rgba(255,255,255,.9));
+    }
+    .mounted-device-row .device-select {
+      width: min(260px, 48vw);
+    }
+    .mounted-account-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      padding: 6px;
+      border-radius: 18px;
+      background: rgba(238,244,255,.82);
+    }
+    .mounted-account-tabs button {
+      min-height: 38px;
+      padding: 0 10px;
+      color: #62708a;
+      background: transparent;
+      box-shadow: none;
+      font-size: 13px;
+      font-weight: 900;
+    }
+    .mounted-account-tabs button.active {
+      color: #fff;
+      background: linear-gradient(135deg, #245cff, #13a873);
+      box-shadow: 0 10px 24px rgba(36,92,255,.18);
+    }
     .account-mount-row {
       display: grid;
       grid-template-columns: 1fr;
