@@ -57,6 +57,7 @@ _H5_UPLOAD_DIR = _ROOT / "temp_assets" / "h5_chat_uploads"
 _H5_WEBCLIP_URL = "https://h5.bhzn.top/"
 _H5_WEBCLIP_LABEL = "必火AI员工"
 _VALID_MODES = {"direct"}
+_H5_CLIENT_COMMAND_PREFIX = "__LOBSTER_H5_CLIENT_COMMAND__"
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _CHAT_TURN_BILLING_SUPPORT_HEADER = "X-Lobster-Chat-Turn-Billing"
 _UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -123,6 +124,14 @@ class H5DeviceDisplayNameIn(BaseModel):
 class H5MountedAccountDefaultIn(BaseModel):
     scope: str = Field(..., min_length=1, max_length=32)
     account_key: str = Field(..., min_length=1, max_length=255)
+
+
+class H5WechatAutoReplyIn(BaseModel):
+    enabled: bool = False
+    installation_id: Optional[str] = Field(default=None, max_length=128)
+    account_key: Optional[str] = Field(default="wechat:pc-default", max_length=255)
+    account_id: Optional[str] = Field(default="pc-wechat-default", max_length=160)
+    interval_seconds: int = Field(default=1800, ge=300, le=86400)
 
 
 def _normalize_publish_account_snapshot(accounts: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
@@ -408,9 +417,14 @@ def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
     )
     defaults = _mounted_default_rows(db, user_id)
     default_payload = {scope: _mounted_default_payload(row) for scope, row in defaults.items()}
+    auto_reply_pref = defaults.get("wechat_auto_reply")
+    auto_reply_payload = auto_reply_pref.payload if auto_reply_pref and isinstance(auto_reply_pref.payload, dict) else {}
     for row in accounts:
         pref = defaults.get(str(row.get("scope") or ""))
         row["is_default"] = bool(pref and pref.account_key == row.get("account_key"))
+        if row.get("scope") == "wechat":
+            row["auto_reply_enabled"] = bool(auto_reply_payload.get("enabled") or auto_reply_payload.get("auto_reply_enabled"))
+            row["auto_reply_interval_seconds"] = int(auto_reply_payload.get("interval_seconds") or 1800)
     return {"ok": True, "accounts": accounts, "defaults": default_payload, "devices": device_rows}
 
 
@@ -1194,6 +1208,89 @@ def h5_mounted_accounts(
     return _mounted_accounts_payload(db, owner_user.id)
 
 
+@router.post("/api/h5-chat/mounted-accounts/wechat-auto-reply", summary="H5 设置个人微信自动回复")
+def h5_set_wechat_auto_reply(
+    body: H5WechatAutoReplyIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    payload = _mounted_accounts_payload(db, owner_user.id)
+    target_installation = (body.installation_id or "").strip()
+    account = next(
+        (
+            row
+            for row in payload.get("accounts", [])
+            if row.get("scope") == "wechat"
+            and row.get("online")
+            and (not target_installation or str(row.get("installation_id") or "") == target_installation)
+        ),
+        None,
+    )
+    if not account:
+        raise HTTPException(status_code=404, detail="未找到在线微信设备")
+
+    installation_id = str(account.get("installation_id") or "").strip()
+    if not installation_id:
+        raise HTTPException(status_code=400, detail="微信设备缺少 installation_id")
+
+    account_key = (body.account_key or str(account.get("account_key") or "") or "wechat:pc-default").strip()
+    account_id = (body.account_id or str(account.get("account_id") or "") or "pc-wechat-default").strip()
+    interval_seconds = max(300, min(int(body.interval_seconds or 1800), 86400))
+    now = datetime.utcnow()
+
+    pref = (
+        db.query(H5MountedAccountDefault)
+        .filter(H5MountedAccountDefault.user_id == owner_user.id, H5MountedAccountDefault.scope == "wechat_auto_reply")
+        .first()
+    )
+    if not pref:
+        pref = H5MountedAccountDefault(user_id=owner_user.id, scope="wechat_auto_reply", created_at=now)
+        db.add(pref)
+    pref.account_key = account_key
+    pref.platform = "wechat"
+    pref.account_id = account_id
+    pref.account_label = str(account.get("nickname") or "本机微信")[:255]
+    pref.installation_id = installation_id
+    pref.source = "pc_wechat"
+    pref.payload = {
+        "enabled": bool(body.enabled),
+        "interval_seconds": interval_seconds,
+        "account_id": account_id,
+        "account_key": account_key,
+    }
+    pref.updated_at = now
+
+    command = {
+        "action": "native_wechat_auto_reply_config",
+        "account_id": account_id,
+        "enabled": bool(body.enabled),
+        "interval_seconds": interval_seconds,
+    }
+    message = H5ChatMessage(
+        id=uuid.uuid4().hex,
+        user_id=owner_user.id,
+        installation_id=installation_id,
+        mode="client_command",
+        content=_H5_CLIENT_COMMAND_PREFIX + json.dumps(command, ensure_ascii=False, separators=(",", ":")),
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(message)
+    _add_event(db, message, "queued", {"mode": "client_command", "action": command["action"]})
+    _clear_pending_empty_for_target(owner_user.id, installation_id)
+    db.commit()
+    db.refresh(message)
+    result = _mounted_accounts_payload(db, owner_user.id)
+    return {
+        "ok": True,
+        "message": _serialize_message(message),
+        "accounts": result.get("accounts", []),
+        "defaults": result.get("defaults", {}),
+    }
+
+
 @router.post("/api/h5-chat/mounted-accounts/default", summary="H5 设置默认挂载账号")
 def h5_set_mounted_account_default(
     body: H5MountedAccountDefaultIn,
@@ -1290,7 +1387,8 @@ def h5_pending_messages(
     current_user: Optional[User] = None
     for row in rows:
         turn_id = f"h5:{row.id}"
-        if turn_billing_supported:
+        billable_message = turn_billing_supported and str(row.mode or "").strip() == "direct"
+        if billable_message:
             if current_user is None:
                 current_user = db.query(User).filter(User.id == current_user_id).first()
                 if current_user is None:
@@ -1321,7 +1419,7 @@ def h5_pending_messages(
         row.claimed_at = now
         row.updated_at = now
         claimed_payload = {"installation_id": xi or ""}
-        if turn_billing_supported:
+        if billable_message:
             claimed_payload.update({"chat_turn_charged": True, "chat_turn_id": turn_id})
         _add_event(db, row, "claimed", claimed_payload)
         db.commit()
@@ -1330,7 +1428,17 @@ def h5_pending_messages(
         _clear_pending_empty(pending_key)
     else:
         _mark_pending_empty(pending_key)
-    return {"ok": True, "items": [_serialize_message(r, include_reply=False, chat_turn_charged=turn_billing_supported) for r in claimed_rows]}
+    return {
+        "ok": True,
+        "items": [
+            _serialize_message(
+                r,
+                include_reply=False,
+                chat_turn_charged=turn_billing_supported and str(r.mode or "").strip() == "direct",
+            )
+            for r in claimed_rows
+        ],
+    }
 
 
 def _assert_worker_can_update(message: H5ChatMessage, xi: str) -> None:

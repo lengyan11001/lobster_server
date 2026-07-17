@@ -2324,6 +2324,23 @@
       color: #0c815b;
       background: rgba(19,168,115,.12);
     }
+    .mounted-auto-reply-btn {
+      min-height: 28px;
+      padding: 0 10px;
+      color: #526178;
+      border-color: rgba(82,97,120,.18);
+      background: rgba(245,248,253,.9);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .mounted-auto-reply-btn.active {
+      color: #0c815b;
+      border-color: rgba(19,168,115,.28);
+      background: rgba(19,168,115,.12);
+    }
+    .mounted-auto-reply-btn:disabled {
+      opacity: .58;
+    }
     .mounted-account-empty {
       min-height: 44px;
       display: grid;

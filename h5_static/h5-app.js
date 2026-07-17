@@ -7592,6 +7592,9 @@
             ? '<button class="ghost mounted-default-btn active" type="button" disabled>默认</button>'
             : `<button class="ghost mounted-default-btn" type="button" data-mounted-default-scope="${escapeHtml(row.scope || "")}" data-mounted-default-key="${escapeHtml(row.account_key || "")}">设默认</button>`)
           : "";
+        const autoReplyAction = row.scope === "wechat"
+          ? `<button class="ghost mounted-auto-reply-btn${row.auto_reply_enabled ? " active" : ""}" type="button" data-mounted-wechat-auto-reply="${row.auto_reply_enabled ? "0" : "1"}" data-mounted-installation-id="${escapeHtml(row.installation_id || "")}">${row.auto_reply_enabled ? "自动回复开" : "自动回复关"}</button>`
+          : "";
         return `<div class="mounted-account-item${row.online ? " online" : ""}${row.is_default ? " default" : ""}">
           <span class="mounted-account-icon">${escapeHtml(firstChar(mountedScopeLabel(row.scope)))}</span>
           <div class="mounted-account-main">
@@ -7599,6 +7602,7 @@
             <em>${escapeHtml(mountedScopeLabel(row.scope))}${meta ? ` · ${escapeHtml(meta)}` : ""}</em>
           </div>
           <span class="mounted-account-status">${escapeHtml(mountedAccountStatusText(row))}</span>
+          ${autoReplyAction}
           ${action}
         </div>`;
       }).join("");
@@ -7644,6 +7648,26 @@
       if (row && row.installation_id) setSelectedInstallationId(row.installation_id);
       else loadPublishAccounts().catch((err) => toast(err.message || "发布账号加载失败"));
       toast("默认账号已设置");
+    }
+
+    async function setMountedWechatAutoReply(enabled, installationId, btn) {
+      if (btn) btn.disabled = true;
+      try {
+        const data = await api("/api/h5-chat/mounted-accounts/wechat-auto-reply", {
+          method: "POST",
+          json: {
+            enabled: !!enabled,
+            installation_id: installationId || state.selectedInstallationId || "",
+            interval_seconds: 1800,
+          },
+        });
+        state.mountedAccounts = Array.isArray(data.accounts) ? data.accounts : state.mountedAccounts;
+        state.mountedAccountDefaults = data.defaults || state.mountedAccountDefaults || {};
+        renderMountedAccounts();
+        toast(enabled ? "个人微信自动回复已开启" : "个人微信自动回复已关闭");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     }
 
     async function refreshDeviceStatus() {
@@ -12922,6 +12946,12 @@
       renderMountedAccounts();
     });
     $("mountedAccountList")?.addEventListener("click", (evt) => {
+      const autoBtn = evt.target.closest("[data-mounted-wechat-auto-reply]");
+      if (autoBtn) {
+        const enabled = autoBtn.dataset.mountedWechatAutoReply === "1";
+        setMountedWechatAutoReply(enabled, autoBtn.dataset.mountedInstallationId || "", autoBtn).catch((err) => toast(err.message || "自动回复设置失败"));
+        return;
+      }
       const btn = evt.target.closest("[data-mounted-default-key]");
       if (!btn) return;
       setMountedAccountDefault(btn.dataset.mountedDefaultScope || "", btn.dataset.mountedDefaultKey || "").catch((err) => toast(err.message || "设置默认账号失败"));
