@@ -3885,6 +3885,9 @@
 
     function workflowTemplateNodesForSchedule() {
       const active = state.workflowActive;
+      if (active && Array.isArray(active.template_nodes) && active.template_nodes.length) {
+        return active.template_nodes.slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      }
       const activeTpl = active && active.template_id ? workflowTemplateById(active.template_id) : null;
       const nodes = activeTpl && Array.isArray(activeTpl.nodes) && activeTpl.nodes.length
         ? activeTpl.nodes
@@ -3892,10 +3895,26 @@
       return nodes.slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
     }
 
+    function workflowTaskForNode(node, tasks) {
+      const nodeId = String((node && node.id) || "");
+      const nodeKey = String((node && node.ability_key) || "");
+      const nodeTime = String((node && node.time) || "");
+      return (tasks || []).find((task) => {
+        const payload = task && task.payload && typeof task.payload === "object" ? task.payload : {};
+        const ctx = h5ContextFromPayload(payload);
+        if (nodeId && String(ctx.workflow_node_id || "") === nodeId) return true;
+        if (nodeKey && String(ctx.ability_key || "") === nodeKey && taskDailyTimes(task).includes(nodeTime)) return true;
+        return false;
+      }) || null;
+    }
+
     function workflowSchedulesForDate(dateKey) {
       const tasks = workflowTasksForDate(dateKey);
-      if (tasks.length) return tasks;
-      return workflowTemplateNodesForSchedule().map((node) => ({ ...node, _workflowNode: true }));
+      const nodes = workflowTemplateNodesForSchedule();
+      if (nodes.length) {
+        return nodes.map((node) => ({ ...node, _workflowNode: true, _task: workflowTaskForNode(node, tasks) }));
+      }
+      return tasks;
     }
 
     function workflowRunItemHtml(row) {
@@ -3908,12 +3927,18 @@
 
     function workflowScheduleItemHtml(item) {
       if (item && item._workflowNode) {
-        const active = !!state.workflowActive;
+        const activeTask = item._task || null;
         const plan = item.plan && typeof item.plan === "object" ? item.plan : {};
-        return `<div class="workflow-day-item">
-          <span>${escapeHtml(item.time || "--:--")}</span>
+        const content = `<span>${escapeHtml(item.time || "--:--")}</span>
           <strong>${escapeHtml(item.ability_label || plan.title || "任务节点")}</strong>
-          <em>${escapeHtml(active ? "已安排" : "未启用")}</em>
+          <em>${escapeHtml(activeTask ? statusText(activeTask.status) : (state.workflowActive ? "已安排" : "未启用"))}</em>`;
+        if (activeTask && activeTask.id) {
+          return `<button class="workflow-day-item" type="button" data-open-task-detail="${escapeHtml(activeTask.id || "")}">
+            ${content}
+          </button>`;
+        }
+        return `<div class="workflow-day-item">
+          ${content}
         </div>`;
       }
       const daily = taskDailyTimes(item);

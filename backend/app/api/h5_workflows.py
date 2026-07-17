@@ -116,12 +116,17 @@ def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, 
 
 
 def _activation_payload(row: H5WorkflowActivation, template: Optional[H5WorkflowTemplate] = None) -> dict[str, Any]:
+    snapshot = row.template_snapshot if isinstance(row.template_snapshot, dict) else {}
+    template_nodes = snapshot.get("nodes") if isinstance(snapshot.get("nodes"), list) else None
+    if template_nodes is None and template is not None:
+        template_nodes = template.nodes or []
     return {
         "id": row.id,
         "user_id": row.user_id,
         "installation_id": row.installation_id,
         "template_id": row.template_id,
-        "template_name": template.name if template else (row.template_snapshot or {}).get("name", ""),
+        "template_name": template.name if template else snapshot.get("name", ""),
+        "template_nodes": template_nodes or [],
         "status": row.status,
         "scheduled_task_ids": row.scheduled_task_ids or [],
         "started_at": _iso(row.started_at),
