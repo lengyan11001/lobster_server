@@ -7829,24 +7829,25 @@
 
     async function savePersonalRawMemory(btn) {
       const files = selectedPersonalUploadFiles();
-      const raw = (($("personalRawMemoryText") && $("personalRawMemoryText").value) || "").trim();
-      const urls = (($("personalMemoryUrls") && $("personalMemoryUrls").value) || "").trim();
-      const mode = "new";
-      const quickTitle = (($("personalQuickMemoryTitle") && $("personalQuickMemoryTitle").value) || "").trim();
-      const title = quickTitle || (($("personalMemoryTitle") && $("personalMemoryTitle").value) || "").trim();
-      const targetDocId = "";
-      if (!files.length && !raw && !urls) throw new Error("请上传资料、填写链接或粘贴资料后再保存。");
-      if (mode === "new" && !title) throw new Error("新建文档需要填写文档名字。");
-      if (mode === "overwrite" && !targetDocId) throw new Error("覆盖已有文档需要先选择一个文档。");
-      const fd = new FormData();
-      files.forEach((file) => fd.append("files", file, file.name || "upload"));
-      fd.append("title", title);
-      fd.append("notes", "IP人设定位直接保存");
-      fd.append("raw_text", raw);
-      fd.append("urls", urls);
-      fd.append("mode", mode);
-      fd.append("target_doc_id", targetDocId);
-      await savePersonalUploadedMemory(btn, fd);
+      if (!files.length) throw new Error("请先上传文件。");
+      personalSetBusy(btn, true, "保存中...");
+      try {
+        for (const file of files) {
+          const fd = new FormData();
+          fd.append("files", file, file.name || "upload");
+          fd.append("title", file.name || "上传资料");
+          fd.append("notes", "IP人设定位上传资料");
+          fd.append("raw_text", "");
+          fd.append("urls", "");
+          fd.append("mode", "new");
+          fd.append("target_doc_id", "");
+          await savePersonalUploadedMemory(null, fd);
+        }
+        state.personalUploadFiles = [];
+        renderPersonalSelectedFiles();
+      } finally {
+        personalSetBusy(btn, false);
+      }
     }
 
     async function savePersonalMemory(btn) {
