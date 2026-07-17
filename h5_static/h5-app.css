@@ -4625,11 +4625,16 @@
     }
     .asset-library-head,
     .personal-list-page-head {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+    }
+    .asset-library-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .personal-list-page-head {
+      display: flex;
     }
     .asset-library-head .asset-library-tabs {
       flex: 1 1 auto;
@@ -4642,6 +4647,10 @@
       padding: 0 12px;
       border-radius: 999px;
       font-size: 12px;
+    }
+    .personal-list-page-head button {
+      min-height: 40px;
+      padding: 0 14px;
     }
     .personal-list-page-head {
       padding: 10px;
