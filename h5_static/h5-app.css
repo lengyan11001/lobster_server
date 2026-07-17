@@ -5312,6 +5312,156 @@
       padding: 0 12px;
       white-space: nowrap;
     }
+    .workflow-day-board {
+      display: grid;
+      gap: 10px;
+    }
+    .workflow-calendar {
+      display: grid;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid rgba(223,230,242,.78);
+      border-radius: 22px;
+      background:
+        radial-gradient(circle at 8% 12%, rgba(36,92,255,.1), transparent 26%),
+        rgba(255,255,255,.86);
+      box-shadow: 0 12px 28px rgba(29,54,105,.08);
+    }
+    .workflow-calendar-days {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(44px, 1fr));
+      gap: 6px;
+      min-width: 0;
+    }
+    .workflow-calendar-day {
+      display: grid;
+      justify-items: center;
+      gap: 2px;
+      min-width: 0;
+      min-height: 58px;
+      padding: 6px 4px;
+      color: #6d7890;
+      border: 1px solid rgba(223,230,242,.9);
+      border-radius: 16px;
+      background: rgba(255,255,255,.74);
+      box-shadow: none;
+    }
+    .workflow-calendar-day span {
+      font-size: 11px;
+      font-weight: 900;
+    }
+    .workflow-calendar-day strong {
+      color: #102036;
+      font-size: 17px;
+      line-height: 1;
+    }
+    .workflow-calendar-day em {
+      min-height: 13px;
+      color: #245cff;
+      font-size: 10px;
+      font-style: normal;
+      font-weight: 900;
+    }
+    .workflow-calendar-day.today {
+      border-color: rgba(19,168,115,.36);
+    }
+    .workflow-calendar-day.active {
+      color: #fff;
+      border-color: transparent;
+      background: linear-gradient(145deg, #245cff, #13a873);
+      box-shadow: 0 12px 24px rgba(36,92,255,.2);
+    }
+    .workflow-calendar-day.active strong,
+    .workflow-calendar-day.active em {
+      color: #fff;
+    }
+    .workflow-day-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 42px;
+      padding: 0 14px;
+      color: #102036;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(232,244,255,.9), rgba(235,255,245,.9));
+    }
+    .workflow-day-summary span,
+    .workflow-day-summary em {
+      color: #6d7890;
+      font-size: 12px;
+      font-style: normal;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .workflow-day-summary strong {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 15px;
+      font-weight: 950;
+    }
+    .workflow-day-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .workflow-day-card {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid rgba(223,230,242,.9);
+      border-radius: 20px;
+      background: rgba(255,255,255,.92);
+      box-shadow: 0 12px 26px rgba(24,50,105,.08);
+    }
+    .workflow-day-card > strong {
+      color: #102036;
+      font-size: 14px;
+      font-weight: 950;
+    }
+    .workflow-day-item {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 38px;
+      width: 100%;
+      padding: 8px;
+      color: #102036;
+      text-align: left;
+      border: 0;
+      border-radius: 14px;
+      background: rgba(246,249,255,.92);
+      box-shadow: none;
+      appearance: none;
+    }
+    .workflow-day-item span,
+    .workflow-day-item em {
+      color: #6d7890;
+      font-size: 11px;
+      font-style: normal;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .workflow-day-item strong {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      font-weight: 950;
+    }
+    #workflowView .department-day-empty {
+      min-height: 40px;
+      display: grid;
+      place-items: center;
+      color: #7b879b;
+      border-radius: 14px;
+      background: rgba(246,249,255,.72);
+      font-size: 12px;
+      font-weight: 800;
+    }
     .workflow-editor-card,
     .workflow-template-drawer,
     .workflow-node-card {
@@ -5587,6 +5737,29 @@
       }
       #departmentView .department-calendar-day {
         flex: 0 0 52px;
+      }
+      .workflow-calendar {
+        padding: 8px;
+      }
+      .workflow-calendar-days {
+        display: flex;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .workflow-calendar-days::-webkit-scrollbar {
+        display: none;
+      }
+      .workflow-calendar-day {
+        flex: 0 0 52px;
+      }
+      .workflow-day-summary {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 3px;
+        padding: 9px 12px;
+      }
+      .workflow-day-grid {
+        grid-template-columns: 1fr;
       }
       #departmentView .department-day-summary {
         align-items: flex-start;

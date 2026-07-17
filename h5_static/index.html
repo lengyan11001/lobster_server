@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260717-department-calendar-demo-3" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260717-workflow-calendar" />
 </head>
 <body>
   <main class="shell">
@@ -188,6 +188,23 @@
             <div class="workflow-head-actions">
               <button type="button" id="workflowOpenAddNodeBtn">添加节点</button>
               <button class="ghost" type="button" id="workflowTemplateListBtn">模板列表</button>
+            </div>
+          </div>
+
+          <div class="workflow-day-board">
+            <div class="workflow-calendar">
+              <div class="workflow-calendar-days" id="workflowCalendarDays"></div>
+            </div>
+            <div class="workflow-day-summary" id="workflowDaySummary"></div>
+            <div class="workflow-day-grid">
+              <div class="workflow-day-card">
+                <strong>执行</strong>
+                <div id="workflowDayRuns"></div>
+              </div>
+              <div class="workflow-day-card">
+                <strong>安排</strong>
+                <div id="workflowDaySchedules"></div>
+              </div>
             </div>
           </div>
 
@@ -1437,6 +1454,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260717-department-calendar-demo-3"></script>
+  <script src="/h5-static/h5-app.js?v=20260717-workflow-calendar"></script>
 </body>
 </html>

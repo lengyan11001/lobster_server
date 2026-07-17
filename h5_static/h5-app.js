@@ -32,6 +32,7 @@
       companyName: localStorage.getItem("lobster_h5_company_name") || "我的AI公司",
       officeDeviceFilter: "all",
       departmentSelectedDate: "",
+      workflowSelectedDate: "",
       officePage: 1,
       officePageSize: 4,
       taskAbility: "goal.video.pipeline",
@@ -2931,6 +2932,7 @@
       }
       if ($("workflowActivateBtn")) $("workflowActivateBtn").disabled = !!state.workflowSubmitting;
       if ($("workflowStopBtn")) $("workflowStopBtn").disabled = !active || !!state.workflowSubmitting;
+      renderWorkflowDayBoard();
       renderWorkflowTimeline();
       renderWorkflowTemplates();
       renderWorkflowGrantPanel();
@@ -3848,6 +3850,116 @@
       if (taskBox) taskBox.innerHTML = tasks.length ? tasks.slice(0, 6).map(departmentTaskItemHtml).join("") : dayBoardEmpty("当天暂无安排");
     }
 
+    function workflowSelectedDateKey() {
+      if (!state.workflowSelectedDate) state.workflowSelectedDate = todayDateKey();
+      return state.workflowSelectedDate;
+    }
+
+    function workflowActiveTaskIds() {
+      return new Set(((state.workflowActive && state.workflowActive.scheduled_task_ids) || []).map((id) => String(id || "")).filter(Boolean));
+    }
+
+    function workflowRecordMatchesCurrent(row) {
+      if (!row) return false;
+      const activeIds = workflowActiveTaskIds();
+      if (activeIds.size) {
+        const rowTaskId = String((row.task_id !== undefined && row.task_id !== null) ? row.task_id : row.id || "");
+        return !!rowTaskId && activeIds.has(rowTaskId);
+      }
+      const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+      const ctx = h5ContextFromPayload(payload);
+      const activeTemplateId = String((state.workflowActive && state.workflowActive.template_id) || "");
+      if (activeTemplateId && String(ctx.workflow_template_id || "") === activeTemplateId) return true;
+      return String(row.created_by_role || "") === "workflow" || !!(ctx.workflow_template_id || ctx.workflow_node_id);
+    }
+
+    function workflowRunsForDate(dateKey) {
+      const key = dateKey || workflowSelectedDateKey();
+      return (state.runs || []).filter((row) => workflowRecordMatchesCurrent(row) && workDateKey(row) === key);
+    }
+
+    function workflowTasksForDate(dateKey) {
+      const key = dateKey || workflowSelectedDateKey();
+      return (state.tasks || []).filter((task) => workflowRecordMatchesCurrent(task) && taskScheduledOnDate(task, key));
+    }
+
+    function workflowTemplateNodesForSchedule() {
+      const active = state.workflowActive;
+      const activeTpl = active && active.template_id ? workflowTemplateById(active.template_id) : null;
+      const nodes = activeTpl && Array.isArray(activeTpl.nodes) && activeTpl.nodes.length
+        ? activeTpl.nodes
+        : (state.workflowNodesDraft || []);
+      return nodes.slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+    }
+
+    function workflowSchedulesForDate(dateKey) {
+      const tasks = workflowTasksForDate(dateKey);
+      if (tasks.length) return tasks;
+      return workflowTemplateNodesForSchedule().map((node) => ({ ...node, _workflowNode: true }));
+    }
+
+    function workflowRunItemHtml(row) {
+      return `<button class="workflow-day-item" type="button" data-open-run-detail="${escapeHtml(row && row.id || "")}">
+        <span>${escapeHtml(timeLabel(row && (row.finished_at || row.updated_at || row.started_at || row.created_at)))}</span>
+        <strong>${escapeHtml(row && (row.title || "任务") || "任务")}</strong>
+        <em>${escapeHtml(statusText(row && row.status))}</em>
+      </button>`;
+    }
+
+    function workflowScheduleItemHtml(item) {
+      if (item && item._workflowNode) {
+        const active = !!state.workflowActive;
+        const plan = item.plan && typeof item.plan === "object" ? item.plan : {};
+        return `<div class="workflow-day-item">
+          <span>${escapeHtml(item.time || "--:--")}</span>
+          <strong>${escapeHtml(item.ability_label || plan.title || "任务节点")}</strong>
+          <em>${escapeHtml(active ? "已安排" : "未启用")}</em>
+        </div>`;
+      }
+      const daily = taskDailyTimes(item);
+      const timeText = daily.length ? daily.join("、") : timeLabel(item && (item.next_run_at || item.start_at || item.created_at));
+      return `<button class="workflow-day-item" type="button" data-open-task-detail="${escapeHtml(item && item.id || "")}">
+        <span>${escapeHtml(timeText || "--:--")}</span>
+        <strong>${escapeHtml(item && (item.title || capabilityName(taskCapabilityId(item))) || "任务安排")}</strong>
+        <em>${escapeHtml(statusText(item && item.status))}</em>
+      </button>`;
+    }
+
+    function renderWorkflowDayBoard() {
+      const daysBox = $("workflowCalendarDays");
+      if (!daysBox) return;
+      const selected = parseDateKey(workflowSelectedDateKey());
+      const start = addDateDays(selected, -((selected.getDay() + 6) % 7));
+      const today = todayDateKey();
+      const selectedKey = workflowSelectedDateKey();
+      daysBox.innerHTML = Array.from({ length: 7 }, (_item, idx) => {
+        const d = addDateDays(start, idx);
+        const key = localDateKey(d);
+        const count = workflowRunsForDate(key).length + workflowSchedulesForDate(key).length;
+        return `<button class="workflow-calendar-day${key === selectedKey ? " active" : ""}${key === today ? " today" : ""}" type="button" data-workflow-date="${escapeHtml(key)}">
+          <span>${escapeHtml(dayShortLabel(d))}</span>
+          <strong>${escapeHtml(String(d.getDate()))}</strong>
+          <em>${escapeHtml(count ? `${count}个` : "")}</em>
+        </button>`;
+      }).join("");
+      const runs = workflowRunsForDate(selectedKey)
+        .sort((a, b) => itemTimeMs(b.finished_at, b.updated_at, b.created_at) - itemTimeMs(a.finished_at, a.updated_at, a.created_at));
+      const schedules = workflowSchedulesForDate(selectedKey)
+        .sort((a, b) => String((a && (a.time || a.next_run_at || a.created_at)) || "").localeCompare(String((b && (b.time || b.next_run_at || b.created_at)) || "")));
+      const stats = runStats(runs);
+      const summary = $("workflowDaySummary");
+      if (summary) {
+        const activeName = state.workflowActive && state.workflowActive.template_name ? state.workflowActive.template_name : (($("workflowTemplateName") && $("workflowTemplateName").value) || "员工定制");
+        summary.innerHTML = `<span>${escapeHtml(selectedKey === today ? "今天" : selectedKey)}</span>
+          <strong>${escapeHtml(activeName)} · ${stats.total} 个执行 · ${schedules.length} 个安排</strong>
+          <em>完成 ${stats.completed} · 执行中 ${stats.running} · 失败 ${stats.failed}</em>`;
+      }
+      const runBox = $("workflowDayRuns");
+      if (runBox) runBox.innerHTML = runs.length ? runs.slice(0, 6).map(workflowRunItemHtml).join("") : dayBoardEmpty("当天暂无执行");
+      const taskBox = $("workflowDaySchedules");
+      if (taskBox) taskBox.innerHTML = schedules.length ? schedules.slice(0, 8).map(workflowScheduleItemHtml).join("") : dayBoardEmpty("当天暂无安排");
+    }
+
     function secretaryAbilityCount(department) {
       let count = 0;
       eachAbilityNode((department && department.children) || [], department, [], (node) => {
@@ -4151,7 +4263,7 @@
       const offlineCount = snapshots.filter((row) => row.snapshot.mode === "offline").length;
       const onlineCount = workingCount + idleCount;
       const roles = [
-        { id: "sales", departmentId: "sales", name: "销售", status: "待命" },
+        { id: "sales", name: "销售", status: "待命", target: "salesWorkflow" },
         { id: "customer_service", departmentId: "customer_service", name: "客服", status: "待命" },
         { id: "overseas", departmentId: "overseas", name: "海外员工", status: "待命" },
         { id: "hr", departmentId: "operations", name: "HR", status: "待命" },
@@ -4171,8 +4283,9 @@
       floor.innerHTML = roles.map((role, index) => {
         const img = employeeAsset({ installation_id: role.id }, index, "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
-        const departmentAttr = role.departmentId ? ` data-role-department="${escapeHtml(role.departmentId)}"` : "";
-        return `<button class="office-employee-card" type="button"${departmentAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
+        const targetAttr = role.target ? ` data-home-target="${escapeHtml(role.target)}"` : "";
+        const departmentAttr = !role.target && role.departmentId ? ` data-role-department="${escapeHtml(role.departmentId)}"` : "";
+        return `<button class="office-employee-card" type="button"${targetAttr}${departmentAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
           <img src="${escapeHtml(img)}" alt="" loading="lazy">
           <span class="office-employee-info">
             <strong>${escapeHtml(role.name || "员工")}</strong>
@@ -6265,6 +6378,8 @@
           loadIpTemplates().catch(() => {}),
           loadWorkflowTemplates().catch(() => {}),
           loadWorkflowActive().catch(() => {}),
+          loadTasks({ reset: true, limit: 80 }).catch(() => {}),
+          loadRuns({ reset: true, limit: 80 }).catch(() => {}),
         ]).then(renderWorkflow);
       }
       if (key === "personalSettings" && !state.personalSettingsBackTab) state.personalSettingsBackTab = "profile";
@@ -10572,6 +10687,7 @@
         state.tasks = append ? (state.tasks || []).concat(rows) : rows;
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
+        if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
         if (!box) return;
         const allRows = state.tasks || [];
         if (!allRows.length) {
@@ -10600,6 +10716,7 @@
         state.taskListHasNext = false;
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
+        if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
         if (box) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "定时任务加载失败")}</div>`;
         $("loadMoreTasksBtn")?.classList.add("hidden");
       }
@@ -11689,6 +11806,7 @@
         renderOfficeEmployees();
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
+        if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
         if (!box) return;
         const allRows = state.runs || [];
         if (!allRows.length) {
@@ -11714,6 +11832,7 @@
         renderOfficeEmployees();
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
+        if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
         if (box) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
         $("loadMoreRunsBtn")?.classList.add("hidden");
       }
@@ -12035,6 +12154,25 @@
         addWorkflowNodeFromInput();
       } catch (err) {
         toast(err.message || "添加失败");
+      }
+    });
+    $("workflowCalendarDays")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-workflow-date]");
+      if (!btn) return;
+      state.workflowSelectedDate = btn.dataset.workflowDate || todayDateKey();
+      renderWorkflowDayBoard();
+    });
+    $("workflowView")?.addEventListener("click", (evt) => {
+      const runBtn = evt.target.closest("[data-open-run-detail]");
+      if (runBtn && runBtn.closest(".workflow-day-board")) {
+        evt.preventDefault();
+        openRunDetail(runBtn.dataset.openRunDetail || "", "workflow");
+        return;
+      }
+      const taskBtn = evt.target.closest("[data-open-task-detail]");
+      if (taskBtn && taskBtn.closest(".workflow-day-board")) {
+        evt.preventDefault();
+        openTaskDetail(taskBtn.dataset.openTaskDetail || "", "workflow");
       }
     });
     $("workflowTimeline")?.addEventListener("click", (evt) => {
