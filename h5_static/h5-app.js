@@ -674,6 +674,15 @@
       const key = `${row[1]}@@${row[2]}`;
       return [key, { key: row[1], label: row[2], note: row[2] }];
     })).values());
+    const AI_MARKETING_CREATION_ID = "ai_marketing_creation";
+    const AI_MARKETING_CREATION_DEPARTMENT = {
+      id: AI_MARKETING_CREATION_ID,
+      name: "AI营销创作",
+      alias: "营销创作",
+      mark: "营",
+      description: "汇总所有可下发的营销创作节点。",
+      virtual: true,
+    };
 
     const DOUYIN_TASK_ACTIONS = {
       search_collect: {
@@ -1554,7 +1563,12 @@
 
     function departmentById(id) {
       const wanted = String(id || "").trim();
+      if (wanted === AI_MARKETING_CREATION_ID) return AI_MARKETING_CREATION_DEPARTMENT;
       return DEPARTMENT_SKILL_TREE.find((dept) => dept.id === wanted) || DEPARTMENT_SKILL_TREE[0];
+    }
+
+    function isMarketingCreationDepartment(department) {
+      return String((department && department.id) || "").trim() === AI_MARKETING_CREATION_ID;
     }
 
     function eachAbilityNode(nodes, department, trail, visit) {
@@ -1612,6 +1626,9 @@
     }
 
     function departmentLeafNodes(department) {
+      if (isMarketingCreationDepartment(department)) {
+        return DEPARTMENT_SKILL_TREE.flatMap((dept) => departmentLeafNodes(dept));
+      }
       return abilityLeafNodes((department && department.children) || []);
     }
 
@@ -2822,6 +2839,20 @@
       </button>`;
     }
 
+    function officeWorkflowEmployeeCardHtml(tpl, index = 0) {
+      const nodeCount = workflowTemplateNodeCount(tpl);
+      const own = workflowTemplateCanEdit(tpl);
+      const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
+      return `<button class="office-employee-card custom-template" type="button" data-custom-employee-detail="${escapeHtml(tpl.id || "")}" style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(tpl.name || "定制员工")}">
+        <span class="office-custom-employee-avatar">${escapeHtml(workflowTemplateInitial(tpl))}</span>
+        <span class="office-employee-info">
+          <strong>${escapeHtml(tpl.name || "定制员工")}</strong>
+          <em>${escapeHtml(nodeCount ? `${nodeCount} 个节点` : "暂无节点")}</em>
+        </span>
+        <b class="office-custom-employee-tag">${own ? "我的" : "授权"}</b>
+      </button>`;
+    }
+
     function renderCustomEmployees() {
       const strip = $("customEmployeeStrip");
       if (!strip) return;
@@ -2964,6 +2995,7 @@
         state.workflowTemplatesLoading = false;
         renderWorkflow();
         renderCustomEmployees();
+        if (document.querySelector("#officeView.active")) renderOfficeEmployees();
       }
     }
 
@@ -3383,12 +3415,14 @@
       $("departmentSkillGrid").innerHTML = leaves.map(abilityCardHtml).join("") || `<div class="quick-empty">这个部门暂时没有配置能力。</div>`;
     }
 
-    function openAbilityView(key) {
+    function openAbilityView(key, backDepartmentId = "") {
       const lookup = abilityLookup(key);
       if (!lookup) return;
+      const sourceDepartmentId = String(backDepartmentId || state.currentDepartmentId || "").trim();
       state.currentDepartmentId = lookup.department.id;
       state.currentAbilityKey = lookup.node.key;
       state.abilityTrail = lookup.trail.map((node) => node.key);
+      if (sourceDepartmentId === AI_MARKETING_CREATION_ID) state.currentDepartmentId = sourceDepartmentId;
       switchTab("ability");
     }
 
@@ -3658,12 +3692,13 @@
 
     function departmentNodeKeys(department) {
       const keys = new Set();
-      eachAbilityNode((department && department.children) || [], department, [], (node) => {
+      const departments = isMarketingCreationDepartment(department) ? DEPARTMENT_SKILL_TREE : [department];
+      departments.forEach((dept) => eachAbilityNode((dept && dept.children) || [], dept, [], (node) => {
         [node.key, node.capabilityId, node.packageId, node.workQuickKey].forEach((value) => {
           const text = String(value || "").trim();
           if (text) keys.add(text);
         });
-      });
+      }));
       return keys;
     }
 
@@ -4285,14 +4320,16 @@
       const onlineCount = workingCount + idleCount;
       const roles = [
         { id: "sales", name: "销售", status: "待命", target: "salesWorkflow" },
-        { id: "customer_service", departmentId: "customer_service", name: "客服", status: "待命" },
-        { id: "overseas", departmentId: "overseas", name: "海外员工", status: "待命" },
-        { id: "hr", departmentId: "operations", name: "HR", status: "待命" },
+        { id: "customer_service", name: "客服", status: "敬请期待", comingSoon: true },
+        { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true },
+        { id: "hr", name: "HR", status: "敬请期待", comingSoon: true },
       ];
+      const customEmployees = workflowTemplateRows();
+      const totalEmployees = roles.length + customEmployees.length;
       const runningCount = (state.runs || []).filter(isActiveRun).length;
       if ($("officeDeviceCount")) $("officeDeviceCount").textContent = String(devices.length);
-      if ($("officeEmployeeCount")) $("officeEmployeeCount").textContent = String(roles.length);
-      if ($("officeEmployeeTotal")) $("officeEmployeeTotal").textContent = `(${roles.length})`;
+      if ($("officeEmployeeCount")) $("officeEmployeeCount").textContent = String(totalEmployees);
+      if ($("officeEmployeeTotal")) $("officeEmployeeTotal").textContent = `(${totalEmployees})`;
       if ($("officeRunningCount")) $("officeRunningCount").textContent = String(runningCount);
       if ($("officeTotalCount")) $("officeTotalCount").textContent = String(devices.length);
       if ($("officeOnlineCount")) $("officeOnlineCount").textContent = String(onlineCount);
@@ -4301,12 +4338,13 @@
       if ($("officeOfflineCount")) $("officeOfflineCount").textContent = String(offlineCount);
       updateBossOfficeStats(onlineCount, workingCount);
       floor.style.minHeight = "";
-      floor.innerHTML = roles.map((role, index) => {
+      const roleHtml = roles.map((role, index) => {
         const img = employeeAsset({ installation_id: role.id }, index, "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
         const targetAttr = role.target ? ` data-home-target="${escapeHtml(role.target)}"` : "";
         const departmentAttr = !role.target && role.departmentId ? ` data-role-department="${escapeHtml(role.departmentId)}"` : "";
-        return `<button class="office-employee-card" type="button"${targetAttr}${departmentAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
+        const disabledAttr = role.comingSoon ? ' disabled aria-disabled="true"' : "";
+        return `<button class="office-employee-card${role.comingSoon ? " coming-soon" : ""}" type="button"${targetAttr}${departmentAttr}${disabledAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
           <img src="${escapeHtml(img)}" alt="" loading="lazy">
           <span class="office-employee-info">
             <strong>${escapeHtml(role.name || "员工")}</strong>
@@ -4314,6 +4352,8 @@
           </span>
         </button>`;
       }).join("");
+      const templateHtml = customEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, roles.length + index)).join("");
+      floor.innerHTML = roleHtml + templateHtml;
       renderOfficeRecentTasks();
       renderCustomEmployees();
     }
@@ -11959,7 +11999,7 @@
         toast("敬请期待");
         return;
       }
-      openAbilityView(btn.dataset.abilityKey || "");
+      openAbilityView(btn.dataset.abilityKey || "", state.currentDepartmentId);
     });
     $("departmentView")?.addEventListener("click", (evt) => {
       const runBtn = evt.target.closest("[data-open-run-detail]");
@@ -12557,6 +12597,13 @@
       }
     });
     $("employeeFloor").addEventListener("click", (evt) => {
+      const customEmployeeBtn = evt.target.closest("[data-custom-employee-detail]");
+      if (customEmployeeBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        openCustomEmployeeDetail(customEmployeeBtn.dataset.customEmployeeDetail || "");
+        return;
+      }
       const homeTargetBtn = evt.target.closest("[data-home-target]");
       if (homeTargetBtn) {
         evt.preventDefault();
@@ -12631,6 +12678,7 @@
       if (evt.target.closest("#companySignBtn")) return;
       if (evt.target.closest("[data-secretary-role]")) return;
       if (evt.target.closest("[data-role-department]")) return;
+      if (evt.target.closest("[data-custom-employee-detail]")) return;
       const card = evt.target.closest("[data-employee-id]");
       if (!card) return;
       openEmployeeModal(card.dataset.employeeId || "");
