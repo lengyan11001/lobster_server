@@ -105,6 +105,7 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "department_id": str(raw.get("department_id") or raw.get("departmentId") or "").strip()[:64],
                 "department_name": str(raw.get("department_name") or raw.get("departmentName") or "").strip()[:80],
                 "note": str(raw.get("note") or "").strip()[:2000],
+                "sales_preset": bool(raw.get("sales_preset") or raw.get("salesPreset")),
                 "param_configured": bool(raw.get("param_configured")),
                 "plan": {
                     "title": title,
@@ -311,6 +312,8 @@ def _is_sales_workflow(template_name: str, nodes: list[dict[str, Any]], snapshot
     if "销售" in _clean_text(template_name, 160):
         return True
     for node in nodes or []:
+        if bool(node.get("sales_preset") or node.get("salesPreset")):
+            return True
         if str(node.get("id") or "").startswith("sales_"):
             return True
         if _clean_text(node.get("department_id"), 64) == "sales":
@@ -357,6 +360,7 @@ def _prepare_sales_workflow_nodes(
     has_douyin = False
     has_ip_daily = False
     has_local_bestseller = False
+    has_wechat = False
     missing: list[str] = []
 
     for node in prepared:
@@ -384,8 +388,8 @@ def _prepare_sales_workflow_nodes(
                     payload["memory_doc_ids"] = memory_doc_ids
                 if not payload.get("memory_docs"):
                     payload["memory_docs"] = memory_docs
-                if not isinstance(payload.get("requirements"), dict) or not payload.get("requirements"):
-                    payload["requirements"] = requirements
+                # 销售员工统一从 IP 人设定位取资料，避免节点备注占位文案污染生成内容。
+                payload["requirements"] = requirements
                 if "sync_before" not in payload:
                     payload["sync_before"] = True
             tasks = payload.get("tasks") if isinstance(payload.get("tasks"), list) else []
@@ -421,11 +425,24 @@ def _prepare_sales_workflow_nodes(
         if task_kind == "client_workflow" and action.startswith("local_bestseller"):
             has_local_bestseller = True
 
+        if task_kind == "client_workflow" and action == "wecom_poll_reply":
+            has_wechat = True
+
         if task_kind == "capability" and capability_id == "hifly.video.create_by_tts":
             has_hifly = True
             payload = dict(payload)
             inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
             inner = dict(inner)
+            placeholder_texts = {
+                _clean_text(node.get("note"), 200),
+                _clean_text(node.get("ability_label"), 200),
+                _clean_text(plan.get("title"), 200),
+                "自动创作一条数字人口播视频",
+            }
+            for script_key in ("script", "text"):
+                script_value = _clean_text(inner.get(script_key), 200)
+                if script_value in placeholder_texts or script_value.startswith("自动创作"):
+                    inner.pop(script_key, None)
             if not _clean_text(inner.get("avatar"), 128) and hifly_avatar:
                 inner["avatar"] = hifly_avatar
             if not _clean_text(inner.get("voice"), 128) and hifly_voice:
@@ -459,6 +476,8 @@ def _prepare_sales_workflow_nodes(
             missing.append("平台账号：默认抖音账号不在当前启用设备上")
         elif not _device_is_online(db, owner.id, douyin_iid):
             missing.append("平台账号：默认抖音账号所在设备不在线")
+    if has_wechat and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
+        missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
     if has_hifly:
         if not hifly_avatar:
             missing.append("素材库：请先创建可用的数字人形象分身")

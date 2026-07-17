@@ -679,6 +679,22 @@
       const key = `${row[1]}@@${row[2]}`;
       return [key, { key: row[1], label: row[2], note: row[2] }];
     })).values());
+    const SALES_PERSONA_DEFAULT_KEYS = new Set([
+      "local_bestseller",
+      "hifly.video.create_by_tts",
+      "ip_content_daily",
+      "douyin_leads",
+      "wecom_reply",
+    ]);
+
+    function workflowNodeUsesPersonaDefaults(node) {
+      if (!node) return false;
+      const id = String(node.id || "");
+      const key = String(node.ability_key || node.key || "");
+      if (node.sales_preset || id.startsWith("sales_")) return true;
+      return String(node.department_id || "") === "sales" && SALES_PERSONA_DEFAULT_KEYS.has(key);
+    }
+
     function salesWorkflowActionForNote(note) {
       const text = String(note || "");
       if (text.includes("养号")) return "account_nurture";
@@ -1896,8 +1912,9 @@
       return workflowCapabilityFieldsHtml(item && (item.capabilityId || item.key));
     }
 
-    function workflowFieldsHtmlForNode(node) {
+    function workflowFieldsHtmlForNode(node, workflowNode = null) {
       if (!node) return "";
+      if (workflowNodeUsesPersonaDefaults(workflowNode)) return "";
       const platform = socialPlatformFromAbilityKey(node.key);
       if (platform) return workflowSocialFieldsHtml(platform);
       if (node.key === "linkedin_leads") return workflowLinkedinFieldsHtml();
@@ -2259,9 +2276,10 @@
       return collectWorkflowCapabilityPlan(quick || {});
     }
 
-    function workflowPlanFromParamFields(lookup, note) {
+    function workflowPlanFromParamFields(lookup, note, workflowNode = null) {
       const node = lookup && lookup.node;
       if (!node) throw new Error("未找到任务节点");
+      if (workflowNodeUsesPersonaDefaults(workflowNode)) return workflowPlanForLookup(lookup, note);
       const platform = socialPlatformFromAbilityKey(node.key);
       if (platform) {
         const payload = collectWorkflowSocialLeadsPayload(platform);
@@ -2382,6 +2400,7 @@
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
       const note = (($("workflowNodeNote") && $("workflowNodeNote").value) || lookup.defaultNote || "").trim();
       const plan = workflowPlanForLookup(lookup, note);
+      const salesPreset = lookup.optionId != null;
       return {
         id: `wf_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
         time,
@@ -2390,6 +2409,7 @@
         department_id: lookup.department.id,
         department_name: lookup.department.name || "",
         note,
+        sales_preset: salesPreset,
         param_configured: false,
         plan,
       };
@@ -2432,6 +2452,7 @@
           department_id: lookup.department.id,
           department_name: lookup.department.name || "",
           note,
+          sales_preset: true,
           param_configured: false,
           plan,
         });
@@ -2669,7 +2690,7 @@
       $("workflowParamSubTitle").textContent = `${node.department_name || ""}${node.time ? ` · ${node.time}` : ""}`;
       $("workflowParamTime").value = node.time || "09:00";
       $("workflowParamNote").value = node.note || "";
-      $("workflowParamFields").innerHTML = workflowFieldsHtmlForNode(lookup.node);
+      $("workflowParamFields").innerHTML = workflowFieldsHtmlForNode(lookup.node, node);
       modal.classList.remove("hidden");
       initWorkflowParamControls(lookup.node);
       refillWorkflowParamFields(node, lookup);
@@ -2694,7 +2715,7 @@
       const time = workflowParamValue("workflowParamTime");
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
       const note = workflowParamValue("workflowParamNote");
-      const plan = workflowPlanFromParamFields(lookup, note);
+      const plan = workflowPlanFromParamFields(lookup, note, current);
       state.workflowNodesDraft[idx] = {
         ...current,
         time,
