@@ -2858,7 +2858,7 @@
         const nodeCount = Array.isArray(tpl.nodes) ? tpl.nodes.length : 0;
         const sourceText = system ? "系统提供 · 全员可见" : (tpl.source === "granted" ? `来自 ${tpl.owner_name || "代理商"}` : `${nodeCount} 个节点`);
         const copyBtn = `<button class="ghost" type="button" data-workflow-copy="${escapeHtml(tpl.id)}">复制</button>`;
-        const activateBtn = system ? "" : `<button type="button" data-workflow-activate-template="${escapeHtml(tpl.id)}">启用</button>`;
+        const activateBtn = `<button type="button" data-workflow-activate-template="${escapeHtml(tpl.id)}">启用</button>`;
         const deleteBtn = own ? `<button class="ghost" type="button" data-workflow-delete="${tpl.id}">删除</button>` : "";
         return `<div class="workflow-template-item">
           <div>
@@ -3170,6 +3170,12 @@
       state.workflowSubmitting = true;
       renderWorkflow();
       try {
+        const tpl = workflowTemplateById(id);
+        if (tpl && tpl.source === "system") {
+          const copied = await copyWorkflowTemplateById(id, { openEditor: false, toast: false });
+          id = String((copied && copied.id) || "");
+          if (!id) throw new Error("系统模板启用失败");
+        }
         const data = await api("/api/h5-workflows/activate", {
           method: "POST",
           json: { template_id: Number(id), installation_id: iid, timezone_offset_minutes: timezoneOffsetMinutes() },
