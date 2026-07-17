@@ -2365,10 +2365,12 @@
     }
 
     function prepareSalesWorkflowDraft() {
-      if (String(state.workflowEditingTemplateId || "").trim()) return;
-      if ((state.workflowNodesDraft || []).length) return;
+      state.workflowEditingTemplateId = "";
       state.workflowNodesDraft = buildSalesWorkflowPresetNodes();
+      state.workflowParamNodeId = "";
       if ($("workflowTemplateName")) $("workflowTemplateName").value = "销售24小时员工";
+      if ($("workflowNodeTime")) $("workflowNodeTime").value = "09:00";
+      if ($("workflowNodeNote")) $("workflowNodeNote").value = "";
     }
 
     function resetWorkflowDraft() {
