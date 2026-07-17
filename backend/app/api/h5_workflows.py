@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 from datetime import datetime
 from typing import Any, Optional
@@ -10,9 +11,16 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import (
+    ContentCompetitorAccount,
     H5WorkflowActivation,
+    H5ChatDevicePresence,
+    H5MountedAccountDefault,
     H5WorkflowTemplate,
     H5WorkflowTemplateGrant,
+    IPContentKeyword,
+    IPContentScheduleTemplate,
+    UserHiflyAvatarAsset,
+    UserHiflyVoiceAsset,
     ScheduledTask,
     User,
 )
@@ -25,12 +33,16 @@ from .scheduled_tasks import (
     _cancel_pending_runs_for_task,
     _create_task_row,
     _delete_task_row,
+    _local_bestseller_profile_from_persona,
     _serialize_task,
 )
 
 router = APIRouter()
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+_PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
+_IP_DAILY_DEFAULT_TASKS = ["industry_hot_oral", "professional_ip_oral", "moments_candidate"]
+_DEVICE_ONLINE_TTL_SECONDS = 120
 
 
 class WorkflowTemplateIn(BaseModel):
@@ -106,6 +118,361 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         raise HTTPException(status_code=400, detail="请至少添加一个工作流节点")
     cleaned.sort(key=lambda item: item["time"])
     return cleaned[:48]
+
+
+def _clean_text(value: Any, limit: int = 500) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", text)[:limit]
+
+
+def _clean_id_list(value: Any, limit: int = 50) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    if not isinstance(value, list):
+        return out
+    for item in value:
+        try:
+            ident = int(item or 0)
+        except Exception:
+            continue
+        if ident <= 0 or ident in seen:
+            continue
+        seen.add(ident)
+        out.append(ident)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _personal_default_template(db: Session, user_id: int) -> Optional[IPContentScheduleTemplate]:
+    return (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == user_id,
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+
+
+def _first_req_text(requirements: dict[str, Any], *keys: str, limit: int = 500) -> str:
+    req = requirements if isinstance(requirements, dict) else {}
+    basic = req.get("basic_profile") if isinstance(req.get("basic_profile"), dict) else {}
+    business = req.get("business_description") if isinstance(req.get("business_description"), dict) else {}
+    aliases = {
+        "name": ["profile_name", "name"],
+        "gender": ["gender", "sex"],
+        "photo": ["profile_photo_asset_id", "profile_photo_url", "photo_asset_id", "photo_url", "portrait_asset_id", "portrait_url"],
+        "birth_era": ["birth_era"],
+        "current_province": ["current_province", "province"],
+        "current_city": ["current_city", "city"],
+        "hometown": ["hometown"],
+        "role": ["role", "identity"],
+        "share_topic": ["share_topic", "industry"],
+        "video_style": ["video_style", "style"],
+        "after_view_action": ["after_view_action", "cta"],
+        "product": ["product", "business", "industry"],
+        "target_customer": ["target_customer", "target_age"],
+        "advantages": ["advantages", "advantage", "differentiator"],
+    }
+    expanded: list[str] = []
+    for key in keys:
+        expanded.extend(aliases.get(key, [key]))
+    for key in expanded:
+        for source in (req, basic, business):
+            text = _clean_text(source.get(key) if isinstance(source, dict) else "", limit)
+            if text:
+                return text
+    return ""
+
+
+def _missing_sales_persona_fields(requirements: dict[str, Any]) -> list[str]:
+    req = requirements if isinstance(requirements, dict) else {}
+    profile = _local_bestseller_profile_from_persona(req)
+    photo = _first_req_text(req, "photo", limit=1000) or _clean_text(profile.get("photo_asset_id") or profile.get("photo_url"), 1000)
+    checks = [
+        ("你的名字", _first_req_text(req, "name")),
+        ("性别", _first_req_text(req, "gender") or _clean_text(profile.get("gender"))),
+        ("出生年代", _first_req_text(req, "birth_era") or _clean_text(profile.get("age_label"))),
+        ("现居省份", _first_req_text(req, "current_province") or _clean_text(profile.get("province"))),
+        ("现居城市", _first_req_text(req, "current_city") or _clean_text(profile.get("city"))),
+        ("籍贯", _first_req_text(req, "hometown") or _clean_text(profile.get("hometown"))),
+        ("你是做什么的", _first_req_text(req, "role") or _clean_text(profile.get("identity"))),
+        ("主要分享什么", _first_req_text(req, "share_topic") or _clean_text(profile.get("industry"))),
+        ("视频风格", _first_req_text(req, "video_style") or _clean_text(profile.get("style"))),
+        ("看完后希望用户做什么", _first_req_text(req, "after_view_action")),
+        ("产品/业务描述", _first_req_text(req, "product") or _clean_text(profile.get("industry"))),
+        ("目标客户", _first_req_text(req, "target_customer") or _clean_text(profile.get("target_age"))),
+        ("你的优势/比同行好在哪", _first_req_text(req, "advantages")),
+        ("人物照片", photo),
+    ]
+    return [label for label, value in checks if not _clean_text(value, 1000)]
+
+
+def _active_keywords_for_ids(db: Session, user_id: int, ids: list[int]) -> list[IPContentKeyword]:
+    if not ids:
+        return []
+    return (
+        db.query(IPContentKeyword)
+        .filter(IPContentKeyword.user_id == user_id, IPContentKeyword.status == "active", IPContentKeyword.id.in_(ids))
+        .order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc())
+        .all()
+    )
+
+
+def _active_competitors_for_ids(db: Session, user_id: int, ids: list[int]) -> list[ContentCompetitorAccount]:
+    if not ids:
+        return []
+    return (
+        db.query(ContentCompetitorAccount)
+        .filter(ContentCompetitorAccount.user_id == user_id, ContentCompetitorAccount.status == "active", ContentCompetitorAccount.id.in_(ids))
+        .order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc())
+        .all()
+    )
+
+
+def _latest_hifly_avatar(db: Session, user_id: int) -> str:
+    row = (
+        db.query(UserHiflyAvatarAsset)
+        .filter(
+            UserHiflyAvatarAsset.user_id == user_id,
+            UserHiflyAvatarAsset.status == "success",
+            UserHiflyAvatarAsset.hifly_avatar_id.isnot(None),
+        )
+        .order_by(UserHiflyAvatarAsset.updated_at.desc(), UserHiflyAvatarAsset.id.desc())
+        .first()
+    )
+    return _clean_text(row.hifly_avatar_id if row else "", 128)
+
+
+def _latest_hifly_voice(db: Session, user_id: int) -> str:
+    row = (
+        db.query(UserHiflyVoiceAsset)
+        .filter(
+            UserHiflyVoiceAsset.user_id == user_id,
+            UserHiflyVoiceAsset.status == "success",
+            UserHiflyVoiceAsset.hifly_voice_id.isnot(None),
+        )
+        .order_by(UserHiflyVoiceAsset.updated_at.desc(), UserHiflyVoiceAsset.id.desc())
+        .first()
+    )
+    return _clean_text(row.hifly_voice_id if row else "", 128)
+
+
+def _mounted_default(db: Session, user_id: int, scope: str) -> Optional[H5MountedAccountDefault]:
+    return (
+        db.query(H5MountedAccountDefault)
+        .filter(H5MountedAccountDefault.user_id == user_id, H5MountedAccountDefault.scope == scope)
+        .first()
+    )
+
+
+def _device_is_online(db: Session, user_id: int, installation_id: str) -> bool:
+    iid = _clean_text(installation_id, 128)
+    if not iid:
+        return False
+    row = (
+        db.query(H5ChatDevicePresence)
+        .filter(H5ChatDevicePresence.user_id == user_id, H5ChatDevicePresence.installation_id == iid)
+        .first()
+    )
+    if not row or not row.last_seen_at:
+        return False
+    return (datetime.utcnow() - row.last_seen_at).total_seconds() <= _DEVICE_ONLINE_TTL_SECONDS
+
+
+def _sales_action_from_note(note: Any) -> str:
+    text = _clean_text(note, 200)
+    if "养号" in text:
+        return "account_nurture"
+    if "发布后采集" in text or "关键词抓取" in text:
+        return "search_collect"
+    if "回复" in text and "评论" in text:
+        return "reply_comments"
+    if "@精准" in text:
+        return "mention_comment"
+    if "关注" in text and "评论" in text:
+        return "follow_comment"
+    if "私信10" in text:
+        return "direct_message"
+    if "私信引流" in text:
+        return "stranger_message"
+    return "search_collect"
+
+
+def _is_sales_workflow(template_name: str, nodes: list[dict[str, Any]], snapshot_extra: Optional[dict[str, Any]]) -> bool:
+    template_key = _clean_text((snapshot_extra or {}).get("template_key"), 128)
+    if template_key == "system_sales":
+        return True
+    if "销售" in _clean_text(template_name, 160):
+        return True
+    for node in nodes or []:
+        if str(node.get("id") or "").startswith("sales_"):
+            return True
+        if _clean_text(node.get("department_id"), 64) == "sales":
+            return True
+    return False
+
+
+def _node_payload(node: dict[str, Any]) -> dict[str, Any]:
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    return plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+
+
+def _prepare_sales_workflow_nodes(
+    *,
+    db: Session,
+    owner: User,
+    installation_id: str,
+    template_name: str,
+    nodes: list[dict[str, Any]],
+    snapshot_extra: Optional[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not _is_sales_workflow(template_name, nodes, snapshot_extra):
+        return nodes
+
+    prepared = copy.deepcopy(nodes)
+    personal = _personal_default_template(db, owner.id)
+    requirements = personal.requirements if personal and isinstance(personal.requirements, dict) else {}
+    keyword_ids = _clean_id_list(personal.keyword_ids if personal else [])
+    competitor_ids = _clean_id_list(personal.competitor_ids if personal else [])
+    keywords = _active_keywords_for_ids(db, owner.id, keyword_ids)
+    competitors = _active_competitors_for_ids(db, owner.id, competitor_ids)
+    memory_doc_ids = [str(x or "").strip() for x in ((personal.memory_doc_ids if personal else []) or []) if str(x or "").strip()]
+    memory_docs = personal.memory_docs if personal and isinstance(personal.memory_docs, list) else []
+    keyword_texts = [_clean_text(row.display_name or row.keyword, 120) for row in keywords if _clean_text(row.display_name or row.keyword, 120)]
+    city = _first_req_text(requirements, "current_city")
+    province = _first_req_text(requirements, "current_province")
+    regions = [x for x in [city, province] if x] or ["全国"]
+    douyin_default = _mounted_default(db, owner.id, "douyin")
+    douyin_iid = _clean_text(douyin_default.installation_id if douyin_default else "", 128)
+    hifly_avatar = _latest_hifly_avatar(db, owner.id)
+    hifly_voice = _latest_hifly_voice(db, owner.id)
+
+    has_hifly = False
+    has_douyin = False
+    has_ip_daily = False
+    has_local_bestseller = False
+    missing: list[str] = []
+
+    for node in prepared:
+        plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+        task_kind = _clean_text(plan.get("task_kind"), 64)
+        payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+        capability_id = _clean_text(payload.get("capability_id"), 128)
+        action = _clean_text(payload.get("action"), 128)
+
+        if task_kind == "ip_content_daily":
+            has_ip_daily = True
+            payload = dict(payload)
+            if personal:
+                try:
+                    template_id = int(payload.get("template_id") or 0)
+                except Exception:
+                    template_id = 0
+                if template_id <= 0:
+                    payload["template_id"] = personal.id
+                if not payload.get("keyword_ids"):
+                    payload["keyword_ids"] = keyword_ids
+                if not payload.get("competitor_ids"):
+                    payload["competitor_ids"] = competitor_ids
+                if not payload.get("memory_doc_ids"):
+                    payload["memory_doc_ids"] = memory_doc_ids
+                if not payload.get("memory_docs"):
+                    payload["memory_docs"] = memory_docs
+                if not isinstance(payload.get("requirements"), dict) or not payload.get("requirements"):
+                    payload["requirements"] = requirements
+                if "sync_before" not in payload:
+                    payload["sync_before"] = True
+            tasks = payload.get("tasks") if isinstance(payload.get("tasks"), list) else []
+            normalized_tasks = [task for task in tasks if task in _IP_DAILY_DEFAULT_TASKS]
+            payload["tasks"] = normalized_tasks or list(_IP_DAILY_DEFAULT_TASKS)
+            plan["payload"] = payload
+
+        if task_kind == "douyin_leads":
+            has_douyin = True
+            payload = dict(payload)
+            params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+            params = dict(params)
+            sales_action = _clean_text(params.get("sales_action"), 64) or _sales_action_from_note(node.get("note") or node.get("ability_label"))
+            params["sales_action"] = sales_action
+            params["sales_node_label"] = _clean_text(node.get("ability_label") or node.get("note"), 160)
+            if keyword_texts:
+                params["keywords"] = keyword_texts
+                if not _clean_text(params.get("keyword"), 200) or _clean_text(params.get("keyword"), 200) == params["sales_node_label"]:
+                    params["keyword"] = keyword_texts[0]
+                params.setdefault("query", params.get("keyword"))
+                params.setdefault("search_keyword", params.get("keyword"))
+            if not params.get("regions") or params.get("regions") == ["全国"]:
+                params["regions"] = regions
+            if douyin_default:
+                params["account_key"] = _clean_text(douyin_default.account_key, 255)
+                params["account_id"] = _clean_text(douyin_default.account_id, 128)
+                params["account_label"] = _clean_text(douyin_default.account_label, 255)
+                params["douyin_installation_id"] = douyin_iid
+            payload["params"] = params
+            payload["action"] = _clean_text(payload.get("action"), 64) or "search_collect"
+            plan["payload"] = payload
+
+        if task_kind == "client_workflow" and action.startswith("local_bestseller"):
+            has_local_bestseller = True
+
+        if task_kind == "capability" and capability_id == "hifly.video.create_by_tts":
+            has_hifly = True
+            payload = dict(payload)
+            inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+            inner = dict(inner)
+            if not _clean_text(inner.get("avatar"), 128) and hifly_avatar:
+                inner["avatar"] = hifly_avatar
+            if not _clean_text(inner.get("voice"), 128) and hifly_voice:
+                inner["voice"] = hifly_voice
+            payload["payload"] = inner
+            plan["payload"] = payload
+
+    if not personal:
+        missing.append("IP人设定位：请先完成资料调查并保存")
+    else:
+        profile_missing = _missing_sales_persona_fields(requirements)
+        if profile_missing:
+            missing.append("IP人设定位-资料调查：" + "、".join(profile_missing))
+        if not keywords:
+            missing.append("IP人设定位-关键词：至少添加并在当前模板选择 1 个行业关键词")
+        if not competitors:
+            missing.append("IP人设定位-同行账号：至少添加并在当前模板选择 1 个同行账号")
+        elif not any(row.last_fetch_at for row in competitors):
+            missing.append("IP人设定位-同行账号：请先同步同行账号数据")
+        if not (memory_doc_ids or memory_docs):
+            missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
+
+    if has_ip_daily and not personal:
+        missing.append("IP日更：缺少当前使用模板")
+    if has_douyin:
+        if not douyin_default:
+            missing.append("平台账号：请在个人中心设置默认抖音获客账号")
+        elif not douyin_iid:
+            missing.append("平台账号：默认抖音账号缺少设备信息")
+        elif douyin_iid != _clean_text(installation_id, 128):
+            missing.append("平台账号：默认抖音账号不在当前启用设备上")
+        elif not _device_is_online(db, owner.id, douyin_iid):
+            missing.append("平台账号：默认抖音账号所在设备不在线")
+    if has_hifly:
+        if not hifly_avatar:
+            missing.append("素材库：请先创建可用的数字人形象分身")
+        if not hifly_voice:
+            missing.append("素材库：请先创建可用的声音分身")
+    if has_local_bestseller and personal:
+        profile = _local_bestseller_profile_from_persona(requirements)
+        if not (_clean_text(profile.get("photo_asset_id"), 128) or _clean_text(profile.get("photo_url"), 1000)):
+            missing.append("同城爆款视频：缺少人物照片")
+
+    if missing:
+        detail = "销售员工无法启动，缺少：" + "；".join(dict.fromkeys(missing)) + "。请到 IP人设定位、素材库或个人中心补足后再启用。"
+        raise HTTPException(status_code=400, detail=detail)
+    return prepared
 
 
 def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, source: str = "own", grants: Optional[list[int]] = None) -> dict[str, Any]:
@@ -225,6 +592,14 @@ def _activate_nodes_for_device(
     timezone_offset_minutes: Optional[int],
     snapshot_extra: Optional[dict[str, Any]] = None,
 ):
+    nodes = _prepare_sales_workflow_nodes(
+        db=db,
+        owner=owner,
+        installation_id=installation_id,
+        template_name=template_name,
+        nodes=nodes,
+        snapshot_extra=snapshot_extra,
+    )
     now = datetime.utcnow()
     stopped_ids = _stop_active_for_device(db, owner.id, installation_id, now)
     db.commit()

@@ -679,6 +679,17 @@
       const key = `${row[1]}@@${row[2]}`;
       return [key, { key: row[1], label: row[2], note: row[2] }];
     })).values());
+    function salesWorkflowActionForNote(note) {
+      const text = String(note || "");
+      if (text.includes("养号")) return "account_nurture";
+      if (text.includes("发布后采集") || text.includes("关键词抓取")) return "search_collect";
+      if (text.includes("回复") && text.includes("评论")) return "reply_comments";
+      if (text.includes("@精准")) return "mention_comment";
+      if (text.includes("关注") && text.includes("评论")) return "follow_comment";
+      if (text.includes("私信10")) return "direct_message";
+      if (text.includes("私信引流")) return "stranger_message";
+      return "search_collect";
+    }
     const AI_MARKETING_CREATION_ID = "ai_marketing_creation";
     const AI_MARKETING_CREATION_DEPARTMENT = {
       id: AI_MARKETING_CREATION_ID,
@@ -2297,24 +2308,24 @@
         return { title: payload.title, task_kind: "wechat_channels_transcript", content: "H5 工作流：视频号文案提取", payload };
       }
       if (node.key === "douyin_leads" || node.workQuickKey === "douyin_leads") {
+        const salesAction = salesWorkflowActionForNote(prompt);
         return {
           title: `抖音获客 - ${prompt.slice(0, 24)}`,
           task_kind: "douyin_leads",
           content: "H5 工作流：抖音获客",
-          payload: { action: "search_collect", params: { keyword: prompt, max_results: 50, regions: ["全国"], mode: "script" } },
+          payload: { action: "search_collect", params: { keyword: prompt, sales_action: salesAction, max_results: 50, regions: ["全国"], mode: "script" } },
         };
       }
       const capabilityId = String(node.capabilityId || node.key || "").trim();
       if (capabilityId === "ip_content_daily") {
-        const tpl = (state.ipTemplates || [])[0];
-        if (!tpl || !tpl.id) throw new Error("IP日更节点需要先保存一个IP日更模板");
         return {
           title: "IP日更文案",
           task_kind: "ip_content_daily",
           content: "H5 工作流：IP日更文案",
           payload: {
-            template_id: tpl.id,
-            tasks: ["oral", "moments", "image"],
+            template_id: 0,
+            use_personal_default: true,
+            tasks: ["industry_hot_oral", "professional_ip_oral", "moments_candidate"],
             sync_before: true,
             requirements: { common: prompt, oral: prompt, moments: prompt, image: prompt },
             industry_count: 5,
@@ -2412,22 +2423,18 @@
       SALES_WORKFLOW_PRESET.forEach(([time, key, note], index) => {
         const lookup = abilityLookup(key);
         if (!lookup || !lookup.node || lookup.node.comingSoon || isPublishCenterNode(lookup.node)) return;
-        try {
-          const plan = workflowPlanForLookup(lookup, note);
-          nodes.push({
-            id: `sales_${String(time).replace(":", "")}_${index}`,
-            time,
-            ability_key: lookup.node.key || "",
-            ability_label: note || lookup.node.label || lookup.node.key || "",
-            department_id: lookup.department.id,
-            department_name: lookup.department.name || "",
-            note,
-            param_configured: false,
-            plan,
-          });
-        } catch (_err) {
-          // Some nodes need user-owned templates before they can be scheduled.
-        }
+        const plan = workflowPlanForLookup(lookup, note);
+        nodes.push({
+          id: `sales_${String(time).replace(":", "")}_${index}`,
+          time,
+          ability_key: lookup.node.key || "",
+          ability_label: note || lookup.node.label || lookup.node.key || "",
+          department_id: lookup.department.id,
+          department_name: lookup.department.name || "",
+          note,
+          param_configured: false,
+          plan,
+        });
       });
       return nodes.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
     }
