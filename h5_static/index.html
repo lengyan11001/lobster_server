@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260717-workflow-sales-reset" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260717-workflow-node-modal" />
 </head>
 <body>
   <main class="shell">
@@ -185,28 +185,16 @@
               <select id="workflowDeviceSelect"></select>
               <span id="workflowActiveText">未启用员工定制</span>
             </div>
-            <button class="ghost" type="button" id="workflowTemplateListBtn">模板列表</button>
+            <div class="workflow-head-actions">
+              <button type="button" id="workflowOpenAddNodeBtn">添加节点</button>
+              <button class="ghost" type="button" id="workflowTemplateListBtn">模板列表</button>
+            </div>
           </div>
 
           <div class="workflow-editor-card">
             <div class="workflow-template-name">
               <label for="workflowTemplateName">员工模板名称</label>
               <input id="workflowTemplateName" type="text" maxlength="80" placeholder="给这个自定义员工取一个名字">
-            </div>
-            <div class="workflow-node-form">
-              <div class="field">
-                <label for="workflowNodeTime">时间</label>
-                <input id="workflowNodeTime" type="time" step="60" value="09:00">
-              </div>
-              <div class="field">
-                <label for="workflowNodeAbility">任务节点</label>
-                <select id="workflowNodeAbility"></select>
-              </div>
-              <div class="field full">
-                <label for="workflowNodeNote">任务要求</label>
-                <textarea id="workflowNodeNote" rows="3" placeholder="这个时间点要做什么"></textarea>
-              </div>
-              <button type="button" id="workflowAddNodeBtn">添加节点</button>
             </div>
           </div>
 
@@ -1159,6 +1147,39 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="workflowNodeModal" role="dialog" aria-modal="true" aria-labelledby="workflowNodeTitle">
+    <button class="employee-modal-backdrop" type="button" id="workflowNodeBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover workflow-node-popover">
+      <button class="employee-popover-close" type="button" id="workflowNodeClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">节</div>
+        <div class="employee-popover-title">
+          <strong id="workflowNodeTitle">添加节点</strong>
+        </div>
+      </div>
+      <form class="work-dispatch-form" id="workflowNodeForm">
+        <div class="work-dispatch-fields workflow-node-fields">
+          <div class="field">
+            <label for="workflowNodeTime">时间</label>
+            <input id="workflowNodeTime" type="time" step="60" value="09:00">
+          </div>
+          <div class="field">
+            <label for="workflowNodeAbility">任务节点</label>
+            <select id="workflowNodeAbility"></select>
+          </div>
+          <div class="field full">
+            <label for="workflowNodeNote">任务要求</label>
+            <textarea id="workflowNodeNote" rows="3" placeholder="这个时间点要做什么"></textarea>
+          </div>
+        </div>
+        <div class="work-dispatch-actions">
+          <button class="ghost" type="button" id="workflowNodeCancel">取消</button>
+          <button type="submit" id="workflowAddNodeBtn">添加节点</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="employee-modal hidden" id="workflowParamModal" role="dialog" aria-modal="true" aria-labelledby="workflowParamTitle">
     <button class="employee-modal-backdrop" type="button" id="workflowParamBackdrop" aria-label="关闭"></button>
     <div class="employee-popover work-dispatch-popover workflow-param-popover">
@@ -1259,6 +1280,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260717-workflow-sales-reset"></script>
+  <script src="/h5-static/h5-app.js?v=20260717-workflow-node-modal"></script>
 </body>
 </html>

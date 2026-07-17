@@ -2339,6 +2339,29 @@
       };
     }
 
+    function openWorkflowNodeModal() {
+      const modal = $("workflowNodeModal");
+      if (!modal) return;
+      if ($("workflowNodeTime") && !$("workflowNodeTime").value) $("workflowNodeTime").value = "09:00";
+      renderWorkflowAbilitySelect();
+      modal.classList.remove("hidden");
+      const first = $("workflowNodeTime") || modal.querySelector("input, textarea, select");
+      if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 80);
+    }
+
+    function closeWorkflowNodeModal() {
+      const modal = $("workflowNodeModal");
+      if (modal) modal.classList.add("hidden");
+    }
+
+    function addWorkflowNodeFromInput() {
+      state.workflowNodesDraft.push(workflowNodePayloadFromInput());
+      state.workflowNodesDraft.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      if ($("workflowNodeNote")) $("workflowNodeNote").value = "";
+      renderWorkflow();
+      closeWorkflowNodeModal();
+    }
+
     function buildSalesWorkflowPresetNodes() {
       const nodes = [];
       SALES_WORKFLOW_PRESET.forEach(([time, key, note], index) => {
@@ -11436,12 +11459,14 @@
       setSelectedInstallationId(evt.target.value || "");
       loadWorkflowActive().catch((err) => toast(err.message || "工作流状态加载失败"));
     });
-    $("workflowAddNodeBtn")?.addEventListener("click", () => {
+    $("workflowOpenAddNodeBtn")?.addEventListener("click", openWorkflowNodeModal);
+    $("workflowNodeBackdrop")?.addEventListener("click", closeWorkflowNodeModal);
+    $("workflowNodeClose")?.addEventListener("click", closeWorkflowNodeModal);
+    $("workflowNodeCancel")?.addEventListener("click", closeWorkflowNodeModal);
+    $("workflowNodeForm")?.addEventListener("submit", (evt) => {
+      evt.preventDefault();
       try {
-        state.workflowNodesDraft.push(workflowNodePayloadFromInput());
-        state.workflowNodesDraft.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
-        if ($("workflowNodeNote")) $("workflowNodeNote").value = "";
-        renderWorkflow();
+        addWorkflowNodeFromInput();
       } catch (err) {
         toast(err.message || "添加失败");
       }

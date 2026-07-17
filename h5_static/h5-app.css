@@ -5057,6 +5057,18 @@
       font-size: 12px;
       font-weight: 800;
     }
+    .workflow-head-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .workflow-head-actions button {
+      min-height: 38px;
+      padding: 0 12px;
+      white-space: nowrap;
+    }
     .workflow-editor-card,
     .workflow-template-drawer,
     .workflow-node-card {
@@ -5075,7 +5087,8 @@
       gap: 6px;
     }
     .workflow-template-name label,
-    .workflow-node-form label {
+    .workflow-node-form label,
+    .workflow-node-fields label {
       color: #17233d;
       font-size: 12px;
       font-weight: 900;
@@ -5095,6 +5108,18 @@
     }
     .workflow-node-form textarea {
       min-height: 74px;
+      resize: vertical;
+    }
+    .workflow-node-popover {
+      max-height: min(82vh, 680px);
+      overflow: auto;
+    }
+    .workflow-node-fields {
+      grid-template-columns: .65fr 1fr;
+      align-items: start;
+    }
+    .workflow-node-fields textarea {
+      min-height: 96px;
       resize: vertical;
     }
     .workflow-timeline {
