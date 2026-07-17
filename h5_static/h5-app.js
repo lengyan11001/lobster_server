@@ -31,6 +31,7 @@
       wechatTranscriptJobs: [],
       companyName: localStorage.getItem("lobster_h5_company_name") || "我的AI公司",
       officeDeviceFilter: "all",
+      officeSelectedDate: "",
       officePage: 1,
       officePageSize: 4,
       taskAbility: "goal.video.pipeline",
@@ -47,12 +48,20 @@
       publishRunSubmitting: false,
       userUploadAssetCache: {},
       userUploadAssetLoading: {},
+      assetLibrarySection: "uploads",
       assetLibraryOrigin: "user_upload",
       assetLibraryPage: { user_upload: 1, generated: 1 },
       assetLibraryPageSize: 10,
       assetLibraryRows: { user_upload: [], generated: [] },
       assetLibraryTotals: { user_upload: 0, generated: 0 },
       assetLibraryLoading: false,
+      assetLibraryAvatarPage: 1,
+      assetLibraryVoicePage: 1,
+      assetLibraryAvatarRows: [],
+      assetLibraryVoiceRows: [],
+      assetLibraryAvatarTotal: 0,
+      assetLibraryVoiceTotal: 0,
+      assetLibraryDigitalLoading: false,
       contentRecordMediaType: "",
       contentRecordPage: 1,
       contentRecordPageSize: 10,
@@ -3614,6 +3623,104 @@
       return lines[minuteSlot % lines.length];
     }
 
+    function localDateKey(value = new Date()) {
+      const d = value instanceof Date ? value : parseDate(value);
+      if (!d || Number.isNaN(d.getTime())) return "";
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+
+    function todayDateKey() {
+      return localDateKey(new Date());
+    }
+
+    function parseDateKey(key) {
+      const parts = String(key || "").split("-").map((item) => Number(item));
+      if (parts.length !== 3 || parts.some((item) => !Number.isFinite(item))) return new Date();
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+
+    function addDateDays(date, days) {
+      const d = new Date(date.getTime());
+      d.setDate(d.getDate() + Number(days || 0));
+      return d;
+    }
+
+    function officeSelectedDateKey() {
+      if (!state.officeSelectedDate) state.officeSelectedDate = todayDateKey();
+      return state.officeSelectedDate;
+    }
+
+    function officeRunDateKey(row) {
+      return localDateKey(row && (row.finished_at || row.updated_at || row.started_at || row.claimed_at || row.created_at));
+    }
+
+    function officeRunsForDate(dateKey) {
+      const key = dateKey || officeSelectedDateKey();
+      return (state.runs || []).filter((row) => officeRunDateKey(row) === key);
+    }
+
+    function officeRoleRuns(role, dateKey) {
+      const rows = officeRunsForDate(dateKey);
+      if (!role || !role.departmentId) return [];
+      const scope = departmentScope(departmentById(role.departmentId));
+      return rows.filter((row) => recordMatchesWorkScope(row, scope));
+    }
+
+    function officeRunSucceeded(row) {
+      const s = String((row && row.status) || "").toLowerCase();
+      return ["completed", "success", "done"].includes(s);
+    }
+
+    function officeRunFailed(row) {
+      const s = String((row && row.status) || "").toLowerCase();
+      return ["failed", "error", "cancelled", "canceled"].includes(s);
+    }
+
+    function officeRunStats(rows) {
+      const list = rows || [];
+      const running = list.filter(isActiveRun).length;
+      const failed = list.filter(officeRunFailed).length;
+      const completed = list.filter(officeRunSucceeded).length;
+      return { total: list.length, running, failed, completed };
+    }
+
+    function officeDateLabel(date) {
+      const today = todayDateKey();
+      const key = localDateKey(date);
+      if (key === today) return "今天";
+      const names = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+      return names[date.getDay()] || "";
+    }
+
+    function renderOfficeCalendar() {
+      const box = $("officeCalendarDays");
+      const summary = $("officeDaySummary");
+      if (!box) return;
+      const selected = parseDateKey(officeSelectedDateKey());
+      const start = addDateDays(selected, -((selected.getDay() + 6) % 7));
+      const today = todayDateKey();
+      const selectedKey = officeSelectedDateKey();
+      box.innerHTML = Array.from({ length: 7 }, (_item, idx) => {
+        const d = addDateDays(start, idx);
+        const key = localDateKey(d);
+        const count = officeRunsForDate(key).length;
+        return `<button class="office-calendar-day${key === selectedKey ? " active" : ""}${key === today ? " today" : ""}" type="button" data-office-date="${escapeHtml(key)}">
+          <span>${escapeHtml(officeDateLabel(d))}</span>
+          <strong>${escapeHtml(String(d.getDate()))}</strong>
+          <em>${escapeHtml(count ? `${count}个` : "")}</em>
+        </button>`;
+      }).join("");
+      if (summary) {
+        const stats = officeRunStats(officeRunsForDate(selectedKey));
+        summary.innerHTML = `<span>${escapeHtml(selectedKey === today ? "今天" : selectedKey)}</span>
+          <strong>${stats.total} 个执行</strong>
+          <em>完成 ${stats.completed} · 执行中 ${stats.running} · 失败 ${stats.failed}</em>`;
+      }
+    }
+
     function secretaryAbilityCount(department) {
       let count = 0;
       eachAbilityNode((department && department.children) || [], department, [], (node) => {
@@ -3875,7 +3982,8 @@
     function renderOfficeRecentTasks() {
       const box = $("officeRecentTasks");
       if (!box) return;
-      const runRows = (state.runs || []).map((row) => ({
+      const dateKey = officeSelectedDateKey();
+      const runRows = officeRunsForDate(dateKey).map((row) => ({
         kind: "run",
         id: row && row.id,
         title: row && (row.title || "任务"),
@@ -3885,24 +3993,12 @@
         text: isActiveRun(row) ? (runProgressText(row) || "执行中") : (row && (row.error || row.result_text || "")),
         active: isActiveRun(row),
       }));
-      const taskRows = (state.tasks || [])
-        .filter((row) => String((row && row.status) || "").toLowerCase() !== "deleted")
-        .map((row) => ({
-          kind: "task",
-          id: row && row.id,
-          title: row && (row.title || capabilityName(taskCapabilityId(row)) || "定时任务"),
-          status: row && row.status,
-          time: row && (row.next_run_at || row.updated_at || row.created_at),
-          sortTime: row && (row.updated_at || row.created_at || row.next_run_at),
-          text: row && row.next_run_at ? `下次 ${fmtTime(row.next_run_at)}` : "",
-          active: String((row && row.status) || "").toLowerCase() === "active",
-        }));
-      const rows = runRows.concat(taskRows)
+      const rows = runRows
         .filter((row) => row.id)
         .sort((a, b) => itemTimeMs(b.sortTime, b.time) - itemTimeMs(a.sortTime, a.time))
         .slice(0, 5);
       if (!rows.length) {
-        box.innerHTML = `<div class="office-recent-empty">暂无任务</div>`;
+        box.innerHTML = `<div class="office-recent-empty">当天暂无执行记录</div>`;
         return;
       }
       box.innerHTML = rows.map((row) => {
@@ -3922,6 +4018,7 @@
     function renderOfficeEmployees() {
       const floor = $("employeeFloor");
       if (!floor) return;
+      renderOfficeCalendar();
       const devices = state.devices || [];
       const snapshots = devices.map((device) => ({ device, snapshot: deviceSnapshot(device) }));
       const workingCount = snapshots.filter((row) => row.snapshot.mode === "working").length;
@@ -3929,10 +4026,10 @@
       const offlineCount = snapshots.filter((row) => row.snapshot.mode === "offline").length;
       const onlineCount = workingCount + idleCount;
       const roles = [
-        { id: "sales", name: "销售", status: "24小时工作流", target: "salesWorkflow" },
-        { id: "customer_service", name: "客服", status: "敬请期待", comingSoon: true },
-        { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true },
-        { id: "hr", name: "HR", status: "敬请期待", comingSoon: true },
+        { id: "sales", departmentId: "sales", name: "销售", status: "待命", target: "salesWorkflow" },
+        { id: "customer_service", departmentId: "customer_service", name: "客服", status: "待命", comingSoon: true },
+        { id: "overseas", departmentId: "overseas", name: "海外员工", status: "待命", comingSoon: true },
+        { id: "hr", departmentId: "operations", name: "HR", status: "待命", comingSoon: true },
       ];
       const runningCount = (state.runs || []).filter(isActiveRun).length;
       if ($("officeDeviceCount")) $("officeDeviceCount").textContent = String(devices.length);
@@ -3946,16 +4043,25 @@
       if ($("officeOfflineCount")) $("officeOfflineCount").textContent = String(offlineCount);
       updateBossOfficeStats(onlineCount, workingCount);
       floor.style.minHeight = "";
+      const selectedDate = officeSelectedDateKey();
       floor.innerHTML = roles.map((role, index) => {
         const img = employeeAsset({ installation_id: role.id }, index, role.comingSoon ? "offline" : "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
         const targetAttr = role.target ? ` data-home-target="${escapeHtml(role.target)}"` : "";
         const soonAttr = role.comingSoon ? ` data-role-coming-soon="1"` : "";
+        const stats = officeRunStats(officeRoleRuns(role, selectedDate));
+        const status = stats.running ? `执行中 ${stats.running}` : (stats.total ? `完成 ${stats.completed}` : role.status);
         return `<button class="office-employee-card${role.comingSoon ? " coming-soon" : ""}" type="button"${targetAttr}${soonAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
           <img src="${escapeHtml(img)}" alt="" loading="lazy">
           <span class="office-employee-info">
             <strong>${escapeHtml(role.name || "员工")}</strong>
-            <em>${escapeHtml(role.status || "")}</em>
+            <em>${escapeHtml(status || "")}</em>
+            <span class="office-employee-stats">
+              <b>总 ${escapeHtml(String(stats.total))}</b>
+              <b>成 ${escapeHtml(String(stats.completed))}</b>
+              <b>中 ${escapeHtml(String(stats.running))}</b>
+              <b>败 ${escapeHtml(String(stats.failed))}</b>
+            </span>
           </span>
         </button>`;
       }).join("");
@@ -3968,13 +4074,18 @@
     }
 
     function renderAssetLibraryTabs() {
-      document.querySelectorAll("[data-asset-origin]").forEach((btn) => {
-        const active = btn.dataset.assetOrigin === state.assetLibraryOrigin;
+      document.querySelectorAll("[data-asset-section]").forEach((btn) => {
+        const active = btn.dataset.assetSection === (state.assetLibrarySection || "uploads");
         btn.classList.toggle("active", active);
       });
       if (activeViewKey() === "assetLibrary" && $("pageTitle")) $("pageTitle").textContent = "素材库";
       if ($("assetUserUploadTotal")) $("assetUserUploadTotal").textContent = compactNumber(state.assetLibraryTotals.user_upload || 0);
-      if ($("assetGeneratedTotal")) $("assetGeneratedTotal").textContent = compactNumber(state.assetLibraryTotals.generated || 0);
+      if ($("assetAvatarTotal")) $("assetAvatarTotal").textContent = compactNumber(state.assetLibraryAvatarTotal || 0);
+      if ($("assetVoiceTotal")) $("assetVoiceTotal").textContent = compactNumber(state.assetLibraryVoiceTotal || 0);
+      if ($("assetLibraryAddBtn")) {
+        const labelMap = { uploads: "上传", avatars: "添加形象", voices: "添加声音" };
+        $("assetLibraryAddBtn").textContent = labelMap[state.assetLibrarySection || "uploads"] || "添加";
+      }
     }
 
     function assetPreviewHtml(asset) {
@@ -4010,6 +4121,42 @@
       </button>`;
     }
 
+    function hiflyStatusClass(row) {
+      const status = String((row && row.status) || "").toLowerCase();
+      return status === "failed" ? " failed" : "";
+    }
+
+    function hiflyAvatarCardHtml(row) {
+      const id = String((row && row.id) || "");
+      const title = String((row && row.title) || "未命名形象");
+      const img = String((row && (row.image_url || row.cover_url || row.detail_url)) || "").trim();
+      const thumb = img
+        ? `<img class="asset-library-thumb" src="${escapeHtml(mediaProxyUrl(img, "inline", filenameFromUrl(img, "avatar")))}" alt="" loading="lazy">`
+        : `<div class="asset-library-thumb asset-library-thumb-empty">形象</div>`;
+      return `<button class="asset-library-card" type="button" data-hifly-asset-kind="avatar" data-hifly-asset-id="${escapeHtml(id)}">
+        ${thumb}
+        <div class="asset-library-card-main">
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(row && row.source_type || "image")}</span>
+          <em class="asset-status${hiflyStatusClass(row)}">${escapeHtml(row && row.status_text || row && row.status || "处理中")}</em>
+        </div>
+      </button>`;
+    }
+
+    function hiflyVoiceCardHtml(row) {
+      const id = String((row && row.id) || "");
+      const title = String((row && row.title) || "未命名声音");
+      const provider = String((row && row.provider) || "");
+      return `<button class="asset-library-card" type="button" data-hifly-asset-kind="voice" data-hifly-asset-id="${escapeHtml(id)}">
+        <div class="asset-audio-thumb">声</div>
+        <div class="asset-library-card-main">
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(provider || "voice")}</span>
+          <em class="asset-status${hiflyStatusClass(row)}">${escapeHtml(row && row.status_text || row && row.status || "处理中")}</em>
+        </div>
+      </button>`;
+    }
+
     function assetPreviewLargeHtml(asset) {
       const url = String((asset && asset.source_url) || "").trim();
       const type = String((asset && asset.media_type) || mediaTypeFromUrl(url) || "").toLowerCase();
@@ -4028,6 +4175,11 @@
       const id = String(assetId || "");
       const rows = [].concat(state.assetLibraryRows.user_upload || [], state.assetLibraryRows.generated || [], state.contentRecordRows || []);
       return rows.find((row) => String(row && row.asset_id || "") === id) || null;
+    }
+
+    function findHiflyAsset(kind, id) {
+      const rows = kind === "voice" ? state.assetLibraryVoiceRows : state.assetLibraryAvatarRows;
+      return (rows || []).find((row) => String(row && row.id || "") === String(id || "")) || null;
     }
 
     function openAssetPreview(assetId) {
@@ -4053,27 +4205,81 @@
       modal.classList.remove("hidden");
     }
 
+    function openHiflyAssetPreview(kind, id) {
+      const row = findHiflyAsset(kind, id);
+      if (!row) return;
+      const modal = $("assetPreviewDialog");
+      const body = $("assetPreviewBody");
+      const title = $("assetPreviewTitle");
+      if (!modal || !body) return;
+      if (title) title.textContent = row.title || (kind === "voice" ? "声音分身" : "形象分身");
+      const isVoice = kind === "voice";
+      const mediaUrl = String((isVoice ? row.demo_url : (row.image_url || row.cover_url || row.detail_url)) || "").trim();
+      let preview = `<div class="asset-preview-large asset-preview-large-empty">${isVoice ? "暂无试听" : "暂无预览"}</div>`;
+      if (mediaUrl) {
+        const src = mediaProxyUrl(mediaUrl, "inline", filenameFromUrl(mediaUrl, isVoice ? "voice.mp3" : "avatar"));
+        preview = isVoice
+          ? `<audio class="asset-preview-audio" src="${escapeHtml(src)}" controls></audio>`
+          : `<img class="asset-preview-large" src="${escapeHtml(src)}" alt="">`;
+      }
+      body.innerHTML = `
+        ${preview}
+        <div class="asset-preview-meta">
+          <div><span>类型</span><strong>${isVoice ? "声音分身" : "形象分身"}</strong></div>
+          <div><span>状态</span><strong>${escapeHtml(row.status_text || row.status || "-")}</strong></div>
+          <div><span>时间</span><strong>${escapeHtml(fmtTime(row.created_at))}</strong></div>
+          <div><span>ID</span><strong>${escapeHtml(String(row.avatar || row.voice || row.task_id || row.id || "-"))}</strong></div>
+        </div>
+        ${row.message ? `<div class="asset-preview-text">${escapeHtml(row.message)}</div>` : ""}
+        <div class="work-dispatch-actions">
+          <button class="ghost danger-text" type="button" data-delete-hifly-asset="${escapeHtml(kind)}" data-delete-hifly-id="${escapeHtml(String(row.id || ""))}">删除</button>
+        </div>`;
+      modal.classList.remove("hidden");
+    }
+
     function renderAssetLibrary() {
       const list = $("assetLibraryList");
       if (!list) return;
       renderAssetLibraryTabs();
-      const origin = state.assetLibraryOrigin || "user_upload";
-      const page = Math.max(1, Number((state.assetLibraryPage || {})[origin]) || 1);
-      const total = Number((state.assetLibraryTotals || {})[origin] || 0);
+      const section = state.assetLibrarySection || "uploads";
       const pageSize = Number(state.assetLibraryPageSize || 10);
+      let page = 1;
+      let total = 0;
+      let rows = [];
+      let loading = false;
+      if (section === "avatars") {
+        page = Math.max(1, Number(state.assetLibraryAvatarPage || 1));
+        total = Number(state.assetLibraryAvatarTotal || 0);
+        rows = state.assetLibraryAvatarRows || [];
+        loading = !!state.assetLibraryDigitalLoading;
+      } else if (section === "voices") {
+        page = Math.max(1, Number(state.assetLibraryVoicePage || 1));
+        total = Number(state.assetLibraryVoiceTotal || 0);
+        rows = state.assetLibraryVoiceRows || [];
+        loading = !!state.assetLibraryDigitalLoading;
+      } else {
+        const origin = state.assetLibraryOrigin || "user_upload";
+        page = Math.max(1, Number((state.assetLibraryPage || {})[origin]) || 1);
+        total = Number((state.assetLibraryTotals || {})[origin] || 0);
+        rows = (state.assetLibraryRows && state.assetLibraryRows[origin]) || [];
+        loading = !!state.assetLibraryLoading;
+      }
       const pageCount = Math.max(1, Math.ceil(total / pageSize));
-      const rows = (state.assetLibraryRows && state.assetLibraryRows[origin]) || [];
-      list.classList.toggle("loading", !!state.assetLibraryLoading);
-      if (state.assetLibraryLoading) {
+      list.classList.toggle("loading", loading);
+      if (loading) {
         list.innerHTML = `<div class="asset-library-empty">加载中...</div>`;
       } else if (!rows.length) {
         list.innerHTML = `<div class="asset-library-empty">暂无素材</div>`;
+      } else if (section === "avatars") {
+        list.innerHTML = rows.map(hiflyAvatarCardHtml).join("");
+      } else if (section === "voices") {
+        list.innerHTML = rows.map(hiflyVoiceCardHtml).join("");
       } else {
         list.innerHTML = rows.map(assetCardHtml).join("");
       }
       if ($("assetLibraryPageText")) $("assetLibraryPageText").textContent = `${page} / ${pageCount}`;
-      if ($("assetLibraryPrevBtn")) $("assetLibraryPrevBtn").disabled = page <= 1 || state.assetLibraryLoading;
-      if ($("assetLibraryNextBtn")) $("assetLibraryNextBtn").disabled = page >= pageCount || state.assetLibraryLoading;
+      if ($("assetLibraryPrevBtn")) $("assetLibraryPrevBtn").disabled = page <= 1 || loading;
+      if ($("assetLibraryNextBtn")) $("assetLibraryNextBtn").disabled = page >= pageCount || loading;
     }
 
     async function loadAssetLibrary(origin = state.assetLibraryOrigin) {
@@ -4097,9 +4303,51 @@
       }
     }
 
+    async function loadAssetLibraryAvatars() {
+      if (!state.token) return;
+      const pageSize = Number(state.assetLibraryPageSize || 10);
+      const page = Math.max(1, Number(state.assetLibraryAvatarPage || 1));
+      state.assetLibraryDigitalLoading = true;
+      renderAssetLibrary();
+      try {
+        const data = await api(`/api/hifly/my/avatar/list?page=${page}&size=${pageSize}`);
+        state.assetLibraryAvatarRows = Array.isArray(data.items) ? data.items : [];
+        state.assetLibraryAvatarTotal = Number(data.total || 0);
+        state.hiflyLoaded = false;
+      } catch (err) {
+        state.assetLibraryAvatarRows = [];
+        toast(err.message || "形象分身加载失败");
+      } finally {
+        state.assetLibraryDigitalLoading = false;
+        renderAssetLibrary();
+      }
+    }
+
+    async function loadAssetLibraryVoices() {
+      if (!state.token) return;
+      const pageSize = Number(state.assetLibraryPageSize || 10);
+      const page = Math.max(1, Number(state.assetLibraryVoicePage || 1));
+      state.assetLibraryDigitalLoading = true;
+      renderAssetLibrary();
+      try {
+        const data = await api(`/api/hifly/my/voice/list?page=${page}&size=${pageSize}`);
+        state.assetLibraryVoiceRows = Array.isArray(data.items) ? data.items : [];
+        state.assetLibraryVoiceTotal = Number(data.total || 0);
+        state.hiflyLoaded = false;
+      } catch (err) {
+        state.assetLibraryVoiceRows = [];
+        toast(err.message || "声音分身加载失败");
+      } finally {
+        state.assetLibraryDigitalLoading = false;
+        renderAssetLibrary();
+      }
+    }
+
     async function refreshAssetLibrary() {
+      if ((state.assetLibrarySection || "uploads") === "avatars") return loadAssetLibraryAvatars();
+      if ((state.assetLibrarySection || "uploads") === "voices") return loadAssetLibraryVoices();
       state.assetLibraryOrigin = "user_upload";
-      await loadAssetLibrary("user_upload");
+      return loadAssetLibrary("user_upload");
     }
 
     function renderContentRecordTabs() {
@@ -4169,22 +4417,143 @@
         for (let i = 0; i < files.length; i += 1) {
           const fd = new FormData();
           fd.append("file", files[i], files[i].name || "upload");
+          fd.append("split_video", "true");
           const resp = await fetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd });
           const data = await resp.json().catch(() => ({}));
           if (!resp.ok) throw new Error(data.detail || data.message || `上传失败：HTTP ${resp.status}`);
-          addUserUploadAssetToCache({ ...data, asset_origin: "user_upload" });
+          const rows = Array.isArray(data.assets) && data.assets.length ? data.assets : [data];
+          rows.forEach((row) => addUserUploadAssetToCache({ ...row, asset_origin: "user_upload" }));
           if (status) status.textContent = `${i + 1}/${files.length}`;
         }
         if (input) input.value = "";
         state.assetLibraryPage.user_upload = 1;
         await refreshAssetLibrary();
         toast("上传完成");
+        closeAssetUploadModal();
       } finally {
         if (btn) {
           btn.disabled = false;
           btn.textContent = oldText || "上传图片/视频";
         }
       }
+    }
+
+    function closeAssetUploadModal() {
+      $("assetUploadModal")?.classList.add("hidden");
+      if ($("assetLibraryUploadStatus")) $("assetLibraryUploadStatus").textContent = "";
+    }
+
+    function closeAssetAvatarModal() {
+      $("assetAvatarModal")?.classList.add("hidden");
+      if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "";
+    }
+
+    function closeAssetVoiceModal() {
+      $("assetVoiceModal")?.classList.add("hidden");
+      if ($("assetVoiceStatus")) $("assetVoiceStatus").textContent = "";
+    }
+
+    function openAssetLibraryAddModal() {
+      const section = state.assetLibrarySection || "uploads";
+      if (section === "avatars") {
+        if ($("assetAvatarForm")) $("assetAvatarForm").reset();
+        if ($("assetAvatarModel")) $("assetAvatarModel").value = "2";
+        syncAssetAvatarFileAccept();
+        $("assetAvatarModal")?.classList.remove("hidden");
+        setTimeout(() => $("assetAvatarName")?.focus(), 80);
+        return;
+      }
+      if (section === "voices") {
+        if ($("assetVoiceForm")) $("assetVoiceForm").reset();
+        $("assetVoiceModal")?.classList.remove("hidden");
+        setTimeout(() => $("assetVoiceName")?.focus(), 80);
+        return;
+      }
+      if ($("assetUploadForm")) $("assetUploadForm").reset();
+      $("assetUploadModal")?.classList.remove("hidden");
+    }
+
+    function syncAssetAvatarFileAccept() {
+      const type = (($("assetAvatarSourceType") && $("assetAvatarSourceType").value) || "image").trim();
+      if ($("assetAvatarFile")) $("assetAvatarFile").accept = type === "video" ? "video/*,.mp4,.mov" : "image/*,.jpg,.jpeg,.png";
+      if ($("assetAvatarModel")) $("assetAvatarModel").closest(".field")?.classList.toggle("hidden", type === "video");
+    }
+
+    async function submitAssetAvatarForm(evt) {
+      evt.preventDefault();
+      const file = $("assetAvatarFile") && $("assetAvatarFile").files ? $("assetAvatarFile").files[0] : null;
+      if (!file) return toast("请选择素材文件");
+      const title = (($("assetAvatarName") && $("assetAvatarName").value) || file.name || "未命名形象").trim();
+      const sourceType = (($("assetAvatarSourceType") && $("assetAvatarSourceType").value) || "image").trim();
+      const fd = new FormData();
+      fd.append("title", title);
+      fd.append("file", file, file.name || "avatar");
+      if (sourceType !== "video") fd.append("model", (($("assetAvatarModel") && $("assetAvatarModel").value) || "2"));
+      const btn = $("assetAvatarSubmit");
+      const oldText = btn ? btn.textContent : "";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "提交中...";
+      }
+      if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "正在提交克隆任务";
+      try {
+        const endpoint = sourceType === "video" ? "/api/hifly/my/avatar/create-by-video-upload" : "/api/hifly/my/avatar/create-by-image-upload";
+        const resp = await fetch(apiUrl(endpoint), { method: "POST", headers: authHeaders(), body: fd });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.detail || data.message || `提交失败：HTTP ${resp.status}`);
+        state.assetLibraryAvatarPage = 1;
+        closeAssetAvatarModal();
+        await loadAssetLibraryAvatars();
+        toast("形象克隆任务已提交");
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText || "开始克隆";
+        }
+      }
+    }
+
+    async function submitAssetVoiceForm(evt) {
+      evt.preventDefault();
+      const file = $("assetVoiceFile") && $("assetVoiceFile").files ? $("assetVoiceFile").files[0] : null;
+      if (!file) return toast("请选择声音文件");
+      const title = (($("assetVoiceName") && $("assetVoiceName").value) || file.name || "未命名声音").trim();
+      const fd = new FormData();
+      fd.append("title", title);
+      fd.append("file", file, file.name || "voice.mp3");
+      const btn = $("assetVoiceSubmit");
+      const oldText = btn ? btn.textContent : "";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "提交中...";
+      }
+      if ($("assetVoiceStatus")) $("assetVoiceStatus").textContent = "正在提交克隆任务";
+      try {
+        const resp = await fetch(apiUrl("/api/hifly/my/voice/create-upload"), { method: "POST", headers: authHeaders(), body: fd });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.detail || data.message || `提交失败：HTTP ${resp.status}`);
+        state.assetLibraryVoicePage = 1;
+        closeAssetVoiceModal();
+        await loadAssetLibraryVoices();
+        toast("声音克隆任务已提交");
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText || "开始克隆";
+        }
+      }
+    }
+
+    async function deleteHiflyAsset(kind, id) {
+      const cleanKind = kind === "voice" ? "voice" : "avatar";
+      if (!id) return;
+      if (!confirm(`删除这个${cleanKind === "voice" ? "声音" : "形象"}分身？`)) return;
+      await api(`/api/hifly/my/${cleanKind}/${encodeURIComponent(id)}`, { method: "DELETE" });
+      closeAssetPreviewDialog();
+      if (cleanKind === "voice") await loadAssetLibraryVoices();
+      else await loadAssetLibraryAvatars();
+      state.hiflyLoaded = false;
+      toast("已删除");
     }
 
     function leadPlatformLabel(platform) {
@@ -5708,6 +6077,7 @@
         return;
       }
       if (key === "assetLibrary") {
+        state.assetLibrarySection = "uploads";
         state.assetLibraryOrigin = "user_upload";
         switchTab("assetLibrary");
         return;
@@ -7327,6 +7697,10 @@
       return uploadRows.length ? uploadRows : rows;
     }
 
+    function personalUploadedDocRows() {
+      return (state.personalMemoryDocs || []).filter((doc) => !doc.read_only && doc.source !== "agent" && isPersonalUploadedMemoryDoc(doc));
+    }
+
     function ensurePersonalMemorySourceSelections() {
       if (state.personalMemoryUseProfile !== false) state.personalMemoryUseProfile = true;
       state.personalMemorySourceKeywords = personalSyncSelectionMap(
@@ -7535,6 +7909,22 @@
       renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "", "data-delete-personal-keyword", "删除");
       renderPersonalRows("personalCompetitorList", state.personalCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "", "data-delete-personal-competitor", "删除", "data-sync-personal-competitor");
       renderPersonalMemorySourceSelectors();
+      const uploadDocs = $("personalUploadDocList");
+      if (uploadDocs) {
+        const rows = personalUploadedDocRows();
+        uploadDocs.innerHTML = rows.length
+          ? rows.map((doc) => {
+              const id = personalDocId(doc);
+              return `<div class="personal-row personal-memory-row">
+                <span>${escapeHtml(personalMemoryTitle(doc))}</span>
+                <div class="personal-row-actions">
+                  <button type="button" data-preview-personal-memory="${escapeHtml(id)}">预览</button>
+                  <button type="button" data-delete-personal-memory="${escapeHtml(id)}">删除</button>
+                </div>
+              </div>`;
+            }).join("")
+          : `<div class="personal-empty">暂无上传资料</div>`;
+      }
       const mem = $("personalMemoryList");
       if (mem) {
         mem.innerHTML = state.personalMemoryDocs.length
@@ -7723,6 +8113,24 @@
       state.personalCustomReferenceFile = file && (file.name || file.size > 0) ? file : null;
       if (input) input.value = "";
       renderPersonalCustomReference();
+    }
+
+    function openPersonalUploadModal() {
+      $("personalUploadModal")?.classList.remove("hidden");
+    }
+
+    function closePersonalUploadModal() {
+      $("personalUploadModal")?.classList.add("hidden");
+    }
+
+    function openPersonalMemoryGenerateModal() {
+      renderPersonalMemorySourceSelectors();
+      renderPersonalGeneratedDocs();
+      $("personalMemoryGenerateModal")?.classList.remove("hidden");
+    }
+
+    function closePersonalMemoryGenerateModal() {
+      $("personalMemoryGenerateModal")?.classList.add("hidden");
     }
 
     function selectedPersonalDocTypes() {
@@ -7970,6 +8378,7 @@
         await refreshPersonalDataPreserveSelection({ memories: true });
         await savePersonalDefaultSilently();
         personalSetStatus("已存入记忆。");
+        closePersonalMemoryGenerateModal();
       } finally {
         personalSetBusy(btn, false);
       }
@@ -7989,6 +8398,7 @@
         await refreshPersonalDataPreserveSelection({ memories: true });
         await savePersonalDefaultSilently();
         personalSetStatus("已存入记忆。");
+        closePersonalMemoryGenerateModal();
       } finally {
         personalSetBusy(btn, false);
       }
@@ -8033,6 +8443,7 @@
         state.personalUploadFiles = [];
         renderPersonalSelectedFiles();
         renderPersonalMemorySourceSelectors();
+        closePersonalUploadModal();
       } finally {
         personalSetBusy(btn, false);
       }
@@ -11369,25 +11780,42 @@
     $("publishRunForm")?.addEventListener("submit", submitPublishRunForm);
     $("refreshStatusBtn").addEventListener("click", refreshDeviceStatus);
     $("assetLibraryTabs")?.addEventListener("click", (evt) => {
-      const btn = evt.target.closest("[data-asset-origin]");
+      const btn = evt.target.closest("[data-asset-section]");
       if (!btn) return;
-      state.assetLibraryOrigin = "user_upload";
+      state.assetLibrarySection = btn.dataset.assetSection || "uploads";
       renderAssetLibrary();
-      loadAssetLibrary("user_upload");
+      refreshAssetLibrary();
     });
-    $("assetLibraryUploadBtn")?.addEventListener("click", () => $("assetLibraryUploadInput")?.click());
-    $("assetLibraryUploadInput")?.addEventListener("change", (evt) => {
+    $("assetLibraryAddBtn")?.addEventListener("click", openAssetLibraryAddModal);
+    $("assetUploadBackdrop")?.addEventListener("click", closeAssetUploadModal);
+    $("assetUploadClose")?.addEventListener("click", closeAssetUploadModal);
+    $("assetUploadCancel")?.addEventListener("click", closeAssetUploadModal);
+    $("assetUploadForm")?.addEventListener("submit", (evt) => {
+      evt.preventDefault();
       uploadAssetLibraryFiles($("assetLibraryUploadBtn")).catch((err) => toast(err.message || "上传失败"));
     });
+    $("assetAvatarBackdrop")?.addEventListener("click", closeAssetAvatarModal);
+    $("assetAvatarClose")?.addEventListener("click", closeAssetAvatarModal);
+    $("assetAvatarCancel")?.addEventListener("click", closeAssetAvatarModal);
+    $("assetAvatarSourceType")?.addEventListener("change", syncAssetAvatarFileAccept);
+    $("assetAvatarForm")?.addEventListener("submit", (evt) => submitAssetAvatarForm(evt).catch((err) => toast(err.message || "提交失败")));
+    $("assetVoiceBackdrop")?.addEventListener("click", closeAssetVoiceModal);
+    $("assetVoiceClose")?.addEventListener("click", closeAssetVoiceModal);
+    $("assetVoiceCancel")?.addEventListener("click", closeAssetVoiceModal);
+    $("assetVoiceForm")?.addEventListener("submit", (evt) => submitAssetVoiceForm(evt).catch((err) => toast(err.message || "提交失败")));
     $("assetLibraryPrevBtn")?.addEventListener("click", () => {
-      const origin = state.assetLibraryOrigin || "user_upload";
-      state.assetLibraryPage[origin] = Math.max(1, Number(state.assetLibraryPage[origin] || 1) - 1);
-      loadAssetLibrary(origin);
+      const section = state.assetLibrarySection || "uploads";
+      if (section === "avatars") state.assetLibraryAvatarPage = Math.max(1, Number(state.assetLibraryAvatarPage || 1) - 1);
+      else if (section === "voices") state.assetLibraryVoicePage = Math.max(1, Number(state.assetLibraryVoicePage || 1) - 1);
+      else state.assetLibraryPage.user_upload = Math.max(1, Number(state.assetLibraryPage.user_upload || 1) - 1);
+      refreshAssetLibrary();
     });
     $("assetLibraryNextBtn")?.addEventListener("click", () => {
-      const origin = state.assetLibraryOrigin || "user_upload";
-      state.assetLibraryPage[origin] = Math.max(1, Number(state.assetLibraryPage[origin] || 1) + 1);
-      loadAssetLibrary(origin);
+      const section = state.assetLibrarySection || "uploads";
+      if (section === "avatars") state.assetLibraryAvatarPage = Math.max(1, Number(state.assetLibraryAvatarPage || 1) + 1);
+      else if (section === "voices") state.assetLibraryVoicePage = Math.max(1, Number(state.assetLibraryVoicePage || 1) + 1);
+      else state.assetLibraryPage.user_upload = Math.max(1, Number(state.assetLibraryPage.user_upload || 1) + 1);
+      refreshAssetLibrary();
     });
     $("contentRecordTabs")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-content-record-media]");
@@ -11581,6 +12009,11 @@
       renderLeadCenter();
     });
     $("assetLibraryList")?.addEventListener("click", (evt) => {
+      const hiflyBtn = evt.target.closest("[data-hifly-asset-kind]");
+      if (hiflyBtn) {
+        openHiflyAssetPreview(hiflyBtn.dataset.hiflyAssetKind || "", hiflyBtn.dataset.hiflyAssetId || "");
+        return;
+      }
       const btn = evt.target.closest("[data-asset-preview-id]");
       if (!btn) return;
       openAssetPreview(btn.dataset.assetPreviewId || "");
@@ -11598,6 +12031,11 @@
     $("personalTemplateHelpCloseBtn")?.addEventListener("click", closePersonalTemplateHelpDialog);
     $("assetPreviewBackdrop")?.addEventListener("click", closeAssetPreviewDialog);
     $("assetPreviewCloseBtn")?.addEventListener("click", closeAssetPreviewDialog);
+    $("assetPreviewBody")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-delete-hifly-asset]");
+      if (!btn) return;
+      deleteHiflyAsset(btn.dataset.deleteHiflyAsset || "", btn.dataset.deleteHiflyId || "").catch((err) => toast(err.message || "删除失败"));
+    });
     $("leadDetailBackdrop")?.addEventListener("click", closeLeadDetailDialog);
     $("leadDetailCloseBtn")?.addEventListener("click", closeLeadDetailDialog);
     document.addEventListener("click", (evt) => {
@@ -11653,6 +12091,13 @@
     $("personalNewTemplateBtn")?.addEventListener("click", resetPersonalTemplateForm);
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
     $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => toast(err.message || "添加失败")));
+    $("personalOpenUploadBtn")?.addEventListener("click", openPersonalUploadModal);
+    $("personalUploadBackdrop")?.addEventListener("click", closePersonalUploadModal);
+    $("personalUploadClose")?.addEventListener("click", closePersonalUploadModal);
+    $("personalUploadCancel")?.addEventListener("click", closePersonalUploadModal);
+    $("personalOpenMemoryGenerateBtn")?.addEventListener("click", openPersonalMemoryGenerateModal);
+    $("personalMemoryGenerateBackdrop")?.addEventListener("click", closePersonalMemoryGenerateModal);
+    $("personalMemoryGenerateClose")?.addEventListener("click", closePersonalMemoryGenerateModal);
     $("personalGenerateMemoryBtn")?.addEventListener("click", (evt) => generatePersonalMemoryDocs(evt.currentTarget).catch((err) => personalSetStatus(err.message || "AI 理解失败", true)));
     $("personalSaveMemoryBtn")?.addEventListener("click", (evt) => savePersonalMemory(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
     $("personalSaveRawMemoryBtn")?.addEventListener("click", (evt) => savePersonalRawMemory(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
@@ -11775,6 +12220,24 @@
     $("loadMoreTasksBtn")?.addEventListener("click", () => loadTasks({ append: true, reset: false }));
     $("loadMoreRunsBtn")?.addEventListener("click", () => loadRuns({ append: true, reset: false }));
     $("officeWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory({ type: "all", label: "全部记录" }, "office"));
+    $("officeCalendarDays")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-office-date]");
+      if (!btn) return;
+      state.officeSelectedDate = btn.dataset.officeDate || todayDateKey();
+      renderOfficeEmployees();
+    });
+    $("officeCalendarPrev")?.addEventListener("click", () => {
+      state.officeSelectedDate = localDateKey(addDateDays(parseDateKey(officeSelectedDateKey()), -7));
+      renderOfficeEmployees();
+    });
+    $("officeCalendarNext")?.addEventListener("click", () => {
+      state.officeSelectedDate = localDateKey(addDateDays(parseDateKey(officeSelectedDateKey()), 7));
+      renderOfficeEmployees();
+    });
+    $("officeCalendarToday")?.addEventListener("click", () => {
+      state.officeSelectedDate = todayDateKey();
+      renderOfficeEmployees();
+    });
     $("officeView")?.addEventListener("click", (evt) => {
       const runBtn = evt.target.closest("[data-open-run-detail]");
       if (runBtn) {

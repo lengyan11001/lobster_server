@@ -4107,6 +4107,96 @@
       padding: 0 14px;
       border-radius: 999px;
     }
+    #officeView .office-calendar {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid rgba(223,230,242,.78);
+      border-radius: 22px;
+      background:
+        radial-gradient(circle at 8% 12%, rgba(36,92,255,.1), transparent 26%),
+        rgba(255,255,255,.86);
+      box-shadow: 0 12px 28px rgba(29,54,105,.08);
+    }
+    #officeView .office-calendar button {
+      min-height: 34px;
+      padding: 0 11px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    #officeView .office-calendar-days {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(44px, 1fr));
+      gap: 6px;
+      min-width: 0;
+    }
+    #officeView .office-calendar-day {
+      display: grid;
+      justify-items: center;
+      gap: 2px;
+      min-width: 0;
+      min-height: 58px;
+      padding: 6px 4px;
+      color: #6d7890;
+      border: 1px solid rgba(223,230,242,.9);
+      border-radius: 16px;
+      background: rgba(255,255,255,.74);
+      box-shadow: none;
+    }
+    #officeView .office-calendar-day span {
+      font-size: 11px;
+      font-weight: 900;
+    }
+    #officeView .office-calendar-day strong {
+      color: #102036;
+      font-size: 17px;
+      line-height: 1;
+    }
+    #officeView .office-calendar-day em {
+      min-height: 13px;
+      color: #245cff;
+      font-size: 10px;
+      font-style: normal;
+      font-weight: 900;
+    }
+    #officeView .office-calendar-day.today {
+      border-color: rgba(19,168,115,.36);
+    }
+    #officeView .office-calendar-day.active {
+      color: #fff;
+      border-color: transparent;
+      background: linear-gradient(145deg, #245cff, #13a873);
+      box-shadow: 0 12px 24px rgba(36,92,255,.2);
+    }
+    #officeView .office-calendar-day.active strong,
+    #officeView .office-calendar-day.active em {
+      color: #fff;
+    }
+    #officeView .office-day-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 42px;
+      padding: 0 14px;
+      color: #102036;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(232,244,255,.9), rgba(235,255,245,.9));
+    }
+    #officeView .office-day-summary span,
+    #officeView .office-day-summary em {
+      color: #6d7890;
+      font-size: 12px;
+      font-style: normal;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    #officeView .office-day-summary strong {
+      font-size: 15px;
+      font-weight: 950;
+    }
     #officeView .office-employee-grid {
       min-height: 0 !important;
       display: flex !important;
@@ -4184,6 +4274,21 @@
       height: 7px;
       border-radius: 50%;
       background: currentColor;
+    }
+    #officeView .office-employee-stats {
+      display: grid;
+      grid-template-columns: repeat(4, auto);
+      gap: 5px;
+      justify-content: center;
+    }
+    #officeView .office-employee-stats b {
+      padding: 4px 6px;
+      color: #4a5a73;
+      border-radius: 999px;
+      background: rgba(255,255,255,.72);
+      font-size: 10px;
+      font-weight: 900;
+      white-space: nowrap;
     }
     #officeView .custom-employee-strip {
       display: grid;
@@ -4465,6 +4570,37 @@
       min-height: calc(100dvh - 96px);
       padding: 10px 0 24px;
     }
+    .asset-library-head,
+    .personal-list-page-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .asset-library-head .asset-library-tabs {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .asset-library-head > button,
+    .personal-list-page-head button {
+      flex: 0 0 auto;
+      min-height: 40px;
+      padding: 0 14px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+    .personal-list-page-head {
+      padding: 10px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.88);
+      border: 1px solid rgba(223,230,242,.9);
+      box-shadow: 0 12px 26px rgba(24,50,105,.07);
+    }
+    .personal-list-page-head strong {
+      color: #17233d;
+      font-size: 15px;
+      font-weight: 950;
+    }
     .asset-library-upload,
     .asset-library-tabs,
     .content-record-tabs,
@@ -4619,6 +4755,40 @@
       white-space: nowrap;
       font-size: 11px;
       font-style: normal;
+    }
+    .asset-library-card-main .asset-status {
+      color: #0f8f7a;
+      font-weight: 900;
+    }
+    .asset-library-card-main .asset-status.failed {
+      color: #b42318;
+    }
+    .asset-audio-thumb {
+      aspect-ratio: 1 / 1;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      color: #0f4767;
+      background:
+        radial-gradient(circle at 22% 20%, rgba(19,183,216,.22), transparent 34%),
+        linear-gradient(135deg, #e7f7ff, #f2fff8);
+      border: 1px solid rgba(223,230,242,.9);
+      font-size: 36px;
+      font-weight: 950;
+    }
+    .asset-upload-status {
+      min-height: 20px;
+      color: #6d7890;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .asset-action-popover,
+    .personal-action-popover {
+      max-height: min(84vh, 760px);
+      overflow: auto;
+    }
+    .personal-memory-popover {
+      width: min(880px, calc(100vw - 28px));
     }
     .asset-library-pager {
       display: grid;
@@ -4888,6 +5058,12 @@
       place-items: center;
       color: #6d7890;
       font-weight: 900;
+    }
+    .asset-preview-audio {
+      width: 100%;
+      min-height: 56px;
+      border-radius: 16px;
+      background: #eef4ff;
     }
     .asset-preview-meta,
     .lead-detail-summary {
@@ -5330,6 +5506,32 @@
         width: 36px;
         height: 36px;
         border-radius: 14px;
+      }
+      #officeView .office-calendar {
+        grid-template-columns: auto auto auto;
+        padding: 8px;
+      }
+      #officeView .office-calendar-days {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        display: flex;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      #officeView .office-calendar-days::-webkit-scrollbar {
+        display: none;
+      }
+      #officeView .office-calendar-day {
+        flex: 0 0 52px;
+      }
+      #officeView .office-day-summary {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 3px;
+        padding: 9px 12px;
+      }
+      #officeView .office-employee-stats {
+        grid-template-columns: repeat(2, auto);
       }
       .workflow-node-card {
         grid-template-columns: 54px minmax(0, 1fr);

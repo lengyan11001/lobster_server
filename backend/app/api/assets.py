@@ -4,6 +4,8 @@ import hashlib
 import json
 import logging
 import os
+import shutil
+import subprocess
 import tempfile
 import time
 import uuid
@@ -11,7 +13,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -34,6 +36,8 @@ _CUSTOM_CONFIGS_FILE = _BASE_DIR / "custom_configs.json"
 
 # 带签名的临时访问：用于会话里上传的图/视频生成可被速推拉取的 URL
 _ASSET_FILE_EXPIRY_SEC = 86400  # 24 hours
+_VIDEO_SEGMENT_SECONDS = 3
+_VIDEO_SEGMENT_MAX_COUNT = 120
 
 # 临时文件跟踪：task_id -> [temp_file_paths]，用于任务完成后清理
 _temp_files_by_task: dict[str, list[Path]] = {}
@@ -233,6 +237,78 @@ def get_asset_public_url(
 
 def _gen_asset_id() -> str:
     return uuid.uuid4().hex[:12]
+
+
+def _find_asset_ffmpeg() -> str:
+    candidates = [
+        os.environ.get("FFMPEG_BIN"),
+        shutil.which("ffmpeg"),
+        shutil.which("ffmpeg.exe"),
+        str(_BASE_DIR / "ffmpeg" / "ffmpeg"),
+        str(_BASE_DIR / "ffmpeg" / "ffmpeg.exe"),
+        str(_BASE_DIR / "deps" / "ffmpeg" / "ffmpeg"),
+        str(_BASE_DIR / "deps" / "ffmpeg" / "ffmpeg.exe"),
+    ]
+    for item in candidates:
+        if item and Path(item).exists():
+            return str(Path(item))
+    raise HTTPException(status_code=500, detail="服务器缺少 ffmpeg，无法把视频切成 2～3 秒片段")
+
+
+def _run_ffmpeg_segment(ffmpeg: str, source: Path, out_pattern: Path) -> None:
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(source),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-force_key_frames",
+        f"expr:gte(t,n_forced*{_VIDEO_SEGMENT_SECONDS})",
+        "-f",
+        "segment",
+        "-segment_time",
+        str(_VIDEO_SEGMENT_SECONDS),
+        "-reset_timestamps",
+        "1",
+        str(out_pattern),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "ffmpeg segment failed").strip()[-800:]
+        raise HTTPException(status_code=500, detail=f"视频切片失败：{detail}")
+
+
+def _split_video_bytes(data: bytes, ext: str) -> list[tuple[str, bytes]]:
+    ffmpeg = _find_asset_ffmpeg()
+    clean_ext = ext if ext.startswith(".") else f".{ext or 'mp4'}"
+    with tempfile.TemporaryDirectory(prefix="asset_video_split_") as tmp:
+        tmpdir = Path(tmp)
+        source = tmpdir / f"source{clean_ext}"
+        source.write_bytes(data)
+        out_pattern = tmpdir / "segment_%03d.mp4"
+        _run_ffmpeg_segment(ffmpeg, source, out_pattern)
+        segments = sorted(tmpdir.glob("segment_*.mp4"))[:_VIDEO_SEGMENT_MAX_COUNT]
+        out: list[tuple[str, bytes]] = []
+        for idx, path in enumerate(segments, start=1):
+            raw = path.read_bytes()
+            if raw:
+                out.append((f"segment_{idx:03d}.mp4", raw))
+        if not out:
+            raise HTTPException(status_code=500, detail="视频切片失败：没有生成可用片段")
+        return out
 
 
 def _save_bytes(data: bytes, ext: str) -> tuple[str, str, int]:
@@ -567,6 +643,7 @@ async def save_asset_from_url(
 @router.post("/api/assets/upload", summary="上传素材文件")
 async def upload_asset(
     file: UploadFile = File(...),
+    split_video: bool = Form(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -584,6 +661,59 @@ async def upload_asset(
         mtype = "audio"
 
     content_type = getattr(file, "content_type", "") or ""
+    if split_video and mtype == "video":
+        segment_rows = []
+        for idx, (segment_name, segment_bytes) in enumerate(_split_video_bytes(data, ext), start=1):
+            aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(segment_bytes, ".mp4", "video/mp4")
+            if not tos_public_url:
+                local_path = ASSETS_DIR / fname_or_key
+                try:
+                    if local_path.exists():
+                        local_path.unlink()
+                except Exception as e:
+                    logger.warning("[视频切片入库-失败] 删除本地文件异常 asset_id=%s err=%s", aid, e)
+                raise HTTPException(status_code=503, detail="服务器未成功写入 TOS 公网链接，视频片段无法入库")
+            asset = Asset(
+                asset_id=aid,
+                user_id=owner_user.id,
+                filename=fname_or_key,
+                media_type="video",
+                file_size=fsize,
+                source_url=tos_public_url,
+                meta={
+                    "asset_origin": "user_upload",
+                    "source_upload_filename": name,
+                    "video_segment": True,
+                    "segment_index": idx,
+                    "segment_seconds": _VIDEO_SEGMENT_SECONDS,
+                    "segment_name": segment_name,
+                },
+            )
+            db.add(asset)
+            segment_rows.append(
+                {
+                    "asset_id": aid,
+                    "filename": fname_or_key,
+                    "media_type": "video",
+                    "file_size": fsize,
+                    "source_url": tos_public_url,
+                    "url": tos_public_url,
+                    "asset_origin": "user_upload",
+                    "video_segment": True,
+                    "segment_index": idx,
+                }
+            )
+        db.commit()
+        logger.info("[素材库视频切片] user_id=%s filename=%s segments=%d", owner_user.id, name, len(segment_rows))
+        first = segment_rows[0] if segment_rows else {}
+        return {
+            **first,
+            "ok": True,
+            "split_video": True,
+            "total": len(segment_rows),
+            "assets": segment_rows,
+        }
+
     aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(data, ext, content_type)
     if not tos_public_url:
         local_path = ASSETS_DIR / fname_or_key
