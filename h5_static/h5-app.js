@@ -683,6 +683,12 @@
       description: "汇总所有可下发的营销创作节点。",
       virtual: true,
     };
+    const SYSTEM_WORKFLOW_EMPLOYEES = [
+      { id: "system_sales", name: "销售员工", departmentId: "sales", mark: "销", preset: "sales" },
+      { id: "system_customer_service", name: "客服员工", departmentId: "customer_service", mark: "客" },
+      { id: "system_overseas", name: "海外员工", departmentId: "overseas", mark: "海" },
+      { id: "system_hr", name: "HR员工", departmentId: "operations", mark: "HR" },
+    ];
 
     const DOUYIN_TASK_ACTIONS = {
       search_collect: {
@@ -1658,27 +1664,55 @@
       }).filter(Boolean);
     }
 
+    function workflowDepartmentNodeLookups() {
+      const rows = [];
+      DEPARTMENT_SKILL_TREE.forEach((department) => {
+        departmentLeafNodes(department).forEach((node) => {
+          if (!node || node.comingSoon || isPublishCenterNode(node)) return;
+          rows.push({
+            node,
+            department,
+            trail: [node],
+            optionLabel: node.label || node.key,
+            optionGroup: department.name || "部门节点",
+          });
+        });
+      });
+      return rows;
+    }
+
     function workflowLeafLookups() {
-      return workflowSalesNodeLookups();
+      return [...workflowSalesNodeLookups(), ...workflowDepartmentNodeLookups()];
     }
 
     function workflowLookupFromValue(value) {
       const raw = String(value || "");
       if (raw.startsWith("sales@@")) {
-        const index = Number(raw.split("@@")[1]);
-        return workflowSalesNodeLookups().find((item) => Number(item.optionId) === index) || null;
+        const indexText = raw.split("@@")[1];
+        if (/^\d+$/.test(indexText || "")) {
+          const index = Number(indexText);
+          return workflowSalesNodeLookups().find((item) => Number(item.optionId) === index) || null;
+        }
       }
       const [departmentId, key] = raw.split("@@");
       return workflowLeafLookups().find((item) => item.department.id === departmentId && String(item.node.key || "") === key) || null;
     }
 
     function workflowAbilityOptionsHtml() {
-      const options = workflowLeafLookups().map((lookup) => {
-        const disabled = abilityIsActionable(lookup.node) ? "" : " disabled";
-        const label = lookup.optionLabel || lookup.node.label || lookup.node.key;
-        return `<option value="${escapeHtml(workflowOptionValue(lookup))}"${disabled}>${escapeHtml(label)}</option>`;
+      const groups = new Map();
+      workflowLeafLookups().forEach((lookup) => {
+        const group = lookup.optionGroup || "销售员工";
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push(lookup);
+      });
+      return Array.from(groups.entries()).map(([group, lookups]) => {
+        const options = lookups.map((lookup) => {
+          const disabled = abilityIsActionable(lookup.node) ? "" : " disabled";
+          const label = lookup.optionLabel || lookup.node.label || lookup.node.key;
+          return `<option value="${escapeHtml(workflowOptionValue(lookup))}"${disabled}>${escapeHtml(label)}</option>`;
+        }).join("");
+        return `<optgroup label="${escapeHtml(group)}">${options}</optgroup>`;
       }).join("");
-      return `<optgroup label="销售员工">${options}</optgroup>`;
     }
 
     function workflowPrompt(note, node) {
@@ -2414,6 +2448,61 @@
       return nodes.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
     }
 
+    function cloneWorkflowNodes(nodes) {
+      return JSON.parse(JSON.stringify(Array.isArray(nodes) ? nodes : []));
+    }
+
+    function workflowPresetTime(index) {
+      const hour = Math.min(22, 9 + Math.floor(index * 90 / 60));
+      const minute = (index * 90) % 60;
+      return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    }
+
+    function buildDepartmentWorkflowPresetNodes(departmentId, prefix) {
+      const department = departmentById(departmentId);
+      const nodes = [];
+      departmentLeafNodes(department).forEach((node) => {
+        if (!node || node.comingSoon || isPublishCenterNode(node)) return;
+        const note = node.label || node.key || "任务节点";
+        try {
+          nodes.push({
+            id: `${prefix}_${nodes.length + 1}`,
+            time: workflowPresetTime(nodes.length),
+            ability_key: node.key || "",
+            ability_label: node.label || node.key || "",
+            department_id: department.id,
+            department_name: department.name || "",
+            note,
+            param_configured: false,
+            plan: workflowPlanForLookup({ node, department, trail: [node] }, note),
+          });
+        } catch (_err) {
+          // Some ability entries are pure navigation or need user-specific data before scheduling.
+        }
+      });
+      return nodes;
+    }
+
+    function systemWorkflowTemplates() {
+      return SYSTEM_WORKFLOW_EMPLOYEES.map((item) => {
+        const nodes = item.preset === "sales"
+          ? buildSalesWorkflowPresetNodes()
+          : buildDepartmentWorkflowPresetNodes(item.departmentId, item.id.replace(/^system_/, ""));
+        return {
+          id: item.id,
+          owner_user_id: 0,
+          owner_name: "系统",
+          name: item.name,
+          nodes,
+          status: "active",
+          source: "system",
+          system: true,
+          mark: item.mark,
+          granted_user_ids: [],
+        };
+      }).filter((tpl) => workflowTemplateNodeCount(tpl) > 0);
+    }
+
     function prepareSalesWorkflowDraft() {
       state.workflowEditingTemplateId = "";
       state.workflowNodesDraft = buildSalesWorkflowPresetNodes();
@@ -2758,33 +2847,43 @@
         list.innerHTML = `<div class="hint">加载中...</div>`;
         return;
       }
-      const rows = state.workflowTemplates || [];
+      const rows = workflowTemplateRows();
       if (!rows.length) {
         list.innerHTML = `<div class="hint">暂无模板</div>`;
         return;
       }
       list.innerHTML = rows.map((tpl) => {
         const own = tpl.source === "own";
+        const system = tpl.source === "system";
         const nodeCount = Array.isArray(tpl.nodes) ? tpl.nodes.length : 0;
-        const grantBtn = own && state.workflowCanGrant ? `<button type="button" data-workflow-grant="${tpl.id}">授权</button>` : "";
+        const sourceText = system ? "系统提供 · 全员可见" : (tpl.source === "granted" ? `来自 ${tpl.owner_name || "代理商"}` : `${nodeCount} 个节点`);
+        const copyBtn = `<button class="ghost" type="button" data-workflow-copy="${escapeHtml(tpl.id)}">复制</button>`;
+        const activateBtn = system ? "" : `<button type="button" data-workflow-activate-template="${escapeHtml(tpl.id)}">启用</button>`;
         const deleteBtn = own ? `<button class="ghost" type="button" data-workflow-delete="${tpl.id}">删除</button>` : "";
         return `<div class="workflow-template-item">
           <div>
             <strong>${escapeHtml(tpl.name || "工作流模板")}</strong>
-            <span>${escapeHtml(tpl.source === "granted" ? `来自 ${tpl.owner_name || "代理商"}` : `${nodeCount} 个节点`)}</span>
+            <span>${escapeHtml(sourceText)}${system ? ` · ${escapeHtml(nodeCount + " 个节点")}` : ""}</span>
           </div>
           <div class="workflow-template-actions">
-            <button type="button" data-workflow-load="${tpl.id}">${own ? "编辑" : "套用"}</button>
-            <button type="button" data-workflow-activate-template="${tpl.id}">启用</button>
-            ${grantBtn}
+            <button type="button" data-workflow-load="${escapeHtml(tpl.id)}">${own ? "编辑" : "套用"}</button>
+            ${copyBtn}
+            ${activateBtn}
             ${deleteBtn}
           </div>
         </div>`;
       }).join("");
     }
 
-    function workflowTemplateRows() {
+    function userWorkflowTemplateRows() {
       return Array.isArray(state.workflowTemplates) ? state.workflowTemplates : [];
+    }
+
+    function workflowTemplateRows() {
+      const systemRows = systemWorkflowTemplates();
+      const userRows = userWorkflowTemplateRows();
+      const ids = new Set(systemRows.map((tpl) => String(tpl.id || "")));
+      return [...systemRows, ...userRows.filter((tpl) => !ids.has(String(tpl && tpl.id || "")))];
     }
 
     function workflowTemplateById(id) {
@@ -2802,6 +2901,7 @@
 
     function workflowTemplateSourceText(tpl) {
       if (!tpl) return "";
+      if (tpl.source === "system") return "系统提供";
       return tpl.source === "granted" ? `代理商下发${tpl.owner_name ? ` · ${tpl.owner_name}` : ""}` : "自己创建";
     }
 
@@ -2829,19 +2929,21 @@
       const compact = !!options.compact;
       const nodeCount = workflowTemplateNodeCount(tpl);
       const own = workflowTemplateCanEdit(tpl);
+      const system = tpl && tpl.source === "system";
       return `<button class="custom-employee-card${compact ? " compact" : ""}" type="button" data-custom-employee-detail="${escapeHtml(tpl.id || "")}">
         <span class="custom-employee-avatar">${escapeHtml(workflowTemplateInitial(tpl))}</span>
         <span class="custom-employee-main">
           <strong>${escapeHtml(tpl.name || "自定义员工")}</strong>
           <em>${escapeHtml(nodeCount ? `${nodeCount} 个节点` : "暂无节点")}</em>
         </span>
-        <b>${own ? "我的" : "授权"}</b>
+        <b>${system ? "系统" : (own ? "我的" : "授权")}</b>
       </button>`;
     }
 
     function officeWorkflowEmployeeCardHtml(tpl, index = 0) {
       const nodeCount = workflowTemplateNodeCount(tpl);
       const own = workflowTemplateCanEdit(tpl);
+      const system = tpl && tpl.source === "system";
       const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
       return `<button class="office-employee-card custom-template" type="button" data-custom-employee-detail="${escapeHtml(tpl.id || "")}" style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(tpl.name || "定制员工")}">
         <span class="office-custom-employee-avatar">${escapeHtml(workflowTemplateInitial(tpl))}</span>
@@ -2849,14 +2951,14 @@
           <strong>${escapeHtml(tpl.name || "定制员工")}</strong>
           <em>${escapeHtml(nodeCount ? `${nodeCount} 个节点` : "暂无节点")}</em>
         </span>
-        <b class="office-custom-employee-tag">${own ? "我的" : "授权"}</b>
+        <b class="office-custom-employee-tag">${system ? "系统" : (own ? "我的" : "授权")}</b>
       </button>`;
     }
 
     function renderCustomEmployees() {
       const strip = $("customEmployeeStrip");
       if (!strip) return;
-      const rows = workflowTemplateRows();
+      const rows = userWorkflowTemplateRows();
       if ($("customEmployeeTotal")) $("customEmployeeTotal").textContent = `(${rows.length})`;
       if (state.workflowTemplatesLoading) {
         strip.innerHTML = `<div class="custom-employee-empty">加载中...</div>`;
@@ -2905,12 +3007,43 @@
         ${workflowTemplateNodeListHtml(tpl)}
         <div class="custom-employee-actions">
           <button class="ghost" type="button" data-custom-employee-list>返回列表</button>
+          <button class="ghost" type="button" data-custom-employee-copy="${escapeHtml(tpl.id || "")}">复制</button>
           ${own ? `<button class="ghost danger-text" type="button" data-custom-employee-delete="${escapeHtml(tpl.id || "")}">删除</button>` : ""}
           ${own ? `<button type="button" data-custom-employee-edit="${escapeHtml(tpl.id || "")}">编辑</button>` : ""}
-          <button type="button" data-custom-employee-activate="${escapeHtml(tpl.id || "")}">启用</button>
+          ${tpl.source === "system" ? "" : `<button type="button" data-custom-employee-activate="${escapeHtml(tpl.id || "")}">启用</button>`}
         </div>
       </div>`;
       modal.classList.remove("hidden");
+    }
+
+    function copiedWorkflowTemplateName(tpl) {
+      const base = String((tpl && tpl.name) || "员工模板").trim() || "员工模板";
+      return /副本$/.test(base) ? base : `${base}副本`;
+    }
+
+    async function copyWorkflowTemplateById(id, options = {}) {
+      const tpl = workflowTemplateById(id);
+      if (!tpl) throw new Error("模板不存在");
+      if (!workflowTemplateNodeCount(tpl)) throw new Error("模板没有可复制的节点");
+      const data = await api("/api/h5-workflows/templates", {
+        method: "POST",
+        json: {
+          name: copiedWorkflowTemplateName(tpl),
+          nodes: cloneWorkflowNodes(tpl.nodes),
+          meta: { copied_from: String(tpl.id || ""), copied_source: tpl.source || "" },
+        },
+      });
+      state.workflowTemplatesLoaded = false;
+      await loadWorkflowTemplates(true);
+      const copied = workflowTemplateById((data.template && data.template.id) || "");
+      if (options.openEditor !== false) {
+        applyWorkflowTemplate(copied || data.template);
+        $("workflowTemplateDrawer")?.classList.add("hidden");
+        closeCustomEmployeeDialog();
+        switchTab("workflow");
+      }
+      if (options.toast !== false) toast("已复制，可继续编辑");
+      return copied || data.template;
     }
 
     async function deleteWorkflowTemplateById(id) {
@@ -2933,27 +3066,10 @@
       const panel = $("workflowGrantPanel");
       const list = $("workflowSubUserList");
       if (!panel || !list) return;
-      const templateId = String(state.workflowGrantTemplateId || "");
-      panel.classList.toggle("hidden", !templateId);
-      if (!templateId) return;
-      const rows = state.workflowSubUsers || [];
-      const checkedMap = state.workflowGrantSelectedUserIds || {};
-      list.innerHTML = rows.length
-        ? rows.map((user) => `<label class="workflow-sub-user"><input type="checkbox" value="${escapeHtml(user.id)}" ${checkedMap[String(user.id)] ? "checked" : ""}><span>${escapeHtml(user.email || `用户${user.id}`)}</span></label>`).join("")
-        : `<div class="hint">暂无下级用户</div>`;
-      const pageText = $("workflowGrantPageText");
-      if (pageText) {
-        const start = state.workflowSubUserTotal ? state.workflowSubUserOffset + 1 : 0;
-        const end = Math.min(state.workflowSubUserOffset + rows.length, state.workflowSubUserTotal);
-        pageText.textContent = `${start}-${end} / ${state.workflowSubUserTotal || 0}`;
-      }
-      const prev = $("workflowGrantPrevBtn");
-      const next = $("workflowGrantNextBtn");
-      if (prev) prev.disabled = state.workflowSubUserOffset <= 0;
-      if (next) next.disabled = state.workflowSubUserOffset + state.workflowSubUserLimit >= state.workflowSubUserTotal;
-      list.querySelectorAll("input[type='checkbox']").forEach((input) => {
-        input.onchange = () => { state.workflowGrantSelectedUserIds[String(input.value || "")] = !!input.checked; };
-      });
+      panel.classList.add("hidden");
+      state.workflowGrantTemplateId = "";
+      state.workflowGrantSelectedUserIds = {};
+      list.innerHTML = "";
     }
 
     function renderWorkflow() {
@@ -4348,7 +4464,7 @@
         { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true },
         { id: "hr", name: "HR", status: "敬请期待", comingSoon: true },
       ];
-      const customEmployees = workflowTemplateRows();
+      const customEmployees = userWorkflowTemplateRows();
       const totalEmployees = roles.length + customEmployees.length;
       const runningCount = (state.runs || []).filter(isActiveRun).length;
       if ($("officeDeviceCount")) $("officeDeviceCount").textContent = String(devices.length);
@@ -12194,6 +12310,7 @@
       const editBtn = evt.target.closest("[data-custom-employee-edit]");
       const activateBtn = evt.target.closest("[data-custom-employee-activate]");
       const deleteBtn = evt.target.closest("[data-custom-employee-delete]");
+      const copyBtn = evt.target.closest("[data-custom-employee-copy]");
       const demoBtn = evt.target.closest("[data-custom-employee-demo-node]");
       if (demoBtn) {
         evt.preventDefault();
@@ -12218,6 +12335,10 @@
         applyWorkflowTemplate(tpl);
         closeCustomEmployeeDialog();
         switchTab("workflow");
+        return;
+      }
+      if (copyBtn) {
+        copyWorkflowTemplateById(copyBtn.dataset.customEmployeeCopy || "").catch((err) => toast(err.message || "复制失败"));
         return;
       }
       if (activateBtn) {
@@ -12298,11 +12419,15 @@
       const loadBtn = evt.target.closest("[data-workflow-load]");
       const activateBtn = evt.target.closest("[data-workflow-activate-template]");
       const deleteBtn = evt.target.closest("[data-workflow-delete]");
-      const grantBtn = evt.target.closest("[data-workflow-grant]");
+      const copyBtn = evt.target.closest("[data-workflow-copy]");
       if (loadBtn) {
-        const tpl = (state.workflowTemplates || []).find((item) => String(item.id) === String(loadBtn.dataset.workflowLoad));
+        const tpl = workflowTemplateById(loadBtn.dataset.workflowLoad || "");
         applyWorkflowTemplate(tpl);
         $("workflowTemplateDrawer")?.classList.add("hidden");
+        return;
+      }
+      if (copyBtn) {
+        copyWorkflowTemplateById(copyBtn.dataset.workflowCopy || "").catch((err) => toast(err.message || "复制失败"));
         return;
       }
       if (activateBtn) {
@@ -12323,17 +12448,6 @@
           .then(() => toast("模板已删除"))
           .catch((err) => toast(err.message || "删除失败"));
         return;
-      }
-      if (grantBtn) {
-        state.workflowGrantTemplateId = grantBtn.dataset.workflowGrant || "";
-        const tpl = (state.workflowTemplates || []).find((item) => String(item.id) === String(state.workflowGrantTemplateId));
-        state.workflowGrantSelectedUserIds = {};
-        ((tpl && tpl.granted_user_ids) || []).forEach((id) => { state.workflowGrantSelectedUserIds[String(id)] = true; });
-        state.workflowSubUserQuery = "";
-        state.workflowSubUserOffset = 0;
-        if ($("workflowGrantSearchInput")) $("workflowGrantSearchInput").value = "";
-        renderWorkflowGrantPanel();
-        loadWorkflowSubUsers(true).catch((err) => toast(err.message || "下级用户加载失败"));
       }
     });
     $("workflowGrantCancelBtn")?.addEventListener("click", () => {
