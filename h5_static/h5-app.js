@@ -285,7 +285,7 @@
         department: "市场部",
         mark: "城",
         dispatchKind: "client_workflow",
-        workflowAction: "local_bestseller_plan",
+        workflowAction: "local_bestseller_daily_video",
         always: true,
       },
       {
@@ -1867,16 +1867,7 @@
           + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
       }
       if (key === "local_bestseller") {
-        return taskFieldHtml("生成方式", taskSelectHtml("workflowParamLocalMode", optionHtml("plan", "先生成 30 天内容方案") + optionHtml("scene_batch", "直接批量生成场景图")))
-          + taskFieldHtml("天数", workInputHtml("workflowParamLocalDays", "number", "30", 'min="1" max="30"'))
-          + taskFieldHtml("姓名", workInputHtml("workflowParamLocalName", "text", "", 'placeholder="真实姓名，可选"'))
-          + taskFieldHtml("短视频昵称", workInputHtml("workflowParamLocalNickname", "text", "", 'placeholder="不填则使用姓名或“我”"'))
-          + taskFieldHtml("性别", taskSelectHtml("workflowParamLocalGender", optionHtml("female", "女") + optionHtml("male", "男")))
-          + taskFieldHtml("人设身份", workInputHtml("workflowParamLocalIdentity", "text", "女老板"))
-          + taskFieldHtml("行业/赛道", workInputHtml("workflowParamLocalIndustry", "text", "大健康"))
-          + taskFieldHtml("城市", workInputHtml("workflowParamLocalCity", "text", "深圳"))
-          + taskFieldHtml("省份", workInputHtml("workflowParamLocalProvince", "text", "广东"))
-          + taskFieldHtml("人物照片", assetPickerControlHtml("workflowParamLocalPhoto", { mediaType: "image", output: "url", uploadText: "从相册上传" }), true);
+        return taskFieldHtml("内容天数", workInputHtml("workflowParamLocalDays", "number", "30", 'min="1" max="30"'));
       }
       if (key === "viral_video_remix") {
         return taskFieldHtml("参考视频", assetPickerControlHtml("workflowParamViralVideoUrl", { mediaType: "video", output: "url", accept: "video/*", uploadText: "上传视频" }), true)
@@ -2210,26 +2201,14 @@
         };
       }
       if (key === "local_bestseller") {
-        const photo = workflowParamValue("workflowParamLocalPhoto");
-        const profile = {
-          name: workflowParamValue("workflowParamLocalName"),
-          nickname: workflowParamValue("workflowParamLocalNickname"),
-          gender: workflowParamValue("workflowParamLocalGender") || "female",
-          identity: workflowParamValue("workflowParamLocalIdentity") || "女老板",
-          industry: workflowParamValue("workflowParamLocalIndustry") || "大健康",
-          city: workflowParamValue("workflowParamLocalCity") || "深圳",
-          province: workflowParamValue("workflowParamLocalProvince") || "广东",
-        };
-        if (/^https?:\/\//i.test(photo)) profile.photo_url = photo;
-        else if (photo) profile.photo_asset_id = photo;
-        const mode = workflowParamValue("workflowParamLocalMode") || "plan";
+        const days = workflowParamNumber("workflowParamLocalDays", 30, 1, 30);
         return {
-          title: `同城爆款 - ${profile.city || "本地"}`,
+          title: "同城爆款视频",
           task_kind: "client_workflow",
           content: "H5 工作流：同城爆款",
           payload: {
-            action: mode === "scene_batch" ? "local_bestseller_scene_batch" : "local_bestseller_plan",
-            params: { profile, days: workflowParamNumber("workflowParamLocalDays", 30, 1, 30) },
+            action: "local_bestseller_daily_video",
+            params: { days, day_mode: "workflow_elapsed" },
           },
         };
       }
@@ -2349,9 +2328,9 @@
         const action = quick.workflowAction || node.workflowAction || "";
         if (action) {
           const params = { note: prompt, prompt };
-          if (action === "local_bestseller_plan") {
-            params.profile = { identity: "老板", industry: prompt, city: "本地", province: "" };
+          if (action.startsWith("local_bestseller")) {
             params.days = 30;
+            params.day_mode = "workflow_elapsed";
           }
           if (action === "viral_video_remix_start") {
             params.billing_confirmed = true;
@@ -2567,18 +2546,8 @@
         setFieldValue("workflowParamDouyinMode", params.mode || "script");
         return;
       }
-      if (payload.action === "local_bestseller_plan" || payload.action === "local_bestseller_scene_batch" || nodeInfo.workQuickKey === "local_bestseller") {
-        const profile = params.profile && typeof params.profile === "object" ? params.profile : {};
-        setFieldValue("workflowParamLocalMode", payload.action === "local_bestseller_scene_batch" ? "scene_batch" : "plan");
+      if (payload.action === "local_bestseller_daily_video" || payload.action === "local_bestseller_plan" || payload.action === "local_bestseller_scene_batch" || nodeInfo.workQuickKey === "local_bestseller") {
         setFieldValue("workflowParamLocalDays", params.days || 30);
-        setFieldValue("workflowParamLocalName", profile.name || "");
-        setFieldValue("workflowParamLocalNickname", profile.nickname || "");
-        setFieldValue("workflowParamLocalGender", profile.gender || "female");
-        setFieldValue("workflowParamLocalIdentity", profile.identity || "女老板");
-        setFieldValue("workflowParamLocalIndustry", profile.industry || node.note || "大健康");
-        setFieldValue("workflowParamLocalCity", profile.city || "深圳");
-        setFieldValue("workflowParamLocalProvince", profile.province || "广东");
-        setFieldValue("workflowParamLocalPhoto", profile.photo_asset_id || profile.photo_url || "");
         return;
       }
       if (payload.action === "viral_video_remix_start" || nodeInfo.workQuickKey === "viral_video_remix") {
@@ -6287,17 +6256,8 @@
       setFieldValue("workDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
       setFieldValue("workDouyinMaxResults", params.max_results || "");
       setFieldValue("workDouyinMode", params.mode || "script");
-      setFieldValue("workLocalMode", payload.action === "local_bestseller_scene_batch" ? "scene_batch" : "plan");
-      const profile = params.profile && typeof params.profile === "object" ? params.profile : {};
       setFieldValue("workLocalDays", params.days || "");
-      setFieldValue("workLocalName", profile.name || "");
-      setFieldValue("workLocalNickname", profile.nickname || "");
-      setFieldValue("workLocalGender", profile.gender || "female");
-      setFieldValue("workLocalIdentity", profile.identity || "");
-      setFieldValue("workLocalIndustry", profile.industry || "");
-      setFieldValue("workLocalCity", profile.city || "");
-      setFieldValue("workLocalProvince", profile.province || "");
-      setFieldValue("workLocalPhoto", profile.photo_asset_id || profile.photo_url || "");
+      setFieldValue("workLocalDay", params.day || "");
       setFieldValue("workViralVideoUrl", params.original_video_url || "");
       setFieldValue("workViralCharacterUrl", params.character_image_url || "");
       setFieldValue("workViralProductUrl", params.product_image_url || "");
@@ -8171,7 +8131,10 @@
     function personalSurveyQuestions() {
       return [
         { field: "personalProfileName", label: "名字", type: "input" },
+        { field: "personalGender", label: "性别", type: "select", options: [{ value: "female", label: "女" }, { value: "male", label: "男" }] },
+        { field: "personalProfilePhoto", label: "人物照片", type: "asset_image" },
         { field: "personalBirthEra", label: "出生年代", type: "input" },
+        { field: "personalCurrentProvince", label: "现居省份", type: "input" },
         { field: "personalCurrentCity", label: "现居城市", type: "input" },
         { field: "personalHometown", label: "籍贯", type: "input" },
         { field: "personalRole", label: "你是做什么的", type: "input" },
@@ -8188,6 +8151,11 @@
       const questions = personalSurveyQuestions();
       const idx = Math.max(0, Math.min(Number(state.personalSurveyIndex || 0), questions.length - 1));
       const question = questions[idx];
+      if (question && question.type === "asset_image") {
+        const picker = $(`${question.field}Picker`);
+        if (picker) setPersonalFieldValue(question.field, picker.value || "");
+        return;
+      }
       const answer = $("personalSurveyAnswer");
       if (question && answer) setPersonalFieldValue(question.field, answer.value || "");
     }
@@ -8210,14 +8178,27 @@
       if (step) step.textContent = `${idx + 1}/${questions.length}`;
       if (progress) progress.style.width = `${Math.round(((idx + 1) / questions.length) * 100)}%`;
       const value = personalFieldValue(question.field);
-      const tag = question.type === "textarea" ? "textarea" : "input";
-      host.innerHTML = tag === "textarea"
-        ? `<textarea id="personalSurveyAnswer" rows="5"></textarea>`
-        : `<input id="personalSurveyAnswer" type="text">`;
+      if (question.type === "asset_image") {
+        const pickerId = `${question.field}Picker`;
+        host.innerHTML = assetPickerControlHtml(pickerId, { mediaType: "image", output: "asset_id", uploadText: "上传人物照片", selectText: "选择已上传照片" });
+        setFieldValue(pickerId, value);
+        initAssetPickerControls(host);
+        renderAssetPickerControl(pickerId);
+        $(`${pickerId}`)?.addEventListener("change", (evt) => setPersonalFieldValue(question.field, evt.target.value || ""));
+      } else if (question.type === "select") {
+        const options = Array.isArray(question.options) ? question.options : [];
+        host.innerHTML = `<select id="personalSurveyAnswer">${optionHtml("", "请选择")}${options.map((item) => optionHtml(item.value, item.label)).join("")}</select>`;
+      } else {
+        const tag = question.type === "textarea" ? "textarea" : "input";
+        host.innerHTML = tag === "textarea"
+          ? `<textarea id="personalSurveyAnswer" rows="5"></textarea>`
+          : `<input id="personalSurveyAnswer" type="text">`;
+      }
       const answer = $("personalSurveyAnswer");
       if (answer) {
         answer.value = value;
         answer.addEventListener("input", syncPersonalSurveyAnswerToField);
+        answer.addEventListener("change", syncPersonalSurveyAnswerToField);
         setTimeout(() => answer.focus(), 0);
       }
       if (prev) prev.disabled = idx <= 0;
@@ -8234,9 +8215,14 @@
     }
 
     function personalProfileRequirements() {
+      const profilePhoto = personalFieldValue("personalProfilePhoto");
       return {
         name: personalFieldValue("personalProfileName"),
+        gender: personalFieldValue("personalGender"),
+        profile_photo_asset_id: /^https?:\/\//i.test(profilePhoto) ? "" : profilePhoto,
+        profile_photo_url: /^https?:\/\//i.test(profilePhoto) ? profilePhoto : "",
         birth_era: personalFieldValue("personalBirthEra"),
+        current_province: personalFieldValue("personalCurrentProvince"),
         current_city: personalFieldValue("personalCurrentCity"),
         hometown: personalFieldValue("personalHometown"),
         role: personalFieldValue("personalRole"),
@@ -8261,7 +8247,11 @@
         basic_profile: basicProfile,
         business_description: businessDescription,
         profile_name: basicProfile.name,
+        gender: basicProfile.gender,
+        profile_photo_asset_id: basicProfile.profile_photo_asset_id,
+        profile_photo_url: basicProfile.profile_photo_url,
         birth_era: basicProfile.birth_era,
+        current_province: basicProfile.current_province,
         current_city: basicProfile.current_city,
         hometown: basicProfile.hometown,
         role: basicProfile.role,
@@ -8296,7 +8286,10 @@
       const profile = req.basic_profile && typeof req.basic_profile === "object" ? req.basic_profile : req.profile || {};
       const business = req.business_description && typeof req.business_description === "object" ? req.business_description : req.business || {};
       setPersonalFieldValue("personalProfileName", req.profile_name || profile.name || "");
+      setPersonalFieldValue("personalGender", req.gender || profile.gender || "");
+      setPersonalFieldValue("personalProfilePhoto", req.profile_photo_asset_id || profile.profile_photo_asset_id || req.profile_photo_url || profile.profile_photo_url || "");
       setPersonalFieldValue("personalBirthEra", req.birth_era || profile.birth_era || "");
+      setPersonalFieldValue("personalCurrentProvince", req.current_province || profile.current_province || "");
       setPersonalFieldValue("personalCurrentCity", req.current_city || profile.current_city || "");
       setPersonalFieldValue("personalHometown", req.hometown || profile.hometown || "");
       setPersonalFieldValue("personalRole", req.role || profile.role || "");
@@ -9580,16 +9573,8 @@
           + taskFieldHtml("搜索方式", taskSelectHtml("workDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
       }
       if (key === "local_bestseller") {
-        return taskFieldHtml("生成方式", taskSelectHtml("workLocalMode", optionHtml("plan", "先生成 30 天内容方案") + optionHtml("scene_batch", "直接批量生成场景图")))
-          + taskFieldHtml("天数", workInputHtml("workLocalDays", "number", "30", 'min="1" max="30"'))
-          + taskFieldHtml("姓名", workInputHtml("workLocalName", "text", "", 'placeholder="真实姓名，可选"'))
-          + taskFieldHtml("短视频昵称", workInputHtml("workLocalNickname", "text", "", 'placeholder="不填则使用姓名或“我”"'))
-          + taskFieldHtml("性别", taskSelectHtml("workLocalGender", optionHtml("female", "女") + optionHtml("male", "男")))
-          + taskFieldHtml("人设身份", workInputHtml("workLocalIdentity", "text", "女老板"))
-          + taskFieldHtml("行业/赛道", workInputHtml("workLocalIndustry", "text", "大健康"))
-          + taskFieldHtml("城市", workInputHtml("workLocalCity", "text", "深圳"))
-          + taskFieldHtml("省份", workInputHtml("workLocalProvince", "text", "广东"))
-          + taskFieldHtml("人物照片", assetPickerControlHtml("workLocalPhoto", { mediaType: "image", output: "url", uploadText: "从相册上传" }), true);
+        return taskFieldHtml("内容天数", workInputHtml("workLocalDays", "number", "30", 'min="1" max="30"'))
+          + taskFieldHtml("生成第几天", workInputHtml("workLocalDay", "number", "1", 'min="1" max="30"'));
       }
       if (key === "viral_video_remix") {
         return taskFieldHtml("参考视频", assetPickerControlHtml("workViralVideoUrl", { mediaType: "video", output: "url", accept: "video/*", uploadText: "上传视频" }), true)
@@ -9739,26 +9724,14 @@
         };
       }
       if (key === "local_bestseller") {
-        const photo = workValue("workLocalPhoto");
-        const profile = {
-          name: workValue("workLocalName"),
-          nickname: workValue("workLocalNickname"),
-          gender: workValue("workLocalGender") || "female",
-          identity: workValue("workLocalIdentity") || "女老板",
-          industry: workValue("workLocalIndustry") || "大健康",
-          city: workValue("workLocalCity") || "深圳",
-          province: workValue("workLocalProvince") || "广东",
-        };
-        if (/^https?:\/\//i.test(photo)) profile.photo_url = photo;
-        else if (photo) profile.photo_asset_id = photo;
-        const mode = workValue("workLocalMode") || "plan";
+        const days = workNumber(workValue("workLocalDays"), 30, 1, 30);
         return {
-          title: `同城爆款 - ${profile.city || "本地"}`,
+          title: "同城爆款视频",
           taskKind: "client_workflow",
           content: "H5 安排工作：同城爆款",
           payload: {
-            action: mode === "scene_batch" ? "local_bestseller_scene_batch" : "local_bestseller_plan",
-            params: { profile, days: workNumber(workValue("workLocalDays"), 30, 1, 30) },
+            action: "local_bestseller_daily_video",
+            params: { days, day: workNumber(workValue("workLocalDay"), 1, 1, days), day_mode: "manual" },
           },
         };
       }

@@ -25,6 +25,7 @@ from ..models import (
     User,
     UserInstallation,
     IPContentDraftRecord,
+    IPContentScheduleTemplate,
 )
 from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
@@ -63,6 +64,8 @@ _PENDING_INSTALLATION_TOUCH_MIN_SECONDS = 60
 _RUN_PENDING_EMPTY_CACHE_SECONDS = 20.0
 _PUBLISH_PENDING_EMPTY_CACHE_SECONDS = 20.0
 _pending_empty_cache: Dict[str, float] = {}
+_PERSONAL_DEFAULT_TEMPLATE_NAME = "\u4e2a\u4eba\u9ed8\u8ba4\u914d\u7f6e"
+_LOCAL_BESTSELLER_ACTIONS = {"local_bestseller_plan", "local_bestseller_scene_batch", "local_bestseller_daily_video"}
 
 
 def _server_side_timeout_seconds(task_kind: str) -> float:
@@ -160,6 +163,139 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     if dt.tzinfo is not None:
         dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt.isoformat(timespec="seconds") + "Z"
+
+
+def _clean_profile_text(value: Any, limit: int = 300) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def _clean_profile_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _first_profile_text(*values: Any, limit: int = 300) -> str:
+    for value in values:
+        text = _clean_profile_text(value, limit)
+        if text:
+            return text
+    return ""
+
+
+def _personal_default_requirements(db: Session, user_id: int) -> Dict[str, Any]:
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == user_id,
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+    return row.requirements if row and isinstance(row.requirements, dict) else {}
+
+
+def _local_bestseller_profile_from_persona(requirements: Dict[str, Any]) -> Dict[str, str]:
+    req = requirements if isinstance(requirements, dict) else {}
+    basic = _clean_profile_dict(req.get("basic_profile"))
+    business = _clean_profile_dict(req.get("business_description"))
+    profile = {
+        "name": _first_profile_text(req.get("profile_name"), req.get("name"), basic.get("name")),
+        "nickname": _first_profile_text(req.get("nickname"), req.get("short_video_nickname"), basic.get("nickname"), req.get("profile_name"), basic.get("name")),
+        "gender": _first_profile_text(req.get("gender"), req.get("sex"), basic.get("gender"), basic.get("sex")),
+        "identity": _first_profile_text(req.get("identity"), req.get("role"), basic.get("role")),
+        "industry": _first_profile_text(req.get("industry"), req.get("product"), business.get("product"), req.get("share_topic"), basic.get("share_topic"), req.get("role"), basic.get("role")),
+        "city": _first_profile_text(req.get("current_city"), req.get("city"), basic.get("current_city"), basic.get("city")),
+        "province": _first_profile_text(req.get("current_province"), req.get("province"), basic.get("current_province"), basic.get("province")),
+        "hometown": _first_profile_text(req.get("hometown"), basic.get("hometown")),
+        "age_label": _first_profile_text(req.get("birth_era"), basic.get("birth_era")),
+        "target_age": _first_profile_text(req.get("target_customer"), business.get("target_customer")),
+        "style": _first_profile_text(req.get("video_style"), basic.get("video_style"), req.get("style"), basic.get("style")),
+        "photo_asset_id": _first_profile_text(
+            req.get("profile_photo_asset_id"),
+            req.get("photo_asset_id"),
+            req.get("portrait_asset_id"),
+            req.get("image_asset_id"),
+            basic.get("profile_photo_asset_id"),
+            basic.get("photo_asset_id"),
+            basic.get("portrait_asset_id"),
+            basic.get("image_asset_id"),
+        ),
+        "photo_url": _first_profile_text(
+            req.get("profile_photo_url"),
+            req.get("photo_url"),
+            req.get("portrait_url"),
+            req.get("image_url"),
+            basic.get("profile_photo_url"),
+            basic.get("photo_url"),
+            basic.get("portrait_url"),
+            basic.get("image_url"),
+            limit=1000,
+        ),
+    }
+    return {key: value for key, value in profile.items() if value}
+
+
+def _missing_local_bestseller_profile_fields(profile: Dict[str, Any]) -> List[str]:
+    missing: List[str] = []
+    if not _clean_profile_text(profile.get("gender")):
+        missing.append("性别")
+    if not _clean_profile_text(profile.get("identity")):
+        missing.append("你是做什么的")
+    if not _clean_profile_text(profile.get("industry")):
+        missing.append("业务/产品或主要分享内容")
+    if not _clean_profile_text(profile.get("province")):
+        missing.append("现居省份")
+    if not _clean_profile_text(profile.get("city")):
+        missing.append("现居城市")
+    if not _clean_profile_text(profile.get("hometown")):
+        missing.append("籍贯")
+    if not _clean_profile_text(profile.get("age_label")):
+        missing.append("出生年代")
+    if not _clean_profile_text(profile.get("target_age")):
+        missing.append("想卖给谁/目标客户")
+    if not _clean_profile_text(profile.get("style")):
+        missing.append("视频风格")
+    if not (_clean_profile_text(profile.get("photo_asset_id")) or _clean_profile_text(profile.get("photo_url"))):
+        missing.append("人物照片")
+    return missing
+
+
+def _enrich_local_bestseller_workflow_payload(
+    db: Session,
+    *,
+    payload: Dict[str, Any],
+    target_user_id: int,
+    now: datetime,
+) -> Dict[str, Any]:
+    action = _clean_profile_text(payload.get("action"), 80)
+    if action not in _LOCAL_BESTSELLER_ACTIONS:
+        return payload
+    out = dict(payload)
+    out["action"] = "local_bestseller_daily_video"
+    params = out.get("params") if isinstance(out.get("params"), dict) else {}
+    params = dict(params)
+    persona_profile = _local_bestseller_profile_from_persona(_personal_default_requirements(db, target_user_id))
+    existing_profile = params.get("profile") if isinstance(params.get("profile"), dict) else {}
+    merged_profile = {key: _clean_profile_text(value, 1000) for key, value in existing_profile.items() if _clean_profile_text(value, 1000)}
+    # IP persona wins for employee workflows; old templates often carried placeholder profile values.
+    merged_profile.update(persona_profile)
+    params["profile"] = merged_profile
+    try:
+        days = int(params.get("days") or 30)
+    except Exception:
+        days = 30
+    params["days"] = max(1, min(days, 30))
+    params.setdefault("day_mode", "workflow_elapsed")
+    params["missing_profile_fields"] = _missing_local_bestseller_profile_fields(merged_profile)
+    out["params"] = params
+    h5_context = out.get("h5_context") if isinstance(out.get("h5_context"), dict) else {}
+    h5_context = dict(h5_context)
+    h5_context.setdefault("workflow_started_at", _iso(now))
+    h5_context.setdefault("workflow_day_start", _iso(now))
+    h5_context["persona_source"] = "ip_persona_default"
+    out["h5_context"] = h5_context
+    return out
 
 
 def _parse_client_datetime(value: Optional[str], timezone_offset_minutes: Optional[int]) -> Optional[datetime]:
@@ -1428,6 +1564,8 @@ def _create_task_row(
         _normalize_goal_video_task_payload(payload)
     interval_seconds = None
     now = datetime.utcnow()
+    if task_kind == "client_workflow":
+        payload = _enrich_local_bestseller_workflow_payload(db, payload=dict(payload), target_user_id=target_user_id, now=now)
     tz_offset = int(body.timezone_offset_minutes if body.timezone_offset_minutes is not None else 480)
     start_at_utc = None if schedule_type == "daily_times" else _parse_client_datetime(body.start_at, tz_offset)
     schedule_config: Dict[str, Any] = {
