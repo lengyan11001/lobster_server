@@ -659,14 +659,13 @@
               </div>
               <select id="profileDeviceSelect" class="device-select"></select>
             </div>
-            <div class="setting-row">
+            <div class="setting-row account-mount-row">
               <div>
-                <strong>路由切换</strong>
-                <div class="hint">手机会话当前使用直连通道</div>
+                <strong>已挂载账号</strong>
+                <div class="hint" id="mountedAccountSummary">正在读取账号状态</div>
               </div>
-              <div class="route-switch">
-                <button type="button" class="active" data-route="direct">直连</button>
-                <button type="button" disabled data-route="openclaw">OpenClaw</button>
+              <div class="mounted-account-list" id="mountedAccountList">
+                <div class="mounted-account-empty">正在加载...</div>
               </div>
             </div>
             <div class="setting-row">

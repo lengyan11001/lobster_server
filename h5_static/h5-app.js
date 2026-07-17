@@ -45,6 +45,10 @@
       publishAccounts: [],
       publishAccountsLoaded: false,
       publishAccountsLoading: false,
+      mountedAccounts: [],
+      mountedAccountDefaults: {},
+      mountedAccountsLoaded: false,
+      mountedAccountsLoading: false,
       publishRunDraft: null,
       publishRunSubmitting: false,
       userUploadAssetCache: {},
@@ -6654,6 +6658,7 @@
           loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}),
         ]).then(renderWorkflow);
       }
+      if (key === "profile") loadMountedAccounts(true).catch(() => {});
       if (key === "personalSettings" && !state.personalSettingsBackTab) state.personalSettingsBackTab = "profile";
       if (key === "agentManage") {
         renderAgentManage();
@@ -7447,6 +7452,135 @@
       if ($("profileSelectedDeviceText")) $("profileSelectedDeviceText").textContent = text;
     }
 
+    function mountedScopeLabel(scope) {
+      return {
+        wechat: "微信",
+        publish: "发布中心",
+        douyin: "抖音获客",
+      }[String(scope || "")] || "账号";
+    }
+
+    function mountedAccountStatusText(row) {
+      if (!row) return "未知";
+      if (row.online) return "在线";
+      const status = String(row.status || "").trim();
+      if (status) {
+        return {
+          active: "可用",
+          online: "在线",
+          offline: "离线",
+          pending: "待登录",
+          error: "异常",
+        }[status.toLowerCase()] || status;
+      }
+      return "离线";
+    }
+
+    function mountedDefault(scope) {
+      return (state.mountedAccountDefaults || {})[scope] || null;
+    }
+
+    function mountedDefaultInstallationId(scope) {
+      const pref = mountedDefault(scope);
+      return String((pref && pref.installation_id) || "").trim();
+    }
+
+    function defaultDouyinInstallationId() {
+      return mountedDefaultInstallationId("douyin") || String((state.douyinStatus && state.douyinStatus.default_installation_id) || "").trim();
+    }
+
+    function defaultPublishAccount() {
+      return (state.publishAccounts || []).find((row) => row && row.is_default) || null;
+    }
+
+    function renderMountedAccounts() {
+      const list = $("mountedAccountList");
+      const summary = $("mountedAccountSummary");
+      if (!list) return;
+      if (state.mountedAccountsLoading) {
+        list.innerHTML = '<div class="mounted-account-empty">正在加载...</div>';
+        if (summary) summary.textContent = "正在读取账号状态";
+        return;
+      }
+      const rows = Array.isArray(state.mountedAccounts) ? state.mountedAccounts.slice() : [];
+      if (summary) {
+        const online = rows.filter((row) => row.online).length;
+        summary.textContent = rows.length ? `${online}/${rows.length} 在线` : "暂无挂载账号";
+      }
+      if (!rows.length) {
+        list.innerHTML = '<div class="mounted-account-empty">暂无挂载账号</div>';
+        return;
+      }
+      const scopeOrder = { wechat: 0, publish: 1, douyin: 2 };
+      rows.sort((a, b) => {
+        const scopeDelta = (scopeOrder[a.scope] ?? 9) - (scopeOrder[b.scope] ?? 9);
+        if (scopeDelta) return scopeDelta;
+        const defaultDelta = Number(!!b.is_default) - Number(!!a.is_default);
+        if (defaultDelta) return defaultDelta;
+        return Number(!!b.online) - Number(!!a.online);
+      });
+      list.innerHTML = rows.map((row) => {
+        const title = row.nickname || row.account_id || mountedScopeLabel(row.scope);
+        const device = row.device_name || (row.installation_id ? `设备 ${String(row.installation_id).slice(0, 8)}` : "");
+        const meta = [row.platform_name && row.platform_name !== row.nickname ? row.platform_name : "", device].filter(Boolean).join(" · ");
+        const canSetDefault = !!row.defaultable && !!String(row.account_key || "").trim();
+        const action = canSetDefault
+          ? (row.is_default
+            ? '<button class="ghost mounted-default-btn active" type="button" disabled>默认</button>'
+            : `<button class="ghost mounted-default-btn" type="button" data-mounted-default-scope="${escapeHtml(row.scope || "")}" data-mounted-default-key="${escapeHtml(row.account_key || "")}">设默认</button>`)
+          : "";
+        return `<div class="mounted-account-item${row.online ? " online" : ""}${row.is_default ? " default" : ""}">
+          <span class="mounted-account-icon">${escapeHtml(firstChar(mountedScopeLabel(row.scope)))}</span>
+          <div class="mounted-account-main">
+            <strong>${escapeHtml(title)}${row.is_default ? '<b>默认</b>' : ""}</strong>
+            <em>${escapeHtml(mountedScopeLabel(row.scope))}${meta ? ` · ${escapeHtml(meta)}` : ""}</em>
+          </div>
+          <span class="mounted-account-status">${escapeHtml(mountedAccountStatusText(row))}</span>
+          ${action}
+        </div>`;
+      }).join("");
+    }
+
+    async function loadMountedAccounts(force = false) {
+      if (!state.token) return;
+      if (!force && state.mountedAccountsLoaded) {
+        renderMountedAccounts();
+        return;
+      }
+      state.mountedAccountsLoading = true;
+      renderMountedAccounts();
+      try {
+        const data = await api("/api/h5-chat/mounted-accounts");
+        state.mountedAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+        state.mountedAccountDefaults = data.defaults || {};
+        state.mountedAccountsLoaded = true;
+      } catch (err) {
+        state.mountedAccounts = [];
+        state.mountedAccountDefaults = {};
+        if ($("mountedAccountSummary")) $("mountedAccountSummary").textContent = "账号状态获取失败";
+      } finally {
+        state.mountedAccountsLoading = false;
+        renderMountedAccounts();
+      }
+    }
+
+    async function setMountedAccountDefault(scope, accountKey) {
+      if (!scope || !accountKey) throw new Error("账号无效，无法设为默认");
+      const row = (state.mountedAccounts || []).find((item) => item.scope === scope && item.account_key === accountKey);
+      const data = await api("/api/h5-chat/mounted-accounts/default", {
+        method: "POST",
+        json: { scope, account_key: accountKey },
+      });
+      state.mountedAccounts = Array.isArray(data.accounts) ? data.accounts : state.mountedAccounts;
+      state.mountedAccountDefaults = data.defaults || state.mountedAccountDefaults || {};
+      state.publishAccountsLoaded = false;
+      state.douyinStatus = null;
+      renderMountedAccounts();
+      if (row && row.installation_id) setSelectedInstallationId(row.installation_id);
+      else loadPublishAccounts().catch((err) => toast(err.message || "发布账号加载失败"));
+      toast("默认账号已设置");
+    }
+
     async function refreshDeviceStatus() {
       if (!state.token) return;
       try {
@@ -7463,6 +7597,7 @@
         renderProfileDeviceSelect();
         renderWorkflowDeviceSelect();
         renderOfficeEmployees();
+        loadMountedAccounts(true).catch(() => {});
       } catch (err) {
         $("onlineDot").classList.remove("online");
         renderProfileDeviceSelect();
@@ -7470,6 +7605,7 @@
         $("deviceText").textContent = "设备状态获取失败";
         $("profileDeviceText").textContent = "设备状态获取失败";
         renderOfficeEmployees();
+        loadMountedAccounts(true).catch(() => {});
       }
     }
 
@@ -7717,13 +7853,14 @@
       const platform = row.platform_name || platformDisplayName(row.platform);
       const nickname = row.nickname || `账号 #${publishAccountLocalId(row)}`;
       const device = row.device_name ? ` / ${row.device_name}` : "";
-      return `${platform} - ${nickname}${device}`;
+      return `${row.is_default ? "默认 · " : ""}${platform} - ${nickname}${device}`;
     }
 
     function fillPublishPlatformSelect() {
       const sel = $("taskPublishPlatform");
       if (!sel) return;
-      const current = sel.value;
+      const preferred = defaultPublishAccount();
+      const current = sel.value || (preferred && preferred.platform) || "";
       const byPlatform = new Map();
       (state.publishAccounts || []).forEach((row) => {
         const platform = String(row && row.platform || "").trim();
@@ -7739,8 +7876,10 @@
     function fillPublishAccountSelect() {
       const sel = $("taskPublishAccount");
       if (!sel) return;
-      const current = sel.value;
       const platform = $("taskPublishPlatform") ? $("taskPublishPlatform").value : "";
+      const preferred = defaultPublishAccount();
+      const preferredId = preferred && (!platform || preferred.platform === platform) ? publishAccountSelectId(preferred) : "";
+      const current = sel.value || preferredId;
       const rows = (state.publishAccounts || []).filter((row) => !platform || row.platform === platform);
       sel.innerHTML = rows.length
         ? optionHtml("", "请选择账号") + rows.map((row) => optionHtml(publishAccountSelectId(row), publishAccountOptionLabel(row))).join("")
@@ -7753,7 +7892,8 @@
       if (!sel) return;
       const draft = state.publishRunDraft || {};
       const draftAccount = draft.account_id ? (state.publishAccounts || []).find((row) => String(publishAccountLocalId(row)) === String(draft.account_id)) : null;
-      const current = sel.value || draft.platform || (draftAccount && draftAccount.platform) || "";
+      const preferred = defaultPublishAccount();
+      const current = sel.value || draft.platform || (draftAccount && draftAccount.platform) || (preferred && preferred.platform) || "";
       const byPlatform = new Map();
       (state.publishAccounts || []).forEach((row) => {
         const platform = String(row && row.platform || "").trim();
@@ -7774,7 +7914,9 @@
       const draft = state.publishRunDraft || {};
       const platform = $("publishRunPlatform") ? $("publishRunPlatform").value : "";
       const rows = (state.publishAccounts || []).filter((row) => !platform || row.platform === platform);
-      const current = sel.value || String(draft.account_id || "");
+      const preferred = defaultPublishAccount();
+      const preferredId = preferred && (!platform || preferred.platform === platform) ? publishAccountSelectId(preferred) : "";
+      const current = sel.value || String(draft.account_id || "") || preferredId;
       sel.innerHTML = rows.length
         ? optionHtml("", "请选择账号") + rows.map((row) => optionHtml(publishAccountSelectId(row), publishAccountOptionLabel(row))).join("")
         : optionHtml("", "暂无账号");
@@ -7783,6 +7925,8 @@
       } else if (draft.account_nickname) {
         const hit = rows.find((row) => String(row.nickname || "") === String(draft.account_nickname || ""));
         if (hit) sel.value = publishAccountSelectId(hit);
+      } else if (preferredId && rows.some((row) => publishAccountSelectId(row) === preferredId)) {
+        sel.value = preferredId;
       }
     }
 
@@ -7794,9 +7938,7 @@
       }
       state.publishAccountsLoading = true;
       try {
-        const iid = currentInstallationId();
-        const suffix = iid ? `?installation_id=${encodeURIComponent(iid)}` : "";
-        const data = await api(`/api/scheduled-tasks/publish/accounts${suffix}`);
+        const data = await api("/api/scheduled-tasks/publish/accounts");
         state.publishAccounts = Array.isArray(data.accounts) ? data.accounts : [];
         state.publishAccountsLoaded = true;
       } catch (err) {
@@ -9397,6 +9539,9 @@
         renderWorkHiflyOptions();
         loadHiflyLibraries();
       }
+      if (item.key === "publish_center") {
+        loadPublishAccounts().catch((err) => toast(err.message || "发布账号加载失败"));
+      }
       const first = modal.querySelector("input, textarea, select");
       if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 80);
     }
@@ -9561,7 +9706,8 @@
       if (key === "publish_center") {
         const material = workMaterialPayload(workValue("workPublishMaterial"));
         const accountNickname = workValue("workPublishAccount");
-        if (!accountNickname) throw new Error("请填写发布账号昵称");
+        const account = accountNickname ? null : defaultPublishAccount();
+        if (!accountNickname && !account) throw new Error("请先在个人中心设置默认发布账号，或填写发布账号昵称");
         return {
           title: "发布中心入库",
           taskKind: "client_workflow",
@@ -9571,7 +9717,12 @@
             params: {
               ...material,
               media_type: workValue("workPublishMediaType") || "video",
-              account_nickname: accountNickname,
+              platform: account ? (account.platform || "") : "",
+              platform_name: account ? (account.platform_name || platformDisplayName(account.platform)) : "",
+              account_id: account ? publishAccountLocalId(account) : "",
+              account_nickname: accountNickname || (account ? (account.nickname || "") : ""),
+              publish_installation_id: account ? (account.installation_id || "") : "",
+              installation_id: account ? (account.installation_id || "") : "",
               title: workValue("workPublishTitle"),
               description: workValue("workPublishDescription"),
               tags: workValue("workPublishTags"),
@@ -9888,8 +10039,24 @@
       return ["ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript"].includes(String(kind || ""));
     }
 
+    function targetInstallationIdFromPlan(plan, fallback = "") {
+      const root = plan && plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const inner = root.payload && typeof root.payload === "object" ? root.payload : {};
+      const params = root.params && typeof root.params === "object" ? root.params : {};
+      return String(
+        root.publish_installation_id
+        || root.installation_id
+        || inner.publish_installation_id
+        || inner.installation_id
+        || params.publish_installation_id
+        || params.installation_id
+        || fallback
+        || ""
+      ).trim();
+    }
+
     async function submitScheduledClientTask(plan, scheduleOptions = {}) {
-      const installationId = currentInstallationId();
+      const installationId = targetInstallationIdFromPlan(plan, currentInstallationId());
       const scheduleType = scheduleOptions.schedule_type || "once";
       const serverSide = isServerSideScheduledKind(plan.taskKind) || plan.serverSide;
       if (!serverSide && !installationId) throw new Error("暂未检测到在线设备，请先让本机 online 客户端保持登录");
@@ -10557,6 +10724,13 @@
       const commentText = (($("douyinTaskCommentText") || {}).value || "").trim();
       const dmText = (($("douyinTaskDmText") || {}).value || "").trim();
       const params = {};
+      const defaultKey = String((state.douyinStatus && state.douyinStatus.default_account_key) || "").trim();
+      const defaultAccount = ((state.douyinStatus && state.douyinStatus.accounts) || []).find((row) => String((row && (row.account_key || row.select_id)) || "") === defaultKey) || null;
+      if (defaultAccount) {
+        params.account_key = defaultKey;
+        params.account_id = defaultAccount.account_id || defaultAccount.id || "";
+        params.account_nickname = defaultAccount.nickname || defaultAccount.name || "";
+      }
       if (keyword) {
         params.keyword = keyword;
         params.query = keyword;
@@ -10610,6 +10784,7 @@
       const runtimeHint = $("douyinRuntimeHint");
       const normalizedAccounts = accounts.map((row) => {
         const accountId = row && row.account_id != null ? row.account_id : row && row.id != null ? row.id : "";
+        const accountKey = String((row && (row.account_key || row.select_id)) || "").trim();
         const nickname = String((row && (row.nickname || row.name)) || "").trim();
         const installationId = String((row && row.installation_id) || "").trim();
         const statusText = String((row && row.status) || "").trim().toLowerCase();
@@ -10618,24 +10793,26 @@
           : statusText === "online" || statusText === "active";
         return {
           accountId,
+          accountKey,
           nickname,
           installationId,
           statusText,
           online,
           lastLogin: String((row && row.last_login) || "").trim(),
+          isDefault: !!(row && row.is_default),
         };
       });
       const onlineCount = normalizedAccounts.filter((row) => row.online).length;
-      const preferredAccountId = normalizedAccounts.find((row) => row.online)?.accountId
-        || normalizedAccounts[0]?.accountId
+      const preferredAccountKey = String(data.default_account_key || "").trim()
+        || normalizedAccounts.find((row) => row.isDefault)?.accountKey
         || "";
       if (accountHint) accountHint.textContent = normalizedAccounts.length ? `在线 ${onlineCount} / ${normalizedAccounts.length}` : "暂无账号";
       if (accountList) {
         if (!normalizedAccounts.length) {
           accountList.innerHTML = '<div class="douyin-empty">当前还没有检测到抖音账号在线。等本机登录抖音后，这里会展示账号状态。</div>';
         } else {
-          accountList.innerHTML = normalizedAccounts.slice(0, 1).map((row) => {
-            const active = String(row.accountId || "") === String(preferredAccountId || "");
+          accountList.innerHTML = normalizedAccounts.map((row) => {
+            const active = !!(preferredAccountKey && row.accountKey && row.accountKey === preferredAccountKey);
             const title = row.nickname || `账号 ${row.accountId || "-"}`;
             const sublineParts = [];
             if (row.accountId !== "") sublineParts.push(`账号 ID ${escapeHtml(String(row.accountId))}`);
@@ -10643,10 +10820,13 @@
             if (row.lastLogin) sublineParts.push(`登录 ${escapeHtml(row.lastLogin.replace("T", " ").slice(0, 16))}`);
             return `<div class="douyin-account-item concise">
               <div>
-                <strong>${active ? "当前账号" : "抖音账号"} ${escapeHtml(title)}</strong>
+                <strong>${active ? "默认账号" : "抖音账号"} ${escapeHtml(title)}</strong>
                 <span>${sublineParts.join(" · ") || "等待账号状态上报"}</span>
               </div>
-              <span class="douyin-badge ${row.online ? "success" : "warn"}">${row.online ? "在线" : "离线"}</span>
+              <div class="douyin-account-actions">
+                <span class="douyin-badge ${row.online ? "success" : "warn"}">${row.online ? "在线" : "离线"}</span>
+                ${active ? '<button class="ghost" type="button" disabled>默认</button>' : (row.accountKey ? `<button class="ghost" type="button" data-douyin-default-account="${escapeHtml(row.accountKey || "")}">设默认</button>` : "")}
+              </div>
             </div>`;
           }).join("");
         }
@@ -10728,7 +10908,7 @@
     }
 
     async function submitDouyinTask() {
-      const installationId = currentInstallationId();
+      const installationId = defaultDouyinInstallationId() || currentInstallationId();
       if (!installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
       const douyinPayload = collectDouyinTaskPayload();
       const scheduleType = (("douyinTaskScheduleType" && $("douyinTaskScheduleType")) ? $("douyinTaskScheduleType").value : "once") || "once";
@@ -10762,7 +10942,7 @@
     }
 
     async function submitVoiceDouyinTask(voicePayload) {
-      const installationId = currentInstallationId();
+      const installationId = defaultDouyinInstallationId() || currentInstallationId();
       if (!installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
       const actionInfo = DOUYIN_TASK_ACTIONS[voicePayload.action] || {};
       const body = {
@@ -10874,7 +11054,7 @@
 
     async function createScheduledTask() {
       const btn = $("createTaskBtn");
-      const installationId = currentInstallationId();
+      const selectedInstallationId = currentInstallationId();
       if (!isScheduledTaskAbility(state.taskAbility)) {
         toast("这个技能暂不支持定时下发，请在下方岗位工作入口发起");
         renderTaskAbilityBoard();
@@ -10885,11 +11065,15 @@
         renderTaskAbilityBoard();
         return;
       }
-      if (state.taskAbility !== "ip_content_daily" && !installationId) {
+      if (state.taskAbility !== "ip_content_daily" && !selectedInstallationId) {
         toast("未检测到本地 online 设备");
         return;
       }
       const capPayload = collectCapabilityPayload();
+      const installationId = targetInstallationIdFromPlan(
+        { payload: state.taskAbility === "ip_content_daily" ? capPayload : { payload: capPayload } },
+        selectedInstallationId,
+      );
       const scheduleType = $("taskScheduleType").value || "once";
       const dailyTimes = collectDailyTimes();
       if (scheduleType === "daily_times" && !dailyTimes.length) throw new Error("请填写每天执行时间，例如 09:00、12:00、18:00");
@@ -11628,6 +11812,8 @@
       setPublishRunValue("publishRunDescription", state.publishRunDraft.description || "");
       setPublishRunValue("publishRunMediaType", state.publishRunDraft.media_type || "video");
       setPublishRunValue("publishRunTags", state.publishRunDraft.tags || "");
+      setPublishRunValue("publishRunPlatform", "");
+      setPublishRunValue("publishRunAccount", "");
       if ($("publishRunAiCopy")) $("publishRunAiCopy").checked = !!state.publishRunDraft.ai_publish_copy;
       $("publishRunModal")?.classList.remove("hidden");
       await loadPublishAccounts();
@@ -12651,6 +12837,11 @@
     });
     $("refreshProfileBtn").addEventListener("click", refreshDeviceStatus);
     $("profileDeviceSelect")?.addEventListener("change", (evt) => setSelectedInstallationId(evt.target.value || ""));
+    $("mountedAccountList")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-mounted-default-key]");
+      if (!btn) return;
+      setMountedAccountDefault(btn.dataset.mountedDefaultScope || "", btn.dataset.mountedDefaultKey || "").catch((err) => toast(err.message || "设置默认账号失败"));
+    });
     $("personalSettingsTabs")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-personal-tab]");
       if (btn) setPersonalSettingsTab(btn.dataset.personalTab || "template");
@@ -13123,6 +13314,13 @@
     $("openDouyinLeadsScheduleBtn")?.addEventListener("click", () => switchTab("douyinLeadsSchedule"));
     $("backToDouyinStatusBtn")?.addEventListener("click", () => switchTab("douyinLeads"));
     $("refreshDouyinLeadsBtn")?.addEventListener("click", () => loadDouyinStatus());
+    $("douyinAccountList")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-douyin-default-account]");
+      if (!btn) return;
+      setMountedAccountDefault("douyin", btn.dataset.douyinDefaultAccount || "")
+        .then(() => loadDouyinStatus())
+        .catch((err) => toast(err.message || "设置默认账号失败"));
+    });
     $("douyinTaskScheduleType")?.addEventListener("change", updateDouyinScheduleFields);
     $("douyinAddDailyTimeBtn")?.addEventListener("click", () => addDouyinDailyTime());
     $("douyinTaskResetBtn")?.addEventListener("click", () => resetDouyinTaskForm());

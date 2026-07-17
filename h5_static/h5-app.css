@@ -1497,6 +1497,18 @@
       margin-top: 0;
       line-height: 1.4;
     }
+    .douyin-account-actions {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      flex: 0 0 auto;
+    }
+    .douyin-account-actions button {
+      min-height: 28px;
+      padding: 0 10px;
+      font-size: 12px;
+    }
     .douyin-metric-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -2183,11 +2195,107 @@
     .settings { padding: 16px; display: grid; gap: 12px; }
     .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border-radius: 16px; background: rgba(248,251,255,.9); border: 1px solid rgba(223,230,242,.8); }
     .setting-row .device-select { max-width: min(210px, 48vw); }
+    .account-mount-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
+    .mounted-account-list {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+    .mounted-account-item {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 8px;
+      min-height: 48px;
+      padding: 8px;
+      border: 1px solid rgba(223,230,242,.9);
+      border-radius: 14px;
+      background: rgba(255,255,255,.9);
+    }
+    .mounted-account-item.default {
+      border-color: rgba(19,168,115,.34);
+      background: linear-gradient(135deg, rgba(235,255,245,.96), rgba(255,255,255,.92));
+    }
+    .mounted-account-icon {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      color: #245cff;
+      background: rgba(36,92,255,.1);
+      font-size: 13px;
+      font-weight: 950;
+    }
+    .mounted-account-item.online .mounted-account-icon {
+      color: #0c815b;
+      background: rgba(19,168,115,.12);
+    }
+    .mounted-account-main {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }
+    .mounted-account-main strong {
+      overflow: hidden;
+      color: #102036;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 950;
+    }
+    .mounted-account-main strong b {
+      margin-left: 5px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      color: #0c815b;
+      background: rgba(19,168,115,.12);
+      font-size: 10px;
+      vertical-align: 1px;
+    }
+    .mounted-account-main em {
+      overflow: hidden;
+      color: #6d7890;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      font-style: normal;
+      font-weight: 800;
+    }
+    .mounted-account-status {
+      color: #6d7890;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .mounted-account-item.online .mounted-account-status {
+      color: #0c815b;
+    }
+    .mounted-default-btn {
+      min-height: 28px;
+      padding: 0 10px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .mounted-default-btn.active {
+      color: #0c815b;
+      background: rgba(19,168,115,.12);
+    }
+    .mounted-account-empty {
+      min-height: 44px;
+      display: grid;
+      place-items: center;
+      color: #7b879b;
+      border-radius: 14px;
+      background: rgba(255,255,255,.72);
+      font-size: 12px;
+      font-weight: 800;
+    }
     .setting-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-    .route-switch { display: inline-grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; border-radius: 999px; background: #eef4ff; }
-    .route-switch button { padding: 7px 11px; color: var(--muted); background: transparent; box-shadow: none; }
-    .route-switch button.active { color: #fff; background: var(--blue); }
-    .route-switch button:disabled { opacity: .45; }
     .profile-entry {
       width: 100%;
       display: flex;

@@ -19,6 +19,7 @@ from ..models import (
     H5ChatDevicePresence,
     H5ChatEvent,
     H5ChatMessage,
+    H5MountedAccountDefault,
     PublishAccount,
     ScheduledTask,
     ScheduledTaskRun,
@@ -1557,6 +1558,12 @@ def list_h5_scheduled_publish_accounts(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
+    default_row = (
+        db.query(H5MountedAccountDefault)
+        .filter(H5MountedAccountDefault.user_id == owner_user.id, H5MountedAccountDefault.scope == "publish")
+        .first()
+    )
+    default_key = str(default_row.account_key or "").strip() if default_row else ""
     device_accounts = _reported_publish_accounts_from_devices(
         db,
         owner_user.id,
@@ -1584,10 +1591,17 @@ def list_h5_scheduled_publish_accounts(
         }
         for row in rows
     ]
+    accounts = device_accounts + server_accounts
+    for account in accounts:
+        key = str(account.get("select_id") or account.get("id") or "").strip()
+        account["account_key"] = key
+        account["is_default"] = bool(default_key and key == default_key)
     return {
         "ok": True,
-        "accounts": device_accounts + server_accounts,
+        "accounts": accounts,
         "platforms": [{"id": key, "name": value["name"]} for key, value in SUPPORTED_PLATFORMS.items()],
+        "default_account_key": default_key,
+        "default_installation_id": str(default_row.installation_id or "").strip() if default_row else "",
     }
 
 

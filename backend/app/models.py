@@ -965,6 +965,29 @@ class H5ChatDevicePresence(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class H5MountedAccountDefault(Base):
+    """Default mounted account/device picked from H5 for publish and lead tasks."""
+
+    __tablename__ = "h5_mounted_account_defaults"
+    __table_args__ = (
+        UniqueConstraint("user_id", "scope", name="uq_h5_mounted_account_default_user_scope"),
+        Index("ix_h5_mounted_account_default_user_scope", "user_id", "scope"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    account_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    platform: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    account_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    account_label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    source: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class DouyinDashboardDeviceState(Base):
     """Latest Douyin leads dashboard snapshot reported by a local online device."""
 

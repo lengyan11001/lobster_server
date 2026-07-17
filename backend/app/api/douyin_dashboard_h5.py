@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import DouyinDashboardDeviceState, H5ChatDevicePresence, User
+from ..models import DouyinDashboardDeviceState, H5ChatDevicePresence, H5MountedAccountDefault, User
 from .auth import get_current_user
 from .installation_slots import INSTALLATION_ID_HEADER, ensure_installation_slot
 from .mobile_identity import online_user_for_mobile_user
@@ -138,21 +138,66 @@ def get_douyin_dashboard_status(
     if preferred and isinstance(preferred.payload, dict):
         payload.update(preferred.payload)
 
+    default_row = (
+        db.query(H5MountedAccountDefault)
+        .filter(H5MountedAccountDefault.user_id == owner_user.id, H5MountedAccountDefault.scope == "douyin")
+        .first()
+    )
+    default_key = str(default_row.account_key or "").strip() if default_row else ""
     raw_accounts = payload.get("accounts")
     accounts: List[Dict[str, Any]] = []
-    if isinstance(raw_accounts, list):
+    seen_accounts: set[str] = set()
+    for state_row in state_rows:
+        state_payload = state_row.payload if isinstance(state_row.payload, dict) else {}
+        state_accounts = state_payload.get("accounts") if isinstance(state_payload.get("accounts"), list) else []
+        for item in state_accounts:
+            if not isinstance(item, dict):
+                continue
+            installation_id = str(item.get("installation_id") or state_row.installation_id or "").strip()
+            account_id = str(item.get("account_id") or item.get("id") or "").strip()
+            nickname = str(item.get("nickname") or item.get("name") or account_id or "").strip()
+            if not (account_id or nickname):
+                continue
+            key_id = account_id or nickname
+            account_key = f"{installation_id}:douyin:{key_id}"
+            if account_key in seen_accounts:
+                continue
+            seen_accounts.add(account_key)
+            status = str(item.get("status") or ("active" if item.get("online") else "offline")).strip()
+            online = bool(item.get("online")) if "online" in item else bool(device_online.get(installation_id))
+            accounts.append(
+                {
+                    "account_key": account_key,
+                    "select_id": account_key,
+                    "account_id": key_id,
+                    "nickname": nickname,
+                    "status": status,
+                    "online": online and bool(device_online.get(installation_id)),
+                    "installation_id": installation_id,
+                    "last_login": str(item.get("last_login") or "").strip(),
+                    "is_default": bool(default_key and account_key == default_key),
+                }
+            )
+    if not accounts and isinstance(raw_accounts, list):
         for item in raw_accounts:
             if not isinstance(item, dict):
                 continue
             installation_id = str(item.get("installation_id") or (preferred.installation_id if preferred else "") or "").strip()
+            account_id = str(item.get("account_id") or item.get("id") or "").strip()
+            nickname = str(item.get("nickname") or item.get("name") or account_id or "").strip()
+            key_id = account_id or nickname
+            account_key = f"{installation_id}:douyin:{key_id}"
             accounts.append(
                 {
+                    "account_key": account_key,
+                    "select_id": account_key,
                     "account_id": item.get("account_id"),
-                    "nickname": str(item.get("nickname") or item.get("name") or "").strip(),
+                    "nickname": nickname,
                     "status": str(item.get("status") or ("active" if item.get("online") else "offline")).strip(),
                     "online": bool(item.get("online")) if "online" in item else bool(device_online.get(installation_id)),
                     "installation_id": installation_id,
                     "last_login": str(item.get("last_login") or "").strip(),
+                    "is_default": bool(default_key and account_key == default_key),
                 }
             )
 
@@ -180,4 +225,6 @@ def get_douyin_dashboard_status(
         },
         "updated_at": updated_at,
         "installation_id": str(preferred.installation_id or "").strip() if preferred else "",
+        "default_account_key": default_key,
+        "default_installation_id": str(default_row.installation_id or "").strip() if default_row else "",
     }

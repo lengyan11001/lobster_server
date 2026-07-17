@@ -25,11 +25,21 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import SessionLocal, get_db
-from ..models import H5ChatDevicePresence, H5ChatEvent, H5ChatMessage, User, UserInstallation
+from ..models import (
+    DouyinDashboardDeviceState,
+    H5ChatDevicePresence,
+    H5ChatEvent,
+    H5ChatMessage,
+    H5MountedAccountDefault,
+    PublishAccount,
+    User,
+    UserInstallation,
+)
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token
 from .installation_slots import INSTALLATION_ID_HEADER, ensure_installation_slot, optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
+from .publish import SUPPORTED_PLATFORMS
 from .sutui_chat_proxy import charge_chat_turn_once
 
 logger = logging.getLogger(__name__)
@@ -110,6 +120,11 @@ class H5DeviceDisplayNameIn(BaseModel):
     display_name: Optional[str] = Field(default=None, max_length=128)
 
 
+class H5MountedAccountDefaultIn(BaseModel):
+    scope: str = Field(..., min_length=1, max_length=32)
+    account_key: str = Field(..., min_length=1, max_length=255)
+
+
 def _normalize_publish_account_snapshot(accounts: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
     if accounts is None:
         return None
@@ -144,6 +159,259 @@ def _normalize_publish_account_snapshot(accounts: Optional[List[Dict[str, Any]]]
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() if dt else None
+
+
+def _device_payload(row: H5ChatDevicePresence, now: Optional[datetime] = None) -> Dict[str, Any]:
+    current = now or datetime.utcnow()
+    age = (current - row.last_seen_at).total_seconds() if row.last_seen_at else 999999
+    return {
+        "installation_id": row.installation_id,
+        "device_name": row.display_name or row.installation_id,
+        "last_seen_at": _iso(row.last_seen_at),
+        "online": age <= _DEVICE_ONLINE_TTL_SECONDS,
+    }
+
+
+def _mounted_default_rows(db: Session, user_id: int) -> Dict[str, H5MountedAccountDefault]:
+    rows = db.query(H5MountedAccountDefault).filter(H5MountedAccountDefault.user_id == user_id).all()
+    return {str(row.scope or ""): row for row in rows if row.scope}
+
+
+def _mounted_default_payload(row: H5MountedAccountDefault) -> Dict[str, Any]:
+    return {
+        "scope": row.scope,
+        "account_key": row.account_key,
+        "platform": row.platform or "",
+        "account_id": row.account_id or "",
+        "account_label": row.account_label or "",
+        "installation_id": row.installation_id or "",
+        "source": row.source or "",
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+def _account_online_from_status(status: str, online: Any = None, *, device_online: bool = True) -> bool:
+    if online is not None:
+        return bool(online) and device_online
+    return str(status or "").strip().lower() in {"active", "online", "logged_in", "ready", "success"} and device_online
+
+
+def _mounted_account_row(
+    *,
+    scope: str,
+    account_key: str,
+    source: str,
+    source_label: str,
+    platform: str,
+    platform_name: str,
+    account_id: Any,
+    nickname: str,
+    status: str,
+    online: bool,
+    installation_id: str = "",
+    device_name: str = "",
+    last_seen_at: str = "",
+    last_login: str = "",
+    defaultable: bool = True,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    label = nickname or (f"{platform_name}账号" if platform_name else "账号")
+    row = {
+        "scope": scope,
+        "account_key": account_key,
+        "source": source,
+        "source_label": source_label,
+        "platform": platform,
+        "platform_name": platform_name or platform,
+        "account_id": str(account_id or "").strip(),
+        "nickname": label,
+        "status": status or ("online" if online else "offline"),
+        "online": bool(online),
+        "installation_id": installation_id,
+        "device_name": device_name,
+        "last_seen_at": last_seen_at,
+        "last_login": last_login,
+        "defaultable": bool(defaultable),
+    }
+    if extra:
+        row.update(extra)
+    return row
+
+
+def _collect_device_publish_accounts(db: Session, user_id: int, now: datetime) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
+    devices = (
+        db.query(H5ChatDevicePresence)
+        .filter(H5ChatDevicePresence.user_id == user_id)
+        .order_by(H5ChatDevicePresence.last_seen_at.desc())
+        .limit(30)
+        .all()
+    )
+    device_rows = [_device_payload(row, now) for row in devices]
+    out: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for device, device_info in zip(devices, device_rows):
+        payload = device.account_payload if isinstance(device.account_payload, dict) else {}
+        accounts = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
+        for item in accounts:
+            if not isinstance(item, dict):
+                continue
+            platform = str(item.get("platform") or "").strip()
+            account_id = str(item.get("account_id") or item.get("id") or "").strip()
+            nickname = str(item.get("nickname") or item.get("name") or "").strip()
+            if not platform or not (account_id or nickname):
+                continue
+            key_id = account_id or nickname
+            account_key = f"{device.installation_id}:{platform}:{key_id}"
+            if account_key in seen:
+                continue
+            seen.add(account_key)
+            status = str(item.get("status") or "").strip()
+            online = _account_online_from_status(status, item.get("online"), device_online=bool(device_info["online"]))
+            out.append(
+                _mounted_account_row(
+                    scope="publish",
+                    account_key=account_key,
+                    source="publish_device",
+                    source_label="发布中心",
+                    platform=platform,
+                    platform_name=str(item.get("platform_name") or item.get("platform_label") or SUPPORTED_PLATFORMS.get(platform, {}).get("name", platform)),
+                    account_id=key_id,
+                    nickname=nickname or key_id,
+                    status=status,
+                    online=online,
+                    installation_id=device.installation_id,
+                    device_name=str(device_info["device_name"] or ""),
+                    last_seen_at=str(device_info["last_seen_at"] or ""),
+                    extra={
+                        "select_id": account_key,
+                        "managed_by": str(item.get("managed_by") or "").strip(),
+                        "is_origin_slot": bool(item.get("is_origin_slot")) if item.get("is_origin_slot") is not None else False,
+                    },
+                )
+            )
+    return out, device_rows
+
+
+def _collect_server_publish_accounts(db: Session, user_id: int) -> list[Dict[str, Any]]:
+    rows = (
+        db.query(PublishAccount)
+        .filter(PublishAccount.user_id == user_id)
+        .order_by(PublishAccount.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    return [
+        _mounted_account_row(
+            scope="publish",
+            account_key=f"server:{row.id}",
+            source="publish_server",
+            source_label="发布中心",
+            platform=row.platform,
+            platform_name=SUPPORTED_PLATFORMS.get(row.platform, {}).get("name", row.platform),
+            account_id=row.id,
+            nickname=row.nickname,
+            status=row.status,
+            online=_account_online_from_status(row.status, None, device_online=True),
+            last_login=_iso(row.last_login) or "",
+            defaultable=False,
+            extra={"select_id": f"server:{row.id}"},
+        )
+        for row in rows
+    ]
+
+
+def _collect_douyin_lead_accounts(db: Session, user_id: int, device_by_id: Dict[str, Dict[str, Any]]) -> list[Dict[str, Any]]:
+    rows = (
+        db.query(DouyinDashboardDeviceState)
+        .filter(DouyinDashboardDeviceState.user_id == user_id)
+        .order_by(DouyinDashboardDeviceState.updated_at.desc())
+        .limit(30)
+        .all()
+    )
+    out: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for state_row in rows:
+        payload = state_row.payload if isinstance(state_row.payload, dict) else {}
+        accounts = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
+        for item in accounts:
+            if not isinstance(item, dict):
+                continue
+            installation_id = str(item.get("installation_id") or state_row.installation_id or "").strip()
+            account_id = str(item.get("account_id") or item.get("id") or "").strip()
+            nickname = str(item.get("nickname") or item.get("name") or account_id or "").strip()
+            if not (account_id or nickname):
+                continue
+            key_id = account_id or nickname
+            account_key = f"{installation_id}:douyin:{key_id}"
+            if account_key in seen:
+                continue
+            seen.add(account_key)
+            device_info = device_by_id.get(installation_id) or {}
+            device_online = bool(device_info.get("online"))
+            status = str(item.get("status") or "").strip()
+            online = _account_online_from_status(status, item.get("online"), device_online=device_online)
+            out.append(
+                _mounted_account_row(
+                    scope="douyin",
+                    account_key=account_key,
+                    source="douyin_leads",
+                    source_label="抖音获客",
+                    platform="douyin",
+                    platform_name="抖音",
+                    account_id=key_id,
+                    nickname=nickname or key_id,
+                    status=status,
+                    online=online,
+                    installation_id=installation_id,
+                    device_name=str(device_info.get("device_name") or installation_id),
+                    last_seen_at=str(device_info.get("last_seen_at") or ""),
+                    last_login=str(item.get("last_login") or "").strip(),
+                    extra={"select_id": account_key},
+                )
+            )
+    return out
+
+
+def _collect_wechat_account(device_rows: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    if not device_rows:
+        return []
+    selected = next((row for row in device_rows if row.get("online")), device_rows[0])
+    return [
+        _mounted_account_row(
+            scope="wechat",
+            account_key="wechat:pc-default",
+            source="pc_wechat",
+            source_label="微信",
+            platform="wechat",
+            platform_name="微信",
+            account_id="pc-wechat-default",
+            nickname="本机微信",
+            status="online" if selected.get("online") else "offline",
+            online=bool(selected.get("online")),
+            installation_id=str(selected.get("installation_id") or ""),
+            device_name=str(selected.get("device_name") or ""),
+            last_seen_at=str(selected.get("last_seen_at") or ""),
+            defaultable=False,
+        )
+    ]
+
+
+def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
+    now = datetime.utcnow()
+    publish_device_accounts, device_rows = _collect_device_publish_accounts(db, user_id, now)
+    device_by_id = {str(row.get("installation_id") or ""): row for row in device_rows}
+    accounts = (
+        _collect_wechat_account(device_rows)
+        + publish_device_accounts
+        + _collect_server_publish_accounts(db, user_id)
+        + _collect_douyin_lead_accounts(db, user_id, device_by_id)
+    )
+    defaults = _mounted_default_rows(db, user_id)
+    default_payload = {scope: _mounted_default_payload(row) for scope, row in defaults.items()}
+    for row in accounts:
+        pref = defaults.get(str(row.get("scope") or ""))
+        row["is_default"] = bool(pref and pref.account_key == row.get("account_key"))
+    return {"ok": True, "accounts": accounts, "defaults": default_payload, "devices": device_rows}
 
 
 def _serialize_event(row: H5ChatEvent) -> Dict[str, Any]:
@@ -915,6 +1183,60 @@ def h5_devices_status(
             }
         )
     return {"ok": True, "online": any(d["online"] for d in devices), "devices": devices}
+
+
+@router.get("/api/h5-chat/mounted-accounts", summary="H5 已挂载平台账号列表")
+def h5_mounted_accounts(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    return _mounted_accounts_payload(db, owner_user.id)
+
+
+@router.post("/api/h5-chat/mounted-accounts/default", summary="H5 设置默认挂载账号")
+def h5_set_mounted_account_default(
+    body: H5MountedAccountDefaultIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    scope = (body.scope or "").strip().lower()
+    if scope not in {"publish", "douyin"}:
+        raise HTTPException(status_code=400, detail="该类型不支持设置默认账号")
+    account_key = (body.account_key or "").strip()
+    payload = _mounted_accounts_payload(db, owner_user.id)
+    account = next(
+        (
+            row
+            for row in payload.get("accounts", [])
+            if row.get("scope") == scope and row.get("account_key") == account_key and row.get("defaultable")
+        ),
+        None,
+    )
+    if not account:
+        raise HTTPException(status_code=404, detail="账号不存在或暂不可设为默认")
+    now = datetime.utcnow()
+    row = (
+        db.query(H5MountedAccountDefault)
+        .filter(H5MountedAccountDefault.user_id == owner_user.id, H5MountedAccountDefault.scope == scope)
+        .first()
+    )
+    if not row:
+        row = H5MountedAccountDefault(user_id=owner_user.id, scope=scope, created_at=now)
+        db.add(row)
+    row.account_key = account_key
+    row.platform = str(account.get("platform") or "")[:64] or None
+    row.account_id = str(account.get("account_id") or "")[:128] or None
+    row.account_label = str(account.get("nickname") or "")[:255] or None
+    row.installation_id = str(account.get("installation_id") or "")[:128] or None
+    row.source = str(account.get("source") or "")[:64] or None
+    row.payload = account
+    row.updated_at = now
+    db.commit()
+    db.refresh(row)
+    result = _mounted_accounts_payload(db, owner_user.id)
+    return {"ok": True, "default": _mounted_default_payload(row), "accounts": result.get("accounts", []), "defaults": result.get("defaults", {})}
 
 
 @router.get("/api/h5-chat/pending", summary="本地 online 轮询领取 H5 消息")
