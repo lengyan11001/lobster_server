@@ -3401,16 +3401,36 @@
       switchTab("department");
     }
 
+    function clearDepartmentDayBoard() {
+      ["departmentCalendarDays", "departmentDaySummary", "departmentDayRuns", "departmentDaySchedules"].forEach((id) => {
+        const el = $(id);
+        if (el) el.innerHTML = "";
+      });
+    }
+
+    function setDepartmentEntryOnlyMode(department) {
+      const entryOnly = isMarketingCreationDepartment(department);
+      const board = document.querySelector("#departmentView .department-day-board");
+      if (board) board.classList.toggle("hidden", entryOnly);
+      ["departmentWorkHistoryBtn", "departmentChatBtn"].forEach((id) => {
+        const el = $(id);
+        if (el) el.classList.toggle("hidden", entryOnly);
+      });
+      return entryOnly;
+    }
+
     function renderDepartmentView() {
       const department = departmentById(state.currentDepartmentId);
       if (!department) return;
+      const entryOnly = setDepartmentEntryOnlyMode(department);
       state.currentDepartmentId = department.id;
       $("departmentKicker").textContent = department.alias || "DEPARTMENT";
       $("departmentTitle").textContent = department.name || "职能中心";
       if ($("pageTitle")) $("pageTitle").textContent = department.name || "职能中心";
       if ($("pageSubtitle")) $("pageSubtitle").textContent = "";
       $("departmentBreadcrumb").innerHTML = "";
-      renderDepartmentDayBoard();
+      if (entryOnly) clearDepartmentDayBoard();
+      else renderDepartmentDayBoard();
       const leaves = departmentLeafNodes(department);
       $("departmentSkillGrid").innerHTML = leaves.map(abilityCardHtml).join("") || `<div class="quick-empty">这个部门暂时没有配置能力。</div>`;
     }
@@ -3856,6 +3876,10 @@
       const department = departmentById(state.currentDepartmentId);
       const daysBox = $("departmentCalendarDays");
       if (!department || !daysBox) return;
+      if (setDepartmentEntryOnlyMode(department)) {
+        clearDepartmentDayBoard();
+        return;
+      }
       const selected = parseDateKey(departmentSelectedDateKey());
       const start = addDateDays(selected, -((selected.getDay() + 6) % 7));
       const today = todayDateKey();
