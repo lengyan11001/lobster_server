@@ -605,6 +605,33 @@ def _generation_prompt(source_text: str, doc_types: list[str], reference_text: s
 """
 
 
+async def _describe_visual_sources(request: Request, installation_id: str, source_text: str, visual_blocks: list[dict[str, Any]]) -> str:
+    if not visual_blocks:
+        return source_text
+    prompt = f"""请把用户上传的图片/视频关键帧客观整理成文字资料。
+
+要求：
+- 只描述画面中能确认的信息，不要编造品牌、人名、公司名。
+- 如果有场景、人物、产品、文字、动作、风格，请分点写清楚。
+- 这是后续生成记忆文件的素材，不要写成营销文案。
+
+已知文件信息：
+{source_text or "无"}
+"""
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    content.extend(visual_blocks)
+    text = await _call_llm(
+        request,
+        installation_id,
+        [
+            {"role": "system", "content": "你是图片和视频资料理解助手，只做客观信息提取。"},
+            {"role": "user", "content": content},
+        ],
+        timeout_seconds=180.0,
+    )
+    return _limit_text("\n\n".join(part for part in [source_text, f"【图片/视频理解】\n{text.strip()}"] if str(part or "").strip()))
+
+
 def _parse_generated(text: str, doc_types: list[str]) -> dict[str, str]:
     documents: dict[str, str] = {}
     pattern = re.compile(r"^<<<([a-z0-9_]+)>>>\s*(.*?)(?=^<<<[a-z0-9_]+>>>\s*|\Z)", re.S | re.M)
@@ -834,10 +861,11 @@ async def save_uploaded_memory_document(
         db=db,
         stt_user=target_user,
     )
+    source_text = await _describe_visual_sources(request, installation_id, source_text, _visual_blocks)
     mode = (mode or "new").strip().lower()
     if mode == "overwrite":
         row = _memory_row(db, target_user.id, installation_id, target_doc_id)
-        row = _overwrite_document(db, row, content_text=source_text, notes=notes or "IP人设定位上传资料", meta={"save_mode": "overwrite"})
+        row = _overwrite_document(db, row, content_text=source_text, notes=notes or "IP人设定位上传资料", meta={"save_mode": "overwrite", "uploaded": True})
     else:
         clean_title = _short_title(title, "个人记忆")
         row = _create_document(
@@ -849,7 +877,7 @@ async def save_uploaded_memory_document(
             filename=f"{clean_title}.txt",
             notes=notes or "IP人设定位上传资料",
             content_text=source_text,
-            meta={"save_mode": "new"},
+            meta={"save_mode": "new", "uploaded": True},
         )
     return {
         "ok": True,
@@ -891,6 +919,8 @@ async def generate_memory_documents(
         db=db,
         stt_user=target_user,
     )
+    source_text = await _describe_visual_sources(request, installation_id, source_text, visual_blocks)
+    visual_blocks = []
 
     ref_ids = [_sanitize_doc_id(x) for x in (reference_doc_ids or "").split(",") if _sanitize_doc_id(x)]
     if ref_ids:

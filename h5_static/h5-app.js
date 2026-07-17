@@ -113,6 +113,11 @@
       personalSelectedKeywords: {},
       personalSelectedCompetitors: {},
       personalSelectedMemories: {},
+      personalMemoryUseProfile: true,
+      personalMemorySourceKeywords: {},
+      personalMemorySourceCompetitors: {},
+      personalMemorySourceDocs: {},
+      personalMemorySourceFiles: {},
       taskSkillPackages: [],
       taskAllowedCapabilityIds: [],
       taskSkillsLoaded: false,
@@ -6980,6 +6985,14 @@
       return row ? row.label : (key || "记忆");
     }
 
+    function recommendPersonalMemoryTitle(docTypes, hasCustomReference) {
+      const keys = Array.isArray(docTypes) ? docTypes.filter(Boolean) : [];
+      if (keys.length === 1 && keys[0] === "custom_memory") return "自定义记忆";
+      if (keys.length === 1) return personalDocTypeLabel(keys[0]);
+      if (!keys.length && hasCustomReference) return "自定义记忆";
+      return "IP人设记忆";
+    }
+
     function selectedPersonalIds(kind) {
       return Array.from(document.querySelectorAll(`[data-personal-select="${kind}"]:checked`))
         .map((el) => String(el.value || "").trim())
@@ -7265,6 +7278,130 @@
       syncPersonalSaveMode();
     }
 
+    function personalSyncSelectionMap(map, ids, defaultSelected = true) {
+      ids = (ids || []).map((id) => String(id || "").trim()).filter(Boolean);
+      const allowed = new Set(ids);
+      Object.keys(map || {}).forEach((id) => {
+        if (!allowed.has(String(id))) delete map[id];
+      });
+      ids.forEach((id) => {
+        if (!(id in map)) map[id] = !!defaultSelected;
+      });
+      return map;
+    }
+
+    function isPersonalUploadedMemoryDoc(doc) {
+      const notes = String((doc && doc.notes) || "");
+      const meta = doc && doc.meta && typeof doc.meta === "object" ? doc.meta : {};
+      return notes.includes("上传资料") || meta.save_mode === "new" || meta.uploaded === true;
+    }
+
+    function personalMemorySourceDocRows() {
+      const rows = (state.personalMemoryDocs || []).filter((doc) => !doc.read_only && doc.source !== "agent");
+      const uploadRows = rows.filter(isPersonalUploadedMemoryDoc);
+      return uploadRows.length ? uploadRows : rows;
+    }
+
+    function ensurePersonalMemorySourceSelections() {
+      if (state.personalMemoryUseProfile !== false) state.personalMemoryUseProfile = true;
+      state.personalMemorySourceKeywords = personalSyncSelectionMap(
+        state.personalMemorySourceKeywords || {},
+        (state.personalKeywords || []).map((row) => row.id)
+      );
+      state.personalMemorySourceCompetitors = personalSyncSelectionMap(
+        state.personalMemorySourceCompetitors || {},
+        (state.personalCompetitors || []).map((row) => row.id)
+      );
+      state.personalMemorySourceDocs = personalSyncSelectionMap(
+        state.personalMemorySourceDocs || {},
+        personalMemorySourceDocRows().map(personalDocId)
+      );
+      state.personalMemorySourceFiles = personalSyncSelectionMap(
+        state.personalMemorySourceFiles || {},
+        selectedPersonalUploadFiles().map(personalUploadFileKey)
+      );
+    }
+
+    function selectedPersonalMemoryKeywordRows() {
+      ensurePersonalMemorySourceSelections();
+      return (state.personalKeywords || []).filter((row) => state.personalMemorySourceKeywords[String(row.id || "")]);
+    }
+
+    function selectedPersonalMemoryCompetitorRows() {
+      ensurePersonalMemorySourceSelections();
+      return (state.personalCompetitors || []).filter((row) => state.personalMemorySourceCompetitors[String(row.id || "")]);
+    }
+
+    function selectedPersonalMemorySourceDocs() {
+      ensurePersonalMemorySourceSelections();
+      return personalMemorySourceDocRows().filter((doc) => state.personalMemorySourceDocs[personalDocId(doc)]);
+    }
+
+    function selectedPersonalMemoryUploadFiles() {
+      ensurePersonalMemorySourceSelections();
+      return selectedPersonalUploadFiles().filter((file) => state.personalMemorySourceFiles[personalUploadFileKey(file)]);
+    }
+
+    function renderPersonalSourceOptions(targetId, rows, selectedMap, kind, titleFn, subtitleFn) {
+      const el = $(targetId);
+      if (!el) return;
+      if (!rows.length) {
+        el.innerHTML = `<div class="personal-empty">暂无</div>`;
+        return;
+      }
+      el.innerHTML = rows.map((row) => {
+        const id = kind === "source_file" ? personalUploadFileKey(row) : (kind === "source_doc" ? personalDocId(row) : String(row.id || ""));
+        const subtitle = subtitleFn ? String(subtitleFn(row) || "") : "";
+        return `<label class="personal-source-option">
+          <input type="checkbox" data-personal-memory-source="${escapeHtml(kind)}" value="${escapeHtml(id)}"${selectedMap[id] ? " checked" : ""}>
+          <span><strong>${escapeHtml(titleFn(row))}</strong>${subtitle ? `<small>${escapeHtml(subtitle)}</small>` : ""}</span>
+        </label>`;
+      }).join("");
+    }
+
+    function renderPersonalMemorySourceSelectors() {
+      ensurePersonalMemorySourceSelections();
+      const profile = $("personalMemoryUseProfile");
+      if (profile) profile.checked = state.personalMemoryUseProfile !== false;
+      renderPersonalSourceOptions(
+        "personalMemoryKeywordSourceList",
+        state.personalKeywords || [],
+        state.personalMemorySourceKeywords,
+        "keyword",
+        (row) => row.display_name || row.keyword || `关键词 #${row.id}`,
+        (row) => row.keyword || ""
+      );
+      renderPersonalSourceOptions(
+        "personalMemoryCompetitorSourceList",
+        state.personalCompetitors || [],
+        state.personalMemorySourceCompetitors,
+        "competitor",
+        (row) => row.display_name || row.account_key || `同行 #${row.id}`,
+        (row) => `${row.platform || ""}${row.account_key ? ` · ${row.account_key}` : ""}`
+      );
+      renderPersonalSourceOptions(
+        "personalMemoryUploadSourceList",
+        personalMemorySourceDocRows(),
+        state.personalMemorySourceDocs,
+        "source_doc",
+        personalMemoryTitle,
+        (row) => row.notes || row.filename || ""
+      );
+      const currentFiles = selectedPersonalUploadFiles();
+      if (currentFiles.length) {
+        const box = $("personalMemoryUploadSourceList");
+        const fileHtml = currentFiles.map((file) => {
+          const id = personalUploadFileKey(file);
+          const size = file && file.size ? ` · ${Math.ceil(file.size / 1024)}KB` : "";
+          return `<label class="personal-source-option">
+            <input type="checkbox" data-personal-memory-source="source_file" value="${escapeHtml(id)}"${state.personalMemorySourceFiles[id] ? " checked" : ""}>
+            <span><strong>${escapeHtml(file.name || "未命名文件")}</strong><small>当前选择${escapeHtml(size)}</small></span>
+          </label>`;
+        }).join("");
+        if (box) box.innerHTML = (box.innerHTML && !box.innerHTML.includes("personal-empty") ? box.innerHTML : "") + fileHtml;
+      }
+    }
+
     function syncPersonalSaveMode() {
       const mode = (($("personalSaveMode") && $("personalSaveMode").value) || "new").trim();
       const target = $("personalTargetMemorySelect");
@@ -7372,6 +7509,7 @@
       renderPersonalSavedTemplates();
       renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "", "data-delete-personal-keyword", "删除");
       renderPersonalRows("personalCompetitorList", state.personalCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "", "data-delete-personal-competitor", "删除", "data-sync-personal-competitor");
+      renderPersonalMemorySourceSelectors();
       const mem = $("personalMemoryList");
       if (mem) {
         mem.innerHTML = state.personalMemoryDocs.length
@@ -7544,6 +7682,7 @@
       });
       if (input) input.value = "";
       renderPersonalSelectedFiles();
+      renderPersonalMemorySourceSelectors();
     }
 
     function renderPersonalCustomReference() {
@@ -7612,16 +7751,23 @@
 
     function personalMemoryInputText() {
       const parts = [];
-      const raw = (($("personalRawMemoryText") && $("personalRawMemoryText").value) || "").trim();
-      const urls = (($("personalMemoryUrls") && $("personalMemoryUrls").value) || "").trim();
-      if (raw) parts.push(raw);
-      if (urls) parts.push(`资料链接：\n${urls}`);
-      const files = selectedPersonalUploadFiles();
-      if (files.length) parts.push(`已上传文件：\n${files.map((file) => `- ${file.name || "upload"}`).join("\n")}`);
+      const context = personalMemoryContextText({
+        includeProfile: state.personalMemoryUseProfile !== false,
+        keywordRows: selectedPersonalMemoryKeywordRows(),
+        competitorRows: selectedPersonalMemoryCompetitorRows(),
+        sourceDocs: selectedPersonalMemorySourceDocs(),
+      });
+      if (context) parts.push(context);
+      const files = selectedPersonalMemoryUploadFiles();
+      if (files.length) parts.push(`当前选择文件：\n${files.map((file) => `- ${file.name || "upload"}`).join("\n")}`);
       return parts.join("\n\n").trim();
     }
 
-    function personalMemoryContextText() {
+    function personalMemoryContextText(options = {}) {
+      const includeProfile = options.includeProfile !== false;
+      const keywordRows = Array.isArray(options.keywordRows) ? options.keywordRows : selectedPersonalMemoryKeywordRows();
+      const competitorRows = Array.isArray(options.competitorRows) ? options.competitorRows : selectedPersonalMemoryCompetitorRows();
+      const sourceDocs = Array.isArray(options.sourceDocs) ? options.sourceDocs : selectedPersonalMemorySourceDocs();
       const req = personalSurveyRequirements();
       const profile = req.basic_profile || {};
       const business = req.business_description || {};
@@ -7640,13 +7786,19 @@
         ["目标客户", business.target_customer],
         ["优势", business.advantages],
       ].filter((item) => String(item[1] || "").trim()).map((item) => `${item[0]}：${item[1]}`);
-      const keywordLines = (state.personalKeywords || []).map((row) => row.display_name || row.keyword).filter(Boolean);
-      const competitorLines = (state.personalCompetitors || []).map((row) => `${row.platform || ""} ${row.display_name || row.account_key || ""}`.trim()).filter(Boolean);
+      const keywordLines = keywordRows.map((row) => row.display_name || row.keyword).filter(Boolean);
+      const competitorLines = competitorRows.map((row) => `${row.platform || ""} ${row.display_name || row.account_key || ""}`.trim()).filter(Boolean);
+      const docLines = sourceDocs.map((doc) => {
+        const title = personalMemoryTitle(doc);
+        const text = String(doc.content_text || doc.content || doc.text || doc.content_preview || "").trim();
+        return text ? `【${title}】\n${text}` : "";
+      }).filter(Boolean);
       const sections = [];
-      if (profileLines.length) sections.push(`资料调查：\n${profileLines.join("\n")}`);
-      if (businessLines.length) sections.push(`业务描述：\n${businessLines.join("\n")}`);
+      if (includeProfile && profileLines.length) sections.push(`资料调查：\n${profileLines.join("\n")}`);
+      if (includeProfile && businessLines.length) sections.push(`业务描述：\n${businessLines.join("\n")}`);
       if (keywordLines.length) sections.push(`关键词：\n${keywordLines.join("\n")}`);
       if (competitorLines.length) sections.push(`同行账号：\n${competitorLines.join("\n")}`);
+      if (docLines.length) sections.push(`上传资料：\n${docLines.join("\n\n")}`);
       return sections.join("\n\n").trim();
     }
 
@@ -7661,14 +7813,15 @@
       ].filter((item) => item[1] !== undefined && item[1] !== null && String(item[1]) !== "").map((item) => `${item[0]}${item[1]}`).join("，");
     }
 
-    async function personalCompetitorSourceText() {
-      const selected = personalCleanIntIds(state.personalSelectedCompetitors);
+    async function personalCompetitorSourceText(selectedIds = null) {
+      const selected = Array.isArray(selectedIds) ? selectedIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0) : personalCleanIntIds(state.personalMemorySourceCompetitors);
+      if (!selected.length) return "";
       const wanted = new Set(selected.map((id) => String(id)));
       const data = await api("/api/ip-content/source-items?source_type=competitor&limit=80").catch(() => ({ items: [] }));
       const rows = (Array.isArray(data.items) ? data.items : []).filter((row) => {
         const meta = row && row.source_meta && typeof row.source_meta === "object" ? row.source_meta : {};
         const cid = String(meta.competitor_account_id || "");
-        return !wanted.size || wanted.has(cid);
+        return wanted.has(cid);
       }).slice(0, 40);
       if (!rows.length) return "";
       const text = rows.map((row, idx) => {
@@ -7733,26 +7886,33 @@
     async function generatePersonalMemoryDocs(btn) {
       const iid = currentInstallationId();
       if (!iid) throw new Error("请先选择在线设备");
-      const files = selectedPersonalUploadFiles();
-      const raw = (($("personalRawMemoryText") && $("personalRawMemoryText").value) || "").trim();
-      const urls = (($("personalMemoryUrls") && $("personalMemoryUrls").value) || "").trim();
+      syncPersonalSurveyAnswerToField();
+      ensurePersonalMemorySourceSelections();
+      const files = selectedPersonalMemoryUploadFiles();
+      const keywordRows = selectedPersonalMemoryKeywordRows();
+      const competitorRows = selectedPersonalMemoryCompetitorRows();
+      const sourceDocs = selectedPersonalMemorySourceDocs();
       const docTypes = selectedPersonalDocTypes();
       const reference = state.personalCustomReferenceFile;
-      const contextText = personalMemoryContextText();
-      const competitorText = await personalCompetitorSourceText();
-      const referenceDocIds = personalCleanStringIds(state.personalSelectedMemories);
-      if (!files.length && !raw && !urls && !contextText && !competitorText && !referenceDocIds.length) throw new Error("请上传资料、填写链接、粘贴资料内容，或先保存资料调查。");
+      const contextText = personalMemoryContextText({
+        includeProfile: state.personalMemoryUseProfile !== false,
+        keywordRows,
+        competitorRows,
+        sourceDocs,
+      });
+      const competitorText = await personalCompetitorSourceText(competitorRows.map((row) => row.id));
+      if (!files.length && !contextText && !competitorText) throw new Error("请选择要生成的资料来源。");
       if (!docTypes.length && !reference) throw new Error("请选择生成类型，或上传自定义参考文档。");
       const fd = new FormData();
       files.forEach((file) => fd.append("files", file, file.name || "upload"));
-      fd.append("urls", urls);
-      fd.append("direct_intro", [contextText, competitorText, raw].filter(Boolean).join("\n\n"));
+      fd.append("urls", "");
+      fd.append("direct_intro", [contextText, competitorText].filter(Boolean).join("\n\n"));
       fd.append("direct_faq", "");
       fd.append("direct_scripts", "");
       fd.append("doc_type", docTypes[0] || "");
       fd.append("doc_types", JSON.stringify(docTypes));
       if (reference) fd.append("custom_reference_file", reference, reference.name || "reference");
-      fd.append("reference_doc_ids", referenceDocIds.join(","));
+      fd.append("reference_doc_ids", "");
       personalSetBusy(btn, true, "理解中...");
       personalSetStatus("正在理解资料...");
       try {
@@ -7761,6 +7921,8 @@
         if (!resp.ok || data.ok === false) throw new Error(data.detail || data.message || "AI 理解失败");
         state.personalGeneratedDocuments = data.documents || {};
         state.personalGeneratedDocOrder = Array.isArray(data.doc_types) && data.doc_types.length ? data.doc_types : docTypes;
+        const title = $("personalMemoryTitle");
+        if (title && (($("personalSaveMode") && $("personalSaveMode").value) || "new") === "new") title.value = recommendPersonalMemoryTitle(state.personalGeneratedDocOrder, !!reference);
         setPersonalSettingsTab("memory");
         renderPersonalGeneratedDocs();
         personalSetStatus("AI 理解完成，审核后存入记忆。");
@@ -7845,6 +8007,7 @@
         }
         state.personalUploadFiles = [];
         renderPersonalSelectedFiles();
+        renderPersonalMemorySourceSelectors();
       } finally {
         personalSetBusy(btn, false);
       }
@@ -11469,10 +11632,24 @@
     $("personalMemoryFiles")?.addEventListener("change", handlePersonalUploadFilesChange);
     $("personalCustomReferenceFile")?.addEventListener("change", handlePersonalCustomReferenceChange);
     $("personalSaveMode")?.addEventListener("change", syncPersonalSaveMode);
+    $("personalMemoryUseProfile")?.addEventListener("change", (evt) => {
+      state.personalMemoryUseProfile = !!evt.target.checked;
+    });
     $("personalTargetMemorySelect")?.addEventListener("change", () => {
       syncPersonalSaveMode();
       const id = ($("personalTargetMemorySelect") && $("personalTargetMemorySelect").value) || "";
       if (id) previewPersonalMemory(id).catch((err) => personalSetStatus(err.message || "读取失败", true));
+    });
+    $("personalSettingsView")?.addEventListener("change", (evt) => {
+      const input = evt.target.closest("[data-personal-memory-source]");
+      if (!input) return;
+      const kind = input.dataset.personalMemorySource || "";
+      const map = kind === "keyword"
+        ? state.personalMemorySourceKeywords
+        : (kind === "competitor"
+          ? state.personalMemorySourceCompetitors
+          : (kind === "source_doc" ? state.personalMemorySourceDocs : state.personalMemorySourceFiles));
+      if (input.value) map[String(input.value)] = !!input.checked;
     });
     $("personalSettingsView")?.addEventListener("click", async (evt) => {
       const keywordBtn = evt.target.closest("[data-delete-personal-keyword]");
@@ -11506,6 +11683,7 @@
           const idx = Number(uploadRemove.dataset.removePersonalUpload || "-1");
           state.personalUploadFiles = selectedPersonalUploadFiles().filter((_file, fileIdx) => fileIdx !== idx);
           renderPersonalSelectedFiles();
+          renderPersonalMemorySourceSelectors();
           return;
         }
         if (referenceRemove) {

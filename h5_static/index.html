@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260717-upload-files-only" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260717-memory-source-select" />
 </head>
 <body>
   <main class="shell">
@@ -838,6 +838,24 @@
             <div class="personal-grid">
               <div class="personal-block">
                 <strong>生成记忆文件</strong>
+                <div class="personal-memory-sources">
+                  <label class="personal-source-card personal-source-profile">
+                    <input id="personalMemoryUseProfile" type="checkbox" checked>
+                    <span>资料调查</span>
+                  </label>
+                  <div class="personal-source-card">
+                    <span>关键词</span>
+                    <div class="personal-source-list" id="personalMemoryKeywordSourceList"></div>
+                  </div>
+                  <div class="personal-source-card">
+                    <span>同行账号</span>
+                    <div class="personal-source-list" id="personalMemoryCompetitorSourceList"></div>
+                  </div>
+                  <div class="personal-source-card">
+                    <span>上传资料</span>
+                    <div class="personal-source-list" id="personalMemoryUploadSourceList"></div>
+                  </div>
+                </div>
                 <div class="personal-field">
                   <label>AI 生成类型</label>
                   <div class="personal-doc-types" id="personalGenerateDocTypes">
@@ -1241,6 +1259,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260717-upload-files-only"></script>
+  <script src="/h5-static/h5-app.js?v=20260717-memory-source-select"></script>
 </body>
 </html>
