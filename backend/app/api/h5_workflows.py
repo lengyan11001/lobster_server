@@ -43,6 +43,7 @@ _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 _IP_DAILY_DEFAULT_TASKS = ["industry_hot_oral", "professional_ip_oral", "moments_candidate"]
 _DEVICE_ONLINE_TTL_SECONDS = 120
+_WORKFLOW_ACTION_PLATFORMS = {"douyin": "抖音", "toutiao": "头条"}
 
 
 class WorkflowTemplateIn(BaseModel):
@@ -80,6 +81,68 @@ def _clean_time(value: Any) -> str:
     return text
 
 
+def _workflow_platform_label(platform: str) -> str:
+    key = str(platform or "").strip().lower()
+    return _WORKFLOW_ACTION_PLATFORMS.get(key, key or "平台")
+
+
+def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    if not isinstance(raw_actions, list):
+        return actions
+    parent_id = str(parent.get("id") or "").strip()
+    for raw in raw_actions[:12]:
+        if not isinstance(raw, dict):
+            continue
+        action_type = str(raw.get("action_type") or raw.get("type") or "publish").strip().lower()
+        if action_type != "publish":
+            raise HTTPException(status_code=400, detail="动作节点暂时只支持发布")
+        platform = str(raw.get("platform") or "").strip().lower()
+        if platform not in _WORKFLOW_ACTION_PLATFORMS:
+            raise HTTPException(status_code=400, detail="发布动作暂时只支持抖音和头条")
+        label = f"发布{_workflow_platform_label(platform)}"
+        plan = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
+        payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        params = dict(params or {})
+        params.update(
+            {
+                "source_mode": "parent_latest_run",
+                "source_workflow_node_id": parent_id,
+                "source_workflow_node_label": parent.get("ability_label") or parent.get("note") or "",
+                "platform": platform,
+                "media_type": params.get("media_type") or "video",
+                "ai_publish_copy": bool(params.get("ai_publish_copy", True)),
+            }
+        )
+        action_id = str(raw.get("id") or f"{parent_id}_action_{len(actions) + 1}")[:64]
+        actions.append(
+            {
+                "id": action_id,
+                "time": _clean_time(raw.get("time")),
+                "parent_node_id": parent_id,
+                "action_type": action_type,
+                "type": action_type,
+                "platform": platform,
+                "ability_key": "publish_content",
+                "ability_label": str(raw.get("ability_label") or raw.get("label") or label).strip()[:160],
+                "department_id": str(raw.get("department_id") or parent.get("department_id") or "").strip()[:64],
+                "department_name": str(raw.get("department_name") or parent.get("department_name") or "").strip()[:80],
+                "note": str(raw.get("note") or "").strip()[:2000],
+                "is_action_node": True,
+                "param_configured": bool(raw.get("param_configured", True)),
+                "plan": {
+                    "title": str(plan.get("title") or label).strip()[:160],
+                    "task_kind": "client_workflow",
+                    "content": str(plan.get("content") or f"H5 工作流动作：{label}").strip()[:12000],
+                    "payload": {"action": "publish_content", "params": params},
+                },
+            }
+        )
+    actions.sort(key=lambda item: item["time"])
+    return actions
+
+
 def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     cleaned: list[dict[str, Any]] = []
     for raw in nodes or []:
@@ -96,25 +159,28 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             raise HTTPException(status_code=400, detail=f"{title} 缺少客户端动作")
         if task_kind == "capability" and not str(payload.get("capability_id") or "").strip():
             raise HTTPException(status_code=400, detail=f"{title} 缺少能力 ID")
-        cleaned.append(
-            {
-                "id": str(raw.get("id") or f"node_{len(cleaned) + 1}")[:64],
-                "time": _clean_time(raw.get("time")),
-                "ability_key": str(raw.get("ability_key") or raw.get("abilityKey") or "").strip()[:128],
-                "ability_label": str(raw.get("ability_label") or raw.get("abilityLabel") or raw.get("label") or title).strip()[:160],
-                "department_id": str(raw.get("department_id") or raw.get("departmentId") or "").strip()[:64],
-                "department_name": str(raw.get("department_name") or raw.get("departmentName") or "").strip()[:80],
-                "note": str(raw.get("note") or "").strip()[:2000],
-                "sales_preset": bool(raw.get("sales_preset") or raw.get("salesPreset")),
-                "param_configured": bool(raw.get("param_configured")),
-                "plan": {
-                    "title": title,
-                    "task_kind": task_kind,
-                    "content": content,
-                    "payload": payload,
-                },
-            }
-        )
+        item = {
+            "id": str(raw.get("id") or f"node_{len(cleaned) + 1}")[:64],
+            "time": _clean_time(raw.get("time")),
+            "ability_key": str(raw.get("ability_key") or raw.get("abilityKey") or "").strip()[:128],
+            "ability_label": str(raw.get("ability_label") or raw.get("abilityLabel") or raw.get("label") or title).strip()[:160],
+            "department_id": str(raw.get("department_id") or raw.get("departmentId") or "").strip()[:64],
+            "department_name": str(raw.get("department_name") or raw.get("departmentName") or "").strip()[:80],
+            "note": str(raw.get("note") or "").strip()[:2000],
+            "sales_preset": bool(raw.get("sales_preset") or raw.get("salesPreset")),
+            "param_configured": bool(raw.get("param_configured")),
+            "plan": {
+                "title": title,
+                "task_kind": task_kind,
+                "content": content,
+                "payload": payload,
+            },
+        }
+        raw_children = raw.get("children") if isinstance(raw.get("children"), list) else raw.get("actions")
+        children = _clean_action_nodes(raw_children, item)
+        if children:
+            item["children"] = children
+        cleaned.append(item)
     if not cleaned:
         raise HTTPException(status_code=400, detail="请至少添加一个工作流节点")
     cleaned.sort(key=lambda item: item["time"])
@@ -284,6 +350,82 @@ def _device_is_online(db: Session, user_id: int, installation_id: str) -> bool:
     if not row or not row.last_seen_at:
         return False
     return (datetime.utcnow() - row.last_seen_at).total_seconds() <= _DEVICE_ONLINE_TTL_SECONDS
+
+
+def _workflow_child_nodes(node: dict[str, Any]) -> list[dict[str, Any]]:
+    children = node.get("children") if isinstance(node.get("children"), list) else node.get("actions")
+    return [item for item in (children or []) if isinstance(item, dict)]
+
+
+def _workflow_nodes_with_actions(nodes: list[dict[str, Any]]) -> list[tuple[dict[str, Any], Optional[dict[str, Any]]]]:
+    out: list[tuple[dict[str, Any], Optional[dict[str, Any]]]] = []
+    for node in nodes or []:
+        if not isinstance(node, dict):
+            continue
+        out.append((node, None))
+        for child in _workflow_child_nodes(node):
+            out.append((child, node))
+    return out
+
+
+def _prepare_publish_action_nodes(
+    *,
+    db: Session,
+    owner: User,
+    installation_id: str,
+    nodes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    prepared = copy.deepcopy(nodes)
+    publish_default = _mounted_default(db, owner.id, "publish")
+    missing: list[str] = []
+    for parent in prepared:
+        for child in _workflow_child_nodes(parent):
+            plan = child.get("plan") if isinstance(child.get("plan"), dict) else {}
+            payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+            action = _clean_text(payload.get("action"), 128)
+            params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+            if action != "publish_content":
+                continue
+            params = dict(params)
+            platform = _clean_text(child.get("platform") or params.get("platform"), 64).lower()
+            if platform not in _WORKFLOW_ACTION_PLATFORMS:
+                missing.append("发布动作：请选择抖音或头条")
+                continue
+            if not publish_default:
+                missing.append(f"发布{_workflow_platform_label(platform)}：请先在个人中心设置默认发布账号")
+                continue
+            default_platform = _clean_text(publish_default.platform, 64).lower()
+            if default_platform != platform:
+                missing.append(f"发布{_workflow_platform_label(platform)}：默认发布账号不是{_workflow_platform_label(platform)}账号")
+                continue
+            default_iid = _clean_text(publish_default.installation_id, 128)
+            if default_iid != _clean_text(installation_id, 128):
+                missing.append(f"发布{_workflow_platform_label(platform)}：默认发布账号不在当前启用设备上")
+                continue
+            if not _device_is_online(db, owner.id, default_iid):
+                missing.append(f"发布{_workflow_platform_label(platform)}：默认发布账号所在设备不在线")
+                continue
+            params.update(
+                {
+                    "platform": default_platform,
+                    "platform_name": _workflow_platform_label(default_platform),
+                    "account_id": _clean_text(publish_default.account_id, 128),
+                    "account_nickname": _clean_text(publish_default.account_label, 255),
+                    "publish_installation_id": default_iid,
+                    "installation_id": default_iid,
+                    "source_mode": "parent_latest_run",
+                    "source_workflow_node_id": _clean_text(child.get("parent_node_id") or parent.get("id"), 64),
+                    "source_workflow_node_label": _clean_text(parent.get("ability_label") or parent.get("note"), 160),
+                    "media_type": _clean_text(params.get("media_type"), 32) or "video",
+                    "ai_publish_copy": bool(params.get("ai_publish_copy", True)),
+                }
+            )
+            payload["params"] = params
+            plan["payload"] = payload
+            child["plan"] = plan
+    if missing:
+        raise HTTPException(status_code=400, detail="；".join(dict.fromkeys(missing)))
+    return prepared
 
 
 def _sales_action_from_note(note: Any) -> str:
@@ -619,12 +761,18 @@ def _activate_nodes_for_device(
         nodes=nodes,
         snapshot_extra=snapshot_extra,
     )
+    nodes = _prepare_publish_action_nodes(
+        db=db,
+        owner=owner,
+        installation_id=installation_id,
+        nodes=nodes,
+    )
     now = datetime.utcnow()
     stopped_ids = _stop_active_for_device(db, owner.id, installation_id, now)
     db.commit()
     created_task_ids: list[int] = []
     try:
-        for node in nodes:
+        for node, parent_node in _workflow_nodes_with_actions(nodes):
             plan = node.get("plan") or {}
             task_kind = str(plan.get("task_kind") or "").strip().lower()
             payload = dict(plan.get("payload") or {})
@@ -640,6 +788,17 @@ def _activate_nodes_for_device(
                 "department_id": node.get("department_id"),
                 "department_name": node.get("department_name"),
             }
+            if parent_node:
+                payload["h5_context"].update(
+                    {
+                        "workflow_parent_node_id": parent_node.get("id"),
+                        "workflow_parent_node_time": parent_node.get("time"),
+                        "workflow_parent_ability_key": parent_node.get("ability_key"),
+                        "workflow_parent_ability_label": parent_node.get("ability_label"),
+                        "workflow_action_type": node.get("action_type") or node.get("type"),
+                        "workflow_action_platform": node.get("platform"),
+                    }
+                )
             scheduled = _create_task_row(
                 db,
                 ScheduledTaskCreate(

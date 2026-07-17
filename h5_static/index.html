@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260717-sales-local-video" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260717-workflow-missing-dialog" />
 </head>
 <body>
   <main class="shell">
@@ -810,23 +810,10 @@
           <div class="personal-panel" data-personal-panel="template">
             <div class="personal-template-stack">
               <div class="personal-block">
-                <strong>当前使用模板</strong>
-                <div class="personal-current-template" id="personalCurrentTemplateBox"></div>
-              </div>
-              <div class="personal-block personal-card-accent">
-                <div class="personal-template-editor-head">
-                  <strong id="personalTemplateEditState">新建模板</strong>
-                  <button class="ghost" type="button" id="personalNewTemplateBtn">新建模板</button>
+                <div class="personal-list-page-head">
+                  <strong>已有模板</strong>
+                  <button type="button" id="personalNewTemplateBtn">新建模板</button>
                 </div>
-                <div class="personal-field">
-                  <label for="personalTemplateName">模板名称</label>
-                  <input id="personalTemplateName" type="text" placeholder="模板名称">
-                </div>
-                <div class="personal-list" id="personalTemplateList"></div>
-                <button type="button" id="personalSaveDefaultBtn">保存模板</button>
-              </div>
-              <div class="personal-block">
-                <strong>已有模板</strong>
                 <div class="personal-template-list" id="personalSavedTemplateList"></div>
               </div>
             </div>
@@ -1149,6 +1136,45 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="workflowActionModal" role="dialog" aria-modal="true" aria-labelledby="workflowActionTitle">
+    <button class="employee-modal-backdrop" type="button" id="workflowActionBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover workflow-node-popover">
+      <button class="employee-popover-close" type="button" id="workflowActionClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">动</div>
+        <div class="employee-popover-title">
+          <strong id="workflowActionTitle">添加动作</strong>
+          <span id="workflowActionParent"></span>
+        </div>
+      </div>
+      <form class="work-dispatch-form" id="workflowActionForm">
+        <div class="work-dispatch-fields workflow-node-fields">
+          <div class="field">
+            <label for="workflowActionTime">时间</label>
+            <input id="workflowActionTime" type="time" step="60" value="09:30">
+          </div>
+          <div class="field">
+            <label for="workflowActionType">动作</label>
+            <select id="workflowActionType">
+              <option value="publish">发布</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="workflowActionPlatform">平台</label>
+            <select id="workflowActionPlatform">
+              <option value="douyin">抖音</option>
+              <option value="toutiao">头条</option>
+            </select>
+          </div>
+        </div>
+        <div class="work-dispatch-actions">
+          <button class="ghost" type="button" id="workflowActionCancel">取消</button>
+          <button type="submit" id="workflowActionSave">保存动作</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="employee-modal hidden" id="assetUploadModal" role="dialog" aria-modal="true" aria-labelledby="assetUploadTitle">
     <button class="employee-modal-backdrop" type="button" id="assetUploadBackdrop" aria-label="关闭"></button>
     <div class="employee-popover work-dispatch-popover asset-action-popover">
@@ -1281,6 +1307,30 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="personalTemplateModal" role="dialog" aria-modal="true" aria-labelledby="personalTemplateModalTitle">
+    <button class="employee-modal-backdrop" type="button" id="personalTemplateBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover personal-action-popover personal-template-popover">
+      <button class="employee-popover-close" type="button" id="personalTemplateClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">模</div>
+        <div class="employee-popover-title">
+          <strong id="personalTemplateModalTitle">新建模板</strong>
+        </div>
+      </div>
+      <div class="work-dispatch-form">
+        <div class="personal-field">
+          <label for="personalTemplateName">模板名称</label>
+          <input id="personalTemplateName" type="text" placeholder="模板名称">
+        </div>
+        <div class="personal-list" id="personalTemplateList"></div>
+        <div class="work-dispatch-actions">
+          <button class="ghost" type="button" id="personalTemplateCancel">取消</button>
+          <button type="button" id="personalSaveDefaultBtn">保存模板</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="employee-modal hidden" id="personalMemoryGenerateModal" role="dialog" aria-modal="true" aria-labelledby="personalMemoryGenerateTitle">
     <button class="employee-modal-backdrop" type="button" id="personalMemoryGenerateBackdrop" aria-label="关闭"></button>
     <div class="employee-popover work-dispatch-popover personal-action-popover personal-memory-popover">
@@ -1378,6 +1428,28 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="workflowMissingModal" role="dialog" aria-modal="true" aria-labelledby="workflowMissingTitle">
+    <button class="employee-modal-backdrop" type="button" id="workflowMissingBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover workflow-missing-popover">
+      <button class="employee-popover-close" type="button" id="workflowMissingClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">缺</div>
+        <div class="employee-popover-title">
+          <strong id="workflowMissingTitle">启动前需要补充信息</strong>
+          <span>补齐后再启用销售员工</span>
+        </div>
+      </div>
+      <div class="workflow-missing-body">
+        <p>销售员工暂时无法启动，请先处理下面这些信息：</p>
+        <ol class="workflow-missing-list" id="workflowMissingList"></ol>
+      </div>
+      <div class="work-dispatch-actions">
+        <button class="ghost" type="button" id="workflowMissingCancel">稍后处理</button>
+        <button type="button" id="workflowMissingPrimary">去处理第 1 项</button>
+      </div>
+    </div>
+  </div>
+
   <div class="task-success-dialog hidden" id="customEmployeeDialog" role="dialog" aria-modal="true" aria-labelledby="customEmployeeDialogTitle">
     <button class="task-success-backdrop" type="button" id="customEmployeeBackdrop" aria-label="关闭"></button>
     <div class="task-success-panel detail-modal-panel custom-employee-panel">
@@ -1447,6 +1519,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260717-sales-local-video"></script>
+  <script src="/h5-static/h5-app.js?v=20260717-workflow-missing-dialog"></script>
 </body>
 </html>

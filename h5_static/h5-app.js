@@ -90,6 +90,8 @@
       workflowGrantSelectedUserIds: {},
       workflowSubmitting: false,
       workflowParamNodeId: "",
+      workflowActionParentNodeId: "",
+      workflowActionEditId: "",
       agentUsers: [],
       agentUsersTotal: 0,
       agentUsersOffset: 0,
@@ -777,6 +779,115 @@
     function closeLeadDetailDialog() {
       const modal = $("leadDetailDialog");
       if (modal) modal.classList.add("hidden");
+    }
+
+    function closeWorkflowMissingDialog() {
+      $("workflowMissingModal")?.classList.add("hidden");
+    }
+
+    function workflowMissingTargetForText(text) {
+      const value = String(text || "");
+      if (value.includes("关键词")) return { view: "personalSettings", personalTab: "keywords", label: "去关键词" };
+      if (value.includes("同行账号")) return { view: "personalSettings", personalTab: "competitors", label: "去同行账号" };
+      if (value.includes("记忆文件")) return { view: "personalSettings", personalTab: "memory", label: "去记忆文件" };
+      if (value.includes("当前使用模板") || value.includes("IP日更")) return { view: "personalSettings", personalTab: "template", label: "去模板" };
+      if (value.includes("平台账号") || value.includes("默认抖音")) return { view: "mountedAccounts", mountedTab: "douyin", label: "去平台账号" };
+      if (value.includes("数字人形象")) return { view: "assetLibrary", assetSection: "avatars", label: "去形象分身" };
+      if (value.includes("声音分身")) return { view: "assetLibrary", assetSection: "voices", label: "去声音分身" };
+      if (value.includes("素材库")) return { view: "assetLibrary", assetSection: "uploads", label: "去素材库" };
+      return { view: "personalSettings", personalTab: "profile", label: "去资料调查" };
+    }
+
+    function parseWorkflowMissingMessage(message) {
+      const raw = String(message || "").trim();
+      const shouldUseDialog = raw.includes("销售员工无法启动") || raw.includes("无法启动") || raw.includes("缺少");
+      if (!shouldUseDialog) return [];
+      const startMarker = "缺少：";
+      let body = raw;
+      if (raw.includes(startMarker)) {
+        body = raw.slice(raw.indexOf(startMarker) + startMarker.length).trim();
+      } else if (raw.includes("缺少")) {
+        body = raw.slice(raw.indexOf("缺少")).trim();
+      }
+      const end = body.indexOf("。请");
+      if (end >= 0) body = body.slice(0, end);
+      body = body
+        .replace(/^销售员工无法启动[，,：:\s]*/g, "")
+        .replace(/^无法启动[，,：:\s]*/g, "")
+        .replace(/[。.!！]+$/g, "")
+        .trim();
+      const items = body.split(/[；;]/)
+        .map((item) => item.trim().replace(/^[：:、\s]+|[。.!！\s]+$/g, ""))
+        .filter(Boolean)
+        .map((text) => ({ text, target: workflowMissingTargetForText(text) }));
+      if (items.length) return items;
+      return raw ? [{ text: raw, target: workflowMissingTargetForText(raw) }] : [];
+    }
+
+    function workflowMissingTargetAttrs(target) {
+      target = target || {};
+      return `data-workflow-missing-goto="${escapeHtml(target.view || "")}" data-personal-tab="${escapeHtml(target.personalTab || "")}" data-asset-section="${escapeHtml(target.assetSection || "")}" data-mounted-tab="${escapeHtml(target.mountedTab || "")}"`;
+    }
+
+    function navigateWorkflowMissingTarget(target) {
+      target = target || {};
+      closeWorkflowMissingDialog();
+      if (target.view === "assetLibrary") {
+        state.assetLibrarySection = target.assetSection || "uploads";
+        state.assetLibraryOrigin = "user_upload";
+        switchTab("assetLibrary");
+        return;
+      }
+      if (target.view === "mountedAccounts") {
+        state.mountedAccountTab = target.mountedTab || "douyin";
+        switchTab("mountedAccounts");
+        return;
+      }
+      state.personalSettingsBackTab = "workflow";
+      state.personalSettingsTab = target.personalTab || "profile";
+      switchTab("personalSettings");
+    }
+
+    function workflowMissingTargetFromButton(btn) {
+      return {
+        view: btn && btn.dataset.workflowMissingGoto || "personalSettings",
+        personalTab: btn && btn.dataset.personalTab || "",
+        assetSection: btn && btn.dataset.assetSection || "",
+        mountedTab: btn && btn.dataset.mountedTab || "",
+      };
+    }
+
+    function openWorkflowMissingDialog(message) {
+      const items = parseWorkflowMissingMessage(message);
+      if (!items.length) return false;
+      const list = $("workflowMissingList");
+      if (list) {
+        list.innerHTML = items.map((item) => `<li>
+          <span>${escapeHtml(item.text)}</span>
+          <button class="ghost" type="button" ${workflowMissingTargetAttrs(item.target)}>${escapeHtml(item.target.label || "去处理")}</button>
+        </li>`).join("");
+      }
+      const primary = $("workflowMissingPrimary");
+      if (primary) {
+        primary.hidden = !items[0];
+        primary.textContent = items[0] ? items[0].target.label || "去处理第 1 项" : "去处理第 1 项";
+        const target = items[0] && items[0].target || {};
+        primary.dataset.workflowMissingGoto = target.view || "";
+        primary.dataset.personalTab = target.personalTab || "";
+        primary.dataset.assetSection = target.assetSection || "";
+        primary.dataset.mountedTab = target.mountedTab || "";
+      }
+      $("workflowMissingModal")?.classList.remove("hidden");
+      return true;
+    }
+
+    function handleWorkflowActivateError(err) {
+      const message = String(err && err.message || err || "");
+      if (openWorkflowMissingDialog(message)) {
+        closeCustomEmployeeDialog();
+        return;
+      }
+      toast(message || "启用失败");
     }
 
     function normalizeViewTarget(target, defaultTab = "profile") {
@@ -2438,6 +2549,69 @@
       closeWorkflowNodeModal();
     }
 
+    function openWorkflowActionModal(parentNodeId, actionId = "") {
+      const parentNode = workflowParentNodeById(parentNodeId);
+      if (!parentNode) {
+        toast("未找到上级节点");
+        return;
+      }
+      const action = actionId ? workflowActionById(parentNode, actionId) : null;
+      state.workflowActionParentNodeId = String(parentNode.id || "");
+      state.workflowActionEditId = action ? String(action.id || "") : "";
+      const modal = $("workflowActionModal");
+      if (!modal) return;
+      if ($("workflowActionTitle")) $("workflowActionTitle").textContent = action ? "编辑动作" : "添加动作";
+      if ($("workflowActionParent")) $("workflowActionParent").textContent = parentNode.ability_label || parentNode.note || "上级节点";
+      if ($("workflowActionTime")) $("workflowActionTime").value = action && action.time || parentNode.time || "09:30";
+      if ($("workflowActionType")) $("workflowActionType").value = action && (action.action_type || action.type) || "publish";
+      if ($("workflowActionPlatform")) $("workflowActionPlatform").value = action && action.platform || "douyin";
+      modal.classList.remove("hidden");
+      const first = $("workflowActionTime") || modal.querySelector("input, select");
+      if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 80);
+    }
+
+    function closeWorkflowActionModal() {
+      const modal = $("workflowActionModal");
+      if (modal) modal.classList.add("hidden");
+      state.workflowActionParentNodeId = "";
+      state.workflowActionEditId = "";
+    }
+
+    function saveWorkflowActionNode() {
+      const parentId = String(state.workflowActionParentNodeId || "");
+      const editId = String(state.workflowActionEditId || "");
+      const parentIndex = (state.workflowNodesDraft || []).findIndex((item) => String(item.id || "") === parentId);
+      if (parentIndex < 0) throw new Error("未找到上级节点");
+      const parentNode = state.workflowNodesDraft[parentIndex];
+      const time = (($("workflowActionTime") && $("workflowActionTime").value) || "").trim();
+      if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择动作时间");
+      const actionType = (($("workflowActionType") && $("workflowActionType").value) || "publish").trim();
+      const platform = (($("workflowActionPlatform") && $("workflowActionPlatform").value) || "douyin").trim();
+      if (actionType !== "publish") throw new Error("暂时只支持发布动作");
+      if (!["douyin", "toutiao"].includes(platform)) throw new Error("暂时只支持抖音和头条");
+      const currentChildren = workflowChildActions(parentNode).slice();
+      if (!editId && currentChildren.length) throw new Error("每个节点暂时只能添加一个动作");
+      const existing = editId ? currentChildren.find((item) => String(item && item.id || "") === editId) : null;
+      const nextAction = workflowActionPayload(parentNode, { time, action_type: actionType, platform }, existing);
+      const children = currentChildren
+        .filter((item) => String(item && item.id || "") !== String(nextAction.id || ""))
+        .concat(nextAction)
+        .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      state.workflowNodesDraft[parentIndex] = { ...parentNode, children };
+      closeWorkflowActionModal();
+      renderWorkflow();
+      toast("动作已保存");
+    }
+
+    function removeWorkflowActionNode(parentId, actionId) {
+      const parentIndex = (state.workflowNodesDraft || []).findIndex((item) => String(item.id || "") === String(parentId || ""));
+      if (parentIndex < 0) return;
+      const parentNode = state.workflowNodesDraft[parentIndex];
+      const children = workflowChildActions(parentNode).filter((item) => String(item && item.id || "") !== String(actionId || ""));
+      state.workflowNodesDraft[parentIndex] = { ...parentNode, children };
+      renderWorkflow();
+    }
+
     function buildSalesWorkflowPresetNodes() {
       const nodes = [];
       SALES_WORKFLOW_PRESET.forEach(([time, key, note], index) => {
@@ -2462,6 +2636,85 @@
 
     function cloneWorkflowNodes(nodes) {
       return JSON.parse(JSON.stringify(Array.isArray(nodes) ? nodes : []));
+    }
+
+    function workflowChildActions(node) {
+      if (!node || typeof node !== "object") return [];
+      if (Array.isArray(node.children)) return node.children;
+      if (Array.isArray(node.actions)) return node.actions;
+      return [];
+    }
+
+    function workflowActionPlatformLabel(platform) {
+      const key = String(platform || "").trim().toLowerCase();
+      if (key === "douyin") return "抖音";
+      if (key === "toutiao") return "头条";
+      return platformDisplayName(key) || "平台";
+    }
+
+    function workflowActionLabel(action) {
+      const type = String(action && (action.action_type || action.type) || "publish").trim().toLowerCase();
+      if (type === "publish") return `发布${workflowActionPlatformLabel(action && action.platform)}`;
+      return action && action.ability_label || "动作";
+    }
+
+    function workflowPublishActionPlan(parentNode, action) {
+      const platform = String(action && action.platform || "douyin").trim().toLowerCase();
+      const label = workflowActionPlatformLabel(platform);
+      return {
+        title: `发布${label}`,
+        task_kind: "client_workflow",
+        content: `H5 工作流动作：发布${label}`,
+        payload: {
+          action: "publish_content",
+          params: {
+            source_mode: "parent_latest_run",
+            source_workflow_node_id: String(parentNode && parentNode.id || ""),
+            source_workflow_node_label: String(parentNode && (parentNode.ability_label || parentNode.note) || ""),
+            platform,
+            media_type: "video",
+            ai_publish_copy: true,
+          },
+        },
+      };
+    }
+
+    function workflowActionPayload(parentNode, formData = {}, existing = null) {
+      const platform = String(formData.platform || (existing && existing.platform) || "douyin").trim().toLowerCase();
+      const type = String(formData.action_type || (existing && (existing.action_type || existing.type)) || "publish").trim().toLowerCase();
+      const time = String(formData.time || (existing && existing.time) || "").trim();
+      const id = String(existing && existing.id || `wf_action_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`);
+      const action = {
+        ...(existing || {}),
+        id,
+        time,
+        action_type: type,
+        type,
+        platform,
+        parent_node_id: String(parentNode && parentNode.id || ""),
+        ability_key: "publish_content",
+        ability_label: workflowActionLabel({ action_type: type, platform }),
+        department_id: parentNode && parentNode.department_id || "",
+        department_name: parentNode && parentNode.department_name || "",
+        note: "",
+        is_action_node: true,
+      };
+      if (type === "publish") action.plan = workflowPublishActionPlan(parentNode, action);
+      return action;
+    }
+
+    function workflowActionNodeCount(nodes) {
+      return (Array.isArray(nodes) ? nodes : []).reduce((sum, node) => sum + 1 + workflowChildActions(node).length, 0);
+    }
+
+    function workflowParentNodeById(nodeId) {
+      const id = String(nodeId || "");
+      return (state.workflowNodesDraft || []).find((item) => String(item.id || "") === id) || null;
+    }
+
+    function workflowActionById(parentNode, actionId) {
+      const id = String(actionId || "");
+      return workflowChildActions(parentNode).find((item) => String(item && item.id || "") === id) || null;
     }
 
     function workflowPresetTime(index) {
@@ -2815,7 +3068,7 @@
       if (current && Array.from(sel.options).some((opt) => opt.value === current && !opt.disabled)) sel.value = current;
     }
 
-    function renderWorkflowTimeline() {
+    function renderWorkflowTimelineLegacy() {
       const box = $("workflowTimeline");
       if (!box) return;
       const nodes = (state.workflowNodesDraft || []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
@@ -2842,6 +3095,65 @@
       `).join("");
     }
 
+    function renderWorkflowTimeline() {
+      const box = $("workflowTimeline");
+      if (!box) return;
+      const nodes = (state.workflowNodesDraft || []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      if (!nodes.length) {
+        box.innerHTML = `<div class="workflow-empty">还没有节点</div>`;
+        return;
+      }
+      const selectedKey = workflowSelectedDateKey();
+      const tasks = workflowTasksForDate(selectedKey);
+      const runs = workflowRunsForDate(selectedKey);
+      box.innerHTML = nodes.map((node) => {
+        const children = workflowChildActions(node).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+        const childHtml = children.map((action) => `
+          <div class="workflow-node-card workflow-action-card">
+            <div class="workflow-node-time action">${escapeHtml(action.time || "--:--")}</div>
+            <div class="workflow-node-main">
+              <strong>${escapeHtml(action.ability_label || workflowActionLabel(action))}</strong>
+            </div>
+            <div class="workflow-node-status">
+              ${workflowStatusPillHtml(workflowStatusInfo(action, workflowTaskForNode(action, tasks), workflowLatestRunForNode(action, runs), selectedKey))}
+            </div>
+            <div class="workflow-node-actions">
+              <details class="task-action-menu workflow-node-action-menu">
+                <summary>操作</summary>
+                <div class="task-action-list">
+                  <button type="button" data-workflow-parent-node="${escapeHtml(node.id || "")}" data-workflow-action-node="${escapeHtml(action.id || "")}">编辑动作</button>
+                  <button class="danger-text" type="button" data-workflow-remove-action="${escapeHtml(action.id || "")}" data-workflow-remove-action-parent="${escapeHtml(node.id || "")}">删除</button>
+                </div>
+              </details>
+            </div>
+          </div>
+        `).join("");
+        return `
+          <div class="workflow-node-card">
+            <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>
+            <div class="workflow-node-main">
+              <strong>${escapeHtml(node.ability_label || "任务节点")}</strong>
+            </div>
+            <div class="workflow-node-status">
+              ${workflowStatusPillHtml(workflowStatusInfo(node, workflowTaskForNode(node, tasks), workflowLatestRunForNode(node, runs), selectedKey))}
+            </div>
+            <div class="workflow-node-actions">
+              <details class="task-action-menu workflow-node-action-menu">
+                <summary>操作</summary>
+                <div class="task-action-list">
+                  <button type="button" data-workflow-edit-node="${escapeHtml(node.id || "")}">设置参数</button>
+                  <button type="button" data-workflow-add-action="${escapeHtml(node.id || "")}">添加动作</button>
+                  <button type="button" data-workflow-demo-node="${escapeHtml(node.id || "")}">演示</button>
+                  <button class="danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>
+                </div>
+              </details>
+            </div>
+          </div>
+          ${childHtml}
+        `;
+      }).join("");
+    }
+
     function renderWorkflowTemplates() {
       const list = $("workflowTemplateList");
       if (!list) return;
@@ -2858,7 +3170,7 @@
         const own = tpl.source === "own";
         const system = tpl.source === "system";
         const active = workflowTemplateIsActive(tpl);
-        const nodeCount = Array.isArray(tpl.nodes) ? tpl.nodes.length : 0;
+        const nodeCount = workflowTemplateNodeCount(tpl);
         const baseSourceText = system ? "系统提供 · 全员可见" : (tpl.source === "granted" ? `来自 ${tpl.owner_name || "代理商"}` : `${nodeCount} 个节点`);
         const sourceText = active ? `启用中 · ${baseSourceText}` : baseSourceText;
         const copyBtn = `<button class="ghost" type="button" data-workflow-copy="${escapeHtml(tpl.id)}">复制</button>`;
@@ -2935,7 +3247,7 @@
     }
 
     function workflowTemplateNodeCount(tpl) {
-      return Array.isArray(tpl && tpl.nodes) ? tpl.nodes.length : 0;
+      return workflowActionNodeCount(tpl && tpl.nodes);
     }
 
     function workflowTemplateSourceText(tpl) {
@@ -2949,7 +3261,7 @@
       return (name.slice(0, 1) || "员").toUpperCase();
     }
 
-    function workflowTemplateNodeListHtml(tpl) {
+    function workflowTemplateNodeListHtmlLegacy(tpl) {
       const nodes = (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
       if (!nodes.length) return `<div class="custom-employee-empty">暂无任务节点</div>`;
       return `<div class="custom-employee-node-list">${nodes.map((node, index) => {
@@ -2961,6 +3273,28 @@
           <button class="ghost" type="button" data-custom-employee-demo-node="${escapeHtml(nodeKey)}">演示</button>
           ${node.note ? `<em>${escapeHtml(node.note)}</em>` : ""}
         </div>`;
+      }).join("")}</div>`;
+    }
+
+    function workflowTemplateNodeListHtml(tpl) {
+      const nodes = (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      if (!nodes.length) return `<div class="custom-employee-empty">暂无任务节点</div>`;
+      return `<div class="custom-employee-node-list">${nodes.map((node, index) => {
+        const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
+        const nodeKey = `${tpl.id || ""}@@${node.id || index}`;
+        const childHtml = workflowChildActions(node).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || ""))).map((action) => `
+          <div class="custom-employee-node workflow-template-action-node">
+            <span>${escapeHtml(action.time || "--:--")}</span>
+            <strong>${escapeHtml(action.ability_label || workflowActionLabel(action))}</strong>
+            <em>使用上级输出素材</em>
+          </div>
+        `).join("");
+        return `<div class="custom-employee-node">
+          <span>${escapeHtml(node.time || "--:--")}</span>
+          <strong>${escapeHtml(node.ability_label || plan.title || "任务节点")}</strong>
+          <button class="ghost" type="button" data-custom-employee-demo-node="${escapeHtml(nodeKey)}">演示</button>
+          ${node.note ? `<em>${escapeHtml(node.note)}</em>` : ""}
+        </div>${childHtml}`;
       }).join("")}</div>`;
     }
 
@@ -8158,20 +8492,20 @@
 
     function personalSurveyQuestions() {
       return [
-        { field: "personalProfileName", label: "名字", type: "input" },
-        { field: "personalGender", label: "性别", type: "select", options: [{ value: "female", label: "女" }, { value: "male", label: "男" }] },
-        { field: "personalProfilePhoto", label: "人物照片", type: "asset_image" },
-        { field: "personalBirthEra", label: "出生年代", type: "input" },
-        { field: "personalCurrentProvince", label: "现居省份", type: "input" },
-        { field: "personalCurrentCity", label: "现居城市", type: "input" },
-        { field: "personalHometown", label: "籍贯", type: "input" },
-        { field: "personalRole", label: "你是做什么的", type: "input" },
-        { field: "personalShareTopic", label: "主要分享什么", type: "input" },
-        { field: "personalVideoStyle", label: "视频风格", type: "input" },
-        { field: "personalAfterViewAction", label: "看完后希望用户做什么", type: "input" },
-        { field: "personalBusinessProduct", label: "你在做什么/什么产品", type: "textarea" },
-        { field: "personalTargetCustomer", label: "想卖给谁/哪些年代的人", type: "textarea" },
-        { field: "personalAdvantages", label: "优势/比同行好在哪", type: "textarea" },
+        { field: "personalProfileName", label: "名字", type: "input", placeholder: "填写出镜称呼" },
+        { field: "personalGender", label: "性别", type: "select", placeholder: "选择性别", options: [{ value: "female", label: "女" }, { value: "male", label: "男" }] },
+        { field: "personalProfilePhoto", label: "人物照片", type: "asset_image", placeholder: "上传正脸或半身照" },
+        { field: "personalBirthEra", label: "出生年代", type: "input", placeholder: "如 80后、90后" },
+        { field: "personalCurrentProvince", label: "现居省份", type: "input", placeholder: "填写现居省份" },
+        { field: "personalCurrentCity", label: "现居城市", type: "input", placeholder: "填写现居城市" },
+        { field: "personalHometown", label: "籍贯", type: "input", placeholder: "填写籍贯城市" },
+        { field: "personalRole", label: "你是做什么的", type: "input", placeholder: "写身份或岗位" },
+        { field: "personalShareTopic", label: "主要分享什么", type: "input", placeholder: "写内容方向" },
+        { field: "personalVideoStyle", label: "视频风格", type: "input", placeholder: "写口播/画面风格" },
+        { field: "personalAfterViewAction", label: "看完后希望用户做什么", type: "input", placeholder: "如关注、私信、到店" },
+        { field: "personalBusinessProduct", label: "你在做什么/什么产品", type: "textarea", placeholder: "写产品、服务和卖点" },
+        { field: "personalTargetCustomer", label: "想卖给谁/哪些年代的人", type: "textarea", placeholder: "写目标人群和痛点" },
+        { field: "personalAdvantages", label: "优势/比同行好在哪", type: "textarea", placeholder: "写差异化优势" },
       ];
     }
 
@@ -8208,19 +8542,21 @@
       const value = personalFieldValue(question.field);
       if (question.type === "asset_image") {
         const pickerId = `${question.field}Picker`;
-        host.innerHTML = assetPickerControlHtml(pickerId, { mediaType: "image", output: "asset_id", uploadText: "上传人物照片", selectText: "选择已上传照片" });
+        host.innerHTML = assetPickerControlHtml(pickerId, { mediaType: "image", output: "asset_id", uploadText: "上传人物照片", selectText: "选择已上传照片" })
+          + `<p class="personal-survey-placeholder">${escapeHtml(question.placeholder || "")}</p>`;
         setFieldValue(pickerId, value);
         initAssetPickerControls(host);
         renderAssetPickerControl(pickerId);
         $(`${pickerId}`)?.addEventListener("change", (evt) => setPersonalFieldValue(question.field, evt.target.value || ""));
       } else if (question.type === "select") {
         const options = Array.isArray(question.options) ? question.options : [];
-        host.innerHTML = `<select id="personalSurveyAnswer">${optionHtml("", "请选择")}${options.map((item) => optionHtml(item.value, item.label)).join("")}</select>`;
+        host.innerHTML = `<select id="personalSurveyAnswer">${optionHtml("", question.placeholder || "请选择")}${options.map((item) => optionHtml(item.value, item.label)).join("")}</select>`;
       } else {
         const tag = question.type === "textarea" ? "textarea" : "input";
+        const placeholder = escapeHtml(question.placeholder || "");
         host.innerHTML = tag === "textarea"
-          ? `<textarea id="personalSurveyAnswer" rows="5"></textarea>`
-          : `<input id="personalSurveyAnswer" type="text">`;
+          ? `<textarea id="personalSurveyAnswer" rows="5" placeholder="${placeholder}"></textarea>`
+          : `<input id="personalSurveyAnswer" type="text" placeholder="${placeholder}">`;
       }
       const answer = $("personalSurveyAnswer");
       if (answer) {
@@ -8582,6 +8918,46 @@
       return String((row && row.name) || "").trim() || "未命名模板";
     }
 
+    function activePersonalTemplateId() {
+      const meta = state.personalDefault && state.personalDefault.meta && typeof state.personalDefault.meta === "object" ? state.personalDefault.meta : {};
+      return String(meta.current_template_id || "").trim();
+    }
+
+    function isActivePersonalTemplate(row) {
+      return !!(row && row.id && String(row.id) === activePersonalTemplateId());
+    }
+
+    function sortedPersonalTemplates() {
+      return (Array.isArray(state.personalTemplates) ? state.personalTemplates : []).slice().sort((a, b) => {
+        const activeDelta = Number(isActivePersonalTemplate(b)) - Number(isActivePersonalTemplate(a));
+        if (activeDelta) return activeDelta;
+        return String(personalTemplateName(a)).localeCompare(String(personalTemplateName(b)), "zh-Hans-CN");
+      });
+    }
+
+    function openPersonalTemplateModal() {
+      const modal = $("personalTemplateModal");
+      if (!modal) return;
+      const title = $("personalTemplateModalTitle");
+      if (title) {
+        const current = (state.personalTemplates || []).find((row) => String(row.id || "") === String(state.personalEditingTemplateId || ""));
+        title.textContent = current ? `编辑模板：${personalTemplateName(current)}` : "新建模板";
+      }
+      renderPersonalSettings();
+      modal.classList.remove("hidden");
+      const nameInput = $("personalTemplateName");
+      if (nameInput && typeof nameInput.focus === "function") setTimeout(() => nameInput.focus(), 80);
+    }
+
+    function closePersonalTemplateModal() {
+      $("personalTemplateModal")?.classList.add("hidden");
+    }
+
+    function startNewPersonalTemplate() {
+      resetPersonalTemplateForm();
+      openPersonalTemplateModal();
+    }
+
     function resetPersonalTemplateForm() {
       state.personalEditingTemplateId = "";
       state.personalSelectedKeywords = {};
@@ -8595,7 +8971,7 @@
     function renderPersonalSavedTemplates() {
       const list = $("personalSavedTemplateList");
       if (!list) return;
-      const rows = Array.isArray(state.personalTemplates) ? state.personalTemplates : [];
+      const rows = sortedPersonalTemplates();
       if (!rows.length) {
         list.innerHTML = `<div class="personal-empty">暂无模板</div>`;
         return;
@@ -8604,19 +8980,22 @@
       list.innerHTML = rows.map((row) => {
         const id = String(row.id || "");
         const own = row.source !== "agent";
+        const isDefault = isActivePersonalTemplate(row);
         const keywordCount = Array.isArray(row.keyword_ids) ? row.keyword_ids.length : 0;
         const competitorCount = Array.isArray(row.competitor_ids) ? row.competitor_ids.length : 0;
         const memoryCount = Array.isArray(row.memory_doc_ids) ? row.memory_doc_ids.length : 0;
-        const active = id && id === editingId ? " active" : "";
+        const active = isDefault ? " active default" : (id && id === editingId ? " active" : "");
         const source = row.source === "agent" ? `代理商：${row.owner_name || ""}` : `关键词 ${keywordCount} · 同行 ${competitorCount} · 记忆 ${memoryCount}`;
         const grantBtn = own && canManageAgent() ? `<button type="button" data-agent-dispatch-template="${escapeHtml(id)}">下发</button>` : "";
+        const defaultBadge = isDefault ? `<span class="personal-template-badge">默认使用</span>` : "";
+        const defaultBtn = isDefault ? "" : `<button type="button" data-use-personal-template="${escapeHtml(id)}">设为默认</button>`;
         return `<div class="personal-template-card${active}">
           <div>
-            <strong>${escapeHtml(personalTemplateName(row))}</strong>
+            <strong>${escapeHtml(personalTemplateName(row))}${defaultBadge}</strong>
             <div class="personal-template-meta">${escapeHtml(source)}</div>
           </div>
           <div class="personal-row-actions">
-            <button type="button" data-use-personal-template="${escapeHtml(id)}">设为当前</button>
+            ${defaultBtn}
             <button type="button" data-edit-personal-template="${escapeHtml(id)}">${own ? "编辑" : "套用"}</button>
             ${grantBtn}
           </div>
@@ -8667,7 +9046,6 @@
         const current = (state.personalTemplates || []).find((row) => String(row.id || "") === String(state.personalEditingTemplateId || ""));
         editingLabel.textContent = current ? `编辑：${personalTemplateName(current)}` : "新建模板";
       }
-      renderPersonalCurrentTemplate();
       renderPersonalSavedTemplates();
       renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "", "data-delete-personal-keyword", "删除");
       renderPersonalRows("personalCompetitorList", state.personalCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "", "data-delete-personal-competitor", "删除", "data-sync-personal-competitor");
@@ -8784,7 +9162,7 @@
         state.personalDefault = data.item || {};
         applyPersonalSurvey(state.personalDefault);
         renderPersonalSettings();
-        personalSetStatus("当前使用模板已更新。");
+        personalSetStatus("默认模板已更新。");
       } finally {
         personalSetBusy(btn, false);
       }
@@ -12698,7 +13076,7 @@
       if (activateBtn) {
         activateWorkflowTemplate(activateBtn.dataset.customEmployeeActivate || "")
           .then(closeCustomEmployeeDialog)
-          .catch((err) => toast(err.message || "启用失败"));
+          .catch(handleWorkflowActivateError);
         return;
       }
       if (stopBtn) {
@@ -12727,6 +13105,26 @@
         toast(err.message || "添加失败");
       }
     });
+    $("workflowActionBackdrop")?.addEventListener("click", closeWorkflowActionModal);
+    $("workflowActionClose")?.addEventListener("click", closeWorkflowActionModal);
+    $("workflowActionCancel")?.addEventListener("click", closeWorkflowActionModal);
+    $("workflowActionForm")?.addEventListener("submit", (evt) => {
+      evt.preventDefault();
+      try {
+        saveWorkflowActionNode();
+      } catch (err) {
+        toast(err.message || "保存动作失败");
+      }
+    });
+    $("workflowMissingBackdrop")?.addEventListener("click", closeWorkflowMissingDialog);
+    $("workflowMissingClose")?.addEventListener("click", closeWorkflowMissingDialog);
+    $("workflowMissingCancel")?.addEventListener("click", closeWorkflowMissingDialog);
+    $("workflowMissingPrimary")?.addEventListener("click", (evt) => navigateWorkflowMissingTarget(workflowMissingTargetFromButton(evt.currentTarget)));
+    $("workflowMissingList")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-workflow-missing-goto]");
+      if (!btn) return;
+      navigateWorkflowMissingTarget(workflowMissingTargetFromButton(btn));
+    });
     $("workflowCalendarDays")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-workflow-date]");
       if (!btn) return;
@@ -12749,6 +13147,20 @@
         openTaskDetail(taskBtn.dataset.openTaskDetail || "", "workflow");
         return;
       }
+      const addActionBtn = evt.target.closest("[data-workflow-add-action]");
+      if (addActionBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        openWorkflowActionModal(addActionBtn.dataset.workflowAddAction || "");
+        return;
+      }
+      const removeActionBtn = evt.target.closest("[data-workflow-remove-action]");
+      if (removeActionBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        removeWorkflowActionNode(removeActionBtn.dataset.workflowRemoveActionParent || "", removeActionBtn.dataset.workflowRemoveAction || "");
+        return;
+      }
       const demoBtn = evt.target.closest("[data-workflow-demo-node]");
       if (demoBtn) {
         evt.preventDefault();
@@ -12763,12 +13175,17 @@
         renderWorkflow();
         return;
       }
+      const actionTarget = evt.target.closest("[data-workflow-action-node]");
+      if (actionTarget) {
+        openWorkflowActionModal(actionTarget.dataset.workflowParentNode || "", actionTarget.dataset.workflowActionNode || "");
+        return;
+      }
       const editTarget = evt.target.closest("[data-workflow-edit-node]");
       if (!editTarget) return;
       openWorkflowParamModal(editTarget.dataset.workflowEditNode || "");
     });
     $("workflowSaveTemplateBtn")?.addEventListener("click", () => saveWorkflowTemplate().catch((err) => toast(err.message || "保存失败")));
-    $("workflowActivateBtn")?.addEventListener("click", () => activateWorkflowTemplate().catch((err) => toast(err.message || "启用失败")));
+    $("workflowActivateBtn")?.addEventListener("click", () => activateWorkflowTemplate().catch(handleWorkflowActivateError));
     $("workflowStopBtn")?.addEventListener("click", () => stopWorkflowActive().catch((err) => toast(err.message || "停用失败")));
     $("workflowTemplateListBtn")?.addEventListener("click", () => {
       $("workflowTemplateDrawer")?.classList.toggle("hidden");
@@ -12796,7 +13213,7 @@
         return;
       }
       if (activateBtn) {
-        activateWorkflowTemplate(activateBtn.dataset.workflowActivateTemplate || "").catch((err) => toast(err.message || "启用失败"));
+        activateWorkflowTemplate(activateBtn.dataset.workflowActivateTemplate || "").catch(handleWorkflowActivateError);
         return;
       }
       if (stopBtn) {
@@ -12965,8 +13382,11 @@
     $("personalSurveyPrevBtn")?.addEventListener("click", () => movePersonalSurvey(-1));
     $("personalSurveyNextBtn")?.addEventListener("click", () => movePersonalSurvey(1));
     $("personalSaveProfileBtn")?.addEventListener("click", (evt) => savePersonalProfile(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
-    $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().catch((err) => toast(err.message || "保存失败")));
-    $("personalNewTemplateBtn")?.addEventListener("click", resetPersonalTemplateForm);
+    $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().then(closePersonalTemplateModal).catch((err) => toast(err.message || "保存失败")));
+    $("personalNewTemplateBtn")?.addEventListener("click", startNewPersonalTemplate);
+    $("personalTemplateBackdrop")?.addEventListener("click", closePersonalTemplateModal);
+    $("personalTemplateClose")?.addEventListener("click", closePersonalTemplateModal);
+    $("personalTemplateCancel")?.addEventListener("click", closePersonalTemplateModal);
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
     $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => toast(err.message || "添加失败")));
     $("personalOpenUploadBtn")?.addEventListener("click", openPersonalUploadModal);
@@ -13025,7 +13445,7 @@
           const row = (state.personalTemplates || []).find((item) => String(item.id || "") === String(editTemplateBtn.dataset.editPersonalTemplate || ""));
           if (row) {
             applyPersonalTemplate(row, { editing: row.source !== "agent" });
-            renderPersonalSettings();
+            openPersonalTemplateModal();
           }
           return;
         }
