@@ -2588,7 +2588,7 @@
       const actionType = (($("workflowActionType") && $("workflowActionType").value) || "publish").trim();
       const platform = (($("workflowActionPlatform") && $("workflowActionPlatform").value) || "douyin").trim();
       if (actionType !== "publish") throw new Error("暂时只支持发布动作");
-      if (!["douyin", "toutiao"].includes(platform)) throw new Error("暂时只支持抖音和头条");
+      if (!["douyin", "toutiao", "wechat_moments"].includes(platform)) throw new Error("暂时只支持抖音、头条和朋友圈");
       const currentChildren = workflowChildActions(parentNode).slice();
       if (!editId && currentChildren.length) throw new Error("每个节点暂时只能添加一个动作");
       const existing = editId ? currentChildren.find((item) => String(item && item.id || "") === editId) : null;
@@ -2649,6 +2649,7 @@
       const key = String(platform || "").trim().toLowerCase();
       if (key === "douyin") return "抖音";
       if (key === "toutiao") return "头条";
+      if (key === "wechat_moments") return "朋友圈图文";
       return platformDisplayName(key) || "平台";
     }
 
@@ -2661,6 +2662,7 @@
     function workflowPublishActionPlan(parentNode, action) {
       const platform = String(action && action.platform || "douyin").trim().toLowerCase();
       const label = workflowActionPlatformLabel(platform);
+      const mediaType = platform === "wechat_moments" ? "image_text" : "video";
       return {
         title: `发布${label}`,
         task_kind: "client_workflow",
@@ -2672,7 +2674,7 @@
             source_workflow_node_id: String(parentNode && parentNode.id || ""),
             source_workflow_node_label: String(parentNode && (parentNode.ability_label || parentNode.note) || ""),
             platform,
-            media_type: "video",
+            media_type: mediaType,
             ai_publish_copy: true,
           },
         },
@@ -6099,12 +6101,15 @@
       }).join("")}</div>`;
     }
 
-    function momentRecordHtml(rec, idx, imageBusy) {
+    function momentRecordHtml(rec, idx, imageBusy, runId = "") {
       const recordId = String(rec.record_id || "").trim();
       const title = String(rec.title || `朋友圈文案 ${idx + 1}`).trim();
       const body = String(rec.body || rec.content || "").trim();
       const prompts = recordImagePrompts(rec);
       const images = recordImages(rec);
+      const firstImage = images[0] || {};
+      const firstImageUrl = String(firstImage.image_url || firstImage.url || "").trim();
+      const firstImageAssetId = String(firstImage.image_asset_id || firstImage.asset_id || "").trim();
       const disabled = recordId ? "" : " disabled";
       const memoryDocIds = Array.isArray(rec.memory_doc_ids) ? rec.memory_doc_ids.map((id) => String(id || "").trim()).filter(Boolean).join(",") : "";
       return `<div class="moment-item" data-moment-record="${escapeHtml(recordId)}" data-moment-memory-doc-ids="${escapeHtml(memoryDocIds)}">
@@ -6120,6 +6125,7 @@
             ${recordId ? (imageBusy ? "<span>图片生成中，暂不可重复下发。</span>" : "<span>已选择后可复制，也可生成图片。</span>") : "<span>缺少 record_id，无法回写图片</span>"}
           </div>
           <div class="task-detail-moments-copy">${escapeHtml(body || "暂无正文")}</div>
+          ${runId ? `<div class="moment-record-actions"><button type="button" data-publish-moment-record="1" data-publish-run="${escapeHtml(runId)}" data-moment-title="${escapeHtml(title)}" data-moment-body="${escapeHtml(body)}" data-moment-asset-id="${escapeHtml(firstImageAssetId)}" data-moment-url="${escapeHtml(firstImageUrl)}">发布到朋友圈</button></div>` : ""}
           <div class="task-detail-prompts">
             ${prompts.length ? prompts.map((p, pIdx) => `<label><input type="checkbox" data-moment-prompt="${escapeHtml(recordId)}" value="${escapeHtml(pIdx)}" checked>配图 ${escapeHtml(pIdx + 1)}：${escapeHtml(p)}</label>`).join("") : "<span>暂无配图提示词，将根据正文生成。</span>"}
           </div>
@@ -6409,7 +6415,7 @@
                 <button type="button" data-generate-selected-moment-images="1"${imageBusy ? " disabled" : ""}>${imageBusy ? "图片生成中" : "生成选中图片"}</button>
                 <span class="moment-image-status">${escapeHtml(imageStateText)}</span>
               </div>
-              ${records.map((rec, idx) => momentRecordHtml(rec, idx, imageBusy)).join("")}
+              ${records.map((rec, idx) => momentRecordHtml(rec, idx, imageBusy, run && run.id || "")).join("")}
             </div>`;
           }
           return `<div class="task-detail-record" data-copy-group="${escapeHtml(group.task || "")}">
@@ -8220,6 +8226,7 @@
         douyin: "抖音",
         xiaohongshu: "小红书",
         toutiao: "今日头条",
+        wechat_moments: "微信朋友圈",
         kuaishou: "快手",
         bilibili: "B站",
       }[String(platform || "").trim()] || platform || "-";
@@ -8267,6 +8274,14 @@
       return `${row.is_default ? "默认 · " : ""}${platform} - ${nickname}${device}`;
     }
 
+    function publishPlatformOrder(platform) {
+      const key = String(platform || "").trim();
+      if (key === "wechat_moments") return 90;
+      if (key === "douyin") return 10;
+      if (key === "toutiao") return 20;
+      return 50;
+    }
+
     function fillPublishPlatformSelect() {
       const sel = $("taskPublishPlatform");
       if (!sel) return;
@@ -8279,7 +8294,9 @@
         if (!byPlatform.has(platform)) byPlatform.set(platform, row.platform_name || platformDisplayName(platform));
       });
       sel.innerHTML = optionHtml("", "不发布，仅生成记录")
-        + Array.from(byPlatform.entries()).map(([platform, label]) => optionHtml(platform, label)).join("");
+        + Array.from(byPlatform.entries())
+          .sort((a, b) => publishPlatformOrder(a[0]) - publishPlatformOrder(b[0]))
+          .map(([platform, label]) => optionHtml(platform, label)).join("");
       if (current && byPlatform.has(current)) sel.value = current;
       fillPublishAccountSelect();
     }
@@ -8298,11 +8315,26 @@
       if (current && rows.some((row) => publishAccountSelectId(row) === current)) sel.value = current;
     }
 
+    function findPublishAccountForDraft(draft = {}, platform = "") {
+      const rows = state.publishAccounts || [];
+      const draftPlatform = String(platform || draft.platform || "").trim();
+      const draftAccountId = String(draft.account_id || "").trim();
+      const draftInstallationId = String(draft.installation_id || "").trim();
+      return rows.find((row) => {
+        const rowPlatform = String(row && row.platform || "").trim();
+        const rowInstallationId = String(row && row.installation_id || "").trim();
+        if (draftPlatform && rowPlatform !== draftPlatform) return false;
+        if (draftInstallationId && rowInstallationId && rowInstallationId !== draftInstallationId) return false;
+        if (draftAccountId && String(publishAccountLocalId(row)) === draftAccountId) return true;
+        return !!(draftInstallationId && rowInstallationId === draftInstallationId && draftPlatform && rowPlatform === draftPlatform);
+      }) || null;
+    }
+
     function fillPublishRunPlatformSelect() {
       const sel = $("publishRunPlatform");
       if (!sel) return;
       const draft = state.publishRunDraft || {};
-      const draftAccount = draft.account_id ? (state.publishAccounts || []).find((row) => String(publishAccountLocalId(row)) === String(draft.account_id)) : null;
+      const draftAccount = findPublishAccountForDraft(draft);
       const preferred = defaultPublishAccount();
       const current = sel.value || draft.platform || (draftAccount && draftAccount.platform) || (preferred && preferred.platform) || "";
       const byPlatform = new Map();
@@ -8312,7 +8344,9 @@
         if (!byPlatform.has(platform)) byPlatform.set(platform, row.platform_name || platformDisplayName(platform));
       });
       sel.innerHTML = byPlatform.size
-        ? Array.from(byPlatform.entries()).map(([platform, label]) => optionHtml(platform, label)).join("")
+        ? Array.from(byPlatform.entries())
+          .sort((a, b) => publishPlatformOrder(a[0]) - publishPlatformOrder(b[0]))
+          .map(([platform, label]) => optionHtml(platform, label)).join("")
         : optionHtml("", "暂无账号");
       if (current && byPlatform.has(current)) sel.value = current;
       else if (byPlatform.size) sel.value = Array.from(byPlatform.keys())[0];
@@ -8327,12 +8361,17 @@
       const rows = (state.publishAccounts || []).filter((row) => !platform || row.platform === platform);
       const preferred = defaultPublishAccount();
       const preferredId = preferred && (!platform || preferred.platform === platform) ? publishAccountSelectId(preferred) : "";
-      const current = sel.value || String(draft.account_id || "") || preferredId;
+      const draftAccount = findPublishAccountForDraft(draft, platform);
+      const draftSelectId = draftAccount ? publishAccountSelectId(draftAccount) : "";
+      const current = sel.value || draftSelectId || preferredId;
       sel.innerHTML = rows.length
         ? optionHtml("", "请选择账号") + rows.map((row) => optionHtml(publishAccountSelectId(row), publishAccountOptionLabel(row))).join("")
         : optionHtml("", "暂无账号");
       if (current && rows.some((row) => publishAccountSelectId(row) === String(current))) {
         sel.value = String(current);
+      } else if (draft.installation_id) {
+        const hit = rows.find((row) => String(row.installation_id || "") === String(draft.installation_id || ""));
+        if (hit) sel.value = publishAccountSelectId(hit);
       } else if (draft.account_nickname) {
         const hit = rows.find((row) => String(row.nickname || "") === String(draft.account_nickname || ""));
         if (hit) sel.value = publishAccountSelectId(hit);
@@ -8352,7 +8391,9 @@
       }
       state.publishAccountsLoading = true;
       try {
-        const data = await api("/api/scheduled-tasks/publish/accounts");
+        const installationId = currentInstallationId();
+        const query = installationId ? `?installation_id=${encodeURIComponent(installationId)}` : "";
+        const data = await api(`/api/scheduled-tasks/publish/accounts${query}`);
         state.publishAccounts = applyPublishAccountDefaults(data.accounts);
         state.publishAccountsLoaded = true;
       } catch (err) {
@@ -12264,7 +12305,7 @@
       el.value = value == null ? "" : String(value);
     }
 
-    async function openPublishRunModal(runId, mediaIndex = -1) {
+    async function openPublishRunModal(runId, mediaIndex = -1, preferredPlatform = "") {
       let row = findRunById(runId);
       if (!row) {
         try {
@@ -12281,14 +12322,60 @@
         return;
       }
       state.publishRunDraft = buildPublishRunDraft(row, Number(mediaIndex));
+      if (preferredPlatform) state.publishRunDraft.platform = String(preferredPlatform || "").trim();
+      if (!state.publishRunDraft.installation_id) state.publishRunDraft.installation_id = currentInstallationId();
       setPublishRunValue("publishRunMaterial", state.publishRunDraft.asset_id || state.publishRunDraft.url || state.publishRunDraft.source_url || "");
       setPublishRunValue("publishRunTitleInput", state.publishRunDraft.title || "");
       setPublishRunValue("publishRunDescription", state.publishRunDraft.description || "");
-      setPublishRunValue("publishRunMediaType", state.publishRunDraft.media_type || "video");
+      const draftMediaType = state.publishRunDraft.media_type || "video";
+      const hasDraftMaterial = !!(state.publishRunDraft.asset_id || state.publishRunDraft.url || state.publishRunDraft.source_url);
+      setPublishRunValue("publishRunMediaType", state.publishRunDraft.platform === "wechat_moments" && (!hasDraftMaterial || draftMediaType !== "video") ? "image_text" : draftMediaType);
       setPublishRunValue("publishRunTags", state.publishRunDraft.tags || "");
       setPublishRunValue("publishRunPlatform", "");
       setPublishRunValue("publishRunAccount", "");
       if ($("publishRunAiCopy")) $("publishRunAiCopy").checked = !!state.publishRunDraft.ai_publish_copy;
+      $("publishRunModal")?.classList.remove("hidden");
+      await loadPublishAccounts();
+    }
+
+    async function openMomentRecordPublishModal(btn) {
+      if (!btn) return;
+      const runId = btn.dataset.publishRun || "";
+      if (!runId) {
+        toast("缺少执行记录 ID");
+        return;
+      }
+      const assetId = String(btn.dataset.momentAssetId || "").trim();
+      const url = String(btn.dataset.momentUrl || "").trim();
+      const title = String(btn.dataset.momentTitle || "").trim();
+      const body = String(btn.dataset.momentBody || "").trim();
+      if (!assetId && !url && !body && !title) {
+        toast("当前图文没有可发布内容");
+        return;
+      }
+      state.publishRunDraft = {
+        run_id: runId,
+        platform: "wechat_moments",
+        platform_name: "微信朋友圈",
+        account_id: "pc-wechat-default",
+        account_nickname: "本机微信",
+        installation_id: currentInstallationId(),
+        asset_id: assetId,
+        url,
+        source_url: url,
+        title,
+        description: body,
+        media_type: assetId || url ? "image_text" : "image_text",
+        ai_publish_copy: false,
+      };
+      setPublishRunValue("publishRunMaterial", assetId || url || "");
+      setPublishRunValue("publishRunTitleInput", title || "");
+      setPublishRunValue("publishRunDescription", body || "");
+      setPublishRunValue("publishRunMediaType", "image_text");
+      setPublishRunValue("publishRunTags", "");
+      setPublishRunValue("publishRunPlatform", "");
+      setPublishRunValue("publishRunAccount", "");
+      if ($("publishRunAiCopy")) $("publishRunAiCopy").checked = false;
       $("publishRunModal")?.classList.remove("hidden");
       await loadPublishAccounts();
     }
@@ -12305,8 +12392,22 @@
       const runId = draft.run_id || "";
       const account = selectedPublishRunAccount();
       const platform = $("publishRunPlatform") ? $("publishRunPlatform").value : "";
-      if (!draft.asset_id) {
+      const materialInput = $("publishRunMaterial") ? $("publishRunMaterial").value.trim() : "";
+      let assetId = String(draft.asset_id || "").trim();
+      let sourceUrl = String(draft.source_url || draft.url || "").trim();
+      if (materialInput) {
+        if (/^https?:\/\//i.test(materialInput)) sourceUrl = materialInput;
+        else assetId = materialInput;
+      }
+      const description = $("publishRunDescription") ? $("publishRunDescription").value.trim() : "";
+      const title = $("publishRunTitleInput") ? $("publishRunTitleInput").value.trim() : "";
+      const isWechatMoments = String(platform || (account && account.platform) || "").trim().toLowerCase() === "wechat_moments";
+      if (!assetId && !isWechatMoments) {
         toast("当前素材还没有入库，不能直接发布");
+        return;
+      }
+      if (isWechatMoments && !assetId && !sourceUrl && !description && !title) {
+        toast("朋友圈发布需要正文或素材");
         return;
       }
       if (!account) {
@@ -12315,16 +12416,16 @@
       }
       const body = {
         ...draft,
-        asset_id: String(draft.asset_id || "").trim(),
-        source_url: String(draft.source_url || draft.url || "").trim(),
+        asset_id: assetId,
+        source_url: sourceUrl,
         media_type: $("publishRunMediaType") ? $("publishRunMediaType").value : (draft.media_type || "video"),
         platform: platform || account.platform || "",
         platform_name: account.platform_name || platformDisplayName(platform || account.platform),
         account_id: publishAccountLocalId(account),
         account_nickname: account.nickname || "",
         installation_id: account.installation_id || currentInstallationId(),
-        title: $("publishRunTitleInput") ? $("publishRunTitleInput").value.trim() : "",
-        description: $("publishRunDescription") ? $("publishRunDescription").value.trim() : "",
+        title,
+        description,
         tags: $("publishRunTags") ? $("publishRunTags").value.trim() : "",
         ai_publish_copy: !!($("publishRunAiCopy") && $("publishRunAiCopy").checked),
         status: "ready",
@@ -12673,9 +12774,14 @@
       }).filter(Boolean);
     }
 
-    function runMediaPublishButton(row, index) {
+    function runMediaPublishButton(row, index, mediaType = "") {
       if (!row || !row.id) return "";
-      return `<button type="button" data-open-publish-run="${escapeHtml(row.id)}" data-publish-media-index="${escapeHtml(index)}">发布</button>`;
+      const buttons = [`<button type="button" data-open-publish-run="${escapeHtml(row.id)}" data-publish-media-index="${escapeHtml(index)}">发布</button>`];
+      const mt = String(mediaType || "").trim().toLowerCase();
+      if (mt === "image" || mt === "video") {
+        buttons.push(`<button type="button" data-open-publish-run="${escapeHtml(row.id)}" data-publish-media-index="${escapeHtml(index)}" data-publish-platform="wechat_moments">发布到朋友圈</button>`);
+      }
+      return buttons.join("");
     }
 
     function renderRunMedia(input, row = null) {
@@ -12684,18 +12790,18 @@
       return `<div class="run-media">${entries.map((entry, index) => {
         const url = String(entry.url || entry.source_url || "").trim();
         if (!url && entry.asset_id) {
-          return `<div class="run-media-item"><div class="hint">素材已入库</div><div class="run-media-actions">${runMediaPublishButton(row, index)}</div></div>`;
+          return `<div class="run-media-item"><div class="hint">素材已入库</div><div class="run-media-actions">${runMediaPublishButton(row, index, entry.media_type)}</div></div>`;
         }
         if (!url) return "";
         const low = url.toLowerCase();
         if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}<div class="run-media-actions">${runMediaPublishButton(row, index)}</div></div>`;
+          return `<div class="run-media-item"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}<div class="run-media-actions">${runMediaPublishButton(row, index, "video")}</div></div>`;
         }
         if (/\.(png|jpe?g|webp|gif)(\?|#|$)/.test(low)) {
           const previewUrl = escapeHtml(mediaProxyUrl(url, "inline", "lobster-image.png"));
-          return `<div class="run-media-item"><a href="${previewUrl}" target="_blank" rel="noopener noreferrer"><img src="${previewUrl}" alt="预览"></a>${mediaActionHtml(url, "下载图片", "lobster-image.png")}<div class="run-media-actions">${runMediaPublishButton(row, index)}</div></div>`;
+          return `<div class="run-media-item"><a href="${previewUrl}" target="_blank" rel="noopener noreferrer"><img src="${previewUrl}" alt="预览"></a>${mediaActionHtml(url, "下载图片", "lobster-image.png")}<div class="run-media-actions">${runMediaPublishButton(row, index, "image")}</div></div>`;
         }
-        return `<div class="run-media-item"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开预览</a>${mediaActionHtml(url, "下载文件", "lobster-media")}<div class="run-media-actions">${runMediaPublishButton(row, index)}</div></div>`;
+        return `<div class="run-media-item"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开预览</a>${mediaActionHtml(url, "下载文件", "lobster-media")}<div class="run-media-actions">${runMediaPublishButton(row, index, entry.media_type)}</div></div>`;
       }).join("")}</div>`;
     }
 
@@ -13746,7 +13852,11 @@
       }
       const openPublishBtn = evt.target.closest("[data-open-publish-run]");
       if (openPublishBtn) {
-        openPublishRunModal(openPublishBtn.dataset.openPublishRun || "", parseInt(openPublishBtn.dataset.publishMediaIndex || "-1", 10));
+        openPublishRunModal(
+          openPublishBtn.dataset.openPublishRun || "",
+          parseInt(openPublishBtn.dataset.publishMediaIndex || "-1", 10),
+          openPublishBtn.dataset.publishPlatform || "",
+        );
         return;
       }
       const copyBtn = evt.target.closest("[data-copy-media]");
@@ -13820,6 +13930,11 @@
         generateSelectedMomentImages(genBtn);
         return;
       }
+      const publishMomentBtn = evt.target.closest("[data-publish-moment-record]");
+      if (publishMomentBtn) {
+        openMomentRecordPublishModal(publishMomentBtn).catch((err) => toast(err.message || "打开发布窗口失败"));
+        return;
+      }
       const publishBtn = evt.target.closest("[data-publish-run]");
       if (publishBtn) {
         openPublishRunModal(publishBtn.dataset.publishRun || "");
@@ -13827,7 +13942,11 @@
       }
       const openPublishBtn = evt.target.closest("[data-open-publish-run]");
       if (openPublishBtn) {
-        openPublishRunModal(openPublishBtn.dataset.openPublishRun || "", parseInt(openPublishBtn.dataset.publishMediaIndex || "-1", 10));
+        openPublishRunModal(
+          openPublishBtn.dataset.openPublishRun || "",
+          parseInt(openPublishBtn.dataset.publishMediaIndex || "-1", 10),
+          openPublishBtn.dataset.publishPlatform || "",
+        );
         return;
       }
       const copyBtn = evt.target.closest("[data-copy-media]");

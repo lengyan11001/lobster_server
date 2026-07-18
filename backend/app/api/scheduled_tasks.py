@@ -66,6 +66,9 @@ _PUBLISH_PENDING_EMPTY_CACHE_SECONDS = 20.0
 _pending_empty_cache: Dict[str, float] = {}
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "\u4e2a\u4eba\u9ed8\u8ba4\u914d\u7f6e"
 _LOCAL_BESTSELLER_ACTIONS = {"local_bestseller_plan", "local_bestseller_scene_batch", "local_bestseller_daily_video"}
+_WECHAT_MOMENTS_PLATFORM = "wechat_moments"
+_WECHAT_MOMENTS_ACCOUNT_ID = "pc-wechat-default"
+_WECHAT_MOMENTS_PLATFORM_NAME = "微信朋友圈"
 
 
 def _server_side_timeout_seconds(task_kind: str) -> float:
@@ -927,6 +930,27 @@ def _publish_account_id_value(value: Any) -> Any:
     return text
 
 
+def _publish_draft_platform(draft: Dict[str, Any]) -> str:
+    return str((draft or {}).get("platform") or "").strip().lower()
+
+
+def _publish_draft_is_wechat_moments(draft: Dict[str, Any]) -> bool:
+    return _publish_draft_platform(draft) in {_WECHAT_MOMENTS_PLATFORM, "wechat", "moments"}
+
+
+def _publish_draft_has_moments_content(draft: Dict[str, Any]) -> bool:
+    if str((draft or {}).get("asset_id") or "").strip():
+        return True
+    if str((draft or {}).get("source_url") or (draft or {}).get("url") or "").strip():
+        return True
+    text_parts = [
+        str((draft or {}).get("description") or "").strip(),
+        str((draft or {}).get("title") or "").strip(),
+        str((draft or {}).get("content") or "").strip(),
+    ]
+    return any(text_parts)
+
+
 def _reported_publish_accounts_from_devices(
     db: Session,
     user_id: int,
@@ -974,6 +998,43 @@ def _reported_publish_accounts_from_devices(
                     "is_origin_slot": bool(item.get("is_origin_slot")) if item.get("is_origin_slot") is not None else False,
                 }
             )
+    return out
+
+
+def _reported_wechat_moments_accounts_from_devices(
+    db: Session,
+    user_id: int,
+    *,
+    installation_id: str = "",
+) -> List[Dict[str, Any]]:
+    now = datetime.utcnow()
+    query = db.query(H5ChatDevicePresence).filter(H5ChatDevicePresence.user_id == user_id)
+    if installation_id:
+        query = query.filter(H5ChatDevicePresence.installation_id == installation_id)
+    devices = query.order_by(H5ChatDevicePresence.last_seen_at.desc()).limit(30).all()
+    out: List[Dict[str, Any]] = []
+    for device in devices:
+        age = (now - device.last_seen_at).total_seconds() if device.last_seen_at else 999999
+        if age > 90:
+            continue
+        select_id = f"{device.installation_id}:{_WECHAT_MOMENTS_PLATFORM}:{_WECHAT_MOMENTS_ACCOUNT_ID}"
+        out.append(
+            {
+                "id": select_id,
+                "select_id": select_id,
+                "account_id": _WECHAT_MOMENTS_ACCOUNT_ID,
+                "platform": _WECHAT_MOMENTS_PLATFORM,
+                "platform_name": _WECHAT_MOMENTS_PLATFORM_NAME,
+                "nickname": "本机微信",
+                "status": "online",
+                "installation_id": device.installation_id,
+                "device_name": device.display_name or device.installation_id,
+                "device_online": True,
+                "source": "pc_wechat",
+                "managed_by": "",
+                "is_origin_slot": False,
+            }
+        )
     return out
 
 
@@ -1700,6 +1761,11 @@ def list_h5_scheduled_publish_accounts(
         owner_user.id,
         installation_id=(installation_id or "").strip(),
     )
+    wechat_moments_accounts = _reported_wechat_moments_accounts_from_devices(
+        db,
+        owner_user.id,
+        installation_id=(installation_id or "").strip(),
+    )
     rows = (
         db.query(PublishAccount)
         .filter(PublishAccount.user_id == owner_user.id)
@@ -1724,8 +1790,9 @@ def list_h5_scheduled_publish_accounts(
     ]
     return {
         "ok": True,
-        "accounts": device_accounts + server_accounts,
-        "platforms": [{"id": key, "name": value["name"]} for key, value in SUPPORTED_PLATFORMS.items()],
+        "accounts": wechat_moments_accounts + device_accounts + server_accounts,
+        "platforms": [{"id": _WECHAT_MOMENTS_PLATFORM, "name": _WECHAT_MOMENTS_PLATFORM_NAME}]
+        + [{"id": key, "name": value["name"]} for key, value in SUPPORTED_PLATFORMS.items()],
     }
 
 
@@ -1981,7 +2048,16 @@ def request_scheduled_task_publish(
         draft.update({k: v for k, v in incoming.items() if v is not None})
     if not draft:
         raise HTTPException(status_code=400, detail="该记录没有可发布草稿")
-    if not str(draft.get("asset_id") or "").strip():
+    is_wechat_moments = _publish_draft_is_wechat_moments(draft)
+    if is_wechat_moments:
+        draft["platform"] = _WECHAT_MOMENTS_PLATFORM
+        draft["platform_name"] = str(draft.get("platform_name") or _WECHAT_MOMENTS_PLATFORM_NAME).strip()
+        draft["account_id"] = str(draft.get("account_id") or _WECHAT_MOMENTS_ACCOUNT_ID).strip()
+        draft["account_nickname"] = str(draft.get("account_nickname") or "本机微信").strip()
+        draft["media_type"] = str(draft.get("media_type") or "image_text").strip()
+        if not _publish_draft_has_moments_content(draft):
+            raise HTTPException(status_code=400, detail="朋友圈发布缺少正文或素材")
+    elif not str(draft.get("asset_id") or "").strip():
         raise HTTPException(status_code=400, detail="发布草稿缺少素材 asset_id")
     if not str(draft.get("account_id") or "").strip() and not str(draft.get("account_nickname") or "").strip():
         raise HTTPException(status_code=400, detail="发布草稿缺少发布账号")

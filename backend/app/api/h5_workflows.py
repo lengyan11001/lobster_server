@@ -43,7 +43,7 @@ _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 _IP_DAILY_DEFAULT_TASKS = ["industry_hot_oral", "professional_ip_oral", "moments_candidate"]
 _DEVICE_ONLINE_TTL_SECONDS = 120
-_WORKFLOW_ACTION_PLATFORMS = {"douyin": "抖音", "toutiao": "头条"}
+_WORKFLOW_ACTION_PLATFORMS = {"douyin": "抖音", "toutiao": "头条", "wechat_moments": "朋友圈图文"}
 
 
 class WorkflowTemplateIn(BaseModel):
@@ -99,7 +99,7 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
             raise HTTPException(status_code=400, detail="动作节点暂时只支持发布")
         platform = str(raw.get("platform") or "").strip().lower()
         if platform not in _WORKFLOW_ACTION_PLATFORMS:
-            raise HTTPException(status_code=400, detail="发布动作暂时只支持抖音和头条")
+            raise HTTPException(status_code=400, detail="发布动作暂时只支持抖音、头条和朋友圈")
         label = f"发布{_workflow_platform_label(platform)}"
         plan = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
         payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
@@ -111,7 +111,7 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
                 "source_workflow_node_id": parent_id,
                 "source_workflow_node_label": parent.get("ability_label") or parent.get("note") or "",
                 "platform": platform,
-                "media_type": params.get("media_type") or "video",
+                "media_type": params.get("media_type") or ("image_text" if platform == "wechat_moments" else "video"),
                 "ai_publish_copy": bool(params.get("ai_publish_copy", True)),
             }
         )
@@ -389,7 +389,31 @@ def _prepare_publish_action_nodes(
             params = dict(params)
             platform = _clean_text(child.get("platform") or params.get("platform"), 64).lower()
             if platform not in _WORKFLOW_ACTION_PLATFORMS:
-                missing.append("发布动作：请选择抖音或头条")
+                missing.append("发布动作：请选择抖音、头条或朋友圈")
+                continue
+            if platform == "wechat_moments":
+                current_iid = _clean_text(installation_id, 128)
+                if not _device_is_online(db, owner.id, current_iid):
+                    missing.append("发布朋友圈：当前启用设备不在线")
+                    continue
+                params.update(
+                    {
+                        "platform": "wechat_moments",
+                        "platform_name": _workflow_platform_label("wechat_moments"),
+                        "account_id": "pc-wechat-default",
+                        "account_nickname": "本机微信",
+                        "publish_installation_id": current_iid,
+                        "installation_id": current_iid,
+                        "source_mode": "parent_latest_run",
+                        "source_workflow_node_id": _clean_text(child.get("parent_node_id") or parent.get("id"), 64),
+                        "source_workflow_node_label": _clean_text(parent.get("ability_label") or parent.get("note"), 160),
+                        "media_type": _clean_text(params.get("media_type"), 32) or "image_text",
+                        "ai_publish_copy": bool(params.get("ai_publish_copy", True)),
+                    }
+                )
+                payload["params"] = params
+                plan["payload"] = payload
+                child["plan"] = plan
                 continue
             if not publish_default:
                 missing.append(f"发布{_workflow_platform_label(platform)}：请先在个人中心设置默认发布账号")
