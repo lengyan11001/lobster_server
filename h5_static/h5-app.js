@@ -81,6 +81,8 @@
       workflowCanGrant: false,
       workflowNodesDraft: [],
       workflowEditingTemplateId: "",
+      workflowViewingTemplateId: "",
+      workflowViewingTemplateKey: "",
       workflowActive: null,
       workflowSubUsers: [],
       workflowSubUserTotal: 0,
@@ -2933,6 +2935,8 @@
     function prepareSalesWorkflowDraft() {
       closeWorkflowOverlays();
       state.workflowEditingTemplateId = "";
+      state.workflowViewingTemplateId = "";
+      state.workflowViewingTemplateKey = "system_sales";
       state.workflowNodesDraft = buildSalesWorkflowPresetNodes();
       state.workflowParamNodeId = "";
       if ($("workflowTemplateName")) $("workflowTemplateName").value = "销售24小时员工";
@@ -2942,6 +2946,8 @@
 
     function resetWorkflowDraft() {
       state.workflowEditingTemplateId = "";
+      state.workflowViewingTemplateId = "";
+      state.workflowViewingTemplateKey = "";
       state.workflowNodesDraft = [];
       state.workflowParamNodeId = "";
       if ($("workflowTemplateName")) $("workflowTemplateName").value = "";
@@ -3628,6 +3634,8 @@
     function applyWorkflowTemplate(tpl) {
       if (!tpl) return;
       state.workflowEditingTemplateId = tpl.source === "own" ? String(tpl.id || "") : "";
+      state.workflowViewingTemplateId = tpl.source === "system" ? "" : String(tpl.id || "");
+      state.workflowViewingTemplateKey = tpl.source === "system" ? String(tpl.id || "") : "";
       state.workflowNodesDraft = cloneWorkflowNodes(tpl.nodes);
       if ($("workflowTemplateName")) $("workflowTemplateName").value = tpl.name || "";
       renderWorkflow();
@@ -4608,6 +4616,50 @@
       return new Set(((state.workflowActive && state.workflowActive.scheduled_task_ids) || []).map((id) => String(id || "")).filter(Boolean));
     }
 
+    function workflowVisibleNodes() {
+      const rows = [];
+      (state.workflowNodesDraft || []).forEach((node) => {
+        if (!node) return;
+        rows.push(node);
+        workflowChildActions(node).forEach((child) => {
+          if (child) rows.push(child);
+        });
+      });
+      return rows;
+    }
+
+    function workflowDisplayedHasContext() {
+      return !!(
+        String(state.workflowViewingTemplateId || "").trim()
+        || String(state.workflowViewingTemplateKey || "").trim()
+        || workflowVisibleNodes().length
+      );
+    }
+
+    function workflowNodeContextMatches(ctx, node) {
+      if (!ctx || !node) return false;
+      const nodeId = String(node.id || "");
+      const nodeKey = String(node.ability_key || node.key || "");
+      const nodeTime = String(node.time || "");
+      const ctxNodeId = String(ctx.workflow_node_id || "");
+      if (ctxNodeId) return !!nodeId && ctxNodeId === nodeId;
+      return !!nodeKey && String(ctx.ability_key || "") === nodeKey && (!nodeTime || String(ctx.workflow_node_time || "") === nodeTime);
+    }
+
+    function workflowRecordMatchesDisplayed(row) {
+      if (!row) return false;
+      const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+      const ctx = h5ContextFromPayload(payload);
+      if (!String(row.created_by_role || "") && !(ctx.workflow_template_id || ctx.workflow_template_key || ctx.workflow_node_id)) return false;
+      const viewTemplateId = String(state.workflowViewingTemplateId || "").trim();
+      const viewTemplateKey = String(state.workflowViewingTemplateKey || "").trim();
+      if (viewTemplateId && String(ctx.workflow_template_id || "") === viewTemplateId) return true;
+      if (viewTemplateKey && String(ctx.workflow_template_key || "") === viewTemplateKey) return true;
+      const nodes = workflowVisibleNodes();
+      if (!nodes.length) return false;
+      return nodes.some((node) => workflowNodeContextMatches(ctx, node));
+    }
+
     function workflowRecordMatchesCurrent(row) {
       if (!row) return false;
       const activeIds = workflowActiveTaskIds();
@@ -4624,16 +4676,28 @@
 
     function workflowRunsForDate(dateKey) {
       const key = dateKey || workflowSelectedDateKey();
-      return (state.runs || []).filter((row) => workflowRecordMatchesCurrent(row) && workDateKey(row) === key);
+      const hasDisplayedContext = workflowDisplayedHasContext();
+      return (state.runs || []).filter((row) => {
+        if (workDateKey(row) !== key) return false;
+        if (hasDisplayedContext) return workflowRecordMatchesDisplayed(row);
+        return workflowRecordMatchesCurrent(row);
+      });
     }
 
     function workflowTasksForDate(dateKey) {
       const key = dateKey || workflowSelectedDateKey();
-      return (state.tasks || []).filter((task) => workflowRecordMatchesCurrent(task) && taskScheduledOnDate(task, key));
+      if (key < todayDateKey()) return [];
+      const hasDisplayedContext = workflowDisplayedHasContext();
+      return (state.tasks || []).filter((task) => {
+        if (!taskScheduledOnDate(task, key)) return false;
+        if (hasDisplayedContext) return workflowRecordMatchesDisplayed(task);
+        return workflowRecordMatchesCurrent(task);
+      });
     }
 
     function workflowCurrentTasks() {
-      return (state.tasks || []).filter((task) => workflowRecordMatchesCurrent(task));
+      const hasDisplayedContext = workflowDisplayedHasContext();
+      return (state.tasks || []).filter((task) => hasDisplayedContext ? workflowRecordMatchesDisplayed(task) : workflowRecordMatchesCurrent(task));
     }
 
     function workflowTaskForNodeDateOrCurrent(node, tasks, dateKey) {
@@ -4702,6 +4766,7 @@
       if (run && isActiveRun(run)) return { label: "执行中", kind: "running", runId: run.id || "" };
       if (run && runFailed(run)) return { label: "失败", kind: "failed", runId: run.id || "" };
       if (run && runSucceeded(run)) return { label: "完成", kind: "completed", runId: run.id || "" };
+      if ((dateKey || workflowSelectedDateKey()) < todayDateKey()) return { label: "无执行", kind: "idle" };
       const status = String((activeTask && activeTask.status) || "").toLowerCase();
       if (status === "paused") return { label: "暂停", kind: "paused", taskId: activeTask.id || "" };
       if (status === "cancelled" || status === "canceled") return { label: "已取消", kind: "failed", taskId: activeTask.id || "" };
