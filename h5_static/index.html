@@ -1324,6 +1324,25 @@
           <label for="personalTemplateName">模板名称</label>
           <input id="personalTemplateName" type="text" placeholder="模板名称">
         </div>
+        <div class="personal-field">
+          <label for="personalTemplateLanguage">语种</label>
+          <select id="personalTemplateLanguage">
+            <option value="zh-CN">简体中文</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="th">ไทย</option>
+            <option value="vi">Tiếng Việt</option>
+            <option value="id">Bahasa Indonesia</option>
+            <option value="ms">Bahasa Melayu</option>
+            <option value="es">Español</option>
+            <option value="pt">Português</option>
+            <option value="fr">Français</option>
+            <option value="de">Deutsch</option>
+            <option value="ru">Русский</option>
+            <option value="ar">العربية</option>
+          </select>
+        </div>
         <div class="personal-list" id="personalTemplateList"></div>
         <div class="work-dispatch-actions">
           <button class="ghost" type="button" id="personalTemplateCancel">取消</button>
@@ -1521,6 +1540,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260719-workflow-date-runs"></script>
+  <script src="/h5-static/h5-app.js?v=20260719-ip-template-language"></script>
 </body>
 </html>

@@ -127,6 +127,7 @@
       personalMemoryDocs: [],
       personalTemplates: [],
       personalEditingTemplateId: "",
+      personalTemplateLanguage: "zh-CN",
       personalDefault: null,
       personalUploadFiles: [],
       personalCustomReferenceFile: null,
@@ -2277,7 +2278,7 @@
             template_id: templateId,
             tasks,
             sync_before: workflowParamChecked("workflowParamIpSyncBefore"),
-            requirements: extra ? { common: extra, oral: extra, moments: extra, image: extra } : {},
+            requirements: ipDailyRequirementsWithLanguage(extra, templateId),
             industry_count: 5,
             ip_count: 5,
             moments_count: 20,
@@ -2597,7 +2598,7 @@
             use_personal_default: true,
             tasks: ["industry_hot_oral", "professional_ip_oral", "moments_candidate"],
             sync_before: true,
-            requirements: { common: prompt, oral: prompt, moments: prompt, image: prompt },
+            requirements: ipDailyRequirementsWithLanguage(prompt, 0),
             industry_count: 5,
             ip_count: 5,
             moments_count: 20,
@@ -6166,6 +6167,117 @@
       return `${capabilityName(taskCapabilityId(row) || row.task_kind)} · ${owner ? "员工 " + shortId(owner) : "等待员工领取"}`;
     }
 
+    const IP_TEMPLATE_LANGUAGES = [
+      ["zh-CN", "简体中文"],
+      ["en", "English"],
+      ["ja", "日本語"],
+      ["ko", "한국어"],
+      ["th", "ไทย"],
+      ["vi", "Tiếng Việt"],
+      ["id", "Bahasa Indonesia"],
+      ["ms", "Bahasa Melayu"],
+      ["es", "Español"],
+      ["pt", "Português"],
+      ["fr", "Français"],
+      ["de", "Deutsch"],
+      ["ru", "Русский"],
+      ["ar", "العربية"],
+    ];
+
+    function normalizeIpTemplateLanguage(value) {
+      const raw = String(value || "").trim();
+      const lower = raw.toLowerCase();
+      const aliases = {
+        zh: "zh-CN",
+        "zh-cn": "zh-CN",
+        chinese: "zh-CN",
+        "简体中文": "zh-CN",
+        english: "en",
+        japanese: "ja",
+        korean: "ko",
+        thai: "th",
+        vietnamese: "vi",
+        indonesian: "id",
+        malay: "ms",
+        spanish: "es",
+        portuguese: "pt",
+        french: "fr",
+        german: "de",
+        russian: "ru",
+        arabic: "ar",
+      };
+      const normalized = aliases[lower] || raw;
+      return IP_TEMPLATE_LANGUAGES.some(([code]) => code === normalized) ? normalized : "zh-CN";
+    }
+
+    function ipTemplateLanguageLabel(value) {
+      const lang = normalizeIpTemplateLanguage(value);
+      const row = IP_TEMPLATE_LANGUAGES.find(([code]) => code === lang);
+      return row ? row[1] : "简体中文";
+    }
+
+    function ipTemplateLanguageInstruction(value) {
+      const lang = normalizeIpTemplateLanguage(value);
+      const label = ipTemplateLanguageLabel(lang);
+      return `目标语种：${label}。所有生成内容必须使用${label}输出；标题、口播正文、朋友圈正文、图片提示词中的可见文字都要使用${label}，不要混用其他语言。`;
+    }
+
+    function stripIpTemplateLanguageInstruction(text) {
+      return String(text || "")
+        .split(/\r?\n/)
+        .filter((line) => !/^目标语种[:：]/.test(line.trim()))
+        .join("\n")
+        .trim();
+    }
+
+    function templateLanguageFromRequirements(requirements, meta) {
+      const req = requirements && typeof requirements === "object" ? requirements : {};
+      const m = meta && typeof meta === "object" ? meta : {};
+      return normalizeIpTemplateLanguage(req.language || req.target_language || m.language || m.target_language || "");
+    }
+
+    function ipTemplateLanguage(row) {
+      row = row || {};
+      return templateLanguageFromRequirements(row.requirements, row.meta);
+    }
+
+    function ipTemplateById(id) {
+      const sid = String(id || "").trim();
+      return (state.ipTemplates || []).find((row) => String(row && row.id || "") === sid) || null;
+    }
+
+    function currentPersonalTemplateLanguage() {
+      const sel = $("personalTemplateLanguage");
+      return normalizeIpTemplateLanguage((sel && sel.value) || state.personalTemplateLanguage || "");
+    }
+
+    function setPersonalTemplateLanguage(value) {
+      state.personalTemplateLanguage = normalizeIpTemplateLanguage(value);
+      const sel = $("personalTemplateLanguage");
+      if (sel) sel.value = state.personalTemplateLanguage;
+    }
+
+    function templateRequirementsWithLanguage(requirements, language) {
+      const req = requirements && typeof requirements === "object" ? { ...requirements } : {};
+      const lang = normalizeIpTemplateLanguage(language);
+      const instruction = ipTemplateLanguageInstruction(lang);
+      const existingCommon = stripIpTemplateLanguageInstruction(req.common || "");
+      req.language = lang;
+      req.target_language = ipTemplateLanguageLabel(lang);
+      req.common = [instruction, existingCommon].filter(Boolean).join("\n");
+      return req;
+    }
+
+    function ipDailyRequirementsWithLanguage(extra, templateId) {
+      const tpl = ipTemplateById(templateId);
+      const lang = tpl ? ipTemplateLanguage(tpl) : templateLanguageFromRequirements((state.personalDefault || {}).requirements, (state.personalDefault || {}).meta);
+      const instruction = ipTemplateLanguageInstruction(lang);
+      const text = String(extra || "").trim();
+      return text
+        ? { language: lang, target_language: ipTemplateLanguageLabel(lang), common: instruction, oral: text, moments: text, image: text }
+        : { language: lang, target_language: ipTemplateLanguageLabel(lang), common: instruction };
+    }
+
     function mergeRuns(rows) {
       if (!Array.isArray(rows) || !rows.length) return;
       const byId = new Map((state.runs || []).map((row) => [String(row.id || ""), row]));
@@ -8772,7 +8884,8 @@
         sel.innerHTML = optionHtml("", "请选择模板") + state.ipTemplates.map((row) => {
           const k = Array.isArray(row.keyword_ids) ? row.keyword_ids.length : 0;
           const c = Array.isArray(row.competitor_ids) ? row.competitor_ids.length : 0;
-          return optionHtml(String(row.id), `${row.name || "模板"} · 关键词${k} · 同行${c}`);
+          const lang = ipTemplateLanguageLabel(ipTemplateLanguage(row));
+          return optionHtml(String(row.id), `${row.name || "模板"} · ${lang} · 关键词${k} · 同行${c}`);
         }).join("");
         if (current && state.ipTemplates.some((row) => String(row.id) === current)) sel.value = current;
       });
@@ -9084,6 +9197,7 @@
       (item.competitor_ids || []).forEach((id) => { if (id) state.personalSelectedCompetitors[String(id)] = true; });
       (item.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
       if ($("personalTemplateName")) $("personalTemplateName").value = item.name || "";
+      setPersonalTemplateLanguage(ipTemplateLanguage(item));
       if (item.requirements && typeof item.requirements === "object") fillPersonalSurveyFields(item);
     }
 
@@ -9366,6 +9480,7 @@
 
     function resetPersonalTemplateForm() {
       state.personalEditingTemplateId = "";
+      setPersonalTemplateLanguage("zh-CN");
       state.personalSelectedKeywords = {};
       state.personalSelectedCompetitors = {};
       state.personalSelectedMemories = {};
@@ -9390,15 +9505,16 @@
         const keywordCount = Array.isArray(row.keyword_ids) ? row.keyword_ids.length : 0;
         const competitorCount = Array.isArray(row.competitor_ids) ? row.competitor_ids.length : 0;
         const memoryCount = Array.isArray(row.memory_doc_ids) ? row.memory_doc_ids.length : 0;
+        const languageLabel = ipTemplateLanguageLabel(ipTemplateLanguage(row));
         const active = isDefault ? " active default" : (id && id === editingId ? " active" : "");
-        const source = row.source === "agent" ? `代理商：${row.owner_name || ""}` : `关键词 ${keywordCount} · 同行 ${competitorCount} · 记忆 ${memoryCount}`;
         const grantBtn = own && canManageAgent() ? `<button type="button" data-agent-dispatch-template="${escapeHtml(id)}">下发</button>` : "";
         const defaultBadge = isDefault ? `<span class="personal-template-badge">默认使用</span>` : "";
         const defaultBtn = isDefault ? "" : `<button type="button" data-use-personal-template="${escapeHtml(id)}">设为默认</button>`;
+        const displaySource = row.source === "agent" ? `代理商：${row.owner_name || ""} · ${languageLabel}` : `语种 ${languageLabel} · 关键词 ${keywordCount} · 同行 ${competitorCount} · 记忆 ${memoryCount}`;
         return `<div class="personal-template-card${active}">
           <div>
             <strong>${escapeHtml(personalTemplateName(row))}${defaultBadge}</strong>
-            <div class="personal-template-meta">${escapeHtml(source)}</div>
+            <div class="personal-template-meta">${escapeHtml(displaySource)}</div>
           </div>
           <div class="personal-row-actions">
             ${defaultBtn}
@@ -9416,6 +9532,8 @@
       const keywordCount = Array.isArray(current.keyword_ids) ? current.keyword_ids.length : 0;
       const competitorCount = Array.isArray(current.competitor_ids) ? current.competitor_ids.length : 0;
       const memoryCount = Array.isArray(current.memory_doc_ids) ? current.memory_doc_ids.length : 0;
+      const languageLabel = ipTemplateLanguageLabel(ipTemplateLanguage(current));
+      const currentTemplateMeta = `语种 ${languageLabel} · 关键词 ${keywordCount} · 同行 ${competitorCount} · 记忆 ${memoryCount}`;
       const meta = current.meta && typeof current.meta === "object" ? current.meta : {};
       const sourceId = String(meta.current_template_id || "").trim();
       const sourceTemplate = sourceId ? (state.personalTemplates || []).find((row) => String(row.id || "") === sourceId) : null;
@@ -9423,7 +9541,7 @@
       box.innerHTML = `<div class="personal-template-card active">
         <div>
           <strong>${escapeHtml(title)}</strong>
-          <div class="personal-template-meta">关键词 ${keywordCount} · 同行 ${competitorCount} · 记忆 ${memoryCount}</div>
+          <div class="personal-template-meta">${escapeHtml(currentTemplateMeta)}</div>
         </div>
       </div>`;
     }
@@ -9545,14 +9663,16 @@
       const selectedDocs = state.personalMemoryDocs
         .filter((doc) => memoryIds.includes(personalDocId(doc)))
         .map(personalMemoryDocPayload);
+      const language = currentPersonalTemplateLanguage();
+      const requirements = templateRequirementsWithLanguage(personalSurveyRequirements(), language);
       const payload = {
         name,
         keyword_ids: personalCleanIntIds(state.personalSelectedKeywords),
         competitor_ids: personalCleanIntIds(state.personalSelectedCompetitors),
         memory_doc_ids: memoryIds,
         memory_docs: selectedDocs,
-        requirements: personalSurveyRequirements(),
-        meta: { source: "h5_personal_settings" },
+        requirements,
+        meta: { source: "h5_personal_settings", language, target_language: ipTemplateLanguageLabel(language) },
       };
       const editingId = String(state.personalEditingTemplateId || "").trim();
       const data = await api(editingId ? `/api/ip-content/schedule-templates/${encodeURIComponent(editingId)}` : "/api/ip-content/schedule-templates", {
@@ -9571,6 +9691,7 @@
       if (!row) throw new Error("模板不存在");
       personalSetBusy(btn, true, "保存中...");
       try {
+        const language = ipTemplateLanguage(row);
         const data = await api("/api/ip-content/personal-default", {
           method: "PUT",
           json: {
@@ -9579,8 +9700,8 @@
             competitor_ids: Array.isArray(row.competitor_ids) ? row.competitor_ids : [],
             memory_doc_ids: Array.isArray(row.memory_doc_ids) ? row.memory_doc_ids : [],
             memory_docs: Array.isArray(row.memory_docs) ? row.memory_docs : [],
-            requirements: { ...(((state.personalDefault || {}).requirements && typeof (state.personalDefault || {}).requirements === "object") ? state.personalDefault.requirements : personalSurveyRequirements()), ...((row.requirements && typeof row.requirements === "object") ? row.requirements : {}) },
-            meta: { ...(row.meta || {}), source: "h5_personal_current_template", current_template_id: row.id },
+            requirements: templateRequirementsWithLanguage({ ...(((state.personalDefault || {}).requirements && typeof (state.personalDefault || {}).requirements === "object") ? state.personalDefault.requirements : personalSurveyRequirements()), ...((row.requirements && typeof row.requirements === "object") ? row.requirements : {}) }, language),
+            meta: { ...(row.meta || {}), source: "h5_personal_current_template", current_template_id: row.id, language, target_language: ipTemplateLanguageLabel(language) },
           },
         });
         state.personalDefault = data.item || {};
@@ -10660,7 +10781,7 @@
         const tasks = selectedAbilityIpDailyTasks();
         if (!tasks.length) throw new Error("请选择至少一种生成内容");
         const extra = abilityValue("abilityIpRequirement");
-        const requirements = extra ? { common: extra, oral: extra, moments: extra, image: extra } : {};
+        const requirements = ipDailyRequirementsWithLanguage(extra, templateId);
         return {
           title: node.label || "IP日更文案",
           taskKind: "ip_content_daily",
@@ -11340,7 +11461,7 @@
         const tasks = selectedIpDailyTasks();
         if (!tasks.length) throw new Error("请选择至少一种生成内容");
         const extra = (($("taskIpRequirement") && $("taskIpRequirement").value) || "").trim();
-        const requirements = extra ? { common: extra, oral: extra, moments: extra, image: extra } : {};
+        const requirements = ipDailyRequirementsWithLanguage(extra, templateId);
         return {
           template_id: templateId,
           tasks,
@@ -13926,6 +14047,7 @@
     $("personalTemplateBackdrop")?.addEventListener("click", closePersonalTemplateModal);
     $("personalTemplateClose")?.addEventListener("click", closePersonalTemplateModal);
     $("personalTemplateCancel")?.addEventListener("click", closePersonalTemplateModal);
+    $("personalTemplateLanguage")?.addEventListener("change", (evt) => setPersonalTemplateLanguage(evt.target.value || "zh-CN"));
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
     $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => toast(err.message || "添加失败")));
     $("personalOpenUploadBtn")?.addEventListener("click", openPersonalUploadModal);
