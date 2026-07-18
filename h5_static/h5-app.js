@@ -35,6 +35,7 @@
       workflowSelectedDate: "",
       officePage: 1,
       officePageSize: 4,
+      officeResetEmployeeScrollUntil: 0,
       taskAbility: "goal.video.pipeline",
       taskPanelOpen: false,
       hiflyLoaded: false,
@@ -127,6 +128,7 @@
       personalCustomReferenceFile: null,
       personalGeneratedDocuments: {},
       personalGeneratedDocOrder: [],
+      personalGeneratedSourceImages: [],
       personalSelectedKeywords: {},
       personalSelectedCompetitors: {},
       personalSelectedMemories: {},
@@ -2915,7 +2917,21 @@
       }).filter((tpl) => workflowTemplateNodeCount(tpl) > 0);
     }
 
+    function closeWorkflowOverlays() {
+      [
+        "workflowNodeModal",
+        "workflowActionModal",
+        "workflowParamModal",
+        "workflowMissingModal",
+      ].forEach((id) => $(id)?.classList.add("hidden"));
+      $("workflowTemplateDrawer")?.classList.add("hidden");
+      state.workflowParamNodeId = "";
+      state.workflowActionParentNodeId = "";
+      state.workflowActionEditId = "";
+    }
+
     function prepareSalesWorkflowDraft() {
+      closeWorkflowOverlays();
       state.workflowEditingTemplateId = "";
       state.workflowNodesDraft = buildSalesWorkflowPresetNodes();
       state.workflowParamNodeId = "";
@@ -3234,7 +3250,7 @@
             <span>${escapeHtml(node.department_name || "")}${node.note ? ` · ${escapeHtml(node.note)}` : ""}</span>
           </div>
           <div class="workflow-node-actions">
-            ${workflowStatusPillHtml(workflowStatusInfo(node, workflowTaskForNode(node, tasks), workflowLatestRunForNode(node, runs), selectedKey))}
+            ${workflowStatusPillHtml(workflowStatusInfo(node, workflowTaskForNodeDateOrCurrent(node, tasks, selectedKey), workflowLatestRunForNode(node, runs), selectedKey))}
             <button class="ghost" type="button" data-workflow-demo-node="${escapeHtml(node.id || "")}">演示</button>
             <button class="ghost danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>
           </div>
@@ -3262,7 +3278,7 @@
               <strong>${escapeHtml(action.ability_label || workflowActionLabel(action))}</strong>
             </div>
             <div class="workflow-node-status">
-              ${workflowStatusPillHtml(workflowStatusInfo(action, workflowTaskForNode(action, tasks), workflowLatestRunForNode(action, runs), selectedKey))}
+              ${workflowStatusPillHtml(workflowStatusInfo(action, workflowTaskForNodeDateOrCurrent(action, tasks, selectedKey), workflowLatestRunForNode(action, runs), selectedKey))}
             </div>
             <div class="workflow-node-actions">
               <details class="task-action-menu workflow-node-action-menu">
@@ -3282,7 +3298,7 @@
               <strong>${escapeHtml(node.ability_label || "任务节点")}</strong>
             </div>
             <div class="workflow-node-status">
-              ${workflowStatusPillHtml(workflowStatusInfo(node, workflowTaskForNode(node, tasks), workflowLatestRunForNode(node, runs), selectedKey))}
+              ${workflowStatusPillHtml(workflowStatusInfo(node, workflowTaskForNodeDateOrCurrent(node, tasks, selectedKey), workflowLatestRunForNode(node, runs), selectedKey))}
             </div>
             <div class="workflow-node-actions">
               <details class="task-action-menu workflow-node-action-menu">
@@ -4485,20 +4501,38 @@
         : (Array.isArray(config.daily_times) ? config.daily_times : []);
     }
 
-    function taskScheduledOnDate(task, dateKey) {
-      if (!task) return false;
-      const status = String(task.status || "").toLowerCase();
-      if (status === "deleted" || status === "cancelled" || status === "canceled") return false;
-      const type = String(task.schedule_type || "").toLowerCase();
+    function taskScheduleIsVisible(task) {
+      const status = String((task && task.status) || "").toLowerCase();
+      return !["deleted", "cancelled", "canceled", "paused"].includes(status);
+    }
+
+    function taskOccurrenceRowsForDate(task, dateKey) {
+      if (!task || !taskScheduleIsVisible(task)) return [];
+      const key = dateKey || todayDateKey();
+      const status = String((task && task.status) || "").toLowerCase();
+      const type = String((task && task.schedule_type) || "").toLowerCase();
       if (type === "daily_times") {
-        const createdKey = localDateKey(task.created_at || task.updated_at || new Date());
-        return !createdKey || dateKey >= createdKey;
+        const created = parseDate(task.created_at || task.updated_at);
+        const createdKey = created ? localDateKey(created) : "";
+        if (createdKey && key < createdKey) return [];
+        const times = taskDailyTimes(task);
+        const rows = (times.length ? times : ["09:00"]).map((time) => ({
+          task,
+          occurrenceTime: localDateTimeIso(key, time),
+          occurrenceLabel: time,
+        }));
+        if (!created || key !== createdKey) return rows;
+        const createdMs = created.getTime();
+        return rows.filter((row) => itemTimeMs(row.occurrenceTime) >= createdMs);
       }
-      if (type === "interval") {
-        return localDateKey(task.next_run_at || task.start_at || task.created_at) === dateKey;
-      }
-      if (type === "once" && status === "completed" && taskHasRun(task, state.runs || [])) return false;
-      return localDateKey(task.next_run_at || task.start_at || task.created_at) === dateKey;
+      if (type === "once" && status === "completed" && taskHasRun(task, state.runs || [])) return [];
+      const value = task && (task.next_run_at || task.start_at || task.created_at || task.updated_at);
+      if (localDateKey(value) !== key) return [];
+      return [{ task, occurrenceTime: value, occurrenceLabel: timeLabel(value) }];
+    }
+
+    function taskScheduledOnDate(task, dateKey) {
+      return taskOccurrenceRowsForDate(task, dateKey).length > 0;
     }
 
     function departmentTasksForDate(department, dateKey) {
@@ -4598,6 +4632,17 @@
       return (state.tasks || []).filter((task) => workflowRecordMatchesCurrent(task) && taskScheduledOnDate(task, key));
     }
 
+    function workflowCurrentTasks() {
+      return (state.tasks || []).filter((task) => workflowRecordMatchesCurrent(task));
+    }
+
+    function workflowTaskForNodeDateOrCurrent(node, tasks, dateKey) {
+      const dated = workflowTaskForNode(node, tasks);
+      if (dated) return dated;
+      if ((dateKey || workflowSelectedDateKey()) < todayDateKey()) return null;
+      return workflowTaskForNode(node, workflowCurrentTasks());
+    }
+
     function workflowTemplateNodesForSchedule() {
       const active = state.workflowActive;
       if (active && Array.isArray(active.template_nodes) && active.template_nodes.length) {
@@ -4660,11 +4705,7 @@
       const status = String((activeTask && activeTask.status) || "").toLowerCase();
       if (status === "paused") return { label: "暂停", kind: "paused", taskId: activeTask.id || "" };
       if (status === "cancelled" || status === "canceled") return { label: "已取消", kind: "failed", taskId: activeTask.id || "" };
-      const dueAt = workflowNodeDueAt(item, dateKey);
-      if (state.workflowActive && dueAt && dueAt.getTime() < Date.now()) {
-        return { label: "过期", kind: "overdue", taskId: activeTask && activeTask.id || "" };
-      }
-      if (activeTask) return { label: statusText(activeTask.status) || "待执行", kind: "pending", taskId: activeTask.id || "" };
+      if (activeTask) return { label: taskWorkStatusText(activeTask) || "待执行", kind: "pending", taskId: activeTask.id || "" };
       return state.workflowActive ? { label: "待执行", kind: "pending" } : { label: "未启用", kind: "idle" };
     }
 
@@ -4957,22 +4998,37 @@
     function renderOfficeRecentTasks() {
       const box = $("officeRecentTasks");
       if (!box) return;
-      const runRows = (state.runs || []).map((row) => ({
+      const today = todayDateKey();
+      const todayRuns = (state.runs || []).filter((row) => workDateKey(row) === today);
+      const runTaskIds = new Set(todayRuns.map((row) => String((row && row.task_id) || "")).filter(Boolean));
+      const runRows = todayRuns.map((row) => ({
         kind: "run",
         id: row && row.id,
         title: row && (row.title || "任务"),
-        status: row && row.status,
+        status: statusText(row && row.status),
         time: row && (row.updated_at || row.finished_at || row.created_at),
         sortTime: row && (row.updated_at || row.finished_at || row.created_at),
         text: isActiveRun(row) ? (runProgressText(row) || "执行中") : (row && (row.error || row.result_text || "")),
         active: isActiveRun(row),
       }));
-      const rows = runRows
+      const taskRows = (state.tasks || [])
+        .filter((task) => !runTaskIds.has(String((task && task.id) || "")))
+        .flatMap((task) => taskOccurrenceRowsForDate(task, today).map((occ) => ({
+          kind: "task",
+          id: task && task.id,
+          title: task && (task.title || capabilityName(taskCapabilityId(task) || task.task_kind) || "任务安排"),
+          status: taskWorkStatusText(task),
+          time: occ.occurrenceTime,
+          sortTime: occ.occurrenceTime,
+          text: taskScheduleLabel(task),
+          active: false,
+        })));
+      const rows = [...runRows, ...taskRows]
         .filter((row) => row.id)
         .sort((a, b) => itemTimeMs(b.sortTime, b.time) - itemTimeMs(a.sortTime, a.time))
         .slice(0, 5);
       if (!rows.length) {
-        box.innerHTML = `<div class="office-recent-empty">暂无执行记录</div>`;
+        box.innerHTML = `<div class="office-recent-empty">今天暂无执行和安排</div>`;
         return;
       }
       box.innerHTML = rows.map((row) => {
@@ -4983,7 +5039,7 @@
             <strong>${escapeHtml(row.title || "任务")}</strong>
             <em>${escapeHtml(fmtTime(row.time))}</em>
           </span>
-          <span class="office-recent-status">${escapeHtml(statusText(row.status))}</span>
+          <span class="office-recent-status">${escapeHtml(row.status || "-")}</span>
           ${row.text ? `<small>${escapeHtml(String(row.text).slice(0, 46))}</small>` : ""}
         </button>`;
       }).join("");
@@ -5028,13 +5084,17 @@
       }
       updateBossOfficeStats(onlineCount, workingCount);
       floor.style.minHeight = "";
-      const roleHtml = roles.sort((a, b) => Number(!!b.active) - Number(!!a.active)).map((role, index) => {
+      const roleHtml = roles.map((role, index) => {
         const img = employeeAsset({ installation_id: role.id }, index, "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
+        const activeSystemTemplate = role.active && role.systemTemplateId ? workflowTemplateById(role.systemTemplateId) : null;
+        const systemTargetAttr = role.target ? ` data-system-employee-target="${escapeHtml(role.target)}"` : "";
         const targetAttr = role.target ? ` data-home-target="${escapeHtml(role.target)}"` : "";
+        const templateAttr = "";
         const departmentAttr = !role.target && role.departmentId ? ` data-role-department="${escapeHtml(role.departmentId)}"` : "";
-        const disabledAttr = role.comingSoon ? ' disabled aria-disabled="true"' : "";
-        return `<button class="office-employee-card${role.comingSoon ? " coming-soon" : ""}${role.active ? " active" : ""}" type="button"${targetAttr}${departmentAttr}${disabledAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
+        const locked = role.comingSoon && !activeSystemTemplate;
+        const disabledAttr = locked ? ' disabled aria-disabled="true"' : "";
+        return `<button class="office-employee-card${locked ? " coming-soon" : ""}${role.active ? " active" : ""}" type="button"${systemTargetAttr}${targetAttr}${templateAttr}${departmentAttr}${disabledAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
           <img src="${escapeHtml(img)}" alt="" loading="lazy">
           <span class="office-employee-info">
             <strong>${escapeHtml(role.name || "员工")}</strong>
@@ -5044,6 +5104,11 @@
       }).join("");
       const templateHtml = sortWorkflowTemplatesForDisplay(customEmployees).map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, roles.length + index)).join("");
       floor.innerHTML = roleHtml + templateHtml;
+      if (state.officeResetEmployeeScrollUntil && Date.now() <= state.officeResetEmployeeScrollUntil) {
+        floor.scrollLeft = 0;
+        requestAnimationFrame(() => { floor.scrollLeft = 0; });
+        setTimeout(() => { floor.scrollLeft = 0; }, 80);
+      }
       renderOfficeRecentTasks();
       renderCustomEmployees();
     }
@@ -5928,6 +5993,26 @@
       return "一次性";
     }
 
+    function taskWorkStatusText(task) {
+      const status = String((task && task.status) || "").toLowerCase();
+      if (status === "paused") return "暂停";
+      if (status === "cancelled" || status === "canceled") return "已取消";
+      if (status === "completed") return "完成";
+      if (status === "processing" || status === "running") return "执行中";
+      if (status === "failed") return "失败";
+      if (status === "active") return "已安排";
+      return statusText(status || "pending") || "待执行";
+    }
+
+    function localDateTimeIso(dateKey, timeText) {
+      const parts = String(dateKey || "").split("-").map((item) => Number(item));
+      const timeParts = String(timeText || "00:00").split(":").map((item) => Number(item));
+      if (parts.length !== 3 || parts.some((item) => !Number.isFinite(item))) return "";
+      const hour = Number.isFinite(timeParts[0]) ? timeParts[0] : 0;
+      const minute = Number.isFinite(timeParts[1]) ? timeParts[1] : 0;
+      return new Date(parts[0], parts[1] - 1, parts[2], hour, minute, 0).toISOString();
+    }
+
     function jobStatusText(status) {
       const s = String(status || "").toLowerCase();
       return {
@@ -6144,9 +6229,9 @@
             sortTime: row.next_run_at || row.updated_at || row.created_at,
             createdTime: row.created_at,
             title: row.title || capabilityName(taskCapabilityId(row) || row.task_kind),
-            badge: row.next_run_at ? "待执行" : statusText(row.status),
+            badge: taskWorkStatusText(row),
             meta: `${capabilityName(taskCapabilityId(row) || row.task_kind)} / ${taskScheduleLabel(row)}`,
-            actionTaskId: active ? (row.id || "") : "",
+            actionTaskId: "",
           };
         });
       const items = [...current, ...scheduled, ...workbenchJobs, ...done, ...messages]
@@ -6220,6 +6305,44 @@
       return [];
     }
 
+    function looksLikeReferenceImageUrl(value) {
+      const text = String(value || "").trim();
+      if (!text) return false;
+      if (text.toLowerCase().startsWith("data:image/")) return true;
+      if (!/^https?:\/\//i.test(text)) return false;
+      const path = text.split("#")[0].split("?")[0].toLowerCase();
+      return [".jpg", ".jpeg", ".png", ".webp", ".gif"].some((ext) => path.endsWith(ext));
+    }
+
+    function referenceImageUrlsFromValue(value, limit = 8) {
+      const urls = [];
+      const imageKeys = new Set(["image", "image_url", "image_urls", "images", "reference_image_url", "reference_image_urls", "source_image", "source_images", "public_url", "preview_url", "source_url", "url"]);
+      const add = (raw) => {
+        const text = String(raw || "").trim();
+        if (text && looksLikeReferenceImageUrl(text) && !urls.includes(text)) urls.push(text);
+      };
+      const visit = (raw, hinted = false, depth = 0) => {
+        if (urls.length >= limit || depth > 6 || raw == null) return;
+        if (typeof raw === "string") {
+          if (hinted) add(raw);
+          return;
+        }
+        if (Array.isArray(raw)) {
+          raw.forEach((item) => visit(item, hinted, depth + 1));
+          return;
+        }
+        if (typeof raw === "object") {
+          Object.keys(raw).forEach((key) => {
+            const lower = String(key || "").toLowerCase();
+            const nextHinted = hinted || imageKeys.has(lower) || lower.includes("image");
+            if (nextHinted || lower === "meta" || lower === "source_meta") visit(raw[key], nextHinted, depth + 1);
+          });
+        }
+      };
+      visit(value, true, 0);
+      return urls.slice(0, limit);
+    }
+
     function recordImagePrompts(rec) {
       const prompts = [];
       const add = (value) => {
@@ -6257,7 +6380,8 @@
       const firstImageAssetId = String(firstImage.image_asset_id || firstImage.asset_id || "").trim();
       const disabled = recordId ? "" : " disabled";
       const memoryDocIds = Array.isArray(rec.memory_doc_ids) ? rec.memory_doc_ids.map((id) => String(id || "").trim()).filter(Boolean).join(",") : "";
-      return `<div class="moment-item" data-moment-record="${escapeHtml(recordId)}" data-moment-memory-doc-ids="${escapeHtml(memoryDocIds)}">
+      const referenceImageUrls = referenceImageUrlsFromValue(rec, 8);
+      return `<div class="moment-item" data-moment-record="${escapeHtml(recordId)}" data-moment-memory-doc-ids="${escapeHtml(memoryDocIds)}" data-moment-reference-image-urls="${escapeHtml(JSON.stringify(referenceImageUrls))}">
         <div class="moment-summary-row">
           <label class="summary-check"><input type="checkbox" data-draft-copy-select="1" data-draft-task="moments_candidate" data-moment-select="${escapeHtml(recordId)}"${disabled}>选择</label>
           <button class="moment-summary" type="button" data-toggle-moment="${escapeHtml(recordId || idx)}">
@@ -6835,7 +6959,13 @@
         }).filter(Boolean).slice(0, 3);
         const title = item ? (item.querySelector(".moment-summary span")?.textContent || "").replace(/^\d+\.\s*/, "").trim() : "";
         const memoryDocIds = item ? String(item.dataset.momentMemoryDocIds || "").split(",").map((id) => id.trim()).filter(Boolean) : [];
-        return { recordId, body, prompts, title, memory_doc_ids: memoryDocIds };
+        let referenceImageUrls = [];
+        try {
+          referenceImageUrls = item ? referenceImageUrlsFromValue(JSON.parse(item.dataset.momentReferenceImageUrls || "[]"), 8) : [];
+        } catch (_) {
+          referenceImageUrls = [];
+        }
+        return { recordId, body, prompts, title, memory_doc_ids: memoryDocIds, reference_image_urls: referenceImageUrls };
       }).filter((row) => row.recordId);
     }
 
@@ -7069,6 +7199,7 @@
         return;
       }
       if (key === "workflowNew") {
+        closeWorkflowOverlays();
         resetWorkflowDraft();
         switchTab("workflow");
         return;
@@ -7081,8 +7212,34 @@
       switchTab(key);
     }
 
+    function refreshOfficeSummary() {
+      if (!state.token) {
+        renderOfficeEmployees();
+        return Promise.resolve();
+      }
+      const now = Date.now();
+      if (state.officeSummaryLoading) return state.officeSummaryLoading;
+      if (state.officeSummaryLoadedAt && now - state.officeSummaryLoadedAt < 8000) {
+        renderOfficeEmployees();
+        return Promise.resolve();
+      }
+      state.officeSummaryLoading = Promise.all([
+        loadTasks({ reset: true, limit: 80 }).catch(() => {}),
+        loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}),
+      ]).finally(() => {
+        state.officeSummaryLoadedAt = Date.now();
+        state.officeSummaryLoading = null;
+        if (document.querySelector("#officeView.active")) renderOfficeEmployees();
+      });
+      return state.officeSummaryLoading;
+    }
+
     function switchTab(tab) {
       const key = tab || "office";
+      const previousActiveId = document.querySelector(".view.active")?.id || "";
+      if (key === "office" && previousActiveId && previousActiveId !== "officeView") {
+        state.officeResetEmployeeScrollUntil = Date.now() + 2500;
+      }
       document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
       document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
       const titleMap = {
@@ -7124,6 +7281,7 @@
       if (key === "office") {
         renderOfficeEmployees();
         loadWorkflowTemplates().catch(() => {});
+        refreshOfficeSummary().catch(() => {});
       }
       if (key === "workflow") {
         renderWorkflow();
@@ -8600,6 +8758,17 @@
       return String((doc && (doc.doc_id || doc.id)) || "").trim();
     }
 
+    function personalMemoryDocPayload(doc) {
+      const meta = doc && doc.meta && typeof doc.meta === "object" ? doc.meta : {};
+      return {
+        doc_id: personalDocId(doc),
+        title: doc && (doc.title || doc.filename || ""),
+        content_text: doc && (doc.content_text || doc.content_preview || ""),
+        meta,
+        reference_image_urls: referenceImageUrlsFromValue(doc, 8),
+      };
+    }
+
     const PERSONAL_DOC_TYPES = [
       { key: "brand_product_intro", label: "产品介绍" },
       { key: "product_service_faq", label: "百问百答" },
@@ -9331,7 +9500,7 @@
       const memoryIds = personalCleanStringIds(state.personalSelectedMemories);
       const selectedDocs = state.personalMemoryDocs
         .filter((doc) => memoryIds.includes(personalDocId(doc)))
-        .map((doc) => ({ doc_id: personalDocId(doc), title: doc.title || doc.filename || "", content_text: doc.content_text || doc.content_preview || "" }));
+        .map(personalMemoryDocPayload);
       const payload = {
         name,
         keyword_ids: personalCleanIntIds(state.personalSelectedKeywords),
@@ -9650,7 +9819,7 @@
       const memoryIds = personalUniqueIds([...(Array.isArray(existing.memory_doc_ids) ? existing.memory_doc_ids : []), ...personalCleanStringIds(state.personalSelectedMemories)]);
       const selectedDocs = state.personalMemoryDocs
         .filter((doc) => memoryIds.includes(personalDocId(doc)))
-        .map((doc) => ({ doc_id: personalDocId(doc), title: doc.title || doc.filename || "", content_text: doc.content_text || doc.content_preview || "" }));
+        .map(personalMemoryDocPayload);
       const data = await api("/api/ip-content/personal-default", {
         method: "PUT",
         json: {
@@ -9698,6 +9867,7 @@
       fd.append("doc_types", JSON.stringify(docTypes));
       if (reference) fd.append("custom_reference_file", reference, reference.name || "reference");
       fd.append("reference_doc_ids", "");
+      fd.append("source_doc_ids", sourceDocs.map(personalDocId).filter(Boolean).join(","));
       personalSetBusy(btn, true, "理解中...");
       personalSetStatus("正在理解资料...");
       try {
@@ -9706,6 +9876,7 @@
         if (!resp.ok || data.ok === false) throw new Error(data.detail || data.message || "AI 理解失败");
         state.personalGeneratedDocuments = data.documents || {};
         state.personalGeneratedDocOrder = Array.isArray(data.doc_types) && data.doc_types.length ? data.doc_types : docTypes;
+        state.personalGeneratedSourceImages = Array.isArray(data.source_images) ? data.source_images : [];
         const title = $("personalMemoryTitle");
         if (title && (($("personalSaveMode") && $("personalSaveMode").value) || "new") === "new") title.value = recommendPersonalMemoryTitle(state.personalGeneratedDocOrder, !!reference);
         setPersonalSettingsTab("memory");
@@ -9723,7 +9894,7 @@
         const data = await api("/api/personal-settings/memory-documents/save", {
           method: "POST",
           headers: { "X-Installation-Id": iid },
-          json: { title, notes: "IP人设定位 AI 理解", documents: documents || {} },
+          json: { title, notes: "IP人设定位 AI 理解", documents: documents || {}, source_images: state.personalGeneratedSourceImages || [] },
         });
         const docs = Array.isArray(data.documents) ? data.documents : [];
         docs.forEach((doc) => { const id = personalDocId(doc); if (id) state.personalSelectedMemories[id] = true; });
@@ -9767,6 +9938,7 @@
         docs.forEach((doc) => { const id = personalDocId(doc); if (id) state.personalSelectedMemories[id] = true; });
         state.personalGeneratedDocuments = {};
         state.personalGeneratedDocOrder = [];
+        state.personalGeneratedSourceImages = [];
         renderPersonalGeneratedDocs();
         await refreshPersonalDataPreserveSelection({ memories: true });
         await savePersonalDefaultSilently();
@@ -11830,7 +12002,7 @@
     async function loadTasks(options = {}) {
       const reset = options.reset !== false;
       const append = !!options.append;
-      const pageSize = Math.max(1, Math.min(100, parseInt(options.limit || "10", 10) || 10));
+      const pageSize = Math.max(1, Math.min(200, parseInt(options.limit || "200", 10) || 200));
       const box = $("taskList");
       if (!state.token) return;
       if (reset) {
@@ -13118,6 +13290,11 @@
         switchTab("office");
         return;
       }
+      if (activeId === "workflowView") {
+        closeWorkflowOverlays();
+        switchTab("office");
+        return;
+      }
       if (activeId === "messagesView" && state.lastViewBeforeMessages) {
         const next = state.lastViewBeforeMessages;
         state.lastViewBeforeMessages = "";
@@ -13840,6 +14017,15 @@
       }
     });
     $("employeeFloor").addEventListener("click", (evt) => {
+      const systemEmployeeBtn = evt.target.closest("[data-system-employee-target]");
+      if (systemEmployeeBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        evt.stopImmediatePropagation();
+        const target = String(systemEmployeeBtn.dataset.systemEmployeeTarget || "").trim();
+        openHomeTarget(target, "office");
+        return;
+      }
       const customEmployeeBtn = evt.target.closest("[data-custom-employee-detail]");
       if (customEmployeeBtn) {
         evt.preventDefault();
