@@ -480,11 +480,36 @@
             workQuickKey: "wecom_reply",
           },
           {
-            key: "personal_wechat",
-            label: "个微（私聊+朋友圈评论区）",
+            key: "personal_wechat_group",
+            label: "个人微信",
             mark: "微",
-            description: "围绕个人微信私聊和朋友圈评论区做客户跟进。",
-            comingSoon: true,
+            description: "围绕个人微信私聊、加好友和朋友圈互动做客户跟进。",
+            children: [
+              {
+                key: "native_wechat_poll",
+                label: "个微私信接管",
+                mark: "私",
+                description: "读取个人微信新消息，并按个人记忆自动生成回复。",
+                workQuickKey: "native_wechat_poll",
+                workflowAction: "native_wechat_poll",
+              },
+              {
+                key: "native_wechat_add_friend",
+                label: "个微自动加好友",
+                mark: "加",
+                description: "把目标手机号或微信号加入本机个人微信加好友队列。",
+                workQuickKey: "native_wechat_add_friend",
+                workflowAction: "native_wechat_add_friend",
+              },
+              {
+                key: "native_wechat_moments_engage",
+                label: "朋友圈点赞评论",
+                mark: "圈",
+                description: "对指定联系人 24 小时内朋友圈进行点赞或评论。",
+                workQuickKey: "native_wechat_moments_engage",
+                workflowAction: "native_wechat_moments_engage",
+              },
+            ],
           },
           {
             key: "sales_publish_center",
@@ -647,35 +672,35 @@
     const SALES_WORKFLOW_PRESET = [
       ["06:00", "local_bestseller", "自动创作一条同城爆款视频"],
       ["07:00", "hifly.video.create_by_tts", "自动创作一条数字人口播视频"],
-      ["08:00", "wecom_reply", "私信接管"],
+      ["08:00", "native_wechat_poll", "私信接管"],
       ["08:30", "douyin_leads", "自动养号"],
       ["09:00", "douyin_leads", "视频发布后采集互动线索"],
-      ["09:30", "wecom_reply", "私信接管"],
-      ["09:45", "wecom_reply", "自动加好友"],
+      ["09:30", "native_wechat_poll", "私信接管"],
+      ["09:45", "native_wechat_add_friend", "自动加好友"],
       ["10:00", "ip_content_daily", "朋友圈发布文案准备"],
-      ["10:30", "wecom_reply", "朋友圈点赞评论"],
-      ["11:00", "wecom_reply", "私信接管"],
+      ["10:30", "native_wechat_moments_engage", "朋友圈点赞评论"],
+      ["11:00", "native_wechat_poll", "私信接管"],
       ["11:30", "douyin_leads", "自动养号"],
       ["12:00", "douyin_leads", "关键词抓取精准客户"],
       ["12:30", "douyin_leads", "回复10个精准客户评论"],
       ["13:00", "douyin_leads", "评论上午发布的视频并@精准客户"],
       ["13:30", "douyin_leads", "关注精准客户并评论首条作品"],
-      ["14:00", "wecom_reply", "私信接管"],
+      ["14:00", "native_wechat_poll", "私信接管"],
       ["14:30", "douyin_leads", "抖音私信10个精准客户"],
       ["15:00", "douyin_leads", "抖音私信引流接管"],
       ["15:30", "douyin_leads", "自动养号"],
-      ["16:30", "wecom_reply", "自动加好友"],
-      ["17:00", "wecom_reply", "私信接管"],
+      ["16:30", "native_wechat_add_friend", "自动加好友"],
+      ["17:00", "native_wechat_poll", "私信接管"],
       ["17:30", "douyin_leads", "关键词抓取精准客户"],
       ["18:30", "douyin_leads", "回复10个精准客户评论"],
       ["19:00", "douyin_leads", "评论上午发布的视频并@精准客户"],
       ["19:30", "douyin_leads", "关注精准客户并评论首条作品"],
-      ["20:00", "wecom_reply", "私信接管"],
+      ["20:00", "native_wechat_poll", "私信接管"],
       ["20:30", "douyin_leads", "抖音私信10个精准客户"],
-      ["21:00", "wecom_reply", "朋友圈点赞评论"],
+      ["21:00", "native_wechat_moments_engage", "朋友圈点赞评论"],
       ["21:30", "douyin_leads", "抖音私信引流接管"],
-      ["22:30", "wecom_reply", "自动加好友"],
-      ["23:00", "wecom_reply", "私信接管"],
+      ["22:30", "native_wechat_add_friend", "自动加好友"],
+      ["23:00", "native_wechat_poll", "私信接管"],
     ];
     const SALES_WORKFLOW_NODE_OPTIONS = Array.from(new Map(SALES_WORKFLOW_PRESET.map((row) => {
       const key = `${row[1]}@@${row[2]}`;
@@ -687,6 +712,9 @@
       "ip_content_daily",
       "douyin_leads",
       "wecom_reply",
+      "native_wechat_poll",
+      "native_wechat_add_friend",
+      "native_wechat_moments_engage",
     ]);
 
     function workflowNodeUsesPersonaDefaults(node) {
@@ -695,6 +723,88 @@
       const key = String(node.ability_key || node.key || "");
       if (node.sales_preset || id.startsWith("sales_")) return true;
       return String(node.department_id || "") === "sales" && SALES_PERSONA_DEFAULT_KEYS.has(key);
+    }
+
+    function nativeWechatKeyFromSalesNote(note) {
+      const text = String(note || "");
+      if (text.includes("自动加好友")) return "native_wechat_add_friend";
+      if (text.includes("朋友圈点赞") || text.includes("朋友圈评论")) return "native_wechat_moments_engage";
+      if (text.includes("私信接管")) return "native_wechat_poll";
+      return "";
+    }
+
+    function isNativeWechatWorkflowKey(key) {
+      return ["native_wechat_poll", "native_wechat_add_friend", "native_wechat_moments_engage"].includes(String(key || ""));
+    }
+
+    function nativeWechatWorkflowPlan(key, note, params = {}, options = {}) {
+      const actionKey = String(key || "");
+      const prompt = String(note || "").trim();
+      const baseParams = {
+        account_id: "pc-wechat-default",
+        note: prompt,
+        prompt,
+        ...(params && typeof params === "object" ? params : {}),
+      };
+      if (actionKey === "native_wechat_poll") {
+        return {
+          title: "个微私信接管",
+          task_kind: "client_workflow",
+          content: "H5 工作流：个微私信接管",
+          payload: { action: "native_wechat_poll", params: baseParams },
+        };
+      }
+      if (actionKey === "native_wechat_add_friend") {
+        const targets = Array.isArray(baseParams.targets) ? baseParams.targets.filter(Boolean) : [];
+        if (options.requireTargets && !targets.length) throw new Error("请填写手机号或微信号");
+        return {
+          title: "个微自动加好友",
+          task_kind: "client_workflow",
+          content: "H5 工作流：个微自动加好友",
+          payload: { action: "native_wechat_add_friend", params: { ...baseParams, targets } },
+        };
+      }
+      if (actionKey === "native_wechat_moments_engage") {
+        const targets = Array.isArray(baseParams.targets) ? baseParams.targets.filter(Boolean) : [];
+        if (options.requireTargets && !targets.length) throw new Error("请选择或填写朋友圈联系人");
+        return {
+          title: "朋友圈点赞评论",
+          task_kind: "client_workflow",
+          content: "H5 工作流：朋友圈点赞评论",
+          payload: {
+            action: "native_wechat_moments_engage",
+            params: { ...baseParams, targets, moment_action: baseParams.moment_action || "like_comment", max_scrolls: baseParams.max_scrolls || 6 },
+          },
+        };
+      }
+      throw new Error("这个个微节点暂不支持加入工作流");
+    }
+
+    function normalizeSalesWorkflowNode(node) {
+      if (!node || typeof node !== "object") return node;
+      const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const action = String(payload.action || (payload.params || {}).action || "");
+      const isSalesNode = !!node.sales_preset || String(node.id || "").startsWith("sales_") || String(node.department_id || "") === "sales";
+      if (!isSalesNode || action !== "wecom_poll_reply") {
+        return { ...node, children: workflowChildActions(node).map(normalizeSalesWorkflowNode).filter(Boolean) };
+      }
+      const note = String(node.note || node.ability_label || plan.title || "");
+      const nativeKey = nativeWechatKeyFromSalesNote(note);
+      if (!nativeKey) return node;
+      const lookup = abilityLookup(nativeKey);
+      return {
+        ...node,
+        ability_key: nativeKey,
+        department_id: "sales",
+        department_name: lookup && lookup.department ? lookup.department.name || "销售部" : "销售部",
+        plan: nativeWechatWorkflowPlan(nativeKey, note),
+        children: workflowChildActions(node).map(normalizeSalesWorkflowNode).filter(Boolean),
+      };
+    }
+
+    function normalizeSalesWorkflowNodes(nodes) {
+      return (Array.isArray(nodes) ? nodes : []).map(normalizeSalesWorkflowNode).filter(Boolean);
     }
 
     function salesWorkflowActionForNote(note) {
@@ -1218,6 +1328,9 @@
         if (action.startsWith("local_bestseller_")) addKey(keys, "local_bestseller");
         if (action === "viral_video_remix_start") addKey(keys, "viral_video_remix");
         if (action === "wecom_poll_reply") addKey(keys, "wecom_reply");
+        if (action === "native_wechat_poll") addKey(keys, "native_wechat_poll");
+        if (action === "native_wechat_add_friend") addKey(keys, "native_wechat_add_friend");
+        if (action === "native_wechat_moments_engage") addKey(keys, "native_wechat_moments_engage");
         if (action === "publish_content") addKey(keys, "publish_center");
       }
       return keys;
@@ -2020,6 +2133,18 @@
         return taskFieldHtml("执行动作", taskSelectHtml("workflowParamWecomAction", optionHtml("poll_reply", "拉取待处理消息并自动回复一次")))
           + taskFieldHtml("备注", taskTextareaHtml("workflowParamWecomNote", "可选"), true);
       }
+      if (key === "native_wechat_poll") {
+        return taskFieldHtml("备注", taskTextareaHtml("workflowParamNativeWechatNote", "可选"), true);
+      }
+      if (key === "native_wechat_add_friend") {
+        return taskFieldHtml("手机号/微信号", taskTextareaHtml("workflowParamNativeWechatTargets", "多个目标用逗号或换行分隔"), true)
+          + taskFieldHtml("申请语", workInputHtml("workflowParamNativeWechatApplyMessage", "text", "", 'placeholder="可选"'));
+      }
+      if (key === "native_wechat_moments_engage") {
+        return taskFieldHtml("联系人", taskTextareaHtml("workflowParamNativeWechatTargets", "多个联系人用逗号或换行分隔"), true)
+          + taskFieldHtml("动作", taskSelectHtml("workflowParamNativeWechatMomentAction", optionHtml("like_comment", "点赞并评论") + optionHtml("like", "只点赞") + optionHtml("comment", "只评论")))
+          + taskFieldHtml("备注", taskTextareaHtml("workflowParamNativeWechatNote", "可选"), true);
+      }
       return workflowCapabilityFieldsHtml(item && (item.capabilityId || item.key));
     }
 
@@ -2384,6 +2509,13 @@
           payload: { action: "wecom_poll_reply", params: { note: workflowParamValue("workflowParamWecomNote") } },
         };
       }
+      if (isNativeWechatWorkflowKey(key)) {
+        return nativeWechatWorkflowPlan(key, workflowParamValue("workflowParamNativeWechatNote"), {
+          targets: workSplitList(workflowParamValue("workflowParamNativeWechatTargets")),
+          apply_message: workflowParamValue("workflowParamNativeWechatApplyMessage"),
+          moment_action: workflowParamValue("workflowParamNativeWechatMomentAction") || "like_comment",
+        }, { requireTargets: key !== "native_wechat_poll" });
+      }
       return collectWorkflowCapabilityPlan(quick || {});
     }
 
@@ -2444,6 +2576,9 @@
           content: "H5 工作流：抖音获客",
           payload: { action: "search_collect", params: { keyword: prompt, sales_action: salesAction, max_results: 50, regions: ["全国"], mode: "script" } },
         };
+      }
+      if (isNativeWechatWorkflowKey(node.key) || isNativeWechatWorkflowKey(node.workQuickKey)) {
+        return nativeWechatWorkflowPlan(node.key || node.workQuickKey, prompt);
       }
       const capabilityId = String(node.capabilityId || node.key || "").trim();
       if (capabilityId === "ip_content_daily") {
@@ -2635,7 +2770,17 @@
     }
 
     function cloneWorkflowNodes(nodes) {
-      return JSON.parse(JSON.stringify(Array.isArray(nodes) ? nodes : []));
+      return normalizeSalesWorkflowNodes(JSON.parse(JSON.stringify(Array.isArray(nodes) ? nodes : [])));
+    }
+
+    function normalizeWorkflowTemplate(tpl) {
+      if (!tpl || typeof tpl !== "object") return tpl;
+      return { ...tpl, nodes: cloneWorkflowNodes(tpl.nodes) };
+    }
+
+    function normalizeWorkflowActivation(active) {
+      if (!active || typeof active !== "object") return active;
+      return { ...active, template_nodes: cloneWorkflowNodes(active.template_nodes) };
     }
 
     function workflowChildActions(node) {
@@ -3467,7 +3612,7 @@
     function applyWorkflowTemplate(tpl) {
       if (!tpl) return;
       state.workflowEditingTemplateId = tpl.source === "own" ? String(tpl.id || "") : "";
-      state.workflowNodesDraft = Array.isArray(tpl.nodes) ? JSON.parse(JSON.stringify(tpl.nodes)) : [];
+      state.workflowNodesDraft = cloneWorkflowNodes(tpl.nodes);
       if ($("workflowTemplateName")) $("workflowTemplateName").value = tpl.name || "";
       renderWorkflow();
     }
@@ -3481,7 +3626,7 @@
       renderWorkflowTemplates();
       try {
         const data = await api("/api/h5-workflows/templates");
-        state.workflowTemplates = Array.isArray(data.templates) ? data.templates : [];
+        state.workflowTemplates = (Array.isArray(data.templates) ? data.templates : []).map(normalizeWorkflowTemplate);
         state.workflowCanGrant = !!data.can_grant;
         state.workflowTemplatesLoaded = true;
       } finally {
@@ -3500,7 +3645,7 @@
         return;
       }
       const data = await api(`/api/h5-workflows/active?installation_id=${encodeURIComponent(iid)}`);
-      state.workflowActive = data.activation || null;
+      state.workflowActive = normalizeWorkflowActivation(data.activation || null);
       renderWorkflow();
       if (document.querySelector("#officeView.active")) renderOfficeEmployees();
     }
@@ -3560,13 +3705,13 @@
               timezone_offset_minutes: timezoneOffsetMinutes(),
             },
           });
-          state.workflowActive = data.activation || null;
+          state.workflowActive = normalizeWorkflowActivation(data.activation || null);
         } else {
           const data = await api("/api/h5-workflows/activate", {
             method: "POST",
             json: { template_id: Number(id), installation_id: iid, timezone_offset_minutes: timezoneOffsetMinutes() },
           });
-          state.workflowActive = data.activation || null;
+          state.workflowActive = normalizeWorkflowActivation(data.activation || null);
         }
         await Promise.all([loadTasks({ reset: true }), loadWorkflowActive()]);
         if (document.querySelector("#officeView.active")) renderOfficeEmployees();
@@ -6514,6 +6659,9 @@
         if (action.startsWith("local_bestseller_")) return findAbilityKeyBy((node) => node.workQuickKey === "local_bestseller") || "local_bestseller";
         if (action === "viral_video_remix_start") return findAbilityKeyBy((node) => node.workQuickKey === "viral_video_remix") || "viral_video_remix";
         if (action === "wecom_poll_reply") return findAbilityKeyBy((node) => node.workQuickKey === "wecom_reply") || "wecom_reply";
+        if (action === "native_wechat_poll") return "native_wechat_poll";
+        if (action === "native_wechat_add_friend") return "native_wechat_add_friend";
+        if (action === "native_wechat_moments_engage") return "native_wechat_moments_engage";
         if (action === "publish_content") return findAbilityKeyBy((node) => node.workQuickKey === "publish_center") || "publish_center";
       }
       const capabilityId = cleanKey(taskCapabilityId(run) || payload.capability_id);
@@ -10036,6 +10184,18 @@
         return taskFieldHtml("执行动作", taskSelectHtml("workWecomAction", optionHtml("poll_reply", "拉取待处理消息并自动回复一次")))
           + taskFieldHtml("备注", taskTextareaHtml("workWecomNote", "可选：这次希望客服重点关注的业务场景或回复口径"), true);
       }
+      if (key === "native_wechat_poll") {
+        return taskFieldHtml("备注", taskTextareaHtml("workNativeWechatNote", "可选"), true);
+      }
+      if (key === "native_wechat_add_friend") {
+        return taskFieldHtml("手机号/微信号", taskTextareaHtml("workNativeWechatTargets", "多个目标用逗号或换行分隔"), true)
+          + taskFieldHtml("申请语", workInputHtml("workNativeWechatApplyMessage", "text", "", 'placeholder="可选"'));
+      }
+      if (key === "native_wechat_moments_engage") {
+        return taskFieldHtml("联系人", taskTextareaHtml("workNativeWechatTargets", "多个联系人用逗号或换行分隔"), true)
+          + taskFieldHtml("动作", taskSelectHtml("workNativeWechatMomentAction", optionHtml("like_comment", "点赞并评论") + optionHtml("like", "只点赞") + optionHtml("comment", "只评论")))
+          + taskFieldHtml("备注", taskTextareaHtml("workNativeWechatNote", "可选"), true);
+      }
       if (key === "publish_center") {
         return taskFieldHtml("发布素材", assetPickerControlHtml("workPublishMaterial", { mediaType: "", output: "url", accept: "image/*,video/*,.pdf,.doc,.docx,.ppt,.pptx", uploadText: "上传素材" }), true)
           + taskFieldHtml("素材类型", taskSelectHtml("workPublishMediaType", optionHtml("video", "视频") + optionHtml("image", "图片") + optionHtml("document", "文档")))
@@ -10214,6 +10374,14 @@
           content: "H5 安排工作：企业微信客服",
           payload: { action: "wecom_poll_reply", params: { note: workValue("workWecomNote") } },
         };
+      }
+      if (isNativeWechatWorkflowKey(key)) {
+        const plan = nativeWechatWorkflowPlan(key, workValue("workNativeWechatNote"), {
+          targets: workSplitList(workValue("workNativeWechatTargets")),
+          apply_message: workValue("workNativeWechatApplyMessage"),
+          moment_action: workValue("workNativeWechatMomentAction") || "like_comment",
+        }, { requireTargets: key !== "native_wechat_poll" });
+        return { title: plan.title, taskKind: plan.task_kind, content: "H5 安排工作：" + plan.title, payload: plan.payload };
       }
       if (key === "publish_center") {
         const material = workMaterialPayload(workValue("workPublishMaterial"));

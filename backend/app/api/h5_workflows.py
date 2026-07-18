@@ -471,6 +471,58 @@ def _sales_action_from_note(note: Any) -> str:
     return "search_collect"
 
 
+_NATIVE_WECHAT_WORKFLOW_ACTIONS = {
+    "native_wechat_poll",
+    "native_wechat_add_friend",
+    "native_wechat_moments_engage",
+}
+
+
+def _native_wechat_key_from_sales_note(note: Any) -> str:
+    text = _clean_text(note, 200)
+    if "自动加好友" in text:
+        return "native_wechat_add_friend"
+    if "朋友圈点赞" in text or "朋友圈评论" in text:
+        return "native_wechat_moments_engage"
+    if "私信接管" in text:
+        return "native_wechat_poll"
+    return ""
+
+
+def _native_wechat_plan(action_key: str, note: Any, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    note_text = _clean_text(note, 2000)
+    base_params = dict(params or {})
+    base_params.setdefault("account_id", "pc-wechat-default")
+    base_params.setdefault("note", note_text)
+    base_params.setdefault("prompt", note_text)
+    if action_key == "native_wechat_poll":
+        return {
+            "title": "个微私信接管",
+            "task_kind": "client_workflow",
+            "content": "H5 工作流：个微私信接管",
+            "payload": {"action": action_key, "params": base_params},
+        }
+    if action_key == "native_wechat_add_friend":
+        base_params.setdefault("targets", [])
+        return {
+            "title": "个微自动加好友",
+            "task_kind": "client_workflow",
+            "content": "H5 工作流：个微自动加好友",
+            "payload": {"action": action_key, "params": base_params},
+        }
+    if action_key == "native_wechat_moments_engage":
+        base_params.setdefault("targets", [])
+        base_params.setdefault("moment_action", "like_comment")
+        base_params.setdefault("max_scrolls", 6)
+        return {
+            "title": "朋友圈点赞评论",
+            "task_kind": "client_workflow",
+            "content": "H5 工作流：朋友圈点赞评论",
+            "payload": {"action": action_key, "params": base_params},
+        }
+    return {}
+
+
 def _is_sales_workflow(template_name: str, nodes: list[dict[str, Any]], snapshot_extra: Optional[dict[str, Any]]) -> bool:
     template_key = _clean_text((snapshot_extra or {}).get("template_key"), 128)
     if template_key == "system_sales":
@@ -492,6 +544,31 @@ def _node_payload(node: dict[str, Any]) -> dict[str, Any]:
     return plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
 
 
+def _normalize_sales_native_wechat_node(node: dict[str, Any]) -> None:
+    if not isinstance(node, dict):
+        return
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    action = _clean_text(payload.get("action") or params.get("action"), 128)
+    is_sales = (
+        bool(node.get("sales_preset") or node.get("salesPreset"))
+        or _clean_text(node.get("id"), 80).startswith("sales_")
+        or _clean_text(node.get("department_id") or node.get("departmentId"), 64) == "sales"
+    )
+    if is_sales and action == "wecom_poll_reply":
+        note = _clean_text(node.get("note") or node.get("ability_label") or plan.get("title"), 2000)
+        native_key = _native_wechat_key_from_sales_note(note)
+        native_plan = _native_wechat_plan(native_key, note, params) if native_key else {}
+        if native_plan:
+            node["ability_key"] = native_key
+            node["department_id"] = "sales"
+            node["department_name"] = "销售部"
+            node["plan"] = native_plan
+    for child in _workflow_child_nodes(node):
+        _normalize_sales_native_wechat_node(child)
+
+
 def _prepare_sales_workflow_nodes(
     *,
     db: Session,
@@ -505,6 +582,8 @@ def _prepare_sales_workflow_nodes(
         return nodes
 
     prepared = copy.deepcopy(nodes)
+    for node in prepared:
+        _normalize_sales_native_wechat_node(node)
     personal = _personal_default_template(db, owner.id)
     requirements = personal.requirements if personal and isinstance(personal.requirements, dict) else {}
     keyword_ids = _clean_id_list(personal.keyword_ids if personal else [])
@@ -591,7 +670,7 @@ def _prepare_sales_workflow_nodes(
         if task_kind == "client_workflow" and action.startswith("local_bestseller"):
             has_local_bestseller = True
 
-        if task_kind == "client_workflow" and action == "wecom_poll_reply":
+        if task_kind == "client_workflow" and action in _NATIVE_WECHAT_WORKFLOW_ACTIONS:
             has_wechat = True
 
         if task_kind == "capability" and capability_id == "hifly.video.create_by_tts":
