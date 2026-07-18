@@ -5000,8 +5000,7 @@
       if (!box) return;
       const today = todayDateKey();
       const todayRuns = (state.runs || []).filter((row) => workDateKey(row) === today);
-      const runTaskIds = new Set(todayRuns.map((row) => String((row && row.task_id) || "")).filter(Boolean));
-      const runRows = todayRuns.map((row) => ({
+      const rows = todayRuns.map((row) => ({
         kind: "run",
         id: row && row.id,
         title: row && (row.title || "任务"),
@@ -5010,30 +5009,16 @@
         sortTime: row && (row.updated_at || row.finished_at || row.created_at),
         text: isActiveRun(row) ? (runProgressText(row) || "执行中") : (row && (row.error || row.result_text || "")),
         active: isActiveRun(row),
-      }));
-      const taskRows = (state.tasks || [])
-        .filter((task) => !runTaskIds.has(String((task && task.id) || "")))
-        .flatMap((task) => taskOccurrenceRowsForDate(task, today).map((occ) => ({
-          kind: "task",
-          id: task && task.id,
-          title: task && (task.title || capabilityName(taskCapabilityId(task) || task.task_kind) || "任务安排"),
-          status: taskWorkStatusText(task),
-          time: occ.occurrenceTime,
-          sortTime: occ.occurrenceTime,
-          text: taskScheduleLabel(task),
-          active: false,
-        })));
-      const rows = [...runRows, ...taskRows]
+      }))
         .filter((row) => row.id)
         .sort((a, b) => itemTimeMs(b.sortTime, b.time) - itemTimeMs(a.sortTime, a.time))
         .slice(0, 5);
       if (!rows.length) {
-        box.innerHTML = `<div class="office-recent-empty">今天暂无执行和安排</div>`;
+        box.innerHTML = `<div class="office-recent-empty">今天暂无执行记录</div>`;
         return;
       }
       box.innerHTML = rows.map((row) => {
-        const attr = row.kind === "task" ? `data-open-task-detail="${escapeHtml(row.id || "")}"` : `data-open-run-detail="${escapeHtml(row.id || "")}"`;
-        return `<button class="office-recent-item${row.active ? " active" : ""}" type="button" ${attr}>
+        return `<button class="office-recent-item${row.active ? " active" : ""}" type="button" data-open-run-detail="${escapeHtml(row.id || "")}">
           <span class="office-recent-dot"></span>
           <span class="office-recent-main">
             <strong>${escapeHtml(row.title || "任务")}</strong>
@@ -6218,23 +6203,7 @@
         ...scopedLinkedinJobs.map((job) => workbenchJobItem(job, "linkedin")),
         ...scopedWechatJobs.map((job) => workbenchJobItem(job, "wechat")),
       ].filter(Boolean);
-      const scheduled = tasks
-        .filter((row) => taskShouldShowInWorkList(row, runs))
-        .slice(0, 80)
-        .map((row) => {
-          const active = taskIsFutureWork(row, runs);
-          return {
-            type: active ? "future" : "scheduled",
-            time: row.next_run_at || row.updated_at || row.created_at,
-            sortTime: row.next_run_at || row.updated_at || row.created_at,
-            createdTime: row.created_at,
-            title: row.title || capabilityName(taskCapabilityId(row) || row.task_kind),
-            badge: taskWorkStatusText(row),
-            meta: `${capabilityName(taskCapabilityId(row) || row.task_kind)} / ${taskScheduleLabel(row)}`,
-            actionTaskId: "",
-          };
-        });
-      const items = [...current, ...scheduled, ...workbenchJobs, ...done, ...messages]
+      const items = [...current, ...workbenchJobs, ...done, ...messages]
         .filter((item) => item.title)
         .sort((a, b) => workSortTime(b) - workSortTime(a))
         .slice(0, 80);
