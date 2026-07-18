@@ -83,6 +83,8 @@
       workflowEditingTemplateId: "",
       workflowViewingTemplateId: "",
       workflowViewingTemplateKey: "",
+      workflowRunDateLoaded: {},
+      workflowRunDateLoading: {},
       workflowActive: null,
       workflowSubUsers: [],
       workflowSubUserTotal: 0,
@@ -4684,6 +4686,11 @@
       });
     }
 
+    function workflowRunsLoadingForDate(dateKey) {
+      const key = dateKey || workflowSelectedDateKey();
+      return !!(state.workflowRunDateLoading && state.workflowRunDateLoading[key]);
+    }
+
     function workflowTasksForDate(dateKey) {
       const key = dateKey || workflowSelectedDateKey();
       if (key < todayDateKey()) return [];
@@ -4766,6 +4773,7 @@
       if (run && isActiveRun(run)) return { label: "执行中", kind: "running", runId: run.id || "" };
       if (run && runFailed(run)) return { label: "失败", kind: "failed", runId: run.id || "" };
       if (run && runSucceeded(run)) return { label: "完成", kind: "completed", runId: run.id || "" };
+      if (workflowRunsLoadingForDate(dateKey)) return { label: "加载中", kind: "pending" };
       if ((dateKey || workflowSelectedDateKey()) < todayDateKey()) return { label: "无执行", kind: "idle" };
       const status = String((activeTask && activeTask.status) || "").toLowerCase();
       if (status === "paused") return { label: "暂停", kind: "paused", taskId: activeTask.id || "" };
@@ -7326,7 +7334,9 @@
           loadWorkflowTemplates().catch(() => {}),
           loadWorkflowActive().catch(() => {}),
           loadTasks({ reset: true, limit: 80 }).catch(() => {}),
-          loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}),
+          loadRuns({ reset: true, limit: 20, compact: true })
+            .then(() => loadWorkflowRunsForDate(workflowSelectedDateKey()).catch(() => {}))
+            .catch(() => {}),
         ]).then(renderWorkflow);
       }
       if (key === "mountedAccounts") {
@@ -13228,6 +13238,7 @@
       if (reset) {
         state.runListOffset = 0;
         state.runListHasNext = false;
+        state.workflowRunDateLoaded = {};
       }
       const offset = append ? state.runListOffset : 0;
       if (box && !append) box.innerHTML = `<div class="hint">加载中...</div>`;
@@ -13270,6 +13281,26 @@
         if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
         if (box) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
         $("loadMoreRunsBtn")?.classList.add("hidden");
+      }
+    }
+
+    async function loadWorkflowRunsForDate(dateKey, options = {}) {
+      const key = String(dateKey || workflowSelectedDateKey() || "").trim();
+      if (!key) return;
+      if (!options.force && state.workflowRunDateLoaded && state.workflowRunDateLoaded[key]) return;
+      if (state.workflowRunDateLoading && state.workflowRunDateLoading[key]) return;
+      state.workflowRunDateLoading = { ...(state.workflowRunDateLoading || {}), [key]: true };
+      renderWorkflowTimeline();
+      try {
+        const data = await api(`/api/scheduled-tasks/runs?limit=200&offset=0&compact=1&date=${encodeURIComponent(key)}&timezone_offset_minutes=${encodeURIComponent(String(timezoneOffsetMinutes()))}`);
+        mergeRuns(Array.isArray(data.runs) ? data.runs : []);
+        state.workflowRunDateLoaded = { ...(state.workflowRunDateLoaded || {}), [key]: true };
+      } finally {
+        const nextLoading = { ...(state.workflowRunDateLoading || {}) };
+        delete nextLoading[key];
+        state.workflowRunDateLoading = nextLoading;
+        renderWorkflowTimeline();
+        renderWorkflowDayBoard();
       }
     }
 
@@ -13638,6 +13669,7 @@
       state.workflowSelectedDate = btn.dataset.workflowDate || todayDateKey();
       renderWorkflowDayBoard();
       renderWorkflowTimeline();
+      loadWorkflowRunsForDate(state.workflowSelectedDate).catch((err) => toast(err.message || "执行记录加载失败"));
     });
     $("workflowTimeline")?.addEventListener("click", (evt) => {
       const runBtn = evt.target.closest("[data-open-run-detail]");

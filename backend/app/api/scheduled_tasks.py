@@ -1919,12 +1919,23 @@ def list_scheduled_task_runs(
     limit: int = Query(80, ge=1, le=200),
     offset: int = Query(0, ge=0),
     compact: bool = Query(False),
+    date: str = Query("", max_length=10),
+    timezone_offset_minutes: int = Query(480, ge=-720, le=840),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
     _enqueue_due_tasks(db, owner_user.id)
     query = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.user_id == owner_user.id)
+    date_key = (date or "").strip()
+    if date_key:
+        try:
+            local_start = datetime.strptime(date_key, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid date") from None
+        start_utc = local_start - timedelta(minutes=int(timezone_offset_minutes or 0))
+        end_utc = start_utc + timedelta(days=1)
+        query = query.filter(ScheduledTaskRun.created_at >= start_utc, ScheduledTaskRun.created_at < end_utc)
     total = query.with_entities(func.count(ScheduledTaskRun.id)).scalar() or 0
     rows = query.order_by(ScheduledTaskRun.created_at.desc()).offset(offset).limit(limit).all()
     serializer = _serialize_run_compact if compact else _serialize_run
