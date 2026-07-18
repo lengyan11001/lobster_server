@@ -8940,6 +8940,10 @@
         input.onchange = () => {
           const map = personalSelectedMap(input.dataset.personalSelect || "");
           if (input.value) map[String(input.value)] = !!input.checked;
+          input.closest(".personal-template-choice")?.classList.toggle("checked", !!input.checked);
+          const group = input.closest(".personal-template-resource-group");
+          const countEl = group ? group.querySelector("[data-personal-template-selected-count]") : null;
+          if (countEl && group) countEl.textContent = String(group.querySelectorAll("[data-personal-select]:checked").length);
         };
       });
     }
@@ -9219,13 +9223,31 @@
         const keywordRows = state.personalKeywords.map((row) => ({ ...row, _kind: "keyword" }));
         const competitorRows = state.personalCompetitors.map((row) => ({ ...row, _kind: "competitor" }));
         const memoryRows = state.personalMemoryDocs.map((row) => ({ ...row, _kind: "memory_doc" }));
-        const section = (label, rows, selectedMap, kind, titleFn, subtitleFn) => rows.length
-          ? `<div class="hint">${escapeHtml(label)}</div>` + rows.map((row) => {
-              const id = kind === "memory_doc" ? personalDocId(row) : String(row.id || "");
-              const subtitle = subtitleFn ? subtitleFn(row) : "";
-              return `<div class="personal-row"><label><input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${selectedMap[id] ? " checked" : ""}><span>${escapeHtml(titleFn(row))}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span></label></div>`;
-            }).join("")
-          : `<div class="personal-empty">${escapeHtml(label)}：暂无</div>`;
+        const section = (label, rows, selectedMap, kind, titleFn, subtitleFn) => {
+          const count = rows.filter((row) => selectedMap[kind === "memory_doc" ? personalDocId(row) : String(row.id || "")]).length;
+          const body = rows.length
+            ? `<div class="personal-template-choice-grid">` + rows.map((row) => {
+                const id = kind === "memory_doc" ? personalDocId(row) : String(row.id || "");
+                const subtitle = subtitleFn ? subtitleFn(row) : "";
+                const title = titleFn(row);
+                const checked = selectedMap[id] ? " checked" : "";
+                return `<label class="personal-template-choice${checked ? " checked" : ""}" title="${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}">
+                  <input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${checked}>
+                  <span>
+                    <strong>${escapeHtml(title)}</strong>
+                    ${subtitle ? `<em>${escapeHtml(subtitle)}</em>` : ""}
+                  </span>
+                </label>`;
+              }).join("") + `</div>`
+            : `<div class="personal-template-empty">暂无可选${escapeHtml(label)}</div>`;
+          return `<section class="personal-template-resource-group">
+            <div class="personal-template-resource-head">
+              <strong>${escapeHtml(label)}</strong>
+              <span>已选 <b data-personal-template-selected-count>${count}</b></span>
+            </div>
+            ${body}
+          </section>`;
+        };
         tpl.innerHTML = section("关键词", keywordRows, state.personalSelectedKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "")
           + section("同行账号", competitorRows, state.personalSelectedCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "")
           + section("记忆文件", memoryRows, state.personalSelectedMemories, "memory_doc", personalMemoryTitle, (row) => row.notes || row.filename || "");
