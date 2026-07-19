@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import base64
+import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
-from .assets import get_asset_public_url
+from ..models import Asset, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
+from .assets import _get_tos_config, _save_bytes_or_tos, get_asset_public_url
 from .auth import get_current_user
 from .shanjian_smart_clip import _data, _get, _post
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -54,6 +60,21 @@ class CreateVideoBody(_TokenBody):
     language: str = "zh-CN"
     speed_ratio: float = 1.0
     callback_url: str = ""
+    template_scene: str = ""
+    style_id: str = ""
+    materials: List[Dict[str, Any]] = Field(default_factory=list)
+    material_sound_switch: bool = False
+    introduce_name: str = ""
+    introduce_description: str = ""
+    header_switch: bool = True
+    material_switch: bool = True
+    subtitle_switch: bool = True
+    keyword_switch: bool = True
+    watermark_show: bool = False
+    material_match_way: str = "fuzzyMatch"
+    resource_preprocess_method: str = "roughCut"
+    material_composition: str = "random"
+    video_duration: int = 30
 
 
 class VideoTaskBody(_TokenBody):
@@ -63,6 +84,113 @@ class VideoTaskBody(_TokenBody):
 
 def _clean_text(value: Optional[str]) -> str:
     return str(value or "").strip()
+
+
+def _url_hint(value: str) -> str:
+    raw = _clean_text(value)
+    if raw.startswith("data:"):
+        return "data-url"
+    try:
+        parsed = urlparse(raw)
+        path = (parsed.path or "")[:80]
+        return f"{parsed.scheme}://{parsed.netloc}{path}"
+    except Exception:
+        return raw[:120]
+
+
+def _audio_ext_from_content(content_type: str, url: str = "") -> str:
+    ct = (content_type or "").split(";", 1)[0].strip().lower()
+    suffix = Path((url or "").split("?", 1)[0].split("#", 1)[0]).suffix.lower()
+    if suffix in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}:
+        return suffix
+    if "wav" in ct:
+        return ".wav"
+    if "mp4" in ct or "m4a" in ct:
+        return ".m4a"
+    if "aac" in ct:
+        return ".aac"
+    if "ogg" in ct:
+        return ".ogg"
+    if "flac" in ct:
+        return ".flac"
+    return ".mp3"
+
+
+async def _download_audio_bytes(audio_url: str) -> tuple[bytes, str]:
+    raw = _clean_text(audio_url)
+    if raw.startswith("data:"):
+        header, _, payload = raw.partition(",")
+        if not payload:
+            raise HTTPException(status_code=400, detail="audio_url data URL 格式无效")
+        content_type = header[5:].split(";", 1)[0].strip() or "audio/mpeg"
+        try:
+            data = base64.b64decode(payload)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="audio_url data URL 解码失败") from exc
+        return data, content_type
+    if not raw.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="audio_url 必须是 http(s) 或 data: 音频地址")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "audio/*,*/*;q=0.8",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True, trust_env=False) as client:
+            resp = await client.get(raw, headers=headers)
+            resp.raise_for_status()
+            return resp.content, resp.headers.get("content-type", "") or "audio/mpeg"
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"下载音频失败: HTTP {exc.response.status_code}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"下载音频失败: {type(exc).__name__}: {exc}") from exc
+
+
+async def _persist_audio_for_shanjian(
+    *,
+    audio_url: str,
+    db: Session,
+    current_user: User,
+    title: str,
+) -> tuple[str, str]:
+    raw = _clean_text(audio_url)
+    data, content_type = await _download_audio_bytes(raw)
+    if not data:
+        raise HTTPException(status_code=400, detail="音频内容为空，无法提交数字人任务")
+    media_type = (content_type or "audio/mpeg").split(";", 1)[0].strip() or "audio/mpeg"
+    ext = _audio_ext_from_content(media_type, raw)
+    asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, media_type)
+    if not public_url:
+        raise HTTPException(status_code=503, detail="数字人口播音频转存 TOS 失败，无法提交闪剪")
+    asset = Asset(
+        asset_id=asset_id,
+        user_id=int(current_user.id),
+        filename=filename_or_key,
+        media_type="audio",
+        file_size=file_size,
+        source_url=public_url,
+        prompt=_clean_text(title)[:200],
+        model="shanjian-digital-human-tts-audio",
+        tags="shanjian,digital-human,audio",
+        meta={
+            "source": "shanjian_digital_human_audio_transfer",
+            "original_url_hint": _url_hint(raw),
+            "content_type": media_type,
+        },
+    )
+    db.add(asset)
+    db.flush()
+    logger.info(
+        "[shanjian-dh] audio rehosted user_id=%s asset_id=%s size=%s from=%s to=%s",
+        getattr(current_user, "id", ""),
+        asset_id,
+        file_size,
+        _url_hint(raw),
+        _url_hint(public_url),
+    )
+    return public_url, asset_id
 
 
 def _normalize_mode(value: str) -> str:
@@ -121,6 +249,391 @@ def _resolve_asset_or_url(
         raise HTTPException(status_code=400, detail=f"{label} 素材还没有可用公网地址，请先确认素材已上传成功")
     return public_url
 
+
+
+
+def _media_ext_from_content(content_type: str, url: str = "", fallback: str = ".bin") -> str:
+    ct = (content_type or "").split(";", 1)[0].strip().lower()
+    try:
+        suffix = Path(urlparse(url or "").path or "").suffix.lower()
+    except Exception:
+        suffix = ""
+    if suffix in {".mp4", ".mov", ".m4v", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}:
+        return suffix
+    if "quicktime" in ct:
+        return ".mov"
+    if "mp4" in ct:
+        return ".mp4"
+    if "jpeg" in ct or "jpg" in ct:
+        return ".jpg"
+    if "png" in ct:
+        return ".png"
+    if "webp" in ct:
+        return ".webp"
+    if "gif" in ct:
+        return ".gif"
+    if "mpeg" in ct or "mp3" in ct:
+        return ".mp3"
+    if "wav" in ct:
+        return ".wav"
+    if "m4a" in ct or "aac" in ct:
+        return ".m4a"
+    return fallback
+
+
+async def _download_media_bytes(media_url: str, *, accept: str = "*/*") -> tuple[bytes, str]:
+    raw = _clean_text(media_url)
+    if raw.startswith("data:"):
+        header, _, payload = raw.partition(",")
+        if not payload:
+            raise HTTPException(status_code=400, detail="media data URL 格式无效")
+        content_type = header[5:].split(";", 1)[0].strip() or "application/octet-stream"
+        try:
+            return base64.b64decode(payload), content_type
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="media data URL 解码失败") from exc
+    if not raw.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="media URL 必须是 http(s) 或 data: 地址")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": accept,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=180.0, follow_redirects=True, trust_env=False) as client:
+            resp = await client.get(raw, headers=headers)
+            resp.raise_for_status()
+            return resp.content, resp.headers.get("content-type", "") or "application/octet-stream"
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=400, detail=f"下载媒体失败: HTTP {exc.response.status_code}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"下载媒体失败: {type(exc).__name__}: {exc}") from exc
+
+
+async def _persist_media_for_shanjian(
+    *,
+    media_url: str,
+    db: Session,
+    current_user: User,
+    title: str,
+    media_type: str,
+    label: str,
+) -> tuple[str, str]:
+    raw = _clean_text(media_url)
+    accept = "video/*,*/*;q=0.8" if media_type == "video" else ("image/*,*/*;q=0.8" if media_type == "image" else "*/*")
+    data, content_type = await _download_media_bytes(raw, accept=accept)
+    if not data:
+        raise HTTPException(status_code=400, detail=f"{label}内容为空，无法继续模板剪辑")
+    media_type_header = (content_type or "application/octet-stream").split(";", 1)[0].strip() or "application/octet-stream"
+    fallback = ".mp4" if media_type == "video" else (".jpg" if media_type == "image" else ".bin")
+    ext = _media_ext_from_content(media_type_header, raw, fallback=fallback)
+    asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, media_type_header)
+    if not public_url:
+        raise HTTPException(status_code=503, detail=f"{label}转存 TOS 失败，无法继续模板剪辑")
+    asset = Asset(
+        asset_id=asset_id,
+        user_id=int(current_user.id),
+        filename=filename_or_key,
+        media_type=media_type,
+        file_size=file_size,
+        source_url=public_url,
+        prompt=_clean_text(title)[:200],
+        model="shanjian-digital-human-template-media",
+        tags="shanjian,digital-human,template-media",
+        meta={
+            "source": "shanjian_digital_human_template_transfer",
+            "label": label,
+            "original_url_hint": _url_hint(raw),
+            "content_type": media_type_header,
+        },
+    )
+    db.add(asset)
+    db.flush()
+    logger.info(
+        "[shanjian-dh] media rehosted user_id=%s label=%s media_type=%s asset_id=%s size=%s from=%s to=%s",
+        getattr(current_user, "id", ""),
+        label,
+        media_type,
+        asset_id,
+        file_size,
+        _url_hint(raw),
+        _url_hint(public_url),
+    )
+    return public_url, asset_id
+
+
+def _template_meta_from_body(body: CreateVideoBody) -> Optional[Dict[str, Any]]:
+    style_id = _clean_text(body.style_id)
+    template_scene = _clean_text(body.template_scene)
+    materials: List[Dict[str, Any]] = []
+    for item in (body.materials or [])[:20]:
+        if not isinstance(item, dict):
+            continue
+        kind = _clean_text(item.get("type") or item.get("media_type")).lower()
+        if kind not in {"image", "video"}:
+            continue
+        file_url = _clean_text(
+            item.get("fileUrl")
+            or item.get("file_url")
+            or item.get("url")
+            or item.get("source_url")
+            or item.get("open_url")
+            or item.get("preview_url")
+        )
+        asset_id = _clean_text(item.get("asset_id") or item.get("assetId"))
+        if not (file_url or asset_id):
+            continue
+        row: Dict[str, Any] = {"type": kind}
+        if file_url:
+            row["fileUrl"] = file_url
+        if asset_id:
+            row["asset_id"] = asset_id
+        materials.append(row)
+    if not (style_id or template_scene or materials or _clean_text(body.introduce_name) or _clean_text(body.introduce_description)):
+        return None
+    return {
+        "template_scene": template_scene or "realMan",
+        "style_id": style_id,
+        "materials": materials,
+        "material_sound_switch": bool(body.material_sound_switch),
+        "introduce_name": _clean_text(body.introduce_name),
+        "introduce_description": _clean_text(body.introduce_description),
+        "header_switch": bool(body.header_switch),
+        "material_switch": bool(body.material_switch),
+        "subtitle_switch": bool(body.subtitle_switch),
+        "keyword_switch": bool(body.keyword_switch),
+        "watermark_show": bool(body.watermark_show),
+        "material_match_way": _clean_text(body.material_match_way) or "fuzzyMatch",
+        "resource_preprocess_method": _clean_text(body.resource_preprocess_method) or "roughCut",
+        "material_composition": _clean_text(body.material_composition) or "random",
+        "video_duration": int(body.video_duration or 30),
+    }
+
+
+def _template_meta_from_submit_payload(submit_payload: Optional[dict]) -> Optional[Dict[str, Any]]:
+    if not isinstance(submit_payload, dict):
+        return None
+    template = submit_payload.get("template")
+    if isinstance(template, dict):
+        return template
+    legacy = submit_payload.get("templateClip")
+    if isinstance(legacy, dict):
+        pack_rules = legacy.get("packRules") if isinstance(legacy.get("packRules"), dict) else {}
+        process_rules = legacy.get("processRules") if isinstance(legacy.get("processRules"), dict) else {}
+        return {
+            "template_scene": _clean_text(legacy.get("scene")) or "realMan",
+            "style_id": _clean_text(legacy.get("styleId") or legacy.get("style_id")),
+            "materials": legacy.get("materials") if isinstance(legacy.get("materials"), list) else [],
+            "material_sound_switch": bool(legacy.get("materialSoundSwitch")),
+            "introduce_name": _clean_text((legacy.get("introduceCard") or {}).get("name") if isinstance(legacy.get("introduceCard"), dict) else ""),
+            "introduce_description": _clean_text((legacy.get("introduceCard") or {}).get("description") if isinstance(legacy.get("introduceCard"), dict) else ""),
+            "header_switch": bool(pack_rules.get("headerSwitch", True)),
+            "material_switch": bool(pack_rules.get("materialSwitch", True)),
+            "subtitle_switch": bool(pack_rules.get("subtitleSwitch", True)),
+            "keyword_switch": bool(pack_rules.get("keywordSwitch", True)),
+            "watermark_show": bool(process_rules.get("watermarkShow", False)),
+            "material_match_way": _clean_text(process_rules.get("materialMatchWay")) or "fuzzyMatch",
+            "resource_preprocess_method": _clean_text(process_rules.get("resourcePreprocessMethod")) or "roughCut",
+            "material_composition": _clean_text(process_rules.get("materialComposition")) or "random",
+            "video_duration": int(process_rules.get("videoDuration") or legacy.get("videoDuration") or 30),
+            "clip_task_id": _clean_text(legacy.get("clipTaskId") or legacy.get("clip_task_id")),
+            "clip_request_id": _clean_text(legacy.get("clipRequestId") or legacy.get("clip_request_id")),
+        }
+    style_id = _clean_text(submit_payload.get("styleId") or submit_payload.get("style_id"))
+    if style_id:
+        return {
+            "template_scene": "realMan",
+            "style_id": style_id,
+            "materials": submit_payload.get("materials") if isinstance(submit_payload.get("materials"), list) else [],
+        }
+    return None
+
+
+async def _prepare_template_media_urls(
+    *,
+    db: Session,
+    current_user: User,
+    template_meta: Dict[str, Any],
+    title: str,
+) -> Dict[str, Any]:
+    prepared = dict(template_meta or {})
+    materials: List[Dict[str, Any]] = []
+    for index, item in enumerate((template_meta.get("materials") or [])[:20]):
+        if not isinstance(item, dict):
+            continue
+        kind = _clean_text(item.get("type") or item.get("media_type")).lower()
+        if kind not in {"image", "video"}:
+            continue
+        asset_id = _clean_text(item.get("asset_id") or item.get("assetId"))
+        file_url = _clean_text(
+            item.get("fileUrl")
+            or item.get("file_url")
+            or item.get("url")
+            or item.get("source_url")
+            or item.get("open_url")
+            or item.get("preview_url")
+        )
+        if asset_id:
+            row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == int(current_user.id)).first()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"???????{index + 1}")
+            row_url = _clean_text(getattr(row, "source_url", None))
+            if _is_reusable_shanjian_media_url(row_url):
+                logger.info("[shanjian-dh] reuse template material user_id=%s asset_id=%s type=%s url=%s", getattr(current_user, "id", ""), asset_id, kind, _url_hint(row_url))
+                materials.append({"type": kind, "fileUrl": row_url})
+                continue
+            file_url = row_url or file_url
+        if not file_url:
+            continue
+        if _is_reusable_shanjian_media_url(file_url):
+            logger.info("[shanjian-dh] reuse template material url user_id=%s type=%s url=%s", getattr(current_user, "id", ""), kind, _url_hint(file_url))
+            materials.append({"type": kind, "fileUrl": file_url})
+            continue
+        uploaded_url, _ = await _persist_media_for_shanjian(
+            media_url=file_url,
+            db=db,
+            current_user=current_user,
+            title=title,
+            media_type=kind,
+            label=f"????{index + 1}",
+        )
+        materials.append({"type": kind, "fileUrl": uploaded_url})
+    prepared["materials"] = materials
+    return prepared
+
+
+def _build_realman_clip_payload(*, title: str, template_meta: Dict[str, Any], video_url: str) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "styleId": _clean_text(template_meta.get("style_id")),
+        "title": _clean_text(title)[:80] or "数字人口播",
+        "videoUrl": _clean_text(video_url),
+        "materialSoundSwitch": bool(template_meta.get("material_sound_switch")),
+        "packRules": {
+            "headerSwitch": bool(template_meta.get("header_switch", True)),
+            "materialSwitch": bool(template_meta.get("material_switch", True)),
+            "subtitleSwitch": bool(template_meta.get("subtitle_switch", True)),
+            "keywordSwitch": bool(template_meta.get("keyword_switch", True)),
+        },
+        "processRules": {
+            "watermarkShow": bool(template_meta.get("watermark_show", False)),
+            "materialMatchWay": template_meta.get("material_match_way") if template_meta.get("material_match_way") in {"fuzzyMatch", "preciseMatch"} else "fuzzyMatch",
+            "resourcePreprocessMethod": template_meta.get("resource_preprocess_method") if template_meta.get("resource_preprocess_method") in {"roughCut", "sliceMerge"} else "roughCut",
+        },
+    }
+    material_composition = _clean_text(template_meta.get("material_composition"))
+    if material_composition in {"random", "sequential"}:
+        payload["processRules"]["materialComposition"] = material_composition
+    try:
+        payload["processRules"]["videoDuration"] = max(5, min(int(template_meta.get("video_duration") or 30), 300))
+    except Exception:
+        payload["processRules"]["videoDuration"] = 30
+    if template_meta.get("materials"):
+        payload["materials"] = [
+            {"type": str(item.get("type") or "").strip(), "fileUrl": _clean_text(item.get("fileUrl") or item.get("file_url"))}
+            for item in template_meta.get("materials")[:20]
+            if isinstance(item, dict)
+            and _clean_text(item.get("fileUrl") or item.get("file_url"))
+            and str(item.get("type") or "").strip() in {"image", "video"}
+        ]
+    intro_name = _clean_text(template_meta.get("introduce_name"))
+    intro_desc = _clean_text(template_meta.get("introduce_description"))
+    if intro_name or intro_desc:
+        payload["introduceCard"] = {"name": intro_name, "description": intro_desc}
+    return payload
+
+
+async def _submit_realman_clip_task(
+    *,
+    body: VideoTaskBody,
+    db: Session,
+    current_user: User,
+    row: ShanjianDigitalHumanVideoTask,
+    template_meta: Dict[str, Any],
+    base_result_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    result = base_result_payload.get("result") if isinstance(base_result_payload, dict) else {}
+    base_video_url = _clean_text(_pick_result_value(result if isinstance(result, dict) else {}, "videoUrl")) or _clean_text(row.video_url)
+    if not base_video_url:
+        raise HTTPException(status_code=502, detail="基础视频未返回可用 videoUrl，无法继续模板剪辑")
+    base_video_url, base_asset_id = await _persist_media_for_shanjian(
+        media_url=base_video_url,
+        db=db,
+        current_user=current_user,
+        title=row.title or "数字人口播",
+        media_type="video",
+        label="基础数字人视频",
+    )
+    prepared_template = await _prepare_template_media_urls(
+        db=db,
+        current_user=current_user,
+        template_meta=template_meta,
+        title=row.title or "数字人口播",
+    )
+    clip_payload = _build_realman_clip_payload(title=row.title or "数字人口播", template_meta=prepared_template, video_url=base_video_url)
+    logger.info(
+        "[shanjian-dh] submit realman clip user_id=%s base_task=%s style_id=%s materials=%s payload=%s",
+        getattr(current_user, "id", ""),
+        row.task_id,
+        clip_payload.get("styleId"),
+        len(clip_payload.get("materials") or []),
+        str(clip_payload)[:2000],
+    )
+    clip_upstream = await _post("/v1/clip/video/realman_broadcast", body.token, clip_payload)
+    clip_data = _data(clip_upstream)
+    clip_task_id = _clean_text(clip_data.get("taskId"))
+    if not clip_task_id:
+        logger.warning("[shanjian-dh] realman clip missing taskId user_id=%s response=%s", getattr(current_user, "id", ""), str(clip_upstream)[:1000])
+        raise HTTPException(status_code=502, detail="闪剪模板剪辑未返回 taskId")
+
+    submit_payload = dict(row.submit_payload or {})
+    template_state = dict(prepared_template or {})
+    template_state["clip_task_id"] = clip_task_id
+    template_state["clip_request_id"] = _clean_text(clip_upstream.get("requestId"))
+    template_state["base_video_url"] = base_video_url
+    template_state["base_asset_id"] = base_asset_id
+    submit_payload["template"] = template_state
+    submit_payload["stage"] = "clip"
+    submit_payload["base_result"] = base_result_payload
+    row.submit_payload = submit_payload
+    row.status = "processing"
+    row.result_payload = {"base": base_result_payload, "clip_submit": clip_upstream}
+    row.error_message = None
+    row.updated_at = datetime.utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "stage": "clip",
+        "clip_task_id": clip_task_id,
+        "request_id": _clean_text(clip_upstream.get("requestId")),
+        "clip_payload": clip_payload,
+        "raw": clip_upstream,
+    }
+
+
+def _is_reusable_shanjian_media_url(url: str) -> bool:
+    raw = _clean_text(url)
+    if not raw.startswith(("http://", "https://")):
+        return False
+    if "token=" in raw or "?token" in raw:
+        return False
+    try:
+        parsed = urlparse(raw)
+        hostname = (parsed.hostname or "").lower()
+    except Exception:
+        return False
+    if not hostname or hostname in {"localhost", "127.0.0.1", "0.0.0.0"}:
+        return False
+    if hostname.endswith(".local") or hostname.startswith("192.168.") or hostname.startswith("10."):
+        return False
+    try:
+        cfg = _get_tos_config() or {}
+        public_domain = str(cfg.get("public_domain", "") or "").strip().rstrip("/")
+    except Exception:
+        public_domain = ""
+    if public_domain and raw.startswith(public_domain + "/"):
+        return True
+    return ("tos" in hostname and "volces.com" in hostname) or ".tos-" in hostname or hostname.startswith("lobster-online-assets")
 
 def _clear_default_profiles(db: Session, user_id: int) -> None:
     db.query(ShanjianDigitalHumanProfile).filter(
@@ -423,6 +936,8 @@ async def create_video(
     speaker_id = _clean_text(body.speaker_id)
     audio_url = _clean_text(body.audio_url)
     audio_asset_id = _clean_text(body.audio_asset_id) or None
+    title = _clean_text(body.title)[:80] or "Digital human video"
+
     if not audio_url and audio_asset_id:
         audio_url = _resolve_asset_or_url(
             request=request,
@@ -430,15 +945,21 @@ async def create_video(
             current_user=current_user,
             url=None,
             asset_id=audio_asset_id,
-            label="驱动音频",
+            label="audio",
         )
     if not audio_url and (not text or not speaker_id):
-        raise HTTPException(status_code=400, detail="请提供 audio_url / audio_asset_id，或同时提供 text + speaker_id")
+        raise HTTPException(status_code=400, detail="Please provide audio_url / audio_asset_id, or text + speaker_id")
 
-    payload: Dict[str, Any] = {
-        "title": _clean_text(body.title)[:80] or "数字人口播",
-        "virtualmanId": virtualman_id,
-    }
+    if audio_url:
+        audio_url, persisted_audio_asset_id = await _persist_audio_for_shanjian(
+            audio_url=audio_url,
+            db=db,
+            current_user=current_user,
+            title=title,
+        )
+        audio_asset_id = audio_asset_id or persisted_audio_asset_id
+
+    payload: Dict[str, Any] = {"title": title, "virtualmanId": virtualman_id}
     if _clean_text(body.callback_url):
         payload["callbackUrl"] = _clean_text(body.callback_url)
     if audio_url:
@@ -451,15 +972,43 @@ async def create_video(
             "language": _clean_text(body.language) or "zh-CN",
         }
 
-    upstream = await _post("/v1/virtualman/video", body.token, payload)
+    template_meta = _template_meta_from_body(body)
+    submit_payload: Dict[str, Any] = {"base": payload, "stage": "base"}
+    if template_meta:
+        submit_payload["template"] = template_meta
+
+    logger.info(
+        "[shanjian-dh] submit base video user_id=%s profile_id=%s virtualman=%s audio=%s text_len=%s template=%s style_id=%s materials=%s",
+        getattr(current_user, "id", ""),
+        getattr(profile, "id", None),
+        virtualman_id,
+        _url_hint(payload.get("audioUrl", "")) if payload.get("audioUrl") else "",
+        len(text or ""),
+        bool(template_meta),
+        (template_meta or {}).get("style_id"),
+        len((template_meta or {}).get("materials") or []),
+    )
+    try:
+        upstream = await _post("/v1/virtualman/video", body.token, payload)
+    except HTTPException as exc:
+        logger.warning(
+            "[shanjian-dh] submit base video failed user_id=%s virtualman=%s audio=%s detail=%s",
+            getattr(current_user, "id", ""),
+            virtualman_id,
+            _url_hint(payload.get("audioUrl", "")) if payload.get("audioUrl") else "",
+            getattr(exc, "detail", exc),
+        )
+        raise
     data = _data(upstream)
     task_id = _clean_text(data.get("taskId"))
     if not task_id:
-        raise HTTPException(status_code=502, detail="闪剪未返回 taskId")
+        logger.warning("[shanjian-dh] submit base video missing taskId user_id=%s response=%s", getattr(current_user, "id", ""), str(upstream)[:1000])
+        raise HTTPException(status_code=502, detail="Shanjian did not return taskId")
+
     row = ShanjianDigitalHumanVideoTask(
         user_id=int(current_user.id),
         profile_id=getattr(profile, "id", None),
-        title=_clean_text(body.title)[:80] or "数字人口播",
+        title=title,
         status="processing",
         task_id=task_id,
         request_id=_clean_text(upstream.get("requestId")),
@@ -468,18 +1017,13 @@ async def create_video(
         audio_url=audio_url or None,
         speaker_id=speaker_id or None,
         text=text or None,
-        submit_payload=payload,
-        result_payload=upstream,
+        submit_payload=submit_payload,
+        result_payload={"base_submit": upstream},
     )
     db.add(row)
     db.commit()
     db.refresh(row)
-    return {
-        "ok": True,
-        "task_id": task_id,
-        "record": _video_task_to_dict(row),
-        "raw": upstream,
-    }
+    return {"ok": True, "task_id": task_id, "record": _video_task_to_dict(row), "raw": upstream}
 
 
 @router.post("/api/shanjian-digital-human/video/task")
@@ -502,6 +1046,47 @@ async def query_video_task(
     if not row:
         raise HTTPException(status_code=404, detail="未找到对应的闪剪视频任务")
 
+    submit_payload = row.submit_payload if isinstance(row.submit_payload, dict) else {}
+    template_meta = _template_meta_from_submit_payload(submit_payload)
+    clip_task_id = _clean_text((template_meta or {}).get("clip_task_id"))
+
+    if clip_task_id:
+        payload = await _get("/v1/task/info", body.token, {"taskId": clip_task_id})
+        data = _data(payload)
+        result = data.get("result") if isinstance(data.get("result"), dict) else {}
+        status = _clean_text(data.get("status")) or "processing"
+        error_message = _clean_text(data.get("errorMessage") or payload.get("message"))
+
+        row.status = status
+        row.request_id = _clean_text(payload.get("requestId")) or row.request_id
+        row.video_url = _clean_text(_pick_result_value(result, "videoUrl")) or row.video_url
+        row.cover_url = _clean_text(_pick_result_value(result, "coverUrl")) or row.cover_url
+        try:
+            duration_value = _pick_result_value(result, "duration")
+            row.duration = int(duration_value) if duration_value not in (None, "") else row.duration
+        except Exception:
+            pass
+        row.result_payload = {"base": submit_payload.get("base_result"), "clip": payload}
+        row.error_message = error_message or None
+        row.updated_at = datetime.utcnow()
+
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return {
+            "ok": status != "failed",
+            "status": status,
+            "status_text": _task_status_text(status),
+            "task_id": row.task_id,
+            "clip_task_id": clip_task_id,
+            "video_url": row.video_url or "",
+            "cover_url": row.cover_url or "",
+            "duration": row.duration,
+            "record": _video_task_to_dict(row),
+            "message": error_message,
+            "raw": payload,
+        }
+
     payload = await _get("/v1/task/info", body.token, {"taskId": row.task_id})
     data = _data(payload)
     result = data.get("result") if isinstance(data.get("result"), dict) else {}
@@ -517,6 +1102,57 @@ async def query_video_task(
         row.duration = int(duration_value) if duration_value not in (None, "") else row.duration
     except Exception:
         pass
+
+    if status == "succeed" and template_meta and _clean_text(template_meta.get("style_id")):
+        try:
+            clip_submit = await _submit_realman_clip_task(
+                body=body,
+                db=db,
+                current_user=current_user,
+                row=row,
+                template_meta=template_meta,
+                base_result_payload=payload,
+            )
+        except HTTPException as exc:
+            row.status = "failed"
+            row.result_payload = {"base": payload, "clip_error": getattr(exc, "detail", str(exc))}
+            row.error_message = f"模板剪辑提交失败：{getattr(exc, 'detail', str(exc))}"
+            row.updated_at = datetime.utcnow()
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            logger.warning(
+                "[shanjian-dh] realman clip submit failed user_id=%s base_task=%s detail=%s",
+                getattr(current_user, "id", ""),
+                row.task_id,
+                getattr(exc, "detail", exc),
+            )
+            return {
+                "ok": False,
+                "status": "failed",
+                "status_text": _task_status_text("failed"),
+                "task_id": row.task_id,
+                "video_url": row.video_url or "",
+                "cover_url": row.cover_url or "",
+                "duration": row.duration,
+                "record": _video_task_to_dict(row),
+                "message": row.error_message,
+                "raw": row.result_payload,
+            }
+        return {
+            "ok": True,
+            "status": "processing",
+            "status_text": "处理中",
+            "task_id": row.task_id,
+            "clip_task_id": clip_submit.get("clip_task_id"),
+            "video_url": row.video_url or "",
+            "cover_url": row.cover_url or "",
+            "duration": row.duration,
+            "record": _video_task_to_dict(row),
+            "message": "基础视频已完成，模板剪辑任务已提交。",
+            "raw": {"base": payload, "clip_submit": clip_submit},
+        }
+
     row.result_payload = payload
     row.error_message = error_message or None
     row.updated_at = datetime.utcnow()
@@ -528,6 +1164,7 @@ async def query_video_task(
         "ok": status != "failed",
         "status": status,
         "status_text": _task_status_text(status),
+        "task_id": row.task_id,
         "video_url": row.video_url or "",
         "cover_url": row.cover_url or "",
         "duration": row.duration,
