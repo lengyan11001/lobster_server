@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import logging
+import math
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -12,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
 from .assets import _get_tos_config, _save_bytes_or_tos, get_asset_public_url
@@ -20,6 +23,11 @@ from .shanjian_smart_clip import _data, _get, _post
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_SHANJIAN_BILLING_CAPABILITY_ID = "hifly.video.create_by_tts"
+_SHANJIAN_UNIT_CREDITS_PER_SECOND = 10
+_SHANJIAN_TEMPLATE_UNIT_CREDITS_PER_SECOND = 15
+_SHANJIAN_TTS_CHARS_PER_SECOND = 4
 
 
 class _TokenBody(BaseModel):
@@ -84,6 +92,239 @@ class VideoTaskBody(_TokenBody):
 
 def _clean_text(value: Optional[str]) -> str:
     return str(value or "").strip()
+
+
+def _bearer_from_request(request: Optional[Request]) -> str:
+    if request is None:
+        return ""
+    auth = (request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
+
+
+def _billing_base() -> str:
+    base = (getattr(settings, "auth_server_base", None) or "").strip().rstrip("/")
+    if not base:
+        raise HTTPException(status_code=503, detail="AUTH_SERVER_BASE is not configured; billing is unavailable")
+    return base
+
+
+def _billing_headers(request: Request) -> Dict[str, str]:
+    token = _bearer_from_request(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Please sign in before generating a digital human video")
+    headers: Dict[str, str] = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    installation_id = (request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or "").strip()
+    if installation_id:
+        headers["X-Installation-Id"] = installation_id
+    billing_key = (
+        (getattr(settings, "lobster_mcp_billing_internal_key", None) or "").strip()
+        or (os.environ.get("LOBSTER_MCP_BILLING_INTERNAL_KEY") or "").strip()
+    )
+    if billing_key:
+        headers["X-Lobster-Mcp-Billing"] = billing_key
+    return headers
+
+
+def _estimate_text_seconds(text: str) -> int:
+    clean = "".join(str(text or "").split())
+    return max(1, int(math.ceil(len(clean) / _SHANJIAN_TTS_CHARS_PER_SECOND)))
+
+
+def _duration_seconds(value: Any, fallback: int = 1) -> int:
+    if value in (None, ""):
+        return max(1, int(fallback or 1))
+    if isinstance(value, (int, float)):
+        return max(1, int(math.ceil(float(value))))
+    raw = str(value).strip()
+    try:
+        return max(1, int(math.ceil(float(raw))))
+    except Exception:
+        pass
+    parts = raw.split(":")
+    if len(parts) in {2, 3}:
+        try:
+            nums = [float(p) for p in parts]
+            seconds = nums[-1] + nums[-2] * 60
+            if len(nums) == 3:
+                seconds += nums[0] * 3600
+            return max(1, int(math.ceil(seconds)))
+        except Exception:
+            pass
+    return max(1, int(fallback or 1))
+
+
+def _billing_unit_credits(template_meta: Optional[Dict[str, Any]]) -> int:
+    return _SHANJIAN_TEMPLATE_UNIT_CREDITS_PER_SECOND if template_meta and _clean_text(template_meta.get("style_id")) else _SHANJIAN_UNIT_CREDITS_PER_SECOND
+
+
+def _estimate_billing_seconds(body: "CreateVideoBody", template_meta: Optional[Dict[str, Any]], text: str) -> int:
+    if template_meta:
+        return max(1, min(int(getattr(body, "video_duration", None) or template_meta.get("video_duration") or 30), 300))
+    if text:
+        return _estimate_text_seconds(text)
+    return max(1, min(int(getattr(body, "video_duration", None) or 30), 300))
+
+
+async def _shanjian_pre_deduct(
+    *,
+    request: Request,
+    template_meta: Optional[Dict[str, Any]],
+    estimated_seconds: int,
+    title: str,
+) -> Dict[str, Any]:
+    unit = _billing_unit_credits(template_meta)
+    expected_credits = int(max(1, estimated_seconds)) * unit
+    body = {
+        "capability_id": _SHANJIAN_BILLING_CAPABILITY_ID,
+        "model": "shanjian-digital-human-template" if unit == _SHANJIAN_TEMPLATE_UNIT_CREDITS_PER_SECOND else "shanjian-digital-human",
+        "force_credits": expected_credits,
+        "params": {
+            "provider": "shanjian",
+            "title": _clean_text(title)[:80],
+            "estimated_seconds": int(max(1, estimated_seconds)),
+            "unit_credits": unit,
+            "expected_credits": expected_credits,
+            "template_enabled": bool(unit == _SHANJIAN_TEMPLATE_UNIT_CREDITS_PER_SECOND),
+            "style_id": _clean_text((template_meta or {}).get("style_id")),
+        },
+    }
+    async with httpx.AsyncClient(timeout=20.0, trust_env=False) as client:
+        resp = await client.post(f"{_billing_base()}/capabilities/pre-deduct", json=body, headers=_billing_headers(request))
+    if resp.status_code == 402:
+        try:
+            detail = (resp.json() if resp.content else {}).get("detail", "balance insufficient")
+        except Exception:
+            detail = "balance insufficient"
+        raise HTTPException(status_code=402, detail=f"算力不足，预计需预扣 {expected_credits} 算力。{detail}")
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录后再生成")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Shanjian billing pre-deduct failed HTTP {resp.status_code}: {(resp.text or '')[:300]}")
+    data = resp.json() if resp.content else {}
+    try:
+        charged = float(data.get("credits_charged"))
+    except Exception:
+        charged = float(expected_credits)
+    return {
+        "billing_status": "pre_deducted",
+        "capability_id": _SHANJIAN_BILLING_CAPABILITY_ID,
+        "provider": "shanjian",
+        "unit_credits": unit,
+        "estimated_seconds": int(max(1, estimated_seconds)),
+        "expected_credits": expected_credits,
+        "credits_pre_deducted": charged,
+        "template_enabled": bool(unit == _SHANJIAN_TEMPLATE_UNIT_CREDITS_PER_SECOND),
+        "raw": data,
+    }
+
+
+async def _shanjian_refund_billing(request: Request, billing: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+    if not isinstance(billing, dict) or billing.get("billing_status") in {"settled", "refunded"}:
+        return billing if isinstance(billing, dict) else {}
+    credits = float(billing.get("credits_pre_deducted") or 0)
+    if credits <= 0:
+        billing["billing_status"] = "refunded"
+        billing["refund_reason"] = reason
+        billing["credits_refunded"] = 0
+        return billing
+    body = {"capability_id": billing.get("capability_id") or _SHANJIAN_BILLING_CAPABILITY_ID, "credits": credits}
+    try:
+        async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
+            resp = await client.post(f"{_billing_base()}/capabilities/refund", json=body, headers=_billing_headers(request))
+        if resp.status_code >= 400:
+            logger.warning("[shanjian-billing] refund failed http=%s body=%s", resp.status_code, (resp.text or "")[:300])
+            billing["billing_status"] = "refund_failed"
+            billing["billing_error"] = (resp.text or "")[:300]
+            return billing
+        billing["billing_status"] = "refunded"
+        billing["refund_reason"] = reason
+        billing["credits_refunded"] = credits
+        billing["refunded_at"] = datetime.utcnow().isoformat() + "Z"
+    except Exception as exc:
+        logger.exception("[shanjian-billing] refund exception")
+        billing["billing_status"] = "refund_failed"
+        billing["billing_error"] = str(exc)[:300]
+    return billing
+
+
+async def _shanjian_settle_billing(
+    *,
+    request: Request,
+    row: ShanjianDigitalHumanVideoTask,
+    billing: Dict[str, Any],
+    duration_seconds: int,
+    video_url: str,
+    stage: str,
+) -> Dict[str, Any]:
+    if not isinstance(billing, dict) or billing.get("billing_status") in {"settled", "refunded"}:
+        return billing if isinstance(billing, dict) else {}
+    unit = int(billing.get("unit_credits") or _SHANJIAN_UNIT_CREDITS_PER_SECOND)
+    actual_seconds = max(1, int(duration_seconds or billing.get("estimated_seconds") or 1))
+    final_credits = actual_seconds * unit
+    body = {
+        "capability_id": billing.get("capability_id") or _SHANJIAN_BILLING_CAPABILITY_ID,
+        "success": True,
+        "source": "shanjian_digital_human_video_task",
+        "request_payload": {
+            "task_id": row.task_id,
+            "request_id": row.request_id or "",
+            "stage": stage,
+            "estimated_seconds": billing.get("estimated_seconds"),
+            "unit_credits": unit,
+            "template_enabled": bool(billing.get("template_enabled")),
+        },
+        "response_payload": {"duration": actual_seconds, "video_url": video_url or ""},
+        "credits_charged": final_credits,
+        "pre_deduct_applied": True,
+        "credits_pre_deducted": float(billing.get("credits_pre_deducted") or 0),
+        "credits_final": final_credits,
+    }
+    async with httpx.AsyncClient(timeout=20.0, trust_env=False) as client:
+        resp = await client.post(f"{_billing_base()}/capabilities/record-call", json=body, headers=_billing_headers(request))
+    if resp.status_code >= 400:
+        logger.warning("[shanjian-billing] settle failed http=%s body=%s", resp.status_code, (resp.text or "")[:300])
+        billing["billing_status"] = "settle_failed"
+        billing["billing_error"] = (resp.text or "")[:300]
+        return billing
+    billing["billing_status"] = "settled"
+    billing["actual_seconds"] = actual_seconds
+    billing["credits_final"] = final_credits
+    billing["settled_stage"] = stage
+    billing["settled_at"] = datetime.utcnow().isoformat() + "Z"
+    billing["record_call_raw"] = resp.json() if resp.content else {}
+    return billing
+
+
+async def _finalize_row_billing(
+    *,
+    request: Request,
+    row: ShanjianDigitalHumanVideoTask,
+    status: str,
+    duration_value: Any,
+    video_url: str,
+    stage: str,
+    error_message: str = "",
+) -> None:
+    submit_payload = row.submit_payload if isinstance(row.submit_payload, dict) else {}
+    billing = dict(submit_payload.get("billing") or {})
+    if not billing or billing.get("billing_status") in {"settled", "refunded"}:
+        return
+    if status == "succeed":
+        fallback = int(billing.get("estimated_seconds") or row.duration or 1)
+        billing = await _shanjian_settle_billing(
+            request=request,
+            row=row,
+            billing=billing,
+            duration_seconds=_duration_seconds(duration_value, fallback=fallback),
+            video_url=video_url,
+            stage=stage,
+        )
+    elif status == "failed":
+        billing = await _shanjian_refund_billing(request, billing, reason=error_message or f"{stage}_failed")
+    submit_payload["billing"] = billing
+    row.submit_payload = submit_payload
 
 
 def _url_hint(value: str) -> str:
@@ -976,6 +1217,13 @@ async def create_video(
     submit_payload: Dict[str, Any] = {"base": payload, "stage": "base"}
     if template_meta:
         submit_payload["template"] = template_meta
+    billing = await _shanjian_pre_deduct(
+        request=request,
+        template_meta=template_meta,
+        estimated_seconds=_estimate_billing_seconds(body, template_meta, text),
+        title=title,
+    )
+    submit_payload["billing"] = billing
 
     logger.info(
         "[shanjian-dh] submit base video user_id=%s profile_id=%s virtualman=%s audio=%s text_len=%s template=%s style_id=%s materials=%s",
@@ -991,6 +1239,7 @@ async def create_video(
     try:
         upstream = await _post("/v1/virtualman/video", body.token, payload)
     except HTTPException as exc:
+        await _shanjian_refund_billing(request, billing, reason="base_submit_failed")
         logger.warning(
             "[shanjian-dh] submit base video failed user_id=%s virtualman=%s audio=%s detail=%s",
             getattr(current_user, "id", ""),
@@ -1002,6 +1251,7 @@ async def create_video(
     data = _data(upstream)
     task_id = _clean_text(data.get("taskId"))
     if not task_id:
+        await _shanjian_refund_billing(request, billing, reason="base_missing_task_id")
         logger.warning("[shanjian-dh] submit base video missing taskId user_id=%s response=%s", getattr(current_user, "id", ""), str(upstream)[:1000])
         raise HTTPException(status_code=502, detail="Shanjian did not return taskId")
 
@@ -1029,6 +1279,7 @@ async def create_video(
 @router.post("/api/shanjian-digital-human/video/task")
 async def query_video_task(
     body: VideoTaskBody,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1061,14 +1312,23 @@ async def query_video_task(
         row.request_id = _clean_text(payload.get("requestId")) or row.request_id
         row.video_url = _clean_text(_pick_result_value(result, "videoUrl")) or row.video_url
         row.cover_url = _clean_text(_pick_result_value(result, "coverUrl")) or row.cover_url
+        duration_value = _pick_result_value(result, "duration")
         try:
-            duration_value = _pick_result_value(result, "duration")
             row.duration = int(duration_value) if duration_value not in (None, "") else row.duration
         except Exception:
             pass
         row.result_payload = {"base": submit_payload.get("base_result"), "clip": payload}
         row.error_message = error_message or None
         row.updated_at = datetime.utcnow()
+        await _finalize_row_billing(
+            request=request,
+            row=row,
+            status=status,
+            duration_value=duration_value,
+            video_url=row.video_url or "",
+            stage="clip",
+            error_message=error_message,
+        )
 
         db.add(row)
         db.commit()
@@ -1097,8 +1357,8 @@ async def query_video_task(
     row.request_id = _clean_text(payload.get("requestId")) or row.request_id
     row.video_url = _clean_text(_pick_result_value(result, "videoUrl")) or row.video_url
     row.cover_url = _clean_text(_pick_result_value(result, "coverUrl")) or row.cover_url
+    duration_value = _pick_result_value(result, "duration")
     try:
-        duration_value = _pick_result_value(result, "duration")
         row.duration = int(duration_value) if duration_value not in (None, "") else row.duration
     except Exception:
         pass
@@ -1118,6 +1378,15 @@ async def query_video_task(
             row.result_payload = {"base": payload, "clip_error": getattr(exc, "detail", str(exc))}
             row.error_message = f"模板剪辑提交失败：{getattr(exc, 'detail', str(exc))}"
             row.updated_at = datetime.utcnow()
+            await _finalize_row_billing(
+                request=request,
+                row=row,
+                status="failed",
+                duration_value=row.duration,
+                video_url=row.video_url or "",
+                stage="clip_submit",
+                error_message=row.error_message or "",
+            )
             db.add(row)
             db.commit()
             db.refresh(row)
@@ -1156,6 +1425,15 @@ async def query_video_task(
     row.result_payload = payload
     row.error_message = error_message or None
     row.updated_at = datetime.utcnow()
+    await _finalize_row_billing(
+        request=request,
+        row=row,
+        status=status,
+        duration_value=duration_value,
+        video_url=row.video_url or "",
+        stage="base",
+        error_message=error_message,
+    )
 
     db.add(row)
     db.commit()
