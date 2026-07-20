@@ -25,7 +25,7 @@ from .auth import access_token_claims, create_access_token, get_current_user
 from .mobile_identity import online_user_for_mobile_user
 from ..core.config import settings
 from ..db import get_db
-from ..models import ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, TikHubQueryLog, TikHubSourceItem, User
+from ..models import ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
 
@@ -1587,14 +1587,112 @@ def _memory_payload_from_docs(docs: list[dict[str, Any]], *, content_limit: int 
         if not isinstance(doc, dict):
             continue
         doc_id = doc.get("id") or doc.get("doc_id") or doc.get("memory_id") or doc.get("filename") or doc.get("name")
+        meta = doc.get("meta") if isinstance(doc.get("meta"), dict) else {}
+        reference_image_urls = _extract_reference_image_urls(doc, limit=8)
         memories.append(
             {
                 "id": _clean_text(doc_id, 191),
                 "title": _clean_text(doc.get("title") or doc.get("name") or doc.get("filename"), 120),
                 "content": _clean_long_text(doc.get("content") or doc.get("content_text") or doc.get("text") or doc.get("summary") or doc.get("notes"), content_limit),
+                "meta": _jsonable(meta),
+                "reference_image_urls": reference_image_urls,
             }
         )
     return memories
+
+
+def _looks_like_reference_image_url(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if text.lower().startswith("data:image/"):
+        return True
+    if not text.lower().startswith(("http://", "https://")):
+        return False
+    path = text.split("#", 1)[0].split("?", 1)[0].lower()
+    return any(path.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif"))
+
+
+def _extract_reference_image_urls(value: Any, *, limit: int = 8) -> list[str]:
+    urls: list[str] = []
+    image_keys = {
+        "image",
+        "image_url",
+        "image_urls",
+        "images",
+        "reference_image_url",
+        "reference_image_urls",
+        "source_image",
+        "source_images",
+        "public_url",
+        "preview_url",
+        "source_url",
+        "url",
+    }
+
+    def add(raw: Any) -> None:
+        if len(urls) >= limit:
+            return
+        text = str(raw or "").strip()
+        if text and _looks_like_reference_image_url(text) and text not in urls:
+            urls.append(text)
+
+    def visit(raw: Any, *, hinted: bool = False, depth: int = 0) -> None:
+        if len(urls) >= limit or depth > 6:
+            return
+        if isinstance(raw, str):
+            if hinted:
+                add(raw)
+            return
+        if isinstance(raw, dict):
+            for key, val in raw.items():
+                key_text = str(key or "").lower()
+                next_hinted = hinted or key_text in image_keys or "image" in key_text
+                if next_hinted or key_text in {"meta", "source_meta"}:
+                    visit(val, hinted=next_hinted, depth=depth + 1)
+            return
+        if isinstance(raw, list):
+            for item in raw:
+                visit(item, hinted=hinted, depth=depth + 1)
+                if len(urls) >= limit:
+                    break
+
+    visit(value, hinted=True)
+    return urls[:limit]
+
+
+def _memory_doc_reference_image_urls(
+    db: Session,
+    current_user: User,
+    docs: list[dict[str, Any]],
+    memories: list[dict[str, Any]],
+    *,
+    limit: int = 8,
+) -> list[str]:
+    urls = _extract_reference_image_urls([docs, memories], limit=limit)
+    doc_ids = _clean_memory_doc_ids(
+        [
+            item.get("doc_id") or item.get("id") or item.get("memory_id")
+            for item in list(docs or []) + list(memories or [])
+            if isinstance(item, dict)
+        ],
+        50,
+    )
+    if doc_ids and len(urls) < limit:
+        owner_ids = {int(current_user.id)}
+        try:
+            owner_ids.add(int(online_user_for_mobile_user(db, current_user).id))
+        except Exception:
+            pass
+        rows = (
+            db.query(OpenClawMemoryDocument)
+            .filter(OpenClawMemoryDocument.doc_id.in_(doc_ids), OpenClawMemoryDocument.status == "active")
+            .filter(OpenClawMemoryDocument.target_user_id.in_(list(owner_ids)))
+            .limit(50)
+            .all()
+        )
+        urls = _extract_reference_image_urls([urls, [{"meta": row.meta or {}, "doc_id": row.doc_id} for row in rows]], limit=limit)
+    return urls[:limit]
 
 
 def _item_brief(row: TikHubSourceItem, idx: int) -> dict[str, Any]:
@@ -3017,12 +3115,14 @@ def _save_draft_records(
     memories: list[dict[str, Any]],
     extra_requirements: str,
     group_id: str,
+    reference_image_urls: Optional[list[str]] = None,
 ) -> list[IPContentDraftRecord]:
     source_ids = [int(row.id) for row in rows]
     memory_ids = [m.get("id") for m in memories if m.get("id")]
     saved: list[IPContentDraftRecord] = []
     is_moments = _is_moments_task(task)
     is_oral = _is_oral_task(task)
+    clean_reference_image_urls = _extract_reference_image_urls(reference_image_urls or [], limit=8) if is_moments else []
     for draft in drafts:
         image_prompts = [p for p in (draft.get("image_prompts") or []) if isinstance(p, str) and p.strip()]
         image_prompt = _clean_long_text(draft.get("image_prompt"), 2000) or (image_prompts[0] if image_prompts else None)
@@ -3032,6 +3132,9 @@ def _save_draft_records(
             image_prompt = None
         elif is_moments:
             content = _strip_moments_comment_bait(_strip_embedded_image_prompt(content or "", 8000), 8000) or content
+        meta = {"group_id": group_id, "extra_requirements": _clean_long_text(extra_requirements, 4000), "image_prompts": image_prompts[:3]}
+        if clean_reference_image_urls:
+            meta["reference_image_urls"] = clean_reference_image_urls
         rec = IPContentDraftRecord(
             record_id=uuid.uuid4().hex,
             user_id=current_user.id,
@@ -3042,7 +3145,7 @@ def _save_draft_records(
             image_prompt=image_prompt,
             source_item_ids=source_ids,
             memory_doc_ids=memory_ids,
-            meta={"group_id": group_id, "extra_requirements": _clean_long_text(extra_requirements, 4000), "image_prompts": image_prompts[:3]},
+            meta=meta,
         )
         db.add(rec)
         saved.append(rec)
@@ -3074,6 +3177,7 @@ async def _generate_and_save_ip_content_records(
     llm_timeout_seconds: float = 150.0,
     progress: ScheduleProgress = None,
     task_label: str = "",
+    reference_image_urls: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     target_count = max(1, min(int(count or 5), 20))
     clean_group_id = _clean_group_id(group_id) or uuid.uuid4().hex
@@ -3090,6 +3194,8 @@ async def _generate_and_save_ip_content_records(
     source_items: list[dict[str, Any]] = []
     requirements_text = ""
     batch_payloads: list[dict[str, Any]] = []
+    failed_batches: list[dict[str, Any]] = []
+    clean_reference_image_urls = _extract_reference_image_urls(reference_image_urls or [], limit=8)
 
     _emit_schedule_progress(
         progress,
@@ -3105,6 +3211,7 @@ async def _generate_and_save_ip_content_records(
             "llm_attempts": llm_attempts,
             "llm_timeout_seconds": llm_timeout_seconds,
             "group_id": clean_group_id,
+            "reference_image_count": len(clean_reference_image_urls) if _is_moments_task(record_task) else 0,
         },
     )
     for batch_index, cur_count in enumerate(batch_sizes, start=1):
@@ -3134,87 +3241,161 @@ async def _generate_and_save_ip_content_records(
                 "group_id": clean_group_id,
             },
         )
-        generated = await _call_ip_content_llm(
-            request=request,
-            auth_token=auth_token,
-            installation_id=installation_id,
-            task=task_key,
-            platform=platform,
-            count=cur_count,
-            rows=rows,
-            memories=memories,
-            extra_requirements=batch_extra,
-            fallback_sources=fallback_sources,
-            llm_attempts=llm_attempts,
-            llm_timeout_seconds=llm_timeout_seconds,
-        )
-        drafts = list(generated.get("drafts") or [])
-        all_drafts.extend(drafts)
-        if not source_items:
-            source_items = list(generated.get("source_items") or [])
-        requirements_text = str(generated.get("requirements") or requirements_text or "")
-        _emit_schedule_progress(
-            progress,
-            "save_drafts",
-            f"正在保存{clean_label}第 {batch_index}/{total_batches} 批",
-            {
-                "task": record_task,
-                "batch_index": batch_index,
-                "batch_count": total_batches,
-                "draft_count": len(drafts),
-                "saved_count": len(all_records),
-                "group_id": clean_group_id,
-            },
-        )
-        records = _save_draft_records(
-            db,
-            current_user=current_user,
-            task=record_task,
-            platform=platform,
-            drafts=drafts,
-            rows=rows,
-            memories=memories,
-            extra_requirements=extra_requirements,
-            group_id=clean_group_id,
-        )
-        all_records.extend(records)
-        batch_payloads.append(
-            {
+        try:
+            generated = await _call_ip_content_llm(
+                request=request,
+                auth_token=auth_token,
+                installation_id=installation_id,
+                task=task_key,
+                platform=platform,
+                count=cur_count,
+                rows=rows,
+                memories=memories,
+                extra_requirements=batch_extra,
+                fallback_sources=fallback_sources,
+                llm_attempts=llm_attempts,
+                llm_timeout_seconds=llm_timeout_seconds,
+            )
+            drafts = list(generated.get("drafts") or [])
+            all_drafts.extend(drafts)
+            if not source_items:
+                source_items = list(generated.get("source_items") or [])
+            requirements_text = str(generated.get("requirements") or requirements_text or "")
+            _emit_schedule_progress(
+                progress,
+                "save_drafts",
+                f"正在保存{clean_label}第 {batch_index}/{total_batches} 批",
+                {
+                    "task": record_task,
+                    "batch_index": batch_index,
+                    "batch_count": total_batches,
+                    "draft_count": len(drafts),
+                    "saved_count": len(all_records),
+                    "group_id": clean_group_id,
+                },
+            )
+            records = _save_draft_records(
+                db,
+                current_user=current_user,
+                task=record_task,
+                platform=platform,
+                drafts=drafts,
+                rows=rows,
+                memories=memories,
+                extra_requirements=extra_requirements,
+                group_id=clean_group_id,
+                reference_image_urls=clean_reference_image_urls,
+            )
+            all_records.extend(records)
+            batch_payloads.append(
+                {
+                    "index": batch_index,
+                    "status": "completed",
+                    "count": len(records),
+                    "records": [_draft_record_payload(row) for row in records],
+                }
+            )
+            _emit_schedule_progress(
+                progress,
+                "generate_batch_done",
+                f"{clean_label}第 {batch_index}/{total_batches} 批已生成",
+                {
+                    "task": record_task,
+                    "batch_index": batch_index,
+                    "batch_count": total_batches,
+                    "record_count": len(records),
+                    "saved_count": len(all_records),
+                    "group_id": clean_group_id,
+                },
+            )
+        except Exception as exc:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            detail = getattr(exc, "detail", None) or str(exc)
+            if isinstance(detail, (dict, list)):
+                detail = json.dumps(detail, ensure_ascii=False)
+            error_text = _clean_long_text(detail, 1000) or f"{clean_label}第 {batch_index}/{total_batches} 批生成失败"
+            batch_error = {
                 "index": batch_index,
-                "count": len(records),
-                "records": [_draft_record_payload(row) for row in records],
+                "status": "failed",
+                "count": 0,
+                "records": [],
+                "error": error_text,
             }
-        )
+            failed_batches.append(batch_error)
+            batch_payloads.append(batch_error)
+            _emit_schedule_progress(
+                progress,
+                "generate_batch_error",
+                f"{clean_label}第 {batch_index}/{total_batches} 批生成失败，继续执行后续批次",
+                {
+                    "task": record_task,
+                    "batch_index": batch_index,
+                    "batch_count": total_batches,
+                    "saved_count": len(all_records),
+                    "group_id": clean_group_id,
+                    "error": error_text,
+                },
+            )
+            continue
+    records_payload = [_draft_record_payload(row) for row in all_records]
+    failed_count = len(failed_batches)
+    completed_batches = max(0, total_batches - failed_count)
+    generation_status = "completed"
+    if failed_count:
+        generation_status = "failed" if completed_batches <= 0 else "partial"
+    if failed_count >= total_batches:
+        first_error = failed_batches[0].get("error") if failed_batches else ""
+        error_message = f"{clean_label}全部批次生成失败"
+        if first_error:
+            error_message += f"：{first_error}"
         _emit_schedule_progress(
             progress,
-            "generate_batch_done",
-            f"{clean_label}第 {batch_index}/{total_batches} 批已生成",
+            "generate_failed",
+            error_message,
             {
                 "task": record_task,
-                "batch_index": batch_index,
+                "status": generation_status,
                 "batch_count": total_batches,
-                "record_count": len(records),
-                "saved_count": len(all_records),
+                "failed_count": failed_count,
+                "failed_batches": failed_batches,
                 "group_id": clean_group_id,
             },
         )
-    records_payload = [_draft_record_payload(row) for row in all_records]
+        raise HTTPException(status_code=502, detail=error_message)
     _emit_schedule_progress(
         progress,
         "generate_done",
-        f"{clean_label}已生成",
-        {"task": record_task, "record_count": len(records_payload), "group_id": clean_group_id},
+        f"{clean_label}已生成" if generation_status == "completed" else f"{clean_label}部分批次已生成",
+        {
+            "task": record_task,
+            "status": generation_status,
+            "record_count": len(records_payload),
+            "batch_count": total_batches,
+            "completed_batches": completed_batches,
+            "failed_count": failed_count,
+            "group_id": clean_group_id,
+        },
     )
     return {
+        "status": generation_status,
         "task": record_task,
         "group_id": clean_group_id,
         "count": len(records_payload),
+        "target_count": target_count,
+        "batch_count": total_batches,
+        "completed_batches": completed_batches,
+        "failed_count": failed_count,
+        "failed_batches": failed_batches,
         "requirements": requirements_text,
         "records": records_payload,
         "drafts": all_drafts[:target_count],
         "source_items": source_items,
         "memory_docs": memories,
         "extra_requirements": _clean_long_text(extra_requirements, 4000),
+        "reference_image_urls": clean_reference_image_urls if _is_moments_task(record_task) else [],
         "batches": batch_payloads,
     }
 
@@ -3304,6 +3485,7 @@ async def run_ip_content_daily_scheduled(
         else []
     )
     memories = _memory_payload_from_docs(memory_docs_raw, content_limit=3200)
+    template_reference_image_urls = _memory_doc_reference_image_urls(db, current_user, memory_docs_raw, memories, limit=8)
     if not keywords and not competitors and not memories:
         raise HTTPException(status_code=400, detail="请选择关键词、同行账号模板或记忆资料")
 
@@ -3315,6 +3497,7 @@ async def run_ip_content_daily_scheduled(
             "keyword_count": len(keywords),
             "competitor_count": len(competitors),
             "memory_count": len(memories),
+            "reference_image_count": len(template_reference_image_urls),
         },
     )
     scheduled_llm_attempts = _env_int("IP_CONTENT_STUDIO_SCHEDULE_LLM_ATTEMPTS", 1, minimum=1, maximum=3)
@@ -3406,6 +3589,7 @@ async def run_ip_content_daily_scheduled(
         count: int,
         extra: str,
         batch_size: Optional[int] = None,
+        reference_image_urls: Optional[list[str]] = None,
     ) -> None:
         task_label = {
             "industry_hot_oral": "行业热门口播文案",
@@ -3430,15 +3614,23 @@ async def run_ip_content_daily_scheduled(
             llm_timeout_seconds=scheduled_llm_timeout_seconds,
             progress=progress,
             task_label=task_label,
+            reference_image_urls=reference_image_urls,
         )
         generated_groups.append(
             {
+                "status": generated.get("status") or "completed",
                 "task": record_task,
                 "group_id": generated.get("group_id") or "",
                 "count": int(generated.get("count") or 0),
+                "target_count": int(generated.get("target_count") or count or 0),
+                "batch_count": int(generated.get("batch_count") or 1),
+                "completed_batches": int(generated.get("completed_batches") or 0),
+                "failed_count": int(generated.get("failed_count") or 0),
+                "failed_batches": generated.get("failed_batches") or [],
                 "requirements": generated.get("requirements") or "",
                 "records": generated.get("records") or [],
                 "source_items": generated.get("source_items") or [],
+                "reference_image_urls": generated.get("reference_image_urls") or [],
                 "batches": generated.get("batches") or [],
             }
         )
@@ -3474,6 +3666,7 @@ async def run_ip_content_daily_scheduled(
             "ip_row_count": len(ip_rows),
             "moment_row_count": len(moment_rows),
             "memory_count": len(memories),
+            "reference_image_count": len(template_reference_image_urls),
         },
     )
 
@@ -3507,6 +3700,7 @@ async def run_ip_content_daily_scheduled(
             count=min(max(int(opts.moments_count or 20), 1), 20),
             extra=_requirements_text(requirements, "moments", "moments_copy", "image", "common"),
             batch_size=_env_int("IP_CONTENT_STUDIO_MOMENTS_BATCH_SIZE", 5, minimum=1, maximum=20),
+            reference_image_urls=template_reference_image_urls,
         )
 
     records_by_task = {group["task"]: group["records"] for group in generated_groups}
@@ -3518,6 +3712,7 @@ async def run_ip_content_daily_scheduled(
         "keyword_ids": keyword_ids,
         "competitor_ids": competitor_ids,
         "memory_docs": memories,
+        "reference_image_urls": template_reference_image_urls,
         "requirements": requirements,
         "sync_results": sync_results,
         "groups": generated_groups,
@@ -4402,7 +4597,9 @@ async def generate_moments_candidates(
     seen: set[int] = set()
     rows = [row for row in rows if not (row.id in seen or seen.add(row.id))][:40]
     memories = _memory_payload_from_docs(body.memory_docs)
+    reference_image_urls = _memory_doc_reference_image_urls(db, current_user, body.memory_docs, memories, limit=8)
     requested_count = min(max(int(body.count or 20), 1), 20)
+    request_batch_size = requested_count if requested_count <= 5 else _env_int("IP_CONTENT_STUDIO_MOMENTS_BATCH_SIZE", 5, minimum=1, maximum=20)
     generated = await _generate_and_save_ip_content_records(
         db=db,
         current_user=current_user,
@@ -4416,7 +4613,8 @@ async def generate_moments_candidates(
         extra_requirements=body.extra_requirements,
         count=requested_count,
         group_id=body.group_id,
-        batch_size=_env_int("IP_CONTENT_STUDIO_MOMENTS_BATCH_SIZE", 5, minimum=1, maximum=20),
+        batch_size=request_batch_size,
+        reference_image_urls=reference_image_urls,
         task_label="朋友圈文案",
     )
     return {"ok": True, "task": "moments_candidate", "sync_results": sync_results, **generated}

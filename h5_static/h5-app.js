@@ -677,41 +677,61 @@
       { value: "moments_candidate", label: "朋友圈文案" },
     ];
     const SALES_WORKFLOW_PRESET = [
-      ["06:00", "local_bestseller", "自动创作一条同城爆款视频"],
-      ["07:00", "hifly.video.create_by_tts", "自动创作一条数字人口播视频"],
-      ["08:00", "native_wechat_poll", "私信接管"],
-      ["08:30", "douyin_leads", "自动养号"],
-      ["09:00", "douyin_leads", "视频发布后采集互动线索"],
-      ["09:30", "native_wechat_poll", "私信接管"],
-      ["09:45", "native_wechat_add_friend", "自动加好友"],
-      ["10:00", "ip_content_daily", "朋友圈发布文案准备"],
-      ["10:30", "native_wechat_moments_engage", "朋友圈点赞评论"],
-      ["11:00", "native_wechat_poll", "私信接管"],
-      ["11:30", "douyin_leads", "自动养号"],
-      ["12:00", "douyin_leads", "关键词抓取精准客户"],
-      ["12:30", "douyin_leads", "回复10个精准客户评论"],
-      ["13:00", "douyin_leads", "评论上午发布的视频并@精准客户"],
-      ["13:30", "douyin_leads", "关注精准客户并评论首条作品"],
-      ["14:00", "native_wechat_poll", "私信接管"],
-      ["14:30", "douyin_leads", "抖音私信10个精准客户"],
-      ["15:00", "douyin_leads", "抖音私信引流接管"],
-      ["15:30", "douyin_leads", "自动养号"],
-      ["16:30", "native_wechat_add_friend", "自动加好友"],
-      ["17:00", "native_wechat_poll", "私信接管"],
-      ["17:30", "douyin_leads", "关键词抓取精准客户"],
-      ["18:30", "douyin_leads", "回复10个精准客户评论"],
-      ["19:00", "douyin_leads", "评论上午发布的视频并@精准客户"],
-      ["19:30", "douyin_leads", "关注精准客户并评论首条作品"],
-      ["20:00", "native_wechat_poll", "私信接管"],
-      ["20:30", "douyin_leads", "抖音私信10个精准客户"],
-      ["21:00", "native_wechat_moments_engage", "朋友圈点赞评论"],
-      ["21:30", "douyin_leads", "抖音私信引流接管"],
-      ["22:30", "native_wechat_add_friend", "自动加好友"],
-      ["23:00", "native_wechat_poll", "私信接管"],
+      { time: "06:00", endTime: "06:30", key: "local_bestseller", label: "创作同城爆款视频", note: "创作一条同城爆款视频（用于发公域平台）", actions: [{ time: "08:45", platform: "douyin", label: "同城爆款视频发布抖音", note: "同城爆款视频发布抖音，配文案、带标签发布" }] },
+      { time: "06:30", endTime: "07:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "09:30", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
+      { time: "07:00", endTime: "07:15", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中提取明确微信号后加好友，没有明确微信号则跳过", params: { source_mode: "douyin_private_message_wechat_id", trigger: "clear_wechat_id", skip_without_clear_wechat_id: true } },
+      { time: "07:15", endTime: "07:30", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
+      { time: "07:30", endTime: "07:45", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
+      { time: "07:45", endTime: "08:15", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
+      { time: "08:15", endTime: "08:45", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
+      { time: "09:00", endTime: "09:15", key: "wechat_channels_publish", label: "同城爆款视频发布视频号（敬请期待）", note: "同城爆款视频发布视频号，配文案、带标签发布", comingSoon: true },
+      { time: "09:15", endTime: "09:30", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
+      { time: "09:45", endTime: "10:00", key: "native_wechat_moments_engage", label: "微信朋友圈点赞评论", note: "微信朋友圈点赞评论" },
+      { time: "10:00", endTime: "10:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
+      { time: "10:15", endTime: "10:30", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
+      { time: "10:30", endTime: "11:00", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
+      { time: "11:00", endTime: "11:30", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
+      { time: "11:30", endTime: "12:00", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户" },
+      { time: "12:00", endTime: "12:15", key: "douyin_leads", label: "抖音回复精准客户评论10个", note: "抖音回复精准客户评论10个" },
+      { time: "12:15", endTime: "12:30", key: "douyin_leads", label: "抖音自己评论区接管", note: "抖音自己评论区接管，评论并@10个精准客户" },
+      { time: "12:30", endTime: "12:45", key: "douyin_leads", label: "抖音关注精准客户并评论首条作品", note: "抖音关注10个精准客户，并找到他的首条作品去评论" },
+      { time: "12:45", endTime: "13:00", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中提取明确微信号后加好友，没有明确微信号则跳过", params: { source_mode: "douyin_private_message_wechat_id", trigger: "clear_wechat_id", skip_without_clear_wechat_id: true } },
+      { time: "13:00", endTime: "13:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
+      { time: "13:15", endTime: "13:30", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
+      { time: "13:30", endTime: "13:45", key: "native_wechat_moments_engage", label: "微信朋友圈自己评论区接管", note: "微信朋友圈自己评论区接管", params: { moment_action: "comment" } },
+      { time: "13:45", endTime: "14:15", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "14:15", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
+      { time: "14:30", endTime: "14:45", key: "douyin_leads", label: "抖音主动私信精准客户", note: "抖音主动私信10个精准客户" },
+      { time: "14:45", endTime: "15:00", key: "douyin_leads", label: "抖音私信接管", note: "抖音私信接管" },
+      { time: "15:00", endTime: "15:15", key: "wechat_channels_comment", label: "视频号评论区接管（敬请期待）", note: "视频号评论区接管", comingSoon: true },
+      { time: "15:15", endTime: "15:30", key: "wechat_channels_message", label: "视频号私信接管（敬请期待）", note: "视频号私信接管", comingSoon: true },
+      { time: "15:30", endTime: "16:00", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
+      { time: "16:00", endTime: "16:30", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
+      { time: "16:30", endTime: "16:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
+      { time: "16:45", endTime: "17:00", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
+      { time: "17:00", endTime: "17:15", key: "native_wechat_moments_engage", label: "微信朋友圈点赞评论", note: "微信朋友圈点赞评论" },
+      { time: "17:15", endTime: "17:30", key: "douyin_leads", label: "抖音获客·关键词抓取精准客户", note: "抖音获客·关键词抓取精准客户" },
+      { time: "17:30", endTime: "17:45", key: "douyin_leads", label: "抖音回复精准客户评论10个", note: "抖音回复精准客户评论10个" },
+      { time: "17:45", endTime: "18:00", key: "douyin_leads", label: "抖音自己评论区接管", note: "抖音自己评论区接管，评论并@10个精准客户" },
+      { time: "18:00", endTime: "18:15", key: "douyin_leads", label: "抖音关注精准客户并评论首条作品", note: "抖音关注10个精准客户，并找到他的首条作品去评论" },
+      { time: "18:15", endTime: "18:30", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中提取明确微信号后加好友，没有明确微信号则跳过", params: { source_mode: "douyin_private_message_wechat_id", trigger: "clear_wechat_id", skip_without_clear_wechat_id: true } },
+      { time: "18:30", endTime: "18:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
+      { time: "18:45", endTime: "19:00", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
+      { time: "19:00", endTime: "19:15", key: "douyin_leads", label: "抖音主动私信精准客户", note: "抖音主动私信10个精准客户" },
+      { time: "19:15", endTime: "19:30", key: "douyin_leads", label: "抖音私信接管", note: "抖音私信接管" },
+      { time: "19:30", endTime: "20:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "20:00", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
+      { time: "20:15", endTime: "20:30", key: "wechat_channels_comment", label: "视频号评论区接管（敬请期待）", note: "视频号评论区接管", comingSoon: true },
+      { time: "20:30", endTime: "20:45", key: "wechat_channels_message", label: "视频号私信接管（敬请期待）", note: "视频号私信接管", comingSoon: true },
+      { time: "20:45", endTime: "21:00", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中提取明确微信号后加好友，没有明确微信号则跳过", params: { source_mode: "douyin_private_message_wechat_id", trigger: "clear_wechat_id", skip_without_clear_wechat_id: true } },
+      { time: "21:00", endTime: "22:00", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
+      { time: "22:00", endTime: "22:15", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
+      { time: "22:15", endTime: "22:30", key: "native_wechat_moments_engage", label: "朋友圈点赞评论（微信）", note: "朋友圈点赞评论（微信）" },
+      { time: "22:30", endTime: "23:00", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
+      { time: "23:00", endTime: "23:30", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
+      { time: "23:30", endTime: "24:00", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
     ];
-    const SALES_WORKFLOW_NODE_OPTIONS = Array.from(new Map(SALES_WORKFLOW_PRESET.map((row) => {
-      const key = `${row[1]}@@${row[2]}`;
-      return [key, { key: row[1], label: row[2], note: row[2] }];
+    const SALES_WORKFLOW_NODE_OPTIONS = Array.from(new Map(SALES_WORKFLOW_PRESET.filter((row) => !row.comingSoon).map((row) => {
+      const key = `${row.key}@@${row.label || row.note}`;
+      return [key, { key: row.key, label: row.label || row.note, note: row.note || row.label }];
     })).values());
     const SALES_PERSONA_DEFAULT_KEYS = new Set([
       "local_bestseller",
@@ -735,6 +755,7 @@
     function nativeWechatKeyFromSalesNote(note) {
       const text = String(note || "");
       if (text.includes("自动加好友")) return "native_wechat_add_friend";
+      if (text.includes("自动拉群")) return "native_wechat_poll";
       if (text.includes("朋友圈点赞") || text.includes("朋友圈评论")) return "native_wechat_moments_engage";
       if (text.includes("私信接管")) return "native_wechat_poll";
       return "";
@@ -753,11 +774,19 @@
         prompt,
         ...(params && typeof params === "object" ? params : {}),
       };
+      const groupInvite = baseParams.followup_action === "group_invite" || prompt.includes("自动拉群");
+      if (groupInvite) {
+        baseParams.followup_action = "group_invite";
+        baseParams.group_invite_enabled = true;
+        baseParams.group_invite_rule_status = baseParams.group_invite_rule_status || "pending_rules";
+        baseParams.trigger = baseParams.trigger || "qualified_intent";
+      }
       if (actionKey === "native_wechat_poll") {
+        const title = groupInvite ? "个微自动拉群" : "个微私信接管";
         return {
-          title: "个微私信接管",
+          title,
           task_kind: "client_workflow",
-          content: "H5 工作流：个微私信接管",
+          content: `H5 工作流：${title}`,
           payload: { action: "native_wechat_poll", params: baseParams },
         };
       }
@@ -787,8 +816,39 @@
       throw new Error("这个个微节点暂不支持加入工作流");
     }
 
+    function salesWorkflowPlaceholderPlan(row) {
+      const label = row && (row.label || row.note || "敬请期待") || "敬请期待";
+      return {
+        title: label,
+        task_kind: "workflow_placeholder",
+        content: `H5 工作流占位：${label}`,
+        payload: {
+          action: "workflow_coming_soon",
+          skip_execution: true,
+          note: row && row.note || label,
+          platform: String(row && row.key || "").startsWith("wechat_channels") ? "wechat_channels" : "",
+        },
+      };
+    }
+
+    function workflowNodeIsPlaceholder(node) {
+      if (!node || typeof node !== "object") return false;
+      const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      return !!(node.comingSoon || node.workflow_placeholder || payload.skip_execution || payload.action === "workflow_coming_soon");
+    }
+
     function normalizeSalesWorkflowNode(node) {
       if (!node || typeof node !== "object") return node;
+      if (workflowNodeIsPlaceholder(node)) {
+        return {
+          ...node,
+          comingSoon: true,
+          workflow_placeholder: true,
+          plan: node.plan && typeof node.plan === "object" ? node.plan : salesWorkflowPlaceholderPlan(node),
+          children: [],
+        };
+      }
       const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
       const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
       const action = String(payload.action || (payload.params || {}).action || "");
@@ -821,8 +881,8 @@
       if (text.includes("回复") && text.includes("评论")) return "reply_comments";
       if (text.includes("@精准")) return "mention_comment";
       if (text.includes("关注") && text.includes("评论")) return "follow_comment";
-      if (text.includes("私信10")) return "direct_message";
-      if (text.includes("私信引流")) return "stranger_message";
+      if (text.includes("主动私信") || text.includes("私信10")) return "direct_message";
+      if (text.includes("私信接管") || text.includes("私信引流")) return "stranger_message";
       return "search_collect";
     }
     const AI_MARKETING_CREATION_ID = "ai_marketing_creation";
@@ -836,9 +896,9 @@
     };
     const SYSTEM_WORKFLOW_EMPLOYEES = [
       { id: "system_sales", name: "销售员工", departmentId: "sales", mark: "销", preset: "sales" },
-      { id: "system_customer_service", name: "客服员工", departmentId: "customer_service", mark: "客" },
-      { id: "system_overseas", name: "海外员工", departmentId: "overseas", mark: "海" },
-      { id: "system_hr", name: "HR员工", departmentId: "operations", mark: "HR" },
+      { id: "system_customer_service", name: "客服员工", departmentId: "customer_service", mark: "客", comingSoon: true },
+      { id: "system_overseas", name: "海外员工", departmentId: "overseas", mark: "海", comingSoon: true },
+      { id: "system_hr", name: "HR员工", departmentId: "operations", mark: "HR", comingSoon: true },
     ];
 
     const DOUYIN_TASK_ACTIONS = {
@@ -2577,11 +2637,12 @@
       }
       if (node.key === "douyin_leads" || node.workQuickKey === "douyin_leads") {
         const salesAction = salesWorkflowActionForNote(prompt);
+        const maxUsers = salesAction !== "search_collect" && salesAction !== "account_nurture" ? 10 : 50;
         return {
           title: `抖音获客 - ${prompt.slice(0, 24)}`,
           task_kind: "douyin_leads",
           content: "H5 工作流：抖音获客",
-          payload: { action: "search_collect", params: { keyword: prompt, sales_action: salesAction, max_results: 50, regions: ["全国"], mode: "script" } },
+          payload: { action: "search_collect", params: { keyword: prompt, sales_action: salesAction, max_results: maxUsers, max_users: maxUsers, regions: ["全国"], mode: "script" } },
         };
       }
       if (isNativeWechatWorkflowKey(node.key) || isNativeWechatWorkflowKey(node.workQuickKey)) {
@@ -2754,24 +2815,106 @@
       renderWorkflow();
     }
 
+    function salesWorkflowDurationMinutes(row) {
+      const start = String(row && row.time || "");
+      const end = String(row && row.endTime || "");
+      const parse = (value) => {
+        const m = /^(\d{2}):(\d{2})$/.exec(String(value || ""));
+        if (!m) return null;
+        return Number(m[1]) * 60 + Number(m[2]);
+      };
+      const s = parse(start);
+      let e = parse(end);
+      if (s == null || e == null) return 0;
+      if (e === 0 && end === "24:00") e = 24 * 60;
+      if (e < s) e += 24 * 60;
+      return Math.max(0, e - s);
+    }
+
+    function mergeSalesWorkflowPresetParams(plan, row) {
+      const next = JSON.parse(JSON.stringify(plan || {}));
+      const payload = next.payload && typeof next.payload === "object" ? next.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const mergedParams = {
+        ...params,
+        ...(row && row.params && typeof row.params === "object" ? row.params : {}),
+        sales_schedule_start: row && row.time || "",
+        sales_schedule_end: row && row.endTime || "",
+        sales_schedule_duration_minutes: salesWorkflowDurationMinutes(row),
+        sales_node_label: row && (row.label || row.note) || params.sales_node_label || "",
+      };
+      if (next.task_kind === "douyin_leads") {
+        const salesAction = salesWorkflowActionForNote(row && (row.note || row.label));
+        mergedParams.sales_action = salesAction;
+        if (salesAction !== "search_collect" && salesAction !== "account_nurture") {
+          mergedParams.max_results = row && row.maxResults || 10;
+          mergedParams.max_users = row && row.maxUsers || 10;
+        }
+        if (salesAction === "stranger_message") {
+          mergedParams.extract_wechat_id = true;
+          mergedParams.followup_action = "native_wechat_add_friend";
+          mergedParams.skip_followup_without_clear_wechat_id = true;
+        }
+      }
+      payload.params = mergedParams;
+      next.payload = payload;
+      return next;
+    }
+
+    function salesWorkflowPresetPlan(row, lookup) {
+      if (row && row.comingSoon) return salesWorkflowPlaceholderPlan(row);
+      if (isNativeWechatWorkflowKey(row && row.key)) {
+        return mergeSalesWorkflowPresetParams(nativeWechatWorkflowPlan(row.key, row.note || row.label, row.params || {}), row);
+      }
+      return mergeSalesWorkflowPresetParams(workflowPlanForLookup(lookup, row && (row.note || row.label) || ""), row);
+    }
+
+    function salesWorkflowPublishAction(parentNode, action, index) {
+      const child = workflowActionPayload(parentNode, {
+        time: action && action.time,
+        action_type: "publish",
+        platform: action && action.platform,
+      }, null);
+      child.id = `${parentNode.id}_action_${index + 1}`;
+      child.ability_label = action && action.label || workflowActionLabel(child);
+      child.note = action && action.note || "";
+      child.param_configured = true;
+      if (child.plan && child.plan.payload && child.plan.payload.params) {
+        child.plan.title = child.ability_label;
+        child.plan.content = `H5 工作流动作：${child.ability_label}`;
+        child.plan.payload.params.note = child.note;
+        child.plan.payload.params.sales_schedule_start = action && action.time || "";
+        child.plan.payload.params.sales_schedule_end = action && action.endTime || "";
+      }
+      return child;
+    }
+
     function buildSalesWorkflowPresetNodes() {
       const nodes = [];
-      SALES_WORKFLOW_PRESET.forEach(([time, key, note], index) => {
-        const lookup = abilityLookup(key);
-        if (!lookup || !lookup.node || lookup.node.comingSoon || isPublishCenterNode(lookup.node)) return;
-        const plan = workflowPlanForLookup(lookup, note);
-        nodes.push({
-          id: `sales_${String(time).replace(":", "")}_${index}`,
-          time,
-          ability_key: lookup.node.key || "",
-          ability_label: note || lookup.node.label || lookup.node.key || "",
-          department_id: lookup.department.id,
-          department_name: lookup.department.name || "",
-          note,
+      SALES_WORKFLOW_PRESET.forEach((row, index) => {
+        const lookup = row && !row.comingSoon ? abilityLookup(row.key) : null;
+        if (!row || (!row.comingSoon && (!lookup || !lookup.node || lookup.node.comingSoon || isPublishCenterNode(lookup.node)))) return;
+        const node = {
+          id: `sales_${String(row.time || "").replace(":", "")}_${index}`,
+          time: row.time,
+          end_time: row.endTime || "",
+          time_range: row.endTime ? `${row.time}-${row.endTime}` : row.time,
+          ability_key: row.comingSoon ? row.key : (lookup.node.key || ""),
+          ability_label: row.label || row.note || (lookup && lookup.node && (lookup.node.label || lookup.node.key)) || "",
+          department_id: row.comingSoon ? "sales" : lookup.department.id,
+          department_name: row.comingSoon ? "销售部" : (lookup.department.name || ""),
+          note: row.note || row.label || "",
           sales_preset: true,
+          comingSoon: !!row.comingSoon,
+          workflow_placeholder: !!row.comingSoon,
           param_configured: false,
-          plan,
-        });
+          plan: salesWorkflowPresetPlan(row, lookup),
+        };
+        const actions = Array.isArray(row.actions) ? row.actions : [];
+        if (actions.length && !node.comingSoon) {
+          node.children = actions.map((action, actionIndex) => salesWorkflowPublishAction(node, action, actionIndex));
+        }
+        nodes.push(node);
       });
       return nodes.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
     }
@@ -2913,10 +3056,11 @@
           owner_name: "系统",
           name: item.name,
           nodes,
-          status: "active",
+          status: item.comingSoon ? "coming_soon" : "active",
           source: "system",
           system: true,
           mark: item.mark,
+          comingSoon: !!item.comingSoon,
           granted_user_ids: [],
         };
       }).filter((tpl) => workflowTemplateNodeCount(tpl) > 0);
@@ -3104,6 +3248,10 @@
     function openWorkflowParamModal(nodeId) {
       const node = (state.workflowNodesDraft || []).find((item) => String(item.id || "") === String(nodeId || ""));
       const lookup = workflowLookupForNode(node);
+      if (workflowNodeIsPlaceholder(node)) {
+        toast("敬请期待");
+        return;
+      }
       if (!node || !lookup) {
         toast("未找到节点");
         return;
@@ -3155,6 +3303,7 @@
     }
 
     function workflowDemoPlan(node) {
+      if (workflowNodeIsPlaceholder(node)) throw new Error("敬请期待");
       const lookup = workflowLookupForNode(node);
       if (!node || !lookup) throw new Error("未找到节点");
       const raw = node.plan && typeof node.plan === "object" ? node.plan : workflowPlanForLookup(lookup, node.note || "");
@@ -3172,6 +3321,10 @@
       const node = (state.workflowNodesDraft || []).find((item) => String(item.id || "") === String(nodeId || ""));
       if (!node) {
         toast("未找到节点");
+        return;
+      }
+      if (workflowNodeIsPlaceholder(node)) {
+        toast("敬请期待");
         return;
       }
       const oldText = btn ? btn.textContent : "";
@@ -3252,7 +3405,7 @@
       const tasks = workflowTasksForDate(selectedKey);
       const runs = workflowRunsForDate(selectedKey);
       box.innerHTML = nodes.map((node, index) => `
-        <div class="workflow-node-card" data-workflow-edit-node="${escapeHtml(node.id || "")}">
+        <div class="workflow-node-card${workflowNodeIsPlaceholder(node) ? " is-placeholder" : ""}"${workflowNodeIsPlaceholder(node) ? "" : ` data-workflow-edit-node="${escapeHtml(node.id || "")}"`}>
           <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>
           <div class="workflow-node-main">
             <strong>${escapeHtml(node.ability_label || "任务节点")}</strong>
@@ -3260,8 +3413,7 @@
           </div>
           <div class="workflow-node-actions">
             ${workflowStatusPillHtml(workflowStatusInfo(node, workflowTaskForNodeDateOrCurrent(node, tasks, selectedKey), workflowLatestRunForNode(node, runs), selectedKey))}
-            <button class="ghost" type="button" data-workflow-demo-node="${escapeHtml(node.id || "")}">演示</button>
-            <button class="ghost danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>
+            ${workflowNodeIsPlaceholder(node) ? "" : `<button class="ghost" type="button" data-workflow-demo-node="${escapeHtml(node.id || "")}">演示</button><button class="ghost danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>`}
           </div>
         </div>
       `).join("");
@@ -3279,6 +3431,7 @@
       const tasks = workflowTasksForDate(selectedKey);
       const runs = workflowRunsForDate(selectedKey);
       box.innerHTML = nodes.map((node) => {
+        const placeholder = workflowNodeIsPlaceholder(node);
         const children = workflowChildActions(node).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
         const childHtml = children.map((action) => `
           <div class="workflow-node-card workflow-action-card">
@@ -3301,16 +3454,17 @@
           </div>
         `).join("");
         return `
-          <div class="workflow-node-card">
+          <div class="workflow-node-card${placeholder ? " is-placeholder" : ""}"${placeholder ? "" : ` data-workflow-edit-node="${escapeHtml(node.id || "")}"`}>
             <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>
             <div class="workflow-node-main">
               <strong>${escapeHtml(node.ability_label || "任务节点")}</strong>
+              ${placeholder ? `<span>敬请期待</span>` : ""}
             </div>
             <div class="workflow-node-status">
               ${workflowStatusPillHtml(workflowStatusInfo(node, workflowTaskForNodeDateOrCurrent(node, tasks, selectedKey), workflowLatestRunForNode(node, runs), selectedKey))}
             </div>
             <div class="workflow-node-actions">
-              <details class="task-action-menu workflow-node-action-menu">
+              ${placeholder ? "" : `<details class="task-action-menu workflow-node-action-menu">
                 <summary>操作</summary>
                 <div class="task-action-list">
                   <button type="button" data-workflow-edit-node="${escapeHtml(node.id || "")}">设置参数</button>
@@ -3318,7 +3472,7 @@
                   <button type="button" data-workflow-demo-node="${escapeHtml(node.id || "")}">演示</button>
                   <button class="danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>
                 </div>
-              </details>
+              </details>`}
             </div>
           </div>
           ${childHtml}
@@ -3341,16 +3495,20 @@
       list.innerHTML = rows.map((tpl) => {
         const own = tpl.source === "own";
         const system = tpl.source === "system";
+        const comingSoon = workflowTemplateIsComingSoon(tpl);
+        const canActivate = workflowTemplateCanActivate(tpl);
         const active = workflowTemplateIsActive(tpl);
         const nodeCount = workflowTemplateNodeCount(tpl);
-        const baseSourceText = system ? "系统提供 · 全员可见" : (tpl.source === "granted" ? `来自 ${tpl.owner_name || "代理商"}` : `${nodeCount} 个节点`);
+        const baseSourceText = comingSoon ? "敬请期待" : (system ? "系统提供 · 全员可见" : (tpl.source === "granted" ? `来自 ${tpl.owner_name || "代理商"}` : `${nodeCount} 个节点`));
         const sourceText = active ? `启用中 · ${baseSourceText}` : baseSourceText;
-        const copyBtn = `<button class="ghost" type="button" data-workflow-copy="${escapeHtml(tpl.id)}">复制</button>`;
-        const activateBtn = active
+        const copyBtn = canActivate ? `<button class="ghost" type="button" data-workflow-copy="${escapeHtml(tpl.id)}">复制</button>` : "";
+        const activateBtn = !canActivate
+          ? `<button class="ghost" type="button" disabled aria-disabled="true">敬请期待</button>`
+          : active
           ? `<button class="ghost danger-text" type="button" data-workflow-stop-template="${escapeHtml(tpl.id)}">停用</button>`
           : `<button type="button" data-workflow-activate-template="${escapeHtml(tpl.id)}">启用</button>`;
         const deleteBtn = own ? `<button class="ghost" type="button" data-workflow-delete="${tpl.id}">删除</button>` : "";
-        return `<div class="workflow-template-item${active ? " active" : ""}">
+        return `<div class="workflow-template-item${active ? " active" : ""}${comingSoon ? " coming-soon" : ""}">
           <div>
             <strong>${escapeHtml(tpl.name || "工作流模板")}${active ? `<b class="workflow-active-badge">启用中</b>` : ""}</strong>
             <span>${escapeHtml(sourceText)}${system ? ` · ${escapeHtml(nodeCount + " 个节点")}` : ""}</span>
@@ -3385,6 +3543,14 @@
       return !!tpl && tpl.source === "own";
     }
 
+    function workflowTemplateIsComingSoon(tpl) {
+      return !!(tpl && (tpl.comingSoon || tpl.coming_soon || tpl.workflow_placeholder || tpl.status === "coming_soon"));
+    }
+
+    function workflowTemplateCanActivate(tpl) {
+      return !!tpl && !workflowTemplateIsComingSoon(tpl);
+    }
+
     function activeWorkflowTemplateId() {
       return String((state.workflowActive && state.workflowActive.template_id) || "").trim();
     }
@@ -3399,10 +3565,11 @@
 
     function activeWorkflowTemplateName() {
       const tpl = activeWorkflowTemplateRow();
-      return String((tpl && tpl.name) || (state.workflowActive && state.workflowActive.template_name) || "").trim();
+      return String((tpl && tpl.name) || "").trim();
     }
 
     function workflowTemplateIsActive(tpl) {
+      if (!workflowTemplateCanActivate(tpl)) return false;
       if (tpl && tpl.source === "system") {
         return !!activeWorkflowTemplateKey() && activeWorkflowTemplateKey() === String(tpl.id || "");
       }
@@ -3414,6 +3581,8 @@
       return (Array.isArray(rows) ? rows : []).slice().sort((a, b) => {
         const activeDelta = Number(workflowTemplateIsActive(b)) - Number(workflowTemplateIsActive(a));
         if (activeDelta) return activeDelta;
+        const comingSoonDelta = Number(workflowTemplateIsComingSoon(a)) - Number(workflowTemplateIsComingSoon(b));
+        if (comingSoonDelta) return comingSoonDelta;
         return 0;
       });
     }
@@ -3442,7 +3611,7 @@
         return `<div class="custom-employee-node">
           <span>${escapeHtml(node.time || "--:--")}</span>
           <strong>${escapeHtml(node.ability_label || plan.title || "任务节点")}</strong>
-          <button class="ghost" type="button" data-custom-employee-demo-node="${escapeHtml(nodeKey)}">演示</button>
+          ${workflowNodeIsPlaceholder(node) ? `<em>敬请期待</em>` : `<button class="ghost" type="button" data-custom-employee-demo-node="${escapeHtml(nodeKey)}">演示</button>`}
           ${node.note ? `<em>${escapeHtml(node.note)}</em>` : ""}
         </div>`;
       }).join("")}</div>`;
@@ -3464,7 +3633,7 @@
         return `<div class="custom-employee-node">
           <span>${escapeHtml(node.time || "--:--")}</span>
           <strong>${escapeHtml(node.ability_label || plan.title || "任务节点")}</strong>
-          <button class="ghost" type="button" data-custom-employee-demo-node="${escapeHtml(nodeKey)}">演示</button>
+          ${workflowNodeIsPlaceholder(node) ? `<em>敬请期待</em>` : `<button class="ghost" type="button" data-custom-employee-demo-node="${escapeHtml(nodeKey)}">演示</button>`}
           ${node.note ? `<em>${escapeHtml(node.note)}</em>` : ""}
         </div>${childHtml}`;
       }).join("")}</div>`;
@@ -3475,14 +3644,16 @@
       const nodeCount = workflowTemplateNodeCount(tpl);
       const own = workflowTemplateCanEdit(tpl);
       const system = tpl && tpl.source === "system";
+      const comingSoon = workflowTemplateIsComingSoon(tpl);
       const active = workflowTemplateIsActive(tpl);
-      return `<button class="custom-employee-card${compact ? " compact" : ""}${active ? " active" : ""}" type="button" data-custom-employee-detail="${escapeHtml(tpl.id || "")}">
+      const detailAttr = comingSoon ? ' disabled aria-disabled="true"' : ` data-custom-employee-detail="${escapeHtml(tpl.id || "")}"`;
+      return `<button class="custom-employee-card${compact ? " compact" : ""}${active ? " active" : ""}${comingSoon ? " coming-soon" : ""}" type="button"${detailAttr}>
         <span class="custom-employee-avatar">${escapeHtml(workflowTemplateInitial(tpl))}</span>
         <span class="custom-employee-main">
           <strong>${escapeHtml(tpl.name || "自定义员工")}</strong>
           <em>${escapeHtml(nodeCount ? `${nodeCount} 个节点` : "暂无节点")}</em>
         </span>
-        <b>${active ? "启用中" : (system ? "系统" : (own ? "我的" : "授权"))}</b>
+        <b>${comingSoon ? "敬请期待" : (active ? "启用中" : (system ? "系统" : (own ? "我的" : "授权")))}</b>
       </button>`;
     }
 
@@ -3490,15 +3661,17 @@
       const nodeCount = workflowTemplateNodeCount(tpl);
       const own = workflowTemplateCanEdit(tpl);
       const system = tpl && tpl.source === "system";
+      const comingSoon = workflowTemplateIsComingSoon(tpl);
       const active = workflowTemplateIsActive(tpl);
       const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
-      return `<button class="office-employee-card custom-template${active ? " active" : ""}" type="button" data-custom-employee-detail="${escapeHtml(tpl.id || "")}" style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(tpl.name || "定制员工")}">
+      const detailAttr = comingSoon ? ' disabled aria-disabled="true"' : ` data-custom-employee-detail="${escapeHtml(tpl.id || "")}"`;
+      return `<button class="office-employee-card custom-template${active ? " active" : ""}${comingSoon ? " coming-soon" : ""}" type="button"${detailAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(tpl.name || "定制员工")}">
         <span class="office-custom-employee-avatar">${escapeHtml(workflowTemplateInitial(tpl))}</span>
         <span class="office-employee-info">
           <strong>${escapeHtml(tpl.name || "定制员工")}</strong>
           <em>${escapeHtml(nodeCount ? `${nodeCount} 个节点` : "暂无节点")}</em>
         </span>
-        <b class="office-custom-employee-tag">${active ? "启用中" : (system ? "系统" : (own ? "我的" : "授权"))}</b>
+        <b class="office-custom-employee-tag">${comingSoon ? "敬请期待" : (active ? "启用中" : (system ? "系统" : (own ? "我的" : "授权")))}</b>
       </button>`;
     }
 
@@ -3717,10 +3890,11 @@
       if (!id) throw new Error("请先保存模板");
       const iid = currentInstallationId();
       if (!iid) throw new Error("请选择设备");
+      const tpl = workflowTemplateById(id);
+      if (tpl && !workflowTemplateCanActivate(tpl)) throw new Error("该员工暂未开放");
       state.workflowSubmitting = true;
       renderWorkflow();
       try {
-        const tpl = workflowTemplateById(id);
         if (tpl && tpl.source === "system") {
           const data = await api("/api/h5-workflows/activate-inline", {
             method: "POST",
@@ -4677,6 +4851,14 @@
       return String(row.created_by_role || "") === "workflow" || !!(ctx.workflow_template_id || ctx.workflow_node_id);
     }
 
+    function workflowDisplayedContextIsActive() {
+      const viewTemplateId = String(state.workflowViewingTemplateId || "").trim();
+      const viewTemplateKey = String(state.workflowViewingTemplateKey || "").trim();
+      if (viewTemplateKey) return activeWorkflowTemplateKey() === viewTemplateKey;
+      if (viewTemplateId) return activeWorkflowTemplateId() === viewTemplateId;
+      return !!state.workflowActive;
+    }
+
     function workflowRunsForDate(dateKey) {
       const key = dateKey || workflowSelectedDateKey();
       const hasDisplayedContext = workflowDisplayedHasContext();
@@ -4771,6 +4953,7 @@
     }
 
     function workflowStatusInfo(item, activeTask, run, dateKey) {
+      if (workflowNodeIsPlaceholder(item)) return { label: "敬请期待", kind: "paused", placeholder: true };
       if (run && isActiveRun(run)) return { label: "执行中", kind: "running", runId: run.id || "" };
       if (run && runFailed(run)) return { label: "失败", kind: "failed", runId: run.id || "" };
       if (run && runSucceeded(run)) return { label: "完成", kind: "completed", runId: run.id || "" };
@@ -4780,11 +4963,11 @@
       if (status === "paused") return { label: "暂停", kind: "paused", taskId: activeTask.id || "" };
       if (status === "cancelled" || status === "canceled") return { label: "已取消", kind: "failed", taskId: activeTask.id || "" };
       if (activeTask) return { label: taskWorkStatusText(activeTask) || "待执行", kind: "pending", taskId: activeTask.id || "" };
-      return state.workflowActive ? { label: "待执行", kind: "pending" } : { label: "未启用", kind: "idle" };
+      return workflowDisplayedContextIsActive() ? { label: "待执行", kind: "pending" } : { label: "未启用", kind: "idle" };
     }
 
     function workflowStatusPillHtml(info) {
-      const cls = `workflow-status-pill ${info && info.kind ? `is-${info.kind}` : "is-idle"}`;
+      const cls = `workflow-status-pill ${info && info.kind ? `is-${info.kind}` : "is-idle"}${info && info.placeholder ? " workflow-placeholder-pill" : ""}`;
       if (info && info.runId) {
         return `<button class="${escapeHtml(cls)}" type="button" data-open-run-detail="${escapeHtml(info.runId)}">${escapeHtml(info.label || "-")}</button>`;
       }
@@ -5119,7 +5302,7 @@
         { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true, systemTemplateId: "system_overseas" },
         { id: "hr", name: "HR", status: "敬请期待", comingSoon: true, systemTemplateId: "system_hr" },
       ].map((role) => {
-        const active = activeWorkflowTemplateKey() === String(role.systemTemplateId || "");
+        const active = !role.comingSoon && activeWorkflowTemplateKey() === String(role.systemTemplateId || "");
         return active ? { ...role, status: "启用中", active } : role;
       });
       const customEmployees = userWorkflowTemplateRows();
@@ -5151,7 +5334,7 @@
         const targetAttr = role.target ? ` data-home-target="${escapeHtml(role.target)}"` : "";
         const templateAttr = "";
         const departmentAttr = !role.target && role.departmentId ? ` data-role-department="${escapeHtml(role.departmentId)}"` : "";
-        const locked = role.comingSoon && !activeSystemTemplate;
+        const locked = !!role.comingSoon || (role.active && !activeSystemTemplate);
         const disabledAttr = locked ? ' disabled aria-disabled="true"' : "";
         return `<button class="office-employee-card${locked ? " coming-soon" : ""}${role.active ? " active" : ""}" type="button"${systemTargetAttr}${targetAttr}${templateAttr}${departmentAttr}${disabledAttr} style="--employee-glow:${escapeHtml(hue)}" aria-label="${escapeHtml(role.name)}">
           <img src="${escapeHtml(img)}" alt="" loading="lazy">

@@ -75,6 +75,7 @@ class GeneratedMemorySaveBody(BaseModel):
     title: str = ""
     notes: str = ""
     documents: dict[str, str] = Field(default_factory=dict)
+    source_images: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def _internal_api_base() -> str:
@@ -409,6 +410,131 @@ def _append_visual_block(visual_blocks: list[dict[str, Any]], filename: str, dat
     return True
 
 
+def _clean_reference_image_url(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.lower().startswith("data:image/"):
+        return text
+    if not text.lower().startswith(("http://", "https://")):
+        return ""
+    clean = text.split("#", 1)[0]
+    path = clean.split("?", 1)[0].lower()
+    if any(path.endswith(suffix) for suffix in IMAGE_SUFFIXES):
+        return text
+    return ""
+
+
+def _reference_image_urls_from_sources(source_images: list[dict[str, Any]], *, limit: int = 8) -> list[str]:
+    urls: list[str] = []
+    for item in source_images or []:
+        if not isinstance(item, dict):
+            continue
+        url = _clean_reference_image_url(item.get("url") or item.get("image_url") or item.get("public_url"))
+        if url and url not in urls:
+            urls.append(url)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+def _source_images_from_meta(meta: Any, *, source: str = "memory_doc", limit: int = 8) -> list[dict[str, Any]]:
+    if not isinstance(meta, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    raw_images = meta.get("source_images") if isinstance(meta.get("source_images"), list) else []
+    for item in raw_images:
+        if not isinstance(item, dict):
+            continue
+        url = _clean_reference_image_url(item.get("url") or item.get("image_url") or item.get("public_url"))
+        if not url:
+            continue
+        out.append({**item, "url": url, "source": item.get("source") or source})
+        if len(out) >= limit:
+            return out
+    raw_urls = meta.get("reference_image_urls") or meta.get("image_urls") or []
+    if isinstance(raw_urls, str):
+        raw_urls = [raw_urls]
+    iter_urls = raw_urls if isinstance(raw_urls, list) else []
+    for url_value in iter_urls:
+        url = _clean_reference_image_url(url_value)
+        if url and url not in {item.get("url") for item in out}:
+            out.append({"type": "image", "source": source, "filename": Path(url.split("?", 1)[0]).name or "reference-image", "url": url})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _merge_source_images(*groups: list[dict[str, Any]], limit: int = 8) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group or []:
+            if not isinstance(item, dict):
+                continue
+            url = _clean_reference_image_url(item.get("url") or item.get("image_url") or item.get("public_url"))
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            out.append({**item, "url": url})
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def _upload_reference_image(
+    *,
+    installation_id: str,
+    filename: str,
+    suffix: str,
+    data: bytes,
+    source: str,
+) -> Optional[dict[str, Any]]:
+    if not data or len(data) > MAX_IMAGE_BYTES:
+        return None
+    ext = suffix if suffix in IMAGE_SUFFIXES else Path(filename or "").suffix.lower()
+    if ext not in IMAGE_SUFFIXES:
+        ext = ".png"
+    content_type = mimetypes.guess_type(f"reference{ext}")[0] or "image/png"
+    try:
+        with tempfile.TemporaryDirectory(prefix="lobster-h5-ref-image-") as tmp:
+            path = Path(tmp) / f"reference{ext}"
+            path.write_bytes(data)
+            object_key = (
+                "assets/h5_personal_memory_refs/"
+                f"{_safe_object_segment(installation_id)}/{uuid.uuid4().hex}{ext}"
+            )
+            url = _upload_job_file_to_tos(path, object_key=object_key, content_type=content_type)
+    except Exception:
+        return None
+    clean_url = _clean_reference_image_url(url)
+    if not clean_url:
+        return None
+    return {"type": "image", "source": source, "filename": filename or f"reference{ext}", "url": clean_url}
+
+
+def _add_reference_image(
+    source_images: list[dict[str, Any]],
+    *,
+    installation_id: str,
+    filename: str,
+    suffix: str,
+    data: bytes,
+    source: str,
+) -> None:
+    if len(source_images) >= MAX_VISUAL_BLOCKS:
+        return
+    entry = _upload_reference_image(
+        installation_id=installation_id,
+        filename=filename,
+        suffix=suffix,
+        data=data,
+        source=source,
+    )
+    if entry and entry.get("url") not in {item.get("url") for item in source_images if isinstance(item, dict)}:
+        source_images.append(entry)
+
+
 def _extract_stt_text(stt_data: dict[str, Any]) -> str:
     output = _extract_stt_output(stt_data)
     for key in ("text", "transcript", "content", "result_text"):
@@ -479,9 +605,10 @@ async def _collect_sources(
     *,
     db: Session,
     stt_user: User,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     parts: list[str] = []
     visual_blocks: list[dict[str, Any]] = []
+    source_images: list[dict[str, Any]] = []
     if raw_text.strip():
         parts.append("【粘贴资料】\n" + raw_text.strip())
     if urls.strip():
@@ -492,6 +619,9 @@ async def _collect_sources(
             if _looks_like_image_url(url):
                 try:
                     data = await _download_media_url(url, max_bytes=MAX_IMAGE_BYTES)
+                    clean_url = _clean_reference_image_url(url)
+                    if clean_url and clean_url not in {item.get("url") for item in source_images if isinstance(item, dict)}:
+                        source_images.append({"type": "image", "source": "url", "filename": Path(url).name or "image-url", "url": clean_url})
                     if _append_visual_block(visual_blocks, Path(url).name or "image-url", data):
                         parts.append(f"【图片链接】{url}")
                 except Exception as exc:
@@ -504,6 +634,14 @@ async def _collect_sources(
                         parts.append(f"【视频链接】{url}\n已抽取 {len(frames)} 张关键帧用于理解。")
                         for frame_name, frame_data in frames:
                             _append_visual_block(visual_blocks, frame_name, frame_data)
+                            _add_reference_image(
+                                source_images,
+                                installation_id=installation_id,
+                                filename=f"{Path(url).name or 'video-url'}-{frame_name}",
+                                suffix=Path(frame_name).suffix.lower(),
+                                data=frame_data,
+                                source="video_url_frame",
+                            )
                     else:
                         parts.append(f"【视频链接】{url}\n关键帧抽取失败。")
                 except Exception as exc:
@@ -530,6 +668,14 @@ async def _collect_sources(
             continue
         filename, suffix, data = await _read_upload(file)
         if suffix in IMAGE_SUFFIXES and _append_visual_block(visual_blocks, filename, data):
+            _add_reference_image(
+                source_images,
+                installation_id=installation_id,
+                filename=filename,
+                suffix=suffix,
+                data=data,
+                source="upload",
+            )
             parts.append(f"【图片】{filename}")
             continue
         if suffix in VIDEO_SUFFIXES:
@@ -538,6 +684,14 @@ async def _collect_sources(
                 parts.append(f"【视频】{filename}\n已抽取 {len(frames)} 张关键帧用于理解。")
                 for frame_name, frame_data in frames:
                     _append_visual_block(visual_blocks, f"{filename}-{frame_name}", frame_data)
+                    _add_reference_image(
+                        source_images,
+                        installation_id=installation_id,
+                        filename=f"{filename}-{frame_name}",
+                        suffix=Path(frame_name).suffix.lower(),
+                        data=frame_data,
+                        source="video_frame",
+                    )
             else:
                 parts.append(_media_text(filename, suffix, data) + "\n关键帧抽取失败。")
             continue
@@ -557,7 +711,7 @@ async def _collect_sources(
     merged = _limit_text("\n\n".join(part for part in parts if part.strip()))
     if not merged and not visual_blocks:
         raise HTTPException(status_code=400, detail="请上传资料、填写链接或粘贴资料内容。")
-    return merged, visual_blocks
+    return merged, visual_blocks, source_images
 
 
 def _limit_local(text: str, max_chars: int = 120_000) -> str:
@@ -819,6 +973,8 @@ async def save_generated_memory_documents(
         raise HTTPException(status_code=400, detail="没有可保存的记忆内容。")
     created: list[OpenClawMemoryDocument] = []
     multi = len(docs) > 1
+    source_images = _merge_source_images(body.source_images)
+    source_image_urls = _reference_image_urls_from_sources(source_images)
     for key, text in docs.items():
         title = _document_title(body.title, key, multi)
         row = _create_document(
@@ -830,7 +986,11 @@ async def save_generated_memory_documents(
             filename=f"{title}.txt",
             notes=body.notes or "IP人设定位 AI 理解",
             content_text=text,
-            meta={"doc_type": key, "doc_type_label": DOC_TYPE_LABELS.get(key, key)},
+            meta={
+                "doc_type": key,
+                "doc_type_label": DOC_TYPE_LABELS.get(key, key),
+                **({"source_images": source_images, "reference_image_urls": source_image_urls} if source_image_urls else {}),
+            },
         )
         created.append(row)
     return {"ok": True, "documents": [_doc_summary(row, include_content=True) for row in created]}
@@ -852,7 +1012,7 @@ async def save_uploaded_memory_document(
     installation_id = _installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
-    source_text, _visual_blocks = await _collect_sources(
+    source_text, _visual_blocks, source_images = await _collect_sources(
         request,
         installation_id,
         files,
@@ -862,10 +1022,12 @@ async def save_uploaded_memory_document(
         stt_user=target_user,
     )
     source_text = await _describe_visual_sources(request, installation_id, source_text, _visual_blocks)
+    source_image_urls = _reference_image_urls_from_sources(source_images)
+    source_meta = {"source_images": source_images, "reference_image_urls": source_image_urls} if source_image_urls else {}
     mode = (mode or "new").strip().lower()
     if mode == "overwrite":
         row = _memory_row(db, target_user.id, installation_id, target_doc_id)
-        row = _overwrite_document(db, row, content_text=source_text, notes=notes or "IP人设定位上传资料", meta={"save_mode": "overwrite", "uploaded": True})
+        row = _overwrite_document(db, row, content_text=source_text, notes=notes or "IP人设定位上传资料", meta={"save_mode": "overwrite", "uploaded": True, **source_meta})
     else:
         clean_title = _short_title(title, "个人记忆")
         row = _create_document(
@@ -877,7 +1039,7 @@ async def save_uploaded_memory_document(
             filename=f"{clean_title}.txt",
             notes=notes or "IP人设定位上传资料",
             content_text=source_text,
-            meta={"save_mode": "new", "uploaded": True},
+            meta={"save_mode": "new", "uploaded": True, **source_meta},
         )
     return {
         "ok": True,
@@ -899,6 +1061,7 @@ async def generate_memory_documents(
     doc_types: str = Form(default=""),
     custom_reference_file: Optional[UploadFile] = File(default=None),
     reference_doc_ids: str = Form(default=""),
+    source_doc_ids: str = Form(default=""),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -910,7 +1073,7 @@ async def generate_memory_documents(
 
     raw_parts = [direct_intro.strip(), direct_faq.strip(), direct_scripts.strip()]
     raw_text = "\n\n".join(part for part in raw_parts if part)
-    source_text, visual_blocks = await _collect_sources(
+    source_text, visual_blocks, source_images = await _collect_sources(
         request,
         installation_id,
         files,
@@ -921,6 +1084,19 @@ async def generate_memory_documents(
     )
     source_text = await _describe_visual_sources(request, installation_id, source_text, visual_blocks)
     visual_blocks = []
+
+    source_ref_ids = [_sanitize_doc_id(x) for x in (source_doc_ids or "").split(",") if _sanitize_doc_id(x)]
+    if source_ref_ids:
+        rows = (
+            _doc_query(db, target_user.id, installation_id)
+            .filter(OpenClawMemoryDocument.doc_id.in_(source_ref_ids[:8]))
+            .order_by(OpenClawMemoryDocument.updated_at.desc())
+            .all()
+        )
+        own_ids = {row.doc_id for row in rows}
+        rows.extend(row for row in _agent_granted_memory_rows(db, target_user, source_ref_ids[:8]) if row.doc_id not in own_ids)
+        for row in rows:
+            source_images = _merge_source_images(source_images, _source_images_from_meta(row.meta, source="source_doc"))
 
     ref_ids = [_sanitize_doc_id(x) for x in (reference_doc_ids or "").split(",") if _sanitize_doc_id(x)]
     if ref_ids:
@@ -950,4 +1126,12 @@ async def generate_memory_documents(
     documents = _parse_generated(text, selected_doc_types)
     if not documents:
         raise HTTPException(status_code=502, detail="AI 理解没有生成可保存内容。")
-    return {"ok": True, "documents": documents, "doc_types": selected_doc_types, "raw_text": text}
+    source_images = _merge_source_images(source_images)
+    return {
+        "ok": True,
+        "documents": documents,
+        "doc_types": selected_doc_types,
+        "raw_text": text,
+        "source_images": source_images,
+        "reference_image_urls": _reference_image_urls_from_sources(source_images),
+    }

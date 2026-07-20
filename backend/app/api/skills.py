@@ -51,6 +51,18 @@ def _skill_store_admin(user: User) -> bool:
 
 
 DEFAULT_VISIBLE_PACKAGES_DOMESTIC: tuple[str, ...] = (
+    "home_ai_chat_entry",
+    "h5_chat_entry",
+    "skill_store_entry",
+    "publish_center_entry",
+    "asset_library_entry",
+    "scheduled_tasks_entry",
+    "production_records_entry",
+    "billing_entry",
+    "sys_config_entry",
+    "logs_entry",
+    "personal_settings_entry",
+    "agent_entry",
     "sutui_mcp",
     "xiaohongshu_publish",
     "douyin_publish",
@@ -68,14 +80,29 @@ DEFAULT_VISIBLE_PACKAGES_DOMESTIC: tuple[str, ...] = (
     "reddit_leads",
     "x_leads",
     "tiktok_leads",
+    "wecom_reply",
     "juhe_wechat_skill",
     "create_video_pipeline_skill",
     "wewrite_official_account_skill",
     "create_ppt_skill",
+    "local_bestseller_skill",
+    "viral_video_remix_skill",
 )
 
 
 DEFAULT_VISIBLE_PACKAGES_OVERSEAS: tuple[str, ...] = (
+    "home_ai_chat_entry",
+    "h5_chat_entry",
+    "skill_store_entry",
+    "publish_center_entry",
+    "asset_library_entry",
+    "scheduled_tasks_entry",
+    "production_records_entry",
+    "billing_entry",
+    "sys_config_entry",
+    "logs_entry",
+    "personal_settings_entry",
+    "agent_entry",
     "sutui_mcp",
     "youtube_publish",
     "twilio_whatsapp",
@@ -90,9 +117,12 @@ DEFAULT_VISIBLE_PACKAGES_OVERSEAS: tuple[str, ...] = (
     "reddit_leads",
     "x_leads",
     "tiktok_leads",
+    "wecom_reply",
     "juhe_wechat_skill",
     "create_ppt_skill",
     "create_video_pipeline_skill",
+    "local_bestseller_skill",
+    "viral_video_remix_skill",
 )
 
 

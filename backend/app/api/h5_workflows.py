@@ -44,6 +44,7 @@ _PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 _IP_DAILY_DEFAULT_TASKS = ["industry_hot_oral", "professional_ip_oral", "moments_candidate"]
 _DEVICE_ONLINE_TTL_SECONDS = 120
 _WORKFLOW_ACTION_PLATFORMS = {"douyin": "抖音", "toutiao": "头条", "wechat_moments": "朋友圈图文"}
+_ENABLED_SYSTEM_WORKFLOW_KEYS = {"system_sales"}
 
 
 class WorkflowTemplateIn(BaseModel):
@@ -143,6 +144,21 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
     return actions
 
 
+def _is_workflow_placeholder(node: Any) -> bool:
+    if not isinstance(node, dict):
+        return False
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    return bool(
+        node.get("comingSoon")
+        or node.get("coming_soon")
+        or node.get("workflow_placeholder")
+        or node.get("placeholder")
+        or payload.get("skip_execution")
+        or payload.get("action") == "workflow_coming_soon"
+    )
+
+
 def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     cleaned: list[dict[str, Any]] = []
     for raw in nodes or []:
@@ -153,6 +169,32 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
         title = str(plan.get("title") or raw.get("label") or raw.get("ability_label") or "工作流任务").strip()[:160]
         content = str(plan.get("content") or f"H5 工作流：{title}").strip()[:12000]
+        if _is_workflow_placeholder(raw) or payload.get("action") == "workflow_coming_soon":
+            placeholder_payload = dict(payload)
+            placeholder_payload["action"] = "workflow_coming_soon"
+            placeholder_payload["skip_execution"] = True
+            cleaned.append(
+                {
+                    "id": str(raw.get("id") or f"node_{len(cleaned) + 1}")[:64],
+                    "time": _clean_time(raw.get("time")),
+                    "ability_key": str(raw.get("ability_key") or raw.get("abilityKey") or "").strip()[:128],
+                    "ability_label": str(raw.get("ability_label") or raw.get("abilityLabel") or raw.get("label") or title).strip()[:160],
+                    "department_id": str(raw.get("department_id") or raw.get("departmentId") or "").strip()[:64],
+                    "department_name": str(raw.get("department_name") or raw.get("departmentName") or "").strip()[:80],
+                    "note": str(raw.get("note") or "").strip()[:2000],
+                    "sales_preset": bool(raw.get("sales_preset") or raw.get("salesPreset")),
+                    "comingSoon": True,
+                    "workflow_placeholder": True,
+                    "param_configured": bool(raw.get("param_configured")),
+                    "plan": {
+                        "title": title,
+                        "task_kind": "workflow_placeholder",
+                        "content": content,
+                        "payload": placeholder_payload,
+                    },
+                }
+            )
+            continue
         if not task_kind:
             raise HTTPException(status_code=400, detail=f"{title} 缺少任务类型")
         if task_kind == "client_workflow" and not str(payload.get("action") or "").strip():
@@ -184,7 +226,7 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not cleaned:
         raise HTTPException(status_code=400, detail="请至少添加一个工作流节点")
     cleaned.sort(key=lambda item: item["time"])
-    return cleaned[:48]
+    return cleaned[:96]
 
 
 def _clean_text(value: Any, limit: int = 500) -> str:
@@ -192,6 +234,18 @@ def _clean_text(value: Any, limit: int = 500) -> str:
     if not text:
         return ""
     return re.sub(r"\s+", " ", text)[:limit]
+
+
+def _safe_int(value: Any, default: int = 0, *, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
+    try:
+        out = int(value)
+    except Exception:
+        out = int(default)
+    if min_value is not None:
+        out = max(int(min_value), out)
+    if max_value is not None:
+        out = min(int(max_value), out)
+    return out
 
 
 def _clean_id_list(value: Any, limit: int = 50) -> list[int]:
@@ -362,6 +416,9 @@ def _workflow_nodes_with_actions(nodes: list[dict[str, Any]]) -> list[tuple[dict
     for node in nodes or []:
         if not isinstance(node, dict):
             continue
+        if _is_workflow_placeholder(node):
+            out.append((node, None))
+            continue
         out.append((node, None))
         for child in _workflow_child_nodes(node):
             out.append((child, node))
@@ -379,7 +436,11 @@ def _prepare_publish_action_nodes(
     publish_default = _mounted_default(db, owner.id, "publish")
     missing: list[str] = []
     for parent in prepared:
+        if _is_workflow_placeholder(parent):
+            continue
         for child in _workflow_child_nodes(parent):
+            if _is_workflow_placeholder(child):
+                continue
             plan = child.get("plan") if isinstance(child.get("plan"), dict) else {}
             payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
             action = _clean_text(payload.get("action"), 128)
@@ -464,9 +525,9 @@ def _sales_action_from_note(note: Any) -> str:
         return "mention_comment"
     if "关注" in text and "评论" in text:
         return "follow_comment"
-    if "私信10" in text:
+    if "主动私信" in text or "私信10" in text:
         return "direct_message"
-    if "私信引流" in text:
+    if "私信接管" in text or "私信引流" in text:
         return "stranger_message"
     return "search_collect"
 
@@ -482,6 +543,8 @@ def _native_wechat_key_from_sales_note(note: Any) -> str:
     text = _clean_text(note, 200)
     if "自动加好友" in text:
         return "native_wechat_add_friend"
+    if "自动拉群" in text:
+        return "native_wechat_poll"
     if "朋友圈点赞" in text or "朋友圈评论" in text:
         return "native_wechat_moments_engage"
     if "私信接管" in text:
@@ -495,11 +558,18 @@ def _native_wechat_plan(action_key: str, note: Any, params: Optional[dict[str, A
     base_params.setdefault("account_id", "pc-wechat-default")
     base_params.setdefault("note", note_text)
     base_params.setdefault("prompt", note_text)
+    group_invite = base_params.get("followup_action") == "group_invite" or "自动拉群" in note_text
+    if group_invite:
+        base_params["followup_action"] = "group_invite"
+        base_params["group_invite_enabled"] = True
+        base_params.setdefault("group_invite_rule_status", "pending_rules")
+        base_params.setdefault("trigger", "qualified_intent")
     if action_key == "native_wechat_poll":
+        title = "个微自动拉群" if group_invite else "个微私信接管"
         return {
-            "title": "个微私信接管",
+            "title": title,
             "task_kind": "client_workflow",
-            "content": "H5 工作流：个微私信接管",
+            "content": f"H5 工作流：{title}",
             "payload": {"action": action_key, "params": base_params},
         }
     if action_key == "native_wechat_add_friend":
@@ -546,6 +616,8 @@ def _node_payload(node: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_sales_native_wechat_node(node: dict[str, Any]) -> None:
     if not isinstance(node, dict):
+        return
+    if _is_workflow_placeholder(node):
         return
     plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
     payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
@@ -609,6 +681,8 @@ def _prepare_sales_workflow_nodes(
     missing: list[str] = []
 
     for node in prepared:
+        if _is_workflow_placeholder(node):
+            continue
         plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
         task_kind = _clean_text(plan.get("task_kind"), 64)
         payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
@@ -650,6 +724,9 @@ def _prepare_sales_workflow_nodes(
             sales_action = _clean_text(params.get("sales_action"), 64) or _sales_action_from_note(node.get("note") or node.get("ability_label"))
             params["sales_action"] = sales_action
             params["sales_node_label"] = _clean_text(node.get("ability_label") or node.get("note"), 160)
+            if sales_action and sales_action != "search_collect":
+                params["max_results"] = _safe_int(params.get("max_results") or params.get("max_users") or 10, 10)
+                params["max_users"] = _safe_int(params.get("max_users") or params.get("max_results") or 10, 10)
             if keyword_texts:
                 params["keywords"] = keyword_texts
                 if not _clean_text(params.get("keyword"), 200) or _clean_text(params.get("keyword"), 200) == params["sales_node_label"]:
@@ -876,6 +953,8 @@ def _activate_nodes_for_device(
     created_task_ids: list[int] = []
     try:
         for node, parent_node in _workflow_nodes_with_actions(nodes):
+            if _is_workflow_placeholder(node):
+                continue
             plan = node.get("plan") or {}
             task_kind = str(plan.get("task_kind") or "").strip().lower()
             payload = dict(plan.get("payload") or {})
@@ -1206,6 +1285,8 @@ def activate_inline_workflow_template(
     template_key = (body.template_key or "").strip()[:128]
     if not template_key:
         raise HTTPException(status_code=400, detail="缺少系统模板标识")
+    if template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+        raise HTTPException(status_code=400, detail="该系统员工暂未开放")
     name = (body.name or "系统员工模板").strip()[:160] or "系统员工模板"
     nodes = _clean_nodes(body.nodes or [])
     activation, stopped_ids, tasks = _activate_nodes_for_device(
