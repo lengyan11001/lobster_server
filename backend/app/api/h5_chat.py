@@ -199,6 +199,35 @@ def _mounted_default_payload(row: H5MountedAccountDefault) -> Dict[str, Any]:
     }
 
 
+def _publish_default_scope(platform: Any) -> str:
+    platform_key = str(platform or "").strip().lower()
+    return f"publish:{platform_key}" if platform_key else "publish"
+
+
+def _default_scope_for_mounted_account(row: Dict[str, Any]) -> str:
+    scope = str(row.get("scope") or "").strip().lower()
+    if scope == "publish":
+        return _publish_default_scope(row.get("platform"))
+    return scope
+
+
+def _default_pref_for_mounted_account(
+    defaults: Dict[str, H5MountedAccountDefault],
+    row: Dict[str, Any],
+) -> Optional[H5MountedAccountDefault]:
+    default_scope = _default_scope_for_mounted_account(row)
+    pref = defaults.get(default_scope)
+    if pref or str(row.get("scope") or "").strip().lower() != "publish":
+        return pref
+
+    legacy = defaults.get("publish")
+    legacy_platform = str((legacy.platform if legacy else "") or "").strip().lower()
+    row_platform = str(row.get("platform") or "").strip().lower()
+    if legacy and legacy_platform == row_platform:
+        return legacy
+    return None
+
+
 def _account_online_from_status(status: str, online: Any = None, *, device_online: bool = True) -> bool:
     if online is not None:
         return bool(online) and device_online
@@ -420,7 +449,8 @@ def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
     auto_reply_pref = defaults.get("wechat_auto_reply")
     auto_reply_payload = auto_reply_pref.payload if auto_reply_pref and isinstance(auto_reply_pref.payload, dict) else {}
     for row in accounts:
-        pref = defaults.get(str(row.get("scope") or ""))
+        row["default_scope"] = _default_scope_for_mounted_account(row)
+        pref = _default_pref_for_mounted_account(defaults, row)
         row["is_default"] = bool(pref and pref.account_key == row.get("account_key"))
         if row.get("scope") == "wechat":
             row["auto_reply_enabled"] = bool(auto_reply_payload.get("enabled") or auto_reply_payload.get("auto_reply_enabled"))
@@ -1298,8 +1328,12 @@ def h5_set_mounted_account_default(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
-    scope = (body.scope or "").strip().lower()
-    if scope not in {"publish", "douyin"}:
+    requested_scope = (body.scope or "").strip().lower()
+    if requested_scope == "publish" or requested_scope.startswith("publish:"):
+        account_scope = "publish"
+    elif requested_scope == "douyin":
+        account_scope = "douyin"
+    else:
         raise HTTPException(status_code=400, detail="该类型不支持设置默认账号")
     account_key = (body.account_key or "").strip()
     payload = _mounted_accounts_payload(db, owner_user.id)
@@ -1307,12 +1341,20 @@ def h5_set_mounted_account_default(
         (
             row
             for row in payload.get("accounts", [])
-            if row.get("scope") == scope and row.get("account_key") == account_key and row.get("defaultable")
+            if row.get("scope") == account_scope and row.get("account_key") == account_key and row.get("defaultable")
         ),
         None,
     )
     if not account:
         raise HTTPException(status_code=404, detail="账号不存在或暂不可设为默认")
+    platform = str(account.get("platform") or "").strip().lower()
+    if account_scope == "publish":
+        requested_platform = requested_scope.split(":", 1)[1].strip().lower() if ":" in requested_scope else ""
+        if requested_platform and requested_platform != platform:
+            raise HTTPException(status_code=400, detail="默认账号平台不匹配")
+        scope = _publish_default_scope(platform)
+    else:
+        scope = account_scope
     now = datetime.utcnow()
     row = (
         db.query(H5MountedAccountDefault)
@@ -1323,7 +1365,7 @@ def h5_set_mounted_account_default(
         row = H5MountedAccountDefault(user_id=owner_user.id, scope=scope, created_at=now)
         db.add(row)
     row.account_key = account_key
-    row.platform = str(account.get("platform") or "")[:64] or None
+    row.platform = platform[:64] or None
     row.account_id = str(account.get("account_id") or "")[:128] or None
     row.account_label = str(account.get("nickname") or "")[:255] or None
     row.installation_id = str(account.get("installation_id") or "")[:128] or None

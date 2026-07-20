@@ -2793,7 +2793,14 @@
       if (actionType !== "publish") throw new Error("暂时只支持发布动作");
       if (!["douyin", "toutiao", "wechat_channels", "wechat_moments"].includes(platform)) throw new Error("暂时只支持抖音、头条、视频号和朋友圈");
       const currentChildren = workflowChildActions(parentNode).slice();
-      if (!editId && currentChildren.length) throw new Error("每个节点暂时只能添加一个动作");
+      const duplicate = currentChildren.find((item) => {
+        if (editId && String(item && item.id || "") === editId) return false;
+        const itemPlan = item && item.plan && typeof item.plan === "object" ? item.plan : {};
+        const itemPayload = itemPlan.payload && typeof itemPlan.payload === "object" ? itemPlan.payload : {};
+        const itemParams = itemPayload.params && typeof itemPayload.params === "object" ? itemPayload.params : {};
+        return String((item && item.platform) || itemParams.platform || "").trim() === platform;
+      });
+      if (duplicate) throw new Error("这个平台已经有发布动作了");
       const existing = editId ? currentChildren.find((item) => String(item && item.id || "") === editId) : null;
       const nextAction = workflowActionPayload(parentNode, { time, action_type: actionType, platform }, existing);
       const children = currentChildren
@@ -8618,8 +8625,23 @@
       return "离线";
     }
 
+    function publishDefaultScope(platform) {
+      const key = String(platform || "").trim().toLowerCase();
+      return key ? `publish:${key}` : "publish";
+    }
+
     function mountedDefault(scope) {
-      return (state.mountedAccountDefaults || {})[scope] || null;
+      const defaults = state.mountedAccountDefaults || {};
+      const scopeText = String(scope || "").trim();
+      const pref = defaults[scopeText];
+      if (pref) return pref;
+      if (scopeText.startsWith("publish:")) {
+        const platform = scopeText.slice("publish:".length).trim().toLowerCase();
+        const legacy = defaults.publish || null;
+        const legacyPlatform = String((legacy && legacy.platform) || "").trim().toLowerCase();
+        if (legacy && legacyPlatform === platform) return legacy;
+      }
+      return null;
     }
 
     function mountedDefaultInstallationId(scope) {
@@ -8639,8 +8661,17 @@
       return mountedDefaultInstallationId("douyin");
     }
 
-    function defaultPublishAccount() {
-      return (state.publishAccounts || []).find((row) => row && row.is_default && mountedAccountDeviceOnline(row)) || null;
+    function defaultPublishAccount(platform = "") {
+      const platformKey = String(platform || "").trim().toLowerCase();
+      const rows = (state.publishAccounts || []).filter((row) => row && mountedAccountDeviceOnline(row));
+      if (platformKey) {
+        const defaultKey = mountedDefaultAccountKey(publishDefaultScope(platformKey));
+        return rows.find((row) => {
+          const rowPlatform = String(row.platform || "").trim().toLowerCase();
+          return rowPlatform === platformKey && defaultKey && String(row.account_key || "") === defaultKey;
+        }) || rows.find((row) => String(row.platform || "").trim().toLowerCase() === platformKey && row.is_default) || null;
+      }
+      return rows.find((row) => row.is_default) || null;
     }
 
     function mountedAccountDeviceOnline(row) {
@@ -8653,12 +8684,15 @@
     }
 
     function applyPublishAccountDefaults(rows) {
-      const defaultKey = mountedDefaultAccountKey("publish");
       return (Array.isArray(rows) ? rows : []).map((row) => {
         const key = String((row && (row.select_id || row.id || row.account_key)) || "").trim();
+        const platform = String((row && row.platform) || "").trim().toLowerCase();
+        const defaultScope = String((row && row.default_scope) || publishDefaultScope(platform));
+        const defaultKey = mountedDefaultAccountKey(defaultScope);
         return {
           ...row,
           account_key: key,
+          default_scope: defaultScope,
           is_default: !!(defaultKey && key === defaultKey && mountedAccountDeviceOnline(row)),
         };
       });
@@ -8723,10 +8757,11 @@
         const device = row.device_name || (row.installation_id ? `设备 ${String(row.installation_id).slice(0, 8)}` : "");
         const meta = [row.platform_name && row.platform_name !== row.nickname ? row.platform_name : "", device].filter(Boolean).join(" · ");
         const canSetDefault = !!row.defaultable && !!String(row.account_key || "").trim();
+        const defaultScope = row.default_scope || (row.scope === "publish" ? publishDefaultScope(row.platform) : row.scope);
         const action = canSetDefault
           ? (row.is_default
             ? '<button class="ghost mounted-default-btn active" type="button" disabled>默认</button>'
-            : `<button class="ghost mounted-default-btn" type="button" data-mounted-default-scope="${escapeHtml(row.scope || "")}" data-mounted-default-key="${escapeHtml(row.account_key || "")}">设默认</button>`)
+            : `<button class="ghost mounted-default-btn" type="button" data-mounted-default-scope="${escapeHtml(defaultScope || "")}" data-mounted-default-key="${escapeHtml(row.account_key || "")}">设默认</button>`)
           : "";
         const autoReplyAction = row.scope === "wechat"
           ? `<button class="ghost mounted-auto-reply-btn${row.auto_reply_enabled ? " active" : ""}" type="button" data-mounted-wechat-auto-reply="${row.auto_reply_enabled ? "0" : "1"}" data-mounted-installation-id="${escapeHtml(row.installation_id || "")}">${row.auto_reply_enabled ? "自动回复开" : "自动回复关"}</button>`
@@ -8770,7 +8805,8 @@
 
     async function setMountedAccountDefault(scope, accountKey) {
       if (!scope || !accountKey) throw new Error("账号无效，无法设为默认");
-      const row = (state.mountedAccounts || []).find((item) => item.scope === scope && item.account_key === accountKey);
+      const sourceScope = String(scope || "").startsWith("publish:") ? "publish" : scope;
+      const row = (state.mountedAccounts || []).find((item) => item.scope === sourceScope && item.account_key === accountKey);
       const data = await api("/api/h5-chat/mounted-accounts/default", {
         method: "POST",
         json: { scope, account_key: accountKey },
@@ -9114,8 +9150,8 @@
       const sel = $("taskPublishAccount");
       if (!sel) return;
       const platform = $("taskPublishPlatform") ? $("taskPublishPlatform").value : "";
-      const preferred = defaultPublishAccount();
-      const preferredId = preferred && (!platform || preferred.platform === platform) ? publishAccountSelectId(preferred) : "";
+      const preferred = defaultPublishAccount(platform);
+      const preferredId = preferred ? publishAccountSelectId(preferred) : "";
       const current = sel.value || preferredId;
       const rows = (state.publishAccounts || []).filter((row) => !platform || row.platform === platform);
       sel.innerHTML = rows.length
@@ -9144,7 +9180,7 @@
       if (!sel) return;
       const draft = state.publishRunDraft || {};
       const draftAccount = findPublishAccountForDraft(draft);
-      const preferred = defaultPublishAccount();
+      const preferred = defaultPublishAccount(draft.platform || (draftAccount && draftAccount.platform) || "");
       const current = sel.value || draft.platform || (draftAccount && draftAccount.platform) || (preferred && preferred.platform) || "";
       const byPlatform = new Map();
       (state.publishAccounts || []).forEach((row) => {
@@ -9168,8 +9204,8 @@
       const draft = state.publishRunDraft || {};
       const platform = $("publishRunPlatform") ? $("publishRunPlatform").value : "";
       const rows = (state.publishAccounts || []).filter((row) => !platform || row.platform === platform);
-      const preferred = defaultPublishAccount();
-      const preferredId = preferred && (!platform || preferred.platform === platform) ? publishAccountSelectId(preferred) : "";
+      const preferred = defaultPublishAccount(platform);
+      const preferredId = preferred ? publishAccountSelectId(preferred) : "";
       const draftAccount = findPublishAccountForDraft(draft, platform);
       const draftSelectId = draftAccount ? publishAccountSelectId(draftAccount) : "";
       const current = sel.value || draftSelectId || preferredId;

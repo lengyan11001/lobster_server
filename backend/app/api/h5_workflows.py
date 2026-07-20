@@ -522,6 +522,24 @@ def _mounted_default(db: Session, user_id: int, scope: str) -> Optional[H5Mounte
     )
 
 
+def _publish_default_scope(platform: str) -> str:
+    platform_key = _clean_text(platform, 64).lower()
+    return f"publish:{platform_key}" if platform_key else "publish"
+
+
+def _mounted_publish_default(db: Session, user_id: int, platform: str) -> Optional[H5MountedAccountDefault]:
+    platform_key = _clean_text(platform, 64).lower()
+    if not platform_key:
+        return None
+    scoped = _mounted_default(db, user_id, _publish_default_scope(platform_key))
+    if scoped:
+        return scoped
+    legacy = _mounted_default(db, user_id, "publish")
+    if legacy and _clean_text(legacy.platform, 64).lower() == platform_key:
+        return legacy
+    return None
+
+
 def _device_is_online(db: Session, user_id: int, installation_id: str) -> bool:
     iid = _clean_text(installation_id, 128)
     if not iid:
@@ -563,7 +581,6 @@ def _prepare_publish_action_nodes(
     nodes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     prepared = copy.deepcopy(nodes)
-    publish_default = _mounted_default(db, owner.id, "publish")
     missing: list[str] = []
     for parent in prepared:
         if _is_workflow_placeholder(parent):
@@ -606,6 +623,7 @@ def _prepare_publish_action_nodes(
                 plan["payload"] = payload
                 child["plan"] = plan
                 continue
+            publish_default = _mounted_publish_default(db, owner.id, platform)
             if not publish_default:
                 missing.append(f"发布{_workflow_platform_label(platform)}：请先在个人中心设置默认发布账号")
                 continue
