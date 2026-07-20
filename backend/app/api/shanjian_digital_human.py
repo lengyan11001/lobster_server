@@ -1019,7 +1019,8 @@ async def list_profiles(
     db: Session = Depends(get_db),
 ):
     rows = db.query(ShanjianDigitalHumanProfile).filter(
-        ShanjianDigitalHumanProfile.user_id == int(current_user.id)
+        ShanjianDigitalHumanProfile.user_id == int(current_user.id),
+        ShanjianDigitalHumanProfile.status != "deleted",
     ).order_by(
         ShanjianDigitalHumanProfile.is_default.desc(),
         ShanjianDigitalHumanProfile.updated_at.desc(),
@@ -1034,12 +1035,76 @@ async def list_video_tasks(
     db: Session = Depends(get_db),
 ):
     rows = db.query(ShanjianDigitalHumanVideoTask).filter(
-        ShanjianDigitalHumanVideoTask.user_id == int(current_user.id)
+        ShanjianDigitalHumanVideoTask.user_id == int(current_user.id),
+        ShanjianDigitalHumanVideoTask.status != "deleted",
     ).order_by(
         ShanjianDigitalHumanVideoTask.updated_at.desc(),
         ShanjianDigitalHumanVideoTask.id.desc(),
     ).limit(100).all()
     return {"ok": True, "items": [_video_task_to_dict(row) for row in rows]}
+
+
+@router.delete("/api/shanjian-digital-human/profiles/{profile_id}")
+async def delete_profile(
+    profile_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(ShanjianDigitalHumanProfile).filter(
+        ShanjianDigitalHumanProfile.id == int(profile_id),
+        ShanjianDigitalHumanProfile.user_id == int(current_user.id),
+        ShanjianDigitalHumanProfile.status != "deleted",
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="未找到对应的闪剪数字人档案")
+
+    was_default = bool(row.is_default)
+    row.status = "deleted"
+    row.is_default = False
+    row.error_message = row.error_message or "deleted by user"
+    row.updated_at = datetime.utcnow()
+
+    promoted_id = None
+    if was_default:
+        next_row = db.query(ShanjianDigitalHumanProfile).filter(
+            ShanjianDigitalHumanProfile.user_id == int(current_user.id),
+            ShanjianDigitalHumanProfile.status == "succeed",
+            ShanjianDigitalHumanProfile.id != int(profile_id),
+        ).order_by(
+            ShanjianDigitalHumanProfile.updated_at.desc(),
+            ShanjianDigitalHumanProfile.id.desc(),
+        ).first()
+        if next_row:
+            next_row.is_default = True
+            next_row.updated_at = datetime.utcnow()
+            promoted_id = next_row.id
+            db.add(next_row)
+
+    db.add(row)
+    db.commit()
+    return {"ok": True, "deleted": profile_id, "promoted_profile_id": promoted_id}
+
+
+@router.delete("/api/shanjian-digital-human/videos/{record_id}")
+async def delete_video_task(
+    record_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(ShanjianDigitalHumanVideoTask).filter(
+        ShanjianDigitalHumanVideoTask.id == int(record_id),
+        ShanjianDigitalHumanVideoTask.user_id == int(current_user.id),
+        ShanjianDigitalHumanVideoTask.status != "deleted",
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="未找到对应的闪剪视频任务")
+
+    row.status = "deleted"
+    row.error_message = row.error_message or "deleted by user"
+    row.updated_at = datetime.utcnow()
+    db.add(row)
+    db.commit()
+    return {"ok": True, "deleted": record_id}
 
 
 @router.post("/api/shanjian-digital-human/profile/train")

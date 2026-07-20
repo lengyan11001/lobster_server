@@ -59,6 +59,7 @@ _MINIMAX_PROVIDER = "minimax"
 _MINIMAX_DEFAULT_VOICE_ID = "male-qn-qingse"
 _MINIMAX_DEFAULT_EMOTION = "happy"
 _MINIMAX_EMOTIONS = {"happy", "sad", "angry", "fearful", "disgusted", "surprised", "neutral"}
+_VOICE_PREVIEW_TTS_SEGMENT_MAX_CHARS = 480
 _HIFLY_SHARE_SECRET = (getattr(settings, "secret_key", None) or os.getenv("SECRET_KEY") or "lobster-share-secret").encode("utf-8")
 _VOICE_PREVIEW_EXPIRY_SEC = 86400
 _AVATAR_COVER_EXPIRY_SEC = 30 * 86400
@@ -127,7 +128,7 @@ class HiflyVoiceEditBody(BaseModel):
 
 class HiflyVoicePreviewTtsBody(BaseModel):
     voice: str = Field(..., min_length=1, max_length=128)
-    text: str = Field(_VOICE_PARAM_PREVIEW_TEXT, max_length=500)
+    text: str = Field(_VOICE_PARAM_PREVIEW_TEXT, max_length=10000)
     rate: str = Field("1.0")
     volume: str = Field("1.0")
     pitch: str = Field("0")
@@ -186,6 +187,68 @@ def _billing_headers(request: Request) -> Dict[str, str]:
 def _estimate_tts_seconds(text: str) -> int:
     clean = "".join(str(text or "").split())
     return max(1, int(math.ceil(len(clean) / _HIFLY_TTS_CHARS_PER_SECOND)))
+
+
+def _split_text_by_delimiters(text: str, delimiters: set[str]) -> List[str]:
+    parts: List[str] = []
+    current: List[str] = []
+    for char in str(text or ""):
+        current.append(char)
+        if char in delimiters:
+            piece = "".join(current).strip()
+            if piece:
+                parts.append(piece)
+            current = []
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _pack_tts_units(units: List[str], max_chars: int) -> List[str]:
+    segments: List[str] = []
+    current = ""
+    for raw in units:
+        unit = str(raw or "").strip()
+        if not unit:
+            continue
+        if not current:
+            current = unit
+            continue
+        candidate = current + "\n" + unit
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            segments.append(current)
+            current = unit
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _split_long_tts_text(text: str, max_chars: int = _VOICE_PREVIEW_TTS_SEGMENT_MAX_CHARS) -> List[str]:
+    clean = re.sub(r"\r\n?", "\n", str(text or "")).strip()
+    if not clean:
+        return []
+    if len(clean) <= max_chars:
+        return [clean]
+
+    primary_units = _split_text_by_delimiters(clean, set("\n。！？!?；;"))
+    expanded: List[str] = []
+    for unit in primary_units:
+        if len(unit) <= max_chars:
+            expanded.append(unit)
+            continue
+        secondary_units = _split_text_by_delimiters(unit, set("，,、：: "))
+        for secondary in secondary_units:
+            if len(secondary) <= max_chars:
+                expanded.append(secondary)
+                continue
+            for start in range(0, len(secondary), max_chars):
+                chunk = secondary[start : start + max_chars].strip()
+                if chunk:
+                    expanded.append(chunk)
+    return _pack_tts_units(expanded, max_chars)
 
 
 def _duration_seconds(value: Any) -> int:
@@ -694,6 +757,115 @@ async def _minimax_tts_audio(
         "tts_text": tts_text,
         "request_body": body,
         "raw": {k: v for k, v in payload.items() if k != "data"},
+    }
+
+
+def _concat_tts_audio_segments(audio_segments: List[bytes]) -> bytes:
+    chunks = [bytes(item or b"") for item in audio_segments if item]
+    if not chunks:
+        return b""
+    if len(chunks) == 1:
+        return chunks[0]
+    ffmpeg = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
+    if not ffmpeg:
+        logger.warning("[hifly] ffmpeg not found, fallback to raw mp3 byte concat for segmented TTS")
+        return b"".join(chunks)
+    with tempfile.TemporaryDirectory(prefix="hifly-tts-concat-") as tmp:
+        tmp_dir = Path(tmp)
+        list_path = tmp_dir / "inputs.txt"
+        out_path = tmp_dir / "merged.mp3"
+        lines: List[str] = []
+        for index, chunk in enumerate(chunks):
+            segment_path = tmp_dir / f"segment_{index:03d}.mp3"
+            segment_path.write_bytes(chunk)
+            escaped = str(segment_path).replace("\\", "/").replace("'", r"'\''")
+            lines.append(f"file '{escaped}'")
+        list_path.write_text("\n".join(lines), encoding="utf-8")
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(list_path),
+            "-c",
+            "copy",
+            str(out_path),
+        ]
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            data = out_path.read_bytes()
+            if data:
+                return data
+        except Exception as exc:
+            logger.warning("[hifly] ffmpeg concat segmented TTS failed: %s", exc)
+    return b"".join(chunks)
+
+
+async def _preview_tts_audio(
+    *,
+    provider: str,
+    row: UserHiflyVoiceAsset,
+    text: str,
+    rate: Any = None,
+    volume: Any = None,
+    pitch: Any = None,
+    emotion: Any = None,
+    instructions: Optional[str] = None,
+) -> Dict[str, Any]:
+    source_text = (text or "").strip()
+    if not source_text:
+        source_text = "你好，这是声音试听。"
+    segments = _split_long_tts_text(source_text)
+    if not segments:
+        segments = [source_text]
+
+    audio_segments: List[bytes] = []
+    extra_items: List[Dict[str, Any]] = []
+    duration_seconds = 0
+    for index, segment in enumerate(segments):
+        if provider == _QWEN_PROVIDER:
+            result = await _qwen_tts_audio(
+                voice_id=_qwen_voice_id_from_row(row),
+                text=segment,
+                instructions=instructions,
+            )
+        elif provider == _MINIMAX_PROVIDER:
+            result = await _minimax_tts_audio(
+                voice_id=_minimax_voice_id_from_row(row),
+                text=segment,
+                rate=rate,
+                volume=volume,
+                pitch=pitch,
+                emotion=emotion,
+            )
+        else:
+            raise HTTPException(status_code=400, detail="当前声音不能实时合成试听")
+        audio_segments.append(result["audio_bytes"])
+        duration_seconds += int(result.get("duration_seconds") or _estimate_tts_seconds(segment))
+        extra_items.append({
+            "index": index + 1,
+            "chars": len(segment),
+            "duration_seconds": result.get("duration_seconds"),
+            "extra_info": result.get("extra_info"),
+        })
+
+    audio_bytes = _concat_tts_audio_segments(audio_segments)
+    return {
+        "audio_bytes": audio_bytes,
+        "duration_seconds": max(1, duration_seconds),
+        "segments": segments,
+        "extra_info": {
+            "segmented": len(segments) > 1,
+            "segment_count": len(segments),
+            "segment_max_chars": _VOICE_PREVIEW_TTS_SEGMENT_MAX_CHARS,
+            "segments": extra_items,
+        },
     }
 
 
@@ -2377,27 +2549,49 @@ async def preview_my_voice_tts(
     provider_hint = _normalize_voice_provider_hint(body.voice_provider)
     if provider not in {_QWEN_PROVIDER, _MINIMAX_PROVIDER} and provider_hint:
         provider = provider_hint
-    if provider == _QWEN_PROVIDER:
-        result = await _qwen_tts_audio(
-            voice_id=_qwen_voice_id_from_row(row),
-            text=(body.text or "").strip() or "你好，这是千问声音试听。",
-            instructions=body.instructions or ((row.meta or {}).get("voice_params") or {}).get("instructions"),
+    text = (body.text or "").strip()
+    default_text = "你好，这是千问声音试听。" if provider == _QWEN_PROVIDER else "你好，这是 MiniMax 声音试听。"
+    text = text or default_text
+    result = await _preview_tts_audio(
+        provider=provider,
+        row=row,
+        text=text,
+        instructions=body.instructions or ((row.meta or {}).get("voice_params") or {}).get("instructions"),
+        rate=body.rate,
+        volume=body.volume,
+        pitch=body.pitch,
+        emotion=body.emotion,
+    )
+    segments = result.get("segments") if isinstance(result.get("segments"), list) else []
+    is_segmented = len(segments) > 1
+    audio_url = ""
+    if is_segmented:
+        asset = await _persist_voice_demo_asset(
+            db,
+            int(current_user.id),
+            raw=result["audio_bytes"],
+            title=f"{row.title or '声音'}-长文案合成",
+            voice_id=voice_id,
+            params={
+                "rate": body.rate,
+                "volume": body.volume,
+                "pitch": body.pitch,
+                "emotion": body.emotion,
+                "segment_count": len(segments),
+                "text_length": len(text),
+            },
+            provider=provider,
         )
-    elif provider == _MINIMAX_PROVIDER:
-        result = await _minimax_tts_audio(
-            voice_id=_minimax_voice_id_from_row(row),
-            text=(body.text or "").strip() or "你好，这是 MiniMax 声音试听。",
-            rate=body.rate,
-            volume=body.volume,
-            pitch=body.pitch,
-            emotion=body.emotion,
-        )
+        audio_url = str(asset.get("source_url") or "").strip()
+        if not audio_url:
+            raise HTTPException(status_code=503, detail="长文案音频转存失败，请稍后重试")
+        db.commit()
     else:
-        raise HTTPException(status_code=400, detail="当前声音不能实时合成试听")
-    audio_b64 = base64.b64encode(result["audio_bytes"]).decode("ascii")
+        audio_b64 = base64.b64encode(result["audio_bytes"]).decode("ascii")
+        audio_url = f"data:audio/mpeg;base64,{audio_b64}"
     return {
         "ok": True,
-        "audio_url": f"data:audio/mpeg;base64,{audio_b64}",
+        "audio_url": audio_url,
         "duration_seconds": result.get("duration_seconds"),
         "extra_info": result.get("extra_info"),
     }
