@@ -3998,45 +3998,28 @@
       border-top: 3px solid currentColor;
       border-bottom: 3px solid currentColor;
     }
-    #floatingScheduleBtn {
-      position: fixed !important;
-      right: max(21px, env(safe-area-inset-right));
-      bottom: max(154px, calc(env(safe-area-inset-bottom) + 150px));
-      z-index: 89;
-      width: 52px !important;
-      min-width: 52px !important;
-      height: 52px;
-      min-height: 52px;
-      padding: 0 !important;
+    .scroll-top-btn {
+      position: fixed;
+      right: max(18px, calc((100vw - 420px) / 2 + 18px));
+      bottom: max(96px, calc(env(safe-area-inset-bottom) + 96px));
+      z-index: 88;
+      width: 46px;
+      min-width: 46px;
+      height: 46px;
+      min-height: 46px;
+      padding: 0;
       border-radius: 50%;
-      color: #9a3412;
-      font-size: 0;
+      color: #1d4ed8;
+      font-size: 20px;
+      font-weight: 1000;
+      line-height: 1;
       background:
-        radial-gradient(circle at 30% 20%, rgba(255,255,255,.76), transparent 28%),
-        linear-gradient(135deg, rgba(255,247,237,.98), rgba(254,215,170,.98));
-      border: 1px solid rgba(234,88,12,.22);
-      box-shadow: 0 16px 30px rgba(124,45,18,.16), 0 8px 16px rgba(234,88,12,.16);
+        radial-gradient(circle at 30% 20%, rgba(255,255,255,.85), transparent 30%),
+        linear-gradient(135deg, rgba(239,246,255,.98), rgba(219,234,254,.98));
+      border: 1px solid rgba(37,99,235,.22);
+      box-shadow: 0 16px 30px rgba(30,64,175,.15), 0 8px 16px rgba(37,99,235,.14);
     }
-    #floatingScheduleBtn::before {
-      content: "";
-      width: 24px;
-      height: 24px;
-      border: 3px solid currentColor;
-      border-radius: 50%;
-    }
-    #floatingScheduleBtn::after {
-      content: "";
-      position: absolute;
-      left: 25px;
-      top: 17px;
-      width: 9px;
-      height: 11px;
-      border-left: 3px solid currentColor;
-      border-bottom: 3px solid currentColor;
-      transform-origin: left bottom;
-      transform: rotate(-45deg);
-    }
-    #floatingScheduleBtn.hidden {
+    .scroll-top-btn.hidden {
       display: none !important;
     }
     .ability-workbench {
@@ -5715,7 +5698,7 @@
       position: relative;
       display: grid;
       gap: 12px;
-      padding: 14px;
+      padding: 14px 14px 94px;
       border-radius: 28px;
       background:
         radial-gradient(circle at 12% 0%, rgba(36,92,255,.14), transparent 34%),
@@ -6157,9 +6140,11 @@
       grid-column: 1 / -1;
     }
     .workflow-actions {
-      position: sticky;
-      bottom: 10px;
-      z-index: 3;
+      position: fixed;
+      left: max(12px, calc((100vw - 420px) / 2 + 12px));
+      right: max(12px, calc((100vw - 420px) / 2 + 12px));
+      bottom: max(12px, env(safe-area-inset-bottom));
+      z-index: 87;
       padding: 10px;
       border-radius: 18px;
       background: rgba(255,255,255,.9);

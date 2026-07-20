@@ -7672,10 +7672,10 @@
       setTimeout(scrollMessagesToBottom, 60);
     }
 
-    function syncFloatingScheduleButton(key) {
-      const btn = $("floatingScheduleBtn");
+    function syncScrollTopButton(key = activeViewKey()) {
+      const btn = $("scrollTopBtn");
       if (!btn) return;
-      const hidden = !state.token || ["messages", "secretary", "taskList", "taskDetail", "runDetail"].includes(key);
+      const hidden = key !== "workflow" || window.scrollY < 220;
       btn.classList.toggle("hidden", hidden);
     }
 
@@ -7777,7 +7777,7 @@
       $("topActions").classList.toggle("hidden", key !== "office" || !state.token);
       $("topbar").classList.toggle("subpage", key !== "office");
       $("topbar").classList.toggle("voice-page", key === "voice");
-      syncFloatingScheduleButton(key);
+      syncScrollTopButton(key);
       if (key === "office") {
         renderOfficeEmployees();
         loadWorkflowTemplates().catch(() => {});
@@ -13973,7 +13973,8 @@
     });
     $("departmentWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(departmentScope(departmentById(state.currentDepartmentId))));
     $("abilityWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(abilityScope(activeAbilityLookup())));
-    $("floatingScheduleBtn")?.addEventListener("click", () => openScheduleManager());
+    $("scrollTopBtn")?.addEventListener("click", () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" }));
+    window.addEventListener("scroll", () => syncScrollTopButton(), { passive: true });
     $("workScopeChips")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-work-scope]");
       if (!btn) return;
