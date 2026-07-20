@@ -677,14 +677,13 @@
       { value: "moments_candidate", label: "朋友圈文案" },
     ];
     const SALES_WORKFLOW_PRESET = [
-      { time: "06:00", endTime: "06:30", key: "local_bestseller", label: "创作同城爆款视频", note: "创作一条同城爆款视频（用于发公域平台）", actions: [{ time: "08:45", platform: "douyin", label: "同城爆款视频发布抖音", note: "同城爆款视频发布抖音，配文案、带标签发布" }] },
+      { time: "06:00", endTime: "06:30", key: "local_bestseller", label: "创作同城爆款视频", note: "创作一条同城爆款视频（用于发公域平台）", actions: [{ time: "08:45", platform: "douyin", label: "同城爆款视频发布抖音", note: "同城爆款视频发布抖音，配文案、带标签发布" }, { time: "09:00", platform: "wechat_channels", label: "同城爆款视频发布视频号", note: "同城爆款视频发布视频号，配文案、带标签发布" }] },
       { time: "06:30", endTime: "07:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "09:30", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
       { time: "07:00", endTime: "07:15", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中提取明确微信号后加好友，没有明确微信号则跳过", params: { source_mode: "douyin_private_message_wechat_id", trigger: "clear_wechat_id", skip_without_clear_wechat_id: true } },
       { time: "07:15", endTime: "07:30", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
       { time: "07:30", endTime: "07:45", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "07:45", endTime: "08:15", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
       { time: "08:15", endTime: "08:45", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
-      { time: "09:00", endTime: "09:15", key: "wechat_channels_publish", label: "同城爆款视频发布视频号（敬请期待）", note: "同城爆款视频发布视频号，配文案、带标签发布", comingSoon: true },
       { time: "09:15", endTime: "09:30", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
       { time: "09:45", endTime: "10:00", key: "native_wechat_moments_engage", label: "微信朋友圈点赞评论", note: "微信朋友圈点赞评论" },
       { time: "10:00", endTime: "10:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
