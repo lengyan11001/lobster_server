@@ -964,10 +964,10 @@
 
     function workflowMissingTargetForText(text) {
       const value = String(text || "");
+      if (value.includes("当前模板") || value.includes("当前启用模板") || value.includes("IP人设定位-模板") || value.includes("当前使用模板") || value.includes("IP日更")) return { view: "personalSettings", personalTab: "template", label: "去模板" };
       if (value.includes("关键词")) return { view: "personalSettings", personalTab: "keywords", label: "去关键词" };
       if (value.includes("同行账号")) return { view: "personalSettings", personalTab: "competitors", label: "去同行账号" };
       if (value.includes("记忆文件")) return { view: "personalSettings", personalTab: "memory", label: "去记忆文件" };
-      if (value.includes("当前使用模板") || value.includes("IP日更")) return { view: "personalSettings", personalTab: "template", label: "去模板" };
       if (value.includes("平台账号") || value.includes("默认抖音")) return { view: "mountedAccounts", mountedTab: "douyin", label: "去平台账号" };
       if (value.includes("数字人形象")) return { view: "assetLibrary", assetSection: "avatars", label: "去形象分身" };
       if (value.includes("声音分身")) return { view: "assetLibrary", assetSection: "voices", label: "去声音分身" };

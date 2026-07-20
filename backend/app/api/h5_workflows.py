@@ -14,11 +14,13 @@ from ..models import (
     ContentCompetitorAccount,
     H5WorkflowActivation,
     H5ChatDevicePresence,
+    H5AgentTemplateGrant,
     H5MountedAccountDefault,
     H5WorkflowTemplate,
     H5WorkflowTemplateGrant,
     IPContentKeyword,
     IPContentScheduleTemplate,
+    OpenClawMemoryDocument,
     UserHiflyAvatarAsset,
     UserHiflyVoiceAsset,
     ScheduledTask,
@@ -411,6 +413,15 @@ def _active_keywords_for_ids(db: Session, user_id: int, ids: list[int]) -> list[
     )
 
 
+def _has_active_keywords(db: Session, user_id: int) -> bool:
+    return (
+        db.query(IPContentKeyword.id)
+        .filter(IPContentKeyword.user_id == user_id, IPContentKeyword.status == "active")
+        .first()
+        is not None
+    )
+
+
 def _active_competitors_for_ids(db: Session, user_id: int, ids: list[int]) -> list[ContentCompetitorAccount]:
     if not ids:
         return []
@@ -420,6 +431,59 @@ def _active_competitors_for_ids(db: Session, user_id: int, ids: list[int]) -> li
         .order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc())
         .all()
     )
+
+
+def _has_active_competitors(db: Session, user_id: int) -> bool:
+    return (
+        db.query(ContentCompetitorAccount.id)
+        .filter(ContentCompetitorAccount.user_id == user_id, ContentCompetitorAccount.status == "active")
+        .first()
+        is not None
+    )
+
+
+def _has_active_memory_docs(db: Session, user_id: int, installation_id: str) -> bool:
+    query = db.query(OpenClawMemoryDocument.id).filter(
+        OpenClawMemoryDocument.target_user_id == user_id,
+        OpenClawMemoryDocument.status == "active",
+    )
+    iid = _clean_text(installation_id, 128)
+    if iid:
+        query = query.filter(OpenClawMemoryDocument.installation_id == iid)
+    return query.first() is not None
+
+
+def _current_personal_schedule_template(
+    db: Session,
+    user_id: int,
+    personal: Optional[IPContentScheduleTemplate],
+) -> Optional[IPContentScheduleTemplate]:
+    meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
+    try:
+        template_id = int(meta.get("current_template_id") or meta.get("template_id") or 0)
+    except Exception:
+        template_id = 0
+    if template_id <= 0:
+        return None
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(IPContentScheduleTemplate.id == template_id, IPContentScheduleTemplate.status == "active")
+        .first()
+    )
+    if row is None:
+        return None
+    if int(row.user_id) == int(user_id):
+        return row
+    grant = (
+        db.query(H5AgentTemplateGrant.id)
+        .filter(
+            H5AgentTemplateGrant.template_id == row.id,
+            H5AgentTemplateGrant.target_user_id == user_id,
+            H5AgentTemplateGrant.status == "active",
+        )
+        .first()
+    )
+    return row if grant else None
 
 
 def _latest_hifly_avatar(db: Session, user_id: int) -> str:
@@ -719,13 +783,20 @@ def _prepare_sales_workflow_nodes(
     for node in prepared:
         _normalize_sales_native_wechat_node(node)
     personal = _personal_default_template(db, owner.id)
+    current_template = _current_personal_schedule_template(db, owner.id, personal)
+    reference_template = current_template or personal
+    reference_owner_id = int(reference_template.user_id) if reference_template else int(owner.id)
     requirements = personal.requirements if personal and isinstance(personal.requirements, dict) else {}
-    keyword_ids = _clean_id_list(personal.keyword_ids if personal else [])
-    competitor_ids = _clean_id_list(personal.competitor_ids if personal else [])
-    keywords = _active_keywords_for_ids(db, owner.id, keyword_ids)
-    competitors = _active_competitors_for_ids(db, owner.id, competitor_ids)
-    memory_doc_ids = [str(x or "").strip() for x in ((personal.memory_doc_ids if personal else []) or []) if str(x or "").strip()]
-    memory_docs = personal.memory_docs if personal and isinstance(personal.memory_docs, list) else []
+    if current_template and isinstance(current_template.requirements, dict):
+        merged_requirements = dict(requirements)
+        merged_requirements.update(current_template.requirements)
+        requirements = merged_requirements
+    keyword_ids = _clean_id_list(reference_template.keyword_ids if reference_template else [])
+    competitor_ids = _clean_id_list(reference_template.competitor_ids if reference_template else [])
+    keywords = _active_keywords_for_ids(db, reference_owner_id, keyword_ids)
+    competitors = _active_competitors_for_ids(db, reference_owner_id, competitor_ids)
+    memory_doc_ids = [str(x or "").strip() for x in ((reference_template.memory_doc_ids if reference_template else []) or []) if str(x or "").strip()]
+    memory_docs = reference_template.memory_docs if reference_template and isinstance(reference_template.memory_docs, list) else []
     keyword_texts = [_clean_text(row.display_name or row.keyword, 120) for row in keywords if _clean_text(row.display_name or row.keyword, 120)]
     city = _first_req_text(requirements, "current_city")
     province = _first_req_text(requirements, "current_province")
@@ -760,7 +831,7 @@ def _prepare_sales_workflow_nodes(
                 except Exception:
                     template_id = 0
                 if template_id <= 0:
-                    payload["template_id"] = personal.id
+                    payload["template_id"] = reference_template.id if reference_template else personal.id
                 if not payload.get("keyword_ids"):
                     payload["keyword_ids"] = keyword_ids
                 if not payload.get("competitor_ids"):
@@ -841,13 +912,22 @@ def _prepare_sales_workflow_nodes(
         if profile_missing:
             missing.append("IP人设定位-资料调查：" + "、".join(profile_missing))
         if not keywords:
-            missing.append("IP人设定位-关键词：至少添加并在当前模板选择 1 个行业关键词")
+            if _has_active_keywords(db, reference_owner_id):
+                missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个行业关键词")
+            else:
+                missing.append("IP人设定位-关键词：请先添加至少 1 个行业关键词")
         if not competitors:
-            missing.append("IP人设定位-同行账号：至少添加并在当前模板选择 1 个同行账号")
+            if _has_active_competitors(db, reference_owner_id):
+                missing.append("IP人设定位-模板：请在当前启用模板中选择 1 个同行账号")
+            else:
+                missing.append("IP人设定位-同行账号：请先添加至少 1 个同行账号")
         elif not any(row.last_fetch_at for row in competitors):
-            missing.append("IP人设定位-同行账号：请先同步同行账号数据")
+            missing.append("IP人设定位-同行账号：当前模板选择的同行账号还没有同步数据，请先同步同行账号数据")
         if not (memory_doc_ids or memory_docs):
-            missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
+            if _has_active_memory_docs(db, owner.id, installation_id):
+                missing.append("IP人设定位-模板：请在当前启用模板中选择 1 份记忆文件")
+            else:
+                missing.append("IP人设定位-记忆文件：请先生成或保存至少 1 份记忆文件")
 
     if has_ip_daily and not personal:
         missing.append("IP日更：缺少当前使用模板")

@@ -2653,7 +2653,7 @@ _PERSONAL_PROFILE_REQUIREMENT_KEYS = {
     "advantages",
 }
 _PERSONAL_PROFILE_REQUIREMENT_OBJECT_KEYS = {"basic_profile", "business_description", "profile", "business"}
-_PERSONAL_PROFILE_UPDATE_SOURCES = {"h5_personal_profile", "online_personal_profile", "personal_profile"}
+_PERSONAL_PROFILE_UPDATE_SOURCES = {"h5_personal_profile", "online_personal_profile", "personal_profile", "personal_settings_profile"}
 
 
 def _strip_personal_profile_requirements(requirements: Any) -> dict[str, Any]:
