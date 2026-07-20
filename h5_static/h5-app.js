@@ -2030,7 +2030,8 @@
       });
       return Array.from(groups.entries()).map(([group, lookups]) => {
         const options = lookups.map((lookup) => {
-          const disabled = abilityIsActionable(lookup.node) ? "" : " disabled";
+          const isSalesWorkflowOption = lookup && lookup.optionId != null;
+          const disabled = (isSalesWorkflowOption || abilityIsActionable(lookup.node)) ? "" : " disabled";
           const label = lookup.optionLabel || lookup.node.label || lookup.node.key;
           return `<option value="${escapeHtml(workflowOptionValue(lookup))}"${disabled}>${escapeHtml(label)}</option>`;
         }).join("");
