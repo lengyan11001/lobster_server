@@ -2630,6 +2630,69 @@ def _personal_default_template_payload(row: Optional[IPContentScheduleTemplate])
     return payload
 
 
+_PERSONAL_PROFILE_REQUIREMENT_KEYS = {
+    "profile_name",
+    "name",
+    "gender",
+    "sex",
+    "profile_photo_asset_id",
+    "profile_photo_url",
+    "birth_era",
+    "current_province",
+    "province",
+    "current_city",
+    "city",
+    "hometown",
+    "role",
+    "identity",
+    "share_topic",
+    "video_style",
+    "after_view_action",
+    "product",
+    "target_customer",
+    "advantages",
+}
+_PERSONAL_PROFILE_REQUIREMENT_OBJECT_KEYS = {"basic_profile", "business_description", "profile", "business"}
+_PERSONAL_PROFILE_UPDATE_SOURCES = {"h5_personal_profile", "online_personal_profile", "personal_profile"}
+
+
+def _strip_personal_profile_requirements(requirements: Any) -> dict[str, Any]:
+    req = dict(requirements or {}) if isinstance(requirements, dict) else {}
+    for key in _PERSONAL_PROFILE_REQUIREMENT_KEYS:
+        req.pop(key, None)
+    for key in _PERSONAL_PROFILE_REQUIREMENT_OBJECT_KEYS:
+        req.pop(key, None)
+    return req
+
+
+def _personal_profile_fields(requirements: Any) -> dict[str, Any]:
+    req = requirements if isinstance(requirements, dict) else {}
+    out: dict[str, Any] = {}
+    for key in _PERSONAL_PROFILE_REQUIREMENT_OBJECT_KEYS:
+        value = req.get(key)
+        if isinstance(value, dict):
+            out[key] = _jsonable(value)
+    for key in _PERSONAL_PROFILE_REQUIREMENT_KEYS:
+        if key in req:
+            out[key] = req.get(key)
+    return out
+
+
+def _allows_personal_profile_update(meta: Any) -> bool:
+    source = ""
+    if isinstance(meta, dict):
+        source = _clean_text(meta.get("source"), 80)
+    return source in _PERSONAL_PROFILE_UPDATE_SOURCES
+
+
+def _personal_default_requirements_for_save(incoming: Any, existing: Any, meta: Any) -> dict[str, Any]:
+    if _allows_personal_profile_update(meta):
+        return dict(incoming or {}) if isinstance(incoming, dict) else {}
+    req = _strip_personal_profile_requirements(incoming)
+    req.update(_personal_profile_fields(existing))
+    return req
+
+
 def _validate_template_refs(db: Session, user_id: int, keyword_ids: list[int], competitor_ids: list[int]) -> tuple[list[int], list[int]]:
     clean_keyword_ids = _clean_int_ids(keyword_ids, 50)
     clean_competitor_ids = _clean_int_ids(competitor_ids, 50)
@@ -3972,11 +4035,12 @@ def save_personal_default_ip_content_config(
             name=_PERSONAL_DEFAULT_TEMPLATE_NAME,
         )
         db.add(row)
+    existing_requirements = row.requirements if row is not None else {}
     row.keyword_ids = keyword_ids
     row.competitor_ids = competitor_ids
     row.memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
     row.memory_docs = memory_docs
-    row.requirements = _jsonable(body.requirements or {})
+    row.requirements = _jsonable(_personal_default_requirements_for_save(body.requirements, existing_requirements, body.meta))
     row.meta = _jsonable({**(body.meta or {}), "source": "personal_settings", "is_personal_default": True})
     row.status = "active"
     row.updated_at = _utcnow()
@@ -4007,7 +4071,7 @@ def save_schedule_template(
         competitor_ids=competitor_ids,
         memory_doc_ids=_clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50),
         memory_docs=memory_docs,
-        requirements=_jsonable(body.requirements or {}),
+        requirements=_jsonable(_strip_personal_profile_requirements(body.requirements)),
         meta=_jsonable(body.meta or {}),
     )
     db.add(row)
@@ -4044,7 +4108,7 @@ def update_schedule_template(
     row.competitor_ids = competitor_ids
     row.memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
     row.memory_docs = memory_docs
-    row.requirements = _jsonable(body.requirements or {})
+    row.requirements = _jsonable(_strip_personal_profile_requirements(body.requirements))
     row.meta = _jsonable(body.meta or {})
     row.status = "active"
     row.updated_at = _utcnow()

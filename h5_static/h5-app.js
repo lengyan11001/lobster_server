@@ -9487,6 +9487,35 @@
       };
     }
 
+    const PERSONAL_SURVEY_REQUIREMENT_KEYS = [
+      "basic_profile",
+      "business_description",
+      "profile",
+      "business",
+      "profile_name",
+      "name",
+      "gender",
+      "profile_photo_asset_id",
+      "profile_photo_url",
+      "birth_era",
+      "current_province",
+      "current_city",
+      "hometown",
+      "role",
+      "share_topic",
+      "video_style",
+      "after_view_action",
+      "product",
+      "target_customer",
+      "advantages",
+    ];
+
+    function stripPersonalSurveyRequirements(requirements) {
+      const req = requirements && typeof requirements === "object" ? { ...requirements } : {};
+      PERSONAL_SURVEY_REQUIREMENT_KEYS.forEach((key) => { delete req[key]; });
+      return req;
+    }
+
     function isPersonalDefaultTemplate(row) {
       const meta = row && row.meta && typeof row.meta === "object" ? row.meta : {};
       return !!meta.is_personal_default || String((row && row.name) || "") === "个人默认配置";
@@ -9542,7 +9571,6 @@
       (item.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
       if ($("personalTemplateName")) $("personalTemplateName").value = item.name || "";
       setPersonalTemplateLanguage(ipTemplateLanguage(item));
-      if (item.requirements && typeof item.requirements === "object") fillPersonalSurveyFields(item);
     }
 
     async function refreshPersonalDataPreserveSelection(parts = {}) {
@@ -10008,7 +10036,7 @@
         .filter((doc) => memoryIds.includes(personalDocId(doc)))
         .map(personalMemoryDocPayload);
       const language = currentPersonalTemplateLanguage();
-      const requirements = templateRequirementsWithLanguage(personalSurveyRequirements(), language);
+      const requirements = templateRequirementsWithLanguage(stripPersonalSurveyRequirements((state.personalDefault || {}).requirements), language);
       const payload = {
         name,
         keyword_ids: personalCleanIntIds(state.personalSelectedKeywords),
@@ -10044,7 +10072,10 @@
             competitor_ids: Array.isArray(row.competitor_ids) ? row.competitor_ids : [],
             memory_doc_ids: Array.isArray(row.memory_doc_ids) ? row.memory_doc_ids : [],
             memory_docs: Array.isArray(row.memory_docs) ? row.memory_docs : [],
-            requirements: templateRequirementsWithLanguage({ ...(((state.personalDefault || {}).requirements && typeof (state.personalDefault || {}).requirements === "object") ? state.personalDefault.requirements : personalSurveyRequirements()), ...((row.requirements && typeof row.requirements === "object") ? row.requirements : {}) }, language),
+            requirements: templateRequirementsWithLanguage({
+              ...(((state.personalDefault || {}).requirements && typeof (state.personalDefault || {}).requirements === "object") ? state.personalDefault.requirements : {}),
+              ...stripPersonalSurveyRequirements(row.requirements),
+            }, language),
             meta: { ...(row.meta || {}), source: "h5_personal_current_template", current_template_id: row.id, language, target_language: ipTemplateLanguageLabel(language) },
           },
         });
@@ -10337,7 +10368,7 @@
           competitor_ids: competitorIds,
           memory_doc_ids: memoryIds,
           memory_docs: selectedDocs,
-          requirements: { ...((existing.requirements && typeof existing.requirements === "object") ? existing.requirements : {}), ...personalSurveyRequirements() },
+          requirements: (existing.requirements && typeof existing.requirements === "object") ? existing.requirements : {},
           meta: { ...((existing.meta && typeof existing.meta === "object") ? existing.meta : {}), source: "h5_personal_settings" },
         },
       });
