@@ -33,6 +33,7 @@ SUPPORTED_PLATFORMS = {
     "bilibili": {"name": "B站", "login_url": "https://member.bilibili.com"},
     "xiaohongshu": {"name": "小红书", "login_url": "https://creator.xiaohongshu.com"},
     "kuaishou": {"name": "快手", "login_url": "https://cp.kuaishou.com"},
+    "wechat_channels": {"name": "视频号", "login_url": "https://channels.weixin.qq.com/platform"},
 }
 
 def _ensure_tiny_mp4(path: Path) -> Path:

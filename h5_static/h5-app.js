@@ -2792,7 +2792,7 @@
       const actionType = (($("workflowActionType") && $("workflowActionType").value) || "publish").trim();
       const platform = (($("workflowActionPlatform") && $("workflowActionPlatform").value) || "douyin").trim();
       if (actionType !== "publish") throw new Error("暂时只支持发布动作");
-      if (!["douyin", "toutiao", "wechat_moments"].includes(platform)) throw new Error("暂时只支持抖音、头条和朋友圈");
+      if (!["douyin", "toutiao", "wechat_channels", "wechat_moments"].includes(platform)) throw new Error("暂时只支持抖音、头条、视频号和朋友圈");
       const currentChildren = workflowChildActions(parentNode).slice();
       if (!editId && currentChildren.length) throw new Error("每个节点暂时只能添加一个动作");
       const existing = editId ? currentChildren.find((item) => String(item && item.id || "") === editId) : null;
@@ -3101,6 +3101,7 @@
       const key = String(platform || "").trim().toLowerCase();
       if (key === "douyin") return "抖音";
       if (key === "toutiao") return "头条";
+      if (key === "wechat_channels") return "视频号";
       if (key === "wechat_moments") return "朋友圈图文";
       return platformDisplayName(key) || "平台";
     }
@@ -9087,6 +9088,7 @@
       if (key === "wechat_moments") return 90;
       if (key === "douyin") return 10;
       if (key === "toutiao") return 20;
+      if (key === "wechat_channels") return 30;
       return 50;
     }
 

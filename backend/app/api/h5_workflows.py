@@ -45,7 +45,7 @@ _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 _IP_DAILY_DEFAULT_TASKS = ["industry_hot_oral", "professional_ip_oral", "moments_candidate"]
 _DEVICE_ONLINE_TTL_SECONDS = 120
-_WORKFLOW_ACTION_PLATFORMS = {"douyin": "抖音", "toutiao": "头条", "wechat_moments": "朋友圈图文"}
+_WORKFLOW_ACTION_PLATFORMS = {"douyin": "抖音", "toutiao": "头条", "wechat_channels": "视频号", "wechat_moments": "朋友圈图文"}
 _WORKFLOW_CHILD_CLIENT_ACTIONS = {
     "native_wechat_poll",
     "native_wechat_add_friend",
@@ -168,7 +168,7 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
             continue
         platform = str(raw.get("platform") or "").strip().lower()
         if platform not in _WORKFLOW_ACTION_PLATFORMS:
-            raise HTTPException(status_code=400, detail="发布动作暂时只支持抖音、头条和朋友圈")
+            raise HTTPException(status_code=400, detail="发布动作暂时只支持抖音、头条、视频号和朋友圈")
         label = f"发布{_workflow_platform_label(platform)}"
         plan = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
         payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
@@ -580,7 +580,7 @@ def _prepare_publish_action_nodes(
             params = dict(params)
             platform = _clean_text(child.get("platform") or params.get("platform"), 64).lower()
             if platform not in _WORKFLOW_ACTION_PLATFORMS:
-                missing.append("发布动作：请选择抖音、头条或朋友圈")
+                missing.append("发布动作：请选择抖音、头条、视频号或朋友圈")
                 continue
             if platform == "wechat_moments":
                 current_iid = _clean_text(installation_id, 128)
