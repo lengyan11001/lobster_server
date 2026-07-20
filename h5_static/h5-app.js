@@ -2889,9 +2889,159 @@
       return child;
     }
 
+    function salesWorkflowRowText(row) {
+      return `${row && row.label || ""} ${row && row.note || ""}`;
+    }
+
+    function isSalesWechatGroupInviteRow(row) {
+      const params = row && row.params && typeof row.params === "object" ? row.params : {};
+      return params.followup_action === "group_invite" || salesWorkflowRowText(row).includes("微信自动拉群");
+    }
+
+    function isSalesWechatAddFriendRow(row) {
+      return String(row && row.key || "") === "native_wechat_add_friend" || salesWorkflowRowText(row).includes("微信自动加好友");
+    }
+
+    function isSalesWechatPrivateNode(node) {
+      return String(node && node.ability_key || "") === "native_wechat_poll" && salesWorkflowRowText(node).includes("微信私信接管");
+    }
+
+    function isSalesDouyinPrivateNode(node) {
+      const text = salesWorkflowRowText(node);
+      return String(node && node.ability_key || "") === "douyin_leads" && text.includes("抖音私信接管");
+    }
+
+    function appendSalesWorkflowChild(parentNode, child) {
+      if (!parentNode || !child) return false;
+      const children = workflowChildActions(parentNode).slice();
+      const childKey = String(child.ability_key || "");
+      const childType = String(child.action_type || child.type || "");
+      if (childKey && childKey !== "publish_content" && children.some((item) => String(item && item.ability_key || "") === childKey && String(item && (item.action_type || item.type) || "") === childType)) {
+        return false;
+      }
+      children.push(child);
+      children.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      parentNode.children = children;
+      return true;
+    }
+
+    function mergeSalesWorkflowParentParams(parentNode, patch) {
+      if (!parentNode || !patch || typeof patch !== "object") return;
+      const plan = parentNode.plan && typeof parentNode.plan === "object" ? { ...parentNode.plan } : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
+      const params = payload.params && typeof payload.params === "object" ? { ...payload.params } : {};
+      payload.params = { ...params, ...patch };
+      plan.payload = payload;
+      parentNode.plan = plan;
+    }
+
+    function salesWorkflowNativeChild(parentNode, row, index, overrides = {}) {
+      const params = {
+        ...(row && row.params && typeof row.params === "object" ? row.params : {}),
+        source_workflow_node_id: String(parentNode && parentNode.id || ""),
+        source_workflow_node_label: String(parentNode && (parentNode.ability_label || parentNode.note) || ""),
+        ...(overrides.params || {}),
+      };
+      const key = overrides.key || row.key;
+      const child = {
+        id: `${parentNode.id}_native_${String(row.time || index).replace(":", "")}_${index}`,
+        time: row.time || parentNode.time || "09:00",
+        end_time: row.endTime || "",
+        time_range: row.endTime ? `${row.time}-${row.endTime}` : (row.time || parentNode.time || ""),
+        parent_node_id: String(parentNode && parentNode.id || ""),
+        action_type: overrides.action_type || "client_workflow",
+        type: overrides.action_type || "client_workflow",
+        ability_key: key,
+        ability_label: row.label || row.note || "",
+        department_id: parentNode && parentNode.department_id || "sales",
+        department_name: parentNode && parentNode.department_name || "销售部",
+        note: row.note || row.label || "",
+        sales_preset: true,
+        is_action_node: true,
+        param_configured: true,
+        plan: nativeWechatWorkflowPlan(key, row.note || row.label, params),
+      };
+      return child;
+    }
+
+    function attachSalesWechatGroupInvite(parentNode, row, index) {
+      if (!parentNode) return false;
+      const child = salesWorkflowNativeChild(parentNode, row, index, {
+        action_type: "native_wechat_group_invite",
+        params: {
+          followup_action: "group_invite",
+          group_invite_enabled: true,
+          group_invite_rule_status: "pending_rules",
+          trigger: "qualified_intent",
+          group_invite_targets_source: "qualified_intent",
+          group_invite_members: [],
+          group_invite_manager_contacts: [],
+        },
+      });
+      if (!appendSalesWorkflowChild(parentNode, child)) return false;
+      const existingRules = (((parentNode.plan || {}).payload || {}).params || {}).group_invite_rules;
+      mergeSalesWorkflowParentParams(parentNode, {
+        group_invite_enabled: true,
+        group_invite_rule_status: "pending_rules",
+        group_invite_targets_source: "qualified_intent",
+        group_invite_members: [],
+        group_invite_manager_contacts: [],
+        group_invite_rules: [
+          ...(Array.isArray(existingRules) ? existingRules : []),
+          {
+            child_node_id: child.id,
+            time: child.time,
+            trigger: "qualified_intent",
+            members: [],
+            manager_contacts: [],
+          },
+        ],
+      });
+      return true;
+    }
+
+    function attachSalesWechatAddFriend(parentNode, row, index) {
+      if (!parentNode) return false;
+      const child = salesWorkflowNativeChild(parentNode, row, index, {
+        action_type: "native_wechat_add_friend",
+        params: {
+          source_mode: "douyin_private_message_wechat_id",
+          trigger: "clear_wechat_id",
+          skip_without_clear_wechat_id: true,
+          targets: [],
+        },
+      });
+      if (!appendSalesWorkflowChild(parentNode, child)) return false;
+      const existingRules = (((parentNode.plan || {}).payload || {}).params || {}).wechat_add_friend_rules;
+      mergeSalesWorkflowParentParams(parentNode, {
+        wechat_add_friend_enabled: true,
+        wechat_add_friend_targets_source: "douyin_private_message_wechat_id",
+        wechat_add_friend_rules: [
+          ...(Array.isArray(existingRules) ? existingRules : []),
+          {
+            child_node_id: child.id,
+            time: child.time,
+            trigger: "clear_wechat_id",
+            skip_without_clear_wechat_id: true,
+          },
+        ],
+      });
+      return true;
+    }
+
     function buildSalesWorkflowPresetNodes() {
       const nodes = [];
+      const pendingAddFriendRows = [];
       SALES_WORKFLOW_PRESET.forEach((row, index) => {
+        if (isSalesWechatAddFriendRow(row)) {
+          const parent = nodes.slice().reverse().find(isSalesDouyinPrivateNode);
+          if (!attachSalesWechatAddFriend(parent, row, index)) pendingAddFriendRows.push({ row, index });
+          return;
+        }
+        if (isSalesWechatGroupInviteRow(row)) {
+          attachSalesWechatGroupInvite(nodes.slice().reverse().find(isSalesWechatPrivateNode), row, index);
+          return;
+        }
         const lookup = row && !row.comingSoon ? abilityLookup(row.key) : null;
         if (!row || (!row.comingSoon && (!lookup || !lookup.node || lookup.node.comingSoon || isPublishCenterNode(lookup.node)))) return;
         const node = {
@@ -2915,6 +3065,12 @@
           node.children = actions.map((action, actionIndex) => salesWorkflowPublishAction(node, action, actionIndex));
         }
         nodes.push(node);
+        if (isSalesDouyinPrivateNode(node) && pendingAddFriendRows.length) {
+          const item = pendingAddFriendRows[0];
+          const rowAfterParent = { ...item.row, time: node.end_time || node.time || item.row.time, endTime: "" };
+          attachSalesWechatAddFriend(node, rowAfterParent, item.index);
+          pendingAddFriendRows.splice(0);
+        }
       });
       return nodes.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
     }
@@ -3433,26 +3589,29 @@
       box.innerHTML = nodes.map((node) => {
         const placeholder = workflowNodeIsPlaceholder(node);
         const children = workflowChildActions(node).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
-        const childHtml = children.map((action) => `
-          <div class="workflow-node-card workflow-action-card">
-            <div class="workflow-node-time action">${escapeHtml(action.time || "--:--")}</div>
-            <div class="workflow-node-main">
-              <strong>${escapeHtml(action.ability_label || workflowActionLabel(action))}</strong>
+        const childHtml = children.map((action) => {
+          const canEditAction = String(action && (action.action_type || action.type) || "publish").toLowerCase() === "publish";
+          return `
+            <div class="workflow-node-card workflow-action-card">
+              <div class="workflow-node-time action">${escapeHtml(action.time || "--:--")}</div>
+              <div class="workflow-node-main">
+                <strong>${escapeHtml(action.ability_label || workflowActionLabel(action))}</strong>
+              </div>
+              <div class="workflow-node-status">
+                ${workflowStatusPillHtml(workflowStatusInfo(action, workflowTaskForNodeDateOrCurrent(action, tasks, selectedKey), workflowLatestRunForNode(action, runs), selectedKey))}
+              </div>
+              <div class="workflow-node-actions">
+                <details class="task-action-menu workflow-node-action-menu">
+                  <summary>操作</summary>
+                  <div class="task-action-list">
+                    ${canEditAction ? `<button type="button" data-workflow-parent-node="${escapeHtml(node.id || "")}" data-workflow-action-node="${escapeHtml(action.id || "")}">编辑动作</button>` : ""}
+                    <button class="danger-text" type="button" data-workflow-remove-action="${escapeHtml(action.id || "")}" data-workflow-remove-action-parent="${escapeHtml(node.id || "")}">删除</button>
+                  </div>
+                </details>
+              </div>
             </div>
-            <div class="workflow-node-status">
-              ${workflowStatusPillHtml(workflowStatusInfo(action, workflowTaskForNodeDateOrCurrent(action, tasks, selectedKey), workflowLatestRunForNode(action, runs), selectedKey))}
-            </div>
-            <div class="workflow-node-actions">
-              <details class="task-action-menu workflow-node-action-menu">
-                <summary>操作</summary>
-                <div class="task-action-list">
-                  <button type="button" data-workflow-parent-node="${escapeHtml(node.id || "")}" data-workflow-action-node="${escapeHtml(action.id || "")}">编辑动作</button>
-                  <button class="danger-text" type="button" data-workflow-remove-action="${escapeHtml(action.id || "")}" data-workflow-remove-action-parent="${escapeHtml(node.id || "")}">删除</button>
-                </div>
-              </details>
-            </div>
-          </div>
-        `).join("");
+          `;
+        }).join("");
         return `
           <div class="workflow-node-card${placeholder ? " is-placeholder" : ""}"${placeholder ? "" : ` data-workflow-edit-node="${escapeHtml(node.id || "")}"`}>
             <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>

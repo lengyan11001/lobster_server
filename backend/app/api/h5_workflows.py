@@ -44,6 +44,17 @@ _PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 _IP_DAILY_DEFAULT_TASKS = ["industry_hot_oral", "professional_ip_oral", "moments_candidate"]
 _DEVICE_ONLINE_TTL_SECONDS = 120
 _WORKFLOW_ACTION_PLATFORMS = {"douyin": "抖音", "toutiao": "头条", "wechat_moments": "朋友圈图文"}
+_WORKFLOW_CHILD_CLIENT_ACTIONS = {
+    "native_wechat_poll",
+    "native_wechat_add_friend",
+    "native_wechat_moments_engage",
+}
+_WORKFLOW_CHILD_ACTION_TYPES = {
+    "client_workflow",
+    "native_wechat_add_friend",
+    "native_wechat_group_invite",
+    "native_wechat_moments_engage",
+}
 _ENABLED_SYSTEM_WORKFLOW_KEYS = {"system_sales"}
 
 
@@ -97,7 +108,62 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
             continue
         action_type = str(raw.get("action_type") or raw.get("type") or "publish").strip().lower()
         if action_type != "publish":
-            raise HTTPException(status_code=400, detail="动作节点暂时只支持发布")
+            plan = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
+            payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+            action = _clean_text(payload.get("action") or raw.get("ability_key"), 128)
+            if action_type not in _WORKFLOW_CHILD_ACTION_TYPES or action not in _WORKFLOW_CHILD_CLIENT_ACTIONS:
+                raise HTTPException(status_code=400, detail="动作节点暂时只支持发布或系统销售微信动作")
+            params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+            params = dict(params or {})
+            params.update(
+                {
+                    "source_workflow_node_id": parent_id,
+                    "source_workflow_node_label": parent.get("ability_label") or parent.get("note") or "",
+                }
+            )
+            if action == "native_wechat_add_friend":
+                params.setdefault("source_mode", "douyin_private_message_wechat_id")
+                params.setdefault("trigger", "clear_wechat_id")
+                params.setdefault("skip_without_clear_wechat_id", True)
+                params.setdefault("targets", [])
+            if action == "native_wechat_poll" and (
+                action_type == "native_wechat_group_invite"
+                or params.get("followup_action") == "group_invite"
+                or "自动拉群" in _clean_text(raw.get("note") or raw.get("ability_label"), 200)
+            ):
+                params["followup_action"] = "group_invite"
+                params["group_invite_enabled"] = True
+                params.setdefault("group_invite_rule_status", "pending_rules")
+                params.setdefault("trigger", "qualified_intent")
+                params.setdefault("group_invite_targets_source", "qualified_intent")
+                params.setdefault("group_invite_members", [])
+                params.setdefault("group_invite_manager_contacts", [])
+            label = str(raw.get("ability_label") or raw.get("label") or plan.get("title") or "系统销售微信动作").strip()[:160]
+            action_id = str(raw.get("id") or f"{parent_id}_action_{len(actions) + 1}")[:64]
+            actions.append(
+                {
+                    "id": action_id,
+                    "time": _clean_time(raw.get("time")),
+                    "parent_node_id": parent_id,
+                    "action_type": action_type,
+                    "type": action_type,
+                    "platform": str(raw.get("platform") or "").strip().lower()[:64],
+                    "ability_key": str(raw.get("ability_key") or action).strip()[:128],
+                    "ability_label": label,
+                    "department_id": str(raw.get("department_id") or parent.get("department_id") or "").strip()[:64],
+                    "department_name": str(raw.get("department_name") or parent.get("department_name") or "").strip()[:80],
+                    "note": str(raw.get("note") or "").strip()[:2000],
+                    "is_action_node": True,
+                    "param_configured": bool(raw.get("param_configured", True)),
+                    "plan": {
+                        "title": str(plan.get("title") or label).strip()[:160],
+                        "task_kind": "client_workflow",
+                        "content": str(plan.get("content") or f"H5 工作流动作：{label}").strip()[:12000],
+                        "payload": {"action": action, "params": params},
+                    },
+                }
+            )
+            continue
         platform = str(raw.get("platform") or "").strip().lower()
         if platform not in _WORKFLOW_ACTION_PLATFORMS:
             raise HTTPException(status_code=400, detail="发布动作暂时只支持抖音、头条和朋友圈")
@@ -532,11 +598,7 @@ def _sales_action_from_note(note: Any) -> str:
     return "search_collect"
 
 
-_NATIVE_WECHAT_WORKFLOW_ACTIONS = {
-    "native_wechat_poll",
-    "native_wechat_add_friend",
-    "native_wechat_moments_engage",
-}
+_NATIVE_WECHAT_WORKFLOW_ACTIONS = _WORKFLOW_CHILD_CLIENT_ACTIONS
 
 
 def _native_wechat_key_from_sales_note(note: Any) -> str:
