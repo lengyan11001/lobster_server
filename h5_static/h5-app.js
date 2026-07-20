@@ -4319,6 +4319,7 @@
       if (!node || node.comingSoon) return false;
       if (node.children && node.children.length) return true;
       if (node.always || node.routeTab) return true;
+      if (isNativeWechatWorkflowKey(node.key) || isNativeWechatWorkflowKey(node.workQuickKey) || isNativeWechatWorkflowKey(node.workflowAction)) return true;
       if (node.featureKey) return !!(state.user && state.user.features && state.user.features[node.featureKey]);
       if (node.workQuickKey) {
         const quick = workQuickItemByKey(node.workQuickKey);
