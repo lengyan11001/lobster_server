@@ -13616,7 +13616,39 @@
       document.querySelectorAll('.top-action[data-tab-target="messages"]').forEach((btn) => btn.remove());
     }
 
+    function closeTaskActionMenus(exceptMenu = null) {
+      document.querySelectorAll(".task-action-menu[open]").forEach((menu) => {
+        if (exceptMenu && menu === exceptMenu) return;
+        menu.removeAttribute("open");
+      });
+    }
+
+    function bindTaskActionMenuBehavior() {
+      document.addEventListener("toggle", (evt) => {
+        const menu = evt.target;
+        if (!menu || !menu.matches || !menu.matches(".task-action-menu") || !menu.open) return;
+        closeTaskActionMenus(menu);
+      }, true);
+      document.addEventListener("click", (evt) => {
+        const summary = evt.target.closest && evt.target.closest(".task-action-menu > summary");
+        if (summary) {
+          closeTaskActionMenus(summary.closest(".task-action-menu"));
+          return;
+        }
+        const actionBtn = evt.target.closest && evt.target.closest(".task-action-list button");
+        if (actionBtn) {
+          const menu = actionBtn.closest(".task-action-menu");
+          if (menu) setTimeout(() => menu.removeAttribute("open"), 0);
+          return;
+        }
+        if (!evt.target.closest || !evt.target.closest(".task-action-menu")) {
+          closeTaskActionMenus();
+        }
+      }, true);
+    }
+
     syncTopNavigationActions();
+    bindTaskActionMenuBehavior();
 
     document.querySelectorAll("[data-tab-target]").forEach((btn) => {
       btn.addEventListener("click", () => {
