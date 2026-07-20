@@ -7472,7 +7472,9 @@
       return Array.from(document.querySelectorAll(selector)).map((input) => {
         const item = input.closest(".copy-item, .moment-item");
         if (!item) return "";
-        return (item.querySelector(".task-detail-moments-copy")?.textContent || "").trim();
+        const title = (item.querySelector(".copy-summary span, .moment-summary span")?.textContent || "").replace(/^\d+\.\s*/, "").trim();
+        const body = (item.querySelector(".task-detail-moments-copy")?.textContent || "").trim();
+        return [title, body].filter(Boolean).join("\n");
       }).filter(Boolean);
     }
 
@@ -14200,6 +14202,8 @@
       loadWorkflowRunsForDate(state.workflowSelectedDate).catch((err) => toast(err.message || "执行记录加载失败"));
     });
     $("workflowTimeline")?.addEventListener("click", (evt) => {
+      const workflowActionMenu = evt.target.closest && evt.target.closest(".workflow-node-action-menu");
+      const workflowActionMenuButton = evt.target.closest && evt.target.closest(".workflow-node-action-menu .task-action-list button");
       const runBtn = evt.target.closest("[data-open-run-detail]");
       if (runBtn) {
         evt.preventDefault();
@@ -14244,11 +14248,19 @@
       }
       const actionTarget = evt.target.closest("[data-workflow-action-node]");
       if (actionTarget) {
+        evt.preventDefault();
+        evt.stopPropagation();
         openWorkflowActionModal(actionTarget.dataset.workflowParentNode || "", actionTarget.dataset.workflowActionNode || "");
+        return;
+      }
+      if (workflowActionMenu && !workflowActionMenuButton) {
+        evt.stopPropagation();
         return;
       }
       const editTarget = evt.target.closest("[data-workflow-edit-node]");
       if (!editTarget) return;
+      evt.preventDefault();
+      evt.stopPropagation();
       openWorkflowParamModal(editTarget.dataset.workflowEditNode || "");
     });
     $("workflowSaveTemplateBtn")?.addEventListener("click", () => saveWorkflowTemplate().catch((err) => toast(err.message || "保存失败")));
