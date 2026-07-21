@@ -1223,6 +1223,57 @@
       },
       "tags": ["全球获客", "CRM", "企业搜索", "LinkedIn", "X", "TikTok"]
     },
+    "alibaba_inquiry_takeover_skill": {
+      "name": "\u963f\u91cc\u8be2\u76d8\u63a5\u7ba1",
+      "description": "\u63a5\u5165\u963f\u91cc\u56fd\u9645\u7ad9\u8be2\u76d8\uff1a\u8d26\u53f7\u626b\u7801\u767b\u5f55\u3001\u6eda\u52a8\u540c\u6b65\u5386\u53f2\u8be2\u76d8\u3001\u672c\u5730\u5ba2\u6237\u6863\u6848\u3001AI\u8bdd\u672f\u603b\u7ed3\u548c\u56de\u590d\u8f85\u52a9\u3002",
+      "type": "builtin",
+      "store_visibility": "online",
+      "default_installed": true,
+      "status": "available",
+      "package_config": {
+        "view": "alibaba-inquiries",
+        "default_page_size": 20,
+        "sync_mode": "scroll_all"
+      },
+      "capabilities": {
+        "alibaba.inquiry.takeover": {
+          "description": "\u963f\u91cc\u56fd\u9645\u7ad9\u8be2\u76d8\u63a5\u7ba1\u5de5\u4f5c\u53f0\uff1a\u540c\u6b65\u8be2\u76d8\u3001\u5ba2\u6237\u6863\u6848\u3001\u8bad\u7ec3\u8bdd\u672f\u548c\u56de\u590d\u8f85\u52a9\u3002",
+          "upstream": "local",
+          "upstream_tool": "alibaba_inquiries",
+          "enabled": true,
+          "is_default": false,
+          "unit_credits": 0,
+          "arg_schema": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "sync",
+                  "list",
+                  "sync_detail",
+                  "draft_reply",
+                  "send_reply"
+                ]
+              },
+              "account_id": {
+                "type": "integer"
+              },
+              "inquiry_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "tags": [
+        "\u963f\u91cc\u56fd\u9645\u7ad9",
+        "\u8be2\u76d8",
+        "\u5ba2\u6237\u6863\u6848",
+        "AI\u8bdd\u672f"
+      ]
+    },
     "ai_3d_model_skill": {
       "name": "高质量 3D 模型",
       "description": "上传单图、多视角图片或 zip 拆件包，自动调用 Meshy 生成 GLB/FBX/OBJ/USDZ。生产质量模式默认启用贴图、PBR 与重拓扑，适合复杂头盔、道具、产品资产进入 Blender/ZBrush 继续修模。",

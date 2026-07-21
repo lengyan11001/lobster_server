@@ -967,6 +967,9 @@
       if (value.includes("关键词")) return { view: "personalSettings", personalTab: "keywords", label: "去关键词" };
       if (value.includes("同行账号")) return { view: "personalSettings", personalTab: "competitors", label: "去同行账号" };
       if (value.includes("记忆文件")) return { view: "personalSettings", personalTab: "memory", label: "去记忆文件" };
+      if (value.includes("发布朋友圈") || (value.includes("朋友圈") && value.includes("设备"))) return { view: "mountedAccounts", mountedTab: "wechat", label: "去微信账号" };
+      if (value.includes("默认发布账号") || value.includes("发布账号") || value.includes("发布视频号") || value.includes("发布抖音") || value.includes("发布头条")) return { view: "mountedAccounts", mountedTab: "publish", label: "去平台账号" };
+      if (value.includes("当前启用设备") || value.includes("设备不在线") || value.includes("请选择设备")) return { view: "mountedAccounts", mountedTab: "publish", label: "去设备账号" };
       if (value.includes("平台账号") || value.includes("默认抖音")) return { view: "mountedAccounts", mountedTab: "douyin", label: "去平台账号" };
       if (value.includes("数字人形象")) return { view: "assetLibrary", assetSection: "avatars", label: "去形象分身" };
       if (value.includes("声音分身")) return { view: "assetLibrary", assetSection: "voices", label: "去声音分身" };
@@ -976,7 +979,16 @@
 
     function parseWorkflowMissingMessage(message) {
       const raw = String(message || "").trim();
-      const shouldUseDialog = raw.includes("销售员工无法启动") || raw.includes("无法启动") || raw.includes("缺少");
+      const shouldUseDialog = raw.includes("销售员工无法启动")
+        || raw.includes("无法启动")
+        || raw.includes("缺少")
+        || raw.includes("默认发布账号")
+        || raw.includes("发布账号")
+        || raw.includes("默认账号")
+        || raw.includes("不在当前启用设备")
+        || raw.includes("所在设备不在线")
+        || raw.includes("当前启用设备不在线")
+        || raw.includes("请选择设备");
       if (!shouldUseDialog) return [];
       const startMarker = "缺少：";
       let body = raw;
