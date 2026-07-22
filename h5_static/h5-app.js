@@ -13075,8 +13075,11 @@
     function collectMediaUrls(payload) {
       const out = [];
       const seen = new Set();
+      const priorityOut = [];
+      const prioritySeen = new Set();
       const savedOut = [];
       const savedSeen = new Set();
+      const isVideoUrl = (url) => /\.(mp4|webm|mov|m4v|avi)(?:[?#].*)?$/i.test(String(url || "").trim());
       function add(value) {
         if (Array.isArray(value)) { value.forEach(add); return; }
         if (value && typeof value === "object") { Object.values(value).forEach(add); return; }
@@ -13089,6 +13092,25 @@
           out.push(url);
         });
       }
+      function addPriority(value) {
+        if (!value) return;
+        if (Array.isArray(value)) { value.forEach(addPriority); return; }
+        if (typeof value === "string") {
+          const url = value.trim();
+          if (/^https?:\/\//i.test(url) && isVideoUrl(url) && !prioritySeen.has(url)) {
+            prioritySeen.add(url);
+            priorityOut.push(url);
+          }
+          return;
+        }
+        if (typeof value !== "object") return;
+        const url = String(value.url || value.source_url || value.public_url || value.video_url || value.final_url || value.output_url || value.media_url || "").trim();
+        const type = String(value.media_type || value.type || value.kind || "").toLowerCase();
+        if (url && /^https?:\/\//i.test(url) && (isVideoUrl(url) || type.includes("video")) && !prioritySeen.has(url)) {
+          prioritySeen.add(url);
+          priorityOut.push(url);
+        }
+      }
       function addSaved(value) {
         if (Array.isArray(value)) { value.forEach(addSaved); return; }
         if (!value || typeof value !== "object") return;
@@ -13099,8 +13121,22 @@
         }
       }
       const refs = payload && payload.result_refs && typeof payload.result_refs === "object" ? payload.result_refs : {};
+      const local = payload && payload.local_result && typeof payload.local_result === "object" ? payload.local_result : {};
+      const localItem = local.item && typeof local.item === "object" ? local.item : {};
+      const videoResult = local.video_result && typeof local.video_result === "object" ? local.video_result : {};
+      const videoResultInner = videoResult.result && typeof videoResult.result === "object" ? videoResult.result : {};
+      addPriority(local.final_video);
+      addPriority(local.video_url);
+      addPriority(localItem.final_video);
+      addPriority(localItem.video_url);
+      addPriority(videoResult.final_video);
+      addPriority(videoResultInner.final_video);
       addSaved(payload && payload.saved_assets);
       addSaved(refs.saved_assets);
+      if (priorityOut.length) {
+        const merged = priorityOut.concat(savedOut.filter((url) => !prioritySeen.has(url)));
+        return merged.slice(0, 6);
+      }
       if (savedOut.length) return savedOut.slice(0, 6);
       if (Array.isArray(payload && payload.media_urls) || Array.isArray(refs.urls)) {
         add(payload && payload.media_urls);
@@ -13755,6 +13791,18 @@
       };
       const addUrl = (url) => addEntry({ url });
       const draft = publishDraftFromPayload({ ...payload, run_id: row && row.id });
+      const local = payload.local_result && typeof payload.local_result === "object" ? payload.local_result : {};
+      const localItem = local.item && typeof local.item === "object" ? local.item : {};
+      const videoResult = local.video_result && typeof local.video_result === "object" ? local.video_result : {};
+      const videoResultInner = videoResult.result && typeof videoResult.result === "object" ? videoResult.result : {};
+      [
+        local.final_video,
+        local.video_url ? { url: local.video_url, asset_id: local.video_asset_id, media_type: "video", title: local.title || defaults.title } : null,
+        localItem.final_video,
+        localItem.video_url ? { url: localItem.video_url, asset_id: localItem.video_asset_id, media_type: "video", title: localItem.title || defaults.title } : null,
+        videoResult.final_video,
+        videoResultInner.final_video,
+      ].forEach(addEntry);
       const ids = Array.isArray(refs.asset_ids) ? refs.asset_ids : [];
       const urls = Array.isArray(refs.urls) ? refs.urls : [];
       urls.forEach((url, idx) => addEntry({ url, asset_id: ids[idx] || "", media_type: mediaTypeFromUrl(url) }));

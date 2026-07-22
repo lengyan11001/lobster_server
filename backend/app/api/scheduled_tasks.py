@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import uuid
 import re
@@ -22,6 +23,7 @@ from ..models import (
     PublishAccount,
     ScheduledTask,
     ScheduledTaskRun,
+    CreativeGenerationJob,
     User,
     UserInstallation,
     IPContentDraftRecord,
@@ -615,6 +617,225 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
         "started_at": _iso(row.started_at),
         "finished_at": _iso(row.finished_at),
     }
+
+
+_CREATIVE_VIDEO_JOB_ID_KEYS = {
+    "job_id",
+    "video_job_id",
+    "video_task_id",
+    "creative_job_id",
+    "creative_video_job_id",
+    "creative_generation_job_id",
+    "generation_job_id",
+}
+
+
+def _append_unique_text(out: List[str], seen: set[str], value: Any) -> None:
+    text = str(value or "").strip()
+    if not text or text in seen:
+        return
+    seen.add(text)
+    out.append(text)
+
+
+def _extract_creative_video_job_ids(*values: Any) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+
+    def scan_text(text: str) -> None:
+        for match in re.findall(r"/jobs/([A-Za-z0-9_-]{16,128})", text):
+            _append_unique_text(out, seen, match)
+        for match in re.findall(r"\b[a-fA-F0-9]{24,64}\b", text):
+            _append_unique_text(out, seen, match)
+
+    def walk(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                key_name = str(key or "").strip().lower()
+                if key_name in _CREATIVE_VIDEO_JOB_ID_KEYS:
+                    _append_unique_text(out, seen, item)
+                elif key_name in {"poll_path", "video_poll_path"}:
+                    scan_text(str(item or ""))
+                if isinstance(item, (dict, list)):
+                    walk(item)
+            return
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, (dict, list)):
+                    walk(item)
+            return
+        scan_text(str(value or ""))
+
+    for value in values:
+        walk(value)
+    return out
+
+
+def _creative_video_entry_from_dict(item: Any, *, title: str = "") -> Optional[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+    url = str(
+        item.get("url")
+        or item.get("public_url")
+        or item.get("source_url")
+        or item.get("video_url")
+        or item.get("final_url")
+        or item.get("output_url")
+        or item.get("media_url")
+        or ""
+    ).strip()
+    asset_id = str(
+        item.get("asset_id")
+        or item.get("id")
+        or item.get("video_asset_id")
+        or item.get("final_asset_id")
+        or ""
+    ).strip()
+    media_type = str(item.get("media_type") or item.get("type") or "").strip().lower()
+    kind = str(item.get("kind") or item.get("category") or "").strip().lower()
+    if not url and not asset_id:
+        return None
+    if url and not (_is_video_url(url) or media_type == "video" or "video" in kind):
+        return None
+    return {
+        "url": url,
+        "source_url": url,
+        "asset_id": asset_id,
+        "media_type": "video",
+        "title": str(item.get("title") or title or "").strip(),
+        "description": str(item.get("description") or item.get("hint") or "").strip(),
+        "filename": str(item.get("filename") or "").strip(),
+    }
+
+
+def _creative_job_final_video_entry(job: CreativeGenerationJob, *, title: str = "") -> Optional[Dict[str, Any]]:
+    payload = job.result_payload if isinstance(job.result_payload, dict) else {}
+    candidates: List[Any] = [
+        payload.get("final_video"),
+        payload.get("video"),
+        payload.get("output_video"),
+        payload.get("result_video"),
+    ]
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    candidates.extend([
+        result.get("final_video"),
+        result.get("video"),
+        result.get("output_video"),
+        result.get("result_video"),
+    ])
+    candidates.extend(job.saved_assets or [])
+    candidates.extend(payload.get("saved_assets") or [])
+    candidates.extend(result.get("saved_assets") or [])
+    for item in candidates:
+        entry = _creative_video_entry_from_dict(item, title=title)
+        if entry:
+            return entry
+
+    stack: List[Any] = [payload]
+    seen_obj: set[int] = set()
+    while stack:
+        cur = stack.pop()
+        oid = id(cur)
+        if oid in seen_obj:
+            continue
+        seen_obj.add(oid)
+        if isinstance(cur, dict):
+            entry = _creative_video_entry_from_dict(cur, title=title)
+            if entry:
+                return entry
+            for value in cur.values():
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(cur, list):
+            stack.extend(value for value in cur if isinstance(value, (dict, list)))
+    return None
+
+
+def _prepend_unique_list(items: List[Any], new_item: Any, key_fn) -> List[Any]:
+    key = key_fn(new_item)
+    if not key:
+        return items
+    rest = [item for item in items if key_fn(item) != key]
+    return [new_item] + rest
+
+
+def _enrich_run_with_creative_video(db: Session, row: ScheduledTaskRun, data: Dict[str, Any]) -> Dict[str, Any]:
+    payload = data.get("result_payload") if isinstance(data.get("result_payload"), dict) else {}
+    ids = _extract_creative_video_job_ids(payload, row.payload or {}, row.result_text or "")
+    if not ids:
+        return data
+    jobs = (
+        db.query(CreativeGenerationJob)
+        .filter(
+            CreativeGenerationJob.user_id == row.user_id,
+            CreativeGenerationJob.job_id.in_(ids),
+            CreativeGenerationJob.deleted_at.is_(None),
+        )
+        .all()
+    )
+    job_by_id = {str(job.job_id or ""): job for job in jobs}
+    final_entry: Optional[Dict[str, Any]] = None
+    final_job_id = ""
+    for job_id in ids:
+        job = job_by_id.get(job_id)
+        if not job:
+            continue
+        entry = _creative_job_final_video_entry(job, title=row.title or "")
+        if entry:
+            final_entry = entry
+            final_job_id = job.job_id
+            break
+    if not final_entry:
+        return data
+
+    enriched = copy.deepcopy(payload)
+    local_result = enriched.get("local_result")
+    if not isinstance(local_result, dict):
+        local_result = {}
+        enriched["local_result"] = local_result
+    local_result["final_video"] = final_entry
+    local_result["video_url"] = final_entry.get("url") or ""
+    local_result["video_asset_id"] = final_entry.get("asset_id") or ""
+    local_result["video_status"] = "completed"
+    local_result["video_job_id"] = final_job_id or local_result.get("video_job_id") or ""
+
+    item = local_result.get("item")
+    if isinstance(item, dict):
+        item["final_video"] = final_entry
+        item["video_url"] = final_entry.get("url") or item.get("video_url") or ""
+        item["video_asset_id"] = final_entry.get("asset_id") or item.get("video_asset_id") or ""
+        item["video_status"] = "completed"
+        item["video_job_id"] = final_job_id or item.get("video_job_id") or ""
+
+    refs = enriched.get("result_refs")
+    if not isinstance(refs, dict):
+        refs = {}
+        enriched["result_refs"] = refs
+    url = str(final_entry.get("url") or "").strip()
+    asset_id = str(final_entry.get("asset_id") or "").strip()
+    if url:
+        refs["urls"] = _prepend_unique_list(
+            [str(item) for item in (refs.get("urls") or []) if str(item or "").strip()],
+            url,
+            lambda item: str(item or "").strip(),
+        )
+    if asset_id:
+        refs["asset_ids"] = _prepend_unique_list(
+            [str(item) for item in (refs.get("asset_ids") or []) if str(item or "").strip()],
+            asset_id,
+            lambda item: str(item or "").strip(),
+        )
+    saved_assets = refs.get("saved_assets") if isinstance(refs.get("saved_assets"), list) else []
+    refs["saved_assets"] = _prepend_unique_list(
+        saved_assets,
+        final_entry,
+        lambda item: str((item or {}).get("asset_id") or (item or {}).get("url") or "").strip() if isinstance(item, dict) else "",
+    )
+
+    data["result_payload"] = enriched
+    return data
 
 
 def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
@@ -2000,6 +2221,7 @@ def get_scheduled_task_run(
     data = _serialize_run(row)
     if row.task_kind == "ip_content_daily":
         data["result_payload"] = _refresh_ip_content_daily_payload(db, row)
+    data = _enrich_run_with_creative_video(db, row, data)
     return {"ok": True, "run": data}
 
 
