@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import Asset, User, UserHiflyAvatarAsset, UserHiflyVideoAsset, UserHiflyVoiceAsset
+from ..models import Asset, ShanjianDigitalHumanProfile, User, UserHiflyAvatarAsset, UserHiflyVideoAsset, UserHiflyVoiceAsset
 from .assets import _save_bytes_or_tos, _resolve_asset_public_base, build_asset_file_url
 from .auth import get_current_user
 
@@ -1535,6 +1535,10 @@ def _normalize_avatar_asset(row: UserHiflyAvatarAsset, request: Optional[Request
     cover_url = row.cover_url or ""
     return {
         "id": row.id,
+        "source": "hifly",
+        "source_label": "必火数字人",
+        "source_record_id": row.id,
+        "provider": "hifly",
         "task_id": row.hifly_task_id,
         "avatar": row.hifly_avatar_id or "",
         "title": row.title,
@@ -1598,6 +1602,9 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
     provider = _voice_provider(row)
     return {
         "id": row.id,
+        "source": "hifly",
+        "source_label": "我的声音",
+        "source_record_id": row.id,
         "task_id": row.hifly_task_id,
         "voice": voice_id,
         "title": row.title,
@@ -1627,6 +1634,50 @@ def _normalize_voice_asset(row: UserHiflyVoiceAsset, request: Optional[Request] 
         },
         "style_count": len(styles),
         "styles": styles,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _normalize_shanjian_profile_as_avatar(
+    row: ShanjianDigitalHumanProfile,
+    request: Optional[Request] = None,
+) -> Dict[str, Any]:
+    source_asset_id = str(row.source_asset_id or "").strip()
+    detail_url = build_asset_file_url(request, source_asset_id) if request and source_asset_id else (row.source_url or "")
+    cover_url = row.cover_url or row.source_url or detail_url or ""
+    status = str(row.status or "").strip()
+    if status == "succeed":
+        normalized_status = "success"
+    elif status == "failed":
+        normalized_status = "failed"
+    else:
+        normalized_status = "processing"
+    return {
+        "id": f"shanjian:{row.id}",
+        "source": "shanjian",
+        "source_label": "Online形象分身",
+        "source_record_id": row.id,
+        "provider": "shanjian",
+        "task_id": row.task_id or "",
+        "avatar": row.virtualman_id or "",
+        "title": row.title,
+        "image_url": cover_url,
+        "cover_url": cover_url,
+        "source_type": row.train_mode or "image",
+        "detail_asset_id": source_asset_id,
+        "detail_url": detail_url,
+        "status": normalized_status,
+        "status_text": {
+            "processing": "处理中",
+            "success": "已完成",
+            "failed": "失败",
+        }.get(normalized_status, "处理中"),
+        "model": None,
+        "aigc_flag": 0,
+        "message": row.error_message or "",
+        "section_label": "Online形象分身",
+        "is_mine": True,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
@@ -3609,6 +3660,104 @@ def list_my_voices(
     return {
         "ok": True,
         "items": [_normalize_voice_asset(row, request) for row in rows],
+        "page": page,
+        "size": size,
+        "total": total,
+    }
+
+
+@router.get("/api/h5/assets/digital-library")
+def list_h5_digital_library(
+    request: Request,
+    kind: str = Query("avatar"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    clean_kind = str(kind or "avatar").strip().lower()
+    if clean_kind in {"voice", "voices"}:
+        query = db.query(UserHiflyVoiceAsset).filter(
+            UserHiflyVoiceAsset.user_id == current_user.id,
+            UserHiflyVoiceAsset.status != "deleted",
+        )
+        total = query.count()
+        rows = (
+            query.order_by(UserHiflyVoiceAsset.updated_at.desc(), UserHiflyVoiceAsset.id.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+            .all()
+        )
+        changed = False
+        for row in rows:
+            missing_preview = not str(row.demo_url or "").strip()
+            missing_voice_id = not str(row.hifly_voice_id or "").strip()
+            provider = _voice_provider(row)
+            should_refresh_hifly = provider == "hifly" and (
+                row.status in {"waiting", "processing"}
+                or (row.status == "success" and (missing_preview or missing_voice_id))
+            )
+            if should_refresh_hifly and _refresh_voice_asset_from_hifly(row):
+                db.add(row)
+                changed = True
+        if changed:
+            db.commit()
+            for row in rows:
+                db.refresh(row)
+        return {
+            "ok": True,
+            "kind": "voice",
+            "items": [_normalize_voice_asset(row, request) for row in rows],
+            "page": page,
+            "size": size,
+            "total": total,
+        }
+
+    hifly_rows = (
+        db.query(UserHiflyAvatarAsset)
+        .filter(
+            UserHiflyAvatarAsset.user_id == current_user.id,
+            UserHiflyAvatarAsset.status != "deleted",
+        )
+        .all()
+    )
+    shanjian_rows = (
+        db.query(ShanjianDigitalHumanProfile)
+        .filter(
+            ShanjianDigitalHumanProfile.user_id == int(current_user.id),
+            ShanjianDigitalHumanProfile.status != "deleted",
+        )
+        .all()
+    )
+    merged: List[tuple[datetime, str, Any]] = []
+    for row in hifly_rows:
+        merged.append((row.updated_at or row.created_at or datetime.min, "hifly", row))
+    for row in shanjian_rows:
+        merged.append((row.updated_at or row.created_at or datetime.min, "shanjian", row))
+    merged.sort(key=lambda item: (item[0], str(getattr(item[2], "id", ""))), reverse=True)
+    total = len(merged)
+    selected = merged[(page - 1) * size : page * size]
+
+    changed = False
+    for _, source, row in selected:
+        if source == "hifly" and row.status in {"waiting", "processing"} and str(row.hifly_task_id or "").strip():
+            if _refresh_avatar_asset_from_hifly(row):
+                db.add(row)
+                changed = True
+    if changed:
+        db.commit()
+        for _, source, row in selected:
+            if source == "hifly":
+                db.refresh(row)
+
+    items = [
+        _normalize_avatar_asset(row, request) if source == "hifly" else _normalize_shanjian_profile_as_avatar(row, request)
+        for _, source, row in selected
+    ]
+    return {
+        "ok": True,
+        "kind": "avatar",
+        "items": items,
         "page": page,
         "size": size,
         "total": total,

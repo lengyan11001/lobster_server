@@ -5486,6 +5486,9 @@
         return active ? { ...role, status: "启用中", active } : role;
       });
       const customEmployees = userWorkflowTemplateRows();
+      const sortedCustomEmployees = sortWorkflowTemplatesForDisplay(customEmployees);
+      const activeCustomEmployees = sortedCustomEmployees.filter((tpl) => workflowTemplateIsActive(tpl));
+      const inactiveCustomEmployees = sortedCustomEmployees.filter((tpl) => !workflowTemplateIsActive(tpl));
       const totalEmployees = roles.length + customEmployees.length;
       const runningCount = (state.runs || []).filter(isActiveRun).length;
       if ($("officeDeviceCount")) $("officeDeviceCount").textContent = String(devices.length);
@@ -5524,8 +5527,9 @@
           </span>
         </button>`;
       }).join("");
-      const templateHtml = sortWorkflowTemplatesForDisplay(customEmployees).map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, roles.length + index)).join("");
-      floor.innerHTML = roleHtml + templateHtml;
+      const activeTemplateHtml = activeCustomEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, index)).join("");
+      const templateHtml = inactiveCustomEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, activeCustomEmployees.length + roles.length + index)).join("");
+      floor.innerHTML = activeTemplateHtml + roleHtml + templateHtml;
       if (state.officeResetEmployeeScrollUntil && Date.now() <= state.officeResetEmployeeScrollUntil) {
         floor.scrollLeft = 0;
         requestAnimationFrame(() => { floor.scrollLeft = 0; });
@@ -5596,6 +5600,7 @@
       const id = String((row && row.id) || "");
       const title = String((row && row.title) || "未命名形象");
       const img = String((row && (row.image_url || row.cover_url || row.detail_url)) || "").trim();
+      const sourceLabel = String((row && (row.source_label || row.section_label || row.source_type)) || "image");
       const thumb = img
         ? `<img class="asset-library-thumb" src="${escapeHtml(mediaProxyUrl(img, "inline", filenameFromUrl(img, "avatar")))}" alt="" loading="lazy">`
         : `<div class="asset-library-thumb asset-library-thumb-empty">形象</div>`;
@@ -5603,7 +5608,7 @@
         ${thumb}
         <div class="asset-library-card-main">
           <strong>${escapeHtml(title)}</strong>
-          <span>${escapeHtml(row && row.source_type || "image")}</span>
+          <span>${escapeHtml(sourceLabel)}</span>
           <em class="asset-status${hiflyStatusClass(row)}">${escapeHtml(row && row.status_text || row && row.status || "处理中")}</em>
         </div>
       </button>`;
@@ -5612,7 +5617,7 @@
     function hiflyVoiceCardHtml(row) {
       const id = String((row && row.id) || "");
       const title = String((row && row.title) || "未命名声音");
-      const provider = String((row && row.provider) || "");
+      const provider = String((row && (row.source_label || row.provider)) || "");
       return `<button class="asset-library-card" type="button" data-hifly-asset-kind="voice" data-hifly-asset-id="${escapeHtml(id)}">
         <div class="asset-audio-thumb">声</div>
         <div class="asset-library-card-main">
@@ -5680,6 +5685,8 @@
       if (!modal || !body) return;
       if (title) title.textContent = row.title || (kind === "voice" ? "声音分身" : "形象分身");
       const isVoice = kind === "voice";
+      const source = String((row && row.source) || "hifly");
+      const sourceLabel = String((row && (row.source_label || row.section_label)) || (source === "hifly" ? "必火数字人" : "Online"));
       const mediaUrl = String((isVoice ? row.demo_url : (row.image_url || row.cover_url || row.detail_url)) || "").trim();
       let preview = `<div class="asset-preview-large asset-preview-large-empty">${isVoice ? "暂无试听" : "暂无预览"}</div>`;
       if (mediaUrl) {
@@ -5688,9 +5695,13 @@
           ? `<audio class="asset-preview-audio" src="${escapeHtml(src)}" controls></audio>`
           : `<img class="asset-preview-large" src="${escapeHtml(src)}" alt="">`;
       }
+      const deleteActions = source === "hifly"
+        ? `<button class="ghost danger-text" type="button" data-delete-hifly-asset="${escapeHtml(kind)}" data-delete-hifly-id="${escapeHtml(String(row.source_record_id || row.id || ""))}" data-delete-hifly-source="hifly">删除</button>`
+        : `<span class="asset-status">同步自 ${escapeHtml(sourceLabel)}，请在原创建入口管理</span>`;
       body.innerHTML = `
         ${preview}
         <div class="asset-preview-meta">
+          <div><span>来源</span><strong>${escapeHtml(sourceLabel)}</strong></div>
           <div><span>类型</span><strong>${isVoice ? "声音分身" : "形象分身"}</strong></div>
           <div><span>状态</span><strong>${escapeHtml(row.status_text || row.status || "-")}</strong></div>
           <div><span>时间</span><strong>${escapeHtml(fmtTime(row.created_at))}</strong></div>
@@ -5698,7 +5709,7 @@
         </div>
         ${row.message ? `<div class="asset-preview-text">${escapeHtml(row.message)}</div>` : ""}
         <div class="work-dispatch-actions">
-          <button class="ghost danger-text" type="button" data-delete-hifly-asset="${escapeHtml(kind)}" data-delete-hifly-id="${escapeHtml(String(row.id || ""))}">删除</button>
+          ${deleteActions}
         </div>`;
       modal.classList.remove("hidden");
     }
@@ -5776,7 +5787,7 @@
       state.assetLibraryDigitalLoading = true;
       renderAssetLibrary();
       try {
-        const data = await api(`/api/hifly/my/avatar/list?page=${page}&size=${pageSize}`);
+        const data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}`);
         state.assetLibraryAvatarRows = Array.isArray(data.items) ? data.items : [];
         state.assetLibraryAvatarTotal = Number(data.total || 0);
         state.hiflyLoaded = false;
@@ -5796,7 +5807,7 @@
       state.assetLibraryDigitalLoading = true;
       renderAssetLibrary();
       try {
-        const data = await api(`/api/hifly/my/voice/list?page=${page}&size=${pageSize}`);
+        const data = await api(`/api/h5/assets/digital-library?kind=voice&page=${page}&size=${pageSize}`);
         state.assetLibraryVoiceRows = Array.isArray(data.items) ? data.items : [];
         state.assetLibraryVoiceTotal = Number(data.total || 0);
         state.hiflyLoaded = false;
@@ -6014,9 +6025,13 @@
       }
     }
 
-    async function deleteHiflyAsset(kind, id) {
+    async function deleteHiflyAsset(kind, id, source = "hifly") {
       const cleanKind = kind === "voice" ? "voice" : "avatar";
       if (!id) return;
+      if (String(source || "hifly") !== "hifly") {
+        toast("同步上来的分身请在原创建入口管理");
+        return;
+      }
       if (!confirm(`删除这个${cleanKind === "voice" ? "声音" : "形象"}分身？`)) return;
       await api(`/api/hifly/my/${cleanKind}/${encodeURIComponent(id)}`, { method: "DELETE" });
       closeAssetPreviewDialog();
@@ -7032,7 +7047,13 @@
         return `<div class="task-detail-record"><strong>${escapeHtml(title || "结果")}</strong>${normalizedLines.map((line) => `<pre>${escapeHtml(line)}</pre>`).join("")}</div>`;
       }
       const inputRows = runParameterRows(run);
-      sections.push(`<div class="task-detail-section"><h4>创建参数</h4>${inputRows.length ? inputRows.map(([label, value]) => `<div class="task-detail-record"><strong>${escapeHtml(label)}</strong><pre>${escapeHtml(String(value))}</pre></div>`).join("") : "<div class=\"hint\">暂无可展示参数。</div>"}${runDetailActionsHtml(run)}</div>`);
+      const technicalHtml = `<details class="task-detail-section task-detail-technical">
+        <summary>执行配置与参数</summary>
+        <div class="task-detail-technical-body">
+          ${inputRows.length ? inputRows.map(([label, value]) => `<div class="task-detail-record"><strong>${escapeHtml(label)}</strong><pre>${escapeHtml(String(value))}</pre></div>`).join("") : "<div class=\"hint\">暂无可展示参数。</div>"}
+          ${runDetailActionsHtml(run)}
+        </div>
+      </details>`;
       function douyinLeadActionLabel(action) {
         return ((DOUYIN_TASK_ACTIONS[action] || {}).label || action || "抖音获客");
       }
@@ -7179,6 +7200,72 @@
         add("媒体文件", urls.length ? `${urls.length} 个` : "");
         return rows;
       }
+      function readableDetailValue(item, keys) {
+        if (!item || typeof item !== "object") return "";
+        for (const key of keys) {
+          const value = item[key];
+          if (value == null || value === "") continue;
+          if (Array.isArray(value)) {
+            const text = value.map((part) => valueLabel(part)).filter(Boolean).join("；");
+            if (text) return text;
+          } else if (typeof value === "object") {
+            const text = valueLabel(value.title || value.name || value.text || value.content || value.message || value.summary || "");
+            if (text) return text;
+          } else {
+            const text = valueLabel(value);
+            if (text) return text;
+          }
+        }
+        return "";
+      }
+      function readableDetailLines(item) {
+        if (!item || typeof item !== "object") return [];
+        return [
+          ["对象", ["conversation_name", "session_name", "chat_name", "contact_name", "nickname", "name", "receiver", "target", "to", "user_name", "sender_name"]],
+          ["状态", ["status_text", "status", "state", "result"]],
+          ["收到消息", ["incoming_text", "last_message", "message", "content", "text", "question", "raw_text"]],
+          ["回复内容", ["reply_text", "reply", "answer", "response", "comment_text", "sent_text"]],
+          ["数量", ["count", "message_count", "reply_count", "sent_count", "success_count", "skipped_count"]],
+          ["原因", ["reason", "skip_reason", "error", "message_error"]],
+          ["时间", ["time", "sent_at", "created_at", "updated_at"]],
+        ].map(([label, keys]) => {
+          const text = readableDetailValue(item, keys);
+          return text ? `${label}：${text}` : "";
+        }).filter(Boolean);
+      }
+      function renderGenericResultDetails(data) {
+        if (!data || typeof data !== "object") return "";
+        const detailKeys = ["replies", "messages", "sessions", "conversations", "records", "items", "results", "outputs", "users", "tasks", "details"];
+        const blocks = [];
+        detailKeys.forEach((key) => {
+          const value = data[key];
+          const rows = Array.isArray(value) ? value : [];
+          if (!rows.length) return;
+          const visibleRows = rows.slice(0, 10);
+          const labelMap = {
+            replies: "回复明细",
+            messages: "消息明细",
+            sessions: "会话明细",
+            conversations: "会话明细",
+            records: "记录明细",
+            items: "结果明细",
+            results: "结果明细",
+            outputs: "输出明细",
+            users: "客户明细",
+            tasks: "任务明细",
+            details: "执行明细",
+          };
+          blocks.push(`<div class="task-detail-record"><strong>${escapeHtml(labelMap[key] || "结果明细")} · ${compactNumber(rows.length)}条</strong>${visibleRows.map((row, idx) => {
+            if (row == null) return "";
+            if (typeof row !== "object") return `<pre>${escapeHtml(`${idx + 1}. ${String(row)}`)}</pre>`;
+            const title = readableDetailValue(row, ["title", "conversation_name", "session_name", "chat_name", "contact_name", "nickname", "name", "receiver", "target", "uid"]) || `明细 ${idx + 1}`;
+            const lines = readableDetailLines(row);
+            return `<pre>${escapeHtml(`${idx + 1}. ${title}${lines.length ? "\n" + lines.join("\n") : ""}`)}</pre>`;
+          }).join("")}</div>`);
+        });
+        if (!blocks.length) return "";
+        return `<div class="task-detail-section task-detail-result-details"><h4>结果明细</h4>${blocks.join("")}</div>`;
+      }
       if (payload.ip_content_daily) {
         const groups = Array.isArray(payload.groups) ? payload.groups : [];
         const activeImageRun = activeMomentImageRun(run && run.id);
@@ -7215,7 +7302,7 @@
         }).join("")}</div>`);
       }
       const text = run.error || run.result_text || (run.progress && (run.progress.text || run.progress.message)) || "";
-      sections.push(`<div class="task-detail-section"><h4>结果 / 状态</h4><pre>${escapeHtml(text || statusText(run.status))}</pre></div>`);
+      const resultSummaryHtml = `<div class="task-detail-section task-detail-result-primary"><h4>执行结果</h4><pre>${escapeHtml(text || statusText(run.status))}</pre></div>`;
       if (payload.task_kind === "douyin_leads" || run.task_kind === "douyin_leads") {
         const summaryHtml = renderDouyinLeadSummary(payload);
         if (summaryHtml) sections.push(summaryHtml);
@@ -7224,12 +7311,14 @@
       } else if (!payload.ip_content_daily) {
         const summaryRows = readablePayloadRows(payload);
         if (summaryRows.length) sections.push(renderTaskDetailSection("结果摘要", summaryRows));
+        const detailHtml = renderGenericResultDetails(payload);
+        if (detailHtml) sections.push(detailHtml);
         const media = renderRunMedia(collectRunMediaEntries(run), run);
         if (media) sections.push(`<div class="task-detail-section"><h4>媒体结果</h4>${media}</div>`);
         const publishActions = renderRunPublishActions(run);
         if (publishActions) sections.push(`<div class="task-detail-section"><h4>发布动作</h4>${publishActions}</div>`);
       }
-      return sections.join("");
+      return [resultSummaryHtml].concat(sections).concat(technicalHtml).join("");
     }
 
     async function openRunDetail(runId, backTab = "") {
@@ -11723,9 +11812,9 @@
       state.hiflyLoading = true;
       try {
         const [myAvatar, publicAvatar, myVoice, publicVoice] = await Promise.all([
-          api("/api/hifly/my/avatar/list?page=1&size=100").catch(() => ({ items: [] })),
+          api("/api/h5/assets/digital-library?kind=avatar&page=1&size=100").catch(() => ({ items: [] })),
           api("/api/hifly/avatar/library", { method: "POST", json: { page: 1, size: 100, include_mine: true } }).catch(() => ({ public: [] })),
-          api("/api/hifly/my/voice/list?page=1&size=100").catch(() => ({ items: [] })),
+          api("/api/h5/assets/digital-library?kind=voice&page=1&size=100").catch(() => ({ items: [] })),
           api("/api/hifly/voice/library", { method: "POST", json: {} }).catch(() => ({ public: [] })),
         ]);
         state.avatarRows = normalizeAvatarRows(myAvatar.items || [], publicAvatar.public || []);
@@ -14438,7 +14527,7 @@
     $("assetPreviewBody")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-delete-hifly-asset]");
       if (!btn) return;
-      deleteHiflyAsset(btn.dataset.deleteHiflyAsset || "", btn.dataset.deleteHiflyId || "").catch((err) => toast(err.message || "删除失败"));
+      deleteHiflyAsset(btn.dataset.deleteHiflyAsset || "", btn.dataset.deleteHiflyId || "", btn.dataset.deleteHiflySource || "hifly").catch((err) => toast(err.message || "删除失败"));
     });
     $("leadDetailBackdrop")?.addEventListener("click", closeLeadDetailDialog);
     $("leadDetailCloseBtn")?.addEventListener("click", closeLeadDetailDialog);

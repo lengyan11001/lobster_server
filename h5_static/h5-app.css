@@ -2458,6 +2458,30 @@
     .task-detail-section { border: 1px solid rgba(223,230,242,.92); border-radius: 14px; background: rgba(248,251,255,.9); padding: 12px; }
     .task-detail-section h4 { margin: 0 0 8px; font-size: 15px; }
     .task-detail-section pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; color: #263858; max-height: 180px; overflow: auto; }
+    .task-detail-result-primary {
+      border-color: rgba(54,103,255,.2);
+      background: linear-gradient(135deg, rgba(240,246,255,.96), rgba(255,253,247,.98));
+      box-shadow: 0 12px 26px rgba(36,92,255,.08);
+    }
+    .task-detail-result-primary h4 { color: #1742c6; }
+    .task-detail-result-primary pre {
+      max-height: none;
+      font-size: 13px;
+      color: #17233d;
+    }
+    .task-detail-result-details .task-detail-record pre { max-height: 260px; }
+    .task-detail-technical {
+      background: rgba(248,251,255,.55);
+      border-style: dashed;
+    }
+    .task-detail-technical summary {
+      cursor: pointer;
+      color: #66758f;
+      font-size: 13px;
+      font-weight: 800;
+      list-style-position: inside;
+    }
+    .task-detail-technical-body { margin-top: 10px; }
     .task-detail-record { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
     .task-detail-record:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
     .task-detail-record strong { display: block; margin-bottom: 6px; }

@@ -66,6 +66,7 @@ _PUBLISH_PENDING_EMPTY_CACHE_SECONDS = 20.0
 _pending_empty_cache: Dict[str, float] = {}
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "\u4e2a\u4eba\u9ed8\u8ba4\u914d\u7f6e"
 _LOCAL_BESTSELLER_ACTIONS = {"local_bestseller_plan", "local_bestseller_scene_batch", "local_bestseller_daily_video"}
+_SERIAL_CLIENT_TASK_KINDS = {"douyin_leads"}
 _WECHAT_MOMENTS_PLATFORM = "wechat_moments"
 _WECHAT_MOMENTS_ACCOUNT_ID = "pc-wechat-default"
 _WECHAT_MOMENTS_PLATFORM_NAME = "微信朋友圈"
@@ -1083,6 +1084,48 @@ def _claim_pending_run(
     return db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == run_id).first()
 
 
+def _serial_client_run_key(row: ScheduledTaskRun, installation_id: str) -> str:
+    kind = str(row.task_kind or "").strip()
+    if kind not in _SERIAL_CLIENT_TASK_KINDS:
+        return ""
+    effective_installation_id = (
+        str(row.installation_id or "").strip()
+        or str(row.claimed_by_installation_id or "").strip()
+        or str(installation_id or "").strip()
+        or "unknown"
+    )
+    return f"{kind}:{effective_installation_id}"
+
+
+def _serial_client_run_is_blocked(
+    db: Session,
+    *,
+    candidate: ScheduledTaskRun,
+    installation_id: str,
+    claimed_keys: set[str],
+) -> bool:
+    key = _serial_client_run_key(candidate, installation_id)
+    if not key:
+        return False
+    if key in claimed_keys:
+        return True
+    q = db.query(ScheduledTaskRun.id).filter(
+        ScheduledTaskRun.user_id == candidate.user_id,
+        ScheduledTaskRun.id != candidate.id,
+        ScheduledTaskRun.task_kind == candidate.task_kind,
+        ScheduledTaskRun.status == "processing",
+    )
+    effective_installation_id = str(candidate.installation_id or "").strip() or str(installation_id or "").strip()
+    if effective_installation_id:
+        q = q.filter(
+            or_(
+                ScheduledTaskRun.installation_id == effective_installation_id,
+                ScheduledTaskRun.claimed_by_installation_id == effective_installation_id,
+            )
+        )
+    return q.first() is not None
+
+
 def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Optional[str], now: datetime) -> ScheduledTaskRun:
     run_id = uuid.uuid4().hex
     server_side = _is_server_side_task(task)
@@ -1435,7 +1478,7 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     )
     if user_id is not None:
         q = q.filter(ScheduledTask.user_id == user_id)
-    q = q.order_by(ScheduledTask.next_run_at.asc()).limit(50).with_for_update(skip_locked=True)
+    q = q.order_by(ScheduledTask.next_run_at.asc(), ScheduledTask.id.asc()).limit(50).with_for_update(skip_locked=True)
     count = 0
     for candidate in q.all():
         task = _reserve_due_task_for_enqueue(db, candidate, now)
@@ -2015,12 +2058,21 @@ def pending_scheduled_task_runs(
         .filter(ScheduledTaskRun.user_id == current_user_id, ScheduledTaskRun.status == "pending")
         .filter(ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)))
         .filter(or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == xi))
-        .order_by(ScheduledTaskRun.created_at.asc())
+        .order_by(ScheduledTaskRun.created_at.asc(), ScheduledTaskRun.id.asc())
         .limit(limit)
         .all()
     )
     rows: List[ScheduledTaskRun] = []
+    claimed_serial_keys: set[str] = set()
     for candidate in candidates:
+        serial_key = _serial_client_run_key(candidate, xi)
+        if _serial_client_run_is_blocked(
+            db,
+            candidate=candidate,
+            installation_id=xi,
+            claimed_keys=claimed_serial_keys,
+        ):
+            continue
         row = _claim_pending_run(db, run_id=candidate.id, user_id=current_user_id, installation_id=xi, now=now)
         if not row:
             continue
@@ -2033,6 +2085,8 @@ def pending_scheduled_task_runs(
                 msg.updated_at = now
         _add_h5_event(db, row.h5_message_id, row.user_id, "claimed", {"installation_id": xi or ""})
         rows.append(row)
+        if serial_key:
+            claimed_serial_keys.add(serial_key)
     db.commit()
     if rows:
         _clear_pending_empty(pending_key)
