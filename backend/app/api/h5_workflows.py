@@ -880,10 +880,12 @@ def _prepare_sales_workflow_nodes(
                 params["max_users"] = _safe_int(params.get("max_users") or params.get("max_results") or 10, 10)
             if keyword_texts:
                 params["keywords"] = keyword_texts
-                if not _clean_text(params.get("keyword"), 200) or _clean_text(params.get("keyword"), 200) == params["sales_node_label"]:
-                    params["keyword"] = keyword_texts[0]
-                params.setdefault("query", params.get("keyword"))
-                params.setdefault("search_keyword", params.get("keyword"))
+                # 定时任务执行时只允许模板关键词进入搜索字段；节点标题只是动作说明。
+                params["keyword"] = keyword_texts[0]
+                params["query"] = keyword_texts[0]
+                params["search_keyword"] = keyword_texts[0]
+                if _clean_text(params.get("prompt"), 200) == params["sales_node_label"]:
+                    params["prompt"] = keyword_texts[0]
             if not params.get("regions") or params.get("regions") == ["全国"]:
                 params["regions"] = regions
             if douyin_default:

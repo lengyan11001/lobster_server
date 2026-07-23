@@ -61,6 +61,7 @@ from .api.lead_collection_templates import router as lead_collection_templates_r
 from .api.global_leads import router as global_leads_router
 from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
 from .api.mobile_client import router as mobile_client_router
+from .api.alibaba_customer_research import router as alibaba_customer_research_router
 try:
     from .api.wecom_kf import router as wecom_kf_router
 except Exception:
@@ -1070,6 +1071,7 @@ def create_app() -> FastAPI:
     app.include_router(global_leads_router, prefix="")
     app.include_router(wechat_channels_transcript_router, prefix="")
     app.include_router(mobile_client_router, prefix="")
+    app.include_router(alibaba_customer_research_router, prefix="")
     if wecom_kf_router is not None:
         app.include_router(wecom_kf_router, prefix="")
     if wecom_router is not None:
