@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import re
 from datetime import datetime
 from typing import Any, Optional
@@ -21,6 +22,7 @@ from ..models import (
     IPContentKeyword,
     IPContentScheduleTemplate,
     OpenClawMemoryDocument,
+    ShanjianDigitalHumanProfile,
     UserHiflyAvatarAsset,
     UserHiflyVoiceAsset,
     ScheduledTask,
@@ -58,6 +60,8 @@ _WORKFLOW_CHILD_ACTION_TYPES = {
     "native_wechat_moments_engage",
 }
 _ENABLED_SYSTEM_WORKFLOW_KEYS = {"system_sales"}
+_SALES_DH_PROVIDER_V2 = "shanjian_v2"
+_SALES_DH_PROVIDER_LEGACY = "hifly_legacy"
 
 
 class WorkflowTemplateIn(BaseModel):
@@ -514,6 +518,73 @@ def _latest_hifly_voice(db: Session, user_id: int) -> str:
     return _clean_text(row.hifly_voice_id if row else "", 128)
 
 
+def _latest_shanjian_virtualman(db: Session, user_id: int) -> str:
+    row = (
+        db.query(ShanjianDigitalHumanProfile)
+        .filter(
+            ShanjianDigitalHumanProfile.user_id == user_id,
+            ShanjianDigitalHumanProfile.status == "succeed",
+            ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
+        )
+        .order_by(
+            ShanjianDigitalHumanProfile.is_default.desc(),
+            ShanjianDigitalHumanProfile.updated_at.desc(),
+            ShanjianDigitalHumanProfile.id.desc(),
+        )
+        .first()
+    )
+    return _clean_text(row.virtualman_id if row else "", 128)
+
+
+def _template_language(requirements: dict[str, Any], template: Optional[IPContentScheduleTemplate]) -> str:
+    req = requirements if isinstance(requirements, dict) else {}
+    meta = template.meta if template and isinstance(template.meta, dict) else {}
+    raw = _clean_text(
+        req.get("language")
+        or req.get("target_language")
+        or meta.get("language")
+        or meta.get("target_language")
+        or meta.get("profile_language")
+        or "zh-CN",
+        64,
+    )
+    lowered = raw.lower()
+    if lowered in {"zh", "zh-cn", "中文", "简体中文", "chinese"}:
+        return "zh-CN"
+    if lowered in {"en", "en-us", "english", "英文", "英语"}:
+        return "en-US"
+    if lowered in {"ja", "ja-jp", "japanese", "日文", "日语"}:
+        return "ja-JP"
+    if lowered in {"ko", "ko-kr", "korean", "韩文", "韩语"}:
+        return "ko-KR"
+    return raw or "zh-CN"
+
+
+def _sales_digital_human_provider(
+    snapshot_extra: Optional[dict[str, Any]],
+    template: Optional[IPContentScheduleTemplate],
+) -> str:
+    snapshot = snapshot_extra if isinstance(snapshot_extra, dict) else {}
+    meta = template.meta if template and isinstance(template.meta, dict) else {}
+    req = template.requirements if template and isinstance(template.requirements, dict) else {}
+    raw = _clean_text(
+        snapshot.get("sales_digital_human_provider")
+        or snapshot.get("digital_human_provider")
+        or meta.get("sales_digital_human_provider")
+        or meta.get("digital_human_provider")
+        or req.get("sales_digital_human_provider")
+        or req.get("digital_human_provider")
+        or os.environ.get("LOBSTER_H5_SALES_DIGITAL_HUMAN_PROVIDER")
+        or _SALES_DH_PROVIDER_V2,
+        64,
+    ).lower()
+    if raw in {"old", "legacy", "v1", "1", "1.0", "hifly", "hifly_legacy", "hifly_v1"}:
+        return _SALES_DH_PROVIDER_LEGACY
+    if raw in {"new", "v2", "2", "2.0", "shanjian", "shanjian_v2", "digital_human_2", "digital_human_2_0"}:
+        return _SALES_DH_PROVIDER_V2
+    return _SALES_DH_PROVIDER_V2
+
+
 def _mounted_default(db: Session, user_id: int, scope: str) -> Optional[H5MountedAccountDefault]:
     return (
         db.query(H5MountedAccountDefault)
@@ -821,8 +892,11 @@ def _prepare_sales_workflow_nodes(
     regions = [x for x in [city, province] if x] or ["全国"]
     douyin_default = _mounted_default(db, owner.id, "douyin")
     douyin_iid = _clean_text(douyin_default.installation_id if douyin_default else "", 128)
-    hifly_avatar = _latest_hifly_avatar(db, owner.id)
+    digital_human_provider = _sales_digital_human_provider(snapshot_extra, reference_template)
+    hifly_avatar = _latest_hifly_avatar(db, owner.id) if digital_human_provider == _SALES_DH_PROVIDER_LEGACY else ""
+    shanjian_virtualman = _latest_shanjian_virtualman(db, owner.id)
     hifly_voice = _latest_hifly_voice(db, owner.id)
+    template_language = _template_language(requirements, reference_template)
 
     has_hifly = False
     has_douyin = False
@@ -903,6 +977,46 @@ def _prepare_sales_workflow_nodes(
         if task_kind == "client_workflow" and action in _NATIVE_WECHAT_WORKFLOW_ACTIONS:
             has_wechat = True
 
+        if task_kind == "client_workflow" and action == "shanjian_digital_human_video":
+            has_hifly = True
+            if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
+                params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+                inner = dict(params)
+                if hifly_avatar:
+                    inner.setdefault("avatar", hifly_avatar)
+                if hifly_voice:
+                    inner.setdefault("voice", hifly_voice)
+                if _clean_text(inner.get("script"), 200) in {
+                    _clean_text(node.get("note"), 200),
+                    _clean_text(node.get("ability_label"), 200),
+                    _clean_text(plan.get("title"), 200),
+                    "自动创作一条数字人口播视频",
+                }:
+                    inner.pop("script", None)
+                node["ability_key"] = "hifly.video.create_by_tts"
+                plan["task_kind"] = "capability"
+                plan["payload"] = {"capability_id": "hifly.video.create_by_tts", "payload": inner}
+            else:
+                payload = dict(payload)
+                params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+                params = dict(params)
+                params.setdefault("requirements", requirements)
+                params.setdefault("keywords", keyword_texts)
+                params.setdefault("keyword_texts", keyword_texts)
+                params.setdefault("competitors", [_clean_text(row.display_name or row.account_name or row.account_id, 160) for row in competitors])
+                params.setdefault("memory_doc_ids", memory_doc_ids)
+                params.setdefault("memory_docs", memory_docs)
+                params.setdefault("language", template_language)
+                params.setdefault("target_language", template_language)
+                params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
+                if shanjian_virtualman:
+                    params.setdefault("virtualman_id", shanjian_virtualman)
+                if hifly_voice:
+                    params.setdefault("voice", hifly_voice)
+                    params.setdefault("speaker_id", hifly_voice)
+                payload["params"] = params
+                plan["payload"] = payload
+
         if task_kind == "capability" and capability_id == "hifly.video.create_by_tts":
             has_hifly = True
             payload = dict(payload)
@@ -918,12 +1032,36 @@ def _prepare_sales_workflow_nodes(
                 script_value = _clean_text(inner.get(script_key), 200)
                 if script_value in placeholder_texts or script_value.startswith("自动创作"):
                     inner.pop(script_key, None)
-            if not _clean_text(inner.get("avatar"), 128) and hifly_avatar:
-                inner["avatar"] = hifly_avatar
-            if not _clean_text(inner.get("voice"), 128) and hifly_voice:
-                inner["voice"] = hifly_voice
-            payload["payload"] = inner
-            plan["payload"] = payload
+            if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
+                if hifly_avatar:
+                    inner.setdefault("avatar", hifly_avatar)
+                if hifly_voice:
+                    inner.setdefault("voice", hifly_voice)
+                payload["payload"] = inner
+                plan["payload"] = payload
+            else:
+                params = {
+                    key: value
+                    for key, value in inner.items()
+                    if key not in {"avatar", "avatar_id", "st_show", "aigc_flag"}
+                }
+                params.setdefault("requirements", requirements)
+                params.setdefault("keywords", keyword_texts)
+                params.setdefault("keyword_texts", keyword_texts)
+                params.setdefault("competitors", [_clean_text(row.display_name or row.account_name or row.account_id, 160) for row in competitors])
+                params.setdefault("memory_doc_ids", memory_doc_ids)
+                params.setdefault("memory_docs", memory_docs)
+                params.setdefault("language", template_language)
+                params.setdefault("target_language", template_language)
+                params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
+                if shanjian_virtualman:
+                    params.setdefault("virtualman_id", shanjian_virtualman)
+                if hifly_voice:
+                    params.setdefault("voice", hifly_voice)
+                    params.setdefault("speaker_id", hifly_voice)
+                node["ability_key"] = "shanjian_digital_human_video"
+                plan["task_kind"] = "client_workflow"
+                plan["payload"] = {"action": "shanjian_digital_human_video", "params": params}
 
     if not personal:
         missing.append("IP人设定位：请先完成资料调查并保存")
@@ -963,8 +1101,11 @@ def _prepare_sales_workflow_nodes(
     if has_wechat and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
         missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
     if has_hifly:
-        if not hifly_avatar:
-            missing.append("素材库：请先创建可用的数字人形象分身")
+        if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
+            if not hifly_avatar:
+                missing.append("素材库：请先创建可用的旧版数字人形象分身")
+        elif not shanjian_virtualman:
+            missing.append("素材库：请先创建并训练完成可用的数字人形象分身（数字人2.0）")
         if not hifly_voice:
             missing.append("素材库：请先创建可用的声音分身")
     if has_local_bestseller and personal:
