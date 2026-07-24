@@ -20,6 +20,10 @@ from ..models import (
     H5ChatDevicePresence,
     H5ChatEvent,
     H5ChatMessage,
+    H5AgentTemplateGrant,
+    ContentCompetitorAccount,
+    IPContentKeyword,
+    OpenClawMemoryDocument,
     PublishAccount,
     ScheduledTask,
     ScheduledTaskRun,
@@ -28,6 +32,8 @@ from ..models import (
     UserInstallation,
     IPContentDraftRecord,
     IPContentScheduleTemplate,
+    ShanjianDigitalHumanProfile,
+    UserHiflyVoiceAsset,
 )
 from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
@@ -72,6 +78,303 @@ _SERIAL_CLIENT_TASK_KINDS = {"douyin_leads"}
 _WECHAT_MOMENTS_PLATFORM = "wechat_moments"
 _WECHAT_MOMENTS_ACCOUNT_ID = "pc-wechat-default"
 _WECHAT_MOMENTS_PLATFORM_NAME = "微信朋友圈"
+
+
+_HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
+_SHANJIAN_DIGITAL_HUMAN_ACTION = "shanjian_digital_human_video"
+_DIGITAL_HUMAN_PROVIDER_LEGACY = "hifly_legacy"
+_DIGITAL_HUMAN_PROVIDER_V2 = "shanjian_v2"
+
+
+def _h5_dh_clean_text(value: Any, limit: int = 500) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", text)[:limit]
+
+
+def _h5_dh_clean_id_list(value: Any, limit: int = 100) -> List[int]:
+    raw = value if isinstance(value, list) else []
+    out: List[int] = []
+    seen: set[int] = set()
+    for item in raw:
+        try:
+            ident = int(item or 0)
+        except Exception:
+            continue
+        if ident <= 0 or ident in seen:
+            continue
+        seen.add(ident)
+        out.append(ident)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _h5_dh_provider() -> str:
+    raw = _h5_dh_clean_text(
+        os.environ.get("LOBSTER_H5_DIGITAL_HUMAN_PROVIDER")
+        or os.environ.get("LOBSTER_H5_SALES_DIGITAL_HUMAN_PROVIDER")
+        or "",
+        64,
+    ).lower()
+    if raw in {"old", "legacy", "v1", "1", "1.0", "hifly", "hifly_legacy", "hifly_v1"}:
+        return _DIGITAL_HUMAN_PROVIDER_LEGACY
+    return _DIGITAL_HUMAN_PROVIDER_V2
+
+
+def _h5_dh_personal_default_template(db: Session, user_id: int) -> Optional[IPContentScheduleTemplate]:
+    return (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == user_id,
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+
+
+def _h5_dh_current_template(
+    db: Session,
+    user_id: int,
+    personal: Optional[IPContentScheduleTemplate],
+) -> Optional[IPContentScheduleTemplate]:
+    meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
+    try:
+        template_id = int(meta.get("current_template_id") or meta.get("template_id") or 0)
+    except Exception:
+        template_id = 0
+    if template_id <= 0:
+        return None
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(IPContentScheduleTemplate.id == template_id, IPContentScheduleTemplate.status == "active")
+        .first()
+    )
+    if row is None:
+        return None
+    if int(row.user_id) == int(user_id):
+        return row
+    grant = (
+        db.query(H5AgentTemplateGrant.id)
+        .filter(
+            H5AgentTemplateGrant.template_id == row.id,
+            H5AgentTemplateGrant.target_user_id == user_id,
+            H5AgentTemplateGrant.status == "active",
+        )
+        .first()
+    )
+    return row if grant else None
+
+
+def _h5_dh_latest_virtualman(db: Session, user_id: int) -> str:
+    row = (
+        db.query(ShanjianDigitalHumanProfile)
+        .filter(
+            ShanjianDigitalHumanProfile.user_id == user_id,
+            ShanjianDigitalHumanProfile.status == "succeed",
+            ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
+        )
+        .order_by(
+            ShanjianDigitalHumanProfile.is_default.desc(),
+            ShanjianDigitalHumanProfile.updated_at.desc(),
+            ShanjianDigitalHumanProfile.id.desc(),
+        )
+        .first()
+    )
+    return _h5_dh_clean_text(row.virtualman_id if row else "", 128)
+
+
+def _h5_dh_latest_voice(db: Session, user_id: int) -> str:
+    row = (
+        db.query(UserHiflyVoiceAsset)
+        .filter(
+            UserHiflyVoiceAsset.user_id == user_id,
+            UserHiflyVoiceAsset.status == "success",
+            UserHiflyVoiceAsset.hifly_voice_id.isnot(None),
+        )
+        .order_by(UserHiflyVoiceAsset.updated_at.desc(), UserHiflyVoiceAsset.id.desc())
+        .first()
+    )
+    return _h5_dh_clean_text(row.hifly_voice_id if row else "", 128)
+
+
+def _h5_dh_template_language(requirements: Dict[str, Any], template: Optional[IPContentScheduleTemplate]) -> str:
+    req = requirements if isinstance(requirements, dict) else {}
+    meta = template.meta if template and isinstance(template.meta, dict) else {}
+    raw = _h5_dh_clean_text(
+        req.get("language")
+        or req.get("target_language")
+        or meta.get("language")
+        or meta.get("target_language")
+        or meta.get("profile_language")
+        or "zh-CN",
+        64,
+    )
+    lowered = raw.lower()
+    if lowered in {"zh", "zh-cn", "chinese"}:
+        return "zh-CN"
+    if lowered in {"en", "en-us", "english"}:
+        return "en-US"
+    if lowered in {"ja", "ja-jp", "japanese"}:
+        return "ja-JP"
+    if lowered in {"ko", "ko-kr", "korean"}:
+        return "ko-KR"
+    return raw or "zh-CN"
+
+
+def _h5_dh_context_params(db: Session, user_id: int) -> Dict[str, Any]:
+    personal = _h5_dh_personal_default_template(db, user_id)
+    current_template = _h5_dh_current_template(db, user_id, personal)
+    reference_template = current_template or personal
+    reference_owner_id = int(reference_template.user_id) if reference_template else int(user_id)
+    requirements = personal.requirements if personal and isinstance(personal.requirements, dict) else {}
+    if current_template and isinstance(current_template.requirements, dict):
+        merged = dict(requirements)
+        merged.update(current_template.requirements)
+        requirements = merged
+    keyword_ids = _h5_dh_clean_id_list(reference_template.keyword_ids if reference_template else [])
+    competitor_ids = _h5_dh_clean_id_list(reference_template.competitor_ids if reference_template else [])
+    keywords = (
+        db.query(IPContentKeyword)
+        .filter(IPContentKeyword.user_id == reference_owner_id, IPContentKeyword.status == "active", IPContentKeyword.id.in_(keyword_ids))
+        .order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc())
+        .all()
+        if keyword_ids
+        else []
+    )
+    competitors = (
+        db.query(ContentCompetitorAccount)
+        .filter(
+            ContentCompetitorAccount.user_id == reference_owner_id,
+            ContentCompetitorAccount.status == "active",
+            ContentCompetitorAccount.id.in_(competitor_ids),
+        )
+        .order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc())
+        .all()
+        if competitor_ids
+        else []
+    )
+    memory_doc_ids = [
+        str(x or "").strip()
+        for x in ((reference_template.memory_doc_ids if reference_template else []) or [])
+        if str(x or "").strip()
+    ]
+    memory_docs = reference_template.memory_docs if reference_template and isinstance(reference_template.memory_docs, list) else []
+    if memory_doc_ids and not memory_docs:
+        doc_ids = [int(x) for x in memory_doc_ids if str(x).isdigit()]
+        rows = (
+            db.query(OpenClawMemoryDocument)
+            .filter(
+                OpenClawMemoryDocument.target_user_id == reference_owner_id,
+                OpenClawMemoryDocument.status == "active",
+                OpenClawMemoryDocument.id.in_(doc_ids),
+            )
+            .order_by(OpenClawMemoryDocument.updated_at.desc(), OpenClawMemoryDocument.id.desc())
+            .limit(12)
+            .all()
+            if doc_ids
+            else []
+        )
+        memory_docs = [
+            {
+                "id": row.id,
+                "title": row.title,
+                "doc_type": row.doc_type,
+                "content": (row.content or "")[:4000],
+            }
+            for row in rows
+        ]
+    keyword_texts = [_h5_dh_clean_text(row.display_name or row.keyword, 120) for row in keywords]
+    return {
+        "requirements": requirements,
+        "keywords": keyword_texts,
+        "keyword_texts": keyword_texts,
+        "competitors": [
+            _h5_dh_clean_text(row.display_name or row.account_name or row.account_id, 160)
+            for row in competitors
+        ],
+        "memory_doc_ids": memory_doc_ids,
+        "memory_docs": memory_docs,
+        "language": _h5_dh_template_language(requirements, reference_template),
+        "target_language": _h5_dh_template_language(requirements, reference_template),
+    }
+
+
+def _maybe_convert_h5_digital_human_task(
+    db: Session,
+    *,
+    task_kind: str,
+    payload: Dict[str, Any],
+    target_user_id: int,
+) -> tuple[str, Dict[str, Any]]:
+    if task_kind != "capability" or _h5_dh_provider() != _DIGITAL_HUMAN_PROVIDER_V2:
+        return task_kind, payload
+    if _h5_dh_clean_text(payload.get("capability_id"), 128) != _HIFLY_TTS_CAPABILITY_ID:
+        return task_kind, payload
+    h5_context = payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}
+    context_hint = " ".join(
+        _h5_dh_clean_text(value, 160)
+        for value in (
+            h5_context.get("source"),
+            h5_context.get("department_id"),
+            h5_context.get("ability"),
+            h5_context.get("ability_label"),
+            h5_context.get("path"),
+        )
+    )
+    if "h5" not in context_hint.lower() and "数字人" not in context_hint:
+        return task_kind, payload
+    inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    params = {
+        key: value
+        for key, value in dict(inner).items()
+        if key not in {"avatar", "avatar_id", "st_show", "aigc_flag"}
+    }
+    placeholder_texts = {
+        "数字人口播",
+        "数字人口播视频",
+        "创作数字人口播视频",
+        "创作一条数字人口播视频（用于发朋友圈）",
+    }
+    for script_key in ("script", "text", "oral_script"):
+        script_value = _h5_dh_clean_text(params.get(script_key), 220)
+        if script_value in placeholder_texts or script_value.startswith("创作一条数字人口播视频"):
+            params.pop(script_key, None)
+    label = _h5_dh_clean_text(
+        h5_context.get("ability_label")
+        or h5_context.get("ability")
+        or params.get("prompt")
+        or "数字人口播视频",
+        160,
+    )
+    params.setdefault("sales_node_label", label)
+    params.setdefault("task_title", label)
+    context_params = _h5_dh_context_params(db, target_user_id)
+    for key, value in context_params.items():
+        if value and not params.get(key):
+            params[key] = value
+    virtualman_id = _h5_dh_latest_virtualman(db, target_user_id)
+    voice = _h5_dh_latest_voice(db, target_user_id)
+    if virtualman_id:
+        params.setdefault("virtualman_id", virtualman_id)
+    if voice:
+        params.setdefault("voice", voice)
+        params.setdefault("speaker_id", voice)
+    converted_payload = {
+        "action": _SHANJIAN_DIGITAL_HUMAN_ACTION,
+        "params": params,
+        "h5_context": {
+            **h5_context,
+            "ability_key": _SHANJIAN_DIGITAL_HUMAN_ACTION,
+            "ability_label": label,
+            "digital_human_provider": _DIGITAL_HUMAN_PROVIDER_V2,
+            "converted_from_capability_id": _HIFLY_TTS_CAPABILITY_ID,
+        },
+    }
+    return "client_workflow", converted_payload
 
 
 def _server_side_timeout_seconds(task_kind: str) -> float:
@@ -1840,6 +2143,12 @@ def _create_task_row(
     schedule_type = _normalize_schedule_type(body.schedule_type)
     content = (body.content or "").strip()
     payload = body.payload or {}
+    task_kind, payload = _maybe_convert_h5_digital_human_task(
+        db,
+        task_kind=task_kind,
+        payload=dict(payload),
+        target_user_id=target_user_id,
+    )
     if task_kind in {"openclaw_message", "chat_message"} and not content:
         raise HTTPException(status_code=400, detail="消息内容不能为空")
     if task_kind == "capability" and not str(payload.get("capability_id") or "").strip():
