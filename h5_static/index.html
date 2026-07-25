@@ -8,7 +8,8 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260725-designer-restore" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260725-designer-replica" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260725-designer-replica" />
 </head>
 <body>
   <main class="shell">
@@ -88,37 +89,41 @@
       <section class="view active" id="officeView">
         <div class="office-dashboard">
           <button class="office-secretary-hero" type="button" data-home-target="secretary" aria-label="老板驾驶舱">
+            <img class="designer-home-hero-bg" src="/h5-static/designer-home-hero.jpg" alt="" loading="eager">
+            <span class="designer-home-hero-shade" aria-hidden="true"></span>
             <div class="office-hero-copy">
-              <span>企业AI数字化运营</span>
-              <strong id="bossName">让AI员工24小时为我工作</strong>
+              <span class="designer-home-eyebrow">企业AI数字化运营</span>
+              <strong id="bossName">让AI员工<br>24小时为我工作</strong>
               <div class="office-hero-chips">
                 <em><b id="officeDeviceCount">0</b> 台手机 · <b id="officeEmployeeCount">0</b> 个员工</em>
                 <em><b id="officeRunningCount">0</b> 个任务运行</em>
                 <em class="office-active-workflow-chip hidden" id="officeActiveWorkflowChip">启用中</em>
               </div>
+              <span class="designer-home-gallery" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="m3 16 4.6-4.6a2 2 0 0 1 2.8 0L15 16l1.6-1.6a2 2 0 0 1 2.8 0L21 16M6 4h12a2 2 0 0 1 2 2v12H4V6a2 2 0 0 1 2-2zm9 3.5h.01"/></svg>
+              </span>
             </div>
-            <img src="/h5-static/h5-secretary-role.png?v=20260706-secretary-fullbody-2" alt="" loading="lazy">
           </button>
 
           <div class="office-shortcuts" aria-label="快捷入口">
             <button type="button" data-home-target="personalSettings">
-              <span class="office-shortcut-icon">设</span>
+              <span class="office-shortcut-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0zM4.5 20.1a7.5 7.5 0 0 1 15 0A18 18 0 0 1 12 21.75 18 18 0 0 1 4.5 20.1z"/></svg></span>
               <strong>IP人设定位</strong>
             </button>
             <button type="button" data-home-target="assetLibrary">
-              <span class="office-shortcut-icon">素</span>
+              <span class="office-shortcut-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 16 4.7-4.7a2 2 0 0 1 2.8 0L15 16l1.6-1.6a2 2 0 0 1 2.8 0L21 16M6 4h12a2 2 0 0 1 2 2v12H4V6a2 2 0 0 1 2-2zm9 3.5h.01"/></svg></span>
               <strong>素材库</strong>
             </button>
             <button type="button" data-home-target="contentRecords">
-              <span class="office-shortcut-icon">记</span>
+              <span class="office-shortcut-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l4 4v16H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1v5h5M8 13h8M8 17h6"/></svg></span>
               <strong>内容记录</strong>
             </button>
             <button type="button" data-home-target="leadCenter">
-              <span class="office-shortcut-icon">客</span>
+              <span class="office-shortcut-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19a8 8 0 0 0-12 0M9 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm7-1a3 3 0 1 0 0-6m1 9a6 6 0 0 1 4 5"/></svg></span>
               <strong>客资线索</strong>
             </button>
             <button type="button" data-home-target="tutorial">
-              <span class="office-shortcut-icon">教</span>
+              <span class="office-shortcut-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6a9 9 0 0 0-8-2v15a9 9 0 0 1 8 2m0-15a9 9 0 0 1 8-2v15a9 9 0 0 0-8 2m0-15v15"/></svg></span>
               <strong>教程</strong>
             </button>
           </div>
@@ -138,9 +143,14 @@
               <h2>AI营销创作</h2>
             </div>
             <button class="marketing-creation-card" type="button" data-role-department="ai_marketing_creation">
-              <span>营</span>
-              <strong>AI营销创作</strong>
-              <em>全部创作节点</em>
+              <span class="designer-marketing-media">
+                <img src="/h5-static/designer-marketing-banner.jpg" alt="AI营销创作" loading="lazy">
+                <i><b></b>HOT</i>
+              </span>
+              <span class="designer-marketing-copy">
+                <span><strong>AI营销创作</strong><em>一键生成全域爆款内容</em></span>
+                <b aria-hidden="true">›</b>
+              </span>
             </button>
           </section>
 
@@ -152,6 +162,28 @@
             <div class="office-recent-list" id="officeRecentTasks"></div>
           </section>
         </div>
+        <nav class="designer-bottom-nav" aria-label="主要导航">
+          <button class="active" type="button" data-home-target="office" data-designer-home-top="1">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10z"/></svg>
+            <span>首页</span>
+          </button>
+          <button type="button" data-home-target="salesWorkflow">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 20a4 4 0 0 0-8 0M12 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm6-4a2 2 0 1 0 0-4m1 8a3 3 0 0 1 3 3M6 9a2 2 0 1 1 0-4m-1 8a3 3 0 0 0-3 3"/></svg>
+            <span>AI员工</span>
+          </button>
+          <button class="designer-bottom-create" type="button" data-role-department="ai_marketing_creation" aria-label="创作">
+            <i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></i>
+            <span>创作</span>
+          </button>
+          <button type="button" data-home-target="contentRecords">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14H4V5zm4 3h8M8 12h8M8 16h5"/></svg>
+            <span>作品</span>
+          </button>
+          <button type="button" data-home-target="profile">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm8 9a8 8 0 0 0-16 0"/></svg>
+            <span>我的</span>
+          </button>
+        </nav>
         <button class="hire-fab hidden" type="button" id="hireEmployeeBtn">雇佣新员工</button>
       </section>
 
@@ -246,9 +278,11 @@
       <section class="view" id="contentRecordsView">
         <div class="asset-library-shell content-record-shell">
           <div class="content-record-tabs" id="contentRecordTabs">
-            <button type="button" class="active" data-content-record-media="">全部</button>
-            <button type="button" data-content-record-media="image">图片</button>
+            <button type="button" class="active" data-content-record-media="image">图片</button>
             <button type="button" data-content-record-media="video">视频</button>
+            <button type="button" data-content-record-media="article">文章</button>
+            <button type="button" data-content-record-media="wechat_article">公众号</button>
+            <button type="button" data-content-record-media="ppt">PPT</button>
           </div>
           <div class="asset-library-grid" id="contentRecordList"></div>
           <div class="asset-library-pager">
@@ -285,10 +319,23 @@
 
       <section class="view" id="tutorialView">
         <div class="tutorial-shell">
-          <div class="tutorial-card">
-            <div class="tutorial-mark">?</div>
-            <h2>教程</h2>
-            <p>入口预留中</p>
+          <div class="designer-tutorial-list">
+            <button class="designer-tutorial-card" type="button" data-tutorial-title="新手入门：如何快速定制你的第一个AI员工？" data-tutorial-cover="/h5-static/designer-tutorial-setup.jpg">
+              <span class="designer-tutorial-cover"><img src="/h5-static/designer-tutorial-setup.jpg" alt="" loading="lazy"><i class="designer-tutorial-play">▶</i><em>05:24</em></span>
+              <span class="designer-tutorial-copy"><strong>新手入门：如何快速定制你的第一个AI员工？</strong><span><small>07/20 14:30 上传</small><b>基础必看</b></span></span>
+            </button>
+            <button class="designer-tutorial-card" type="button" data-tutorial-title="进阶技巧：利用AI营销创作生成爆款文案" data-tutorial-cover="/h5-static/designer-tutorial-marketing.jpg">
+              <span class="designer-tutorial-cover"><img src="/h5-static/designer-tutorial-marketing.jpg" alt="" loading="lazy"><i class="designer-tutorial-play">▶</i><em>08:15</em></span>
+              <span class="designer-tutorial-copy"><strong>进阶技巧：利用AI营销创作生成爆款文案</strong><span><small>07/18 09:15 上传</small><b class="indigo">内容创作</b></span></span>
+            </button>
+            <button class="designer-tutorial-card" type="button" data-tutorial-title="数字人实战：创建专属形象与声音分身" data-tutorial-cover="/h5-static/designer-tutorial-avatar.jpg">
+              <span class="designer-tutorial-cover"><img src="/h5-static/designer-tutorial-avatar.jpg" alt="" loading="lazy"><i class="designer-tutorial-play">▶</i><em>12:40</em></span>
+              <span class="designer-tutorial-copy"><strong>形象克隆：如何拍摄高质量的数字分身素材</strong><span><small>07/15 16:20 上传</small><b class="green">素材库</b></span></span>
+            </button>
+            <button class="designer-tutorial-card" type="button" data-tutorial-title="内容发布：从生成素材到多平台分发" data-tutorial-cover="/h5-static/designer-tutorial-publish.jpg">
+              <span class="designer-tutorial-cover"><img src="/h5-static/designer-tutorial-publish.jpg" alt="" loading="lazy"><i class="designer-tutorial-play">▶</i><em>15:05</em></span>
+              <span class="designer-tutorial-copy"><strong>全自动化：抖音号矩阵日常获客配置指南</strong><span><small>07/10 10:00 上传</small><b class="amber">运营实操</b></span></span>
+            </button>
           </div>
         </div>
       </section>
@@ -1541,6 +1588,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260725-designer-restore"></script>
+  <script src="/h5-static/h5-app.js?v=20260725-designer-replica"></script>
 </body>
 </html>

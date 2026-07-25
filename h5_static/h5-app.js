@@ -69,9 +69,9 @@
       assetLibraryAvatarTotal: 0,
       assetLibraryVoiceTotal: 0,
       assetLibraryDigitalLoading: false,
-      contentRecordMediaType: "",
+      contentRecordMediaType: "image",
       contentRecordPage: 1,
-      contentRecordPageSize: 10,
+      contentRecordPageSize: 6,
       contentRecordRows: [],
       contentRecordTotal: 0,
       contentRecordLoading: false,
@@ -949,7 +949,11 @@
 
     function closeAssetPreviewDialog() {
       const modal = $("assetPreviewDialog");
-      if (modal) modal.classList.add("hidden");
+      if (!modal) return;
+      modal.querySelectorAll("video, audio").forEach((media) => {
+        try { media.pause(); } catch (_) {}
+      });
+      modal.classList.add("hidden");
     }
 
     function closeLeadDetailDialog() {
@@ -1781,7 +1785,7 @@
       const stats = officeOutcomeStats();
       if ($("bossCreditsSpent")) $("bossCreditsSpent").textContent = compactNumber(stats.spent, stats.spent > 0 && stats.spent < 10 ? 1 : 0);
       if ($("bossHarvestCount")) $("bossHarvestCount").textContent = compactNumber(stats.harvest);
-      if ($("bossName")) $("bossName").textContent = "让AI员工24小时为我工作";
+      if ($("bossName")) $("bossName").innerHTML = "让AI员工<br>24小时为我工作";
       const line = workingCount > 0
         ? `${workingCount} 位员工正在干活，老板盯着交付进度。`
         : (onlineCount > 0 ? `${onlineCount} 位员工已到岗，等待安排。` : "员工还没到岗，办公室先亮着灯。");
@@ -4414,6 +4418,17 @@
       return "blue";
     }
 
+    function abilityDesignerArtLabel(node) {
+      const key = String((node && (node.key || node.capabilityId || node.workQuickKey)) || "").toLowerCase();
+      if (key.includes("ppt")) return "幻 灯 片 自 动 化";
+      if (key.includes("3d") || key.includes("model")) return "3D 建 模 实 验 室";
+      if (key.includes("article")) return "深 度 内 容 构 建";
+      if (key.includes("daily") || key.includes("copy") || key.includes("text")) return "文 案 矩 阵 大 脑";
+      if (key.includes("video")) return "智 能 生 成 视 频";
+      if (key.includes("image") || key.includes("pic")) return "AI 绘 图 引 擎";
+      return "AI 营 销 创 作";
+    }
+
     function abilityCardHtml(node) {
       const count = abilityChildCount(node);
       const actionable = abilityIsActionable(node);
@@ -4423,6 +4438,7 @@
         <div class="designer-ability-art">
           <i></i><b></b>
           <span>${abilityDesignerIcon(node)}</span>
+          <em>${escapeHtml(abilityDesignerArtLabel(node))}</em>
         </div>
         <div class="designer-ability-meta">
           <h3>${escapeHtml(node.label || node.key || "能力")}</h3>
@@ -5566,8 +5582,14 @@
       }
       updateBossOfficeStats(onlineCount, workingCount);
       floor.style.minHeight = "";
+      const designerRoleAssets = {
+        sales: "/h5-static/designer-employee-sales.jpg",
+        customer_service: "/h5-static/designer-employee-service.jpg",
+        overseas: "/h5-static/designer-employee-overseas.jpg",
+        hr: "/h5-static/designer-employee-hr.jpg",
+      };
       const roleHtml = roles.map((role, index) => {
-        const img = employeeAsset({ installation_id: role.id }, index, "idle");
+        const img = designerRoleAssets[role.id] || employeeAsset({ installation_id: role.id }, index, "idle");
         const hue = ["rgba(19,168,115,.2)", "rgba(36,92,255,.18)", "rgba(240,139,45,.2)", "rgba(19,183,216,.18)"][index % 4];
         const activeSystemTemplate = role.active && role.systemTemplateId ? workflowTemplateById(role.systemTemplateId) : null;
         const systemTargetAttr = role.target ? ` data-system-employee-target="${escapeHtml(role.target)}"` : "";
@@ -5614,6 +5636,7 @@
       if (raw === "video") return "视频";
       if (raw === "image") return "图片";
       if (raw === "audio") return "音频";
+      if (["article", "wechat_article", "ppt", "document"].includes(raw)) return "文档";
       return "文件";
     }
 
@@ -5640,10 +5663,19 @@
       }
     }
 
-    function assetPreviewHtml(asset) {
+    function designerFallbackMedia(asset, index = 0) {
+      const origin = String((asset && asset.origin) || "").toLowerCase();
+      const generated = origin === "generated" || !!(asset && asset._designer_content_kind);
+      const count = generated ? 6 : 10;
+      const fileIndex = (Math.max(0, Number(index) || 0) % count) + 1;
+      const prefix = generated ? "designer-content-image" : "designer-asset-sample";
+      return `/h5-static/${prefix}-${String(fileIndex).padStart(2, "0")}.jpg`;
+    }
+
+    function assetPreviewHtml(asset, index = 0) {
       const url = String((asset && asset.source_url) || "").trim();
       const type = String((asset && asset.media_type) || mediaTypeFromUrl(url) || "").toLowerCase();
-      if (!url) return `<div class="asset-library-thumb asset-library-thumb-empty">${escapeHtml(type || "素材")}</div>`;
+      if (!url) return `<img class="asset-library-thumb" src="${designerFallbackMedia(asset, index)}" alt="" loading="lazy">`;
       const src = mediaProxyUrl(url, "inline", filenameFromUrl(url, asset && asset.filename || "asset"));
       if (type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url)) {
         return `<video class="asset-library-thumb" src="${escapeHtml(src)}" muted playsinline preload="metadata"></video>`;
@@ -5660,13 +5692,13 @@
       return title || "素材";
     }
 
-    function assetCardHtml(asset) {
+    function assetCardHtml(asset, index = 0) {
       const title = assetTitle(asset);
       const id = String((asset && asset.asset_id) || "");
-      const type = designerMediaType(asset);
+      const type = String((asset && asset._designer_content_kind) || designerMediaType(asset));
       return `<button class="asset-library-card designer-media-card" type="button" data-asset-preview-id="${escapeHtml(id)}">
         <span class="designer-media-thumb">
-          ${assetPreviewHtml(asset)}
+          ${assetPreviewHtml(asset, index)}
           <i class="designer-media-badge">${designerMediaIcon(type)}</i>
           ${type === "video" ? `<b class="designer-play-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></b>` : ""}
         </span>
@@ -5674,6 +5706,28 @@
           <strong>${escapeHtml(title || "素材")}</strong>
           <span>${escapeHtml(designerMediaTypeLabel(type))}</span>
           <em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>
+        </span>
+      </button>`;
+    }
+
+    function contentDocumentCardHtml(asset, index, kind) {
+      const id = String((asset && asset.asset_id) || "");
+      const title = assetTitle(asset);
+      const failed = /fail|error/i.test(String((asset && asset.status) || ""));
+      const kindLabels = { article: "深度长文", wechat_article: "公众号文章", ppt: "演示文稿" };
+      const fallback = designerFallbackMedia({ ...(asset || {}), origin: "generated", _designer_content_kind: kind }, index);
+      const sourceUrl = String((asset && asset.source_url) || "").trim();
+      const sourceType = String((asset && asset.media_type) || mediaTypeFromUrl(sourceUrl) || "").toLowerCase();
+      const cover = sourceUrl && (sourceType === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(sourceUrl))
+        ? mediaProxyUrl(sourceUrl, "inline", filenameFromUrl(sourceUrl, asset && asset.filename || "asset"))
+        : fallback;
+      return `<button class="content-document-card ${escapeHtml(kind)}" type="button" data-asset-preview-id="${escapeHtml(id)}">
+        <span class="content-document-cover"><img src="${escapeHtml(cover)}" alt="" loading="lazy"></span>
+        <span class="content-document-main">
+          <span class="content-document-state"><em class="${failed ? "failed" : ""}">${failed ? "生成失败" : "已完成"}</em><time>${escapeHtml(fmtTime(asset && asset.created_at))}</time></span>
+          <strong>${escapeHtml(title || "内容记录")}</strong>
+          <span class="content-document-tags"><i>${escapeHtml(kindLabels[kind] || "文档")}</i><i>AI排版</i></span>
+          <small>查看内容</small>
         </span>
       </button>`;
     }
@@ -5760,6 +5814,25 @@
         </div>
         ${asset.prompt ? `<div class="asset-preview-text">${escapeHtml(asset.prompt)}</div>` : ""}
         ${actions}`;
+      modal.classList.remove("hidden");
+    }
+
+    function openTutorialPreview(card) {
+      if (!card) return;
+      const modal = $("assetPreviewDialog");
+      const body = $("assetPreviewBody");
+      const title = $("assetPreviewTitle");
+      if (!modal || !body) return;
+      const cover = String(card.dataset.tutorialCover || "").trim();
+      const tutorialTitle = String(card.dataset.tutorialTitle || "教程").trim() || "教程";
+      const video = String(card.dataset.tutorialVideo || "").trim();
+      if (title) title.textContent = tutorialTitle;
+      if (video) {
+        body.innerHTML = `<video class="tutorial-preview-video" src="${escapeHtml(video)}" controls playsinline preload="metadata" poster="${escapeHtml(cover)}"></video>`;
+      } else {
+        body.innerHTML = `<div class="tutorial-preview-poster"><img src="${escapeHtml(cover)}" alt=""><span>${designerMediaIcon("video")}</span></div>
+          <div class="tutorial-preview-note">教程视频将在内容配置完成后开放播放。</div>`;
+      }
       modal.classList.remove("hidden");
     }
 
@@ -5923,23 +5996,41 @@
       });
     }
 
+    function contentRecordApiMediaType(type) {
+      const raw = String(type || "image").trim().toLowerCase();
+      return ["article", "wechat_article", "ppt"].includes(raw) ? "document" : raw;
+    }
+
+    function contentRecordKind(asset) {
+      const title = `${assetTitle(asset)} ${(asset && asset.tags) || ""} ${(asset && asset.prompt) || ""}`.toLowerCase();
+      const filename = String((asset && asset.filename) || "").toLowerCase();
+      if (/\.(ppt|pptx)$/i.test(filename) || /(^|\s|[_-])ppt([\s_-]|$)|幻灯片|演示文稿/i.test(title)) return "ppt";
+      if (/公众号|wechat\s*article|weixin\s*article/i.test(title)) return "wechat_article";
+      return "article";
+    }
+
     function renderContentRecords() {
       const list = $("contentRecordList");
       if (!list) return;
-      list.classList.add("designer-media-grid");
       renderContentRecordTabs();
       const page = Math.max(1, Number(state.contentRecordPage || 1));
       const total = Number(state.contentRecordTotal || 0);
       const pageSize = Number(state.contentRecordPageSize || 10);
       const pageCount = Math.max(1, Math.ceil(total / pageSize));
       const rows = state.contentRecordRows || [];
+      const uiType = String(state.contentRecordMediaType || "image").trim().toLowerCase();
+      const documentMode = ["article", "wechat_article", "ppt"].includes(uiType);
+      list.classList.toggle("designer-media-grid", !documentMode);
+      list.classList.toggle("designer-document-list", documentMode);
       list.classList.toggle("loading", !!state.contentRecordLoading);
       if (state.contentRecordLoading) {
         list.innerHTML = `<div class="asset-library-empty">加载中...</div>`;
       } else if (!rows.length) {
         list.innerHTML = `<div class="asset-library-empty">暂无内容记录</div>`;
       } else {
-        list.innerHTML = rows.map(assetCardHtml).join("");
+        list.innerHTML = rows.map((asset, index) => documentMode
+          ? contentDocumentCardHtml(asset, index, uiType)
+          : assetCardHtml(asset, index)).join("");
       }
       if ($("contentRecordPageText")) $("contentRecordPageText").textContent = `${page} / ${pageCount}`;
       if ($("contentRecordPrevBtn")) $("contentRecordPrevBtn").disabled = page <= 1 || state.contentRecordLoading;
@@ -5951,14 +6042,30 @@
       const pageSize = Number(state.contentRecordPageSize || 10);
       const page = Math.max(1, Number(state.contentRecordPage || 1));
       const offset = (page - 1) * pageSize;
-      const params = new URLSearchParams({ origin: "generated", limit: String(pageSize), offset: String(offset) });
-      if (state.contentRecordMediaType) params.set("media_type", state.contentRecordMediaType);
+      const uiType = String(state.contentRecordMediaType || "image").trim().toLowerCase();
+      const apiType = contentRecordApiMediaType(uiType);
+      const documentMode = apiType === "document";
+      const params = new URLSearchParams({
+        origin: "generated",
+        limit: String(documentMode ? 200 : pageSize),
+        offset: String(documentMode ? 0 : offset),
+        media_type: apiType,
+      });
       state.contentRecordLoading = true;
       renderContentRecords();
       try {
         const data = await api(`/api/assets?${params.toString()}`);
-        state.contentRecordRows = Array.isArray(data.assets) ? data.assets : [];
-        state.contentRecordTotal = Number(data.total || 0);
+        const assets = Array.isArray(data.assets) ? data.assets : [];
+        if (documentMode) {
+          const matched = assets
+            .map((asset) => ({ ...asset, _designer_content_kind: contentRecordKind(asset) }))
+            .filter((asset) => asset._designer_content_kind === uiType);
+          state.contentRecordRows = matched.slice(offset, offset + pageSize);
+          state.contentRecordTotal = matched.length;
+        } else {
+          state.contentRecordRows = assets.map((asset) => ({ ...asset, _designer_content_kind: uiType }));
+          state.contentRecordTotal = Number(data.total || 0);
+        }
         state.assetLibraryRows.generated = state.contentRecordRows;
         state.assetLibraryTotals.generated = state.contentRecordTotal;
       } catch (err) {
@@ -7881,6 +7988,11 @@
     function openHomeTarget(target, backTab = "office") {
       const key = String(target || "").trim();
       if (!key) return;
+      if (key === "office") {
+        switchTab("office");
+        requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+        return;
+      }
       if (key === "personalSettings") {
         state.personalSettingsBackTab = backTab || "office";
         state.personalSettingsTab = "profile";
@@ -7975,6 +8087,7 @@
       $("topBackBtn").classList.toggle("hidden", key === "office");
       $("topActions").classList.toggle("hidden", key !== "office" || !state.token);
       $("topbar").classList.toggle("subpage", key !== "office");
+      $("topbar").classList.toggle("office-page", key === "office");
       $("topbar").classList.toggle("voice-page", key === "voice");
       syncScrollTopButton(key);
       if (key === "office") {
@@ -14654,6 +14767,11 @@
       const btn = evt.target.closest("[data-lead-detail-index]");
       if (!btn) return;
       openLeadDetail(btn.dataset.leadDetailIndex || "0");
+    });
+    $("tutorialView")?.addEventListener("click", (evt) => {
+      const card = evt.target.closest("[data-tutorial-title]");
+      if (!card) return;
+      openTutorialPreview(card);
     });
     $("taskSuccessBackdrop")?.addEventListener("click", closeTaskSuccessDialog);
     $("taskSuccessCloseBtn")?.addEventListener("click", closeTaskSuccessDialog);
