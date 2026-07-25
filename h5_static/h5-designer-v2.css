@@ -470,7 +470,7 @@ body::before {
   border: 0;
   border-radius: 24px;
   color: #0f172a;
-  text-align: center;
+  text-align: left;
   background: #fff;
   box-shadow: var(--designer-shadow);
 }
@@ -534,6 +534,7 @@ body::before {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
+  text-align: left;
   transform: none !important;
   border-radius: 0;
   color: inherit;
@@ -553,7 +554,9 @@ body::before {
   height: auto !important;
   display: grid;
   grid-column: 1;
+  justify-self: stretch;
   justify-items: start;
+  align-items: start;
   gap: 3px;
   transform: none !important;
   border-radius: 0;
@@ -566,7 +569,10 @@ body::before {
 
 #officeView .designer-marketing-copy strong,
 #officeView .designer-marketing-copy em {
+  display: block;
+  width: 100%;
   margin: 0;
+  text-align: left;
 }
 
 #officeView .designer-marketing-copy strong {
