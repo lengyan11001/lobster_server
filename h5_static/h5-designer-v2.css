@@ -460,7 +460,8 @@ body::before {
   position: relative !important;
   inset: auto !important;
   width: 100% !important;
-  height: 110px !important;
+  height: auto !important;
+  aspect-ratio: 12 / 5;
   display: block;
   overflow: hidden;
   border-radius: 16px;
@@ -475,6 +476,7 @@ body::before {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: 62% center;
 }
 
 #officeView .designer-marketing-media > i {

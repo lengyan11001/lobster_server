@@ -6,6 +6,13 @@ from backend.app.api.shanjian_digital_human import (
 from backend.app.models import IPContentScheduleTemplate
 
 
+def test_h5_app_exposes_digital_human_template_list_route():
+    from backend.app.h5_main import app
+
+    paths = {route.path for route in app.routes}
+    assert "/api/shanjian-smart-clip/templates" in paths
+
+
 def test_active_personal_template_supplies_digital_human_editing_template(db_session, test_user):
     current = IPContentScheduleTemplate(
         user_id=test_user.id,

@@ -25,6 +25,7 @@ from .api.linkedin_mining import router as linkedin_mining_router
 from .api.social_leads import router as social_leads_router
 from .api.lead_collection_templates import router as lead_collection_templates_router
 from .api.scheduled_tasks import router as scheduled_tasks_router
+from .api.shanjian_smart_clip import router as shanjian_smart_clip_router
 from .api.skills import router as skills_router
 from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
 from .core.config import settings
@@ -67,6 +68,7 @@ def create_h5_app() -> FastAPI:
     app.include_router(h5_workflows_router, prefix="")
     app.include_router(hifly_assets_router, prefix="")
     app.include_router(scheduled_tasks_router, prefix="")
+    app.include_router(shanjian_smart_clip_router, prefix="")
     app.include_router(ip_content_studio_router, prefix="")
     app.include_router(linkedin_mining_router, prefix="")
     app.include_router(social_leads_router, prefix="")
