@@ -35,7 +35,6 @@
       workflowSelectedDate: "",
       officePage: 1,
       officePageSize: 4,
-      officeResetEmployeeScrollUntil: 0,
       taskAbility: "goal.video.pipeline",
       taskPanelOpen: false,
       hiflyLoaded: false,
@@ -5608,12 +5607,9 @@
       }).join("");
       const activeTemplateHtml = activeCustomEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, index)).join("");
       const templateHtml = inactiveCustomEmployees.map((tpl, index) => officeWorkflowEmployeeCardHtml(tpl, activeCustomEmployees.length + roles.length + index)).join("");
+      const employeeScrollLeft = floor.scrollLeft;
       floor.innerHTML = activeTemplateHtml + roleHtml + templateHtml;
-      if (state.officeResetEmployeeScrollUntil && Date.now() <= state.officeResetEmployeeScrollUntil) {
-        floor.scrollLeft = 0;
-        requestAnimationFrame(() => { floor.scrollLeft = 0; });
-        setTimeout(() => { floor.scrollLeft = 0; }, 80);
-      }
+      floor.scrollLeft = Math.min(employeeScrollLeft, Math.max(0, floor.scrollWidth - floor.clientWidth));
       renderOfficeRecentTasks();
       renderCustomEmployees();
     }
@@ -8047,10 +8043,6 @@
 
     function switchTab(tab) {
       const key = tab || "office";
-      const previousActiveId = document.querySelector(".view.active")?.id || "";
-      if (key === "office" && previousActiveId && previousActiveId !== "officeView") {
-        state.officeResetEmployeeScrollUntil = Date.now() + 2500;
-      }
       document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
       document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
       const titleMap = {

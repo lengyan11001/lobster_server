@@ -12,6 +12,9 @@
 
 html,
 body {
+  min-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior-y: auto;
   background: #e5e7eb;
   letter-spacing: 0;
 }
@@ -24,9 +27,12 @@ body::before {
   width: 100%;
   max-width: 430px;
   min-height: 100dvh;
+  height: auto;
+  max-height: none;
   margin: 0 auto;
   padding: 0;
   overflow-x: hidden;
+  overflow-y: visible;
   background:
     linear-gradient(135deg, rgba(219, 234, 254, .72), transparent 44%),
     linear-gradient(315deg, rgba(224, 242, 254, .62), transparent 45%),
@@ -350,7 +356,12 @@ body::before {
   gap: 16px;
   margin: 0 -20px;
   padding: 0 20px 4px !important;
-  overflow-x: auto;
+  overflow-x: auto !important;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
 
@@ -369,6 +380,8 @@ body::before {
   border-radius: 24px;
   background: #fff;
   box-shadow: var(--designer-shadow);
+  scroll-snap-align: start;
+  touch-action: pan-x pan-y;
 }
 
 #officeView .office-employee-card > img,
@@ -416,13 +429,14 @@ body::before {
 #officeView .marketing-creation-card {
   min-height: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   padding: 10px;
   overflow: hidden;
   border: 0;
   border-radius: 24px;
   color: #0f172a;
-  text-align: left;
+  text-align: center;
   background: #fff;
   box-shadow: var(--designer-shadow);
 }
@@ -432,12 +446,18 @@ body::before {
 }
 
 #officeView .marketing-creation-card > .designer-marketing-media {
-  position: relative;
-  width: 100%;
-  height: 110px;
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  height: 110px !important;
   display: block;
   overflow: hidden;
   border-radius: 16px;
+  transform: none !important;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+  font-size: inherit;
 }
 
 .designer-marketing-media img {
@@ -471,21 +491,43 @@ body::before {
 }
 
 #officeView .marketing-creation-card > .designer-marketing-copy {
-  position: static;
-  width: auto;
-  height: auto;
-  display: flex;
+  position: static !important;
+  inset: auto !important;
+  width: 100% !important;
+  height: auto !important;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
   align-items: center;
-  justify-content: space-between;
-  transform: none;
+  transform: none !important;
+  border-radius: 0;
   color: inherit;
   background: transparent;
   box-shadow: none;
+  font-size: inherit;
 }
 
-.designer-marketing-copy > span {
+#officeView .marketing-creation-card > .designer-marketing-copy::before {
+  content: "";
+  width: 32px;
+  height: 32px;
+}
+
+#officeView .marketing-creation-card .designer-marketing-copy > span {
+  position: static !important;
+  inset: auto !important;
+  width: auto !important;
+  height: auto !important;
   display: grid;
+  grid-column: 2;
+  justify-items: center;
   gap: 3px;
+  transform: none !important;
+  border-radius: 0;
+  color: inherit;
+  text-align: center;
+  background: transparent;
+  box-shadow: none;
+  font-size: inherit;
 }
 
 #officeView .designer-marketing-copy strong,
@@ -506,6 +548,7 @@ body::before {
 }
 
 .designer-marketing-copy > b {
+  grid-column: 3;
   width: 32px;
   height: 32px;
   display: grid;
