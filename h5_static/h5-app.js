@@ -3,6 +3,7 @@
       token: localStorage.getItem("lobster_h5_token") || "",
       mode: "direct",
       user: null,
+      homeHeroUrl: "",
       streams: new Map(),
       pollers: new Map(),
       uploads: [],
@@ -1264,6 +1265,54 @@
         if (!resp.ok) throw new Error(data.detail || data.message || `HTTP ${resp.status}`);
         return data;
       });
+    }
+
+    const DEFAULT_HOME_HERO_URL = "/h5-static/designer-home-hero.jpg";
+
+    function applyHomeHero(url) {
+      const image = $("homeHeroImage");
+      if (!image) return;
+      const nextUrl = String(url || "").trim() || DEFAULT_HOME_HERO_URL;
+      state.homeHeroUrl = nextUrl;
+      image.src = nextUrl;
+    }
+
+    async function loadHomeHero() {
+      const data = await api("/api/h5/home/preferences");
+      applyHomeHero(data && data.hero_url);
+    }
+
+    async function uploadHomeHero(file) {
+      if (!file) return;
+      const filename = String(file.name || "");
+      const isImage = String(file.type || "").toLowerCase().startsWith("image/")
+        || /\.(?:jpe?g|png|webp|gif|bmp|avif)$/i.test(filename);
+      if (!isImage) throw new Error("请选择图片文件");
+
+      const button = $("homeHeroUploadBtn");
+      if (button) button.disabled = true;
+      try {
+        const form = new FormData();
+        form.append("file", file, filename || "home-hero-image");
+        const response = await fetch(apiUrl("/api/assets/upload"), {
+          method: "POST",
+          headers: authHeaders(),
+          body: form,
+        });
+        const uploaded = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(uploaded.detail || uploaded.message || `上传失败：HTTP ${response.status}`);
+        if (!uploaded.asset_id || uploaded.media_type !== "image") throw new Error("上传结果不是可用图片");
+
+        addUserUploadAssetToCache({ ...uploaded, asset_origin: "user_upload" });
+        const saved = await api("/api/h5/home/hero", {
+          method: "PUT",
+          json: { asset_id: uploaded.asset_id },
+        });
+        applyHomeHero(saved.hero_url || uploaded.source_url || uploaded.url);
+        toast("首页图片已更新");
+      } finally {
+        if (button) button.disabled = false;
+      }
     }
 
     function escapeHtml(text) {
@@ -8893,7 +8942,14 @@
         $("loginPanel").classList.add("hidden");
         $("appPanel").classList.remove("hidden");
         switchTab("office");
-        await Promise.all([loadHistory(), refreshDeviceStatus(), loadTasks({ reset: true }), loadRuns({ reset: true, limit: 20, compact: true }), loadTaskSkills()]);
+        await Promise.all([
+          loadHistory(),
+          refreshDeviceStatus(),
+          loadTasks({ reset: true }),
+          loadRuns({ reset: true, limit: 20, compact: true }),
+          loadTaskSkills(),
+          loadHomeHero().catch(() => applyHomeHero("")),
+        ]);
         return true;
       } catch (err) {
         localStorage.removeItem("lobster_h5_token");
@@ -14616,6 +14672,18 @@
     $("clearChatContextBtn")?.addEventListener("click", () => {
       setChatContext(null);
       toast("已取消来源标记");
+    });
+    $("homeHeroUploadBtn")?.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      $("homeHeroFileInput")?.click();
+    });
+    $("homeHeroFileInput")?.addEventListener("change", (evt) => {
+      const input = evt.currentTarget;
+      const file = input && input.files && input.files[0];
+      uploadHomeHero(file).catch((err) => toast(err.message || "首页图片上传失败")).finally(() => {
+        if (input) input.value = "";
+      });
     });
     document.querySelectorAll("[data-home-target]").forEach((btn) => {
       btn.addEventListener("click", () => {

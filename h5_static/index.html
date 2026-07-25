@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
   <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260725-toast-position" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260725-layout-banner" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260725-home-hero-marketing-left" />
 </head>
 <body>
   <main class="shell">
@@ -88,22 +88,25 @@
     <div id="appPanel" class="hidden">
       <section class="view active" id="officeView">
         <div class="office-dashboard">
-          <button class="office-secretary-hero" type="button" data-home-target="secretary" aria-label="老板驾驶舱">
-            <img class="designer-home-hero-bg" src="/h5-static/designer-home-hero.jpg" alt="" loading="eager">
-            <span class="designer-home-hero-shade" aria-hidden="true"></span>
-            <div class="office-hero-copy">
-              <span class="designer-home-eyebrow">企业AI数字化运营</span>
-              <strong id="bossName">让AI员工<br>24小时为我工作</strong>
-              <div class="office-hero-chips">
-                <em><b id="officeDeviceCount">0</b> 台手机 · <b id="officeEmployeeCount">0</b> 个员工</em>
-                <em><b id="officeRunningCount">0</b> 个任务运行</em>
-                <em class="office-active-workflow-chip hidden" id="officeActiveWorkflowChip">启用中</em>
+          <div class="office-secretary-hero-wrap">
+            <button class="office-secretary-hero" type="button" data-home-target="secretary" aria-label="老板驾驶舱">
+              <img class="designer-home-hero-bg" id="homeHeroImage" src="/h5-static/designer-home-hero.jpg" alt="" loading="eager">
+              <span class="designer-home-hero-shade" aria-hidden="true"></span>
+              <div class="office-hero-copy">
+                <span class="designer-home-eyebrow">企业AI数字化运营</span>
+                <strong id="bossName">让AI员工<br>24小时为我工作</strong>
+                <div class="office-hero-chips">
+                  <em><b id="officeDeviceCount">0</b> 台手机 · <b id="officeEmployeeCount">0</b> 个员工</em>
+                  <em><b id="officeRunningCount">0</b> 个任务运行</em>
+                  <em class="office-active-workflow-chip hidden" id="officeActiveWorkflowChip">启用中</em>
+                </div>
               </div>
-              <span class="designer-home-gallery" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><path d="m3 16 4.6-4.6a2 2 0 0 1 2.8 0L15 16l1.6-1.6a2 2 0 0 1 2.8 0L21 16M6 4h12a2 2 0 0 1 2 2v12H4V6a2 2 0 0 1 2-2zm9 3.5h.01"/></svg>
-              </span>
-            </div>
-          </button>
+            </button>
+            <button class="designer-home-gallery" id="homeHeroUploadBtn" type="button" aria-label="设置首页图片" title="设置首页图片">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 16 4.6-4.6a2 2 0 0 1 2.8 0L15 16l1.6-1.6a2 2 0 0 1 2.8 0L21 16M6 4h12a2 2 0 0 1 2 2v12H4V6a2 2 0 0 1 2-2zm9 3.5h.01"/></svg>
+            </button>
+            <input class="hidden" id="homeHeroFileInput" type="file" accept="image/*">
+          </div>
 
           <div class="office-shortcuts" aria-label="快捷入口">
             <button type="button" data-home-target="personalSettings">
@@ -1631,6 +1634,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260725-dh-template-picker"></script>
+  <script src="/h5-static/h5-app.js?v=20260725-home-hero"></script>
 </body>
 </html>

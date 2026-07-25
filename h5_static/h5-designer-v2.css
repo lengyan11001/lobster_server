@@ -104,10 +104,17 @@ body::before {
   padding: 24px 0 112px;
 }
 
+#officeView .office-secretary-hero-wrap {
+  position: relative;
+  width: 100%;
+  min-height: 190px;
+}
+
 #officeView .office-secretary-hero {
   position: relative;
   min-height: 190px;
   display: block;
+  width: 100%;
   margin: 0;
   padding: 0;
   overflow: hidden;
@@ -131,7 +138,7 @@ body::before {
   height: 100%;
   margin: 0;
   border-radius: 0;
-  object-fit: cover;
+  object-fit: fill;
   filter: none;
 }
 
@@ -211,11 +218,27 @@ body::before {
   height: 32px;
   display: grid;
   place-items: center;
+  z-index: 4;
+  margin: 0;
+  padding: 0;
   border: 1px solid rgba(255, 255, 255, .24);
   border-radius: 50%;
   color: #fff;
   background: rgba(255, 255, 255, .18);
   backdrop-filter: blur(8px);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.designer-home-gallery:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+.designer-home-gallery:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 
 .designer-home-gallery svg {
@@ -509,7 +532,7 @@ body::before {
   width: 100% !important;
   height: auto !important;
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
   transform: none !important;
   border-radius: 0;
@@ -520,9 +543,7 @@ body::before {
 }
 
 #officeView .marketing-creation-card > .designer-marketing-copy::before {
-  content: "";
-  width: 32px;
-  height: 32px;
+  display: none;
 }
 
 #officeView .marketing-creation-card .designer-marketing-copy > span {
@@ -531,13 +552,13 @@ body::before {
   width: auto !important;
   height: auto !important;
   display: grid;
-  grid-column: 2;
-  justify-items: center;
+  grid-column: 1;
+  justify-items: start;
   gap: 3px;
   transform: none !important;
   border-radius: 0;
   color: inherit;
-  text-align: center;
+  text-align: left;
   background: transparent;
   box-shadow: none;
   font-size: inherit;
@@ -561,7 +582,7 @@ body::before {
 }
 
 .designer-marketing-copy > b {
-  grid-column: 3;
+  grid-column: 2;
   width: 32px;
   height: 32px;
   display: grid;

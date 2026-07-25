@@ -35,6 +35,7 @@ from .api.cutcli_templates import router as cutcli_templates_router
 from .api.logs_api import router as logs_router
 from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
 from .api.h5_chat import router as h5_chat_router
+from .api.h5_home import router as h5_home_router
 from .api.h5_workflows import router as h5_workflows_router
 from .api.h5_personal_settings import router as h5_personal_settings_router
 from .api.h5_agent_management import router as h5_agent_management_router
@@ -1048,6 +1049,7 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, prefix="")
     app.include_router(douyin_dashboard_h5_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
+    app.include_router(h5_home_router, prefix="")
     app.include_router(h5_workflows_router, prefix="")
     app.include_router(h5_personal_settings_router, prefix="")
     app.include_router(h5_agent_management_router, prefix="")

@@ -2308,7 +2308,7 @@ async function showUserDetail(userId) {
           <div class="recharge-row" style="margin-top:0">
             <select id="llmModelOverrideInput" style="width:320px;max-width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff">
               <option value="" ${!u.llm_model_override ? 'selected' : ''}>默认模型</option>
-              <option value="openai/gpt-5.5" ${u.llm_model_override === 'openai/gpt-5.5' ? 'selected' : ''}>openai/gpt-5.5</option>
+              <option value="openai/gpt-5.6-sol" ${u.llm_model_override === 'openai/gpt-5.6-sol' ? 'selected' : ''}>openai/gpt-5.6-sol</option>
             </select>
             <button class="btn btn-primary btn-sm" style="width:auto" onclick="saveUserLlmModelOverride(${u.id})">保存模型</button>
             <button class="btn btn-outline btn-sm" onclick="clearUserLlmModelOverride(${u.id})">清空</button>

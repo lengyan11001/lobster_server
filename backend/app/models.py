@@ -1020,6 +1020,17 @@ class H5MountedAccountDefault(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class H5HomePreference(Base):
+    """Per-user H5 homepage presentation preferences."""
+
+    __tablename__ = "h5_home_preferences"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    hero_asset_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class DouyinDashboardDeviceState(Base):
     """Latest Douyin leads dashboard snapshot reported by a local online device."""
 
