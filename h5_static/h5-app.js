@@ -8066,7 +8066,7 @@
       }
       if (key === "personalSettings") {
         state.personalSettingsBackTab = backTab || "office";
-        state.personalSettingsTab = "profile";
+        state.personalSettingsTab = "keywords";
         switchTab("personalSettings");
         return;
       }
