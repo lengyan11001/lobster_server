@@ -7330,10 +7330,18 @@
       left: max(18px, calc((100vw - 430px) / 2 + 18px));
       right: max(18px, calc((100vw - 430px) / 2 + 18px));
       bottom: max(82px, env(safe-area-inset-bottom));
+      width: auto;
+      max-width: none;
       border-radius: 18px;
       background: rgba(15, 23, 42, .88);
       box-shadow: 0 18px 44px rgba(15, 23, 42, .24);
       backdrop-filter: blur(16px);
+      text-align: center;
+      transform: translateY(0);
+    }
+
+    .toast.show {
+      transform: translateY(-6px);
     }
 
     @media (min-width: 431px) {
