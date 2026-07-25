@@ -365,6 +365,17 @@ body::before {
   scrollbar-width: none;
 }
 
+#officeView .office-employee-section .office-employee-grid {
+  margin-left: 0;
+  margin-right: -20px;
+  padding-left: 0 !important;
+  padding-right: 20px !important;
+}
+
+#officeView .office-today-section .office-section-head h2 {
+  font-weight: 500;
+}
+
 #officeView .office-employee-grid::-webkit-scrollbar {
   display: none;
 }
@@ -1586,6 +1597,13 @@ body::before {
     margin-right: -14px;
     padding-left: 14px;
     padding-right: 14px;
+  }
+
+  #officeView .office-employee-section .office-employee-grid {
+    margin-left: 0;
+    margin-right: -14px;
+    padding-left: 0 !important;
+    padding-right: 14px !important;
   }
 
   #officeView .office-shortcut-icon {
