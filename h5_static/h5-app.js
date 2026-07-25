@@ -3600,25 +3600,43 @@
       if (!box) return;
       const nodes = (state.workflowNodesDraft || []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
       if (!nodes.length) {
+        box.classList.remove("designer-workflow-groups");
         box.innerHTML = `<div class="workflow-empty">还没有节点</div>`;
         return;
       }
       const selectedKey = workflowSelectedDateKey();
       const tasks = workflowTasksForDate(selectedKey);
       const runs = workflowRunsForDate(selectedKey);
-      box.innerHTML = nodes.map((node) => {
+      const openGroups = new Set(Array.from(box.querySelectorAll("details.designer-workflow-group[open]"))
+        .map((item) => String(item.dataset.workflowGroup || "")));
+      const grouped = [];
+      const groupMap = new Map();
+      nodes.forEach((node) => {
+        const label = String(node.ability_label || "任务节点").trim() || "任务节点";
+        if (!groupMap.has(label)) {
+          const group = { label, nodes: [] };
+          groupMap.set(label, group);
+          grouped.push(group);
+        }
+        groupMap.get(label).nodes.push(node);
+      });
+      const nodeHtml = (node) => {
         const placeholder = workflowNodeIsPlaceholder(node);
         const children = workflowChildActions(node).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+        const nodeStatus = workflowStatusInfo(node, workflowTaskForNodeDateOrCurrent(node, tasks, selectedKey), workflowLatestRunForNode(node, runs), selectedKey);
         const childHtml = children.map((action) => {
           const canEditAction = String(action && (action.action_type || action.type) || "publish").toLowerCase() === "publish";
+          const actionStatus = workflowStatusInfo(action, workflowTaskForNodeDateOrCurrent(action, tasks, selectedKey), workflowLatestRunForNode(action, runs), selectedKey);
           return `
-            <div class="workflow-node-card workflow-action-card">
+            <div class="workflow-node-card workflow-action-card designer-workflow-node designer-workflow-action-node">
+              <div class="designer-workflow-branch" aria-hidden="true"></div>
               <div class="workflow-node-time action">${escapeHtml(action.time || "--:--")}</div>
-              <div class="workflow-node-main">
+              <div class="workflow-node-main" ${canEditAction ? `data-workflow-parent-node="${escapeHtml(node.id || "")}" data-workflow-action-node="${escapeHtml(action.id || "")}"` : ""}>
                 <strong>${escapeHtml(action.ability_label || workflowActionLabel(action))}</strong>
+                <span>使用上级节点输出素材</span>
               </div>
               <div class="workflow-node-status">
-                ${workflowStatusPillHtml(workflowStatusInfo(action, workflowTaskForNodeDateOrCurrent(action, tasks, selectedKey), workflowLatestRunForNode(action, runs), selectedKey))}
+                ${workflowStatusPillHtml(actionStatus)}
               </div>
               <div class="workflow-node-actions">
                 <details class="task-action-menu workflow-node-action-menu">
@@ -3633,14 +3651,14 @@
           `;
         }).join("");
         return `
-          <div class="workflow-node-card${placeholder ? " is-placeholder" : ""}"${placeholder ? "" : ` data-workflow-edit-node="${escapeHtml(node.id || "")}"`}>
+          <div class="workflow-node-card designer-workflow-node${placeholder ? " is-placeholder" : ""}">
             <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>
-            <div class="workflow-node-main">
+            <div class="workflow-node-main"${placeholder ? "" : ` data-workflow-edit-node="${escapeHtml(node.id || "")}"`}>
               <strong>${escapeHtml(node.ability_label || "任务节点")}</strong>
-              ${placeholder ? `<span>敬请期待</span>` : ""}
+              <span>${placeholder ? "敬请期待" : escapeHtml(node.department_name || node.note || "点击查看节点配置")}</span>
             </div>
             <div class="workflow-node-status">
-              ${workflowStatusPillHtml(workflowStatusInfo(node, workflowTaskForNodeDateOrCurrent(node, tasks, selectedKey), workflowLatestRunForNode(node, runs), selectedKey))}
+              ${workflowStatusPillHtml(nodeStatus)}
             </div>
             <div class="workflow-node-actions">
               ${placeholder ? "" : `<details class="task-action-menu workflow-node-action-menu">
@@ -3656,6 +3674,25 @@
           </div>
           ${childHtml}
         `;
+      };
+      box.classList.add("designer-workflow-groups");
+      box.innerHTML = grouped.map((group) => {
+        const childCount = group.nodes.reduce((total, node) => total + workflowChildActions(node).length, 0);
+        const itemCount = group.nodes.length + childCount;
+        const allPlaceholder = group.nodes.every((node) => workflowNodeIsPlaceholder(node));
+        const isOpen = openGroups.has(group.label);
+        return `<details class="designer-workflow-group" data-workflow-group="${escapeHtml(group.label)}"${isOpen ? " open" : ""}>
+          <summary>
+            <span class="designer-workflow-group-title">
+              <strong>${escapeHtml(group.label)}</strong>
+              <span>包含 ${itemCount} 个执行节点</span>
+            </span>
+            <em class="designer-workflow-group-state">${allPlaceholder ? "敬请期待" : "查看节点"}</em>
+          </summary>
+          <div class="designer-workflow-group-content">
+            ${group.nodes.map(nodeHtml).join("")}
+          </div>
+        </details>`;
       }).join("");
     }
 
@@ -4360,17 +4397,35 @@
       return "未开通";
     }
 
+    function abilityDesignerIcon(node) {
+      const key = String((node && (node.key || node.capabilityId || node.workQuickKey)) || "").toLowerCase();
+      if (key.includes("video") || key.includes("daily")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.8 11.2 11.6 9A1 1 0 0 0 10 9.9v4.2a1 1 0 0 0 1.6.8l3.2-2.1a1 1 0 0 0 0-1.6z"/><path d="M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z"/></svg>`;
+      if (key.includes("article") || key.includes("copy") || key.includes("text")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.8V8h4.2M8 12h8v2H8v-2zm0 4h8v2H8v-2z"/></svg>`;
+      if (key.includes("image") || key.includes("pic")) return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16l4.6-4.6a2 2 0 0 1 2.8 0L16 16l1.6-1.6a2 2 0 0 1 2.8 0L22 16v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-3zM6 5h12a2 2 0 0 1 2 2v5.2l-.2-.2a4 4 0 0 0-5.6 0L16 13.8l-3.2-3.2a4 4 0 0 0-5.6 0L4 13.8V7a2 2 0 0 1 2-2z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 10-13h-7l1-7z"/></svg>`;
+    }
+
+    function abilityDesignerTone(node) {
+      const key = String((node && (node.key || node.capabilityId || node.workQuickKey)) || "").toLowerCase();
+      if (key.includes("article")) return "emerald";
+      if (key.includes("ppt")) return "rose";
+      if (key.includes("image")) return "purple";
+      if (key.includes("lead") || key.includes("customer")) return "cyan";
+      return "blue";
+    }
+
     function abilityCardHtml(node) {
       const count = abilityChildCount(node);
       const actionable = abilityIsActionable(node);
       const disabled = node.comingSoon ? " disabled" : "";
-      const chipClass = count ? "department-skill-chip child" : "department-skill-chip";
-      return `<button class="department-skill-card${disabled}" type="button" data-ability-key="${escapeHtml(node.key || "")}" ${node.comingSoon ? 'aria-disabled="true"' : ""}>
-        <div class="department-skill-top">
-          <h3 class="department-skill-title">${escapeHtml(node.label || node.key || "能力")}</h3>
-          <span class="${chipClass}">${escapeHtml(node.mark || firstChar(node.label || node.key))}</span>
+      const tone = abilityDesignerTone(node);
+      return `<button class="department-skill-card designer-ability-card ${escapeHtml(tone)}${disabled}" type="button" data-ability-key="${escapeHtml(node.key || "")}" ${node.comingSoon ? 'aria-disabled="true"' : ""}>
+        <div class="designer-ability-art">
+          <i></i><b></b>
+          <span>${abilityDesignerIcon(node)}</span>
         </div>
-        <div class="department-skill-foot">
+        <div class="designer-ability-meta">
+          <h3>${escapeHtml(node.label || node.key || "能力")}</h3>
           <span>${count ? "继续选择" : (actionable ? "可进入" : "需开通")}</span>
           <strong>${escapeHtml(abilityStatusText(node))}</strong>
         </div>
@@ -4447,7 +4502,9 @@
 
     function setDepartmentEntryOnlyMode(department) {
       const entryOnly = isMarketingCreationDepartment(department);
+      const shell = document.querySelector("#departmentView .department-shell");
       const board = document.querySelector("#departmentView .department-day-board");
+      if (shell) shell.classList.toggle("marketing-entry-mode", entryOnly);
       if (board) board.classList.toggle("hidden", entryOnly);
       ["departmentWorkHistoryBtn", "departmentChatBtn"].forEach((id) => {
         const el = $(id);
@@ -5543,6 +5600,31 @@
       return origin === "user_upload" ? "用户上传" : "内容记录";
     }
 
+    function designerMediaType(asset) {
+      const url = String((asset && asset.source_url) || "").trim();
+      const raw = String((asset && asset.media_type) || mediaTypeFromUrl(url) || "").toLowerCase();
+      if (raw === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url)) return "video";
+      if (raw === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(url)) return "image";
+      if (raw === "audio" || /\.(mp3|wav|m4a|aac)(\?|$)/i.test(url)) return "audio";
+      return raw || "file";
+    }
+
+    function designerMediaTypeLabel(type) {
+      const raw = String(type || "").toLowerCase();
+      if (raw === "video") return "视频";
+      if (raw === "image") return "图片";
+      if (raw === "audio") return "音频";
+      return "文件";
+    }
+
+    function designerMediaIcon(type) {
+      const raw = String(type || "").toLowerCase();
+      if (raw === "video") return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 10l4.6-2.3A1 1 0 0 1 21 8.6v6.8a1 1 0 0 1-1.4.9L15 14v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2z"/></svg>`;
+      if (raw === "audio") return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a4 4 0 0 0-4 4v4a4 4 0 0 0 8 0V7a4 4 0 0 0-4-4zm6 8a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.9V22h2v-3.1a8 8 0 0 0 7-7.9h-2z"/></svg>`;
+      if (raw === "file") return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm0 2.5L17.5 8H14V4.5z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16l4.6-4.6a2 2 0 0 1 2.8 0L16 16l1.6-1.6a2 2 0 0 1 2.8 0L22 16v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-3zm2-11h12a2 2 0 0 1 2 2v5.2l-.2-.2a4 4 0 0 0-5.6 0L16 13.8l-3.2-3.2a4 4 0 0 0-5.6 0L4 13.8V7a2 2 0 0 1 2-2zm9 2.5A1.5 1.5 0 1 0 15 10a1.5 1.5 0 0 0 0-3z"/></svg>`;
+    }
+
     function renderAssetLibraryTabs() {
       document.querySelectorAll("[data-asset-section]").forEach((btn) => {
         const active = btn.dataset.assetSection === (state.assetLibrarySection || "uploads");
@@ -5581,13 +5663,18 @@
     function assetCardHtml(asset) {
       const title = assetTitle(asset);
       const id = String((asset && asset.asset_id) || "");
-      return `<button class="asset-library-card" type="button" data-asset-preview-id="${escapeHtml(id)}">
-        ${assetPreviewHtml(asset)}
-        <div class="asset-library-card-main">
+      const type = designerMediaType(asset);
+      return `<button class="asset-library-card designer-media-card" type="button" data-asset-preview-id="${escapeHtml(id)}">
+        <span class="designer-media-thumb">
+          ${assetPreviewHtml(asset)}
+          <i class="designer-media-badge">${designerMediaIcon(type)}</i>
+          ${type === "video" ? `<b class="designer-play-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></b>` : ""}
+        </span>
+        <span class="asset-library-card-main designer-media-meta">
           <strong>${escapeHtml(title || "素材")}</strong>
-          <span>${escapeHtml((asset && asset.media_type) || "file")}</span>
+          <span>${escapeHtml(designerMediaTypeLabel(type))}</span>
           <em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>
-        </div>
+        </span>
       </button>`;
     }
 
@@ -5604,9 +5691,9 @@
       const thumb = img
         ? `<img class="asset-library-thumb" src="${escapeHtml(mediaProxyUrl(img, "inline", filenameFromUrl(img, "avatar")))}" alt="" loading="lazy">`
         : `<div class="asset-library-thumb asset-library-thumb-empty">形象</div>`;
-      return `<button class="asset-library-card" type="button" data-hifly-asset-kind="avatar" data-hifly-asset-id="${escapeHtml(id)}">
-        ${thumb}
-        <div class="asset-library-card-main">
+      return `<button class="asset-library-card designer-avatar-card" type="button" data-hifly-asset-kind="avatar" data-hifly-asset-id="${escapeHtml(id)}">
+        <span class="designer-avatar-thumb">${thumb}</span>
+        <div class="asset-library-card-main designer-avatar-meta">
           <strong>${escapeHtml(title)}</strong>
           <span>${escapeHtml(sourceLabel)}</span>
           <em class="asset-status${hiflyStatusClass(row)}">${escapeHtml(row && row.status_text || row && row.status || "处理中")}</em>
@@ -5618,9 +5705,9 @@
       const id = String((row && row.id) || "");
       const title = String((row && row.title) || "未命名声音");
       const provider = String((row && (row.source_label || row.provider)) || "");
-      return `<button class="asset-library-card" type="button" data-hifly-asset-kind="voice" data-hifly-asset-id="${escapeHtml(id)}">
-        <div class="asset-audio-thumb">声</div>
-        <div class="asset-library-card-main">
+      return `<button class="asset-library-card designer-voice-card" type="button" data-hifly-asset-kind="voice" data-hifly-asset-id="${escapeHtml(id)}">
+        <div class="asset-audio-thumb designer-voice-thumb">${designerMediaIcon("audio")}</div>
+        <div class="asset-library-card-main designer-voice-meta">
           <strong>${escapeHtml(title)}</strong>
           <span>${escapeHtml(provider || "voice")}</span>
           <em class="asset-status${hiflyStatusClass(row)}">${escapeHtml(row && row.status_text || row && row.status || "处理中")}</em>
@@ -5743,6 +5830,9 @@
       }
       const pageCount = Math.max(1, Math.ceil(total / pageSize));
       list.classList.toggle("loading", loading);
+      list.classList.toggle("designer-avatar-grid", section === "avatars");
+      list.classList.toggle("designer-voice-list", section === "voices");
+      list.classList.toggle("designer-media-grid", section !== "avatars" && section !== "voices");
       if (loading) {
         list.innerHTML = `<div class="asset-library-empty">加载中...</div>`;
       } else if (!rows.length) {
@@ -5836,6 +5926,7 @@
     function renderContentRecords() {
       const list = $("contentRecordList");
       if (!list) return;
+      list.classList.add("designer-media-grid");
       renderContentRecordTabs();
       const page = Math.max(1, Number(state.contentRecordPage || 1));
       const total = Number(state.contentRecordTotal || 0);
