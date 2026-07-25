@@ -846,6 +846,41 @@ body::before {
   object-fit: cover;
 }
 
+.content-record-cover {
+  max-height: 260px;
+  object-fit: cover;
+}
+
+.content-record-file-mark {
+  min-height: 150px;
+  color: #fff;
+  font-size: 42px;
+  font-weight: 900;
+  background: linear-gradient(135deg, #ef4444, #f97316);
+}
+
+.content-record-summary {
+  padding: 12px 14px;
+  border-left: 3px solid #ff4057;
+  border-radius: 0 12px 12px 0;
+  color: #475569;
+  background: #fff1f2;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.content-record-article-body {
+  padding: 16px;
+  overflow-wrap: anywhere;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  color: #1e293b;
+  background: #fff;
+  font-size: 14px;
+  line-height: 1.85;
+  white-space: pre-wrap;
+}
+
 .content-document-main {
   min-width: 0;
   flex: 1;

@@ -54,6 +54,7 @@ from .api.homepage import router as homepage_router
 from .api.meta_social_publish import router as meta_social_publish_router
 from .api.admin import router as admin_router
 from .api.generation_records import router as generation_records_router
+from .api.content_records import router as content_records_router
 from .api.ip_content_studio import router as ip_content_studio_router
 from .api.linkedin_mining import router as linkedin_mining_router
 from .api.social_leads import router as social_leads_router
@@ -1064,6 +1065,7 @@ def create_app() -> FastAPI:
     app.include_router(meta_social_publish_router, prefix="")
     app.include_router(admin_router, prefix="")
     app.include_router(generation_records_router, prefix="")
+    app.include_router(content_records_router, prefix="")
     app.include_router(ip_content_studio_router, prefix="")
     app.include_router(linkedin_mining_router, prefix="")
     app.include_router(social_leads_router, prefix="")

@@ -419,6 +419,38 @@ class IPContentDraftRecord(Base):
     )
 
 
+class UserContentRecord(Base):
+    """Content created by the desktop client and shared with H5."""
+
+    __tablename__ = "user_content_records"
+    __table_args__ = (
+        UniqueConstraint("user_id", "source", "source_id", name="uq_user_content_records_user_source"),
+        Index("ix_user_content_records_user_kind_created", "user_id", "kind", "source_created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cover_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="completed", nullable=False, index=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    source_created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 class IPContentScheduleTemplate(Base):
     """Per-user saved IP daily content template for scheduled tasks."""
 

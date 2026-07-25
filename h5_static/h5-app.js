@@ -5712,9 +5712,9 @@
       const failed = /fail|error/i.test(String((asset && asset.status) || ""));
       const kindLabels = { article: "深度长文", wechat_article: "公众号文章", ppt: "演示文稿" };
       const fallback = designerFallbackMedia({ ...(asset || {}), origin: "generated", _designer_content_kind: kind }, index);
-      const sourceUrl = String((asset && asset.source_url) || "").trim();
+      const sourceUrl = String((asset && (asset.cover_url || asset.source_url)) || "").trim();
       const sourceType = String((asset && asset.media_type) || mediaTypeFromUrl(sourceUrl) || "").toLowerCase();
-      const cover = sourceUrl && (sourceType === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(sourceUrl))
+      const cover = sourceUrl && (/^data:image\//i.test(sourceUrl) || sourceType === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(sourceUrl))
         ? mediaProxyUrl(sourceUrl, "inline", filenameFromUrl(sourceUrl, asset && asset.filename || "asset"))
         : fallback;
       return `<button class="content-document-card ${escapeHtml(kind)}" type="button" data-asset-preview-id="${escapeHtml(id)}">
@@ -5798,6 +5798,35 @@
       const title = $("assetPreviewTitle");
       if (!modal || !body) return;
       if (title) title.textContent = assetTitle(asset);
+      if (asset._content_record) {
+        const kind = String(asset.kind || asset._designer_content_kind || "article");
+        const kindLabels = { article: "IP日更文章", wechat_article: "公众号文章", ppt: "PPT演示文稿" };
+        const sourceLabels = { ip_daily: "每日IP日更", online_wechat_article: "公众号文章创作", online_ppt: "PPT创作" };
+        const statusLabels = { completed: "已完成", local_saved: "已保存", pushed: "已推送公众号", failed: "生成失败" };
+        const coverUrl = String(asset.cover_url || "").trim();
+        const fileUrl = String(asset.file_url || asset.source_url || "").trim();
+        const cover = coverUrl
+          ? `<img class="asset-preview-large content-record-cover" src="${escapeHtml(mediaProxyUrl(coverUrl, "inline", filenameFromUrl(coverUrl, "cover")))}" alt="">`
+          : (kind === "ppt" ? `<div class="asset-preview-large asset-preview-large-empty content-record-file-mark">PPT</div>` : "");
+        const summary = String(asset.summary || "").trim();
+        const content = String(asset.content || "").trim();
+        const meta = asset.meta && typeof asset.meta === "object" ? asset.meta : {};
+        const slideCount = Number(meta.slide_count || 0);
+        body.innerHTML = `
+          ${cover}
+          <div class="asset-preview-meta">
+            <div><span>来源</span><strong>${escapeHtml(sourceLabels[asset.source] || "内容创作")}</strong></div>
+            <div><span>类型</span><strong>${escapeHtml(kindLabels[kind] || "文章")}</strong></div>
+            <div><span>状态</span><strong>${escapeHtml(statusLabels[String(asset.status || "").toLowerCase()] || asset.status || "已完成")}</strong></div>
+            <div><span>时间</span><strong>${escapeHtml(fmtTime(asset.created_at))}</strong></div>
+            ${slideCount ? `<div><span>页数</span><strong>${escapeHtml(String(slideCount))} 页</strong></div>` : ""}
+          </div>
+          ${summary ? `<div class="content-record-summary">${escapeHtml(summary)}</div>` : ""}
+          ${content ? `<article class="content-record-article-body">${escapeHtml(content)}</article>` : ""}
+          ${fileUrl ? mediaActionHtml(fileUrl, kind === "ppt" ? "下载PPT" : "下载文件", asset.filename || asset.source_id || "content") : ""}`;
+        modal.classList.remove("hidden");
+        return;
+      }
       const url = String(asset.source_url || "").trim();
       const actions = url ? mediaActionHtml(url, "下载素材", asset.filename || asset.asset_id || "asset") : "";
       body.innerHTML = `
@@ -5992,19 +6021,6 @@
       });
     }
 
-    function contentRecordApiMediaType(type) {
-      const raw = String(type || "image").trim().toLowerCase();
-      return ["article", "wechat_article", "ppt"].includes(raw) ? "document" : raw;
-    }
-
-    function contentRecordKind(asset) {
-      const title = `${assetTitle(asset)} ${(asset && asset.tags) || ""} ${(asset && asset.prompt) || ""}`.toLowerCase();
-      const filename = String((asset && asset.filename) || "").toLowerCase();
-      if (/\.(ppt|pptx)$/i.test(filename) || /(^|\s|[_-])ppt([\s_-]|$)|幻灯片|演示文稿/i.test(title)) return "ppt";
-      if (/公众号|wechat\s*article|weixin\s*article/i.test(title)) return "wechat_article";
-      return "article";
-    }
-
     function renderContentRecords() {
       const list = $("contentRecordList");
       if (!list) return;
@@ -6039,26 +6055,28 @@
       const page = Math.max(1, Number(state.contentRecordPage || 1));
       const offset = (page - 1) * pageSize;
       const uiType = String(state.contentRecordMediaType || "image").trim().toLowerCase();
-      const apiType = contentRecordApiMediaType(uiType);
-      const documentMode = apiType === "document";
-      const params = new URLSearchParams({
-        origin: "generated",
-        limit: String(documentMode ? 200 : pageSize),
-        offset: String(documentMode ? 0 : offset),
-        media_type: apiType,
-      });
+      const documentMode = ["article", "wechat_article", "ppt"].includes(uiType);
       state.contentRecordLoading = true;
       renderContentRecords();
       try {
-        const data = await api(`/api/assets?${params.toString()}`);
-        const assets = Array.isArray(data.assets) ? data.assets : [];
         if (documentMode) {
-          const matched = assets
-            .map((asset) => ({ ...asset, _designer_content_kind: contentRecordKind(asset) }))
-            .filter((asset) => asset._designer_content_kind === uiType);
-          state.contentRecordRows = matched.slice(offset, offset + pageSize);
-          state.contentRecordTotal = matched.length;
+          const params = new URLSearchParams({ kind: uiType, limit: String(pageSize), offset: String(offset) });
+          const data = await api(`/api/content-records?${params.toString()}`);
+          state.contentRecordRows = (Array.isArray(data.items) ? data.items : []).map((item) => ({
+            ...item,
+            _content_record: true,
+            _designer_content_kind: uiType,
+          }));
+          state.contentRecordTotal = Number(data.pagination && data.pagination.total || 0);
         } else {
+          const params = new URLSearchParams({
+            origin: "generated",
+            limit: String(pageSize),
+            offset: String(offset),
+            media_type: uiType,
+          });
+          const data = await api(`/api/assets?${params.toString()}`);
+          const assets = Array.isArray(data.assets) ? data.assets : [];
           state.contentRecordRows = assets.map((asset) => ({ ...asset, _designer_content_kind: uiType }));
           state.contentRecordTotal = Number(data.total || 0);
         }
