@@ -2037,3 +2037,9 @@ body::before {
     margin: 0;
   }
 }
+
+/* Homepage typography stays regular across titles, cards, labels, and statuses. */
+#officeView,
+#officeView * {
+  font-weight: 400 !important;
+}
