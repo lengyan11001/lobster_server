@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import Asset, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
+from ..models import Asset, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
 from .assets import _get_tos_config, _save_bytes_or_tos, get_asset_public_url
 from .auth import get_current_user
 from .shanjian_smart_clip import _data, _get, _post
@@ -28,6 +28,7 @@ _SHANJIAN_BILLING_CAPABILITY_ID = "hifly.video.create_by_tts"
 _SHANJIAN_UNIT_CREDITS_PER_SECOND = 10
 _SHANJIAN_TEMPLATE_UNIT_CREDITS_PER_SECOND = 15
 _SHANJIAN_TTS_CHARS_PER_SECOND = 4
+_PERSONAL_DEFAULT_TEMPLATE_NAME = "个人默认配置"
 
 
 class _TokenBody(BaseModel):
@@ -648,6 +649,97 @@ def _template_meta_from_body(body: CreateVideoBody) -> Optional[Dict[str, Any]]:
         "material_composition": _clean_text(body.material_composition) or "random",
         "video_duration": int(body.video_duration or 30),
     }
+
+
+def _stored_digital_human_template(meta: Any) -> tuple[bool, Optional[Dict[str, Any]]]:
+    if not isinstance(meta, dict) or "digital_human_template" not in meta:
+        return False, None
+    raw = meta.get("digital_human_template")
+    if not isinstance(raw, dict):
+        return True, None
+    style_id = _clean_text(raw.get("style_id") or raw.get("styleId") or raw.get("id"))
+    if not style_id:
+        return True, None
+    pack_rules = raw.get("pack_rules") if isinstance(raw.get("pack_rules"), dict) else {}
+    process_rules = raw.get("process_rules") if isinstance(raw.get("process_rules"), dict) else {}
+    materials = raw.get("materials") if isinstance(raw.get("materials"), list) else []
+    try:
+        video_duration = int(raw.get("video_duration") or process_rules.get("videoDuration") or 30)
+    except (TypeError, ValueError):
+        video_duration = 30
+    return True, {
+        "template_scene": _clean_text(raw.get("scene") or raw.get("template_scene")) or "realMan",
+        "style_id": style_id,
+        "template_name": _clean_text(raw.get("name") or raw.get("title")),
+        "cover_url": _clean_text(raw.get("cover_url") or raw.get("coverUrl")),
+        "demo_url": _clean_text(raw.get("demo_url") or raw.get("demoUrl")),
+        "materials": materials[:20],
+        "material_sound_switch": bool(raw.get("material_sound_switch", raw.get("materialSoundSwitch", False))),
+        "introduce_name": _clean_text(raw.get("introduce_name") or raw.get("introduceName")),
+        "introduce_description": _clean_text(raw.get("introduce_description") or raw.get("introduceDescription")),
+        "header_switch": bool(raw.get("header_switch", pack_rules.get("headerSwitch", True))),
+        "material_switch": bool(raw.get("material_switch", pack_rules.get("materialSwitch", True))),
+        "subtitle_switch": bool(raw.get("subtitle_switch", pack_rules.get("subtitleSwitch", True))),
+        "keyword_switch": bool(raw.get("keyword_switch", pack_rules.get("keywordSwitch", True))),
+        "watermark_show": bool(raw.get("watermark_show", process_rules.get("watermarkShow", False))),
+        "material_match_way": _clean_text(raw.get("material_match_way") or process_rules.get("materialMatchWay")) or "fuzzyMatch",
+        "resource_preprocess_method": _clean_text(raw.get("resource_preprocess_method") or process_rules.get("resourcePreprocessMethod")) or "roughCut",
+        "material_composition": _clean_text(raw.get("material_composition") or process_rules.get("materialComposition")) or "random",
+        "video_duration": max(5, min(video_duration, 300)),
+    }
+
+
+def _default_digital_human_template(
+    db: Session,
+    user_id: int,
+) -> Optional[Dict[str, Any]]:
+    personal = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+    if personal is None:
+        return None
+
+    personal_meta = personal.meta if isinstance(personal.meta, dict) else {}
+    try:
+        current_template_id = int(personal_meta.get("current_template_id") or personal_meta.get("template_id") or 0)
+    except (TypeError, ValueError):
+        current_template_id = 0
+    if current_template_id > 0:
+        current = (
+            db.query(IPContentScheduleTemplate)
+            .filter(
+                IPContentScheduleTemplate.id == current_template_id,
+                IPContentScheduleTemplate.user_id == int(user_id),
+                IPContentScheduleTemplate.status == "active",
+            )
+            .first()
+        )
+        if current is not None:
+            configured, template_meta = _stored_digital_human_template(current.meta)
+            if configured:
+                return template_meta
+
+    _configured, template_meta = _stored_digital_human_template(personal_meta)
+    return template_meta
+
+
+def _resolve_video_template_meta(
+    db: Session,
+    user_id: int,
+    body: CreateVideoBody,
+) -> tuple[Optional[Dict[str, Any]], str]:
+    explicit = _template_meta_from_body(body)
+    if explicit is not None:
+        return explicit, "request"
+    configured = _default_digital_human_template(db, user_id)
+    return configured, "active_personal_template" if configured is not None else ""
 
 
 def _template_meta_from_submit_payload(submit_payload: Optional[dict]) -> Optional[Dict[str, Any]]:
@@ -1278,10 +1370,11 @@ async def create_video(
             "language": _clean_text(body.language) or "zh-CN",
         }
 
-    template_meta = _template_meta_from_body(body)
+    template_meta, template_source = _resolve_video_template_meta(db, int(current_user.id), body)
     submit_payload: Dict[str, Any] = {"base": payload, "stage": "base"}
     if template_meta:
         submit_payload["template"] = template_meta
+        submit_payload["template_source"] = template_source
     billing = await _shanjian_pre_deduct(
         request=request,
         template_meta=template_meta,
@@ -1291,13 +1384,14 @@ async def create_video(
     submit_payload["billing"] = billing
 
     logger.info(
-        "[shanjian-dh] submit base video user_id=%s profile_id=%s virtualman=%s audio=%s text_len=%s template=%s style_id=%s materials=%s",
+        "[shanjian-dh] submit base video user_id=%s profile_id=%s virtualman=%s audio=%s text_len=%s template=%s template_source=%s style_id=%s materials=%s",
         getattr(current_user, "id", ""),
         getattr(profile, "id", None),
         virtualman_id,
         _url_hint(payload.get("audioUrl", "")) if payload.get("audioUrl") else "",
         len(text or ""),
         bool(template_meta),
+        template_source,
         (template_meta or {}).get("style_id"),
         len((template_meta or {}).get("materials") or []),
     )

@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260725-home-layout-fix" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260725-home-spacing" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260725-dh-template-picker" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260725-workflow-menu-font" />
 </head>
 <body>
   <main class="shell">
@@ -1391,12 +1391,56 @@
             <option value="ar">العربية</option>
           </select>
         </div>
+        <div class="personal-field personal-digital-human-field">
+          <div class="personal-digital-human-field-head">
+            <div>
+              <label>数字人剪辑模板</label>
+              <small>数字人口播生成后，自动使用所选模板完成剪辑</small>
+            </div>
+            <button class="ghost" type="button" id="personalDigitalHumanTemplateChooseBtn">选择模板</button>
+          </div>
+          <div id="personalDigitalHumanTemplateSummary"></div>
+        </div>
         <div class="personal-list" id="personalTemplateList"></div>
         <div class="work-dispatch-actions">
           <button class="ghost" type="button" id="personalTemplateCancel">取消</button>
           <button type="button" id="personalSaveDefaultBtn">保存模板</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div class="employee-modal personal-digital-human-picker-modal hidden" id="personalDigitalHumanTemplateModal" role="dialog" aria-modal="true" aria-labelledby="personalDigitalHumanTemplateTitle">
+    <button class="employee-modal-backdrop" type="button" id="personalDigitalHumanTemplateBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover personal-digital-human-picker">
+      <button class="employee-popover-close" type="button" id="personalDigitalHumanTemplateClose" aria-label="关闭">×</button>
+      <div class="personal-digital-human-picker-head">
+        <div>
+          <strong id="personalDigitalHumanTemplateTitle">选择数字人剪辑模板</strong>
+          <span>选择一个模板，数字人口播完成后会继续自动剪辑</span>
+        </div>
+        <em id="personalDigitalHumanTemplateCount">0 个模板</em>
+      </div>
+      <div class="personal-digital-human-search">
+        <input id="personalDigitalHumanTemplateSearch" type="search" placeholder="搜索模板名称">
+        <button class="ghost" type="button" id="personalDigitalHumanTemplateRefresh" aria-label="刷新模板">刷新</button>
+      </div>
+      <div class="personal-digital-human-picker-status" id="personalDigitalHumanTemplateStatus"></div>
+      <div class="personal-digital-human-template-grid" id="personalDigitalHumanTemplateGrid"></div>
+      <div class="work-dispatch-actions personal-digital-human-picker-actions">
+        <button class="ghost danger-text" type="button" id="personalDigitalHumanTemplateDisable">不使用自动剪辑</button>
+        <button class="ghost" type="button" id="personalDigitalHumanTemplateCancel">取消</button>
+        <button type="button" id="personalDigitalHumanTemplateConfirm">确认选择</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="employee-modal personal-digital-human-preview-modal hidden" id="personalDigitalHumanPreviewModal" role="dialog" aria-modal="true" aria-labelledby="personalDigitalHumanPreviewTitle">
+    <button class="employee-modal-backdrop" type="button" id="personalDigitalHumanPreviewBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover personal-digital-human-preview">
+      <button class="employee-popover-close" type="button" id="personalDigitalHumanPreviewClose" aria-label="关闭">×</button>
+      <strong id="personalDigitalHumanPreviewTitle">模板样片</strong>
+      <video id="personalDigitalHumanPreviewVideo" controls playsinline preload="metadata"></video>
     </div>
   </div>
 
@@ -1588,6 +1632,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260725-content-records"></script>
+  <script src="/h5-static/h5-app.js?v=20260725-dh-template-picker"></script>
 </body>
 </html>

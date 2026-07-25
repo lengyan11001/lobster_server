@@ -1628,3 +1628,410 @@ body::before {
     gap: 7px;
   }
 }
+
+/* Keep workflow action menus above following cards and groups. */
+.designer-workflow-group,
+.designer-workflow-group-content,
+.workflow-node-card.designer-workflow-node {
+  overflow: visible;
+}
+
+.designer-workflow-group.task-menu-open {
+  position: relative;
+  z-index: 160;
+}
+
+.workflow-node-card.designer-workflow-node.task-menu-open {
+  z-index: 180;
+}
+
+.workflow-node-card.task-menu-open .task-action-list {
+  z-index: 240;
+}
+
+/* The today feed is intentionally regular-weight for fast mobile scanning. */
+#officeView .office-today-section,
+#officeView .office-today-section * {
+  font-weight: 400 !important;
+}
+
+/* Digital-human editing template picker in IP persona templates. */
+.personal-digital-human-field {
+  display: grid;
+  gap: 10px;
+}
+
+.personal-digital-human-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.personal-digital-human-field-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.personal-digital-human-field-head small,
+.personal-digital-human-selected small,
+.personal-digital-human-empty small {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.personal-digital-human-field-head button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 12px;
+  color: #2563eb;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #eff6ff;
+}
+
+.personal-digital-human-empty,
+.personal-digital-human-selected {
+  min-height: 66px;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
+.personal-digital-human-empty {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  color: #64748b;
+}
+
+.personal-digital-human-selected {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.personal-digital-human-selected > div:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.personal-digital-human-selected strong {
+  overflow: hidden;
+  color: #0f172a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.personal-digital-human-selected-cover {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 12px;
+  color: #2563eb;
+  background: #eaf2ff;
+}
+
+.personal-digital-human-selected-cover img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.personal-digital-human-selected > button {
+  min-height: 30px;
+  padding: 0 10px;
+  color: #64748b;
+  background: #fff;
+}
+
+.personal-digital-human-picker-modal {
+  z-index: 190;
+}
+
+.personal-digital-human-preview-modal {
+  z-index: 220;
+}
+
+.personal-digital-human-picker.employee-popover {
+  width: min(760px, calc(100vw - 24px)) !important;
+  height: min(90dvh, 780px);
+  max-height: min(90dvh, 780px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  padding: 18px;
+  color: #0f172a;
+}
+
+.personal-digital-human-picker::after,
+.personal-digital-human-preview::after {
+  display: none;
+}
+
+.personal-digital-human-picker-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 36px;
+}
+
+.personal-digital-human-picker-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.personal-digital-human-picker-head strong {
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.personal-digital-human-picker-head span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.personal-digital-human-picker-head em {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  color: #2563eb;
+  border-radius: 999px;
+  background: #eff6ff;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.personal-digital-human-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.personal-digital-human-search input {
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 13px;
+  color: #0f172a;
+  border: 1px solid #dbe3ef;
+  border-radius: 14px;
+  outline: 0;
+  background: #f8fafc;
+}
+
+.personal-digital-human-search input:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, .12);
+}
+
+.personal-digital-human-search button {
+  min-height: 42px;
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+.personal-digital-human-picker-status {
+  min-height: 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.personal-digital-human-picker-status:empty {
+  display: none;
+}
+
+.personal-digital-human-picker-status.error {
+  color: #b42318;
+}
+
+.personal-digital-human-template-grid {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 3px 10px 2px;
+  scrollbar-width: none;
+}
+
+.personal-digital-human-template-grid::-webkit-scrollbar {
+  display: none;
+}
+
+.personal-digital-human-template-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 5px 16px rgba(30, 58, 138, .05);
+}
+
+.personal-digital-human-template-card.selected {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, .14), 0 8px 20px rgba(30, 58, 138, .1);
+}
+
+.personal-digital-human-template-card:focus-visible {
+  outline: 3px solid rgba(59, 130, 246, .22);
+  outline-offset: 2px;
+}
+
+.personal-digital-human-template-card.skeleton {
+  min-height: 250px;
+  border: 0;
+  background: linear-gradient(100deg, #f1f5f9 20%, #f8fafc 36%, #f1f5f9 52%) 0 0 / 220% 100%;
+  animation: personal-template-loading 1.2s linear infinite;
+}
+
+@keyframes personal-template-loading {
+  to { background-position: -220% 0; }
+}
+
+.personal-digital-human-template-cover {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #2563eb;
+  background: #edf4ff;
+  font-size: 20px;
+}
+
+.personal-digital-human-template-cover img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.personal-digital-human-template-cover i {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 8px;
+  color: #2563eb;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .92);
+  font-size: 10px;
+  font-style: normal;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, .1);
+}
+
+.personal-digital-human-template-card.selected .personal-digital-human-template-cover i {
+  color: #fff;
+  background: #2563eb;
+}
+
+.personal-digital-human-template-copy {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+}
+
+.personal-digital-human-template-copy strong {
+  overflow: hidden;
+  color: #0f172a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.personal-digital-human-template-copy button,
+.personal-digital-human-template-copy small {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  color: #2563eb;
+  border-radius: 9px;
+  background: #eff6ff;
+  font-size: 11px;
+}
+
+.personal-digital-human-template-copy small {
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
+.personal-digital-human-picker-actions {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+}
+
+.personal-digital-human-picker-actions .danger-text {
+  margin-right: auto;
+  color: #b42318;
+  background: #fff1f2;
+}
+
+.personal-digital-human-preview.employee-popover {
+  width: min(520px, calc(100vw - 28px)) !important;
+  display: grid;
+  gap: 12px;
+  overflow: hidden;
+  padding: 18px;
+  color: #0f172a;
+}
+
+.personal-digital-human-preview > strong {
+  padding-right: 38px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.personal-digital-human-preview video {
+  width: 100%;
+  max-height: 72dvh;
+  display: block;
+  border-radius: 16px;
+  background: #0f172a;
+}
+
+@media (max-width: 619px) {
+  .personal-digital-human-template-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+  }
+
+  .personal-digital-human-picker.employee-popover {
+    height: min(92dvh, 760px);
+    max-height: min(92dvh, 760px);
+    padding: 15px;
+  }
+
+  .personal-digital-human-picker-head em {
+    display: none;
+  }
+
+  .personal-digital-human-picker-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .personal-digital-human-picker-actions .danger-text {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+}

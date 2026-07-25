@@ -126,7 +126,15 @@
       personalMemoryDocs: [],
       personalTemplates: [],
       personalEditingTemplateId: "",
+      personalTemplateBaseMeta: {},
       personalTemplateLanguage: "zh-CN",
+      personalDigitalHumanTemplates: [],
+      personalDigitalHumanTemplatesLoaded: false,
+      personalDigitalHumanTemplatesLoading: false,
+      personalDigitalHumanTemplatesError: "",
+      personalDigitalHumanTemplateSearch: "",
+      personalSelectedDigitalHumanTemplate: null,
+      personalDigitalHumanTemplateDraft: null,
       personalDefault: null,
       personalUploadFiles: [],
       personalCustomReferenceFile: null,
@@ -9916,13 +9924,16 @@
     function applyPersonalTemplate(item, options = {}) {
       item = item || {};
       const editing = !!options.editing;
+      const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
       state.personalEditingTemplateId = editing && item && item.id ? String(item.id) : "";
+      state.personalTemplateBaseMeta = { ...meta };
       state.personalSelectedKeywords = {};
       state.personalSelectedCompetitors = {};
       state.personalSelectedMemories = {};
       (item.keyword_ids || []).forEach((id) => { if (id) state.personalSelectedKeywords[String(id)] = true; });
       (item.competitor_ids || []).forEach((id) => { if (id) state.personalSelectedCompetitors[String(id)] = true; });
       (item.memory_doc_ids || []).forEach((id) => { if (id) state.personalSelectedMemories[String(id)] = true; });
+      state.personalSelectedDigitalHumanTemplate = normalizePersonalDigitalHumanTemplate(meta.digital_human_template);
       if ($("personalTemplateName")) $("personalTemplateName").value = item.name || "";
       setPersonalTemplateLanguage(ipTemplateLanguage(item));
     }
@@ -10197,6 +10208,8 @@
 
     function closePersonalTemplateModal() {
       $("personalTemplateModal")?.classList.add("hidden");
+      closePersonalDigitalHumanTemplatePicker();
+      closePersonalDigitalHumanPreview();
     }
 
     function startNewPersonalTemplate() {
@@ -10206,13 +10219,192 @@
 
     function resetPersonalTemplateForm() {
       state.personalEditingTemplateId = "";
+      state.personalTemplateBaseMeta = {};
       setPersonalTemplateLanguage("zh-CN");
       state.personalSelectedKeywords = {};
       state.personalSelectedCompetitors = {};
       state.personalSelectedMemories = {};
+      state.personalSelectedDigitalHumanTemplate = null;
+      state.personalDigitalHumanTemplateDraft = null;
       if ($("personalTemplateName")) $("personalTemplateName").value = "";
       personalSetStatus("");
       renderPersonalSettings();
+    }
+
+    function personalDigitalHumanMediaUrl(value) {
+      const url = String(value || "").trim();
+      return /^(https?:)?\/\//i.test(url) || url.startsWith("/") ? url : "";
+    }
+
+    function normalizePersonalDigitalHumanTemplate(item) {
+      if (!item || typeof item !== "object") return null;
+      const styleId = String(item.style_id || item.styleId || item.id || "").trim();
+      if (!styleId) return null;
+      return {
+        scene: String(item.scene || item.template_scene || "realMan").trim() || "realMan",
+        style_id: styleId,
+        name: String(item.name || item.title || "未命名模板").trim() || "未命名模板",
+        cover_url: personalDigitalHumanMediaUrl(item.cover_url || item.coverUrl || item.imageUrl),
+        demo_url: personalDigitalHumanMediaUrl(item.demo_url || item.demoUrl || item.videoUrl),
+        pack_rules: item.pack_rules && typeof item.pack_rules === "object" ? { ...item.pack_rules } : {},
+        process_rules: item.process_rules && typeof item.process_rules === "object" ? { ...item.process_rules } : {},
+      };
+    }
+
+    function clonePersonalDigitalHumanTemplate(item) {
+      const normalized = normalizePersonalDigitalHumanTemplate(item);
+      return normalized ? {
+        ...normalized,
+        pack_rules: { ...(normalized.pack_rules || {}) },
+        process_rules: { ...(normalized.process_rules || {}) },
+      } : null;
+    }
+
+    function renderPersonalDigitalHumanTemplateSummary() {
+      const box = $("personalDigitalHumanTemplateSummary");
+      if (!box) return;
+      const item = state.personalSelectedDigitalHumanTemplate;
+      if (!item) {
+        box.innerHTML = `<div class="personal-digital-human-empty">
+          <span>未选择</span>
+          <small>数字人口播完成后不进行自动模板剪辑</small>
+        </div>`;
+        return;
+      }
+      box.innerHTML = `<div class="personal-digital-human-selected">
+        <div class="personal-digital-human-selected-cover">
+          ${item.cover_url ? `<img src="${escapeHtml(item.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span>${escapeHtml((item.name || "模板").slice(0, 2))}</span>`}
+        </div>
+        <div>
+          <strong>${escapeHtml(item.name)}</strong>
+          <small>已启用自动剪辑</small>
+        </div>
+        <button class="ghost" type="button" data-clear-personal-dh-template aria-label="清除数字人剪辑模板">清除</button>
+      </div>`;
+    }
+
+    function filteredPersonalDigitalHumanTemplates() {
+      const query = String(state.personalDigitalHumanTemplateSearch || "").trim().toLowerCase();
+      const rows = Array.isArray(state.personalDigitalHumanTemplates) ? state.personalDigitalHumanTemplates : [];
+      if (!query) return rows;
+      return rows.filter((item) => String(item.name || "").toLowerCase().includes(query)
+        || String(item.style_id || "").toLowerCase().includes(query));
+    }
+
+    function renderPersonalDigitalHumanTemplatePicker() {
+      const grid = $("personalDigitalHumanTemplateGrid");
+      if (!grid) return;
+      const rows = filteredPersonalDigitalHumanTemplates();
+      const total = (state.personalDigitalHumanTemplates || []).length;
+      const count = $("personalDigitalHumanTemplateCount");
+      if (count) count.textContent = state.personalDigitalHumanTemplateSearch ? `${rows.length} / ${total} 个模板` : `${total} 个模板`;
+      const status = $("personalDigitalHumanTemplateStatus");
+      if (status) {
+        status.textContent = state.personalDigitalHumanTemplatesLoading
+          ? "正在加载全部模板..."
+          : (state.personalDigitalHumanTemplatesError || (rows.length ? "" : (state.personalDigitalHumanTemplateSearch ? "没有匹配的模板" : "暂无可用模板")));
+        status.classList.toggle("error", !!state.personalDigitalHumanTemplatesError);
+      }
+      if (state.personalDigitalHumanTemplatesLoading && !rows.length) {
+        grid.innerHTML = Array.from({ length: 6 }, () => `<div class="personal-digital-human-template-card skeleton"></div>`).join("");
+        return;
+      }
+      const selectedId = String((state.personalDigitalHumanTemplateDraft || {}).style_id || "");
+      grid.innerHTML = rows.map((item) => {
+        const selected = String(item.style_id || "") === selectedId;
+        return `<article class="personal-digital-human-template-card${selected ? " selected" : ""}" data-personal-dh-template="${escapeHtml(item.style_id)}" tabindex="0" role="radio" aria-checked="${selected ? "true" : "false"}">
+          <div class="personal-digital-human-template-cover">
+            ${item.cover_url ? `<img src="${escapeHtml(item.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span>${escapeHtml((item.name || "模板").slice(0, 2))}</span>`}
+            <i>${selected ? "已选择" : "选择"}</i>
+          </div>
+          <div class="personal-digital-human-template-copy">
+            <strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
+            ${item.demo_url ? `<button class="ghost" type="button" data-preview-personal-dh-template="${escapeHtml(item.style_id)}">查看样片</button>` : `<small>暂无样片</small>`}
+          </div>
+        </article>`;
+      }).join("");
+    }
+
+    async function loadPersonalDigitalHumanTemplates(force = false) {
+      if (state.personalDigitalHumanTemplatesLoading) return;
+      if (!force && state.personalDigitalHumanTemplatesLoaded) {
+        renderPersonalDigitalHumanTemplatePicker();
+        return;
+      }
+      state.personalDigitalHumanTemplatesLoading = true;
+      state.personalDigitalHumanTemplatesError = "";
+      if (force) state.personalDigitalHumanTemplates = [];
+      renderPersonalDigitalHumanTemplatePicker();
+      try {
+        const rows = [];
+        const seen = new Set();
+        let sid = "";
+        for (let page = 0; page < 20; page += 1) {
+          const data = await api("/api/shanjian-smart-clip/templates", {
+            method: "POST",
+            json: { page_size: 60, sid, scene: "realMan", sort_by: "desc" },
+          });
+          (Array.isArray(data.results) ? data.results : []).forEach((raw) => {
+            const item = normalizePersonalDigitalHumanTemplate(raw);
+            if (!item || seen.has(item.style_id)) return;
+            seen.add(item.style_id);
+            rows.push(item);
+          });
+          const nextSid = String(data.sid || "").trim();
+          if (!nextSid || nextSid === sid) break;
+          sid = nextSid;
+        }
+        state.personalDigitalHumanTemplates = rows;
+        state.personalDigitalHumanTemplatesLoaded = true;
+        const selectedId = String((state.personalDigitalHumanTemplateDraft || {}).style_id || "");
+        const selected = selectedId ? rows.find((item) => item.style_id === selectedId) : null;
+        if (selected) state.personalDigitalHumanTemplateDraft = clonePersonalDigitalHumanTemplate(selected);
+      } catch (err) {
+        state.personalDigitalHumanTemplatesError = err && err.message ? err.message : "模板加载失败，请重试";
+      } finally {
+        state.personalDigitalHumanTemplatesLoading = false;
+        renderPersonalDigitalHumanTemplatePicker();
+      }
+    }
+
+    function openPersonalDigitalHumanTemplatePicker() {
+      state.personalDigitalHumanTemplateDraft = clonePersonalDigitalHumanTemplate(state.personalSelectedDigitalHumanTemplate);
+      state.personalDigitalHumanTemplateSearch = "";
+      if ($("personalDigitalHumanTemplateSearch")) $("personalDigitalHumanTemplateSearch").value = "";
+      $("personalDigitalHumanTemplateModal")?.classList.remove("hidden");
+      renderPersonalDigitalHumanTemplatePicker();
+      loadPersonalDigitalHumanTemplates(false);
+    }
+
+    function closePersonalDigitalHumanTemplatePicker() {
+      $("personalDigitalHumanTemplateModal")?.classList.add("hidden");
+      state.personalDigitalHumanTemplateDraft = null;
+    }
+
+    function confirmPersonalDigitalHumanTemplate() {
+      state.personalSelectedDigitalHumanTemplate = clonePersonalDigitalHumanTemplate(state.personalDigitalHumanTemplateDraft);
+      closePersonalDigitalHumanTemplatePicker();
+      renderPersonalDigitalHumanTemplateSummary();
+    }
+
+    function closePersonalDigitalHumanPreview() {
+      const video = $("personalDigitalHumanPreviewVideo");
+      if (video) {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      }
+      $("personalDigitalHumanPreviewModal")?.classList.add("hidden");
+    }
+
+    function openPersonalDigitalHumanPreview(item) {
+      if (!item || !item.demo_url) return;
+      const title = $("personalDigitalHumanPreviewTitle");
+      const video = $("personalDigitalHumanPreviewVideo");
+      if (title) title.textContent = item.name || "模板样片";
+      if (video) video.src = item.demo_url;
+      $("personalDigitalHumanPreviewModal")?.classList.remove("hidden");
+      if (video) video.play().catch(() => {});
     }
 
     function renderPersonalSavedTemplates() {
@@ -10356,6 +10548,7 @@
       renderPersonalSelectedFiles();
       renderPersonalCustomReference();
       renderPersonalGeneratedDocs();
+      renderPersonalDigitalHumanTemplateSummary();
     }
 
     async function savePersonalProfile(btn = null) {
@@ -10391,6 +10584,7 @@
         .map(personalMemoryDocPayload);
       const language = currentPersonalTemplateLanguage();
       const requirements = templateRequirementsWithLanguage(stripPersonalSurveyRequirements((state.personalDefault || {}).requirements), language);
+      const digitalHumanTemplate = clonePersonalDigitalHumanTemplate(state.personalSelectedDigitalHumanTemplate);
       const payload = {
         name,
         keyword_ids: personalCleanIntIds(state.personalSelectedKeywords),
@@ -10398,7 +10592,13 @@
         memory_doc_ids: memoryIds,
         memory_docs: selectedDocs,
         requirements,
-        meta: { source: "h5_personal_settings", language, target_language: ipTemplateLanguageLabel(language) },
+        meta: {
+          ...(state.personalTemplateBaseMeta || {}),
+          source: "h5_personal_settings",
+          language,
+          target_language: ipTemplateLanguageLabel(language),
+          digital_human_template: digitalHumanTemplate,
+        },
       };
       const editingId = String(state.personalEditingTemplateId || "").trim();
       const data = await api(editingId ? `/api/ip-content/schedule-templates/${encodeURIComponent(editingId)}` : "/api/ip-content/schedule-templates", {
@@ -14215,13 +14415,26 @@
         if (exceptMenu && menu === exceptMenu) return;
         menu.removeAttribute("open");
       });
+      document.querySelectorAll(".task-menu-open").forEach((item) => {
+        if (exceptMenu && (item === exceptMenu.closest(".workflow-node-card") || item === exceptMenu.closest(".designer-workflow-group"))) return;
+        item.classList.remove("task-menu-open");
+      });
     }
 
     function bindTaskActionMenuBehavior() {
       document.addEventListener("toggle", (evt) => {
         const menu = evt.target;
-        if (!menu || !menu.matches || !menu.matches(".task-action-menu") || !menu.open) return;
+        if (!menu || !menu.matches || !menu.matches(".task-action-menu")) return;
+        const card = menu.closest(".workflow-node-card");
+        const group = menu.closest(".designer-workflow-group");
+        if (!menu.open) {
+          card?.classList.remove("task-menu-open");
+          if (group && !group.querySelector(".task-action-menu[open]")) group.classList.remove("task-menu-open");
+          return;
+        }
         closeTaskActionMenus(menu);
+        card?.classList.add("task-menu-open");
+        group?.classList.add("task-menu-open");
       }, true);
       document.addEventListener("click", (evt) => {
         const summary = evt.target.closest && evt.target.closest(".task-action-menu > summary");
@@ -14873,6 +15086,51 @@
     $("personalTemplateClose")?.addEventListener("click", closePersonalTemplateModal);
     $("personalTemplateCancel")?.addEventListener("click", closePersonalTemplateModal);
     $("personalTemplateLanguage")?.addEventListener("change", (evt) => setPersonalTemplateLanguage(evt.target.value || "zh-CN"));
+    $("personalDigitalHumanTemplateChooseBtn")?.addEventListener("click", openPersonalDigitalHumanTemplatePicker);
+    $("personalDigitalHumanTemplateSummary")?.addEventListener("click", (evt) => {
+      if (!evt.target.closest("[data-clear-personal-dh-template]")) return;
+      state.personalSelectedDigitalHumanTemplate = null;
+      renderPersonalDigitalHumanTemplateSummary();
+    });
+    $("personalDigitalHumanTemplateSearch")?.addEventListener("input", (evt) => {
+      state.personalDigitalHumanTemplateSearch = evt.target.value || "";
+      renderPersonalDigitalHumanTemplatePicker();
+    });
+    $("personalDigitalHumanTemplateRefresh")?.addEventListener("click", () => loadPersonalDigitalHumanTemplates(true));
+    $("personalDigitalHumanTemplateBackdrop")?.addEventListener("click", closePersonalDigitalHumanTemplatePicker);
+    $("personalDigitalHumanTemplateClose")?.addEventListener("click", closePersonalDigitalHumanTemplatePicker);
+    $("personalDigitalHumanTemplateCancel")?.addEventListener("click", closePersonalDigitalHumanTemplatePicker);
+    $("personalDigitalHumanTemplateConfirm")?.addEventListener("click", confirmPersonalDigitalHumanTemplate);
+    $("personalDigitalHumanTemplateDisable")?.addEventListener("click", () => {
+      state.personalDigitalHumanTemplateDraft = null;
+      confirmPersonalDigitalHumanTemplate();
+    });
+    $("personalDigitalHumanTemplateGrid")?.addEventListener("click", (evt) => {
+      const previewBtn = evt.target.closest("[data-preview-personal-dh-template]");
+      const card = evt.target.closest("[data-personal-dh-template]");
+      const id = String((previewBtn && previewBtn.dataset.previewPersonalDhTemplate) || (card && card.dataset.personalDhTemplate) || "");
+      const item = (state.personalDigitalHumanTemplates || []).find((row) => String(row.style_id || "") === id);
+      if (!item) return;
+      if (previewBtn) {
+        openPersonalDigitalHumanPreview(item);
+        return;
+      }
+      state.personalDigitalHumanTemplateDraft = clonePersonalDigitalHumanTemplate(item);
+      renderPersonalDigitalHumanTemplatePicker();
+    });
+    $("personalDigitalHumanTemplateGrid")?.addEventListener("keydown", (evt) => {
+      if (evt.key !== "Enter" && evt.key !== " ") return;
+      if (evt.target.closest("[data-preview-personal-dh-template]")) return;
+      const card = evt.target.closest("[data-personal-dh-template]");
+      if (!card) return;
+      evt.preventDefault();
+      const item = (state.personalDigitalHumanTemplates || []).find((row) => String(row.style_id || "") === String(card.dataset.personalDhTemplate || ""));
+      if (!item) return;
+      state.personalDigitalHumanTemplateDraft = clonePersonalDigitalHumanTemplate(item);
+      renderPersonalDigitalHumanTemplatePicker();
+    });
+    $("personalDigitalHumanPreviewBackdrop")?.addEventListener("click", closePersonalDigitalHumanPreview);
+    $("personalDigitalHumanPreviewClose")?.addEventListener("click", closePersonalDigitalHumanPreview);
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
     $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => toast(err.message || "添加失败")));
     $("personalOpenUploadBtn")?.addEventListener("click", openPersonalUploadModal);
