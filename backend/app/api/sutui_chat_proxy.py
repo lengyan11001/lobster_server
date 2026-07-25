@@ -708,9 +708,9 @@ def _xskill_upstream_pool_quota_error(data: Any) -> bool:
 
 
 def _parse_sutui_chat_fallback_chain_env() -> List[str]:
-    """主→备模型顺序：默认主模型 → gpt-5.4-pro → deepseek-chat；可用 SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON 覆盖。"""
+    """主→备模型顺序：默认主模型 → openai/gpt-5.6-sol → deepseek-chat。"""
     raw = (os.environ.get("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON") or "").strip()
-    default = ["gpt-5.4-pro", "deepseek-chat"]
+    default = ["openai/gpt-5.6-sol", "deepseek-chat"]
     if not raw:
         return default
     try:
@@ -726,7 +726,11 @@ def _parse_sutui_chat_fallback_chain_env() -> List[str]:
 
 def _remap_model_id_for_sutui(mid: str) -> str:
     """对单个 model id 应用 SUTUI_CHAT_MODEL_MAP_JSON（与 body 一致）。"""
-    b: Dict[str, Any] = {"model": (mid or "").strip()}
+    normalized = (mid or "").strip()
+    # This xskill route requires its provider-qualified model ID.
+    if normalized == "openai/gpt-5.6-sol":
+        return normalized
+    b: Dict[str, Any] = {"model": normalized}
     if not b["model"]:
         return ""
     _remap_sutui_chat_model(b)

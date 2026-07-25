@@ -1,4 +1,7 @@
-from backend.app.api.sutui_chat_proxy import _sutui_chat_attempts_for_models
+from backend.app.api.sutui_chat_proxy import (
+    _sutui_chat_attempts_for_models,
+    _sutui_chat_model_candidates,
+)
 
 
 def test_forced_model_override_uses_single_exact_xskill_route():
@@ -27,3 +30,21 @@ def test_default_deepseek_chat_keeps_existing_fallback_routes():
         ("deepseek/deepseek-v3.2", "xskill-v3"),
         ("deepseek-chat", "xskill"),
     ]
+
+
+def test_default_chain_uses_provider_qualified_gpt_5_6_as_final_fallback(monkeypatch):
+    monkeypatch.delenv("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON", raising=False)
+    monkeypatch.delenv("SUTUI_CHAT_MODEL_MAP_JSON", raising=False)
+
+    candidates = _sutui_chat_model_candidates("deepseek-chat")
+    attempts = _sutui_chat_attempts_for_models(
+        candidates,
+        "sutui-token",
+        forced_model_override=False,
+    )
+
+    assert candidates == ["deepseek-chat", "openai/gpt-5.6-sol"]
+    assert (attempts[-1]["model"], attempts[-1]["provider"]) == (
+        "openai/gpt-5.6-sol",
+        "xskill",
+    )
