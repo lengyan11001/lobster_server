@@ -8205,7 +8205,7 @@
       }
       if (key === "ability") renderAbilityView();
       if (key !== "office") closeEmployeeModal();
-      if (key === "personalSettings") loadPersonalSettings();
+      if (key === "personalSettings") loadPersonalSettings(true);
       if (key === "taskList") loadTasks({ reset: true });
       if (key === "runList") loadRuns({ reset: true });
       if (key === "workList") {
@@ -9947,7 +9947,7 @@
     }
 
     async function loadPersonalTemplateRows() {
-      const data = await api("/api/ip-content/schedule-templates").catch(() => ({ items: [] }));
+      const data = await api("/api/ip-content/schedule-templates", { cache: "no-store" }).catch(() => ({ items: [] }));
       return (Array.isArray(data.items) ? data.items : []).filter((row) => !isPersonalDefaultTemplate(row));
     }
 
@@ -10493,6 +10493,7 @@
           <div class="personal-row-actions">
             ${defaultBtn}
             <button type="button" data-edit-personal-template="${escapeHtml(id)}">${own ? "编辑" : "套用"}</button>
+            ${own ? `<button class="danger-text" type="button" data-delete-personal-template="${escapeHtml(id)}">删除</button>` : ""}
             ${grantBtn}
           </div>
         </div>`;
@@ -10698,6 +10699,22 @@
       }
     }
 
+    async function deletePersonalTemplate(templateId, btn = null) {
+      const id = String(templateId || "").trim();
+      const row = (state.personalTemplates || []).find((item) => String(item.id || "") === id);
+      if (!row || row.source === "agent") throw new Error("只能删除自己创建的模板");
+      if (!confirm(`删除模板「${personalTemplateName(row)}」？删除后电脑端和手机端都会同步移除。`)) return;
+      personalSetBusy(btn, true, "删除中...");
+      try {
+        await api(`/api/ip-content/schedule-templates/${encodeURIComponent(id)}`, { method: "DELETE" });
+        if (String(state.personalEditingTemplateId || "") === id) resetPersonalTemplateForm();
+        await loadPersonalSettings(true);
+        personalSetStatus("模板已删除。电脑端和手机端刷新后会保持一致。");
+      } finally {
+        personalSetBusy(btn, false);
+      }
+    }
+
     async function addPersonalKeyword() {
       const input = $("personalKeywordInput");
       const displayInput = $("personalKeywordDisplayName");
@@ -10754,6 +10771,13 @@
       if (!box) return;
       const files = selectedPersonalUploadFiles();
       box.innerHTML = files.length ? files.map((file, idx) => personalFileChip(file, idx, "data-remove-personal-upload")).join("") : "";
+    }
+
+    function removePersonalUploadFile(index) {
+      if (!Number.isInteger(index) || index < 0) return;
+      state.personalUploadFiles = selectedPersonalUploadFiles().filter((_file, fileIdx) => fileIdx !== index);
+      renderPersonalSelectedFiles();
+      renderPersonalMemorySourceSelectors();
     }
 
     function handlePersonalUploadFilesChange() {
@@ -15212,7 +15236,17 @@
     $("personalSaveMemoryBtn")?.addEventListener("click", (evt) => savePersonalMemory(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
     $("personalSaveRawMemoryBtn")?.addEventListener("click", (evt) => savePersonalRawMemory(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
     $("personalMemoryFiles")?.addEventListener("change", handlePersonalUploadFilesChange);
+    $("personalSelectedFiles")?.addEventListener("click", (evt) => {
+      const removeBtn = evt.target.closest("[data-remove-personal-upload]");
+      if (!removeBtn) return;
+      removePersonalUploadFile(Number(removeBtn.dataset.removePersonalUpload || "-1"));
+    });
     $("personalCustomReferenceFile")?.addEventListener("change", handlePersonalCustomReferenceChange);
+    $("personalCustomReferenceInfo")?.addEventListener("click", (evt) => {
+      if (!evt.target.closest("[data-remove-personal-reference]")) return;
+      state.personalCustomReferenceFile = null;
+      renderPersonalCustomReference();
+    });
     $("personalSaveMode")?.addEventListener("change", syncPersonalSaveMode);
     $("personalMemoryUseProfile")?.addEventListener("change", (evt) => {
       state.personalMemoryUseProfile = !!evt.target.checked;
@@ -15237,11 +15271,10 @@
       const keywordBtn = evt.target.closest("[data-delete-personal-keyword]");
       const competitorBtn = evt.target.closest("[data-delete-personal-competitor]");
       const competitorSyncBtn = evt.target.closest("[data-sync-personal-competitor]");
-      const uploadRemove = evt.target.closest("[data-remove-personal-upload]");
-      const referenceRemove = evt.target.closest("[data-remove-personal-reference]");
       const previewMemoryBtn = evt.target.closest("[data-preview-personal-memory]");
       const deleteMemoryBtn = evt.target.closest("[data-delete-personal-memory]");
       const editTemplateBtn = evt.target.closest("[data-edit-personal-template]");
+      const deleteTemplateBtn = evt.target.closest("[data-delete-personal-template]");
       const useTemplateBtn = evt.target.closest("[data-use-personal-template]");
       const dispatchTemplateBtn = evt.target.closest("[data-agent-dispatch-template]");
       try {
@@ -15261,16 +15294,8 @@
           }
           return;
         }
-        if (uploadRemove) {
-          const idx = Number(uploadRemove.dataset.removePersonalUpload || "-1");
-          state.personalUploadFiles = selectedPersonalUploadFiles().filter((_file, fileIdx) => fileIdx !== idx);
-          renderPersonalSelectedFiles();
-          renderPersonalMemorySourceSelectors();
-          return;
-        }
-        if (referenceRemove) {
-          state.personalCustomReferenceFile = null;
-          renderPersonalCustomReference();
+        if (deleteTemplateBtn) {
+          await deletePersonalTemplate(deleteTemplateBtn.dataset.deletePersonalTemplate || "", deleteTemplateBtn);
           return;
         }
         if (previewMemoryBtn) {

@@ -2669,6 +2669,7 @@
     }
     .personal-template-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
     .personal-template-card button { flex: 0 0 auto; padding: 7px 12px; border-radius: 999px; background: rgba(36,92,255,.08); color: var(--blue); box-shadow: none; font-size: 12px; }
+    .personal-template-card button.danger-text { color: #d9483b; background: rgba(217,72,59,.08); }
     .personal-current-template {
       display: grid;
       gap: 8px;

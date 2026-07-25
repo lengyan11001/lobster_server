@@ -4136,6 +4136,33 @@ def delete_schedule_template(
         raise HTTPException(status_code=404, detail="模板不存在")
     row.status = "deleted"
     row.updated_at = _utcnow()
+
+    personal_default = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == current_user.id,
+            IPContentScheduleTemplate.name == _PERSONAL_DEFAULT_TEMPLATE_NAME,
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+    if personal_default is not None and personal_default.id != row.id:
+        default_meta = dict(personal_default.meta or {})
+        if str(default_meta.get("current_template_id") or "") == str(row.id):
+            default_meta.pop("current_template_id", None)
+            default_meta.pop("current_template_name", None)
+            personal_default.meta = _jsonable(default_meta)
+            personal_default.updated_at = _utcnow()
+
+    grants = (
+        db.query(H5AgentTemplateGrant)
+        .filter(H5AgentTemplateGrant.template_id == row.id, H5AgentTemplateGrant.status == "active")
+        .all()
+    )
+    for grant in grants:
+        grant.status = "deleted"
+        grant.updated_at = _utcnow()
     db.commit()
     return {"ok": True}
 

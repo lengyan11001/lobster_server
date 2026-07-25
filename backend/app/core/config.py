@@ -128,6 +128,15 @@ class Settings(BaseSettings):
     tikhub_api_key: Optional[str] = None
     """Default Lobster credits charged per successful TikHub query."""
     tikhub_query_unit_credits: float = 1.0
+    """Customer archive first-priority search provider. Values: auto/serper/google_cse/tavily/html."""
+    customer_research_search_provider: str = "auto"
+    """Stable web search API key. Keep it on the server; never send it to clients."""
+    serper_api_key: Optional[str] = None
+    google_cse_api_key: Optional[str] = None
+    google_cse_cx: Optional[str] = None
+    tavily_api_key: Optional[str] = None
+    """Company registry API key. The UI only exposes this as the company registry source."""
+    opencorporates_api_key: Optional[str] = None
     capability_sutui_mcp_url: Optional[str] = None
     capability_upstream_urls_json: Optional[str] = None
     reddit_comment2video_backend_url: Optional[str] = None
