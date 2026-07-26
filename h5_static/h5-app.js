@@ -3661,35 +3661,26 @@
       const nodes = (state.workflowNodesDraft || []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
       if (!nodes.length) {
         box.classList.remove("designer-workflow-groups");
+        box.classList.remove("workflow-time-list");
         box.innerHTML = `<div class="workflow-empty">还没有节点</div>`;
         return;
       }
       const selectedKey = workflowSelectedDateKey();
       const tasks = workflowTasksForDate(selectedKey);
       const runs = workflowRunsForDate(selectedKey);
-      const openGroups = new Set(Array.from(box.querySelectorAll("details.designer-workflow-group[open]"))
-        .map((item) => String(item.dataset.workflowGroup || "")));
-      const grouped = [];
-      const groupMap = new Map();
-      nodes.forEach((node) => {
-        const label = String(node.ability_label || "任务节点").trim() || "任务节点";
-        if (!groupMap.has(label)) {
-          const group = { label, nodes: [] };
-          groupMap.set(label, group);
-          grouped.push(group);
-        }
-        groupMap.get(label).nodes.push(node);
-      });
+      const expandedNodes = new Set(Array.from(box.querySelectorAll(".workflow-timeline-entry.is-expanded"))
+        .map((item) => String(item.dataset.workflowTimelineNode || "")));
       const nodeHtml = (node) => {
         const placeholder = workflowNodeIsPlaceholder(node);
         const children = workflowChildActions(node).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+        const nodeId = String(node.id || "");
+        const expanded = !!nodeId && expandedNodes.has(nodeId);
         const nodeStatus = workflowStatusInfo(node, workflowTaskForNodeDateOrCurrent(node, tasks, selectedKey), workflowLatestRunForNode(node, runs), selectedKey);
         const childHtml = children.map((action) => {
           const canEditAction = String(action && (action.action_type || action.type) || "publish").toLowerCase() === "publish";
           const actionStatus = workflowStatusInfo(action, workflowTaskForNodeDateOrCurrent(action, tasks, selectedKey), workflowLatestRunForNode(action, runs), selectedKey);
           return `
-            <div class="workflow-node-card workflow-action-card designer-workflow-node designer-workflow-action-node">
-              <div class="designer-workflow-branch" aria-hidden="true"></div>
+            <div class="workflow-node-card workflow-action-card workflow-time-node">
               <div class="workflow-node-time action">${escapeHtml(action.time || "--:--")}</div>
               <div class="workflow-node-main" ${canEditAction ? `data-workflow-parent-node="${escapeHtml(node.id || "")}" data-workflow-action-node="${escapeHtml(action.id || "")}"` : ""}>
                 <strong>${escapeHtml(action.ability_label || workflowActionLabel(action))}</strong>
@@ -3711,49 +3702,36 @@
           `;
         }).join("");
         return `
-          <div class="workflow-node-card designer-workflow-node${placeholder ? " is-placeholder" : ""}">
-            <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>
-            <div class="workflow-node-main"${placeholder ? "" : ` data-workflow-edit-node="${escapeHtml(node.id || "")}"`}>
-              <strong>${escapeHtml(node.ability_label || "任务节点")}</strong>
-              <span>${placeholder ? "敬请期待" : escapeHtml(node.department_name || node.note || "点击查看节点配置")}</span>
+          <div class="workflow-timeline-entry${expanded ? " is-expanded" : ""}" data-workflow-timeline-node="${escapeHtml(nodeId)}">
+            <div class="workflow-node-card workflow-time-node${placeholder ? " is-placeholder" : ""}">
+              <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>
+              <div class="workflow-node-main"${placeholder ? "" : ` data-workflow-edit-node="${escapeHtml(node.id || "")}"`}>
+                <strong>${escapeHtml(node.ability_label || "任务节点")}</strong>
+                <span>${placeholder ? "敬请期待" : escapeHtml(node.department_name || node.note || "点击查看节点配置")}</span>
+              </div>
+              <div class="workflow-node-status">
+                ${workflowStatusPillHtml(nodeStatus)}
+              </div>
+              <div class="workflow-node-actions">
+                ${children.length ? `<button class="workflow-child-toggle" type="button" data-workflow-toggle-children="${escapeHtml(nodeId)}" aria-expanded="${expanded ? "true" : "false"}"><span>下级 ${children.length}</span></button>` : ""}
+                ${placeholder ? "" : `<details class="task-action-menu workflow-node-action-menu">
+                  <summary>操作</summary>
+                  <div class="task-action-list">
+                    <button type="button" data-workflow-edit-node="${escapeHtml(node.id || "")}">设置参数</button>
+                    <button type="button" data-workflow-add-action="${escapeHtml(node.id || "")}">添加动作</button>
+                    <button type="button" data-workflow-demo-node="${escapeHtml(node.id || "")}">演示</button>
+                    <button class="danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>
+                  </div>
+                </details>`}
+              </div>
             </div>
-            <div class="workflow-node-status">
-              ${workflowStatusPillHtml(nodeStatus)}
-            </div>
-            <div class="workflow-node-actions">
-              ${placeholder ? "" : `<details class="task-action-menu workflow-node-action-menu">
-                <summary>操作</summary>
-                <div class="task-action-list">
-                  <button type="button" data-workflow-edit-node="${escapeHtml(node.id || "")}">设置参数</button>
-                  <button type="button" data-workflow-add-action="${escapeHtml(node.id || "")}">添加动作</button>
-                  <button type="button" data-workflow-demo-node="${escapeHtml(node.id || "")}">演示</button>
-                  <button class="danger-text" type="button" data-workflow-remove-node="${escapeHtml(node.id || "")}">删除</button>
-                </div>
-              </details>`}
-            </div>
+            ${children.length ? `<div class="workflow-child-list${expanded ? "" : " hidden"}">${childHtml}</div>` : ""}
           </div>
-          ${childHtml}
         `;
       };
-      box.classList.add("designer-workflow-groups");
-      box.innerHTML = grouped.map((group) => {
-        const childCount = group.nodes.reduce((total, node) => total + workflowChildActions(node).length, 0);
-        const itemCount = group.nodes.length + childCount;
-        const allPlaceholder = group.nodes.every((node) => workflowNodeIsPlaceholder(node));
-        const isOpen = openGroups.has(group.label);
-        return `<details class="designer-workflow-group" data-workflow-group="${escapeHtml(group.label)}"${isOpen ? " open" : ""}>
-          <summary>
-            <span class="designer-workflow-group-title">
-              <strong>${escapeHtml(group.label)}</strong>
-              <span>包含 ${itemCount} 个执行节点</span>
-            </span>
-            <em class="designer-workflow-group-state">${allPlaceholder ? "敬请期待" : "查看节点"}</em>
-          </summary>
-          <div class="designer-workflow-group-content">
-            ${group.nodes.map(nodeHtml).join("")}
-          </div>
-        </details>`;
-      }).join("");
+      box.classList.remove("designer-workflow-groups");
+      box.classList.add("workflow-time-list");
+      box.innerHTML = nodes.map(nodeHtml).join("");
     }
 
     function renderWorkflowTemplates() {
@@ -3899,19 +3877,30 @@
       return `<div class="custom-employee-node-list">${nodes.map((node, index) => {
         const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
         const nodeKey = `${tpl.id || ""}@@${node.id || index}`;
-        const childHtml = workflowChildActions(node).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || ""))).map((action) => `
-          <div class="custom-employee-node workflow-template-action-node">
-            <span>${escapeHtml(action.time || "--:--")}</span>
-            <strong>${escapeHtml(action.ability_label || workflowActionLabel(action))}</strong>
-            <em>使用上级输出素材</em>
+        const children = workflowChildActions(node).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+        const childHtml = children.map((action) => `
+          <div class="custom-employee-node custom-employee-child-node">
+            <time>${escapeHtml(action.time || "--:--")}</time>
+            <div class="custom-employee-node-copy">
+              <strong>${escapeHtml(action.ability_label || workflowActionLabel(action))}</strong>
+              <small>使用上级输出素材</small>
+            </div>
           </div>
         `).join("");
-        return `<div class="custom-employee-node">
-          <span>${escapeHtml(node.time || "--:--")}</span>
-          <strong>${escapeHtml(node.ability_label || plan.title || "任务节点")}</strong>
-          ${workflowNodeIsPlaceholder(node) ? `<em>敬请期待</em>` : `<button class="ghost" type="button" data-custom-employee-demo-node="${escapeHtml(nodeKey)}">演示</button>`}
-          ${node.note ? `<em>${escapeHtml(node.note)}</em>` : ""}
-        </div>${childHtml}`;
+        return `<div class="custom-employee-timeline-entry">
+          <div class="custom-employee-node">
+            <time>${escapeHtml(node.time || "--:--")}</time>
+            <div class="custom-employee-node-copy">
+              <strong>${escapeHtml(node.ability_label || plan.title || "任务节点")}</strong>
+              ${node.note ? `<small>${escapeHtml(node.note)}</small>` : ""}
+            </div>
+            <div class="custom-employee-node-actions">
+              ${children.length ? `<button class="ghost custom-employee-child-toggle" type="button" data-custom-employee-toggle-children aria-expanded="false"><span>下级 ${children.length}</span></button>` : ""}
+              ${workflowNodeIsPlaceholder(node) ? `<em>敬请期待</em>` : `<button class="ghost" type="button" data-custom-employee-demo-node="${escapeHtml(nodeKey)}">演示</button>`}
+            </div>
+          </div>
+          ${children.length ? `<div class="custom-employee-child-list hidden">${childHtml}</div>` : ""}
+        </div>`;
       }).join("")}</div>`;
     }
 
@@ -5523,9 +5512,10 @@
       }).join("")}`;
       trendPanel.innerHTML = `<div class="secretary-trend-copy">
         <strong>7日交付趋势</strong>
+        <em>单位：件</em>
         <span class="${escapeHtml(secretaryTrendClass(totalTrend))}">${escapeHtml(secretaryTrendArrow(totalTrend))}</span>
       </div>
-      <div class="secretary-sparkline">${secretarySparkline(totals.daily)}</div>`;
+      <div class="secretary-sparkline" aria-label="最近七天交付数量">${secretarySparkline(totals.daily)}</div>`;
       grid.innerHTML = stats.slice().sort((a, b) => b.score - a.score).map((stat, index) => {
         const last = stat.lastMs ? fmtTime(new Date(stat.lastMs).toISOString()) : "暂无";
         return `<button class="secretary-dept-card${secretaryPulseClass(stat)}" type="button" data-secretary-dept="${escapeHtml(stat.department.id)}" style="--accent:${index % 4}">
@@ -5622,7 +5612,7 @@
       const runningCount = (state.runs || []).filter(isActiveRun).length;
       if ($("officeDeviceCount")) $("officeDeviceCount").textContent = String(devices.length);
       if ($("officeEmployeeCount")) $("officeEmployeeCount").textContent = String(totalEmployees);
-      if ($("officeEmployeeTotal")) $("officeEmployeeTotal").textContent = `(${totalEmployees})`;
+      if ($("officeEmployeeTotal")) $("officeEmployeeTotal").textContent = String(totalEmployees);
       if ($("officeRunningCount")) $("officeRunningCount").textContent = String(runningCount);
       if ($("officeTotalCount")) $("officeTotalCount").textContent = String(devices.length);
       if ($("officeOnlineCount")) $("officeOnlineCount").textContent = String(onlineCount);
@@ -10179,7 +10169,7 @@
         state.personalKeywords || [],
         state.personalMemorySourceKeywords,
         "keyword",
-        (row) => row.display_name || row.keyword || `关键词 #${row.id}`,
+        (row) => row.keyword || `关键词 #${row.id}`,
         (row) => row.keyword || ""
       );
       renderPersonalSourceOptions(
@@ -10554,7 +10544,7 @@
             ${body}
           </section>`;
         };
-        tpl.innerHTML = section("关键词", keywordRows, state.personalSelectedKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "")
+        tpl.innerHTML = section("关键词", keywordRows, state.personalSelectedKeywords, "keyword", (row) => row.keyword || `#${row.id}`)
           + section("同行账号", competitorRows, state.personalSelectedCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "")
           + section("记忆文件", memoryRows, state.personalSelectedMemories, "memory_doc", personalMemoryTitle, (row) => row.notes || row.filename || "");
       }
@@ -10564,7 +10554,7 @@
         editingLabel.textContent = current ? `编辑：${personalTemplateName(current)}` : "新建模板";
       }
       renderPersonalSavedTemplates();
-      renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.display_name || row.keyword || `#${row.id}`, (row) => row.keyword || "", "data-delete-personal-keyword", "删除");
+      renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.keyword || `#${row.id}`, null, "data-delete-personal-keyword", "删除");
       renderPersonalRows("personalCompetitorList", state.personalCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "", "data-delete-personal-competitor", "删除", "data-sync-personal-competitor");
       renderPersonalMemorySourceSelectors();
       const uploadDocs = $("personalUploadDocList");
@@ -10717,12 +10707,10 @@
 
     async function addPersonalKeyword() {
       const input = $("personalKeywordInput");
-      const displayInput = $("personalKeywordDisplayName");
       const keyword = (input && input.value || "").trim();
       if (!keyword) throw new Error("请填写关键词");
-      const data = await api("/api/ip-content/keywords", { method: "POST", json: { keyword, display_name: (displayInput && displayInput.value || "").trim() || keyword, meta: { source: "h5_personal_settings" } } });
+      await api("/api/ip-content/keywords", { method: "POST", json: { keyword, display_name: keyword, meta: { source: "h5_personal_settings" } } });
       if (input) input.value = "";
-      if (displayInput) displayInput.value = "";
       await refreshPersonalDataPreserveSelection({ keywords: true });
     }
 
@@ -10914,7 +10902,7 @@
         ["目标客户", business.target_customer],
         ["优势", business.advantages],
       ].filter((item) => String(item[1] || "").trim()).map((item) => `${item[0]}：${item[1]}`);
-      const keywordLines = keywordRows.map((row) => row.display_name || row.keyword).filter(Boolean);
+      const keywordLines = keywordRows.map((row) => row.keyword).filter(Boolean);
       const competitorLines = competitorRows.map((row) => `${row.platform || ""} ${row.display_name || row.account_key || ""}`.trim()).filter(Boolean);
       const docLines = sourceDocs.map((doc) => {
         const title = personalMemoryTitle(doc);
@@ -14496,7 +14484,7 @@
         menu.removeAttribute("open");
       });
       document.querySelectorAll(".task-menu-open").forEach((item) => {
-        if (exceptMenu && (item === exceptMenu.closest(".workflow-node-card") || item === exceptMenu.closest(".designer-workflow-group"))) return;
+        if (exceptMenu && (item === exceptMenu.closest(".workflow-node-card") || item === exceptMenu.closest(".workflow-timeline-entry") || item === exceptMenu.closest(".designer-workflow-group"))) return;
         item.classList.remove("task-menu-open");
       });
     }
@@ -14506,14 +14494,17 @@
         const menu = evt.target;
         if (!menu || !menu.matches || !menu.matches(".task-action-menu")) return;
         const card = menu.closest(".workflow-node-card");
+        const entry = menu.closest(".workflow-timeline-entry");
         const group = menu.closest(".designer-workflow-group");
         if (!menu.open) {
           card?.classList.remove("task-menu-open");
+          if (entry && !entry.querySelector(".task-action-menu[open]")) entry.classList.remove("task-menu-open");
           if (group && !group.querySelector(".task-action-menu[open]")) group.classList.remove("task-menu-open");
           return;
         }
         closeTaskActionMenus(menu);
         card?.classList.add("task-menu-open");
+        entry?.classList.add("task-menu-open");
         group?.classList.add("task-menu-open");
       }, true);
       document.addEventListener("click", (evt) => {
@@ -14810,6 +14801,7 @@
     $("customEmployeeBackdrop")?.addEventListener("click", closeCustomEmployeeDialog);
     $("customEmployeeCloseBtn")?.addEventListener("click", closeCustomEmployeeDialog);
     $("customEmployeeDialogBody")?.addEventListener("click", (evt) => {
+      const childToggle = evt.target.closest("[data-custom-employee-toggle-children]");
       const listBtn = evt.target.closest("[data-custom-employee-list]");
       const detailBtn = evt.target.closest("[data-custom-employee-detail]");
       const editBtn = evt.target.closest("[data-custom-employee-edit]");
@@ -14818,6 +14810,17 @@
       const deleteBtn = evt.target.closest("[data-custom-employee-delete]");
       const copyBtn = evt.target.closest("[data-custom-employee-copy]");
       const demoBtn = evt.target.closest("[data-custom-employee-demo-node]");
+      if (childToggle) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        const entry = childToggle.closest(".custom-employee-timeline-entry");
+        const childList = entry && entry.querySelector(".custom-employee-child-list");
+        const expanded = childToggle.getAttribute("aria-expanded") === "true";
+        childToggle.setAttribute("aria-expanded", expanded ? "false" : "true");
+        entry?.classList.toggle("is-expanded", !expanded);
+        childList?.classList.toggle("hidden", expanded);
+        return;
+      }
       if (demoBtn) {
         evt.preventDefault();
         evt.stopPropagation();
@@ -14910,6 +14913,18 @@
     $("workflowTimeline")?.addEventListener("click", (evt) => {
       const workflowActionMenu = evt.target.closest && evt.target.closest(".workflow-node-action-menu");
       const workflowActionMenuButton = evt.target.closest && evt.target.closest(".workflow-node-action-menu .task-action-list button");
+      const childToggle = evt.target.closest("[data-workflow-toggle-children]");
+      if (childToggle) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        const entry = childToggle.closest(".workflow-timeline-entry");
+        const childList = entry && entry.querySelector(".workflow-child-list");
+        const expanded = childToggle.getAttribute("aria-expanded") === "true";
+        childToggle.setAttribute("aria-expanded", expanded ? "false" : "true");
+        entry?.classList.toggle("is-expanded", !expanded);
+        childList?.classList.toggle("hidden", expanded);
+        return;
+      }
       const runBtn = evt.target.closest("[data-open-run-detail]");
       if (runBtn) {
         evt.preventDefault();
