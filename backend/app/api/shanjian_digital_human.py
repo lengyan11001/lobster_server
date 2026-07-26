@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import logging
 import math
 import os
+import shutil
+import subprocess
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,7 +21,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
-from .assets import _get_tos_config, _save_bytes_or_tos, get_asset_public_url
+from .assets import _find_asset_ffmpeg, _get_tos_config, _save_bytes_or_tos, get_asset_public_url
 from .auth import get_current_user
 from .shanjian_smart_clip import _data, _get, _post
 
@@ -84,6 +88,7 @@ class CreateVideoBody(_TokenBody):
     resource_preprocess_method: str = "roughCut"
     material_composition: str = "random"
     video_duration: int = 30
+    hard_max_duration: Optional[float] = Field(default=None, ge=5, le=300)
 
 
 class VideoTaskBody(_TokenBody):
@@ -549,6 +554,200 @@ async def _download_media_bytes(media_url: str, *, accept: str = "*/*") -> tuple
         raise HTTPException(status_code=400, detail=f"下载媒体失败: HTTP {exc.response.status_code}") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"下载媒体失败: {type(exc).__name__}: {exc}") from exc
+
+
+def _duration_float(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if math.isfinite(seconds) and seconds > 0 else None
+
+
+def _requested_video_duration_limit(submit_payload: Any) -> Optional[float]:
+    if not isinstance(submit_payload, dict):
+        return None
+    constraints = submit_payload.get("output_constraints")
+    if isinstance(constraints, dict):
+        explicit = _duration_float(constraints.get("hard_max_duration"))
+        if explicit is not None:
+            return max(5.0, min(explicit, 300.0))
+
+    template_meta = _template_meta_from_submit_payload(submit_payload)
+    if template_meta and _clean_text(template_meta.get("style_id")):
+        configured = _duration_float(template_meta.get("video_duration"))
+        if configured is not None:
+            return max(5.0, min(configured, 300.0))
+    return None
+
+
+def _ffprobe_duration(ffmpeg: str, video_path: Path) -> float:
+    sibling = Path(ffmpeg).with_name("ffprobe.exe" if Path(ffmpeg).suffix.lower() == ".exe" else "ffprobe")
+    ffprobe = str(sibling) if sibling.is_file() else (shutil.which("ffprobe") or shutil.which("ffprobe.exe") or "")
+    if not ffprobe:
+        raise RuntimeError("服务器缺少 ffprobe，无法校验裁剪后的视频时长")
+    proc = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "ffprobe failed").strip()[-500:]
+        raise RuntimeError(f"裁剪后视频时长校验失败：{detail}")
+    duration = _duration_float((proc.stdout or "").strip())
+    if duration is None:
+        raise RuntimeError("裁剪后视频没有可用时长")
+    return duration
+
+
+def _run_ffmpeg_duration_cap(video_data: bytes, max_seconds: float) -> tuple[bytes, float]:
+    ffmpeg = _find_asset_ffmpeg()
+    # Leave a small margin for the final encoded frame so platforms with a hard
+    # duration boundary do not reject a nominally exact 30-second video.
+    target_seconds = max(1.0, float(max_seconds) - 0.25)
+    with tempfile.TemporaryDirectory(prefix="shanjian_duration_cap_") as tmp:
+        tmpdir = Path(tmp)
+        source = tmpdir / "source.mp4"
+        output = tmpdir / "final.mp4"
+        source.write_bytes(video_data)
+        proc = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-i",
+                str(source),
+                "-t",
+                f"{target_seconds:.3f}",
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "21",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
+                "-max_muxing_queue_size",
+                "2048",
+                str(output),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        if proc.returncode != 0 or not output.is_file() or output.stat().st_size <= 0:
+            detail = (proc.stderr or proc.stdout or "ffmpeg failed").strip()[-800:]
+            raise RuntimeError(f"数字人成片时长裁剪失败：{detail}")
+        actual_seconds = _ffprobe_duration(ffmpeg, output)
+        if actual_seconds > float(max_seconds) + 0.02:
+            raise RuntimeError(f"裁剪后视频仍超过时长限制：{actual_seconds:.2f}s > {max_seconds:.2f}s")
+        return output.read_bytes(), actual_seconds
+
+
+async def _apply_video_duration_limit(
+    *,
+    row: ShanjianDigitalHumanVideoTask,
+    db: Session,
+    current_user: User,
+    source_video_url: str,
+    source_duration: Any,
+) -> tuple[str, Any, Optional[Dict[str, Any]]]:
+    submit_payload = dict(row.submit_payload or {})
+    limit_seconds = _requested_video_duration_limit(submit_payload)
+    if limit_seconds is None:
+        return source_video_url, source_duration, None
+
+    constraints = dict(submit_payload.get("output_constraints") or {})
+    existing_url = _clean_text(constraints.get("final_video_url"))
+    existing_duration = _duration_float(constraints.get("final_duration"))
+    if existing_url and existing_duration is not None:
+        return existing_url, existing_duration, constraints
+
+    actual_source_duration = _duration_float(source_duration)
+    constraints["hard_max_duration"] = limit_seconds
+    constraints["source_video_url"] = source_video_url
+    constraints["source_duration"] = actual_source_duration
+    if actual_source_duration is not None and actual_source_duration <= limit_seconds:
+        constraints.update(
+            {
+                "duration_status": "within_limit",
+                "final_video_url": source_video_url,
+                "final_duration": actual_source_duration,
+            }
+        )
+        submit_payload["output_constraints"] = constraints
+        row.submit_payload = submit_payload
+        return source_video_url, actual_source_duration, constraints
+
+    video_data, _content_type = await _download_media_bytes(source_video_url, accept="video/*,*/*;q=0.8")
+    try:
+        trimmed_data, final_duration = await asyncio.to_thread(_run_ffmpeg_duration_cap, video_data, limit_seconds)
+        asset_id, filename_or_key, file_size, public_url = await asyncio.to_thread(
+            _save_bytes_or_tos,
+            trimmed_data,
+            ".mp4",
+            "video/mp4",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if not public_url:
+        raise HTTPException(status_code=503, detail="裁剪后的数字人成片转存 TOS 失败")
+
+    db.add(
+        Asset(
+            asset_id=asset_id,
+            user_id=int(current_user.id),
+            filename=filename_or_key,
+            media_type="video",
+            file_size=file_size,
+            source_url=public_url,
+            prompt=_clean_text(row.title)[:200],
+            model="shanjian-digital-human-duration-cap",
+            tags="shanjian,digital-human,final,duration-cap",
+            meta={
+                "source": "shanjian_digital_human_duration_cap",
+                "source_url_hint": _url_hint(source_video_url),
+                "source_duration": actual_source_duration,
+                "hard_max_duration": limit_seconds,
+                "final_duration": final_duration,
+            },
+        )
+    )
+    db.flush()
+    constraints.update(
+        {
+            "duration_status": "trimmed",
+            "final_video_url": public_url,
+            "final_asset_id": asset_id,
+            "final_duration": final_duration,
+        }
+    )
+    submit_payload["output_constraints"] = constraints
+    row.submit_payload = submit_payload
+    logger.info(
+        "[shanjian-dh] duration capped user_id=%s task_id=%s source=%.3s limit=%.3s final=%.3s asset_id=%s",
+        getattr(current_user, "id", ""),
+        row.task_id,
+        actual_source_duration or 0.0,
+        limit_seconds,
+        final_duration,
+        asset_id,
+    )
+    return public_url, final_duration, constraints
 
 
 async def _persist_media_for_shanjian(
@@ -1372,6 +1571,8 @@ async def create_video(
 
     template_meta, template_source = _resolve_video_template_meta(db, int(current_user.id), body)
     submit_payload: Dict[str, Any] = {"base": payload, "stage": "base"}
+    if body.hard_max_duration is not None:
+        submit_payload["output_constraints"] = {"hard_max_duration": float(body.hard_max_duration)}
     if template_meta:
         submit_payload["template"] = template_meta
         submit_payload["template_source"] = template_source
@@ -1472,11 +1673,27 @@ async def query_video_task(
         row.video_url = _clean_text(_pick_result_value(result, "videoUrl")) or row.video_url
         row.cover_url = _clean_text(_pick_result_value(result, "coverUrl")) or row.cover_url
         duration_value = _pick_result_value(result, "duration")
+        postprocess: Optional[Dict[str, Any]] = None
+        if status == "succeed" and row.video_url:
+            try:
+                row.video_url, duration_value, postprocess = await _apply_video_duration_limit(
+                    row=row,
+                    db=db,
+                    current_user=current_user,
+                    source_video_url=row.video_url,
+                    source_duration=duration_value,
+                )
+            except HTTPException as exc:
+                status = "failed"
+                row.status = status
+                error_message = f"数字人成片时长处理失败：{getattr(exc, 'detail', str(exc))}"
         try:
-            row.duration = int(duration_value) if duration_value not in (None, "") else row.duration
+            row.duration = int(math.ceil(float(duration_value))) if duration_value not in (None, "") else row.duration
         except Exception:
             pass
         row.result_payload = {"base": submit_payload.get("base_result"), "clip": payload}
+        if postprocess:
+            row.result_payload["postprocess"] = postprocess
         row.error_message = error_message or None
         row.updated_at = datetime.utcnow()
         await _finalize_row_billing(
@@ -1518,7 +1735,7 @@ async def query_video_task(
     row.cover_url = _clean_text(_pick_result_value(result, "coverUrl")) or row.cover_url
     duration_value = _pick_result_value(result, "duration")
     try:
-        row.duration = int(duration_value) if duration_value not in (None, "") else row.duration
+        row.duration = int(math.ceil(float(duration_value))) if duration_value not in (None, "") else row.duration
     except Exception:
         pass
 
@@ -1581,7 +1798,22 @@ async def query_video_task(
             "raw": {"base": payload, "clip_submit": clip_submit},
         }
 
-    row.result_payload = payload
+    postprocess = None
+    if status == "succeed" and row.video_url:
+        try:
+            row.video_url, duration_value, postprocess = await _apply_video_duration_limit(
+                row=row,
+                db=db,
+                current_user=current_user,
+                source_video_url=row.video_url,
+                source_duration=duration_value,
+            )
+            row.duration = int(math.ceil(float(duration_value)))
+        except HTTPException as exc:
+            status = "failed"
+            row.status = status
+            error_message = f"数字人成片时长处理失败：{getattr(exc, 'detail', str(exc))}"
+    row.result_payload = payload if not postprocess else {"base": payload, "postprocess": postprocess}
     row.error_message = error_message or None
     row.updated_at = datetime.utcnow()
     await _finalize_row_billing(

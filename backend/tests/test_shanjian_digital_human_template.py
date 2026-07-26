@@ -1,9 +1,14 @@
+import pytest
+
+from backend.app.api import shanjian_digital_human as digital_human_api
 from backend.app.api.shanjian_digital_human import (
     CreateVideoBody,
+    _apply_video_duration_limit,
+    _requested_video_duration_limit,
     _resolve_video_template_meta,
     _stored_digital_human_template,
 )
-from backend.app.models import IPContentScheduleTemplate
+from backend.app.models import Asset, IPContentScheduleTemplate, ShanjianDigitalHumanVideoTask
 
 
 def test_h5_app_exposes_digital_human_template_list_route():
@@ -114,3 +119,91 @@ def test_stored_template_rules_are_normalized_without_trusting_bad_duration():
     assert template_meta["video_duration"] == 30
     assert template_meta["subtitle_switch"] is False
     assert template_meta["watermark_show"] is True
+
+
+def test_editing_template_duration_is_a_hard_output_limit():
+    assert _requested_video_duration_limit(
+        {"template": {"style_id": "style-1", "video_duration": 30}}
+    ) == 30.0
+
+
+def test_explicit_hard_output_limit_overrides_template_duration():
+    assert _requested_video_duration_limit(
+        {
+            "output_constraints": {"hard_max_duration": 29},
+            "template": {"style_id": "style-1", "video_duration": 60},
+        }
+    ) == 29.0
+
+
+@pytest.mark.asyncio
+async def test_overlong_edited_video_is_replaced_with_trimmed_tos_asset(db_session, test_user, monkeypatch):
+    row = ShanjianDigitalHumanVideoTask(
+        user_id=test_user.id,
+        title="朋友圈数字人口播",
+        status="succeed",
+        task_id="base-task-1",
+        submit_payload={"template": {"style_id": "style-1", "video_duration": 30}},
+    )
+    db_session.add(row)
+    db_session.flush()
+
+    async def fake_download(_url, *, accept="*/*"):
+        assert accept.startswith("video/")
+        return b"source-video", "video/mp4"
+
+    monkeypatch.setattr(digital_human_api, "_download_media_bytes", fake_download)
+    monkeypatch.setattr(
+        digital_human_api,
+        "_run_ffmpeg_duration_cap",
+        lambda data, limit: (b"trimmed-video", 29.72),
+    )
+    monkeypatch.setattr(
+        digital_human_api,
+        "_save_bytes_or_tos",
+        lambda data, ext, content_type: ("trimmed123", "assets/trimmed123.mp4", len(data), "https://cdn.test/trimmed123.mp4"),
+    )
+
+    final_url, final_duration, postprocess = await _apply_video_duration_limit(
+        row=row,
+        db=db_session,
+        current_user=test_user,
+        source_video_url="https://upstream.test/edited.mp4",
+        source_duration=32.12,
+    )
+
+    assert final_url == "https://cdn.test/trimmed123.mp4"
+    assert final_duration == 29.72
+    assert postprocess["duration_status"] == "trimmed"
+    assert row.submit_payload["output_constraints"]["final_asset_id"] == "trimmed123"
+    asset = db_session.query(Asset).filter(Asset.asset_id == "trimmed123").one()
+    assert asset.meta["source_duration"] == 32.12
+
+
+@pytest.mark.asyncio
+async def test_video_within_template_duration_is_not_reencoded(db_session, test_user, monkeypatch):
+    row = ShanjianDigitalHumanVideoTask(
+        user_id=test_user.id,
+        title="短数字人口播",
+        status="succeed",
+        task_id="base-task-2",
+        submit_payload={"template": {"style_id": "style-1", "video_duration": 30}},
+    )
+    db_session.add(row)
+    db_session.flush()
+
+    async def should_not_download(*_args, **_kwargs):
+        raise AssertionError("within-limit video should not be downloaded")
+
+    monkeypatch.setattr(digital_human_api, "_download_media_bytes", should_not_download)
+    final_url, final_duration, postprocess = await _apply_video_duration_limit(
+        row=row,
+        db=db_session,
+        current_user=test_user,
+        source_video_url="https://upstream.test/short.mp4",
+        source_duration=24.6,
+    )
+
+    assert final_url == "https://upstream.test/short.mp4"
+    assert final_duration == 24.6
+    assert postprocess["duration_status"] == "within_limit"
