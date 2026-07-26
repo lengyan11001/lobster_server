@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
 
+import httpx
 import pytest
 
 
@@ -19,6 +21,62 @@ class _JsonResponse:
 
     def json(self):
         return self._payload
+
+
+def test_mcp_gateway_allows_understand_calls_to_finish():
+    from backend.app.api.mcp_gateway import _mcp_gateway_forward_read_timeout_sec
+
+    body = json.dumps({
+        "jsonrpc": "2.0",
+        "id": "understand-timeout-test",
+        "method": "tools/call",
+        "params": {
+            "name": "invoke_capability",
+            "arguments": {
+                "capability_id": "image.understand",
+                "payload": {"image_urls": ["https://example.test/image.png"]},
+            },
+        },
+    }).encode("utf-8")
+
+    assert _mcp_gateway_forward_read_timeout_sec(body) == 6.5 * 60.0
+
+
+@pytest.mark.asyncio
+async def test_apiz_vision_uses_extended_timeout_and_reports_read_timeout(monkeypatch):
+    from mcp import http_server
+
+    captured = {}
+
+    class _TimeoutClient:
+        def __init__(self, *args, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            raise httpx.ReadTimeout("")
+
+    monkeypatch.setattr(http_server.httpx, "AsyncClient", _TimeoutClient)
+
+    result = await http_server._call_apiz_chat_completions_vision(
+        "https://example.test",
+        "token",
+        {
+            "model": "openai/gpt-5.5",
+            "prompt": "Analyze this image",
+            "image_urls": ["https://example.test/image.png"],
+        },
+        lobster_capability_id="image.understand",
+    )
+
+    assert captured["timeout"].read == 6 * 60.0
+    assert "360" in result["error"]["message"]
+    assert "ReadTimeout" in result["error"]["message"]
 
 
 @pytest.mark.asyncio

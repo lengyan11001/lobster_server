@@ -56,6 +56,7 @@ _DEFAULT_VIDEO_MODEL = (
 ).strip() or "xai/grok-imagine-video/text-to-video"
 _GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS = 10
 _GPT_IMAGE_2_MODEL_ID = "openai/gpt-image-2"
+_APIZ_VISION_READ_TIMEOUT_SECONDS = 6 * 60.0
 _GPT_IMAGE_2_MODEL_IDS = frozenset(
     {
         _GPT_IMAGE_2_MODEL_ID,
@@ -1015,17 +1016,41 @@ async def _call_apiz_chat_completions_vision(
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+    vision_timeout = httpx.Timeout(
+        connect=120.0,
+        read=_APIZ_VISION_READ_TIMEOUT_SECONDS,
+        write=120.0,
+        pool=60.0,
+    )
     try:
-        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=vision_timeout, trust_env=False) as client:
             resp = await client.post(url, json=body, headers=headers)
+    except httpx.ReadTimeout as e:
+        error_detail = str(e).strip() or type(e).__name__
+        logger.warning(
+            "[apiz-chat] vision processing timeout capability=%s model=%s timeout=%ss err=%s",
+            lobster_capability_id or "(none)",
+            model,
+            int(_APIZ_VISION_READ_TIMEOUT_SECONDS),
+            error_detail,
+        )
+        return {
+            "error": {
+                "message": (
+                    f"上游图片理解处理超时（已等待 {int(_APIZ_VISION_READ_TIMEOUT_SECONDS)} 秒）："
+                    f"{error_detail}"
+                )
+            }
+        }
     except httpx.HTTPError as e:
+        error_detail = str(e).strip() or type(e).__name__
         logger.warning(
             "[apiz-chat] vision network error capability=%s model=%s err=%s",
             lobster_capability_id or "(none)",
             model,
-            e,
+            error_detail,
         )
-        return {"error": {"message": f"上游 chat/completions 网络不可达: {e}"}}
+        return {"error": {"message": f"上游 chat/completions 网络请求失败: {error_detail}"}}
 
     try:
         raw = resp.json() if resp.content else {}

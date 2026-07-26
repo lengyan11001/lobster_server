@@ -89,6 +89,8 @@ def _mcp_gateway_forward_read_timeout_sec(body: bytes) -> float:
         return 40 * 60.0
     if cap == "task.get_result":
         return 35 * 60.0
+    if cap in {"image.understand", "video.understand"}:
+        return 6.5 * 60.0
     if cap == "image.generate":
         return 25 * 60.0
     # 兼容老名（comfly.veo*）与新名（comfly.daihuo*）
