@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
-from .assets import _find_asset_ffmpeg, _get_tos_config, _save_bytes_or_tos, get_asset_public_url
+from .assets import _find_asset_ffmpeg, _gen_asset_id, _get_tos_config, _save_bytes_or_tos, get_asset_public_url
 from .auth import get_current_user
 from .shanjian_smart_clip import _data, _get, _post
 
@@ -656,6 +656,42 @@ def _run_ffmpeg_duration_cap(video_data: bytes, max_seconds: float) -> tuple[byt
         return output.read_bytes(), actual_seconds
 
 
+def _register_final_video_asset(
+    *,
+    row: ShanjianDigitalHumanVideoTask,
+    db: Session,
+    current_user: User,
+    video_url: str,
+    duration: Optional[float],
+    duration_status: str,
+) -> str:
+    asset_id = _gen_asset_id()
+    filename = Path(urlparse(video_url).path).name[:255] or f"{asset_id}.mp4"
+    db.add(
+        Asset(
+            asset_id=asset_id,
+            user_id=int(current_user.id),
+            filename=filename,
+            media_type="video",
+            file_size=None,
+            source_url=video_url,
+            prompt=_clean_text(row.title)[:200],
+            model="shanjian-digital-human-final",
+            tags="shanjian,digital-human,final,template-edited",
+            meta={
+                "source": "shanjian_digital_human_final",
+                "asset_origin": "generated",
+                "content_visibility": "visible",
+                "task_id": row.task_id,
+                "duration": duration,
+                "duration_status": duration_status,
+            },
+        )
+    )
+    db.flush()
+    return asset_id
+
+
 async def _apply_video_duration_limit(
     *,
     row: ShanjianDigitalHumanVideoTask,
@@ -666,24 +702,32 @@ async def _apply_video_duration_limit(
 ) -> tuple[str, Any, Optional[Dict[str, Any]]]:
     submit_payload = dict(row.submit_payload or {})
     limit_seconds = _requested_video_duration_limit(submit_payload)
-    if limit_seconds is None:
-        return source_video_url, source_duration, None
-
     constraints = dict(submit_payload.get("output_constraints") or {})
     existing_url = _clean_text(constraints.get("final_video_url"))
     existing_duration = _duration_float(constraints.get("final_duration"))
-    if existing_url and existing_duration is not None:
-        return existing_url, existing_duration, constraints
+    if existing_url and _clean_text(constraints.get("final_asset_id")):
+        return existing_url, existing_duration if existing_duration is not None else source_duration, constraints
 
     actual_source_duration = _duration_float(source_duration)
-    constraints["hard_max_duration"] = limit_seconds
+    if limit_seconds is not None:
+        constraints["hard_max_duration"] = limit_seconds
     constraints["source_video_url"] = source_video_url
     constraints["source_duration"] = actual_source_duration
-    if actual_source_duration is not None and actual_source_duration <= limit_seconds:
+    if limit_seconds is None or (actual_source_duration is not None and actual_source_duration <= limit_seconds):
+        duration_status = "unbounded" if limit_seconds is None else "within_limit"
+        final_asset_id = _register_final_video_asset(
+            row=row,
+            db=db,
+            current_user=current_user,
+            video_url=source_video_url,
+            duration=actual_source_duration,
+            duration_status=duration_status,
+        )
         constraints.update(
             {
-                "duration_status": "within_limit",
+                "duration_status": duration_status,
                 "final_video_url": source_video_url,
+                "final_asset_id": final_asset_id,
                 "final_duration": actual_source_duration,
             }
         )
@@ -720,6 +764,8 @@ async def _apply_video_duration_limit(
             tags="shanjian,digital-human,final,duration-cap",
             meta={
                 "source": "shanjian_digital_human_duration_cap",
+                "asset_origin": "generated",
+                "content_visibility": "visible",
                 "source_url_hint": _url_hint(source_video_url),
                 "source_duration": actual_source_duration,
                 "hard_max_duration": limit_seconds,
@@ -782,6 +828,8 @@ async def _persist_media_for_shanjian(
         tags="shanjian,digital-human,template-media",
         meta={
             "source": "shanjian_digital_human_template_transfer",
+            "asset_origin": "intermediate",
+            "content_visibility": "hidden",
             "label": label,
             "original_url_hint": _url_hint(raw),
             "content_type": media_type_header,

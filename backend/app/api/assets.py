@@ -921,6 +921,23 @@ def _asset_origin(meta: Optional[dict]) -> str:
     return "generated"
 
 
+def _asset_hidden_from_library(row: Asset) -> bool:
+    meta = row.meta
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except Exception:
+            meta = None
+    if isinstance(meta, dict):
+        visibility = str(meta.get("content_visibility") or meta.get("library_visibility") or "").strip().lower()
+        origin = str(meta.get("asset_origin") or meta.get("origin") or "").strip().lower()
+        if visibility in {"hidden", "internal", "intermediate"} or origin in {"internal", "intermediate"}:
+            return True
+    # Historical rows created before content_visibility was recorded must also
+    # stay out of the user-facing content list.
+    return str(row.model or "").strip() == "shanjian-digital-human-template-media"
+
+
 def _normalize_asset_origin_filter(value: Optional[str]) -> str:
     raw = str(value or "").strip().lower()
     if raw in ("user_upload", "upload", "uploaded", "manual_upload"):
@@ -984,13 +1001,14 @@ def list_assets(
         matched = [
             row
             for row in query.order_by(Asset.created_at.desc()).all()
-            if _asset_origin(row.meta) == origin_filter
+            if _asset_origin(row.meta) == origin_filter and not _asset_hidden_from_library(row)
         ]
         total = len(matched)
         rows = matched[offset : offset + max_limit]
     else:
-        total = query.count()
-        rows = query.order_by(Asset.created_at.desc()).offset(offset).limit(max_limit).all()
+        matched = [row for row in query.order_by(Asset.created_at.desc()).all() if not _asset_hidden_from_library(row)]
+        total = len(matched)
+        rows = matched[offset : offset + max_limit]
     return {
         "total": total,
         "assets": [

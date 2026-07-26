@@ -1,6 +1,7 @@
 import pytest
 
 from backend.app.api import shanjian_digital_human as digital_human_api
+from backend.app.api.assets import _asset_hidden_from_library, list_assets
 from backend.app.api.shanjian_digital_human import (
     CreateVideoBody,
     _apply_video_duration_limit,
@@ -207,3 +208,53 @@ async def test_video_within_template_duration_is_not_reencoded(db_session, test_
     assert final_url == "https://upstream.test/short.mp4"
     assert final_duration == 24.6
     assert postprocess["duration_status"] == "within_limit"
+    assert postprocess["final_asset_id"]
+    final_asset = db_session.query(Asset).filter(Asset.asset_id == postprocess["final_asset_id"]).one()
+    assert final_asset.model == "shanjian-digital-human-final"
+    assert final_asset.source_url == final_url
+
+
+def test_shanjian_template_intermediate_asset_is_hidden_from_content_library(db_session, test_user):
+    historical = Asset(
+        asset_id="historical-intermediate",
+        user_id=test_user.id,
+        filename="base.mp4",
+        media_type="video",
+        model="shanjian-digital-human-template-media",
+    )
+    explicit = Asset(
+        asset_id="explicit-intermediate",
+        user_id=test_user.id,
+        filename="base-2.mp4",
+        media_type="video",
+        model="other",
+        meta={"asset_origin": "intermediate", "content_visibility": "hidden"},
+    )
+    final = Asset(
+        asset_id="visible-final",
+        user_id=test_user.id,
+        filename="final.mp4",
+        media_type="video",
+        model="shanjian-digital-human-final",
+        meta={"asset_origin": "generated", "content_visibility": "visible"},
+    )
+
+    assert _asset_hidden_from_library(historical) is True
+    assert _asset_hidden_from_library(explicit) is True
+    assert _asset_hidden_from_library(final) is False
+
+    db_session.add_all([historical, explicit, final])
+    db_session.commit()
+    payload = list_assets(
+        media_type="video",
+        q=None,
+        source=None,
+        origin="generated",
+        asset_origin=None,
+        limit=50,
+        offset=0,
+        current_user=test_user,
+        db=db_session,
+    )
+    assert payload["total"] == 1
+    assert [item["asset_id"] for item in payload["assets"]] == ["visible-final"]

@@ -5740,7 +5740,7 @@
     }
 
     function assetTitle(asset) {
-      const raw = asset && (asset.title || asset.name || asset.tags || asset.prompt || asset.filename || asset.asset_id);
+      const raw = asset && (asset.title || asset.name || asset.prompt || asset.filename || asset.tags || asset.asset_id);
       const title = valueLabel(raw);
       return title || "素材";
     }
