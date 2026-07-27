@@ -78,6 +78,7 @@
       workflowTemplates: [],
       workflowTemplatesLoaded: false,
       workflowTemplatesLoading: false,
+      workflowTemplateSaving: false,
       workflowCanGrant: false,
       workflowNodesDraft: [],
       workflowEditingTemplateId: "",
@@ -3924,12 +3925,11 @@
       });
       const mergedSystemRows = systemRows.map((tpl) => mirrors.get(String(tpl.id || "")) || tpl);
       const mergedIds = new Set(mergedSystemRows.map((tpl) => String(tpl && tpl.id || "")));
-      const mirrorIds = new Set(Array.from(mirrors.values()).map((tpl) => String(tpl && tpl.id || "")));
       return [
         ...mergedSystemRows,
         ...userRows.filter((tpl) => {
           const id = String(tpl && tpl.id || "");
-          return !mirrorIds.has(id) && !mergedIds.has(id);
+          return !workflowSystemTemplateKey(tpl) && !mergedIds.has(id);
         }),
       ];
     }
@@ -4008,6 +4008,19 @@
       return (name.slice(0, 1) || "员").toUpperCase();
     }
 
+    function workflowTemplateCover(tpl) {
+      const key = workflowSystemTemplateKey(tpl) || (tpl && tpl.source === "system" ? String(tpl.id || "") : "");
+      return key === "system_sales" ? "/h5-static/designer-employee-sales.jpg" : "";
+    }
+
+    function workflowTemplateAvatarHtml(tpl, large = false) {
+      const cover = workflowTemplateCover(tpl);
+      const sizeClass = large ? " large" : "";
+      return `<span class="custom-employee-avatar${sizeClass}${cover ? " has-cover" : ""}">${cover
+        ? `<img src="${escapeHtml(cover)}" alt="" loading="lazy">`
+        : escapeHtml(workflowTemplateInitial(tpl))}</span>`;
+    }
+
     function workflowTemplateNodeListHtmlLegacy(tpl) {
       const nodes = (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
       if (!nodes.length) return `<div class="custom-employee-empty">暂无任务节点</div>`;
@@ -4065,7 +4078,7 @@
       const active = workflowTemplateIsActive(tpl);
       const detailAttr = comingSoon ? ' disabled aria-disabled="true"' : ` data-custom-employee-detail="${escapeHtml(tpl.id || "")}"`;
       return `<button class="custom-employee-card${compact ? " compact" : ""}${active ? " active" : ""}${comingSoon ? " coming-soon" : ""}" type="button"${detailAttr}>
-        <span class="custom-employee-avatar">${escapeHtml(workflowTemplateInitial(tpl))}</span>
+        ${workflowTemplateAvatarHtml(tpl)}
         <span class="custom-employee-main">
           <strong>${escapeHtml(tpl.name || "自定义员工")}</strong>
           <em>${escapeHtml(nodeCount ? `${nodeCount} 个节点` : "暂无节点")}</em>
@@ -4135,7 +4148,7 @@
       if (title) title.textContent = tpl.name || "自定义员工";
       body.innerHTML = `<div class="custom-employee-detail">
         <div class="custom-employee-detail-head">
-          <span class="custom-employee-avatar large">${escapeHtml(workflowTemplateInitial(tpl))}</span>
+          ${workflowTemplateAvatarHtml(tpl, true)}
           <div>
             <strong>${escapeHtml(tpl.name || "自定义员工")}</strong>
             <em>${escapeHtml(workflowTemplateSourceText(tpl))} · ${escapeHtml(workflowTemplateNodeCount(tpl) + " 个节点")}</em>
@@ -4287,6 +4300,7 @@
     }
 
     async function saveWorkflowTemplate() {
+      if (state.workflowTemplateSaving) return;
       const name = ($("workflowTemplateName") && $("workflowTemplateName").value || "").trim();
       if (!name) {
         $("workflowTemplateName")?.focus();
@@ -4305,19 +4319,36 @@
         meta.system_template_key = systemTemplateKey;
         meta.source = meta.source || "system_mirror";
       }
-      const data = await api(id ? `/api/h5-workflows/templates/${encodeURIComponent(id)}` : "/api/h5-workflows/templates", {
-        method: id ? "PATCH" : "POST",
-        json: { name, nodes: state.workflowNodesDraft, meta },
-      });
-      state.workflowEditingTemplateId = String((data.template && data.template.id) || id || "");
-      state.workflowEditingTemplateMeta = data.template && data.template.meta && typeof data.template.meta === "object"
-        ? { ...data.template.meta }
-        : meta;
-      state.workflowViewingTemplateId = state.workflowEditingTemplateId;
-      state.workflowViewingTemplateKey = String(state.workflowEditingTemplateMeta.system_template_key || "").trim();
-      state.workflowTemplatesLoaded = false;
-      await loadWorkflowTemplates(true);
-      toast("模板已保存");
+      const saveButton = $("workflowSaveTemplateBtn");
+      const previousLabel = saveButton ? saveButton.textContent : "";
+      state.workflowTemplateSaving = true;
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.setAttribute("aria-busy", "true");
+        saveButton.textContent = "保存中...";
+      }
+      try {
+        const data = await api(id ? `/api/h5-workflows/templates/${encodeURIComponent(id)}` : "/api/h5-workflows/templates", {
+          method: id ? "PATCH" : "POST",
+          json: { name, nodes: state.workflowNodesDraft, meta },
+        });
+        state.workflowEditingTemplateId = String((data.template && data.template.id) || id || "");
+        state.workflowEditingTemplateMeta = data.template && data.template.meta && typeof data.template.meta === "object"
+          ? { ...data.template.meta }
+          : meta;
+        state.workflowViewingTemplateId = state.workflowEditingTemplateId;
+        state.workflowViewingTemplateKey = String(state.workflowEditingTemplateMeta.system_template_key || "").trim();
+        state.workflowTemplatesLoaded = false;
+        await loadWorkflowTemplates(true);
+        toast(systemTemplateKey === "system_sales" ? "销售已保存" : "工作流已保存");
+      } finally {
+        state.workflowTemplateSaving = false;
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.removeAttribute("aria-busy");
+          saveButton.textContent = previousLabel || "保存模板";
+        }
+      }
     }
 
     async function activateWorkflowTemplate(templateId = "") {

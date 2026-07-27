@@ -92,5 +92,8 @@ def test_h5_editor_only_creates_from_system_mirror_or_explicit_copy():
     assert ".then(openCustomEmployeeList)" in script
     assert "function customWorkflowTemplateRows()" in script
     assert "const mirrors = new Map();" in script
+    assert "return !workflowSystemTemplateKey(tpl) && !mergedIds.has(id);" in script
     assert "return personalSystemWorkflowTemplate(sid)" in script
-    assert "20260727-workflow-template-save-v2" in html
+    assert "if (state.workflowTemplateSaving) return;" in script
+    assert 'key === "system_sales" ? "/h5-static/designer-employee-sales.jpg" : ""' in script
+    assert "20260727-workflow-template-save-v3" in html
