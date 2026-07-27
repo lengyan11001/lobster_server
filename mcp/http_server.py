@@ -2992,7 +2992,11 @@ def _normalize_understand_payload(
             out[k] = payload[k]
     return out
 
-def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_video_generate_payload(
+    payload: Dict[str, Any],
+    *,
+    migrate_legacy_default: bool = False,
+) -> Dict[str, Any]:
     """
     按视频模型把「统一 payload」转成该模型 API 需要的参数，与 lobster 对齐：支持 backend 注入的 filePaths/media_files。
     """
@@ -3005,6 +3009,11 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
     image_refs = _collect_video_image_refs(payload)
     has_image = bool(image_refs)
 
+    # Older online builds injected the retired Grok default before forwarding
+    # managed pipeline requests. Treat that value as a stale default only when
+    # the caller identifies the request as one of our video pipelines.
+    if migrate_legacy_default:
+        model = resolve_default_video_model_id(model, has_image)
     model = resolve_video_model_id(model, has_image, image_count=len(image_refs))
     model_lower = model.lower()
     first_url = image_refs[0] if image_refs else ""
@@ -3781,7 +3790,16 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     return [{"type": "text", "text": f"image.generate 参数错误: {e}"}], True
             elif capability_id == "video.generate":
                 try:
-                    payload = _normalize_video_generate_payload(payload)
+                    pipeline_capability_hint = (
+                        request.headers.get("X-Lobster-Pipeline-Capability")
+                        or request.headers.get("x-lobster-pipeline-capability")
+                        or ""
+                    ).strip().lower()
+                    payload = _normalize_video_generate_payload(
+                        payload,
+                        migrate_legacy_default=pipeline_capability_hint
+                        in {"goal.video.pipeline", "create.video.pipeline"},
+                    )
                 except ValueError as e:
                     return [{"type": "text", "text": f"video.generate 参数错误: {e}"}], True
             elif capability_id == "image.understand":

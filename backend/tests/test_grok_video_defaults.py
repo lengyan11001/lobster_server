@@ -115,6 +115,48 @@ def test_stale_configured_default_migrates_to_apiz_without_changing_explicit_gro
     assert resolve_video_model_id("grok-video-3", False) == "xai/grok-imagine-video/text-to-video"
 
 
+@pytest.mark.parametrize(
+    ("legacy_model", "image_urls", "expected_model"),
+    [
+        (
+            "xai/grok-imagine-video/text-to-video",
+            [],
+            "apiz/veo3.1/text-to-video",
+        ),
+        (
+            "xai/grok-imagine-video/image-to-video",
+            ["https://example.com/a.png"],
+            "apiz/veo3.1/image-to-video",
+        ),
+        (
+            "grok-video-3",
+            ["https://example.com/a.png", "https://example.com/b.png"],
+            "apiz/veo3.1/reference-to-video",
+        ),
+    ],
+)
+def test_managed_pipeline_migrates_stale_grok_default(legacy_model, image_urls, expected_model):
+    payload = {"model": legacy_model, "prompt": "legacy pipeline request"}
+    if image_urls:
+        payload["image_urls"] = image_urls
+
+    out = _normalize_video_generate_payload(payload, migrate_legacy_default=True)
+
+    assert out["model"] == expected_model
+
+
+def test_explicit_grok_outside_managed_pipeline_is_unchanged():
+    out = _normalize_video_generate_payload(
+        {
+            "model": "xai/grok-imagine-video/text-to-video",
+            "prompt": "explicit Grok request",
+            "image_url": "https://example.com/a.png",
+        }
+    )
+
+    assert out["model"] == "xai/grok-imagine-video/image-to-video"
+
+
 def test_apiz_veo_resolution_uses_image_count():
     assert resolve_video_model_id("veo3.1", False, image_count=0) == "apiz/veo3.1/text-to-video"
     assert resolve_video_model_id("veo3.1", True, image_count=1) == "apiz/veo3.1/image-to-video"
