@@ -1268,7 +1268,14 @@
       media.src = source;
       body.appendChild(media);
       const title = $("mobileMediaPreviewTitle");
-      if (title) title.textContent = safeName;
+      if (title) {
+        title.textContent = {
+          video: "视频预览",
+          image: "图片预览",
+          audio: "音频预览",
+          document: "文件预览",
+        }[kind] || "素材预览";
+      }
       const download = $("mobileMediaPreviewDownloadBtn");
       if (download) {
         download.dataset.mediaDownloadUrl = source.replace(/([?&])disposition=inline(?:&|$)/, "$1disposition=attachment&");

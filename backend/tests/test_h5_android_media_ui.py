@@ -10,7 +10,7 @@ def test_h5_includes_internal_media_preview_dialog():
     assert 'id="mobileMediaPreviewDialog"' in html
     assert 'id="mobileMediaPreviewCloseBtn"' in html
     assert 'id="mobileMediaPreviewDownloadBtn"' in html
-    assert "20260727-android-media" in html
+    assert "20260727-media-viewer-v2" in html
 
 
 def test_generated_media_actions_use_preview_and_download_handlers():
@@ -29,3 +29,4 @@ def test_media_preview_is_full_screen_and_preserves_media_aspect_ratio():
     assert ".mobile-media-preview-panel" in styles
     assert "object-fit: contain" in styles
     assert ".mobile-media-preview-back" in styles
+    assert "grid-template-columns: minmax(0, 1fr)" in styles

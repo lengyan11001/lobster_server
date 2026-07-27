@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-title" content="必火AI员工" />
   <link rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260727-persistent-nav" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260727-persistent-nav" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260727-media-viewer-v2" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260727-media-viewer-v2" />
 </head>
 <body>
   <main class="shell">
@@ -1627,7 +1627,9 @@
           <b>返回</b>
         </button>
         <strong id="mobileMediaPreviewTitle">素材预览</strong>
-        <button class="ghost mobile-media-preview-download" type="button" id="mobileMediaPreviewDownloadBtn">下载</button>
+        <button class="ghost mobile-media-preview-download" type="button" id="mobileMediaPreviewDownloadBtn" aria-label="下载素材" title="下载素材">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2"/></svg>
+        </button>
       </div>
       <div id="mobileMediaPreviewBody" class="mobile-media-preview-body"></div>
     </div>
@@ -1649,6 +1651,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260727-android-media"></script>
+  <script src="/h5-static/h5-app.js?v=20260727-media-viewer-v2"></script>
 </body>
 </html>
