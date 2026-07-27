@@ -839,6 +839,8 @@ def test_generate_and_save_ip_content_records_batches_moments(monkeypatch):
         memories,
         extra_requirements,
         group_id,
+        batch_index=0,
+        batch_target_count=0,
         reference_image_urls=None,
     ):
         saved_groups.append(group_id)
@@ -866,6 +868,7 @@ def test_generate_and_save_ip_content_records_batches_moments(monkeypatch):
 
     monkeypatch.setattr(studio, "_call_ip_content_llm", fake_call)
     monkeypatch.setattr(studio, "_save_draft_records", fake_save)
+    monkeypatch.setattr(studio, "_load_existing_draft_group_records", lambda *_args, **_kwargs: [])
 
     result = asyncio.run(
         studio._generate_and_save_ip_content_records(

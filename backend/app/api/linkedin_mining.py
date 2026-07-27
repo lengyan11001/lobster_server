@@ -1354,6 +1354,7 @@ def create_linkedin_mining_job_from_payload(
     current_user: User,
     payload: LinkedInMiningStartBody | dict[str, Any],
     auto_run: bool = True,
+    meta_patch: Optional[dict[str, Any]] = None,
 ) -> CreativeGenerationJob:
     body = payload if isinstance(payload, LinkedInMiningStartBody) else LinkedInMiningStartBody(**(payload or {}))
     seed_usernames = []
@@ -1384,6 +1385,9 @@ def create_linkedin_mining_job_from_payload(
         "max_company_employees": int(body.max_company_employees or 20),
         "max_interactions_per_post": int(body.max_interactions_per_post or 20),
     }
+    job_meta = {"steps": _initial_steps(request_payload), "outputs": [], "current_step": ""}
+    if meta_patch:
+        job_meta.update(meta_patch)
     row = CreativeGenerationJob(
         job_id=job_id,
         user_id=current_user.id,
@@ -1396,7 +1400,7 @@ def create_linkedin_mining_job_from_payload(
         prompt=_clean_long_text(body.target_profile, 4000) or None,
         request_payload=request_payload,
         result_payload={},
-        meta={"steps": _initial_steps(request_payload), "outputs": [], "current_step": ""},
+        meta=job_meta,
     )
     db.add(row)
     db.commit()

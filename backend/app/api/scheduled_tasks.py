@@ -385,7 +385,7 @@ def _maybe_convert_h5_digital_human_task(
 
 def _server_side_timeout_seconds(task_kind: str) -> float:
     defaults = {
-        "ip_content_daily": ("LOBSTER_IP_CONTENT_SCHEDULE_TIMEOUT_SEC", 600.0),
+        "ip_content_daily": ("LOBSTER_IP_CONTENT_SCHEDULE_TIMEOUT_SEC", 1800.0),
         "lead_collection_templates": ("LOBSTER_LEAD_COLLECTION_SCHEDULE_TIMEOUT_SEC", 1800.0),
         "social_leads": ("LOBSTER_SOCIAL_LEADS_SCHEDULE_TIMEOUT_SEC", 1800.0),
         "linkedin_mining": ("LOBSTER_LINKEDIN_MINING_SCHEDULE_TIMEOUT_SEC", 1800.0),
@@ -1734,7 +1734,41 @@ def _set_server_side_run_progress(
         db.rollback()
 
 
-def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[datetime] = None) -> None:
+def _scheduled_child_job(
+    db: Session,
+    *,
+    user_id: int,
+    run_id: str,
+    feature_type: str,
+) -> Optional[CreativeGenerationJob]:
+    if not run_id:
+        return None
+    query = db.query(CreativeGenerationJob).filter(
+        CreativeGenerationJob.user_id == user_id,
+        CreativeGenerationJob.deleted_at.is_(None),
+    )
+    if feature_type:
+        query = query.filter(CreativeGenerationJob.feature_type == feature_type)
+    candidates = (
+        query
+        .order_by(CreativeGenerationJob.created_at.desc(), CreativeGenerationJob.id.desc())
+        .limit(100)
+        .all()
+    )
+    for row in candidates:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(meta.get("scheduled_run_id") or "") == run_id:
+            return row
+    return None
+
+
+def _execute_server_side_run(
+    db: Session,
+    run: ScheduledTaskRun,
+    now: Optional[datetime] = None,
+    *,
+    resume: bool = False,
+) -> None:
     now = now or datetime.utcnow()
     if run.task_kind not in _SERVER_SIDE_TASK_KINDS:
         return
@@ -1744,10 +1778,27 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
         run.error = "用户不存在"
         run.finished_at = now
         run.updated_at = now
+        db.commit()
         return
+    previous_progress = dict(run.progress or {}) if isinstance(run.progress, dict) else {}
     run.status = "processing"
     run.started_at = now
-    run.progress = {"started_at": now.isoformat(), "server_side": True}
+    run.finished_at = None
+    run.error = None
+    if resume:
+        recovery_count = int(previous_progress.get("recovery_count") or 0) + 1
+        run.progress = {
+            **previous_progress,
+            "server_side": True,
+            "stage": "recovering",
+            "text": "检测到服务器重启，正在从已保存进度继续执行",
+            "recovery_count": recovery_count,
+            "recovered_at": now.isoformat(),
+            "recovery_started_at": now.isoformat(),
+            "recovery_from_stage": str(previous_progress.get("stage") or ""),
+        }
+    else:
+        run.progress = {"started_at": now.isoformat(), "server_side": True}
     run.updated_at = now
     db.flush()
     db.commit()
@@ -1790,7 +1841,22 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
             result_text = "线索采集模板已执行完成。"
         elif run.task_kind == "social_leads":
             progress("start", "服务端开始执行社媒线索采集", {"timeout_seconds": timeout_seconds})
-            job = create_social_leads_job_from_payload(db=db, current_user=user, payload=payload, auto_run=False)
+            job = _scheduled_child_job(
+                db,
+                user_id=user.id,
+                run_id=run.id,
+                feature_type="",
+            )
+            if job is None:
+                job = create_social_leads_job_from_payload(
+                    db=db,
+                    current_user=user,
+                    payload=payload,
+                    auto_run=False,
+                    meta_patch={"scheduled_run_id": run.id},
+                )
+            elif resume:
+                progress("resume_child_job", "已找到原社媒线索作业，继续未完成步骤", {"job_id": job.job_id})
             job = _run_async_blocking(
                 asyncio.wait_for(
                     run_social_leads_job_to_completion(db=db, current_user=user, row=job),
@@ -1801,7 +1867,22 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
             result_text = "社媒线索采集已完成"
         elif run.task_kind == "linkedin_mining":
             progress("start", "服务端开始执行 LinkedIn 线索采集", {"timeout_seconds": timeout_seconds})
-            job = create_linkedin_mining_job_from_payload(db=db, current_user=user, payload=payload, auto_run=False)
+            job = _scheduled_child_job(
+                db,
+                user_id=user.id,
+                run_id=run.id,
+                feature_type="linkedin_mining",
+            )
+            if job is None:
+                job = create_linkedin_mining_job_from_payload(
+                    db=db,
+                    current_user=user,
+                    payload=payload,
+                    auto_run=False,
+                    meta_patch={"scheduled_run_id": run.id},
+                )
+            elif resume:
+                progress("resume_child_job", "已找到原 LinkedIn 线索作业，继续未完成步骤", {"job_id": job.job_id})
             job = _run_async_blocking(
                 asyncio.wait_for(
                     run_linkedin_mining_job_to_completion(db=db, current_user=user, row=job),
@@ -1814,7 +1895,12 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
             progress("start", "服务端开始执行视频号文案提取", {"timeout_seconds": timeout_seconds})
             result = _run_async_blocking(
                 asyncio.wait_for(
-                    run_wechat_channels_transcript_payload_to_completion(db=db, current_user=user, payload=payload),
+                    run_wechat_channels_transcript_payload_to_completion(
+                        db=db,
+                        current_user=user,
+                        payload=payload,
+                        run_id=run.id,
+                    ),
                     timeout=timeout_seconds,
                 )
             )
@@ -1831,14 +1917,21 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
         run.result_text = result_text
         run.result_payload = result
         run.error = "线索采集模板全部执行失败" if run.status == "failed" else None
-        run.progress = {"completed_at": finished.isoformat(), "server_side": True}
+        run.progress = _merge_run_progress(
+            run,
+            {
+                "completed_at": finished.isoformat(),
+                "server_side": True,
+                "stage": "completed" if run.status == "completed" else "failed",
+            },
+        )
         if run.status == "failed" and result_error:
             run.error = result_error
         run.finished_at = finished
         run.updated_at = finished
         task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
         if task:
-            task.last_error = None
+            task.last_error = run.error if run.status == "failed" else None
             task.updated_at = finished
         db.commit()
     except (asyncio.TimeoutError, TimeoutError):
@@ -1875,7 +1968,15 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
             pass
         run.status = "failed"
         run.error = str(exc.detail or exc)
-        run.progress = {"failed_at": failed.isoformat(), "server_side": True}
+        run.progress = _merge_run_progress(
+            run,
+            {
+                "failed_at": failed.isoformat(),
+                "server_side": True,
+                "stage": "failed",
+                "text": run.error,
+            },
+        )
         run.finished_at = failed
         run.updated_at = failed
         task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
@@ -1891,7 +1992,15 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
             pass
         run.status = "failed"
         run.error = str(exc)[:2000]
-        run.progress = {"failed_at": failed.isoformat(), "server_side": True}
+        run.progress = _merge_run_progress(
+            run,
+            {
+                "failed_at": failed.isoformat(),
+                "server_side": True,
+                "stage": "failed",
+                "text": run.error,
+            },
+        )
         run.finished_at = failed
         run.updated_at = failed
         task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
@@ -1899,6 +2008,41 @@ def _execute_server_side_run(db: Session, run: ScheduledTaskRun, now: Optional[d
             task.last_error = run.error
             task.updated_at = failed
         db.commit()
+
+
+def _recover_interrupted_server_side_runs(db: Session, now: Optional[datetime] = None) -> int:
+    now = now or datetime.utcnow()
+    rows = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
+            ScheduledTaskRun.status == "processing",
+        )
+        .order_by(ScheduledTaskRun.started_at.asc(), ScheduledTaskRun.created_at.asc())
+        .all()
+    )
+    recovered = 0
+    for snapshot in rows:
+        expected_updated_at = snapshot.updated_at
+        claim = db.execute(
+            update(ScheduledTaskRun)
+            .where(
+                ScheduledTaskRun.id == snapshot.id,
+                ScheduledTaskRun.status == "processing",
+                ScheduledTaskRun.updated_at == expected_updated_at,
+            )
+            .values(status="recovery_claimed", updated_at=now)
+        )
+        if int(claim.rowcount or 0) != 1:
+            db.rollback()
+            continue
+        db.commit()
+        row = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == snapshot.id).first()
+        if row is None:
+            continue
+        _execute_server_side_run(db, row, now, resume=True)
+        recovered += 1
+    return recovered
 
 
 def _fail_stale_server_side_runs(db: Session, now: Optional[datetime] = None) -> int:

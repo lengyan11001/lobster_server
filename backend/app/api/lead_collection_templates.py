@@ -206,6 +206,36 @@ def _templates_for_user(db: Session, user_id: int, template_ids: list[int]) -> l
     return ordered
 
 
+def _scheduled_template_job(
+    db: Session,
+    *,
+    user_id: int,
+    feature_type: str,
+    template_id: int,
+    run_id: str,
+) -> Optional[CreativeGenerationJob]:
+    if not run_id:
+        return None
+    candidates = (
+        db.query(CreativeGenerationJob)
+        .filter(
+            CreativeGenerationJob.user_id == user_id,
+            CreativeGenerationJob.feature_type == feature_type,
+            CreativeGenerationJob.deleted_at.is_(None),
+        )
+        .order_by(CreativeGenerationJob.created_at.desc(), CreativeGenerationJob.id.desc())
+        .limit(100)
+        .all()
+    )
+    for row in candidates:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(meta.get("scheduled_run_id") or "") != run_id:
+            continue
+        if int(meta.get("lead_collection_template_id") or 0) == int(template_id):
+            return row
+    return None
+
+
 async def _run_one_template(
     *,
     db: Session,
@@ -219,11 +249,24 @@ async def _run_one_template(
     if title_prefix:
         payload["title"] = f"{title_prefix}-{template.name}"[:160]
     if template.platform in _SOCIAL_PLATFORMS:
-        row = create_social_leads_job_from_payload(db=db, current_user=current_user, payload=payload, auto_run=False)
-        meta = dict(row.meta or {})
-        meta.update({"lead_collection_template_id": template.id, "scheduled_run_id": run_id})
-        row.meta = meta
-        db.commit()
+        row = _scheduled_template_job(
+            db,
+            user_id=current_user.id,
+            feature_type={"reddit": "reddit_leads", "x": "x_leads", "tiktok": "tiktok_leads"}.get(
+                template.platform,
+                "",
+            ),
+            template_id=template.id,
+            run_id=run_id,
+        )
+        if row is None:
+            row = create_social_leads_job_from_payload(
+                db=db,
+                current_user=current_user,
+                payload=payload,
+                auto_run=False,
+                meta_patch={"lead_collection_template_id": template.id, "scheduled_run_id": run_id},
+            )
         try:
             row = await run_social_leads_job_to_completion(db=db, current_user=current_user, row=row)
         except Exception as exc:
@@ -238,11 +281,21 @@ async def _run_one_template(
             return summary
         job_payload = social_leads_job_payload(row, db=db, include_sources=False)
     else:
-        row = create_linkedin_mining_job_from_payload(db=db, current_user=current_user, payload=payload, auto_run=False)
-        meta = dict(row.meta or {})
-        meta.update({"lead_collection_template_id": template.id, "scheduled_run_id": run_id})
-        row.meta = meta
-        db.commit()
+        row = _scheduled_template_job(
+            db,
+            user_id=current_user.id,
+            feature_type="linkedin_mining",
+            template_id=template.id,
+            run_id=run_id,
+        )
+        if row is None:
+            row = create_linkedin_mining_job_from_payload(
+                db=db,
+                current_user=current_user,
+                payload=payload,
+                auto_run=False,
+                meta_patch={"lead_collection_template_id": template.id, "scheduled_run_id": run_id},
+            )
         try:
             row = await run_linkedin_mining_job_to_completion(db=db, current_user=current_user, row=row)
         except Exception as exc:

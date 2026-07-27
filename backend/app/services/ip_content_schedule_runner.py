@@ -7,11 +7,24 @@ from datetime import datetime
 
 from sqlalchemy import update
 
-from ..api.scheduled_tasks import _enqueue_task, _fail_stale_server_side_runs
+from ..api.scheduled_tasks import (
+    _SERVER_SIDE_TASK_KINDS,
+    _enqueue_task,
+    _fail_stale_server_side_runs,
+    _recover_interrupted_server_side_runs,
+)
 from ..db import SessionLocal
 from ..models import ScheduledTask
 
 logger = logging.getLogger(__name__)
+
+
+def _recover_once_sync() -> int:
+    db = SessionLocal()
+    try:
+        return _recover_interrupted_server_side_runs(db, datetime.utcnow())
+    finally:
+        db.close()
 
 
 def _tick_once_sync() -> int:
@@ -24,7 +37,7 @@ def _tick_once_sync() -> int:
         rows = (
             db.query(ScheduledTask)
             .filter(
-                ScheduledTask.task_kind.in_(["ip_content_daily", "lead_collection_templates"]),
+                ScheduledTask.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
                 ScheduledTask.status == "active",
                 ScheduledTask.next_run_at.isnot(None),
                 ScheduledTask.next_run_at <= now,
@@ -61,6 +74,12 @@ def _tick_once_sync() -> int:
 
 async def ip_content_schedule_background_loop() -> None:
     await asyncio.sleep(20)
+    try:
+        recovered = await asyncio.to_thread(_recover_once_sync)
+        if recovered:
+            logger.warning("[server-side-schedule] resumed interrupted runs=%s", recovered)
+    except Exception:
+        logger.exception("[server-side-schedule] startup recovery error")
     while True:
         try:
             count = await asyncio.to_thread(_tick_once_sync)

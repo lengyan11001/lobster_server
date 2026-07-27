@@ -855,8 +855,40 @@ async def run_wechat_channels_transcript_payload_to_completion(
     db: Session,
     current_user: User,
     payload: dict[str, Any],
+    run_id: str = "",
 ) -> dict[str, Any]:
     body = dict(payload or {})
+    if run_id:
+        candidates = (
+            db.query(CreativeGenerationJob)
+            .filter(
+                CreativeGenerationJob.user_id == current_user.id,
+                CreativeGenerationJob.feature_type == _FEATURE_TYPE,
+                CreativeGenerationJob.deleted_at.is_(None),
+            )
+            .order_by(CreativeGenerationJob.created_at.desc(), CreativeGenerationJob.id.desc())
+            .limit(100)
+            .all()
+        )
+        existing = next(
+            (
+                row
+                for row in candidates
+                if isinstance(row.meta, dict) and str(row.meta.get("scheduled_run_id") or "") == run_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.status not in _TERMINAL_STATUS:
+                await _run_transcript_job(existing.job_id)
+                db.expire_all()
+                existing = (
+                    db.query(CreativeGenerationJob)
+                    .filter(CreativeGenerationJob.id == existing.id)
+                    .first()
+                    or existing
+                )
+            return _job_payload(existing)
     query = _clean_long_text(body.get("query") or body.get("username") or "", 2000)
     if not query:
         raise HTTPException(status_code=400, detail="视频号文案提取任务需要 query 或 username")
@@ -909,7 +941,10 @@ async def run_wechat_channels_transcript_payload_to_completion(
         prompt=username,
         request_payload={"username": username, "videos": normalized, "query": query},
         result_payload={},
-        meta={"items": [{**v, "status": "pending", "transcript": "", "error": ""} for v in normalized]},
+        meta={
+            "items": [{**v, "status": "pending", "transcript": "", "error": ""} for v in normalized],
+            "scheduled_run_id": run_id,
+        },
     )
     db.add(row)
     db.commit()

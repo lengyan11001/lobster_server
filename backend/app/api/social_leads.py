@@ -2190,6 +2190,7 @@ def create_social_leads_job_from_payload(
     current_user: User,
     payload: SocialLeadsStartBody | dict[str, Any],
     auto_run: bool = True,
+    meta_patch: Optional[dict[str, Any]] = None,
 ) -> CreativeGenerationJob:
     body = payload if isinstance(payload, SocialLeadsStartBody) else SocialLeadsStartBody(**(payload or {}))
     platform = _platform(body.platform)
@@ -2239,6 +2240,9 @@ def create_social_leads_job_from_payload(
         raise HTTPException(status_code=400, detail="请至少输入一个采集条件")
     job_id = ({"reddit": "rd_", "x": "x_", "tiktok": "tt_"}[platform]) + uuid.uuid4().hex[:24]
     title = _clean_text(body.title, 160) or {"reddit": "Reddit线索采集", "x": "X线索采集", "tiktok": "TikTok线索采集"}[platform]
+    job_meta = {"platform": platform, "steps": _initial_steps(req), "outputs": [], "current_step": ""}
+    if meta_patch:
+        job_meta.update(meta_patch)
     row = CreativeGenerationJob(
         job_id=job_id,
         user_id=current_user.id,
@@ -2260,7 +2264,7 @@ def create_social_leads_job_from_payload(
         ),
         request_payload=req,
         result_payload={},
-        meta={"platform": platform, "steps": _initial_steps(req), "outputs": [], "current_step": ""},
+        meta=job_meta,
     )
     db.add(row)
     db.commit()

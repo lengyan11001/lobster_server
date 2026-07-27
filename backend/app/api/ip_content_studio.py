@@ -693,6 +693,15 @@ def _clean_group_id(value: Any) -> str:
     return ""
 
 
+def _scheduled_ip_content_group_id(run_id: str, record_task: str) -> str:
+    clean_run_id = _clean_text(run_id, 80)
+    clean_task = _clean_text(record_task, 64)
+    if not clean_run_id or not clean_task:
+        return ""
+    digest = hashlib.sha256(f"{clean_run_id}:{clean_task}".encode("utf-8")).hexdigest()[:32]
+    return f"ipd-{digest}"
+
+
 def _strip_embedded_image_prompt(value: Any, max_len: int = 8000) -> str:
     text = _clean_long_text(value, max_len)
     if not text:
@@ -3201,6 +3210,8 @@ def _save_draft_records(
     memories: list[dict[str, Any]],
     extra_requirements: str,
     group_id: str,
+    batch_index: int = 0,
+    batch_target_count: int = 0,
     reference_image_urls: Optional[list[str]] = None,
 ) -> list[IPContentDraftRecord]:
     source_ids = [int(row.id) for row in rows]
@@ -3218,7 +3229,13 @@ def _save_draft_records(
             image_prompt = None
         elif is_moments:
             content = _strip_moments_comment_bait(_strip_embedded_image_prompt(content or "", 8000), 8000) or content
-        meta = {"group_id": group_id, "extra_requirements": _clean_long_text(extra_requirements, 4000), "image_prompts": image_prompts[:3]}
+        meta = {
+            "group_id": group_id,
+            "batch_index": max(0, int(batch_index or 0)),
+            "batch_target_count": max(0, int(batch_target_count or 0)),
+            "extra_requirements": _clean_long_text(extra_requirements, 4000),
+            "image_prompts": image_prompts[:3],
+        }
         if clean_reference_image_urls:
             meta["reference_image_urls"] = clean_reference_image_urls
         rec = IPContentDraftRecord(
@@ -3238,6 +3255,71 @@ def _save_draft_records(
     _mark_source_rows_used(db, rows, task=task, record_id=group_id)
     db.commit()
     return saved
+
+
+def _load_existing_draft_group_records(
+    db: Session,
+    *,
+    user_id: int,
+    task: str,
+    platform: str,
+    group_id: str,
+) -> list[IPContentDraftRecord]:
+    if not group_id:
+        return []
+    candidates = (
+        db.query(IPContentDraftRecord)
+        .filter(
+            IPContentDraftRecord.user_id == user_id,
+            IPContentDraftRecord.task == task,
+            IPContentDraftRecord.platform == (platform or "douyin"),
+        )
+        .order_by(IPContentDraftRecord.id.desc())
+        .limit(1000)
+        .all()
+    )
+    return [
+        row
+        for row in reversed(candidates)
+        if isinstance(row.meta, dict) and str(row.meta.get("group_id") or "") == group_id
+    ]
+
+
+def _resume_records_by_batch(
+    records: list[IPContentDraftRecord],
+    batch_sizes: list[int],
+) -> dict[int, list[IPContentDraftRecord]]:
+    grouped: dict[int, list[IPContentDraftRecord]] = {index: [] for index in range(1, len(batch_sizes) + 1)}
+    unassigned: list[IPContentDraftRecord] = []
+    for row in records:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        try:
+            batch_index = int(meta.get("batch_index") or 0)
+        except (TypeError, ValueError):
+            batch_index = 0
+        if batch_index in grouped:
+            grouped[batch_index].append(row)
+        else:
+            unassigned.append(row)
+
+    # Compatibility for records saved before batch_index was introduced.
+    for row in unassigned:
+        for batch_index, target_count in enumerate(batch_sizes, start=1):
+            if len(grouped[batch_index]) < target_count:
+                grouped[batch_index].append(row)
+                break
+    return grouped
+
+
+def _resumed_draft_payload(row: IPContentDraftRecord) -> dict[str, Any]:
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    return {
+        "title": str(row.title or ""),
+        "body": str(row.content or ""),
+        "content": str(row.content or ""),
+        "image_prompt": str(row.image_prompt or ""),
+        "image_prompts": list(meta.get("image_prompts") or []),
+    }
 
 
 def _finish_db_transaction_before_external_io(db: Session) -> None:
@@ -3287,10 +3369,38 @@ async def _generate_and_save_ip_content_records(
     clean_batch_size = batch_size if batch_size is not None else target_count
     batch_sizes = _ip_content_batch_sizes(target_count, clean_batch_size)
     total_batches = len(batch_sizes)
+    existing_records = _load_existing_draft_group_records(
+        db,
+        user_id=current_user.id,
+        task=record_task,
+        platform=platform,
+        group_id=clean_group_id,
+    )
+    resumed_source_ids: list[int] = []
+    for record in existing_records:
+        for raw_id in record.source_item_ids or []:
+            try:
+                source_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if source_id > 0 and source_id not in resumed_source_ids:
+                resumed_source_ids.append(source_id)
+    if resumed_source_ids:
+        resumed_source_rows = (
+            db.query(TikHubSourceItem)
+            .filter(
+                TikHubSourceItem.user_id == current_user.id,
+                TikHubSourceItem.id.in_(resumed_source_ids),
+            )
+            .all()
+        )
+        resumed_source_by_id = {int(row.id): row for row in resumed_source_rows}
+        rows = [resumed_source_by_id[source_id] for source_id in resumed_source_ids if source_id in resumed_source_by_id]
+    resumed_records = _resume_records_by_batch(existing_records, batch_sizes)
     all_records: list[IPContentDraftRecord] = []
     all_drafts: list[dict[str, Any]] = []
-    source_items: list[dict[str, Any]] = []
-    requirements_text = ""
+    source_items: list[dict[str, Any]] = [_item_payload(row) for row in rows]
+    requirements_text = _draft_requirements(task_key, platform, target_count)
     batch_payloads: list[dict[str, Any]] = []
     failed_batches: list[dict[str, Any]] = []
     clean_reference_image_urls = _extract_reference_image_urls(reference_image_urls or [], limit=8)
@@ -3309,10 +3419,40 @@ async def _generate_and_save_ip_content_records(
             "llm_attempts": llm_attempts,
             "llm_timeout_seconds": llm_timeout_seconds,
             "group_id": clean_group_id,
+            "resumed_count": len(existing_records),
             "reference_image_count": len(clean_reference_image_urls) if _is_moments_task(record_task) else 0,
         },
     )
     for batch_index, cur_count in enumerate(batch_sizes, start=1):
+        batch_records = list(resumed_records.get(batch_index) or [])[:cur_count]
+        if batch_records:
+            all_records.extend(batch_records)
+            all_drafts.extend(_resumed_draft_payload(row) for row in batch_records)
+        if len(batch_records) >= cur_count:
+            batch_payloads.append(
+                {
+                    "index": batch_index,
+                    "status": "completed",
+                    "count": len(batch_records),
+                    "resumed": True,
+                    "records": [_draft_record_payload(row) for row in batch_records],
+                }
+            )
+            _emit_schedule_progress(
+                progress,
+                "generate_batch_resume_skip",
+                f"{clean_label}第 {batch_index}/{total_batches} 批已存在，跳过重复生成",
+                {
+                    "task": record_task,
+                    "batch_index": batch_index,
+                    "batch_count": total_batches,
+                    "record_count": len(batch_records),
+                    "saved_count": len(all_records),
+                    "group_id": clean_group_id,
+                },
+            )
+            continue
+        missing_count = cur_count - len(batch_records)
         prior_titles = [
             _clean_long_text((draft.get("title") or draft.get("body") or "") if isinstance(draft, dict) else "", 120)
             for draft in all_drafts[-10:]
@@ -3321,7 +3461,7 @@ async def _generate_and_save_ip_content_records(
         if total_batches > 1:
             batch_extra = (
                 f"{extra_requirements}\n\n"
-                f"本次是第 {batch_index}/{total_batches} 批，需要生成 {cur_count} 条。"
+                f"本次是第 {batch_index}/{total_batches} 批，需要补充生成 {missing_count} 条。"
                 "请主动换选题角度、开场方式和场景，不要和前面批次重复。"
             ).strip()
             if prior_titles:
@@ -3335,6 +3475,8 @@ async def _generate_and_save_ip_content_records(
                 "batch_index": batch_index,
                 "batch_count": total_batches,
                 "batch_target_count": cur_count,
+                "batch_existing_count": len(batch_records),
+                "batch_missing_count": missing_count,
                 "saved_count": len(all_records),
                 "group_id": clean_group_id,
             },
@@ -3347,7 +3489,7 @@ async def _generate_and_save_ip_content_records(
                 installation_id=installation_id,
                 task=task_key,
                 platform=platform,
-                count=cur_count,
+                count=missing_count,
                 rows=rows,
                 memories=memories,
                 extra_requirements=batch_extra,
@@ -3383,15 +3525,24 @@ async def _generate_and_save_ip_content_records(
                 memories=memories,
                 extra_requirements=extra_requirements,
                 group_id=clean_group_id,
+                batch_index=batch_index,
+                batch_target_count=cur_count,
                 reference_image_urls=clean_reference_image_urls,
             )
             all_records.extend(records)
+            batch_records.extend(records)
+            if len(batch_records) < cur_count:
+                raise RuntimeError(
+                    f"{clean_label}第 {batch_index}/{total_batches} 批仅保存 "
+                    f"{len(batch_records)}/{cur_count} 条"
+                )
             batch_payloads.append(
                 {
                     "index": batch_index,
                     "status": "completed",
-                    "count": len(records),
-                    "records": [_draft_record_payload(row) for row in records],
+                    "count": len(batch_records),
+                    "resumed_count": len(batch_records) - len(records),
+                    "records": [_draft_record_payload(row) for row in batch_records],
                 }
             )
             _emit_schedule_progress(
@@ -3402,7 +3553,7 @@ async def _generate_and_save_ip_content_records(
                     "task": record_task,
                     "batch_index": batch_index,
                     "batch_count": total_batches,
-                    "record_count": len(records),
+                    "record_count": len(batch_records),
                     "saved_count": len(all_records),
                     "group_id": clean_group_id,
                 },
@@ -3419,8 +3570,8 @@ async def _generate_and_save_ip_content_records(
             batch_error = {
                 "index": batch_index,
                 "status": "failed",
-                "count": 0,
-                "records": [],
+                "count": len(batch_records),
+                "records": [_draft_record_payload(row) for row in batch_records],
                 "error": error_text,
             }
             failed_batches.append(batch_error)
@@ -3441,7 +3592,7 @@ async def _generate_and_save_ip_content_records(
             continue
     records_payload = [_draft_record_payload(row) for row in all_records]
     failed_count = len(failed_batches)
-    completed_batches = max(0, total_batches - failed_count)
+    completed_batches = len([batch for batch in batch_payloads if batch.get("status") == "completed"])
     generation_status = "completed"
     if failed_count:
         generation_status = "failed" if completed_batches <= 0 else "partial"
@@ -3708,6 +3859,7 @@ async def run_ip_content_daily_scheduled(
             memories=memories,
             extra_requirements=extra,
             count=count,
+            group_id=_scheduled_ip_content_group_id(run_id, record_task) if run_id else "",
             batch_size=batch_size,
             llm_attempts=scheduled_llm_attempts,
             llm_timeout_seconds=scheduled_llm_timeout_seconds,
