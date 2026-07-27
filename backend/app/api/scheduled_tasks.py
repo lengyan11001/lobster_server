@@ -290,6 +290,7 @@ def _h5_dh_context_params(db: Session, user_id: int) -> Dict[str, Any]:
     keyword_texts = [_h5_dh_clean_text(row.display_name or row.keyword, 120) for row in keywords]
     return {
         "requirements": requirements,
+        "keyword_ids": keyword_ids,
         "keywords": keyword_texts,
         "keyword_texts": keyword_texts,
         "competitors": [
@@ -310,7 +311,7 @@ def _maybe_convert_h5_digital_human_task(
     payload: Dict[str, Any],
     target_user_id: int,
 ) -> tuple[str, Dict[str, Any]]:
-    if task_kind != "capability" or _h5_dh_provider() != _DIGITAL_HUMAN_PROVIDER_V2:
+    if task_kind != "capability":
         return task_kind, payload
     if _h5_dh_clean_text(payload.get("capability_id"), 128) != _HIFLY_TTS_CAPABILITY_ID:
         return task_kind, payload
@@ -356,6 +357,11 @@ def _maybe_convert_h5_digital_human_task(
     for key, value in context_params.items():
         if value and not params.get(key):
             params[key] = value
+    params["script_source"] = "ip_daily_industry_hot_oral"
+    if _h5_dh_provider() != _DIGITAL_HUMAN_PROVIDER_V2:
+        legacy_payload = dict(payload)
+        legacy_payload["payload"] = params
+        return task_kind, legacy_payload
     virtualman_id = _h5_dh_latest_virtualman(db, target_user_id)
     voice = _h5_dh_latest_voice(db, target_user_id)
     if virtualman_id:

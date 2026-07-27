@@ -616,6 +616,7 @@ class DraftRequestBody(BaseModel):
 class AutoDraftRequestBody(BaseModel):
     memory_docs: list[dict[str, Any]] = Field(default_factory=list)
     keyword_ids: list[int] = Field(default_factory=list)
+    keyword_texts: list[str] = Field(default_factory=list)
     competitor_ids: list[int] = Field(default_factory=list)
     extra_requirements: str = ""
     count: int = Field(5, ge=1, le=20)
@@ -2954,6 +2955,28 @@ def _keyword_seed_briefs(keywords: list[IPContentKeyword]) -> list[dict[str, Any
     return briefs
 
 
+def _keyword_text_seed_briefs(values: Any) -> list[dict[str, Any]]:
+    briefs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for value in values if isinstance(values, list) else []:
+        keyword = _clean_text(value, 191)
+        dedupe_key = keyword.lower()
+        if not keyword or dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        briefs.append(
+            {
+                "type": "template_keyword",
+                "title": keyword,
+                "description": f"模板关键词：{keyword}",
+                "author": "",
+            }
+        )
+        if len(briefs) >= 8:
+            break
+    return briefs
+
+
 def _competitor_seed_briefs(competitors: list[ContentCompetitorAccount]) -> list[dict[str, Any]]:
     briefs: list[dict[str, Any]] = []
     for row in competitors:
@@ -4587,11 +4610,12 @@ async def generate_industry_hot_oral(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    keyword_text_briefs = _keyword_text_seed_briefs(body.keyword_texts)
     keyword_query = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.status == "active")
     if body.keyword_ids:
         keyword_query = keyword_query.filter(IPContentKeyword.id.in_([int(x) for x in body.keyword_ids if str(x).isdigit()]))
     keywords = keyword_query.order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc()).limit(8).all()
-    if not keywords:
+    if not keywords and not keyword_text_briefs:
         raise HTTPException(status_code=400, detail="请先在配置里添加至少一个行业关键词。")
     sync_results = []
     if body.sync_before:
@@ -4610,7 +4634,7 @@ async def generate_industry_hot_oral(
         record_task="industry_hot_oral",
         platform="douyin",
         rows=rows,
-        fallback_sources=_keyword_seed_briefs(keywords),
+        fallback_sources=[*_keyword_seed_briefs(keywords), *keyword_text_briefs],
         memories=memories,
         extra_requirements=body.extra_requirements,
         count=min(max(int(body.count or 5), 1), 5),

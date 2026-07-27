@@ -886,6 +886,30 @@ def _prepare_sales_workflow_nodes(
     competitors = _active_competitors_for_ids(db, reference_owner_id, competitor_ids)
     memory_doc_ids = [str(x or "").strip() for x in ((reference_template.memory_doc_ids if reference_template else []) or []) if str(x or "").strip()]
     memory_docs = reference_template.memory_docs if reference_template and isinstance(reference_template.memory_docs, list) else []
+    if memory_doc_ids and not memory_docs:
+        numeric_doc_ids = [int(value) for value in memory_doc_ids if value.isdigit()]
+        memory_rows = (
+            db.query(OpenClawMemoryDocument)
+            .filter(
+                OpenClawMemoryDocument.target_user_id == reference_owner_id,
+                OpenClawMemoryDocument.status == "active",
+                OpenClawMemoryDocument.id.in_(numeric_doc_ids),
+            )
+            .order_by(OpenClawMemoryDocument.updated_at.desc(), OpenClawMemoryDocument.id.desc())
+            .limit(12)
+            .all()
+            if numeric_doc_ids
+            else []
+        )
+        memory_docs = [
+            {
+                "id": row.id,
+                "title": row.title,
+                "doc_type": row.doc_type,
+                "content": (row.content or "")[:4000],
+            }
+            for row in memory_rows
+        ]
     keyword_texts = [_clean_text(row.display_name or row.keyword, 120) for row in keywords if _clean_text(row.display_name or row.keyword, 120)]
     city = _first_req_text(requirements, "current_city")
     province = _first_req_text(requirements, "current_province")
@@ -1001,6 +1025,7 @@ def _prepare_sales_workflow_nodes(
                 params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
                 params = dict(params)
                 params.setdefault("requirements", requirements)
+                params.setdefault("keyword_ids", keyword_ids)
                 params.setdefault("keywords", keyword_texts)
                 params.setdefault("keyword_texts", keyword_texts)
                 params.setdefault("competitors", [_clean_text(row.display_name or row.account_name or row.account_id, 160) for row in competitors])
@@ -1009,6 +1034,7 @@ def _prepare_sales_workflow_nodes(
                 params.setdefault("language", template_language)
                 params.setdefault("target_language", template_language)
                 params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
+                params["script_source"] = "ip_daily_industry_hot_oral"
                 if shanjian_virtualman:
                     params.setdefault("virtualman_id", shanjian_virtualman)
                 if hifly_voice:
@@ -1046,6 +1072,7 @@ def _prepare_sales_workflow_nodes(
                     if key not in {"avatar", "avatar_id", "st_show", "aigc_flag"}
                 }
                 params.setdefault("requirements", requirements)
+                params.setdefault("keyword_ids", keyword_ids)
                 params.setdefault("keywords", keyword_texts)
                 params.setdefault("keyword_texts", keyword_texts)
                 params.setdefault("competitors", [_clean_text(row.display_name or row.account_name or row.account_id, 160) for row in competitors])
@@ -1054,6 +1081,7 @@ def _prepare_sales_workflow_nodes(
                 params.setdefault("language", template_language)
                 params.setdefault("target_language", template_language)
                 params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
+                params["script_source"] = "ip_daily_industry_hot_oral"
                 if shanjian_virtualman:
                     params.setdefault("virtualman_id", shanjian_virtualman)
                 if hifly_voice:

@@ -2198,8 +2198,7 @@
       if (id === "hifly.video.create_by_tts") {
         return taskFieldHtml("数字人", taskSelectHtml("workflowParamAvatar", optionHtml("", "加载中...")))
           + taskFieldHtml("声音", taskSelectHtml("workflowParamVoice", optionHtml("", "加载中...")))
-          + taskFieldHtml("任务名称", workInputHtml("workflowParamHiflyTitle", "text", "数字人口播"))
-          + taskFieldHtml("口播文案", taskTextareaHtml("workflowParamHiflyScript", "填写完整口播文案"), true);
+          + taskFieldHtml("任务名称", workInputHtml("workflowParamHiflyTitle", "text", "数字人口播"));
       }
       if (id === "comfly.daihuo.pipeline") {
         return taskFieldHtml("参考图片", assetPickerControlHtml("workflowParamComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }), true)
@@ -2445,15 +2444,13 @@
       if (capabilityId === "hifly.video.create_by_tts") {
         const avatar = workflowParamValue("workflowParamAvatar");
         const voice = workflowParamValue("workflowParamVoice");
-        const script = workflowParamValue("workflowParamHiflyScript");
         if (!avatar) throw new Error("请选择数字人");
         if (!voice) throw new Error("请选择声音");
-        if (!script) throw new Error("请填写口播文案");
         return {
           title: workflowParamValue("workflowParamHiflyTitle") || node.label || "数字人口播",
           task_kind: "capability",
           content: "H5 工作流：数字人口播",
-          payload: { capability_id: "hifly.video.create_by_tts", payload: { avatar, voice, script, prompt: script } },
+          payload: { capability_id: "hifly.video.create_by_tts", payload: { avatar, voice } },
         };
       }
       if (capabilityId === "comfly.daihuo.pipeline") {
@@ -3429,7 +3426,6 @@
         setFieldValue("workflowParamAvatar", inner.avatar || "");
         setFieldValue("workflowParamVoice", inner.voice || "");
         setFieldValue("workflowParamHiflyTitle", plan.title || nodeInfo.label || "数字人口播");
-        setFieldValue("workflowParamHiflyScript", inner.script || inner.prompt || node.note || "");
         return;
       }
       if (capabilityId === "comfly.daihuo.pipeline") {

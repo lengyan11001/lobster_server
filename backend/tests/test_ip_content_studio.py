@@ -781,6 +781,15 @@ def test_ip_content_batch_sizes_split_into_stable_chunks():
     assert studio._ip_content_batch_sizes(99, 8) == [8, 8, 4]
 
 
+def test_keyword_text_seed_briefs_deduplicate_template_keywords():
+    from backend.app.api import ip_content_studio as studio
+
+    briefs = studio._keyword_text_seed_briefs(["深圳装修", " 深圳装修 ", "口腔种植", ""])
+
+    assert [item["title"] for item in briefs] == ["深圳装修", "口腔种植"]
+    assert briefs[0]["description"] == "模板关键词：深圳装修"
+
+
 def test_generate_and_save_ip_content_records_batches_moments(monkeypatch):
     import asyncio
     from types import SimpleNamespace
@@ -801,7 +810,19 @@ def test_generate_and_save_ip_content_records_batches_moments(monkeypatch):
             "source_items": [{"id": "source"}],
         }
 
-    def fake_save(db, *, current_user, task, platform, drafts, rows, memories, extra_requirements, group_id):
+    def fake_save(
+        db,
+        *,
+        current_user,
+        task,
+        platform,
+        drafts,
+        rows,
+        memories,
+        extra_requirements,
+        group_id,
+        reference_image_urls=None,
+    ):
         saved_groups.append(group_id)
         return [
             SimpleNamespace(
