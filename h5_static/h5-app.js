@@ -378,17 +378,17 @@
         description: "负责内容创作、视频生产、IP日更、公众号和发布矩阵。",
         children: [
           {
-            key: "image_composer_studio",
-            label: "创作图片",
-            mark: "图",
-            description: "根据文案或产品资料生成创意图片，适合海报、配图和素材生产。",
-            capabilityId: "goal.image.pipeline",
-            packageId: "goal_video_pipeline_skill",
-            workQuickKey: "image_composer_studio",
+            key: "hifly.video.create_by_tts",
+            label: "数字人口播视频",
+            mark: "数",
+            description: "选择数字人和声音，生成口播视频。",
+            capabilityId: "hifly.video.create_by_tts",
+            packageId: "hifly_digital_human_skill",
+            workQuickKey: "hifly.video.create_by_tts",
           },
           {
             key: "marketing_video_group",
-            label: "创作视频",
+            label: "AI创作视频",
             mark: "视",
             description: "视频创作能力集合，进入后选择具体视频工作流。",
             children: [
@@ -407,15 +407,6 @@
                 description: "围绕同城热点和门店场景生成爆款视频方案。",
                 workQuickKey: "local_bestseller",
                 always: true,
-              },
-              {
-                key: "hifly.video.create_by_tts",
-                label: "数字人口播视频",
-                mark: "数",
-                description: "选择数字人和声音，生成口播视频。",
-                capabilityId: "hifly.video.create_by_tts",
-                packageId: "hifly_digital_human_skill",
-                workQuickKey: "hifly.video.create_by_tts",
               },
               {
                 key: "comfly.daihuo.pipeline",
@@ -446,21 +437,38 @@
             ],
           },
           {
-            key: "ip_content_daily",
-            label: "IP日更文案",
-            mark: "IP",
-            description: "生成短视频口播、朋友圈文案和配图提示词。",
-            capabilityId: "ip_content_daily",
-            packageId: "ip_content_daily_skill",
-            serverTask: true,
+            key: "image_composer_studio",
+            label: "AI设计图",
+            mark: "图",
+            description: "根据文案或产品资料生成海报、详情页和朋友圈配图。",
+            capabilityId: "goal.image.pipeline",
+            packageId: "goal_video_pipeline_skill",
+            workQuickKey: "image_composer_studio",
           },
           {
-            key: "wewrite.article.pipeline",
-            label: "公众号文章",
+            key: "marketing_copy_group",
+            label: "AI文案智能体",
             mark: "文",
-            description: "根据主题生成公众号文章、配图和发布草稿。",
-            capabilityId: "wewrite.article.pipeline",
-            packageId: "wewrite_official_account_skill",
+            description: "生成IP日更、公众号文章和营销文案。",
+            children: [
+              {
+                key: "ip_content_daily",
+                label: "IP日更文案",
+                mark: "IP",
+                description: "生成短视频口播、朋友圈文案和配图提示词。",
+                capabilityId: "ip_content_daily",
+                packageId: "ip_content_daily_skill",
+                serverTask: true,
+              },
+              {
+                key: "wewrite.article.pipeline",
+                label: "公众号文章",
+                mark: "文",
+                description: "根据主题生成公众号文章、配图和发布草稿。",
+                capabilityId: "wewrite.article.pipeline",
+                packageId: "wewrite_official_account_skill",
+              },
+            ],
           },
           {
             key: "publish_center",
@@ -902,6 +910,21 @@
       mark: "营",
       description: "汇总所有可下发的营销创作节点。",
       virtual: true,
+    };
+    const AI_MARKETING_ENTRY_KEYS = [
+      "hifly.video.create_by_tts",
+      "marketing_video_group",
+      "image_composer_studio",
+      "marketing_copy_group",
+    ];
+    const AI_MARKETING_COVERS = {
+      "goal.video.pipeline": "/h5-static/marketing-cover-creative-video.png",
+      local_bestseller: "/h5-static/marketing-cover-local-bestseller.png",
+      "comfly.daihuo.pipeline": "/h5-static/marketing-cover-tvc.png",
+      "comfly.seedance.tvc.pipeline": "/h5-static/marketing-cover-storyboard.png",
+      viral_video_remix: "/h5-static/marketing-cover-remix.png",
+      ip_content_daily: "/h5-static/marketing-cover-ip-daily.png",
+      "wewrite.article.pipeline": "/h5-static/marketing-cover-wechat-article.png",
     };
     const SYSTEM_WORKFLOW_EMPLOYEES = [
       { id: "system_sales", name: "销售员工", departmentId: "sales", mark: "销", preset: "sales" },
@@ -4679,16 +4702,71 @@
       return "AI 营 销 创 作";
     }
 
+    function abilityDesignerCover(node) {
+      const key = String((node && (node.key || node.capabilityId || node.workQuickKey)) || "").trim();
+      return AI_MARKETING_COVERS[key] || "";
+    }
+
+    function marketingCreationEntryNodes() {
+      return AI_MARKETING_ENTRY_KEYS.map((key) => {
+        const lookup = abilityLookup(key);
+        return lookup && lookup.node;
+      }).filter(Boolean);
+    }
+
+    function marketingCreationEntryCardHtml(node) {
+      const key = String(node && node.key || "");
+      const presentation = {
+        "hifly.video.create_by_tts": {
+          className: "digital-human",
+          title: "AI数字人口播视频",
+          description: "1分钟克隆你的形象和声音",
+        },
+        marketing_video_group: {
+          className: "video",
+          title: "AI创作视频",
+          description: "一键生成爆款短视频",
+        },
+        image_composer_studio: {
+          className: "design",
+          title: "AI设计图",
+          description: "海报/详情页/朋友圈",
+        },
+        marketing_copy_group: {
+          className: "copy",
+          title: "AI文案智能体",
+          description: "朋友圈/种草文/销售话术",
+        },
+      }[key] || {
+        className: "default",
+        title: node.label || "营销创作",
+        description: node.description || "进入创作工作台",
+      };
+      return `<button class="marketing-entry-card ${escapeHtml(presentation.className)}" type="button" data-ability-key="${escapeHtml(key)}">
+        <span class="marketing-entry-icon">${abilityDesignerIcon(node)}</span>
+        <span class="marketing-entry-copy">
+          <strong>${escapeHtml(presentation.title)}</strong>
+          <small>${escapeHtml(presentation.description)}</small>
+        </span>
+        <b aria-hidden="true">›</b>
+      </button>`;
+    }
+
+    function renderMarketingCreationEntries() {
+      return marketingCreationEntryNodes().map(marketingCreationEntryCardHtml).join("");
+    }
+
     function abilityCardHtml(node) {
       const count = abilityChildCount(node);
       const actionable = abilityIsActionable(node);
       const disabled = node.comingSoon ? " disabled" : "";
       const tone = abilityDesignerTone(node);
+      const cover = abilityDesignerCover(node);
       return `<button class="department-skill-card designer-ability-card ${escapeHtml(tone)}${disabled}" type="button" data-ability-key="${escapeHtml(node.key || "")}" ${node.comingSoon ? 'aria-disabled="true"' : ""}>
-        <div class="designer-ability-art">
-          <i></i><b></b>
-          <span>${abilityDesignerIcon(node)}</span>
-          <em>${escapeHtml(abilityDesignerArtLabel(node))}</em>
+        <div class="designer-ability-art${cover ? " has-cover" : ""}">
+          ${cover
+            ? `<img src="${escapeHtml(cover)}" alt="" loading="lazy">`
+            : `<i></i><b></b><span>${abilityDesignerIcon(node)}</span><em>${escapeHtml(abilityDesignerArtLabel(node))}</em>`}
         </div>
         <div class="designer-ability-meta">
           <h3>${escapeHtml(node.label || node.key || "能力")}</h3>
@@ -4805,7 +4883,13 @@
       if (entryOnly) clearDepartmentDayBoard();
       else renderDepartmentDayBoard();
       const leaves = departmentLeafNodes(department);
-      $("departmentSkillGrid").innerHTML = leaves.map(abilityCardHtml).join("") || `<div class="quick-empty">这个部门暂时没有配置能力。</div>`;
+      const skillGrid = $("departmentSkillGrid");
+      if (skillGrid) {
+        skillGrid.classList.toggle("marketing-creation-grid", entryOnly);
+        skillGrid.innerHTML = entryOnly
+          ? (renderMarketingCreationEntries() || `<div class="quick-empty">暂无可用的营销创作能力。</div>`)
+          : (leaves.map(abilityCardHtml).join("") || `<div class="quick-empty">这个部门暂时没有配置能力。</div>`);
+      }
     }
 
     function openAbilityView(key, backDepartmentId = "") {
@@ -5025,6 +5109,12 @@
         return;
       }
       const { node, department, trail } = lookup;
+      const marketingMode = String(state.currentDepartmentId || "") === AI_MARKETING_CREATION_ID;
+      const abilityShell = document.querySelector("#abilityView .ability-shell");
+      if (abilityShell) {
+        abilityShell.classList.toggle("marketing-category-mode", marketingMode && abilityChildCount(node) > 0);
+        abilityShell.classList.toggle("marketing-tool-mode", marketingMode && abilityChildCount(node) === 0);
+      }
       const labels = [department.name, ...trail.map((item) => item.label || item.key)];
       $("abilityKicker").textContent = department.name || "ABILITY";
       $("abilityTitle").textContent = node.label || "能力";
@@ -14805,6 +14895,14 @@
       const activeView = document.querySelector(".view.active");
       const activeId = activeView ? String(activeView.id || "") : "";
       if (activeId === "abilityView") {
+        const lookup = activeAbilityLookup();
+        if (String(state.currentDepartmentId || "") === AI_MARKETING_CREATION_ID && lookup && lookup.trail.length > 1) {
+          const parent = lookup.trail[lookup.trail.length - 2];
+          if (parent && parent.key) {
+            openAbilityView(parent.key, AI_MARKETING_CREATION_ID);
+            return;
+          }
+        }
         switchTab("department");
         return;
       }
@@ -15671,6 +15769,12 @@
       if (taskBtn) {
         evt.preventDefault();
         openTaskDetail(taskBtn.dataset.openTaskDetail || "", "office");
+        return;
+      }
+      const marketingAbilityBtn = evt.target.closest("[data-marketing-ability]");
+      if (marketingAbilityBtn) {
+        evt.preventDefault();
+        openAbilityView(marketingAbilityBtn.dataset.marketingAbility || "", AI_MARKETING_CREATION_ID);
         return;
       }
       const departmentBtn = evt.target.closest("[data-role-department]");

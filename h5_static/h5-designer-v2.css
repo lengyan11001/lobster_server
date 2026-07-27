@@ -3043,3 +3043,376 @@ body::before {
     padding: 18px;
   }
 }
+
+/* AI marketing V1.1 package restoration */
+#officeView .marketing-creation-section {
+  display: grid;
+  gap: 12px;
+}
+
+#officeView .marketing-creation-section .office-section-head {
+  margin-bottom: 0;
+}
+
+#officeView .marketing-creation-subtitle {
+  margin: -5px 0 2px 18px;
+  color: #7b8799;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+#officeView .home-marketing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+#officeView .home-marketing-card {
+  min-width: 0;
+  min-height: 126px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(226, 232, 240, .72);
+  border-radius: 22px;
+  color: #172033;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 10px 26px rgba(30, 58, 138, .08);
+  text-align: left;
+}
+
+#officeView .home-marketing-card.digital-human,
+#officeView .home-marketing-card.copy {
+  grid-column: 1 / -1;
+  min-height: 86px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+#officeView .home-marketing-card.digital-human {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(110deg, #244bd4, #2d74ef);
+  box-shadow: 0 14px 30px rgba(37, 99, 235, .24);
+}
+
+#officeView .home-marketing-card > span:not(.home-marketing-icon) {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+#officeView .home-marketing-card strong,
+#officeView .home-marketing-card small {
+  display: block;
+  overflow: hidden;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+}
+
+#officeView .home-marketing-card strong {
+  font-size: 15px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+#officeView .home-marketing-card small {
+  color: #8994a6;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+#officeView .home-marketing-card.digital-human small {
+  color: rgba(255, 255, 255, .82);
+}
+
+#officeView .home-marketing-card > b {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+#officeView .home-marketing-icon {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: #286df0;
+  background: #edf4ff;
+}
+
+#officeView .home-marketing-card.video .home-marketing-icon {
+  color: #396fe7;
+  background: #eaf1ff;
+}
+
+#officeView .home-marketing-card.design .home-marketing-icon {
+  color: #5068e8;
+  background: #eef0ff;
+}
+
+#officeView .home-marketing-card.copy .home-marketing-icon {
+  color: #12a9cc;
+  background: #e9faff;
+}
+
+#officeView .home-marketing-card.digital-human .home-marketing-icon {
+  color: #fff;
+  background: rgba(255, 255, 255, .14);
+}
+
+#officeView .home-marketing-icon svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#departmentView .department-skill-grid.marketing-creation-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px;
+}
+
+#departmentView .marketing-entry-card {
+  min-width: 0;
+  min-height: 136px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(226, 232, 240, .76);
+  border-radius: 22px;
+  color: #172033;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 10px 26px rgba(30, 58, 138, .08);
+  text-align: left;
+}
+
+#departmentView .marketing-entry-card.digital-human,
+#departmentView .marketing-entry-card.copy {
+  grid-column: 1 / -1;
+  min-height: 88px;
+  flex-direction: row;
+  align-items: center;
+}
+
+#departmentView .marketing-entry-card.digital-human {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(110deg, #244bd4, #2d74ef);
+  box-shadow: 0 14px 30px rgba(37, 99, 235, .24);
+}
+
+#departmentView .marketing-entry-icon {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: #286df0;
+  background: #edf4ff;
+}
+
+#departmentView .marketing-entry-card.copy .marketing-entry-icon {
+  color: #12a9cc;
+  background: #e9faff;
+}
+
+#departmentView .marketing-entry-card.digital-human .marketing-entry-icon {
+  color: #fff;
+  background: rgba(255, 255, 255, .14);
+}
+
+#departmentView .marketing-entry-icon svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+}
+
+#departmentView .marketing-entry-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+#departmentView .marketing-entry-copy strong {
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#departmentView .marketing-entry-copy small {
+  color: #8994a6;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+#departmentView .marketing-entry-card.digital-human small {
+  color: rgba(255, 255, 255, .82);
+}
+
+#departmentView .marketing-entry-card > b {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+#abilityView .ability-shell.marketing-category-mode,
+#abilityView .ability-shell.marketing-tool-mode {
+  padding-top: 2px;
+}
+
+#abilityView .ability-shell.marketing-category-mode > .department-hero,
+#abilityView .ability-shell.marketing-category-mode > .department-breadcrumb,
+#abilityView .ability-shell.marketing-category-mode > .ability-workbench,
+#abilityView .ability-shell.marketing-tool-mode > .department-hero,
+#abilityView .ability-shell.marketing-tool-mode > .department-breadcrumb,
+#abilityView .ability-shell.marketing-tool-mode > .ability-child-grid {
+  display: none !important;
+}
+
+#abilityView .ability-shell.marketing-category-mode > .ability-child-grid {
+  grid-template-columns: 1fr !important;
+  gap: 18px;
+}
+
+#abilityView .marketing-category-mode .department-skill-card.designer-ability-card {
+  padding: 10px;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(30, 58, 138, .10);
+}
+
+#abilityView .designer-ability-art.has-cover {
+  height: auto;
+  aspect-ratio: 1400 / 682;
+  background: #eaf0f8;
+}
+
+#abilityView .designer-ability-art.has-cover::before,
+#abilityView .designer-ability-art.has-cover::after {
+  display: none;
+}
+
+#abilityView .designer-ability-art.has-cover img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: fill;
+}
+
+#abilityView .marketing-category-mode .designer-ability-meta {
+  min-height: 58px;
+  padding: 13px 12px 5px;
+}
+
+#abilityView .marketing-category-mode .designer-ability-meta h3 {
+  font-size: 16px;
+}
+
+#abilityView .ability-shell.marketing-tool-mode > .ability-workbench {
+  display: grid;
+  gap: 20px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, .9);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 12px 32px rgba(30, 58, 138, .09);
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-head {
+  flex-direction: row;
+  align-items: center;
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-head h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-badge {
+  min-height: 28px;
+  color: #159370;
+  background: #eafbf5;
+  font-size: 11px;
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 12px;
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-fields .field > label {
+  margin-bottom: 7px;
+  color: #5d697b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-fields input,
+#abilityView .marketing-tool-mode .ability-workbench-fields select,
+#abilityView .marketing-tool-mode .ability-workbench-fields textarea,
+#abilityView .marketing-tool-mode .asset-picker-actions > button,
+#abilityView .marketing-tool-mode .asset-picker-row button {
+  min-height: 48px;
+  border-color: #e4e9f1;
+  border-radius: 14px;
+  color: #263247;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, .04);
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-fields textarea {
+  min-height: 112px;
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-actions button {
+  width: auto !important;
+  min-width: 132px;
+  min-height: 48px;
+  margin-left: auto;
+  border-radius: 22px;
+  background: #286df0;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, .22);
+}
+
+@media (max-width: 380px) {
+  #officeView .home-marketing-grid,
+  #departmentView .department-skill-grid.marketing-creation-grid {
+    gap: 10px;
+  }
+
+  #officeView .home-marketing-card,
+  #departmentView .marketing-entry-card {
+    padding: 14px;
+  }
+
+  #abilityView .ability-shell.marketing-tool-mode > .ability-workbench {
+    padding: 18px;
+  }
+}
