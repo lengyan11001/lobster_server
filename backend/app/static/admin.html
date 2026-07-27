@@ -466,7 +466,7 @@ body{background:#edf2f7}
         <h1>首页数据大盘</h1>
         <p>用户、充值、消耗、能力调用集中查看。</p>
       </div>
-      <button class="btn btn-outline btn-sm" onclick="statsCache=null;loadStats()">刷新数据</button>
+      <button class="btn btn-outline btn-sm" onclick="statsCache={};loadStats()">刷新数据</button>
     </div>
     <div id="statsOverview" class="stats-grid"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
@@ -3027,6 +3027,7 @@ document.addEventListener('keydown', e => {
 let statsCache = null;
 let _statsLoading = false;
 async function loadStats() {
+  if (!statsCache || typeof statsCache !== 'object') statsCache = {};
   if (statsCache && Date.now() - statsCache._ts < 30000) { renderStats(statsCache); return; }
   if (_statsLoading) return;
   _statsLoading = true;
@@ -3038,7 +3039,7 @@ async function loadStats() {
     renderStats(data);
   } catch(e) {
     toast(e.message, 'error');
-    document.getElementById('statsOverview').innerHTML = '<div class="empty" style="cursor:pointer" onclick="statsCache=null;loadStats()">加载失败，点击重试</div>';
+    document.getElementById('statsOverview').innerHTML = '<div class="empty" style="cursor:pointer" onclick="statsCache={};loadStats()">加载失败，点击重试</div>';
   } finally {
     _statsLoading = false;
   }
@@ -3390,17 +3391,55 @@ function renderBarChart(elId, items, valueKey, color) {
   el.innerHTML = html;
 }
 
+const CAPABILITY_LABELS = {
+  'image.generate': '\u56fe\u7247\u5408\u6210',
+  'image.understand': '\u56fe\u7247\u7406\u89e3',
+  'video.generate': '\u89c6\u9891\u5408\u6210',
+  'video.understand': '\u89c6\u9891\u7406\u89e3',
+  'goal.video.pipeline': '\u89c6\u9891\u4efb\u52a1\u6d41',
+  'create.video.pipeline': '\u89c6\u9891\u751f\u6210\u5de5\u4f5c\u6d41',
+  'ppt.create': 'PPT \u5408\u6210',
+  'create.ppt.pipeline': 'PPT \u5de5\u4f5c\u6d41',
+  'hifly.video.create_by_audio': '\u5fc5\u706b\u89c6\u9891\uff08\u97f3\u9891\u6210\u7247\uff09',
+  'hifly.video.create_by_tts': '\u5fc5\u706b\u6570\u5b57\u4eba / TTS \u6210\u7247',
+  'task.get_result': '\u4efb\u52a1\u7ed3\u679c\u67e5\u8be2',
+  'sutui.account': '\u901f\u63a8\u8d26\u53f7\u80fd\u529b',
+  'sutui.transfer_url': '\u901f\u63a8\u94fe\u63a5\u8f6c\u5b58',
+  'sutui.guide': '\u901f\u63a8\u5f15\u5bfc',
+  'sutui.search_models': '\u901f\u63a8\u6a21\u578b\u67e5\u8be2',
+  'sutui.parse_video': '\u901f\u63a8\u89c6\u9891\u89e3\u6790',
+};
+
+function prettifyFeatureToken(value) {
+  return String(value || '')
+    .replace(/[._]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, function(ch) { return ch.toUpperCase(); });
+}
+
+function capabilityLabel(value) {
+  const raw = String(value || '').trim();
+  return CAPABILITY_LABELS[raw] || prettifyFeatureToken(raw) || '\u672a\u77e5\u80fd\u529b';
+}
+
+function renderCapabilityName(raw) {
+  const label = capabilityLabel(raw);
+  const id = String(raw || '').trim();
+  return '<div style="font-weight:600">' + escapeHtml(label) + '</div>'
+    + (id && label !== id ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:4px">' + escapeHtml(id) + '</div>' : '');
+}
+
 function renderCapRanking(items) {
   const el = document.getElementById('chartCapRanking');
-  if (!items || !items.length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  if (!items || !items.length) { el.innerHTML = '<div class="empty">\u6682\u65e0\u6570\u636e</div>'; return; }
   let html = '<table class="rank-table">';
   items.forEach((r, i) => {
-    html += `<tr><td class="rank-num">${i + 1}</td><td style="font-weight:500">${r.capability_id}</td><td>${r.calls} 次</td><td style="color:var(--primary);font-weight:600">${r.credits.toFixed(1)}</td></tr>`;
+    html += `<tr><td class="rank-num">${i + 1}</td><td>${renderCapabilityName(r.capability_id)}</td><td>${r.calls} \u6b21</td><td style="color:var(--primary);font-weight:600">${r.credits.toFixed(1)}</td></tr>`;
   });
   html += '</table>';
   el.innerHTML = html;
 }
-
 function renderTopConsumers(items) {
   const el = document.getElementById('chartTopConsumers');
   if (!items || !items.length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }

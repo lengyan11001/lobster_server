@@ -19,7 +19,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header
 from fastapi.responses import HTMLResponse, FileResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
@@ -178,6 +178,19 @@ def _assert_can_manage_user(db: Session, ctx: AdminContext, user_id: int, *, all
         return
     if int(user_id) not in _agent_visible_user_ids(db, int(ctx.user_id)):
         raise HTTPException(status_code=403, detail="no permission for this user")
+
+
+def _normalize_stats_days(days: int, *, max_days: int = 180, default_days: int = 30) -> int:
+    try:
+        value = int(days or default_days)
+    except Exception:
+        value = default_days
+    return max(1, min(value, max_days))
+
+
+def _capability_source_label(source: Optional[str]) -> str:
+    text = (source or "").strip()
+    return text or "unknown"
 
 
 # ── 页面 ──
@@ -1225,7 +1238,8 @@ def admin_stats(
 ):
     now_utc = datetime.now(timezone.utc)
     today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    range_start = today_start - timedelta(days=max(1, min(days, 90)))
+    days = _normalize_stats_days(days)
+    range_start = today_start - timedelta(days=days)
 
     # 代理商只看自己下级的数据
     agent_sub_ids: Optional[list[int]] = None
@@ -1363,6 +1377,153 @@ def admin_stats(
         for r in cap_ranking_raw
     ]
 
+    feature_total_calls = (
+        _cap_filter(
+            db.query(func.count(CapabilityCallLog.id))
+            .filter(CapabilityCallLog.created_at >= range_start)
+        ).scalar() or 0
+    )
+    feature_unique_users = (
+        _cap_filter(
+            db.query(func.count(func.distinct(CapabilityCallLog.user_id)))
+            .filter(CapabilityCallLog.created_at >= range_start)
+        ).scalar() or 0
+    )
+    feature_success_calls = (
+        _cap_filter(
+            db.query(func.count(CapabilityCallLog.id))
+            .filter(CapabilityCallLog.created_at >= range_start, CapabilityCallLog.success.is_(True))
+        ).scalar() or 0
+    )
+    feature_failed_calls = (
+        _cap_filter(
+            db.query(func.count(CapabilityCallLog.id))
+            .filter(CapabilityCallLog.created_at >= range_start, CapabilityCallLog.success.is_(False))
+        ).scalar() or 0
+    )
+
+    cap_log_date = func.date(CapabilityCallLog.created_at)
+    feature_daily_raw = (
+        _cap_filter(
+            db.query(
+                cap_log_date.label("d"),
+                func.count(CapabilityCallLog.id).label("calls"),
+                func.count(func.distinct(CapabilityCallLog.user_id)).label("users"),
+            )
+            .filter(CapabilityCallLog.created_at >= range_start)
+        )
+        .group_by(cap_log_date)
+        .order_by(cap_log_date)
+        .all()
+    )
+    feature_daily_calls = [
+        {
+            "date": str(r.d),
+            "calls": int(r.calls or 0),
+            "users": int(r.users or 0),
+        }
+        for r in feature_daily_raw
+    ]
+
+    feature_source_ranking_raw = (
+        _cap_filter(
+            db.query(
+                CapabilityCallLog.source.label("source"),
+                func.count(CapabilityCallLog.id).label("calls"),
+                func.count(func.distinct(CapabilityCallLog.user_id)).label("users"),
+            )
+            .filter(CapabilityCallLog.created_at >= range_start)
+        )
+        .group_by(CapabilityCallLog.source)
+        .order_by(func.count(CapabilityCallLog.id).desc(), CapabilityCallLog.source.asc())
+        .limit(12)
+        .all()
+    )
+    feature_source_ranking = [
+        {
+            "source": _capability_source_label(r.source),
+            "calls": int(r.calls or 0),
+            "users": int(r.users or 0),
+        }
+        for r in feature_source_ranking_raw
+    ]
+
+    feature_usage_raw = (
+        _cap_filter(
+            db.query(
+                CapabilityCallLog.capability_id.label("capability_id"),
+                func.count(CapabilityCallLog.id).label("calls"),
+                func.count(func.distinct(CapabilityCallLog.user_id)).label("users"),
+                func.sum(case((CapabilityCallLog.success.is_(True), 1), else_=0)).label("success_calls"),
+                func.sum(case((CapabilityCallLog.success.is_(False), 1), else_=0)).label("failed_calls"),
+                func.sum(CapabilityCallLog.credits_charged).label("credits"),
+                func.avg(CapabilityCallLog.latency_ms).label("avg_latency_ms"),
+                func.max(CapabilityCallLog.created_at).label("last_called_at"),
+            )
+            .filter(CapabilityCallLog.created_at >= range_start)
+        )
+        .group_by(CapabilityCallLog.capability_id)
+        .order_by(func.count(CapabilityCallLog.id).desc(), CapabilityCallLog.capability_id.asc())
+        .limit(50)
+        .all()
+    )
+    feature_ids = [str(r.capability_id or "") for r in feature_usage_raw if (r.capability_id or "").strip()]
+
+    feature_source_map: dict[str, list[dict]] = {}
+    if feature_ids:
+        feature_source_rows = (
+            _cap_filter(
+                db.query(
+                    CapabilityCallLog.capability_id.label("capability_id"),
+                    CapabilityCallLog.source.label("source"),
+                    func.count(CapabilityCallLog.id).label("calls"),
+                    func.count(func.distinct(CapabilityCallLog.user_id)).label("users"),
+                )
+                .filter(
+                    CapabilityCallLog.created_at >= range_start,
+                    CapabilityCallLog.capability_id.in_(feature_ids),
+                )
+            )
+            .group_by(CapabilityCallLog.capability_id, CapabilityCallLog.source)
+            .order_by(
+                CapabilityCallLog.capability_id.asc(),
+                func.count(CapabilityCallLog.id).desc(),
+                CapabilityCallLog.source.asc(),
+            )
+            .all()
+        )
+        for row in feature_source_rows:
+            key = str(row.capability_id or "")
+            feature_source_map.setdefault(key, []).append(
+                {
+                    "source": _capability_source_label(row.source),
+                    "calls": int(row.calls or 0),
+                    "users": int(row.users or 0),
+                }
+            )
+
+    feature_usage = []
+    for row in feature_usage_raw:
+        calls = int(row.calls or 0)
+        success_calls = int(row.success_calls or 0)
+        failed_calls = int(row.failed_calls or 0)
+        source_breakdown = feature_source_map.get(str(row.capability_id or ""), [])[:3]
+        feature_usage.append(
+            {
+                "capability_id": row.capability_id or "unknown",
+                "calls": calls,
+                "users": int(row.users or 0),
+                "success_calls": success_calls,
+                "failed_calls": failed_calls,
+                "success_rate": round((success_calls / calls) * 100, 1) if calls else 0.0,
+                "credits": float(row.credits or 0),
+                "avg_latency_ms": int(row.avg_latency_ms or 0) if row.avg_latency_ms is not None else None,
+                "last_called_at": row.last_called_at.isoformat() if row.last_called_at else None,
+                "top_source": source_breakdown[0]["source"] if source_breakdown else "unknown",
+                "source_breakdown": source_breakdown,
+            }
+        )
+
     top_consumers_raw = (
         _ledger_filter(
             db.query(
@@ -1405,6 +1566,16 @@ def admin_stats(
         "daily_recharge": daily_recharge,
         "daily_consume": daily_consume,
         "capability_ranking": capability_ranking,
+        "feature_usage_overview": {
+            "days": days,
+            "total_calls": int(feature_total_calls or 0),
+            "unique_users": int(feature_unique_users or 0),
+            "success_calls": int(feature_success_calls or 0),
+            "failed_calls": int(feature_failed_calls or 0),
+        },
+        "feature_daily_calls": feature_daily_calls,
+        "feature_source_ranking": feature_source_ranking,
+        "feature_usage": feature_usage,
         "top_consumers": top_consumers,
     }
 
