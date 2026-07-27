@@ -23,6 +23,37 @@ class _JsonResponse:
         return self._payload
 
 
+class _StreamResponse:
+    def __init__(self, status_code: int, lines=None, payload=None):
+        self.status_code = status_code
+        self._lines = list(lines or [])
+        self._payload = payload
+        self.headers = {
+            "content-type": "text/event-stream" if payload is None else "application/json",
+        }
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+    async def aread(self):
+        return json.dumps(self._payload or {}).encode("utf-8")
+
+
+class _StreamContext:
+    def __init__(self, response=None, error=None):
+        self._response = response
+        self._error = error
+
+    async def __aenter__(self):
+        if self._error:
+            raise self._error
+        return self._response
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 def test_mcp_gateway_allows_understand_calls_to_finish():
     from backend.app.api.mcp_gateway import _mcp_gateway_forward_read_timeout_sec
 
@@ -58,8 +89,9 @@ async def test_apiz_vision_uses_extended_timeout_and_reports_read_timeout(monkey
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def post(self, *args, **kwargs):
-            raise httpx.ReadTimeout("")
+        def stream(self, *args, **kwargs):
+            captured["body"] = kwargs.get("json")
+            return _StreamContext(error=httpx.ReadTimeout(""))
 
     monkeypatch.setattr(http_server.httpx, "AsyncClient", _TimeoutClient)
 
@@ -75,8 +107,114 @@ async def test_apiz_vision_uses_extended_timeout_and_reports_read_timeout(monkey
     )
 
     assert captured["timeout"].read == 6 * 60.0
+    assert captured["body"]["model"] == "openai/gpt-5.6-sol"
+    assert captured["body"]["stream"] is True
     assert "360" in result["error"]["message"]
     assert "ReadTimeout" in result["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_apiz_vision_aggregates_streamed_content(monkeypatch):
+    from mcp import http_server
+
+    captured = {}
+    response = _StreamResponse(
+        200,
+        lines=[
+            'data: {"id":"chat-1","model":"openai/gpt-5.6-sol","choices":[{"delta":{"content":"{\\"parts\\":"}}]}',
+            'data: {"choices":[{"delta":{"content":"[]}"}}],"usage":{"prompt_tokens":12,"completion_tokens":3}}',
+            "data: [DONE]",
+        ],
+    )
+
+    class _StreamClient:
+        def __init__(self, *args, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, *args, **kwargs):
+            captured["body"] = kwargs.get("json")
+            return _StreamContext(response=response)
+
+    monkeypatch.setattr(http_server.httpx, "AsyncClient", _StreamClient)
+    monkeypatch.setattr(http_server, "log_xskill_http", lambda **_kwargs: None)
+
+    result = await http_server._call_apiz_chat_completions_vision(
+        "https://example.test",
+        "token",
+        {
+            "model": "openai/gpt-5.5",
+            "prompt": "Analyze this image",
+            "image_urls": ["https://example.test/image.png"],
+        },
+        lobster_capability_id="image.understand",
+    )
+
+    assert result["status"] == "completed"
+    assert result["output"] == '{"parts":[]}'
+    assert result["model"] == "openai/gpt-5.6-sol"
+    assert result["usage"] == {"prompt_tokens": 12, "completion_tokens": 3}
+    assert captured["body"]["model"] == "openai/gpt-5.6-sol"
+    assert captured["body"]["max_tokens"] == 4096
+
+
+@pytest.mark.asyncio
+async def test_apiz_vision_retries_one_http_524(monkeypatch):
+    from mcp import http_server
+
+    responses = [
+        _StreamResponse(524, payload={"message": "origin timeout"}),
+        _StreamResponse(
+            200,
+            lines=[
+                'data: {"model":"openai/gpt-5.6-sol","choices":[{"delta":{"content":"ok"}}]}',
+                "data: [DONE]",
+            ],
+        ),
+    ]
+    calls = []
+    sleeps = []
+
+    class _RetryClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, *args, **kwargs):
+            calls.append(kwargs.get("json"))
+            return _StreamContext(response=responses.pop(0))
+
+    async def _sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(http_server.httpx, "AsyncClient", _RetryClient)
+    monkeypatch.setattr(http_server.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(http_server, "log_xskill_http", lambda **_kwargs: None)
+
+    result = await http_server._call_apiz_chat_completions_vision(
+        "https://example.test",
+        "token",
+        {
+            "prompt": "Analyze this image",
+            "image_urls": ["https://example.test/image.png"],
+        },
+        lobster_capability_id="image.understand",
+    )
+
+    assert result["status"] == "completed"
+    assert result["output"] == "ok"
+    assert len(calls) == 2
+    assert sleeps == [2.0]
 
 
 @pytest.mark.asyncio

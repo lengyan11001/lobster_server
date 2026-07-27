@@ -57,6 +57,8 @@ _DEFAULT_VIDEO_MODEL = (
 _GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS = 10
 _GPT_IMAGE_2_MODEL_ID = "openai/gpt-image-2"
 _APIZ_VISION_READ_TIMEOUT_SECONDS = 6 * 60.0
+_APIZ_VISION_MAX_ATTEMPTS = 2
+_DEFAULT_IMAGE_UNDERSTAND_MODEL = "openai/gpt-5.6-sol"
 _GPT_IMAGE_2_MODEL_IDS = frozenset(
     {
         _GPT_IMAGE_2_MODEL_ID,
@@ -966,13 +968,92 @@ def _extract_chat_completion_content(data: Dict[str, Any]) -> str:
     return text.strip() if isinstance(text, str) else ""
 
 
+def _extract_chat_stream_delta(data: Dict[str, Any]) -> str:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        delta = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content = delta.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+            elif isinstance(item, str):
+                parts.append(item)
+        return "".join(parts)
+    text = first.get("text")
+    return text if isinstance(text, str) else ""
+
+
+async def _read_apiz_chat_stream(resp: httpx.Response) -> Tuple[Dict[str, Any], str]:
+    content_type = (resp.headers.get("content-type") or "").lower()
+    if "text/event-stream" not in content_type:
+        raw_bytes = await resp.aread()
+        raw_text = raw_bytes.decode("utf-8", errors="replace")
+        try:
+            raw = json.loads(raw_text) if raw_text.strip() else {}
+        except Exception:
+            return {}, raw_text
+        return raw if isinstance(raw, dict) else {}, raw_text
+
+    chunks: List[str] = []
+    usage: Dict[str, Any] = {}
+    response_id: Any = None
+    response_model: Any = None
+    last_event: Dict[str, Any] = {}
+    async for line in resp.aiter_lines():
+        line = str(line or "").strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            event = json.loads(payload)
+        except Exception:
+            logger.debug("[apiz-chat] ignored malformed SSE data prefix=%s", payload[:200])
+            continue
+        if not isinstance(event, dict):
+            continue
+        last_event = event
+        if event.get("id"):
+            response_id = event.get("id")
+        if event.get("model"):
+            response_model = event.get("model")
+        if isinstance(event.get("usage"), dict):
+            usage = event["usage"]
+        chunk = _extract_chat_stream_delta(event)
+        if chunk:
+            chunks.append(chunk)
+
+    content = "".join(chunks).strip()
+    if not content and last_event.get("error"):
+        return last_event, json.dumps(last_event, ensure_ascii=False, default=str)
+    raw: Dict[str, Any] = {
+        "id": response_id,
+        "model": response_model,
+        "choices": [{"message": {"role": "assistant", "content": content}}],
+        "usage": usage,
+    }
+    return raw, json.dumps(raw, ensure_ascii=False, default=str)
+
+
 async def _call_apiz_chat_completions_vision(
     api_base: str,
     token: str,
     params: Dict[str, Any],
     lobster_capability_id: str = "",
 ) -> Dict[str, Any]:
-    model = str(params.get("model") or "openai/gpt-5.5").strip() or "openai/gpt-5.5"
+    requested_model = str(params.get("model") or _DEFAULT_IMAGE_UNDERSTAND_MODEL).strip() or _DEFAULT_IMAGE_UNDERSTAND_MODEL
+    model = _DEFAULT_IMAGE_UNDERSTAND_MODEL if requested_model.lower() == "openai/gpt-5.5" else requested_model
     prompt = str(params.get("prompt") or "").strip()
     image_urls = _collect_chat_vision_urls(params)
     if not prompt:
@@ -993,7 +1074,7 @@ async def _call_apiz_chat_completions_vision(
     body: Dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "stream": False,
+        "stream": True,
     }
     if "temperature" in params:
         try:
@@ -1014,7 +1095,7 @@ async def _call_apiz_chat_completions_vision(
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "Accept": "application/json",
+        "Accept": "text/event-stream, application/json",
     }
     vision_timeout = httpx.Timeout(
         connect=120.0,
@@ -1022,9 +1103,25 @@ async def _call_apiz_chat_completions_vision(
         write=120.0,
         pool=60.0,
     )
+    raw: Dict[str, Any] = {}
+    raw_text = ""
+    response_status = 0
     try:
         async with httpx.AsyncClient(timeout=vision_timeout, trust_env=False) as client:
-            resp = await client.post(url, json=body, headers=headers)
+            for attempt in range(1, _APIZ_VISION_MAX_ATTEMPTS + 1):
+                async with client.stream("POST", url, json=body, headers=headers) as resp:
+                    response_status = resp.status_code
+                    raw, raw_text = await _read_apiz_chat_stream(resp)
+                if response_status != 524 or attempt >= _APIZ_VISION_MAX_ATTEMPTS:
+                    break
+                logger.warning(
+                    "[apiz-chat] vision HTTP 524 before stream; retrying capability=%s model=%s attempt=%s/%s",
+                    lobster_capability_id or "(none)",
+                    model,
+                    attempt + 1,
+                    _APIZ_VISION_MAX_ATTEMPTS,
+                )
+                await asyncio.sleep(2.0 * attempt)
     except httpx.ReadTimeout as e:
         error_detail = str(e).strip() or type(e).__name__
         logger.warning(
@@ -1037,7 +1134,7 @@ async def _call_apiz_chat_completions_vision(
         return {
             "error": {
                 "message": (
-                    f"上游图片理解处理超时（已等待 {int(_APIZ_VISION_READ_TIMEOUT_SECONDS)} 秒）："
+                    f"上游图片理解流式处理超时（已等待 {int(_APIZ_VISION_READ_TIMEOUT_SECONDS)} 秒）："
                     f"{error_detail}"
                 )
             }
@@ -1050,21 +1147,18 @@ async def _call_apiz_chat_completions_vision(
             model,
             error_detail,
         )
-        return {"error": {"message": f"上游 chat/completions 网络请求失败: {error_detail}"}}
+        return {"error": {"message": f"上游 chat/completions 流式请求失败: {error_detail}"}}
 
-    try:
-        raw = resp.json() if resp.content else {}
-    except Exception as e:
-        raw_text = (resp.text or "")[:_SUTUI_UPSTREAM_LOG_MAX]
-        logger.warning("[apiz-chat] vision non-json status=%s body=%s", resp.status_code, raw_text)
-        return {"error": {"message": f"上游 chat/completions 非 JSON: {e}"}}
+    if not raw and raw_text:
+        logger.warning("[apiz-chat] vision non-json status=%s body=%s", response_status, raw_text[:_SUTUI_UPSTREAM_LOG_MAX])
+        return {"error": {"message": f"上游 chat/completions 返回非 JSON/SSE: {raw_text[:800]}"}}
 
-    if resp.status_code >= 400:
+    if response_status >= 400:
         log_xskill_http(
             phase="chat_completions.vision",
             method="POST",
             url=url,
-            http_status=resp.status_code,
+            http_status=response_status,
             capability_or_model=lobster_capability_id or model,
             billing_snapshot=None,
             error_message=json.dumps(_sanitize_for_json(raw), ensure_ascii=False, default=str)[:8000],
@@ -1075,8 +1169,8 @@ async def _call_apiz_chat_completions_vision(
         if isinstance(raw, dict):
             msg = str(raw.get("detail") or raw.get("message") or raw.get("error") or "")
         if not msg:
-            msg = (resp.text or "")[:800]
-        return {"error": {"message": f"上游 chat/completions HTTP {resp.status_code}: {msg[:800]}"}}
+            msg = raw_text[:800]
+        return {"error": {"message": f"上游 chat/completions HTTP {response_status}: {msg[:800]}"}}
 
     if not isinstance(raw, dict):
         return {"error": {"message": f"上游 chat/completions 返回非对象: {str(raw)[:500]}"}}
@@ -1106,7 +1200,7 @@ async def _call_apiz_chat_completions_vision(
         phase="chat_completions.vision",
         method="POST",
         url=url,
-        http_status=resp.status_code,
+        http_status=response_status,
         capability_or_model=lobster_capability_id or model,
         billing_snapshot={
             "price": data.get("price"),
@@ -1151,7 +1245,7 @@ async def _call_upstream_sutui_tasks_rest(
             params["model"] = str(understand_model).strip()
         if lobster_capability_id == "image.understand":
             if model.startswith("openrouter/router/"):
-                model = str(params.get("model") or "openai/gpt-5.5").strip() or "openai/gpt-5.5"
+                model = str(params.get("model") or _DEFAULT_IMAGE_UNDERSTAND_MODEL).strip() or _DEFAULT_IMAGE_UNDERSTAND_MODEL
             params["model"] = model
             logger.info(
                 "[apiz-chat] image.understand direct chat/completions model=%s params_keys=%s",
@@ -2447,7 +2541,7 @@ def _normalize_understand_payload(
                 raw_understand_model
                 or os.environ.get("LOBSTER_IMAGE_UNDERSTAND_LLM_MODEL")
                 or os.environ.get("SUTUI_IMAGE_UNDERSTAND_LLM_MODEL")
-                or "openai/gpt-5.5"
+                or _DEFAULT_IMAGE_UNDERSTAND_MODEL
             ).strip()
         understand_model = ""
     elif raw_model.startswith("openrouter/router/"):
