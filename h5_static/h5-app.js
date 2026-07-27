@@ -1179,6 +1179,8 @@
     const UA = navigator.userAgent || "";
     const IS_WECHAT = /MicroMessenger/i.test(UA);
     const IS_IOS = /iPad|iPhone|iPod/i.test(UA) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const IS_ANDROID = /Android/i.test(UA);
+    const IS_ANDROID_APP = /LobsterH5Android/i.test(UA) || Boolean(window.LobsterAndroid);
 
     async function copyText(text) {
       const value = String(text || "");
@@ -1211,6 +1213,93 @@
 
     function onIosDownloadClick() {
       if (IS_IOS && !IS_WECHAT) toast("已开始下载，可在 Safari 下载项或文件 App 的下载目录查看");
+    }
+
+    function closeMobileMediaPreview() {
+      const modal = $("mobileMediaPreviewDialog");
+      const body = $("mobileMediaPreviewBody");
+      if (!modal || modal.classList.contains("hidden")) return false;
+      if (body) {
+        body.querySelectorAll("video, audio").forEach((media) => {
+          try { media.pause(); } catch {}
+          media.removeAttribute("src");
+        });
+        body.querySelectorAll("iframe, img").forEach((media) => media.removeAttribute("src"));
+        body.innerHTML = "";
+      }
+      modal.classList.add("hidden");
+      return true;
+    }
+
+    function mediaPreviewKind(url, filename) {
+      const value = `${filename || ""} ${url || ""}`.toLowerCase();
+      if (/\.(mp4|webm|mov|m4v)(?:[\s?#]|$)/.test(value)) return "video";
+      if (/\.(png|jpe?g|webp|gif|bmp|avif)(?:[\s?#]|$)/.test(value)) return "image";
+      if (/\.(mp3|wav|m4a|aac|ogg|flac)(?:[\s?#]|$)/.test(value)) return "audio";
+      return "document";
+    }
+
+    function openMobileMediaPreview(url, filename) {
+      const source = String(url || "").trim();
+      if (!source) return;
+      const modal = $("mobileMediaPreviewDialog");
+      const body = $("mobileMediaPreviewBody");
+      if (!modal || !body) return;
+      closeMobileMediaPreview();
+      const safeName = String(filename || filenameFromUrl(source, "素材预览")).trim() || "素材预览";
+      const kind = mediaPreviewKind(source, safeName);
+      let media;
+      if (kind === "video") {
+        media = document.createElement("video");
+        media.controls = true;
+        media.playsInline = true;
+        media.preload = "metadata";
+      } else if (kind === "image") {
+        media = document.createElement("img");
+        media.alt = safeName;
+      } else if (kind === "audio") {
+        media = document.createElement("audio");
+        media.controls = true;
+        media.preload = "metadata";
+      } else {
+        media = document.createElement("iframe");
+        media.title = safeName;
+      }
+      media.src = source;
+      body.appendChild(media);
+      const title = $("mobileMediaPreviewTitle");
+      if (title) title.textContent = safeName;
+      const download = $("mobileMediaPreviewDownloadBtn");
+      if (download) {
+        download.dataset.mediaDownloadUrl = source.replace(/([?&])disposition=inline(?:&|$)/, "$1disposition=attachment&");
+        download.dataset.mediaDownloadName = safeName;
+      }
+      modal.classList.remove("hidden");
+    }
+
+    function startMediaDownload(url, filename) {
+      const source = String(url || "").trim();
+      const safeName = String(filename || filenameFromUrl(source, "lobster-media")).trim() || "lobster-media";
+      if (!source) return false;
+      if (window.LobsterAndroid && typeof window.LobsterAndroid.downloadFile === "function") {
+        try {
+          window.LobsterAndroid.downloadFile(source, safeName);
+          return true;
+        } catch {
+          toast("系统下载启动失败，请稍后重试");
+          return true;
+        }
+      }
+      const anchor = document.createElement("a");
+      anchor.href = source;
+      anchor.download = safeName;
+      anchor.rel = "noopener noreferrer";
+      if (!IS_ANDROID) anchor.target = "_blank";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      if (IS_ANDROID_APP) toast("已提交到系统下载");
+      return true;
     }
 
     function installIosWebclip() {
@@ -13658,10 +13747,10 @@
       const actions = document.createElement("div");
       actions.className = "media-actions";
       const filename = filenameFromUrl(url, fallbackName);
-      const open = document.createElement("a");
-      open.href = mediaProxyUrl(url, "inline", filename);
-      open.target = "_blank";
-      open.rel = "noopener noreferrer";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.dataset.mediaPreviewUrl = mediaProxyUrl(url, "inline", filename);
+      open.dataset.mediaPreviewName = filename;
       open.textContent = "打开";
       actions.appendChild(open);
       if (IS_WECHAT) {
@@ -13676,6 +13765,8 @@
         download.target = "_blank";
         download.rel = "noopener noreferrer";
         download.download = filename;
+        download.dataset.mediaDownloadUrl = download.href;
+        download.dataset.mediaDownloadName = filename;
         download.textContent = IS_IOS ? "下载到文件" : downloadLabel;
         download.addEventListener("click", onIosDownloadClick);
         actions.appendChild(download);
@@ -13689,11 +13780,11 @@
       const downloadUrl = escapeHtml(mediaProxyUrl(url, "attachment", filename));
       const safeName = escapeHtml(filename);
       if (IS_WECHAT) {
-        return `<div class="run-media-actions"><a href="${openUrl}" target="_blank" rel="noopener noreferrer">打开</a><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button></div>`;
+        return `<div class="run-media-actions"><button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button></div>`;
       }
       const label = IS_IOS ? "下载到文件" : downloadLabel;
       const iosAttr = IS_IOS ? ` data-ios-download="1"` : "";
-      return `<div class="run-media-actions"><a href="${openUrl}" target="_blank" rel="noopener noreferrer">打开</a><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer"${iosAttr}>${escapeHtml(label)}</a></div>`;
+      return `<div class="run-media-actions"><button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}">打开</button><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer" data-media-download-url="${downloadUrl}" data-media-download-name="${safeName}"${iosAttr}>${escapeHtml(label)}</a></div>`;
     }
 
     function renderMediaPreviews(bubble, urls) {
@@ -13727,10 +13818,11 @@
           downloadLabel = "下载音频";
           fallbackName = "lobster-audio.mp3";
         } else if (/\.(png|jpe?g|webp|gif)(\?|#|$)/.test(low)) {
-          const a = document.createElement("a");
-          a.href = mediaProxyUrl(url, "inline", "lobster-image.png");
-          a.target = "_blank";
-          a.rel = "noopener noreferrer";
+          const a = document.createElement("button");
+          a.type = "button";
+          a.className = "media-preview-trigger";
+          a.dataset.mediaPreviewUrl = mediaProxyUrl(url, "inline", "lobster-image.png");
+          a.dataset.mediaPreviewName = filenameFromUrl(url, "lobster-image.png");
           el = document.createElement("img");
           el.src = mediaProxyUrl(url, "inline", "lobster-image.png");
           el.alt = "生成素材预览";
@@ -13740,10 +13832,10 @@
           box.appendChild(item);
           return;
         } else {
-          el = document.createElement("a");
-          el.href = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-media"));
-          el.target = "_blank";
-          el.rel = "noopener noreferrer";
+          el = document.createElement("button");
+          el.type = "button";
+          el.dataset.mediaPreviewUrl = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-media"));
+          el.dataset.mediaPreviewName = filenameFromUrl(url, "lobster-media");
           el.textContent = "打开预览";
         }
         item.appendChild(el);
@@ -14380,14 +14472,22 @@
         }
         if (!url) return "";
         const low = url.toLowerCase();
-        if (/\.(mp4|webm|mov)(\?|#|$)/.test(low)) {
+        const mediaType = String(entry.media_type || "").trim().toLowerCase();
+        if (mediaType.includes("video") || /\.(mp4|webm|mov|m4v)(\?|#|$)/.test(low)) {
           return `<div class="run-media-item"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}<div class="run-media-actions">${runMediaPublishButton(row, index, "video")}</div></div>`;
         }
-        if (/\.(png|jpe?g|webp|gif)(\?|#|$)/.test(low)) {
+        if (mediaType.includes("image") || /\.(png|jpe?g|webp|gif|bmp|avif)(\?|#|$)/.test(low)) {
           const previewUrl = escapeHtml(mediaProxyUrl(url, "inline", "lobster-image.png"));
-          return `<div class="run-media-item"><a href="${previewUrl}" target="_blank" rel="noopener noreferrer"><img src="${previewUrl}" alt="预览"></a>${mediaActionHtml(url, "下载图片", "lobster-image.png")}<div class="run-media-actions">${runMediaPublishButton(row, index, "image")}</div></div>`;
+          const rawPreviewName = filenameFromUrl(url, "lobster-image.png");
+          const previewName = escapeHtml(rawPreviewName);
+          return `<div class="run-media-item"><button class="media-preview-trigger" type="button" data-media-preview-url="${previewUrl}" data-media-preview-name="${previewName}"><img src="${previewUrl}" alt="预览"></button>${mediaActionHtml(url, "下载图片", "lobster-image.png")}<div class="run-media-actions">${runMediaPublishButton(row, index, "image")}</div></div>`;
         }
-        return `<div class="run-media-item"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开预览</a>${mediaActionHtml(url, "下载文件", "lobster-media")}<div class="run-media-actions">${runMediaPublishButton(row, index, entry.media_type)}</div></div>`;
+        if (mediaType.includes("audio") || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|#|$)/.test(low)) {
+          return `<div class="run-media-item"><audio controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-audio.mp3")))}"></audio>${mediaActionHtml(url, "下载音频", "lobster-audio.mp3")}<div class="run-media-actions">${runMediaPublishButton(row, index, "audio")}</div></div>`;
+        }
+        const rawPreviewName = filenameFromUrl(url, "lobster-media");
+        const previewName = escapeHtml(rawPreviewName);
+        return `<div class="run-media-item"><button type="button" data-media-preview-url="${escapeHtml(mediaProxyUrl(url, "inline", rawPreviewName))}" data-media-preview-name="${previewName}">打开预览</button>${mediaActionHtml(url, "下载文件", "lobster-media")}<div class="run-media-actions">${runMediaPublishButton(row, index, entry.media_type)}</div></div>`;
       }).join("")}</div>`;
     }
 
@@ -15125,6 +15225,8 @@
     $("personalTemplateHelpCloseBtn")?.addEventListener("click", closePersonalTemplateHelpDialog);
     $("assetPreviewBackdrop")?.addEventListener("click", closeAssetPreviewDialog);
     $("assetPreviewCloseBtn")?.addEventListener("click", closeAssetPreviewDialog);
+    $("mobileMediaPreviewBackdrop")?.addEventListener("click", closeMobileMediaPreview);
+    $("mobileMediaPreviewCloseBtn")?.addEventListener("click", closeMobileMediaPreview);
     $("assetPreviewBody")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-delete-hifly-asset]");
       if (!btn) return;
@@ -15133,6 +15235,20 @@
     $("leadDetailBackdrop")?.addEventListener("click", closeLeadDetailDialog);
     $("leadDetailCloseBtn")?.addEventListener("click", closeLeadDetailDialog);
     document.addEventListener("click", (evt) => {
+      const preview = evt.target.closest("[data-media-preview-url]");
+      if (preview) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        openMobileMediaPreview(preview.dataset.mediaPreviewUrl || "", preview.dataset.mediaPreviewName || "");
+        return;
+      }
+      const download = evt.target.closest("[data-media-download-url]");
+      if (download && (IS_ANDROID || download.id === "mobileMediaPreviewDownloadBtn")) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        startMediaDownload(download.dataset.mediaDownloadUrl || download.href || "", download.dataset.mediaDownloadName || download.download || "");
+        return;
+      }
       const btn = evt.target.closest("[data-open-personal-template-settings]");
       if (!btn) return;
       evt.preventDefault();
@@ -15146,6 +15262,24 @@
       const input = id ? $(`${id}File`) : null;
       if (input) input.click();
     });
+
+    window.__lobsterHandleBack = function () {
+      if (closeMobileMediaPreview()) return true;
+      const visibleDialogs = Array.from(document.querySelectorAll('[role="dialog"]:not(.hidden)'));
+      const dialog = visibleDialogs[visibleDialogs.length - 1];
+      if (dialog) {
+        const close = dialog.querySelector('button[aria-label*="关闭"], button[id*="Close"], button[id*="Cancel"]');
+        if (close) {
+          close.click();
+          return true;
+        }
+      }
+      if (activeViewKey() !== "office") {
+        $("topBackBtn")?.click();
+        return true;
+      }
+      return false;
+    };
     document.addEventListener("change", (evt) => {
       const select = evt.target.closest("[data-asset-select]");
       if (select) {

@@ -1618,6 +1618,21 @@
     </div>
   </div>
 
+  <div class="task-success-dialog mobile-media-preview-dialog hidden" id="mobileMediaPreviewDialog" role="dialog" aria-modal="true" aria-labelledby="mobileMediaPreviewTitle">
+    <button class="task-success-backdrop" type="button" id="mobileMediaPreviewBackdrop" aria-label="关闭预览"></button>
+    <div class="task-success-panel mobile-media-preview-panel">
+      <div class="mobile-media-preview-head">
+        <button class="mobile-media-preview-back" type="button" id="mobileMediaPreviewCloseBtn" aria-label="返回">
+          <span aria-hidden="true">‹</span>
+          <b>返回</b>
+        </button>
+        <strong id="mobileMediaPreviewTitle">素材预览</strong>
+        <button class="ghost mobile-media-preview-download" type="button" id="mobileMediaPreviewDownloadBtn">下载</button>
+      </div>
+      <div id="mobileMediaPreviewBody" class="mobile-media-preview-body"></div>
+    </div>
+  </div>
+
   <div class="task-success-dialog hidden" id="leadDetailDialog" role="dialog" aria-modal="true" aria-labelledby="leadDetailTitle">
     <button class="task-success-backdrop" type="button" id="leadDetailBackdrop" aria-label="关闭"></button>
     <div class="task-success-panel detail-modal-panel lead-detail-panel">
@@ -1634,6 +1649,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260727-persistent-nav"></script>
+  <script src="/h5-static/h5-app.js?v=20260727-android-media"></script>
 </body>
 </html>

@@ -5645,6 +5645,117 @@
       line-height: 1.6;
       white-space: pre-wrap;
     }
+    .mobile-media-preview-dialog {
+      padding: 0;
+      place-items: stretch;
+      z-index: 180;
+    }
+    .mobile-media-preview-dialog .task-success-backdrop {
+      background: rgba(9, 17, 31, .72);
+    }
+    .mobile-media-preview-panel {
+      width: 100%;
+      height: 100%;
+      max-height: none;
+      min-height: 0;
+      padding: 0;
+      gap: 0;
+      grid-template-rows: auto minmax(0, 1fr);
+      border: 0;
+      border-radius: 0;
+      background: #0c111b;
+      box-shadow: none;
+      overflow: hidden;
+    }
+    .mobile-media-preview-head {
+      position: relative;
+      z-index: 2;
+      min-height: 58px;
+      padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+      display: grid;
+      grid-template-columns: minmax(72px, auto) minmax(0, 1fr) minmax(72px, auto);
+      align-items: center;
+      gap: 8px;
+      color: #fff;
+      background: rgba(12, 17, 27, .98);
+      border-bottom: 1px solid rgba(255,255,255,.12);
+    }
+    .mobile-media-preview-head > strong {
+      min-width: 0;
+      overflow: hidden;
+      text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .mobile-media-preview-back,
+    .mobile-media-preview-download {
+      min-height: 40px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 8px;
+      color: #fff;
+      background: transparent;
+      box-shadow: none;
+      font-size: 14px;
+    }
+    .mobile-media-preview-back {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 3px;
+    }
+    .mobile-media-preview-back span {
+      font-size: 31px;
+      font-weight: 300;
+      line-height: 1;
+    }
+    .mobile-media-preview-back b { font-weight: 500; }
+    .mobile-media-preview-download {
+      justify-self: end;
+      color: #7e9fff;
+      font-weight: 600;
+    }
+    .mobile-media-preview-body {
+      position: relative;
+      z-index: 1;
+      min-height: 0;
+      height: auto;
+      display: grid;
+      place-items: center;
+      overflow: auto;
+      overscroll-behavior: contain;
+      background: #090d15;
+    }
+    .mobile-media-preview-body img,
+    .mobile-media-preview-body video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      background: #090d15;
+    }
+    .mobile-media-preview-body audio {
+      width: min(520px, calc(100% - 28px));
+    }
+    .mobile-media-preview-body iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #fff;
+    }
+    .media-preview-trigger {
+      width: 100%;
+      padding: 0;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      box-shadow: none;
+      overflow: hidden;
+    }
     .lead-detail-list {
       display: grid;
       gap: 10px;
