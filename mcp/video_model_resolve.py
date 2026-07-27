@@ -16,6 +16,7 @@ Pair = Tuple[str, str]
 APIZ_VEO31_TEXT_MODEL = "apiz/veo3.1/text-to-video"
 APIZ_VEO31_IMAGE_MODEL = "apiz/veo3.1/image-to-video"
 APIZ_VEO31_REFERENCE_MODEL = "apiz/veo3.1/reference-to-video"
+_LEGACY_FAL_VEO31_RE = re.compile(r"^fal-ai/veo3\.1(?:/.*)?$", re.I)
 _LEGACY_DEFAULT_VIDEO_MODELS = frozenset(
     {
         "xai/grok-imagine-video/text-to-video",
@@ -425,6 +426,11 @@ def resolve_video_model_id(raw: str, has_image: bool, image_count: Optional[int]
     except (TypeError, ValueError):
         ref_count = 1 if has_image else 0
     has_image = ref_count > 0
+
+    # Older clients rewrote Veo 3.1 to a retired FAL route. Migrate the whole
+    # family here so those requests use the current APIZ and fallback chain.
+    if _LEGACY_FAL_VEO31_RE.fullmatch(m):
+        return _apiz_veo31_model_for_image_count(ref_count)
 
     m = _rewrite_legacy_prefix(m)
 
