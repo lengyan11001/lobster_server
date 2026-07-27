@@ -90,4 +90,7 @@ def test_h5_editor_only_creates_from_system_mirror_or_explicit_copy():
     assert 'system_template_key: "system_sales"' in script
     assert "新模板请从模板列表选择一个模板后点击复制" in script
     assert ".then(openCustomEmployeeList)" in script
-    assert "20260727-workflow-template-save-v1" in html
+    assert "function customWorkflowTemplateRows()" in script
+    assert "const mirrors = new Map();" in script
+    assert "return personalSystemWorkflowTemplate(sid)" in script
+    assert "20260727-workflow-template-save-v2" in html

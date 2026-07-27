@@ -3910,16 +3910,37 @@
       return Array.isArray(state.workflowTemplates) ? state.workflowTemplates : [];
     }
 
+    function customWorkflowTemplateRows() {
+      return userWorkflowTemplateRows().filter((tpl) => !workflowSystemTemplateKey(tpl));
+    }
+
     function workflowTemplateRows() {
       const systemRows = systemWorkflowTemplates();
       const userRows = userWorkflowTemplateRows();
-      const ids = new Set(systemRows.map((tpl) => String(tpl.id || "")));
-      return [...systemRows, ...userRows.filter((tpl) => !ids.has(String(tpl && tpl.id || "")))];
+      const mirrors = new Map();
+      userRows.forEach((tpl) => {
+        const key = workflowSystemTemplateKey(tpl);
+        if (key && !mirrors.has(key)) mirrors.set(key, tpl);
+      });
+      const mergedSystemRows = systemRows.map((tpl) => mirrors.get(String(tpl.id || "")) || tpl);
+      const mergedIds = new Set(mergedSystemRows.map((tpl) => String(tpl && tpl.id || "")));
+      const mirrorIds = new Set(Array.from(mirrors.values()).map((tpl) => String(tpl && tpl.id || "")));
+      return [
+        ...mergedSystemRows,
+        ...userRows.filter((tpl) => {
+          const id = String(tpl && tpl.id || "");
+          return !mirrorIds.has(id) && !mergedIds.has(id);
+        }),
+      ];
     }
 
     function workflowTemplateById(id) {
       const sid = String(id || "");
-      return workflowTemplateRows().find((tpl) => String(tpl && tpl.id || "") === sid) || null;
+      const direct = workflowTemplateRows().find((tpl) => String(tpl && tpl.id || "") === sid);
+      if (direct) return direct;
+      return personalSystemWorkflowTemplate(sid)
+        || systemWorkflowTemplates().find((tpl) => String(tpl && tpl.id || "") === sid)
+        || null;
     }
 
     function workflowTemplateCanEdit(tpl) {
@@ -3956,6 +3977,8 @@
       if (tpl && tpl.source === "system") {
         return !!activeWorkflowTemplateKey() && activeWorkflowTemplateKey() === String(tpl.id || "");
       }
+      const systemTemplateKey = workflowSystemTemplateKey(tpl);
+      if (systemTemplateKey && activeWorkflowTemplateKey() === systemTemplateKey) return true;
       const id = activeWorkflowTemplateId();
       return !!id && String(tpl && tpl.id || "") === id;
     }
@@ -4072,7 +4095,7 @@
     function renderCustomEmployees() {
       const strip = $("customEmployeeStrip");
       if (!strip) return;
-      const rows = sortWorkflowTemplatesForDisplay(userWorkflowTemplateRows());
+      const rows = sortWorkflowTemplatesForDisplay(customWorkflowTemplateRows());
       if ($("customEmployeeTotal")) $("customEmployeeTotal").textContent = `(${rows.length})`;
       if (state.workflowTemplatesLoading) {
         strip.innerHTML = `<div class="custom-employee-empty">加载中...</div>`;
@@ -5768,7 +5791,7 @@
         const active = !role.comingSoon && activeWorkflowTemplateKey() === String(role.systemTemplateId || "");
         return active ? { ...role, status: "启用中", active } : role;
       });
-      const customEmployees = userWorkflowTemplateRows();
+      const customEmployees = customWorkflowTemplateRows();
       const sortedCustomEmployees = sortWorkflowTemplatesForDisplay(customEmployees);
       const activeCustomEmployees = sortedCustomEmployees.filter((tpl) => workflowTemplateIsActive(tpl));
       const inactiveCustomEmployees = sortedCustomEmployees.filter((tpl) => !workflowTemplateIsActive(tpl));
