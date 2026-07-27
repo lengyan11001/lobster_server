@@ -3237,9 +3237,21 @@ def _save_draft_records(
         saved.append(rec)
     _mark_source_rows_used(db, rows, task=task, record_id=group_id)
     db.commit()
-    for rec in saved:
-        db.refresh(rec)
     return saved
+
+
+def _finish_db_transaction_before_external_io(db: Session) -> None:
+    in_transaction = getattr(db, "in_transaction", None)
+    if not callable(in_transaction) or not in_transaction():
+        return
+    try:
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
 
 
 async def _generate_and_save_ip_content_records(
@@ -3328,6 +3340,7 @@ async def _generate_and_save_ip_content_records(
             },
         )
         try:
+            _finish_db_transaction_before_external_io(db)
             generated = await _call_ip_content_llm(
                 request=request,
                 auth_token=auth_token,

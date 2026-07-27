@@ -799,7 +799,25 @@ def test_generate_and_save_ip_content_records_batches_moments(monkeypatch):
     calls = []
     saved_groups = []
 
+    class DummyDb:
+        def __init__(self):
+            self.transaction_open = True
+            self.commit_count = 0
+
+        def in_transaction(self):
+            return self.transaction_open
+
+        def commit(self):
+            self.commit_count += 1
+            self.transaction_open = False
+
+        def rollback(self):
+            self.transaction_open = False
+
+    db = DummyDb()
+
     async def fake_call(**kwargs):
+        assert db.transaction_open is False
         calls.append(kwargs["count"])
         return {
             "requirements": f"req-{kwargs['count']}",
@@ -824,6 +842,7 @@ def test_generate_and_save_ip_content_records_batches_moments(monkeypatch):
         reference_image_urls=None,
     ):
         saved_groups.append(group_id)
+        db.transaction_open = True
         return [
             SimpleNamespace(
                 id=len(saved_groups) * 100 + idx,
@@ -850,7 +869,7 @@ def test_generate_and_save_ip_content_records_batches_moments(monkeypatch):
 
     result = asyncio.run(
         studio._generate_and_save_ip_content_records(
-            db=object(),
+            db=db,
             current_user=SimpleNamespace(id=1),
             task_key="task2_moments",
             record_task="moments_candidate",
@@ -866,6 +885,7 @@ def test_generate_and_save_ip_content_records_batches_moments(monkeypatch):
     )
 
     assert calls == [5, 5, 2]
+    assert db.commit_count == 3
     assert saved_groups == ["group-a", "group-a", "group-a"]
     assert result["count"] == 12
     assert len(result["batches"]) == 3
