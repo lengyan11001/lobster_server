@@ -27,7 +27,7 @@ from ..db import get_db
 from ..models import AgentCommissionLedger, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
-from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
+from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES, OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID
 from ..services.juhe_wechat import extract_friend_add_target, guid_request, mask_secret, safe_request_snapshot
 
 router = APIRouter()
@@ -1159,6 +1159,11 @@ class AdminSkillVisUpdate(BaseModel):
     unlock_remove: list[str] = []
 
 
+class AdminOpenaiImageChannelToggle(BaseModel):
+    user_id: int
+    enabled: bool = True
+
+
 @router.post("/admin/api/user-skill-visibility/{user_id}")
 def admin_update_user_skill_visibility(
     user_id: int,
@@ -1224,6 +1229,40 @@ def admin_update_user_skill_visibility(
         "removed": removed,
         "unlocked_added": unlocked_added,
         "unlocked_removed": unlocked_removed,
+    }
+
+
+@router.post("/admin/api/set-user-openai-image-channel")
+def admin_set_user_openai_image_channel(
+    body: AdminOpenaiImageChannelToggle,
+    ctx: AdminContext = Depends(_verify_admin_token),
+    db: Session = Depends(get_db),
+):
+    user_id = int(body.user_id)
+    _assert_can_manage_user(db, ctx, user_id)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="鐢ㄦ埛涓嶅瓨鍦?")
+    from .skills import _ensure_user_visibility_seeded
+    _ensure_user_visibility_seeded(db, user)
+    row = db.query(UserSkillVisibility).filter(
+        UserSkillVisibility.user_id == user_id,
+        UserSkillVisibility.package_id == OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,
+    ).first()
+    enabled = bool(body.enabled)
+    if enabled and not row:
+        db.add(UserSkillVisibility(
+            user_id=user_id,
+            package_id=OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,
+        ))
+    if not enabled and row:
+        db.delete(row)
+    db.commit()
+    return {
+        "ok": True,
+        "user_id": user_id,
+        "enabled": enabled,
+        "package_id": OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID,
     }
 
 
