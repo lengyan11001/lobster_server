@@ -191,7 +191,7 @@ def gen_order_no() -> str:
     """生成符合富友规范的商户订单号: 订单前缀(5位) + 日期(8位) + 随机数(最多17位), ≤30。"""
     prefix = _cfg("fuiou_order_prefix", "10000")[:5].ljust(5, "0")
     date_str = datetime.now(_BJ).strftime("%Y%m%d")
-    rand_part = str(int(time.time() * 1000))[-10:] + uuid.uuid4().hex[:4]
+    rand_part = str(int(time.time() * 1000))[-10:] + uuid.uuid4().hex[:7]
     return (prefix + date_str + rand_part)[:30]
 
 

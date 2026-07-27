@@ -1,12 +1,4 @@
-"""共享 fixtures：最小 FastAPI 装配 + 独立 SQLite + 模拟"富友"密钥对。
-
-测试设计要点：
-- 仓库 `certs/fuiou/` 里只有【富友公钥】，没有富友私钥（我们是商户端）。
-- 测试需要"模拟富友" → 临时生成一对 RSA-2048 密钥充当模拟富友，
-  monkeypatch FUIOU_FUIOU_PUBLIC_KEY_PATH 指向这把模拟公钥，
-  这样测试里既能"以商户身份发出加密报文"也能"以富友身份解出 / 加密回应"。
-- 同理商户密钥也独立生成一对，避免污染仓库里的真测试密钥。
-"""
+"""共享 fixtures：最小 FastAPI 装配、独立 SQLite 和富友 MD5 聚合支付模拟。"""
 from __future__ import annotations
 
 import json
@@ -29,84 +21,21 @@ os.environ.setdefault("LOBSTER_ADMIN_USERNAME", "")
 os.environ.setdefault("LOBSTER_ADMIN_PASSWORD", "")
 
 
-def _gen_pair(bits: int = 2048) -> tuple[Any, Any]:
-    from Crypto.PublicKey import RSA
-
-    key = RSA.generate(bits)
-    return key, key.publickey()
-
-
-@pytest.fixture(scope="session")
-def fake_keys(tmp_path_factory) -> dict[str, Any]:
-    """生成两对 RSA 密钥：模拟商户 + 模拟富友；返回 .pem 路径与 key 对象。"""
-    base = tmp_path_factory.mktemp("fuiou_keys")
-    merchant_priv, merchant_pub = _gen_pair(2048)
-    fuiou_priv, fuiou_pub = _gen_pair(2048)
-    paths = {}
-    for name, key in [
-        ("merchant_priv", merchant_priv),
-        ("merchant_pub", merchant_pub),
-        ("fuiou_priv", fuiou_priv),
-        ("fuiou_pub", fuiou_pub),
-    ]:
-        p = base / f"{name}.pem"
-        p.write_bytes(key.export_key("PEM"))
-        paths[name + "_path"] = str(p)
-    return {
-        "merchant_priv": merchant_priv,
-        "merchant_pub": merchant_pub,
-        "fuiou_priv": fuiou_priv,
-        "fuiou_pub": fuiou_pub,
-        **paths,
-    }
-
-
-@pytest.fixture(scope="session")
-def fake_keys_1024(tmp_path_factory) -> dict[str, Any]:
-    """1024 bit 等价对，专门测富友测试环境真实位数。"""
-    base = tmp_path_factory.mktemp("fuiou_keys_1024")
-    mp, _ = _gen_pair(1024)
-    fp, _ = _gen_pair(1024)
-    pm = base / "merchant_priv_1024.pem"
-    pf = base / "fuiou_pub_1024.pem"
-    pm.write_bytes(mp.export_key("PEM"))
-    pf.write_bytes(fp.publickey().export_key("PEM"))
-    return {
-        "merchant_priv": mp,
-        "fuiou_pub": fp.publickey(),
-        "merchant_priv_path": str(pm),
-        "fuiou_pub_path": str(pf),
-    }
-
-
-@pytest.fixture(autouse=True)
-def _reset_fuiou_caches():
-    """每个测试前后清空模块级 _key_cache，避免 monkeypatch 路径变更后仍命中旧 key。"""
-    from backend.app.services import fuiou_pay
-
-    cache = getattr(fuiou_pay, "_key_cache", None)
-    if cache is not None:
-        cache.clear()
-    yield
-    cache = getattr(fuiou_pay, "_key_cache", None)
-    if cache is not None:
-        cache.clear()
-
-
 @pytest.fixture
-def patch_fuiou_settings(monkeypatch, fake_keys):
-    """把 settings.fuiou_* 都指向"模拟富友"的密钥对，URL 用 example.test，避免任何真请求。"""
+def patch_fuiou_settings(monkeypatch):
+    """配置当前 MD5 聚合支付字段，URL 使用 example.test，避免任何真实请求。"""
     from backend.app.core.config import settings
 
     monkeypatch.setattr(settings, "fuiou_mchnt_cd", "0001000F0040992", raising=False)
-    monkeypatch.setattr(settings, "fuiou_merchant_private_key_path", fake_keys["merchant_priv_path"], raising=False)
-    monkeypatch.setattr(settings, "fuiou_fuiou_public_key_path", fake_keys["fuiou_pub_path"], raising=False)
-    monkeypatch.setattr(settings, "fuiou_gateway_pay_url", "https://example.test/aggpos/order.fuiou", raising=False)
-    monkeypatch.setattr(settings, "fuiou_gateway_query_url", "https://example.test/aggpos/orderQuery.fuiou", raising=False)
-    monkeypatch.setattr(settings, "fuiou_gateway_close_url", "https://example.test/close.fuiou", raising=False)
-    monkeypatch.setattr(settings, "fuiou_order_pay_type", "FAPPLET", raising=False)
-    monkeypatch.setattr(settings, "fuiou_ver", "1.0.0", raising=False)
-    monkeypatch.setattr(settings, "fuiou_term_id", "", raising=False)
+    monkeypatch.setattr(settings, "fuiou_mchnt_key", "test-fuiou-md5-secret", raising=False)
+    monkeypatch.setattr(settings, "fuiou_precreate_url", "https://example.test/aggregatePay/preCreate", raising=False)
+    monkeypatch.setattr(settings, "fuiou_query_url", "https://example.test/aggregatePay/commonQuery", raising=False)
+    monkeypatch.setattr(settings, "fuiou_refund_url", "https://example.test/aggregatePay/commonRefund", raising=False)
+    monkeypatch.setattr(settings, "fuiou_term_id", "88888888", raising=False)
+    monkeypatch.setattr(settings, "fuiou_default_order_type", "WECHAT", raising=False)
+    monkeypatch.setattr(settings, "fuiou_order_prefix", "10000", raising=False)
+    monkeypatch.setattr(settings, "fuiou_ins_cd", None, raising=False)
+    monkeypatch.setattr(settings, "fuiou_repeat_order", None, raising=False)
     monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
     monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
     return settings
@@ -258,57 +187,63 @@ def client_as_other(db_session_factory, other_user, patch_fuiou_settings, test_u
 
 # ── 工具：构造模拟富友异步通知 / 响应 ──
 
-def _rsa_encrypt_with(plain: str, pub_key) -> str:
-    """用任意 RSA 公钥分块加密 → b64。"""
-    from backend.app.services.fuiou_pay import _rsa_encrypt
-
-    return _rsa_encrypt(plain, pub_key)
-
-
-def _rsa_decrypt_with(cipher_b64: str, priv_key) -> str:
-    from backend.app.services.fuiou_pay import _rsa_decrypt
-
-    return _rsa_decrypt(cipher_b64, priv_key)
-
-
-def _rsa_sign_with(text: str, priv_key) -> str:
-    from backend.app.services.fuiou_pay import _rsa_sign
-
-    return _rsa_sign(text, priv_key)
-
 
 @pytest.fixture
-def make_notify(fake_keys):
-    """工厂：传入业务字段 → 返回完整可用的"富友异步通知"信封 dict。
+def make_notify():
+    """构造当前 MD5 协议的富友成功回调。"""
+    def _build(
+        values: dict[str, Any],
+        with_sign: bool = True,
+        mchnt_cd: str = "0001000F0040992",
+    ) -> dict[str, Any]:
+        from backend.app.services.fuiou_pay import _md5
 
-    富友返回数据 = 用商户公钥加密 message。
-    通知里如果带 sign，是富友用富友私钥对明文 message 字符串签的。
-    """
-    def _build(plain: dict[str, Any], with_sign: bool = True, mchnt_cd: str = "0001000F0040992") -> dict[str, Any]:
-        plain_text = json.dumps(plain, ensure_ascii=False, separators=(",", ":"))
-        cipher = _rsa_encrypt_with(plain_text, fake_keys["merchant_pub"])
-        env: dict[str, Any] = {"mchnt_cd": mchnt_cd, "message": cipher}
+        data: dict[str, Any] = {
+            "result_code": "000000",
+            "result_msg": "success",
+            "mchnt_cd": mchnt_cd,
+            "mchnt_order_no": values.get("mchnt_order_no") or values.get("order_id") or "",
+            "settle_order_amt": str(values.get("settle_order_amt") or values.get("order_amt") or ""),
+            "order_amt": str(values.get("order_amt") or ""),
+            "txn_fin_ts": str(values.get("txn_fin_ts") or "20260727120000"),
+            "reserved_fy_settle_dt": str(values.get("reserved_fy_settle_dt") or "20260727"),
+            "random_str": str(values.get("random_str") or "notify-random"),
+            "transaction_id": values.get("transaction_id") or values.get("channel_order_no") or "",
+        }
+        data.update({key: value for key, value in values.items() if key not in {"order_id", "order_st", "channel_order_no"}})
         if with_sign:
-            env["sign"] = _rsa_sign_with(plain_text, fake_keys["fuiou_priv"])
-        return env
+            parts = [
+                data.get("result_code", ""),
+                data.get("result_msg", ""),
+                data.get("mchnt_cd", ""),
+                data.get("mchnt_order_no", ""),
+                data.get("settle_order_amt", ""),
+                data.get("order_amt", ""),
+                data.get("txn_fin_ts", ""),
+                data.get("reserved_fy_settle_dt", ""),
+                data.get("random_str", ""),
+                "test-fuiou-md5-secret",
+            ]
+            data["full_sign"] = _md5("|".join(str(item) for item in parts))
+        return data
 
     return _build
 
 
 @pytest.fixture
-def make_fuiou_response(fake_keys):
-    """工厂：模拟"富友 HTTP 响应"信封：富友用商户公钥加密 message。"""
-    def _build(plain: dict[str, Any], resp_code: str = "0000", resp_desc: str = "成功") -> dict[str, Any]:
-        if plain:
-            plain_text = json.dumps(plain, ensure_ascii=False, separators=(",", ":"))
-            cipher = _rsa_encrypt_with(plain_text, fake_keys["merchant_pub"])
-        else:
-            cipher = ""
+def make_fuiou_response():
+    """构造当前聚合支付下单或查单接口的 JSON 响应。"""
+    def _build(
+        values: dict[str, Any],
+        result_code: str = "000000",
+        result_msg: str = "成功",
+    ) -> dict[str, Any]:
         return {
+            "result_code": result_code,
+            "result_msg": result_msg,
             "mchnt_cd": "0001000F0040992",
-            "message": cipher,
-            "resp_code": resp_code,
-            "resp_desc": resp_desc,
+            "random_str": "response-random",
+            **values,
         }
 
     return _build
