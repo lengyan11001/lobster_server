@@ -4536,6 +4536,19 @@
       return activeView ? String(activeView.id || "").replace(/View$/, "") : "office";
     }
 
+    function syncDesignerBottomNav(viewKey = activeViewKey()) {
+      const key = String(viewKey || "office");
+      let activeNav = "office";
+      if (["office", "secretary"].includes(key)) activeNav = "office";
+      else if (key === "contentRecords") activeNav = "contentRecords";
+      else if (["profile", "mountedAccounts", "personalSettings", "agentManage"].includes(key)) activeNav = "profile";
+      else if (["department", "ability"].includes(key) && state.currentDepartmentId === AI_MARKETING_CREATION_ID) activeNav = "create";
+      else if (["workflow", "department", "ability"].includes(key)) activeNav = "employee";
+      document.querySelectorAll(".designer-bottom-nav [data-designer-nav]").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.designerNav === activeNav);
+      });
+    }
+
     function openContextChat(context) {
       const from = activeViewKey();
       if (from && from !== "messages") state.lastViewBeforeMessages = from;
@@ -8077,6 +8090,10 @@
         switchTab("workflow");
         return;
       }
+      if (key === "aiMarketingCreation") {
+        openDepartmentView(AI_MARKETING_CREATION_ID);
+        return;
+      }
       switchTab(key);
     }
 
@@ -8106,6 +8123,7 @@
       const key = tab || "office";
       document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
       document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
+      syncDesignerBottomNav(key);
       const titleMap = {
         office: ["必火AI员工", "我的AI员工办公室"],
         secretary: ["老板驾驶舱", "今日交付、趋势和风险"],
@@ -12390,7 +12408,7 @@
       </div>`
         + taskFieldHtml("执行方式", taskSelectHtml("abilityScheduleType", scheduleTypeOptionsHtml()))
         + taskFieldHtml("间隔分钟", workInputHtml("abilityIntervalMinutes", "number", "60", 'min="1"'))
-        + taskFieldHtml("开始时间（可选）", '<input id="abilityStartAt" type="datetime-local">')
+        + taskFieldHtml("开始时间（可选）", '<input id="abilityStartAt" type="datetime-local">', true)
         + `<div class="field full hidden" id="abilityDailyTimesBlock">
             <label>每天执行时间</label>
             <div class="task-daily-times" id="abilityDailyTimesList"></div>
