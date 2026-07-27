@@ -536,6 +536,35 @@ def _latest_shanjian_virtualman(db: Session, user_id: int) -> str:
     return _clean_text(row.virtualman_id if row else "", 128)
 
 
+def _available_shanjian_virtualmans(db: Session, user_id: int) -> list[dict[str, Any]]:
+    rows = (
+        db.query(ShanjianDigitalHumanProfile)
+        .filter(
+            ShanjianDigitalHumanProfile.user_id == user_id,
+            ShanjianDigitalHumanProfile.status == "succeed",
+            ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
+        )
+        .order_by(ShanjianDigitalHumanProfile.id.asc())
+        .all()
+    )
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        virtualman_id = _clean_text(row.virtualman_id, 128)
+        if not virtualman_id or virtualman_id in seen:
+            continue
+        seen.add(virtualman_id)
+        candidates.append(
+            {
+                "profile_id": int(row.id),
+                "virtualman_id": virtualman_id,
+                "title": _clean_text(row.title, 128),
+                "cover_url": _clean_text(row.cover_url, 1000),
+            }
+        )
+    return candidates
+
+
 def _template_language(requirements: dict[str, Any], template: Optional[IPContentScheduleTemplate]) -> str:
     req = requirements if isinstance(requirements, dict) else {}
     meta = template.meta if template and isinstance(template.meta, dict) else {}
@@ -919,6 +948,7 @@ def _prepare_sales_workflow_nodes(
     digital_human_provider = _sales_digital_human_provider(snapshot_extra, reference_template)
     hifly_avatar = _latest_hifly_avatar(db, owner.id) if digital_human_provider == _SALES_DH_PROVIDER_LEGACY else ""
     shanjian_virtualman = _latest_shanjian_virtualman(db, owner.id)
+    shanjian_virtualmans = _available_shanjian_virtualmans(db, owner.id)
     hifly_voice = _latest_hifly_voice(db, owner.id)
     template_language = _template_language(requirements, reference_template)
 
@@ -1035,6 +1065,9 @@ def _prepare_sales_workflow_nodes(
                 params.setdefault("target_language", template_language)
                 params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
                 params["script_source"] = "ip_daily_industry_hot_oral"
+                if shanjian_virtualmans:
+                    params["virtualman_candidates"] = shanjian_virtualmans
+                    params["virtualman_selection_mode"] = "daily_round_robin"
                 if shanjian_virtualman:
                     params.setdefault("virtualman_id", shanjian_virtualman)
                 if hifly_voice:
@@ -1082,6 +1115,9 @@ def _prepare_sales_workflow_nodes(
                 params.setdefault("target_language", template_language)
                 params.setdefault("sales_node_label", _clean_text(node.get("ability_label") or node.get("note") or plan.get("title"), 160))
                 params["script_source"] = "ip_daily_industry_hot_oral"
+                if shanjian_virtualmans:
+                    params["virtualman_candidates"] = shanjian_virtualmans
+                    params["virtualman_selection_mode"] = "daily_round_robin"
                 if shanjian_virtualman:
                     params.setdefault("virtualman_id", shanjian_virtualman)
                 if hifly_voice:
@@ -1132,7 +1168,7 @@ def _prepare_sales_workflow_nodes(
         if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:
             if not hifly_avatar:
                 missing.append("素材库：请先创建可用的旧版数字人形象分身")
-        elif not shanjian_virtualman:
+        elif not shanjian_virtualmans:
             missing.append("素材库：请先创建并训练完成可用的数字人形象分身（数字人2.0）")
         if not hifly_voice:
             missing.append("素材库：请先创建可用的声音分身")
@@ -1156,6 +1192,7 @@ def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, 
         "nodes": row.nodes or [],
         "status": row.status,
         "source": source,
+        "meta": row.meta or {},
         "granted_user_ids": grants or [],
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
@@ -1421,19 +1458,52 @@ def create_workflow_template(
     name = (body.name or "").strip()[:160]
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
+    meta = dict(body.meta or {})
+    system_template_key = _clean_text(meta.get("system_template_key"), 128)
+    copied_from = _clean_text(meta.get("copied_from"), 128)
+    if system_template_key and system_template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+        raise HTTPException(status_code=400, detail="该系统员工模板暂未开放")
+    if not system_template_key and not copied_from:
+        raise HTTPException(status_code=400, detail="新模板只能通过复制创建；编辑已有模板请直接保存")
+    if system_template_key:
+        own_rows = (
+            db.query(H5WorkflowTemplate)
+            .filter(
+                H5WorkflowTemplate.owner_user_id == owner.id,
+                H5WorkflowTemplate.status == "active",
+            )
+            .order_by(H5WorkflowTemplate.updated_at.desc(), H5WorkflowTemplate.id.desc())
+            .all()
+        )
+        existing = next(
+            (
+                item
+                for item in own_rows
+                if _clean_text((item.meta or {}).get("system_template_key"), 128) == system_template_key
+            ),
+            None,
+        )
+        if existing:
+            existing.name = name
+            existing.nodes = _clean_nodes(body.nodes)
+            existing.meta = {**(existing.meta or {}), **meta}
+            existing.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(existing)
+            return {"ok": True, "created": False, "template": _template_payload(existing, source="own")}
     row = H5WorkflowTemplate(
         owner_user_id=owner.id,
         name=name,
         nodes=_clean_nodes(body.nodes),
         status="active",
-        meta=body.meta or {},
+        meta=meta,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
     db.add(row)
     db.commit()
     db.refresh(row)
-    return {"ok": True, "template": _template_payload(row, source="own")}
+    return {"ok": True, "created": True, "template": _template_payload(row, source="own")}
 
 
 @router.patch("/api/h5-workflows/templates/{template_id}", summary="更新 H5 工作流模板")
@@ -1450,7 +1520,12 @@ def update_workflow_template(
         raise HTTPException(status_code=400, detail="请填写模板名称")
     row.name = name
     row.nodes = _clean_nodes(body.nodes)
-    row.meta = body.meta or {}
+    if body.meta:
+        meta = dict(body.meta)
+        system_template_key = _clean_text(meta.get("system_template_key"), 128)
+        if system_template_key and system_template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+            raise HTTPException(status_code=400, detail="该系统员工模板暂未开放")
+        row.meta = meta
     row.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
@@ -1584,6 +1659,11 @@ def activate_workflow_template(
         raise HTTPException(status_code=400, detail="请选择设备")
     template = _accessible_template(db, body.template_id, owner.id)
     nodes = _clean_nodes(template.nodes or [])
+    template_meta = template.meta if isinstance(template.meta, dict) else {}
+    system_template_key = _clean_text(template_meta.get("system_template_key"), 128)
+    snapshot_extra = None
+    if system_template_key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
+        snapshot_extra = {"template_key": system_template_key, "source": "own"}
     activation, stopped_ids, tasks = _activate_nodes_for_device(
         db=db,
         current_user=current_user,
@@ -1594,6 +1674,7 @@ def activate_workflow_template(
         template_name=template.name,
         nodes=nodes,
         timezone_offset_minutes=body.timezone_offset_minutes,
+        snapshot_extra=snapshot_extra,
     )
     return {
         "ok": True,

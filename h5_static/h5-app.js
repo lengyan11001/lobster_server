@@ -81,6 +81,7 @@
       workflowCanGrant: false,
       workflowNodesDraft: [],
       workflowEditingTemplateId: "",
+      workflowEditingTemplateMeta: {},
       workflowViewingTemplateId: "",
       workflowViewingTemplateKey: "",
       workflowRunDateLoaded: {},
@@ -3253,7 +3254,32 @@
 
     function normalizeWorkflowTemplate(tpl) {
       if (!tpl || typeof tpl !== "object") return tpl;
-      return { ...tpl, nodes: cloneWorkflowNodes(tpl.nodes) };
+      return {
+        ...tpl,
+        nodes: cloneWorkflowNodes(tpl.nodes),
+        meta: tpl.meta && typeof tpl.meta === "object" ? { ...tpl.meta } : {},
+      };
+    }
+
+    function workflowSystemTemplateKey(tpl) {
+      const meta = tpl && tpl.meta && typeof tpl.meta === "object" ? tpl.meta : {};
+      return String(meta.system_template_key || "").trim();
+    }
+
+    function personalSystemWorkflowTemplate(templateKey) {
+      const key = String(templateKey || "").trim();
+      const ownRows = userWorkflowTemplateRows();
+      const exact = ownRows.find((tpl) => workflowSystemTemplateKey(tpl) === key);
+      if (exact) return exact;
+      if (key !== "system_sales") return null;
+      return ownRows.find((tpl) => {
+        if (String(tpl && tpl.name || "").trim() !== "销售24小时员工") return false;
+        return (Array.isArray(tpl.nodes) ? tpl.nodes : []).some((node) => (
+          String(node && node.id || "").startsWith("sales_")
+          || String(node && node.department_id || "").trim() === "sales"
+          || !!(node && (node.sales_preset || node.salesPreset))
+        ));
+      }) || null;
     }
 
     function normalizeWorkflowActivation(active) {
@@ -3410,7 +3436,17 @@
 
     function prepareSalesWorkflowDraft() {
       closeWorkflowOverlays();
+      const personalMirror = personalSystemWorkflowTemplate("system_sales");
+      if (personalMirror) {
+        applyWorkflowTemplate({
+          ...personalMirror,
+          meta: { ...(personalMirror.meta || {}), system_template_key: "system_sales" },
+        });
+        state.workflowViewingTemplateKey = "system_sales";
+        return;
+      }
       state.workflowEditingTemplateId = "";
+      state.workflowEditingTemplateMeta = { system_template_key: "system_sales", source: "system_mirror" };
       state.workflowViewingTemplateId = "";
       state.workflowViewingTemplateKey = "system_sales";
       state.workflowNodesDraft = buildSalesWorkflowPresetNodes();
@@ -3422,6 +3458,7 @@
 
     function resetWorkflowDraft() {
       state.workflowEditingTemplateId = "";
+      state.workflowEditingTemplateMeta = {};
       state.workflowViewingTemplateId = "";
       state.workflowViewingTemplateKey = "";
       state.workflowNodesDraft = [];
@@ -4130,6 +4167,9 @@
       await api(`/api/h5-workflows/templates/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (String(state.workflowEditingTemplateId) === String(id)) {
         state.workflowEditingTemplateId = "";
+        state.workflowEditingTemplateMeta = {};
+        state.workflowViewingTemplateId = "";
+        state.workflowViewingTemplateKey = "";
         state.workflowNodesDraft = [];
         if ($("workflowTemplateName")) $("workflowTemplateName").value = "";
       }
@@ -4166,9 +4206,12 @@
 
     function applyWorkflowTemplate(tpl) {
       if (!tpl) return;
+      const meta = tpl.meta && typeof tpl.meta === "object" ? { ...tpl.meta } : {};
+      const systemTemplateKey = tpl.source === "system" ? String(tpl.id || "") : workflowSystemTemplateKey(tpl);
       state.workflowEditingTemplateId = tpl.source === "own" ? String(tpl.id || "") : "";
+      state.workflowEditingTemplateMeta = tpl.source === "own" ? meta : {};
       state.workflowViewingTemplateId = tpl.source === "system" ? "" : String(tpl.id || "");
-      state.workflowViewingTemplateKey = tpl.source === "system" ? String(tpl.id || "") : "";
+      state.workflowViewingTemplateKey = systemTemplateKey;
       state.workflowNodesDraft = cloneWorkflowNodes(tpl.nodes);
       if ($("workflowTemplateName")) $("workflowTemplateName").value = tpl.name || "";
       renderWorkflow();
@@ -4228,11 +4271,27 @@
       }
       if (!state.workflowNodesDraft.length) throw new Error("请至少添加一个节点");
       const id = String(state.workflowEditingTemplateId || "");
+      const meta = state.workflowEditingTemplateMeta && typeof state.workflowEditingTemplateMeta === "object"
+        ? { ...state.workflowEditingTemplateMeta }
+        : {};
+      const systemTemplateKey = String(meta.system_template_key || state.workflowViewingTemplateKey || "").trim();
+      if (!id && systemTemplateKey !== "system_sales") {
+        throw new Error("新模板请从模板列表选择一个模板后点击复制");
+      }
+      if (systemTemplateKey) {
+        meta.system_template_key = systemTemplateKey;
+        meta.source = meta.source || "system_mirror";
+      }
       const data = await api(id ? `/api/h5-workflows/templates/${encodeURIComponent(id)}` : "/api/h5-workflows/templates", {
         method: id ? "PATCH" : "POST",
-        json: { name, nodes: state.workflowNodesDraft },
+        json: { name, nodes: state.workflowNodesDraft, meta },
       });
       state.workflowEditingTemplateId = String((data.template && data.template.id) || id || "");
+      state.workflowEditingTemplateMeta = data.template && data.template.meta && typeof data.template.meta === "object"
+        ? { ...data.template.meta }
+        : meta;
+      state.workflowViewingTemplateId = state.workflowEditingTemplateId;
+      state.workflowViewingTemplateKey = String(state.workflowEditingTemplateMeta.system_template_key || "").trim();
       state.workflowTemplatesLoaded = false;
       await loadWorkflowTemplates(true);
       toast("模板已保存");
@@ -8177,13 +8236,26 @@
       }
       if (key === "workflowNew") {
         closeWorkflowOverlays();
-        resetWorkflowDraft();
-        switchTab("workflow");
+        loadWorkflowTemplates()
+          .then(openCustomEmployeeList)
+          .catch((err) => toast(err.message || "模板加载失败"));
         return;
       }
       if (key === "salesWorkflow") {
-        prepareSalesWorkflowDraft();
-        switchTab("workflow");
+        const openSalesWorkflow = () => {
+          prepareSalesWorkflowDraft();
+          switchTab("workflow");
+        };
+        if (state.workflowTemplatesLoaded) {
+          openSalesWorkflow();
+        } else {
+          loadWorkflowTemplates(true)
+            .then(openSalesWorkflow)
+            .catch((err) => {
+              openSalesWorkflow();
+              toast(err.message || "模板加载失败，已打开系统销售模板");
+            });
+        }
         return;
       }
       if (key === "aiMarketingCreation") {
@@ -15147,6 +15219,9 @@
           .then(() => {
             if (String(state.workflowEditingTemplateId) === String(id)) {
               state.workflowEditingTemplateId = "";
+              state.workflowEditingTemplateMeta = {};
+              state.workflowViewingTemplateId = "";
+              state.workflowViewingTemplateKey = "";
               state.workflowNodesDraft = [];
             }
             state.workflowTemplatesLoaded = false;

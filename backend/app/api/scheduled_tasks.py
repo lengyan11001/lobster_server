@@ -187,6 +187,35 @@ def _h5_dh_latest_virtualman(db: Session, user_id: int) -> str:
     return _h5_dh_clean_text(row.virtualman_id if row else "", 128)
 
 
+def _h5_dh_available_virtualmans(db: Session, user_id: int) -> list[Dict[str, Any]]:
+    rows = (
+        db.query(ShanjianDigitalHumanProfile)
+        .filter(
+            ShanjianDigitalHumanProfile.user_id == user_id,
+            ShanjianDigitalHumanProfile.status == "succeed",
+            ShanjianDigitalHumanProfile.virtualman_id.isnot(None),
+        )
+        .order_by(ShanjianDigitalHumanProfile.id.asc())
+        .all()
+    )
+    candidates: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        virtualman_id = _h5_dh_clean_text(row.virtualman_id, 128)
+        if not virtualman_id or virtualman_id in seen:
+            continue
+        seen.add(virtualman_id)
+        candidates.append(
+            {
+                "profile_id": int(row.id),
+                "virtualman_id": virtualman_id,
+                "title": _h5_dh_clean_text(row.title, 128),
+                "cover_url": _h5_dh_clean_text(row.cover_url, 1000),
+            }
+        )
+    return candidates
+
+
 def _h5_dh_latest_voice(db: Session, user_id: int) -> str:
     row = (
         db.query(UserHiflyVoiceAsset)
@@ -363,7 +392,11 @@ def _maybe_convert_h5_digital_human_task(
         legacy_payload["payload"] = params
         return task_kind, legacy_payload
     virtualman_id = _h5_dh_latest_virtualman(db, target_user_id)
+    virtualman_candidates = _h5_dh_available_virtualmans(db, target_user_id)
     voice = _h5_dh_latest_voice(db, target_user_id)
+    if virtualman_candidates:
+        params["virtualman_candidates"] = virtualman_candidates
+        params["virtualman_selection_mode"] = "daily_round_robin"
     if virtualman_id:
         params.setdefault("virtualman_id", virtualman_id)
     if voice:

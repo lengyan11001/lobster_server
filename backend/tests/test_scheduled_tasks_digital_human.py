@@ -40,6 +40,14 @@ def test_h5_v2_digital_human_converts_after_ip_daily_context(monkeypatch):
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_provider", lambda: scheduled_tasks._DIGITAL_HUMAN_PROVIDER_V2)
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id: _context())
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_latest_virtualman", lambda db, user_id: "virtualman-1")
+    monkeypatch.setattr(
+        scheduled_tasks,
+        "_h5_dh_available_virtualmans",
+        lambda db, user_id: [
+            {"profile_id": 1, "virtualman_id": "virtualman-1", "title": "Avatar 1", "cover_url": ""},
+            {"profile_id": 2, "virtualman_id": "virtualman-2", "title": "Avatar 2", "cover_url": ""},
+        ],
+    )
     monkeypatch.setattr(scheduled_tasks, "_h5_dh_latest_voice", lambda db, user_id: "voice-2")
 
     task_kind, payload = scheduled_tasks._maybe_convert_h5_digital_human_task(
@@ -51,3 +59,8 @@ def test_h5_v2_digital_human_converts_after_ip_daily_context(monkeypatch):
     assert payload["params"]["script_source"] == "ip_daily_industry_hot_oral"
     assert payload["params"]["keyword_ids"] == [11, 12]
     assert payload["params"]["virtualman_id"] == "virtualman-1"
+    assert payload["params"]["virtualman_selection_mode"] == "daily_round_robin"
+    assert [item["virtualman_id"] for item in payload["params"]["virtualman_candidates"]] == [
+        "virtualman-1",
+        "virtualman-2",
+    ]
