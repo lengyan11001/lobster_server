@@ -59,8 +59,8 @@ _PIPELINE_TOTAL_PREDEDUCT_CAPABILITIES = frozenset(
     }
 )
 _PIPELINE_DEFAULT_IMAGE_MODEL = "openai/gpt-image-2"
-_PIPELINE_DEFAULT_GOAL_VIDEO_MODEL = "xai/grok-imagine-video/image-to-video"
-_PIPELINE_DEFAULT_CREATE_VIDEO_MODEL = "fal-ai/veo3.1/image-to-video"
+_PIPELINE_DEFAULT_GOAL_VIDEO_MODEL = "apiz/veo3.1/image-to-video"
+_PIPELINE_DEFAULT_CREATE_VIDEO_MODEL = "apiz/veo3.1/image-to-video"
 
 
 def _get_user_price_multiplier() -> float:
@@ -792,7 +792,7 @@ def pre_deduct(
             except (TypeError, ValueError):
                 storyboard_count = 5
             storyboard_count = max(1, min(storyboard_count, 20))  # safety bound
-            video_model = (params.get("video_model") or "xai/grok-imagine-video/image-to-video").strip()
+            video_model = (params.get("video_model") or "apiz/veo3.1/image-to-video").strip()
             image_model = (params.get("image_model") or "nano-banana-2").strip()
             analysis_model = (params.get("analysis_model") or "gemini-2.5-pro").strip()
 
@@ -1173,8 +1173,8 @@ def comfly_pricing():
             getattr(settings, "lobster_default_image_generate_model", None) or "openai/gpt-image-2"
         ).strip() or "openai/gpt-image-2",
         "video_generate_model": (
-            getattr(settings, "lobster_default_video_generate_model", None) or "xai/grok-imagine-video/text-to-video"
-        ).strip() or "xai/grok-imagine-video/text-to-video",
+            getattr(settings, "lobster_default_video_generate_model", None) or "apiz/veo3.1/text-to-video"
+        ).strip() or "apiz/veo3.1/text-to-video",
     }
     p = _Path(__file__).resolve().parent.parent.parent.parent / "comfly_pricing.json"
     if not p.exists():

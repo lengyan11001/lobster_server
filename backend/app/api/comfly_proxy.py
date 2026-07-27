@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import hmac
 import json
 import logging
 import mimetypes
@@ -333,6 +334,28 @@ def _check_request_authorized_for_billing(request: Request) -> None:
     本函数预留扩展点：如未来要求强制 billing key，把判断打开即可。
     """
     return None
+
+
+def _is_trusted_internal_video_fallback(request: Request) -> bool:
+    """Only the MCP may reuse an existing video reservation for fallback."""
+    marker = (
+        request.headers.get("X-Lobster-Video-Fallback")
+        or request.headers.get("x-lobster-video-fallback")
+        or ""
+    ).strip().lower()
+    if marker not in {"1", "true", "yes", "on"}:
+        return False
+    expected = (
+        getattr(settings, "lobster_mcp_billing_internal_key", None)
+        or os.environ.get("LOBSTER_MCP_BILLING_INTERNAL_KEY")
+        or ""
+    ).strip()
+    provided = (
+        request.headers.get("X-Lobster-Mcp-Billing")
+        or request.headers.get("x-lobster-mcp-billing")
+        or ""
+    ).strip()
+    return bool(expected and provided and hmac.compare_digest(expected, provided))
 
 
 def _do_pre_deduct(
@@ -841,7 +864,7 @@ def _openmind_video_body(body: Dict[str, Any], model: str, entry: Dict[str, Any]
         if key in forwarded and forwarded.get(key) is not None:
             try:
                 val = float(forwarded.get(key))
-                forwarded[key] = int(val) if val.is_integer() else val
+                forwarded[key] = str(int(val) if val.is_integer() else val)
             except (TypeError, ValueError):
                 forwarded.pop(key, None)
     if "duration" not in forwarded and forwarded.get("seconds") is not None:
@@ -854,15 +877,10 @@ def _openmind_video_body(body: Dict[str, Any], model: str, entry: Dict[str, Any]
     forwarded.setdefault("resolution", "720p")
     if not forwarded.get("size"):
         forwarded["size"] = "720x1280" if str(forwarded.get("aspect_ratio") or "") == "9:16" else "1280x720"
-    image_ref = forwarded.get("image") or forwarded.get("image_url")
-    images = forwarded.get("images")
-    if not isinstance(images, list):
-        images = []
-    images = [str(x).strip() for x in images if str(x or "").strip()]
-    if image_ref and not images:
-        images = [str(image_ref).strip()]
+    _image_ref, images = _normalized_image_refs_from_payload(forwarded)
     if images:
         forwarded["images"] = images
+        forwarded["image_urls"] = images
         forwarded.setdefault("image", images[0])
         forwarded.setdefault("image_url", images[0])
     return forwarded
@@ -1896,14 +1914,22 @@ async def proxy_videos_generations_submit(
 
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
-    pre = _do_pre_deduct_by_user_id(
+    internal_fallback = _is_trusted_internal_video_fallback(request)
+    pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="video_submit",
     )
-    _audit("video_submit_pre_deduct", user_id=billing_user_id, request_user_id=request_user_id, model=model, estimated=estimated)
+    _audit(
+        "video_submit_pre_deduct",
+        user_id=billing_user_id,
+        request_user_id=request_user_id,
+        model=model,
+        estimated=estimated,
+        billing_reused=internal_fallback,
+    )
 
     try:
         if _is_grok_api_format(entry):
@@ -1988,6 +2014,9 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
     low_channel = (channel or "").strip().lower()
     proxy_base = "/api/comfly-proxy"
 
+    if low_model.startswith("apiz/veo3.1/image-to-video") or low_model.startswith("apiz/veo3.1/reference-to-video"):
+        low_channel = "grok"
+
     if low_channel in {"openmind", "grok"} or low_model in {"grok-video-3", "grok-imagine-video-1.5-preview", "grok-imagine-1.0-video", "yingmeng1.5plus"} or low_model.startswith("xai/grok-imagine-video/"):
         return {
             "ok": True,
@@ -1999,14 +2028,14 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             ],
         }
 
-    if low_channel in {"yunwu", "??", "??"} or low_model in {"yunwu-veo3.1-plus", "veo3.1-plus", "veo3.1", "veo31", "veo31-fast", "veo3.1-fast"}:
+    if low_channel in {"yunwu", "??", "??"} or low_model in {"yunwu-veo3.1-plus", "veo3.1-plus", "veo3.1", "veo31", "veo31-fast", "veo3.1-fast"} or low_model.startswith("apiz/veo3.1/text-to-video"):
         return {
             "ok": True,
             "model_family": "veo31",
             "providers": [
-                {"channel": "openmind", "model": "veo3.1-fast", "base_url": proxy_base},
                 {"channel": "comfly", "model": "veo3.1-fast", "base_url": proxy_base},
                 {"channel": "yunwu", "model": "veo3.1", "base_url": proxy_base},
+                {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
             ],
         }
 
@@ -2057,7 +2086,8 @@ async def proxy_openmind_video_submit(
 
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
-    pre = _do_pre_deduct_by_user_id(
+    internal_fallback = _is_trusted_internal_video_fallback(request)
+    pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
@@ -2072,6 +2102,7 @@ async def proxy_openmind_video_submit(
         model=model,
         openmind_model=upstream_body.get("model"),
         estimated=estimated,
+        billing_reused=internal_fallback,
     )
 
     try:
@@ -2166,14 +2197,22 @@ async def proxy_yunwu_video_create(
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
 
     estimated = estimate_comfly_credits(model, body, for_user=True) or 1
-    pre = _do_pre_deduct_by_user_id(
+    internal_fallback = _is_trusted_internal_video_fallback(request)
+    pre = Decimal("0") if internal_fallback else _do_pre_deduct_by_user_id(
         billing_user_id,
         estimated,
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="yunwu_video_create",
     )
-    _audit("yunwu_video_create_pre_deduct", user_id=billing_user_id, request_user_id=request_user_id, model=model, estimated=estimated)
+    _audit(
+        "yunwu_video_create_pre_deduct",
+        user_id=billing_user_id,
+        request_user_id=request_user_id,
+        model=model,
+        estimated=estimated,
+        billing_reused=internal_fallback,
+    )
 
     try:
         resp = await _yunwu_request(

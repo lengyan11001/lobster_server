@@ -4,6 +4,7 @@ import socket
 from functools import lru_cache
 from typing import List, Optional
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,7 +65,20 @@ class Settings(BaseSettings):
     """下发给 lobster_online 的默认图片生成模型；客户端拉取失败时才使用本地兜底。"""
     lobster_default_image_generate_model: str = "openai/gpt-image-2"
     """下发给 lobster_online 的默认视频生成模型；客户端拉取失败时才使用本地兜底。"""
-    lobster_default_video_generate_model: str = "xai/grok-imagine-video/text-to-video"
+    lobster_default_video_generate_model: str = "apiz/veo3.1/text-to-video"
+
+    @field_validator("lobster_default_video_generate_model", mode="before")
+    @classmethod
+    def _migrate_legacy_default_video_model(cls, value: object) -> str:
+        raw = str(value or "").strip()
+        if raw.lower() in {
+            "xai/grok-imagine-video/text-to-video",
+            "xai/grok-imagine-video/image-to-video",
+            "grok-video-3",
+            "grok-imagine-video-1.5-preview",
+        }:
+            return "apiz/veo3.1/text-to-video"
+        return raw or "apiz/veo3.1/text-to-video"
     """Server-side Sutui chat model used by the isolated OpenClaw Browser/Computer workspace alias."""
     lobster_openclaw_skill_sutui_chat_model: str = "gpt-5.4"
     """已废弃：前端由 lobster_online 提供，本服务仅 API，不再挂载 /static 与前端页。保留项以免旧 .env 报错。"""

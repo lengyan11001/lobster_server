@@ -938,7 +938,7 @@
       "status": "available",
       "capabilities": {
         "create.video.pipeline": {
-          "description": "Sutui create-video pipeline: plan scenes, call image.generate(openai/gpt-image-2), then call video.generate(fal-ai/veo3.1/image-to-video).",
+          "description": "创意成片：规划分镜，调用 image.generate(openai/gpt-image-2) 生成首帧，再调用 APIZ Veo 3.1 图生视频；主通道故障时由服务器自动切换备用通道。",
           "upstream": "local",
           "upstream_tool": "invoke",
           "enabled": true,
@@ -992,6 +992,11 @@
                 "type": "string",
                 "default": "16:9"
               },
+              "resolution": {
+                "type": "string",
+                "enum": ["720p", "1080p"],
+                "default": "720p"
+              },
               "planning_model": {
                 "type": "string",
                 "default": "gpt-5.4"
@@ -1002,7 +1007,7 @@
               },
               "video_model": {
                 "type": "string",
-                "default": "fal-ai/veo3.1/image-to-video"
+                "default": "apiz/veo3.1/image-to-video"
               },
               "reference_asset_ids": {
                 "type": "array",

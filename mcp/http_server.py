@@ -24,7 +24,13 @@ if _MCP_DIR not in sys.path:
 
 import httpx
 
-from mcp.video_model_resolve import resolve_video_model_id
+from mcp.video_model_resolve import (
+    APIZ_VEO31_IMAGE_MODEL,
+    APIZ_VEO31_REFERENCE_MODEL,
+    APIZ_VEO31_TEXT_MODEL,
+    resolve_default_video_model_id,
+    resolve_video_model_id,
+)
 from mcp.sutui_error_hints import (
     append_capability_model_hint,
     enhance_upstream_rest_error,
@@ -49,11 +55,11 @@ _DEFAULT_IMAGE_MODEL = (
     or os.getenv("LOBSTER_DEFAULT_IMAGE_GENERATE_MODEL")
     or "openai/gpt-image-2"
 ).strip() or "openai/gpt-image-2"
-_DEFAULT_VIDEO_MODEL = (
+_DEFAULT_VIDEO_MODEL = resolve_default_video_model_id(
     getattr(settings, "lobster_default_video_generate_model", None)
     or os.getenv("LOBSTER_DEFAULT_VIDEO_GENERATE_MODEL")
-    or "xai/grok-imagine-video/text-to-video"
-).strip() or "xai/grok-imagine-video/text-to-video"
+    or APIZ_VEO31_TEXT_MODEL
+)
 _GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS = 10
 _GPT_IMAGE_2_MODEL_ID = "openai/gpt-image-2"
 _APIZ_VISION_READ_TIMEOUT_SECONDS = 6 * 60.0
@@ -714,6 +720,403 @@ def _sutui_get_result_is_terminal_success(resp: Any) -> bool:
     if "已完成" in raw or "生成成功" in raw:
         return True
     return False
+
+
+_MAX_VIDEO_FALLBACK_TASK_TRACK = 5000
+_video_fallback_tasks: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+
+
+def _is_apiz_veo31_payload(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    model = str(payload.get("model") or payload.get("model_id") or "").strip().lower()
+    return model.startswith("apiz/veo3.1/")
+
+
+def _video_fallback_error_text(response: Any) -> str:
+    if not isinstance(response, dict):
+        return str(response or "")[:1000]
+    error = response.get("error")
+    if isinstance(error, dict):
+        return str(error.get("message") or error.get("detail") or error)[:1000]
+    if error:
+        return str(error)[:1000]
+    detail = response.get("detail") or response.get("message") or response.get("msg")
+    if detail:
+        return str(detail)[:1000]
+    return json.dumps(_sanitize_for_json(response), ensure_ascii=False)[:1000]
+
+
+def _video_fallback_allowed(error: Any) -> bool:
+    """Retry service failures, but never bypass billing, auth, safety, or bad input."""
+    message = str(error or "").strip().lower()
+    if not message:
+        return True
+    blocked = (
+        "insufficient credit",
+        "insufficient balance",
+        "quota exceeded",
+        "余额不足",
+        "积分不足",
+        "算力不足",
+        "http 400",
+        "http 401",
+        "http 402",
+        "http 403",
+        "http 422",
+        "unauthorized",
+        "authentication",
+        "invalid api key",
+        "forbidden",
+        "invalid request",
+        "invalid parameter",
+        "参数错误",
+        "参数无效",
+        "content policy",
+        "content safety",
+        "safety violation",
+        "内容安全",
+        "内容违规",
+        "审核不通过",
+    )
+    return not any(token in message for token in blocked)
+
+
+def _video_fallback_candidates(payload: Dict[str, Any]) -> List[Dict[str, str]]:
+    has_image = bool(_collect_video_image_refs(payload))
+    if has_image:
+        return [
+            {"channel": "openmind", "model": "grok-video-3"},
+            {"channel": "comfly", "model": "grok-video-3"},
+            {"channel": "yunwu", "model": "grok-video-3"},
+        ]
+    return [
+        {"channel": "comfly", "model": "veo3.1-fast"},
+        {"channel": "openmind", "model": "grok-video-3"},
+        {"channel": "yunwu", "model": "grok-video-3"},
+    ]
+
+
+def _remember_video_fallback_state(public_task_id: str, state: Dict[str, Any]) -> None:
+    task_id = str(public_task_id or "").strip()
+    if not task_id:
+        return
+    _video_fallback_tasks[task_id] = state
+    _video_fallback_tasks.move_to_end(task_id)
+    while len(_video_fallback_tasks) > _MAX_VIDEO_FALLBACK_TASK_TRACK:
+        _video_fallback_tasks.popitem(last=False)
+
+
+def _new_video_fallback_state(public_task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "public_task_id": public_task_id,
+        "payload": dict(payload),
+        "candidates": _video_fallback_candidates(payload),
+        "next_index": 0,
+        "channel": "apiz" if public_task_id else "",
+        "provider_task_id": public_task_id,
+        "errors": [],
+        "final_response": None,
+        "transitioning": False,
+    }
+
+
+def _register_apiz_video_task(task_id: str, payload: Dict[str, Any]) -> None:
+    public_task_id = str(task_id or "").strip()
+    if not public_task_id or not _is_apiz_veo31_payload(payload):
+        return
+    if public_task_id not in _video_fallback_tasks:
+        _remember_video_fallback_state(
+            public_task_id,
+            _new_video_fallback_state(public_task_id, payload),
+        )
+
+
+def _video_fallback_proxy_headers(
+    token: Optional[str],
+    request: Optional[Request],
+) -> Optional[Dict[str, str]]:
+    headers = _backend_headers(token, request)
+    if not headers.get("X-Lobster-Mcp-Billing"):
+        logger.error("[video-fallback] internal billing key missing; refusing a second billed submit")
+        return None
+    headers["X-Lobster-Video-Fallback"] = "1"
+    return headers
+
+
+def _video_fallback_submit_url(channel: str) -> str:
+    base = _capabilities_api_base().rstrip("/")
+    if channel == "openmind":
+        return f"{base}/api/comfly-proxy/openmind/v1/videos"
+    if channel == "yunwu":
+        return f"{base}/api/comfly-proxy/v1/video/create"
+    return f"{base}/api/comfly-proxy/v2/videos/generations"
+
+
+def _video_fallback_poll_url(channel: str, task_id: str) -> Tuple[str, Optional[Dict[str, str]]]:
+    base = _capabilities_api_base().rstrip("/")
+    if channel == "openmind":
+        return f"{base}/api/comfly-proxy/openmind/v1/videos/{task_id}", None
+    if channel == "yunwu":
+        return f"{base}/api/comfly-proxy/v1/video/query", {"id": task_id}
+    return f"{base}/api/comfly-proxy/v2/videos/generations/{task_id}", None
+
+
+def _video_fallback_payload(source: Dict[str, Any], model: str) -> Dict[str, Any]:
+    payload = dict(source or {})
+    payload["model"] = model
+    refs = _collect_video_image_refs(source)
+    if model.startswith("veo3.1"):
+        # Comfly's existing Veo v2 route accepts prompt/aspect/enhance_prompt;
+        # APIZ-only duration and resolution fields would make it reject the request.
+        payload.pop("duration", None)
+        payload.pop("seconds", None)
+        payload.pop("resolution", None)
+        payload["enhance_prompt"] = True
+    if refs:
+        payload["image_url"] = refs[0]
+        payload["image"] = refs[0]
+        payload["images"] = refs[:3]
+        payload["image_urls"] = refs[:3]
+    return payload
+
+
+def _public_video_fallback_response(
+    raw: Dict[str, Any],
+    *,
+    public_task_id: str,
+    provider_task_id: str = "",
+) -> Dict[str, Any]:
+    from comfly_upstream import format_comfly_video_response_as_sutui
+
+    result = format_comfly_video_response_as_sutui(
+        raw,
+        fallback_task_id=provider_task_id,
+    )
+    if not isinstance(result, dict):
+        result = {"error": {"message": "视频备用通道返回格式异常"}, "status": "failed"}
+    result = dict(result)
+    result["task_id"] = public_task_id
+    result["fallback_used"] = True
+    for key in ("_comfly", "_provider", "_requested_model", "_api_format"):
+        result.pop(key, None)
+    return result
+
+
+async def _submit_video_fallback_candidate(
+    state: Dict[str, Any],
+    candidate: Dict[str, str],
+    token: Optional[str],
+    request: Optional[Request],
+) -> Dict[str, Any]:
+    headers = _video_fallback_proxy_headers(token, request)
+    if headers is None:
+        return {"error": {"message": "视频备用通道未配置内部计费凭据"}, "status": "failed"}
+    body = _video_fallback_payload(state.get("payload") or {}, candidate.get("model") or "")
+    try:
+        async with httpx.AsyncClient(timeout=90.0, trust_env=False) as client:
+            response = await client.post(
+                _video_fallback_submit_url(candidate.get("channel") or ""),
+                json=_sanitize_for_json(body),
+                headers=headers,
+            )
+    except httpx.HTTPError as exc:
+        return {"error": {"message": f"备用通道网络错误: {exc}"}, "status": "failed"}
+    if response.status_code >= 400:
+        try:
+            detail = response.json() if response.content else {}
+        except Exception:
+            detail = response.text
+        return {
+            "error": {"message": f"备用通道 HTTP {response.status_code}: {str(detail)[:600]}"},
+            "status": "failed",
+        }
+    try:
+        data = response.json() if response.content else {}
+    except Exception as exc:
+        return {"error": {"message": f"备用通道返回非 JSON: {exc}"}, "status": "failed"}
+    return data if isinstance(data, dict) else {"error": {"message": "备用通道返回格式异常"}, "status": "failed"}
+
+
+async def _start_next_video_fallback(
+    state: Dict[str, Any],
+    token: Optional[str],
+    request: Optional[Request],
+) -> Dict[str, Any]:
+    public_task_id = str(state.get("public_task_id") or "").strip()
+    candidates = state.get("candidates") if isinstance(state.get("candidates"), list) else []
+    while int(state.get("next_index") or 0) < len(candidates):
+        index = int(state.get("next_index") or 0)
+        state["next_index"] = index + 1
+        candidate = candidates[index]
+        channel = str(candidate.get("channel") or "").strip()
+        model = str(candidate.get("model") or "").strip()
+        logger.warning(
+            "[video-fallback] submit public_task_id=%s attempt=%s/%s channel=%s model=%s",
+            public_task_id,
+            index + 1,
+            len(candidates),
+            channel,
+            model,
+        )
+        raw = await _submit_video_fallback_candidate(state, candidate, token, request)
+        error = _video_fallback_error_text(raw) if raw.get("error") else ""
+        if error:
+            state.setdefault("errors", []).append(error[:500])
+            logger.warning(
+                "[video-fallback] submit failed public_task_id=%s channel=%s error=%s",
+                public_task_id,
+                channel,
+                error[:300],
+            )
+            if not _video_fallback_allowed(error):
+                break
+            continue
+        provider_task_id = _extract_task_id_from_sutui_response(raw)
+        public_result = _public_video_fallback_response(
+            raw,
+            public_task_id=public_task_id,
+            provider_task_id=provider_task_id,
+        )
+        if public_result.get("error") or _sutui_get_result_is_terminal_failure(public_result):
+            state.setdefault("errors", []).append(_video_fallback_error_text(public_result)[:500])
+            continue
+        state["channel"] = channel
+        state["provider_task_id"] = provider_task_id
+        if _sutui_get_result_is_terminal_success(public_result):
+            state["final_response"] = public_result
+        elif not provider_task_id:
+            state.setdefault("errors", []).append("备用通道未返回任务ID")
+            continue
+        _remember_video_fallback_state(public_task_id, state)
+        return public_result
+
+    messages = [str(item) for item in (state.get("errors") or []) if str(item).strip()]
+    suffix = messages[-1][:500] if messages else "所有备用通道均不可用"
+    failed = {
+        "task_id": public_task_id,
+        "status": "failed",
+        "error": {"message": f"视频生成失败，主通道和备用通道均未成功：{suffix}"},
+        "fallback_used": True,
+    }
+    state["final_response"] = failed
+    _remember_video_fallback_state(public_task_id, state)
+    return failed
+
+
+async def _start_video_fallback_after_submit_failure(
+    payload: Dict[str, Any],
+    primary_error: str,
+    token: Optional[str],
+    request: Optional[Request],
+) -> Optional[Dict[str, Any]]:
+    if not _is_apiz_veo31_payload(payload) or not _video_fallback_allowed(primary_error):
+        return None
+    public_task_id = f"video-fallback-{uuid.uuid4().hex}"
+    state = _new_video_fallback_state("", payload)
+    state["public_task_id"] = public_task_id
+    state["channel"] = ""
+    state["provider_task_id"] = ""
+    state["errors"] = [primary_error[:500]] if primary_error else []
+    _remember_video_fallback_state(public_task_id, state)
+    return await _start_next_video_fallback(state, token, request)
+
+
+async def _poll_registered_video_fallback(
+    public_task_id: str,
+    token: Optional[str],
+    request: Optional[Request],
+) -> Optional[Dict[str, Any]]:
+    state = _video_fallback_tasks.get(str(public_task_id or "").strip())
+    if not isinstance(state, dict):
+        return None
+    final = state.get("final_response")
+    if isinstance(final, dict):
+        return dict(final)
+    if state.get("transitioning"):
+        return {"task_id": public_task_id, "status": "pending", "fallback_used": True}
+    channel = str(state.get("channel") or "").strip()
+    provider_task_id = str(state.get("provider_task_id") or "").strip()
+    if channel in {"", "apiz"} or not provider_task_id:
+        return None
+    state["transitioning"] = True
+    try:
+        headers = _video_fallback_proxy_headers(token, request)
+        if headers is None:
+            raw: Dict[str, Any] = {"error": {"message": "视频备用通道未配置内部计费凭据"}, "status": "failed"}
+        else:
+            url, params = _video_fallback_poll_url(channel, provider_task_id)
+            try:
+                async with httpx.AsyncClient(timeout=45.0, trust_env=False) as client:
+                    response = await client.get(url, params=params, headers=headers)
+                if response.status_code >= 400:
+                    raw = {
+                        "error": {"message": f"备用通道轮询 HTTP {response.status_code}: {(response.text or '')[:600]}"},
+                        "status": "failed",
+                    }
+                else:
+                    parsed = response.json() if response.content else {}
+                    raw = parsed if isinstance(parsed, dict) else {"error": {"message": "备用通道轮询格式异常"}, "status": "failed"}
+            except (httpx.HTTPError, ValueError) as exc:
+                raw = {"error": {"message": f"备用通道轮询失败: {exc}"}, "status": "failed"}
+        public_result = _public_video_fallback_response(
+            raw,
+            public_task_id=public_task_id,
+            provider_task_id=provider_task_id,
+        )
+        if _is_task_still_in_progress(public_result):
+            return public_result
+        if _sutui_get_result_is_terminal_success(public_result):
+            state["final_response"] = public_result
+            _remember_video_fallback_state(public_task_id, state)
+            return public_result
+        error = _video_fallback_error_text(public_result)
+        state.setdefault("errors", []).append(error[:500])
+        if not _video_fallback_allowed(error):
+            state["final_response"] = public_result
+            _remember_video_fallback_state(public_task_id, state)
+            return public_result
+        state["channel"] = ""
+        state["provider_task_id"] = ""
+        return await _start_next_video_fallback(state, token, request)
+    finally:
+        state["transitioning"] = False
+
+
+async def _maybe_fallback_after_apiz_poll(
+    public_task_id: str,
+    response: Dict[str, Any],
+    token: Optional[str],
+    request: Optional[Request],
+) -> Dict[str, Any]:
+    state = _video_fallback_tasks.get(str(public_task_id or "").strip())
+    if not isinstance(state, dict) or str(state.get("channel") or "") != "apiz":
+        return response
+    if _is_task_still_in_progress(response):
+        return response
+    if _sutui_get_result_is_terminal_success(response):
+        final = dict(response)
+        final["task_id"] = public_task_id
+        state["final_response"] = final
+        _remember_video_fallback_state(public_task_id, state)
+        return final
+    if not (response.get("error") or _sutui_get_result_is_terminal_failure(response)):
+        return response
+    error = _video_fallback_error_text(response)
+    if not _video_fallback_allowed(error):
+        state["final_response"] = dict(response)
+        _remember_video_fallback_state(public_task_id, state)
+        return response
+    if state.get("transitioning"):
+        return {"task_id": public_task_id, "status": "pending", "fallback_used": True}
+    state.setdefault("errors", []).append(error[:500])
+    state["channel"] = ""
+    state["provider_task_id"] = ""
+    state["transitioning"] = True
+    try:
+        return await _start_next_video_fallback(state, token, request)
+    finally:
+        state["transitioning"] = False
 
 
 _OPENCLAW_GENERATION_CAPABILITIES = frozenset({"image.generate", "video.generate"})
@@ -1978,6 +2381,21 @@ def _coerce_grok_video_resolution(raw: Any) -> Optional[str]:
     return "720p"
 
 
+_APIZ_VEO31_DURATION_SECONDS = (4, 6, 8)
+
+
+def _coerce_apiz_veo31_duration(raw: Any, *, reference_mode: bool = False) -> int:
+    if reference_mode:
+        return 8
+    seconds = _parse_video_duration_seconds(raw, default=4)
+    return min(_APIZ_VEO31_DURATION_SECONDS, key=lambda allowed: (abs(allowed - seconds), allowed))
+
+
+def _coerce_apiz_veo31_resolution(raw: Any) -> str:
+    value = str(raw or "").strip().lower().replace(" ", "")
+    return "1080p" if "1080" in value else "720p"
+
+
 def _sanitize_options_dict_resolution(options: Dict[str, Any]) -> None:
     """Seedance 等 options.resolution 合并后去掉 auto 占位。"""
     if not isinstance(options, dict) or "resolution" not in options:
@@ -2587,13 +3005,31 @@ def _normalize_video_generate_payload(payload: Dict[str, Any]) -> Dict[str, Any]
     image_refs = _collect_video_image_refs(payload)
     has_image = bool(image_refs)
 
-    model = resolve_video_model_id(model, has_image)
+    model = resolve_video_model_id(model, has_image, image_count=len(image_refs))
     model_lower = model.lower()
     first_url = image_refs[0] if image_refs else ""
     aspect_ratio = _coerce_video_aspect_ratio_for_upstream(_payload_get_aspect_ratio(payload))
     valid_ratios = _VIDEO_ASPECT_RATIOS
     ratio_ok = aspect_ratio in valid_ratios
     duration_sec = _parse_video_duration_seconds(_payload_get_duration_raw(payload), default=5)
+
+    if model.startswith("apiz/veo3.1/"):
+        reference_mode = model == APIZ_VEO31_REFERENCE_MODEL
+        out: Dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "duration": _coerce_apiz_veo31_duration(
+                _payload_get_duration_raw(payload),
+                reference_mode=reference_mode,
+            ),
+            "aspect_ratio": "9:16" if aspect_ratio == "9:16" else "16:9",
+            "resolution": _coerce_apiz_veo31_resolution(payload.get("resolution")),
+        }
+        if model == APIZ_VEO31_IMAGE_MODEL and first_url:
+            out["image_url"] = first_url
+        elif reference_mode:
+            out["image_urls"] = list(image_refs[:3])
+        return out
 
     # st-ai/super-seed2：ratio, filePaths, functionMode（保留 backend 注入的多图 filePaths）
     if "super-seed2" in model or "st-ai/super-seed2" == model:
@@ -3818,7 +4254,26 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             _comfly_task_query = _early_comfly_task_query
 
             t0 = time.perf_counter()
-            if _use_comfly:
+            _video_fallback_poll_handled = False
+            if capability_id == "task.get_result":
+                _fallback_public_task_id = str(
+                    payload.get("task_id") or payload.get("taskId") or payload.get("taskid") or ""
+                ).strip()
+                _fallback_poll_response = await _poll_registered_video_fallback(
+                    _fallback_public_task_id,
+                    token,
+                    request,
+                )
+                if isinstance(_fallback_poll_response, dict):
+                    upstream_resp = _fallback_poll_response
+                    _video_fallback_poll_handled = True
+                    logger.info(
+                        "[video-fallback] handled poll with internal provider public_task_id=%s",
+                        _fallback_public_task_id,
+                    )
+            if _video_fallback_poll_handled:
+                pass
+            elif _use_comfly:
                 logger.info("[MCP] invoke_capability capability_id=%s upstream=comfly model=%s task_query=%s", capability_id, _comfly_model_id, _comfly_task_query)
                 try:
                     from comfly_upstream import (
@@ -3908,6 +4363,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             # get_result HTTP 层错误自动重试一次（502/503 等瞬时故障）
             if (
                 upstream_tool == "get_result"
+                and not _video_fallback_poll_handled
                 and isinstance(upstream_resp, dict)
                 and upstream_resp.get("error")
                 and isinstance(upstream_resp["error"], dict)
@@ -3962,6 +4418,37 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         lobster_capability_id=capability_id,
                         brand_mark=user_brand_mark,
                     )
+            if capability_id == "video.generate" and isinstance(upstream_resp, dict) and _is_apiz_veo31_payload(payload):
+                _apiz_submit_error = ""
+                if upstream_resp.get("error") or _sutui_get_result_is_terminal_failure(upstream_resp):
+                    _apiz_submit_error = _video_fallback_error_text(upstream_resp)
+                if _apiz_submit_error:
+                    _fallback_submit_response = await _start_video_fallback_after_submit_failure(
+                        payload,
+                        _apiz_submit_error,
+                        token,
+                        request,
+                    )
+                    if isinstance(_fallback_submit_response, dict):
+                        upstream_resp = _fallback_submit_response
+                else:
+                    _apiz_task_id = _extract_task_id_from_sutui_response(upstream_resp)
+                    if _apiz_task_id:
+                        _register_apiz_video_task(_apiz_task_id, payload)
+            elif (
+                capability_id == "task.get_result"
+                and not _video_fallback_poll_handled
+                and isinstance(upstream_resp, dict)
+            ):
+                _apiz_public_task_id = str(
+                    payload.get("task_id") or payload.get("taskId") or payload.get("taskid") or ""
+                ).strip()
+                upstream_resp = await _maybe_fallback_after_apiz_poll(
+                    _apiz_public_task_id,
+                    upstream_resp,
+                    token,
+                    request,
+                )
             latency_ms = int((time.perf_counter() - t0) * 1000)
             upstream_error = ""
             if isinstance(upstream_resp, dict):
