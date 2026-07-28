@@ -76,7 +76,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica N
 .rank-num{width:32px;font-weight:700;color:var(--primary)}
 .search-bar{display:flex;gap:10px;margin-bottom:24px}
 .search-bar input{flex:1;padding:10px 16px;border:1px solid var(--border);border-radius:8px;font-size:14px}
-.search-bar input:focus{outline:none;border-color:var(--primary)}
+.search-bar select{min-width:180px;padding:10px 34px 10px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:14px;color:var(--text)}
+.search-bar input:focus,.search-bar select:focus{outline:none;border-color:var(--primary)}
 .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:20px}
 .card h3{font-size:16px;margin-bottom:16px;color:var(--text)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:12px}
@@ -160,7 +161,7 @@ tr:hover{background:var(--bg)}
   .stat-item .value{font-size:16px}
   .chart-card{padding:14px}
   .search-bar{flex-direction:column;gap:8px}
-  .search-bar input{width:100%}
+  .search-bar input,.search-bar select{width:100%}
   .search-bar .btn{width:100%}
   .claim-bar{flex-direction:column;gap:8px;padding:12px}
   .claim-bar input{width:100%}
@@ -408,6 +409,11 @@ body{background:#edf2f7}
     </div>
 
     <div class="search-bar">
+      <select id="userBrandFilter" onchange="loadAllUsers(1)">
+        <option value="all">全部品牌</option>
+        <option value="bihuo">必火AI员工</option>
+        <option value="daka">大咖AI员工</option>
+      </select>
       <input type="text" id="searchInput" placeholder="搜索用户：输入手机号、账号、邮箱或用户ID…" onkeydown="if(event.key==='Enter')loadAllUsers(1)">
       <button class="btn btn-primary btn-sm" onclick="loadAllUsers(1)">查询</button>
       <button class="btn btn-outline btn-sm" onclick="clearUserSearch()">清空</button>
@@ -1074,6 +1080,7 @@ function showDashboard() {
   }
   const brandSelect = document.getElementById('adminBrandSelect');
   if (brandSelect) brandSelect.disabled = isAgent();
+  loadUserBrandOptions();
   const brandsTab = document.getElementById('brandsNavTab');
   if (brandsTab) brandsTab.style.display = isAdmin() ? '' : 'none';
 
@@ -1156,6 +1163,30 @@ async function loadBrands() {
   }
 }
 
+async function loadUserBrandOptions() {
+  const select = document.getElementById('userBrandFilter');
+  if (!select) return;
+  select.style.display = isAdmin() ? '' : 'none';
+  if (!isAdmin()) return;
+  const selected = select.value || 'all';
+  try {
+    const data = await api('/admin/api/brands');
+    const items = data.items || [];
+    for (const item of items) {
+      ADMIN_BRANDS[item.mark] = {
+        ...(ADMIN_BRANDS[item.mark] || {}),
+        name: item.display_name || item.mark,
+      };
+    }
+    select.innerHTML = '<option value="all">全部品牌</option>' + items.map(function(item) {
+      return '<option value="' + escapeHtml(item.mark) + '">' + escapeHtml(item.display_name || item.mark) + '</option>';
+    }).join('');
+    select.value = Array.from(select.options).some(option => option.value === selected) ? selected : 'all';
+  } catch(e) {
+    // 保留内置品牌选项，用户列表仍可正常使用。
+  }
+}
+
 async function setBrandEnabled(mark, enabled) {
   try {
     await api('/admin/api/brands/' + encodeURIComponent(mark), { method: 'PATCH', body: JSON.stringify({ enabled: !!enabled }) });
@@ -1184,8 +1215,9 @@ let currentPage = 1;
 async function loadAllUsers(page) {
   currentPage = page;
   const q = (document.getElementById('searchInput') || {}).value || '';
+  const brand = isAdmin() ? (((document.getElementById('userBrandFilter') || {}).value) || 'all') : '';
   try {
-    const data = await api('/admin/api/users?page=' + page + '&page_size=20&q=' + encodeURIComponent(q.trim()));
+    const data = await api('/admin/api/users?page=' + page + '&page_size=20&q=' + encodeURIComponent(q.trim()) + '&brand=' + encodeURIComponent(brand));
     const title = (isAgent() ? '我的下级用户' : '用户列表') + (q.trim() ? ' · 搜索：' + q.trim() : '');
     renderUserTable(data.users, 'allUsersTable', title);
     renderPagination(data.total, data.page, data.page_size);
@@ -1210,15 +1242,17 @@ function renderUserTable(users, containerId, title) {
     return;
   }
   let html = title ? `<h3>${title}（${users.length} 条）</h3>` : '';
-  html += `<div class="table-wrap"><table><thead><tr><th>ID</th><th>账号</th><th>积分</th><th>角色</th>`;
+  html += `<div class="table-wrap"><table><thead><tr><th>ID</th><th>账号</th><th>品牌</th><th>积分</th><th>角色</th>`;
   if (isAdmin()) html += `<th>代理</th>`;
   html += `<th>注册时间</th><th></th></tr></thead><tbody>`;
   for (const u of users) {
     const email = u.email.replace(/@sms\.lobster\.local$/, '');
     const agentLabel = u.agent_level === 2 ? '二级代理' : (u.is_agent ? '代理' : '-');
+    const brandName = ((ADMIN_BRANDS[u.brand_mark] || {}).name) || u.brand_mark || '-';
     html += `<tr>
       <td>${u.id}</td>
       <td>${email}</td>
+      <td><strong>${escapeHtml(brandName)}</strong><div style="font-size:11px;color:var(--text-secondary);margin-top:3px">${escapeHtml(u.brand_mark || '-')}</div></td>
       <td class="credits-value">${u.credits.toFixed(0)}</td>
       <td><span class="badge ${u.role==='admin'?'badge-red':'badge-blue'}">${u.role}</span></td>`;
     if (isAdmin()) {

@@ -204,10 +204,12 @@ def _user_public_payload(u: User) -> dict:
 
 def _assert_can_manage_user(db: Session, ctx: AdminContext, user_id: int, *, allow_agent_self: bool = False) -> None:
     target = db.query(User).filter(User.id == user_id).first()
-    if not target or user_brand_mark(target) != ctx.brand_mark:
+    if not target:
         raise HTTPException(status_code=404, detail="用户不存在")
     if ctx.role == "admin":
         return
+    if user_brand_mark(target) != ctx.brand_mark:
+        raise HTTPException(status_code=404, detail="用户不存在")
     if ctx.role != "agent" or ctx.user_id is None:
         raise HTTPException(status_code=403, detail="forbidden")
     if allow_agent_self and int(user_id) == int(ctx.user_id):
@@ -413,11 +415,8 @@ def admin_user_detail(
     ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
-    if ctx.role == "agent":
-        sub_ids = _agent_visible_user_ids(db, ctx.user_id)
-        if user_id != ctx.user_id and user_id not in sub_ids:
-            raise HTTPException(status_code=403, detail="无权查看此用户")
-    user = db.query(User).filter(User.id == user_id, User.brand_mark == ctx.brand_mark).first()
+    _assert_can_manage_user(db, ctx, user_id, allow_agent_self=True)
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     now = datetime.utcnow()
@@ -602,13 +601,19 @@ def admin_list_users(
     page: int = 1,
     page_size: int = 20,
     q: str = "",
+    brand: str = "",
     ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
-    base_q = db.query(User).filter(User.brand_mark == ctx.brand_mark)
+    base_q = db.query(User)
     if ctx.role == "agent":
+        base_q = base_q.filter(User.brand_mark == ctx.brand_mark)
         sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         base_q = base_q.filter(User.id.in_(sub_ids)) if sub_ids else base_q.filter(False)
+    else:
+        requested_brand = (brand or "").strip().lower()
+        if requested_brand and requested_brand != "all":
+            base_q = base_q.filter(User.brand_mark == normalize_brand_mark(requested_brand))
     term = (q or "").strip()
     if term:
         filters = [User.email.ilike(f"%{term}%")]
@@ -1855,7 +1860,7 @@ def admin_set_agent(
 ):
     """管理员将某用户设为/取消代理商。"""
     _assert_can_manage_user(db, ctx, body.user_id)
-    user = db.query(User).filter(User.id == body.user_id, User.brand_mark == ctx.brand_mark).first()
+    user = db.query(User).filter(User.id == body.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     user.is_agent = body.is_agent

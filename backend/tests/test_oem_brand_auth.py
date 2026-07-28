@@ -221,7 +221,7 @@ def test_miniprogram_openid_is_scoped_by_brand(db_session_factory, monkeypatch):
         assert {row.brand_mark for row in rows} == {"bihuo", "daka"}
 
 
-def test_admin_user_data_is_scoped_by_selected_brand(db_session, db_session_factory, monkeypatch):
+def test_admin_can_list_filter_and_open_users_across_brands(db_session, db_session_factory, monkeypatch):
     from backend.app.api.admin import router as admin_router
     from backend.app.api.auth import get_password_hash
     from backend.app.core.config import settings
@@ -273,12 +273,95 @@ def test_admin_user_data_is_scoped_by_selected_brand(db_session, db_session_fact
     }
 
     users = client.get("/admin/api/users", headers=headers)
+    daka_users = client.get("/admin/api/users?brand=daka", headers=headers)
+    bihuo_detail = client.get(f"/admin/api/user/{bihuo_user.id}", headers=headers)
     wrong_owner = client.get(
         f"/admin/api/ip-content/template-options?owner_user_id={bihuo_user.id}",
         headers=headers,
     )
 
     assert users.status_code == 200
-    assert [item["brand_mark"] for item in users.json()["users"]] == ["daka"]
-    assert users.json()["users"][0]["email"] == "daka-user@example.com"
+    assert [item["brand_mark"] for item in users.json()["users"]] == ["daka", "bihuo"]
+    assert daka_users.status_code == 200
+    assert [item["brand_mark"] for item in daka_users.json()["users"]] == ["daka"]
+    assert daka_users.json()["users"][0]["email"] == "daka-user@example.com"
+    assert bihuo_detail.status_code == 200
+    assert bihuo_detail.json()["user"]["brand_mark"] == "bihuo"
     assert wrong_owner.status_code == 404
+
+
+def test_agent_user_list_remains_scoped_to_its_brand(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.admin import router as admin_router
+    from backend.app.api.auth import get_password_hash
+    from backend.app.core.config import settings
+    from backend.app.db import get_db
+    from backend.app.models import User
+
+    monkeypatch.setattr(settings, "lobster_admin_username", "admin", raising=False)
+    monkeypatch.setattr(settings, "lobster_admin_password", "oem-test-password", raising=False)
+    agent = User(
+        email="13900000000+brand-daka@sms.lobster.local",
+        hashed_password=get_password_hash("agent-password"),
+        credits=Decimal("1"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="daka",
+        is_agent=True,
+        agent_level=1,
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(agent)
+    db_session.flush()
+    db_session.add_all(
+        [
+            User(
+                email="daka-child@example.com",
+                hashed_password=get_password_hash("password-1"),
+                credits=Decimal("1"),
+                role="user",
+                preferred_model="sutui",
+                brand_mark="daka",
+                parent_user_id=agent.id,
+                created_at=datetime.utcnow(),
+            ),
+            User(
+                email="bihuo-child@example.com",
+                hashed_password=get_password_hash("password-2"),
+                credits=Decimal("1"),
+                role="user",
+                preferred_model="sutui",
+                brand_mark="bihuo",
+                parent_user_id=agent.id,
+                created_at=datetime.utcnow(),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    app = FastAPI()
+    app.include_router(admin_router)
+
+    def _get_db_override():
+        session = db_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    client = TestClient(app)
+    login = client.post(
+        "/admin/api/login",
+        json={"username": "13900000000", "password": "agent-password", "brand_mark": "daka"},
+    )
+    assert login.status_code == 200
+    headers = {
+        "X-Admin-Token": login.json()["token"],
+        "X-Lobster-Brand": "daka",
+    }
+
+    users = client.get("/admin/api/users?brand=bihuo", headers=headers)
+
+    assert users.status_code == 200
+    assert [item["email"] for item in users.json()["users"]] == ["daka-child@example.com"]
+    assert {item["brand_mark"] for item in users.json()["users"]} == {"daka"}
