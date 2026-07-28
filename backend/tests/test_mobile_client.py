@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -276,7 +276,7 @@ def test_mobile_devices_resolve_online_devices_by_bound_phone(db_session, db_ses
             installation_id="online-installation-1",
             display_name="电脑端 online",
             created_at=now,
-            last_seen_at=now,
+            last_seen_at=now - timedelta(seconds=45),
         )
     )
     db_session.commit()
@@ -308,6 +308,7 @@ def test_mobile_devices_resolve_online_devices_by_bound_phone(db_session, db_ses
     data = res.json()
     assert data["online_available"] is True
     assert data["online_devices"][0]["installation_id"] == "online-installation-1"
+    assert data["online_devices"][0]["online"] is True
 
 
 def test_h5_messages_from_wechat_session_are_owned_by_bound_phone_user(db_session, db_session_factory, mobile_users, monkeypatch):

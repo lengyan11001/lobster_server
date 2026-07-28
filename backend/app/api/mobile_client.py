@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 _PHONE_EMAIL_SUFFIX = "@sms.lobster.local"
 _CN_MOBILE_RE = re.compile(r"^1[3-9]\d{9}$")
+_ONLINE_DEVICE_TTL_SECONDS = 90
 _MEDIA_EXTS = {".mp4", ".webm", ".mov", ".m4v", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _URL_RE = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
 _DEFAULT_PHONE_UNLOCK_PACKAGES = (
@@ -820,7 +821,11 @@ def list_mobile_devices(
                 "installation_id": r.installation_id,
                 "display_name": r.display_name or "",
                 "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else "",
-                "online": ((now - r.last_seen_at).total_seconds() <= 20) if r.last_seen_at else False,
+                "online": (
+                    (now - r.last_seen_at).total_seconds() <= _ONLINE_DEVICE_TTL_SECONDS
+                    if r.last_seen_at
+                    else False
+                ),
             }
             for r in online_rows
         ],
