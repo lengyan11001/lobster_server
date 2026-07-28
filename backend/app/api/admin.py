@@ -65,6 +65,8 @@ def _verify_admin_token(
         raise HTTPException(status_code=404, detail="品牌不存在")
 
     if token.startswith(ADMIN_TOKEN_PREFIX):
+        if brand_mark != DEFAULT_BRAND_MARK:
+            raise HTTPException(status_code=403, detail="超级管理员仅允许从必火后台登录")
         if not _admin_enabled():
             raise HTTPException(status_code=503, detail="管理后台未配置")
         expected = ADMIN_TOKEN_PREFIX + (settings.lobster_admin_password or "").strip()
@@ -280,7 +282,7 @@ def admin_login(body: LoginBody, db: Session = Depends(get_db)):
     if not username or (not password and not sms_code):
         raise HTTPException(status_code=400, detail="请输入账号和密码或短信验证码")
 
-    if _admin_enabled():
+    if brand_mark == DEFAULT_BRAND_MARK and _admin_enabled():
         admin_u = (settings.lobster_admin_username or "").strip()
         admin_p = (settings.lobster_admin_password or "").strip()
         if username == admin_u and password == admin_p:
@@ -396,9 +398,10 @@ def admin_search_user(
         id_value = int(q)
         if 0 < id_value <= 2_147_483_647:
             filters.append(User.id == id_value)
-    query = db.query(User).filter(User.brand_mark == ctx.brand_mark, or_(*filters))
+    query = db.query(User).filter(or_(*filters))
     if ctx.role == "agent":
         sub_ids = _agent_visible_user_ids(db, ctx.user_id)
+        query = query.filter(User.brand_mark == ctx.brand_mark)
         query = query.filter(User.id.in_(sub_ids)) if sub_ids else query.filter(False)
     query = query.order_by(User.id).limit(50)
     users = []
@@ -706,7 +709,7 @@ def _admin_template_owner_id(db: Session, ctx: AdminContext, requested_owner_use
     owner_id = int(requested_owner_user_id or 0)
     if owner_id <= 0:
         return 0
-    owner = db.query(User).filter(User.id == owner_id, User.brand_mark == ctx.brand_mark).first()
+    owner = db.query(User).filter(User.id == owner_id).first()
     if not owner:
         raise HTTPException(status_code=404, detail="模板归属用户不存在")
     return owner_id
@@ -972,19 +975,11 @@ def admin_list_ip_templates(
     page = max(1, int(page or 1))
     page_size = min(max(int(page_size or 20), 1), 100)
     query = db.query(IPContentScheduleTemplate).filter(IPContentScheduleTemplate.status == "active")
-    brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
     if ctx.role == "agent":
         query = query.filter(IPContentScheduleTemplate.user_id == int(ctx.user_id or 0))
     elif owner_user_id:
         owner_id = _admin_template_owner_id(db, ctx, owner_user_id)
         query = query.filter(IPContentScheduleTemplate.user_id == owner_id)
-    else:
-        query = query.filter(
-            or_(
-                IPContentScheduleTemplate.user_id == 0,
-                IPContentScheduleTemplate.user_id.in_(brand_user_ids),
-            )
-        )
     term = (q or "").strip()
     if term:
         query = query.filter(IPContentScheduleTemplate.name.ilike(f"%{term}%"))
@@ -998,20 +993,19 @@ def admin_list_ip_templates(
     owner_ids = sorted({int(row.user_id) for row in rows})
     owners = {
         row.id: row
-        for row in db.query(User).filter(User.id.in_(owner_ids), User.brand_mark == ctx.brand_mark).all()
+        for row in db.query(User).filter(User.id.in_(owner_ids)).all()
     } if owner_ids else {}
     template_ids = [int(row.id) for row in rows]
     grant_map: dict[int, list[int]] = {}
     if template_ids:
-        grants = (
-            db.query(H5AgentTemplateGrant)
-            .filter(
-                H5AgentTemplateGrant.template_id.in_(template_ids),
-                H5AgentTemplateGrant.target_user_id.in_(brand_user_ids),
-                H5AgentTemplateGrant.status == "active",
-            )
-            .all()
+        grant_query = db.query(H5AgentTemplateGrant).filter(
+            H5AgentTemplateGrant.template_id.in_(template_ids),
+            H5AgentTemplateGrant.status == "active",
         )
+        if ctx.role == "agent":
+            brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
+            grant_query = grant_query.filter(H5AgentTemplateGrant.target_user_id.in_(brand_user_ids))
+        grants = grant_query.all()
         for grant in grants:
             grant_map.setdefault(int(grant.template_id), []).append(int(grant.target_user_id))
     return {
@@ -1059,9 +1053,10 @@ def admin_ip_template_grant_users(
 
     page = max(1, int(page or 1))
     page_size = min(max(int(page_size or 20), 1), 100)
-    query = db.query(User).filter(User.brand_mark == ctx.brand_mark)
+    query = db.query(User)
     if ctx.role == "agent":
         visible_ids = _agent_visible_user_ids(db, int(ctx.user_id or 0))
+        query = query.filter(User.brand_mark == ctx.brand_mark)
         query = query.filter(User.id.in_(visible_ids)) if visible_ids else query.filter(False)
     if int(row.user_id or 0) > 0:
         query = query.filter(User.id != int(row.user_id))
@@ -1372,27 +1367,25 @@ def admin_stats(
     agent_sub_ids: Optional[list[int]] = None
     if ctx.role == "agent":
         agent_sub_ids = _agent_visible_user_ids(db, ctx.user_id)
-    brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
-
     def _user_filter(q):
         if agent_sub_ids is not None:
             return q.filter(User.id.in_(agent_sub_ids)) if agent_sub_ids else q.filter(False)
-        return q.filter(User.brand_mark == ctx.brand_mark)
+        return q
 
     def _order_filter(q):
         if agent_sub_ids is not None:
             return q.filter(RechargeOrder.user_id.in_(agent_sub_ids)) if agent_sub_ids else q.filter(False)
-        return q.filter(RechargeOrder.user_id.in_(brand_user_ids))
+        return q
 
     def _ledger_filter(q):
         if agent_sub_ids is not None:
             return q.filter(CreditLedger.user_id.in_(agent_sub_ids)) if agent_sub_ids else q.filter(False)
-        return q.filter(CreditLedger.user_id.in_(brand_user_ids))
+        return q
 
     def _cap_filter(q):
         if agent_sub_ids is not None:
             return q.filter(CapabilityCallLog.user_id.in_(agent_sub_ids)) if agent_sub_ids else q.filter(False)
-        return q.filter(CapabilityCallLog.user_id.in_(brand_user_ids))
+        return q
 
     total_users = _user_filter(db.query(func.count(User.id))).scalar() or 0
     today_new_users = (
@@ -1734,7 +1727,7 @@ def admin_list_agents(
         return query.filter(or_(*filters))
 
     if ctx.role == "admin":
-        base_q = db.query(User).filter(User.is_agent == True, User.brand_mark == ctx.brand_mark)  # noqa: E712
+        base_q = db.query(User).filter(User.is_agent == True)  # noqa: E712
         base_q = _apply_term(base_q)
         total = int(base_q.with_entities(func.count(User.id)).scalar() or 0)
         rows = (
@@ -1750,35 +1743,35 @@ def admin_list_agents(
                 int(parent_id): int(count)
                 for parent_id, count in (
                     db.query(User.parent_user_id, func.count(User.id))
-                    .filter(User.parent_user_id.in_(agent_ids), User.brand_mark == ctx.brand_mark)
+                    .filter(User.parent_user_id.in_(agent_ids))
                     .group_by(User.parent_user_id)
                     .all()
                 )
             }
         summary = {
-            "total_agents": int(db.query(func.count(User.id)).filter(User.is_agent == True, User.brand_mark == ctx.brand_mark).scalar() or 0),  # noqa: E712
+            "total_agents": int(db.query(func.count(User.id)).filter(User.is_agent == True).scalar() or 0),  # noqa: E712
             "level1_agents": int(
                 db.query(func.count(User.id))
-                .filter(User.is_agent == True, User.brand_mark == ctx.brand_mark, or_(User.agent_level == 1, User.agent_level == 0))  # noqa: E712
+                .filter(User.is_agent == True, or_(User.agent_level == 1, User.agent_level == 0))  # noqa: E712
                 .scalar()
                 or 0
             ),
             "level2_agents": int(
                 db.query(func.count(User.id))
-                .filter(User.is_agent == True, User.brand_mark == ctx.brand_mark, User.agent_level == 2)  # noqa: E712
+                .filter(User.is_agent == True, User.agent_level == 2)  # noqa: E712
                 .scalar()
                 or 0
             ),
-            "sub_users": int(db.query(func.count(User.id)).filter(User.brand_mark == ctx.brand_mark, User.parent_user_id.isnot(None)).scalar() or 0),
+            "sub_users": int(db.query(func.count(User.id)).filter(User.parent_user_id.isnot(None)).scalar() or 0),
             "memory_enabled": int(
                 db.query(func.count(User.id))
-                .filter(User.is_agent == True, User.brand_mark == ctx.brand_mark, User.agent_openclaw_memory_enabled == True)  # noqa: E712
+                .filter(User.is_agent == True, User.agent_openclaw_memory_enabled == True)  # noqa: E712
                 .scalar()
                 or 0
             ),
             "task_dispatch_enabled": int(
                 db.query(func.count(User.id))
-                .filter(User.is_agent == True, User.brand_mark == ctx.brand_mark, User.agent_task_dispatch_enabled == True)  # noqa: E712
+                .filter(User.is_agent == True, User.agent_task_dispatch_enabled == True)  # noqa: E712
                 .scalar()
                 or 0
             ),
@@ -1951,7 +1944,10 @@ def agent_set_second_agent(
 ):
     """一级代理将自己的某个直属下级设置/取消为二级代理。"""
     agent = _require_level1_agent(db, ctx)
-    target_user = db.query(User).filter(User.id == body.user_id, User.brand_mark == ctx.brand_mark).first()
+    target_query = db.query(User).filter(User.id == body.user_id)
+    if ctx.role == "agent":
+        target_query = target_query.filter(User.brand_mark == ctx.brand_mark)
+    target_user = target_query.first()
     if not target_user:
         raise HTTPException(status_code=404, detail="用户不存在")
     if target_user.parent_user_id != agent.id:
@@ -2035,7 +2031,10 @@ def agent_remove_sub(
     db: Session = Depends(get_db),
 ):
     """代理商移除自己的下级。管理员也可调用以解除任何上下级关系。"""
-    target_user = db.query(User).filter(User.id == body.user_id, User.brand_mark == ctx.brand_mark).first()
+    target_query = db.query(User).filter(User.id == body.user_id)
+    if ctx.role == "agent":
+        target_query = target_query.filter(User.brand_mark == ctx.brand_mark)
+    target_user = target_query.first()
     if not target_user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
@@ -2157,10 +2156,10 @@ def agent_commissions(
 
 
 def _juhe_owner_filter(query, db: Session, ctx: AdminContext):
-    brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
-    query = query.filter(JuheWechatConfig.user_id.in_(brand_user_ids))
     if ctx.role == "admin":
         return query
+    brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
+    query = query.filter(JuheWechatConfig.user_id.in_(brand_user_ids))
     return query.filter(JuheWechatConfig.owner_role == "agent", JuheWechatConfig.owner_user_id == ctx.user_id)
 
 
@@ -2606,9 +2605,10 @@ def admin_juhe_list_friend_batches(
     db: Session = Depends(get_db),
 ):
     limit = max(1, min(100, int(limit or 50)))
-    brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
-    q = db.query(JuheWechatFriendAddBatch).filter(JuheWechatFriendAddBatch.target_user_id.in_(brand_user_ids))
+    q = db.query(JuheWechatFriendAddBatch)
     if ctx.role != "admin":
+        brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
+        q = q.filter(JuheWechatFriendAddBatch.target_user_id.in_(brand_user_ids))
         q = q.filter(JuheWechatFriendAddBatch.owner_role == "agent", JuheWechatFriendAddBatch.owner_user_id == ctx.user_id)
     if config_id:
         q = q.filter(JuheWechatFriendAddBatch.config_id == int(config_id))

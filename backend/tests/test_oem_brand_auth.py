@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -257,6 +258,7 @@ def test_admin_can_list_filter_and_open_users_across_brands(db_session, db_sessi
     )
     db_session.commit()
     bihuo_user = db_session.query(User).filter(User.brand_mark == "bihuo").first()
+    daka_user = db_session.query(User).filter(User.brand_mark == "daka").first()
 
     app = FastAPI()
     app.include_router(admin_router)
@@ -272,17 +274,37 @@ def test_admin_can_list_filter_and_open_users_across_brands(db_session, db_sessi
     client = TestClient(app)
     headers = {
         "X-Admin-Token": "lobster-admin-oem-test-password",
-        "X-Lobster-Brand": "daka",
+        "X-Lobster-Brand": "bihuo",
     }
 
+    bihuo_login = client.post(
+        "/admin/api/login",
+        json={"username": "admin", "password": "oem-test-password", "brand_mark": "bihuo"},
+    )
+    daka_login = client.post(
+        "/admin/api/login",
+        json={"username": "admin", "password": "oem-test-password", "brand_mark": "daka"},
+    )
+    daka_token_access = client.get(
+        "/admin/api/users",
+        headers={
+            "X-Admin-Token": "lobster-admin-oem-test-password",
+            "X-Lobster-Brand": "daka",
+        },
+    )
     users = client.get("/admin/api/users", headers=headers)
     daka_users = client.get("/admin/api/users?brand=daka", headers=headers)
     bihuo_detail = client.get(f"/admin/api/user/{bihuo_user.id}", headers=headers)
-    wrong_owner = client.get(
-        f"/admin/api/ip-content/template-options?owner_user_id={bihuo_user.id}",
+    daka_owner = client.get(
+        f"/admin/api/ip-content/template-options?owner_user_id={daka_user.id}",
         headers=headers,
     )
+    stats = client.get("/admin/api/stats?days=30", headers=headers)
 
+    assert bihuo_login.status_code == 200
+    assert bihuo_login.json()["role"] == "admin"
+    assert daka_login.status_code == 401
+    assert daka_token_access.status_code == 403
     assert users.status_code == 200
     assert [item["brand_mark"] for item in users.json()["users"]] == ["daka", "bihuo"]
     assert daka_users.status_code == 200
@@ -290,7 +312,18 @@ def test_admin_can_list_filter_and_open_users_across_brands(db_session, db_sessi
     assert daka_users.json()["users"][0]["email"] == "daka-user@example.com"
     assert bihuo_detail.status_code == 200
     assert bihuo_detail.json()["user"]["brand_mark"] == "bihuo"
-    assert wrong_owner.status_code == 404
+    assert daka_owner.status_code == 200
+    assert stats.status_code == 200
+    assert stats.json()["overview"]["total_users"] == 2
+
+
+def test_admin_brand_is_driven_by_url_without_brand_selectors():
+    html = (Path(__file__).resolve().parents[1] / "app" / "static" / "admin.html").read_text(encoding="utf-8")
+
+    assert 'id="loginBrandSelect"' not in html
+    assert 'id="adminBrandSelect"' not in html
+    assert "new URLSearchParams(location.search).get('brand')" in html
+    assert "REQUESTED_BRAND_MARK === 'daka' ? 'daka' : 'bihuo'" in html
 
 
 def test_agent_user_list_remains_scoped_to_its_brand(db_session, db_session_factory, monkeypatch):

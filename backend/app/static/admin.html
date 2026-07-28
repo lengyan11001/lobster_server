@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>必火AI员工管理后台</title>
-<link rel="icon" type="image/png" href="/admin/static/bihu_32.png">
+<link rel="icon" id="adminFavicon" type="image/png" href="/admin/static/bihu_32.png">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#f5f7fa;--card:#fff;--primary:#4f46e5;--primary-hover:#4338ca;--danger:#ef4444;--success:#22c55e;--text:#1e293b;--text-secondary:#64748b;--border:#e2e8f0;--radius:10px;--shadow:0 1px 3px rgba(0,0,0,.08);--agent-color:#f59e0b;--agent-bg:#fffbeb}
@@ -299,13 +299,6 @@ body{background:#edf2f7}
   <div class="login-card">
     <div style="text-align:center;margin-bottom:12px"><img id="loginBrandIcon" src="/admin/static/bihu_64.png" width="56" height="56" style="border-radius:12px"></div>
     <h1 id="loginBrandTitle">必火AI员工管理后台</h1>
-    <div class="form-group" style="margin-top:18px">
-      <label>管理品牌</label>
-      <select class="brand-select" id="loginBrandSelect" style="width:100%" onchange="changeLoginBrand(this.value)">
-        <option value="bihuo">必火AI员工</option>
-        <option value="daka">大咖AI员工</option>
-      </select>
-    </div>
     <div class="login-tabs">
       <button class="login-tab active" type="button" data-login-tab="password" onclick="switchLoginTab('password')">账号密码登录</button>
       <button class="login-tab" type="button" data-login-tab="sms" onclick="switchLoginTab('sms')">手机号验证码登录</button>
@@ -375,10 +368,6 @@ body{background:#edf2f7}
       <h2 id="topbarTitle">首页数据大盘</h2>
     </div>
     <div class="user-info">
-      <select class="brand-select" id="adminBrandSelect" onchange="changeAdminBrand(this.value)">
-        <option value="bihuo">必火AI员工</option>
-        <option value="daka">大咖AI员工</option>
-      </select>
       <span id="adminName" style="font-size:13px;color:var(--text-secondary)"></span>
       <span id="roleBadge" class="badge" style="display:none"></span>
       <button class="btn btn-outline btn-sm" onclick="doLogout()">退出</button>
@@ -788,12 +777,14 @@ body{background:#edf2f7}
 
 <script>
 const API = location.origin;
-let TOKEN = localStorage.getItem('admin_token') || '';
-let ROLE = localStorage.getItem('admin_role') || '';
-let DISPLAY_NAME = localStorage.getItem('admin_display_name') || '';
-let BRAND_MARK = localStorage.getItem('admin_brand_mark') || 'bihuo';
-let MY_USER_ID = parseInt(localStorage.getItem('admin_my_user_id') || '0', 10) || 0;
-let AGENT_LEVEL = parseInt(localStorage.getItem('admin_agent_level') || '0', 10) || 0;
+const REQUESTED_BRAND_MARK = (new URLSearchParams(location.search).get('brand') || 'bihuo').trim().toLowerCase();
+const BRAND_MARK = REQUESTED_BRAND_MARK === 'daka' ? 'daka' : 'bihuo';
+const SESSION_SUFFIX = ':' + BRAND_MARK;
+let TOKEN = localStorage.getItem('admin_token' + SESSION_SUFFIX) || '';
+let ROLE = localStorage.getItem('admin_role' + SESSION_SUFFIX) || '';
+let DISPLAY_NAME = localStorage.getItem('admin_display_name' + SESSION_SUFFIX) || '';
+let MY_USER_ID = parseInt(localStorage.getItem('admin_my_user_id' + SESSION_SUFFIX) || '0', 10) || 0;
+let AGENT_LEVEL = parseInt(localStorage.getItem('admin_agent_level' + SESSION_SUFFIX) || '0', 10) || 0;
 let secondAgentOptionsCache = null;
 let commissionOffset = 0;
 let generationRecordOffset = 0;
@@ -837,37 +828,15 @@ function toast(msg, type='success') {
 
 function applyAdminBrand() {
   const cfg = ADMIN_BRANDS[BRAND_MARK] || ADMIN_BRANDS.bihuo;
-  const loginSelect = document.getElementById('loginBrandSelect');
-  const adminSelect = document.getElementById('adminBrandSelect');
-  if (loginSelect) loginSelect.value = BRAND_MARK;
-  if (adminSelect) adminSelect.value = BRAND_MARK;
   const loginTitle = document.getElementById('loginBrandTitle');
   const loginIcon = document.getElementById('loginBrandIcon');
   const sidebarIcon = document.getElementById('sidebarBrandIcon');
+  const favicon = document.getElementById('adminFavicon');
   if (loginTitle) loginTitle.textContent = cfg.name + '管理后台';
   if (loginIcon) loginIcon.src = cfg.icon64;
   if (sidebarIcon) sidebarIcon.src = cfg.icon32;
+  if (favicon) favicon.href = cfg.icon32;
   document.title = cfg.name + '管理后台';
-}
-
-function changeLoginBrand(mark) {
-  BRAND_MARK = ADMIN_BRANDS[mark] ? mark : 'bihuo';
-  localStorage.setItem('admin_brand_mark', BRAND_MARK);
-  applyAdminBrand();
-}
-
-function changeAdminBrand(mark) {
-  if (isAgent() && mark !== BRAND_MARK) {
-    toast('代理商只能管理登录品牌下的用户', 'error');
-    applyAdminBrand();
-    return;
-  }
-  BRAND_MARK = ADMIN_BRANDS[mark] ? mark : 'bihuo';
-  localStorage.setItem('admin_brand_mark', BRAND_MARK);
-  statsCache = null;
-  secondAgentOptionsCache = null;
-  applyAdminBrand();
-  showDashboard();
 }
 
 async function api(path, opts={}) {
@@ -994,15 +963,13 @@ async function doLogin() {
     DISPLAY_NAME = data.display_name || '管理员';
     MY_USER_ID = parseInt(data.user_id || 0, 10) || 0;
     AGENT_LEVEL = parseInt(data.agent_level || 0, 10) || 0;
-    BRAND_MARK = data.brand_mark || BRAND_MARK || 'bihuo';
-    localStorage.setItem('admin_token', TOKEN);
-    localStorage.setItem('admin_role', ROLE);
-    localStorage.setItem('admin_display_name', DISPLAY_NAME);
-    localStorage.setItem('admin_brand_mark', BRAND_MARK);
-    if (MY_USER_ID) localStorage.setItem('admin_my_user_id', String(MY_USER_ID));
-    else localStorage.removeItem('admin_my_user_id');
-    if (AGENT_LEVEL) localStorage.setItem('admin_agent_level', String(AGENT_LEVEL));
-    else localStorage.removeItem('admin_agent_level');
+    localStorage.setItem('admin_token' + SESSION_SUFFIX, TOKEN);
+    localStorage.setItem('admin_role' + SESSION_SUFFIX, ROLE);
+    localStorage.setItem('admin_display_name' + SESSION_SUFFIX, DISPLAY_NAME);
+    if (MY_USER_ID) localStorage.setItem('admin_my_user_id' + SESSION_SUFFIX, String(MY_USER_ID));
+    else localStorage.removeItem('admin_my_user_id' + SESSION_SUFFIX);
+    if (AGENT_LEVEL) localStorage.setItem('admin_agent_level' + SESSION_SUFFIX, String(AGENT_LEVEL));
+    else localStorage.removeItem('admin_agent_level' + SESSION_SUFFIX);
     showDashboard();
   } catch(e) {
     err.textContent = e.message;
@@ -1016,11 +983,11 @@ function doLogout() {
   DISPLAY_NAME = '';
   MY_USER_ID = 0;
   AGENT_LEVEL = 0;
-  localStorage.removeItem('admin_token');
-  localStorage.removeItem('admin_role');
-  localStorage.removeItem('admin_display_name');
-  localStorage.removeItem('admin_my_user_id');
-  localStorage.removeItem('admin_agent_level');
+  localStorage.removeItem('admin_token' + SESSION_SUFFIX);
+  localStorage.removeItem('admin_role' + SESSION_SUFFIX);
+  localStorage.removeItem('admin_display_name' + SESSION_SUFFIX);
+  localStorage.removeItem('admin_my_user_id' + SESSION_SUFFIX);
+  localStorage.removeItem('admin_agent_level' + SESSION_SUFFIX);
   document.getElementById('loginView').style.display = 'flex';
   document.getElementById('dashboardView').style.display = 'none';
   if (currentLoginTab === 'sms') loadLoginCaptcha();
@@ -1056,8 +1023,8 @@ function showDashboard() {
     badge.className = 'badge badge-yellow';
     badge.textContent = AGENT_LEVEL === 2 ? '二级代理' : '代理商';
     document.getElementById('topbar').classList.add('agent-topbar');
-    if (brandTitle) brandTitle.textContent = AGENT_LEVEL === 2 ? '二级代理后台' : '代理商后台';
-    if (brandSub) brandSub.textContent = '下级用户管理';
+    if (brandTitle) brandTitle.textContent = (ADMIN_BRANDS[BRAND_MARK] || ADMIN_BRANDS.bihuo).console;
+    if (brandSub) brandSub.textContent = AGENT_LEVEL === 2 ? '二级代理后台' : '代理商后台';
     document.getElementById('agentBanner').style.display = 'flex';
     document.getElementById('claimBar').style.display = isLevel1Agent() ? 'flex' : 'none';
     const commissionTab = document.getElementById('commissionNavTab');
@@ -1078,8 +1045,6 @@ function showDashboard() {
     const memEntry = document.getElementById('agentMemoryEntryBtn');
     if (memEntry) memEntry.style.display = 'none';
   }
-  const brandSelect = document.getElementById('adminBrandSelect');
-  if (brandSelect) brandSelect.disabled = isAgent();
   loadUserBrandOptions();
   const brandsTab = document.getElementById('brandsNavTab');
   if (brandsTab) brandsTab.style.display = isAdmin() ? '' : 'none';
@@ -1142,13 +1107,6 @@ async function loadBrands() {
   try {
     const data = await api('/admin/api/brands');
     const items = data.items || [];
-    const topSelect = document.getElementById('adminBrandSelect');
-    const loginSelect = document.getElementById('loginBrandSelect');
-    const options = items.map(function(item) {
-      return '<option value="' + escapeHtml(item.mark) + '">' + escapeHtml(item.display_name) + (item.enabled ? '' : '（未启用）') + '</option>';
-    }).join('');
-    if (topSelect) { topSelect.innerHTML = options; topSelect.value = BRAND_MARK; }
-    if (loginSelect) { loginSelect.innerHTML = options; loginSelect.value = BRAND_MARK; }
     target.innerHTML = '<div class="table-wrap"><table><thead><tr><th>品牌</th><th>标识</th><th>H5 入口</th><th>状态</th><th>操作</th></tr></thead><tbody>'
       + items.map(function(item) {
         const cfg = ADMIN_BRANDS[item.mark] || ADMIN_BRANDS.bihuo;
