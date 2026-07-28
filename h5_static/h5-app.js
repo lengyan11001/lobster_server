@@ -1,6 +1,21 @@
     const $ = (id) => document.getElementById(id);
+    const H5_BRAND_MARK = (() => {
+      try {
+        const params = new URLSearchParams(window.location.search || "");
+        const raw = String(params.get("brand") || params.get("brand_mark") || "bihuo").trim().toLowerCase();
+        return /^[a-z][a-z0-9_-]{0,62}$/.test(raw) ? raw : "bihuo";
+      } catch {
+        return "bihuo";
+      }
+    })();
+    const brandStorageKey = (key) => `${key}:${H5_BRAND_MARK}`;
+    const H5_TOKEN_KEY = brandStorageKey("lobster_h5_token");
+    if (H5_BRAND_MARK === "bihuo" && !localStorage.getItem(H5_TOKEN_KEY)) {
+      const legacyToken = localStorage.getItem("lobster_h5_token") || "";
+      if (legacyToken) localStorage.setItem(H5_TOKEN_KEY, legacyToken);
+    }
     const state = {
-      token: localStorage.getItem("lobster_h5_token") || "",
+      token: localStorage.getItem(H5_TOKEN_KEY) || "",
       mode: "direct",
       user: null,
       homeHeroUrl: "",
@@ -8,7 +23,7 @@
       pollers: new Map(),
       uploads: [],
       devices: [],
-      selectedInstallationId: localStorage.getItem("lobster_h5_selected_installation_id") || "",
+      selectedInstallationId: localStorage.getItem(brandStorageKey("lobster_h5_selected_installation_id")) || "",
       tasks: [],
       runs: [],
       taskListOffset: 0,
@@ -30,7 +45,7 @@
       socialLeadJobs: [],
       linkedinJobs: [],
       wechatTranscriptJobs: [],
-      companyName: localStorage.getItem("lobster_h5_company_name") || "我的AI公司",
+      companyName: localStorage.getItem(brandStorageKey("lobster_h5_company_name")) || "我的AI公司",
       officeDeviceFilter: "all",
       departmentSelectedDate: "",
       workflowSelectedDate: "",
@@ -1348,7 +1363,8 @@
     }
 
     function authHeaders(extra = {}) {
-      return state.token ? { Authorization: `Bearer ${state.token}`, ...extra } : { ...extra };
+      const headers = { "X-Lobster-Brand": H5_BRAND_MARK, ...extra };
+      return state.token ? { Authorization: `Bearer ${state.token}`, ...headers } : headers;
     }
 
     const H5_API_BASE = (() => {
@@ -1369,8 +1385,15 @@
       const raw = String(path || "").trim();
       if (!raw) return H5_API_BASE;
       if (/^https?:\/\//i.test(raw)) return raw;
-      if (raw.startsWith("/")) return `${H5_API_BASE}${raw}`;
-      return `${H5_API_BASE}/${raw}`;
+      const joined = raw.startsWith("/") ? `${H5_API_BASE}${raw}` : `${H5_API_BASE}/${raw}`;
+      try {
+        const url = new URL(joined, window.location.origin);
+        url.searchParams.set("brand", H5_BRAND_MARK);
+        return url.toString();
+      } catch {
+        const separator = joined.includes("?") ? "&" : "?";
+        return `${joined}${separator}brand=${encodeURIComponent(H5_BRAND_MARK)}`;
+      }
     }
 
     function api(path, options = {}) {
@@ -1386,6 +1409,39 @@
         if (!resp.ok) throw new Error(data.detail || data.message || `HTTP ${resp.status}`);
         return data;
       });
+    }
+
+    const H5_BRAND_FALLBACKS = {
+      bihuo: { display_name: "必火AI员工", icon_32: "/h5-static/bihu_32.png", icon_256: "/h5-static/bihu_256.png", primary_color: "#245cff" },
+      daka: { display_name: "大咖AI员工", icon_32: "/h5-static/daka_32.png", icon_256: "/h5-static/daka_256.png", primary_color: "#00a9c7" },
+    };
+
+    function applyH5Branding(branding = {}) {
+      const cfg = { ...(H5_BRAND_FALLBACKS[H5_BRAND_MARK] || H5_BRAND_FALLBACKS.bihuo), ...branding };
+      const title = String(cfg.document_title || cfg.display_name || H5_BRAND_MARK);
+      document.title = title;
+      document.documentElement.dataset.brand = H5_BRAND_MARK;
+      document.documentElement.style.setProperty("--blue", String(cfg.primary_color || "#245cff"));
+      document.documentElement.style.setProperty("--designer-blue", String(cfg.primary_color || "#2b59ff"));
+      const logo = $("h5BrandLogo");
+      if (logo) logo.src = cfg.icon_32 || cfg.icon_128 || H5_BRAND_FALLBACKS.bihuo.icon_32;
+      const appleIcon = $("h5AppleIcon");
+      if (appleIcon) appleIcon.href = cfg.icon_256 || cfg.icon_128 || H5_BRAND_FALLBACKS.bihuo.icon_256;
+      const appleTitle = $("h5AppleTitle");
+      if (appleTitle) appleTitle.content = title;
+      const pageTitle = $("pageTitle");
+      if (pageTitle && (!state.token || pageTitle.textContent === "必火AI员工" || pageTitle.textContent === "大咖AI员工")) {
+        pageTitle.textContent = title;
+      }
+    }
+
+    async function loadH5Branding() {
+      applyH5Branding();
+      try {
+        const response = await fetch(apiUrl("/api/branding"), { headers: authHeaders() });
+        if (!response.ok) return;
+        applyH5Branding(await response.json());
+      } catch {}
     }
 
     const DEFAULT_HOME_HERO_URL = "/h5-static/designer-home-hero.jpg";
@@ -8274,8 +8330,8 @@
       const online = state.devices.find((d) => d.online && d.installation_id);
       const next = String((online || {}).installation_id || "");
       state.selectedInstallationId = next;
-      if (next) localStorage.setItem("lobster_h5_selected_installation_id", next);
-      else localStorage.removeItem("lobster_h5_selected_installation_id");
+      if (next) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), next);
+      else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
       if (previous !== next) {
         state.publishAccountsLoaded = false;
         state.publishAccounts = [];
@@ -8287,8 +8343,8 @@
       const next = String(value || "").trim();
       const hit = next ? (state.devices || []).find((d) => d.online && String(d.installation_id || "") === next) : null;
       state.selectedInstallationId = hit ? next : "";
-      if (state.selectedInstallationId) localStorage.setItem("lobster_h5_selected_installation_id", state.selectedInstallationId);
-      else localStorage.removeItem("lobster_h5_selected_installation_id");
+      if (state.selectedInstallationId) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), state.selectedInstallationId);
+      else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
       state.publishAccountsLoaded = false;
       state.publishAccounts = [];
       renderProfileDeviceSelect();
@@ -8977,6 +9033,7 @@
       const base = H5_API_BASE.replace(/^http/i, "ws").replace(/^https/i, "wss").replace(/\/$/, "");
       const params = new URLSearchParams();
       params.set("token", state.token || "");
+      params.set("brand", H5_BRAND_MARK);
       const installationId = localStorage.getItem("installation_id") || "";
       if (installationId) params.set("installation_id", installationId);
       return `${base}/api/h5-chat/voice/session?${params.toString()}`;
@@ -9180,7 +9237,7 @@
     }
 
     async function refreshCaptcha() {
-      const data = await fetch(apiUrl("/auth/captcha")).then((r) => r.json());
+      const data = await fetch(apiUrl("/auth/captcha"), { headers: authHeaders() }).then((r) => r.json());
       $("captchaId").value = data.captcha_id || "";
       $("captchaImg").src = data.image || "";
       $("captcha").value = "";
@@ -9268,7 +9325,8 @@
         ]);
         return true;
       } catch (err) {
-        localStorage.removeItem("lobster_h5_token");
+        localStorage.removeItem(H5_TOKEN_KEY);
+        if (H5_BRAND_MARK === "bihuo") localStorage.removeItem("lobster_h5_token");
         state.token = "";
         return false;
       }
@@ -15855,7 +15913,7 @@
       if (next === null) return;
       const name = next.trim().slice(0, 24) || "我的AI公司";
       state.companyName = name;
-      localStorage.setItem("lobster_h5_company_name", name);
+      localStorage.setItem(brandStorageKey("lobster_h5_company_name"), name);
       updateCompanySign();
       updateBossOfficeStats(
         state.devices.filter((d) => d.online).length,
@@ -15912,7 +15970,8 @@
       runTaskNow(btn.dataset.runTaskNow || "", btn);
     });
     $("logoutBtn").addEventListener("click", () => {
-      localStorage.removeItem("lobster_h5_token");
+      localStorage.removeItem(H5_TOKEN_KEY);
+      if (H5_BRAND_MARK === "bihuo") localStorage.removeItem("lobster_h5_token");
       state.token = "";
       location.reload();
     });
@@ -15932,11 +15991,12 @@
       try {
         const resp = await fetch(apiUrl("/auth/sms/send"), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             phone,
             captcha_id: $("captchaId").value || "",
             captcha_answer: captchaAnswer,
+            brand_mark: H5_BRAND_MARK,
           }),
         });
         const data = await resp.json().catch(() => ({}));
@@ -16329,13 +16389,13 @@
         if (!code) throw new Error("请输入短信验证码");
         const resp = await fetch(apiUrl("/auth/register-phone"), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phone, code }),
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ phone, code, brand_mark: H5_BRAND_MARK }),
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.detail || "进入失败");
         state.token = data.access_token;
-        localStorage.setItem("lobster_h5_token", state.token);
+        localStorage.setItem(H5_TOKEN_KEY, state.token);
         await loadMe();
       } catch (err) {
         toast(err.message || "进入失败");
@@ -16355,13 +16415,13 @@
         if (!password) throw new Error("请输入密码");
         const resp = await fetch(apiUrl("/auth/login-phone-password"), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ account, password }),
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ account, password, brand_mark: H5_BRAND_MARK }),
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(normalizeAuthErrorDetail(data.detail) || "登录失败");
         state.token = data.access_token;
-        localStorage.setItem("lobster_h5_token", state.token);
+        localStorage.setItem(H5_TOKEN_KEY, state.token);
         await loadMe();
       } catch (err) {
         toast(err.message || "登录失败");
@@ -16407,6 +16467,7 @@
     });
 
     (async function init() {
+      await loadH5Branding();
       setAuthTab("sms");
       setTaskAbility("goal.video.pipeline");
       const ok = await loadMe();

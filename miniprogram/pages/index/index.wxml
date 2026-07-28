@@ -6,7 +6,7 @@
     <view class="hello-pill">
       <view class="status-dot {{phoneBound ? 'online' : ''}}"></view>
       <text wx:if="{{phoneBound}}">你好，{{phone}}</text>
-      <text wx:else>你好，小龙虾</text>
+      <text wx:else>{{appName}}</text>
     </view>
     <button class="profile-bubble" bindtap="goProfile">{{phoneBound ? '我的' : '授权'}}</button>
   </view>

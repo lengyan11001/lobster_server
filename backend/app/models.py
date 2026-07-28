@@ -25,7 +25,7 @@ class User(Base):
     """自建微信登录：开放平台 openid，用于扫码登录关联用户。"""
     wechat_openid: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     """注册时客户端所在安装包的品牌标记（与 LOBSTER_BRAND_MARK / brands.json 的 marks 键一致，如 bihuo、yingshi）。"""
-    brand_mark: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    brand_mark: Mapped[str] = mapped_column(String(64), default="bihuo", nullable=False, index=True)
     """是否为海外版用户。未标记或历史用户默认 False（国内版）。"""
     is_overseas_user: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     """企业微信消息回调 FromUserName（成员 userid 等），与站内账号绑定后用于渠道侧扣费。"""
@@ -37,6 +37,17 @@ class User(Base):
     agent_task_dispatch_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     parent_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class BrandConfig(Base):
+    __tablename__ = "brand_configs"
+
+    mark: Mapped[str] = mapped_column(String(64), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class AuthChallenge(Base):

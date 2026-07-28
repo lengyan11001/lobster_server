@@ -1,6 +1,7 @@
 const staticAssets = require("./static_assets");
+const config = require("../config");
 
-const DEFAULT_TITLE = "必火AI员工";
+const DEFAULT_TITLE = config.APP_NAME;
 const DEFAULT_IMAGE = staticAssets.staticAssetUrl("share-ai-employee.png");
 
 function parseQuery(query) {
@@ -30,7 +31,7 @@ function withInviteQuery(query) {
 function appShare(options) {
   const opts = options || {};
   return {
-    title: opts.title || "必火AI员工 - 数字人和AI视频创作",
+    title: opts.title || `${config.APP_NAME} - 数字人和AI视频创作`,
     path: withInvitePath(opts.path),
     imageUrl: opts.imageUrl || DEFAULT_IMAGE
   };

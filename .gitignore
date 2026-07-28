@@ -33,6 +33,9 @@ node_modules/
 browser_data/
 browser_chromium/
 assets/
+!miniprogram/assets/
+miniprogram/assets/*
+!miniprogram/assets/daka_128.png
 installed_packages.json
 mcp/capability_catalog.local.json
 
@@ -45,6 +48,10 @@ mcp/capability_catalog.local.json
 data/sutui_reconcile_last.json
 scripts/_tmp*
 static/
+!backend/app/static/
+backend/app/static/*
+!backend/app/static/daka_32.png
+!backend/app/static/daka_64.png
 
 # 客户端 OTA：manifest 与 bundle 均由 publish 脚本 SFTP 写入服务器，不跟 git 避免 deploy 覆盖
 client_static/client_code/manifest.json

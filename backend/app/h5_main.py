@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from . import models  # noqa: F401
 from .api.auth import router as auth_router
 from .api.assets import router as assets_router
+from .api.branding import router as branding_router
 from .api.content_records import router as content_records_router
 from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
 from .api.global_leads import router as global_leads_router
@@ -30,7 +31,8 @@ from .api.shanjian_smart_clip import router as shanjian_smart_clip_router
 from .api.skills import router as skills_router
 from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
 from .core.config import settings
-from .db import Base, engine
+from .db import Base, SessionLocal, engine
+from .services.brand_context import ensure_user_brand_schema, seed_brand_configs
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,8 @@ def create_h5_app() -> FastAPI:
     """Dedicated H5 app: auth, remote chat, scheduled tasks, and lightweight HiFly resources."""
     logger.info("[H5] create_h5_app start")
     Base.metadata.create_all(bind=engine)
+    ensure_user_brand_schema(engine)
+    seed_brand_configs(SessionLocal)
     app = FastAPI(
         title="Lobster H5 Chat",
         version="0.1.0",
@@ -58,6 +62,7 @@ def create_h5_app() -> FastAPI:
         return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
     app.include_router(auth_router, prefix="/auth")
+    app.include_router(branding_router, prefix="")
     app.include_router(assets_router, prefix="")
     app.include_router(content_records_router, prefix="")
     app.include_router(douyin_dashboard_h5_router, prefix="")

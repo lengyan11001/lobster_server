@@ -34,7 +34,7 @@ function filenameFromUrl(url) {
 }
 
 function mediaProxyUrl(url, disposition) {
-  const token = app.globalData.token || wx.getStorageSync("lobster_token") || "";
+  const token = app.globalData.token || "";
   const params = [
     `url=${encodeURIComponent(url)}`,
     `disposition=${encodeURIComponent(disposition || "inline")}`,
@@ -380,7 +380,7 @@ Page({
         url: "/api/assets/upload",
         filePath,
         name: "file",
-        token: app.globalData.token || wx.getStorageSync("lobster_token") || ""
+        token: app.globalData.token || ""
       })
       .then((data) => {
         const url = data.source_url || data.url || "";

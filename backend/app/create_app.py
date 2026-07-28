@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api.health import router as health_router
 from .api.auth import router as auth_router, get_password_hash
+from .api.branding import router as branding_router
 from .api.chat import router as chat_router
 from .api.capabilities import router as capabilities_router
 from .api.skills import router as skills_router
@@ -407,20 +408,22 @@ def _migrate_user_wechat_openid():
 
 
 def _migrate_user_brand_mark():
-    """Add brand_mark column to users if missing（注册时写入品牌标记）。"""
-    from sqlalchemy import inspect, text
+    """Add and backfill the OEM brand for every existing user."""
+    from .services.brand_context import ensure_user_brand_schema
 
     try:
-        insp = inspect(engine)
-        if not insp.has_table("users"):
-            return
-        cols = [c["name"] for c in insp.get_columns("users")]
-        if "brand_mark" in cols:
-            return
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN brand_mark VARCHAR(64) NULL"))
+        ensure_user_brand_schema(engine)
     except Exception as e:
         logger.warning("Migration user brand_mark skipped: %s", e)
+
+
+def _seed_brand_configs():
+    from .services.brand_context import seed_brand_configs
+
+    try:
+        seed_brand_configs(SessionLocal)
+    except Exception as e:
+        logger.warning("Seed brand configs skipped: %s", e)
 
 
 def _migrate_user_is_overseas_user():
@@ -958,6 +961,7 @@ def create_app() -> FastAPI:
         _migrate_user_sutui_token()
         _migrate_user_wechat_openid()
         _migrate_user_brand_mark()
+        _seed_brand_configs()
         _migrate_user_is_overseas_user()
         _migrate_user_wecom_userid()
         _migrate_user_llm_model_override()
@@ -1026,6 +1030,7 @@ def create_app() -> FastAPI:
     app.include_router(privacy_policy_router, prefix="")
     app.include_router(oauth_public_pages_router, prefix="")
     app.include_router(homepage_router, prefix="")
+    app.include_router(branding_router, prefix="")
     app.include_router(auth_router, prefix="/auth")
     app.include_router(capabilities_router, prefix="")
     app.include_router(skills_router, prefix="")

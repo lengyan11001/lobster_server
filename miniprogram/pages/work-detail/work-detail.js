@@ -18,7 +18,7 @@ function filenameFor(item) {
 }
 
 function mediaProxyUrl(url, disposition, filename) {
-  const token = app.globalData.token || wx.getStorageSync("lobster_token") || "";
+  const token = app.globalData.token || "";
   const params = [
     `url=${encodeURIComponent(url || "")}`,
     `disposition=${encodeURIComponent(disposition || "attachment")}`,

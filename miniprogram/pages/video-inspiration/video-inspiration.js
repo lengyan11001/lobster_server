@@ -513,7 +513,7 @@ Page({
           prompt: this.data.prompt || "",
           model: MODEL_ID
         },
-        token: app.globalData.token || wx.getStorageSync("lobster_token") || "",
+        token: app.globalData.token || "",
         timeout: 180000
       }).then((data) => {
         const url = cleanText(data.source_url || data.url || "");
@@ -734,7 +734,7 @@ Page({
       .filter(Boolean)
       .slice(0, MAX_REFERENCES);
     const deviceId = app.globalData.deviceId || wx.getStorageSync("lobster_device_id") || "";
-    const phone = app.globalData.phone || wx.getStorageSync("lobster_phone") || "";
+    const phone = app.globalData.phone || "";
     const localTaskId = `local-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     const pipelineTask = this.buildPipelineTask(localTaskId, referenceUrls.length ? "submitting_video" : "preparing_image");
     this.stopPolling();

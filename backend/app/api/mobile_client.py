@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import secrets
 import logging
+import hashlib
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -28,8 +29,16 @@ from ..models import (
 from ..core.config import settings
 from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
 from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
+from ..services.brand_context import (
+    DEFAULT_BRAND_MARK,
+    ensure_brand_enabled,
+    phone_from_account_email,
+    scoped_account_email,
+    user_brand_mark,
+    user_for_account,
+)
 from .auth import REGISTER_INITIAL_CREDITS, SMS_CODE_TTL_SEC, access_token_claims, create_access_token, get_current_user, get_password_hash
-from .auth import _check_and_update_sms_send_limit, _clear_sms_code, _create_auth_challenge, _verify_sms_challenge
+from .auth import _check_and_update_sms_send_limit, _clear_sms_code, _create_auth_challenge, _sms_challenge_target, _verify_sms_challenge
 from .auth import _get_wechat_access_token
 from .installation_slots import parse_installation_id_strict
 from .mobile_identity import (
@@ -55,6 +64,7 @@ _DEFAULT_PHONE_UNLOCK_PACKAGES = (
 
 
 class MobileBindRequest(BaseModel):
+    brand_mark: Optional[str] = Field(None, max_length=64)
     phone: Optional[str] = Field(None, max_length=32)
     phone_code: Optional[str] = Field(None, max_length=128)
     sms_code: Optional[str] = Field(None, max_length=16)
@@ -69,9 +79,11 @@ class MobileBindRequest(BaseModel):
 
 class MobileSmsSendRequest(BaseModel):
     phone: str = Field(..., max_length=32)
+    brand_mark: Optional[str] = Field(None, max_length=64)
 
 
 class MobileWechatLoginRequest(BaseModel):
+    brand_mark: Optional[str] = Field(None, max_length=64)
     code: str = Field(..., min_length=1, max_length=128)
     device_id: Optional[str] = Field(None, min_length=8, max_length=128)
     platform: str = Field("wechat_miniprogram", max_length=32)
@@ -111,16 +123,13 @@ def _phone_email(mobile: str) -> str:
 
 
 def _phone_from_user_email(email: str) -> str:
-    value = (email or "").strip().lower()
-    if not value.endswith(_PHONE_EMAIL_SUFFIX):
-        return ""
-    raw = value[: -len(_PHONE_EMAIL_SUFFIX)]
-    return raw if _CN_MOBILE_RE.match(raw) else ""
+    return phone_from_account_email(email)
 
 
-def _get_or_create_phone_user(db: Session, mobile: str) -> tuple[User, bool]:
-    email = _phone_email(mobile)
-    user = db.query(User).filter(User.email == email).first()
+def _get_or_create_phone_user(db: Session, mobile: str, brand_mark: str) -> tuple[User, bool]:
+    account_email = _phone_email(mobile)
+    email = scoped_account_email(account_email, brand_mark)
+    user = user_for_account(db, account_email, brand_mark)
     if user:
         return user, False
     user = User(
@@ -129,6 +138,7 @@ def _get_or_create_phone_user(db: Session, mobile: str) -> tuple[User, bool]:
         credits=REGISTER_INITIAL_CREDITS,
         role="user",
         preferred_model="sutui",
+        brand_mark=brand_mark,
     )
     db.add(user)
     db.flush()
@@ -138,18 +148,19 @@ def _get_or_create_phone_user(db: Session, mobile: str) -> tuple[User, bool]:
     return user, True
 
 
-def _new_wechat_user(db: Session, openid: str) -> User:
-    email = f"wx_{openid[:16]}@wechat.lobster.local"
+def _new_wechat_user(db: Session, openid: str, brand_mark: str) -> User:
+    email = scoped_account_email(f"wx_{openid[:16]}@wechat.lobster.local", brand_mark)
     if db.query(User).filter(User.email == email).first():
-        email = f"wx_{openid}@wechat.lobster.local"
+        email = scoped_account_email(f"wx_{openid}@wechat.lobster.local", brand_mark)
     if db.query(User).filter(User.email == email).first():
-        email = f"wx_{openid[:16]}_{secrets.token_hex(4)}@wechat.lobster.local"
+        email = scoped_account_email(f"wx_{openid[:16]}_{secrets.token_hex(4)}@wechat.lobster.local", brand_mark)
     user = User(
         email=email,
         hashed_password=get_password_hash(f"wechat-{openid}"),
         credits=Decimal("0"),
         role="user",
         preferred_model="sutui",
+        brand_mark=brand_mark,
         wechat_openid=openid,
     )
     db.add(user)
@@ -157,9 +168,14 @@ def _new_wechat_user(db: Session, openid: str) -> User:
     return user
 
 
-def _get_or_create_wechat_user(db: Session, openid: str) -> tuple[User, bool, str]:
+def _get_or_create_wechat_user(db: Session, openid: str, brand_mark: str) -> tuple[User, bool, str]:
     legacy_phone = ""
-    for user in db.query(User).filter(User.wechat_openid == openid).order_by(User.id.asc()).all():
+    for user in (
+        db.query(User)
+        .filter(User.wechat_openid == openid, User.brand_mark == brand_mark)
+        .order_by(User.id.asc())
+        .all()
+    ):
         phone = _phone_from_user_email(user.email or "")
         if phone:
             legacy_phone = legacy_phone or phone
@@ -169,10 +185,15 @@ def _get_or_create_wechat_user(db: Session, openid: str) -> tuple[User, bool, st
         return user, False, legacy_phone
     if legacy_phone:
         db.flush()
-        user = db.query(User).filter(User.wechat_openid == openid).order_by(User.id.asc()).first()
+        user = (
+            db.query(User)
+            .filter(User.wechat_openid == openid, User.brand_mark == brand_mark)
+            .order_by(User.id.asc())
+            .first()
+        )
         if user and not _phone_from_user_email(user.email or ""):
             return user, False, legacy_phone
-    user = _new_wechat_user(db, openid)
+    user = _new_wechat_user(db, openid, brand_mark)
     return user, True, legacy_phone
 
 
@@ -216,6 +237,14 @@ def _apply_ref_agent_binding(db: Session, user: User, body: Any, source: str) ->
     if getattr(user, "parent_user_id", None):
         return False
     agent = db.query(User).filter(User.id == int(ref_id)).first()
+    if agent and user_brand_mark(agent) != user_brand_mark(user):
+        logger.info(
+            "[mobile/share-bind] ignored cross-brand ref source=%s user_id=%s ref_id=%s",
+            source,
+            user.id,
+            ref_id,
+        )
+        return False
     if _agent_level_for_bind(agent) not in (1, 2):
         logger.info(
             "[mobile/share-bind] ignored non-agent ref source=%s user_id=%s ref_id=%s",
@@ -290,7 +319,7 @@ def _exchange_wechat_phone_code(phone_code: str) -> str:
     return _normalize_cn_mobile(str(raw_phone))
 
 
-def _resolve_bind_phone(body: MobileBindRequest, db: Session) -> tuple[str, bool]:
+def _resolve_bind_phone(body: MobileBindRequest, db: Session, brand_mark: str) -> tuple[str, bool]:
     plain = (body.phone or "").strip()
     verified = False
     if (body.phone_code or "").strip():
@@ -304,7 +333,7 @@ def _resolve_bind_phone(body: MobileBindRequest, db: Session) -> tuple[str, bool
         if not plain:
             raise HTTPException(status_code=400, detail="请填写手机号")
         mobile = _normalize_cn_mobile(plain)
-        _verify_mobile_sms_code(db, mobile, body.sms_code or "")
+        _verify_mobile_sms_code(db, mobile, body.sms_code or "", brand_mark)
         return mobile, True
     if not plain:
         raise HTTPException(status_code=400, detail="请提供手机号或微信手机号授权 code")
@@ -319,13 +348,19 @@ def _sms_channel_ready() -> tuple[bool, bool]:
     return bool(aliyun_ak and aliyun_sk), bool(ihuyi_acc and ihuyi_pwd)
 
 
-def _send_mobile_sms_code(db: Session, mobile: str) -> None:
+def _send_mobile_sms_code(db: Session, mobile: str, brand_mark: str = DEFAULT_BRAND_MARK) -> None:
     use_aliyun, use_ihuyi = _sms_channel_ready()
     if not use_aliyun and not use_ihuyi:
         raise HTTPException(status_code=503, detail="未配置短信通道")
     _check_and_update_sms_send_limit(db, mobile)
     code = f"{secrets.randbelow(1000000):06d}"
-    _create_auth_challenge(db, kind="sms", target=mobile, answer=code, ttl_seconds=SMS_CODE_TTL_SEC)
+    _create_auth_challenge(
+        db,
+        kind="sms",
+        target=_sms_challenge_target(mobile, brand_mark),
+        answer=code,
+        ttl_seconds=SMS_CODE_TTL_SEC,
+    )
     try:
         if use_aliyun:
             _aliyun_send(
@@ -344,15 +379,15 @@ def _send_mobile_sms_code(db: Session, mobile: str) -> None:
                 code=code,
             )
     except RuntimeError as exc:
-        _clear_sms_code(db, mobile)
+        _clear_sms_code(db, mobile, brand_mark)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-def _verify_mobile_sms_code(db: Session, mobile: str, code: str) -> None:
+def _verify_mobile_sms_code(db: Session, mobile: str, code: str, brand_mark: str = DEFAULT_BRAND_MARK) -> None:
     code_in = (code or "").strip()
     if not code_in or len(code_in) > 8:
         raise HTTPException(status_code=400, detail="短信验证码无效")
-    if not _verify_sms_challenge(db, mobile, code_in):
+    if not _verify_sms_challenge(db, mobile, code_in, brand_mark):
         raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
 
 
@@ -497,8 +532,27 @@ def _walk_media_urls(value: Any) -> Iterable[str]:
             yield from _walk_media_urls(item)
 
 
-def _current_binding(db: Session, current_user: User, device_id: str) -> MobileDeviceBinding:
+def _stored_mobile_device_id(device_id: str, brand_mark: str) -> str:
     device = parse_installation_id_strict(device_id)
+    if brand_mark == DEFAULT_BRAND_MARK:
+        return device
+    prefix = f"{brand_mark}--"
+    if len(prefix) + len(device) <= 128:
+        return prefix + device
+    return prefix + hashlib.sha256(device.encode("utf-8")).hexdigest()
+
+
+def _public_mobile_device_id(device_id: str, brand_mark: str) -> str:
+    prefix = f"{brand_mark}--"
+    value = str(device_id or "")
+    if brand_mark != DEFAULT_BRAND_MARK and value.startswith(prefix):
+        return value[len(prefix):]
+    return value
+
+
+def _current_binding(db: Session, current_user: User, device_id: str) -> MobileDeviceBinding:
+    brand_mark = user_brand_mark(current_user)
+    device = _stored_mobile_device_id(device_id, brand_mark)
     row = (
         db.query(MobileDeviceBinding)
         .filter(MobileDeviceBinding.user_id == current_user.id, MobileDeviceBinding.device_id == device)
@@ -516,9 +570,15 @@ def _asset_owner_for_mobile_request(db: Session, current_user: User, binding: Mo
 
 
 @router.get("/api/mobile/phone/status", summary="手机端：检查手机号是否已有账号")
-def mobile_phone_status(phone: str = Query(...), db: Session = Depends(get_db)):
+def mobile_phone_status(
+    request: Request,
+    phone: str = Query(...),
+    brand_mark: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
     mobile = _normalize_cn_mobile(phone)
-    user = db.query(User).filter(User.email == _phone_email(mobile)).first()
+    brand = ensure_brand_enabled(db, brand_mark or request.headers.get("x-lobster-brand"))
+    user = user_for_account(db, _phone_email(mobile), brand)
     return {
         "ok": True,
         "registered": bool(user),
@@ -530,16 +590,23 @@ def mobile_phone_status(phone: str = Query(...), db: Session = Depends(get_db)):
 @router.post("/api/mobile/sms/send", summary="手机端：发送绑定手机号短信验证码")
 def send_mobile_bind_sms(
     body: MobileSmsSendRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     mobile = _normalize_cn_mobile(body.phone)
-    user = db.query(User).filter(User.email == _phone_email(mobile)).first()
+    brand = ensure_brand_enabled(db, body.brand_mark or request.headers.get("x-lobster-brand"))
+    if brand != user_brand_mark(current_user):
+        raise HTTPException(status_code=403, detail="登录品牌不一致")
+    user = user_for_account(db, _phone_email(mobile), brand)
     current_openid = (getattr(current_user, "wechat_openid", None) or "").strip()
     is_wechat_session = bool(current_openid) or str(current_user.email or "").endswith("@wechat.lobster.local")
     if user and user.id != current_user.id and not is_wechat_session:
         raise HTTPException(status_code=403, detail="当前登录账号与手机号不一致，请先用该手机号登录")
-    _send_mobile_sms_code(db, mobile)
+    if brand == DEFAULT_BRAND_MARK:
+        _send_mobile_sms_code(db, mobile)
+    else:
+        _send_mobile_sms_code(db, mobile, brand)
     return {"ok": True}
 
 
@@ -567,12 +634,14 @@ def mobile_share_bind(
 @router.post("/api/mobile/wechat-login", summary="手机端：小程序 wx.login 登录")
 def mobile_wechat_login(
     body: MobileWechatLoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    brand = ensure_brand_enabled(db, body.brand_mark or request.headers.get("x-lobster-brand"))
     openid = _exchange_wechat_login_code(body.code)
-    user, created_temp_user, legacy_phone = _get_or_create_wechat_user(db, openid)
+    user, created_temp_user, legacy_phone = _get_or_create_wechat_user(db, openid, brand)
     if legacy_phone:
-        _get_or_create_phone_user(db, legacy_phone)
+        _get_or_create_phone_user(db, legacy_phone, brand)
     db.commit()
     db.refresh(user)
     ref_bound = _apply_ref_agent_binding(db, user, body, "wechat_login")
@@ -583,7 +652,7 @@ def mobile_wechat_login(
     phone = (legacy_phone or (latest_binding.phone if latest_binding else "") or _phone_from_user_email(user.email)).strip()
     token = create_access_token(data=access_token_claims(user))
     if phone and body.device_id:
-        device_id = parse_installation_id_strict(body.device_id)
+        device_id = _stored_mobile_device_id(body.device_id, brand)
         now = datetime.utcnow()
         existing_for_device = (
             db.query(MobileDeviceBinding)
@@ -628,6 +697,7 @@ def mobile_wechat_login(
         "ref_agent_bound": ref_bound,
         "needs_phone_bind": not bool(phone),
         "created_temp_user": created_temp_user,
+        "brand_mark": brand,
         "message": "已绑定手机号账号" if phone else "请授权手机号以登录或创建账号",
     }
 
@@ -635,11 +705,15 @@ def mobile_wechat_login(
 @router.post("/api/mobile/devices/bind", summary="手机端：绑定当前手机设备到手机号账号")
 def bind_mobile_device(
     body: MobileBindRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    mobile, phone_verified = _resolve_bind_phone(body, db)
-    phone_user, created_phone_user = _get_or_create_phone_user(db, mobile)
+    brand = ensure_brand_enabled(db, body.brand_mark or request.headers.get("x-lobster-brand"))
+    if brand != user_brand_mark(current_user):
+        raise HTTPException(status_code=403, detail="登录品牌不一致")
+    mobile, phone_verified = _resolve_bind_phone(body, db, brand)
+    phone_user, created_phone_user = _get_or_create_phone_user(db, mobile, brand)
     bind_user = current_user
     current_openid = (getattr(current_user, "wechat_openid", None) or "").strip()
     incoming_openid = (body.openid or "").strip()
@@ -657,7 +731,7 @@ def bind_mobile_device(
     db.add(bind_user)
     db.flush()
 
-    device_id = parse_installation_id_strict(body.device_id)
+    device_id = _stored_mobile_device_id(body.device_id, brand)
     now = datetime.utcnow()
     existing_for_device = (
         db.query(MobileDeviceBinding)
@@ -698,7 +772,7 @@ def bind_mobile_device(
         "user_id": bind_user.id,
         "phone": mobile,
         "phone_verified": phone_verified,
-        "device_id": device_id,
+        "device_id": _public_mobile_device_id(device_id, brand),
         "bound_at": now.isoformat(),
         "access_token": access_token,
         "token_type": "bearer",
@@ -707,6 +781,7 @@ def bind_mobile_device(
         "parent_user_id": phone_user.parent_user_id or bind_user.parent_user_id,
         "wechat_parent_user_id": bind_user.parent_user_id,
         "ref_agent_bound": ref_bound,
+        "brand_mark": brand,
     }
 
 
@@ -732,6 +807,7 @@ def list_mobile_devices(
         .all()
     )
     online_ids = {r.installation_id for r in online_rows}
+    brand = user_brand_mark(current_user)
     return {
         "ok": True,
         "online_available": bool(online_rows),
@@ -747,7 +823,7 @@ def list_mobile_devices(
         "online_installation_ids": list(online_ids),
         "mobile_devices": [
             {
-                "device_id": r.device_id,
+                "device_id": _public_mobile_device_id(r.device_id, brand),
                 "platform": r.platform,
                 "display_name": r.display_name or "",
                 "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else "",

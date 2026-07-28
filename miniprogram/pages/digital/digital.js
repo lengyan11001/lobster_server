@@ -514,7 +514,7 @@ Page({
           aigc_flag: 0,
           model: 2
         },
-        token: app.globalData.token || wx.getStorageSync("lobster_token") || "",
+        token: app.globalData.token || "",
         timeout: 180000
       })
       .then((data) => {
@@ -567,7 +567,7 @@ Page({
           voice_type: 8,
           languages: "zh"
         },
-        token: app.globalData.token || wx.getStorageSync("lobster_token") || "",
+        token: app.globalData.token || "",
         timeout: 180000
       })
       .then((data) => {

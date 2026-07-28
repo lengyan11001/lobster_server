@@ -24,7 +24,8 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import AgentCommissionLedger, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
+from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, normalize_brand_mark, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
 from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
@@ -42,6 +43,7 @@ _JWT_ALGORITHM = "HS256"
 class AdminContext:
     role: str  # "admin" | "agent"
     user_id: Optional[int] = None
+    brand_mark: str = DEFAULT_BRAND_MARK
 
 
 def _admin_enabled() -> bool:
@@ -50,12 +52,17 @@ def _admin_enabled() -> bool:
 
 def _verify_admin_token(
     x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+    x_lobster_brand: Optional[str] = Header(None, alias="X-Lobster-Brand"),
     db: Session = Depends(get_db),
 ) -> AdminContext:
     """解析管理后台 token，返回角色上下文。支持管理员 token 和代理商 JWT token。"""
     if not x_admin_token or not x_admin_token.strip():
         raise HTTPException(status_code=401, detail="缺少管理凭证")
     token = x_admin_token.strip()
+    brand_mark = normalize_brand_mark(x_lobster_brand)
+    brand_row = db.query(BrandConfig).filter(BrandConfig.mark == brand_mark).first()
+    if brand_row is None and brand_mark not in BUILTIN_BRANDS:
+        raise HTTPException(status_code=404, detail="品牌不存在")
 
     if token.startswith(ADMIN_TOKEN_PREFIX):
         if not _admin_enabled():
@@ -63,7 +70,7 @@ def _verify_admin_token(
         expected = ADMIN_TOKEN_PREFIX + (settings.lobster_admin_password or "").strip()
         if token != expected:
             raise HTTPException(status_code=401, detail="管理员凭证无效")
-        return AdminContext(role="admin")
+        return AdminContext(role="admin", brand_mark=brand_mark)
 
     if token.startswith(AGENT_TOKEN_PREFIX):
         jwt_token = token[len(AGENT_TOKEN_PREFIX):]
@@ -72,12 +79,17 @@ def _verify_admin_token(
             user_id = int(payload.get("sub", 0))
             if payload.get("scope") != "agent_admin":
                 raise HTTPException(status_code=401, detail="凭证无效")
+            token_brand = normalize_brand_mark(payload.get("brand_mark"), strict=False)
         except (JWTError, ValueError, TypeError):
             raise HTTPException(status_code=401, detail="代理商凭证无效或已过期")
         user = db.query(User).filter(User.id == user_id).first()
         if not user or not user.is_agent:
             raise HTTPException(status_code=401, detail="代理商账号无效或已被取消代理资格")
-        return AdminContext(role="agent", user_id=user_id)
+        if token_brand != brand_mark or user_brand_mark(user) != brand_mark:
+            raise HTTPException(status_code=403, detail="代理商登录品牌不一致")
+        if brand_row is not None and not bool(brand_row.enabled):
+            raise HTTPException(status_code=403, detail="当前品牌未启用")
+        return AdminContext(role="agent", user_id=user_id, brand_mark=brand_mark)
 
     raise HTTPException(status_code=401, detail="凭证格式无效")
 
@@ -91,7 +103,16 @@ def _require_admin(ctx: AdminContext = Depends(_verify_admin_token)) -> AdminCon
 
 def _agent_sub_user_ids(db: Session, agent_user_id: int) -> list[int]:
     """返回代理商直属下级的 user_id 列表。"""
-    return [uid for (uid,) in db.query(User.id).filter(User.parent_user_id == agent_user_id).all()]
+    agent = db.query(User).filter(User.id == agent_user_id).first()
+    if not agent:
+        return []
+    return [
+        uid
+        for (uid,) in db.query(User.id).filter(
+            User.parent_user_id == agent_user_id,
+            User.brand_mark == user_brand_mark(agent),
+        ).all()
+    ]
 
 
 def _agent_level(user: Optional[User]) -> int:
@@ -122,19 +143,31 @@ def _agent_visible_user_ids(db: Session, agent_user_id: int) -> list[int]:
     ]
     if not second_agent_ids:
         return direct_ids
+    brand_mark = user_brand_mark(agent)
     second_sub_ids = [
         uid
-        for (uid,) in db.query(User.id).filter(User.parent_user_id.in_(second_agent_ids)).all()
+        for (uid,) in db.query(User.id).filter(
+            User.parent_user_id.in_(second_agent_ids),
+            User.brand_mark == brand_mark,
+        ).all()
     ]
     return list(dict.fromkeys(direct_ids + second_sub_ids))
 
 
 def _agent_second_agent_ids(db: Session, agent_user_id: int) -> list[int]:
+    agent = db.query(User).filter(User.id == agent_user_id).first()
+    if not agent:
+        return []
     return [
         uid
         for (uid,) in (
             db.query(User.id)
-            .filter(User.parent_user_id == agent_user_id, User.is_agent == True, User.agent_level == 2)  # noqa: E712
+            .filter(
+                User.parent_user_id == agent_user_id,
+                User.brand_mark == user_brand_mark(agent),
+                User.is_agent == True,  # noqa: E712
+                User.agent_level == 2,
+            )
             .all()
         )
     ]
@@ -144,7 +177,7 @@ def _require_level1_agent(db: Session, ctx: AdminContext) -> User:
     if ctx.role != "agent" or not ctx.user_id:
         raise HTTPException(status_code=403, detail="仅代理商可执行此操作")
     agent = db.query(User).filter(User.id == ctx.user_id).first()
-    if not agent or not agent.is_agent:
+    if not agent or not agent.is_agent or user_brand_mark(agent) != ctx.brand_mark:
         raise HTTPException(status_code=401, detail="代理商账号无效")
     if _agent_level(agent) != 1:
         raise HTTPException(status_code=403, detail="二级代理不能继续设置下级")
@@ -154,7 +187,7 @@ def _require_level1_agent(db: Session, ctx: AdminContext) -> User:
 def _user_public_payload(u: User) -> dict:
     return {
         "id": u.id,
-        "email": u.email,
+        "email": unscoped_account_email(u.email),
         "credits": float(u.credits or 0),
         "role": u.role,
         "is_agent": u.is_agent,
@@ -162,7 +195,7 @@ def _user_public_payload(u: User) -> dict:
         "agent_openclaw_memory_enabled": bool(getattr(u, "agent_openclaw_memory_enabled", False)),
         "agent_task_dispatch_enabled": bool(getattr(u, "agent_task_dispatch_enabled", False)),
         "parent_user_id": u.parent_user_id,
-        "brand_mark": getattr(u, "brand_mark", None),
+        "brand_mark": user_brand_mark(u),
         "is_overseas_user": bool(getattr(u, "is_overseas_user", False)),
         "llm_model_override": (getattr(u, "llm_model_override", None) or ""),
         "created_at": u.created_at.isoformat() if u.created_at else None,
@@ -170,6 +203,9 @@ def _user_public_payload(u: User) -> dict:
 
 
 def _assert_can_manage_user(db: Session, ctx: AdminContext, user_id: int, *, allow_agent_self: bool = False) -> None:
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target or user_brand_mark(target) != ctx.brand_mark:
+        raise HTTPException(status_code=404, detail="用户不存在")
     if ctx.role == "admin":
         return
     if ctx.role != "agent" or ctx.user_id is None:
@@ -226,6 +262,7 @@ class LoginBody(BaseModel):
     captcha_id: str = ""
     captcha_answer: str = ""
     sms_code: str = ""
+    brand_mark: str = DEFAULT_BRAND_MARK
 
 
 @router.post("/admin/api/login")
@@ -234,6 +271,10 @@ def admin_login(body: LoginBody, db: Session = Depends(get_db)):
     username = body.username.strip()
     password = body.password.strip()
     sms_code = (body.sms_code or "").strip()
+    brand_mark = normalize_brand_mark(body.brand_mark)
+    brand_row = db.query(BrandConfig).filter(BrandConfig.mark == brand_mark).first()
+    if (brand_row is None and brand_mark not in BUILTIN_BRANDS) or (brand_row is not None and not brand_row.enabled):
+        raise HTTPException(status_code=403, detail="当前品牌未启用")
     if not username or (not password and not sms_code):
         raise HTTPException(status_code=400, detail="请输入账号和密码或短信验证码")
 
@@ -242,27 +283,32 @@ def admin_login(body: LoginBody, db: Session = Depends(get_db)):
         admin_p = (settings.lobster_admin_password or "").strip()
         if username == admin_u and password == admin_p:
             token = ADMIN_TOKEN_PREFIX + admin_p
-            return {"ok": True, "token": token, "role": "admin", "display_name": "管理员"}
+            return {"ok": True, "token": token, "role": "admin", "display_name": "管理员", "brand_mark": brand_mark}
 
     from .auth import _normalize_cn_mobile, _login_account_key, _verify_sms_challenge, verify_password
     account_key = _login_account_key(username)
     if account_key:
-        user = db.query(User).filter(User.email == account_key).first()
+        user = user_for_account(db, account_key, brand_mark)
         sms_ok = False
         if user and user.is_agent and sms_code:
             mobile = _normalize_cn_mobile(username)
-            sms_ok = _verify_sms_challenge(db, mobile, sms_code)
+            sms_ok = _verify_sms_challenge(db, mobile, sms_code, brand_mark)
             if not sms_ok:
                 raise HTTPException(status_code=400, detail="短信验证码错误或已过期，请重新获取")
         password_ok = bool(user and user.is_agent and password and verify_password(password, user.hashed_password))
         if user and user.is_agent and (password_ok or sms_ok):
             agent_jwt = jwt.encode(
-                {"sub": str(user.id), "scope": "agent_admin", "exp": datetime.utcnow() + timedelta(days=7)},
+                {
+                    "sub": str(user.id),
+                    "scope": "agent_admin",
+                    "brand_mark": brand_mark,
+                    "exp": datetime.utcnow() + timedelta(days=7),
+                },
                 settings.secret_key,
                 algorithm=_JWT_ALGORITHM,
             )
             token = AGENT_TOKEN_PREFIX + agent_jwt
-            display = user.email.replace("@sms.lobster.local", "")
+            display = unscoped_account_email(user.email).replace("@sms.lobster.local", "")
             return {
                 "ok": True,
                 "token": token,
@@ -271,9 +317,67 @@ def admin_login(body: LoginBody, db: Session = Depends(get_db)):
                 "display_name": display,
                 "agent_level": _agent_level(user),
                 "agent_openclaw_memory_enabled": bool(getattr(user, "agent_openclaw_memory_enabled", False)),
+                "brand_mark": brand_mark,
             }
 
     raise HTTPException(status_code=401, detail="用户名或密码/验证码错误")
+
+
+class BrandConfigPatchBody(BaseModel):
+    enabled: bool
+
+
+def _brand_admin_payload(row: Optional[BrandConfig], mark: str) -> dict:
+    built_in = BUILTIN_BRANDS.get(mark) or {}
+    enabled = bool(row.enabled) if row is not None else mark in BUILTIN_BRANDS
+    return {
+        "mark": mark,
+        "display_name": (row.display_name if row else "") or built_in.get("display_name") or mark,
+        "enabled": enabled,
+        "config": row.config if row and isinstance(row.config, dict) else {},
+        "h5_path": f"/h5?brand={mark}",
+    }
+
+
+@router.get("/admin/api/brands")
+def admin_list_brands(
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    rows = {row.mark: row for row in db.query(BrandConfig).order_by(BrandConfig.mark.asc()).all()}
+    marks = list(dict.fromkeys([*BUILTIN_BRANDS.keys(), *rows.keys()]))
+    return {
+        "default_mark": DEFAULT_BRAND_MARK,
+        "selected_mark": ctx.brand_mark,
+        "items": [_brand_admin_payload(rows.get(mark), mark) for mark in marks],
+    }
+
+
+@router.patch("/admin/api/brands/{mark}")
+def admin_update_brand(
+    mark: str,
+    body: BrandConfigPatchBody,
+    ctx: AdminContext = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    brand_mark = normalize_brand_mark(mark)
+    row = db.query(BrandConfig).filter(BrandConfig.mark == brand_mark).first()
+    if row is None:
+        built_in = BUILTIN_BRANDS.get(brand_mark)
+        if built_in is None:
+            raise HTTPException(status_code=404, detail="品牌不存在")
+        row = BrandConfig(
+            mark=brand_mark,
+            display_name=str(built_in.get("display_name") or brand_mark),
+            enabled=bool(body.enabled),
+            config={},
+        )
+        db.add(row)
+    else:
+        row.enabled = bool(body.enabled)
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": _brand_admin_payload(row, brand_mark)}
 
 
 @router.get("/admin/api/search")
@@ -290,9 +394,7 @@ def admin_search_user(
         id_value = int(q)
         if 0 < id_value <= 2_147_483_647:
             filters.append(User.id == id_value)
-    query = db.query(User).filter(
-        or_(*filters)
-    )
+    query = db.query(User).filter(User.brand_mark == ctx.brand_mark, or_(*filters))
     if ctx.role == "agent":
         sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         query = query.filter(User.id.in_(sub_ids)) if sub_ids else query.filter(False)
@@ -315,7 +417,7 @@ def admin_user_detail(
         sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         if user_id != ctx.user_id and user_id not in sub_ids:
             raise HTTPException(status_code=403, detail="无权查看此用户")
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id, User.brand_mark == ctx.brand_mark).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     now = datetime.utcnow()
@@ -387,6 +489,7 @@ def admin_add_credits(
     ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
+    _assert_can_manage_user(db, ctx, body.user_id)
     if ctx.role == "agent":
         sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         if body.user_id not in sub_ids:
@@ -445,6 +548,7 @@ def admin_reset_password(
     db: Session = Depends(get_db),
 ):
     """管理员重置指定用户的登录密码。密码规则与注册一致（6~128 位）。"""
+    _assert_can_manage_user(db, ctx, body.user_id)
     pwd = (body.new_password or "").strip()
     if len(pwd) < 6:
         raise HTTPException(status_code=400, detail="密码至少 6 位")
@@ -469,6 +573,7 @@ def admin_set_user_llm_model(
     ctx: AdminContext = Depends(_require_admin),
     db: Session = Depends(get_db),
 ):
+    _assert_can_manage_user(db, ctx, body.user_id)
     model = (body.model or "").strip()
     if len(model) > 128:
         raise HTTPException(status_code=400, detail="模型ID长度不能超过 128")
@@ -500,7 +605,7 @@ def admin_list_users(
     ctx: AdminContext = Depends(_verify_admin_token),
     db: Session = Depends(get_db),
 ):
-    base_q = db.query(User)
+    base_q = db.query(User).filter(User.brand_mark == ctx.brand_mark)
     if ctx.role == "agent":
         sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         base_q = base_q.filter(User.id.in_(sub_ids)) if sub_ids else base_q.filter(False)
@@ -595,7 +700,7 @@ def _admin_template_owner_id(db: Session, ctx: AdminContext, requested_owner_use
     owner_id = int(requested_owner_user_id or 0)
     if owner_id <= 0:
         return 0
-    owner = db.query(User).filter(User.id == owner_id).first()
+    owner = db.query(User).filter(User.id == owner_id, User.brand_mark == ctx.brand_mark).first()
     if not owner:
         raise HTTPException(status_code=404, detail="模板归属用户不存在")
     return owner_id
@@ -653,7 +758,7 @@ def _admin_template_payload(row: IPContentScheduleTemplate, owner: Optional[User
         "id": row.id,
         "user_id": row.user_id,
         "owner_user_id": row.user_id,
-        "owner_name": (owner.email if owner else "") or "",
+        "owner_name": unscoped_account_email(owner.email) if owner else "",
         "name": row.name,
         "keyword_ids": _admin_clean_int_ids(row.keyword_ids or [], 50),
         "competitor_ids": _admin_clean_int_ids(row.competitor_ids or [], 50),
@@ -861,10 +966,19 @@ def admin_list_ip_templates(
     page = max(1, int(page or 1))
     page_size = min(max(int(page_size or 20), 1), 100)
     query = db.query(IPContentScheduleTemplate).filter(IPContentScheduleTemplate.status == "active")
+    brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
     if ctx.role == "agent":
         query = query.filter(IPContentScheduleTemplate.user_id == int(ctx.user_id or 0))
     elif owner_user_id:
-        query = query.filter(IPContentScheduleTemplate.user_id == int(owner_user_id))
+        owner_id = _admin_template_owner_id(db, ctx, owner_user_id)
+        query = query.filter(IPContentScheduleTemplate.user_id == owner_id)
+    else:
+        query = query.filter(
+            or_(
+                IPContentScheduleTemplate.user_id == 0,
+                IPContentScheduleTemplate.user_id.in_(brand_user_ids),
+            )
+        )
     term = (q or "").strip()
     if term:
         query = query.filter(IPContentScheduleTemplate.name.ilike(f"%{term}%"))
@@ -876,13 +990,20 @@ def admin_list_ip_templates(
         .all()
     )
     owner_ids = sorted({int(row.user_id) for row in rows})
-    owners = {row.id: row for row in db.query(User).filter(User.id.in_(owner_ids)).all()} if owner_ids else {}
+    owners = {
+        row.id: row
+        for row in db.query(User).filter(User.id.in_(owner_ids), User.brand_mark == ctx.brand_mark).all()
+    } if owner_ids else {}
     template_ids = [int(row.id) for row in rows]
     grant_map: dict[int, list[int]] = {}
     if template_ids:
         grants = (
             db.query(H5AgentTemplateGrant)
-            .filter(H5AgentTemplateGrant.template_id.in_(template_ids), H5AgentTemplateGrant.status == "active")
+            .filter(
+                H5AgentTemplateGrant.template_id.in_(template_ids),
+                H5AgentTemplateGrant.target_user_id.in_(brand_user_ids),
+                H5AgentTemplateGrant.status == "active",
+            )
             .all()
         )
         for grant in grants:
@@ -932,7 +1053,7 @@ def admin_ip_template_grant_users(
 
     page = max(1, int(page or 1))
     page_size = min(max(int(page_size or 20), 1), 100)
-    query = db.query(User)
+    query = db.query(User).filter(User.brand_mark == ctx.brand_mark)
     if ctx.role == "agent":
         visible_ids = _agent_visible_user_ids(db, int(ctx.user_id or 0))
         query = query.filter(User.id.in_(visible_ids)) if visible_ids else query.filter(False)
@@ -1245,26 +1366,27 @@ def admin_stats(
     agent_sub_ids: Optional[list[int]] = None
     if ctx.role == "agent":
         agent_sub_ids = _agent_visible_user_ids(db, ctx.user_id)
+    brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
 
     def _user_filter(q):
         if agent_sub_ids is not None:
             return q.filter(User.id.in_(agent_sub_ids)) if agent_sub_ids else q.filter(False)
-        return q
+        return q.filter(User.brand_mark == ctx.brand_mark)
 
     def _order_filter(q):
         if agent_sub_ids is not None:
             return q.filter(RechargeOrder.user_id.in_(agent_sub_ids)) if agent_sub_ids else q.filter(False)
-        return q
+        return q.filter(RechargeOrder.user_id.in_(brand_user_ids))
 
     def _ledger_filter(q):
         if agent_sub_ids is not None:
             return q.filter(CreditLedger.user_id.in_(agent_sub_ids)) if agent_sub_ids else q.filter(False)
-        return q
+        return q.filter(CreditLedger.user_id.in_(brand_user_ids))
 
     def _cap_filter(q):
         if agent_sub_ids is not None:
             return q.filter(CapabilityCallLog.user_id.in_(agent_sub_ids)) if agent_sub_ids else q.filter(False)
-        return q
+        return q.filter(CapabilityCallLog.user_id.in_(brand_user_ids))
 
     total_users = _user_filter(db.query(func.count(User.id))).scalar() or 0
     today_new_users = (
@@ -1606,7 +1728,7 @@ def admin_list_agents(
         return query.filter(or_(*filters))
 
     if ctx.role == "admin":
-        base_q = db.query(User).filter(User.is_agent == True)  # noqa: E712
+        base_q = db.query(User).filter(User.is_agent == True, User.brand_mark == ctx.brand_mark)  # noqa: E712
         base_q = _apply_term(base_q)
         total = int(base_q.with_entities(func.count(User.id)).scalar() or 0)
         rows = (
@@ -1622,35 +1744,35 @@ def admin_list_agents(
                 int(parent_id): int(count)
                 for parent_id, count in (
                     db.query(User.parent_user_id, func.count(User.id))
-                    .filter(User.parent_user_id.in_(agent_ids))
+                    .filter(User.parent_user_id.in_(agent_ids), User.brand_mark == ctx.brand_mark)
                     .group_by(User.parent_user_id)
                     .all()
                 )
             }
         summary = {
-            "total_agents": int(db.query(func.count(User.id)).filter(User.is_agent == True).scalar() or 0),  # noqa: E712
+            "total_agents": int(db.query(func.count(User.id)).filter(User.is_agent == True, User.brand_mark == ctx.brand_mark).scalar() or 0),  # noqa: E712
             "level1_agents": int(
                 db.query(func.count(User.id))
-                .filter(User.is_agent == True, or_(User.agent_level == 1, User.agent_level == 0))  # noqa: E712
+                .filter(User.is_agent == True, User.brand_mark == ctx.brand_mark, or_(User.agent_level == 1, User.agent_level == 0))  # noqa: E712
                 .scalar()
                 or 0
             ),
             "level2_agents": int(
                 db.query(func.count(User.id))
-                .filter(User.is_agent == True, User.agent_level == 2)  # noqa: E712
+                .filter(User.is_agent == True, User.brand_mark == ctx.brand_mark, User.agent_level == 2)  # noqa: E712
                 .scalar()
                 or 0
             ),
-            "sub_users": int(db.query(func.count(User.id)).filter(User.parent_user_id.isnot(None)).scalar() or 0),
+            "sub_users": int(db.query(func.count(User.id)).filter(User.brand_mark == ctx.brand_mark, User.parent_user_id.isnot(None)).scalar() or 0),
             "memory_enabled": int(
                 db.query(func.count(User.id))
-                .filter(User.is_agent == True, User.agent_openclaw_memory_enabled == True)  # noqa: E712
+                .filter(User.is_agent == True, User.brand_mark == ctx.brand_mark, User.agent_openclaw_memory_enabled == True)  # noqa: E712
                 .scalar()
                 or 0
             ),
             "task_dispatch_enabled": int(
                 db.query(func.count(User.id))
-                .filter(User.is_agent == True, User.agent_task_dispatch_enabled == True)  # noqa: E712
+                .filter(User.is_agent == True, User.brand_mark == ctx.brand_mark, User.agent_task_dispatch_enabled == True)  # noqa: E712
                 .scalar()
                 or 0
             ),
@@ -1732,7 +1854,8 @@ def admin_set_agent(
     db: Session = Depends(get_db),
 ):
     """管理员将某用户设为/取消代理商。"""
-    user = db.query(User).filter(User.id == body.user_id).first()
+    _assert_can_manage_user(db, ctx, body.user_id)
+    user = db.query(User).filter(User.id == body.user_id, User.brand_mark == ctx.brand_mark).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     user.is_agent = body.is_agent
@@ -1790,7 +1913,7 @@ def agent_claim_sub(
     if not account_key:
         raise HTTPException(status_code=400, detail="账号格式无效")
 
-    target_user = db.query(User).filter(User.email == account_key).first()
+    target_user = user_for_account(db, account_key, ctx.brand_mark)
     if not target_user:
         raise HTTPException(status_code=404, detail="未找到该用户")
     if target_user.id == agent_user_id:
@@ -1822,7 +1945,7 @@ def agent_set_second_agent(
 ):
     """一级代理将自己的某个直属下级设置/取消为二级代理。"""
     agent = _require_level1_agent(db, ctx)
-    target_user = db.query(User).filter(User.id == body.user_id).first()
+    target_user = db.query(User).filter(User.id == body.user_id, User.brand_mark == ctx.brand_mark).first()
     if not target_user:
         raise HTTPException(status_code=404, detail="用户不存在")
     if target_user.parent_user_id != agent.id:
@@ -1863,7 +1986,7 @@ def agent_assign_sub_parent(
 ):
     """一级代理把自己体系内的普通下级分配给某个二级代理，或移回直属。"""
     agent = _require_level1_agent(db, ctx)
-    target_user = db.query(User).filter(User.id == body.user_id).first()
+    target_user = db.query(User).filter(User.id == body.user_id, User.brand_mark == ctx.brand_mark).first()
     if not target_user:
         raise HTTPException(status_code=404, detail="用户不存在")
     if target_user.id == agent.id:
@@ -1877,7 +2000,7 @@ def agent_assign_sub_parent(
         raise HTTPException(status_code=403, detail="只能调整自己体系内的下级")
 
     if body.second_agent_user_id:
-        second_agent = db.query(User).filter(User.id == body.second_agent_user_id).first()
+        second_agent = db.query(User).filter(User.id == body.second_agent_user_id, User.brand_mark == ctx.brand_mark).first()
         if not second_agent or second_agent.id not in second_agent_ids or _agent_level(second_agent) != 2:
             raise HTTPException(status_code=400, detail="请选择自己的直属二级代理")
         target_user.parent_user_id = second_agent.id
@@ -1906,7 +2029,7 @@ def agent_remove_sub(
     db: Session = Depends(get_db),
 ):
     """代理商移除自己的下级。管理员也可调用以解除任何上下级关系。"""
-    target_user = db.query(User).filter(User.id == body.user_id).first()
+    target_user = db.query(User).filter(User.id == body.user_id, User.brand_mark == ctx.brand_mark).first()
     if not target_user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
@@ -2027,7 +2150,9 @@ def agent_commissions(
     }
 
 
-def _juhe_owner_filter(query, ctx: AdminContext):
+def _juhe_owner_filter(query, db: Session, ctx: AdminContext):
+    brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
+    query = query.filter(JuheWechatConfig.user_id.in_(brand_user_ids))
     if ctx.role == "admin":
         return query
     return query.filter(JuheWechatConfig.owner_role == "agent", JuheWechatConfig.owner_user_id == ctx.user_id)
@@ -2042,7 +2167,7 @@ def _juhe_config_payload(row: JuheWechatConfig, db: Session | None = None) -> di
     if db is not None:
         u = db.query(User).filter(User.id == row.user_id).first()
         if u:
-            user_label = u.email.replace("@sms.lobster.local", "")
+            user_label = unscoped_account_email(u.email).replace("@sms.lobster.local", "")
     return {
         "id": row.id,
         "user_id": row.user_id,
@@ -2077,7 +2202,7 @@ def admin_juhe_list_configs(
     db: Session = Depends(get_db),
 ):
     q = db.query(JuheWechatConfig).filter(JuheWechatConfig.status != "deleted")
-    q = _juhe_owner_filter(q, ctx)
+    q = _juhe_owner_filter(q, db, ctx)
     if user_id:
         _juhe_can_bind_user(db, ctx, int(user_id))
         q = q.filter(JuheWechatConfig.user_id == int(user_id))
@@ -2105,6 +2230,7 @@ def admin_juhe_save_config(
         row = db.query(JuheWechatConfig).filter(JuheWechatConfig.id == int(body.id), JuheWechatConfig.status != "deleted").first()
         if not row:
             raise HTTPException(status_code=404, detail="实例不存在")
+        _juhe_can_bind_user(db, ctx, int(row.user_id))
         if ctx.role != "admin" and (getattr(row, "owner_role", None) != "agent" or getattr(row, "owner_user_id", None) != ctx.user_id):
             raise HTTPException(status_code=403, detail="无权修改该实例")
     else:
@@ -2149,6 +2275,7 @@ def admin_juhe_delete_config(
     row = db.query(JuheWechatConfig).filter(JuheWechatConfig.id == config_id, JuheWechatConfig.status != "deleted").first()
     if not row:
         raise HTTPException(status_code=404, detail="实例不存在")
+    _juhe_can_bind_user(db, ctx, int(row.user_id))
     if ctx.role != "admin" and (getattr(row, "owner_role", None) != "agent" or getattr(row, "owner_user_id", None) != ctx.user_id):
         raise HTTPException(status_code=403, detail="无权删除该实例")
     row.status = "deleted"
@@ -2165,6 +2292,7 @@ async def admin_juhe_check_status(
     row = db.query(JuheWechatConfig).filter(JuheWechatConfig.id == config_id, JuheWechatConfig.status != "deleted").first()
     if not row:
         raise HTTPException(status_code=404, detail="实例不存在")
+    _juhe_can_bind_user(db, ctx, int(row.user_id))
     if ctx.role != "admin" and (getattr(row, "owner_role", None) != "agent" or getattr(row, "owner_user_id", None) != ctx.user_id):
         raise HTTPException(status_code=403, detail="无权检测该实例")
     payload = {"guid": row.guid}
@@ -2472,7 +2600,8 @@ def admin_juhe_list_friend_batches(
     db: Session = Depends(get_db),
 ):
     limit = max(1, min(100, int(limit or 50)))
-    q = db.query(JuheWechatFriendAddBatch)
+    brand_user_ids = db.query(User.id).filter(User.brand_mark == ctx.brand_mark)
+    q = db.query(JuheWechatFriendAddBatch).filter(JuheWechatFriendAddBatch.target_user_id.in_(brand_user_ids))
     if ctx.role != "admin":
         q = q.filter(JuheWechatFriendAddBatch.owner_role == "agent", JuheWechatFriendAddBatch.owner_user_id == ctx.user_id)
     if config_id:
@@ -2490,6 +2619,7 @@ def admin_juhe_get_friend_batch(
     batch = db.query(JuheWechatFriendAddBatch).filter(JuheWechatFriendAddBatch.id == batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
+    _assert_can_manage_user(db, ctx, int(batch.target_user_id), allow_agent_self=True)
     if ctx.role != "admin" and (batch.owner_role != "agent" or batch.owner_user_id != ctx.user_id):
         raise HTTPException(status_code=403, detail="无权查看该批次")
     items = (
@@ -2511,6 +2641,7 @@ def admin_juhe_retry_friend_batch(
     batch = db.query(JuheWechatFriendAddBatch).filter(JuheWechatFriendAddBatch.id == batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
+    _assert_can_manage_user(db, ctx, int(batch.target_user_id), allow_agent_self=True)
     if ctx.role != "admin" and (batch.owner_role != "agent" or batch.owner_user_id != ctx.user_id):
         raise HTTPException(status_code=403, detail="无权操作该批次")
     db.query(JuheWechatFriendAddItem).filter(

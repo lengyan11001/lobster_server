@@ -3,13 +3,14 @@ const api = require("../../utils/api");
 const avatarTemplates = require("../../utils/digital_avatar_templates");
 const staticAssets = require("../../utils/static_assets");
 const share = require("../../utils/share");
+const config = require("../../config");
 
 const SERVER_STATIC_BASE = "https://bhzn.top/client/miniprogram";
 
 const CAPABILITIES = [
   { id: "goal.video.pipeline", name: "创意成片" },
   { id: "ip_content_daily", name: "IP日更文案" },
-  { id: "hifly.video.create_by_tts", name: "必火数字人" }
+  { id: "hifly.video.create_by_tts", name: `${config.APP_NAME.replace(/AI员工$/, "")}数字人` }
 ];
 
 const IP_DAILY_TASK_OPTIONS = [
@@ -59,6 +60,8 @@ function capabilityName(id) {
 
 Page({
   data: {
+    appName: config.APP_NAME,
+    brandLogo: config.BRAND.logo,
     heroBgUrl: staticAssets.staticAssetUrl("openclaw-hero-bg.jpg"),
     lobsterUrl: staticAssets.staticAssetUrl("openclaw-lobster.png"),
     aiImageBgUrl: staticAssets.staticAssetUrl("ai-image-bg.jpg"),

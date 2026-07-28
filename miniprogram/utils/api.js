@@ -2,7 +2,9 @@ const config = require("../config");
 
 function buildUrl(path) {
   if (/^https?:\/\//i.test(path)) return path;
-  return `${config.API_BASE.replace(/\/+$/, "")}/${String(path || "").replace(/^\/+/, "")}`;
+  const joined = `${config.API_BASE.replace(/\/+$/, "")}/${String(path || "").replace(/^\/+/, "")}`;
+  const separator = joined.indexOf("?") >= 0 ? "&" : "?";
+  return `${joined}${separator}brand=${encodeURIComponent(config.BRAND_MARK)}`;
 }
 
 function errorMessage(err) {
@@ -19,7 +21,8 @@ function request(options) {
   const token = options.token || "";
   const header = Object.assign(
     {
-      "content-type": "application/json"
+      "content-type": "application/json",
+      "X-Lobster-Brand": config.BRAND_MARK
     },
     options.header || {}
   );
@@ -29,7 +32,7 @@ function request(options) {
     wx.request({
       url: buildUrl(options.url),
       method,
-      data: options.data || {},
+      data: Object.assign({}, options.data || {}, { brand_mark: config.BRAND_MARK }),
       header,
       timeout: options.timeout || 20000,
       success(res) {
@@ -49,7 +52,7 @@ function request(options) {
 
 function uploadFile(options) {
   const token = options.token || "";
-  const header = Object.assign({}, options.header || {});
+  const header = Object.assign({ "X-Lobster-Brand": config.BRAND_MARK }, options.header || {});
   if (token) header.Authorization = `Bearer ${token}`;
 
   return new Promise((resolve, reject) => {
@@ -57,7 +60,7 @@ function uploadFile(options) {
       url: buildUrl(options.url),
       filePath: options.filePath,
       name: options.name || "file",
-      formData: options.formData || {},
+      formData: Object.assign({}, options.formData || {}, { brand_mark: config.BRAND_MARK }),
       header,
       timeout: options.timeout || 120000,
       success(res) {

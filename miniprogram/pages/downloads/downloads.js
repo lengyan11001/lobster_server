@@ -77,7 +77,7 @@ function filenameFor(item) {
 }
 
 function mediaProxyUrl(url, disposition, filename) {
-  const token = app.globalData.token || wx.getStorageSync("lobster_token") || "";
+  const token = app.globalData.token || "";
   const params = [
     `url=${encodeURIComponent(url || "")}`,
     `disposition=${encodeURIComponent(disposition || "attachment")}`,
@@ -1124,7 +1124,7 @@ Page({
     if (!refs.length) return Promise.reject(new Error("缺少视频参考图"));
     const ratio = task.ratio === "16:9" ? "16:9" : "9:16";
     const deviceId = app.globalData.deviceId || wx.getStorageSync("lobster_device_id") || "";
-    const phone = app.globalData.phone || wx.getStorageSync("lobster_phone") || "";
+    const phone = app.globalData.phone || "";
     return app
       .request({
         method: "POST",

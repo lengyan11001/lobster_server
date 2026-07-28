@@ -309,7 +309,7 @@ def test_mobile_devices_resolve_online_devices_by_bound_phone(db_session, db_ses
 
 
 def test_h5_messages_from_wechat_session_are_owned_by_bound_phone_user(db_session, db_session_factory, mobile_users, monkeypatch):
-    from backend.app.api.auth import get_current_user
+    from backend.app.api.auth import access_token_claims, create_access_token, get_current_user
     from backend.app.api.h5_chat import router as h5_router
     from backend.app.core.config import settings
     from backend.app.db import get_db
@@ -373,7 +373,15 @@ def test_h5_messages_from_wechat_session_are_owned_by_bound_phone_user(db_sessio
         assert msg.user_id == phone_user.id
 
     app.dependency_overrides[get_current_user] = _current_user(phone_user.id)
-    pending = client.get("/api/h5-chat/pending", headers={"X-Installation-Id": "online-installation-1"})
+    pending_token = create_access_token(access_token_claims(phone_user))
+    pending = client.get(
+        "/api/h5-chat/pending",
+        headers={
+            "Authorization": f"Bearer {pending_token}",
+            "X-Installation-Id": "online-installation-1",
+            "X-Lobster-Brand": "bihuo",
+        },
+    )
 
     assert pending.status_code == 200
     assert pending.json()["items"][0]["id"] == message_id

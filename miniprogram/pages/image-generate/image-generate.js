@@ -454,7 +454,7 @@ Page({
         formData: {
           tags: "input,image_generate,reference"
         },
-        token: app.globalData.token || wx.getStorageSync("lobster_token") || "",
+        token: app.globalData.token || "",
         timeout: 180000
       }).then((data) => {
         const url = data.source_url || data.url || "";

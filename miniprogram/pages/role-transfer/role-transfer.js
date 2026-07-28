@@ -309,7 +309,7 @@ Page({
         filePath,
         name: "file",
         formData: { media_type: kind },
-        token: app.globalData.token || wx.getStorageSync("lobster_token") || "",
+        token: app.globalData.token || "",
         timeout: 180000
       })
       .then((data) => {
