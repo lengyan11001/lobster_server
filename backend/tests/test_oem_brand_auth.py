@@ -179,7 +179,7 @@ def test_oem_background_heartbeat_accepts_signed_token_brand_without_header(
     from backend.app.api.auth import access_token_claims, create_access_token, get_password_hash
     from backend.app.api.h5_chat import router as h5_chat_router
     from backend.app.db import get_db
-    from backend.app.models import H5ChatDevicePresence, User
+    from backend.app.models import H5ChatDevicePresence, User, UserInstallation
 
     user = User(
         email=f"{PHONE}+brand-daka@sms.lobster.local",
@@ -211,7 +211,7 @@ def test_oem_background_heartbeat_accepts_signed_token_brand_without_header(
         "/api/h5-chat/device-heartbeat",
         headers={
             "Authorization": f"Bearer {token}",
-            "X-Installation-Id": "daka--same-device",
+            "X-Installation-Id": "same-device",
         },
         json={"display_name": "local-online"},
     )
@@ -222,11 +222,16 @@ def test_oem_background_heartbeat_accepts_signed_token_brand_without_header(
             session.query(H5ChatDevicePresence)
             .filter(
                 H5ChatDevicePresence.user_id == user.id,
-                H5ChatDevicePresence.installation_id == "daka--same-device",
+                H5ChatDevicePresence.installation_id == "same-device",
             )
             .one()
         )
         assert presence.display_name == "local-online"
+        installation_ids = {
+            row.installation_id
+            for row in session.query(UserInstallation).filter(UserInstallation.user_id == user.id).all()
+        }
+        assert installation_ids == {"daka--same-device"}
 
 
 def test_disabled_brand_rejects_login(db_session, db_session_factory, monkeypatch):

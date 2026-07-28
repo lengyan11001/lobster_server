@@ -51,7 +51,7 @@ from .social_leads import (
     social_leads_job_payload,
 )
 from .wechat_channels_transcript import run_wechat_channels_transcript_payload_to_completion
-from .installation_slots import ensure_installation_slot
+from .installation_slots import ensure_installation_slot, installation_slot_id_for_user
 from .mobile_identity import online_user_for_mobile_user
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 
@@ -752,6 +752,7 @@ def _header_installation_id(request: Request) -> str:
 def _touch_installation_slot_lazy(db: Session, user_id: int, installation_id: str) -> None:
     if not installation_id:
         return
+    installation_id = installation_slot_id_for_user(db, user_id, installation_id)
     now = datetime.utcnow()
     row = (
         db.query(UserInstallation)
@@ -2442,7 +2443,11 @@ def create_scheduled_task(
     if not xi and requested_kind not in _SERVER_SIDE_TASK_KINDS:
         raise HTTPException(status_code=400, detail="missing current installation id")
     if xi:
-        ensure_installation_slot(db, owner_user.id, xi)
+        ensure_installation_slot(
+            db,
+            owner_user.id,
+            installation_slot_id_for_user(db, owner_user.id, xi),
+        )
     if requested_kind in _SERVER_SIDE_TASK_KINDS:
         body.installation_ids = []
     else:

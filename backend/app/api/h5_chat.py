@@ -38,7 +38,12 @@ from ..models import (
 from ..services.brand_context import public_brand_config, request_brand_mark
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token
-from .installation_slots import INSTALLATION_ID_HEADER, ensure_installation_slot, optional_installation_id_from_request
+from .installation_slots import (
+    INSTALLATION_ID_HEADER,
+    ensure_installation_slot,
+    installation_slot_id_for_user,
+    optional_installation_id_from_request,
+)
 from .mobile_identity import online_user_for_mobile_user
 from .publish import SUPPORTED_PLATFORMS
 from .sutui_chat_proxy import charge_chat_turn_once
@@ -553,6 +558,7 @@ def _header_installation_id(request: Request) -> str:
 def _touch_installation_slot_lazy(db: Session, user_id: int, installation_id: str) -> None:
     if not installation_id:
         return
+    installation_id = installation_slot_id_for_user(db, user_id, installation_id)
     now = datetime.utcnow()
     slot = (
         db.query(UserInstallation)
@@ -981,7 +987,11 @@ def create_h5_message(
     target_installation = (body.installation_id or "").strip() or None
     request_installation = optional_installation_id_from_request(request)
     if request_installation:
-        ensure_installation_slot(db, owner_user.id, request_installation)
+        ensure_installation_slot(
+            db,
+            owner_user.id,
+            installation_slot_id_for_user(db, owner_user.id, request_installation),
+        )
 
     row = H5ChatMessage(
         id=uuid.uuid4().hex,
@@ -1140,9 +1150,13 @@ def h5_device_heartbeat(
         return {"ok": True, "installation_id": xi, "throttled": True}
     _mark_heartbeat_fast_ack(heartbeat_key)
     now = datetime.utcnow()
+    slot_installation_id = installation_slot_id_for_user(db, current_user_id, xi)
     slot = (
         db.query(UserInstallation)
-        .filter(UserInstallation.user_id == current_user_id, UserInstallation.installation_id == xi)
+        .filter(
+            UserInstallation.user_id == current_user_id,
+            UserInstallation.installation_id == slot_installation_id,
+        )
         .first()
     )
     if slot:
@@ -1151,7 +1165,7 @@ def h5_device_heartbeat(
             slot.last_seen_at = now
             db.commit()
     else:
-        ensure_installation_slot(db, current_user_id, xi)
+        ensure_installation_slot(db, current_user_id, slot_installation_id)
     row = (
         db.query(H5ChatDevicePresence)
         .filter(H5ChatDevicePresence.user_id == current_user_id, H5ChatDevicePresence.installation_id == xi)

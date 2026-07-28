@@ -12,7 +12,8 @@ from starlette.requests import Request
 from sqlalchemy.exc import IntegrityError
 
 from ..core.config import settings
-from ..models import InstallationSignupBonusClaim, UserInstallation
+from ..models import InstallationSignupBonusClaim, User, UserInstallation
+from ..services.brand_context import scoped_installation_id, user_brand_mark
 
 INSTALLATION_ID_HEADER = "X-Installation-Id"
 MAX_USER_INSTALLATIONS = 20
@@ -54,6 +55,16 @@ def optional_installation_id_from_request(request: Request) -> Optional[str]:
     if not re.match(r"^[a-zA-Z0-9\-_]+$", raw):
         return None
     return raw
+
+
+def installation_slot_id_for_user(db: Session, user_id: int, installation_id: str) -> str:
+    raw = (installation_id or "").strip()
+    if not raw:
+        return ""
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        return raw
+    return scoped_installation_id(raw, user_brand_mark(user)) or raw
 
 
 def ensure_installation_slot(db: Session, user_id: int, installation_id: str) -> None:

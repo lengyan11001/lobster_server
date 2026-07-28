@@ -156,6 +156,8 @@ def scoped_installation_id(installation_id: Optional[str], raw_brand: Optional[s
     if mark == DEFAULT_BRAND_MARK:
         return value
     prefix = f"{mark}--"
+    if value.startswith(prefix):
+        return value
     if len(prefix) + len(value) <= 128:
         return prefix + value
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
