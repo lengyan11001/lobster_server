@@ -559,6 +559,7 @@ def admin_reset_password(
     from .auth import get_password_hash
 
     user.hashed_password = get_password_hash(pwd)
+    user.password_initialized = True
     db.add(user)
     db.commit()
     db.refresh(user)

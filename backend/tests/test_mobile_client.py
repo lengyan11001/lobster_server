@@ -206,6 +206,7 @@ def test_bind_mobile_device_with_sms_code_creates_new_phone_user(mobile_client, 
     assert data["created_user"] is True
     assert data["access_token"]
 
+    from backend.app.api.auth import verify_password
     from backend.app.models import MobileDeviceBinding, SkillUnlock, User
 
     with db_session_factory() as s:
@@ -214,7 +215,8 @@ def test_bind_mobile_device_with_sms_code_creates_new_phone_user(mobile_client, 
         binding = s.query(MobileDeviceBinding).filter(MobileDeviceBinding.device_id == DEVICE_ID).first()
         unlocks = s.query(SkillUnlock).filter(SkillUnlock.user_id == created.id).all()
         assert created is not None
-        assert created.hashed_password
+        assert bool(created.password_initialized) is True
+        assert verify_password(NEW_PHONE[-6:], created.hashed_password)
         assert created.wechat_openid is None
         assert old_temp.wechat_openid == "openid_test"
         assert binding.user_id == temp_user.id

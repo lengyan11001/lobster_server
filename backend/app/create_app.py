@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api.health import router as health_router
-from .api.auth import router as auth_router, get_password_hash
+from .api.auth import router as auth_router, backfill_phone_default_passwords, get_password_hash
 from .api.branding import router as branding_router
 from .api.chat import router as chat_router
 from .api.capabilities import router as capabilities_router
@@ -405,6 +405,34 @@ def _migrate_user_wechat_openid():
                 conn.execute(text("ALTER TABLE users ADD COLUMN wechat_openid VARCHAR(64)"))
     except Exception as e:
         logger.warning("Migration wechat_openid skipped: %s", e)
+
+
+def _migrate_user_phone_default_passwords():
+    """Add the initialization marker and backfill legacy phone accounts once."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("users"):
+            return
+        columns = {column["name"] for column in insp.get_columns("users")}
+        if "password_initialized" not in columns:
+            with engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN password_initialized BOOLEAN NOT NULL DEFAULT FALSE")
+                )
+            logger.info("[startup] users added column password_initialized")
+        db = SessionLocal()
+        try:
+            updated = backfill_phone_default_passwords(db)
+            logger.info("[startup] initialized default passwords for %s phone users", updated)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Migration phone default passwords skipped: %s", e)
 
 
 def _migrate_user_brand_mark():
@@ -960,6 +988,7 @@ def create_app() -> FastAPI:
         Base.metadata.create_all(bind=engine)
         _migrate_user_sutui_token()
         _migrate_user_wechat_openid()
+        _migrate_user_phone_default_passwords()
         _migrate_user_brand_mark()
         _seed_brand_configs()
         _migrate_user_is_overseas_user()

@@ -63,6 +63,7 @@ def _put_brand_sms_code(db_session_factory, brand_mark: str, code: str):
 
 
 def test_same_phone_registers_as_two_brand_users(db_session_factory, monkeypatch):
+    from backend.app.api.auth import verify_password
     from backend.app.models import User
 
     client = _auth_client(db_session_factory, monkeypatch)
@@ -89,6 +90,8 @@ def test_same_phone_registers_as_two_brand_users(db_session_factory, monkeypatch
             ("bihuo", PHONE_EMAIL),
             ("daka", f"{PHONE}+brand-daka@sms.lobster.local"),
         }
+        assert all(row.password_initialized for row in matching)
+        assert all(verify_password(PHONE[-6:], row.hashed_password) for row in matching)
 
 
 def test_password_login_is_scoped_by_brand(db_session, db_session_factory, monkeypatch):

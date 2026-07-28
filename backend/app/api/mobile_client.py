@@ -37,7 +37,7 @@ from ..services.brand_context import (
     user_brand_mark,
     user_for_account,
 )
-from .auth import REGISTER_INITIAL_CREDITS, SMS_CODE_TTL_SEC, access_token_claims, create_access_token, get_current_user, get_password_hash
+from .auth import REGISTER_INITIAL_CREDITS, SMS_CODE_TTL_SEC, access_token_claims, create_access_token, get_current_user, get_password_hash, initialize_phone_default_password
 from .auth import _check_and_update_sms_send_limit, _clear_sms_code, _create_auth_challenge, _sms_challenge_target, _verify_sms_challenge
 from .auth import _get_wechat_access_token
 from .installation_slots import parse_installation_id_strict
@@ -131,10 +131,14 @@ def _get_or_create_phone_user(db: Session, mobile: str, brand_mark: str) -> tupl
     email = scoped_account_email(account_email, brand_mark)
     user = user_for_account(db, account_email, brand_mark)
     if user:
+        if initialize_phone_default_password(user, mobile):
+            db.add(user)
+            db.flush()
         return user, False
     user = User(
         email=email,
-        hashed_password=get_password_hash("phone-code-" + secrets.token_urlsafe(32)),
+        hashed_password=get_password_hash(mobile[-6:]),
+        password_initialized=True,
         credits=REGISTER_INITIAL_CREDITS,
         role="user",
         preferred_model="sutui",

@@ -30,6 +30,7 @@ from ..services.brand_context import (
     DEFAULT_BRAND_MARK,
     ensure_brand_enabled,
     normalize_brand_mark,
+    phone_from_account_email,
     request_brand_mark,
     scoped_account_email,
     scoped_installation_id,
@@ -355,6 +356,30 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(data, hashed_password.encode("ascii"))
 
 
+def initialize_phone_default_password(user: User, mobile: str) -> bool:
+    """Set the phone-tail password once without overwriting an initialized password."""
+    if bool(getattr(user, "password_initialized", False)):
+        return False
+    normalized = _normalize_cn_mobile(mobile)
+    user.hashed_password = get_password_hash(normalized[-6:])
+    user.password_initialized = True
+    return True
+
+
+def backfill_phone_default_passwords(db: Session) -> int:
+    """Initialize legacy phone accounts that still carry an unusable placeholder password."""
+    updated = 0
+    users = db.query(User).filter(User.email.like(f"%{PHONE_EMAIL_SUFFIX}")).order_by(User.id.asc()).all()
+    for user in users:
+        mobile = phone_from_account_email(user.email)
+        if mobile and initialize_phone_default_password(user, mobile):
+            db.add(user)
+            updated += 1
+    if updated:
+        db.commit()
+    return updated
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -485,6 +510,7 @@ def set_password(
 ):
     password = _normalize_new_password(body.password)
     current_user.hashed_password = get_password_hash(password)
+    current_user.password_initialized = True
     db.add(current_user)
     db.commit()
     logger.info("[auth/set-password] user_id=%s ok=1", current_user.id)
@@ -566,9 +592,13 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
     email = scoped_account_email(_phone_account_email(mobile), brand_mark)
     existing = user_for_account(db, _phone_account_email(mobile), brand_mark)
     if existing:
+        password_initialized = initialize_phone_default_password(existing, mobile)
         reg_iid = scoped_installation_id(optional_installation_id_from_request(request), brand_mark)
         if reg_iid:
             ensure_installation_slot(db, existing.id, reg_iid)
+        if password_initialized:
+            db.add(existing)
+            db.commit()
         access_token = create_access_token(data=access_token_claims(existing))
         logger.info("[auth/register-phone] login existing user_id=%s mobile_tail=%s", existing.id, mobile[-4:])
         return Token(access_token=access_token)
@@ -585,7 +615,8 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
             logger.warning("[auth/register-phone] parent_account=%s not found", raw_parent[:20])
     user = User(
         email=email,
-        hashed_password=get_password_hash("phone-code-" + secrets.token_urlsafe(32)),
+        hashed_password=get_password_hash(mobile[-6:]),
+        password_initialized=True,
         credits=REGISTER_INITIAL_CREDITS,
         role="user",
         preferred_model="sutui",

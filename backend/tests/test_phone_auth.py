@@ -41,6 +41,7 @@ def _put_sms_code(db_session, phone: str, code: str = "123456") -> None:
 
 
 def test_register_phone_existing_user_logs_in_without_password(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import verify_password
     from backend.app.models import User
 
     user = User(
@@ -64,7 +65,9 @@ def test_register_phone_existing_user_logs_in_without_password(db_session, db_se
     assert res.status_code == 200
     assert res.json()["access_token"]
     with db_session_factory() as s:
-        assert s.query(User).filter(User.email == PHONE_EMAIL).count() == 1
+        stored = s.query(User).filter(User.email == PHONE_EMAIL).one()
+        assert bool(stored.password_initialized) is True
+        assert verify_password(PHONE[-6:], stored.hashed_password)
 
 
 def test_wrong_sms_code_does_not_consume_challenge(db_session, db_session_factory, monkeypatch):
@@ -104,6 +107,7 @@ def test_wrong_sms_code_does_not_consume_challenge(db_session, db_session_factor
 
 
 def test_register_phone_new_user_creates_and_logs_in_without_password(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import verify_password
     from backend.app.models import User
 
     phone = "13900139000"
@@ -119,7 +123,8 @@ def test_register_phone_new_user_creates_and_logs_in_without_password(db_session
     with db_session_factory() as s:
         user = s.query(User).filter(User.email == f"{phone}@sms.lobster.local").first()
         assert user is not None
-        assert user.hashed_password
+        assert bool(user.password_initialized) is True
+        assert verify_password(phone[-6:], user.hashed_password)
 
 
 def test_register_phone_can_mark_overseas_user(db_session, db_session_factory, monkeypatch):
@@ -167,12 +172,88 @@ def test_set_password_then_phone_password_login(db_session, db_session_factory, 
     assert set_res.status_code == 200
     assert set_res.json()["ok"] is True
 
+    with db_session_factory() as s:
+        stored = s.query(User).filter(User.id == user.id).one()
+        assert bool(stored.password_initialized) is True
+
     login_res = client.post(
         "/auth/login-phone-password",
         json={"phone": PHONE, "password": "abc123456"},
     )
     assert login_res.status_code == 200
     assert login_res.json()["access_token"]
+
+
+def test_sms_login_does_not_replace_an_initialized_password(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import get_password_hash, verify_password
+    from backend.app.models import User
+
+    user = User(
+        email=PHONE_EMAIL,
+        hashed_password=get_password_hash("custom-password"),
+        password_initialized=True,
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    _put_sms_code(db_session, PHONE)
+
+    res = _client(db_session_factory, monkeypatch).post(
+        "/auth/register-phone",
+        json={"phone": PHONE, "code": "123456"},
+    )
+
+    assert res.status_code == 200
+    with db_session_factory() as s:
+        stored = s.query(User).filter(User.id == user.id).one()
+        assert verify_password("custom-password", stored.hashed_password)
+        assert not verify_password(PHONE[-6:], stored.hashed_password)
+
+
+def test_backfill_initializes_only_uninitialized_phone_users(db_session):
+    from backend.app.api.auth import backfill_phone_default_passwords, get_password_hash, verify_password
+    from backend.app.models import User
+
+    legacy = User(
+        email=PHONE_EMAIL,
+        hashed_password="legacy-placeholder",
+        password_initialized=False,
+        credits=Decimal("1"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    custom = User(
+        email="13900139002@sms.lobster.local",
+        hashed_password=get_password_hash("keep-this-password"),
+        password_initialized=True,
+        credits=Decimal("1"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    non_phone = User(
+        email="plain-user@example.com",
+        hashed_password=get_password_hash("plain-password"),
+        password_initialized=False,
+        credits=Decimal("1"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([legacy, custom, non_phone])
+    db_session.commit()
+
+    assert backfill_phone_default_passwords(db_session) == 1
+    db_session.refresh(legacy)
+    db_session.refresh(custom)
+    db_session.refresh(non_phone)
+    assert verify_password(PHONE[-6:], legacy.hashed_password)
+    assert verify_password("keep-this-password", custom.hashed_password)
+    assert verify_password("plain-password", non_phone.hashed_password)
 
 
 def test_phone_password_login_rejects_wrong_password(db_session, db_session_factory, monkeypatch):

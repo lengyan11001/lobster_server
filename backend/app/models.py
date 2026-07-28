@@ -16,6 +16,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_initialized: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     credits: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("99999.0000"), nullable=False)
     role: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
     preferred_model: Mapped[str] = mapped_column(String(128), default="openclaw", nullable=False)
