@@ -173,6 +173,62 @@ def test_brand_token_rejected_under_other_brand(db_session, db_session_factory, 
     assert accepted.json()["email"] == PHONE_EMAIL
 
 
+def test_oem_background_heartbeat_accepts_signed_token_brand_without_header(
+    db_session, db_session_factory, monkeypatch
+):
+    from backend.app.api.auth import access_token_claims, create_access_token, get_password_hash
+    from backend.app.api.h5_chat import router as h5_chat_router
+    from backend.app.db import get_db
+    from backend.app.models import H5ChatDevicePresence, User
+
+    user = User(
+        email=f"{PHONE}+brand-daka@sms.lobster.local",
+        hashed_password=get_password_hash("daka-pass"),
+        credits=Decimal("1"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    token = create_access_token(access_token_claims(user))
+
+    app = FastAPI()
+    app.include_router(h5_chat_router)
+
+    def _get_db_override():
+        session = db_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    client = TestClient(app)
+    response = client.post(
+        "/api/h5-chat/device-heartbeat",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Installation-Id": "daka--same-device",
+        },
+        json={"display_name": "local-online"},
+    )
+
+    assert response.status_code == 200, response.text
+    with db_session_factory() as session:
+        presence = (
+            session.query(H5ChatDevicePresence)
+            .filter(
+                H5ChatDevicePresence.user_id == user.id,
+                H5ChatDevicePresence.installation_id == "daka--same-device",
+            )
+            .one()
+        )
+        assert presence.display_name == "local-online"
+
+
 def test_disabled_brand_rejects_login(db_session, db_session_factory, monkeypatch):
     from backend.app.models import BrandConfig
 

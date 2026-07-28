@@ -417,6 +417,7 @@ async def get_current_user(
 async def get_current_user_id_from_token(
     request: Request,
     token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
 ) -> int:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -425,10 +426,22 @@ async def get_current_user_id_from_token(
     )
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        user_id = int(payload.get("sub"))
         token_brand = normalize_brand_mark(payload.get("brand_mark"), strict=False)
-        if request_brand_mark(request) != token_brand:
+        explicit_brand = (
+            request.headers.get("x-lobster-brand")
+            or request.query_params.get("brand")
+            or request.query_params.get("brand_mark")
+        )
+        effective_brand = normalize_brand_mark(explicit_brand) if explicit_brand else token_brand
+        if effective_brand != token_brand:
             raise credentials_exception
-        return int(payload.get("sub"))
+        user = db.query(User).filter(User.id == user_id).first()
+        if user is None:
+            raise credentials_exception
+        if user_brand_mark(user) != token_brand:
+            raise HTTPException(status_code=403, detail="登录品牌与当前品牌不一致，请重新登录")
+        return user_id
     except (JWTError, ValueError, TypeError):
         raise credentials_exception
 
