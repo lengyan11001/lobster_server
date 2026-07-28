@@ -1359,7 +1359,7 @@
       } else {
         toast("下载后请到系统设置里安装描述文件");
       }
-      window.location.href = "/install/ios-webclip.mobileconfig";
+      window.location.href = apiUrl("/install/ios-webclip.mobileconfig");
     }
 
     function authHeaders(extra = {}) {

@@ -35,6 +35,7 @@ from ..models import (
     User,
     UserInstallation,
 )
+from ..services.brand_context import public_brand_config, request_brand_mark
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token
 from .installation_slots import INSTALLATION_ID_HEADER, ensure_installation_slot, optional_installation_id_from_request
@@ -665,11 +666,23 @@ def _plist_data(raw: bytes) -> str:
     return "\n".join(encoded[i : i + 68] for i in range(0, len(encoded), 68))
 
 
-def _webclip_icon_xml() -> str:
-    icon_path = _H5_STATIC_DIR / "bihu_256.png"
-    if not icon_path.is_file():
-        icon_path = _H5_STATIC_DIR / "bihu_32.png"
-    if not icon_path.is_file():
+def _webclip_icon_xml(branding: Dict[str, Any]) -> str:
+    mark = str(branding.get("mark") or "bihuo").strip().lower()
+    configured = str(branding.get("icon_256") or "").strip()
+    candidates = [configured, f"/h5-static/{mark}_256.png"]
+    if mark == "bihuo":
+        candidates.extend(("/h5-static/bihu_256.png", "/h5-static/bihu_32.png"))
+    icon_path: Path | None = None
+    static_root = _H5_STATIC_DIR.resolve()
+    for raw in candidates:
+        filename = unquote(urlparse(raw).path).replace("\\", "/").rsplit("/", 1)[-1].strip()
+        if not filename or not _UPLOAD_NAME_RE.fullmatch(filename):
+            continue
+        candidate = (_H5_STATIC_DIR / filename).resolve()
+        if static_root in candidate.parents and candidate.is_file() and candidate.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            icon_path = candidate
+            break
+    if icon_path is None:
         return ""
     return f"""
             <key>Icon</key>
@@ -678,13 +691,20 @@ def _webclip_icon_xml() -> str:
             </data>"""
 
 
-def _ios_webclip_mobileconfig() -> str:
-    webclip_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{_H5_WEBCLIP_URL}#webclip"))
-    profile_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{_H5_WEBCLIP_URL}#profile"))
-    identifier = "top.bhzn.h5.webclip"
-    label = _plist_text(_H5_WEBCLIP_LABEL)
-    webclip_url = _plist_text(_H5_WEBCLIP_URL)
-    icon_xml = _webclip_icon_xml()
+def _ios_webclip_mobileconfig(branding: Dict[str, Any]) -> str:
+    mark = str(branding.get("mark") or "bihuo").strip().lower()
+    label_raw = str(branding.get("display_name") or branding.get("document_title") or _H5_WEBCLIP_LABEL).strip()
+    webclip_url_raw = f"{_H5_WEBCLIP_URL}?brand={quote(mark, safe='')}"
+    webclip_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{webclip_url_raw}#webclip"))
+    profile_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{webclip_url_raw}#profile"))
+    identifier = f"top.bhzn.h5.webclip.{mark}"
+    label = _plist_text(label_raw)
+    description = _plist_text(f"将{label_raw}添加到 iPhone 桌面。")
+    profile_description = _plist_text(f"安装后会在桌面创建{label_raw}快捷方式。")
+    profile_name = _plist_text(f"{label_raw}桌面入口")
+    organization = _plist_text(label_raw)
+    webclip_url = _plist_text(webclip_url_raw)
+    icon_xml = _webclip_icon_xml(branding)
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -706,13 +726,13 @@ def _ios_webclip_mobileconfig() -> str:
         <key>URL</key>
         <string>{webclip_url}</string>
         <key>PayloadDescription</key>
-        <string>将必火AI员工添加到 iPhone 桌面。</string>
+        <string>{description}</string>
         <key>PayloadDisplayName</key>
         <string>{label}</string>
         <key>PayloadIdentifier</key>
         <string>{identifier}.clip</string>
         <key>PayloadOrganization</key>
-        <string>必火智能</string>
+        <string>{organization}</string>
         <key>PayloadType</key>
         <string>com.apple.webClip.managed</string>
         <key>PayloadUUID</key>
@@ -722,13 +742,13 @@ def _ios_webclip_mobileconfig() -> str:
       </dict>
     </array>
     <key>PayloadDescription</key>
-    <string>安装后会在桌面创建必火AI员工快捷方式。</string>
+    <string>{profile_description}</string>
     <key>PayloadDisplayName</key>
-    <string>必火AI员工桌面入口</string>
+    <string>{profile_name}</string>
     <key>PayloadIdentifier</key>
     <string>{identifier}</string>
     <key>PayloadOrganization</key>
-    <string>必火智能</string>
+    <string>{organization}</string>
     <key>PayloadRemovalDisallowed</key>
     <false/>
     <key>PayloadType</key>
@@ -862,12 +882,14 @@ def h5_static_asset(filename: str):
 
 
 @router.get("/install/ios-webclip.mobileconfig", include_in_schema=False)
-def ios_webclip_mobileconfig():
+def ios_webclip_mobileconfig(request: Request, db: Session = Depends(get_db)):
+    branding = public_brand_config(db, request_brand_mark(request))
+    mark = str(branding.get("mark") or "bihuo").strip().lower()
     return Response(
-        content=_ios_webclip_mobileconfig().encode("utf-8"),
+        content=_ios_webclip_mobileconfig(branding).encode("utf-8"),
         media_type="application/x-apple-aspen-config",
         headers={
-            "Content-Disposition": "attachment; filename=\"bihuo-ai-webclip.mobileconfig\"",
+            "Content-Disposition": f"attachment; filename=\"{mark}-ai-webclip.mobileconfig\"",
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
         },
