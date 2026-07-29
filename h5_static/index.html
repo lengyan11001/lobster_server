@@ -8,8 +8,8 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="必火AI员工" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260727-media-viewer-v2" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-marketing-nav-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260729-workflow-day-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-workflow-day-v1" />
 </head>
 <body>
   <main class="shell">
@@ -1606,6 +1606,31 @@
     </div>
   </div>
 
+  <div class="employee-modal hidden" id="workflowPlanDayModal" role="dialog" aria-modal="true" aria-labelledby="workflowPlanDayTitle">
+    <button class="employee-modal-backdrop" type="button" id="workflowPlanDayBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover work-dispatch-popover workflow-plan-day-popover">
+      <button class="employee-popover-close" type="button" id="workflowPlanDayClose" aria-label="关闭">×</button>
+      <div class="employee-popover-head">
+        <div class="employee-mini-avatar">日</div>
+        <div class="employee-popover-title">
+          <strong id="workflowPlanDayTitle">选择同城爆款规划</strong>
+          <span>启动后，同城爆款视频将使用指定天数的规划</span>
+        </div>
+      </div>
+      <form id="workflowPlanDayForm">
+        <div class="field">
+          <label for="workflowPlanDayInput">使用第几天</label>
+          <input id="workflowPlanDayInput" type="number" inputmode="numeric" min="1" max="30" step="1" value="1" required>
+          <small>可填写 1-30，例如填写 5，则同城爆款视频使用 Day 5 规划。</small>
+        </div>
+        <div class="work-dispatch-actions">
+          <button class="ghost" type="button" id="workflowPlanDayCancel">取消</button>
+          <button type="submit">确认启动</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="task-success-dialog hidden" id="customEmployeeDialog" role="dialog" aria-modal="true" aria-labelledby="customEmployeeDialogTitle">
     <button class="task-success-backdrop" type="button" id="customEmployeeBackdrop" aria-label="关闭"></button>
     <div class="task-success-panel detail-modal-panel custom-employee-panel">
@@ -1692,6 +1717,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260727-ai-marketing-v3"></script>
+  <script src="/h5-static/h5-app.js?v=20260729-workflow-day-v1"></script>
 </body>
 </html>

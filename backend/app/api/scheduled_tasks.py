@@ -21,6 +21,7 @@ from ..models import (
     H5ChatEvent,
     H5ChatMessage,
     H5AgentTemplateGrant,
+    H5WorkflowActivation,
     ContentCompetitorAccount,
     IPContentKeyword,
     OpenClawMemoryDocument,
@@ -667,6 +668,68 @@ def _enrich_local_bestseller_workflow_payload(
     h5_context["persona_source"] = "ip_persona_default"
     out["h5_context"] = h5_context
     return out
+
+
+def _digital_human_sequence_slot(
+    current_task_id: int,
+    ordered_task_ids: List[int],
+    payload_by_task_id: Dict[int, Dict[str, Any]],
+) -> Optional[int]:
+    slot = 0
+    for task_id in ordered_task_ids:
+        payload = payload_by_task_id.get(task_id) or {}
+        if _h5_dh_clean_text(payload.get("action"), 80) != _SHANJIAN_DIGITAL_HUMAN_ACTION:
+            continue
+        if task_id == current_task_id:
+            return slot
+        slot += 1
+    return None
+
+
+def _enrich_digital_human_rotation_payload(
+    db: Session,
+    *,
+    task: ScheduledTask,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    if _h5_dh_clean_text(payload.get("action"), 80) != _SHANJIAN_DIGITAL_HUMAN_ACTION:
+        return payload
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    if "virtualman_rotation_slot" in params:
+        return payload
+
+    activations = (
+        db.query(H5WorkflowActivation)
+        .filter(
+            H5WorkflowActivation.user_id == task.user_id,
+            H5WorkflowActivation.status == "active",
+        )
+        .order_by(H5WorkflowActivation.started_at.desc(), H5WorkflowActivation.id.desc())
+        .all()
+    )
+    for activation in activations:
+        ordered_ids = [
+            int(item)
+            for item in (activation.scheduled_task_ids or [])
+            if str(item or "").isdigit() and int(item) > 0
+        ]
+        if task.id not in ordered_ids:
+            continue
+        task_rows = db.query(ScheduledTask.id, ScheduledTask.payload).filter(ScheduledTask.id.in_(ordered_ids)).all()
+        payload_by_id = {
+            int(task_id): dict(task_payload or {})
+            for task_id, task_payload in task_rows
+        }
+        slot = _digital_human_sequence_slot(int(task.id), ordered_ids, payload_by_id)
+        if slot is None:
+            continue
+        out = dict(payload)
+        out_params = dict(params)
+        out_params["virtualman_rotation_slot"] = slot
+        out_params["virtualman_selection_mode"] = "daily_sequence"
+        out["params"] = out_params
+        return out
+    return payload
 
 
 def _parse_client_datetime(value: Optional[str], timezone_offset_minutes: Optional[int]) -> Optional[datetime]:
@@ -1724,6 +1787,11 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
             payload=dict(run_payload),
             target_user_id=task.user_id,
             now=now,
+        )
+        run_payload = _enrich_digital_human_rotation_payload(
+            db,
+            task=task,
+            payload=run_payload,
         )
     run = ScheduledTaskRun(
         id=run_id,

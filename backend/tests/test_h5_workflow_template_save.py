@@ -1,8 +1,5 @@
 from pathlib import Path
 
-import pytest
-from fastapi import HTTPException
-
 from backend.app.api.h5_workflows import WorkflowTemplateIn, create_workflow_template, update_workflow_template
 from backend.app.models import H5WorkflowTemplate
 
@@ -71,29 +68,32 @@ def test_explicit_copy_metadata_still_creates_new_templates(db_session, test_use
     assert db_session.query(H5WorkflowTemplate).count() == 2
 
 
-def test_plain_save_cannot_create_another_template(db_session, test_user):
+def test_plain_save_creates_blank_editor_template(db_session, test_user):
     body = WorkflowTemplateIn(name="普通保存", nodes=_sales_body("普通保存").nodes)
 
-    with pytest.raises(HTTPException) as exc_info:
-        create_workflow_template(body, current_user=test_user, db=db_session)
+    created = create_workflow_template(body, current_user=test_user, db=db_session)
 
-    assert exc_info.value.status_code == 400
-    assert "只能通过复制创建" in str(exc_info.value.detail)
-    assert db_session.query(H5WorkflowTemplate).count() == 0
+    assert created["created"] is True
+    assert created["template"]["name"] == "普通保存"
+    assert db_session.query(H5WorkflowTemplate).count() == 1
 
 
-def test_h5_editor_only_creates_from_system_mirror_or_explicit_copy():
+def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
 
     assert 'meta: { copied_from: String(tpl.id || ""), copied_source: tpl.source || "" }' in script
     assert 'system_template_key: "system_sales"' in script
-    assert "新模板请从模板列表选择一个模板后点击复制" in script
-    assert ".then(openCustomEmployeeList)" in script
+    assert 'if (key === "workflowNew")' in script
+    assert "resetWorkflowDraft();" in script
+    assert 'switchTab("workflow");' in script
+    assert "workflowPlanDayModal" in html
+    assert "workflowTemplateIsSales(tpl)" in script
+    assert "plan_day: Number(planDay)" in script
     assert "function customWorkflowTemplateRows()" in script
     assert "const mirrors = new Map();" in script
     assert "return !workflowSystemTemplateKey(tpl) && !mergedIds.has(id);" in script
     assert "return personalSystemWorkflowTemplate(sid)" in script
     assert "if (state.workflowTemplateSaving) return;" in script
     assert 'key === "system_sales" ? "/h5-static/designer-employee-sales.jpg" : ""' in script
-    assert "20260727-ai-marketing-v3" in html
+    assert "20260729-workflow-day-v1" in html

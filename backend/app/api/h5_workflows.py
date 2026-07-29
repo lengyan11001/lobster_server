@@ -78,6 +78,7 @@ class WorkflowActivateIn(BaseModel):
     template_id: int
     installation_id: str = Field("", max_length=128)
     timezone_offset_minutes: Optional[int] = None
+    plan_day: Optional[int] = Field(None, ge=1, le=30)
 
 
 class WorkflowActivateInlineIn(BaseModel):
@@ -86,6 +87,7 @@ class WorkflowActivateInlineIn(BaseModel):
     nodes: list[dict[str, Any]] = Field(default_factory=list)
     installation_id: str = Field("", max_length=128)
     timezone_offset_minutes: Optional[int] = None
+    plan_day: Optional[int] = Field(None, ge=1, le=30)
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
@@ -671,6 +673,38 @@ def _workflow_nodes_with_actions(nodes: list[dict[str, Any]]) -> list[tuple[dict
         for child in _workflow_child_nodes(node):
             out.append((child, node))
     return out
+
+
+def _apply_workflow_runtime_options(
+    nodes: list[dict[str, Any]],
+    *,
+    local_bestseller_plan_day: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    digital_human_slot = 0
+    plan_day = (
+        _safe_int(local_bestseller_plan_day, 1, min_value=1, max_value=30)
+        if local_bestseller_plan_day is not None
+        else None
+    )
+    for node, _parent in _workflow_nodes_with_actions(nodes):
+        plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+        payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+        if _clean_text(plan.get("task_kind"), 64) != "client_workflow":
+            continue
+        action = _clean_text(payload.get("action"), 128)
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        params = dict(params)
+        if action == "local_bestseller_daily_video" and plan_day is not None:
+            params["day"] = plan_day
+            params["day_mode"] = "activation_selected"
+        if action == "shanjian_digital_human_video":
+            params["virtualman_rotation_slot"] = digital_human_slot
+            params["virtualman_selection_mode"] = "daily_sequence"
+            digital_human_slot += 1
+        payload["params"] = params
+        plan["payload"] = payload
+        node["plan"] = plan
+    return nodes
 
 
 def _prepare_publish_action_nodes(
@@ -1309,6 +1343,13 @@ def _activate_nodes_for_device(
         nodes=nodes,
         snapshot_extra=snapshot_extra,
     )
+    selected_plan_day = None
+    if isinstance(snapshot_extra, dict) and "plan_day" in snapshot_extra:
+        selected_plan_day = _safe_int(snapshot_extra.get("plan_day"), 1, min_value=1, max_value=30)
+    nodes = _apply_workflow_runtime_options(
+        nodes,
+        local_bestseller_plan_day=selected_plan_day,
+    )
     nodes = _prepare_publish_action_nodes(
         db=db,
         owner=owner,
@@ -1460,11 +1501,8 @@ def create_workflow_template(
         raise HTTPException(status_code=400, detail="请填写模板名称")
     meta = dict(body.meta or {})
     system_template_key = _clean_text(meta.get("system_template_key"), 128)
-    copied_from = _clean_text(meta.get("copied_from"), 128)
     if system_template_key and system_template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
         raise HTTPException(status_code=400, detail="该系统员工模板暂未开放")
-    if not system_template_key and not copied_from:
-        raise HTTPException(status_code=400, detail="新模板只能通过复制创建；编辑已有模板请直接保存")
     if system_template_key:
         own_rows = (
             db.query(H5WorkflowTemplate)
@@ -1664,6 +1702,8 @@ def activate_workflow_template(
     snapshot_extra = None
     if system_template_key in _ENABLED_SYSTEM_WORKFLOW_KEYS:
         snapshot_extra = {"template_key": system_template_key, "source": "own"}
+    if body.plan_day is not None:
+        snapshot_extra = {**(snapshot_extra or {"source": "own"}), "plan_day": body.plan_day}
     activation, stopped_ids, tasks = _activate_nodes_for_device(
         db=db,
         current_user=current_user,
@@ -1711,7 +1751,11 @@ def activate_inline_workflow_template(
         template_name=name,
         nodes=nodes,
         timezone_offset_minutes=body.timezone_offset_minutes,
-        snapshot_extra={"template_key": template_key, "source": "system"},
+        snapshot_extra={
+            "template_key": template_key,
+            "source": "system",
+            **({"plan_day": body.plan_day} if body.plan_day is not None else {}),
+        },
     )
     return {
         "ok": True,

@@ -4083,6 +4083,38 @@ body * {
   box-shadow: 0 10px 22px rgba(37, 99, 235, .22);
 }
 
+.workflow-plan-day-popover {
+  max-width: 420px;
+}
+
+.workflow-plan-day-popover form,
+.workflow-plan-day-popover .field {
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-plan-day-popover input {
+  min-height: 48px;
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.workflow-plan-day-popover small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+main.shell:has(#contentRecordsView.active) #pageTitle,
+#contentRecordsView .content-record-tabs button,
+#contentRecordsView .designer-media-meta strong,
+#assetPreviewDialog .asset-preview-text,
+#assetPreviewDialog .content-record-summary,
+#assetPreviewDialog .content-record-article-body {
+  font-weight: 400 !important;
+}
+
 @media (max-width: 380px) {
   #officeView .home-marketing-grid,
   #departmentView .department-skill-grid.marketing-creation-grid {

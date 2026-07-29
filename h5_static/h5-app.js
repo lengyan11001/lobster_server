@@ -123,6 +123,7 @@
       workflowParamNodeId: "",
       workflowActionParentNodeId: "",
       workflowActionEditId: "",
+      workflowPlanDayResolve: null,
       agentUsers: [],
       agentUsersTotal: 0,
       agentUsersOffset: 0,
@@ -1137,6 +1138,29 @@
         return;
       }
       toast(message || "启用失败");
+    }
+
+    function closeWorkflowPlanDayDialog(value = null) {
+      $("workflowPlanDayModal")?.classList.add("hidden");
+      const resolve = state.workflowPlanDayResolve;
+      state.workflowPlanDayResolve = null;
+      if (typeof resolve === "function") resolve(value);
+    }
+
+    function requestWorkflowPlanDay() {
+      if (typeof state.workflowPlanDayResolve === "function") {
+        state.workflowPlanDayResolve(null);
+      }
+      const input = $("workflowPlanDayInput");
+      if (input) input.value = "1";
+      $("workflowPlanDayModal")?.classList.remove("hidden");
+      setTimeout(() => {
+        input?.focus();
+        input?.select();
+      }, 30);
+      return new Promise((resolve) => {
+        state.workflowPlanDayResolve = resolve;
+      });
     }
 
     function normalizeViewTarget(target, defaultTab = "profile") {
@@ -3358,6 +3382,19 @@
       return String(meta.system_template_key || "").trim();
     }
 
+    function workflowTemplateIsSales(tpl) {
+      if (!tpl) return false;
+      const meta = tpl.meta && typeof tpl.meta === "object" ? tpl.meta : {};
+      const key = workflowSystemTemplateKey(tpl) || (tpl.source === "system" ? String(tpl.id || "") : "");
+      if (key === "system_sales" || String(meta.copied_from || "") === "system_sales") return true;
+      return (Array.isArray(tpl.nodes) ? tpl.nodes : []).some((node) => {
+        if (String(node && node.department_id || "").trim() !== "sales") return false;
+        const plan = node && node.plan && typeof node.plan === "object" ? node.plan : {};
+        const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+        return String(payload.action || "").trim() === "local_bestseller_daily_video";
+      });
+    }
+
     function personalSystemWorkflowTemplate(templateKey) {
       const key = String(templateKey || "").trim();
       const ownRows = userWorkflowTemplateRows();
@@ -4403,9 +4440,6 @@
         ? { ...state.workflowEditingTemplateMeta }
         : {};
       const systemTemplateKey = String(meta.system_template_key || state.workflowViewingTemplateKey || "").trim();
-      if (!id && systemTemplateKey !== "system_sales") {
-        throw new Error("新模板请从模板列表选择一个模板后点击复制");
-      }
       if (systemTemplateKey) {
         meta.system_template_key = systemTemplateKey;
         meta.source = meta.source || "system_mirror";
@@ -4453,6 +4487,11 @@
       if (!iid) throw new Error("请选择设备");
       const tpl = workflowTemplateById(id);
       if (tpl && !workflowTemplateCanActivate(tpl)) throw new Error("该员工暂未开放");
+      let planDay;
+      if (workflowTemplateIsSales(tpl)) {
+        planDay = await requestWorkflowPlanDay();
+        if (planDay === null) return;
+      }
       state.workflowSubmitting = true;
       renderWorkflow();
       try {
@@ -4465,13 +4504,19 @@
               nodes: cloneWorkflowNodes(tpl.nodes),
               installation_id: iid,
               timezone_offset_minutes: timezoneOffsetMinutes(),
+              ...(planDay ? { plan_day: Number(planDay) } : {}),
             },
           });
           state.workflowActive = normalizeWorkflowActivation(data.activation || null);
         } else {
           const data = await api("/api/h5-workflows/activate", {
             method: "POST",
-            json: { template_id: Number(id), installation_id: iid, timezone_offset_minutes: timezoneOffsetMinutes() },
+            json: {
+              template_id: Number(id),
+              installation_id: iid,
+              timezone_offset_minutes: timezoneOffsetMinutes(),
+              ...(planDay ? { plan_day: Number(planDay) } : {}),
+            },
           });
           state.workflowActive = normalizeWorkflowActivation(data.activation || null);
         }
@@ -8539,9 +8584,8 @@
       }
       if (key === "workflowNew") {
         closeWorkflowOverlays();
-        loadWorkflowTemplates()
-          .then(openCustomEmployeeList)
-          .catch((err) => toast(err.message || "模板加载失败"));
+        resetWorkflowDraft();
+        switchTab("workflow");
         return;
       }
       if (key === "salesWorkflow") {
@@ -15441,6 +15485,16 @@
     $("workflowMissingClose")?.addEventListener("click", closeWorkflowMissingDialog);
     $("workflowMissingCancel")?.addEventListener("click", closeWorkflowMissingDialog);
     $("workflowMissingPrimary")?.addEventListener("click", (evt) => navigateWorkflowMissingTarget(workflowMissingTargetFromButton(evt.currentTarget)));
+    $("workflowPlanDayBackdrop")?.addEventListener("click", () => closeWorkflowPlanDayDialog(null));
+    $("workflowPlanDayClose")?.addEventListener("click", () => closeWorkflowPlanDayDialog(null));
+    $("workflowPlanDayCancel")?.addEventListener("click", () => closeWorkflowPlanDayDialog(null));
+    $("workflowPlanDayForm")?.addEventListener("submit", (evt) => {
+      evt.preventDefault();
+      const input = $("workflowPlanDayInput");
+      const value = Math.max(1, Math.min(30, Number(input && input.value || 1)));
+      if (input) input.value = String(value);
+      closeWorkflowPlanDayDialog(value);
+    });
     $("workflowMissingList")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-workflow-missing-goto]");
       if (!btn) return;
