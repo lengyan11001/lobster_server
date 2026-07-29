@@ -1685,6 +1685,22 @@ body::before {
   }
 }
 
+/* Typography: keep everyday UI copy light and reserve emphasis for true page titles. */
+body * {
+  font-weight: 400 !important;
+}
+
+#pageTitle,
+#loginPanel > h2,
+.section-title > h2,
+.subpage-title > strong,
+.employee-popover-title > strong,
+.task-success-panel > h3,
+.detail-modal-head h3,
+.mobile-media-preview-panel > strong {
+  font-weight: 600 !important;
+}
+
 /* Keep workflow action menus above following cards and groups. */
 .designer-workflow-group,
 .designer-workflow-group-content,

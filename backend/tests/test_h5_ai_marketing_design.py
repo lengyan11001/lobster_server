@@ -45,12 +45,22 @@ def test_ai_marketing_design_styles_are_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
     css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
 
-    assert "20260729-designer-pages-v1" in html
+    assert "20260729-regular-type-v1" in html
     assert ".home-marketing-grid" in css
     assert ".marketing-creation-grid" in css
     assert ".marketing-category-mode" in css
     assert ".marketing-tool-mode" in css
     assert "aspect-ratio: 1400 / 682" in css
+
+
+def test_h5_typography_is_regular_except_for_primary_titles():
+    css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
+    voice_preview = (H5 / "voice-preview.html").read_text(encoding="utf-8")
+
+    assert "body * {\n  font-weight: 400 !important;\n}" in css
+    assert ".section-title > h2," in css
+    assert "font-weight: 600 !important;" in css
+    assert "body * { font-weight: 400 !important; }" in voice_preview
 
 
 def test_home_marketing_uses_the_designer_background_asset():
