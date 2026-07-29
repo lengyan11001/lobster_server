@@ -1176,7 +1176,7 @@ async function loadAllUsers(page) {
   const brand = isAdmin() ? (((document.getElementById('userBrandFilter') || {}).value) || 'all') : '';
   try {
     const data = await api('/admin/api/users?page=' + page + '&page_size=20&q=' + encodeURIComponent(q.trim()) + '&brand=' + encodeURIComponent(brand));
-    const title = (isAgent() ? '我的下级用户' : '用户列表') + (q.trim() ? ' · 搜索：' + q.trim() : '');
+    const title = (isAgent() ? '我的用户' : '用户列表') + (q.trim() ? ' · 搜索：' + q.trim() : '');
     renderUserTable(data.users, 'allUsersTable', title);
     renderPagination(data.total, data.page, data.page_size);
   } catch(e) { toast(e.message, 'error'); }

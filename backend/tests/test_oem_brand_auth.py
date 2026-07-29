@@ -715,5 +715,8 @@ def test_agent_user_list_remains_scoped_to_its_brand(db_session, db_session_fact
     users = client.get("/admin/api/users?brand=bihuo", headers=headers)
 
     assert users.status_code == 200
-    assert [item["email"] for item in users.json()["users"]] == ["daka-child@example.com"]
+    assert [item["email"] for item in users.json()["users"]] == [
+        "13900000000@sms.lobster.local",
+        "daka-child@example.com",
+    ]
     assert {item["brand_mark"] for item in users.json()["users"]} == {"daka"}

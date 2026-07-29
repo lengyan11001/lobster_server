@@ -157,6 +157,11 @@ def _agent_visible_user_ids(db: Session, agent_user_id: int) -> list[int]:
     return list(dict.fromkeys(direct_ids + second_sub_ids))
 
 
+def _agent_user_list_ids(db: Session, agent_user_id: int) -> list[int]:
+    """Return the agent plus users visible in the management user list."""
+    return [agent_user_id, *[uid for uid in _agent_visible_user_ids(db, agent_user_id) if uid != agent_user_id]]
+
+
 def _agent_second_agent_ids(db: Session, agent_user_id: int) -> list[int]:
     agent = db.query(User).filter(User.id == agent_user_id).first()
     if not agent:
@@ -405,10 +410,13 @@ def admin_search_user(
             filters.append(User.id == id_value)
     query = db.query(User).filter(or_(*filters))
     if ctx.role == "agent":
-        sub_ids = _agent_visible_user_ids(db, ctx.user_id)
+        visible_ids = _agent_user_list_ids(db, int(ctx.user_id or 0))
         query = query.filter(User.brand_mark == ctx.brand_mark)
-        query = query.filter(User.id.in_(sub_ids)) if sub_ids else query.filter(False)
-    query = query.order_by(User.id).limit(50)
+        query = query.filter(User.id.in_(visible_ids))
+        query = query.order_by(case((User.id == int(ctx.user_id or 0), 0), else_=1), User.id)
+    else:
+        query = query.order_by(User.id)
+    query = query.limit(50)
     users = []
     for u in query.all():
         users.append(_user_public_payload(u))
@@ -684,8 +692,8 @@ def admin_list_users(
     base_q = db.query(User)
     if ctx.role == "agent":
         base_q = base_q.filter(User.brand_mark == ctx.brand_mark)
-        sub_ids = _agent_visible_user_ids(db, ctx.user_id)
-        base_q = base_q.filter(User.id.in_(sub_ids)) if sub_ids else base_q.filter(False)
+        visible_ids = _agent_user_list_ids(db, int(ctx.user_id or 0))
+        base_q = base_q.filter(User.id.in_(visible_ids))
     else:
         requested_brand = (brand or "").strip().lower()
         if requested_brand and requested_brand != "all":
@@ -700,7 +708,11 @@ def admin_list_users(
         base_q = base_q.filter(or_(*filters))
     total = base_q.with_entities(func.count(User.id)).scalar() or 0
     offset = (max(1, page) - 1) * page_size
-    users = base_q.order_by(User.id.desc()).offset(offset).limit(page_size).all()
+    if ctx.role == "agent":
+        base_q = base_q.order_by(case((User.id == int(ctx.user_id or 0), 0), else_=1), User.id.desc())
+    else:
+        base_q = base_q.order_by(User.id.desc())
+    users = base_q.offset(offset).limit(page_size).all()
     return {
         "total": total,
         "page": page,

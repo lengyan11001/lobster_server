@@ -65,6 +65,68 @@ def test_admin_search_large_numeric_phone_does_not_overflow(db_session_factory, 
     assert users[0]["email"] == "13828824168@sms.lobster.local"
 
 
+def test_agent_user_list_includes_self_first_without_expanding_subordinate_permissions(
+    db_session_factory,
+    db_session,
+):
+    agent = User(
+        email="agent-list@test.local",
+        hashed_password="x",
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        is_agent=True,
+        agent_level=1,
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(agent)
+    db_session.commit()
+    db_session.refresh(agent)
+    child = User(
+        email="agent-list-child@test.local",
+        hashed_password="x",
+        credits=Decimal("10.0000"),
+        role="user",
+        preferred_model="sutui",
+        parent_user_id=agent.id,
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    unrelated = User(
+        email="agent-list-unrelated@test.local",
+        hashed_password="x",
+        credits=Decimal("10.0000"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([child, unrelated])
+    db_session.commit()
+    db_session.refresh(child)
+
+    client = _client_for_admin_context(
+        db_session_factory,
+        admin_api.AdminContext(role="agent", user_id=agent.id, brand_mark="daka"),
+    )
+    response = client.get("/admin/api/users")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+    assert [row["id"] for row in data["users"]] == [agent.id, child.id]
+    assert agent.id not in admin_api._agent_visible_user_ids(db_session, agent.id)
+
+    search = client.get("/admin/api/search?q=agent-list@test.local")
+    assert search.status_code == 200
+    assert [row["id"] for row in search.json()["users"]] == [agent.id]
+
+    detail = client.get(f"/admin/api/user/{agent.id}")
+    assert detail.status_code == 200
+    assert detail.json()["user"]["id"] == agent.id
+
+
 def test_admin_skill_visibility_lists_and_saves_social_leads_permissions(db_session_factory, db_session, monkeypatch):
     monkeypatch.setattr(admin_api.settings, "lobster_admin_username", "admin", raising=False)
     monkeypatch.setattr(admin_api.settings, "lobster_admin_password", "secret", raising=False)
