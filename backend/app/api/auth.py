@@ -29,9 +29,11 @@ from ..services.brand_context import (
     BRAND_MARK_RE,
     DEFAULT_BRAND_MARK,
     ensure_brand_enabled,
+    explicit_request_brand_mark,
     normalize_brand_mark,
     phone_from_account_email,
     request_brand_mark,
+    resolve_request_brand_mark,
     scoped_account_email,
     scoped_installation_id,
     unscoped_account_email,
@@ -106,16 +108,6 @@ def access_token_claims(user: User) -> dict:
     if bm:
         claims["brand_mark"] = bm
     return claims
-
-
-def explicit_request_brand_mark(request: Request) -> Optional[str]:
-    """Return an explicitly supplied brand without inventing a default."""
-    raw = (
-        request.headers.get("x-lobster-brand")
-        or request.query_params.get("brand")
-        or request.query_params.get("brand_mark")
-    )
-    return normalize_brand_mark(raw) if raw else None
 
 
 def validate_token_brand(
@@ -491,7 +483,7 @@ async def login(request: Request, db: Session = Depends(get_db)):
     password = form.get("password") or ""
     captcha_id = (form.get("captcha_id") or "").strip()
     captcha_answer = (form.get("captcha_answer") or "").strip()
-    brand_mark = ensure_brand_enabled(db, form.get("brand_mark") or request_brand_mark(request))
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, form.get("brand_mark")))
     if not username or not password:
         raise HTTPException(status_code=400, detail="请输入账号和密码")
     if not _verify_auth_challenge(db, kind="captcha", subject=captcha_id, answer=captcha_answer):
@@ -518,7 +510,7 @@ def login_phone_password(body: PhonePasswordLoginBody, request: Request, db: Ses
         raise HTTPException(status_code=400, detail="请输入账号或手机号")
     if not password:
         raise HTTPException(status_code=400, detail="请输入密码")
-    brand_mark = ensure_brand_enabled(db, body.brand_mark or request_brand_mark(request))
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
     user = user_for_account(db, account_key, brand_mark)
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="账号或密码错误")
@@ -562,7 +554,7 @@ def send_register_sms(body: SmsSendBody, request: Request, db: Session = Depends
     use_independent = getattr(settings, "lobster_independent_auth", True)
     if edition != "online" or not use_independent:
         raise HTTPException(status_code=400, detail="当前版本不支持")
-    brand_mark = ensure_brand_enabled(db, body.brand_mark or request_brand_mark(request))
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
     aliyun_ak = (getattr(settings, "aliyun_sms_access_key_id", None) or "").strip()
     aliyun_sk = (getattr(settings, "aliyun_sms_access_key_secret", None) or "").strip()
     ihuyi_acc = (getattr(settings, "ihuyi_sms_account", None) or "").strip()
@@ -609,7 +601,7 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
     use_independent = getattr(settings, "lobster_independent_auth", True)
     if edition != "online" or not use_independent:
         raise HTTPException(status_code=400, detail="当前版本不支持自主注册")
-    brand_mark = ensure_brand_enabled(db, body.brand_mark or request_brand_mark(request))
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
     mobile = _normalize_cn_mobile(body.phone)
     code_in = (body.code or "").strip()
     if not code_in or len(code_in) > 8:
@@ -861,7 +853,7 @@ def sutui_login_with_token(body: LoginWithTokenBody, request: Request, db: Sessi
         except Exception as e:
             logger.exception("sutui_login_with_token exchange error")
             raise HTTPException(status_code=502, detail="登录验证失败，请稍后重试")
-    brand_mark = ensure_brand_enabled(db, body.brand_mark or request_brand_mark(request))
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
     user = user_for_account(db, ONLINE_USER_EMAIL, brand_mark)
     if not user:
         user = User(
@@ -1025,7 +1017,7 @@ def wechat_miniprogram_login(
     """用户扫码进入小程序后，小程序带 scene，调 wx.login 得 code，再调此接口。后端用 code 换 openid，查/建用户，把 token 绑定到 scene_id，网页轮询即可拿到 token 完成登录。"""
     if not _use_own_wechat_login():
         raise HTTPException(status_code=400, detail="未配置小程序（wechat_app_id/wechat_app_secret）")
-    brand_mark = ensure_brand_enabled(db, body.brand_mark or request_brand_mark(request))
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
     js_code = (body.code or "").strip()
     scene_id = (body.scene_id or "").strip()
     if not js_code:
@@ -1096,7 +1088,7 @@ def wechat_callback(
     if not (code or "").strip():
         raise HTTPException(status_code=400, detail="缺少 code 参数")
     state_brand = (state or "").split(":", 1)[1] if (state or "").startswith("login:") else None
-    brand_mark = ensure_brand_enabled(db, state_brand or request_brand_mark(request))
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, state_brand))
     if _use_wechat_oa_login():
         app_id = (getattr(settings, "wechat_oa_app_id", None) or "").strip()
         app_secret = (getattr(settings, "wechat_oa_secret", None) or "").strip()
@@ -1219,7 +1211,7 @@ def sutui_callback(
         except Exception as e:
             logger.exception("sutui_callback exchange error")
             raise HTTPException(status_code=502, detail="登录验证失败，请稍后重试")
-    brand_mark = ensure_brand_enabled(db, brand or request_brand_mark(request))
+    brand_mark = ensure_brand_enabled(db, resolve_request_brand_mark(request, brand))
     user = user_for_account(db, ONLINE_USER_EMAIL, brand_mark)
     if not user:
         user = User(

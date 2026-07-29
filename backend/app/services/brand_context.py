@@ -89,14 +89,50 @@ def normalize_brand_mark(raw: Optional[str], *, strict: bool = True) -> str:
     return mark
 
 
-def request_brand_mark(request: Request) -> str:
-    raw = (
-        request.headers.get("x-lobster-brand")
-        or request.query_params.get("brand")
-        or request.query_params.get("brand_mark")
-        or DEFAULT_BRAND_MARK
+def resolve_brand_mark_candidates(
+    *raw_values: Optional[str],
+    default: Optional[str] = DEFAULT_BRAND_MARK,
+) -> Optional[str]:
+    """Resolve brand signals and reject requests that disagree about the brand."""
+    marks: list[str] = []
+    for raw in raw_values:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        mark = normalize_brand_mark(value)
+        if mark not in marks:
+            marks.append(mark)
+    if len(marks) > 1:
+        raise HTTPException(status_code=400, detail="请求中的品牌参数不一致")
+    if marks:
+        return marks[0]
+    return normalize_brand_mark(default) if default is not None else None
+
+
+def explicit_request_brand_mark(request: Request) -> Optional[str]:
+    """Return a request's explicit brand without inventing a default."""
+    return resolve_brand_mark_candidates(
+        *request.headers.getlist("x-lobster-brand"),
+        *request.query_params.getlist("brand"),
+        *request.query_params.getlist("brand_mark"),
+        default=None,
     )
-    return normalize_brand_mark(raw)
+
+
+def resolve_request_brand_mark(request: Request, *raw_values: Optional[str]) -> str:
+    """Resolve body/form and transport brand values as one consistent context."""
+    return str(
+        resolve_brand_mark_candidates(
+            *raw_values,
+            *request.headers.getlist("x-lobster-brand"),
+            *request.query_params.getlist("brand"),
+            *request.query_params.getlist("brand_mark"),
+        )
+    )
+
+
+def request_brand_mark(request: Request) -> str:
+    return resolve_request_brand_mark(request)
 
 
 def ensure_brand_enabled(db: Session, raw: Optional[str]) -> str:

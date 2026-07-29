@@ -33,6 +33,7 @@ from ..services.brand_context import (
     DEFAULT_BRAND_MARK,
     ensure_brand_enabled,
     phone_from_account_email,
+    resolve_request_brand_mark,
     scoped_account_email,
     user_brand_mark,
     user_for_account,
@@ -582,7 +583,7 @@ def mobile_phone_status(
     db: Session = Depends(get_db),
 ):
     mobile = _normalize_cn_mobile(phone)
-    brand = ensure_brand_enabled(db, brand_mark or request.headers.get("x-lobster-brand"))
+    brand = ensure_brand_enabled(db, resolve_request_brand_mark(request, brand_mark))
     user = user_for_account(db, _phone_email(mobile), brand)
     return {
         "ok": True,
@@ -600,7 +601,7 @@ def send_mobile_bind_sms(
     db: Session = Depends(get_db),
 ):
     mobile = _normalize_cn_mobile(body.phone)
-    brand = ensure_brand_enabled(db, body.brand_mark or request.headers.get("x-lobster-brand"))
+    brand = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
     if brand != user_brand_mark(current_user):
         raise HTTPException(status_code=403, detail="登录品牌不一致")
     user = user_for_account(db, _phone_email(mobile), brand)
@@ -642,7 +643,7 @@ def mobile_wechat_login(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    brand = ensure_brand_enabled(db, body.brand_mark or request.headers.get("x-lobster-brand"))
+    brand = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
     openid = _exchange_wechat_login_code(body.code)
     user, created_temp_user, legacy_phone = _get_or_create_wechat_user(db, openid, brand)
     if legacy_phone:
@@ -714,7 +715,7 @@ def bind_mobile_device(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    brand = ensure_brand_enabled(db, body.brand_mark or request.headers.get("x-lobster-brand"))
+    brand = ensure_brand_enabled(db, resolve_request_brand_mark(request, body.brand_mark))
     if brand != user_brand_mark(current_user):
         raise HTTPException(status_code=403, detail="登录品牌不一致")
     mobile, phone_verified = _resolve_bind_phone(body, db, brand)

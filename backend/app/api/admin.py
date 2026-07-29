@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
-from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, normalize_brand_mark, unscoped_account_email, user_brand_mark, user_for_account
+from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, normalize_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
 from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
@@ -59,7 +59,7 @@ def _verify_admin_token(
     if not x_admin_token or not x_admin_token.strip():
         raise HTTPException(status_code=401, detail="缺少管理凭证")
     token = x_admin_token.strip()
-    brand_mark = normalize_brand_mark(x_lobster_brand)
+    brand_mark = str(resolve_brand_mark_candidates(x_lobster_brand))
     brand_row = db.query(BrandConfig).filter(BrandConfig.mark == brand_mark).first()
     if brand_row is None and brand_mark not in BUILTIN_BRANDS:
         raise HTTPException(status_code=404, detail="品牌不存在")
@@ -266,16 +266,20 @@ class LoginBody(BaseModel):
     captcha_id: str = ""
     captcha_answer: str = ""
     sms_code: str = ""
-    brand_mark: str = DEFAULT_BRAND_MARK
+    brand_mark: Optional[str] = None
 
 
 @router.post("/admin/api/login")
-def admin_login(body: LoginBody, db: Session = Depends(get_db)):
+def admin_login(
+    body: LoginBody,
+    x_lobster_brand: Optional[str] = Header(None, alias="X-Lobster-Brand"),
+    db: Session = Depends(get_db),
+):
     """管理后台登录。优先匹配管理员（.env），否则尝试代理商账号密码。"""
     username = body.username.strip()
     password = body.password.strip()
     sms_code = (body.sms_code or "").strip()
-    brand_mark = normalize_brand_mark(body.brand_mark)
+    brand_mark = str(resolve_brand_mark_candidates(body.brand_mark, x_lobster_brand))
     brand_row = db.query(BrandConfig).filter(BrandConfig.mark == brand_mark).first()
     if (brand_row is None and brand_mark not in BUILTIN_BRANDS) or (brand_row is not None and not brand_row.enabled):
         raise HTTPException(status_code=403, detail="当前品牌未启用")

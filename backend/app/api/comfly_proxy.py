@@ -41,10 +41,11 @@ from ..core.config import settings
 from ..db import SessionLocal, get_db
 from ..models import Asset, User
 from ..services.credit_ledger import append_credit_ledger
+from ..services.brand_context import explicit_request_brand_mark
 from ..services.credits_amount import quantize_credits, credits_json_float, user_balance_decimal
 from ..services.model_usage_monitor import log_model_usage_event
 from .assets import _save_bytes_or_tos
-from .auth import ALGORITHM, explicit_request_brand_mark, get_current_user, validate_token_brand
+from .auth import ALGORITHM, get_current_user, validate_token_brand
 from .mobile_identity import online_user_for_mobile_user
 
 # 让本模块能 import mcp/ 下的 comfly_upstream

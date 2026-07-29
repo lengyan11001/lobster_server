@@ -35,7 +35,7 @@ from ..models import (
     User,
     UserInstallation,
 )
-from ..services.brand_context import public_brand_config, request_brand_mark
+from ..services.brand_context import explicit_request_brand_mark, public_brand_config, request_brand_mark
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token, validate_token_brand
 from .installation_slots import (
@@ -963,7 +963,7 @@ async def proxy_h5_chat_media(
 ):
     db = SessionLocal()
     try:
-        _user_from_query_token(db, token, request.query_params.get("brand") or request.query_params.get("brand_mark") or "")
+        _user_from_query_token(db, token, explicit_request_brand_mark(request) or "")
     finally:
         db.close()
     remote_url = _assert_public_remote_url(url)
@@ -1091,7 +1091,7 @@ async def stream_h5_message_events(
         user = _user_from_query_token(
             db0,
             token,
-            request.query_params.get("brand") or request.query_params.get("brand_mark") or "",
+            explicit_request_brand_mark(request) or "",
         )
         owner_user = online_user_for_mobile_user(db0, user)
         msg = _message_for_user(db0, message_id, owner_user.id)
