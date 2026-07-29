@@ -15087,12 +15087,16 @@
       const activeId = activeView ? String(activeView.id || "") : "";
       if (activeId === "abilityView") {
         const lookup = activeAbilityLookup();
-        if (String(state.currentDepartmentId || "") === AI_MARKETING_CREATION_ID && lookup && lookup.trail.length > 1) {
-          const parent = lookup.trail[lookup.trail.length - 2];
-          if (parent && parent.key) {
-            openAbilityView(parent.key, AI_MARKETING_CREATION_ID);
-            return;
+        if (String(state.currentDepartmentId || "") === AI_MARKETING_CREATION_ID) {
+          if (lookup && lookup.trail.length > 1) {
+            const parent = lookup.trail[lookup.trail.length - 2];
+            if (parent && parent.key) {
+              openAbilityView(parent.key, AI_MARKETING_CREATION_ID);
+              return;
+            }
           }
+          switchTab("office");
+          return;
         }
         switchTab("department");
         return;

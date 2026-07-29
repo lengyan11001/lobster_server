@@ -3968,14 +3968,19 @@ body * {
 
 #abilityView .ability-shell.marketing-category-mode > .ability-child-grid {
   grid-template-columns: 1fr !important;
-  gap: 18px;
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 12px;
 }
 
 #abilityView .marketing-category-mode .department-skill-card.designer-ability-card {
-  padding: 10px;
-  border-radius: 22px;
+  min-height: 0;
+  height: fit-content;
+  align-self: start;
+  padding: 8px;
+  border-radius: 20px;
   background: #fff;
-  box-shadow: 0 12px 28px rgba(30, 58, 138, .10);
+  box-shadow: 0 8px 22px rgba(30, 58, 138, .09);
 }
 
 #abilityView .designer-ability-art.has-cover {
@@ -3997,12 +4002,17 @@ body * {
 }
 
 #abilityView .marketing-category-mode .designer-ability-meta {
-  min-height: 58px;
-  padding: 13px 12px 5px;
+  min-height: 48px;
+  padding: 10px 8px 2px;
 }
 
 #abilityView .marketing-category-mode .designer-ability-meta h3 {
-  font-size: 16px;
+  font-size: 15px;
+}
+
+#abilityView .marketing-category-mode .designer-ability-meta > strong {
+  padding: 4px 10px;
+  font-size: 11px;
 }
 
 #abilityView .ability-shell.marketing-tool-mode > .ability-workbench {

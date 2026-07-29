@@ -45,12 +45,23 @@ def test_ai_marketing_design_styles_are_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
     css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
 
-    assert "20260729-regular-type-v1" in html
+    assert "20260729-marketing-nav-v1" in html
     assert ".home-marketing-grid" in css
     assert ".marketing-creation-grid" in css
     assert ".marketing-category-mode" in css
     assert ".marketing-tool-mode" in css
     assert "aspect-ratio: 1400 / 682" in css
+    assert "grid-auto-rows: max-content" in css
+    assert "height: fit-content" in css
+
+
+def test_ai_marketing_back_skips_the_intermediate_landing_page():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    branch = script.split('if (activeId === "abilityView") {', 1)[1].split('if (activeId === "departmentView") {', 1)[0]
+    assert 'lookup && lookup.trail.length > 1' in branch
+    assert 'openAbilityView(parent.key, AI_MARKETING_CREATION_ID)' in branch
+    assert 'switchTab("office")' in branch
 
 
 def test_h5_typography_is_regular_except_for_primary_titles():
