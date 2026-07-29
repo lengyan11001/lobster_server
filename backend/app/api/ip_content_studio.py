@@ -28,6 +28,7 @@ from ..db import get_db
 from ..models import ContentCompetitorAccount, H5AgentTemplateGrant, IPContentDraftRecord, IPContentKeyword, IPContentScheduleTemplate, OpenClawMemoryDocument, TikHubQueryLog, TikHubSourceItem, User
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
+from ..services.brand_context import user_brand_mark
 
 router = APIRouter()
 
@@ -3061,6 +3062,7 @@ async def _call_ip_content_llm(
     *,
     request: Optional[Request] = None,
     auth_token: str = "",
+    brand_mark: str = "",
     installation_id: str = "",
     task: str,
     platform: str,
@@ -3161,6 +3163,15 @@ async def _call_ip_content_llm(
     if not token.lower().startswith("bearer "):
         token = f"Bearer {token}"
     headers = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": token}
+    clean_brand_mark = _clean_text(brand_mark, 64).lower()
+    if request is not None:
+        clean_brand_mark = clean_brand_mark or (
+            request.headers.get("X-Lobster-Brand")
+            or request.headers.get("x-lobster-brand")
+            or ""
+        ).strip().lower()
+    if clean_brand_mark:
+        headers["X-Lobster-Brand"] = clean_brand_mark
     xi = _clean_text(installation_id, 128)
     if request is not None:
         xi = xi or (request.headers.get("X-Installation-Id") or request.headers.get("x-installation-id") or "").strip()
@@ -3486,6 +3497,7 @@ async def _generate_and_save_ip_content_records(
             generated = await _call_ip_content_llm(
                 request=request,
                 auth_token=auth_token,
+                brand_mark=user_brand_mark(current_user),
                 installation_id=installation_id,
                 task=task_key,
                 platform=platform,

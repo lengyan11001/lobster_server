@@ -44,7 +44,7 @@ from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, credits_json_float, user_balance_decimal
 from ..services.model_usage_monitor import log_model_usage_event
 from .assets import _save_bytes_or_tos
-from .auth import ALGORITHM, get_current_user
+from .auth import ALGORITHM, explicit_request_brand_mark, get_current_user, validate_token_brand
 from .mobile_identity import online_user_for_mobile_user
 
 # 让本模块能 import mcp/ 下的 comfly_upstream
@@ -136,6 +136,11 @@ def _resolve_proxy_user_ids_from_request(
         request_user = db.query(User).filter(User.id == request_user_id).first()
         if request_user is None:
             raise credentials_exception
+        validate_token_brand(
+            payload,
+            user=request_user,
+            explicit_brand=explicit_request_brand_mark(request),
+        )
         billing_user = online_user_for_mobile_user(db, request_user) if map_to_online_user else request_user
         return int(request_user.id), int(billing_user.id)
     finally:

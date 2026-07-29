@@ -108,6 +108,30 @@ def access_token_claims(user: User) -> dict:
     return claims
 
 
+def explicit_request_brand_mark(request: Request) -> Optional[str]:
+    """Return an explicitly supplied brand without inventing a default."""
+    raw = (
+        request.headers.get("x-lobster-brand")
+        or request.query_params.get("brand")
+        or request.query_params.get("brand_mark")
+    )
+    return normalize_brand_mark(raw) if raw else None
+
+
+def validate_token_brand(
+    payload: dict,
+    *,
+    user: Optional[User] = None,
+    explicit_brand: Optional[str] = None,
+) -> str:
+    """Validate an optional request brand against the signed JWT and DB user."""
+    token_brand = normalize_brand_mark(payload.get("brand_mark"), strict=False)
+    effective_brand = normalize_brand_mark(explicit_brand) if explicit_brand else token_brand
+    if effective_brand != token_brand or (user is not None and user_brand_mark(user) != token_brand):
+        raise HTTPException(status_code=403, detail="登录品牌与当前品牌不一致，请重新登录")
+    return token_brand
+
+
 class RegisterBody(BaseModel):
     account: str  # 字母开头，2～64 位，仅允许字母数字._-
     password: str
@@ -400,17 +424,14 @@ async def get_current_user(
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
         user_id: int = int(payload.get("sub"))
-        token_brand = normalize_brand_mark(payload.get("brand_mark"), strict=False)
         if user_id is None:
             raise credentials_exception
-    except (JWTError, ValueError):
+    except (JWTError, ValueError, TypeError):
         raise credentials_exception
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
-    actual_brand = user_brand_mark(user)
-    if token_brand != actual_brand or request_brand_mark(request) != actual_brand:
-        raise HTTPException(status_code=403, detail="登录品牌与当前品牌不一致，请重新登录")
+    validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
     return user
 
 
@@ -427,26 +448,17 @@ async def get_current_user_id_from_token(
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
         user_id = int(payload.get("sub"))
-        token_brand = normalize_brand_mark(payload.get("brand_mark"), strict=False)
-        explicit_brand = (
-            request.headers.get("x-lobster-brand")
-            or request.query_params.get("brand")
-            or request.query_params.get("brand_mark")
-        )
-        effective_brand = normalize_brand_mark(explicit_brand) if explicit_brand else token_brand
-        if effective_brand != token_brand:
-            raise credentials_exception
         user = db.query(User).filter(User.id == user_id).first()
         if user is None:
             raise credentials_exception
-        if user_brand_mark(user) != token_brand:
-            raise HTTPException(status_code=403, detail="登录品牌与当前品牌不一致，请重新登录")
+        validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
         return user_id
     except (JWTError, ValueError, TypeError):
         raise credentials_exception
 
 
 async def get_messenger_user_id(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> int:
@@ -464,8 +476,10 @@ async def get_messenger_user_id(
         raise credentials_exception
     user = db.query(User).filter(User.id == user_id).first()
     if user is not None:
+        validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
         return user_id
     if getattr(settings, "messenger_trust_jwt_without_user", False):
+        validate_token_brand(payload, explicit_brand=explicit_request_brand_mark(request))
         return user_id
     raise credentials_exception
 

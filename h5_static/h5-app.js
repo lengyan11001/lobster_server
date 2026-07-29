@@ -8605,6 +8605,7 @@
         }
       }
       if (key === "messages") {
+        loadHistory({ includeEvents: true }).catch(() => {});
         renderChatContextBar();
         window.scrollTo({ top: 0, left: 0, behavior: "auto" });
         setTimeout(() => {
@@ -9316,10 +9317,9 @@
         $("appPanel").classList.remove("hidden");
         switchTab("office");
         await Promise.all([
-          loadHistory(),
+          loadHistory({ includeEvents: false }),
           refreshDeviceStatus(),
-          loadTasks({ reset: true }),
-          loadRuns({ reset: true, limit: 20, compact: true }),
+          refreshOfficeSummary(),
           loadTaskSkills(),
           loadHomeHero().catch(() => applyHomeHero("")),
         ]);
@@ -14702,10 +14702,11 @@
       return out.slice(0, 8);
     }
 
-    async function loadHistory() {
+    async function loadHistory(options = {}) {
       if (!state.token) return;
       try {
-        const data = await api("/api/h5-chat/messages?limit=40");
+        const includeEvents = options.includeEvents !== false;
+        const data = await api(`/api/h5-chat/messages?limit=40&include_events=${includeEvents ? "true" : "false"}`);
         const items = Array.isArray(data.messages) ? data.messages : [];
         state.historyItems = items;
         renderOfficeEmployees();

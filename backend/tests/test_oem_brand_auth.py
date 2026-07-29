@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi import Depends, HTTPException, Request
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine, inspect, text
 
 
@@ -166,9 +169,14 @@ def test_brand_token_rejected_under_other_brand(db_session, db_session_factory, 
         "/auth/me",
         headers={"Authorization": f"Bearer {token}", "X-Lobster-Brand": "daka"},
     )
+    accepted_without_explicit_brand = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
 
     assert rejected.status_code == 403
     assert accepted.status_code == 200
+    assert accepted_without_explicit_brand.status_code == 200
     assert accepted.json()["brand_mark"] == "daka"
     assert accepted.json()["email"] == PHONE_EMAIL
 
@@ -232,6 +240,253 @@ def test_oem_background_heartbeat_accepts_signed_token_brand_without_header(
             for row in session.query(UserInstallation).filter(UserInstallation.user_id == user.id).all()
         }
         assert installation_ids == {"daka--same-device"}
+
+
+def test_h5_message_list_can_skip_event_payloads(db_session, db_session_factory):
+    from backend.app.api.auth import access_token_claims, create_access_token, get_password_hash
+    from backend.app.api.h5_chat import router as h5_chat_router
+    from backend.app.db import get_db
+    from backend.app.models import H5ChatEvent, H5ChatMessage, User
+
+    user = User(
+        email=f"{PHONE}+brand-daka@sms.lobster.local",
+        hashed_password=get_password_hash("daka-pass"),
+        credits=Decimal("1"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.flush()
+    message = H5ChatMessage(id="compact-history-message", user_id=user.id, content="hello")
+    db_session.add(message)
+    db_session.add(
+        H5ChatEvent(
+            message_id=message.id,
+            user_id=user.id,
+            event_type="final",
+            payload={"large_result": "payload"},
+        )
+    )
+    db_session.commit()
+    token = create_access_token(access_token_claims(user))
+
+    app = FastAPI()
+    app.include_router(h5_chat_router)
+
+    def _get_db_override():
+        session = db_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    compact = client.get("/api/h5-chat/messages?limit=40&include_events=false", headers=headers)
+    detailed = client.get("/api/h5-chat/messages?limit=40&include_events=true", headers=headers)
+
+    assert compact.status_code == 200, compact.text
+    assert compact.json()["messages"][0]["events"] == []
+    assert detailed.status_code == 200, detailed.text
+    assert detailed.json()["messages"][0]["events"][0]["payload"] == {"large_result": "payload"}
+
+
+def test_oem_scheduled_worker_callbacks_accept_signed_token_brand_without_header(
+    db_session, db_session_factory, monkeypatch
+):
+    from backend.app.api.auth import access_token_claims, create_access_token, get_password_hash
+    from backend.app.api.scheduled_tasks import router as scheduled_tasks_router
+    from backend.app.db import get_db
+    from backend.app.models import ScheduledTaskRun, User
+
+    user = User(
+        email=f"{PHONE}+brand-daka@sms.lobster.local",
+        hashed_password=get_password_hash("daka-pass"),
+        credits=Decimal("1"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.flush()
+    db_session.add_all(
+        [
+            ScheduledTaskRun(
+                id="oem-event-run",
+                user_id=user.id,
+                title="event",
+                status="processing",
+                claimed_by_installation_id="same-device",
+            ),
+            ScheduledTaskRun(
+                id="oem-complete-run",
+                user_id=user.id,
+                title="complete",
+                status="processing",
+                claimed_by_installation_id="same-device",
+            ),
+            ScheduledTaskRun(
+                id="oem-publish-run",
+                user_id=user.id,
+                title="publish",
+                status="completed",
+                result_payload={
+                    "publish_draft": {
+                        "status": "processing",
+                        "claimed_by_installation_id": "same-device",
+                    }
+                },
+            ),
+        ]
+    )
+    db_session.commit()
+    token = create_access_token(access_token_claims(user))
+
+    app = FastAPI()
+    app.include_router(scheduled_tasks_router)
+
+    def _get_db_override():
+        session = db_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    client = TestClient(app)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Installation-Id": "same-device",
+    }
+
+    event = client.post(
+        "/api/scheduled-tasks/runs/oem-event-run/event",
+        headers=headers,
+        json={"type": "progress", "payload": {"text": "running"}},
+    )
+    complete = client.post(
+        "/api/scheduled-tasks/runs/oem-complete-run/complete",
+        headers=headers,
+        json={"result_text": "done", "result_payload": {"ok": True}},
+    )
+    publish = client.post(
+        "/api/scheduled-tasks/runs/oem-publish-run/publish-complete",
+        headers=headers,
+        json={"publish_result": {"ok": True}},
+    )
+
+    assert event.status_code == 200, event.text
+    assert complete.status_code == 200, complete.text
+    assert publish.status_code == 200, publish.text
+
+
+def test_ip_content_internal_llm_request_forwards_brand(monkeypatch):
+    from backend.app.api import ip_content_studio as module
+    from backend.app.api.auth import create_access_token
+
+    captured = {}
+
+    async def _fake_post(*, payload, headers, attempts=3, timeout_seconds=150.0):
+        captured.update(headers)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"items":[{"title":"title","hook":"hook","body":"body","cta":"cta"}]}'
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(module, "_post_llm_with_retry", _fake_post)
+    token = create_access_token({"sub": "99", "brand_mark": "daka"})
+    result = asyncio.run(
+        module._call_ip_content_llm(
+            auth_token=f"Bearer {token}",
+            brand_mark="daka",
+            task="industry_hot_oral",
+            platform="douyin",
+            count=1,
+            rows=[],
+            memories=[],
+            extra_requirements="",
+            fallback_sources=[{"title": "seed", "description": "source"}],
+        )
+    )
+
+    assert result["drafts"]
+    assert captured["X-Lobster-Brand"] == "daka"
+
+
+def test_oem_nonstandard_token_transports_share_brand_validation(
+    db_session, db_session_factory, monkeypatch
+):
+    from backend.app.api import comfly_proxy, h5_chat, h5_voice
+    from backend.app.api.auth import (
+        access_token_claims,
+        create_access_token,
+        get_messenger_user_id,
+        get_password_hash,
+    )
+    from backend.app.db import get_db
+    from backend.app.models import User
+
+    user = User(
+        email=f"{PHONE}+brand-daka@sms.lobster.local",
+        hashed_password=get_password_hash("daka-pass"),
+        credits=Decimal("1"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="daka",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    token = create_access_token(access_token_claims(user))
+
+    assert h5_chat._user_from_query_token(db_session, token).id == user.id
+    assert h5_voice._user_from_query_token(db_session, token).id == user.id
+    with pytest.raises(HTTPException) as media_error:
+        h5_chat._user_from_query_token(db_session, token, "bihuo")
+    assert media_error.value.status_code == 403
+
+    monkeypatch.setattr(comfly_proxy, "SessionLocal", db_session_factory)
+    app = FastAPI()
+
+    def _get_db_override():
+        session = db_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    @app.get("/messenger-oem-test")
+    def _messenger_oem_test(user_id: int = Depends(get_messenger_user_id)):
+        return {"user_id": user_id}
+
+    @app.get("/comfly-oem-test")
+    def _comfly_oem_test(request: Request):
+        request_user_id, billing_user_id = comfly_proxy._resolve_proxy_user_ids_from_request(request)
+        return {"request_user_id": request_user_id, "billing_user_id": billing_user_id}
+
+    app.dependency_overrides[get_db] = _get_db_override
+    client = TestClient(app)
+    auth = {"Authorization": f"Bearer {token}"}
+
+    assert client.get("/messenger-oem-test", headers=auth).status_code == 200
+    assert client.get("/comfly-oem-test", headers=auth).status_code == 200
+    assert client.get(
+        "/messenger-oem-test", headers={**auth, "X-Lobster-Brand": "bihuo"}
+    ).status_code == 403
+    assert client.get(
+        "/comfly-oem-test", headers={**auth, "X-Lobster-Brand": "bihuo"}
+    ).status_code == 403
 
 
 def test_disabled_brand_rejects_login(db_session, db_session_factory, monkeypatch):

@@ -37,7 +37,7 @@ from ..models import (
 )
 from ..services.brand_context import public_brand_config, request_brand_mark
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
-from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token
+from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token, validate_token_brand
 from .installation_slots import (
     INSTALLATION_ID_HEADER,
     ensure_installation_slot,
@@ -520,7 +520,7 @@ def _message_for_user(db: Session, message_id: str, user_id: int) -> H5ChatMessa
     return row
 
 
-def _user_from_query_token(db: Session, token: str) -> User:
+def _user_from_query_token(db: Session, token: str, brand_mark: str = "") -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="无法验证凭证",
@@ -539,6 +539,7 @@ def _user_from_query_token(db: Session, token: str) -> User:
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
+    validate_token_brand(payload, user=user, explicit_brand=brand_mark or None)
     return user
 
 
@@ -962,7 +963,7 @@ async def proxy_h5_chat_media(
 ):
     db = SessionLocal()
     try:
-        _user_from_query_token(db, token)
+        _user_from_query_token(db, token, request.query_params.get("brand") or request.query_params.get("brand_mark") or "")
     finally:
         db.close()
     remote_url = _assert_public_remote_url(url)
@@ -1014,6 +1015,7 @@ def create_h5_message(
 @router.get("/api/h5-chat/messages", summary="H5 list recent remote chat messages")
 def list_h5_messages(
     limit: int = Query(40, ge=1, le=100),
+    include_events: bool = Query(True),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1028,7 +1030,7 @@ def list_h5_messages(
     rows = list(reversed(rows))
     message_ids = [row.id for row in rows]
     events_by_message: Dict[str, List[Dict[str, Any]]] = {message_id: [] for message_id in message_ids}
-    if message_ids:
+    if message_ids and include_events:
         events = (
             db.query(H5ChatEvent)
             .filter(H5ChatEvent.user_id == owner_user.id, H5ChatEvent.message_id.in_(message_ids))
@@ -1086,7 +1088,11 @@ async def stream_h5_message_events(
 
     db0 = SessionLocal()
     try:
-        user = _user_from_query_token(db0, token)
+        user = _user_from_query_token(
+            db0,
+            token,
+            request.query_params.get("brand") or request.query_params.get("brand_mark") or "",
+        )
         owner_user = online_user_for_mobile_user(db0, user)
         msg = _message_for_user(db0, message_id, owner_user.id)
         user_id = owner_user.id

@@ -24,7 +24,7 @@ from ..services.xfyun_realtime_asr import (
     xfyun_missing_config_fields,
 )
 from ..services.voice_intent_llm import resolve_voice_intent_with_llm
-from .auth import ALGORITHM
+from .auth import ALGORITHM, validate_token_brand
 from .installation_slots import ensure_installation_slot
 from .mobile_identity import online_user_for_mobile_user
 
@@ -46,7 +46,7 @@ async def h5_voice_config():
     )
 
 
-def _user_from_query_token(db: Session, token: str) -> User:
+def _user_from_query_token(db: Session, token: str, brand_mark: str = "") -> User:
     credentials_exception = RuntimeError("invalid credentials")
     raw = str(token or "").strip()
     if not raw:
@@ -59,6 +59,7 @@ def _user_from_query_token(db: Session, token: str) -> User:
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
+    validate_token_brand(payload, user=user, explicit_brand=brand_mark or None)
     return user
 
 
@@ -73,13 +74,14 @@ async def _send_json_safe(websocket: WebSocket, payload: Dict[str, Any]) -> None
 async def h5_voice_session(
     websocket: WebSocket,
     token: str = Query(""),
+    brand: str = Query(""),
     installation_id: str = Query(""),
 ):
     await websocket.accept()
 
     db = SessionLocal()
     try:
-        user = _user_from_query_token(db, token)
+        user = _user_from_query_token(db, token, brand)
         owner_user = online_user_for_mobile_user(db, user)
         if installation_id.strip():
             ensure_installation_slot(db, owner_user.id, installation_id.strip())
