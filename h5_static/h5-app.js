@@ -7955,6 +7955,45 @@
           return renderTaskDetailRecord(`${idx + 1}. ${title || `结果 ${idx + 1}`}`, sub);
         }).join("")}</div>`;
       }
+      function renderLinkedinMiningResult(data) {
+        const result = data && data.result_payload && typeof data.result_payload === "object" ? data.result_payload : {};
+        const request = data && data.request_payload && typeof data.request_payload === "object" ? data.request_payload : {};
+        const candidates = Array.isArray(result.candidates) ? result.candidates : [];
+        const leadSummary = result.lead_summary && typeof result.lead_summary === "object" ? result.lead_summary : {};
+        const summary = leadSummary.summary && typeof leadSummary.summary === "object" ? leadSummary.summary : {};
+        const overview = renderTaskDetailSection("采集概览", [
+          ["搜索关键词", valueLabel(request.keywords || [])],
+          ["候选人数", compactNumber(candidates.length || summary.candidate_count || 0)],
+          ["有公开联系方式", compactNumber(summary.with_public_contact || 0)],
+        ]);
+        if (!candidates.length) return overview;
+        const cards = candidates.slice(0, 20).map((candidate, idx) => {
+          const item = candidate && typeof candidate === "object" ? candidate : {};
+          const raw = item.raw && typeof item.raw === "object" ? item.raw : {};
+          const evidence = Array.isArray(item.evidence) ? item.evidence : [];
+          const firstEvidence = evidence.find((entry) => entry && typeof entry === "object" && (entry.description || entry.title)) || {};
+          const name = valueLabel(item.name || item.candidate_key || `候选人 ${idx + 1}`);
+          const headline = valueLabel(item.headline || raw.title || firstEvidence.description || firstEvidence.title || "");
+          const location = valueLabel(raw.location || item.location || "");
+          const company = valueLabel(item.company || "");
+          const contact = item.contact && typeof item.contact === "object" ? item.contact : {};
+          const contactText = valueLabel(contact.email || contact.phone_numbers || contact.websites || contact.wechat || "");
+          const url = String(item.url || item.profile_url || "").trim();
+          const lines = [
+            headline,
+            company ? `公司：${company}` : "",
+            location ? `地区：${location}` : "",
+            contactText ? `公开联系方式：${contactText}` : "",
+            item.score != null ? `匹配分：${compactNumber(item.score)}` : "",
+          ].filter(Boolean);
+          const link = /^https?:\/\//i.test(url)
+            ? `<div class="run-media-actions"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">查看 LinkedIn 主页</a></div>`
+            : "";
+          return `<div class="task-detail-record linkedin-candidate-card"><strong>${escapeHtml(`${idx + 1}. ${name}`)}</strong>${lines.map((line) => `<pre>${escapeHtml(line)}</pre>`).join("")}${link}</div>`;
+        }).join("");
+        return `${overview}<div class="task-detail-section linkedin-result-section"><h4>候选人明细</h4>${cards}</div>`;
+      }
+
       function readablePayloadRows(data) {
         const rows = [];
         const add = (label, value) => {
@@ -8079,6 +8118,9 @@
         if (summaryHtml) sections.push(summaryHtml);
         const previewHtml = renderDouyinLeadPreview(payload);
         if (previewHtml) sections.push(previewHtml);
+      } else if (run.task_kind === "linkedin_mining") {
+        const linkedinHtml = renderLinkedinMiningResult(payload);
+        if (linkedinHtml) sections.push(linkedinHtml);
       } else if (!payload.ip_content_daily) {
         const summaryRows = readablePayloadRows(payload);
         if (summaryRows.length) sections.push(renderTaskDetailSection("结果摘要", summaryRows));
@@ -14151,6 +14193,26 @@
       addPriority(videoResultInner.final_video);
       addSaved(payload && payload.saved_assets);
       addSaved(refs.saved_assets);
+      const result = payload && payload.result && typeof payload.result === "object" ? payload.result : {};
+      const generated = payload && payload.generated_content && typeof payload.generated_content === "object" ? payload.generated_content : {};
+      add([
+        payload && payload.image_url,
+        payload && payload.video_url,
+        payload && payload.audio_url,
+        payload && payload.file_url,
+        local.image_url,
+        local.video_url,
+        local.audio_url,
+        local.file_url,
+        localItem.image_url,
+        localItem.video_url,
+        result.image_url,
+        result.video_url,
+        result.audio_url,
+        result.file_url,
+        generated.image_url,
+        generated.video_url,
+      ]);
       if (priorityOut.length) {
         const merged = priorityOut.concat(savedOut.filter((url) => !prioritySeen.has(url)));
         return merged.slice(0, 6);
@@ -14159,8 +14221,6 @@
       if (Array.isArray(payload && payload.media_urls) || Array.isArray(refs.urls)) {
         add(payload && payload.media_urls);
         if (!out.length) add(refs.urls);
-      } else {
-        add(payload);
       }
       return out.slice(0, 6);
     }

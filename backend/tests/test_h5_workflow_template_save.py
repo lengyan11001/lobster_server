@@ -96,4 +96,4 @@ def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     assert "return personalSystemWorkflowTemplate(sid)" in script
     assert "if (state.workflowTemplateSaving) return;" in script
     assert 'key === "system_sales" ? "/h5-static/designer-employee-sales.jpg" : ""' in script
-    assert "20260729-workflow-day-v1" in html
+    assert "20260729-linkedin-result-v1" in html

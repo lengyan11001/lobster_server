@@ -496,7 +496,7 @@ def _normalize_candidate_from_row(row: TikHubSourceItem) -> Optional[dict[str, A
     name = row.author_name or _profile_name_from_raw(body) or row.title or key
     if not key and not name:
         return None
-    headline = _lookup(body, "headline") or _lookup(body, "occupation") or row.description or ""
+    headline = _lookup(body, "headline") or _lookup(body, "occupation") or _lookup(body, "title") or row.title or row.description or ""
     company = _lookup(body, "company_name") or _lookup(body, "current_company.name") or _lookup(body, "company.name") or ""
     url = row.public_url or _lookup(body, "url") or _lookup(body, "profile_url") or ""
     contact = _contact_payload(body)
@@ -562,7 +562,7 @@ def _candidate_from_raw(raw: Any, *, source_type: str, source_reason: str) -> Op
     name = _profile_name_from_raw(body)
     if not key and not name:
         return None
-    headline = _lookup(body, "headline") or _lookup(body, "occupation") or _lookup(body, "summary") or ""
+    headline = _lookup(body, "headline") or _lookup(body, "occupation") or _lookup(body, "title") or _lookup(body, "summary") or ""
     company = _lookup(body, "company_name") or _lookup(body, "current_company.name") or _lookup(body, "company.name") or ""
     url = _lookup(body, "url") or _lookup(body, "profile_url") or _lookup(body, "public_profile_url") or ""
     contact = _contact_payload(body)
@@ -983,7 +983,17 @@ def _fallback_summary_report(row: CreativeGenerationJob, *, reason: str = "") ->
         name = item.get("name") or item.get("candidate_key") or item.get("handle") or ""
         contact = item.get("contact") if isinstance(item.get("contact"), dict) else {}
         url = item.get("url") or item.get("profile_url") or ""
-        public_contact = contact.get("email") or contact.get("phone") or contact.get("url") or url
+        public_contact = (
+            contact.get("email")
+            or contact.get("phone")
+            or contact.get("phone_numbers")
+            or contact.get("wechat")
+            or contact.get("websites")
+            or contact.get("url")
+            or ""
+        )
+        if isinstance(public_contact, list):
+            public_contact = "、".join(str(value or "").strip() for value in public_contact if str(value or "").strip())
         priority_leads.append(
             {
                 "name": name,

@@ -45,7 +45,7 @@ def test_ai_marketing_design_styles_are_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
     css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
 
-    assert "20260729-workflow-day-v1" in html
+    assert "20260729-linkedin-result-v1" in html
     assert ".home-marketing-grid" in css
     assert ".marketing-creation-grid" in css
     assert ".marketing-category-mode" in css

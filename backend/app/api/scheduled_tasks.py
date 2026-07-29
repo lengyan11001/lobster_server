@@ -85,6 +85,12 @@ _HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
 _SHANJIAN_DIGITAL_HUMAN_ACTION = "shanjian_digital_human_video"
 _DIGITAL_HUMAN_PROVIDER_LEGACY = "hifly_legacy"
 _DIGITAL_HUMAN_PROVIDER_V2 = "shanjian_v2"
+_LINKEDIN_PLACEHOLDER_KEYWORDS = {
+    "linkedin线索挖掘",
+    "linkedin线索采集",
+    "执行linkedin线索挖掘",
+    "执行linkedin线索采集",
+}
 
 
 def _h5_dh_clean_text(value: Any, limit: int = 500) -> str:
@@ -332,6 +338,34 @@ def _h5_dh_context_params(db: Session, user_id: int) -> Dict[str, Any]:
         "language": _h5_dh_template_language(requirements, reference_template),
         "target_language": _h5_dh_template_language(requirements, reference_template),
     }
+
+
+def _enrich_linkedin_mining_keywords(
+    db: Session,
+    *,
+    payload: Dict[str, Any],
+    target_user_id: int,
+) -> Dict[str, Any]:
+    current = [
+        _h5_dh_clean_text(item, 120)
+        for item in (payload.get("keywords") if isinstance(payload.get("keywords"), list) else [])
+        if _h5_dh_clean_text(item, 120)
+    ]
+    uses_placeholder = not current or all(item.lower() in _LINKEDIN_PLACEHOLDER_KEYWORDS for item in current)
+    if not uses_placeholder:
+        return payload
+    context = _h5_dh_context_params(db, target_user_id)
+    keywords = [
+        _h5_dh_clean_text(item, 120)
+        for item in (context.get("keyword_texts") if isinstance(context.get("keyword_texts"), list) else [])
+        if _h5_dh_clean_text(item, 120)
+    ]
+    if not keywords:
+        return payload
+    out = dict(payload)
+    out["keywords"] = keywords
+    out["keyword_source"] = "personal_default_template"
+    return out
 
 
 def _maybe_convert_h5_digital_human_task(
@@ -1781,6 +1815,12 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
     server_side = _is_server_side_task(task)
     message_id = None if server_side else f"task_{run_id}"[:64]
     run_payload = task.payload or {}
+    if task.task_kind == "linkedin_mining":
+        run_payload = _enrich_linkedin_mining_keywords(
+            db,
+            payload=dict(run_payload),
+            target_user_id=task.user_id,
+        )
     if task.task_kind == "client_workflow":
         run_payload = _enrich_local_bestseller_workflow_payload(
             db,
@@ -2432,6 +2472,12 @@ def _create_task_row(
         payload=dict(payload),
         target_user_id=target_user_id,
     )
+    if task_kind == "linkedin_mining":
+        payload = _enrich_linkedin_mining_keywords(
+            db,
+            payload=dict(payload),
+            target_user_id=target_user_id,
+        )
     if task_kind in {"openclaw_message", "chat_message"} and not content:
         raise HTTPException(status_code=400, detail="消息内容不能为空")
     if task_kind == "capability" and not str(payload.get("capability_id") or "").strip():
