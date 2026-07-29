@@ -8476,10 +8476,7 @@
         renderOfficeEmployees();
         return Promise.resolve();
       }
-      state.officeSummaryLoading = Promise.all([
-        loadTasks({ reset: true, limit: 80 }).catch(() => {}),
-        loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}),
-      ]).finally(() => {
+      state.officeSummaryLoading = loadRuns({ reset: true, limit: 20, compact: true }).catch(() => {}).finally(() => {
         state.officeSummaryLoadedAt = Date.now();
         state.officeSummaryLoading = null;
         if (document.querySelector("#officeView.active")) renderOfficeEmployees();

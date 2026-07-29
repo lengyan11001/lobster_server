@@ -12,6 +12,12 @@ def test_h5_bootstrap_reuses_office_summary_request():
     assert "loadTasks({ reset: true })" not in load_me
     assert "loadRuns({ reset: true, limit: 20, compact: true })" not in load_me
 
+    summary_start = js.index("function refreshOfficeSummary()")
+    summary_end = js.index("function switchTab(tab)", summary_start)
+    office_summary = js[summary_start:summary_end]
+    assert "loadTasks(" not in office_summary
+    assert "loadRuns({ reset: true, limit: 20, compact: true })" in office_summary
+
 
 def test_h5_message_history_defers_event_payloads_until_messages_view():
     js = (Path(__file__).resolve().parents[2] / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
