@@ -44,6 +44,7 @@ from ..services.credit_ledger import append_credit_ledger
 from ..services.brand_context import explicit_request_brand_mark
 from ..services.credits_amount import quantize_credits, credits_json_float, user_balance_decimal
 from ..services.model_usage_monitor import log_model_usage_event
+from ..services.user_feature_flags import OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID, user_has_feature
 from .assets import _save_bytes_or_tos
 from .auth import ALGORITHM, get_current_user, validate_token_brand
 from .mobile_identity import online_user_for_mobile_user
@@ -320,8 +321,17 @@ def _image_generation_model_attempts(model: str) -> List[str]:
     """Return billing model ids to try for one image generation request."""
     normalized = _normalized_model_id(model)
     if normalized in {"gpt-image-2", "gpt-image2", "gpt-image"}:
-        return ["gpt-image-2", "gpt-image-2-openmindapi", "gpt-image-2-yunwu"]
+        return ["gpt-image-2", "gpt-image-2-openmindapi", "gpt-image-2-yunwu", "nano-banana-2"]
     return [model]
+
+
+def _image_generation_model_attempts_for_user(model: str, *, openai_official_first: bool) -> List[str]:
+    normalized = _normalized_model_id(model)
+    if normalized not in {"gpt-image-2", "gpt-image2", "gpt-image"}:
+        return [model]
+    if openai_official_first:
+        return ["gpt-image-2-openai-official", "gpt-image-2-openmindapi", "gpt-image-2-yunwu", "nano-banana-2"]
+    return _image_generation_model_attempts(model)
 
 
 def _audit(event: str, **kw: Any) -> None:
@@ -537,6 +547,24 @@ async def _yunwu_multipart_request(
         return {"_raw_text": r.text}
 
 
+async def _openai_official_multipart_request(
+    url: str,
+    data: Dict[str, str],
+    files: List[Tuple[str, Tuple[Any, ...]]],
+    headers: Dict[str, str],
+    timeout: float,
+) -> Dict[str, Any]:
+    multipart_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(url, headers=multipart_headers, data=data, files=files)
+    if r.status_code >= 400:
+        raise RuntimeError(f"OpenAI official HTTP {r.status_code}: {(r.text or '')[:500]}")
+    try:
+        return r.json() if r.content else {}
+    except Exception:
+        return {"_raw_text": r.text}
+
+
 def _comfly_url(path: str, model: str = "") -> str:
     base, _ = get_comfly_config(_model_token_group(model))
     if not base:
@@ -626,6 +654,66 @@ def _openmind_image_headers() -> Dict[str, str]:
     }
 
 
+def _openai_official_image_url(path: str) -> str:
+    base = (os.environ.get("OPENAI_IMAGE_API_BASE") or os.environ.get("OPENAI_API_BASE") or "https://api.openai.com/v1").strip().rstrip("/")
+    return f"{base}{path}"
+
+
+def _openai_official_image_api_key() -> str:
+    key = (os.environ.get("OPENAI_IMAGE_API_KEY") or os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not key:
+        raise RuntimeError("OPENAI_IMAGE_API_KEY is not configured")
+    return key
+
+
+def _openai_official_image_headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {_openai_official_image_api_key()}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _openai_official_image_model() -> str:
+    return (os.environ.get("OPENAI_OFFICIAL_IMAGE_MODEL") or "gpt-image-1").strip() or "gpt-image-1"
+
+
+def _is_openai_official_image_model(model: str) -> bool:
+    value = str(model or "").strip().lower().replace("_", "-")
+    return value in {"gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini", "gpt-image-2", "gpt-image2", "gpt-image"}
+
+
+def _coerce_openai_official_image_size(raw: Any) -> str:
+    value = str(raw or "").strip().lower().replace(" ", "")
+    if not value:
+        return "1024x1024"
+    if value == "auto":
+        return "auto"
+
+    known_ratio = _coerce_comfly_image_ratio_size(value)
+    if known_ratio == "1:1":
+        return "1024x1024"
+    if known_ratio in {"3:4", "2:3", "9:16"}:
+        return "1024x1536"
+    if known_ratio in {"4:3", "3:2", "16:9"}:
+        return "1536x1024"
+
+    if "x" in value:
+        parts = value.split("x", 1)
+        try:
+            width = int(parts[0])
+            height = int(parts[1])
+        except (TypeError, ValueError):
+            width = 0
+            height = 0
+        if width > 0 and height > 0:
+            if width == height:
+                return "1024x1024"
+            return "1024x1536" if height > width else "1536x1024"
+
+    return "1024x1024"
+
+
 def _openmind_image_body(source_body: Dict[str, Any]) -> Dict[str, Any]:
     prompt = str(source_body.get("prompt") or "").strip()
     if not prompt:
@@ -647,6 +735,31 @@ def _openmind_image_body(source_body: Dict[str, Any]) -> Dict[str, Any]:
     if image_url:
         body["image_url"] = image_url
         body["image"] = image_url
+    if image_urls:
+        body["image_urls"] = image_urls
+    return body
+
+
+def _openai_official_image_body(source_body: Dict[str, Any]) -> Dict[str, Any]:
+    prompt = str(source_body.get("prompt") or "").strip()
+    if not prompt:
+        raise RuntimeError("OpenAI official image request missing prompt")
+    body: Dict[str, Any] = {
+        "model": _openai_official_image_model(),
+        "prompt": prompt,
+        "size": _coerce_openai_official_image_size(
+            source_body.get("size")
+            or source_body.get("image_size")
+            or source_body.get("aspect_ratio")
+            or source_body.get("ratio")
+            or "1024x1024"
+        ),
+        "n": int(source_body.get("n") or source_body.get("num_images") or 1),
+    }
+    image_url, image_urls = _normalized_image_refs_from_payload(source_body)
+    if image_url:
+        body["image"] = image_url
+        body["image_url"] = image_url
     if image_urls:
         body["image_urls"] = image_urls
     return body
@@ -813,6 +926,28 @@ async def _openmind_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]
     if isinstance(payload, dict):
         payload.setdefault("fallback_used", True)
         payload.setdefault("fallback_provider", "openmind")
+    return payload
+
+
+async def _openai_official_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]:
+    body = _openai_official_image_body(source_body)
+    async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
+        resp = await client.post(
+            _openai_official_image_url("/images/generations"),
+            headers=_openai_official_image_headers(),
+            json=body,
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"OpenAI official HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    try:
+        payload = resp.json() if resp.content else {}
+    except Exception:
+        payload = {"_raw_text": resp.text}
+    if isinstance(payload, dict):
+        payload.setdefault("fallback_used", True)
+        payload.setdefault("fallback_provider", "openai_official")
+        payload.setdefault("_provider", "openai_official")
+        payload.setdefault("_requested_model", body.get("model"))
     return payload
 
 
@@ -1121,7 +1256,7 @@ async def _build_image_edit_request_parts(
 ) -> Tuple[Dict[str, str], List[Tuple[str, Tuple[Any, ...]]]]:
     forwarded = _body_for_upstream_model(body, model, entry)
     prompt = str(forwarded.get("prompt") or body.get("prompt") or "").strip()
-    image_size = _coerce_image_edit_size(
+    raw_image_size = (
         forwarded.get("size")
         or forwarded.get("image_size")
         or forwarded.get("aspect_ratio")
@@ -1131,6 +1266,12 @@ async def _build_image_edit_request_parts(
         or body.get("aspect_ratio")
         or body.get("ratio")
         or "1024x1024"
+    )
+    token_group = str(entry.get("token_group") or "").strip().lower()
+    image_size = (
+        _coerce_openai_official_image_size(raw_image_size)
+        if token_group == "openai_official"
+        else _coerce_image_edit_size(raw_image_size)
     )
     try:
         num_images = max(1, int(forwarded.get("num_images") or forwarded.get("n") or body.get("n") or 1))
@@ -1330,7 +1471,40 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
     forwarded["model"] = upstream
     api_format = str(entry.get("api_format") or "").strip().lower()
     model_low = str(upstream or model or "").strip().lower()
-    if api_format == "dalle" and ("gpt-image-2" in model_low or "gpt-image2" in model_low or "gptimage2" in model_low):
+    if api_format == "dalle" and "nano-banana" in model_low:
+        prompt = str(forwarded.get("prompt") or "").strip()
+        ratio = _coerce_comfly_image_ratio_size(
+            forwarded.get("aspect_ratio"),
+            forwarded.get("ratio"),
+            forwarded.get("size"),
+            forwarded.get("image_size"),
+        )
+        try:
+            num_images = max(1, int(forwarded.get("num_images") or forwarded.get("n") or 1))
+        except (TypeError, ValueError):
+            num_images = 1
+        image_url, image_urls = _normalized_image_refs_from_payload(forwarded)
+        out: Dict[str, Any] = {
+            "model": upstream,
+            "prompt": prompt,
+            "image_size": ratio,
+            "aspect_ratio": ratio,
+            "num_images": num_images,
+            "n": num_images,
+            "response_format": str(forwarded.get("response_format") or "url"),
+        }
+        if image_url:
+            out["image_url"] = image_url
+            out["image"] = image_url
+        if image_urls:
+            out["image_urls"] = image_urls
+        return out
+    if api_format == "dalle" and (
+        "gpt-image-2" in model_low
+        or "gpt-image2" in model_low
+        or "gptimage2" in model_low
+        or _is_openai_official_image_model(model_low)
+    ):
         prompt = str(forwarded.get("prompt") or "").strip()
         ratio = _coerce_comfly_image_ratio_size(
             forwarded.get("aspect_ratio"),
@@ -1486,11 +1660,15 @@ async def proxy_images_generations(
     model = (body.get("model") or "").strip()
     if not model:
         raise HTTPException(400, "缺少 model")
-    attempt_models = _image_generation_model_attempts(model)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
+    db_flags = SessionLocal()
+    try:
+        openai_official_first = user_has_feature(db_flags, billing_user_id, OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID)
+    finally:
+        db_flags.close()
+    attempt_models = _image_generation_model_attempts_for_user(model, openai_official_first=openai_official_first)
     if len(attempt_models) == 1:
         _require_model_entry(model)
-
-    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
     errors: List[str] = []
     last_error = ""
     attempts_per_model = _env_int("COMFLY_IMAGE_RETRY_ATTEMPTS", 2, min_value=1, max_value=4)
@@ -1564,7 +1742,19 @@ async def proxy_images_generations(
                     refs=len(reference_urls),
                 )
                 token_group = str(entry.get("token_group") or "").strip().lower()
-                if reference_urls:
+                if token_group == "openai_official":
+                    if reference_urls:
+                        edit_data, edit_files = await _build_image_edit_request_parts(body, attempt_model, entry, reference_urls)
+                        resp = await _openai_official_multipart_request(
+                            _openai_official_image_url("/images/edits"),
+                            edit_data,
+                            edit_files,
+                            {"Authorization": f"Bearer {_openai_official_image_api_key()}", "Accept": "application/json"},
+                            _TIMEOUT_IMAGE,
+                        )
+                    else:
+                        resp = await _openai_official_image_request(upstream_body)
+                elif reference_urls:
                     if token_group == "openmindapi":
                         resp = await _openmind_image_request(upstream_body)
                     else:
@@ -1631,7 +1821,7 @@ async def proxy_images_generations(
                     model=attempt_model,
                     provider=(entry.get("token_group") or "comfly"),
                     channel=(entry.get("token_group") or "comfly"),
-                    route="comfly",
+                    route="openai_official" if token_group == "openai_official" else "comfly",
                     endpoint=endpoint_path,
                     meta={"attempt": index, "retry": retry_index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
                 )
@@ -1645,7 +1835,7 @@ async def proxy_images_generations(
                     model=attempt_model,
                     provider=(entry.get("token_group") or "comfly"),
                     channel=(entry.get("token_group") or "comfly"),
-                    route="comfly",
+                    route="openai_official" if token_group == "openai_official" else "comfly",
                     endpoint=endpoint_path,
                     meta={"attempt": index, "retry": retry_index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
                 )
@@ -1675,7 +1865,7 @@ async def proxy_images_generations(
                     model=attempt_model,
                     provider=(entry.get("token_group") or "comfly"),
                     channel=(entry.get("token_group") or "comfly"),
-                    route="comfly",
+                    route="openai_official" if token_group == "openai_official" else "comfly",
                     endpoint=endpoint_path,
                     error_message=last_error[:1000],
                     meta={"attempt": index, "retry": retry_index, "retries": attempts_per_model, "refs": len(reference_urls)},

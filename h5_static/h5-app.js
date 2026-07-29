@@ -26,6 +26,8 @@
       selectedInstallationId: localStorage.getItem(brandStorageKey("lobster_h5_selected_installation_id")) || "",
       tasks: [],
       runs: [],
+      runStatusSnapshot: {},
+      runStatusReady: false,
       taskListOffset: 0,
       taskListHasNext: false,
       taskEditId: "",
@@ -51,6 +53,8 @@
       workListLoading: false,
       workListLoadFailed: false,
       historyItems: [],
+      messageStatusSnapshot: {},
+      messageStatusReady: false,
       socialLeadJobs: [],
       linkedinJobs: [],
       wechatTranscriptJobs: [],
@@ -207,6 +211,10 @@
       currentAbilityKey: "",
       abilityTrail: [],
       chatContext: null,
+      speechEnabled: true,
+      speechUnlocked: false,
+      speechLastText: "",
+      speechLastAt: 0,
     };
     const SHOW_INTERNAL_STEPS = false;
     const IMAGE_TO_VIDEO_PROMPT = "用这个图片，提示词：";
@@ -1570,6 +1578,128 @@
         active: "启用",
         paused: "暂停",
       }[status] || status || "-";
+    }
+
+    function normalizeTaskStatus(status) {
+      return String(status || "").trim().toLowerCase();
+    }
+
+    function isFinalTaskStatus(status) {
+      return ["completed", "failed", "cancelled", "done", "success", "error"].includes(normalizeTaskStatus(status));
+    }
+
+    function isSuccessTaskStatus(status) {
+      return ["completed", "done", "success"].includes(normalizeTaskStatus(status));
+    }
+
+    function unlockSpeechPlayback() {
+      state.speechUnlocked = true;
+    }
+
+    function speakTaskAnnouncement(text) {
+      const content = String(text || "").trim();
+      if (!content || !state.speechEnabled) return;
+      if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return;
+      if (!state.speechUnlocked) return;
+      const now = Date.now();
+      if (state.speechLastText === content && now - Number(state.speechLastAt || 0) < 4000) return;
+      state.speechLastText = content;
+      state.speechLastAt = now;
+      try { window.speechSynthesis.cancel(); } catch {}
+      try {
+        const utterance = new SpeechSynthesisUtterance(content);
+        utterance.lang = "zh-CN";
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.volume = 1;
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.warn("task announcement speech failed", err);
+      }
+    }
+
+    function taskAnnouncementTitle(row, fallback) {
+      const title = String((row && (row.title || row.content || row.task_title)) || fallback || "").trim();
+      if (!title) return "任务";
+      return title.length > 22 ? `${title.slice(0, 22)}...` : title;
+    }
+
+    function taskAnnouncementTimeMs(row) {
+      return itemTimeMs(
+        row && row.finished_at,
+        row && row.completed_at,
+        row && row.updated_at,
+        row && row.created_at
+      );
+    }
+
+    function shouldAnnounceFreshFinalState(row) {
+      const ts = taskAnnouncementTimeMs(row);
+      if (!ts) return false;
+      return Math.abs(Date.now() - ts) <= 20000;
+    }
+
+    function maybeAnnounceRunStatus(row, previousStatus) {
+      const current = normalizeTaskStatus(row && row.status);
+      if (!isFinalTaskStatus(current)) return;
+      const previous = normalizeTaskStatus(previousStatus);
+      if (!previous) {
+        if (!shouldAnnounceFreshFinalState(row)) return;
+      } else if (previous === current || isFinalTaskStatus(previous)) return;
+      const title = taskAnnouncementTitle(row, "任务");
+      if (current === "failed" || current === "error") {
+        speakTaskAnnouncement(`${title}执行失败`);
+        return;
+      }
+      if (current === "cancelled") {
+        speakTaskAnnouncement(`${title}已取消`);
+        return;
+      }
+      if (isSuccessTaskStatus(current)) speakTaskAnnouncement(`${title}已完成`);
+    }
+
+    function captureRunStatusSnapshot(rows, options = {}) {
+      const announce = !!options.announce;
+      const next = {};
+      (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const id = String(row && row.id || "").trim();
+        if (!id) return;
+        const current = normalizeTaskStatus(row && row.status);
+        const previous = state.runStatusSnapshot[id];
+        if (announce && state.runStatusReady) maybeAnnounceRunStatus(row, previous);
+        next[id] = current;
+      });
+      state.runStatusSnapshot = next;
+      state.runStatusReady = true;
+    }
+
+    function maybeAnnounceMessageStatus(msg, previousStatus) {
+      const current = normalizeTaskStatus(msg && msg.status);
+      if (!["completed", "failed", "cancelled"].includes(current)) return;
+      const previous = normalizeTaskStatus(previousStatus);
+      if (!previous) {
+        if (!shouldAnnounceFreshFinalState(msg)) return;
+      } else if (previous === current || ["completed", "failed", "cancelled"].includes(previous)) return;
+      const title = taskAnnouncementTitle(msg, "消息任务");
+      if (current === "failed") {
+        speakTaskAnnouncement(`${title}处理失败`);
+        return;
+      }
+      if (current === "cancelled") {
+        speakTaskAnnouncement(`${title}已取消`);
+        return;
+      }
+      speakTaskAnnouncement(`${title}已完成`);
+    }
+
+    function rememberMessageStatus(msg, options = {}) {
+      const announce = !!options.announce;
+      const id = String(msg && msg.id || "").trim();
+      if (!id) return;
+      const current = normalizeTaskStatus(msg && msg.status);
+      const previous = state.messageStatusSnapshot[id];
+      if (announce && state.messageStatusReady) maybeAnnounceMessageStatus(msg, previous);
+      state.messageStatusSnapshot[id] = current;
     }
 
     function capabilityName(capabilityId) {
@@ -14701,6 +14831,7 @@
             msg.error = (ev.payload && (ev.payload.error || ev.payload.detail || ev.payload.message)) || msg.error;
             msg.finished_at = ev.created_at || new Date().toISOString();
           }
+          rememberMessageStatus(msg, { announce: true });
           renderOfficeEmployees();
           renderWorkList();
         }
@@ -14745,6 +14876,7 @@
             if (hit) {
               if (hit.message) hit.message = data.message;
               else Object.assign(hit, data.message);
+              rememberMessageStatus(data.message, { announce: true });
               renderOfficeEmployees();
               renderWorkList();
             }
@@ -14921,6 +15053,12 @@
         const data = await api(`/api/h5-chat/messages?limit=40&include_events=${includeEvents ? "true" : "false"}`);
         const items = Array.isArray(data.messages) ? data.messages : [];
         state.historyItems = items;
+        state.messageStatusSnapshot = {};
+        items.forEach((entry) => {
+          const msg = (entry && entry.message) || entry;
+          rememberMessageStatus(msg, { announce: false });
+        });
+        state.messageStatusReady = true;
         renderOfficeEmployees();
         if (!items.length) return;
         clearRenderedMessages();
@@ -15036,6 +15174,7 @@
           if (row && row.id) rowsById.set(String(row.id), { ...(rowsById.get(String(row.id)) || {}), ...row });
         });
         state.runs = Array.from(rowsById.values()).sort((a, b) => itemTimeMs(b.updated_at, b.created_at) - itemTimeMs(a.updated_at, a.created_at));
+        captureRunStatusSnapshot(state.runs, { announce: true });
         renderOfficeEmployees();
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
@@ -15067,6 +15206,7 @@
           state.runListHasNext = false;
           state.runListTotal = 0;
         }
+        captureRunStatusSnapshot([], { announce: false });
         renderOfficeEmployees();
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
@@ -15159,6 +15299,9 @@
 
     syncTopNavigationActions();
     bindTaskActionMenuBehavior();
+
+    document.addEventListener("mousedown", unlockSpeechPlayback, { passive: true });
+    document.addEventListener("touchstart", unlockSpeechPlayback, { passive: true });
 
     document.querySelectorAll("[data-tab-target]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -16732,4 +16875,10 @@
         $("topActions").classList.add("hidden");
         await refreshCaptcha();
       }
+      setInterval(refreshDeviceStatus, 7000);
+      setInterval(() => {
+        if (!state.token) return;
+        if (document.visibilityState === "hidden") return;
+        loadRuns({ reset: true });
+      }, 5000);
     })();
