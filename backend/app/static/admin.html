@@ -2470,6 +2470,16 @@ async function showUserDetail(userId) {
 
     document.getElementById('rechargeAmount').value = '';
     document.getElementById('rechargeDesc').value = '管理员手动调整积分';
+    const creditTitle = rechargeCard ? rechargeCard.querySelector('h3') : null;
+    const creditAmountInput = document.getElementById('rechargeAmount');
+    const creditDescInput = document.getElementById('rechargeDesc');
+    if (creditTitle) creditTitle.textContent = isAgent() ? '向下级划转积分' : '调整积分';
+    if (creditAmountInput) {
+      creditAmountInput.placeholder = isAgent()
+        ? '正数从你的余额划转，负数扣减下级余额'
+        : '正数加分，负数下分';
+    }
+    if (creditDescInput && isAgent()) creditDescInput.value = '代理商划转积分';
     if (canManageSkills) loadSkillVisibility(userId);
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -2687,7 +2697,10 @@ async function doAddCredits() {
       method: 'POST',
       body: JSON.stringify({user_id: currentUserId, amount, description: desc})
     });
-    toast(`调整成功：${data.email} ${data.delta > 0 ? '+' : ''}${data.delta} 积分，当前余额 ${data.new_credits.toFixed(2)}`);
+    const agentBalance = data.transfer_id && data.agent_new_credits != null
+      ? `，你的剩余余额 ${Number(data.agent_new_credits).toFixed(2)}`
+      : '';
+    toast(`${data.transfer_id ? '划转' : '调整'}成功：${data.email} ${data.delta > 0 ? '+' : ''}${data.delta} 积分，当前余额 ${data.new_credits.toFixed(2)}${agentBalance}`);
     showUserDetail(currentUserId);
   } catch(e) { toast(e.message, 'error'); }
 }

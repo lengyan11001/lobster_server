@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header
@@ -500,7 +501,19 @@ def admin_add_credits(
         sub_ids = _agent_visible_user_ids(db, ctx.user_id)
         if body.user_id not in sub_ids:
             raise HTTPException(status_code=403, detail="无权操作此用户")
-    user = db.query(User).filter(User.id == body.user_id).first()
+
+    lock_user_ids = [body.user_id]
+    if ctx.role == "agent" and ctx.user_id is not None:
+        lock_user_ids.append(int(ctx.user_id))
+    locked_users = (
+        db.query(User)
+        .filter(User.id.in_(lock_user_ids))
+        .order_by(User.id.asc())
+        .with_for_update()
+        .all()
+    )
+    users_by_id = {row.id: row for row in locked_users}
+    user = users_by_id.get(body.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
@@ -508,12 +521,39 @@ def admin_add_credits(
     delta = quantize_credits_signed(body.amount)
     if delta == 0:
         raise HTTPException(status_code=400, detail="积分数量不能为 0")
+
+    agent: Optional[User] = None
+    agent_old_credits: Optional[Decimal] = None
+    agent_new_credits: Optional[Decimal] = None
+    transfer_id: Optional[str] = None
+    if ctx.role == "agent" and delta > 0:
+        agent = users_by_id.get(int(ctx.user_id or 0))
+        if not agent or not agent.is_agent or user_brand_mark(agent) != ctx.brand_mark:
+            raise HTTPException(status_code=401, detail="代理商账号无效")
+        if user_brand_mark(user) != ctx.brand_mark or body.user_id not in _agent_visible_user_ids(db, agent.id):
+            raise HTTPException(status_code=403, detail="无权操作此用户")
+        agent_old_credits = quantize_credits(agent.credits or 0)
+        if agent_old_credits < delta:
+            raise HTTPException(
+                status_code=400,
+                detail=f"代理商余额不足，当前余额 {agent_old_credits}，本次需要 {delta}",
+            )
+        agent_new_credits = quantize_credits(agent_old_credits - delta)
+        agent.credits = agent_new_credits
+        transfer_id = uuid4().hex
+
     new_credits = old_credits + delta
     if new_credits < 0:
         raise HTTPException(status_code=400, detail=f"积分不足，当前 {old_credits}，操作 {delta}")
     user.credits = quantize_credits(new_credits)
-    entry_type = "recharge" if delta > 0 else "admin_deduct"
-    description = (body.description or "").strip() or ("管理员手动加积分" if delta > 0 else "管理员手动扣减积分")
+    is_agent_transfer = agent is not None and transfer_id is not None
+    entry_type = "agent_transfer_in" if is_agent_transfer else ("recharge" if delta > 0 else "admin_deduct")
+    default_description = (
+        "代理商划转积分"
+        if is_agent_transfer
+        else ("管理员手动加积分" if delta > 0 else "管理员手动扣减积分")
+    )
+    description = (body.description or "").strip() or default_description
 
     append_credit_ledger(
         db,
@@ -522,10 +562,35 @@ def admin_add_credits(
         entry_type,
         user.credits,
         description=description[:200],
-        meta={"source": "admin_panel", "admin_action": "add" if delta > 0 else "deduct"},
+        ref_type="agent_transfer" if is_agent_transfer else None,
+        ref_id=transfer_id,
+        meta={
+            "source": "agent_panel" if is_agent_transfer else "admin_panel",
+            "admin_action": "transfer_in" if is_agent_transfer else ("add" if delta > 0 else "deduct"),
+            **({"agent_user_id": agent.id, "transfer_id": transfer_id} if is_agent_transfer and agent else {}),
+        },
     )
+    if is_agent_transfer and agent and agent_new_credits is not None:
+        append_credit_ledger(
+            db,
+            agent.id,
+            -delta,
+            "agent_transfer_out",
+            agent_new_credits,
+            description=f"向下级用户 {unscoped_account_email(user.email)} 划转积分"[:200],
+            ref_type="agent_transfer",
+            ref_id=transfer_id,
+            meta={
+                "source": "agent_panel",
+                "admin_action": "transfer_out",
+                "target_user_id": user.id,
+                "transfer_id": transfer_id,
+            },
+        )
     db.commit()
     db.refresh(user)
+    if agent is not None:
+        db.refresh(agent)
 
     return {
         "ok": True,
@@ -534,6 +599,9 @@ def admin_add_credits(
         "old_credits": float(old_credits),
         "new_credits": float(quantize_credits(user.credits)),
         "delta": float(delta),
+        "transfer_id": transfer_id,
+        "agent_old_credits": float(agent_old_credits) if agent_old_credits is not None else None,
+        "agent_new_credits": float(quantize_credits(agent.credits)) if agent is not None else None,
     }
 
 
