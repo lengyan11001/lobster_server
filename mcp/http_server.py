@@ -40,6 +40,7 @@ from mcp.jwt_brand import resolve_brand_mark_for_request
 from mcp.sutui_tokens import (
     next_sutui_server_token,
     next_sutui_server_token_with_pool,
+    sutui_pool_key_for_brand,
     sutui_token_ref_from_secret,
 )
 
@@ -1887,7 +1888,8 @@ async def _call_upstream_mcp_tool(
         if not token:
             token = await next_sutui_server_token(brand_mark=brand_mark)
         if not token:
-            return {"error": {"message": "xskill/速推 Token 未配置或当前品牌池为空。请配置 SUTUI_SERVER_TOKENS_BIHUO / SUTUI_SERVER_TOKENS_YINGSHI（及站内探测可选 SUTUI_SERVER_TOKEN）。终端用户须为 bihuo/yingshi，无 USER 兜底。MCP 需与 Backend 共用 SECRET_KEY 以解析 JWT brand_mark。"}}
+            pool_key = sutui_pool_key_for_brand(brand_mark)
+            return {"error": {"message": f"xskill/速推 Token 未配置或当前 OEM 品牌池为空（pool={pool_key}）。MCP 需与 Backend 共用 SECRET_KEY 以解析 JWT brand_mark。"}}
         auth_headers["Authorization"] = f"Bearer {token}"
         # 实测 xskill MCP HTTP 在 generate 返回体序列化时抛 Decimal 错误；create/query 走 REST 稳定
         if tool_name in ("generate", "get_result"):
@@ -3751,18 +3753,6 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 return [{"type": "text", "text": f"能力配置缺失 upstream_tool: {capability_id}"}], True
             upstream_name = str(cfg.get("upstream") or "sutui").strip()
             upstream_url = upstream_urls.get(upstream_name, "").strip()
-            if upstream_name == "sutui":
-                _bm = (user_brand_mark or "").strip().lower()
-                if _bm not in ("bihuo", "yingshi"):
-                    return [
-                        {
-                            "type": "text",
-                            "text": (
-                                "当前账号未绑定必火(bihuo)或影视(yingshi)品牌，无法使用速推算力；"
-                                "无通用兜底。请使用对应品牌安装包注册/登录，或联系管理员写入 brand_mark 后重新登录。"
-                            ),
-                        }
-                    ], True
             sutui_token: Optional[str] = None
             sutui_pool_for_billing = ""
             sutui_token_ref_for_billing = ""
@@ -3775,8 +3765,8 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         {
                             "type": "text",
                             "text": (
-                                "速推 Token 未配置或当前品牌池为空。请配置 SUTUI_SERVER_TOKENS_BIHUO / "
-                                "SUTUI_SERVER_TOKENS_YINGSHI 后重试。"
+                                "速推 Token 未配置或当前 OEM 品牌映射的物理 Token 池为空。"
+                                f"当前 pool={sutui_pool_for_billing or 'none'}。"
                             ),
                         }
                     ], True

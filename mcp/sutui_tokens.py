@@ -1,11 +1,12 @@
-"""服务器侧速推 Token：仅 bihuo / yingshi 两池；无品牌或非这两类不提供 Token（无 USER 兜底）。
+"""Server-side Sutui token pools shared by OEM brands.
 
-环境变量：
-- 必火：SUTUI_SERVER_TOKENS_BIHUO、SUTUI_SERVER_TOKEN_BIHUO
-- 影视：SUTUI_SERVER_TOKENS_YINGSHI、SUTUI_SERVER_TOKEN_YINGSHI
-- 兼容（仅站内 LLM 探测等 internal 路径）：SUTUI_SERVER_TOKENS、SUTUI_SERVER_TOKEN、sutui_config.json
+Physical pools use ``SUTUI_SERVER_TOKENS_<POOL>`` or
+``SUTUI_SERVER_TOKEN_<POOL>``. OEM brands use their same-name pool when one is
+configured; otherwise they inherit ``SUTUI_DEFAULT_BRAND_POOL`` (``bihuo`` by
+default). ``SUTUI_BRAND_POOL_MAP`` can explicitly map brands to pools as JSON,
+for example ``{"daka":"bihuo","another_brand":"yingshi"}``.
 
-不再读取 SUTUI_SERVER_TOKENS_USER（无品牌用户不允许走速推）。
+Legacy unscoped tokens remain internal-probe-only and are never a user fallback.
 """
 from __future__ import annotations
 
@@ -13,11 +14,13 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 _sutui_token_lock = asyncio.Lock()
 _sutui_pool_index: dict[str, int] = {}
+_BRAND_OR_POOL_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
 
 def _load_sutui_token_from_file() -> str:
@@ -66,6 +69,52 @@ def get_sutui_tokens_list_yingshi() -> List[str]:
     return _parse_pool("SUTUI_SERVER_TOKENS_YINGSHI", "SUTUI_SERVER_TOKEN_YINGSHI")
 
 
+def _normalized_brand_or_pool(raw: Optional[str]) -> str:
+    value = str(raw or "").strip().lower().replace("-", "_")
+    return value if _BRAND_OR_POOL_RE.fullmatch(value) else ""
+
+
+def _configured_brand_pool_map() -> Dict[str, str]:
+    raw = os.environ.get("SUTUI_BRAND_POOL_MAP", "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    result: Dict[str, str] = {}
+    for brand, pool in data.items():
+        brand_key = _normalized_brand_or_pool(str(brand))
+        pool_key = _normalized_brand_or_pool(str(pool))
+        if brand_key and pool_key:
+            result[brand_key] = pool_key
+    return result
+
+
+def _tokens_for_pool(pool_key: str) -> List[str]:
+    key = _normalized_brand_or_pool(pool_key)
+    if not key:
+        return []
+    suffix = key.upper()
+    return _parse_pool(f"SUTUI_SERVER_TOKENS_{suffix}", f"SUTUI_SERVER_TOKEN_{suffix}")
+
+
+def sutui_pool_key_for_brand(brand_mark: Optional[str]) -> str:
+    """Resolve any valid OEM brand to a configured physical token pool."""
+    brand = _normalized_brand_or_pool(brand_mark)
+    if not brand:
+        return "none"
+    explicit = _configured_brand_pool_map().get(brand)
+    if explicit:
+        return explicit
+    if brand in {"bihuo", "yingshi"} or _tokens_for_pool(brand):
+        return brand
+    default_pool = _normalized_brand_or_pool(os.environ.get("SUTUI_DEFAULT_BRAND_POOL") or "bihuo")
+    return default_pool or "none"
+
+
 def sutui_token_ref_from_secret(token: Optional[str]) -> str:
     """对账用：完整 sk 的短 SHA256 前缀（不可逆），勿写入日志明文。"""
     t = (token or "").strip()
@@ -84,13 +133,9 @@ def sutui_token_recon_meta(token: Optional[str], pool_key: str) -> Dict[str, Any
 
 
 def _tokens_and_pool_key_user(*, brand_mark: Optional[str]) -> Tuple[str, List[str]]:
-    """终端用户：仅 bihuo / yingshi；池为空则无 Token，不使用 USER/legacy 兜底。"""
-    b = (brand_mark or "").strip().lower()
-    if b == "bihuo":
-        return "bihuo", get_sutui_tokens_list_bihuo()
-    if b == "yingshi":
-        return "yingshi", get_sutui_tokens_list_yingshi()
-    return "none", []
+    """Resolve an OEM brand without falling back to unscoped legacy tokens."""
+    pool_key = sutui_pool_key_for_brand(brand_mark)
+    return pool_key, _tokens_for_pool(pool_key)
 
 
 def _internal_probe_pool_and_list() -> Tuple[str, List[str]]:
@@ -112,7 +157,7 @@ def _internal_probe_token_list() -> List[str]:
 
 
 async def next_sutui_server_token_with_pool(*, brand_mark: Optional[str] = None) -> Tuple[Optional[str], str]:
-    """终端请求：返回 (token, 池名)；无 token 时第二个值为逻辑池名（none/bihuo/yingshi）。"""
+    """Return ``(token, physical_pool)`` for any valid OEM brand."""
     pool_key, lst = _tokens_and_pool_key_user(brand_mark=brand_mark)
     if not lst:
         return None, pool_key
@@ -120,7 +165,7 @@ async def next_sutui_server_token_with_pool(*, brand_mark: Optional[str] = None)
 
 
 async def next_sutui_server_token(*, brand_mark: Optional[str] = None) -> Optional[str]:
-    """终端请求：brand_mark 必须为 bihuo/yingshi 且对应池已配置。"""
+    """Return a token from the brand's resolved physical pool."""
     t, _ = await next_sutui_server_token_with_pool(brand_mark=brand_mark)
     return t
 

@@ -11,6 +11,15 @@
 5. Background work inherits brand from its user/JWT. New Online builds also send `X-Lobster-Brand`; the server must still accept old builds that only carry the signed JWT.
 6. User data remains scoped by `user_id`. Login identities, SMS challenges, OAuth identities, installation IDs, and mobile device IDs are additionally brand-scoped where they exist before authenticated user context.
 
+## Shared Upstream Pools
+
+OEM identity and physical upstream accounts are separate concerns. A valid OEM brand must never be rejected by a hardcoded brand allowlist.
+
+- A brand uses its same-name `SUTUI_SERVER_TOKENS_<BRAND>` pool when configured.
+- Otherwise it inherits `SUTUI_DEFAULT_BRAND_POOL`, which defaults to `bihuo`.
+- `SUTUI_BRAND_POOL_MAP` can explicitly map any brand to a shared or dedicated physical pool without a code change.
+- Empty/invalid brand claims still receive no user token, and legacy unscoped tokens remain internal-probe-only.
+
 ## Client Coverage
 
 | Client or transport | Brand propagation |

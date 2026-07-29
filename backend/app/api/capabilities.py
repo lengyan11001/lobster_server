@@ -18,6 +18,8 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from mcp.sutui_tokens import sutui_pool_key_for_brand
+
 from ..core.config import settings
 from ..db import get_db
 from .auth import get_current_user, brand_mark_for_jwt_claim
@@ -255,19 +257,16 @@ def _estimate_pipeline_total_user_price(
 
 
 def _require_sutui_brand_for_billing(user: User, *, upstream: str) -> None:
-    """速推上游计费时 JWT 须为 bihuo/yingshi；无品牌或非两池不允许预扣/按次扣费。"""
+    """Sutui billing requires a valid OEM brand with a physical token pool."""
     if not _should_deduct_credits():
         return
     if (upstream or "").strip() != "sutui":
         return
     bm = brand_mark_for_jwt_claim(getattr(user, "brand_mark", None))
-    if bm not in ("bihuo", "yingshi"):
+    if sutui_pool_key_for_brand(bm) == "none":
         raise HTTPException(
             status_code=403,
-            detail=(
-                "账号未绑定必火/影视品牌，无法使用速推算力；无通用兜底。"
-                "请使用对应品牌客户端注册或联系管理员补全品牌后重新登录。"
-            ),
+            detail="账号未绑定有效 OEM 品牌，无法使用速推算力，请重新登录。",
         )
 
 
