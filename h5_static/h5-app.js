@@ -31,6 +31,9 @@
       taskEditId: "",
       runListOffset: 0,
       runListHasNext: false,
+      runListTotal: 0,
+      runListLoading: false,
+      runListRequestSeq: 0,
       runDetailBackTab: "runList",
       taskDetailBackTab: "taskList",
       taskListBackTab: "profile",
@@ -41,6 +44,12 @@
       agentManageBackTab: "profile",
       workListScope: { type: "all", label: "全部记录" },
       workListScopeOptions: [],
+      workListPageSize: 20,
+      workListVisibleCount: 20,
+      workListAvailableCount: 0,
+      workListHasMore: false,
+      workListLoading: false,
+      workListLoadFailed: false,
       historyItems: [],
       socialLeadJobs: [],
       linkedinJobs: [],
@@ -1750,6 +1759,9 @@
       const next = scope || { type: "all", label: "全部记录" };
       state.workListScope = next;
       state.workListScopeOptions = options && options.length ? options : workScopeOptions(next);
+      state.workListVisibleCount = state.workListPageSize;
+      state.workListHasMore = true;
+      state.workListLoadFailed = false;
       renderWorkScopeBar();
       renderWorkList();
     }
@@ -5643,17 +5655,24 @@
       const daysBox = $("workflowCalendarDays");
       if (!daysBox) return;
       const selected = parseDateKey(workflowSelectedDateKey());
-      const start = addDateDays(selected, -((selected.getDay() + 6) % 7));
       const today = todayDateKey();
       const selectedKey = workflowSelectedDateKey();
-      daysBox.innerHTML = Array.from({ length: 7 }, (_item, idx) => {
-        const d = addDateDays(start, idx);
+      const year = selected.getFullYear();
+      const month = selected.getMonth();
+      const first = new Date(year, month, 1);
+      const leadingBlanks = (first.getDay() + 6) % 7;
+      const dayCount = new Date(year, month + 1, 0).getDate();
+      const monthTitle = $("workflowCalendarMonth");
+      if (monthTitle) monthTitle.textContent = `${year}年 ${month + 1}月`;
+      const blanks = Array.from({ length: leadingBlanks }, () => `<span class="workflow-calendar-blank" aria-hidden="true"></span>`);
+      const days = Array.from({ length: dayCount }, (_item, idx) => {
+        const d = new Date(year, month, idx + 1);
         const key = localDateKey(d);
         return `<button class="workflow-calendar-day${key === selectedKey ? " active" : ""}${key === today ? " today" : ""}" type="button" data-workflow-date="${escapeHtml(key)}">
-          <span>${escapeHtml(dayShortLabel(d))}</span>
           <strong>${escapeHtml(String(d.getDate()))}</strong>
         </button>`;
-      }).join("");
+      });
+      daysBox.innerHTML = [...blanks, ...days].join("");
     }
 
     function secretaryAbilityCount(department) {
@@ -7347,7 +7366,7 @@
       });
       if (scopedLinkedinJobs.length) platforms.add("LinkedIn");
       if (scopedWechatJobs.length) platforms.add("视频号");
-      const current = runs.filter(isActiveRun).slice(0, 8).map((row) => ({
+      const current = runs.filter(isActiveRun).map((row) => ({
         type: "current",
         runId: row.id || "",
         time: row.started_at || row.claimed_at || row.created_at,
@@ -7358,7 +7377,7 @@
         meta: runWorkMeta(row),
         actionTaskId: "",
       }));
-      const done = runs.filter((row) => !isActiveRun(row)).slice(0, 18).map((row) => ({
+      const done = runs.filter((row) => !isActiveRun(row)).map((row) => ({
         type: String(row.status).toLowerCase() === "failed" ? "failed" : "done",
         runId: row.id || "",
         time: row.finished_at || row.updated_at || row.created_at,
@@ -7369,7 +7388,7 @@
         meta: (row.error || row.result_text || (row.progress && (row.progress.text || row.progress.message)) || capabilityName(taskCapabilityId(row) || row.task_kind) || "已记录").slice(0, 90),
         actionTaskId: "",
       }));
-      const messages = (state.historyItems || []).filter((entry) => messageMatchesWorkScope(entry, scope)).slice(-18).map((entry) => {
+      const messages = (state.historyItems || []).filter((entry) => messageMatchesWorkScope(entry, scope)).map((entry) => {
         const row = entry && entry.message ? entry.message : entry;
         const status = String((row && row.status) || "").toLowerCase();
         const progress = latestProgressTextForMessage(entry);
@@ -7389,16 +7408,38 @@
         ...scopedLinkedinJobs.map((job) => workbenchJobItem(job, "linkedin")),
         ...scopedWechatJobs.map((job) => workbenchJobItem(job, "wechat")),
       ].filter(Boolean);
-      const items = [...current, ...workbenchJobs, ...done, ...messages]
+      const itemMap = new Map();
+      [...current, ...workbenchJobs, ...done, ...messages]
         .filter((item) => item.title)
         .sort((a, b) => workSortTime(b) - workSortTime(a))
-        .slice(0, 80);
-      if ($("workListSubtitle")) $("workListSubtitle").textContent = `查询：${(scope && scope.label) || "全部记录"} · ${items.length} 条`;
-      if (!items.length) {
+        .forEach((item) => {
+          const key = item.runId
+            ? `run:${item.runId}`
+            : [item.type || "record", item.title || "", workDisplayTime(item) || "", item.meta || ""].join("|");
+          if (!itemMap.has(key)) itemMap.set(key, item);
+        });
+      const items = Array.from(itemMap.values());
+      state.workListAvailableCount = items.length;
+      const visibleCount = Math.max(state.workListPageSize, state.workListVisibleCount || state.workListPageSize);
+      const visibleItems = items.slice(0, visibleCount);
+      state.workListHasMore = items.length > visibleItems.length || state.runListHasNext;
+      if ($("workListSubtitle")) $("workListSubtitle").textContent = `查询：${(scope && scope.label) || "全部记录"} · ${visibleItems.length} 条`;
+      syncWorkListLoadState();
+      if (
+        document.querySelector("#workListView.active")
+        && items.length < visibleCount
+        && state.runListHasNext
+        && !state.workListLoading
+        && !state.runListLoading
+        && !state.workListLoadFailed
+      ) {
+        queueMicrotask(() => loadMoreWorkList());
+      }
+      if (!visibleItems.length) {
         timeline.innerHTML = `<div class="office-empty">当前查询条件下暂无工作记录。</div>`;
         return;
       }
-      timeline.innerHTML = items.map((item) => `<div class="work-node">
+      timeline.innerHTML = visibleItems.map((item) => `<div class="work-node">
         <div class="work-time"><strong>${escapeHtml(timeLabel(workDisplayTime(item)))}</strong><span>${escapeHtml(fmtTime(workDisplayTime(item)))}</span></div>
         <div class="work-card ${escapeHtml(item.type)}" ${item.runId ? `data-open-run-detail="${escapeHtml(item.runId)}"` : ""}>
           <div class="work-card-top"><div class="work-card-title">${escapeHtml(item.title)}</div><span class="work-badge">${escapeHtml(item.badge)}</span></div>
@@ -7406,6 +7447,68 @@
           ${item.actionTaskId ? `<div class="work-card-actions"><button type="button" data-run-task-now="${escapeHtml(item.actionTaskId)}">立即执行</button></div>` : ""}
         </div>
       </div>`).join("");
+    }
+
+    function syncWorkListLoadState() {
+      const box = $("workListLoadState");
+      if (!box) return;
+      box.classList.toggle("loading", !!state.workListLoading);
+      box.classList.toggle("complete", !state.workListLoading && !state.workListHasMore);
+      box.classList.toggle("failed", !!state.workListLoadFailed);
+      box.textContent = state.workListLoading
+        ? "正在加载..."
+        : (state.workListLoadFailed
+          ? "加载失败，点击重试"
+          : (state.workListHasMore ? "上滑加载更多" : (state.workListAvailableCount ? "已经到底了" : "")));
+    }
+
+    async function loadMoreWorkList() {
+      if (!document.querySelector("#workListView.active") || state.workListLoading || state.runListLoading) return;
+      const pageSize = state.workListPageSize;
+      if (state.workListAvailableCount > state.workListVisibleCount) {
+        state.workListVisibleCount += pageSize;
+        renderWorkList();
+        return;
+      }
+      if (!state.runListHasNext) {
+        state.workListHasMore = false;
+        syncWorkListLoadState();
+        return;
+      }
+      state.workListLoading = true;
+      state.workListLoadFailed = false;
+      syncWorkListLoadState();
+      try {
+        const loaded = await loadRuns({ append: true, reset: false, limit: pageSize, compact: true });
+        if (loaded === false) {
+          state.workListLoadFailed = true;
+          toast("工作记录加载失败，请稍后重试");
+          return;
+        }
+        state.workListVisibleCount += pageSize;
+      } catch (err) {
+        state.workListLoadFailed = true;
+        toast(err.message || "工作记录加载失败");
+      } finally {
+        state.workListLoading = false;
+        renderWorkList();
+      }
+    }
+
+    function setupWorkListInfiniteScroll() {
+      const sentinel = $("workListLoadState");
+      if (!sentinel) return;
+      if ("IntersectionObserver" in window) {
+        if (state.workListObserver) state.workListObserver.disconnect();
+        state.workListObserver = new IntersectionObserver((entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) loadMoreWorkList();
+        }, { root: null, rootMargin: "0px 0px 220px 0px", threshold: 0.01 });
+        state.workListObserver.observe(sentinel);
+        return;
+      }
+      window.addEventListener("scroll", () => {
+        if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 220) loadMoreWorkList();
+      }, { passive: true });
     }
 
     function ipTaskLabel(task) {
@@ -8486,6 +8589,7 @@
 
     function switchTab(tab) {
       const key = tab || "office";
+      const previousViewId = (document.querySelector(".view.active") || {}).id || "";
       document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
       document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
       syncDesignerBottomNav(key);
@@ -8525,6 +8629,9 @@
       $("topbar").classList.toggle("subpage", key !== "office");
       $("topbar").classList.toggle("office-page", key === "office");
       $("topbar").classList.toggle("voice-page", key === "voice");
+      if (previousViewId !== `${key}View` && key !== "messages") {
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      }
       syncScrollTopButton(key);
       if (key === "office") {
         renderOfficeEmployees();
@@ -8578,11 +8685,15 @@
       if (key === "taskList") loadTasks({ reset: true });
       if (key === "runList") loadRuns({ reset: true });
       if (key === "workList") {
+        state.workListVisibleCount = state.workListPageSize;
+        state.workListAvailableCount = 0;
+        state.workListHasMore = true;
+        state.workListLoadFailed = false;
         renderWorkList();
         Promise.all([
-          loadTasks({ reset: true, limit: 40 }),
-          loadRuns({ reset: true, limit: 20, compact: true }),
-          loadWorkbenchJobs({ limit: 80 }),
+          loadTasks({ reset: true, limit: state.workListPageSize }),
+          loadRuns({ reset: true, limit: state.workListPageSize, compact: true }),
+          loadWorkbenchJobs({ limit: state.workListPageSize }),
         ]).then(renderWorkList);
       }
       if (key === "home") {
@@ -14794,20 +14905,33 @@
       const compact = !!options.compact;
       const box = $("runList");
       if (!state.token) return;
+      if (append && state.runListLoading) return false;
+      const requestId = ++state.runListRequestSeq;
+      state.runListLoading = true;
       if (reset) {
         state.runListOffset = 0;
         state.runListHasNext = false;
+        state.runListTotal = 0;
         state.workflowRunDateLoaded = {};
       }
       const offset = append ? state.runListOffset : 0;
       if (box && !append) box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
         const data = await api(`/api/scheduled-tasks/runs?limit=${pageSize}&offset=${offset}${compact ? "&compact=1" : ""}`);
+        if (requestId !== state.runListRequestSeq) return false;
         const rows = Array.isArray(data.runs) ? data.runs : [];
         const pagination = data.pagination || {};
         state.runListOffset = offset + rows.length;
         state.runListHasNext = !!pagination.has_next;
-        state.runs = append ? (state.runs || []).concat(rows) : rows;
+        state.runListTotal = Number(pagination.total || 0);
+        const rowsById = new Map();
+        (append ? (state.runs || []) : []).forEach((row) => {
+          if (row && row.id) rowsById.set(String(row.id), row);
+        });
+        rows.forEach((row) => {
+          if (row && row.id) rowsById.set(String(row.id), { ...(rowsById.get(String(row.id)) || {}), ...row });
+        });
+        state.runs = Array.from(rowsById.values()).sort((a, b) => itemTimeMs(b.updated_at, b.created_at) - itemTimeMs(a.updated_at, a.created_at));
         renderOfficeEmployees();
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
@@ -14831,15 +14955,26 @@
           </div>`;
         }).join("");
         $("loadMoreRunsBtn")?.classList.toggle("hidden", !state.runListHasNext);
+        return true;
       } catch (err) {
-        state.runs = [];
-        state.runListHasNext = false;
+        if (requestId !== state.runListRequestSeq) return false;
+        if (!append) {
+          state.runs = [];
+          state.runListHasNext = false;
+          state.runListTotal = 0;
+        }
         renderOfficeEmployees();
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
         if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
-        if (box) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
-        $("loadMoreRunsBtn")?.classList.add("hidden");
+        if (box && !append) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
+        if (!append) $("loadMoreRunsBtn")?.classList.add("hidden");
+        return false;
+      } finally {
+        if (requestId === state.runListRequestSeq) {
+          state.runListLoading = false;
+          syncWorkListLoadState();
+        }
       }
     }
 
@@ -15060,6 +15195,10 @@
     $("abilityWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(abilityScope(activeAbilityLookup())));
     $("scrollTopBtn")?.addEventListener("click", () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" }));
     window.addEventListener("scroll", () => syncScrollTopButton(), { passive: true });
+    setupWorkListInfiniteScroll();
+    $("workListLoadState")?.addEventListener("click", () => {
+      if (!state.workListLoading && (state.workListHasMore || state.workListLoadFailed)) loadMoreWorkList();
+    });
     $("workScopeChips")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-work-scope]");
       if (!btn) return;

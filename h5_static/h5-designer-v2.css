@@ -3268,6 +3268,662 @@ body::before {
   line-height: 1.45;
 }
 
+/* Designer refresh: home marketing, employee workflow, work history and profile. */
+#officeView .marketing-creation-section {
+  position: relative;
+  gap: 12px;
+  padding: 24px 20px 20px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .82);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(246, 249, 255, .3), rgba(231, 239, 250, .4)),
+    url("/h5-static/designer-ai-marketing-bg.png") center / cover no-repeat;
+  box-shadow: 0 14px 34px rgba(30, 58, 138, .12);
+}
+
+#officeView .marketing-creation-section .office-section-head,
+#officeView .marketing-creation-subtitle,
+#officeView .home-marketing-grid {
+  position: relative;
+  z-index: 1;
+}
+
+#officeView .marketing-creation-section .office-section-head {
+  padding: 0;
+}
+
+#officeView .marketing-creation-section .office-section-head h2 {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+#officeView .marketing-creation-subtitle {
+  margin: -4px 0 8px 18px;
+  color: #334155;
+  font-size: 11px;
+}
+
+#officeView .home-marketing-grid {
+  gap: 10px;
+}
+
+#officeView .home-marketing-card {
+  min-height: 126px;
+  padding: 16px;
+  border-color: rgba(255, 255, 255, .88);
+  border-radius: 20px;
+  background: rgba(248, 251, 255, .92);
+  box-shadow: 0 8px 22px rgba(43, 76, 130, .1);
+  backdrop-filter: blur(10px);
+}
+
+#officeView .home-marketing-card.digital-human,
+#officeView .home-marketing-card.copy {
+  min-height: 88px;
+}
+
+#officeView .home-marketing-card.digital-human {
+  border: 2px solid rgba(255, 255, 255, .76);
+  background: linear-gradient(112deg, #2253de, #286ce8);
+}
+
+#officeView .home-marketing-card.copy {
+  background: rgba(244, 249, 255, .94);
+}
+
+#workflowView .workflow-shell {
+  display: grid;
+  gap: 14px;
+  padding-bottom: 28px;
+}
+
+#workflowView .workflow-control-card,
+#workflowView .workflow-day-board,
+#workflowView .workflow-editor-card {
+  border: 1px solid rgba(255, 255, 255, .78);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 10px 28px rgba(30, 58, 138, .07);
+  backdrop-filter: blur(14px);
+}
+
+#workflowView .workflow-control-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+#workflowView .workflow-head {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+#workflowView .workflow-device-box {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+#workflowView .workflow-device-box label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+#workflowView .workflow-device-box select {
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 28px 0 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 11px;
+  color: #475569;
+  background-color: #fff;
+  font-size: 12px;
+}
+
+#workflowView #workflowActiveText {
+  max-width: 112px;
+  overflow: hidden;
+  padding: 6px 9px;
+  border-radius: 8px;
+  color: #2563eb;
+  background: #eff6ff;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#workflowView .workflow-actions {
+  position: static !important;
+  inset: auto !important;
+  z-index: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, .72fr);
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+#workflowView .workflow-actions button {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 8px;
+  border-radius: 11px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#workflowView .workflow-actions #workflowActivateBtn {
+  color: #fff;
+  background: #2563eb;
+  box-shadow: 0 7px 16px rgba(37, 99, 235, .22);
+}
+
+#workflowView .workflow-head-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+#workflowView .workflow-head-actions button {
+  min-height: 36px;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+#workflowView .workflow-head-actions #workflowOpenAddNodeBtn::before {
+  content: "+";
+  margin-right: 6px;
+  color: #2563eb;
+  font-size: 16px;
+}
+
+#workflowView .workflow-head-actions #workflowTemplateListBtn::before {
+  content: "≡";
+  margin-right: 6px;
+  color: #2563eb;
+  font-size: 15px;
+}
+
+#workflowView .workflow-day-board {
+  padding: 14px 12px 16px;
+}
+
+#workflowView .workflow-calendar-month {
+  display: block;
+  margin: 0 0 14px 2px;
+  color: #1e293b;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+#workflowView .workflow-calendar-weekdays,
+#workflowView .workflow-calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px 4px;
+}
+
+#workflowView .workflow-calendar-weekdays {
+  margin-bottom: 7px;
+  color: #94a3b8;
+  font-size: 10px;
+  text-align: center;
+}
+
+#workflowView .workflow-calendar-days {
+  padding: 0;
+  overflow: visible;
+}
+
+#workflowView .workflow-calendar-day,
+#workflowView .workflow-calendar-blank {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+}
+
+#workflowView .workflow-calendar-day {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #334155;
+  background: transparent;
+  box-shadow: none;
+  aspect-ratio: 1;
+}
+
+#workflowView .workflow-calendar-day strong {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+#workflowView .workflow-calendar-day.today:not(.active) {
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+#workflowView .workflow-calendar-day.active {
+  color: #fff;
+  background: #2563eb;
+  box-shadow: 0 6px 14px rgba(37, 99, 235, .24);
+}
+
+#workflowView .workflow-editor-card {
+  padding: 13px;
+}
+
+#workflowView .workflow-template-name label {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+#workflowView .workflow-template-name input {
+  min-height: 42px;
+  border-color: #e8edf4;
+  border-radius: 12px;
+  background: #f8fafc;
+  font-size: 13px;
+}
+
+#workListView .work-shell {
+  display: grid;
+  gap: 18px;
+  padding: 2px 0 92px;
+}
+
+#workListView .work-filter-bar {
+  gap: 13px;
+  padding: 20px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .75);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 110% -20%, rgba(191, 219, 254, .34), transparent 42%),
+    rgba(255, 255, 255, .94);
+  box-shadow: 0 10px 28px rgba(30, 58, 138, .07);
+}
+
+#workListView .work-filter-bar strong {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+#workListView .work-filter-bar span {
+  margin-top: 5px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+#workListView .work-scope-chips {
+  gap: 7px;
+  padding: 0;
+}
+
+#workListView .work-scope-chips button {
+  min-height: 34px;
+  padding: 0 16px;
+  border-radius: 999px;
+  color: #64748b;
+  background: #eff4fb;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#workListView .work-scope-chips button.active {
+  color: #fff;
+  background: #2563eb;
+  box-shadow: 0 6px 14px rgba(37, 99, 235, .2);
+}
+
+#workListView .work-timeline {
+  gap: 0;
+  padding: 2px 0 0;
+}
+
+#workListView .work-node {
+  grid-template-columns: 66px minmax(0, 1fr);
+  gap: 22px;
+}
+
+#workListView .work-time {
+  gap: 5px;
+  padding-top: 15px;
+  color: #94a3b8;
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: right;
+}
+
+#workListView .work-time strong {
+  color: #2563eb;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+#workListView .work-time span {
+  max-width: 64px;
+  font-size: 9px;
+}
+
+#workListView .work-time::after {
+  right: -15px;
+  top: 16px;
+  width: 10px;
+  height: 10px;
+  background: #2563eb;
+  box-shadow: 0 0 0 4px #f0f4f8;
+}
+
+#workListView .work-time::before {
+  right: -11px;
+  top: 26px;
+  bottom: -1px;
+  width: 1px;
+  background: #d9e4f3;
+}
+
+#workListView .work-node:last-child .work-time::before {
+  display: none;
+}
+
+#workListView .work-card {
+  gap: 9px;
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, .82);
+  border-left-width: 1px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 8px 24px rgba(30, 58, 138, .065);
+}
+
+#workListView .work-card.current,
+#workListView .work-card.future,
+#workListView .work-card.scheduled,
+#workListView .work-card.done,
+#workListView .work-card.failed {
+  border-left-width: 1px;
+}
+
+#workListView .work-card-title {
+  color: #1e293b;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+#workListView .work-badge {
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+#workListView .work-meta {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow-wrap: anywhere;
+}
+
+#workListView .work-list-load-state {
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+#workListView .work-list-load-state.loading {
+  color: #2563eb;
+}
+
+#workListView .work-list-load-state.failed {
+  color: #e97316;
+}
+
+#profileView .profile-grid {
+  display: grid;
+  gap: 14px;
+  padding: 2px 0 92px;
+}
+
+#profileView .profile-head {
+  min-height: 92px;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, .24);
+  border-radius: 22px;
+  color: #fff;
+  background: linear-gradient(135deg, #2f6cf2, #3746ef);
+  box-shadow: 0 12px 28px rgba(37, 99, 235, .2);
+}
+
+#profileView .profile-avatar {
+  width: 52px;
+  height: 52px;
+  border: 1px solid rgba(255, 255, 255, .24);
+  border-radius: 15px;
+  color: #fff;
+  background: rgba(255, 255, 255, .15);
+  box-shadow: inset 0 1px 12px rgba(255, 255, 255, .08);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+#profileView .profile-identity {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+}
+
+#profileView .profile-head h2 {
+  overflow: hidden;
+  margin: 0;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#profileView .profile-head .hint {
+  color: rgba(255, 255, 255, .84);
+  font-size: 10px;
+}
+
+#profileView .profile-head .hint::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #34d399;
+  vertical-align: 1px;
+}
+
+#profileView .settings {
+  display: grid;
+  gap: 0;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, .76);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 10px 28px rgba(30, 58, 138, .06);
+}
+
+#profileView .setting-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 13px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+#profileView .setting-row + .setting-row,
+#profileView .profile-entry + .profile-entry {
+  border-top: 1px solid #f1f5f9;
+}
+
+#profileView .profile-setting-icon,
+#profileView .profile-entry-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+#profileView .profile-setting-icon svg,
+#profileView .profile-entry-icon svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#profileView .setting-row strong,
+#profileView .profile-entry strong {
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+#profileView .setting-row .hint,
+#profileView .profile-entry small {
+  margin-top: 3px;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+#profileView .setting-row button,
+#profileView .profile-entry > b {
+  min-height: 30px;
+  padding: 0 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  color: #64748b;
+  background: #fff;
+  box-shadow: none;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+#profileView .profile-account-actions > .danger {
+  min-height: 44px;
+  margin: 4px 6px 0;
+  border-top: 1px solid #f1f5f9;
+  border-radius: 0;
+  color: #f43f5e;
+  background: transparent;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+#profileView .profile-entry {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 13px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#profileView .profile-entry > span:not(.profile-entry-icon) {
+  min-width: 0;
+}
+
+#profileView .profile-entry > b {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  color: #2563eb;
+  border: 0;
+  background: #eff6ff;
+  font-style: normal;
+}
+
+#profileView .agent-profile-entry {
+  opacity: 1;
+}
+
+#profileView .profile-entry-icon.tone-blue { color: #2563eb; background: #eff6ff; }
+#profileView .profile-entry-icon.tone-purple { color: #8b5cf6; background: #f5f3ff; }
+#profileView .profile-entry-icon.tone-orange { color: #f59e0b; background: #fffbeb; }
+#profileView .profile-entry-icon.tone-green { color: #10b981; background: #ecfdf5; }
+#profileView .profile-entry-icon.tone-slate { color: #94a3b8; background: #f1f5f9; }
+
+@media (max-width: 380px) {
+  #officeView .marketing-creation-section {
+    padding: 20px 14px 16px;
+  }
+
+  #workflowView .workflow-device-box {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  #workflowView #workflowActiveText {
+    grid-column: 1 / -1;
+    max-width: 100%;
+    justify-self: start;
+  }
+
+  #workListView .work-node {
+    grid-template-columns: 58px minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  #workListView .work-card {
+    padding: 14px;
+  }
+
+  #profileView .setting-row,
+  #profileView .profile-entry {
+    padding-inline: 10px;
+  }
+}
+
 #departmentView .marketing-entry-card.digital-human small {
   color: rgba(255, 255, 255, .82);
 }

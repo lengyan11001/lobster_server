@@ -9,7 +9,7 @@
   <link id="h5AppleIcon" rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
   <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260727-media-viewer-v2" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260727-ai-marketing-v3" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-designer-pages-v1" />
 </head>
 <body>
   <main class="shell">
@@ -205,12 +205,21 @@
 
       <section class="view" id="workflowView">
         <div class="workflow-shell">
-          <div class="workflow-head">
-            <div class="workflow-device-box">
-              <label for="workflowDeviceSelect">设备</label>
-              <select id="workflowDeviceSelect"></select>
-              <span id="workflowActiveText">未启用员工定制</span>
+          <div class="workflow-control-card">
+            <div class="workflow-head">
+              <div class="workflow-device-box">
+                <label for="workflowDeviceSelect">设备</label>
+                <select id="workflowDeviceSelect"></select>
+                <span id="workflowActiveText">未启用员工定制</span>
+              </div>
             </div>
+
+            <div class="workflow-actions">
+              <button class="ghost" type="button" id="workflowSaveTemplateBtn">保存模板</button>
+              <button type="button" id="workflowActivateBtn">启用到设备</button>
+              <button class="ghost" type="button" id="workflowStopBtn">停用</button>
+            </div>
+
             <div class="workflow-head-actions">
               <button type="button" id="workflowOpenAddNodeBtn">添加节点</button>
               <button class="ghost" type="button" id="workflowTemplateListBtn">模板列表</button>
@@ -219,6 +228,10 @@
 
           <div class="workflow-day-board">
             <div class="workflow-calendar">
+              <strong class="workflow-calendar-month" id="workflowCalendarMonth"></strong>
+              <div class="workflow-calendar-weekdays" aria-hidden="true">
+                <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+              </div>
               <div class="workflow-calendar-days" id="workflowCalendarDays"></div>
             </div>
           </div>
@@ -231,12 +244,6 @@
           </div>
 
           <div class="workflow-timeline" id="workflowTimeline"></div>
-
-          <div class="workflow-actions">
-            <button type="button" id="workflowSaveTemplateBtn">保存模板</button>
-            <button type="button" id="workflowActivateBtn">启用到当前设备</button>
-            <button class="ghost" type="button" id="workflowStopBtn">停用</button>
-          </div>
 
           <div class="workflow-template-drawer hidden" id="workflowTemplateDrawer">
             <div class="workflow-template-drawer-head">
@@ -408,6 +415,7 @@
           <div class="work-timeline" id="workTimeline">
             <div class="office-empty">暂无工作记录。</div>
           </div>
+          <div class="work-list-load-state" id="workListLoadState" aria-live="polite">上滑加载更多</div>
         </div>
       </section>
 
@@ -678,13 +686,16 @@
         <div class="profile-grid">
           <div class="panel profile-head">
             <div class="profile-avatar" id="profileAvatar">AI</div>
-            <div>
+            <div class="profile-identity">
               <h2 id="profileName">已登录</h2>
               <div class="hint" id="profileDeviceText">设备状态检查中</div>
             </div>
           </div>
-          <div class="panel settings">
+          <div class="panel settings profile-account-actions">
             <div class="setting-row">
+              <span class="profile-setting-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.55V21h-4v-.08a1.7 1.7 0 0 0-1.03-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.52-1H3v-4h.08A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.08V3h4v.08a1.7 1.7 0 0 0 1.03 1.52 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.24.6.83 1 1.52 1H21v4h-.08c-.69 0-1.28.4-1.52 1Z"></path></svg>
+              </span>
               <div>
                 <strong>设置</strong>
                 <div class="hint">消息和任务都走当前账号</div>
@@ -692,6 +703,9 @@
               <button class="ghost" type="button" id="refreshProfileBtn">刷新</button>
             </div>
             <div class="setting-row">
+              <span class="profile-setting-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"></rect><path d="M11 18h2"></path></svg>
+              </span>
               <div>
                 <strong>iPhone 桌面入口</strong>
                 <div class="hint">下载描述文件后，到系统设置里确认安装。</div>
@@ -702,8 +716,11 @@
             </div>
             <button class="danger" type="button" id="logoutBtn">退出登录</button>
           </div>
-          <div class="panel settings">
+          <div class="panel settings profile-business-menu">
             <button class="profile-entry" type="button" data-tab-target="mountedAccounts">
+              <span class="profile-entry-icon tone-blue" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><path d="M20 8v6m3-3h-6"></path></svg>
+              </span>
               <span>
                 <strong>平台账号</strong>
                 <small id="mountedAccountSummary">微信、发布中心、抖音获客</small>
@@ -711,6 +728,9 @@
               <b>进入</b>
             </button>
             <button class="profile-entry" type="button" data-tab-target="personalSettings">
+              <span class="profile-entry-icon tone-purple" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="m12 3 2.75 5.57 6.15.9-4.45 4.33 1.05 6.12L12 17.03l-5.5 2.89 1.05-6.12L3.1 9.47l6.15-.9L12 3Z"></path></svg>
+              </span>
               <span>
                 <strong>IP人设定位</strong>
                 <small>模板、关键词、同行账号和记忆文件</small>
@@ -718,6 +738,9 @@
               <b>进入</b>
             </button>
             <button class="profile-entry agent-profile-entry" type="button" data-tab-target="agentManage" id="profileAgentManageEntry">
+              <span class="profile-entry-icon tone-slate" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6"></path><path d="M7 3h7l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"></path><path d="M14 3v5h5"></path></svg>
+              </span>
               <span>
                 <strong>代理商管理</strong>
                 <small id="profileAgentManageMeta">查看下级用户，给下级授权员工定制、模板和记忆资料</small>
@@ -725,6 +748,9 @@
               <b>进入</b>
             </button>
             <button class="profile-entry" type="button" data-tab-target="taskList">
+              <span class="profile-entry-icon tone-orange" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+              </span>
               <span>
                 <strong>定时任务</strong>
                 <small>查看已创建的定时任务，进入后默认加载 10 条。</small>
@@ -732,6 +758,9 @@
               <b>进入</b>
             </button>
             <button class="profile-entry" type="button" data-tab-target="runList">
+              <span class="profile-entry-icon tone-green" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"></path><rect x="9" y="3" width="6" height="4" rx="2"></rect><path d="m9 14 2 2 4-4"></path></svg>
+              </span>
               <span>
                 <strong>执行记录</strong>
                 <small>查看任务执行结果，详情页再展示具体内容。</small>

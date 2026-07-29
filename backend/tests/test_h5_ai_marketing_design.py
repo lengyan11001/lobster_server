@@ -45,9 +45,29 @@ def test_ai_marketing_design_styles_are_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
     css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
 
-    assert "20260727-ai-marketing-v3" in html
+    assert "20260729-designer-pages-v1" in html
     assert ".home-marketing-grid" in css
     assert ".marketing-creation-grid" in css
     assert ".marketing-category-mode" in css
     assert ".marketing-tool-mode" in css
     assert "aspect-ratio: 1400 / 682" in css
+
+
+def test_home_marketing_uses_the_designer_background_asset():
+    css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
+    background = H5 / "designer-ai-marketing-bg.png"
+
+    assert background.is_file()
+    assert background.stat().st_size > 1_000_000
+    assert 'url("/h5-static/designer-ai-marketing-bg.png")' in css
+
+
+def test_work_history_uses_twenty_item_infinite_loading():
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'id="workListLoadState"' in html
+    assert "workListPageSize: 20" in script
+    assert "function loadMoreWorkList()" in script
+    assert "function setupWorkListInfiniteScroll()" in script
+    assert "new IntersectionObserver" in script
