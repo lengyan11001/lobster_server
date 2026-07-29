@@ -609,6 +609,19 @@ def _missing_local_bestseller_profile_fields(profile: Dict[str, Any]) -> List[st
     return missing
 
 
+def _server_asset_public_url(db: Session, *, user_id: int, asset_id: Any) -> str:
+    clean_asset_id = _clean_profile_text(asset_id, 64)
+    if not clean_asset_id:
+        return ""
+    row = (
+        db.query(Asset.source_url)
+        .filter(Asset.asset_id == clean_asset_id, Asset.user_id == user_id)
+        .first()
+    )
+    source_url = _clean_profile_text(row[0] if row else "", 2000)
+    return source_url if source_url.lower().startswith(("http://", "https://")) else ""
+
+
 def _enrich_local_bestseller_workflow_payload(
     db: Session,
     *,
@@ -628,6 +641,16 @@ def _enrich_local_bestseller_workflow_payload(
     merged_profile = {key: _clean_profile_text(value, 1000) for key, value in existing_profile.items() if _clean_profile_text(value, 1000)}
     # IP persona wins for employee workflows; old templates often carried placeholder profile values.
     merged_profile.update(persona_profile)
+    photo_asset_id = _clean_profile_text(merged_profile.get("photo_asset_id"), 64)
+    if photo_asset_id:
+        server_photo_url = _server_asset_public_url(db, user_id=target_user_id, asset_id=photo_asset_id)
+        if server_photo_url:
+            merged_profile["photo_url"] = server_photo_url
+        if _clean_profile_text(merged_profile.get("photo_url"), 2000).lower().startswith(("http://", "https://")):
+            # Older online clients try every supplied asset ID against their local database.
+            # Keep the server ID as metadata and send only the public URL in the execution profile.
+            params["profile_photo_source_asset_id"] = photo_asset_id
+            merged_profile.pop("photo_asset_id", None)
     params["profile"] = merged_profile
     try:
         days = int(params.get("days") or 30)
@@ -1694,6 +1717,14 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
     run_id = uuid.uuid4().hex
     server_side = _is_server_side_task(task)
     message_id = None if server_side else f"task_{run_id}"[:64]
+    run_payload = task.payload or {}
+    if task.task_kind == "client_workflow":
+        run_payload = _enrich_local_bestseller_workflow_payload(
+            db,
+            payload=dict(run_payload),
+            target_user_id=task.user_id,
+            now=now,
+        )
     run = ScheduledTaskRun(
         id=run_id,
         task_id=task.id,
@@ -1704,7 +1735,7 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
         title=task.title,
         task_kind=task.task_kind,
         content=task.content,
-        payload=task.payload or {},
+        payload=run_payload,
         status="pending",
         progress={"queued_at": now.isoformat()},
         h5_message_id=message_id,
