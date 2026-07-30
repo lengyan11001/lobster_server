@@ -3351,6 +3351,7 @@ body * {
 #workflowView .workflow-shell {
   display: grid;
   gap: 14px;
+  padding-top: 207px;
   padding-bottom: 28px;
 }
 
@@ -3365,12 +3366,21 @@ body * {
 }
 
 #workflowView .workflow-control-card {
-  position: sticky;
+  position: fixed;
   top: 76px;
-  z-index: 45;
+  left: max(20px, calc(50vw - 195px));
+  z-index: 190;
+  width: min(390px, calc(100vw - 40px));
   display: grid;
   gap: 10px;
   padding: 12px;
+}
+
+@media (max-width: 380px) {
+  #workflowView .workflow-control-card {
+    left: 14px;
+    width: calc(100vw - 28px);
+  }
 }
 
 #workflowView .workflow-head {

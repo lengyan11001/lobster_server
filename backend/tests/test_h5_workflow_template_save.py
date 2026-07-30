@@ -115,14 +115,19 @@ def test_workflow_action_menu_stays_above_children_and_closes_before_modal():
     assert ".workflow-node-card.task-menu-open .task-action-list" in styles
 
 
-def test_workflow_title_and_controls_stay_at_top():
+def test_workflow_title_and_controls_are_fixed_at_top():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     styles = (ROOT / "h5_static" / "h5-designer-v2.css").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
 
+    shell_start = styles.index("#workflowView .workflow-shell {")
+    shell_styles = styles[shell_start : shell_start + 180]
     control_start = styles.index("#workflowView .workflow-control-card {")
-    control_styles = styles[control_start : control_start + 220]
+    control_styles = styles[control_start : control_start + 320]
     assert 'workflow: ["我的AI员工", "24小时任务编排"]' in script
-    assert "position: sticky;" in control_styles
+    assert "padding-top: 207px;" in shell_styles
+    assert "position: fixed;" in control_styles
     assert "top: 76px;" in control_styles
-    assert "20260730-workflow-sticky-v1" in html
+    assert "left: max(20px, calc(50vw - 195px));" in control_styles
+    assert "width: min(390px, calc(100vw - 40px));" in control_styles
+    assert "20260730-workflow-fixed-v2" in html
