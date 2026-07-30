@@ -22,6 +22,17 @@ def test_ai_marketing_home_and_group_navigation_are_present():
     assert 'openAbilityView(parent.key, AI_MARKETING_CREATION_ID)' in script
 
 
+def test_ai_marketing_digital_human_exposes_duration_and_template_controls():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'workCheckboxHtml("workHiflyLongVideo", "生成长视频", false)' in script
+    assert 'workCheckboxHtml("workHiflyUseTemplate", "套用剪辑模板", false)' in script
+    assert 'id="workHiflyTemplateField"' in script
+    assert 'long_video: longVideo' in script
+    assert 'use_template: useTemplate' in script
+    assert 'if (useTemplate && !workValue("workHiflyTemplate"))' in script
+
+
 def test_bottom_create_button_opens_compact_creation_sheet():
     html = (H5 / "index.html").read_text(encoding="utf-8")
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")

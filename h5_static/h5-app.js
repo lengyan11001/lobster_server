@@ -5346,6 +5346,7 @@
             setTimeout(() => {
               renderWorkHiflyOptions();
               loadHiflyLibraries();
+              bindWorkHiflyControls();
             }, 0);
           }
         }
@@ -8746,10 +8747,16 @@
       setFieldValue("workComflyText", inner.task_text || inner.prompt || "");
       setFieldValue("workComflyStoryboardCount", inner.storyboard_count || "");
       setFieldValue("workComflyAutoSave", inner.auto_save !== false);
-      setFieldValue("workAvatar", inner.avatar || "");
-      setFieldValue("workVoice", inner.voice || "");
+      const hiflyParams = Object.keys(params).length ? params : inner;
+      setFieldValue("workAvatar", hiflyParams.virtualman_id || hiflyParams.avatar || "");
+      setFieldValue("workVoice", hiflyParams.voice || "");
       setFieldValue("workHiflyTitle", run && run.title || "数字人口播");
-      setFieldValue("workHiflyScript", inner.script || inner.prompt || "");
+      setFieldValue("workHiflyScript", hiflyParams.script || hiflyParams.prompt || "");
+      setFieldValue("workHiflyLongVideo", hiflyParams.long_video === true);
+      setFieldValue("workHiflyUseTemplate", hiflyParams.use_template === true);
+      if (hiflyParams.use_template === true) {
+        loadPersonalDigitalHumanTemplates(false).then(() => setFieldValue("workHiflyTemplate", hiflyParams.style_id || "")).catch(() => {});
+      }
       setFieldValue("abilityIpTemplate", payload.template_id || "");
       document.querySelectorAll("[data-ability-ip-daily-task]").forEach((el) => {
         const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
@@ -10317,7 +10324,13 @@
         const avatar = String((row && row.avatar) || "").trim();
         if (!avatar || seen.has(avatar)) return;
         seen.add(avatar);
-        out.push({ avatar, title: row.title || avatar, section: row.section_label || row.section || "" });
+        out.push({
+          avatar,
+          title: row.title || avatar,
+          section: row.section_label || row.section || "",
+          provider: String(row.provider || row.source || "").trim().toLowerCase(),
+          status: String(row.status || "").trim().toLowerCase(),
+        });
       });
       return out;
     }
@@ -11363,8 +11376,12 @@
         name: String(item.name || item.title || "未命名模板").trim() || "未命名模板",
         cover_url: personalDigitalHumanMediaUrl(item.cover_url || item.coverUrl || item.imageUrl),
         demo_url: personalDigitalHumanMediaUrl(item.demo_url || item.demoUrl || item.videoUrl),
-        pack_rules: item.pack_rules && typeof item.pack_rules === "object" ? { ...item.pack_rules } : {},
-        process_rules: item.process_rules && typeof item.process_rules === "object" ? { ...item.process_rules } : {},
+        materials: Array.isArray(item.materials) ? item.materials.map((row) => ({ ...row })) : [],
+        material_sound_switch: !!(item.material_sound_switch ?? item.materialSoundSwitch),
+        introduce_name: String(item.introduce_name || item.introduceName || "").trim(),
+        introduce_description: String(item.introduce_description || item.introduceDescription || "").trim(),
+        pack_rules: (item.pack_rules || item.packRules) && typeof (item.pack_rules || item.packRules) === "object" ? { ...(item.pack_rules || item.packRules) } : {},
+        process_rules: (item.process_rules || item.processRules) && typeof (item.process_rules || item.processRules) === "object" ? { ...(item.process_rules || item.processRules) } : {},
       };
     }
 
@@ -11372,6 +11389,7 @@
       const normalized = normalizePersonalDigitalHumanTemplate(item);
       return normalized ? {
         ...normalized,
+        materials: (normalized.materials || []).map((row) => ({ ...row })),
         pack_rules: { ...(normalized.pack_rules || {}) },
         process_rules: { ...(normalized.process_rules || {}) },
       } : null;
@@ -11481,6 +11499,7 @@
       } finally {
         state.personalDigitalHumanTemplatesLoading = false;
         renderPersonalDigitalHumanTemplatePicker();
+        renderWorkHiflyTemplateOptions();
       }
     }
 
@@ -12552,16 +12571,73 @@
     function renderWorkHiflyOptions() {
       const avatarSelects = [$("workAvatar"), $("workflowParamAvatar")].filter(Boolean);
       const voiceSelects = [$("workVoice"), $("workflowParamVoice")].filter(Boolean);
+      const shanjianRows = state.avatarRows.filter((row) => row.provider === "shanjian" && (!row.status || row.status === "success"));
       avatarSelects.forEach((avatarSel) => {
-        avatarSel.innerHTML = state.avatarRows.length
-          ? state.avatarRows.map((row) => `<option value="${escapeHtml(row.avatar)}">${escapeHtml(row.title)}</option>`).join("")
-          : `<option value="">暂无可用数字人</option>`;
+        avatarSel.innerHTML = shanjianRows.length
+          ? shanjianRows.map((row) => `<option value="${escapeHtml(row.avatar)}">${escapeHtml(row.title)}（2.0）</option>`).join("")
+          : `<option value="">暂无可用数字人 2.0</option>`;
       });
       voiceSelects.forEach((voiceSel) => {
         voiceSel.innerHTML = state.voiceRows.length
           ? state.voiceRows.map((row) => `<option value="${escapeHtml(row.voice)}">${escapeHtml(row.title)}</option>`).join("")
           : `<option value="">暂无可用声音</option>`;
       });
+    }
+
+    function renderWorkHiflyTemplateOptions() {
+      const select = $("workHiflyTemplate");
+      if (!select) return;
+      const selected = String(select.value || "").trim();
+      const rows = Array.isArray(state.personalDigitalHumanTemplates) ? state.personalDigitalHumanTemplates : [];
+      const statusOption = state.personalDigitalHumanTemplatesLoading
+        ? optionHtml("", "模板加载中...")
+        : optionHtml("", state.personalDigitalHumanTemplatesError || (rows.length ? "请选择剪辑模板" : "暂无可用剪辑模板"));
+      select.innerHTML = statusOption + rows.map((item) => optionHtml(item.style_id, item.name)).join("");
+      if (selected && rows.some((item) => String(item.style_id || "") === selected)) select.value = selected;
+    }
+
+    function syncWorkHiflyTemplateField() {
+      const enabled = !!($("workHiflyUseTemplate") && $("workHiflyUseTemplate").checked);
+      $("workHiflyTemplateField")?.classList.toggle("hidden", !enabled);
+      if (!enabled) {
+        if ($("workHiflyTemplate")) $("workHiflyTemplate").value = "";
+        return;
+      }
+      renderWorkHiflyTemplateOptions();
+      loadPersonalDigitalHumanTemplates(false).then(renderWorkHiflyTemplateOptions).catch(() => {});
+    }
+
+    function bindWorkHiflyControls() {
+      const toggle = $("workHiflyUseTemplate");
+      if (toggle && toggle.dataset.bound !== "1") {
+        toggle.dataset.bound = "1";
+        toggle.addEventListener("change", syncWorkHiflyTemplateField);
+      }
+      syncWorkHiflyTemplateField();
+    }
+
+    function selectedWorkHiflyTemplatePayload() {
+      const styleId = workValue("workHiflyTemplate");
+      const item = (state.personalDigitalHumanTemplates || []).find((row) => String(row.style_id || "") === styleId);
+      if (!item) return {};
+      const packRules = item.pack_rules && typeof item.pack_rules === "object" ? item.pack_rules : {};
+      const processRules = item.process_rules && typeof item.process_rules === "object" ? item.process_rules : {};
+      return {
+        template_scene: item.scene || "realMan",
+        style_id: item.style_id,
+        materials: Array.isArray(item.materials) ? item.materials : [],
+        material_sound_switch: !!item.material_sound_switch,
+        introduce_name: item.introduce_name || "",
+        introduce_description: item.introduce_description || "",
+        header_switch: packRules.headerSwitch !== false,
+        material_switch: packRules.materialSwitch !== false,
+        subtitle_switch: packRules.subtitleSwitch !== false,
+        keyword_switch: packRules.keywordSwitch !== false,
+        watermark_show: !!processRules.watermarkShow,
+        material_match_way: processRules.materialMatchWay || "fuzzyMatch",
+        resource_preprocess_method: processRules.resourcePreprocessMethod || "roughCut",
+        material_composition: processRules.materialComposition || "random",
+      };
     }
 
     function workDispatchFieldsHtml(item) {
@@ -12586,6 +12662,9 @@
         return taskFieldHtml("数字人", taskSelectHtml("workAvatar", optionHtml("", "加载中...")))
           + taskFieldHtml("声音", taskSelectHtml("workVoice", optionHtml("", "加载中...")))
           + taskFieldHtml("任务标题", workInputHtml("workHiflyTitle", "text", "数字人口播"))
+          + taskFieldHtml("视频时长", workCheckboxHtml("workHiflyLongVideo", "生成长视频", false))
+          + taskFieldHtml("剪辑方式", workCheckboxHtml("workHiflyUseTemplate", "套用剪辑模板", false))
+          + `<div class="field full hidden" id="workHiflyTemplateField"><label>剪辑模板</label>${taskSelectHtml("workHiflyTemplate", optionHtml("", "打开后加载模板"))}</div>`
           + taskFieldHtml("口播文案", taskTextareaHtml("workHiflyScript", "填写要让数字人口播的完整文案"), true);
       }
       if (key === "douyin_leads") {
@@ -12649,6 +12728,7 @@
       if (item.key === "hifly.video.create_by_tts") {
         renderWorkHiflyOptions();
         loadHiflyLibraries();
+        bindWorkHiflyControls();
       }
       if (item.key === "publish_center") {
         loadPublishAccounts().catch((err) => toast(err.message || "发布账号加载失败"));
@@ -12728,14 +12808,29 @@
         const avatar = workValue("workAvatar");
         const voice = workValue("workVoice");
         const script = workValue("workHiflyScript");
+        const longVideo = !!($("workHiflyLongVideo") && $("workHiflyLongVideo").checked);
+        const useTemplate = !!($("workHiflyUseTemplate") && $("workHiflyUseTemplate").checked);
         if (!avatar) throw new Error("请选择数字人");
         if (!voice) throw new Error("请选择声音");
         if (!script) throw new Error("请填写口播文案");
+        if (useTemplate && !workValue("workHiflyTemplate")) throw new Error("请选择剪辑模板");
         return {
           title: workValue("workHiflyTitle") || "数字人口播",
           taskKind: "capability",
           content: "H5 安排工作：数字人口播",
-          payload: { capability_id: "hifly.video.create_by_tts", payload: { avatar, voice, script, prompt: script } },
+          payload: {
+            capability_id: "hifly.video.create_by_tts",
+            payload: {
+              avatar,
+              virtualman_id: avatar,
+              voice,
+              script,
+              prompt: script,
+              long_video: longVideo,
+              use_template: useTemplate,
+              ...(useTemplate ? selectedWorkHiflyTemplatePayload() : {}),
+            },
+          },
         };
       }
       if (key === "douyin_leads") {

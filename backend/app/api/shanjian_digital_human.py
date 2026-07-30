@@ -73,6 +73,8 @@ class CreateVideoBody(_TokenBody):
     language: str = "zh-CN"
     speed_ratio: float = 1.0
     callback_url: str = ""
+    long_video: bool = False
+    use_template: Optional[bool] = None
     template_scene: str = ""
     style_id: str = ""
     materials: List[Dict[str, Any]] = Field(default_factory=list)
@@ -571,6 +573,8 @@ def _requested_video_duration_limit(submit_payload: Any) -> Optional[float]:
         return None
     constraints = submit_payload.get("output_constraints")
     if isinstance(constraints, dict):
+        if _clean_text(constraints.get("duration_mode")).lower() == "long":
+            return None
         explicit = _duration_float(constraints.get("hard_max_duration"))
         if explicit is not None:
             return max(5.0, min(explicit, 300.0))
@@ -982,9 +986,13 @@ def _resolve_video_template_meta(
     user_id: int,
     body: CreateVideoBody,
 ) -> tuple[Optional[Dict[str, Any]], str]:
+    if body.use_template is False:
+        return None, "request_disabled"
     explicit = _template_meta_from_body(body)
     if explicit is not None:
         return explicit, "request"
+    if body.use_template is True:
+        raise HTTPException(status_code=400, detail="已选择套用剪辑模板，请先选择具体模板")
     configured = _default_digital_human_template(db, user_id)
     return configured, "active_personal_template" if configured is not None else ""
 
@@ -1619,8 +1627,13 @@ async def create_video(
 
     template_meta, template_source = _resolve_video_template_meta(db, int(current_user.id), body)
     submit_payload: Dict[str, Any] = {"base": payload, "stage": "base"}
-    if body.hard_max_duration is not None:
-        submit_payload["output_constraints"] = {"hard_max_duration": float(body.hard_max_duration)}
+    if body.long_video:
+        submit_payload["output_constraints"] = {"duration_mode": "long"}
+    elif body.hard_max_duration is not None:
+        submit_payload["output_constraints"] = {
+            "duration_mode": "short",
+            "hard_max_duration": float(body.hard_max_duration),
+        }
     if template_meta:
         submit_payload["template"] = template_meta
         submit_payload["template_source"] = template_source

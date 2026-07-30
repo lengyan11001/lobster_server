@@ -707,6 +707,46 @@ def _apply_workflow_runtime_options(
     return nodes
 
 
+_SALES_DIGITAL_HUMAN_REQUEST_TEMPLATE_KEYS = {
+    "use_template",
+    "template_scene",
+    "style_id",
+    "materials",
+    "material_sound_switch",
+    "introduce_name",
+    "introduce_description",
+    "header_switch",
+    "material_switch",
+    "subtitle_switch",
+    "keyword_switch",
+    "watermark_show",
+    "material_match_way",
+    "resource_preprocess_method",
+    "material_composition",
+}
+
+
+def _apply_sales_digital_human_defaults(params: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(params or {})
+    for key in _SALES_DIGITAL_HUMAN_REQUEST_TEMPLATE_KEYS:
+        normalized.pop(key, None)
+    normalized["long_video"] = False
+    normalized["template_mode"] = "active_personal_template"
+    return normalized
+
+
+def _sales_digital_human_template_id(
+    personal: Optional[IPContentScheduleTemplate],
+    current: Optional[IPContentScheduleTemplate],
+) -> str:
+    personal_meta = personal.meta if personal and isinstance(personal.meta, dict) else {}
+    current_meta = current.meta if current and isinstance(current.meta, dict) else {}
+    raw = current_meta.get("digital_human_template") if "digital_human_template" in current_meta else personal_meta.get("digital_human_template")
+    if not isinstance(raw, dict):
+        return ""
+    return _clean_text(raw.get("style_id") or raw.get("styleId") or raw.get("id"), 128)
+
+
 def _prepare_publish_action_nodes(
     *,
     db: Session,
@@ -937,6 +977,7 @@ def _prepare_sales_workflow_nodes(
     personal = _personal_default_template(db, owner.id)
     current_template = _current_personal_schedule_template(db, owner.id, personal)
     reference_template = current_template or personal
+    digital_human_template_id = _sales_digital_human_template_id(personal, current_template)
     reference_owner_id = int(reference_template.user_id) if reference_template else int(owner.id)
     requirements = personal.requirements if personal and isinstance(personal.requirements, dict) else {}
     if current_template and isinstance(current_template.requirements, dict):
@@ -1107,6 +1148,7 @@ def _prepare_sales_workflow_nodes(
                 if hifly_voice:
                     params.setdefault("voice", hifly_voice)
                     params.setdefault("speaker_id", hifly_voice)
+                params = _apply_sales_digital_human_defaults(params)
                 payload["params"] = params
                 plan["payload"] = payload
 
@@ -1157,6 +1199,7 @@ def _prepare_sales_workflow_nodes(
                 if hifly_voice:
                     params.setdefault("voice", hifly_voice)
                     params.setdefault("speaker_id", hifly_voice)
+                params = _apply_sales_digital_human_defaults(params)
                 node["ability_key"] = "shanjian_digital_human_video"
                 plan["task_kind"] = "client_workflow"
                 plan["payload"] = {"action": "shanjian_digital_human_video", "params": params}
@@ -1204,6 +1247,8 @@ def _prepare_sales_workflow_nodes(
                 missing.append("素材库：请先创建可用的旧版数字人形象分身")
         elif not shanjian_virtualmans:
             missing.append("素材库：请先创建并训练完成可用的数字人形象分身（数字人2.0）")
+        if digital_human_provider == _SALES_DH_PROVIDER_V2 and not digital_human_template_id:
+            missing.append("IP人设定位-模板：请为当前模板选择数字人剪辑模板")
         if not hifly_voice:
             missing.append("素材库：请先创建可用的声音分身")
     if has_local_bestseller and personal:

@@ -64,3 +64,32 @@ def test_h5_v2_digital_human_converts_after_ip_daily_context(monkeypatch):
         "virtualman-1",
         "virtualman-2",
     ]
+
+
+def test_h5_v2_digital_human_preserves_duration_and_template_choices(monkeypatch):
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_provider", lambda: scheduled_tasks._DIGITAL_HUMAN_PROVIDER_V2)
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_context_params", lambda db, user_id: _context())
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_latest_virtualman", lambda db, user_id: "virtualman-1")
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_available_virtualmans", lambda db, user_id: [])
+    monkeypatch.setattr(scheduled_tasks, "_h5_dh_latest_voice", lambda db, user_id: "voice-2")
+    request_payload = _payload()
+    request_payload["payload"].update(
+        {
+            "long_video": True,
+            "use_template": True,
+            "virtualman_id": "virtualman-selected",
+            "style_id": "style-selected",
+            "template_scene": "realMan",
+        }
+    )
+
+    task_kind, payload = scheduled_tasks._maybe_convert_h5_digital_human_task(
+        object(), task_kind="capability", payload=request_payload, target_user_id=7
+    )
+
+    assert task_kind == "client_workflow"
+    assert payload["params"]["long_video"] is True
+    assert payload["params"]["use_template"] is True
+    assert payload["params"]["virtualman_id"] == "virtualman-selected"
+    assert payload["params"]["virtualman_selection_mode"] == "fixed"
+    assert payload["params"]["style_id"] == "style-selected"

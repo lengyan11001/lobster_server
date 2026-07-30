@@ -426,10 +426,13 @@ def _maybe_convert_h5_digital_human_task(
         legacy_payload = dict(payload)
         legacy_payload["payload"] = params
         return task_kind, legacy_payload
+    requested_virtualman_id = _h5_dh_clean_text(params.get("virtualman_id"), 128)
     virtualman_id = _h5_dh_latest_virtualman(db, target_user_id)
     virtualman_candidates = _h5_dh_available_virtualmans(db, target_user_id)
     voice = _h5_dh_latest_voice(db, target_user_id)
-    if virtualman_candidates:
+    if requested_virtualman_id:
+        params["virtualman_selection_mode"] = "fixed"
+    elif virtualman_candidates:
         params["virtualman_candidates"] = virtualman_candidates
         params["virtualman_selection_mode"] = "daily_round_robin"
     if virtualman_id:

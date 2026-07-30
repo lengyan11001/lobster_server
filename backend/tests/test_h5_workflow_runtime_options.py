@@ -1,4 +1,9 @@
-from backend.app.api.h5_workflows import _apply_workflow_runtime_options
+from backend.app.api.h5_workflows import (
+    _apply_sales_digital_human_defaults,
+    _apply_workflow_runtime_options,
+    _sales_digital_human_template_id,
+)
+from backend.app.models import IPContentScheduleTemplate
 
 
 def _node(node_id: str, action: str) -> dict:
@@ -39,3 +44,52 @@ def test_digital_human_nodes_receive_distinct_sequence_slots():
 
     assert [item["virtualman_rotation_slot"] for item in params] == [0, 1, 2]
     assert {item["virtualman_selection_mode"] for item in params} == {"daily_sequence"}
+
+
+def test_sales_digital_human_uses_active_personal_template_and_short_video():
+    params = _apply_sales_digital_human_defaults(
+        {
+            "use_template": False,
+            "style_id": "one-off-template",
+            "template_scene": "realMan",
+            "long_video": True,
+            "voice": "voice-1",
+        }
+    )
+
+    assert "use_template" not in params
+    assert "style_id" not in params
+    assert "template_scene" not in params
+    assert params["long_video"] is False
+    assert params["template_mode"] == "active_personal_template"
+    assert params["voice"] == "voice-1"
+
+
+def test_sales_digital_human_template_comes_from_current_ip_template():
+    personal = IPContentScheduleTemplate(
+        user_id=1,
+        name="个人默认配置",
+        meta={"digital_human_template": {"style_id": "style-personal"}},
+    )
+    current = IPContentScheduleTemplate(
+        user_id=1,
+        name="当前销售模板",
+        meta={"digital_human_template": {"style_id": "style-current"}},
+    )
+
+    assert _sales_digital_human_template_id(personal, current) == "style-current"
+
+
+def test_current_ip_template_can_explicitly_report_missing_sales_template():
+    personal = IPContentScheduleTemplate(
+        user_id=1,
+        name="个人默认配置",
+        meta={"digital_human_template": {"style_id": "style-stale"}},
+    )
+    current = IPContentScheduleTemplate(
+        user_id=1,
+        name="当前销售模板",
+        meta={"digital_human_template": None},
+    )
+
+    assert _sales_digital_human_template_id(personal, current) == ""

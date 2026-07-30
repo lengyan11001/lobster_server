@@ -1,4 +1,5 @@
 import pytest
+from fastapi import HTTPException
 
 from backend.app.api import shanjian_digital_human as digital_human_api
 from backend.app.api.assets import _asset_hidden_from_library, list_assets
@@ -74,6 +75,39 @@ def test_explicit_video_template_overrides_active_personal_template(db_session, 
     assert template_meta["style_id"] == "style-request"
 
 
+def test_request_can_disable_active_personal_template(db_session, test_user):
+    db_session.add(
+        IPContentScheduleTemplate(
+            user_id=test_user.id,
+            name="个人默认配置",
+            status="active",
+            meta={"digital_human_template": {"style_id": "style-default"}},
+        )
+    )
+    db_session.commit()
+
+    template_meta, source = _resolve_video_template_meta(
+        db_session,
+        test_user.id,
+        CreateVideoBody(use_template=False),
+    )
+
+    assert template_meta is None
+    assert source == "request_disabled"
+
+
+def test_request_requiring_template_must_supply_selection(db_session, test_user):
+    with pytest.raises(HTTPException) as exc_info:
+        _resolve_video_template_meta(
+            db_session,
+            test_user.id,
+            CreateVideoBody(use_template=True),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "选择具体模板" in str(exc_info.value)
+
+
 def test_current_template_can_explicitly_disable_automatic_editing(db_session, test_user):
     current = IPContentScheduleTemplate(
         user_id=test_user.id,
@@ -135,6 +169,15 @@ def test_explicit_hard_output_limit_overrides_template_duration():
             "template": {"style_id": "style-1", "video_duration": 60},
         }
     ) == 29.0
+
+
+def test_long_video_is_not_limited_by_template_duration():
+    assert _requested_video_duration_limit(
+        {
+            "output_constraints": {"duration_mode": "long"},
+            "template": {"style_id": "style-1", "video_duration": 30},
+        }
+    ) is None
 
 
 @pytest.mark.asyncio
