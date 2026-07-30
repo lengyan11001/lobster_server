@@ -128,6 +128,10 @@ def test_workflow_title_and_controls_are_fixed_at_top():
     assert "padding-top: 207px;" in shell_styles
     assert "position: fixed;" in control_styles
     assert "top: 76px;" in control_styles
-    assert "left: max(20px, calc(50vw - 195px));" in control_styles
-    assert "width: min(390px, calc(100vw - 40px));" in control_styles
-    assert "20260730-workflow-fixed-v2" in html
+    assert "left: var(--workflow-control-left" in control_styles
+    assert "width: var(--workflow-control-width" in control_styles
+    assert "function syncWorkflowControlCardBounds()" in script
+    assert 'const rect = shell.getBoundingClientRect();' in script
+    assert 'card.style.setProperty("--workflow-control-left", `${rect.left}px`);' in script
+    assert 'card.style.setProperty("--workflow-control-width", `${rect.width}px`);' in script
+    assert "20260730-workflow-aligned-v3" in html

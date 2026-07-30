@@ -3368,9 +3368,9 @@ body * {
 #workflowView .workflow-control-card {
   position: fixed;
   top: 76px;
-  left: max(20px, calc(50vw - 195px));
+  left: var(--workflow-control-left, max(20px, calc(50vw - 195px)));
   z-index: 190;
-  width: min(390px, calc(100vw - 40px));
+  width: var(--workflow-control-width, min(390px, calc(100vw - 40px)));
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -3378,8 +3378,8 @@ body * {
 
 @media (max-width: 380px) {
   #workflowView .workflow-control-card {
-    left: 14px;
-    width: calc(100vw - 28px);
+    left: var(--workflow-control-left, 14px);
+    width: var(--workflow-control-width, calc(100vw - 28px));
   }
 }
 

@@ -8804,6 +8804,17 @@
       return state.officeSummaryLoading;
     }
 
+    function syncWorkflowControlCardBounds() {
+      const view = $("workflowView");
+      const shell = view && view.querySelector(".workflow-shell");
+      const card = view && view.querySelector(".workflow-control-card");
+      if (!view?.classList.contains("active") || !shell || !card) return;
+      const rect = shell.getBoundingClientRect();
+      if (!rect.width) return;
+      card.style.setProperty("--workflow-control-left", `${rect.left}px`);
+      card.style.setProperty("--workflow-control-width", `${rect.width}px`);
+    }
+
     function switchTab(tab) {
       const key = tab || "office";
       const previousViewId = (document.querySelector(".view.active") || {}).id || "";
@@ -8857,6 +8868,7 @@
       }
       if (key === "workflow") {
         renderWorkflow();
+        requestAnimationFrame(syncWorkflowControlCardBounds);
         Promise.all([
           refreshDeviceStatus().catch(() => {}),
           loadTaskSkills().catch(() => {}),
@@ -8867,7 +8879,10 @@
           loadRuns({ reset: true, limit: 20, compact: true })
             .then(() => loadWorkflowRunsForDate(workflowSelectedDateKey()).catch(() => {}))
             .catch(() => {}),
-        ]).then(renderWorkflow);
+        ]).then(() => {
+          renderWorkflow();
+          syncWorkflowControlCardBounds();
+        });
       }
       if (key === "mountedAccounts") {
         renderProfileDeviceSelect();
@@ -16385,6 +16400,7 @@
     });
     window.addEventListener("resize", () => {
       if (document.querySelector("#officeView.active")) renderOfficeEmployees();
+      if (document.querySelector("#workflowView.active")) syncWorkflowControlCardBounds();
     });
     $("workTimeline").addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-run-task-now]");
