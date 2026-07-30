@@ -165,8 +165,10 @@
       personalDigitalHumanTemplatesLoading: false,
       personalDigitalHumanTemplatesError: "",
       personalDigitalHumanTemplateSearch: "",
+      personalDigitalHumanTemplatePickerTarget: "personal",
       personalSelectedDigitalHumanTemplate: null,
       personalDigitalHumanTemplateDraft: null,
+      workSelectedDigitalHumanTemplate: null,
       personalDefault: null,
       personalUploadFiles: [],
       personalCustomReferenceFile: null,
@@ -5341,6 +5343,7 @@
       if (node.workQuickKey) {
         const quick = workQuickItemByKey(node.workQuickKey);
         if (quick && workQuickItemVisible(quick) && !quick.disabled) {
+          if (quick.key === "hifly.video.create_by_tts") state.workSelectedDigitalHumanTemplate = null;
           html = workDispatchFieldsHtml(quick);
           if (quick.key === "hifly.video.create_by_tts") {
             setTimeout(() => {
@@ -8752,10 +8755,19 @@
       setFieldValue("workVoice", hiflyParams.voice || "");
       setFieldValue("workHiflyTitle", run && run.title || "数字人口播");
       setFieldValue("workHiflyScript", hiflyParams.script || hiflyParams.prompt || "");
-      setFieldValue("workHiflyLongVideo", hiflyParams.long_video === true);
-      setFieldValue("workHiflyUseTemplate", hiflyParams.use_template === true);
+      const hiflyLongVideo = hiflyParams.long_video === true;
+      setWorkHiflySegment("workHiflyDurationMode", hiflyLongVideo ? "long" : "short");
+      setFieldValue("workHiflyTargetDuration", hiflyParams.video_duration || hiflyParams.duration_seconds || (hiflyLongVideo ? 60 : 30));
+      setWorkHiflySegment("workHiflyTemplateMode", hiflyParams.use_template === true ? "template" : "none");
       if (hiflyParams.use_template === true) {
-        loadPersonalDigitalHumanTemplates(false).then(() => setFieldValue("workHiflyTemplate", hiflyParams.style_id || "")).catch(() => {});
+        state.workSelectedDigitalHumanTemplate = normalizePersonalDigitalHumanTemplate({
+          ...hiflyParams,
+          style_id: hiflyParams.style_id,
+          name: hiflyParams.template_name || hiflyParams.style_name || hiflyParams.style_id || "已选模板",
+        });
+        setFieldValue("workHiflyTemplate", hiflyParams.style_id || "");
+        renderWorkHiflyTemplateSummary();
+        loadPersonalDigitalHumanTemplates(false).then(renderWorkHiflyTemplateSummary).catch(() => {});
       }
       setFieldValue("abilityIpTemplate", payload.template_id || "");
       document.querySelectorAll("[data-ability-ip-daily-task]").forEach((el) => {
@@ -11499,14 +11511,30 @@
       } finally {
         state.personalDigitalHumanTemplatesLoading = false;
         renderPersonalDigitalHumanTemplatePicker();
-        renderWorkHiflyTemplateOptions();
+        renderWorkHiflyTemplateSummary();
       }
     }
 
-    function openPersonalDigitalHumanTemplatePicker() {
-      state.personalDigitalHumanTemplateDraft = clonePersonalDigitalHumanTemplate(state.personalSelectedDigitalHumanTemplate);
+    function openPersonalDigitalHumanTemplatePicker(target = "personal") {
+      const pickerTarget = target === "work" ? "work" : "personal";
+      state.personalDigitalHumanTemplatePickerTarget = pickerTarget;
+      const selected = pickerTarget === "work"
+        ? state.workSelectedDigitalHumanTemplate
+        : state.personalSelectedDigitalHumanTemplate;
+      state.personalDigitalHumanTemplateDraft = clonePersonalDigitalHumanTemplate(selected);
       state.personalDigitalHumanTemplateSearch = "";
       if ($("personalDigitalHumanTemplateSearch")) $("personalDigitalHumanTemplateSearch").value = "";
+      if ($("personalDigitalHumanTemplateTitle")) {
+        $("personalDigitalHumanTemplateTitle").textContent = pickerTarget === "work" ? "选择本次剪辑模板" : "选择数字人剪辑模板";
+      }
+      if ($("personalDigitalHumanTemplateHint")) {
+        $("personalDigitalHumanTemplateHint").textContent = pickerTarget === "work"
+          ? "封面和样片与个人 IP 设置使用同一套模板数据"
+          : "选择一个模板，数字人口播完成后会继续自动剪辑";
+      }
+      if ($("personalDigitalHumanTemplateDisable")) {
+        $("personalDigitalHumanTemplateDisable").textContent = pickerTarget === "work" ? "本次不套模板" : "不使用自动剪辑";
+      }
       $("personalDigitalHumanTemplateModal")?.classList.remove("hidden");
       renderPersonalDigitalHumanTemplatePicker();
       loadPersonalDigitalHumanTemplates(false);
@@ -11518,9 +11546,17 @@
     }
 
     function confirmPersonalDigitalHumanTemplate() {
-      state.personalSelectedDigitalHumanTemplate = clonePersonalDigitalHumanTemplate(state.personalDigitalHumanTemplateDraft);
+      const selected = clonePersonalDigitalHumanTemplate(state.personalDigitalHumanTemplateDraft);
+      if (state.personalDigitalHumanTemplatePickerTarget === "work") {
+        state.workSelectedDigitalHumanTemplate = selected;
+        if ($("workHiflyTemplate")) $("workHiflyTemplate").value = selected ? selected.style_id : "";
+        if (!selected) setWorkHiflySegment("workHiflyTemplateMode", "none");
+        renderWorkHiflyTemplateSummary();
+      } else {
+        state.personalSelectedDigitalHumanTemplate = selected;
+        renderPersonalDigitalHumanTemplateSummary();
+      }
       closePersonalDigitalHumanTemplatePicker();
-      renderPersonalDigitalHumanTemplateSummary();
     }
 
     function closePersonalDigitalHumanPreview() {
@@ -12395,6 +12431,15 @@
       return `<label class="task-checkbox" style="min-height:42px;color:#46516a;"><input id="${escapeHtml(id)}" type="checkbox" ${checked ? "checked" : ""}><span>${escapeHtml(label)}</span></label>`;
     }
 
+    function workSegmentedHtml(name, options, selectedValue) {
+      return `<div class="work-segmented" role="radiogroup">${options.map((item) => `
+        <label>
+          <input type="radio" name="${escapeHtml(name)}" value="${escapeHtml(item.value)}" ${item.value === selectedValue ? "checked" : ""}>
+          <span>${escapeHtml(item.label)}</span>
+        </label>
+      `).join("")}</div>`;
+    }
+
     function workNumber(value, fallback, min, max) {
       const parsed = parseInt(value, 10);
       const safe = Number.isNaN(parsed) ? fallback : parsed;
@@ -12584,41 +12629,99 @@
       });
     }
 
-    function renderWorkHiflyTemplateOptions() {
-      const select = $("workHiflyTemplate");
-      if (!select) return;
-      const selected = String(select.value || "").trim();
-      const rows = Array.isArray(state.personalDigitalHumanTemplates) ? state.personalDigitalHumanTemplates : [];
-      const statusOption = state.personalDigitalHumanTemplatesLoading
-        ? optionHtml("", "模板加载中...")
-        : optionHtml("", state.personalDigitalHumanTemplatesError || (rows.length ? "请选择剪辑模板" : "暂无可用剪辑模板"));
-      select.innerHTML = statusOption + rows.map((item) => optionHtml(item.style_id, item.name)).join("");
-      if (selected && rows.some((item) => String(item.style_id || "") === selected)) select.value = selected;
+    function setWorkHiflySegment(name, value) {
+      const input = document.querySelector(`input[name="${cssEscape(name)}"][value="${cssEscape(value)}"]`);
+      if (!input) return;
+      input.checked = true;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function renderWorkHiflyTemplateSummary() {
+      const box = $("workHiflyTemplateSummary");
+      if (!box) return;
+      const styleId = workValue("workHiflyTemplate");
+      const loaded = styleId
+        ? (state.personalDigitalHumanTemplates || []).find((row) => String(row.style_id || "") === styleId)
+        : null;
+      if (loaded) state.workSelectedDigitalHumanTemplate = clonePersonalDigitalHumanTemplate(loaded);
+      const item = state.workSelectedDigitalHumanTemplate;
+      const chooseBtn = $("workHiflyTemplateChooseBtn");
+      if (chooseBtn) chooseBtn.textContent = item ? "更换模板" : "选择模板";
+      if (!item) {
+        box.innerHTML = `<div class="personal-digital-human-empty work-hifly-template-empty">
+          <span>未选择剪辑模板</span>
+          <small>选择后可查看封面和样片，本次成片才会套用</small>
+        </div>`;
+        return;
+      }
+      box.innerHTML = `<div class="personal-digital-human-selected work-hifly-template-selected">
+        <div class="personal-digital-human-selected-cover">
+          ${item.cover_url ? `<img src="${escapeHtml(item.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span>${escapeHtml((item.name || "模板").slice(0, 2))}</span>`}
+        </div>
+        <div>
+          <strong>${escapeHtml(item.name)}</strong>
+          <small>${item.demo_url ? "可预览模板样片" : "该模板暂无样片"}</small>
+        </div>
+        ${item.demo_url ? `<button class="ghost" type="button" data-preview-work-dh-template>查看样片</button>` : ""}
+      </div>`;
+    }
+
+    function syncWorkHiflyDurationField() {
+      const selected = document.querySelector('input[name="workHiflyDurationMode"]:checked');
+      const longVideo = !!selected && selected.value === "long";
+      if ($("workHiflyLongVideo")) $("workHiflyLongVideo").value = longVideo ? "true" : "false";
+      $("workHiflyTargetDurationField")?.classList.toggle("hidden", !longVideo);
+      if (longVideo && $("workHiflyTargetDuration") && !$("workHiflyTargetDuration").value) {
+        $("workHiflyTargetDuration").value = "60";
+      }
     }
 
     function syncWorkHiflyTemplateField() {
-      const enabled = !!($("workHiflyUseTemplate") && $("workHiflyUseTemplate").checked);
+      const selected = document.querySelector('input[name="workHiflyTemplateMode"]:checked');
+      const enabled = !!selected && selected.value === "template";
+      if ($("workHiflyUseTemplate")) $("workHiflyUseTemplate").value = enabled ? "true" : "false";
       $("workHiflyTemplateField")?.classList.toggle("hidden", !enabled);
       if (!enabled) {
         if ($("workHiflyTemplate")) $("workHiflyTemplate").value = "";
+        state.workSelectedDigitalHumanTemplate = null;
         return;
       }
-      renderWorkHiflyTemplateOptions();
-      loadPersonalDigitalHumanTemplates(false).then(renderWorkHiflyTemplateOptions).catch(() => {});
+      renderWorkHiflyTemplateSummary();
+      loadPersonalDigitalHumanTemplates(false).then(renderWorkHiflyTemplateSummary).catch(() => {});
     }
 
     function bindWorkHiflyControls() {
-      const toggle = $("workHiflyUseTemplate");
-      if (toggle && toggle.dataset.bound !== "1") {
-        toggle.dataset.bound = "1";
-        toggle.addEventListener("change", syncWorkHiflyTemplateField);
+      document.querySelectorAll('input[name="workHiflyDurationMode"]').forEach((input) => {
+        if (input.dataset.bound === "1") return;
+        input.dataset.bound = "1";
+        input.addEventListener("change", syncWorkHiflyDurationField);
+      });
+      document.querySelectorAll('input[name="workHiflyTemplateMode"]').forEach((input) => {
+        if (input.dataset.bound === "1") return;
+        input.dataset.bound = "1";
+        input.addEventListener("change", syncWorkHiflyTemplateField);
+      });
+      const chooseBtn = $("workHiflyTemplateChooseBtn");
+      if (chooseBtn && chooseBtn.dataset.bound !== "1") {
+        chooseBtn.dataset.bound = "1";
+        chooseBtn.addEventListener("click", () => openPersonalDigitalHumanTemplatePicker("work"));
       }
+      const summary = $("workHiflyTemplateSummary");
+      if (summary && summary.dataset.bound !== "1") {
+        summary.dataset.bound = "1";
+        summary.addEventListener("click", (evt) => {
+          if (!evt.target.closest("[data-preview-work-dh-template]")) return;
+          openPersonalDigitalHumanPreview(state.workSelectedDigitalHumanTemplate);
+        });
+      }
+      syncWorkHiflyDurationField();
       syncWorkHiflyTemplateField();
     }
 
     function selectedWorkHiflyTemplatePayload() {
       const styleId = workValue("workHiflyTemplate");
-      const item = (state.personalDigitalHumanTemplates || []).find((row) => String(row.style_id || "") === styleId);
+      const item = state.workSelectedDigitalHumanTemplate
+        || (state.personalDigitalHumanTemplates || []).find((row) => String(row.style_id || "") === styleId);
       if (!item) return {};
       const packRules = item.pack_rules && typeof item.pack_rules === "object" ? item.pack_rules : {};
       const processRules = item.process_rules && typeof item.process_rules === "object" ? item.process_rules : {};
@@ -12662,9 +12765,10 @@
         return taskFieldHtml("数字人", taskSelectHtml("workAvatar", optionHtml("", "加载中...")))
           + taskFieldHtml("声音", taskSelectHtml("workVoice", optionHtml("", "加载中...")))
           + taskFieldHtml("任务标题", workInputHtml("workHiflyTitle", "text", "数字人口播"))
-          + taskFieldHtml("视频时长", workCheckboxHtml("workHiflyLongVideo", "生成长视频", false))
-          + taskFieldHtml("剪辑方式", workCheckboxHtml("workHiflyUseTemplate", "套用剪辑模板", false))
-          + `<div class="field full hidden" id="workHiflyTemplateField"><label>剪辑模板</label>${taskSelectHtml("workHiflyTemplate", optionHtml("", "打开后加载模板"))}</div>`
+          + taskFieldHtml("视频时长", `<input id="workHiflyLongVideo" type="hidden" value="false">${workSegmentedHtml("workHiflyDurationMode", [{ value: "short", label: "30秒以内" }, { value: "long", label: "长视频" }], "short")}`)
+          + `<div class="field full hidden work-hifly-duration-field" id="workHiflyTargetDurationField"><label for="workHiflyTargetDuration">预计视频时长</label><div class="work-duration-input"><input id="workHiflyTargetDuration" type="number" value="60" min="31" max="300" step="1" inputmode="numeric"><span>秒</span></div><small>当前支持最长 5 分钟，实际成片会随口播节奏略有浮动</small></div>`
+          + taskFieldHtml("剪辑方式", `<input id="workHiflyUseTemplate" type="hidden" value="false">${workSegmentedHtml("workHiflyTemplateMode", [{ value: "none", label: "不套模板" }, { value: "template", label: "套用模板" }], "none")}`)
+          + `<div class="field full hidden work-hifly-template-field" id="workHiflyTemplateField"><div class="work-hifly-template-head"><label>剪辑模板</label><button class="ghost" type="button" id="workHiflyTemplateChooseBtn">选择模板</button></div><input id="workHiflyTemplate" type="hidden" value=""><div id="workHiflyTemplateSummary"></div></div>`
           + taskFieldHtml("口播文案", taskTextareaHtml("workHiflyScript", "填写要让数字人口播的完整文案"), true);
       }
       if (key === "douyin_leads") {
@@ -12719,6 +12823,7 @@
       if (!item || item.disabled) return;
       const modal = $("workDispatchModal");
       if (!modal) return;
+      if (item.key === "hifly.video.create_by_tts") state.workSelectedDigitalHumanTemplate = null;
       state.workDispatchKey = String(item.key || item.label || "");
       $("workDispatchMark").textContent = item.mark || firstChar(item.label);
       $("workDispatchTitle").textContent = item.label || "安排工作";
@@ -12740,6 +12845,9 @@
     function closeWorkDispatchModal() {
       const modal = $("workDispatchModal");
       if (modal) modal.classList.add("hidden");
+      if ($("workDispatchFields")) $("workDispatchFields").innerHTML = "";
+      if (state.personalDigitalHumanTemplatePickerTarget === "work") closePersonalDigitalHumanTemplatePicker();
+      state.workSelectedDigitalHumanTemplate = null;
       state.workDispatchKey = "";
       state.workDispatchSubmitting = false;
       const btn = $("workDispatchSubmit");
@@ -12808,8 +12916,9 @@
         const avatar = workValue("workAvatar");
         const voice = workValue("workVoice");
         const script = workValue("workHiflyScript");
-        const longVideo = !!($("workHiflyLongVideo") && $("workHiflyLongVideo").checked);
-        const useTemplate = !!($("workHiflyUseTemplate") && $("workHiflyUseTemplate").checked);
+        const longVideo = workValue("workHiflyLongVideo") === "true";
+        const useTemplate = workValue("workHiflyUseTemplate") === "true";
+        const videoDuration = longVideo ? workNumber(workValue("workHiflyTargetDuration"), 60, 31, 300) : 30;
         if (!avatar) throw new Error("请选择数字人");
         if (!voice) throw new Error("请选择声音");
         if (!script) throw new Error("请填写口播文案");
@@ -12827,6 +12936,8 @@
               script,
               prompt: script,
               long_video: longVideo,
+              video_duration: videoDuration,
+              duration_seconds: videoDuration,
               use_template: useTemplate,
               ...(useTemplate ? selectedWorkHiflyTemplatePayload() : {}),
             },
@@ -16546,7 +16657,7 @@
     $("personalTemplateClose")?.addEventListener("click", closePersonalTemplateModal);
     $("personalTemplateCancel")?.addEventListener("click", closePersonalTemplateModal);
     $("personalTemplateLanguage")?.addEventListener("change", (evt) => setPersonalTemplateLanguage(evt.target.value || "zh-CN"));
-    $("personalDigitalHumanTemplateChooseBtn")?.addEventListener("click", openPersonalDigitalHumanTemplatePicker);
+    $("personalDigitalHumanTemplateChooseBtn")?.addEventListener("click", () => openPersonalDigitalHumanTemplatePicker("personal"));
     $("personalDigitalHumanTemplateSummary")?.addEventListener("click", (evt) => {
       if (!evt.target.closest("[data-clear-personal-dh-template]")) return;
       state.personalSelectedDigitalHumanTemplate = null;

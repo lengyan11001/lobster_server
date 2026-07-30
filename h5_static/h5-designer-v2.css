@@ -2268,6 +2268,141 @@ body * {
   background: #fff;
 }
 
+.work-segmented {
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f4f6f9;
+}
+
+.work-segmented label {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.work-segmented input {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.work-segmented span {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  border-radius: 10px;
+  color: #687386;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.work-segmented input:checked + span {
+  color: #172033;
+  background: #fff;
+  box-shadow: 0 2px 9px rgba(15, 23, 42, .09);
+}
+
+.work-segmented input:focus-visible + span {
+  outline: 3px solid rgba(37, 99, 235, .18);
+  outline-offset: 1px;
+}
+
+.work-hifly-duration-field {
+  padding: 12px;
+  border: 1px solid #e5eaf1;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.work-duration-input {
+  width: min(190px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid #dfe5ed;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.work-duration-input input {
+  width: 100%;
+  min-height: 42px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.work-duration-input span {
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  color: #657187;
+  border-left: 1px solid #e5eaf1;
+  background: #f8fafc;
+  font-size: 12px;
+}
+
+.work-hifly-duration-field > small {
+  color: #8793a6;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.work-hifly-template-field {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #e5eaf1;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.work-hifly-template-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.work-hifly-template-head > label {
+  margin: 0 !important;
+}
+
+.work-hifly-template-head > button {
+  min-height: 34px;
+  padding: 0 12px;
+  color: #2563eb;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #eff6ff;
+}
+
+.work-hifly-template-empty,
+.work-hifly-template-selected {
+  background: #fff;
+}
+
+.work-hifly-template-selected > button {
+  min-height: 32px;
+  color: #2563eb;
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+}
+
 .personal-digital-human-picker-modal {
   z-index: 190;
 }
