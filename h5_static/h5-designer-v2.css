@@ -4239,6 +4239,71 @@ body * {
   min-height: 112px;
 }
 
+.ip-template-select-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: 100%;
+}
+
+.ip-template-select-row select {
+  min-width: 0;
+}
+
+.ip-template-select-row button {
+  min-width: 92px;
+}
+
+.ip-daily-task-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.task-checkbox.ip-daily-task-option,
+.task-checkbox.ip-daily-sync-option {
+  min-width: 0;
+  min-height: 42px;
+  gap: 9px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.task-checkbox.ip-daily-task-option {
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, .035);
+}
+
+.task-checkbox.ip-daily-sync-option {
+  width: fit-content;
+  padding: 0 2px;
+}
+
+.task-checkbox.ip-daily-task-option input[type="checkbox"],
+.task-checkbox.ip-daily-sync-option input[type="checkbox"] {
+  width: 18px !important;
+  min-width: 18px !important;
+  height: 18px !important;
+  min-height: 18px !important;
+  flex: 0 0 18px;
+  margin: 0;
+  padding: 0;
+  border-radius: 4px;
+  box-shadow: none;
+  accent-color: #286df0;
+  appearance: auto;
+  -webkit-appearance: checkbox;
+}
+
+.task-checkbox.ip-daily-task-option span,
+.task-checkbox.ip-daily-sync-option span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
 #abilityView .marketing-tool-mode .ability-workbench-actions button {
   width: auto !important;
   min-width: 132px;
@@ -4294,5 +4359,9 @@ main.shell:has(#contentRecordsView.active) #pageTitle,
 
   #abilityView .ability-shell.marketing-tool-mode > .ability-workbench {
     padding: 18px;
+  }
+
+  .ip-daily-task-options {
+    grid-template-columns: 1fr;
   }
 }

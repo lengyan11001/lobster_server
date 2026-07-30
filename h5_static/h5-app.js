@@ -1733,6 +1733,29 @@
       return String(payload.capability_id || "");
     }
 
+    function runCapabilityId(row) {
+      const resultPayload = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
+      const mcpResult = resultPayload.mcp_result && typeof resultPayload.mcp_result === "object" ? resultPayload.mcp_result : {};
+      return String(resultPayload.capability_id || mcpResult.capability_id || taskCapabilityId(row) || "");
+    }
+
+    function runDisplayResult(row) {
+      const progress = row && row.progress && (row.progress.text || row.progress.message) || "";
+      const fallback = row && (row.error || row.result_text || progress) || "";
+      if (runCapabilityId(row) !== "comfly.daihuo.pipeline") return fallback;
+      if (row && row.error) return row.error;
+      const status = String(row && row.status || "").toLowerCase();
+      if (["completed", "success", "succeeded", "done"].includes(status)) {
+        const media = collectRunMediaEntries(row);
+        if (media.some((item) => /^https?:\/\//i.test(String(item && (item.url || item.source_url) || "")))) {
+          return "爆款TVC已生成，点击查看成片。";
+        }
+        if (media.length) return "爆款TVC已生成，成片正在同步，请稍后刷新查看。";
+        return "爆款TVC已生成。";
+      }
+      return progress || "爆款TVC正在生成。";
+    }
+
     function cleanKey(value) {
       return String(value || "").trim();
     }
@@ -2210,7 +2233,7 @@
       const mode = !device || !device.online ? "offline" : (run || msg ? "working" : "idle");
       const label = mode === "offline" ? "下班了" : mode === "working" ? "工作中" : "发呆中";
       const detail = run
-        ? (run.error || run.result_text || runProgressText(run) || run.content || "正在执行任务")
+        ? (runDisplayResult(run) || runProgressText(run) || run.content || "正在执行任务")
         : msg
           ? (msg.content || msg.reply_text || "正在处理手机会话消息")
           : mode === "idle"
@@ -2476,8 +2499,8 @@
     }
 
     function workflowIpDailyTaskOptionsHtml() {
-      return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;">${IP_DAILY_TASK_OPTIONS.map((item) => `
-        <label class="task-checkbox" style="min-height:38px;padding:0 10px;border:1px solid rgba(15,23,42,.08);border-radius:10px;background:rgba(255,255,255,.72);">
+      return `<div class="ip-daily-task-options">${IP_DAILY_TASK_OPTIONS.map((item) => `
+        <label class="task-checkbox ip-daily-task-option">
           <input type="checkbox" data-workflow-ip-daily-task="${escapeHtml(item.value)}" checked>
           <span>${escapeHtml(item.label)}</span>
         </label>
@@ -2521,9 +2544,9 @@
     function workflowCapabilityFieldsHtml(capabilityId) {
       const id = String(capabilityId || "").trim();
       if (id === "ip_content_daily") {
-        return taskFieldHtml("模板", ipTemplateSelectControl("workflowParamIpTemplate"))
+        return taskFieldHtml("模板", ipTemplateSelectControl("workflowParamIpTemplate"), true)
           + taskFieldHtml("生成内容", workflowIpDailyTaskOptionsHtml(), true)
-          + taskFieldHtml("执行前同步", `<label class="task-checkbox"><input id="workflowParamIpSyncBefore" type="checkbox" checked>每次执行前同步新数据</label>`, true)
+          + taskFieldHtml("执行前同步", `<label class="task-checkbox ip-daily-sync-option"><input id="workflowParamIpSyncBefore" type="checkbox" checked><span>每次执行前同步新数据</span></label>`, true)
           + taskFieldHtml("补充要求", taskTextareaHtml("workflowParamIpRequirement", "可选"), true);
       }
       if (id === "goal.image.pipeline") {
@@ -5194,8 +5217,8 @@
     }
 
     function abilityIpDailyTaskOptionsHtml() {
-      return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;">${IP_DAILY_TASK_OPTIONS.map((item) => `
-        <label class="task-checkbox" style="min-height:38px;padding:0 10px;border:1px solid rgba(15,23,42,.08);border-radius:10px;background:rgba(255,255,255,.72);">
+      return `<div class="ip-daily-task-options">${IP_DAILY_TASK_OPTIONS.map((item) => `
+        <label class="task-checkbox ip-daily-task-option">
           <input type="checkbox" data-ability-ip-daily-task="${escapeHtml(item.value)}" checked>
           <span>${escapeHtml(item.label)}</span>
         </label>
@@ -5251,9 +5274,9 @@
     function abilityCapabilityFieldsHtml(capabilityId) {
       const id = String(capabilityId || "").trim();
       if (id === "ip_content_daily") {
-        return taskFieldHtml("模板", ipTemplateSelectControl("abilityIpTemplate"))
+        return taskFieldHtml("模板", ipTemplateSelectControl("abilityIpTemplate"), true)
           + taskFieldHtml("生成内容", abilityIpDailyTaskOptionsHtml(), true)
-          + taskFieldHtml("执行前同步", `<label class="task-checkbox"><input id="abilityIpSyncBefore" type="checkbox" checked>每次执行前同步新数据</label>`, true)
+          + taskFieldHtml("执行前同步", `<label class="task-checkbox ip-daily-sync-option"><input id="abilityIpSyncBefore" type="checkbox" checked><span>每次执行前同步新数据</span></label>`, true)
           + taskFieldHtml("补充要求", taskTextareaHtml("abilityIpRequirement", "可选"), true);
       }
       if (id === "goal.video.pipeline") {
@@ -6140,7 +6163,7 @@
         status: statusText(row && row.status),
         time: row && (row.updated_at || row.finished_at || row.created_at),
         sortTime: row && (row.updated_at || row.finished_at || row.created_at),
-        text: isActiveRun(row) ? (runProgressText(row) || "执行中") : (row && (row.error || row.result_text || "")),
+        text: isActiveRun(row) ? (runProgressText(row) || "执行中") : runDisplayResult(row),
         active: isActiveRun(row),
       }))
         .filter((row) => row.id)
@@ -7579,7 +7602,7 @@
         createdTime: row.created_at,
         title: row.title || "已执行任务",
         badge: statusText(row.status),
-        meta: (row.error || row.result_text || (row.progress && (row.progress.text || row.progress.message)) || capabilityName(taskCapabilityId(row) || row.task_kind) || "已记录").slice(0, 90),
+        meta: (runDisplayResult(row) || capabilityName(taskCapabilityId(row) || row.task_kind) || "已记录").slice(0, 90),
         actionTaskId: "",
       }));
       const messages = (state.historyItems || []).filter((entry) => messageMatchesWorkScope(entry, scope)).map((entry) => {
@@ -8260,7 +8283,7 @@
           </div>`;
         }).join("")}</div>`);
       }
-      const text = run.error || run.result_text || (run.progress && (run.progress.text || run.progress.message)) || "";
+      const text = runDisplayResult(run);
       const resultSummaryHtml = `<div class="task-detail-section task-detail-result-primary"><h4>执行结果</h4><pre>${escapeHtml(text || statusText(run.status))}</pre></div>`;
       if (payload.task_kind === "douyin_leads" || run.task_kind === "douyin_leads") {
         const summaryHtml = renderDouyinLeadSummary(payload);
@@ -10039,8 +10062,8 @@
     }
 
     function ipDailyTaskOptionsHtml() {
-      return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;">${IP_DAILY_TASK_OPTIONS.map((item) => `
-        <label class="task-checkbox" style="min-height:38px;padding:0 10px;border:1px solid rgba(255,255,255,.18);border-radius:10px;background:rgba(255,255,255,.08);">
+      return `<div class="ip-daily-task-options">${IP_DAILY_TASK_OPTIONS.map((item) => `
+        <label class="task-checkbox ip-daily-task-option">
           <input type="checkbox" data-ip-daily-task="${escapeHtml(item.value)}" checked>
           <span>${escapeHtml(item.label)}</span>
         </label>
@@ -12948,9 +12971,9 @@
       const host = $("taskParamFields");
       if (!host) return;
       if (state.taskAbility === "ip_content_daily") {
-        host.innerHTML = taskFieldHtml("关键词和同行模板", ipTemplateSelectControl("taskIpTemplate"))
+        host.innerHTML = taskFieldHtml("关键词和同行模板", ipTemplateSelectControl("taskIpTemplate"), true)
           + taskFieldHtml("生成内容", ipDailyTaskOptionsHtml(), true)
-          + taskFieldHtml("执行前同步", `<label class="task-checkbox"><input id="taskIpSyncBefore" type="checkbox" checked>每次执行前同步新数据</label>`, true)
+          + taskFieldHtml("执行前同步", `<label class="task-checkbox ip-daily-sync-option"><input id="taskIpSyncBefore" type="checkbox" checked><span>每次执行前同步新数据</span></label>`, true)
           + taskFieldHtml("补充要求（可选）", taskTextareaHtml("taskIpRequirement", "例如：口播更有案例感；朋友圈短句分行、多段落留白、适当 Emoji、强痛点和结果导向；图片干净真实"), true);
         loadIpTemplates(true);
         return;
@@ -14349,14 +14372,19 @@
       const localItem = local.item && typeof local.item === "object" ? local.item : {};
       const videoResult = local.video_result && typeof local.video_result === "object" ? local.video_result : {};
       const videoResultInner = videoResult.result && typeof videoResult.result === "object" ? videoResult.result : {};
+      const mcpResult = payload && payload.mcp_result && typeof payload.mcp_result === "object" ? payload.mcp_result : {};
+      const mcpJob = mcpResult.result && typeof mcpResult.result === "object" ? mcpResult.result : mcpResult;
+      const mcpPipeline = mcpJob.result && typeof mcpJob.result === "object" ? mcpJob.result : {};
       addPriority(local.final_video);
       addPriority(local.video_url);
       addPriority(localItem.final_video);
       addPriority(localItem.video_url);
       addPriority(videoResult.final_video);
       addPriority(videoResultInner.final_video);
+      addPriority(mcpPipeline.final_video);
       addSaved(payload && payload.saved_assets);
       addSaved(refs.saved_assets);
+      addSaved(mcpJob.saved_assets);
       const result = payload && payload.result && typeof payload.result === "object" ? payload.result : {};
       const generated = payload && payload.generated_content && typeof payload.generated_content === "object" ? payload.generated_content : {};
       add([
@@ -15042,6 +15070,9 @@
       const localItem = local.item && typeof local.item === "object" ? local.item : {};
       const videoResult = local.video_result && typeof local.video_result === "object" ? local.video_result : {};
       const videoResultInner = videoResult.result && typeof videoResult.result === "object" ? videoResult.result : {};
+      const mcpResult = payload.mcp_result && typeof payload.mcp_result === "object" ? payload.mcp_result : {};
+      const mcpJob = mcpResult.result && typeof mcpResult.result === "object" ? mcpResult.result : mcpResult;
+      const mcpPipeline = mcpJob.result && typeof mcpJob.result === "object" ? mcpJob.result : {};
       [
         local.final_video,
         local.video_url ? { url: local.video_url, asset_id: local.video_asset_id, media_type: "video", title: local.title || defaults.title } : null,
@@ -15049,6 +15080,7 @@
         localItem.video_url ? { url: localItem.video_url, asset_id: localItem.video_asset_id, media_type: "video", title: localItem.title || defaults.title } : null,
         videoResult.final_video,
         videoResultInner.final_video,
+        mcpPipeline.final_video,
       ].forEach(addEntry);
       const ids = Array.isArray(refs.asset_ids) ? refs.asset_ids : [];
       const urls = Array.isArray(refs.urls) ? refs.urls : [];
@@ -15074,6 +15106,7 @@
       };
       walk(payload.saved_assets);
       walk(refs.saved_assets);
+      walk(mcpJob.saved_assets);
       walk(payload.media_urls);
       if (draft) addEntry(draft);
       if (!out.length) collectMediaUrls(payload).forEach(addUrl);
@@ -15221,7 +15254,7 @@
           return;
         }
         box.innerHTML = allRows.map((row) => {
-          const result = row.error || row.result_text || (row.progress && (row.progress.text || row.progress.message)) || "";
+          const result = runDisplayResult(row);
           return `<div class="run-card">
             <div class="run-top"><span>${escapeHtml(fmtTime(row.created_at))}</span><span>${escapeHtml(statusText(row.status))}</span></div>
             <div class="run-title">${escapeHtml(row.title || "定时任务")}</div>
