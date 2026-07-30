@@ -191,6 +191,17 @@
       abilityWorkSubmitting: false,
       douyinStatus: null,
       douyinTaskAction: "search_collect",
+      assetVoiceRecordedFile: null,
+      assetVoiceRecordStream: null,
+      assetVoiceRecordContext: null,
+      assetVoiceRecordSource: null,
+      assetVoiceRecordProcessor: null,
+      assetVoiceRecordBuffers: [],
+      assetVoiceRecordStartedAt: 0,
+      assetVoiceRecordTimer: null,
+      assetVoiceRecordPreviewUrl: "",
+      assetVoiceIsRecording: false,
+      assetVoiceRecordPending: false,
       voiceRecording: false,
       voiceDraft: "",
       voiceTimer: null,
@@ -6527,8 +6538,8 @@
           ? `<audio class="asset-preview-audio" src="${escapeHtml(src)}" controls></audio>`
           : `<img class="asset-preview-large" src="${escapeHtml(src)}" alt="">`;
       }
-      const deleteActions = source === "hifly"
-        ? `<button class="ghost danger-text" type="button" data-delete-hifly-asset="${escapeHtml(kind)}" data-delete-hifly-id="${escapeHtml(String(row.source_record_id || row.id || ""))}" data-delete-hifly-source="hifly">删除</button>`
+      const deleteActions = source === "hifly" || (source === "shanjian" && !isVoice)
+        ? `<button class="ghost danger-text" type="button" data-delete-hifly-asset="${escapeHtml(kind)}" data-delete-hifly-id="${escapeHtml(String(row.source_record_id || row.id || ""))}" data-delete-hifly-source="${escapeHtml(source)}">删除</button>`
         : `<span class="asset-status">同步自 ${escapeHtml(sourceLabel)}，请在原创建入口管理</span>`;
       body.innerHTML = `
         ${preview}
@@ -6622,7 +6633,19 @@
       state.assetLibraryDigitalLoading = true;
       renderAssetLibrary();
       try {
-        const data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}`);
+        let data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}`);
+        const pendingProfiles = (Array.isArray(data.items) ? data.items : []).filter((row) => (
+          String(row && row.source || "") === "shanjian"
+          && String(row && row.status || "") === "processing"
+          && Number(row && row.source_record_id || 0) > 0
+        ));
+        if (pendingProfiles.length) {
+          await Promise.allSettled(pendingProfiles.map((row) => api("/api/shanjian-digital-human/profile/task", {
+            method: "POST",
+            json: { profile_id: Number(row.source_record_id) },
+          })));
+          data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}`);
+        }
         state.assetLibraryAvatarRows = Array.isArray(data.items) ? data.items : [];
         state.assetLibraryAvatarTotal = Number(data.total || 0);
         state.hiflyLoaded = false;
@@ -6785,6 +6808,7 @@
     }
 
     function closeAssetVoiceModal() {
+      resetAssetVoiceRecording();
       $("assetVoiceModal")?.classList.add("hidden");
       if ($("assetVoiceStatus")) $("assetVoiceStatus").textContent = "";
     }
@@ -6793,14 +6817,18 @@
       const section = state.assetLibrarySection || "uploads";
       if (section === "avatars") {
         if ($("assetAvatarForm")) $("assetAvatarForm").reset();
+        if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v2";
         if ($("assetAvatarModel")) $("assetAvatarModel").value = "2";
-        syncAssetAvatarFileAccept();
+        if ($("assetAvatarAuthText")) $("assetAvatarAuthText").value = defaultAssetAvatarAuthText();
+        syncAssetAvatarForm();
         $("assetAvatarModal")?.classList.remove("hidden");
         setTimeout(() => $("assetAvatarName")?.focus(), 80);
         return;
       }
       if (section === "voices") {
+        resetAssetVoiceRecording();
         if ($("assetVoiceForm")) $("assetVoiceForm").reset();
+        syncAssetVoiceRecordUi();
         $("assetVoiceModal")?.classList.remove("hidden");
         setTimeout(() => $("assetVoiceName")?.focus(), 80);
         return;
@@ -6809,10 +6837,47 @@
       $("assetUploadModal")?.classList.remove("hidden");
     }
 
-    function syncAssetAvatarFileAccept() {
+    function defaultAssetAvatarAuthText() {
+      const brandName = String((H5_BRAND_FALLBACKS[H5_BRAND_MARK] || H5_BRAND_FALLBACKS.bihuo).display_name || "必火AI员工")
+        .replace(/AI员工$/i, "") || "必火";
+      return `案例：我是xxx（真实姓名），我授权【${brandName}】使用视频中的肖像、声音，为我生成定制数字人及声音，并在本人【${brandName}】账号中创作使用。`;
+    }
+
+    function syncAssetAvatarForm() {
+      const version = (($("assetAvatarVersion") && $("assetAvatarVersion").value) || "v2").trim();
       const type = (($("assetAvatarSourceType") && $("assetAvatarSourceType").value) || "image").trim();
       if ($("assetAvatarFile")) $("assetAvatarFile").accept = type === "video" ? "video/*,.mp4,.mov" : "image/*,.jpg,.jpeg,.png";
-      if ($("assetAvatarModel")) $("assetAvatarModel").closest(".field")?.classList.toggle("hidden", type === "video");
+      document.querySelectorAll('[data-avatar-version-section="v2"]').forEach((node) => node.classList.toggle("hidden", version !== "v2"));
+      document.querySelectorAll('[data-avatar-version-section="v1"]').forEach((node) => node.classList.toggle("hidden", version !== "v1" || type === "video"));
+      if ($("assetAvatarFileLabel")) $("assetAvatarFileLabel").textContent = type === "video" ? "训练视频" : "训练图片";
+      if ($("assetAvatarFileHint")) {
+        $("assetAvatarFileHint").textContent = type === "video"
+          ? (version === "v2" ? "上传清晰正面人物视频，MP4/MOV，不超过 100MB。" : "上传清晰正面人物视频，MP4/MOV。")
+          : "上传清晰正面图片，建议人物占画面主体。";
+      }
+    }
+
+    function avatarCloneFileError(file, kind, version) {
+      if (!file) return kind === "auth" ? "请上传授权视频" : "请选择训练素材";
+      const filename = String(file.name || "").toLowerCase();
+      const isVideo = /\.(mp4|mov)$/.test(filename) || /^video\//.test(String(file.type || ""));
+      const isImage = /\.(png|jpe?g)$/.test(filename) || /^image\//.test(String(file.type || ""));
+      if (kind === "auth" && !isVideo) return "授权视频仅支持 MP4 或 MOV";
+      if (kind === "image" && !isImage) return "训练图片仅支持 JPG、JPEG 或 PNG";
+      if (kind === "video" && !isVideo) return "训练视频仅支持 MP4 或 MOV";
+      const maxBytes = kind === "image" ? 10 * 1024 * 1024 : (version === "v1" && kind === "video" ? 500 : 100) * 1024 * 1024;
+      if (Number(file.size || 0) > maxBytes) return `${kind === "auth" ? "授权视频" : "训练素材"}不能超过 ${Math.round(maxBytes / 1024 / 1024)}MB`;
+      return "";
+    }
+
+    async function uploadDigitalCloneAsset(file) {
+      const fd = new FormData();
+      fd.append("file", file, file.name || "digital-human-material");
+      const resp = await fetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || data.message || `素材上传失败：HTTP ${resp.status}`);
+      if (!data.asset_id) throw new Error("素材已上传，但没有返回素材 ID");
+      return data;
     }
 
     async function submitAssetAvatarForm(evt) {
@@ -6820,11 +6885,18 @@
       const file = $("assetAvatarFile") && $("assetAvatarFile").files ? $("assetAvatarFile").files[0] : null;
       if (!file) return toast("请选择素材文件");
       const title = (($("assetAvatarName") && $("assetAvatarName").value) || file.name || "未命名形象").trim();
+      const version = (($("assetAvatarVersion") && $("assetAvatarVersion").value) || "v2").trim();
       const sourceType = (($("assetAvatarSourceType") && $("assetAvatarSourceType").value) || "image").trim();
-      const fd = new FormData();
-      fd.append("title", title);
-      fd.append("file", file, file.name || "avatar");
-      if (sourceType !== "video") fd.append("model", (($("assetAvatarModel") && $("assetAvatarModel").value) || "2"));
+      const sourceError = avatarCloneFileError(file, sourceType, version);
+      if (sourceError) return toast(sourceError);
+      const authFile = $("assetAvatarAuthFile") && $("assetAvatarAuthFile").files ? $("assetAvatarAuthFile").files[0] : null;
+      const authText = (($("assetAvatarAuthText") && $("assetAvatarAuthText").value) || "").trim();
+      if (version === "v2") {
+        const authError = avatarCloneFileError(authFile, "auth", version);
+        if (authError) return toast(authError);
+        if (authText.length < 2) return toast("请填写授权说明");
+        if (!$("assetAvatarAgree")?.checked) return toast("请先确认已取得形象本人授权");
+      }
       const btn = $("assetAvatarSubmit");
       const oldText = btn ? btn.textContent : "";
       if (btn) {
@@ -6833,14 +6905,38 @@
       }
       if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "正在提交克隆任务";
       try {
-        const endpoint = sourceType === "video" ? "/api/hifly/my/avatar/create-by-video-upload" : "/api/hifly/my/avatar/create-by-image-upload";
-        const resp = await fetch(apiUrl(endpoint), { method: "POST", headers: authHeaders(), body: fd });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data.detail || data.message || `提交失败：HTTP ${resp.status}`);
+        if (version === "v1") {
+          const fd = new FormData();
+          fd.append("title", title);
+          fd.append("file", file, file.name || "avatar");
+          if (sourceType !== "video") fd.append("model", (($("assetAvatarModel") && $("assetAvatarModel").value) || "2"));
+          const endpoint = sourceType === "video" ? "/api/hifly/my/avatar/create-by-video-upload" : "/api/hifly/my/avatar/create-by-image-upload";
+          const resp = await fetch(apiUrl(endpoint), { method: "POST", headers: authHeaders(), body: fd });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(data.detail || data.message || `提交失败：HTTP ${resp.status}`);
+        } else {
+          if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "1/3 正在上传训练素材";
+          const sourceAsset = await uploadDigitalCloneAsset(file);
+          if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "2/3 正在上传授权视频";
+          const authAsset = await uploadDigitalCloneAsset(authFile);
+          if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "3/3 正在创建数字人 2.0 训练任务";
+          await api("/api/shanjian-digital-human/profile/train", {
+            method: "POST",
+            json: {
+              title,
+              mode: sourceType === "video" ? "fast_video" : "image",
+              image_asset_id: sourceType === "image" ? sourceAsset.asset_id : "",
+              video_asset_id: sourceType === "video" ? sourceAsset.asset_id : "",
+              auth_video_asset_id: authAsset.asset_id,
+              auth_text: authText,
+              make_default: true,
+            },
+          });
+        }
         state.assetLibraryAvatarPage = 1;
         closeAssetAvatarModal();
         await loadAssetLibraryAvatars();
-        toast("形象克隆任务已提交");
+        toast(`${version === "v2" ? "数字人 2.0" : "数字人 1.0"}克隆任务已提交`);
       } finally {
         if (btn) {
           btn.disabled = false;
@@ -6849,10 +6945,216 @@
       }
     }
 
+    function formatAssetVoiceRecordDuration(ms) {
+      const seconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+      return `00:${String(Math.min(seconds, 59)).padStart(2, "0")}`;
+    }
+
+    function cleanupAssetVoiceRecordRuntime() {
+      if (state.assetVoiceRecordTimer) clearInterval(state.assetVoiceRecordTimer);
+      state.assetVoiceRecordTimer = null;
+      if (state.assetVoiceRecordProcessor) {
+        try { state.assetVoiceRecordProcessor.disconnect(); } catch {}
+        state.assetVoiceRecordProcessor.onaudioprocess = null;
+      }
+      if (state.assetVoiceRecordSource) {
+        try { state.assetVoiceRecordSource.disconnect(); } catch {}
+      }
+      if (state.assetVoiceRecordStream) {
+        try { state.assetVoiceRecordStream.getTracks().forEach((track) => track.stop()); } catch {}
+      }
+      if (state.assetVoiceRecordContext) {
+        try { state.assetVoiceRecordContext.close(); } catch {}
+      }
+      state.assetVoiceRecordProcessor = null;
+      state.assetVoiceRecordSource = null;
+      state.assetVoiceRecordStream = null;
+      state.assetVoiceRecordContext = null;
+      state.assetVoiceIsRecording = false;
+      state.assetVoiceRecordPending = false;
+    }
+
+    function resetAssetVoiceRecording() {
+      cleanupAssetVoiceRecordRuntime();
+      state.assetVoiceRecordedFile = null;
+      state.assetVoiceRecordBuffers = [];
+      state.assetVoiceRecordStartedAt = 0;
+      if (state.assetVoiceRecordPreviewUrl) URL.revokeObjectURL(state.assetVoiceRecordPreviewUrl);
+      state.assetVoiceRecordPreviewUrl = "";
+      const preview = $("assetVoiceRecordPreview");
+      if (preview) {
+        preview.pause();
+        preview.removeAttribute("src");
+        preview.classList.add("hidden");
+      }
+      if ($("assetVoiceRecordState")) $("assetVoiceRecordState").textContent = "尚未录音";
+      syncAssetVoiceRecordUi();
+    }
+
+    function syncAssetVoiceRecordUi() {
+      const btn = $("assetVoiceRecordBtn");
+      if (!btn) return;
+      btn.disabled = !!state.assetVoiceRecordPending;
+      btn.classList.toggle("recording", !!state.assetVoiceIsRecording);
+      btn.setAttribute("aria-pressed", state.assetVoiceIsRecording ? "true" : "false");
+      btn.title = state.assetVoiceIsRecording ? "停止并使用录音" : "使用麦克风录音";
+      const label = btn.querySelector("span");
+      if (label) label.textContent = state.assetVoiceRecordPending ? "授权中" : (state.assetVoiceIsRecording ? "停止" : "录音");
+    }
+
+    function mergeAssetVoiceBuffers(buffers) {
+      const length = buffers.reduce((total, chunk) => total + (chunk ? chunk.length : 0), 0);
+      const merged = new Float32Array(length);
+      let offset = 0;
+      buffers.forEach((chunk) => {
+        if (!chunk || !chunk.length) return;
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      });
+      return merged;
+    }
+
+    function writeAssetVoiceWaveString(view, offset, value) {
+      for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i));
+    }
+
+    function encodeAssetVoiceWave(buffers, sampleRate) {
+      const samples = mergeAssetVoiceBuffers(buffers);
+      const dataLength = samples.length * 2;
+      const buffer = new ArrayBuffer(44 + dataLength);
+      const view = new DataView(buffer);
+      let offset = 0;
+      writeAssetVoiceWaveString(view, offset, "RIFF"); offset += 4;
+      view.setUint32(offset, 36 + dataLength, true); offset += 4;
+      writeAssetVoiceWaveString(view, offset, "WAVE"); offset += 4;
+      writeAssetVoiceWaveString(view, offset, "fmt "); offset += 4;
+      view.setUint32(offset, 16, true); offset += 4;
+      view.setUint16(offset, 1, true); offset += 2;
+      view.setUint16(offset, 1, true); offset += 2;
+      view.setUint32(offset, sampleRate, true); offset += 4;
+      view.setUint32(offset, sampleRate * 2, true); offset += 4;
+      view.setUint16(offset, 2, true); offset += 2;
+      view.setUint16(offset, 16, true); offset += 2;
+      writeAssetVoiceWaveString(view, offset, "data"); offset += 4;
+      view.setUint32(offset, dataLength, true); offset += 4;
+      samples.forEach((value) => {
+        const sample = Math.max(-1, Math.min(1, value));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+        offset += 2;
+      });
+      return new Blob([buffer], { type: "audio/wav" });
+    }
+
+    function previewAssetVoiceFile(file, message) {
+      if (state.assetVoiceRecordPreviewUrl) URL.revokeObjectURL(state.assetVoiceRecordPreviewUrl);
+      state.assetVoiceRecordPreviewUrl = URL.createObjectURL(file);
+      const preview = $("assetVoiceRecordPreview");
+      if (preview) {
+        preview.src = state.assetVoiceRecordPreviewUrl;
+        preview.classList.remove("hidden");
+      }
+      if ($("assetVoiceRecordState")) $("assetVoiceRecordState").textContent = message;
+    }
+
+    function stopAssetVoiceRecording(save = true) {
+      if (!state.assetVoiceRecordContext) {
+        cleanupAssetVoiceRecordRuntime();
+        syncAssetVoiceRecordUi();
+        return;
+      }
+      const sampleRate = Number(state.assetVoiceRecordContext.sampleRate || 44100);
+      const buffers = state.assetVoiceRecordBuffers.slice();
+      const durationMs = Date.now() - Number(state.assetVoiceRecordStartedAt || Date.now());
+      cleanupAssetVoiceRecordRuntime();
+      state.assetVoiceRecordBuffers = [];
+      state.assetVoiceRecordStartedAt = 0;
+      syncAssetVoiceRecordUi();
+      if (!save) return;
+      if (durationMs < 3000 || !buffers.length) {
+        if ($("assetVoiceRecordState")) $("assetVoiceRecordState").textContent = "录音太短，请至少录制 3 秒";
+        toast("录音太短，请至少录制 3 秒");
+        return;
+      }
+      const wav = encodeAssetVoiceWave(buffers, sampleRate);
+      const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+      const file = new File([wav], `voice-record-${stamp}.wav`, { type: "audio/wav" });
+      state.assetVoiceRecordedFile = file;
+      try {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        $("assetVoiceFile").files = transfer.files;
+      } catch {}
+      previewAssetVoiceFile(file, `录音已生成（${formatAssetVoiceRecordDuration(durationMs)}），可试听后直接克隆`);
+    }
+
+    async function toggleAssetVoiceRecording() {
+      if (state.assetVoiceIsRecording) {
+        stopAssetVoiceRecording(true);
+        return;
+      }
+      if (state.assetVoiceRecordPending) return;
+      if (!navigator.mediaDevices?.getUserMedia || !(window.AudioContext || window.webkitAudioContext)) {
+        toast("当前浏览器不支持麦克风录音，请上传声音文件");
+        return;
+      }
+      resetAssetVoiceRecording();
+      state.assetVoiceRecordPending = true;
+      if ($("assetVoiceRecordState")) $("assetVoiceRecordState").textContent = "正在请求麦克风权限";
+      syncAssetVoiceRecordUi();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (!state.assetVoiceRecordPending) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        const context = new AudioContextClass();
+        if (context.state === "suspended") await context.resume().catch(() => {});
+        const source = context.createMediaStreamSource(stream);
+        const processor = context.createScriptProcessor(4096, 1, 1);
+        state.assetVoiceRecordStream = stream;
+        state.assetVoiceRecordContext = context;
+        state.assetVoiceRecordSource = source;
+        state.assetVoiceRecordProcessor = processor;
+        state.assetVoiceRecordBuffers = [];
+        state.assetVoiceRecordStartedAt = Date.now();
+        state.assetVoiceRecordPending = false;
+        state.assetVoiceIsRecording = true;
+        processor.onaudioprocess = (audioEvent) => {
+          if (!state.assetVoiceIsRecording) return;
+          state.assetVoiceRecordBuffers.push(new Float32Array(audioEvent.inputBuffer.getChannelData(0)));
+        };
+        source.connect(processor);
+        processor.connect(context.destination);
+        state.assetVoiceRecordTimer = setInterval(() => {
+          const duration = Date.now() - state.assetVoiceRecordStartedAt;
+          if ($("assetVoiceRecordState")) $("assetVoiceRecordState").textContent = `录音中 ${formatAssetVoiceRecordDuration(duration)}，再次点击停止`;
+          if (duration >= 30000) stopAssetVoiceRecording(true);
+        }, 250);
+        syncAssetVoiceRecordUi();
+      } catch (err) {
+        cleanupAssetVoiceRecordRuntime();
+        syncAssetVoiceRecordUi();
+        if ($("assetVoiceRecordState")) $("assetVoiceRecordState").textContent = "麦克风无法使用，请检查浏览器权限";
+        toast(err && err.message ? `麦克风打开失败：${err.message}` : "麦克风打开失败");
+      }
+    }
+
+    function syncAssetVoiceSelectedFile() {
+      const file = $("assetVoiceFile")?.files?.[0] || null;
+      if (!file) return;
+      cleanupAssetVoiceRecordRuntime();
+      state.assetVoiceRecordedFile = null;
+      syncAssetVoiceRecordUi();
+      previewAssetVoiceFile(file, `已选择 ${file.name || "声音文件"}，可试听后直接克隆`);
+    }
+
     async function submitAssetVoiceForm(evt) {
       evt.preventDefault();
-      const file = $("assetVoiceFile") && $("assetVoiceFile").files ? $("assetVoiceFile").files[0] : null;
+      const file = state.assetVoiceRecordedFile || ($("assetVoiceFile") && $("assetVoiceFile").files ? $("assetVoiceFile").files[0] : null);
       if (!file) return toast("请选择声音文件");
+      if (Number(file.size || 0) > 20 * 1024 * 1024) return toast("声音文件不能超过 20MB");
+      if (!/\.(mp3|m4a|wav)$/i.test(String(file.name || ""))) return toast("声音文件仅支持 MP3、M4A 或 WAV");
       const title = (($("assetVoiceName") && $("assetVoiceName").value) || file.name || "未命名声音").trim();
       const fd = new FormData();
       fd.append("title", title);
@@ -6887,12 +7189,16 @@
     async function deleteHiflyAsset(kind, id, source = "hifly") {
       const cleanKind = kind === "voice" ? "voice" : "avatar";
       if (!id) return;
-      if (String(source || "hifly") !== "hifly") {
-        toast("同步上来的分身请在原创建入口管理");
+      const cleanSource = String(source || "hifly");
+      if (!confirm(`删除这个${cleanKind === "voice" ? "声音" : "形象"}分身？`)) return;
+      if (cleanSource === "shanjian" && cleanKind === "avatar") {
+        await api(`/api/shanjian-digital-human/profiles/${encodeURIComponent(id)}`, { method: "DELETE" });
+      } else if (cleanSource === "hifly") {
+        await api(`/api/hifly/my/${cleanKind}/${encodeURIComponent(id)}`, { method: "DELETE" });
+      } else {
+        toast("这个分身暂不支持在 H5 删除");
         return;
       }
-      if (!confirm(`删除这个${cleanKind === "voice" ? "声音" : "形象"}分身？`)) return;
-      await api(`/api/hifly/my/${cleanKind}/${encodeURIComponent(id)}`, { method: "DELETE" });
       closeAssetPreviewDialog();
       if (cleanKind === "voice") await loadAssetLibraryVoices();
       else await loadAssetLibraryAvatars();
@@ -15649,11 +15955,14 @@
     $("assetAvatarBackdrop")?.addEventListener("click", closeAssetAvatarModal);
     $("assetAvatarClose")?.addEventListener("click", closeAssetAvatarModal);
     $("assetAvatarCancel")?.addEventListener("click", closeAssetAvatarModal);
-    $("assetAvatarSourceType")?.addEventListener("change", syncAssetAvatarFileAccept);
+    $("assetAvatarVersion")?.addEventListener("change", syncAssetAvatarForm);
+    $("assetAvatarSourceType")?.addEventListener("change", syncAssetAvatarForm);
     $("assetAvatarForm")?.addEventListener("submit", (evt) => submitAssetAvatarForm(evt).catch((err) => toast(err.message || "提交失败")));
     $("assetVoiceBackdrop")?.addEventListener("click", closeAssetVoiceModal);
     $("assetVoiceClose")?.addEventListener("click", closeAssetVoiceModal);
     $("assetVoiceCancel")?.addEventListener("click", closeAssetVoiceModal);
+    $("assetVoiceRecordBtn")?.addEventListener("click", () => toggleAssetVoiceRecording().catch((err) => toast(err.message || "录音失败")));
+    $("assetVoiceFile")?.addEventListener("change", syncAssetVoiceSelectedFile);
     $("assetVoiceForm")?.addEventListener("submit", (evt) => submitAssetVoiceForm(evt).catch((err) => toast(err.message || "提交失败")));
     $("assetLibraryPrevBtn")?.addEventListener("click", () => {
       const section = state.assetLibrarySection || "uploads";

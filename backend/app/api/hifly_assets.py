@@ -1656,7 +1656,7 @@ def _normalize_shanjian_profile_as_avatar(
     return {
         "id": f"shanjian:{row.id}",
         "source": "shanjian",
-        "source_label": "Online形象分身",
+        "source_label": "数字人 2.0",
         "source_record_id": row.id,
         "provider": "shanjian",
         "task_id": row.task_id or "",
@@ -1676,7 +1676,7 @@ def _normalize_shanjian_profile_as_avatar(
         "model": None,
         "aigc_flag": 0,
         "message": row.error_message or "",
-        "section_label": "Online形象分身",
+        "section_label": "数字人 2.0",
         "is_mine": True,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,

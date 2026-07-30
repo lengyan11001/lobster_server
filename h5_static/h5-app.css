@@ -5375,6 +5375,109 @@
         grid-template-columns: 1fr;
       }
     }
+
+    #assetAvatarModal .asset-action-popover,
+    #assetVoiceModal .asset-action-popover {
+      width: min(430px, calc(100vw - 28px));
+      max-height: min(88dvh, 760px);
+    }
+
+    .asset-field-hint {
+      display: block;
+      margin-top: 6px;
+      color: #718096;
+      font-size: 11px;
+      font-weight: 400;
+      line-height: 1.5;
+    }
+
+    .asset-consent-row {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 9px;
+      align-items: start;
+      color: #4b5870;
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.55;
+      cursor: pointer;
+    }
+
+    .asset-consent-row input {
+      width: 18px;
+      height: 18px;
+      min-height: 0;
+      margin: 1px 0 0;
+      accent-color: var(--blue);
+    }
+
+    .asset-voice-input-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .asset-voice-input-row input {
+      min-width: 0;
+      width: 100%;
+    }
+
+    .asset-voice-record-btn {
+      min-width: 84px;
+      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 0 11px;
+      color: #2563eb;
+      border: 1px solid #cfe0ff;
+      background: #eff6ff;
+      box-shadow: none;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .asset-voice-record-btn svg {
+      width: 18px;
+      height: 18px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .asset-voice-record-btn.recording {
+      color: #b42318;
+      border-color: #fecaca;
+      background: #fff1f2;
+    }
+
+    .asset-voice-record-btn.recording svg {
+      animation: assetVoicePulse 1.1s ease-in-out infinite;
+    }
+
+    .asset-voice-record-state {
+      min-height: 18px;
+      margin-top: 7px;
+      color: #667085;
+      font-size: 11px;
+      font-weight: 400;
+      line-height: 1.45;
+    }
+
+    .asset-voice-record-preview {
+      width: 100%;
+      height: 38px;
+      margin-top: 7px;
+    }
+
+    @keyframes assetVoicePulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.12); opacity: .65; }
+    }
     .asset-library-pager {
       display: grid;
       grid-template-columns: auto 1fr auto;

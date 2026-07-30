@@ -8,7 +8,7 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="必火AI员工" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v1" />
   <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1" />
 </head>
 <body>
@@ -1321,6 +1321,13 @@
       <form class="work-dispatch-form" id="assetAvatarForm">
         <div class="work-dispatch-fields">
           <div class="field full">
+            <label for="assetAvatarVersion">数字人版本</label>
+            <select id="assetAvatarVersion">
+              <option value="v2">数字人 2.0（需授权视频）</option>
+              <option value="v1">数字人 1.0</option>
+            </select>
+          </div>
+          <div class="field full">
             <label for="assetAvatarName">名称</label>
             <input id="assetAvatarName" type="text" maxlength="80" placeholder="形象名称">
           </div>
@@ -1331,7 +1338,7 @@
               <option value="video">视频</option>
             </select>
           </div>
-          <div class="field">
+          <div class="field" data-avatar-version-section="v1">
             <label for="assetAvatarModel">训练模式</label>
             <select id="assetAvatarModel">
               <option value="2">标准</option>
@@ -1339,8 +1346,24 @@
             </select>
           </div>
           <div class="field full">
-            <label for="assetAvatarFile">素材文件</label>
+            <label for="assetAvatarFile" id="assetAvatarFileLabel">训练素材</label>
             <input id="assetAvatarFile" type="file" accept="image/*,video/*">
+            <small class="asset-field-hint" id="assetAvatarFileHint">上传清晰正面图片，建议人物占画面主体。</small>
+          </div>
+          <div class="field full" data-avatar-version-section="v2">
+            <label for="assetAvatarAuthFile">授权视频</label>
+            <input id="assetAvatarAuthFile" type="file" accept="video/mp4,video/quicktime,.mp4,.mov">
+            <small class="asset-field-hint">请本人正面出镜朗读下方授权说明，MP4/MOV，不超过 100MB。</small>
+          </div>
+          <div class="field full" data-avatar-version-section="v2">
+            <label for="assetAvatarAuthText">授权说明</label>
+            <textarea id="assetAvatarAuthText" maxlength="500" rows="3" placeholder="请输入授权视频中本人朗读的内容"></textarea>
+          </div>
+          <div class="field full" data-avatar-version-section="v2">
+            <label class="asset-consent-row" for="assetAvatarAgree">
+              <input id="assetAvatarAgree" type="checkbox">
+              <span>我确认已取得形象本人授权，并同意将上述素材用于本账号数字人训练。</span>
+            </label>
           </div>
           <div class="field full">
             <div class="asset-upload-status" id="assetAvatarStatus"></div>
@@ -1372,7 +1395,16 @@
           </div>
           <div class="field full">
             <label for="assetVoiceFile">声音文件</label>
-            <input id="assetVoiceFile" type="file" accept="audio/*,.mp3,.m4a,.wav">
+            <div class="asset-voice-input-row">
+              <input id="assetVoiceFile" type="file" accept="audio/mpeg,audio/mp4,audio/wav,.mp3,.m4a,.wav">
+              <button class="ghost asset-voice-record-btn" type="button" id="assetVoiceRecordBtn" title="使用麦克风录音" aria-label="使用麦克风录音" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3M8 22h8"></path></svg>
+                <span>录音</span>
+              </button>
+            </div>
+            <small class="asset-field-hint">可上传 MP3/M4A/WAV，或录制 3-30 秒清晰人声。</small>
+            <div class="asset-voice-record-state" id="assetVoiceRecordState">尚未录音</div>
+            <audio class="asset-voice-record-preview hidden" id="assetVoiceRecordPreview" controls preload="metadata"></audio>
           </div>
           <div class="field full">
             <div class="asset-upload-status" id="assetVoiceStatus"></div>
@@ -1729,6 +1761,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v1"></script>
 </body>
 </html>
