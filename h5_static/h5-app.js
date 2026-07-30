@@ -15251,10 +15251,27 @@
       document.querySelectorAll('.top-action[data-tab-target="messages"]').forEach((btn) => btn.remove());
     }
 
+    function setTaskActionMenuLayer(menu, open) {
+      if (!menu) return;
+      const card = menu.closest(".workflow-node-card");
+      const entry = menu.closest(".workflow-timeline-entry");
+      const group = menu.closest(".designer-workflow-group");
+      if (open) {
+        card?.classList.add("task-menu-open");
+        entry?.classList.add("task-menu-open");
+        group?.classList.add("task-menu-open");
+        return;
+      }
+      card?.classList.remove("task-menu-open");
+      if (entry && !entry.querySelector(".task-action-menu[open]")) entry.classList.remove("task-menu-open");
+      if (group && !group.querySelector(".task-action-menu[open]")) group.classList.remove("task-menu-open");
+    }
+
     function closeTaskActionMenus(exceptMenu = null) {
       document.querySelectorAll(".task-action-menu[open]").forEach((menu) => {
         if (exceptMenu && menu === exceptMenu) return;
         menu.removeAttribute("open");
+        setTaskActionMenuLayer(menu, false);
       });
       document.querySelectorAll(".task-menu-open").forEach((item) => {
         if (exceptMenu && (item === exceptMenu.closest(".workflow-node-card") || item === exceptMenu.closest(".workflow-timeline-entry") || item === exceptMenu.closest(".designer-workflow-group"))) return;
@@ -15266,30 +15283,36 @@
       document.addEventListener("toggle", (evt) => {
         const menu = evt.target;
         if (!menu || !menu.matches || !menu.matches(".task-action-menu")) return;
-        const card = menu.closest(".workflow-node-card");
-        const entry = menu.closest(".workflow-timeline-entry");
-        const group = menu.closest(".designer-workflow-group");
         if (!menu.open) {
-          card?.classList.remove("task-menu-open");
-          if (entry && !entry.querySelector(".task-action-menu[open]")) entry.classList.remove("task-menu-open");
-          if (group && !group.querySelector(".task-action-menu[open]")) group.classList.remove("task-menu-open");
+          setTaskActionMenuLayer(menu, false);
           return;
         }
         closeTaskActionMenus(menu);
-        card?.classList.add("task-menu-open");
-        entry?.classList.add("task-menu-open");
-        group?.classList.add("task-menu-open");
+        setTaskActionMenuLayer(menu, true);
       }, true);
       document.addEventListener("click", (evt) => {
         const summary = evt.target.closest && evt.target.closest(".task-action-menu > summary");
         if (summary) {
-          closeTaskActionMenus(summary.closest(".task-action-menu"));
+          evt.preventDefault();
+          const menu = summary.closest(".task-action-menu");
+          const willOpen = !menu.open;
+          closeTaskActionMenus(willOpen ? menu : null);
+          if (willOpen) {
+            menu.setAttribute("open", "");
+            setTaskActionMenuLayer(menu, true);
+          } else {
+            menu.removeAttribute("open");
+            setTaskActionMenuLayer(menu, false);
+          }
           return;
         }
         const actionBtn = evt.target.closest && evt.target.closest(".task-action-list button");
         if (actionBtn) {
           const menu = actionBtn.closest(".task-action-menu");
-          if (menu) setTimeout(() => menu.removeAttribute("open"), 0);
+          if (menu) setTimeout(() => {
+            menu.removeAttribute("open");
+            setTaskActionMenuLayer(menu, false);
+          }, 0);
           return;
         }
         if (!evt.target.closest || !evt.target.closest(".task-action-menu")) {

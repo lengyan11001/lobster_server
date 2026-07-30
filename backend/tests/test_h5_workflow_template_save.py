@@ -96,7 +96,7 @@ def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     assert "return personalSystemWorkflowTemplate(sid)" in script
     assert "if (state.workflowTemplateSaving) return;" in script
     assert 'key === "system_sales" ? "/h5-static/designer-employee-sales.jpg" : ""' in script
-    assert "20260730-workflow-menu-v1" in html
+    assert "20260730-workflow-menu-v2" in html
 
 
 def test_workflow_action_menu_stays_above_children_and_closes_before_modal():
@@ -107,5 +107,9 @@ def test_workflow_action_menu_stays_above_children_and_closes_before_modal():
     modal_body = script[modal_start : modal_start + 240]
     assert "closeTaskActionMenus();" in modal_body
     assert ".workflow-node-card.task-menu-open" in styles
+    assert "setTaskActionMenuLayer(menu, true);" in script
+    assert "evt.preventDefault();" in script
+    assert ".workflow-timeline-entry.task-menu-open > .workflow-node-card" in styles
+    assert ".workflow-timeline-entry.task-menu-open > .workflow-child-list" in styles
     assert ".designer-workflow-group.task-menu-open" in styles
     assert ".workflow-node-card.task-menu-open .task-action-list" in styles

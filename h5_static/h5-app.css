@@ -6270,6 +6270,18 @@
     .workflow-node-card.task-menu-open .task-action-list {
       z-index: 160;
     }
+    .workflow-timeline-entry {
+      position: relative;
+      z-index: 0;
+    }
+    .workflow-timeline-entry.task-menu-open > .workflow-node-card {
+      position: relative;
+      z-index: 160;
+    }
+    .workflow-timeline-entry.task-menu-open > .workflow-child-list {
+      position: relative;
+      z-index: 0;
+    }
     .workflow-node-action-menu .task-action-list button {
       min-height: 0;
       width: 100%;
