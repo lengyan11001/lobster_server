@@ -6260,6 +6260,16 @@
       min-width: 112px;
       z-index: 120;
     }
+    .workflow-node-card.task-menu-open,
+    .workflow-timeline-entry.task-menu-open,
+    .designer-workflow-group.task-menu-open {
+      position: relative;
+      z-index: 140;
+      overflow: visible;
+    }
+    .workflow-node-card.task-menu-open .task-action-list {
+      z-index: 160;
+    }
     .workflow-node-action-menu .task-action-list button {
       min-height: 0;
       width: 100%;

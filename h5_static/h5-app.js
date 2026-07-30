@@ -3165,6 +3165,7 @@
     }
 
     function openWorkflowActionModal(parentNodeId, actionId = "") {
+      closeTaskActionMenus();
       const parentNode = workflowParentNodeById(parentNodeId);
       if (!parentNode) {
         toast("未找到上级节点");
