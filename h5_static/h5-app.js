@@ -5000,6 +5000,24 @@
       return marketingCreationEntryNodes().map(marketingCreationEntryCardHtml).join("");
     }
 
+    function openCreationQuickSheet() {
+      const modal = $("creationQuickModal");
+      const grid = $("creationQuickGrid");
+      if (!modal || !grid) return;
+      grid.innerHTML = renderMarketingCreationEntries() || `<div class="creation-quick-empty">暂无可用的营销创作能力</div>`;
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      document.querySelector('[data-designer-nav="create"]')?.classList.add("sheet-open");
+    }
+
+    function closeCreationQuickSheet() {
+      const modal = $("creationQuickModal");
+      if (!modal) return;
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
+      document.querySelector('[data-designer-nav="create"]')?.classList.remove("sheet-open");
+    }
+
     function abilityCardHtml(node) {
       const count = abilityChildCount(node);
       const actionable = abilityIsActionable(node);
@@ -8779,7 +8797,7 @@
         return;
       }
       if (key === "aiMarketingCreation") {
-        openDepartmentView(AI_MARKETING_CREATION_ID);
+        openCreationQuickSheet();
         return;
       }
       switchTab(key);
@@ -15536,6 +15554,25 @@
         if (!target) return;
         openHomeTarget(target, activeViewKey() || "office");
       });
+    });
+    $("creationQuickBackdrop")?.addEventListener("click", closeCreationQuickSheet);
+    $("creationQuickClose")?.addEventListener("click", closeCreationQuickSheet);
+    $("creationQuickGrid")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-ability-key]");
+      if (!btn) return;
+      const key = String(btn.dataset.abilityKey || "");
+      const lookup = abilityLookup(key);
+      if (lookup && lookup.node && lookup.node.comingSoon) {
+        toast("敬请期待");
+        return;
+      }
+      closeCreationQuickSheet();
+      openAbilityView(key, AI_MARKETING_CREATION_ID);
+    });
+    document.addEventListener("keydown", (evt) => {
+      if (evt.key === "Escape" && !$("creationQuickModal")?.classList.contains("hidden")) {
+        closeCreationQuickSheet();
+      }
     });
     $("toggleTaskPanelBtn").addEventListener("click", () => setTaskPanelOpen(!state.taskPanelOpen));
     $("taskAbilityBoard")?.addEventListener("click", (evt) => {

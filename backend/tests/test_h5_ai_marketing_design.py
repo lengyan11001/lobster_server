@@ -22,6 +22,22 @@ def test_ai_marketing_home_and_group_navigation_are_present():
     assert 'openAbilityView(parent.key, AI_MARKETING_CREATION_ID)' in script
 
 
+def test_bottom_create_button_opens_compact_creation_sheet():
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
+
+    assert 'id="creationQuickModal"' in html
+    assert 'id="creationQuickGrid"' in html
+    assert "function openCreationQuickSheet()" in script
+    assert 'if (key === "aiMarketingCreation") {\n        openCreationQuickSheet();' in script
+    assert "grid.innerHTML = renderMarketingCreationEntries()" in script
+    assert 'openAbilityView(key, AI_MARKETING_CREATION_ID);' in script
+    assert ".creation-quick-modal" in css
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in css
+    assert "20260730-create-sheet-v1" in html
+
+
 def test_ai_marketing_cover_assets_are_bundled_and_mapped():
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
     covers = (
