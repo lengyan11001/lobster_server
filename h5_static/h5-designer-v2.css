@@ -3365,6 +3365,9 @@ body * {
 }
 
 #workflowView .workflow-control-card {
+  position: sticky;
+  top: 76px;
+  z-index: 45;
   display: grid;
   gap: 10px;
   padding: 12px;
