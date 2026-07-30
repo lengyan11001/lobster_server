@@ -424,6 +424,9 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
     validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
+    # Do not keep the authentication read transaction checked out while the
+    # endpoint waits on an upstream API or streams a response.
+    db.commit()
     return user
 
 
@@ -444,6 +447,7 @@ async def get_current_user_id_from_token(
         if user is None:
             raise credentials_exception
         validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
+        db.commit()
         return user_id
     except (JWTError, ValueError, TypeError):
         raise credentials_exception
@@ -469,6 +473,7 @@ async def get_messenger_user_id(
     user = db.query(User).filter(User.id == user_id).first()
     if user is not None:
         validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
+        db.commit()
         return user_id
     if getattr(settings, "messenger_trust_jwt_without_user", False):
         validate_token_brand(payload, explicit_brand=explicit_request_brand_mark(request))

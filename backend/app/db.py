@@ -10,6 +10,10 @@ from .core.config import settings
 
 logger = logging.getLogger("db.pool")
 _pool_debug_enabled = (os.environ.get("DB_POOL_DEBUG") or "").strip().lower() in {"1", "true", "yes", "on"}
+try:
+    _slow_checkout_seconds = max(1.0, float(os.environ.get("DB_POOL_SLOW_CHECKOUT_SECONDS") or "15"))
+except (TypeError, ValueError):
+    _slow_checkout_seconds = 15.0
 _request_context: contextvars.ContextVar[dict] = contextvars.ContextVar("db_request_context", default={})
 
 
@@ -44,12 +48,14 @@ else:
 if _pool_debug_enabled:
     logging.getLogger("sqlalchemy.pool").setLevel(logging.DEBUG)
 
-    @event.listens_for(engine, "checkout")
-    def _log_pool_checkout(dbapi_connection, connection_record, connection_proxy):
-        info = connection_record.info
-        info["checkout_ts"] = time.monotonic()
-        ctx = _request_context.get({})
-        info["checkout_ctx"] = dict(ctx)
+
+@event.listens_for(engine, "checkout")
+def _track_pool_checkout(dbapi_connection, connection_record, connection_proxy):
+    info = connection_record.info
+    info["checkout_ts"] = time.monotonic()
+    ctx = _request_context.get({})
+    info["checkout_ctx"] = dict(ctx)
+    if _pool_debug_enabled:
         logger.info(
             "checkout conn=%s record=%s pid=%s method=%s path=%s request_id=%s client=%s",
             id(dbapi_connection),
@@ -61,14 +67,29 @@ if _pool_debug_enabled:
             ctx.get("client", "-"),
         )
 
-    @event.listens_for(engine, "checkin")
-    def _log_pool_checkin(dbapi_connection, connection_record):
-        info = connection_record.info
-        checkout_ts = info.pop("checkout_ts", None)
-        ctx = info.pop("checkout_ctx", {}) or {}
-        held_ms = int((time.monotonic() - checkout_ts) * 1000) if checkout_ts else -1
+
+@event.listens_for(engine, "checkin")
+def _track_pool_checkin(dbapi_connection, connection_record):
+    info = connection_record.info
+    checkout_ts = info.pop("checkout_ts", None)
+    ctx = info.pop("checkout_ctx", {}) or {}
+    held_seconds = (time.monotonic() - checkout_ts) if checkout_ts else -1.0
+    held_ms = int(held_seconds * 1000) if held_seconds >= 0 else -1
+    if _pool_debug_enabled:
         logger.info(
             "checkin conn=%s record=%s pid=%s held_ms=%s method=%s path=%s request_id=%s client=%s",
+            id(dbapi_connection),
+            id(connection_record),
+            os.getpid(),
+            held_ms,
+            ctx.get("method", "-"),
+            ctx.get("path", "-"),
+            ctx.get("request_id", "-"),
+            ctx.get("client", "-"),
+        )
+    elif held_seconds >= _slow_checkout_seconds:
+        logger.warning(
+            "slow checkin conn=%s record=%s pid=%s held_ms=%s method=%s path=%s request_id=%s client=%s",
             id(dbapi_connection),
             id(connection_record),
             os.getpid(),

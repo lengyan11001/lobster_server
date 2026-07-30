@@ -15613,9 +15613,11 @@
       const append = !!options.append;
       const pageSize = Math.max(1, Math.min(100, parseInt(options.limit || "10", 10) || 10));
       const compact = !!options.compact;
+      const preserveExisting = !!options.preserveExisting;
+      const silent = !!options.silent;
       const box = $("runList");
       if (!state.token) return;
-      if (append && state.runListLoading) return false;
+      if (state.runListLoading) return false;
       const requestId = ++state.runListRequestSeq;
       state.runListLoading = true;
       if (reset) {
@@ -15625,9 +15627,9 @@
         state.workflowRunDateLoaded = {};
       }
       const offset = append ? state.runListOffset : 0;
-      if (box && !append) box.innerHTML = `<div class="hint">加载中...</div>`;
+      if (box && !append && !silent) box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
-        const data = await api(`/api/scheduled-tasks/runs?limit=${pageSize}&offset=${offset}${compact ? "&compact=1" : ""}`);
+        const data = await api(`/api/scheduled-tasks/runs?limit=${pageSize}&offset=${offset}&compact=${compact ? "1" : "0"}`);
         if (requestId !== state.runListRequestSeq) return false;
         const rows = Array.isArray(data.runs) ? data.runs : [];
         const pagination = data.pagination || {};
@@ -15635,7 +15637,7 @@
         state.runListHasNext = !!pagination.has_next;
         state.runListTotal = Number(pagination.total || 0);
         const rowsById = new Map();
-        (append ? (state.runs || []) : []).forEach((row) => {
+        ((append || preserveExisting) ? (state.runs || []) : []).forEach((row) => {
           if (row && row.id) rowsById.set(String(row.id), row);
         });
         rows.forEach((row) => {
@@ -15669,18 +15671,18 @@
         return true;
       } catch (err) {
         if (requestId !== state.runListRequestSeq) return false;
-        if (!append) {
+        if (!append && !preserveExisting) {
           state.runs = [];
           state.runListHasNext = false;
           state.runListTotal = 0;
         }
-        captureRunStatusSnapshot([], { announce: false });
+        if (!preserveExisting) captureRunStatusSnapshot([], { announce: false });
         renderOfficeEmployees();
         renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
         if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
-        if (box && !append) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
-        if (!append) $("loadMoreRunsBtn")?.classList.add("hidden");
+        if (box && !append && !silent) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
+        if (!append && !silent) $("loadMoreRunsBtn")?.classList.add("hidden");
         return false;
       } finally {
         if (requestId === state.runListRequestSeq) {
@@ -17393,6 +17395,14 @@
       setInterval(() => {
         if (!state.token) return;
         if (document.visibilityState === "hidden") return;
-        loadRuns({ reset: true });
-      }, 5000);
+        const activeStatuses = new Set(["pending", "claimed", "processing", "running"]);
+        if (!(state.runs || []).some((row) => activeStatuses.has(String(row && row.status || "").toLowerCase()))) return;
+        loadRuns({
+          reset: false,
+          limit: 20,
+          compact: true,
+          preserveExisting: true,
+          silent: true,
+        });
+      }, 15000);
     })();

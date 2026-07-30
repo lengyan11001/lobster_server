@@ -1325,6 +1325,16 @@ def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
     }
 
 
+def _run_list_uses_compact_response(request: Request, explicit: Optional[bool]) -> bool:
+    if explicit is not None:
+        return bool(explicit)
+    source = " ".join(
+        str(request.headers.get(name) or "").strip().lower()
+        for name in ("origin", "referer")
+    )
+    return "h5.bhzn.top" in source or "/h5" in source
+
+
 def _is_server_side_task(task_or_run: Any) -> bool:
     return str(getattr(task_or_run, "task_kind", "") or "").strip() in _SERVER_SIDE_TASK_KINDS
 
@@ -2825,9 +2835,10 @@ def run_scheduled_task_now(
 
 @router.get("/api/scheduled-tasks/runs", summary="执行记录列表")
 def list_scheduled_task_runs(
+    request: Request,
     limit: int = Query(80, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    compact: bool = Query(False),
+    compact: Optional[bool] = Query(None),
     date: str = Query("", max_length=10),
     timezone_offset_minutes: int = Query(480, ge=-720, le=840),
     current_user: User = Depends(get_current_user),
@@ -2847,7 +2858,8 @@ def list_scheduled_task_runs(
         query = query.filter(ScheduledTaskRun.created_at >= start_utc, ScheduledTaskRun.created_at < end_utc)
     total = query.with_entities(func.count(ScheduledTaskRun.id)).scalar() or 0
     rows = query.order_by(ScheduledTaskRun.created_at.desc()).offset(offset).limit(limit).all()
-    serializer = _serialize_run_compact if compact else _serialize_run
+    use_compact = _run_list_uses_compact_response(request, compact)
+    serializer = _serialize_run_compact if use_compact else _serialize_run
     return {
         "ok": True,
         "runs": [serializer(r) for r in rows],

@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import asyncio
 import mimetypes
 import base64
 import json
@@ -913,7 +914,12 @@ async def _persist_voice_demo_asset(
         ext = ".wav"
     elif "mp4" in media_type or "m4a" in media_type:
         ext = ".m4a"
-    asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, media_type)
+    asset_id, filename_or_key, file_size, public_url = await asyncio.to_thread(
+        _save_bytes_or_tos,
+        data,
+        ext,
+        media_type,
+    )
     asset = Asset(
         asset_id=asset_id,
         user_id=user_id,
@@ -2596,6 +2602,7 @@ async def preview_my_voice_tts(
     )
     if not row:
         raise HTTPException(status_code=404, detail="声音不存在或不属于当前账号")
+    user_id = int(current_user.id)
     provider = _voice_provider(row)
     provider_hint = _normalize_voice_provider_hint(body.voice_provider)
     if provider not in {_QWEN_PROVIDER, _MINIMAX_PROVIDER} and provider_hint:
@@ -2603,6 +2610,10 @@ async def preview_my_voice_tts(
     text = (body.text or "").strip()
     default_text = "你好，这是千问声音试听。" if provider == _QWEN_PROVIDER else "你好，这是 MiniMax 声音试听。"
     text = text or default_text
+    # Keep the loaded voice snapshot but release the read transaction before
+    # waiting on TTS and object storage.
+    db.expunge(row)
+    db.commit()
     result = await _preview_tts_audio(
         provider=provider,
         row=row,
@@ -2619,7 +2630,7 @@ async def preview_my_voice_tts(
     if is_segmented:
         asset = await _persist_voice_demo_asset(
             db,
-            int(current_user.id),
+            user_id,
             raw=result["audio_bytes"],
             title=f"{row.title or '声音'}-长文案合成",
             voice_id=voice_id,
