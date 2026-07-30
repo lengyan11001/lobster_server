@@ -1,4 +1,5 @@
 """Asset management: download, store, list, search local media files. 支持 TOS 上传后仅存公网 URL."""
+import asyncio
 import hmac
 import hashlib
 import json
@@ -539,8 +540,9 @@ async def save_asset_from_url(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    user_id = int(current_user.id)
     dk = _save_url_dedupe_key(body.url)
-    existing = _find_existing_asset_by_save_url_dedupe(db, current_user.id, dk)
+    existing = _find_existing_asset_by_save_url_dedupe(db, user_id, dk)
     if existing:
         logger.info(
             "[素材] save-url 去重 命中已有 asset_id=%s",
@@ -553,6 +555,10 @@ async def save_asset_from_url(
             "file_size": existing.file_size or 0,
             "source_url": existing.source_url or "",
         }
+
+    # Remote download and TOS upload can each take minutes. Release the
+    # dedupe query transaction before doing either network operation.
+    db.commit()
 
     try:
         async with httpx.AsyncClient(
@@ -606,7 +612,12 @@ async def save_asset_from_url(
             status_code=503,
             detail="save-url 入库需配置 TOS_CONFIG（custom_configs.json，含 access_key/secret_key/endpoint/region/bucket_name/public_domain），未配置无法保存统一 CDN 地址。",
         )
-    aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(data, ext, ct_use)
+    aid, fname_or_key, fsize, tos_public_url = await asyncio.to_thread(
+        _save_bytes_or_tos,
+        data,
+        ext,
+        ct_use,
+    )
     if not tos_public_url:
         _unlink_safe_asset_file(ASSETS_DIR / fname_or_key)
         raise HTTPException(
@@ -616,7 +627,7 @@ async def save_asset_from_url(
     source_url = tos_public_url
     asset = Asset(
         asset_id=aid,
-        user_id=current_user.id,
+        user_id=user_id,
         filename=fname_or_key,
         media_type=body.media_type,
         file_size=fsize,

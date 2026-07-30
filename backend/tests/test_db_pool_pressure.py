@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -75,6 +76,60 @@ def test_voice_preview_releases_db_before_tts(db_session, test_user, monkeypatch
 
     assert result["ok"] is True
     assert result["audio_url"].startswith("data:audio/mpeg;base64,")
+
+
+def test_save_url_releases_db_and_offloads_tos_upload(db_session, test_user, monkeypatch):
+    from backend.app.api import assets
+
+    caller_thread = threading.get_ident()
+
+    class FakeResponse:
+        content = b"video-bytes"
+        headers = {"content-type": "video/mp4"}
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, *_args, **_kwargs):
+            assert not db_session.in_transaction()
+            return FakeResponse()
+
+    def fake_save(data, ext, content_type):
+        assert not db_session.in_transaction()
+        assert threading.get_ident() != caller_thread
+        assert data == b"video-bytes"
+        assert ext == ".mp4"
+        assert content_type == "video/mp4"
+        return "asset-save-url", "assets/asset-save-url.mp4", len(data), "https://cdn.example.com/asset-save-url.mp4"
+
+    monkeypatch.setattr(assets.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(assets, "_get_tos_config", lambda: {"bucket_name": "test"})
+    monkeypatch.setattr(assets, "_save_bytes_or_tos", fake_save)
+
+    result = asyncio.run(
+        assets.save_asset_from_url(
+            assets.SaveAssetReq(
+                url="https://source.example.com/result.mp4",
+                media_type="video",
+            ),
+            current_user=SimpleNamespace(id=int(test_user.id)),
+            db=db_session,
+        )
+    )
+
+    assert result["asset_id"] == "asset-save-url"
+    assert result["source_url"] == "https://cdn.example.com/asset-save-url.mp4"
 
 
 def test_h5_background_run_refresh_is_compact_and_non_overlapping():
