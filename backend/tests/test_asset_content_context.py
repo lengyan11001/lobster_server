@@ -12,6 +12,7 @@ def test_asset_detail_recovers_copy_and_prompt_from_generation_run(db_session, t
             media_type="image",
             filename="online-image-001.png",
             prompt="生成记录里的画面提示词",
+            tags="auto,task.get_result",
             source="save-url",
         )
     )
@@ -54,6 +55,7 @@ def test_asset_detail_recovers_copy_and_prompt_from_generation_run(db_session, t
     assert detail["title"] == "真实发布标题"
     assert detail["description"] == "适合直接发布的正文"
     assert detail["creative_prompt"] == "生成记录里的画面提示词"
+    assert detail["tags"] == ""
     assert detail["content_context"]["source"] == "generation_record"
     stored = db_session.query(Asset).filter(Asset.asset_id == "server-image-001").one()
     assert stored.meta["existing_marker"] == "keep-me"

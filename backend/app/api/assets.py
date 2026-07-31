@@ -493,6 +493,15 @@ def _first_context_text(*values, limit: int = 12000) -> str:
     return ""
 
 
+def _publish_tags(value) -> str:
+    text = _context_text(value, 2000)
+    if not text:
+        return ""
+    internal = {"auto", "task.get_result", "save-url", "generated"}
+    parts = [part.strip() for part in re.split(r"[,，\s]+", text) if part.strip()]
+    return " ".join(part for part in parts if part.lower() not in internal)
+
+
 def _stored_asset_content_context(row: Asset) -> dict[str, str]:
     meta = row.meta if isinstance(row.meta, dict) else {}
     raw = meta.get("content_context") if isinstance(meta.get("content_context"), dict) else {}
@@ -500,7 +509,7 @@ def _stored_asset_content_context(row: Asset) -> dict[str, str]:
         "title": _first_context_text(raw.get("title"), meta.get("content_title"), limit=500),
         "description": _first_context_text(raw.get("description"), meta.get("content_description")),
         "creative_prompt": _first_context_text(raw.get("creative_prompt"), meta.get("creative_prompt"), row.prompt),
-        "tags": _first_context_text(raw.get("tags"), meta.get("content_tags"), row.tags, limit=2000),
+        "tags": _publish_tags(_first_context_text(raw.get("tags"), meta.get("content_tags"), row.tags, limit=2000)),
         "source": _first_context_text(raw.get("source"), limit=64),
     }
 
@@ -542,10 +551,10 @@ def _run_asset_content_context(row: ScheduledTaskRun) -> dict[str, str]:
             plan.get("image_prompt"), plan.get("video_prompt"), generated.get("prompt"),
             inner_input.get("prompt"), inner_input.get("task_text"), input_payload.get("prompt"),
         ),
-        "tags": _first_context_text(
+        "tags": _publish_tags(_first_context_text(
             result.get("tags"), result.get("hashtags"), generated.get("tags"), plan.get("tags"), draft.get("tags"),
             limit=2000,
-        ),
+        )),
         "source": "scheduled_task_run",
     }
 
@@ -633,7 +642,7 @@ def _resolve_asset_content_context(db: Session, row: Asset) -> dict[str, str]:
                 "title": "",
                 "description": "",
                 "creative_prompt": _first_context_text(generation.prompt),
-                "tags": _first_context_text(generation.tags, limit=2000),
+                "tags": "",
                 "source": "generation_record",
             })
 
@@ -647,6 +656,7 @@ def _resolve_asset_content_context(db: Session, row: Asset) -> dict[str, str]:
 
 def _persist_asset_content_context(row: Asset, context: dict[str, str]) -> bool:
     useful = {key: _context_text(context.get(key), 12000) for key in ("title", "description", "creative_prompt", "tags", "source")}
+    useful["tags"] = _publish_tags(useful.get("tags"))
     useful = {key: value for key, value in useful.items() if value}
     if not useful:
         return False
@@ -661,6 +671,9 @@ def _persist_asset_content_context(row: Asset, context: dict[str, str]) -> bool:
         changed = True
     if not row.tags and useful.get("tags"):
         row.tags = useful["tags"]
+        changed = True
+    elif row.tags and not _publish_tags(row.tags):
+        row.tags = None
         changed = True
     return changed
 
