@@ -89,7 +89,9 @@ class CreateVideoBody(_TokenBody):
     material_match_way: str = "fuzzyMatch"
     resource_preprocess_method: str = "roughCut"
     material_composition: str = "random"
-    video_duration: int = 30
+    # The provider may return the full source duration. A duration is only
+    # constrained when the caller explicitly supplies one.
+    video_duration: Optional[int] = Field(default=None, ge=5, le=300)
     hard_max_duration: Optional[float] = Field(default=None, ge=5, le=300)
 
 
@@ -168,11 +170,12 @@ def _billing_unit_credits(template_meta: Optional[Dict[str, Any]]) -> int:
 
 
 def _estimate_billing_seconds(body: "CreateVideoBody", template_meta: Optional[Dict[str, Any]], text: str) -> int:
-    if template_meta:
-        return max(1, min(int(getattr(body, "video_duration", None) or template_meta.get("video_duration") or 30), 300))
+    explicit_duration = getattr(body, "video_duration", None)
+    if explicit_duration is not None:
+        return max(1, min(int(explicit_duration), 300))
     if text:
         return _estimate_text_seconds(text)
-    return max(1, min(int(getattr(body, "video_duration", None) or 30), 300))
+    return 30
 
 
 async def _shanjian_pre_deduct(
@@ -579,11 +582,9 @@ def _requested_video_duration_limit(submit_payload: Any) -> Optional[float]:
         if explicit is not None:
             return max(5.0, min(explicit, 300.0))
 
-    template_meta = _template_meta_from_submit_payload(submit_payload)
-    if template_meta and _clean_text(template_meta.get("style_id")):
-        configured = _duration_float(template_meta.get("video_duration"))
-        if configured is not None:
-            return max(5.0, min(configured, 300.0))
+    # A template's videoDuration is a provider-side template setting, not a
+    # local hard maximum. Only an explicit caller constraint may trigger the
+    # local ffmpeg trim below.
     return None
 
 
@@ -883,7 +884,7 @@ def _template_meta_from_body(body: CreateVideoBody) -> Optional[Dict[str, Any]]:
         materials.append(row)
     if not (style_id or template_scene or materials or _clean_text(body.introduce_name) or _clean_text(body.introduce_description)):
         return None
-    return {
+    template_meta: Dict[str, Any] = {
         "template_scene": template_scene or "realMan",
         "style_id": style_id,
         "materials": materials,
@@ -898,8 +899,10 @@ def _template_meta_from_body(body: CreateVideoBody) -> Optional[Dict[str, Any]]:
         "material_match_way": _clean_text(body.material_match_way) or "fuzzyMatch",
         "resource_preprocess_method": _clean_text(body.resource_preprocess_method) or "roughCut",
         "material_composition": _clean_text(body.material_composition) or "random",
-        "video_duration": int(body.video_duration or 30),
     }
+    if body.video_duration is not None and not body.long_video:
+        template_meta["requested_video_duration"] = int(body.video_duration)
+    return template_meta
 
 
 def _stored_digital_human_template(meta: Any) -> tuple[bool, Optional[Dict[str, Any]]]:
@@ -1110,10 +1113,12 @@ def _build_realman_clip_payload(*, title: str, template_meta: Dict[str, Any], vi
     material_composition = _clean_text(template_meta.get("material_composition"))
     if material_composition in {"random", "sequential"}:
         payload["processRules"]["materialComposition"] = material_composition
-    try:
-        payload["processRules"]["videoDuration"] = max(5, min(int(template_meta.get("video_duration") or 30), 300))
-    except Exception:
-        payload["processRules"]["videoDuration"] = 30
+    requested_duration = template_meta.get("requested_video_duration")
+    if requested_duration not in (None, ""):
+        try:
+            payload["processRules"]["videoDuration"] = max(5, min(int(requested_duration), 300))
+        except Exception:
+            logger.warning("[shanjian-dh] ignore invalid requested video duration=%r", requested_duration)
     if template_meta.get("materials"):
         payload["materials"] = [
             {"type": str(item.get("type") or "").strip(), "fileUrl": _clean_text(item.get("fileUrl") or item.get("file_url"))}
