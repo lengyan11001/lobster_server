@@ -336,7 +336,8 @@
         label: "创作图片",
         department: "市场部",
         mark: "图",
-        dispatchKind: "capability",
+        dispatchKind: "client_workflow",
+        workflowAction: "image_studio_generate",
         capabilityId: "goal.image.pipeline",
         packageId: "goal_video_pipeline_skill",
       },
@@ -2521,6 +2522,34 @@
       return workNumber(workflowParamValue(id), fallback, min, max);
     }
 
+    function imageStudioFieldsHtml(prefix, titleValue = "创作图片") {
+      return taskFieldHtml("任务标题", workInputHtml(`${prefix}Title`, "text", titleValue))
+        + taskFieldHtml("图片需求", taskTextareaHtml(`${prefix}Prompt`, "描述画面主体、场景、构图、光线和文字要求"), true)
+        + taskFieldHtml("参考图片（可选）", assetPickerControlHtml(`${prefix}Reference`, { mediaType: "image", output: "url", uploadText: "上传图片", selectText: "选择参考图" }), true)
+        + taskFieldHtml("参考图用途", taskSelectHtml(`${prefix}ReferencePurpose`, optionHtml("auto", "普通参考") + optionHtml("person", "替换人物") + optionHtml("product", "替换产品") + optionHtml("style", "参考风格") + optionHtml("background", "参考背景") + optionHtml("local_edit", "局部修改")))
+        + taskFieldHtml("比例", taskSelectHtml(`${prefix}AspectRatio`, optionHtml("9:16", "9:16 竖版") + optionHtml("1:1", "1:1 方图") + optionHtml("3:2", "3:2 横图") + optionHtml("16:9", "16:9 横版") + optionHtml("2:3", "2:3 竖图")))
+        + taskFieldHtml("模型", taskSelectHtml(`${prefix}Model`, optionHtml("gpt-image-2", "影梦lite")))
+        + taskFieldHtml("质量", taskSelectHtml(`${prefix}Quality`, optionHtml("high", "高") + optionHtml("medium", "中") + optionHtml("low", "低") + optionHtml("auto", "自动")))
+        + taskFieldHtml("背景", taskSelectHtml(`${prefix}Background`, optionHtml("auto", "自动") + optionHtml("opaque", "实底") + optionHtml("transparent", "透明")));
+    }
+
+    function collectImageStudioParams(prefix) {
+      const prompt = workflowParamValue(`${prefix}Prompt`);
+      if (!prompt) throw new Error("请填写图片需求");
+      const referenceUrl = workflowParamValue(`${prefix}Reference`);
+      return {
+        prompt,
+        model: workflowParamValue(`${prefix}Model`) || "gpt-image-2",
+        aspect_ratio: workflowParamValue(`${prefix}AspectRatio`) || "9:16",
+        quality: workflowParamValue(`${prefix}Quality`) || "high",
+        background: workflowParamValue(`${prefix}Background`) || "auto",
+        reference_image_urls: referenceUrl ? [referenceUrl] : [],
+        reference_purposes: referenceUrl ? [workflowParamValue(`${prefix}ReferencePurpose`) || "auto"] : [],
+        auto_save: true,
+        poll_timeout_seconds: 1200,
+      };
+    }
+
     function workflowParamSplitList(id) {
       return splitTextareaList(workflowParamValue(id));
     }
@@ -2577,8 +2606,7 @@
           + taskFieldHtml("补充要求", taskTextareaHtml("workflowParamIpRequirement", "可选"), true);
       }
       if (id === "goal.image.pipeline") {
-        return taskFieldHtml("任务名称", workInputHtml("workflowParamImageTitle", "text", "创作图片"))
-          + taskFieldHtml("图片需求", taskTextareaHtml("workflowParamImagePrompt", "图片生成要求"), true);
+        return imageStudioFieldsHtml("workflowParamImage");
       }
       if (id === "goal.video.pipeline") {
         return taskFieldHtml("任务名称", workInputHtml("workflowParamVideoTitle", "text", "创意视频"))
@@ -2810,13 +2838,11 @@
         };
       }
       if (capabilityId === "goal.image.pipeline") {
-        const prompt = workflowParamValue("workflowParamImagePrompt");
-        if (!prompt) throw new Error("请填写图片需求");
         return {
           title: workflowParamValue("workflowParamImageTitle") || node.label || "创作图片",
-          task_kind: "capability",
+          task_kind: "client_workflow",
           content: "H5 工作流：创作图片",
-          payload: { capability_id: "goal.image.pipeline", payload: { prompt } },
+          payload: { action: "image_studio_generate", params: collectImageStudioParams("workflowParamImage") },
         };
       }
       if (capabilityId === "goal.video.pipeline") {
@@ -3817,6 +3843,20 @@
         setFieldValue("workflowParamDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
         setFieldValue("workflowParamDouyinMaxResults", params.max_results || 50);
         setFieldValue("workflowParamDouyinMode", params.mode || "script");
+        return;
+      }
+      if (payload.action === "image_studio_generate" || nodeInfo.workQuickKey === "image_composer_studio") {
+        const referenceUrls = Array.isArray(params.reference_image_urls) ? params.reference_image_urls : [];
+        const referencePurposes = Array.isArray(params.reference_purposes) ? params.reference_purposes : [];
+        setFieldValue("workflowParamImageTitle", plan.title || nodeInfo.label || "创作图片");
+        setFieldValue("workflowParamImagePrompt", params.prompt || inner.prompt || inner.task_text || node.note || "");
+        setFieldValue("workflowParamImageReference", referenceUrls[0] || "");
+        setFieldValue("workflowParamImageReferencePurpose", referencePurposes[0] || "auto");
+        setFieldValue("workflowParamImageAspectRatio", params.aspect_ratio || inner.aspect_ratio || "9:16");
+        setFieldValue("workflowParamImageModel", params.model || "gpt-image-2");
+        setFieldValue("workflowParamImageQuality", params.quality || "high");
+        setFieldValue("workflowParamImageBackground", params.background || "auto");
+        renderAssetPickerControl("workflowParamImageReference");
         return;
       }
       if (payload.action === "local_bestseller_daily_video" || payload.action === "local_bestseller_plan" || payload.action === "local_bestseller_scene_batch" || nodeInfo.workQuickKey === "local_bestseller") {
@@ -6784,6 +6824,8 @@
       const item = normalizeUserUploadAsset(row);
       const prompt = contentActionCreativePromptValue(item.creative_prompt, item.prompt);
       const promptTargets = {
+        workImageReference: "workImagePrompt",
+        workflowParamImageReference: "workflowParamImagePrompt",
         abilityVideoAsset: "abilityVideoPrompt",
         workflowParamVideoAsset: "workflowParamVideoPrompt",
         taskVideoAsset: "taskCreativePrompt",
@@ -6860,9 +6902,22 @@
       const tags = contentActionTextValue(item.tags);
       if (action === "regenerate") {
         if (mediaType === "image") {
+          const reference = contentActionReference(item);
           openContentActionAbility("image_composer_studio", "workImagePrompt", () => {
             setFieldValue("workImageTitle", `${title} - 重新生成`);
             setFieldValue("workImagePrompt", creativePrompt);
+            setFieldValue("workImageReferencePurpose", "local_edit");
+            if (reference) {
+              selectAssetPickerRow("workImageReference", {
+                asset_id: String(item.assetId || "").trim(),
+                filename: String(item.filename || title || "内容图片").trim(),
+                media_type: "image",
+                source_url: reference,
+                preview_url: reference,
+                creative_prompt: creativePrompt,
+                asset_origin: "generated",
+              });
+            }
             if (!creativePrompt) fillContentActionPromptLater(item, "workImagePrompt");
           });
           return;
@@ -9367,6 +9422,7 @@
       }
       if (kind === "client_workflow") {
         const action = cleanKey(payload.action || (payload.params || {}).action);
+        if (action === "image_studio_generate") return "image_composer_studio";
         if (action.startsWith("local_bestseller_")) return findAbilityKeyBy((node) => node.workQuickKey === "local_bestseller") || "local_bestseller";
         if (action === "viral_video_remix_start") return findAbilityKeyBy((node) => node.workQuickKey === "viral_video_remix") || "viral_video_remix";
         if (action === "wecom_poll_reply") return findAbilityKeyBy((node) => node.workQuickKey === "wecom_reply") || "wecom_reply";
@@ -9420,7 +9476,16 @@
       setFieldValue("abilityGenericTitle", run && run.title || "");
       setFieldValue("abilityGenericPrompt", inner.prompt || inner.task_text || "");
       setFieldValue("workImageTitle", run && run.title || "创作图片");
-      setFieldValue("workImagePrompt", inner.prompt || inner.task_text || "");
+      setFieldValue("workImagePrompt", params.prompt || inner.prompt || inner.task_text || "");
+      const imageReferenceUrls = Array.isArray(params.reference_image_urls) ? params.reference_image_urls : [];
+      const imageReferencePurposes = Array.isArray(params.reference_purposes) ? params.reference_purposes : [];
+      setFieldValue("workImageReference", imageReferenceUrls[0] || "");
+      setFieldValue("workImageReferencePurpose", imageReferencePurposes[0] || "auto");
+      setFieldValue("workImageAspectRatio", params.aspect_ratio || "9:16");
+      setFieldValue("workImageModel", params.model || "gpt-image-2");
+      setFieldValue("workImageQuality", params.quality || "high");
+      setFieldValue("workImageBackground", params.background || "auto");
+      renderAssetPickerControl("workImageReference");
       setFieldValue("abilityVideoTitle", run && run.title || "创意视频");
       setFieldValue("abilityVideoPrompt", inner.prompt || inner.task_text || "");
       setFieldValue("abilityVideoMode", goalVideoModeFromPayload(inner));
@@ -13593,8 +13658,7 @@
     function workDispatchFieldsHtml(item) {
       const key = String(item && item.key || "");
       if (key === "image_composer_studio") {
-        return taskFieldHtml("任务标题", workInputHtml("workImageTitle", "text", "创作图片"))
-          + taskFieldHtml("图片需求", taskTextareaHtml("workImagePrompt", "例如：一张适合小红书封面的精致产品场景图，暖色自然光，突出卖点"), true);
+        return imageStudioFieldsHtml("workImage");
       }
       if (key === "comfly.seedance.tvc.pipeline") {
         return taskFieldHtml("参考图片", assetPickerControlHtml("workSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }), true)
@@ -13712,13 +13776,11 @@
     function collectWorkDispatchPlan(item) {
       const key = String(item && item.key || "");
       if (key === "image_composer_studio") {
-        const prompt = workValue("workImagePrompt");
-        if (!prompt) throw new Error("请填写图片需求");
         return {
           title: workValue("workImageTitle") || "创作图片",
-          taskKind: "capability",
+          taskKind: "client_workflow",
           content: "H5 安排工作：创作图片",
-          payload: { capability_id: "goal.image.pipeline", payload: { prompt } },
+          payload: { action: "image_studio_generate", params: collectImageStudioParams("workImage") },
         };
       }
       if (key === "comfly.seedance.tvc.pipeline") {

@@ -42,6 +42,30 @@ def test_ai_marketing_digital_human_exposes_duration_and_template_controls():
     assert ".work-hifly-template-selected" in css
 
 
+def test_ai_marketing_design_uses_online_image_studio_workflow():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    for field in (
+        "workImagePrompt",
+        "workImageReference",
+        "workImageReferencePurpose",
+        "workImageAspectRatio",
+        "workImageModel",
+        "workImageQuality",
+        "workImageBackground",
+    ):
+        assert field in script
+
+    assert 'taskKind: "client_workflow"' in script
+    assert 'payload: { action: "image_studio_generate", params: collectImageStudioParams("workImage") }' in script
+    assert 'payload: { action: "image_studio_generate", params: collectImageStudioParams("workflowParamImage") }' in script
+    assert 'workflowAction: "image_studio_generate"' in script
+    assert 'reference_image_urls: referenceUrl ? [referenceUrl] : []' in script
+    assert 'reference_purposes: referenceUrl ? [workflowParamValue(`${prefix}ReferencePurpose`) || "auto"] : []' in script
+    assert 'if (action === "image_studio_generate") return "image_composer_studio";' in script
+    assert 'payload: { capability_id: "goal.image.pipeline", payload: { prompt } }' not in script
+
+
 def test_bottom_create_button_opens_compact_creation_sheet():
     html = (H5 / "index.html").read_text(encoding="utf-8")
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")

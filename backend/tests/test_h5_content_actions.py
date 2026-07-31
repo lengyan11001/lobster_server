@@ -37,6 +37,8 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert "ensureContentImageInAssetPicker" not in script
     assert 'renderAssetPickerControl("abilityVideoAsset")' in script
     assert 'setFieldValue("workImagePrompt", creativePrompt)' in script
+    assert 'setFieldValue("workImageReferencePurpose", "local_edit")' in script
+    assert 'selectAssetPickerRow("workImageReference", {' in script
     assert 'setFieldValue("abilityVideoPrompt", creativePrompt)' in script
     assert 'setFieldValue("workHiflyScript", script)' in script
     assert 'setFieldValue("workPublishDescription", text)' in script
@@ -101,7 +103,7 @@ def test_work_record_results_reuse_content_actions():
 def test_content_action_assets_are_cache_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
 
-    assert html.count("20260731-content-actions-v8") == 2
+    assert html.count("20260731-content-actions-v9") == 2
     assert html.count("20260731-content-picker-v1") == 3
 
 
