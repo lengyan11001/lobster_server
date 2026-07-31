@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -18,7 +19,6 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
-from sqlalchemy import Text, cast, or_
 from sqlalchemy.orm import Session
 
 from .auth import get_current_user
@@ -550,6 +550,45 @@ def _run_asset_content_context(row: ScheduledTaskRun) -> dict[str, str]:
     }
 
 
+def _value_contains_source_id(value, source_ids: set[str]) -> bool:
+    if isinstance(value, dict):
+        return any(_value_contains_source_id(item, source_ids) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_value_contains_source_id(item, source_ids) for item in value)
+    if isinstance(value, str):
+        return value in source_ids or any(source_id in value for source_id in source_ids)
+    return False
+
+
+def _candidate_asset_runs(
+    db: Session,
+    row: Asset,
+    source_ids: list[str],
+    date_hints: list[datetime],
+) -> list[ScheduledTaskRun]:
+    candidates: dict[str, ScheduledTaskRun] = {}
+    hints = [value for value in date_hints if isinstance(value, datetime)]
+    if not hints and isinstance(row.created_at, datetime):
+        hints = [row.created_at]
+    for hint in hints:
+        rows = (
+            db.query(ScheduledTaskRun)
+            .filter(
+                ScheduledTaskRun.user_id == row.user_id,
+                ScheduledTaskRun.created_at >= hint - timedelta(hours=12),
+                ScheduledTaskRun.created_at <= hint + timedelta(hours=12),
+            )
+            .order_by(ScheduledTaskRun.created_at.desc())
+            .limit(200)
+            .all()
+        )
+        for run in rows:
+            candidates[run.id] = run
+    source_id_set = set(source_ids)
+    ordered = sorted(candidates.values(), key=lambda item: item.created_at or datetime.min, reverse=True)
+    return [run for run in ordered if _value_contains_source_id(run.result_payload, source_id_set)]
+
+
 def _resolve_asset_content_context(db: Session, row: Asset) -> dict[str, str]:
     context = _stored_asset_content_context(row)
 
@@ -559,6 +598,7 @@ def _resolve_asset_content_context(db: Session, row: Asset) -> dict[str, str]:
                 context[key] = values[key]
 
     source_ids = _asset_source_ids(row)
+    date_hints: list[datetime] = []
     if source_ids:
         draft = (
             db.query(IPContentDraftRecord)
@@ -570,6 +610,8 @@ def _resolve_asset_content_context(db: Session, row: Asset) -> dict[str, str]:
             .first()
         )
         if draft:
+            if draft.created_at:
+                date_hints.append(draft.created_at)
             merge({
                 "title": _first_context_text(draft.title, limit=500),
                 "description": _first_context_text(draft.content),
@@ -585,6 +627,8 @@ def _resolve_asset_content_context(db: Session, row: Asset) -> dict[str, str]:
             .first()
         )
         if generation:
+            if generation.created_at:
+                date_hints.append(generation.created_at)
             merge({
                 "title": "",
                 "description": "",
@@ -594,15 +638,7 @@ def _resolve_asset_content_context(db: Session, row: Asset) -> dict[str, str]:
             })
 
         if not context.get("title") or not context.get("description") or not context.get("creative_prompt"):
-            matches = [cast(ScheduledTaskRun.result_payload, Text).contains(source_id) for source_id in source_ids]
-            runs = (
-                db.query(ScheduledTaskRun)
-                .filter(ScheduledTaskRun.user_id == row.user_id, or_(*matches))
-                .order_by(ScheduledTaskRun.created_at.desc())
-                .limit(20)
-                .all()
-            )
-            for run in runs:
+            for run in _candidate_asset_runs(db, row, source_ids, date_hints):
                 merge(_run_asset_content_context(run))
                 if context.get("title") and context.get("description") and context.get("creative_prompt"):
                     break
