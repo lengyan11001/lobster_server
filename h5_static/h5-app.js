@@ -6466,6 +6466,15 @@
       return "";
     }
 
+    function contentActionMediaUrl(value) {
+      const raw = String(value || "").trim();
+      if (!raw || /^https?:\/\//i.test(raw)) return raw;
+      if (raw.startsWith("/") || /^(?:assets?|uploads?|files?|media)\//i.test(raw)) {
+        return apiUrl(raw.startsWith("/") ? raw : `/${raw}`);
+      }
+      return raw;
+    }
+
     function contentActionItemFromAsset(asset) {
       const item = asset && typeof asset === "object" ? asset : {};
       const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
@@ -6473,7 +6482,7 @@
       const sourceKind = String(item.source || meta.source || "").trim().toLowerCase();
       const rawUrl = String(item.file_url || item.source_url || item.cover_url || "").trim();
       const rawImageUrl = String(contentRecordImageUrls(item)[0] || "").trim();
-      const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : (rawUrl.startsWith("/") ? apiUrl(rawUrl) : rawUrl);
+      const url = contentActionMediaUrl(rawUrl);
       let mediaType = designerMediaType({ ...item, source_url: url });
       if (["article", "wechat_article"].includes(recordKind)) mediaType = url && item.file_url ? "document" : "text";
       if (recordKind === "ppt") mediaType = "document";
@@ -6553,9 +6562,9 @@
       }
       if (mediaType === "image") {
         add("generate_video", "生成视频");
-        add("generate_talking_video", "生成数字人视频");
+        add("generate_avatar", "生成数字人");
       }
-      if (mediaType === "video") add("generate_talking_video", "生成数字人视频");
+      if (mediaType === "video") add("generate_avatar", "生成数字人");
       if (hasMaterial && ["image", "video", "document", "file"].includes(mediaType)) add("publish", "发布");
       return actions;
     }
@@ -6583,7 +6592,7 @@
 
     async function resolveContentActionItem(item) {
       const source = item && typeof item === "object" ? { ...item } : {};
-      if (source.assetId && !String(source.assetId).includes(":") && (!source.url || !source.creativePrompt || !source.filename)) {
+      if (source.assetId && !String(source.assetId).includes(":") && !source.url) {
         try {
           const asset = await api(`/api/assets/${encodeURIComponent(source.assetId)}`);
           source.url = source.url || String(asset.source_url || "").trim();
@@ -6600,8 +6609,8 @@
           if (source.mediaType === "image") source.imageUrl = source.url;
         } catch {}
       }
-      if (source.url && !/^https?:\/\//i.test(source.url) && String(source.url).startsWith("/")) source.url = apiUrl(source.url);
-      if (source.imageUrl && !/^https?:\/\//i.test(source.imageUrl) && String(source.imageUrl).startsWith("/")) source.imageUrl = apiUrl(source.imageUrl);
+      source.url = contentActionMediaUrl(source.url);
+      source.imageUrl = contentActionMediaUrl(source.imageUrl);
       return source;
     }
 
@@ -6622,6 +6631,20 @@
       applyContentActionFields(requiredId, callback);
     }
 
+    async function contentActionFile(item) {
+      const source = await resolveContentActionItem(item);
+      const mediaType = String(source.mediaType || mediaTypeFromUrl(source.url) || "").trim().toLowerCase();
+      const url = String(mediaType === "video" ? source.url : (source.imageUrl || source.url) || "").trim();
+      if (!/^https?:\/\//i.test(url)) throw new Error("当前内容没有可读取的素材地址");
+      const fallbackName = mediaType === "video" ? "digital-human-video.mp4" : "digital-human-image.jpg";
+      const filename = source.filename || filenameFromUrl(url, fallbackName);
+      const response = await fetch(mediaProxyUrl(url, "inline", filename), { cache: "no-store" });
+      if (!response.ok) throw new Error(`素材读取失败：HTTP ${response.status}`);
+      const blob = await response.blob();
+      const type = blob.type || (mediaType === "video" ? "video/mp4" : "image/jpeg");
+      return new File([blob], filename, { type, lastModified: Date.now() });
+    }
+
     function selectAssetPickerRow(id, row) {
       const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
       const hidden = $(id);
@@ -6632,6 +6655,29 @@
       hidden.value = assetPickerOutputValue(item, box.dataset.assetOutput || "asset_id");
       hidden.dispatchEvent(new Event("change", { bubbles: true }));
       renderAssetPickerControl(id);
+    }
+
+    async function openContentMediaAsAvatar(item) {
+      const mediaType = String(item && item.mediaType || "").trim().toLowerCase() === "video" ? "video" : "image";
+      const mediaLabel = mediaType === "video" ? "视频" : "图片";
+      state.assetLibrarySection = "avatars";
+      state.assetLibraryOrigin = "user_upload";
+      switchTab("assetLibrary");
+      openAssetLibraryAddModal();
+      if ($("assetAvatarName")) $("assetAvatarName").value = String(item.title || `${mediaLabel}数字人`).trim();
+      if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v1";
+      if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = mediaType;
+      syncAssetAvatarForm();
+      if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `正在带入当前${mediaLabel}...`;
+      try {
+        const file = await contentActionFile(item);
+        state.assetAvatarPrefillFile = file;
+        if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `已带入：${file.name}`;
+      } catch (err) {
+        state.assetAvatarPrefillFile = null;
+        if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `${mediaLabel}带入失败，可重新选择训练${mediaLabel}`;
+        toast(err.message || `${mediaLabel}带入失败`);
+      }
     }
 
     async function performContentAction(action, key) {
@@ -6676,11 +6722,16 @@
         });
         return;
       }
-      if (action === "generate_talking_video" || action === "generate_avatar") {
+      if (action === "generate_talking_video") {
+        if (!script) throw new Error("当前内容没有可用于口播的正文");
         openContentActionAbility("hifly.video.create_by_tts", "workHiflyScript", () => {
           setFieldValue("workHiflyTitle", `${title} - 数字人口播`);
           setFieldValue("workHiflyScript", script);
         });
+        return;
+      }
+      if (action === "generate_avatar") {
+        await openContentMediaAsAvatar(item);
         return;
       }
       if (action === "publish") {

@@ -22,13 +22,15 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
 
     assert 'add("generate_image", "生成图片")' in script
     assert 'add("generate_video", "生成视频")' in script
-    assert 'add("generate_talking_video", "生成数字人视频")' in script
+    assert 'add("generate_avatar", "生成数字人")' in script
     assert 'add("publish", "发布")' in script
     assert 'openContentActionAbility("image_composer_studio", "workImagePrompt"' in script
     assert 'openContentActionAbility("goal.video.pipeline", "abilityVideoPrompt"' in script
     assert 'openContentActionAbility("hifly.video.create_by_tts", "workHiflyScript"' in script
     assert 'openContentActionAbility("publish_center", "workPublishMaterial"' in script
-    assert 'openContentMediaAsAvatar' not in script
+    assert 'state.assetAvatarPrefillFile = file' in script
+    assert 'if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v1"' in script
+    assert 'if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = mediaType' in script
     assert 'selectAssetPickerRow("abilityVideoAsset", {' in script
     assert 'asset_origin: "generated"' in script
     assert "ensureContentImageInAssetPicker" not in script
@@ -55,8 +57,11 @@ def test_content_action_fields_keep_prompt_copy_and_script_separate():
     assert "item.original_prompt," in script
     assert "script: contentActionTextValue(" in script
     assert "tags: contentActionTextValue(item.tags, item.hashtags, meta.tags, meta.hashtags)" in script
-    assert 'if (mediaType === "video") add("generate_talking_video", "生成数字人视频")' in script
-    assert 'if (action === "generate_talking_video" || action === "generate_avatar")' in script
+    assert 'if (mediaType === "video") add("generate_avatar", "生成数字人")' in script
+    assert 'await openContentMediaAsAvatar(item)' in script
+    assert '&& !source.url)' in script
+    assert "function contentActionMediaUrl(value)" in script
+    assert 'return apiUrl(raw.startsWith("/") ? raw : `/${raw}`)' in script
 
 
 def test_work_record_results_reuse_content_actions():
@@ -73,13 +78,13 @@ def test_work_record_results_reuse_content_actions():
     assert "script: explicitScript || defaults.script" in script
     assert "const seen = new Map()" in script
     assert "if (explicitCreativePrompt) existing.creativePrompt = explicitCreativePrompt" in script
-    assert "(!source.url || !source.creativePrompt || !source.filename)" in script
+    assert "&& !source.url)" in script
 
 
 def test_content_action_assets_are_cache_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
 
-    assert html.count("20260731-content-actions-v5") == 2
+    assert html.count("20260731-content-actions-v6") == 2
     assert html.count("20260731-content-picker-v1") == 3
 
 

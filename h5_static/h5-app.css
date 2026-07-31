@@ -5386,6 +5386,135 @@
       max-height: min(88dvh, 760px);
     }
 
+    #assetAvatarModal {
+      padding: 14px;
+    }
+
+    #assetAvatarModal .asset-action-popover {
+      width: min(460px, 100%);
+      max-width: 100%;
+      max-height: calc(100dvh - 28px);
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+      overflow: hidden;
+      color: #17233d;
+      border-radius: 22px;
+      background: #fff;
+    }
+
+    #assetAvatarModal .asset-action-popover::after {
+      display: none;
+    }
+
+    #assetAvatarModal .employee-popover-head {
+      flex: 0 0 auto;
+      min-width: 0;
+      padding: 18px 54px 14px 18px;
+      border-bottom: 1px solid #edf1f7;
+    }
+
+    #assetAvatarModal .employee-mini-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      color: #2563eb;
+      background: #eff6ff;
+    }
+
+    #assetAvatarModal .employee-popover-title strong {
+      color: #17233d;
+      font-size: 17px;
+    }
+
+    #assetAvatarModal .employee-popover-close {
+      top: 14px;
+      right: 14px;
+      color: #64748b;
+      background: #f1f5f9;
+    }
+
+    #assetAvatarModal .work-dispatch-form {
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+      gap: 0;
+      overflow: hidden;
+    }
+
+    #assetAvatarModal .work-dispatch-fields {
+      min-width: 0;
+      min-height: 0;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      flex: 1 1 auto;
+      padding: 16px 18px;
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    #assetAvatarModal .field,
+    #assetAvatarModal input,
+    #assetAvatarModal select,
+    #assetAvatarModal textarea {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    #assetAvatarModal input[type="file"] {
+      width: 100%;
+      padding: 8px;
+      overflow: hidden;
+      border: 1px solid #dce4f0;
+      border-radius: 12px;
+      background: #f8fafc;
+      font-size: 12px;
+    }
+
+    #assetAvatarModal .asset-upload-status:not(:empty) {
+      min-height: 0;
+      padding: 9px 11px;
+      border-radius: 10px;
+      color: #2563eb;
+      background: #eff6ff;
+      overflow-wrap: anywhere;
+    }
+
+    #assetAvatarModal .work-dispatch-actions {
+      flex: 0 0 auto;
+      flex-wrap: nowrap;
+      padding: 12px 18px max(12px, env(safe-area-inset-bottom));
+      border-top: 1px solid #edf1f7;
+      background: #fff;
+    }
+
+    #assetAvatarModal .work-dispatch-actions button {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    @media (max-width: 520px) {
+      #assetAvatarModal {
+        align-items: end;
+        padding: 0;
+      }
+
+      #assetAvatarModal .asset-action-popover {
+        width: 100%;
+        max-height: min(92dvh, 760px);
+        border-radius: 22px 22px 0 0;
+      }
+
+      #assetAvatarModal .work-dispatch-fields {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      #assetAvatarModal .work-dispatch-fields .field.full {
+        grid-column: auto;
+      }
+    }
+
     .asset-field-hint {
       display: block;
       margin-top: 6px;
