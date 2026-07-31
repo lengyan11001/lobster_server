@@ -322,7 +322,13 @@ def _image_generation_model_attempts(model: str) -> List[str]:
     """Return billing model ids to try for one image generation request."""
     normalized = _normalized_model_id(model)
     if normalized in {"gpt-image-2", "gpt-image2", "gpt-image"}:
-        return ["gpt-image-2", "gpt-image-2-openmindapi", "gpt-image-2-yunwu", "nano-banana-2"]
+        return [
+            "gpt-image-2",
+            "gpt-image-2-gaisc",
+            "gpt-image-2-openmindapi",
+            "gpt-image-2-yunwu",
+            "nano-banana-2",
+        ]
     return [model]
 
 
@@ -331,7 +337,13 @@ def _image_generation_model_attempts_for_user(model: str, *, openai_official_fir
     if normalized not in {"gpt-image-2", "gpt-image2", "gpt-image"}:
         return [model]
     if openai_official_first:
-        return ["gpt-image-2-openai-official", "gpt-image-2-openmindapi", "gpt-image-2-yunwu", "nano-banana-2"]
+        return [
+            "gpt-image-2-openai-official",
+            "gpt-image-2-gaisc",
+            "gpt-image-2-openmindapi",
+            "gpt-image-2-yunwu",
+            "nano-banana-2",
+        ]
     return _image_generation_model_attempts(model)
 
 

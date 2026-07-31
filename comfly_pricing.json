@@ -9,6 +9,14 @@
       "comfly_model": "gpt-image-2",
       "sutui_equivalent": ["gpt-image2", "gpt-image-2", "gpt-image"]
     },
+    "gpt-image-2-gaisc": {
+      "price_type": "per_call",
+      "price_per_unit": 30,
+      "api_format": "dalle",
+      "comfly_model": "gpt-image-2",
+      "token_group": "gaisc",
+      "note": "G-AISC image channel used after the default Comfly channel and before OpenMind/Yunwu fallbacks."
+    },
     "gpt-image-2-vip": {
       "price_type": "per_call",
       "price_per_unit": 30,

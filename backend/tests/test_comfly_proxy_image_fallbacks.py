@@ -9,6 +9,7 @@ from mcp.comfly_upstream import lookup_comfly_model
 def test_gpt_image2_attempts_append_nano_banana_for_regular_users():
     assert _image_generation_model_attempts("gpt-image-2") == [
         "gpt-image-2",
+        "gpt-image-2-gaisc",
         "gpt-image-2-openmindapi",
         "gpt-image-2-yunwu",
         "nano-banana-2",
@@ -21,6 +22,7 @@ def test_gpt_image2_attempts_append_nano_banana_for_official_channel_users():
         openai_official_first=True,
     ) == [
         "gpt-image-2-openai-official",
+        "gpt-image-2-gaisc",
         "gpt-image-2-openmindapi",
         "gpt-image-2-yunwu",
         "nano-banana-2",
