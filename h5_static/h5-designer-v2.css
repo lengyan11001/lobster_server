@@ -1838,6 +1838,143 @@ body::before {
   }
 }
 
+/* Content-library actions keep preview and downstream commands independent. */
+.content-action-card {
+  position: relative;
+  overflow: visible !important;
+}
+
+.content-action-card.task-menu-open,
+.content-action-host.task-menu-open {
+  z-index: 120;
+}
+
+.content-card-preview,
+.content-document-preview {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  font: inherit;
+}
+
+.content-card-preview {
+  display: grid;
+  gap: 0;
+}
+
+.content-card-preview:active,
+.content-document-preview:active {
+  transform: none;
+}
+
+.content-card-footer {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 4px 2px;
+}
+
+.content-card-footer > em {
+  min-width: 0;
+  overflow: hidden;
+  color: #94a3b8;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.content-document-preview {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  padding-right: 58px;
+}
+
+.content-document-action {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+}
+
+.content-action-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.content-action-menu > summary {
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  color: #2563eb;
+  background: #eff6ff;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.content-action-menu .task-action-list {
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 128px;
+  z-index: 140;
+}
+
+.content-action-menu .task-action-list button {
+  min-height: 34px;
+  font-weight: 400;
+}
+
+.content-record-shell .designer-media-grid .content-action-card:nth-child(3n + 1) .task-action-list,
+.asset-library-shell:not(.content-record-shell) .designer-media-grid .content-action-card:nth-child(2n + 1) .task-action-list {
+  right: auto;
+  left: 0;
+}
+
+.content-inline-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 30px;
+}
+
+.run-media-actions .content-action-menu {
+  justify-self: end;
+}
+
+.run-media-actions .content-action-menu > summary {
+  min-width: 72px;
+  min-height: 36px;
+}
+
+.run-media-item.content-action-host,
+.copy-item.content-action-host,
+.moment-item.content-action-host,
+.task-detail-section.content-action-host {
+  position: relative;
+  overflow: visible;
+}
+
+#runPageBody .content-action-menu[open] {
+  width: min(100%, 160px);
+}
+
+#runPageBody .content-action-menu .task-action-list {
+  position: static;
+  width: 100%;
+  margin-top: 6px;
+}
+
 /* Typography: keep everyday UI copy light and reserve emphasis for true page titles. */
 body * {
   font-weight: 400 !important;

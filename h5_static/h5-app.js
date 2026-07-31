@@ -103,6 +103,9 @@
       contentRecordRows: [],
       contentRecordTotal: 0,
       contentRecordLoading: false,
+      contentActionItems: new Map(),
+      contentActionSequence: 0,
+      assetAvatarPrefillFile: null,
       workflowTemplates: [],
       workflowTemplatesLoaded: false,
       workflowTemplatesLoading: false,
@@ -6350,22 +6353,214 @@
       return title || "素材";
     }
 
+    function contentActionItemFromAsset(asset) {
+      const item = asset && typeof asset === "object" ? asset : {};
+      const recordKind = String(item.kind || item._designer_content_kind || "").trim().toLowerCase();
+      const rawUrl = String(item.file_url || item.source_url || item.cover_url || "").trim();
+      const rawImageUrl = String(item.cover_url || "").trim();
+      const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : (rawUrl.startsWith("/") ? apiUrl(rawUrl) : rawUrl);
+      let mediaType = designerMediaType({ ...item, source_url: url });
+      if (["article", "wechat_article"].includes(recordKind)) mediaType = url && item.file_url ? "document" : "text";
+      if (recordKind === "ppt") mediaType = "document";
+      return {
+        title: assetTitle(item),
+        text: String(item.content || item.body || item.summary || item.prompt || "").trim(),
+        url,
+        imageUrl: rawImageUrl
+          ? (/^https?:\/\//i.test(rawImageUrl) ? rawImageUrl : (rawImageUrl.startsWith("/") ? apiUrl(rawImageUrl) : rawImageUrl))
+          : (mediaType === "image" ? url : ""),
+        assetId: String(item.asset_id || "").trim(),
+        filename: String(item.filename || "").trim(),
+        mediaType,
+        recordKind,
+      };
+    }
+
+    function registerContentActionItem(item) {
+      state.contentActionSequence = Number(state.contentActionSequence || 0) + 1;
+      const key = `content-action-${state.contentActionSequence}`;
+      state.contentActionItems.set(key, { ...(item || {}) });
+      if (state.contentActionItems.size > 1000) {
+        const oldest = state.contentActionItems.keys().next().value;
+        if (oldest) state.contentActionItems.delete(oldest);
+      }
+      return key;
+    }
+
+    function contentActionDefinitions(item) {
+      const source = item && typeof item === "object" ? item : {};
+      const mediaType = String(source.mediaType || mediaTypeFromUrl(source.url) || "").trim().toLowerCase();
+      const hasText = !!String(source.text || "").trim();
+      const textBased = hasText && (mediaType === "text" || ["article", "wechat_article"].includes(String(source.recordKind || "").toLowerCase()));
+      const hasMaterial = !!String(source.url || source.assetId || "").trim();
+      const actions = [];
+      const add = (action, label) => {
+        if (!actions.some((row) => row.action === action)) actions.push({ action, label });
+      };
+      if (textBased) {
+        add("generate_image", "生成图片");
+        add("generate_video", "生成视频");
+        add("generate_talking_video", "数字人口播");
+      }
+      if (mediaType === "image") {
+        add("generate_video", "生成视频");
+        add("generate_avatar", "生成数字人");
+      }
+      if (hasMaterial && ["image", "video", "document", "file"].includes(mediaType)) add("publish", "发布");
+      return actions;
+    }
+
+    function contentActionMenuHtml(item, extraClass = "") {
+      const actions = contentActionDefinitions(item);
+      if (!actions.length) return "";
+      const key = registerContentActionItem(item);
+      return `<details class="task-action-menu content-action-menu ${escapeHtml(extraClass)}">
+        <summary>操作</summary>
+        <div class="task-action-list">
+          ${actions.map((row) => `<button type="button" data-content-action="${escapeHtml(row.action)}" data-content-action-key="${escapeHtml(key)}">${escapeHtml(row.label)}</button>`).join("")}
+        </div>
+      </details>`;
+    }
+
+    function contentActionReference(item) {
+      const source = item && typeof item === "object" ? item : {};
+      return String(source.imageUrl || (source.mediaType === "image" ? source.url : "") || source.assetId || "").trim();
+    }
+
+    async function resolveContentActionItem(item) {
+      const source = item && typeof item === "object" ? { ...item } : {};
+      if (!source.url && source.assetId && !String(source.assetId).includes(":")) {
+        try {
+          const asset = await api(`/api/assets/${encodeURIComponent(source.assetId)}`);
+          source.url = String(asset.source_url || "").trim();
+          source.filename = source.filename || String(asset.filename || "").trim();
+          source.mediaType = source.mediaType || String(asset.media_type || "").trim();
+          if (source.mediaType === "image") source.imageUrl = source.url;
+        } catch {}
+      }
+      if (source.url && !/^https?:\/\//i.test(source.url) && String(source.url).startsWith("/")) source.url = apiUrl(source.url);
+      if (source.imageUrl && !/^https?:\/\//i.test(source.imageUrl) && String(source.imageUrl).startsWith("/")) source.imageUrl = apiUrl(source.imageUrl);
+      return source;
+    }
+
+    function applyContentActionFields(requiredId, callback, attempts = 20) {
+      if ($(requiredId)) {
+        callback();
+        return;
+      }
+      if (attempts <= 0) {
+        toast("目标功能加载失败，请返回后重试");
+        return;
+      }
+      setTimeout(() => applyContentActionFields(requiredId, callback, attempts - 1), 50);
+    }
+
+    function openContentActionAbility(abilityKey, requiredId, callback) {
+      openAbilityView(abilityKey, AI_MARKETING_CREATION_ID);
+      applyContentActionFields(requiredId, callback);
+    }
+
+    async function contentActionFile(item) {
+      const source = await resolveContentActionItem(item);
+      const url = String(source.imageUrl || source.url || "").trim();
+      if (!/^https?:\/\//i.test(url)) throw new Error("这张图片没有可读取的素材地址");
+      const filename = source.filename || filenameFromUrl(url, "digital-human-image.jpg");
+      const response = await fetch(mediaProxyUrl(url, "inline", filename), { cache: "no-store" });
+      if (!response.ok) throw new Error(`图片读取失败：HTTP ${response.status}`);
+      const blob = await response.blob();
+      const type = blob.type || "image/jpeg";
+      return new File([blob], filename, { type, lastModified: Date.now() });
+    }
+
+    async function openContentImageAsAvatar(item) {
+      state.assetLibrarySection = "avatars";
+      state.assetLibraryOrigin = "user_upload";
+      switchTab("assetLibrary");
+      openAssetLibraryAddModal();
+      if ($("assetAvatarName")) $("assetAvatarName").value = String(item.title || "图片数字人").trim();
+      if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = "image";
+      syncAssetAvatarForm();
+      if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "正在带入当前图片...";
+      try {
+        const file = await contentActionFile(item);
+        state.assetAvatarPrefillFile = file;
+        if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `已带入：${file.name}`;
+      } catch (err) {
+        state.assetAvatarPrefillFile = null;
+        if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "图片带入失败，可重新选择训练图片";
+        toast(err.message || "图片带入失败");
+      }
+    }
+
+    async function performContentAction(action, key) {
+      const registered = state.contentActionItems.get(String(key || ""));
+      if (!registered) throw new Error("当前资源已刷新，请重新选择操作");
+      const item = await resolveContentActionItem(registered);
+      const title = String(item.title || "内容创作").trim();
+      const text = String(item.text || "").trim();
+      const prompt = text || title;
+      if (action === "generate_image") {
+        openContentActionAbility("image_composer_studio", "workImagePrompt", () => {
+          setFieldValue("workImageTitle", `${title} - 配图`);
+          setFieldValue("workImagePrompt", prompt);
+        });
+        return;
+      }
+      if (action === "generate_video") {
+        const reference = contentActionReference(item);
+        openContentActionAbility("goal.video.pipeline", "abilityVideoPrompt", () => {
+          setFieldValue("abilityVideoTitle", `${title} - 视频`);
+          setFieldValue("abilityVideoMode", reference ? "single_asset" : "memory_image");
+          setFieldValue("abilityVideoAsset", reference);
+          setFieldValue("abilityVideoPrompt", prompt);
+          bindGoalVideoModeControls("ability");
+        });
+        return;
+      }
+      if (action === "generate_talking_video") {
+        openContentActionAbility("hifly.video.create_by_tts", "workHiflyScript", () => {
+          setFieldValue("workHiflyTitle", `${title} - 数字人口播`);
+          setFieldValue("workHiflyScript", prompt);
+        });
+        return;
+      }
+      if (action === "generate_avatar") {
+        await openContentImageAsAvatar(item);
+        return;
+      }
+      if (action === "publish") {
+        const material = String(item.url || item.assetId || "").trim();
+        if (!material) throw new Error("当前记录没有可发布的素材");
+        const mediaType = ["image", "video", "document"].includes(item.mediaType) ? item.mediaType : "document";
+        openContentActionAbility("publish_center", "workPublishMaterial", () => {
+          setFieldValue("workPublishMaterial", material);
+          setFieldValue("workPublishMediaType", mediaType);
+          setFieldValue("workPublishTitle", title);
+          setFieldValue("workPublishDescription", text);
+          setFieldValue("workPublishAiCopy", !text);
+        });
+      }
+    }
+
     function assetCardHtml(asset, index = 0) {
       const title = assetTitle(asset);
       const id = String((asset && asset.asset_id) || "");
       const type = String((asset && asset._designer_content_kind) || designerMediaType(asset));
-      return `<button class="asset-library-card designer-media-card" type="button" data-asset-preview-id="${escapeHtml(id)}">
-        <span class="designer-media-thumb">
-          ${assetPreviewHtml(asset, index)}
-          <i class="designer-media-badge">${designerMediaIcon(type)}</i>
-          ${type === "video" ? `<b class="designer-play-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></b>` : ""}
-        </span>
-        <span class="asset-library-card-main designer-media-meta">
-          <strong>${escapeHtml(title || "素材")}</strong>
-          <span>${escapeHtml(designerMediaTypeLabel(type))}</span>
-          <em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>
-        </span>
-      </button>`;
+      const actionItem = contentActionItemFromAsset(asset);
+      return `<article class="asset-library-card designer-media-card content-action-card">
+        <button class="content-card-preview" type="button" data-asset-preview-id="${escapeHtml(id)}">
+          <span class="designer-media-thumb">
+            ${assetPreviewHtml(asset, index)}
+            <i class="designer-media-badge">${designerMediaIcon(type)}</i>
+            ${type === "video" ? `<b class="designer-play-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></b>` : ""}
+          </span>
+          <span class="asset-library-card-main designer-media-meta">
+            <strong>${escapeHtml(title || "素材")}</strong>
+            <span>${escapeHtml(designerMediaTypeLabel(type))}</span>
+          </span>
+        </button>
+        <footer class="content-card-footer"><em>${escapeHtml(fmtTime(asset && asset.created_at))}</em>${contentActionMenuHtml(actionItem)}</footer>
+      </article>`;
     }
 
     function contentDocumentCardHtml(asset, index, kind) {
@@ -6379,15 +6574,18 @@
       const cover = sourceUrl && (/^data:image\//i.test(sourceUrl) || sourceType === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(sourceUrl))
         ? mediaProxyUrl(sourceUrl, "inline", filenameFromUrl(sourceUrl, asset && asset.filename || "asset"))
         : fallback;
-      return `<button class="content-document-card ${escapeHtml(kind)}" type="button" data-asset-preview-id="${escapeHtml(id)}">
-        <span class="content-document-cover"><img src="${escapeHtml(cover)}" alt="" loading="lazy"></span>
-        <span class="content-document-main">
-          <span class="content-document-state"><em class="${failed ? "failed" : ""}">${failed ? "生成失败" : "已完成"}</em><time>${escapeHtml(fmtTime(asset && asset.created_at))}</time></span>
-          <strong>${escapeHtml(title || "内容记录")}</strong>
-          <span class="content-document-tags"><i>${escapeHtml(kindLabels[kind] || "文档")}</i><i>AI排版</i></span>
-          <small>查看内容</small>
-        </span>
-      </button>`;
+      return `<article class="content-document-card ${escapeHtml(kind)} content-action-card">
+        <button class="content-document-preview" type="button" data-asset-preview-id="${escapeHtml(id)}">
+          <span class="content-document-cover"><img src="${escapeHtml(cover)}" alt="" loading="lazy"></span>
+          <span class="content-document-main">
+            <span class="content-document-state"><em class="${failed ? "failed" : ""}">${failed ? "生成失败" : "已完成"}</em><time>${escapeHtml(fmtTime(asset && asset.created_at))}</time></span>
+            <strong>${escapeHtml(title || "内容记录")}</strong>
+            <span class="content-document-tags"><i>${escapeHtml(kindLabels[kind] || "文档")}</i><i>AI排版</i></span>
+            <small>查看内容</small>
+          </span>
+        </button>
+        ${contentActionMenuHtml(contentActionItemFromAsset(asset), "content-document-action")}
+      </article>`;
     }
 
     function hiflyStatusClass(row) {
@@ -6809,6 +7007,7 @@
     function closeAssetAvatarModal() {
       $("assetAvatarModal")?.classList.add("hidden");
       if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "";
+      state.assetAvatarPrefillFile = null;
     }
 
     function closeAssetVoiceModal() {
@@ -6820,6 +7019,7 @@
     function openAssetLibraryAddModal() {
       const section = state.assetLibrarySection || "uploads";
       if (section === "avatars") {
+        state.assetAvatarPrefillFile = null;
         if ($("assetAvatarForm")) $("assetAvatarForm").reset();
         if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v2";
         if ($("assetAvatarModel")) $("assetAvatarModel").value = "2";
@@ -6886,7 +7086,8 @@
 
     async function submitAssetAvatarForm(evt) {
       evt.preventDefault();
-      const file = $("assetAvatarFile") && $("assetAvatarFile").files ? $("assetAvatarFile").files[0] : null;
+      const selectedFile = $("assetAvatarFile") && $("assetAvatarFile").files ? $("assetAvatarFile").files[0] : null;
+      const file = selectedFile || state.assetAvatarPrefillFile;
       if (!file) return toast("请选择素材文件");
       const title = (($("assetAvatarName") && $("assetAvatarName").value) || file.name || "未命名形象").trim();
       const version = (($("assetAvatarVersion") && $("assetAvatarVersion").value) || "v2").trim();
@@ -8163,6 +8364,15 @@
       const firstImage = images[0] || {};
       const firstImageUrl = String(firstImage.image_url || firstImage.url || "").trim();
       const firstImageAssetId = String(firstImage.image_asset_id || firstImage.asset_id || "").trim();
+      const actionItem = {
+        title,
+        text: body,
+        url: firstImageUrl,
+        imageUrl: firstImageUrl,
+        assetId: firstImageAssetId,
+        mediaType: firstImageUrl || firstImageAssetId ? "image" : "text",
+        recordKind: "article",
+      };
       const disabled = recordId ? "" : " disabled";
       const memoryDocIds = Array.isArray(rec.memory_doc_ids) ? rec.memory_doc_ids.map((id) => String(id || "").trim()).filter(Boolean).join(",") : "";
       const referenceImageUrls = referenceImageUrlsFromValue(rec, 8);
@@ -8179,6 +8389,7 @@
             ${recordId ? (imageBusy ? "<span>图片生成中，暂不可重复下发。</span>" : "<span>已选择后可复制，也可生成图片。</span>") : "<span>缺少 record_id，无法回写图片</span>"}
           </div>
           <div class="task-detail-moments-copy">${escapeHtml(body || "暂无正文")}</div>
+          <div class="content-inline-actions content-action-host">${contentActionMenuHtml(actionItem)}</div>
           ${runId ? `<div class="moment-record-actions"><button type="button" data-publish-moment-record="1" data-publish-run="${escapeHtml(runId)}" data-moment-title="${escapeHtml(title)}" data-moment-body="${escapeHtml(body)}" data-moment-asset-id="${escapeHtml(firstImageAssetId)}" data-moment-url="${escapeHtml(firstImageUrl)}">发布到朋友圈</button></div>` : ""}
           <div class="task-detail-prompts">
             ${prompts.length ? prompts.map((p, pIdx) => `<label><input type="checkbox" data-moment-prompt="${escapeHtml(recordId)}" value="${escapeHtml(pIdx)}" checked>配图 ${escapeHtml(pIdx + 1)}：${escapeHtml(p)}</label>`).join("") : "<span>暂无配图提示词，将根据正文生成。</span>"}
@@ -8193,6 +8404,7 @@
       const title = String(rec.title || `${ipTaskLabel(task)} ${idx + 1}`).trim();
       const body = String(rec.body || rec.content || "").trim();
       const id = String(rec.record_id || rec.id || `${task || "copy"}-${idx}`).trim();
+      const actionItem = { title, text: body, mediaType: "text", recordKind: "article" };
       return `<div class="copy-item" data-copy-record="${escapeHtml(id)}">
         <div class="copy-summary-row">
           <label class="summary-check"><input type="checkbox" data-draft-copy-select="1" data-draft-task="${escapeHtml(task || "")}">选择</label>
@@ -8203,6 +8415,7 @@
         </div>
         <div class="copy-detail">
           <div class="task-detail-moments-copy">${escapeHtml(body || "暂无正文")}</div>
+          <div class="content-inline-actions content-action-host">${contentActionMenuHtml(actionItem)}</div>
         </div>
       </div>`;
     }
@@ -8282,6 +8495,30 @@
       return `<div class="run-detail-actions">
         <button type="button" data-refill-run="${escapeHtml(run.id)}">重新执行</button>
       </div>`;
+    }
+
+    function runGeneratedTextForAction(run) {
+      const payload = run && run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
+      const nested = payload.result && typeof payload.result === "object" ? payload.result : {};
+      const output = payload.output && typeof payload.output === "object" ? payload.output : {};
+      const values = [
+        payload.article_content,
+        payload.markdown,
+        payload.content,
+        payload.body,
+        payload.copy,
+        nested.article_content,
+        nested.markdown,
+        nested.content,
+        nested.body,
+        nested.copy,
+        output.article_content,
+        output.markdown,
+        output.content,
+        output.body,
+        output.copy,
+      ];
+      return String(values.find((value) => typeof value === "string" && value.trim().length >= 10) || "").trim();
     }
 
     function taskDetailHtml(run) {
@@ -8608,6 +8845,16 @@
         if (summaryRows.length) sections.push(renderTaskDetailSection("结果摘要", summaryRows));
         const detailHtml = renderGenericResultDetails(payload);
         if (detailHtml) sections.push(detailHtml);
+        const generatedText = runGeneratedTextForAction(run);
+        if (generatedText) {
+          const textActions = contentActionMenuHtml({
+            title: String(run && run.title || "执行结果"),
+            text: generatedText,
+            mediaType: "text",
+            recordKind: "article",
+          });
+          if (textActions) sections.push(`<div class="task-detail-section content-action-host"><h4>内容操作</h4><div class="content-inline-actions">${textActions}</div></div>`);
+        }
         const media = renderRunMedia(collectRunMediaEntries(run), run);
         if (media) sections.push(`<div class="task-detail-section"><h4>媒体结果</h4>${media}</div>`);
         const publishActions = renderRunPublishActions(run);
@@ -10499,9 +10746,9 @@
       }
       if (mode === "memory_image") {
         const memoryDocIds = selectedMultiValues(ids.memoryId);
-        if (!memoryDocIds.length) throw new Error("请选择记忆文件");
+        if (!memoryDocIds.length && !prompt) throw new Error("请选择记忆文件或填写视频提示词");
         payload.source_mode = "ai_image";
-        payload.memory_doc_ids = memoryDocIds;
+        if (memoryDocIds.length) payload.memory_doc_ids = memoryDocIds;
         return payload;
       }
       const group = ids.groupId && $(ids.groupId) ? $(ids.groupId).value.trim() : "";
@@ -15663,14 +15910,23 @@
       }).filter(Boolean);
     }
 
-    function runMediaPublishButton(row, index, mediaType = "") {
-      if (!row || !row.id) return "";
-      const buttons = [`<button type="button" data-open-publish-run="${escapeHtml(row.id)}" data-publish-media-index="${escapeHtml(index)}">发布</button>`];
-      const mt = String(mediaType || "").trim().toLowerCase();
-      if (mt === "image" || mt === "video") {
-        buttons.push(`<button type="button" data-open-publish-run="${escapeHtml(row.id)}" data-publish-media-index="${escapeHtml(index)}" data-publish-platform="wechat_moments">发布到朋友圈</button>`);
-      }
-      return buttons.join("");
+    function runMediaContentActionMenu(entry, row, index) {
+      const url = String(entry && (entry.url || entry.source_url) || "").trim();
+      const rawType = String(entry && entry.media_type || "").trim().toLowerCase();
+      const mediaType = rawType.includes("image") ? "image"
+        : rawType.includes("video") ? "video"
+        : rawType.includes("audio") ? "audio"
+        : mediaTypeFromUrl(url, rawType || "document");
+      return contentActionMenuHtml({
+        title: String(row && row.title || `媒体结果 ${index + 1}`),
+        text: runGeneratedTextForAction(row),
+        url,
+        imageUrl: mediaType === "image" ? url : "",
+        assetId: String(entry && entry.asset_id || "").trim(),
+        filename: String(entry && entry.filename || "").trim(),
+        mediaType,
+        recordKind: "run_media",
+      }, "run-media-action-menu");
     }
 
     function renderRunMedia(input, row = null) {
@@ -15678,27 +15934,28 @@
       if (!entries.length) return "";
       return `<div class="run-media">${entries.map((entry, index) => {
         const url = String(entry.url || entry.source_url || "").trim();
+        const actionMenu = runMediaContentActionMenu(entry, row, index);
         if (!url && entry.asset_id) {
-          return `<div class="run-media-item"><div class="hint">素材已入库</div><div class="run-media-actions">${runMediaPublishButton(row, index, entry.media_type)}</div></div>`;
+          return `<div class="run-media-item content-action-host"><div class="hint">素材已入库</div><div class="run-media-actions">${actionMenu}</div></div>`;
         }
         if (!url) return "";
         const low = url.toLowerCase();
         const mediaType = String(entry.media_type || "").trim().toLowerCase();
         if (mediaType.includes("video") || /\.(mp4|webm|mov|m4v)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}<div class="run-media-actions">${runMediaPublishButton(row, index, "video")}</div></div>`;
+          return `<div class="run-media-item content-action-host"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}<div class="run-media-actions">${actionMenu}</div></div>`;
         }
         if (mediaType.includes("image") || /\.(png|jpe?g|webp|gif|bmp|avif)(\?|#|$)/.test(low)) {
           const previewUrl = escapeHtml(mediaProxyUrl(url, "inline", "lobster-image.png"));
           const rawPreviewName = filenameFromUrl(url, "lobster-image.png");
           const previewName = escapeHtml(rawPreviewName);
-          return `<div class="run-media-item"><button class="media-preview-trigger" type="button" data-media-preview-url="${previewUrl}" data-media-preview-name="${previewName}"><img src="${previewUrl}" alt="预览"></button>${mediaActionHtml(url, "下载图片", "lobster-image.png")}<div class="run-media-actions">${runMediaPublishButton(row, index, "image")}</div></div>`;
+          return `<div class="run-media-item content-action-host"><button class="media-preview-trigger" type="button" data-media-preview-url="${previewUrl}" data-media-preview-name="${previewName}"><img src="${previewUrl}" alt="预览"></button>${mediaActionHtml(url, "下载图片", "lobster-image.png")}<div class="run-media-actions">${actionMenu}</div></div>`;
         }
         if (mediaType.includes("audio") || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item"><audio controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-audio.mp3")))}"></audio>${mediaActionHtml(url, "下载音频", "lobster-audio.mp3")}<div class="run-media-actions">${runMediaPublishButton(row, index, "audio")}</div></div>`;
+          return `<div class="run-media-item content-action-host"><audio controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-audio.mp3")))}"></audio>${mediaActionHtml(url, "下载音频", "lobster-audio.mp3")}<div class="run-media-actions">${actionMenu}</div></div>`;
         }
         const rawPreviewName = filenameFromUrl(url, "lobster-media");
         const previewName = escapeHtml(rawPreviewName);
-        return `<div class="run-media-item"><button type="button" data-media-preview-url="${escapeHtml(mediaProxyUrl(url, "inline", rawPreviewName))}" data-media-preview-name="${previewName}">打开预览</button>${mediaActionHtml(url, "下载文件", "lobster-media")}<div class="run-media-actions">${runMediaPublishButton(row, index, entry.media_type)}</div></div>`;
+        return `<div class="run-media-item content-action-host"><button type="button" data-media-preview-url="${escapeHtml(mediaProxyUrl(url, "inline", rawPreviewName))}" data-media-preview-name="${previewName}">打开预览</button>${mediaActionHtml(url, "下载文件", "lobster-media")}<div class="run-media-actions">${actionMenu}</div></div>`;
       }).join("")}</div>`;
     }
 
@@ -15836,13 +16093,16 @@
       const card = menu.closest(".workflow-node-card");
       const entry = menu.closest(".workflow-timeline-entry");
       const group = menu.closest(".designer-workflow-group");
+      const contentHost = menu.closest(".content-action-card, .content-action-host");
       if (open) {
         card?.classList.add("task-menu-open");
         entry?.classList.add("task-menu-open");
         group?.classList.add("task-menu-open");
+        contentHost?.classList.add("task-menu-open");
         return;
       }
       card?.classList.remove("task-menu-open");
+      contentHost?.classList.remove("task-menu-open");
       if (entry && !entry.querySelector(".task-action-menu[open]")) entry.classList.remove("task-menu-open");
       if (group && !group.querySelector(".task-action-menu[open]")) group.classList.remove("task-menu-open");
     }
@@ -15884,6 +16144,18 @@
             menu.removeAttribute("open");
             setTaskActionMenuLayer(menu, false);
           }
+          return;
+        }
+        const contentActionBtn = evt.target.closest && evt.target.closest("[data-content-action][data-content-action-key]");
+        if (contentActionBtn) {
+          evt.preventDefault();
+          const menu = contentActionBtn.closest(".task-action-menu");
+          if (menu) {
+            menu.removeAttribute("open");
+            setTaskActionMenuLayer(menu, false);
+          }
+          performContentAction(contentActionBtn.dataset.contentAction || "", contentActionBtn.dataset.contentActionKey || "")
+            .catch((err) => toast(err.message || "操作失败"));
           return;
         }
         const actionBtn = evt.target.closest && evt.target.closest(".task-action-list button");
