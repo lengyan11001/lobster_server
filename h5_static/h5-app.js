@@ -5217,7 +5217,10 @@
 
     function hideAbilityWorkbench() {
       const box = $("abilityWorkbench");
-      if (box) box.classList.add("hidden");
+      if (box) {
+        box.classList.add("hidden");
+        delete box.dataset.workbenchKey;
+      }
       if ($("abilityWorkbenchFields")) $("abilityWorkbenchFields").innerHTML = "";
       const btn = $("abilityWorkbenchSubmit");
       if (btn) {
@@ -5405,7 +5408,8 @@
       }
       if (!node.routeTab) html += abilityScheduleFieldsHtml();
       box.classList.remove("hidden");
-      if (title) title.textContent = `${node.label || "能力"}工作台`;
+      box.dataset.workbenchKey = String(node.workQuickKey || node.capabilityId || node.key || "").trim();
+      if (title) title.textContent = node.workQuickKey === "publish_center" ? "发布任务" : `${node.label || "能力"}工作台`;
       if (badge) badge.textContent = badgeText;
       if (fields) fields.innerHTML = html;
       initAssetPickerControls(box);
@@ -6520,6 +6524,9 @@
       if (["article", "wechat_article"].includes(recordKind)) mediaType = url && item.file_url ? "document" : "text";
       if (recordKind === "ppt") mediaType = "document";
       const text = contentActionTextValue(
+        item.description,
+        item.caption,
+        item.publish_copy,
         item.content,
         item.body,
         item.copy,
@@ -6640,20 +6647,28 @@
 
     async function resolveContentActionItem(item) {
       const source = item && typeof item === "object" ? { ...item } : {};
-      if (source.assetId && !String(source.assetId).includes(":") && !source.url) {
+      const sourceTitle = String(source.title || "").trim();
+      const sourceTitleLooksLikeFile = !!sourceTitle && (sourceTitle === String(source.filename || "").trim() || /\.[a-z0-9]{2,6}$/i.test(sourceTitle));
+      const needsDetail = !source.url || !source.text || !source.creativePrompt || !source.tags || !sourceTitle || sourceTitleLooksLikeFile;
+      if (source.assetId && !String(source.assetId).includes(":") && needsDetail) {
         try {
           const asset = await api(`/api/assets/${encodeURIComponent(source.assetId)}`);
           source.url = source.url || String(asset.source_url || "").trim();
           source.filename = source.filename || String(asset.filename || "").trim();
           source.mediaType = source.mediaType || String(asset.media_type || "").trim();
+          const detailTitle = contentActionTextValue(asset.title);
+          if (detailTitle && (!source.title || sourceTitleLooksLikeFile)) source.title = detailTitle;
+          source.text = source.text || contentActionTextValue(asset.description, asset.caption, asset.publish_copy);
           source.creativePrompt = contentActionCreativePromptValue(
             source.creativePrompt,
+            asset.creative_prompt,
             asset.image_prompt,
             asset.video_prompt,
             asset.original_prompt,
             asset.prompt,
           );
           source.tags = source.tags || contentActionTextValue(asset.tags);
+          source.meta = source.meta || (asset.content_context && typeof asset.content_context === "object" ? asset.content_context : {});
           if (source.mediaType === "image") source.imageUrl = source.url;
         } catch {}
       }
@@ -6750,6 +6765,62 @@
       hidden.value = assetPickerOutputValue(item, box.dataset.assetOutput || "asset_id");
       hidden.dispatchEvent(new Event("change", { bubbles: true }));
       renderAssetPickerControl(id);
+      applyAssetSelectionContext(id, item);
+      hydrateAssetSelectionContext(id, item);
+    }
+
+    function setAssetDerivedField(id, value) {
+      const field = $(id);
+      const text = String(value || "").trim();
+      if (!field || !text) return;
+      const current = String(field.value || "").trim();
+      const previous = String(field.dataset.assetDerivedValue || "").trim();
+      if (current && current !== previous) return;
+      setFieldValue(id, text);
+      field.dataset.assetDerivedValue = text;
+    }
+
+    function applyAssetSelectionContext(id, row) {
+      const item = normalizeUserUploadAsset(row);
+      const prompt = contentActionCreativePromptValue(item.creative_prompt, item.prompt);
+      const promptTargets = {
+        abilityVideoAsset: "abilityVideoPrompt",
+        workflowParamVideoAsset: "workflowParamVideoPrompt",
+        taskVideoAsset: "taskCreativePrompt",
+        workComflyAsset: "workComflyText",
+        workflowParamComflyAsset: "workflowParamComflyText",
+        taskComflyAsset: "taskComflyText",
+        workSeedanceAsset: "workSeedanceText",
+        workflowParamSeedanceAsset: "workflowParamSeedanceText",
+        taskSeedanceAsset: "taskSeedanceText",
+        abilityEcommerceAsset: "abilityEcommerceText",
+        workflowParamEcommerceAsset: "workflowParamEcommerceText",
+        taskEcommerceAsset: "taskEcommerceText",
+      };
+      if (promptTargets[id]) setAssetDerivedField(promptTargets[id], prompt);
+      if (id !== "workPublishMaterial") return;
+      setFieldValue("workPublishMediaType", ["image", "video", "document"].includes(item.media_type) ? item.media_type : "document");
+      setAssetDerivedField("workPublishTitle", item.title);
+      setAssetDerivedField("workPublishDescription", item.description);
+      setAssetDerivedField("workPublishTags", item.tags);
+      const hasCopy = !!contentActionTextValue(item.title, item.description);
+      setFieldValue("workPublishAiCopy", !hasCopy);
+    }
+
+    async function hydrateAssetSelectionContext(id, row) {
+      const selected = normalizeUserUploadAsset(row);
+      if (!selected.asset_id || selected.asset_id.includes(":")) return;
+      const expectedId = selected.asset_id;
+      try {
+        const detail = await api(`/api/assets/${encodeURIComponent(expectedId)}`);
+        const current = normalizeUserUploadAsset(state.assetPickerSelections[id]);
+        if (current.asset_id !== expectedId) return;
+        const hydrated = normalizeUserUploadAsset({ ...selected, ...detail, asset_origin: selected.asset_origin });
+        state.assetPickerSelections[id] = hydrated;
+        if (hydrated.asset_origin === "user_upload") addUserUploadAssetToCache(hydrated);
+        renderAssetPickerControl(id);
+        applyAssetSelectionContext(id, hydrated);
+      } catch {}
     }
 
     async function openContentMediaAsAvatar(item) {
@@ -13084,6 +13155,9 @@
       return {
         asset_id: String(item.asset_id || "").trim(),
         filename: String(item.filename || item.name || item.title || item.prompt || "素材").trim(),
+        title: String(item.title || "").trim(),
+        description: String(item.description || item.caption || item.publish_copy || "").trim(),
+        creative_prompt: String(item.creative_prompt || item.image_prompt || item.video_prompt || item.prompt || "").trim(),
         media_type: String(item.media_type || "").trim() || "image",
         source_url: String(item.source_url || item.url || item.open_url || item.preview_url || "").trim(),
         preview_url: String(item.preview_url || item.local_preview_url || item.open_url || item.source_url || item.url || "").trim(),
@@ -13581,12 +13655,12 @@
       }
       if (key === "publish_center") {
         return taskFieldHtml("发布素材", assetPickerControlHtml("workPublishMaterial", { mediaType: "", output: "url", accept: "image/*,video/*,.pdf,.doc,.docx,.ppt,.pptx", uploadText: "上传素材" }), true)
-          + taskFieldHtml("素材类型", taskSelectHtml("workPublishMediaType", optionHtml("video", "视频") + optionHtml("image", "图片") + optionHtml("document", "文档")))
-          + taskFieldHtml("发布账号昵称", workInputHtml("workPublishAccount", "text", "", 'placeholder="与 online 发布中心里的账号昵称一致"'))
+          + taskFieldHtml("素材类型", taskSelectHtml("workPublishMediaType", optionHtml("video", "视频") + optionHtml("image", "图片") + optionHtml("document", "文档")), true)
+          + taskFieldHtml("发布账号", workInputHtml("workPublishAccount", "text", "", 'placeholder="填写 Online 发布中心中的账号昵称"'), true)
           + taskFieldHtml("标题", workInputHtml("workPublishTitle", "text", "", 'placeholder="可选，不填可让 AI 补全"'), true)
           + taskFieldHtml("正文/描述", taskTextareaHtml("workPublishDescription", "可选：发布正文、卖点或备注"), true)
           + taskFieldHtml("话题标签", workInputHtml("workPublishTags", "text", "", 'placeholder="#品牌 #同城 或逗号分隔"'), true)
-          + taskFieldHtml("AI 补全文案", workCheckboxHtml("workPublishAiCopy", "缺少标题/正文时让 AI 自动补全", true));
+          + taskFieldHtml("AI 补全文案", workCheckboxHtml("workPublishAiCopy", "缺少标题或正文时自动补全", true), true);
       }
       return `<div class="quick-empty">这个入口暂未配置下发表单。</div>`;
     }

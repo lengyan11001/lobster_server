@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -17,13 +18,14 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
+from sqlalchemy import Text, cast, or_
 from sqlalchemy.orm import Session
 
 from .auth import get_current_user
 from .mobile_identity import online_user_for_mobile_user
 from ..core.config import settings
 from ..db import get_db
-from ..models import Asset, User
+from ..models import Asset, GenerationRecord, IPContentDraftRecord, ScheduledTaskRun, User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -456,6 +458,7 @@ def _apply_creative_candidate_group_meta(meta: dict, group_name: str) -> bool:
 
 def _registered_asset_payload(row: Asset) -> dict:
     group = _creative_candidate_group(row.meta)
+    context = _stored_asset_content_context(row)
     return {
         "asset_id": row.asset_id,
         "filename": row.filename,
@@ -464,9 +467,166 @@ def _registered_asset_payload(row: Asset) -> dict:
         "source_url": row.source_url or "",
         "url": row.source_url or "",
         "asset_origin": _asset_origin(row.meta),
+        "title": context.get("title", ""),
+        "description": context.get("description", ""),
+        "prompt": row.prompt or context.get("creative_prompt", ""),
+        "creative_prompt": context.get("creative_prompt", "") or row.prompt or "",
+        "tags": row.tags or context.get("tags", ""),
         "creative_candidate_group": group,
         "creative_candidate_groups": _creative_candidate_groups(row.meta),
     }
+
+
+def _context_text(value, limit: int = 12000) -> str:
+    if isinstance(value, (list, tuple, set)):
+        value = " ".join(str(item or "").strip() for item in value if str(item or "").strip())
+    if not isinstance(value, (str, int, float)):
+        return ""
+    return str(value).strip()[:limit]
+
+
+def _first_context_text(*values, limit: int = 12000) -> str:
+    for value in values:
+        text = _context_text(value, limit)
+        if text:
+            return text
+    return ""
+
+
+def _stored_asset_content_context(row: Asset) -> dict[str, str]:
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    raw = meta.get("content_context") if isinstance(meta.get("content_context"), dict) else {}
+    return {
+        "title": _first_context_text(raw.get("title"), meta.get("content_title"), limit=500),
+        "description": _first_context_text(raw.get("description"), meta.get("content_description")),
+        "creative_prompt": _first_context_text(raw.get("creative_prompt"), meta.get("creative_prompt"), row.prompt),
+        "tags": _first_context_text(raw.get("tags"), meta.get("content_tags"), row.tags, limit=2000),
+        "source": _first_context_text(raw.get("source"), limit=64),
+    }
+
+
+def _asset_source_ids(row: Asset) -> list[str]:
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    values = [row.asset_id, meta.get("source_asset_id"), meta.get("client_asset_id")]
+    return list(dict.fromkeys(_context_text(value, 128) for value in values if _context_text(value, 128)))
+
+
+def _run_asset_content_context(row: ScheduledTaskRun) -> dict[str, str]:
+    result = row.result_payload if isinstance(row.result_payload, dict) else {}
+    generated = result.get("generated") if isinstance(result.get("generated"), dict) else {}
+    mcp = result.get("mcp_result") if isinstance(result.get("mcp_result"), dict) else {}
+    mcp_result = mcp.get("result") if isinstance(mcp.get("result"), dict) else {}
+    mcp_pipeline = mcp_result.get("result") if isinstance(mcp_result.get("result"), dict) else {}
+    plans = [
+        value.get("plan")
+        for value in (result, generated, mcp, mcp_result, mcp_pipeline)
+        if isinstance(value, dict) and isinstance(value.get("plan"), dict)
+    ]
+    plan = next((value for value in plans if value), {})
+    draft = result.get("publish_draft") if isinstance(result.get("publish_draft"), dict) else {}
+    input_payload = row.payload if isinstance(row.payload, dict) else {}
+    inner_input = input_payload.get("payload") if isinstance(input_payload.get("payload"), dict) else {}
+    result_text = _context_text(row.result_text, 20000)
+    caption_match = re.search(r"(?:发布文案|发布正文|配文)\s*[:：]\s*([^\r\n]+)", result_text)
+    return {
+        "title": _first_context_text(
+            plan.get("title"), plan.get("headline"), result.get("title"), draft.get("title"), generated.get("title"), row.title,
+            limit=500,
+        ),
+        "description": _first_context_text(
+            result.get("caption"), generated.get("caption"), generated.get("copy"), plan.get("copy"), plan.get("caption"),
+            draft.get("description"), caption_match.group(1) if caption_match else "",
+        ),
+        "creative_prompt": _first_context_text(
+            result.get("skill_prompt"), result.get("image_prompt"), result.get("video_prompt"),
+            plan.get("image_prompt"), plan.get("video_prompt"), generated.get("prompt"),
+            inner_input.get("prompt"), inner_input.get("task_text"), input_payload.get("prompt"),
+        ),
+        "tags": _first_context_text(
+            result.get("tags"), result.get("hashtags"), generated.get("tags"), plan.get("tags"), draft.get("tags"),
+            limit=2000,
+        ),
+        "source": "scheduled_task_run",
+    }
+
+
+def _resolve_asset_content_context(db: Session, row: Asset) -> dict[str, str]:
+    context = _stored_asset_content_context(row)
+
+    def merge(values: dict[str, str]) -> None:
+        for key in ("title", "description", "creative_prompt", "tags", "source"):
+            if not context.get(key) and values.get(key):
+                context[key] = values[key]
+
+    source_ids = _asset_source_ids(row)
+    if source_ids:
+        draft = (
+            db.query(IPContentDraftRecord)
+            .filter(
+                IPContentDraftRecord.user_id == row.user_id,
+                IPContentDraftRecord.image_asset_id.in_(source_ids),
+            )
+            .order_by(IPContentDraftRecord.created_at.desc())
+            .first()
+        )
+        if draft:
+            merge({
+                "title": _first_context_text(draft.title, limit=500),
+                "description": _first_context_text(draft.content),
+                "creative_prompt": _first_context_text(draft.image_prompt),
+                "tags": "",
+                "source": "ip_daily",
+            })
+
+        generation = (
+            db.query(GenerationRecord)
+            .filter(GenerationRecord.user_id == row.user_id, GenerationRecord.client_asset_id.in_(source_ids))
+            .order_by(GenerationRecord.created_at.desc())
+            .first()
+        )
+        if generation:
+            merge({
+                "title": "",
+                "description": "",
+                "creative_prompt": _first_context_text(generation.prompt),
+                "tags": _first_context_text(generation.tags, limit=2000),
+                "source": "generation_record",
+            })
+
+        if not context.get("title") or not context.get("description") or not context.get("creative_prompt"):
+            matches = [cast(ScheduledTaskRun.result_payload, Text).contains(source_id) for source_id in source_ids]
+            runs = (
+                db.query(ScheduledTaskRun)
+                .filter(ScheduledTaskRun.user_id == row.user_id, or_(*matches))
+                .order_by(ScheduledTaskRun.created_at.desc())
+                .limit(20)
+                .all()
+            )
+            for run in runs:
+                merge(_run_asset_content_context(run))
+                if context.get("title") and context.get("description") and context.get("creative_prompt"):
+                    break
+    return context
+
+
+def _persist_asset_content_context(row: Asset, context: dict[str, str]) -> bool:
+    useful = {key: _context_text(context.get(key), 12000) for key in ("title", "description", "creative_prompt", "tags", "source")}
+    useful = {key: value for key, value in useful.items() if value}
+    if not useful:
+        return False
+    changed = False
+    meta = dict(row.meta or {})
+    if meta.get("content_context") != useful:
+        meta["content_context"] = useful
+        row.meta = meta
+        changed = True
+    if not row.prompt and useful.get("creative_prompt"):
+        row.prompt = useful["creative_prompt"]
+        changed = True
+    if not row.tags and useful.get("tags"):
+        row.tags = useful["tags"]
+        changed = True
+    return changed
 
 
 @router.post("/api/assets/register-url", summary="登记公网素材为用户上传素材")
@@ -503,6 +663,10 @@ async def register_asset_url(
             changed = True
         if changed:
             existing.meta = meta
+        context = _resolve_asset_content_context(db, existing)
+        if _persist_asset_content_context(existing, context):
+            changed = True
+        if changed:
             db.add(existing)
             db.commit()
             db.refresh(existing)
@@ -529,6 +693,8 @@ async def register_asset_url(
         _apply_creative_candidate_group_meta(meta, group_name)
         asset.meta = meta
     db.add(asset)
+    db.flush()
+    _persist_asset_content_context(asset, _resolve_asset_content_context(db, asset))
     db.commit()
     db.refresh(asset)
     return _registered_asset_payload(asset)
@@ -1020,25 +1186,29 @@ def list_assets(
         matched = [row for row in query.order_by(Asset.created_at.desc()).all() if not _asset_hidden_from_library(row)]
         total = len(matched)
         rows = matched[offset : offset + max_limit]
+    def payload(row: Asset) -> dict:
+        context = _stored_asset_content_context(row)
+        return {
+            "asset_id": row.asset_id,
+            "filename": row.filename,
+            "media_type": row.media_type,
+            "file_size": row.file_size,
+            "source_url": row.source_url,
+            "title": context.get("title", ""),
+            "description": context.get("description", ""),
+            "prompt": row.prompt or context.get("creative_prompt", ""),
+            "creative_prompt": context.get("creative_prompt", "") or row.prompt or "",
+            "model": row.model,
+            "tags": row.tags or context.get("tags", ""),
+            "creative_candidate_group": _creative_candidate_group(row.meta),
+            "creative_candidate_groups": _creative_candidate_groups(row.meta),
+            "asset_origin": _asset_origin(row.meta),
+            "created_at": row.created_at.isoformat() if row.created_at else "",
+        }
+
     return {
         "total": total,
-        "assets": [
-            {
-                "asset_id": r.asset_id,
-                "filename": r.filename,
-                "media_type": r.media_type,
-                "file_size": r.file_size,
-                "source_url": r.source_url,
-                "prompt": r.prompt,
-                "model": r.model,
-                "tags": r.tags,
-                "creative_candidate_group": _creative_candidate_group(r.meta),
-                "creative_candidate_groups": _creative_candidate_groups(r.meta),
-                "asset_origin": _asset_origin(r.meta),
-                "created_at": r.created_at.isoformat() if r.created_at else "",
-            }
-            for r in rows
-        ],
+        "assets": [payload(row) for row in rows],
     }
 
 
@@ -1161,6 +1331,12 @@ def get_asset(
     a = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user.id).first()
     if not a:
         raise HTTPException(404, detail="素材不存在")
+    context = _resolve_asset_content_context(db, a)
+    if _persist_asset_content_context(a, context):
+        db.add(a)
+        db.commit()
+        db.refresh(a)
+        context = _stored_asset_content_context(a)
     local_path = _asset_local_path(a)
     out = {
         "asset_id": a.asset_id,
@@ -1168,8 +1344,12 @@ def get_asset(
         "media_type": a.media_type,
         "file_size": a.file_size,
         "source_url": a.source_url,
-        "prompt": a.prompt,
-        "tags": a.tags,
+        "title": context.get("title", ""),
+        "description": context.get("description", ""),
+        "prompt": a.prompt or context.get("creative_prompt", ""),
+        "creative_prompt": context.get("creative_prompt", "") or a.prompt or "",
+        "tags": a.tags or context.get("tags", ""),
+        "content_context": context,
         "created_at": a.created_at.isoformat() if a.created_at else "",
     }
     if local_path is not None:

@@ -68,7 +68,7 @@ def test_content_action_fields_keep_prompt_copy_and_script_separate():
     assert "tags: contentActionTextValue(item.tags, item.hashtags, meta.tags, meta.hashtags)" in script
     assert 'if (mediaType === "video") add("generate_avatar", "生成数字人")' in script
     assert 'await openContentMediaAsAvatar(item)' in script
-    assert '&& !source.url)' in script
+    assert "const needsDetail = !source.url || !source.text || !source.creativePrompt" in script
     assert "function contentActionMediaUrl(value)" in script
     assert "function contentActionPromptFromMeta(value, depth = 0)" in script
     assert "sourceKind," in script
@@ -76,6 +76,8 @@ def test_content_action_fields_keep_prompt_copy_and_script_separate():
     assert "function resolveContentActionCreativePrompt(item)" in script
     assert "function fillContentActionPromptLater(item, fieldId" in script
     assert 'fillContentActionPromptLater(item, "abilityVideoPrompt", reference)' in script
+    assert "function hydrateAssetSelectionContext(id, row)" in script
+    assert 'setAssetDerivedField("workPublishDescription", item.description)' in script
     assert 'return apiUrl(raw.startsWith("/") ? raw : `/${raw}`)' in script
 
 
@@ -93,13 +95,13 @@ def test_work_record_results_reuse_content_actions():
     assert "script: explicitScript || defaults.script" in script
     assert "const seen = new Map()" in script
     assert "if (explicitCreativePrompt) existing.creativePrompt = explicitCreativePrompt" in script
-    assert "&& !source.url)" in script
+    assert "const needsDetail = !source.url || !source.text || !source.creativePrompt" in script
 
 
 def test_content_action_assets_are_cache_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
 
-    assert html.count("20260731-content-actions-v7") == 2
+    assert html.count("20260731-content-actions-v8") == 2
     assert html.count("20260731-content-picker-v1") == 3
 
 
