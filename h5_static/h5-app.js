@@ -6425,18 +6425,68 @@
       return `<article class="content-record-article-body">${gallery}${parts.join("")}</article>`;
     }
 
+    function contentActionTextValue(...values) {
+      for (const value of values) {
+        if (Array.isArray(value)) {
+          const text = value.map((item) => String(item || "").trim()).filter(Boolean).join(" ");
+          if (text) return text;
+          continue;
+        }
+        if (typeof value !== "string" && typeof value !== "number") continue;
+        const text = String(value).trim();
+        if (text) return text;
+      }
+      return "";
+    }
+
     function contentActionItemFromAsset(asset) {
       const item = asset && typeof asset === "object" ? asset : {};
+      const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
       const recordKind = String(item.kind || item._designer_content_kind || "").trim().toLowerCase();
+      const sourceKind = String(item.source || meta.source || "").trim().toLowerCase();
       const rawUrl = String(item.file_url || item.source_url || item.cover_url || "").trim();
       const rawImageUrl = String(contentRecordImageUrls(item)[0] || "").trim();
       const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : (rawUrl.startsWith("/") ? apiUrl(rawUrl) : rawUrl);
       let mediaType = designerMediaType({ ...item, source_url: url });
       if (["article", "wechat_article"].includes(recordKind)) mediaType = url && item.file_url ? "document" : "text";
       if (recordKind === "ppt") mediaType = "document";
+      const text = contentActionTextValue(
+        item.content,
+        item.body,
+        item.copy,
+        item.description,
+        item.summary,
+        meta.content,
+        meta.body,
+        meta.copy,
+        meta.description,
+      );
+      const explicitCreativePrompt = contentActionTextValue(
+        item.image_prompt,
+        item.video_prompt,
+        item.original_prompt,
+        meta.image_prompt,
+        meta.video_prompt,
+        meta.original_prompt,
+      );
+      const storedPromptIsCreative = !["article", "wechat_article", "ppt"].includes(recordKind) || sourceKind === "ip_daily";
+      const creativePrompt = explicitCreativePrompt || (storedPromptIsCreative
+        ? contentActionTextValue(item.prompt, meta.prompt)
+        : "");
       return {
         title: assetTitle(item),
-        text: String(item.content || item.body || item.summary || item.prompt || "").trim(),
+        text,
+        creativePrompt,
+        script: contentActionTextValue(
+          item.script,
+          item.voiceover_script,
+          item.oral_script,
+          meta.script,
+          meta.voiceover_script,
+          meta.oral_script,
+          text,
+        ),
+        tags: contentActionTextValue(item.tags, item.hashtags, meta.tags, meta.hashtags),
         url,
         imageUrl: rawImageUrl
           ? (/^https?:\/\//i.test(rawImageUrl) ? rawImageUrl : (rawImageUrl.startsWith("/") ? apiUrl(rawImageUrl) : rawImageUrl))
@@ -6462,7 +6512,7 @@
     function contentActionDefinitions(item) {
       const source = item && typeof item === "object" ? item : {};
       const mediaType = String(source.mediaType || mediaTypeFromUrl(source.url) || "").trim().toLowerCase();
-      const hasText = !!String(source.text || "").trim();
+      const hasText = !!contentActionTextValue(source.text, source.script);
       const textBased = hasText && (mediaType === "text" || ["article", "wechat_article"].includes(String(source.recordKind || "").toLowerCase()));
       const hasMaterial = !!String(source.url || source.assetId || "").trim();
       const actions = [];
@@ -6478,6 +6528,7 @@
         add("generate_video", "生成视频");
         add("generate_avatar", "生成数字人");
       }
+      if (mediaType === "video") add("generate_avatar", "生成数字人");
       if (hasMaterial && ["image", "video", "document", "file"].includes(mediaType)) add("publish", "发布");
       return actions;
     }
@@ -6496,17 +6547,23 @@
 
     function contentActionReference(item) {
       const source = item && typeof item === "object" ? item : {};
-      return String(source.imageUrl || (source.mediaType === "image" ? source.url : "") || source.assetId || "").trim();
+      if (source.imageUrl) return String(source.imageUrl).trim();
+      if (String(source.mediaType || "").trim().toLowerCase() === "image") {
+        return String(source.url || source.assetId || "").trim();
+      }
+      return "";
     }
 
     async function resolveContentActionItem(item) {
       const source = item && typeof item === "object" ? { ...item } : {};
-      if (!source.url && source.assetId && !String(source.assetId).includes(":")) {
+      if (source.assetId && !String(source.assetId).includes(":") && (!source.url || !source.creativePrompt || !source.filename)) {
         try {
           const asset = await api(`/api/assets/${encodeURIComponent(source.assetId)}`);
-          source.url = String(asset.source_url || "").trim();
+          source.url = source.url || String(asset.source_url || "").trim();
           source.filename = source.filename || String(asset.filename || "").trim();
           source.mediaType = source.mediaType || String(asset.media_type || "").trim();
+          source.creativePrompt = source.creativePrompt || String(asset.prompt || "").trim();
+          source.tags = source.tags || contentActionTextValue(asset.tags);
           if (source.mediaType === "image") source.imageUrl = source.url;
         } catch {}
       }
@@ -6534,13 +6591,15 @@
 
     async function contentActionFile(item) {
       const source = await resolveContentActionItem(item);
-      const url = String(source.imageUrl || source.url || "").trim();
-      if (!/^https?:\/\//i.test(url)) throw new Error("这张图片没有可读取的素材地址");
-      const filename = source.filename || filenameFromUrl(url, "digital-human-image.jpg");
+      const mediaType = String(source.mediaType || mediaTypeFromUrl(source.url) || "").trim().toLowerCase();
+      const url = String(mediaType === "video" ? source.url : (source.imageUrl || source.url) || "").trim();
+      if (!/^https?:\/\//i.test(url)) throw new Error("当前内容没有可读取的素材地址");
+      const fallbackName = mediaType === "video" ? "digital-human-video.mp4" : "digital-human-image.jpg";
+      const filename = source.filename || filenameFromUrl(url, fallbackName);
       const response = await fetch(mediaProxyUrl(url, "inline", filename), { cache: "no-store" });
-      if (!response.ok) throw new Error(`图片读取失败：HTTP ${response.status}`);
+      if (!response.ok) throw new Error(`素材读取失败：HTTP ${response.status}`);
       const blob = await response.blob();
-      const type = blob.type || "image/jpeg";
+      const type = blob.type || (mediaType === "video" ? "video/mp4" : "image/jpeg");
       return new File([blob], filename, { type, lastModified: Date.now() });
     }
 
@@ -6573,23 +6632,26 @@
       return uploadUserAssetForPicker(id, file);
     }
 
-    async function openContentImageAsAvatar(item) {
+    async function openContentMediaAsAvatar(item) {
+      const mediaType = String(item && item.mediaType || "").trim().toLowerCase() === "video" ? "video" : "image";
+      const mediaLabel = mediaType === "video" ? "视频" : "图片";
       state.assetLibrarySection = "avatars";
       state.assetLibraryOrigin = "user_upload";
       switchTab("assetLibrary");
       openAssetLibraryAddModal();
-      if ($("assetAvatarName")) $("assetAvatarName").value = String(item.title || "图片数字人").trim();
-      if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = "image";
+      if ($("assetAvatarName")) $("assetAvatarName").value = String(item.title || `${mediaLabel}数字人`).trim();
+      if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v1";
+      if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = mediaType;
       syncAssetAvatarForm();
-      if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "正在带入当前图片...";
+      if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `正在带入当前${mediaLabel}...`;
       try {
         const file = await contentActionFile(item);
         state.assetAvatarPrefillFile = file;
         if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `已带入：${file.name}`;
       } catch (err) {
         state.assetAvatarPrefillFile = null;
-        if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "图片带入失败，可重新选择训练图片";
-        toast(err.message || "图片带入失败");
+        if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `${mediaLabel}带入失败，可重新选择训练${mediaLabel}`;
+        toast(err.message || `${mediaLabel}带入失败`);
       }
     }
 
@@ -6598,12 +6660,14 @@
       if (!registered) throw new Error("当前资源已刷新，请重新选择操作");
       const item = await resolveContentActionItem(registered);
       const title = String(item.title || "内容创作").trim();
-      const text = String(item.text || "").trim();
-      const prompt = text || title;
+      const text = contentActionTextValue(item.text);
+      const creativePrompt = contentActionTextValue(item.creativePrompt, text, title);
+      const script = contentActionTextValue(item.script, text);
+      const tags = contentActionTextValue(item.tags);
       if (action === "generate_image") {
         openContentActionAbility("image_composer_studio", "workImagePrompt", () => {
           setFieldValue("workImageTitle", `${title} - 配图`);
-          setFieldValue("workImagePrompt", prompt);
+          setFieldValue("workImagePrompt", creativePrompt);
         });
         return;
       }
@@ -6613,10 +6677,10 @@
           setFieldValue("abilityVideoTitle", `${title} - 视频`);
           setFieldValue("abilityVideoMode", reference ? "single_asset" : "memory_image");
           setFieldValue("abilityVideoAsset", reference);
-          setFieldValue("abilityVideoPrompt", prompt);
+          setFieldValue("abilityVideoPrompt", creativePrompt);
           bindGoalVideoModeControls("ability");
           renderAssetPickerControl("abilityVideoAsset");
-          if (reference && String(item.mediaType || "").toLowerCase() === "image") {
+          if (reference && item.imageUrl) {
             ensureContentImageInAssetPicker("abilityVideoAsset", item).catch((err) => {
               renderAssetPickerControl("abilityVideoAsset");
               toast(err.message || "图片加入素材库失败");
@@ -6626,14 +6690,15 @@
         return;
       }
       if (action === "generate_talking_video") {
+        if (!script) throw new Error("当前内容没有可用于口播的正文");
         openContentActionAbility("hifly.video.create_by_tts", "workHiflyScript", () => {
           setFieldValue("workHiflyTitle", `${title} - 数字人口播`);
-          setFieldValue("workHiflyScript", prompt);
+          setFieldValue("workHiflyScript", script);
         });
         return;
       }
       if (action === "generate_avatar") {
-        await openContentImageAsAvatar(item);
+        await openContentMediaAsAvatar(item);
         return;
       }
       if (action === "publish") {
@@ -6645,6 +6710,7 @@
           setFieldValue("workPublishMediaType", mediaType);
           setFieldValue("workPublishTitle", title);
           setFieldValue("workPublishDescription", text);
+          setFieldValue("workPublishTags", tags);
           setFieldValue("workPublishAiCopy", !text);
         });
       }
@@ -15900,9 +15966,23 @@
       const params = payload.params && typeof payload.params === "object" ? payload.params : {};
       const result = row && row.result_payload && typeof row.result_payload === "object" ? row.result_payload : {};
       const generated = result.generated_content && typeof result.generated_content === "object" ? result.generated_content : {};
+      const generatedText = runGeneratedTextForAction(row);
       return {
         title: valueLabel(params.title || inner.title || payload.title || generated.title || result.title || ""),
-        description: valueLabel(params.description || inner.description || params.prompt || inner.prompt || inner.task_text || payload.prompt || generated.prompt || generated.caption || ""),
+        description: contentActionTextValue(params.description, inner.description, generated.caption, generated.copy, result.caption, result.copy, generatedText),
+        creativePrompt: contentActionTextValue(
+          params.image_prompt,
+          params.video_prompt,
+          inner.image_prompt,
+          inner.video_prompt,
+          inner.original_prompt,
+          params.prompt,
+          inner.prompt,
+          inner.task_text,
+          payload.prompt,
+          generated.prompt,
+        ),
+        script: contentActionTextValue(params.script, inner.script, generated.script, generatedText),
         tags: valueLabel(params.tags || generated.tags || result.tags || ""),
       };
     }
@@ -15912,25 +15992,52 @@
       const refs = payload.result_refs && typeof payload.result_refs === "object" ? payload.result_refs : {};
       const defaults = publishDefaultsFromRun(row);
       const out = [];
-      const seen = new Set();
+      const seen = new Map();
       const addEntry = (entry) => {
         if (!entry || typeof entry !== "object") return;
         const url = String(entry.url || entry.source_url || entry.public_url || entry.image_url || entry.video_url || entry.final_url || entry.output_url || entry.media_url || "").trim();
         const assetId = String(entry.asset_id || entry.id || entry.final_asset_id || entry.video_asset_id || entry.image_asset_id || "").trim();
         if (!url && !assetId) return;
-        const key = assetId || url;
-        if (seen.has(key)) return;
-        seen.add(key);
-        out.push({
+        const explicitTitle = contentActionTextValue(entry.title, entry.filename);
+        const explicitDescription = contentActionTextValue(entry.description, entry.caption, entry.copy);
+        const explicitCreativePrompt = contentActionTextValue(entry.image_prompt, entry.video_prompt, entry.original_prompt, entry.prompt);
+        const explicitScript = contentActionTextValue(entry.script, entry.voiceover_script);
+        const explicitTags = contentActionTextValue(entry.tags);
+        const existingIndex = (assetId && seen.has(assetId))
+          ? seen.get(assetId)
+          : ((url && seen.has(url)) ? seen.get(url) : -1);
+        const next = {
           ...defaults,
           url,
           source_url: url,
           asset_id: assetId,
           media_type: mediaTypeFromUrl(url, entry.media_type || entry.type || ""),
-          title: valueLabel(entry.title || entry.filename || defaults.title),
-          description: valueLabel(entry.description || entry.prompt || entry.caption || defaults.description),
-          tags: valueLabel(entry.tags || defaults.tags),
-        });
+          title: explicitTitle || defaults.title,
+          description: explicitDescription || defaults.description,
+          creativePrompt: explicitCreativePrompt || defaults.creativePrompt,
+          script: explicitScript || defaults.script,
+          tags: explicitTags || defaults.tags,
+        };
+        if (existingIndex < 0) {
+          const nextIndex = out.length;
+          if (assetId) seen.set(assetId, nextIndex);
+          if (url) seen.set(url, nextIndex);
+          out.push(next);
+          return;
+        }
+        if (assetId) seen.set(assetId, existingIndex);
+        if (url) seen.set(url, existingIndex);
+        const existing = out[existingIndex];
+        if (!existing) return;
+        existing.url = existing.url || next.url;
+        existing.source_url = existing.source_url || next.source_url;
+        existing.asset_id = existing.asset_id || next.asset_id;
+        existing.media_type = existing.media_type || next.media_type;
+        if (explicitTitle) existing.title = explicitTitle;
+        if (explicitDescription) existing.description = explicitDescription;
+        if (explicitCreativePrompt) existing.creativePrompt = explicitCreativePrompt;
+        if (explicitScript) existing.script = explicitScript;
+        if (explicitTags) existing.tags = explicitTags;
       };
       const addUrl = (url) => addEntry({ url });
       const draft = publishDraftFromPayload({ ...payload, run_id: row && row.id });
@@ -16027,8 +16134,11 @@
         : rawType.includes("audio") ? "audio"
         : mediaTypeFromUrl(url, rawType || "document");
       return contentActionMenuHtml({
-        title: String(row && row.title || `媒体结果 ${index + 1}`),
-        text: runGeneratedTextForAction(row),
+        title: contentActionTextValue(entry && entry.title, row && row.title, `媒体结果 ${index + 1}`),
+        text: contentActionTextValue(entry && entry.description, runGeneratedTextForAction(row)),
+        creativePrompt: contentActionTextValue(entry && entry.creativePrompt),
+        script: contentActionTextValue(entry && entry.script, runGeneratedTextForAction(row)),
+        tags: contentActionTextValue(entry && entry.tags),
         url,
         imageUrl: mediaType === "image" ? url : "",
         assetId: String(entry && entry.asset_id || "").trim(),

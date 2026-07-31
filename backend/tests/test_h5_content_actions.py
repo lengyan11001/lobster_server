@@ -29,9 +29,31 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert 'openContentActionAbility("hifly.video.create_by_tts", "workHiflyScript"' in script
     assert 'openContentActionAbility("publish_center", "workPublishMaterial"' in script
     assert 'state.assetAvatarPrefillFile = file' in script
+    assert 'if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v1"' in script
+    assert 'if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = mediaType' in script
     assert 'ensureContentImageInAssetPicker("abilityVideoAsset", item)' in script
     assert 'return uploadUserAssetForPicker(id, file)' in script
     assert 'renderAssetPickerControl("abilityVideoAsset")' in script
+    assert 'setFieldValue("workImagePrompt", creativePrompt)' in script
+    assert 'setFieldValue("abilityVideoPrompt", creativePrompt)' in script
+    assert 'setFieldValue("workHiflyScript", script)' in script
+    assert 'setFieldValue("workPublishDescription", text)' in script
+    assert 'setFieldValue("workPublishTags", tags)' in script
+    assert 'if (String(source.mediaType || "").trim().toLowerCase() === "image")' in script
+    assert 'return String(source.url || source.assetId || "").trim()' in script
+
+
+def test_content_action_fields_keep_prompt_copy_and_script_separate():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert "function contentActionTextValue(...values)" in script
+    assert "const explicitCreativePrompt = contentActionTextValue(" in script
+    assert "item.image_prompt," in script
+    assert "item.video_prompt," in script
+    assert "item.original_prompt," in script
+    assert "script: contentActionTextValue(" in script
+    assert "tags: contentActionTextValue(item.tags, item.hashtags, meta.tags, meta.hashtags)" in script
+    assert 'if (mediaType === "video") add("generate_avatar", "生成数字人")' in script
 
 
 def test_work_record_results_reuse_content_actions():
@@ -41,12 +63,20 @@ def test_work_record_results_reuse_content_actions():
     assert 'contentActionMenuHtml(actionItem)' in script
     assert '<h4>内容操作</h4>' in script
     assert 'class="run-media-item content-action-host"' in script
+    assert "creativePrompt: contentActionTextValue(" in script
+    assert "entry.image_prompt," in script
+    assert "entry.video_prompt," in script
+    assert "const explicitScript = contentActionTextValue(entry.script, entry.voiceover_script)" in script
+    assert "script: explicitScript || defaults.script" in script
+    assert "const seen = new Map()" in script
+    assert "if (explicitCreativePrompt) existing.creativePrompt = explicitCreativePrompt" in script
+    assert "(!source.url || !source.creativePrompt || !source.filename)" in script
 
 
 def test_content_action_assets_are_cache_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
 
-    assert html.count("20260731-content-actions-v2") == 2
+    assert html.count("20260731-content-actions-v3") == 2
 
 
 def test_document_cards_only_use_real_images_and_render_article_images():
