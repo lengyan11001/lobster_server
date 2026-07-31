@@ -6357,7 +6357,14 @@
     }
 
     function assetTitle(asset) {
-      const raw = asset && (asset.title || asset.name || asset.prompt || asset.filename || asset.tags || asset.asset_id);
+      const raw = asset && (
+        asset.title
+        || asset.name
+        || asset.filename
+        || contentActionCreativePromptValue(asset.prompt)
+        || asset.tags
+        || asset.asset_id
+      );
       const title = valueLabel(raw);
       return title || "素材";
     }
@@ -6448,6 +6455,17 @@
       return "";
     }
 
+    function contentActionCreativePromptValue(...values) {
+      const mediaReferencePattern = /^(?:https?:\/\/|data:|blob:|\/?(?:assets?|uploads?|files?|media)\/|[a-z]:[\\/]|\.{0,2}[\\/])\S+$/i;
+      const mediaFilenamePattern = /^[^\s<>]+\.(?:png|jpe?g|webp|gif|bmp|svg|mp4|mov|webm|m4v)(?:[?#].*)?$/i;
+      for (const value of values) {
+        const text = contentActionTextValue(value);
+        if (!text || mediaReferencePattern.test(text) || mediaFilenamePattern.test(text)) continue;
+        return text;
+      }
+      return "";
+    }
+
     function contentActionItemFromAsset(asset) {
       const item = asset && typeof asset === "object" ? asset : {};
       const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
@@ -6470,7 +6488,7 @@
         meta.copy,
         meta.description,
       );
-      const explicitCreativePrompt = contentActionTextValue(
+      const explicitCreativePrompt = contentActionCreativePromptValue(
         item.image_prompt,
         item.video_prompt,
         item.original_prompt,
@@ -6480,7 +6498,7 @@
       );
       const storedPromptIsCreative = !["article", "wechat_article", "ppt"].includes(recordKind) || sourceKind === "ip_daily";
       const creativePrompt = explicitCreativePrompt || (storedPromptIsCreative
-        ? contentActionTextValue(item.prompt, meta.prompt)
+        ? contentActionCreativePromptValue(item.prompt, meta.prompt)
         : "");
       return {
         title: assetTitle(item),
@@ -6535,9 +6553,9 @@
       }
       if (mediaType === "image") {
         add("generate_video", "生成视频");
-        add("generate_avatar", "生成数字人");
+        add("generate_talking_video", "生成数字人视频");
       }
-      if (mediaType === "video") add("generate_avatar", "生成数字人");
+      if (mediaType === "video") add("generate_talking_video", "生成数字人视频");
       if (hasMaterial && ["image", "video", "document", "file"].includes(mediaType)) add("publish", "发布");
       return actions;
     }
@@ -6571,7 +6589,13 @@
           source.url = source.url || String(asset.source_url || "").trim();
           source.filename = source.filename || String(asset.filename || "").trim();
           source.mediaType = source.mediaType || String(asset.media_type || "").trim();
-          source.creativePrompt = source.creativePrompt || String(asset.prompt || "").trim();
+          source.creativePrompt = contentActionCreativePromptValue(
+            source.creativePrompt,
+            asset.image_prompt,
+            asset.video_prompt,
+            asset.original_prompt,
+            asset.prompt,
+          );
           source.tags = source.tags || contentActionTextValue(asset.tags);
           if (source.mediaType === "image") source.imageUrl = source.url;
         } catch {}
@@ -6598,20 +6622,6 @@
       applyContentActionFields(requiredId, callback);
     }
 
-    async function contentActionFile(item) {
-      const source = await resolveContentActionItem(item);
-      const mediaType = String(source.mediaType || mediaTypeFromUrl(source.url) || "").trim().toLowerCase();
-      const url = String(mediaType === "video" ? source.url : (source.imageUrl || source.url) || "").trim();
-      if (!/^https?:\/\//i.test(url)) throw new Error("当前内容没有可读取的素材地址");
-      const fallbackName = mediaType === "video" ? "digital-human-video.mp4" : "digital-human-image.jpg";
-      const filename = source.filename || filenameFromUrl(url, fallbackName);
-      const response = await fetch(mediaProxyUrl(url, "inline", filename), { cache: "no-store" });
-      if (!response.ok) throw new Error(`素材读取失败：HTTP ${response.status}`);
-      const blob = await response.blob();
-      const type = blob.type || (mediaType === "video" ? "video/mp4" : "image/jpeg");
-      return new File([blob], filename, { type, lastModified: Date.now() });
-    }
-
     function selectAssetPickerRow(id, row) {
       const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
       const hidden = $(id);
@@ -6624,36 +6634,16 @@
       renderAssetPickerControl(id);
     }
 
-    async function openContentMediaAsAvatar(item) {
-      const mediaType = String(item && item.mediaType || "").trim().toLowerCase() === "video" ? "video" : "image";
-      const mediaLabel = mediaType === "video" ? "视频" : "图片";
-      state.assetLibrarySection = "avatars";
-      state.assetLibraryOrigin = "user_upload";
-      switchTab("assetLibrary");
-      openAssetLibraryAddModal();
-      if ($("assetAvatarName")) $("assetAvatarName").value = String(item.title || `${mediaLabel}数字人`).trim();
-      if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v1";
-      if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = mediaType;
-      syncAssetAvatarForm();
-      if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `正在带入当前${mediaLabel}...`;
-      try {
-        const file = await contentActionFile(item);
-        state.assetAvatarPrefillFile = file;
-        if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `已带入：${file.name}`;
-      } catch (err) {
-        state.assetAvatarPrefillFile = null;
-        if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `${mediaLabel}带入失败，可重新选择训练${mediaLabel}`;
-        toast(err.message || `${mediaLabel}带入失败`);
-      }
-    }
-
     async function performContentAction(action, key) {
       const registered = state.contentActionItems.get(String(key || ""));
       if (!registered) throw new Error("当前资源已刷新，请重新选择操作");
       const item = await resolveContentActionItem(registered);
       const title = String(item.title || "内容创作").trim();
       const text = contentActionTextValue(item.text);
-      const creativePrompt = contentActionTextValue(item.creativePrompt, text, title);
+      const mediaType = String(item.mediaType || mediaTypeFromUrl(item.url) || "").trim().toLowerCase();
+      const textBased = mediaType === "text" || ["article", "wechat_article"].includes(String(item.recordKind || "").toLowerCase());
+      const creativePrompt = contentActionCreativePromptValue(item.creativePrompt)
+        || (textBased ? contentActionTextValue(text, title) : "");
       const script = contentActionTextValue(item.script, text);
       const tags = contentActionTextValue(item.tags);
       if (action === "generate_image") {
@@ -6686,16 +6676,11 @@
         });
         return;
       }
-      if (action === "generate_talking_video") {
-        if (!script) throw new Error("当前内容没有可用于口播的正文");
+      if (action === "generate_talking_video" || action === "generate_avatar") {
         openContentActionAbility("hifly.video.create_by_tts", "workHiflyScript", () => {
           setFieldValue("workHiflyTitle", `${title} - 数字人口播`);
           setFieldValue("workHiflyScript", script);
         });
-        return;
-      }
-      if (action === "generate_avatar") {
-        await openContentMediaAsAvatar(item);
         return;
       }
       if (action === "publish") {
@@ -16125,7 +16110,7 @@
       return {
         title: valueLabel(params.title || inner.title || payload.title || generated.title || result.title || ""),
         description: contentActionTextValue(params.description, inner.description, generated.caption, generated.copy, result.caption, result.copy, generatedText),
-        creativePrompt: contentActionTextValue(
+        creativePrompt: contentActionCreativePromptValue(
           params.image_prompt,
           params.video_prompt,
           inner.image_prompt,
@@ -16155,7 +16140,7 @@
         if (!url && !assetId) return;
         const explicitTitle = contentActionTextValue(entry.title, entry.filename);
         const explicitDescription = contentActionTextValue(entry.description, entry.caption, entry.copy);
-        const explicitCreativePrompt = contentActionTextValue(entry.image_prompt, entry.video_prompt, entry.original_prompt, entry.prompt);
+        const explicitCreativePrompt = contentActionCreativePromptValue(entry.image_prompt, entry.video_prompt, entry.original_prompt, entry.prompt);
         const explicitScript = contentActionTextValue(entry.script, entry.voiceover_script);
         const explicitTags = contentActionTextValue(entry.tags);
         const existingIndex = (assetId && seen.has(assetId))
