@@ -8,8 +8,8 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="必火AI员工" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v1" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v3" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v1-20260731-content-picker-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v4-20260731-content-picker-v1" />
 </head>
 <body>
   <main class="shell">
@@ -1531,6 +1531,34 @@
     </div>
   </div>
 
+  <div class="employee-modal asset-picker-library-modal hidden" id="assetPickerLibraryModal" role="dialog" aria-modal="true" aria-labelledby="assetPickerLibraryTitle">
+    <button class="employee-modal-backdrop" type="button" id="assetPickerLibraryBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover asset-picker-library-dialog">
+      <button class="employee-popover-close" type="button" id="assetPickerLibraryClose" aria-label="关闭">×</button>
+      <div class="asset-picker-library-head">
+        <div>
+          <strong id="assetPickerLibraryTitle">选择素材</strong>
+          <span id="assetPickerLibraryHint">从素材库或内容库选择</span>
+        </div>
+        <em id="assetPickerLibraryStatus"></em>
+      </div>
+      <div class="asset-picker-library-tabs" role="tablist" aria-label="素材来源">
+        <button type="button" data-asset-picker-source="user_upload" role="tab" aria-selected="true">素材库</button>
+        <button type="button" data-asset-picker-source="generated" role="tab" aria-selected="false">内容库</button>
+      </div>
+      <div class="asset-picker-library-search">
+        <input id="assetPickerLibrarySearch" type="search" placeholder="搜索素材名称或提示词">
+        <button class="ghost" type="button" id="assetPickerLibraryRefresh">刷新</button>
+      </div>
+      <div class="asset-picker-library-grid" id="assetPickerLibraryGrid"></div>
+      <div class="work-dispatch-actions asset-picker-library-actions">
+        <button class="ghost danger-text" type="button" id="assetPickerLibraryClear">清除选择</button>
+        <button class="ghost" type="button" id="assetPickerLibraryCancel">取消</button>
+        <button type="button" id="assetPickerLibraryConfirm">确认选择</button>
+      </div>
+    </div>
+  </div>
+
   <div class="employee-modal hidden" id="personalMemoryGenerateModal" role="dialog" aria-modal="true" aria-labelledby="personalMemoryGenerateTitle">
     <button class="employee-modal-backdrop" type="button" id="personalMemoryGenerateBackdrop" aria-label="关闭"></button>
     <div class="employee-popover work-dispatch-popover personal-action-popover personal-memory-popover">
@@ -1761,6 +1789,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v1-20260730-dh-workbench-v2-20260731-content-actions-v3"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v1-20260730-dh-workbench-v2-20260731-content-actions-v4-20260731-content-picker-v1"></script>
 </body>
 </html>

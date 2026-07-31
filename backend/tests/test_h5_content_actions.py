@@ -31,8 +31,9 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert 'state.assetAvatarPrefillFile = file' in script
     assert 'if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v1"' in script
     assert 'if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = mediaType' in script
-    assert 'ensureContentImageInAssetPicker("abilityVideoAsset", item)' in script
-    assert 'return uploadUserAssetForPicker(id, file)' in script
+    assert 'selectAssetPickerRow("abilityVideoAsset", {' in script
+    assert 'asset_origin: "generated"' in script
+    assert "ensureContentImageInAssetPicker" not in script
     assert 'renderAssetPickerControl("abilityVideoAsset")' in script
     assert 'setFieldValue("workImagePrompt", creativePrompt)' in script
     assert 'setFieldValue("abilityVideoPrompt", creativePrompt)' in script
@@ -76,7 +77,8 @@ def test_work_record_results_reuse_content_actions():
 def test_content_action_assets_are_cache_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
 
-    assert html.count("20260731-content-actions-v3") == 2
+    assert html.count("20260731-content-actions-v4") == 2
+    assert html.count("20260731-content-picker-v1") == 3
 
 
 def test_document_cards_only_use_real_images_and_render_article_images():
@@ -90,3 +92,25 @@ def test_document_cards_only_use_real_images_and_render_article_images():
     assert "designerFallbackMedia({ ...(asset || {}), origin: \"generated\"" not in script
     assert ".content-record-inline-image img" in styles
     assert "top: 50%;" in styles
+    assert "data-content-document-cover" in script
+    assert 'image.matches("[data-content-document-cover], [data-asset-picker-library-image]")' in script
+
+
+def test_asset_picker_uses_library_modal_instead_of_native_dropdown():
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    base_styles = (H5 / "h5-app.css").read_text(encoding="utf-8")
+    designer_styles = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
+
+    assert 'id="assetPickerLibraryModal"' in html
+    assert 'data-asset-picker-source="user_upload"' in html
+    assert 'data-asset-picker-source="generated"' in html
+    assert 'data-asset-picker-open="${escapeHtml(id)}"' in script
+    assert "data-asset-select" not in script
+    assert "function openAssetPickerModal(id)" in script
+    assert "function loadAssetPickerModalRows()" in script
+    assert 'origin: source' in script
+    assert "state.assetPickerSelections[id] = item" in script
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in base_styles
+    assert ".asset-picker-library-grid" in designer_styles
+    assert ".asset-picker-library-card.selected" in designer_styles

@@ -83,6 +83,15 @@
       publishRunSubmitting: false,
       userUploadAssetCache: {},
       userUploadAssetLoading: {},
+      assetPickerSelections: {},
+      assetPickerModalTarget: "",
+      assetPickerModalSource: "user_upload",
+      assetPickerModalRows: [],
+      assetPickerModalDraft: null,
+      assetPickerModalQuery: "",
+      assetPickerModalLoading: false,
+      assetPickerModalError: "",
+      assetPickerModalRequest: 0,
       assetLibrarySection: "uploads",
       assetLibraryOrigin: "user_upload",
       assetLibraryPage: { user_upload: 1, generated: 1 },
@@ -6607,29 +6616,12 @@
       const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
       const hidden = $(id);
       if (!box || !hidden || !row) return;
-      const item = addUserUploadAssetToCache(row);
+      const item = normalizeUserUploadAsset(row);
+      if (item.asset_origin === "user_upload") addUserUploadAssetToCache(item);
+      state.assetPickerSelections[id] = item;
       hidden.value = assetPickerOutputValue(item, box.dataset.assetOutput || "asset_id");
       hidden.dispatchEvent(new Event("change", { bubbles: true }));
       renderAssetPickerControl(id);
-    }
-
-    async function ensureContentImageInAssetPicker(id, item) {
-      const source = await resolveContentActionItem(item);
-      const url = String(source.imageUrl || source.url || "").trim();
-      if (!/^https?:\/\//i.test(url)) throw new Error("当前图片没有可加入素材库的地址");
-      const rows = await loadUserUploadAssets("image", true).catch(() => userUploadAssetRows("image"));
-      const existing = (rows || []).find((row) => {
-        const normalized = normalizeUserUploadAsset(row);
-        return normalized.source_url === url || normalized.preview_url === url;
-      });
-      if (existing) {
-        selectAssetPickerRow(id, existing);
-        return existing;
-      }
-      const preview = $(`${id}Preview`);
-      if (preview) preview.innerHTML = "<span>正在将内容图片加入素材库...</span>";
-      const file = await contentActionFile(source);
-      return uploadUserAssetForPicker(id, file);
     }
 
     async function openContentMediaAsAvatar(item) {
@@ -6679,12 +6671,17 @@
           setFieldValue("abilityVideoAsset", reference);
           setFieldValue("abilityVideoPrompt", creativePrompt);
           bindGoalVideoModeControls("ability");
-          renderAssetPickerControl("abilityVideoAsset");
           if (reference && item.imageUrl) {
-            ensureContentImageInAssetPicker("abilityVideoAsset", item).catch((err) => {
-              renderAssetPickerControl("abilityVideoAsset");
-              toast(err.message || "图片加入素材库失败");
+            selectAssetPickerRow("abilityVideoAsset", {
+              asset_id: String(item.assetId || "").trim(),
+              filename: String(item.filename || title || "内容图片").trim(),
+              media_type: "image",
+              source_url: reference,
+              preview_url: reference,
+              asset_origin: "generated",
             });
+          } else {
+            renderAssetPickerControl("abilityVideoAsset");
           }
         });
         return;
@@ -6744,9 +6741,10 @@
       const kindLabels = { article: "深度长文", wechat_article: "公众号文章", ppt: "演示文稿" };
       const coverUrl = contentRecordImageUrls(asset)[0] || "";
       const emptyLabels = { article: "文章", wechat_article: "公众号", ppt: "PPT" };
+      const emptyCover = `<span class="content-document-cover-empty ${escapeHtml(kind)}"><b>${escapeHtml(emptyLabels[kind] || "文档")}</b></span>`;
       const cover = coverUrl
-        ? contentRecordImageHtml(coverUrl)
-        : `<span class="content-document-cover-empty ${escapeHtml(kind)}"><b>${escapeHtml(emptyLabels[kind] || "文档")}</b></span>`;
+        ? `<img data-content-document-cover class="content-document-cover-image" src="${escapeHtml(mediaProxyUrl(coverUrl, "inline", filenameFromUrl(coverUrl, "content-cover")))}" alt="" loading="lazy">${emptyCover.replace('class="', 'class="hidden ')}`
+        : emptyCover;
       return `<article class="content-document-card ${escapeHtml(kind)} content-action-card">
         <button class="content-document-preview" type="button" data-asset-preview-id="${escapeHtml(id)}">
           <span class="content-document-cover">${cover}</span>
@@ -12889,11 +12887,13 @@
       const item = row && typeof row === "object" ? row : {};
       return {
         asset_id: String(item.asset_id || "").trim(),
-        filename: String(item.filename || item.name || "已上传素材").trim(),
+        filename: String(item.filename || item.name || item.title || item.prompt || "素材").trim(),
         media_type: String(item.media_type || "").trim() || "image",
         source_url: String(item.source_url || item.url || item.open_url || item.preview_url || "").trim(),
         preview_url: String(item.preview_url || item.local_preview_url || item.open_url || item.source_url || item.url || "").trim(),
         asset_origin: item.asset_origin || "user_upload",
+        prompt: String(item.prompt || "").trim(),
+        tags: contentActionTextValue(item.tags),
         created_at: item.created_at || "",
       };
     }
@@ -12920,13 +12920,13 @@
       const accept = String(opts.accept || (mediaType === "video" ? "video/*" : "image/*"));
       const output = String(opts.output || "asset_id");
       const uploadText = String(opts.uploadText || "上传");
-      const selectText = String(opts.selectText || "选择已上传素材");
+      const selectText = String(opts.selectText || "选择素材");
       return `<div class="asset-picker" data-asset-picker="${escapeHtml(id)}" data-asset-media-type="${escapeHtml(mediaType)}" data-asset-output="${escapeHtml(output)}">
         <input id="${escapeHtml(id)}" type="hidden">
         <input id="${escapeHtml(id)}File" type="file" accept="${escapeHtml(accept)}" data-asset-upload-input="${escapeHtml(id)}" hidden>
         <div class="asset-picker-row">
           <button class="ghost" type="button" data-asset-upload-trigger="${escapeHtml(id)}">${escapeHtml(uploadText)}</button>
-          <select id="${escapeHtml(id)}Select" data-asset-select="${escapeHtml(id)}"><option value="">${escapeHtml(selectText)}</option></select>
+          <button class="ghost" type="button" data-asset-picker-open="${escapeHtml(id)}">${escapeHtml(selectText)}</button>
         </div>
         <div class="asset-picker-preview" id="${escapeHtml(id)}Preview"></div>
       </div>`;
@@ -12935,20 +12935,17 @@
     function renderAssetPickerControl(id) {
       const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
       const hidden = $(id);
-      const select = $(`${id}Select`);
       const preview = $(`${id}Preview`);
-      if (!box || !hidden || !select || !preview) return;
+      if (!box || !hidden || !preview) return;
       const mediaType = box.dataset.assetMediaType || "";
       const output = box.dataset.assetOutput || "asset_id";
       const rows = userUploadAssetRows(mediaType);
-      const loading = !!state.userUploadAssetLoading[assetPickerCacheKey(mediaType)];
       const current = String(hidden.value || "").trim();
-      const matched = rows.find((row) => row.asset_id === current || assetPickerOutputValue(row, output) === current) || null;
-      select.innerHTML = `<option value="">${loading ? "加载中..." : "选择已上传素材"}</option>` + rows.map((row) => {
-        const item = normalizeUserUploadAsset(row);
-        return `<option value="${escapeHtml(item.asset_id)}">${escapeHtml(item.filename || item.asset_id)}</option>`;
-      }).join("");
-      select.value = matched ? matched.asset_id : "";
+      const remembered = state.assetPickerSelections[id] ? normalizeUserUploadAsset(state.assetPickerSelections[id]) : null;
+      const rememberedMatches = remembered && current && (remembered.asset_id === current || assetPickerOutputValue(remembered, output) === current);
+      const matched = (rememberedMatches ? remembered : null)
+        || rows.find((row) => row.asset_id === current || assetPickerOutputValue(row, output) === current)
+        || null;
       if (matched) {
         const item = normalizeUserUploadAsset(matched);
         const nextValue = assetPickerOutputValue(item, output);
@@ -12959,7 +12956,12 @@
           : (item.media_type === "image" ? `<img src="${escapeHtml(src)}" alt="">` : `<div class="asset-picker-file">${escapeHtml((item.filename || "FILE").split(".").pop() || "FILE")}</div>`);
         preview.innerHTML = `<div class="asset-picker-thumb">${media}</div><span>${escapeHtml(item.filename || item.asset_id)}</span>`;
       } else if (current) {
-        preview.innerHTML = `<span>已选择素材</span>`;
+        const isUrl = /^https?:\/\//i.test(current);
+        const type = mediaType || mediaTypeFromUrl(current);
+        const media = isUrl && type === "video"
+          ? `<video src="${escapeHtml(current)}" muted playsinline preload="metadata"></video>`
+          : (isUrl && type === "image" ? `<img src="${escapeHtml(current)}" alt="">` : "");
+        preview.innerHTML = `${media ? `<div class="asset-picker-thumb">${media}</div>` : ""}<span>已选择素材</span>`;
       } else {
         preview.innerHTML = "";
       }
@@ -13026,13 +13028,166 @@
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || data.message || `上传失败：HTTP ${resp.status}`);
       const item = addUserUploadAssetToCache({ ...data, asset_origin: "user_upload" });
-      const output = box.dataset.assetOutput || "asset_id";
-      hidden.value = assetPickerOutputValue(item, output);
-      hidden.dispatchEvent(new Event("change", { bubbles: true }));
+      selectAssetPickerRow(id, item);
       renderAssetPickerControls(item.media_type);
       renderAssetPickerControls("");
       toast("已上传，之后可直接选择");
       return item;
+    }
+
+    function assetPickerRowIdentity(row) {
+      const item = normalizeUserUploadAsset(row);
+      return item.asset_id || item.source_url || item.preview_url;
+    }
+
+    function filteredAssetPickerModalRows() {
+      const query = String(state.assetPickerModalQuery || "").trim().toLowerCase();
+      const rows = Array.isArray(state.assetPickerModalRows) ? state.assetPickerModalRows : [];
+      if (!query) return rows;
+      return rows.filter((row) => {
+        const item = normalizeUserUploadAsset(row);
+        return [item.filename, item.prompt, item.tags].some((value) => String(value || "").toLowerCase().includes(query));
+      });
+    }
+
+    function assetPickerModalMediaHtml(row) {
+      const item = normalizeUserUploadAsset(row);
+      const src = assetPickerPreviewUrl(item);
+      const label = item.media_type === "video" ? "视频" : (item.media_type === "image" ? "图片" : "文件");
+      if (!src) return `<span class="asset-picker-library-empty-media">${escapeHtml(label)}</span>`;
+      const proxy = mediaProxyUrl(src, "inline", item.filename || `asset-${item.asset_id}`);
+      if (item.media_type === "video") {
+        return `<video src="${escapeHtml(proxy)}" muted playsinline preload="metadata"></video><span class="asset-picker-library-play" aria-hidden="true">▶</span>`;
+      }
+      if (item.media_type === "image") {
+        return `<img data-asset-picker-library-image src="${escapeHtml(proxy)}" alt="" loading="lazy"><span class="asset-picker-library-empty-media hidden">图片</span>`;
+      }
+      return `<span class="asset-picker-library-empty-media">${escapeHtml((item.filename || "文件").split(".").pop() || "文件")}</span>`;
+    }
+
+    function renderAssetPickerModal() {
+      const grid = $("assetPickerLibraryGrid");
+      if (!grid) return;
+      document.querySelectorAll("[data-asset-picker-source]").forEach((button) => {
+        const active = String(button.dataset.assetPickerSource || "") === state.assetPickerModalSource;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      const rows = filteredAssetPickerModalRows();
+      const status = $("assetPickerLibraryStatus");
+      if (status) {
+        status.textContent = state.assetPickerModalLoading
+          ? "正在加载素材..."
+          : (state.assetPickerModalError || `${rows.length} 个可选素材`);
+        status.classList.toggle("error", !!state.assetPickerModalError);
+      }
+      if (state.assetPickerModalLoading && !rows.length) {
+        grid.innerHTML = Array.from({ length: 6 }, () => `<div class="asset-picker-library-card skeleton"></div>`).join("");
+      } else if (!rows.length) {
+        grid.innerHTML = `<div class="asset-picker-library-empty">${state.assetPickerModalQuery ? "没有匹配的素材" : "这里还没有可选素材"}</div>`;
+      } else {
+        const selectedId = assetPickerRowIdentity(state.assetPickerModalDraft);
+        grid.innerHTML = rows.map((row, index) => {
+          const item = normalizeUserUploadAsset(row);
+          const selected = !!selectedId && assetPickerRowIdentity(item) === selectedId;
+          return `<button class="asset-picker-library-card${selected ? " selected" : ""}" type="button" data-asset-picker-choice="${index}" role="radio" aria-checked="${selected ? "true" : "false"}">
+            <span class="asset-picker-library-cover">${assetPickerModalMediaHtml(item)}<i>${selected ? "已选择" : designerMediaTypeLabel(item.media_type)}</i></span>
+            <span class="asset-picker-library-copy"><strong title="${escapeHtml(item.filename)}">${escapeHtml(item.filename || "素材")}</strong><small>${escapeHtml(fmtTime(item.created_at))}</small></span>
+          </button>`;
+        }).join("");
+      }
+      if ($("assetPickerLibraryConfirm")) $("assetPickerLibraryConfirm").disabled = !state.assetPickerModalDraft;
+    }
+
+    async function loadAssetPickerModalRows() {
+      const target = String(state.assetPickerModalTarget || "");
+      const box = target ? document.querySelector(`[data-asset-picker="${cssEscape(target)}"]`) : null;
+      if (!box) return;
+      const requestId = Number(state.assetPickerModalRequest || 0) + 1;
+      state.assetPickerModalRequest = requestId;
+      const source = state.assetPickerModalSource;
+      state.assetPickerModalLoading = true;
+      state.assetPickerModalError = "";
+      state.assetPickerModalRows = [];
+      renderAssetPickerModal();
+      try {
+        const params = new URLSearchParams({
+          origin: source,
+          limit: "200",
+          offset: "0",
+        });
+        const mediaType = String(box.dataset.assetMediaType || "").trim();
+        if (mediaType) params.set("media_type", mediaType);
+        const data = await api(`/api/assets?${params.toString()}`);
+        if (requestId !== state.assetPickerModalRequest) return;
+        state.assetPickerModalRows = (Array.isArray(data.assets) ? data.assets : [])
+          .map((row) => normalizeUserUploadAsset({ ...row, asset_origin: row.asset_origin || source }))
+          .filter((row) => row.asset_id && (mediaType ? row.media_type === mediaType : ["image", "video", "document", "file"].includes(row.media_type)));
+      } catch (err) {
+        if (requestId !== state.assetPickerModalRequest) return;
+        state.assetPickerModalError = err && err.message ? err.message : "素材加载失败";
+      } finally {
+        if (requestId !== state.assetPickerModalRequest) return;
+        state.assetPickerModalLoading = false;
+        renderAssetPickerModal();
+      }
+    }
+
+    function openAssetPickerModal(id) {
+      const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
+      const hidden = $(id);
+      if (!box || !hidden) return;
+      const current = String(hidden.value || "").trim();
+      const remembered = state.assetPickerSelections[id] ? normalizeUserUploadAsset(state.assetPickerSelections[id]) : null;
+      const rememberedMatches = remembered && current && (remembered.asset_id === current || assetPickerOutputValue(remembered, box.dataset.assetOutput || "asset_id") === current);
+      const cachedRows = userUploadAssetRows(box.dataset.assetMediaType || "");
+      const cached = cachedRows.find((row) => row.asset_id === current || assetPickerOutputValue(row, box.dataset.assetOutput || "asset_id") === current) || null;
+      state.assetPickerModalTarget = id;
+      state.assetPickerModalDraft = (rememberedMatches ? remembered : null) || cached || (current ? normalizeUserUploadAsset({
+        asset_id: /^https?:\/\//i.test(current) ? "" : current,
+        source_url: /^https?:\/\//i.test(current) ? current : "",
+        media_type: box.dataset.assetMediaType || mediaTypeFromUrl(current),
+        filename: "当前素材",
+      }) : null);
+      state.assetPickerModalSource = state.assetPickerModalDraft && state.assetPickerModalDraft.asset_origin === "generated" ? "generated" : "user_upload";
+      state.assetPickerModalQuery = "";
+      state.assetPickerModalRows = [];
+      state.assetPickerModalError = "";
+      if ($("assetPickerLibrarySearch")) $("assetPickerLibrarySearch").value = "";
+      if ($("assetPickerLibraryHint")) {
+        const mediaType = String(box.dataset.assetMediaType || "").trim();
+        $("assetPickerLibraryHint").textContent = mediaType === "video" ? "选择一个视频素材" : (mediaType === "image" ? "选择一张图片素材" : "选择要使用的图片、视频或文件");
+      }
+      $("assetPickerLibraryModal")?.classList.remove("hidden");
+      renderAssetPickerModal();
+      loadAssetPickerModalRows();
+    }
+
+    function closeAssetPickerModal() {
+      $("assetPickerLibraryModal")?.classList.add("hidden");
+      state.assetPickerModalTarget = "";
+      state.assetPickerModalRows = [];
+      state.assetPickerModalError = "";
+      state.assetPickerModalRequest = Number(state.assetPickerModalRequest || 0) + 1;
+    }
+
+    function confirmAssetPickerModal() {
+      const target = String(state.assetPickerModalTarget || "");
+      if (!target || !state.assetPickerModalDraft) return;
+      selectAssetPickerRow(target, state.assetPickerModalDraft);
+      closeAssetPickerModal();
+    }
+
+    function clearAssetPickerModal() {
+      const target = String(state.assetPickerModalTarget || "");
+      const hidden = target ? $(target) : null;
+      if (hidden) {
+        hidden.value = "";
+        hidden.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      if (target) delete state.assetPickerSelections[target];
+      renderAssetPickerControl(target);
+      closeAssetPickerModal();
     }
 
     function renderWorkHiflyOptions() {
@@ -17062,6 +17217,12 @@
       openPersonalTemplateSettings();
     });
     document.addEventListener("click", (evt) => {
+      const pickerBtn = evt.target.closest("[data-asset-picker-open]");
+      if (pickerBtn) {
+        evt.preventDefault();
+        openAssetPickerModal(pickerBtn.dataset.assetPickerOpen || "");
+        return;
+      }
       const btn = evt.target.closest("[data-asset-upload-trigger]");
       if (!btn) return;
       evt.preventDefault();
@@ -17069,6 +17230,15 @@
       const input = id ? $(`${id}File`) : null;
       if (input) input.click();
     });
+    document.addEventListener("error", (evt) => {
+      const image = evt.target;
+      if (!(image instanceof HTMLImageElement)) return;
+      if (image.matches("[data-content-document-cover], [data-asset-picker-library-image]")) {
+        image.classList.add("hidden");
+        const fallback = image.nextElementSibling;
+        if (fallback) fallback.classList.remove("hidden");
+      }
+    }, true);
 
     window.__lobsterHandleBack = function () {
       if (closeMobileMediaPreview()) return true;
@@ -17088,19 +17258,6 @@
       return false;
     };
     document.addEventListener("change", (evt) => {
-      const select = evt.target.closest("[data-asset-select]");
-      if (select) {
-        const id = select.dataset.assetSelect || "";
-        const box = id ? document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`) : null;
-        const hidden = id ? $(id) : null;
-        if (!box || !hidden) return;
-        const rows = userUploadAssetRows(box.dataset.assetMediaType || "");
-        const row = rows.find((item) => item.asset_id === select.value) || null;
-        hidden.value = row ? assetPickerOutputValue(row, box.dataset.assetOutput || "asset_id") : "";
-        hidden.dispatchEvent(new Event("change", { bubbles: true }));
-        renderAssetPickerControl(id);
-        return;
-      }
       const input = evt.target.closest("[data-asset-upload-input]");
       if (input) {
         const id = input.dataset.assetUploadInput || "";
@@ -17193,6 +17350,35 @@
     });
     $("personalDigitalHumanPreviewBackdrop")?.addEventListener("click", closePersonalDigitalHumanPreview);
     $("personalDigitalHumanPreviewClose")?.addEventListener("click", closePersonalDigitalHumanPreview);
+    $("assetPickerLibraryBackdrop")?.addEventListener("click", closeAssetPickerModal);
+    $("assetPickerLibraryClose")?.addEventListener("click", closeAssetPickerModal);
+    $("assetPickerLibraryCancel")?.addEventListener("click", closeAssetPickerModal);
+    $("assetPickerLibraryConfirm")?.addEventListener("click", confirmAssetPickerModal);
+    $("assetPickerLibraryClear")?.addEventListener("click", clearAssetPickerModal);
+    $("assetPickerLibraryRefresh")?.addEventListener("click", loadAssetPickerModalRows);
+    $("assetPickerLibrarySearch")?.addEventListener("input", (evt) => {
+      state.assetPickerModalQuery = evt.target.value || "";
+      renderAssetPickerModal();
+    });
+    $("assetPickerLibraryModal")?.addEventListener("click", (evt) => {
+      const sourceBtn = evt.target.closest("[data-asset-picker-source]");
+      if (sourceBtn) {
+        const source = String(sourceBtn.dataset.assetPickerSource || "");
+        if (source && source !== state.assetPickerModalSource) {
+          state.assetPickerModalSource = source;
+          state.assetPickerModalRows = [];
+          loadAssetPickerModalRows();
+        }
+        return;
+      }
+      const card = evt.target.closest("[data-asset-picker-choice]");
+      if (!card) return;
+      const rows = filteredAssetPickerModalRows();
+      const item = rows[Number(card.dataset.assetPickerChoice || -1)];
+      if (!item) return;
+      state.assetPickerModalDraft = normalizeUserUploadAsset(item);
+      renderAssetPickerModal();
+    });
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
     $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => toast(err.message || "添加失败")));
     $("personalOpenUploadBtn")?.addEventListener("click", openPersonalUploadModal);
