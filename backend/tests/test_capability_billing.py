@@ -97,7 +97,7 @@ def test_grok_imagine_video_direct_charge_uses_fixed_user_price(db_session, db_s
     user = User(
         email="grok-direct-billing@test.local",
         hashed_password="x",
-        credits=Decimal("500.0000"),
+        credits=Decimal("1500.0000"),
         role="user",
         preferred_model="sutui",
         brand_mark="bihuo",
@@ -131,18 +131,18 @@ def test_grok_imagine_video_direct_charge_uses_fixed_user_price(db_session, db_s
         },
     )
     assert resp.status_code == 200
-    assert resp.json()["credits_charged"] == 320.0
+    assert resp.json()["credits_charged"] == 1000.0
 
     with db_session_factory() as s:
         u = s.query(User).filter(User.id == user.id).first()
-        assert u.credits == Decimal("180.0000")
+        assert u.credits == Decimal("500.0000")
         row = s.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
         assert row.entry_type == "direct_charge"
-        assert row.delta == Decimal("-320.0000")
+        assert row.delta == Decimal("-1000.0000")
         assert row.meta["upstream_reported_credits"] == 100.0
         assert row.meta["price_multiplier"] == 1.0
-        assert row.meta["credits_charged"] == 320.0
-        assert row.meta["billing_rule"] == "grok_imagine_video_flat_320"
+        assert row.meta["credits_charged"] == 1000.0
+        assert row.meta["billing_rule"] == "grok_imagine_video_flat_1000"
         assert row.meta["requested_duration"] == 30
 
 
@@ -334,7 +334,7 @@ def test_grok_imagine_video_pre_deduct_uses_fixed_user_price(db_session, db_sess
     user = User(
         email="grok-pre-billing@test.local",
         hashed_password="x",
-        credits=Decimal("500.0000"),
+        credits=Decimal("1500.0000"),
         role="user",
         preferred_model="sutui",
         brand_mark="bihuo",
@@ -376,7 +376,7 @@ def test_grok_imagine_video_pre_deduct_uses_fixed_user_price(db_session, db_sess
         },
     )
     assert dry_run.status_code == 200
-    assert dry_run.json()["credits_charged"] == 320.0
+    assert dry_run.json()["credits_charged"] == 1000.0
 
     resp = client.post(
         "/capabilities/pre-deduct",
@@ -388,15 +388,15 @@ def test_grok_imagine_video_pre_deduct_uses_fixed_user_price(db_session, db_sess
         },
     )
     assert resp.status_code == 200
-    assert resp.json()["credits_charged"] == 320.0
+    assert resp.json()["credits_charged"] == 1000.0
 
     with db_session_factory() as s:
         u = s.query(User).filter(User.id == user.id).first()
-        assert u.credits == Decimal("180.0000")
+        assert u.credits == Decimal("500.0000")
         row = s.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
         assert row.entry_type == "pre_deduct"
-        assert row.delta == Decimal("-320.0000")
+        assert row.delta == Decimal("-1000.0000")
         assert row.meta["price_multiplier"] == 1.0
-        assert row.meta["pre_estimated"] == 320.0
-        assert row.meta["billing_rule"] == "grok_imagine_video_flat_320"
+        assert row.meta["pre_estimated"] == 1000.0
+        assert row.meta["billing_rule"] == "grok_imagine_video_flat_1000"
         assert row.meta["requested_duration"] == 99

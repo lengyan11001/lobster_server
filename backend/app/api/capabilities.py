@@ -47,7 +47,7 @@ _IMAGE_GENERATE_FIXED_PRICE_MODELS = frozenset(
         "gptimage2",
     }
 )
-_GROK_IMAGINE_VIDEO_FIXED_PRICE_CREDITS = 320
+_GROK_IMAGINE_VIDEO_FIXED_PRICE_CREDITS = 1000
 _GROK_IMAGINE_VIDEO_MODELS = frozenset(
     {
         "xai/grok-imagine-video/text-to-video",
@@ -130,7 +130,7 @@ def _fixed_generate_user_price(
     if mid not in _GROK_IMAGINE_VIDEO_MODELS:
         return None
     meta: dict[str, Any] = {
-        "billing_rule": "grok_imagine_video_flat_320",
+        "billing_rule": "grok_imagine_video_flat_1000",
         "fixed_price_credits": _GROK_IMAGINE_VIDEO_FIXED_PRICE_CREDITS,
     }
     if isinstance(params, dict):
@@ -233,7 +233,7 @@ def _estimate_pipeline_total_user_price(
             # temporarily unavailable. The older behavior charged later substeps;
             # now we need a single reservation before starting.
             per_video = _GROK_IMAGINE_VIDEO_FIXED_PRICE_CREDITS
-            video_meta = {"billing_rule": "pipeline_video_fallback_320"}
+            video_meta = {"billing_rule": "pipeline_video_fallback_1000"}
 
     total = quantize_credits(image_total + per_video * scene_count)
     meta = {
