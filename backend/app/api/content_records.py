@@ -20,6 +20,8 @@ router = APIRouter()
 
 _CONTENT_KINDS = {"article", "wechat_article", "ppt"}
 _SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*(https?://[^\s)]+)", re.IGNORECASE)
+_HTML_IMAGE_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*(['\"])(https?://.*?)\1", re.IGNORECASE)
 _IP_TASK_LABELS = {
     "moments_candidate": "朋友圈内容",
     "douyin_copy": "抖音文案",
@@ -69,6 +71,45 @@ def _compact_summary(value: Any, limit: int = 180) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
 
 
+def _content_image_urls(*, cover_url: Any = "", content: Any = "", meta: Any = None) -> list[str]:
+    urls: list[str] = []
+
+    def add(value: Any) -> None:
+        url = _clean_text(value, 4096)
+        if url.startswith(("http://", "https://")) and url not in urls:
+            urls.append(url)
+
+    def add_meta_images(value: Any, *, image_context: bool = False) -> None:
+        if isinstance(value, str):
+            if image_context:
+                add(value)
+            return
+        if isinstance(value, list):
+            for item in value:
+                add_meta_images(item, image_context=image_context)
+            return
+        if not isinstance(value, dict):
+            return
+        for key, item in value.items():
+            normalized_key = str(key or "").strip().lower()
+            nested_image_context = image_context or any(
+                token in normalized_key for token in ("image", "cover", "thumbnail", "poster", "preview")
+            )
+            if normalized_key in {"url", "src", "source_url", "public_url"} and image_context:
+                add(item)
+            else:
+                add_meta_images(item, image_context=nested_image_context)
+
+    add(cover_url)
+    raw_content = str(content or "")
+    for match in _MARKDOWN_IMAGE_RE.finditer(raw_content):
+        add(match.group(1))
+    for match in _HTML_IMAGE_RE.finditer(raw_content):
+        add(match.group(2))
+    add_meta_images(meta)
+    return urls[:30]
+
+
 def _validate_sync_item(item: ContentRecordSyncItem) -> tuple[str, str, str]:
     source = _clean_text(item.source, 64).lower()
     source_id = _clean_text(item.source_id, 128)
@@ -98,6 +139,9 @@ def _apply_sync_item(row: UserContentRecord, item: ContentRecordSyncItem, *, kin
 
 def _synced_payload(row: UserContentRecord) -> dict[str, Any]:
     content_id = f"content:{row.source}:{row.source_id}"
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    image_urls = _content_image_urls(cover_url=row.cover_url, content=row.content, meta=meta)
+    cover_url = row.cover_url or (image_urls[0] if image_urls else "")
     return {
         "id": row.id,
         "record_id": content_id,
@@ -108,15 +152,16 @@ def _synced_payload(row: UserContentRecord) -> dict[str, Any]:
         "title": row.title or "",
         "summary": row.summary or "",
         "content": row.content or "",
-        "cover_url": row.cover_url or "",
+        "cover_url": cover_url,
+        "image_urls": image_urls,
         "file_url": row.file_url or "",
-        "source_url": row.file_url or row.cover_url or "",
+        "source_url": row.file_url or cover_url,
         "filename": row.filename or "",
         "media_type": "document",
         "status": row.status or "completed",
         "tags": f"content-record,{row.kind},{row.source}",
         "prompt": row.summary or "",
-        "meta": row.meta or {},
+        "meta": meta,
         "created_at": row.source_created_at.isoformat() if row.source_created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         "_content_record": True,
@@ -126,14 +171,9 @@ def _synced_payload(row: UserContentRecord) -> dict[str, Any]:
 def _ip_draft_payload(row: IPContentDraftRecord) -> dict[str, Any]:
     meta = dict(row.meta) if isinstance(row.meta, dict) else {}
     images = meta.get("images") if isinstance(meta.get("images"), list) else []
-    cover_url = row.image_url or ""
-    if not cover_url:
-        for image in images:
-            if isinstance(image, dict):
-                cover_url = _clean_text(image.get("image_url") or image.get("url"), 4096)
-                if cover_url:
-                    break
     content = row.content or ""
+    image_urls = _content_image_urls(cover_url=row.image_url, content=content, meta={"images": images})
+    cover_url = image_urls[0] if image_urls else ""
     title = row.title or _IP_TASK_LABELS.get(row.task, "IP日更内容")
     content_id = f"ip-daily:{row.record_id}"
     meta.update({"task": row.task, "platform": row.platform, "image_asset_id": row.image_asset_id or ""})
@@ -148,6 +188,7 @@ def _ip_draft_payload(row: IPContentDraftRecord) -> dict[str, Any]:
         "summary": _compact_summary(content),
         "content": content,
         "cover_url": cover_url,
+        "image_urls": image_urls,
         "file_url": "",
         "source_url": cover_url,
         "filename": "",

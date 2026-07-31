@@ -29,6 +29,9 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert 'openContentActionAbility("hifly.video.create_by_tts", "workHiflyScript"' in script
     assert 'openContentActionAbility("publish_center", "workPublishMaterial"' in script
     assert 'state.assetAvatarPrefillFile = file' in script
+    assert 'ensureContentImageInAssetPicker("abilityVideoAsset", item)' in script
+    assert 'return uploadUserAssetForPicker(id, file)' in script
+    assert 'renderAssetPickerControl("abilityVideoAsset")' in script
 
 
 def test_work_record_results_reuse_content_actions():
@@ -43,4 +46,17 @@ def test_work_record_results_reuse_content_actions():
 def test_content_action_assets_are_cache_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
 
-    assert html.count("20260731-content-actions-v1") == 2
+    assert html.count("20260731-content-actions-v2") == 2
+
+
+def test_document_cards_only_use_real_images_and_render_article_images():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    styles = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
+
+    assert "function contentRecordImageUrls(asset)" in script
+    assert "function contentRecordArticleBodyHtml(content, imageUrls = [])" in script
+    assert 'contentRecordImageUrls(asset)[0] || ""' in script
+    assert 'class="content-document-cover-empty' in script
+    assert "designerFallbackMedia({ ...(asset || {}), origin: \"generated\"" not in script
+    assert ".content-record-inline-image img" in styles
+    assert "top: 50%;" in styles

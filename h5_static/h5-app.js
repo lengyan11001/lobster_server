@@ -6353,11 +6353,83 @@
       return title || "素材";
     }
 
+    function contentRecordImageUrls(asset) {
+      const item = asset && typeof asset === "object" ? asset : {};
+      const urls = [];
+      const add = (value) => {
+        const url = String(value || "").trim();
+        if (/^https?:\/\//i.test(url) && !urls.includes(url)) urls.push(url);
+      };
+      const walk = (value, imageContext = false) => {
+        if (typeof value === "string") {
+          if (imageContext) add(value);
+          return;
+        }
+        if (Array.isArray(value)) {
+          value.forEach((entry) => walk(entry, imageContext));
+          return;
+        }
+        if (!value || typeof value !== "object") return;
+        Object.entries(value).forEach(([key, entry]) => {
+          const normalized = String(key || "").toLowerCase();
+          const nestedImageContext = imageContext || /image|cover|thumbnail|poster|preview/.test(normalized);
+          if (imageContext && ["url", "src", "source_url", "public_url"].includes(normalized)) add(entry);
+          else walk(entry, nestedImageContext);
+        });
+      };
+      add(item.cover_url);
+      walk(item.image_urls, true);
+      walk(item.meta, false);
+      const content = String(item.content || item.body || "");
+      const markdownPattern = /!\[[^\]]*\]\(\s*(https?:\/\/[^\s)]+)/gi;
+      const htmlPattern = /<img\b[^>]*\bsrc\s*=\s*(["'])(https?:\/\/.*?)\1/gi;
+      let match;
+      while ((match = markdownPattern.exec(content))) add(match[1]);
+      while ((match = htmlPattern.exec(content))) add(match[2]);
+      return urls.slice(0, 30);
+    }
+
+    function contentRecordImageHtml(url, className = "") {
+      const src = mediaProxyUrl(url, "inline", filenameFromUrl(url, "article-image"));
+      return `<img class="${escapeHtml(className)}" src="${escapeHtml(src)}" alt="" loading="lazy">`;
+    }
+
+    function contentRecordArticleBodyHtml(content, imageUrls = []) {
+      const raw = String(content || "").trim();
+      const used = new Set();
+      const parts = [];
+      const appendText = (value) => {
+        const text = String(value || "").trim();
+        if (text) parts.push(`<div class="content-record-article-text">${escapeHtml(text)}</div>`);
+      };
+      const appendImage = (url) => {
+        const clean = String(url || "").trim();
+        if (!/^https?:\/\//i.test(clean) || used.has(clean)) return;
+        used.add(clean);
+        parts.push(`<figure class="content-record-inline-image">${contentRecordImageHtml(clean)}</figure>`);
+      };
+      const imagePattern = /!\[[^\]]*\]\(\s*(https?:\/\/[^\s)]+)[^)]*\)|<img\b[^>]*\bsrc\s*=\s*(["'])(https?:\/\/.*?)\2[^>]*>/gi;
+      let cursor = 0;
+      let match;
+      while ((match = imagePattern.exec(raw))) {
+        appendText(raw.slice(cursor, match.index));
+        appendImage(match[1] || match[3]);
+        cursor = imagePattern.lastIndex;
+      }
+      appendText(raw.slice(cursor));
+      const remaining = imageUrls.filter((url) => !used.has(String(url || "").trim()));
+      const gallery = remaining.length
+        ? `<div class="content-record-image-gallery">${remaining.map((url) => contentRecordImageHtml(url)).join("")}</div>`
+        : "";
+      if (!parts.length && !gallery) return "";
+      return `<article class="content-record-article-body">${gallery}${parts.join("")}</article>`;
+    }
+
     function contentActionItemFromAsset(asset) {
       const item = asset && typeof asset === "object" ? asset : {};
       const recordKind = String(item.kind || item._designer_content_kind || "").trim().toLowerCase();
       const rawUrl = String(item.file_url || item.source_url || item.cover_url || "").trim();
-      const rawImageUrl = String(item.cover_url || "").trim();
+      const rawImageUrl = String(contentRecordImageUrls(item)[0] || "").trim();
       const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : (rawUrl.startsWith("/") ? apiUrl(rawUrl) : rawUrl);
       let mediaType = designerMediaType({ ...item, source_url: url });
       if (["article", "wechat_article"].includes(recordKind)) mediaType = url && item.file_url ? "document" : "text";
@@ -6472,6 +6544,35 @@
       return new File([blob], filename, { type, lastModified: Date.now() });
     }
 
+    function selectAssetPickerRow(id, row) {
+      const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
+      const hidden = $(id);
+      if (!box || !hidden || !row) return;
+      const item = addUserUploadAssetToCache(row);
+      hidden.value = assetPickerOutputValue(item, box.dataset.assetOutput || "asset_id");
+      hidden.dispatchEvent(new Event("change", { bubbles: true }));
+      renderAssetPickerControl(id);
+    }
+
+    async function ensureContentImageInAssetPicker(id, item) {
+      const source = await resolveContentActionItem(item);
+      const url = String(source.imageUrl || source.url || "").trim();
+      if (!/^https?:\/\//i.test(url)) throw new Error("当前图片没有可加入素材库的地址");
+      const rows = await loadUserUploadAssets("image", true).catch(() => userUploadAssetRows("image"));
+      const existing = (rows || []).find((row) => {
+        const normalized = normalizeUserUploadAsset(row);
+        return normalized.source_url === url || normalized.preview_url === url;
+      });
+      if (existing) {
+        selectAssetPickerRow(id, existing);
+        return existing;
+      }
+      const preview = $(`${id}Preview`);
+      if (preview) preview.innerHTML = "<span>正在将内容图片加入素材库...</span>";
+      const file = await contentActionFile(source);
+      return uploadUserAssetForPicker(id, file);
+    }
+
     async function openContentImageAsAvatar(item) {
       state.assetLibrarySection = "avatars";
       state.assetLibraryOrigin = "user_upload";
@@ -6514,6 +6615,13 @@
           setFieldValue("abilityVideoAsset", reference);
           setFieldValue("abilityVideoPrompt", prompt);
           bindGoalVideoModeControls("ability");
+          renderAssetPickerControl("abilityVideoAsset");
+          if (reference && String(item.mediaType || "").toLowerCase() === "image") {
+            ensureContentImageInAssetPicker("abilityVideoAsset", item).catch((err) => {
+              renderAssetPickerControl("abilityVideoAsset");
+              toast(err.message || "图片加入素材库失败");
+            });
+          }
         });
         return;
       }
@@ -6568,15 +6676,14 @@
       const title = assetTitle(asset);
       const failed = /fail|error/i.test(String((asset && asset.status) || ""));
       const kindLabels = { article: "深度长文", wechat_article: "公众号文章", ppt: "演示文稿" };
-      const fallback = designerFallbackMedia({ ...(asset || {}), origin: "generated", _designer_content_kind: kind }, index);
-      const sourceUrl = String((asset && (asset.cover_url || asset.source_url)) || "").trim();
-      const sourceType = String((asset && asset.media_type) || mediaTypeFromUrl(sourceUrl) || "").toLowerCase();
-      const cover = sourceUrl && (/^data:image\//i.test(sourceUrl) || sourceType === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(sourceUrl))
-        ? mediaProxyUrl(sourceUrl, "inline", filenameFromUrl(sourceUrl, asset && asset.filename || "asset"))
-        : fallback;
+      const coverUrl = contentRecordImageUrls(asset)[0] || "";
+      const emptyLabels = { article: "文章", wechat_article: "公众号", ppt: "PPT" };
+      const cover = coverUrl
+        ? contentRecordImageHtml(coverUrl)
+        : `<span class="content-document-cover-empty ${escapeHtml(kind)}"><b>${escapeHtml(emptyLabels[kind] || "文档")}</b></span>`;
       return `<article class="content-document-card ${escapeHtml(kind)} content-action-card">
         <button class="content-document-preview" type="button" data-asset-preview-id="${escapeHtml(id)}">
-          <span class="content-document-cover"><img src="${escapeHtml(cover)}" alt="" loading="lazy"></span>
+          <span class="content-document-cover">${cover}</span>
           <span class="content-document-main">
             <span class="content-document-state"><em class="${failed ? "failed" : ""}">${failed ? "生成失败" : "已完成"}</em><time>${escapeHtml(fmtTime(asset && asset.created_at))}</time></span>
             <strong>${escapeHtml(title || "内容记录")}</strong>
@@ -6663,9 +6770,10 @@
         const kindLabels = { article: "IP日更文章", wechat_article: "公众号文章", ppt: "PPT演示文稿" };
         const sourceLabels = { ip_daily: "每日IP日更", online_wechat_article: "公众号文章创作", online_ppt: "PPT创作" };
         const statusLabels = { completed: "已完成", local_saved: "已保存", pushed: "已推送公众号", failed: "生成失败" };
-        const coverUrl = String(asset.cover_url || "").trim();
+        const imageUrls = contentRecordImageUrls(asset);
+        const coverUrl = imageUrls[0] || "";
         const fileUrl = String(asset.file_url || asset.source_url || "").trim();
-        const cover = coverUrl
+        const cover = kind === "ppt" && coverUrl
           ? `<img class="asset-preview-large content-record-cover" src="${escapeHtml(mediaProxyUrl(coverUrl, "inline", filenameFromUrl(coverUrl, "cover")))}" alt="">`
           : (kind === "ppt" ? `<div class="asset-preview-large asset-preview-large-empty content-record-file-mark">PPT</div>` : "");
         const summary = String(asset.summary || "").trim();
@@ -6682,7 +6790,7 @@
             ${slideCount ? `<div><span>页数</span><strong>${escapeHtml(String(slideCount))} 页</strong></div>` : ""}
           </div>
           ${summary ? `<div class="content-record-summary">${escapeHtml(summary)}</div>` : ""}
-          ${content ? `<article class="content-record-article-body">${escapeHtml(content)}</article>` : ""}
+          ${kind !== "ppt" ? contentRecordArticleBodyHtml(content, imageUrls) : ""}
           ${fileUrl ? mediaActionHtml(fileUrl, kind === "ppt" ? "下载PPT" : "下载文件", asset.filename || asset.source_id || "content") : ""}`;
         modal.classList.remove("hidden");
         return;
@@ -12858,6 +12966,7 @@
       renderAssetPickerControls(item.media_type);
       renderAssetPickerControls("");
       toast("已上传，之后可直接选择");
+      return item;
     }
 
     function renderWorkHiflyOptions() {
