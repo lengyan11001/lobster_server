@@ -63,7 +63,7 @@ def assert_pricing_pre_deduct_allows_upstream_or_http(
             status_code=402,
             detail=(
                 f"积分不足：按速推定价表本次预估至少 {need} 积分，当前余额 {bal}。"
-                "请充值或缩短上下文/降低 max_tokens 后重试。"
+                "请充值后重试。"
             ),
         )
     return need
