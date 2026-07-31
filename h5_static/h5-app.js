@@ -114,6 +114,8 @@
       contentRecordLoading: false,
       contentActionItems: new Map(),
       contentActionSequence: 0,
+      contentActionPromptCache: new Map(),
+      contentActionPromptRequestSequence: 0,
       assetAvatarPrefillFile: null,
       workflowTemplates: [],
       workflowTemplatesLoaded: false,
@@ -6466,6 +6468,30 @@
       return "";
     }
 
+    function contentActionPromptFromMeta(value, depth = 0) {
+      if (!value || typeof value !== "object" || depth > 4) return "";
+      const preferredKeys = [
+        "image_prompt",
+        "image_prompts",
+        "visual_prompt",
+        "visual_prompts",
+        "original_prompt",
+        "creative_prompt",
+        "generation_prompt",
+        "prompt",
+      ];
+      for (const key of preferredKeys) {
+        const prompt = contentActionCreativePromptValue(value[key]);
+        if (prompt) return prompt;
+      }
+      const nestedKeys = ["meta", "params", "payload", "input", "request", "request_payload", "generation"];
+      for (const key of nestedKeys) {
+        const prompt = contentActionPromptFromMeta(value[key], depth + 1);
+        if (prompt) return prompt;
+      }
+      return "";
+    }
+
     function contentActionMediaUrl(value) {
       const raw = String(value || "").trim();
       if (!raw || /^https?:\/\//i.test(raw)) return raw;
@@ -6473,6 +6499,13 @@
         return apiUrl(raw.startsWith("/") ? raw : `/${raw}`);
       }
       return raw;
+    }
+
+    function contentActionRegenerateBrief(title, text, limit = 12000) {
+      const parts = [title, text]
+        .map((value) => String(value || "").trim())
+        .filter((value, index, rows) => value && rows.indexOf(value) === index);
+      return parts.join("\n\n").slice(0, limit);
     }
 
     function contentActionItemFromAsset(asset) {
@@ -6499,11 +6532,20 @@
       );
       const explicitCreativePrompt = contentActionCreativePromptValue(
         item.image_prompt,
+        item.image_prompts,
         item.video_prompt,
         item.original_prompt,
+        item.visual_prompt,
+        item.creative_prompt,
+        item.generation_prompt,
         meta.image_prompt,
+        meta.image_prompts,
         meta.video_prompt,
         meta.original_prompt,
+        meta.visual_prompt,
+        meta.creative_prompt,
+        meta.generation_prompt,
+        contentActionPromptFromMeta(meta),
       );
       const storedPromptIsCreative = !["article", "wechat_article", "ppt"].includes(recordKind) || sourceKind === "ip_daily";
       const creativePrompt = explicitCreativePrompt || (storedPromptIsCreative
@@ -6523,6 +6565,7 @@
           text,
         ),
         tags: contentActionTextValue(item.tags, item.hashtags, meta.tags, meta.hashtags),
+        style: contentActionTextValue(item.style, item.tone, meta.style, meta.tone),
         url,
         imageUrl: rawImageUrl
           ? (/^https?:\/\//i.test(rawImageUrl) ? rawImageUrl : (rawImageUrl.startsWith("/") ? apiUrl(rawImageUrl) : rawImageUrl))
@@ -6531,6 +6574,8 @@
         filename: String(item.filename || "").trim(),
         mediaType,
         recordKind,
+        sourceKind,
+        meta,
       };
     }
 
@@ -6555,6 +6600,9 @@
       const add = (action, label) => {
         if (!actions.some((row) => row.action === action)) actions.push({ action, label });
       };
+      if (["image", "video"].includes(mediaType) || textBased || ["article", "wechat_article", "ppt"].includes(String(source.recordKind || "").toLowerCase())) {
+        add("regenerate", "重新生成");
+      }
       if (textBased) {
         add("generate_image", "生成图片");
         add("generate_video", "生成视频");
@@ -6612,6 +6660,53 @@
       source.url = contentActionMediaUrl(source.url);
       source.imageUrl = contentActionMediaUrl(source.imageUrl);
       return source;
+    }
+
+    async function resolveContentActionCreativePrompt(item) {
+      const source = item && typeof item === "object" ? item : {};
+      const existing = contentActionCreativePromptValue(source.creativePrompt, contentActionPromptFromMeta(source.meta));
+      if (existing) return existing;
+      const assetId = String(source.assetId || source.asset_id || "").trim();
+      if (!assetId || assetId.includes(":") || assetId.length > 128) return "";
+      const cached = state.contentActionPromptCache.get(assetId);
+      if (typeof cached === "string") return cached;
+      if (cached && typeof cached.then === "function") return cached;
+      const request = api(`/api/assets/${encodeURIComponent(assetId)}`)
+        .then((asset) => contentActionCreativePromptValue(
+          asset.image_prompt,
+          asset.image_prompts,
+          asset.video_prompt,
+          asset.original_prompt,
+          asset.visual_prompt,
+          asset.creative_prompt,
+          asset.generation_prompt,
+          asset.prompt,
+          contentActionPromptFromMeta(asset.meta),
+        ))
+        .catch(() => "")
+        .then((prompt) => {
+          state.contentActionPromptCache.set(assetId, prompt);
+          return prompt;
+        });
+      state.contentActionPromptCache.set(assetId, request);
+      return request;
+    }
+
+    function fillContentActionPromptLater(item, fieldId, expectedReference = "") {
+      const initialField = $(fieldId);
+      if (!initialField) return;
+      state.contentActionPromptRequestSequence = Number(state.contentActionPromptRequestSequence || 0) + 1;
+      const requestId = String(state.contentActionPromptRequestSequence);
+      initialField.dataset.contentPromptRequest = requestId;
+      resolveContentActionCreativePrompt(item).then((prompt) => {
+        const field = $(fieldId);
+        if (!prompt || !field || field.dataset.contentPromptRequest !== requestId || String(field.value || "").trim()) return;
+        if (expectedReference) {
+          const currentReference = String(($("abilityVideoAsset") && $("abilityVideoAsset").value) || "").trim();
+          if (currentReference && currentReference !== expectedReference) return;
+        }
+        setFieldValue(fieldId, prompt);
+      });
     }
 
     function applyContentActionFields(requiredId, callback, attempts = 20) {
@@ -6692,6 +6787,70 @@
         || (textBased ? contentActionTextValue(text, title) : "");
       const script = contentActionTextValue(item.script, text);
       const tags = contentActionTextValue(item.tags);
+      if (action === "regenerate") {
+        if (mediaType === "image") {
+          openContentActionAbility("image_composer_studio", "workImagePrompt", () => {
+            setFieldValue("workImageTitle", `${title} - 重新生成`);
+            setFieldValue("workImagePrompt", creativePrompt);
+            if (!creativePrompt) fillContentActionPromptLater(item, "workImagePrompt");
+          });
+          return;
+        }
+        if (mediaType === "video") {
+          openContentActionAbility("goal.video.pipeline", "abilityVideoPrompt", () => {
+            setFieldValue("abilityVideoTitle", `${title} - 重新生成`);
+            setFieldValue("abilityVideoMode", "memory_image");
+            setFieldValue("abilityVideoAsset", "");
+            setFieldValue("abilityVideoPrompt", creativePrompt);
+            bindGoalVideoModeControls("ability");
+            if (!creativePrompt) fillContentActionPromptLater(item, "abilityVideoPrompt");
+          });
+          return;
+        }
+        const recordKind = String(item.recordKind || "").toLowerCase();
+        const sourceKind = String(item.sourceKind || "").toLowerCase();
+        if (recordKind === "article" && sourceKind === "ip_daily") {
+          const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
+          const sourceTask = String(meta.task || "").trim();
+          openContentActionAbility("ip_content_daily", "abilityIpRequirement", () => {
+            document.querySelectorAll("[data-ability-ip-daily-task]").forEach((field) => {
+              field.checked = !sourceTask || field.getAttribute("data-ability-ip-daily-task") === sourceTask;
+            });
+            setFieldValue("abilityIpSyncBefore", false);
+            setFieldValue("abilityIpRequirement", contentActionRegenerateBrief(title, text));
+            const templateId = String(meta.template_id || meta.schedule_template_id || "").trim();
+            if (templateId) {
+              loadIpTemplates().then(() => setFieldValue("abilityIpTemplate", templateId)).catch(() => {});
+            }
+          });
+          return;
+        }
+        if (["article", "wechat_article"].includes(recordKind)) {
+          openContentActionAbility("wewrite.article.pipeline", "abilityArticleIdea", () => {
+            setFieldValue("abilityArticleTitle", `${title} - 重新生成`);
+            setFieldValue("abilityArticleIdea", contentActionRegenerateBrief(title, text));
+            setFieldValue("abilityArticleStyle", contentActionTextValue(item.style));
+          });
+          return;
+        }
+        if (recordKind === "ppt") {
+          openContentActionAbility("ppt.create", "abilityPptTopic", () => {
+            setFieldValue("abilityPptTitle", `${title} - 重新生成`);
+            setFieldValue("abilityPptTopic", contentActionRegenerateBrief(title, text));
+            setFieldValue("abilityPptInstructions", contentActionTextValue(item.style));
+          });
+          return;
+        }
+        if (textBased) {
+          openContentActionAbility("wewrite.article.pipeline", "abilityArticleIdea", () => {
+            setFieldValue("abilityArticleTitle", `${title} - 重新生成`);
+            setFieldValue("abilityArticleIdea", contentActionRegenerateBrief(title, text));
+            setFieldValue("abilityArticleStyle", contentActionTextValue(item.style));
+          });
+          return;
+        }
+        throw new Error("当前内容暂不支持重新生成");
+      }
       if (action === "generate_image") {
         openContentActionAbility("image_composer_studio", "workImagePrompt", () => {
           setFieldValue("workImageTitle", `${title} - 配图`);
@@ -6719,6 +6878,7 @@
           } else {
             renderAssetPickerControl("abilityVideoAsset");
           }
+          if (!creativePrompt) fillContentActionPromptLater(item, "abilityVideoPrompt", reference);
         });
         return;
       }

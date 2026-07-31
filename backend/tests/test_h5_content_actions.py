@@ -23,6 +23,7 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert 'add("generate_image", "生成图片")' in script
     assert 'add("generate_video", "生成视频")' in script
     assert 'add("generate_avatar", "生成数字人")' in script
+    assert 'add("regenerate", "重新生成")' in script
     assert 'add("publish", "发布")' in script
     assert 'openContentActionAbility("image_composer_studio", "workImagePrompt"' in script
     assert 'openContentActionAbility("goal.video.pipeline", "abilityVideoPrompt"' in script
@@ -42,6 +43,14 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert 'setFieldValue("workPublishTags", tags)' in script
     assert 'if (String(source.mediaType || "").trim().toLowerCase() === "image")' in script
     assert 'return String(source.url || source.assetId || "").trim()' in script
+    assert 'openContentActionAbility("wewrite.article.pipeline", "abilityArticleIdea"' in script
+    assert 'openContentActionAbility("ppt.create", "abilityPptTopic"' in script
+    assert 'openContentActionAbility("ip_content_daily", "abilityIpRequirement"' in script
+    assert "function contentActionRegenerateBrief(title, text" in script
+    assert 'setFieldValue("abilityArticleIdea", contentActionRegenerateBrief(title, text))' in script
+    assert 'setFieldValue("abilityPptTopic", contentActionRegenerateBrief(title, text))' in script
+    assert 'field.checked = !sourceTask || field.getAttribute("data-ability-ip-daily-task") === sourceTask' in script
+    assert 'setFieldValue("abilityIpRequirement", contentActionRegenerateBrief(title, text))' in script
 
 
 def test_content_action_fields_keep_prompt_copy_and_script_separate():
@@ -61,6 +70,12 @@ def test_content_action_fields_keep_prompt_copy_and_script_separate():
     assert 'await openContentMediaAsAvatar(item)' in script
     assert '&& !source.url)' in script
     assert "function contentActionMediaUrl(value)" in script
+    assert "function contentActionPromptFromMeta(value, depth = 0)" in script
+    assert "sourceKind," in script
+    assert "meta," in script
+    assert "function resolveContentActionCreativePrompt(item)" in script
+    assert "function fillContentActionPromptLater(item, fieldId" in script
+    assert 'fillContentActionPromptLater(item, "abilityVideoPrompt", reference)' in script
     assert 'return apiUrl(raw.startsWith("/") ? raw : `/${raw}`)' in script
 
 
@@ -84,7 +99,7 @@ def test_work_record_results_reuse_content_actions():
 def test_content_action_assets_are_cache_versioned():
     html = (H5 / "index.html").read_text(encoding="utf-8")
 
-    assert html.count("20260731-content-actions-v6") == 2
+    assert html.count("20260731-content-actions-v7") == 2
     assert html.count("20260731-content-picker-v1") == 3
 
 
@@ -130,3 +145,7 @@ def test_media_paths_are_not_used_as_creative_prompts():
     assert "source.creativePrompt = contentActionCreativePromptValue(" in script
     assert 'const creativePrompt = contentActionCreativePromptValue(item.creativePrompt)' in script
     assert '|| (textBased ? contentActionTextValue(text, title) : "")' in script
+    assert "item.image_prompts," in script
+    assert "meta.image_prompts," in script
+    assert 'state.contentActionPromptCache.set(assetId, request)' in script
+    assert "field.dataset.contentPromptRequest !== requestId" in script
