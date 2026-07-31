@@ -83,6 +83,7 @@ def test_skill_store_default_visibility_domestic_vs_overseas(db_session, db_sess
     assert "ip_content_daily_skill" in domestic_ids
     assert "messenger_reply" not in domestic_ids
     assert "twilio_whatsapp" not in domestic_ids
+    assert "bihuo_25_video_skill" not in domestic_ids
 
     assert "twilio_whatsapp" in overseas_ids
     assert "youtube_publish" in overseas_ids
@@ -99,6 +100,7 @@ def test_skill_store_default_visibility_domestic_vs_overseas(db_session, db_sess
     assert "douyin_publish" not in overseas_ids
     assert "xiaohongshu_publish" not in overseas_ids
     assert "toutiao_publish" not in overseas_ids
+    assert "bihuo_25_video_skill" not in overseas_ids
 
 
 def test_skill_store_visibility_depends_on_client_header_not_user_origin(db_session, db_session_factory, monkeypatch):
@@ -132,3 +134,39 @@ def test_skill_store_visibility_depends_on_client_header_not_user_origin(db_sess
     assert "douyin_publish" not in overseas_ids
     assert "youtube_publish" not in domestic_ids
     assert "youtube_publish" in overseas_ids
+
+
+def test_bihuo_25_is_visible_only_after_server_grant(db_session, db_session_factory, monkeypatch):
+    from backend.app.models import User, UserSkillVisibility
+
+    user = User(
+        email="bihuo25-permission@test.local",
+        hashed_password="x",
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        is_overseas_user=False,
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    client = _client_for_user(db_session_factory, monkeypatch, user.id)
+    denied = client.get("/skills/bihuo-25-video-eligible")
+    store_before = client.get("/skills/store")
+
+    assert denied.status_code == 200
+    assert denied.json()["allowed"] is False
+    assert "bihuo_25_video_skill" not in {item["id"] for item in store_before.json()["packages"]}
+
+    db_session.add(UserSkillVisibility(user_id=user.id, package_id="bihuo_25_video_skill"))
+    db_session.commit()
+
+    allowed = client.get("/skills/bihuo-25-video-eligible")
+    store_after = client.get("/skills/store")
+    package = next(item for item in store_after.json()["packages"] if item["id"] == "bihuo_25_video_skill")
+
+    assert allowed.status_code == 200
+    assert allowed.json()["allowed"] is True
+    assert package["default_installed"] is False

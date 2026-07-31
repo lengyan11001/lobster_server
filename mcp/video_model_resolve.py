@@ -16,6 +16,7 @@ Pair = Tuple[str, str]
 APIZ_VEO31_TEXT_MODEL = "apiz/veo3.1/text-to-video"
 APIZ_VEO31_IMAGE_MODEL = "apiz/veo3.1/image-to-video"
 APIZ_VEO31_REFERENCE_MODEL = "apiz/veo3.1/reference-to-video"
+APIZ_BIHUO_25_VIDEO_MODEL = "st-ai/super-seed2-lite"
 _LEGACY_FAL_VEO31_RE = re.compile(r"^fal-ai/veo3\.1(?:/.*)?$", re.I)
 _LEGACY_DEFAULT_VIDEO_MODELS = frozenset(
     {
@@ -125,6 +126,21 @@ def _build_alias_map() -> Dict[str, Pair]:
             "sora pro",
         ),
         sora_pro,
+    )
+
+    # 2.5 uses a different API contract from the older super-seed2 route.
+    sd25 = _p(APIZ_BIHUO_25_VIDEO_MODEL, APIZ_BIHUO_25_VIDEO_MODEL)
+    add(
+        (
+            "bihuo 2.5",
+            "bihuo2.5",
+            "必火 2.5",
+            "必火2.5",
+            "super seed2 lite",
+            "super-seed2-lite",
+            "superseed2lite",
+        ),
+        sd25,
     )
 
     # —— Seedance / super-seed2 ——
@@ -321,6 +337,8 @@ def _heuristic_video_model(model: str, has_image: bool) -> str:
         return "fal-ai/sora-2/image-to-video" if has_image else "fal-ai/sora-2/text-to-video"
 
     if "seedance" in model_lower or ("seed" in model_lower and "seedream" not in model_lower):
+        if "2.5" in model:
+            return APIZ_BIHUO_25_VIDEO_MODEL
         if "2" in model or "2.0" in model:
             return "st-ai/super-seed2"
         if "1.5" in model:

@@ -22,6 +22,7 @@ router = APIRouter()
 
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 _OVERSEAS_CLIENT_HEADER = "x-lobster-client-overseas"
+BIHUO_25_VIDEO_PACKAGE_ID = "bihuo_25_video_skill"
 
 # 技能商店管理员：除 role=admin 外，以下登录账号（User.email 存的是账号名）视为管理员
 _SKILL_STORE_ADMIN_LOGIN_ACCOUNTS = frozenset(
@@ -339,6 +340,25 @@ def list_store(
 @router.get("/skills/skill-store-admin", summary="当前用户是否为技能商店管理员（可见调试包与调试能力）")
 def skill_store_admin_flag(current_user: User = Depends(get_current_user)):
     return {"is_skill_store_admin": _skill_store_admin(current_user)}
+
+
+@router.get("/skills/bihuo-25-video-eligible", summary="必火2.5：当前用户是否已获服务器授权")
+def bihuo_25_video_eligible(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    x_lobster_client_overseas: Optional[str] = Header(default=None, alias="X-Lobster-Client-Overseas"),
+):
+    if _skill_store_admin(current_user):
+        return {"allowed": True, "package_id": BIHUO_25_VIDEO_PACKAGE_ID}
+    visible = _user_visible_package_ids(
+        db,
+        current_user,
+        is_overseas_client=_client_is_overseas(x_lobster_client_overseas),
+    )
+    return {
+        "allowed": BIHUO_25_VIDEO_PACKAGE_ID in visible,
+        "package_id": BIHUO_25_VIDEO_PACKAGE_ID,
+    }
 
 
 @router.get("/skills/user-allowed-capability-ids", summary="当前用户可使用的 capability_id 列表（MCP 过滤用）")

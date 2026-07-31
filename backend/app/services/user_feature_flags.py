@@ -28,6 +28,7 @@ PERSONAL_SETTINGS_ENTRY_ID = "personal_settings_entry"
 AGENT_ENTRY_ID = "agent_entry"
 LOCAL_BESTSELLER_SKILL_ID = "local_bestseller_skill"
 VIRAL_VIDEO_REMIX_SKILL_ID = "viral_video_remix_skill"
+BIHUO_25_VIDEO_SKILL_ID = "bihuo_25_video_skill"
 HOMEPAGE_FEATURE_GATES_MARKER = "__homepage_feature_gates_v1"
 HOMEPAGE_ENTRY_SEEDED_MARKER = "__homepage_entry_permissions_seeded_v1"
 HOMEPAGE_DEFAULT_ENTRY_FEATURE_IDS = (
@@ -219,6 +220,15 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "capabilities_count": 0,
         "feature_key": VIRAL_VIDEO_REMIX_SKILL_ID,
     },
+    {
+        "id": BIHUO_25_VIDEO_SKILL_ID,
+        "name": "必火2.5入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": BIHUO_25_VIDEO_SKILL_ID,
+    },
 )
 
 FEATURE_FLAG_PACKAGE_ALIASES = {
@@ -289,6 +299,13 @@ def user_feature_flags(db: Session, user_id: int) -> dict[str, bool]:
         }
 
     flags: dict[str, bool] = {HOMEPAGE_FEATURE_GATES_MARKER: True}
+    for package in FEATURE_FLAG_PACKAGES:
+        package_id = str(package.get("id") or "").strip()
+        feature_key = str(package.get("feature_key") or "").strip()
+        if package_id:
+            flags.setdefault(package_id, False)
+        if feature_key:
+            flags.setdefault(feature_key, False)
     for package_id in visible:
         key = str(package_id or "").strip()
         if not key:

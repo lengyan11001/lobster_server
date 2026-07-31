@@ -25,6 +25,7 @@ if _MCP_DIR not in sys.path:
 import httpx
 
 from mcp.video_model_resolve import (
+    APIZ_BIHUO_25_VIDEO_MODEL,
     APIZ_VEO31_IMAGE_MODEL,
     APIZ_VEO31_REFERENCE_MODEL,
     APIZ_VEO31_TEXT_MODEL,
@@ -1625,6 +1626,22 @@ async def _call_apiz_chat_completions_vision(
     return data
 
 
+def _apiz_create_request_parts(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """Build APIZ tasks.create model/params while removing Lobster-only fields."""
+    if not isinstance(arguments, dict):
+        arguments = {}
+    model = str(arguments.get("model") or arguments.get("model_id") or "").strip()
+    params = {
+        key: value
+        for key, value in arguments.items()
+        if key not in ("model", "model_id")
+    }
+    inner_model = str(params.pop("__apiz_params_model", "") or "").strip()
+    if inner_model:
+        params["model"] = inner_model
+    return model, params
+
+
 async def _call_upstream_sutui_tasks_rest(
     api_base: str,
     tool_name: str,
@@ -1639,11 +1656,10 @@ async def _call_upstream_sutui_tasks_rest(
     model_for_hint = ""
 
     if tool_name == "generate":
-        model = (arguments.get("model") or arguments.get("model_id") or "").strip()
+        model, params = _apiz_create_request_parts(arguments)
         if not model:
             return {"error": {"message": "generate 缺少 model（或 model_id）"}}
         model_for_hint = model
-        params = {k: v for k, v in arguments.items() if k not in ("model", "model_id")}
         understand_model = params.pop("__understand_model", None)
         if model in ("openrouter/router/vision", "openrouter/router/video") and understand_model:
             params["model"] = str(understand_model).strip()
@@ -1696,12 +1712,7 @@ async def _call_upstream_sutui_tasks_rest(
         try:
             async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
                 if tool_name == "generate":
-                    raw_model = (arguments.get("model") or arguments.get("model_id") or "").strip()
-                    raw_params = {
-                        k: v
-                        for k, v in arguments.items()
-                        if k not in ("model", "model_id")
-                    }
+                    raw_model, raw_params = _apiz_create_request_parts(arguments)
                     understand_model = raw_params.pop("__understand_model", None)
                     if raw_model in ("openrouter/router/vision", "openrouter/router/video") and understand_model:
                         raw_params["model"] = str(understand_model).strip()
@@ -1987,6 +1998,15 @@ def _extract_first_http_url_from_any(obj: Any, _seen: Optional[set[int]] = None)
         item = obj.strip()
         if item.startswith(("http://", "https://")):
             return item
+        if item.startswith(("{", "[")):
+            try:
+                nested = json.loads(item)
+            except Exception:
+                nested = None
+            if nested is not None:
+                found = _extract_first_http_url_from_any(nested, _seen)
+                if found:
+                    return found
         m = re.search(r"https?://[^\s\"'<>\\)\\]]+", item)
         return m.group(0).rstrip(".,;") if m else ""
     if isinstance(obj, dict):
@@ -2007,6 +2027,52 @@ def _extract_first_http_url_from_any(obj: Any, _seen: Optional[set[int]] = None)
             if found:
                 return found
     return ""
+
+
+async def _prepare_bihuo_25_video_input(
+    payload: Dict[str, Any],
+    *,
+    upstream_url: str,
+    sutui_token: str,
+    brand_mark: str,
+) -> Dict[str, Any]:
+    """Transfer the single source video required by edit/extend before submission."""
+    if not isinstance(payload, dict) or payload.get("model") != APIZ_BIHUO_25_VIDEO_MODEL:
+        return payload
+    mode = str(payload.get("functionMode") or "").strip().lower()
+    if mode not in {"edit", "extend"}:
+        return payload
+    paths = _clean_media_url_list(payload.get("filePaths"), limit=2)
+    if len(paths) != 1:
+        raise ValueError("视频编辑和视频延长模式必须且只能提供一个视频")
+    source_url = paths[0]
+    source_lower = source_url.lower()
+    if "/mcp-images/" in source_lower or "/v3-tasks/" in source_lower:
+        return payload
+    transfer_resp = await _call_upstream_mcp_tool(
+        upstream_url,
+        "transfer_url",
+        {"url": source_url, "type": "image"},
+        upstream_name="sutui",
+        sutui_token=sutui_token,
+        lobster_capability_id="video.generate",
+        brand_mark=brand_mark,
+    )
+    if isinstance(transfer_resp, dict) and transfer_resp.get("error"):
+        message = str((transfer_resp.get("error") or {}).get("message") or "视频转存失败")
+        raise RuntimeError(message)
+    transferred_url = _extract_first_http_url_from_any(transfer_resp)
+    if not transferred_url:
+        raise RuntimeError("视频转存未返回可用地址")
+    out = dict(payload)
+    out["filePaths"] = [transferred_url]
+    logger.info(
+        "[MCP video.generate] 必火2.5 %s 输入视频已转存 source=%s transferred=%s",
+        mode,
+        source_url[:120],
+        transferred_url[:120],
+    )
+    return out
 
 
 def _object_contains_text(obj: Any, needles: Tuple[str, ...], _seen: Optional[set[int]] = None) -> bool:
@@ -2437,6 +2503,99 @@ def _merge_common_video_ui_fields(out: Dict[str, Any], payload: Dict[str, Any]) 
             continue
         if k in payload and payload[k] is not None and k not in out:
             out[k] = payload[k]
+
+
+_BIHUO_25_FUNCTION_MODES = frozenset({"omini", "edit", "extend", "first_last_frame"})
+_BIHUO_25_RESOLUTIONS = frozenset({"480p", "720p"})
+
+
+def _clean_media_url_list(value: Any, *, limit: int) -> List[str]:
+    values = value if isinstance(value, (list, tuple)) else [value]
+    out: List[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        if isinstance(raw, dict):
+            raw = raw.get("url") or raw.get("source_url") or raw.get("file_url") or ""
+        item = str(raw or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _normalize_bihuo_25_video_payload(payload: Dict[str, Any], prompt: str) -> Dict[str, Any]:
+    mode_aliases = {
+        "reference": "omini",
+        "multimodal": "omini",
+        "omni": "omini",
+        "first_last": "first_last_frame",
+        "first-last-frame": "first_last_frame",
+        "first_last_frames": "first_last_frame",
+    }
+    raw_mode = str(payload.get("functionMode") or payload.get("function_mode") or "omini").strip().lower()
+    function_mode = mode_aliases.get(raw_mode, raw_mode)
+    if function_mode not in _BIHUO_25_FUNCTION_MODES:
+        raise ValueError("必火2.5 模式无效，请使用参考生成、视频编辑、视频延长或首尾帧")
+
+    ratio_raw = str(payload.get("ratio") or payload.get("aspect_ratio") or "9:16").strip().lower()
+    ratio = "adaptive" if ratio_raw in {"adaptive", "auto", "adapt"} else _coerce_video_aspect_ratio_for_upstream(ratio_raw)
+    resolution_raw = str(payload.get("resolution") or "720p").strip().lower()
+    resolution = resolution_raw if resolution_raw in _BIHUO_25_RESOLUTIONS else "720p"
+
+    image_urls = _clean_media_url_list(payload.get("image_urls"), limit=31)
+    video_urls = _clean_media_url_list(payload.get("video_urls"), limit=11)
+    audio_urls = _clean_media_url_list(payload.get("audio_urls"), limit=11)
+    file_paths = _clean_media_url_list(payload.get("filePaths"), limit=51)
+    first_image_url = str(payload.get("image_url") or payload.get("first_image_url") or "").strip()
+    end_image_url = str(payload.get("end_image_url") or payload.get("last_image_url") or "").strip()
+
+    out: Dict[str, Any] = {
+        "model": APIZ_BIHUO_25_VIDEO_MODEL,
+        "__apiz_params_model": "Seedance_2.5",
+        "prompt": prompt,
+        "functionMode": function_mode,
+        "ratio": ratio,
+        "resolution": resolution,
+    }
+
+    if function_mode == "omini":
+        combined = _clean_media_url_list(image_urls + video_urls + audio_urls + file_paths, limit=51)
+        if not combined:
+            raise ValueError("参考生成至少需要一张图片、一段视频或一段音频")
+        if len(image_urls) > 30 or len(video_urls) > 10 or len(audio_urls) > 10 or len(combined) > 50:
+            raise ValueError("参考素材超过上限：图片30个、视频10个、音频10个，总数50个")
+        out["filePaths"] = combined
+        duration = _parse_video_duration_seconds(_payload_get_duration_raw(payload), default=10)
+        if duration < 4 or duration > 30:
+            raise ValueError("必火2.5 时长只支持 4-30 秒")
+        out["duration"] = duration
+        return out
+
+    if function_mode == "first_last_frame":
+        if not first_image_url or not end_image_url:
+            raise ValueError("首尾帧模式必须同时提供首帧图和尾帧图")
+        out["image_url"] = first_image_url
+        out["end_image_url"] = end_image_url
+        duration = _parse_video_duration_seconds(_payload_get_duration_raw(payload), default=10)
+        if duration < 4 or duration > 30:
+            raise ValueError("必火2.5 时长只支持 4-30 秒")
+        out["duration"] = duration
+        return out
+
+    videos = _clean_media_url_list(video_urls + file_paths, limit=2)
+    single_video = videos[:1]
+    if len(videos) != 1:
+        raise ValueError("视频编辑和视频延长模式必须且只能提供一个视频")
+    out["filePaths"] = single_video
+    if function_mode == "extend":
+        duration = _parse_video_duration_seconds(_payload_get_duration_raw(payload), default=5)
+        if duration < 4 or duration > 30:
+            raise ValueError("视频延长时长只支持 4-30 秒")
+        out["duration"] = duration
+    return out
 
 
 def _clamp_num_images_for_image_model(num: int, model: str) -> int:
@@ -3041,6 +3200,11 @@ def _normalize_video_generate_payload(
         elif reference_mode:
             out["image_urls"] = list(image_refs[:3])
         return out
+
+    # 必火2.5：上游外层 model 固定为 super-seed2-lite，内层 params.model 固定为 Seedance_2.5。
+    # 该契约与旧 super-seed2 不兼容，必须在旧分支之前处理。
+    if model == APIZ_BIHUO_25_VIDEO_MODEL:
+        return _normalize_bihuo_25_video_payload(payload, prompt)
 
     # st-ai/super-seed2：ratio, filePaths, functionMode（保留 backend 注入的多图 filePaths）
     if "super-seed2" in model or "st-ai/super-seed2" == model:
@@ -4343,15 +4507,25 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     upstream_resp = {"error": {"message": f"Comfly 调用失败: {_cf_call_err}"}}
             else:
                 logger.info("[MCP] invoke_capability capability_id=%s upstream=%s model=%s", capability_id, upstream_name, normalized_model or original_model or "(无)")
-                upstream_resp = await _call_upstream_mcp_tool(
-                    upstream_url,
-                    upstream_tool,
-                    payload,
-                    upstream_name=upstream_name,
-                    sutui_token=sutui_token,
-                    lobster_capability_id=capability_id,
-                    brand_mark=user_brand_mark,
-                )
+                try:
+                    if capability_id == "video.generate" and upstream_name == "sutui":
+                        payload = await _prepare_bihuo_25_video_input(
+                            payload,
+                            upstream_url=upstream_url,
+                            sutui_token=sutui_token,
+                            brand_mark=user_brand_mark,
+                        )
+                    upstream_resp = await _call_upstream_mcp_tool(
+                        upstream_url,
+                        upstream_tool,
+                        payload,
+                        upstream_name=upstream_name,
+                        sutui_token=sutui_token,
+                        lobster_capability_id=capability_id,
+                        brand_mark=user_brand_mark,
+                    )
+                except (ValueError, RuntimeError) as exc:
+                    upstream_resp = {"error": {"message": str(exc)}}
             if (
                 capability_id == "image.generate"
                 and upstream_tool == "generate"

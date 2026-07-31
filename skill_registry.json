@@ -1,5 +1,15 @@
 {
   "packages": {
+    "bihuo_25_video_skill": {
+      "name": "必火2.5",
+      "description": "支持多模态参考、首尾帧、视频编辑和视频延长的统一视频工作台。",
+      "type": "builtin",
+      "store_visibility": "debug",
+      "default_installed": false,
+      "status": "available",
+      "capabilities": {},
+      "tags": ["视频", "多模态", "首尾帧", "视频编辑"]
+    },
     "douyin_publish": {
       "name": "发抖音",
       "description": "一键将生成的视频/图文发布到抖音。默认已安装直接可用；可添加多个发布账号。",
