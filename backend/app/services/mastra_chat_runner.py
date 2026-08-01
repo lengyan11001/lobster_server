@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -38,6 +39,9 @@ class MastraChatJob:
     approval_id: str
     authorization: str
     legacy_history: List[Dict[str, str]]
+    conversation_summary: str
+    summary_messages: List[Dict[str, str]]
+    summary_through_message_id: str
 
 
 def _enabled() -> bool:
@@ -54,6 +58,34 @@ def _max_concurrency() -> int:
         return max(1, min(12, int(os.environ.get("LOBSTER_MASTRA_MAX_CONCURRENCY") or "4")))
     except (TypeError, ValueError):
         return 4
+
+
+def _max_concurrency_per_user() -> int:
+    try:
+        return max(1, min(4, int(os.environ.get("LOBSTER_MASTRA_MAX_CONCURRENCY_PER_USER") or "1")))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _summary_keep_turns() -> int:
+    try:
+        return max(3, min(12, int(os.environ.get("LOBSTER_MASTRA_SUMMARY_KEEP_TURNS") or "5")))
+    except (TypeError, ValueError):
+        return 5
+
+
+def _summary_min_turns() -> int:
+    try:
+        return max(2, min(20, int(os.environ.get("LOBSTER_MASTRA_SUMMARY_MIN_TURNS") or "4")))
+    except (TypeError, ValueError):
+        return 4
+
+
+def _summary_min_chars() -> int:
+    try:
+        return max(4000, min(60000, int(os.environ.get("LOBSTER_MASTRA_SUMMARY_MIN_CHARS") or "12000")))
+    except (TypeError, ValueError):
+        return 12000
 
 
 def _poll_interval_seconds() -> float:
@@ -112,6 +144,62 @@ def _legacy_history(db, row: H5ChatMessage) -> List[Dict[str, str]]:
     return messages
 
 
+def _summary_context(
+    db,
+    row: H5ChatMessage,
+    session: Optional[H5ChatSession],
+) -> tuple[str, List[Dict[str, str]], str]:
+    if session is None:
+        return "", [], ""
+    existing_summary = (session.summary_text or "").strip()[:16000]
+    previous = (
+        db.query(H5ChatMessage)
+        .filter(
+            H5ChatMessage.user_id == row.user_id,
+            H5ChatMessage.session_id == row.session_id,
+            H5ChatMessage.parent_message_id.is_(None),
+            H5ChatMessage.mode == "mastra",
+            H5ChatMessage.status == "completed",
+            H5ChatMessage.created_at < row.created_at,
+        )
+        .order_by(H5ChatMessage.created_at.asc(), H5ChatMessage.id.asc())
+        .all()
+    )
+    keep_turns = _summary_keep_turns()
+    compressible = previous[:-keep_turns] if len(previous) > keep_turns else []
+    cursor = (session.summary_through_message_id or "").strip()
+    if cursor:
+        cursor_index = next((index for index, item in enumerate(compressible) if item.id == cursor), None)
+        if cursor_index is not None:
+            compressible = compressible[cursor_index + 1 :]
+        else:
+            cursor_row = db.query(H5ChatMessage).filter(H5ChatMessage.id == cursor).first()
+            if cursor_row and cursor_row.created_at:
+                compressible = [item for item in compressible if item.created_at > cursor_row.created_at]
+
+    total_chars = sum(len(item.content or "") + len(item.reply_text or "") for item in compressible)
+    if len(compressible) < _summary_min_turns() and total_chars < _summary_min_chars():
+        return existing_summary, [], ""
+
+    messages: List[Dict[str, str]] = []
+    used_chars = 0
+    through_id = ""
+    for item in compressible[:12]:
+        user_text = (item.content or "").strip()[:8000]
+        assistant_text = (item.reply_text or item.error or "").strip()[:12000]
+        remaining = 48000 - used_chars
+        if remaining <= 0:
+            break
+        if len(user_text) + len(assistant_text) > remaining:
+            assistant_budget = max(0, remaining - min(len(user_text), 8000))
+            user_text = user_text[: min(len(user_text), remaining)]
+            assistant_text = assistant_text[:assistant_budget]
+        messages.append({"message_id": item.id, "user": user_text, "assistant": assistant_text})
+        used_chars += len(user_text) + len(assistant_text)
+        through_id = item.id
+    return existing_summary, messages, through_id
+
+
 def _recover_stale_sync() -> int:
     db = SessionLocal()
     try:
@@ -150,15 +238,21 @@ def _recover_stale_sync() -> int:
         db.close()
 
 
-def _claim_jobs_sync(limit: int) -> List[MastraChatJob]:
+def _claim_jobs_sync(
+    limit: int,
+    running_user_counts: Optional[Dict[int, int]] = None,
+    per_user_limit: Optional[int] = None,
+) -> List[MastraChatJob]:
     db = SessionLocal()
     try:
+        per_user_limit = per_user_limit or _max_concurrency_per_user()
+        user_counts = Counter(running_user_counts or {})
         query = (
             db.query(H5ChatMessage)
             .filter(H5ChatMessage.mode == "mastra", H5ChatMessage.status == "pending")
             .order_by(H5ChatMessage.created_at.asc())
             .with_for_update(skip_locked=True)
-            .limit(max(1, limit))
+            .limit(max(100, limit * 25))
         )
         rows = query.all()
         if not rows:
@@ -167,6 +261,10 @@ def _claim_jobs_sync(limit: int) -> List[MastraChatJob]:
         now = datetime.utcnow()
         jobs: List[MastraChatJob] = []
         for row in rows:
+            if len(jobs) >= max(1, limit):
+                break
+            if user_counts[int(row.user_id)] >= per_user_limit:
+                continue
             user = db.query(User).filter(User.id == row.user_id).first()
             if user is None:
                 row.status = "failed"
@@ -182,6 +280,7 @@ def _claim_jobs_sync(limit: int) -> List[MastraChatJob]:
                 .first()
             )
             permission_mode = "full" if session and session.permission_mode == "full" else "confirm"
+            conversation_summary, summary_messages, summary_through_message_id = _summary_context(db, row, session)
             approval = (
                 db.query(H5ChatApproval)
                 .filter(H5ChatApproval.message_id == row.id, H5ChatApproval.status == "approved")
@@ -211,8 +310,12 @@ def _claim_jobs_sync(limit: int) -> List[MastraChatJob]:
                     approval_id=approval.id if approval else "",
                     authorization=create_access_token(access_token_claims(user)),
                     legacy_history=_legacy_history(db, row),
+                    conversation_summary=conversation_summary,
+                    summary_messages=summary_messages,
+                    summary_through_message_id=summary_through_message_id,
                 )
             )
+            user_counts[int(row.user_id)] += 1
         db.commit()
         return jobs
     except Exception:
@@ -393,7 +496,70 @@ async def _append_event(message_id: str, event_type: str, payload: Optional[Dict
     await asyncio.to_thread(_append_event_sync, message_id, event_type, payload)
 
 
+def _update_summary_sync(job: MastraChatJob, summary_text: str) -> None:
+    db = SessionLocal()
+    try:
+        session = (
+            db.query(H5ChatSession)
+            .filter(H5ChatSession.id == job.session_id, H5ChatSession.user_id == job.user_id)
+            .first()
+        )
+        if session is None or not job.summary_through_message_id:
+            return
+        session.summary_text = (summary_text or "").strip()[:16000] or session.summary_text
+        session.summary_through_message_id = job.summary_through_message_id
+        session.summary_updated_at = datetime.utcnow()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+async def _refresh_conversation_summary(job: MastraChatJob) -> str:
+    if not job.summary_messages or not job.summary_through_message_id:
+        return job.conversation_summary
+    timeout = httpx.Timeout(connect=8.0, read=240.0, write=30.0, pool=8.0)
+    payload = {
+        "authorization": job.authorization,
+        "brand": job.brand,
+        "user_id": str(job.user_id),
+        "installation_id": job.installation_id,
+        "parent_message_id": job.message_id,
+        "existing_summary": job.conversation_summary,
+        "messages": job.summary_messages,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            response = await client.post(
+                f"{_mastra_base_url()}/internal/summarize",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Lobster-Mastra-Secret": _internal_secret(),
+                },
+                json=payload,
+            )
+        response.raise_for_status()
+        data = response.json()
+        summary = str(data.get("summary") or "").strip()[:16000]
+        if not summary:
+            return job.conversation_summary
+        await asyncio.to_thread(_update_summary_sync, job, summary)
+        logger.info(
+            "[mastra_chat] compacted session=%s through=%s turns=%s",
+            job.session_id,
+            job.summary_through_message_id,
+            len(job.summary_messages),
+        )
+        return summary
+    except Exception as exc:
+        logger.warning("[mastra_chat] summary refresh skipped session=%s error=%s", job.session_id, str(exc)[:300])
+        return job.conversation_summary
+
+
 async def _run_job(job: MastraChatJob) -> None:
+    conversation_summary = await _refresh_conversation_summary(job)
     body = {
         "message": job.content,
         "attachments": job.attachments,
@@ -406,6 +572,7 @@ async def _run_job(job: MastraChatJob) -> None:
         "thread_id": f"h5:{job.brand}:{job.user_id}:{job.session_id}",
         "resource_id": f"{job.brand}:{job.user_id}",
         "legacy_history": job.legacy_history,
+        "conversation_summary": conversation_summary,
         "permission_mode": job.permission_mode,
         "approval_granted": job.approval_granted,
         "approval_id": job.approval_id,
@@ -444,7 +611,7 @@ async def _run_job(job: MastraChatJob) -> None:
                     if event_type == "delta":
                         delta_buffer += str(event.get("text") or "")
                         elapsed = asyncio.get_running_loop().time() - last_delta_flush
-                        if len(delta_buffer) >= 80 or elapsed >= 0.15:
+                        if len(delta_buffer) >= 160 or elapsed >= 0.25:
                             await flush_delta()
                         continue
 
@@ -486,12 +653,13 @@ async def mastra_chat_background_loop() -> None:
         logger.warning("[mastra_chat] recovered %s stale message(s)", recovered)
 
     concurrency = _max_concurrency()
-    running: set[asyncio.Task] = set()
-    logger.info("[mastra_chat] runner started concurrency=%s", concurrency)
+    per_user_limit = _max_concurrency_per_user()
+    running: Dict[asyncio.Task, int] = {}
+    logger.info("[mastra_chat] runner started concurrency=%s per_user=%s", concurrency, per_user_limit)
     while True:
         finished = {task for task in running if task.done()}
         for task in finished:
-            running.remove(task)
+            running.pop(task, None)
             try:
                 task.result()
             except asyncio.CancelledError:
@@ -502,20 +670,22 @@ async def mastra_chat_background_loop() -> None:
         capacity = concurrency - len(running)
         if capacity > 0:
             try:
-                jobs = await asyncio.to_thread(_claim_jobs_sync, capacity)
+                running_user_counts = dict(Counter(running.values()))
+                jobs = await asyncio.to_thread(_claim_jobs_sync, capacity, running_user_counts, per_user_limit)
             except Exception:
                 logger.exception("[mastra_chat] failed to claim messages")
                 jobs = []
             for job in jobs:
-                running.add(asyncio.create_task(_run_job(job), name=f"mastra-chat-{job.message_id[:8]}"))
+                task = asyncio.create_task(_run_job(job), name=f"mastra-chat-{job.message_id[:8]}")
+                running[task] = job.user_id
 
         if running:
             try:
-                await asyncio.wait(running, timeout=_poll_interval_seconds(), return_when=asyncio.FIRST_COMPLETED)
+                await asyncio.wait(set(running), timeout=_poll_interval_seconds(), return_when=asyncio.FIRST_COMPLETED)
             except asyncio.CancelledError:
                 for task in running:
                     task.cancel()
-                await asyncio.gather(*running, return_exceptions=True)
+                await asyncio.gather(*running.keys(), return_exceptions=True)
                 raise
         else:
             await asyncio.sleep(_poll_interval_seconds())

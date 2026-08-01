@@ -45,28 +45,35 @@ def _ensure_h5_chat_mastra_columns() -> None:
 
     try:
         inspector = inspect(engine)
-        if not inspector.has_table("h5_chat_messages"):
-            return
-        columns = {column["name"] for column in inspector.get_columns("h5_chat_messages")}
         with engine.begin() as connection:
-            if "parent_message_id" not in columns:
-                connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN parent_message_id VARCHAR(64)"))
-            if "attachments" not in columns:
-                connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN attachments JSON"))
-            if "session_id" not in columns:
-                connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN session_id VARCHAR(64)"))
-            connection.execute(
-                text(
-                    "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_parent_message_id "
-                    "ON h5_chat_messages (parent_message_id)"
+            if inspector.has_table("h5_chat_messages"):
+                columns = {column["name"] for column in inspector.get_columns("h5_chat_messages")}
+                if "parent_message_id" not in columns:
+                    connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN parent_message_id VARCHAR(64)"))
+                if "attachments" not in columns:
+                    connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN attachments JSON"))
+                if "session_id" not in columns:
+                    connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN session_id VARCHAR(64)"))
+                connection.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_parent_message_id "
+                        "ON h5_chat_messages (parent_message_id)"
+                    )
                 )
-            )
-            connection.execute(
-                text(
-                    "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_session_id "
-                    "ON h5_chat_messages (session_id)"
+                connection.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_session_id "
+                        "ON h5_chat_messages (session_id)"
+                    )
                 )
-            )
+            if inspector.has_table("h5_chat_sessions"):
+                session_columns = {column["name"] for column in inspector.get_columns("h5_chat_sessions")}
+                if "summary_text" not in session_columns:
+                    connection.execute(text("ALTER TABLE h5_chat_sessions ADD COLUMN summary_text TEXT"))
+                if "summary_through_message_id" not in session_columns:
+                    connection.execute(text("ALTER TABLE h5_chat_sessions ADD COLUMN summary_through_message_id VARCHAR(64)"))
+                if "summary_updated_at" not in session_columns:
+                    connection.execute(text("ALTER TABLE h5_chat_sessions ADD COLUMN summary_updated_at TIMESTAMP"))
     except Exception as exc:
         logger.warning("H5 Mastra column migration skipped: %s", exc)
 

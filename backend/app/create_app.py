@@ -241,6 +241,15 @@ def _migrate_h5_chat_mastra_columns():
                     "ON h5_chat_messages (session_id)"
                 )
             )
+        if insp.has_table("h5_chat_sessions"):
+            session_cols = [c["name"] for c in insp.get_columns("h5_chat_sessions")]
+            with engine.begin() as conn:
+                if "summary_text" not in session_cols:
+                    conn.execute(text("ALTER TABLE h5_chat_sessions ADD COLUMN summary_text TEXT"))
+                if "summary_through_message_id" not in session_cols:
+                    conn.execute(text("ALTER TABLE h5_chat_sessions ADD COLUMN summary_through_message_id VARCHAR(64)"))
+                if "summary_updated_at" not in session_cols:
+                    conn.execute(text("ALTER TABLE h5_chat_sessions ADD COLUMN summary_updated_at TIMESTAMP"))
     except Exception as e:
         logger.warning("Migration h5_chat_messages Mastra columns skipped: %s", e)
 

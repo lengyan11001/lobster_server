@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -877,6 +877,7 @@ def _overwrite_document(
 @router.get("/api/personal-settings/memory-documents/list")
 async def list_memory_documents(
     request: Request,
+    include_content: bool = Query(True),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -885,8 +886,8 @@ async def list_memory_documents(
     ensure_installation_slot(db, target_user.id, installation_id)
     rows = _doc_query(db, target_user.id, installation_id).order_by(OpenClawMemoryDocument.updated_at.desc()).limit(200).all()
     agent_rows = _agent_granted_memory_rows(db, target_user)
-    documents = [_memory_summary(row, include_content=True, source="own") for row in rows]
-    documents.extend(_memory_summary(row, include_content=True, source="agent") for row in agent_rows)
+    documents = [_memory_summary(row, include_content=include_content, source="own") for row in rows]
+    documents.extend(_memory_summary(row, include_content=include_content, source="agent") for row in agent_rows)
     documents.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
     return {"ok": True, "documents": documents[:300]}
 

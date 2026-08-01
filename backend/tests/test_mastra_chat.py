@@ -556,3 +556,179 @@ def test_online_pending_still_claims_legacy_client_command(db_session, test_user
     )
     assert [item["id"] for item in result["items"]] == [row.id]
     assert result["items"][0]["mode"] == "client_command"
+
+
+def test_attachment_payload_enforces_per_file_limits(db_session, db_session_factory, test_user):
+    from backend.app.models import Asset
+
+    too_large = Asset(
+        asset_id="oversized-chat-document",
+        user_id=test_user.id,
+        filename="超大资料.pdf",
+        media_type="document",
+        file_size=31 * 1024 * 1024,
+        source_url="https://cdn.example.test/oversized.pdf",
+    )
+    db_session.add(too_large)
+    db_session.commit()
+
+    response = _client(db_session_factory, test_user.id).post(
+        "/api/mastra-chat/messages",
+        json={"content": "分析资料", "attachments": [{"asset_id": too_large.asset_id}]},
+    )
+
+    assert response.status_code == 400
+    assert "素材过大" in response.json()["detail"]
+
+
+def test_personal_profile_write_reuses_ip_persona_and_requires_authorization(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.models import H5ChatMessage, IPContentScheduleTemplate
+
+    confirm_session = _session(db_session, test_user.id, permission_mode="confirm")
+    confirm_parent = H5ChatMessage(
+        id="profile-confirm-parent",
+        user_id=test_user.id,
+        session_id=confirm_session.id,
+        mode="mastra",
+        content="把客户资料写到人设",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    full_session = _session(db_session, test_user.id, permission_mode="full")
+    full_parent = H5ChatMessage(
+        id="profile-full-parent",
+        user_id=test_user.id,
+        session_id=full_session.id,
+        mode="mastra",
+        content="更新人设",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add_all([confirm_parent, full_parent])
+    db_session.commit()
+    client = _client(db_session_factory, test_user.id)
+
+    blocked = client.patch(
+        "/api/mastra-chat/personal-profile",
+        json={"parent_message_id": confirm_parent.id, "fields": {"product": "工业相机"}},
+    )
+    assert blocked.status_code == 409
+
+    saved = client.patch(
+        "/api/mastra-chat/personal-profile",
+        json={
+            "parent_message_id": full_parent.id,
+            "fields": {"name": "张总", "product": "工业相机", "target_customer": "制造企业"},
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["profile"]["fields"]["product"] == "工业相机"
+    with db_session_factory() as session:
+        row = session.query(IPContentScheduleTemplate).filter(
+            IPContentScheduleTemplate.user_id == test_user.id,
+            IPContentScheduleTemplate.name == "个人默认配置",
+        ).one()
+        assert row.requirements["basic_profile"]["name"] == "张总"
+        assert row.requirements["business_description"]["target_customer"] == "制造企业"
+
+
+def test_runner_compacts_only_older_turns_in_the_same_session(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    chat_session = _session(db_session, test_user.id, permission_mode="full")
+    other_session = _session(db_session, test_user.id, permission_mode="full", title="其他会话")
+    base = datetime.utcnow() - timedelta(hours=2)
+    rows = []
+    for index in range(10):
+        created = base + timedelta(minutes=index)
+        rows.append(
+            H5ChatMessage(
+                id=f"summary-history-{index}",
+                user_id=test_user.id,
+                session_id=chat_session.id,
+                mode="mastra",
+                content=f"同一会话问题 {index}",
+                reply_text=f"同一会话回答 {index}",
+                status="completed",
+                created_at=created,
+                updated_at=created,
+                finished_at=created,
+            )
+        )
+    rows.append(
+        H5ChatMessage(
+            id="summary-other-session",
+            user_id=test_user.id,
+            session_id=other_session.id,
+            mode="mastra",
+            content="不能进入摘要的其他会话",
+            reply_text="隔离内容",
+            status="completed",
+            created_at=base,
+            updated_at=base,
+            finished_at=base,
+        )
+    )
+    current = H5ChatMessage(
+        id="summary-current",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="继续当前会话",
+        status="pending",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add_all([*rows, current])
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    jobs = mastra_chat_runner._claim_jobs_sync(1)
+
+    assert len(jobs) == 1
+    assert [item["message_id"] for item in jobs[0].summary_messages] == [
+        f"summary-history-{index}" for index in range(5)
+    ]
+    assert all("其他会话" not in item["user"] for item in jobs[0].summary_messages)
+    assert jobs[0].summary_through_message_id == "summary-history-4"
+
+
+def test_runner_does_not_claim_a_second_job_past_per_user_limit(
+    db_session, db_session_factory, test_user, other_user, monkeypatch
+):
+    from backend.app.models import H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    now = datetime.utcnow()
+    blocked = H5ChatMessage(
+        id="per-user-blocked",
+        user_id=test_user.id,
+        mode="mastra",
+        content="同一用户的第二个任务",
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    available = H5ChatMessage(
+        id="per-user-available",
+        user_id=other_user.id,
+        mode="mastra",
+        content="另一个用户的任务",
+        status="pending",
+        created_at=now + timedelta(seconds=1),
+        updated_at=now + timedelta(seconds=1),
+    )
+    db_session.add_all([blocked, available])
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    jobs = mastra_chat_runner._claim_jobs_sync(2, {test_user.id: 1}, 1)
+
+    assert [job.message_id for job in jobs] == [available.id]

@@ -39,6 +39,7 @@ except Exception:
 
 from backend.app.core.config import settings
 from backend.app.services.ip_content_schedule_runner import ip_content_schedule_background_loop
+from backend.app.services.h5_chat_retention import h5_chat_retention_background_loop
 from backend.app.services.mastra_chat_runner import mastra_chat_background_loop
 from backend.app.services.meta_social_schedule_runner import meta_social_schedule_background_loop
 from backend.app.services.provider_balance_monitor import (
@@ -86,6 +87,7 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
 
     if _enabled_from_env("LOBSTER_MASTRA_CHAT_ENABLED", True):
         factories.append(("mastra_chat", mastra_chat_background_loop))
+        factories.append(("h5_chat_retention", h5_chat_retention_background_loop))
     else:
         logger.info("[background] AI 调度会话未启用")
 

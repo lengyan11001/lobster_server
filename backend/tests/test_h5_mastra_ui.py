@@ -73,5 +73,18 @@ def test_mastra_concurrency_slot_is_handed_directly_to_next_waiter():
     decrement = release_slot.index("activeRequests = Math.max(0, activeRequests - 1)")
 
     assert "if (next)" in release_slot[handoff:decrement]
-    assert "next()" in release_slot[handoff:decrement]
+    assert "next.resolve()" in release_slot[handoff:decrement]
     assert "return" in release_slot[handoff:decrement]
+
+
+def test_mastra_bounds_context_and_searches_large_tool_catalogs():
+    mastra = (ROOT / "mastra_server" / "src" / "mastra" / "index.ts").read_text(encoding="utf-8")
+
+    assert "TokenLimiterProcessor" in mastra
+    assert "LOBSTER_MASTRA_CONTEXT_TOKEN_LIMIT || 48000" in mastra
+    assert "LOBSTER_MASTRA_LAST_MESSAGES || 10" in mastra
+    assert "new ToolSearchProcessor" in mastra
+    assert "topK: 3" in mastra
+    assert "list_system_capabilities" in mastra
+    assert "conversation_summary" in mastra
+    assert "/internal/summarize" in mastra

@@ -1215,6 +1215,8 @@ async def stream_h5_message_events(
                 for ev in events:
                     last_id = max(last_id, int(ev.id))
                     yield _event_stream_line(ev)
+                if events:
+                    idle = 0
                 if msg.status in _FINAL_STATUSES and not events:
                     break
             except HTTPException:
@@ -1224,9 +1226,9 @@ async def stream_h5_message_events(
                 db.close()
 
             idle += 1
-            if idle % 15 == 0:
+            if idle % 10 == 0:
                 yield ": keep-alive\n\n"
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.75 if idle <= 2 else 1.5)
 
     return StreamingResponse(
         gen(),
