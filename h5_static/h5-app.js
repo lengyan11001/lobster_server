@@ -16765,9 +16765,10 @@
       state.pollers.delete(messageId);
     }
 
-    function handleEvent(ev, bubble, messageId) {
+    function handleEvent(ev, bubble, messageId, options = {}) {
       if (!ev || !bubble) return;
-      if (messageId) {
+      const historical = options.historical === true;
+      if (messageId && !historical) {
         const hit = state.historyItems.find((entry) => {
           const msg = entry && entry.message ? entry.message : entry;
           return msg && msg.id === messageId;
@@ -16798,7 +16799,7 @@
       }
       const label = eventLabel(ev);
       if (label) addStep(bubble, label);
-      if (ev.type === "approval_required" && ev.payload) {
+      if (!historical && ev.type === "approval_required" && ev.payload) {
         upsertPendingApproval(ev.payload);
       }
       if (ev.type === "delta" && ev.payload && ev.payload.text) {
@@ -16819,8 +16820,10 @@
         setBubbleText(bubble, reply);
         renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
         renderPublishDraftActions(bubble, ev.payload || {});
-        closeStream(messageId);
-        ensureConversationComposerReady();
+        if (!historical) {
+          closeStream(messageId);
+          ensureConversationComposerReady();
+        }
       }
       if (ev.type === "publish_pending" || ev.type === "publish_claimed" || ev.type === "publish_result") {
         renderPublishDraftActions(bubble, ev.payload || {});
@@ -16828,8 +16831,10 @@
       if (ev.type === "error") {
         bubble.classList.add("err");
         setBubbleText(bubble, (ev.payload && (ev.payload.error || ev.payload.detail)) || "处理失败");
-        closeStream(messageId);
-        ensureConversationComposerReady();
+        if (!historical) {
+          closeStream(messageId);
+          ensureConversationComposerReady();
+        }
       }
     }
 
@@ -16873,13 +16878,13 @@
       state.pollers.set(messageId, timer);
     }
 
-    function startSse(messageId, bubble) {
+    function startSse(messageId, bubble, lastEventId = 0) {
       if (!window.EventSource) {
-        startPolling(messageId, bubble, 0);
+        startPolling(messageId, bubble, lastEventId);
         return;
       }
-      let last = 0;
-      const es = new EventSource(apiUrl(`/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}`));
+      let last = Math.max(0, Number(lastEventId || 0));
+      const es = new EventSource(apiUrl(`/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}&last_event_id=${last}`));
       state.streams.set(messageId, es);
       ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error", "approval_required", "publish_pending", "publish_claimed", "publish_result"].forEach((type) => {
         es.addEventListener(type, (evt) => {
@@ -16921,9 +16926,11 @@
       bot._placeholder = !isFinal && !hasDelta;
       if (msg.status === "failed") bot.classList.add("err");
       let finalPayload = null;
+      let lastHistoryEventId = 0;
       for (const ev of events) {
+        lastHistoryEventId = Math.max(lastHistoryEventId, Number(ev && ev.id || 0));
         if (ev && ev.type === "final") finalPayload = ev.payload || null;
-        handleEvent(ev, bot, msg.id);
+        handleEvent(ev, bot, msg.id, { historical: true });
       }
       if (msg.status === "completed" && msg.reply_text) setBubbleText(bot, msg.reply_text);
       if (finalPayload) renderMediaPreviews(bot, collectMediaUrls(finalPayload));
@@ -16931,7 +16938,7 @@
         bot.classList.add("err");
         setBubbleText(bot, msg.error || "处理失败");
       }
-      if (!isFinal) startSse(msg.id, bot);
+      if (!isFinal) startSse(msg.id, bot, lastHistoryEventId);
     }
 
     function mediaTypeFromUrl(url, fallback = "") {

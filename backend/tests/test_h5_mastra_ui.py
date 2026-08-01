@@ -84,6 +84,17 @@ def test_h5_chat_restores_composer_after_each_task_result():
     assert script.count("ensureConversationComposerReady();") >= 3
 
 
+def test_h5_chat_history_does_not_replay_old_approvals_or_speech():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert "function handleEvent(ev, bubble, messageId, options = {})" in script
+    assert "const historical = options.historical === true;" in script
+    assert 'if (!historical && ev.type === "approval_required" && ev.payload)' in script
+    assert "handleEvent(ev, bot, msg.id, { historical: true });" in script
+    assert "startSse(msg.id, bot, lastHistoryEventId);" in script
+    assert "&last_event_id=${last}" in script
+
+
 def test_streaming_progress_is_visible_without_exposing_internal_reasoning():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     mastra = (ROOT / "mastra_server" / "src" / "mastra" / "index.ts").read_text(encoding="utf-8")
