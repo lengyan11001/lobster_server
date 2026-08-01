@@ -348,6 +348,129 @@ def _capabilities_api_base() -> str:
     return BASE_URL.rstrip("/")
 
 
+def _binary_flag(value: Any, *, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, (int, float)):
+        return 1 if int(value) == 1 else 0
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on", "show", "enabled", "开启", "显示", "是"}:
+        return 1
+    if text in {"0", "false", "no", "off", "hide", "disabled", "关闭", "隐藏", "否"}:
+        return 0
+    return 1 if int(default or 0) == 1 else 0
+
+
+def _normalize_hifly_video_create_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    raw = dict(payload or {})
+    text = str(
+        raw.get("text")
+        or raw.get("script")
+        or raw.get("oral_script")
+        or raw.get("prompt")
+        or ""
+    ).strip()
+    if not text:
+        raise ValueError("缺少口播文案 text")
+
+    body: Dict[str, Any] = {
+        "title": str(raw.get("title") or "数字人口播").strip() or "数字人口播",
+        "avatar": str(raw.get("avatar") or raw.get("avatar_id") or "current").strip() or "current",
+        "voice": str(raw.get("voice") or raw.get("voice_id") or raw.get("speaker_id") or "current").strip() or "current",
+        "text": text,
+        "st_show": _binary_flag(
+            raw.get("st_show", raw.get("auto_subtitle", raw.get("subtitle", 0))),
+        ),
+        "aigc_flag": _binary_flag(raw.get("aigc_flag", 0)),
+    }
+    for key in (
+        "rate",
+        "volume",
+        "pitch",
+        "emotion",
+        "instructions",
+        "speech_language",
+        "avatar_title",
+        "avatar_image_url",
+        "voice_title",
+        "voice_provider",
+    ):
+        if raw.get(key) not in (None, ""):
+            body[key] = raw[key]
+
+    post_edit_keys = {
+        "aspect_ratio",
+        "ratio",
+        "background_music",
+        "background_music_url",
+        "bgm",
+        "bgm_url",
+        "template",
+        "template_id",
+        "editing_template_id",
+    }
+    post_edit_required = sorted(key for key in post_edit_keys if raw.get(key) not in (None, "", False))
+    return body, post_edit_required
+
+
+async def _invoke_hifly_video_create_by_tts(
+    payload: Dict[str, Any],
+    token: Optional[str],
+    request: Optional[Request],
+    *,
+    brand_mark: str,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    try:
+        body, post_edit_required = _normalize_hifly_video_create_payload(payload)
+    except ValueError as exc:
+        return [{"type": "text", "text": f"数字人口播参数错误: {exc}"}], True
+
+    headers = _backend_headers(token, request)
+    if brand_mark:
+        headers["X-Lobster-Brand"] = brand_mark
+    try:
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            response = await client.post(
+                f"{BASE_URL}/api/hifly/my/video/create-by-tts",
+                json=_sanitize_for_json(body),
+                headers=headers,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[MCP] 服务端数字人口播接口调用失败")
+        return [{"type": "text", "text": f"数字人口播服务调用失败: {exc}"}], True
+
+    try:
+        data = response.json() if response.content else {}
+    except Exception:  # noqa: BLE001
+        data = {"detail": (response.text or "").strip()}
+    if response.status_code >= 400:
+        detail = data.get("detail") if isinstance(data, dict) else data
+        if isinstance(detail, (dict, list)):
+            detail = json.dumps(detail, ensure_ascii=False)
+        return [
+            {
+                "type": "text",
+                "text": f"数字人口播提交失败 HTTP {response.status_code}: {detail or '服务端未返回错误详情'}",
+            }
+        ], True
+
+    result: Dict[str, Any] = dict(data) if isinstance(data, dict) else {"result": data}
+    result["capability_id"] = "hifly.video.create_by_tts"
+    result["status"] = "submitted"
+    result["applied_parameters"] = [
+        "title",
+        "avatar",
+        "voice",
+        "text",
+        "st_show",
+        "aigc_flag",
+    ]
+    if post_edit_required:
+        result["post_edit_required"] = post_edit_required
+        result["parameter_notice"] = "数字人口播已提交；背景音乐、画幅或剪辑模板需在成片完成后进入剪辑环节处理。"
+    return [{"type": "text", "text": _json_dumps_mcp_payload(result)}], False
+
+
 async def _find_account_id_by_nickname(
     nickname: str, token: Optional[str], request: Optional[Request] = None,
 ) -> Optional[int]:
@@ -3912,6 +4035,13 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             if allowed is not None and capability_id not in allowed:
                 return [{"type": "text", "text": f"当前账号未开通此能力: {capability_id}"}], True
             cfg = catalog[capability_id]
+            if capability_id == "hifly.video.create_by_tts":
+                return await _invoke_hifly_video_create_by_tts(
+                    payload,
+                    token,
+                    request,
+                    brand_mark=user_brand_mark,
+                )
             upstream_tool = str(cfg.get("upstream_tool") or "").strip()
             if not upstream_tool:
                 return [{"type": "text", "text": f"能力配置缺失 upstream_tool: {capability_id}"}], True

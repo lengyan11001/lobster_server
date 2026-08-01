@@ -23,6 +23,90 @@ class _JsonResponse:
         return self._payload
 
 
+@pytest.mark.asyncio
+async def test_hifly_video_create_uses_backend_bridge_without_generic_pre_deduct(monkeypatch):
+    from mcp import http_server
+
+    monkeypatch.setattr(
+        http_server,
+        "_load_capability_catalog",
+        lambda: {
+            "hifly.video.create_by_tts": {
+                "upstream": "local",
+                "upstream_tool": "invoke",
+                "enabled": True,
+            }
+        },
+    )
+    monkeypatch.setattr(http_server, "_load_upstream_urls", lambda: {})
+    monkeypatch.setattr(http_server, "resolve_brand_mark_for_request", lambda _auth: "daka")
+
+    async def _allowed(*_args, **_kwargs):
+        return None
+
+    async def _unexpected_upstream(*_args, **_kwargs):
+        raise AssertionError("HiFly server bridge must not use the generic local upstream")
+
+    calls = []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            assert kwargs.get("timeout") == 600.0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return _JsonResponse(
+                200,
+                {
+                    "ok": True,
+                    "task_id": "hifly-task-1",
+                    "billing": {"credits_pre_deducted": 12},
+                    "item": {"id": 88, "status": "processing"},
+                },
+            )
+
+    monkeypatch.setattr(http_server, "_fetch_user_allowed_capability_ids", _allowed)
+    monkeypatch.setattr(http_server, "_call_upstream_mcp_tool", _unexpected_upstream)
+    monkeypatch.setattr(http_server.httpx, "AsyncClient", _FakeAsyncClient)
+
+    content, is_error = await http_server._call_tool(
+        "invoke_capability",
+        {
+            "capability_id": "hifly.video.create_by_tts",
+            "payload": {
+                "script": "这是一段口播稿。",
+                "subtitle": True,
+                "background_music": "古风",
+                "aspect_ratio": "9:16",
+            },
+        },
+        token="user-token",
+        request=_Request(),
+    )
+
+    assert is_error is False
+    assert len(calls) == 1
+    url, kwargs = calls[0]
+    assert url.endswith("/api/hifly/my/video/create-by-tts")
+    assert kwargs["headers"]["Authorization"] == "Bearer user-token"
+    assert kwargs["headers"]["X-Lobster-Brand"] == "daka"
+    assert kwargs["json"]["avatar"] == "current"
+    assert kwargs["json"]["voice"] == "current"
+    assert kwargs["json"]["text"] == "这是一段口播稿。"
+    assert kwargs["json"]["st_show"] == 1
+    assert "background_music" not in kwargs["json"]
+    result = json.loads(content[0]["text"])
+    assert result["task_id"] == "hifly-task-1"
+    assert result["billing"]["credits_pre_deducted"] == 12
+    assert result["post_edit_required"] == ["aspect_ratio", "background_music"]
+
+
 class _StreamResponse:
     def __init__(self, status_code: int, lines=None, payload=None):
         self.status_code = status_code

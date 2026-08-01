@@ -466,15 +466,21 @@
       "type": "object",
       "properties": {
         "title": { "type": "string", "description": "视频标题" },
-        "avatar": { "type": "string", "description": "必火数字人 avatar id" },
-        "voice": { "type": "string", "description": "必火声音 voice id" },
+        "avatar": { "type": "string", "default": "current", "description": "必火数字人 avatar id；省略或传 current 时使用当前账号最近可用的分身" },
+        "voice": { "type": "string", "default": "current", "description": "必火声音 voice id；省略或传 current 时使用当前账号最近可用的声音" },
         "text": { "type": "string", "description": "口播文案" },
         "st_show": { "type": "integer", "default": 0, "description": "是否显示字幕，0/1" },
         "aigc_flag": { "type": "integer", "default": 0 },
+        "rate": { "type": "string", "description": "可选语速" },
+        "volume": { "type": "string", "description": "可选音量" },
+        "pitch": { "type": "string", "description": "可选语调" },
+        "emotion": { "type": "string", "description": "可选情绪" },
+        "instructions": { "type": "string", "description": "可选声音表达指令" },
+        "speech_language": { "type": "string", "description": "可选口播语种" },
         "poll_interval_seconds": { "type": "integer", "default": 10 },
         "poll_timeout_seconds": { "type": "integer", "default": 2400 }
       },
-      "required": ["avatar", "voice", "text"]
+      "required": ["text"]
     }
   },
   "ecommerce.publish": {

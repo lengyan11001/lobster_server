@@ -2782,6 +2782,41 @@ class HiflyVideoCreateBody(BaseModel):
     token: Optional[str] = None
 
 
+_CURRENT_ASSET_REFS = {"current", "default", "latest", "当前", "默认", "当前数字人", "当前声音"}
+
+
+def _is_current_asset_ref(value: Any) -> bool:
+    return str(value or "").strip().lower() in _CURRENT_ASSET_REFS
+
+
+def _latest_successful_hifly_avatar(db: Session, user_id: int) -> Optional[UserHiflyAvatarAsset]:
+    return (
+        db.query(UserHiflyAvatarAsset)
+        .filter(
+            UserHiflyAvatarAsset.user_id == int(user_id),
+            UserHiflyAvatarAsset.status == "success",
+            UserHiflyAvatarAsset.hifly_avatar_id.isnot(None),
+            UserHiflyAvatarAsset.hifly_avatar_id != "",
+        )
+        .order_by(UserHiflyAvatarAsset.updated_at.desc(), UserHiflyAvatarAsset.id.desc())
+        .first()
+    )
+
+
+def _latest_successful_hifly_voice(db: Session, user_id: int) -> Optional[UserHiflyVoiceAsset]:
+    return (
+        db.query(UserHiflyVoiceAsset)
+        .filter(
+            UserHiflyVoiceAsset.user_id == int(user_id),
+            UserHiflyVoiceAsset.status == "success",
+            UserHiflyVoiceAsset.hifly_voice_id.isnot(None),
+            UserHiflyVoiceAsset.hifly_voice_id != "",
+        )
+        .order_by(UserHiflyVoiceAsset.updated_at.desc(), UserHiflyVoiceAsset.id.desc())
+        .first()
+    )
+
+
 def _pick_nested(payload: Dict[str, Any], key: str) -> Any:
     """HiFly 部分接口把业务字段包在 data 里，这里做统一 fallback。"""
     if payload.get(key) not in (None, ""):
@@ -3158,6 +3193,19 @@ async def create_my_video_by_tts(
 ):
     title = _safe_title(body.title, "数字人口播", 128)
     voice_value = body.voice.strip()
+    avatar_value = body.avatar.strip()
+    avatar_row: Optional[UserHiflyAvatarAsset] = None
+    voice_row: Optional[UserHiflyVoiceAsset] = None
+    if _is_current_asset_ref(avatar_value):
+        avatar_row = _latest_successful_hifly_avatar(db, current_user.id)
+        if not avatar_row:
+            raise HTTPException(status_code=400, detail="当前账号没有可用的数字人分身，请先在个人 IP 设置中创建分身")
+        avatar_value = str(avatar_row.hifly_avatar_id or "").strip()
+    if _is_current_asset_ref(voice_value):
+        voice_row = _latest_successful_hifly_voice(db, current_user.id)
+        if not voice_row:
+            raise HTTPException(status_code=400, detail="当前账号没有可用的声音分身，请先在个人 IP 设置中创建声音")
+        voice_value = str(voice_row.hifly_voice_id or "").strip()
     if voice_value.startswith("consumer_"):
         raise HTTPException(
             status_code=400,
@@ -3165,14 +3213,13 @@ async def create_my_video_by_tts(
         )
     payload = {
         "title": title[:20] or "数字人口播",
-        "avatar": body.avatar.strip(),
+        "avatar": avatar_value,
         "voice": voice_value,
         "text": body.text.strip(),
         "st_show": 1 if int(body.st_show or 0) == 1 else 0,
         "aigc_flag": int(body.aigc_flag or 0),
     }
-    voice_row: Optional[UserHiflyVoiceAsset] = None
-    if voice_value:
+    if voice_value and voice_row is None:
         voice_row = (
             db.query(UserHiflyVoiceAsset)
             .filter(UserHiflyVoiceAsset.user_id == current_user.id, UserHiflyVoiceAsset.hifly_voice_id == voice_value)
@@ -3255,7 +3302,7 @@ async def create_my_video_by_tts(
             generated_upload["source_url"] = source_asset.source_url or ""
         audio_payload = {
             "title": title[:20] or "数字人口播",
-            "avatar": body.avatar.strip(),
+            "avatar": avatar_value,
             "file_id": generated_upload["file_id"],
             "st_show": 1 if int(body.st_show or 0) == 1 else 0,
             "aigc_flag": int(body.aigc_flag or 0),
@@ -3281,7 +3328,7 @@ async def create_my_video_by_tts(
             title=title,
             status="processing",
             hifly_task_id=task_id,
-            avatar_id=body.avatar.strip() or None,
+            avatar_id=avatar_value or None,
             voice_id=voice_value or None,
             text=body.text.strip(),
             aigc_flag=audio_payload["aigc_flag"],
@@ -3304,8 +3351,8 @@ async def create_my_video_by_tts(
                     "raw": tts_result.get("raw"),
                 },
                 "translation": translation_result if is_qwen_voice else {},
-                "avatar_title": (body.avatar_title or "").strip(),
-                "avatar_image_url": (body.avatar_image_url or "").strip(),
+                "avatar_title": (body.avatar_title or (avatar_row.title if avatar_row else "") or "").strip(),
+                "avatar_image_url": (body.avatar_image_url or (avatar_row.cover_url if avatar_row else "") or "").strip(),
                 "voice_title": (body.voice_title or (voice_row.title if voice_row else "") or "").strip(),
                 "voice_provider_hint": provider_hint,
                 "voice_row_found": bool(voice_row),
@@ -3350,7 +3397,7 @@ async def create_my_video_by_tts(
         title=title,
         status="processing",
         hifly_task_id=task_id,
-        avatar_id=body.avatar.strip() or None,
+        avatar_id=avatar_value or None,
         voice_id=voice_value or None,
         text=body.text.strip(),
         aigc_flag=payload["aigc_flag"],
@@ -3358,9 +3405,9 @@ async def create_my_video_by_tts(
         meta={
             "create_raw": created,
             "create_payload": payload,
-            "avatar_title": (body.avatar_title or "").strip(),
-            "avatar_image_url": (body.avatar_image_url or "").strip(),
-            "voice_title": (body.voice_title or "").strip(),
+            "avatar_title": (body.avatar_title or (avatar_row.title if avatar_row else "") or "").strip(),
+            "avatar_image_url": (body.avatar_image_url or (avatar_row.cover_url if avatar_row else "") or "").strip(),
+            "voice_title": (body.voice_title or (voice_row.title if voice_row else "") or "").strip(),
             "billing": {
                 "capability_id": _HIFLY_TTS_CAPABILITY_ID,
                 "billing_status": "pending",
