@@ -1542,6 +1542,7 @@ def _apply_chat_deduct(
     logger.info("[sutui-chat] 已扣积分 trace_id=%s user_id=%s model=%s credits=%s", tid, current_user.id, model, credits)
 
 
+@router.post("/api/sutui-chat/chat/completions", include_in_schema=False)
 @router.post("/api/sutui-chat/completions", summary="速推 LLM 对话代理（需登录）")
 async def sutui_chat_completions(
     request: Request,

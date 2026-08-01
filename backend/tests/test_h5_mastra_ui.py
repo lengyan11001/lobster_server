@@ -59,6 +59,7 @@ def test_h5_chat_supports_isolated_sessions_attachments_and_permissions():
     assert 'session_id: state.activeChatSessionId' in script
     assert "attachments," in script
     assert "openai/gpt-5.6-sol" in mastra
+    assert "return provider.chat(modelId)" in mastra
     assert "approval_id: contextValue(context, 'approvalId')" in mastra
 
 

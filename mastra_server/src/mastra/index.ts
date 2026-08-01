@@ -269,7 +269,7 @@ const orchestrator = new Agent({
         ...(installationId ? { 'X-Installation-Id': installationId } : {}),
       },
     })
-    return provider(modelId)
+    return provider.chat(modelId)
   },
   tools: {
     readPersonalMemory,
