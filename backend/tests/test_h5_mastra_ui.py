@@ -34,10 +34,12 @@ def test_h5_chat_voice_permission_and_cancellation_are_race_safe():
     assert 'new Error("语音识别连接超时，请重试")' in open_voice
     assert "}, 8000);" in open_voice
     assert "function isTransientMicrophoneStartError" in script
-    assert "if (!IS_ANDROID_APP || !isTransientMicrophoneStartError(error)) throw error" in script
-    assert "setTimeout(resolve, 450)" in script
+    assert "function prepareAndroidMicrophoneCapture" in script
+    assert "window.LobsterAndroid.prepareMicrophoneCapture()" in script
+    assert "IS_ANDROID_APP ? [0, 700, 1600, 3000] : [0]" in script
     assert 'typeof canRetry === "function" && !canRetry()' in script
-    assert "return navigator.mediaDevices.getUserMedia({ audio: true })" in script
+    assert "attempt === 0 ? constraints : { audio: true }" in script
+    assert "cleanupAssetVoiceRecordRuntime();" in open_voice
 
     stop_voice_start = script.index("function stopVoiceCapture")
     stop_voice_end = script.index("function stopComposerVoiceDurationTimer", stop_voice_start)
@@ -47,6 +49,7 @@ def test_h5_chat_voice_permission_and_cancellation_are_race_safe():
     assert 'document.addEventListener("pointercancel"' in script
     assert 'window.addEventListener("pagehide"' in script
     assert 'document.addEventListener("visibilitychange"' in script
+    assert "stopAssetVoiceRecording(false)" in script
     assert "resetComposerVoiceCapture" in script
 
 

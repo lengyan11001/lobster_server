@@ -41,9 +41,9 @@ def test_voice_clone_can_record_wav_and_release_microphone():
 
     assert 'id="assetVoiceRecordBtn"' in html
     assert 'id="assetVoiceRecordPreview"' in html
-    assert "navigator.mediaDevices.getUserMedia({ audio: true })" in script
+    assert "requestMicrophoneStream({ audio: true }" in script
+    assert "function prepareAndroidMicrophoneCapture" in script
     assert 'new Blob([buffer], { type: "audio/wav" })' in script
     assert 'new File([wav], `voice-record-${stamp}.wav`' in script
     assert "state.assetVoiceRecordStream.getTracks().forEach((track) => track.stop())" in script
     assert "resetAssetVoiceRecording();" in script
-

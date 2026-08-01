@@ -242,6 +242,7 @@
       voiceProcessor: null,
       voiceSourceNode: null,
       voiceSeq: 0,
+      lastMicrophoneDiagnostics: "",
       officeVoiceHoldActive: false,
       voiceCaptureTarget: "voice",
       voiceSessionNonce: 0,
@@ -1316,15 +1317,40 @@
       return name === "NotReadableError" || name === "TrackStartError" || name === "AbortError";
     }
 
-    async function requestMicrophoneStream(constraints = { audio: true }, canRetry = null) {
+    function prepareAndroidMicrophoneCapture() {
+      if (!IS_ANDROID_APP || typeof window.LobsterAndroid?.prepareMicrophoneCapture !== "function") return "";
       try {
-        return await navigator.mediaDevices.getUserMedia(constraints);
+        const diagnostics = String(window.LobsterAndroid.prepareMicrophoneCapture() || "");
+        state.lastMicrophoneDiagnostics = diagnostics;
+        return diagnostics;
       } catch (error) {
-        if (!IS_ANDROID_APP || !isTransientMicrophoneStartError(error)) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 450));
-        if (typeof canRetry === "function" && !canRetry()) throw error;
-        return navigator.mediaDevices.getUserMedia({ audio: true });
+        console.warn("Android microphone preparation failed", error);
+        return "";
       }
+    }
+
+    async function requestMicrophoneStream(constraints = { audio: true }, canRetry = null) {
+      const retryDelays = IS_ANDROID_APP ? [0, 700, 1600, 3000] : [0];
+      let lastError = null;
+      for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
+        const delay = retryDelays[attempt];
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        if (attempt > 0 && typeof canRetry === "function" && !canRetry()) throw lastError;
+        const diagnostics = prepareAndroidMicrophoneCapture();
+        try {
+          return await navigator.mediaDevices.getUserMedia(attempt === 0 ? constraints : { audio: true });
+        } catch (error) {
+          lastError = error;
+          console.warn("Microphone start attempt failed", {
+            attempt: attempt + 1,
+            name: String(error && error.name || ""),
+            message: String(error && error.message || ""),
+            diagnostics,
+          });
+          if (!IS_ANDROID_APP || !isTransientMicrophoneStartError(error)) throw error;
+        }
+      }
+      throw lastError || new Error("Microphone startup failed");
     }
 
     async function copyText(text) {
@@ -7832,6 +7858,12 @@
         toast("当前浏览器不支持麦克风录音，请上传声音文件");
         return;
       }
+      if (state.voiceCaptureTarget === "composer" && (state.voiceRecording || state.composerVoicePendingSend)) {
+        cancelComposerVoiceCapture();
+      } else if (state.voiceRecording) {
+        state.voiceRecording = false;
+        cleanupVoiceRuntime();
+      }
       resetAssetVoiceRecording();
       state.assetVoiceRecordPending = true;
       if ($("assetVoiceRecordState")) $("assetVoiceRecordState").textContent = "正在请求麦克风权限";
@@ -10598,6 +10630,7 @@
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("当前浏览器不支持麦克风录音");
       }
+      cleanupAssetVoiceRecordRuntime();
       cleanupVoiceRuntime();
       state.voiceDraft = "";
       state.voicePartial = "";
@@ -19100,9 +19133,20 @@
     });
     window.addEventListener("pagehide", () => {
       if (state.voiceCaptureTarget === "composer") cancelComposerVoiceCapture();
+      else if (state.voiceRecording) {
+        state.voiceRecording = false;
+        cleanupVoiceRuntime();
+      }
+      if (state.assetVoiceIsRecording || state.assetVoiceRecordPending) stopAssetVoiceRecording(false);
     });
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden && state.voiceCaptureTarget === "composer") cancelComposerVoiceCapture();
+      if (!document.hidden) return;
+      if (state.voiceCaptureTarget === "composer") cancelComposerVoiceCapture();
+      else if (state.voiceRecording) {
+        state.voiceRecording = false;
+        cleanupVoiceRuntime();
+      }
+      if (state.assetVoiceIsRecording || state.assetVoiceRecordPending) stopAssetVoiceRecording(false);
     });
     $("voiceMicBtn")?.addEventListener("mousedown", startVoiceCapture);
     $("voiceMicBtn")?.addEventListener("touchstart", startVoiceCapture, { passive: false });
