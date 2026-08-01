@@ -1906,7 +1906,8 @@
     .composer-voice-feedback::after { content: ""; position: absolute; left: 28px; bottom: -7px; width: 13px; height: 13px; background: #fff; border-right: 1px solid rgba(36,92,255,.14); border-bottom: 1px solid rgba(36,92,255,.14); transform: rotate(45deg); }
     .composer-voice-feedback strong { font-size: 15px; font-weight: 600; }
     .composer-voice-feedback span { color: #64718a; font-variant-numeric: tabular-nums; font-size: 13px; }
-    .composer-voice-feedback small { grid-column: 1 / -1; color: #8a96aa; text-align: center; }
+    .composer-voice-feedback small { grid-column: 1; color: #8a96aa; text-align: left; }
+    .composer-voice-cancel { grid-column: 2; min-width: 66px; min-height: 30px; padding: 5px 12px; color: #c93642; border: 1px solid rgba(223,77,87,.2); border-radius: 999px; background: #fff4f5; box-shadow: none; font-size: 12px; font-weight: 500; }
     .composer-voice-feedback.is-cancelling { border-color: rgba(223,77,87,.28); }
     .composer-voice-feedback.is-cancelling strong { color: #c93642; }
     .composer-voice-meter { grid-column: 1 / -1; height: 28px; display: flex; align-items: center; justify-content: center; gap: 5px; }

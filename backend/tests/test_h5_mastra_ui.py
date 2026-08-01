@@ -7,25 +7,57 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_h5_chat_uses_mastra_and_has_hold_to_talk_controls():
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    voice_api = (ROOT / "backend" / "app" / "api" / "h5_voice.py").read_text(encoding="utf-8")
 
     assert 'id="composerVoiceBtn"' in html
     assert 'id="composerVoiceFeedback"' in html
-    assert "上滑取消" in html
+    assert 'id="composerVoiceCancelBtn"' in html
+    assert "上滑或点击取消" in html
     assert "AI 调度助手" in html
     assert 'api("/api/mastra-chat/messages"' in script
     assert 'startVoiceCapture(evt, "composer")' in script
     assert 'params.set("resolve_intent", resolveIntent ? "1" : "0")' in script
     assert "finishComposerVoiceRecognition" in script
+    assert 'state.voiceStatus = "requesting"' in script
+    assert "正在请求麦克风..." in script
+    assert "ensure_installation_slot" not in voice_api
+
+
+def test_h5_chat_voice_permission_and_cancellation_are_race_safe():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    open_voice_start = script.index("async function openVoiceRealtimeSession")
+    open_voice_end = script.index("async function startVoiceCapture", open_voice_start)
+    open_voice = script[open_voice_start:open_voice_end]
+    assert open_voice.index("navigator.mediaDevices.getUserMedia") < open_voice.index("new WebSocket")
+    assert "sessionNonce !== state.voiceSessionNonce || !state.voiceRecording" in open_voice
+    assert 'new Error("语音识别连接超时，请重试")' in open_voice
+    assert "}, 8000);" in open_voice
+
+    stop_voice_start = script.index("function stopVoiceCapture")
+    stop_voice_end = script.index("function stopComposerVoiceDurationTimer", stop_voice_start)
+    assert "}, 12000);" in script[stop_voice_start:stop_voice_end]
+    assert 'document.addEventListener("pointermove"' in script
+    assert 'document.addEventListener("pointerup"' in script
+    assert 'document.addEventListener("pointercancel"' in script
+    assert 'window.addEventListener("pagehide"' in script
+    assert 'document.addEventListener("visibilitychange"' in script
+    assert "resetComposerVoiceCapture" in script
 
 
 def test_h5_voice_layout_is_stable_and_mobile_friendly():
     styles = (ROOT / "h5_static" / "h5-app.css").read_text(encoding="utf-8")
+    designer_styles = (ROOT / "h5_static" / "h5-designer-v2.css").read_text(encoding="utf-8")
 
     assert ".composer-surface" in styles
     assert ".composer-toolbar" in styles
     assert ".composer-voice-feedback" in styles
     assert "touch-action: none" in styles
     assert "width: min(310px, calc(100vw - 40px))" in styles
+    assert ".composer-voice-cancel" in styles
+    assert "body.messages-view-active" in designer_styles
+    assert "#messagesView.active" in designer_styles
+    assert "position: fixed" in designer_styles
 
 
 def test_streaming_progress_is_visible_without_exposing_internal_reasoning():

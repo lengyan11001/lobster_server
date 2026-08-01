@@ -26,8 +26,6 @@ from ..services.xfyun_realtime_asr import (
 from ..services.voice_intent_llm import resolve_voice_intent_with_llm
 from ..services.brand_context import explicit_request_brand_mark
 from .auth import ALGORITHM, validate_token_brand
-from .installation_slots import ensure_installation_slot
-from .mobile_identity import online_user_for_mobile_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -83,10 +81,7 @@ async def h5_voice_session(
 
     db = SessionLocal()
     try:
-        user = _user_from_query_token(db, token, explicit_request_brand_mark(websocket) or brand)
-        owner_user = online_user_for_mobile_user(db, user)
-        if installation_id.strip():
-            ensure_installation_slot(db, owner_user.id, installation_id.strip())
+        _user_from_query_token(db, token, explicit_request_brand_mark(websocket) or brand)
     except Exception:
         db.close()
         await _send_json_safe(websocket, {"type": "error", "message": "登录已失效，请重新登录后再试"})

@@ -9826,7 +9826,15 @@
 
     function scrollMessagesToBottom() {
       const messages = $("messages");
-      if (messages) messages.scrollTop = messages.scrollHeight;
+      if (!messages) return;
+      const apply = () => {
+        messages.scrollTop = messages.scrollHeight;
+      };
+      apply();
+      requestAnimationFrame(() => {
+        apply();
+        requestAnimationFrame(apply);
+      });
     }
 
     function focusMessageInput() {
@@ -9940,6 +9948,10 @@
     function switchTab(tab) {
       const key = tab || "office";
       const previousViewId = (document.querySelector(".view.active") || {}).id || "";
+      if (key !== "messages" && (state.voiceCaptureTarget === "composer") && (state.voiceRecording || state.composerVoicePendingSend || state.composerVoicePointerId !== null)) {
+        cancelComposerVoiceCapture();
+      }
+      document.body.classList.toggle("messages-view-active", key === "messages");
       document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${key}View`));
       document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
       syncDesignerBottomNav(key);
@@ -10512,21 +10524,27 @@
     async function finishComposerVoiceRecognition(text) {
       const transcript = String(text || "").trim();
       const shouldSend = state.composerVoicePendingSend && !state.composerVoiceCancelled;
-      state.composerVoicePendingSend = false;
-      state.voiceRecording = false;
-      if (state.voiceTimer) {
-        clearTimeout(state.voiceTimer);
-        state.voiceTimer = null;
-      }
-      stopComposerVoiceDurationTimer();
-      cleanupVoiceRuntime();
-      renderComposerVoiceFeedback(false);
+      resetComposerVoiceCapture({ status: "resolved", clearTranscript: true });
       if (!shouldSend) return;
       if (!transcript) {
         toast("没有识别到语音，请按住后再说一次");
         return;
       }
       await submitChatMessage(transcript, { source: "voice" });
+    }
+
+    function microphonePermissionMessage(error) {
+      const name = String(error && error.name || "");
+      if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
+        return "没有麦克风权限，请在浏览器或手机系统设置中允许麦克风后重试";
+      }
+      if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        return "没有检测到可用麦克风";
+      }
+      if (name === "NotReadableError" || name === "TrackStartError") {
+        return "麦克风正被其他应用占用，请关闭占用后重试";
+      }
+      return String(error && error.message || "无法启动麦克风");
     }
 
     async function openVoiceRealtimeSession(target = "voice", sessionNonce = state.voiceSessionNonce) {
@@ -10540,13 +10558,32 @@
       state.voiceExpanded = false;
       resetVoiceIntent();
 
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
+      } catch (error) {
+        throw new Error(microphonePermissionMessage(error));
+      }
+      if (sessionNonce !== state.voiceSessionNonce || !state.voiceRecording) {
+        try { stream.getTracks().forEach((track) => track.stop()); } catch {}
+        return false;
+      }
+      state.voiceMediaStream = stream;
+
       const ws = new WebSocket(voiceWsUrl(target !== "composer"));
       ws.binaryType = "arraybuffer";
       await new Promise((resolve, reject) => {
         let settled = false;
+        const timer = setTimeout(() => {
+          try { ws.close(); } catch {}
+          finish(reject, new Error("语音识别连接超时，请重试"));
+        }, 8000);
         const finish = (fn, value) => {
           if (settled) return;
           settled = true;
+          clearTimeout(timer);
           fn(value);
         };
         ws.onopen = () => finish(resolve);
@@ -10557,7 +10594,7 @@
       });
       if (sessionNonce !== state.voiceSessionNonce || !state.voiceRecording) {
         try { ws.close(); } catch {}
-        return;
+        return false;
       }
       state.voiceWs = ws;
       ws.onmessage = (event) => {
@@ -10601,34 +10638,43 @@
             return;
           }
           if (type === "error") {
-            state.voiceStatus = "error";
-            cleanupVoiceRuntime();
-            toast(String(payload.message || "语音识别失败"));
+            const message = String(payload.message || "语音识别失败");
             if (target === "composer") {
-              state.composerVoicePendingSend = false;
-              stopComposerVoiceDurationTimer();
-              renderComposerVoiceFeedback(false);
+              resetComposerVoiceCapture({ status: "error", clearTranscript: true });
             } else {
+              state.voiceRecording = false;
+              state.voiceStatus = "error";
+              cleanupVoiceRuntime();
               syncVoiceDraftDisplay();
             }
+            toast(message);
           }
         } catch (err) {
           console.warn("voice message parse failed", err);
         }
       };
       ws.onclose = () => {
+        if (sessionNonce !== state.voiceSessionNonce) return;
         state.voiceWs = null;
+        if (target === "composer" && (state.voiceRecording || state.composerVoicePendingSend)) {
+          resetComposerVoiceCapture({ status: "error", clearTranscript: true });
+          toast("语音识别连接已中断，请重试");
+        } else if (target !== "composer" && state.voiceRecording) {
+          state.voiceRecording = false;
+          state.voiceStatus = "error";
+          cleanupVoiceRuntime();
+          syncVoiceDraftDisplay();
+        }
+      };
+      ws.onerror = () => {
+        if (sessionNonce !== state.voiceSessionNonce) return;
+        if (target === "composer") {
+          resetComposerVoiceCapture({ status: "error", clearTranscript: true });
+          toast("语音识别连接异常，请重试");
+        }
       };
       ws.send(JSON.stringify({ type: "start", format: "pcm_s16le", sample_rate: 16000, channels: 1 }));
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (sessionNonce !== state.voiceSessionNonce || !state.voiceRecording) {
-        try { stream.getTracks().forEach((track) => track.stop()); } catch {}
-        if (ws.readyState === WebSocket.OPEN) {
-          try { ws.send(JSON.stringify({ type: "stop" })); } catch {}
-        }
-        return;
-      }
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       if (audioContext.state === "suspended") {
         try { await audioContext.resume(); } catch {}
@@ -10649,11 +10695,11 @@
       };
       source.connect(processor);
       processor.connect(audioContext.destination);
-      state.voiceMediaStream = stream;
       state.voiceAudioContext = audioContext;
       state.voiceSourceNode = source;
       state.voiceProcessor = processor;
       state.voiceStatus = "recording";
+      return true;
     }
 
     async function startVoiceCapture(evt, target = "voice") {
@@ -10662,24 +10708,31 @@
       state.voiceCaptureTarget = target;
       const sessionNonce = ++state.voiceSessionNonce;
       state.voiceRecording = true;
+      state.voiceStatus = "requesting";
+      syncActiveVoiceDisplay(target);
       if (state.voiceTimer) {
         clearTimeout(state.voiceTimer);
         state.voiceTimer = null;
       }
       try {
-        await openVoiceRealtimeSession(target, sessionNonce);
-      } catch (err) {
-        state.voiceRecording = false;
-        state.voiceStatus = "error";
-        cleanupVoiceRuntime();
-        toast(err.message || "无法启动语音识别");
-        if (target === "composer") {
-          state.composerVoicePendingSend = false;
-          stopComposerVoiceDurationTimer();
-          renderComposerVoiceFeedback(false);
+        const opened = await openVoiceRealtimeSession(target, sessionNonce);
+        if (!opened) {
+          if (target === "composer") resetComposerVoiceCapture({ status: "idle", clearTranscript: true });
+          return false;
         }
+      } catch (err) {
+        if (target === "composer") {
+          resetComposerVoiceCapture({ status: "error", clearTranscript: true });
+        } else {
+          state.voiceRecording = false;
+          state.voiceStatus = "error";
+          cleanupVoiceRuntime();
+        }
+        toast(err.message || "无法启动语音识别");
+        return false;
       }
       syncActiveVoiceDisplay(target);
+      return true;
     }
 
     function stopVoiceCapture(evt) {
@@ -10692,18 +10745,18 @@
       }
       syncActiveVoiceDisplay(state.voiceCaptureTarget);
       state.voiceTimer = setTimeout(() => {
+        if (state.voiceCaptureTarget === "composer" && state.composerVoicePendingSend) {
+          const hasPartial = !!String(state.voiceDraft || state.voicePartial || "").trim();
+          resetComposerVoiceCapture({ status: "idle", clearTranscript: true });
+          toast(hasPartial ? "语音识别超时，请重试" : "没有识别到语音，请按住后再说一次");
+          return;
+        }
         if (!state.voiceDraft && !state.voicePartial) {
           cleanupVoiceRuntime();
           state.voiceStatus = "idle";
-          if (state.voiceCaptureTarget === "composer") {
-            state.composerVoicePendingSend = false;
-            stopComposerVoiceDurationTimer();
-            renderComposerVoiceFeedback(false);
-            toast("没有识别到语音，请按住后再说一次");
-          }
         }
         syncActiveVoiceDisplay(state.voiceCaptureTarget);
-      }, 2500);
+      }, 12000);
     }
 
     function stopComposerVoiceDurationTimer() {
@@ -10736,7 +10789,9 @@
       if (status) {
         status.textContent = cancelling
           ? "松开取消"
-          : (state.composerVoicePendingSend ? "正在识别..." : "松开发送");
+          : (state.composerVoicePendingSend
+            ? "正在识别..."
+            : (state.voiceStatus === "requesting" ? "正在请求麦克风..." : "松开发送"));
       }
       if (duration) {
         const seconds = composerVoiceElapsedSeconds();
@@ -10744,17 +10799,37 @@
       }
     }
 
-    function cancelComposerVoiceCapture() {
-      state.composerVoiceCancelled = true;
+    function releaseComposerVoicePointer() {
+      const pointerId = state.composerVoicePointerId;
+      state.composerVoicePointerId = null;
+      if (pointerId === null) return;
+      try { $("composerVoiceBtn")?.releasePointerCapture?.(pointerId); } catch {}
+    }
+
+    function resetComposerVoiceCapture(options = {}) {
+      const status = String(options.status || "idle");
+      const clearTranscript = options.clearTranscript !== false;
+      releaseComposerVoicePointer();
       state.composerVoicePendingSend = false;
       state.voiceRecording = false;
-      state.voiceStatus = "idle";
-      state.voiceDraft = "";
-      state.voicePartial = "";
+      state.voiceStatus = status;
+      state.composerVoiceCancelled = status === "cancelled";
+      if (clearTranscript) {
+        state.voiceDraft = "";
+        state.voicePartial = "";
+      }
       state.voiceSessionNonce += 1;
+      if (state.voiceTimer) {
+        clearTimeout(state.voiceTimer);
+        state.voiceTimer = null;
+      }
       stopComposerVoiceDurationTimer();
       cleanupVoiceRuntime();
       renderComposerVoiceFeedback(false);
+    }
+
+    function cancelComposerVoiceCapture() {
+      resetComposerVoiceCapture({ status: "cancelled", clearTranscript: true });
     }
 
     async function startComposerVoiceCapture(evt) {
@@ -10766,6 +10841,7 @@
       state.composerVoiceStartedAt = Date.now();
       state.composerVoiceCancelled = false;
       state.composerVoicePendingSend = false;
+      state.voiceStatus = "requesting";
       try { evt.currentTarget?.setPointerCapture?.(evt.pointerId); } catch {}
       stopComposerVoiceDurationTimer();
       state.composerVoiceDurationTimer = setInterval(renderComposerVoiceFeedback, 250);
@@ -10783,8 +10859,7 @@
     function finishComposerVoiceCapture(evt, forceCancel = false) {
       if (state.composerVoicePointerId === null || (evt && evt.pointerId !== state.composerVoicePointerId)) return;
       if (evt && evt.cancelable) evt.preventDefault();
-      try { evt?.currentTarget?.releasePointerCapture?.(state.composerVoicePointerId); } catch {}
-      state.composerVoicePointerId = null;
+      releaseComposerVoicePointer();
       const elapsedMs = Math.max(0, Date.now() - state.composerVoiceStartedAt);
       if (forceCancel || state.composerVoiceCancelled) {
         cancelComposerVoiceCapture();
@@ -17125,8 +17200,13 @@
         state.messageStatusReady = true;
         renderOfficeEmployees();
         clearRenderedMessages();
-        if (!items.length) return;
+        if (!items.length) {
+          scrollMessagesToBottom();
+          return;
+        }
         for (const item of items) renderHistoryItem(item);
+        scrollMessagesToBottom();
+        setTimeout(scrollMessagesToBottom, 120);
       } catch (err) {
         console.warn("Load H5 history failed", err);
       }
@@ -18950,6 +19030,27 @@
       if (state.composerVoicePointerId !== null) finishComposerVoiceCapture(evt, true);
     });
     $("composerVoiceBtn")?.addEventListener("contextmenu", (evt) => evt.preventDefault());
+    $("composerVoiceCancelBtn")?.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      cancelComposerVoiceCapture();
+      toast("已取消语音输入");
+    });
+    document.addEventListener("pointermove", (evt) => {
+      if (state.voiceCaptureTarget === "composer") moveComposerVoiceCapture(evt);
+    }, { passive: false });
+    document.addEventListener("pointerup", (evt) => {
+      if (state.voiceCaptureTarget === "composer") finishComposerVoiceCapture(evt, false);
+    });
+    document.addEventListener("pointercancel", (evt) => {
+      if (state.voiceCaptureTarget === "composer") finishComposerVoiceCapture(evt, true);
+    });
+    window.addEventListener("pagehide", () => {
+      if (state.voiceCaptureTarget === "composer") cancelComposerVoiceCapture();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && state.voiceCaptureTarget === "composer") cancelComposerVoiceCapture();
+    });
     $("voiceMicBtn")?.addEventListener("mousedown", startVoiceCapture);
     $("voiceMicBtn")?.addEventListener("touchstart", startVoiceCapture, { passive: false });
     document.addEventListener("mousedown", (evt) => {
