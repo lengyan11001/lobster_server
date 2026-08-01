@@ -880,11 +880,15 @@ async def upload_asset(
 
     name = file.filename or "upload"
     ext = Path(name).suffix or ".bin"
-    mtype = "image"
-    if ext.lower() in (".mp4", ".webm", ".mov", ".avi", ".mkv", ".flv", ".wmv"):
+    mtype = "file"
+    if ext.lower() in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic", ".heif"):
+        mtype = "image"
+    elif ext.lower() in (".mp4", ".webm", ".mov", ".avi", ".mkv", ".flv", ".wmv"):
         mtype = "video"
     elif ext.lower() in (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
         mtype = "audio"
+    elif ext.lower() in (".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".csv", ".txt", ".md"):
+        mtype = "document"
 
     content_type = getattr(file, "content_type", "") or ""
     if split_video and mtype == "video":

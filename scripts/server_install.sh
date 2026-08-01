@@ -16,6 +16,12 @@ fi
 echo "[2/2] 安装依赖 pip install -r requirements.txt ..."
 "$ROOT/.venv/bin/pip" install -r requirements.txt
 
+echo "[Mastra] 安装独立 Node 运行时并构建调度服务 ..."
+"$ROOT/scripts/install_mastra_runtime.sh" "$ROOT"
+export PATH="$ROOT/.runtime/node/bin:$PATH"
+"$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/mastra_server" ci
+"$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/mastra_server" run build
+
 if [ ! -f ".env" ]; then
   cp .env.example .env
   echo ""

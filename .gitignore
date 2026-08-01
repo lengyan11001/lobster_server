@@ -28,6 +28,8 @@ __pycache__/
 
 # Node（可选）
 node_modules/
+mastra_server/.mastra/
+.runtime/
 
 # 运行时
 browser_data/

@@ -16,6 +16,7 @@ from .api.content_records import router as content_records_router
 from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
 from .api.global_leads import router as global_leads_router
 from .api.h5_chat import router as h5_chat_router
+from .api.mastra_chat import router as mastra_chat_router
 from .api.h5_home import router as h5_home_router
 from .api.h5_agent_management import router as h5_agent_management_router
 from .api.h5_personal_settings import router as h5_personal_settings_router
@@ -38,10 +39,43 @@ from .services.brand_context import ensure_user_brand_schema, seed_brand_configs
 logger = logging.getLogger(__name__)
 
 
+def _ensure_h5_chat_mastra_columns() -> None:
+    """Keep standalone H5 startup compatible with pre-Mastra databases."""
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(engine)
+        if not inspector.has_table("h5_chat_messages"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("h5_chat_messages")}
+        with engine.begin() as connection:
+            if "parent_message_id" not in columns:
+                connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN parent_message_id VARCHAR(64)"))
+            if "attachments" not in columns:
+                connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN attachments JSON"))
+            if "session_id" not in columns:
+                connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN session_id VARCHAR(64)"))
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_parent_message_id "
+                    "ON h5_chat_messages (parent_message_id)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_session_id "
+                    "ON h5_chat_messages (session_id)"
+                )
+            )
+    except Exception as exc:
+        logger.warning("H5 Mastra column migration skipped: %s", exc)
+
+
 def create_h5_app() -> FastAPI:
     """Dedicated H5 app: auth, remote chat, scheduled tasks, and lightweight HiFly resources."""
     logger.info("[H5] create_h5_app start")
     Base.metadata.create_all(bind=engine)
+    _ensure_h5_chat_mastra_columns()
     ensure_user_brand_schema(engine)
     seed_brand_configs(SessionLocal)
     app = FastAPI(
@@ -69,6 +103,7 @@ def create_h5_app() -> FastAPI:
     app.include_router(douyin_dashboard_h5_router, prefix="")
     app.include_router(global_leads_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
+    app.include_router(mastra_chat_router, prefix="")
     app.include_router(h5_home_router, prefix="")
     app.include_router(h5_agent_management_router, prefix="")
     app.include_router(h5_personal_settings_router, prefix="")

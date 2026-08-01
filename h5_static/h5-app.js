@@ -16,12 +16,21 @@
     }
     const state = {
       token: localStorage.getItem(H5_TOKEN_KEY) || "",
-      mode: "direct",
+      mode: "mastra",
       user: null,
       homeHeroUrl: "",
       streams: new Map(),
       pollers: new Map(),
       uploads: [],
+      chatSessions: [],
+      activeChatSessionId: localStorage.getItem(brandStorageKey("lobster_h5_chat_session_id")) || "",
+      chatSessionsRequestSeq: 0,
+      chatHistoryRequestSeq: 0,
+      chatApprovalRequestSeq: 0,
+      pendingApprovals: [],
+      activeApprovalId: "",
+      chatSessionManageId: "",
+      chatSessionManageMode: "rename",
       devices: [],
       selectedInstallationId: localStorage.getItem(brandStorageKey("lobster_h5_selected_installation_id")) || "",
       tasks: [],
@@ -234,6 +243,15 @@
       voiceSourceNode: null,
       voiceSeq: 0,
       officeVoiceHoldActive: false,
+      voiceCaptureTarget: "voice",
+      voiceSessionNonce: 0,
+      composerVoicePointerId: null,
+      composerVoiceStartY: 0,
+      composerVoiceStartedAt: 0,
+      composerVoiceCancelled: false,
+      composerVoicePendingSend: false,
+      composerVoiceDurationTimer: null,
+      mastraReady: false,
       currentDepartmentId: "",
       currentAbilityKey: "",
       abilityTrail: [],
@@ -243,7 +261,7 @@
       speechLastText: "",
       speechLastAt: 0,
     };
-    const SHOW_INTERNAL_STEPS = false;
+    const SHOW_INTERNAL_STEPS = true;
     const IMAGE_TO_VIDEO_PROMPT = "用这个图片，提示词：";
     const TASK_CAPABILITIES = {
       "goal.video.pipeline": {
@@ -6788,7 +6806,7 @@
       if (!/^https?:\/\//i.test(url)) throw new Error("当前内容没有可读取的素材地址");
       const fallbackName = mediaType === "video" ? "digital-human-video.mp4" : "digital-human-image.jpg";
       const filename = source.filename || filenameFromUrl(url, fallbackName);
-      const response = await fetch(mediaProxyUrl(url, "inline", filename), { cache: "no-store" });
+      const response = await fetch(apiUrl(mediaProxyUrl(url, "inline", filename)), { cache: "no-store" });
       if (!response.ok) throw new Error(`素材读取失败：HTTP ${response.status}`);
       const blob = await response.blob();
       const type = blob.type || (mediaType === "video" ? "video/mp4" : "image/jpeg");
@@ -9823,22 +9841,9 @@
       const input = $("messageInput");
       if (!input) return;
       input.style.height = "auto";
-      const expanded = $("sendForm")?.classList.contains("expanded");
-      const limit = expanded ? Math.min(window.innerHeight * 0.48, 360) : 148;
+      const limit = Math.min(window.innerHeight * 0.34, 220);
       const next = Math.min(input.scrollHeight, limit);
-      input.style.height = `${Math.max(48, next)}px`;
-    }
-
-    function setComposerExpanded(expanded) {
-      const form = $("sendForm");
-      const btn = $("toggleComposerBtn");
-      if (!form || !btn) return;
-      form.classList.toggle("expanded", !!expanded);
-      btn.textContent = expanded ? "收起" : "展开";
-      btn.setAttribute("aria-expanded", expanded ? "true" : "false");
-      autosizeMessageInput();
-      focusMessageInput();
-      setTimeout(scrollMessagesToBottom, 60);
+      input.style.height = `${Math.max(46, next)}px`;
     }
 
     function syncScrollTopButton(key = activeViewKey()) {
@@ -9949,7 +9954,7 @@
         contentRecords: ["内容记录", ""],
         leadCenter: ["客资线索", ""],
         tutorial: ["教程", ""],
-        messages: ["手机会话", "消息结果和素材预览"],
+        messages: ["AI 调度助手", "用文字或语音安排工作"],
         voice: ["龙虾AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
         mountedAccounts: ["平台账号", ""],
@@ -10063,6 +10068,7 @@
       }
       if (key === "messages") {
         loadHistory({ includeEvents: true }).catch(() => {});
+        refreshMastraStatus().catch(() => {});
         renderChatContextBar();
         window.scrollTo({ top: 0, left: 0, behavior: "auto" });
         setTimeout(() => {
@@ -10487,17 +10493,43 @@
       return output;
     }
 
-    function voiceWsUrl() {
+    function voiceWsUrl(resolveIntent = true) {
       const base = H5_API_BASE.replace(/^http/i, "ws").replace(/^https/i, "wss").replace(/\/$/, "");
       const params = new URLSearchParams();
       params.set("token", state.token || "");
       params.set("brand", H5_BRAND_MARK);
+      params.set("resolve_intent", resolveIntent ? "1" : "0");
       const installationId = localStorage.getItem("installation_id") || "";
       if (installationId) params.set("installation_id", installationId);
       return `${base}/api/h5-chat/voice/session?${params.toString()}`;
     }
 
-    async function openVoiceRealtimeSession() {
+    function syncActiveVoiceDisplay(target = state.voiceCaptureTarget) {
+      if (target === "composer") renderComposerVoiceFeedback();
+      else syncVoiceDraftDisplay();
+    }
+
+    async function finishComposerVoiceRecognition(text) {
+      const transcript = String(text || "").trim();
+      const shouldSend = state.composerVoicePendingSend && !state.composerVoiceCancelled;
+      state.composerVoicePendingSend = false;
+      state.voiceRecording = false;
+      if (state.voiceTimer) {
+        clearTimeout(state.voiceTimer);
+        state.voiceTimer = null;
+      }
+      stopComposerVoiceDurationTimer();
+      cleanupVoiceRuntime();
+      renderComposerVoiceFeedback(false);
+      if (!shouldSend) return;
+      if (!transcript) {
+        toast("没有识别到语音，请按住后再说一次");
+        return;
+      }
+      await submitChatMessage(transcript, { source: "voice" });
+    }
+
+    async function openVoiceRealtimeSession(target = "voice", sessionNonce = state.voiceSessionNonce) {
       if (!state.token) throw new Error("请先登录后再使用语音输入");
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("当前浏览器不支持麦克风录音");
@@ -10508,7 +10540,7 @@
       state.voiceExpanded = false;
       resetVoiceIntent();
 
-      const ws = new WebSocket(voiceWsUrl());
+      const ws = new WebSocket(voiceWsUrl(target !== "composer"));
       ws.binaryType = "arraybuffer";
       await new Promise((resolve, reject) => {
         let settled = false;
@@ -10523,32 +10555,43 @@
           if (!settled) finish(reject, new Error("语音会话已关闭"));
         };
       });
+      if (sessionNonce !== state.voiceSessionNonce || !state.voiceRecording) {
+        try { ws.close(); } catch {}
+        return;
+      }
       state.voiceWs = ws;
       ws.onmessage = (event) => {
+        if (sessionNonce !== state.voiceSessionNonce) return;
         try {
           const payload = JSON.parse(String(event.data || "{}"));
           const type = String(payload.type || "");
           if (type === "listening") {
             state.voiceStatus = "recording";
-            syncVoiceDraftDisplay();
+            syncActiveVoiceDisplay(target);
             return;
           }
           if (type === "partial") {
             state.voiceStatus = "recognizing";
             state.voicePartial = String(payload.text || "").trim();
-            syncVoiceDraftDisplay();
+            syncActiveVoiceDisplay(target);
             return;
           }
           if (type === "final") {
-            state.voiceStatus = "understanding";
             state.voicePartial = "";
             state.voiceDraft = String(payload.text || "").trim();
+            if (target === "composer") {
+              state.voiceStatus = "resolved";
+              finishComposerVoiceRecognition(state.voiceDraft).catch((err) => toast(err.message || "发送失败"));
+              return;
+            }
+            state.voiceStatus = "understanding";
             state.voiceExpanded = false;
             resetVoiceIntent();
             syncVoiceDraftDisplay();
             return;
           }
           if (type === "intent") {
+            if (target === "composer") return;
             state.voiceStatus = "resolved";
             state.voiceIntent = payload;
             state.voiceActions = Array.isArray(payload.actions) ? payload.actions : [];
@@ -10561,7 +10604,13 @@
             state.voiceStatus = "error";
             cleanupVoiceRuntime();
             toast(String(payload.message || "语音识别失败"));
-            syncVoiceDraftDisplay();
+            if (target === "composer") {
+              state.composerVoicePendingSend = false;
+              stopComposerVoiceDurationTimer();
+              renderComposerVoiceFeedback(false);
+            } else {
+              syncVoiceDraftDisplay();
+            }
           }
         } catch (err) {
           console.warn("voice message parse failed", err);
@@ -10573,6 +10622,13 @@
       ws.send(JSON.stringify({ type: "start", format: "pcm_s16le", sample_rate: 16000, channels: 1 }));
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (sessionNonce !== state.voiceSessionNonce || !state.voiceRecording) {
+        try { stream.getTracks().forEach((track) => track.stop()); } catch {}
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ type: "stop" })); } catch {}
+        }
+        return;
+      }
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       if (audioContext.state === "suspended") {
         try { await audioContext.resume(); } catch {}
@@ -10600,23 +10656,30 @@
       state.voiceStatus = "recording";
     }
 
-    async function startVoiceCapture(evt) {
+    async function startVoiceCapture(evt, target = "voice") {
       if (evt && evt.cancelable) evt.preventDefault();
       if (state.voiceRecording) return;
+      state.voiceCaptureTarget = target;
+      const sessionNonce = ++state.voiceSessionNonce;
       state.voiceRecording = true;
       if (state.voiceTimer) {
         clearTimeout(state.voiceTimer);
         state.voiceTimer = null;
       }
       try {
-        await openVoiceRealtimeSession();
+        await openVoiceRealtimeSession(target, sessionNonce);
       } catch (err) {
         state.voiceRecording = false;
         state.voiceStatus = "error";
         cleanupVoiceRuntime();
         toast(err.message || "无法启动语音识别");
+        if (target === "composer") {
+          state.composerVoicePendingSend = false;
+          stopComposerVoiceDurationTimer();
+          renderComposerVoiceFeedback(false);
+        }
       }
-      syncVoiceDraftDisplay();
+      syncActiveVoiceDisplay(target);
     }
 
     function stopVoiceCapture(evt) {
@@ -10627,14 +10690,114 @@
       if (state.voiceWs && state.voiceWs.readyState === WebSocket.OPEN) {
         try { state.voiceWs.send(JSON.stringify({ type: "stop" })); } catch {}
       }
-      syncVoiceDraftDisplay();
+      syncActiveVoiceDisplay(state.voiceCaptureTarget);
       state.voiceTimer = setTimeout(() => {
         if (!state.voiceDraft && !state.voicePartial) {
           cleanupVoiceRuntime();
           state.voiceStatus = "idle";
+          if (state.voiceCaptureTarget === "composer") {
+            state.composerVoicePendingSend = false;
+            stopComposerVoiceDurationTimer();
+            renderComposerVoiceFeedback(false);
+            toast("没有识别到语音，请按住后再说一次");
+          }
         }
-        syncVoiceDraftDisplay();
+        syncActiveVoiceDisplay(state.voiceCaptureTarget);
       }, 2500);
+    }
+
+    function stopComposerVoiceDurationTimer() {
+      if (state.composerVoiceDurationTimer) {
+        clearInterval(state.composerVoiceDurationTimer);
+        state.composerVoiceDurationTimer = null;
+      }
+    }
+
+    function composerVoiceElapsedSeconds() {
+      if (!state.composerVoiceStartedAt) return 0;
+      return Math.max(0, Math.floor((Date.now() - state.composerVoiceStartedAt) / 1000));
+    }
+
+    function renderComposerVoiceFeedback(visible = null) {
+      const feedback = $("composerVoiceFeedback");
+      const button = $("composerVoiceBtn");
+      const status = $("composerVoiceStatus");
+      const duration = $("composerVoiceDuration");
+      if (!feedback || !button) return;
+      const active = visible === null
+        ? state.voiceCaptureTarget === "composer" && (state.voiceRecording || state.composerVoicePendingSend)
+        : !!visible;
+      const cancelling = active && state.composerVoiceCancelled;
+      feedback.classList.toggle("hidden", !active);
+      feedback.classList.toggle("is-cancelling", cancelling);
+      button.classList.toggle("is-recording", active && !cancelling);
+      button.classList.toggle("is-cancelling", cancelling);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+      if (status) {
+        status.textContent = cancelling
+          ? "松开取消"
+          : (state.composerVoicePendingSend ? "正在识别..." : "松开发送");
+      }
+      if (duration) {
+        const seconds = composerVoiceElapsedSeconds();
+        duration.textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+      }
+    }
+
+    function cancelComposerVoiceCapture() {
+      state.composerVoiceCancelled = true;
+      state.composerVoicePendingSend = false;
+      state.voiceRecording = false;
+      state.voiceStatus = "idle";
+      state.voiceDraft = "";
+      state.voicePartial = "";
+      state.voiceSessionNonce += 1;
+      stopComposerVoiceDurationTimer();
+      cleanupVoiceRuntime();
+      renderComposerVoiceFeedback(false);
+    }
+
+    async function startComposerVoiceCapture(evt) {
+      if (!evt || (evt.pointerType === "mouse" && evt.button !== 0)) return;
+      if (evt.cancelable) evt.preventDefault();
+      if (state.voiceRecording || state.composerVoicePendingSend) return;
+      state.composerVoicePointerId = evt.pointerId;
+      state.composerVoiceStartY = Number(evt.clientY || 0);
+      state.composerVoiceStartedAt = Date.now();
+      state.composerVoiceCancelled = false;
+      state.composerVoicePendingSend = false;
+      try { evt.currentTarget?.setPointerCapture?.(evt.pointerId); } catch {}
+      stopComposerVoiceDurationTimer();
+      state.composerVoiceDurationTimer = setInterval(renderComposerVoiceFeedback, 250);
+      renderComposerVoiceFeedback(true);
+      await startVoiceCapture(evt, "composer");
+    }
+
+    function moveComposerVoiceCapture(evt) {
+      if (state.composerVoicePointerId === null || evt.pointerId !== state.composerVoicePointerId) return;
+      if (evt.cancelable) evt.preventDefault();
+      state.composerVoiceCancelled = state.composerVoiceStartY - Number(evt.clientY || 0) >= 58;
+      renderComposerVoiceFeedback(true);
+    }
+
+    function finishComposerVoiceCapture(evt, forceCancel = false) {
+      if (state.composerVoicePointerId === null || (evt && evt.pointerId !== state.composerVoicePointerId)) return;
+      if (evt && evt.cancelable) evt.preventDefault();
+      try { evt?.currentTarget?.releasePointerCapture?.(state.composerVoicePointerId); } catch {}
+      state.composerVoicePointerId = null;
+      const elapsedMs = Math.max(0, Date.now() - state.composerVoiceStartedAt);
+      if (forceCancel || state.composerVoiceCancelled) {
+        cancelComposerVoiceCapture();
+        return;
+      }
+      if (elapsedMs < 350) {
+        cancelComposerVoiceCapture();
+        toast("按住说话，松开后发送");
+        return;
+      }
+      state.composerVoicePendingSend = true;
+      renderComposerVoiceFeedback(true);
+      stopVoiceCapture(evt);
     }
 
     function setOfficeVoiceButtonPressed(pressed) {
@@ -10773,8 +10936,10 @@
         $("loginPanel").classList.add("hidden");
         $("appPanel").classList.remove("hidden");
         switchTab("office");
+        await loadChatSessions();
         await Promise.all([
           loadHistory({ includeEvents: false }),
+          loadPendingApprovals(),
           refreshDeviceStatus(),
           refreshOfficeSummary(),
           loadTaskSkills(),
@@ -11052,6 +11217,35 @@
       }
     }
 
+    function renderChatAvailabilityStatus() {
+      const dot = $("onlineDot");
+      const label = $("deviceText");
+      if (!dot || !label) return;
+      const online = (state.devices || []).filter((device) => device.online).length;
+      const total = (state.devices || []).length;
+      dot.classList.toggle("online", !!state.mastraReady);
+      if (state.mastraReady) {
+        label.textContent = online
+          ? `AI 调度在线 · Online ${online}/${total || online} 台`
+          : "AI 调度在线 · 本机任务需启动 Online";
+      } else {
+        label.textContent = online
+          ? `AI 调度连接中 · Online ${online}/${total || online} 台`
+          : "AI 调度连接中";
+      }
+    }
+
+    async function refreshMastraStatus() {
+      if (!state.token) return;
+      try {
+        const data = await api("/api/mastra-chat/status");
+        state.mastraReady = !!data.ready;
+      } catch {
+        state.mastraReady = false;
+      }
+      renderChatAvailabilityStatus();
+    }
+
     async function refreshDeviceStatus() {
       if (!state.token) return;
       try {
@@ -11059,22 +11253,20 @@
         state.devices = Array.isArray(data.devices) ? data.devices : [];
         ensureSelectedInstallationId();
         state.publishAccountsLoaded = false;
-        $("onlineDot").classList.toggle("online", !!data.online);
         const online = state.devices.filter((d) => d.online).length;
         const total = state.devices.length;
         const text = data.online ? `本地在线：${online}/${total || online} 台` : "未检测到本地 online";
-        $("deviceText").textContent = text;
         $("profileDeviceText").textContent = text;
+        renderChatAvailabilityStatus();
         renderProfileDeviceSelect();
         renderWorkflowDeviceSelect();
         renderOfficeEmployees();
         if (activeViewKey() === "mountedAccounts") loadMountedAccounts(true).catch(() => {});
       } catch (err) {
-        $("onlineDot").classList.remove("online");
         renderProfileDeviceSelect();
         renderWorkflowDeviceSelect();
-        $("deviceText").textContent = "设备状态获取失败";
         $("profileDeviceText").textContent = "设备状态获取失败";
+        renderChatAvailabilityStatus();
         renderOfficeEmployees();
         if (activeViewKey() === "mountedAccounts") loadMountedAccounts(true).catch(() => {});
       }
@@ -15596,6 +15788,24 @@
       switchTab("taskDetail");
     }
 
+    function composerAttachmentType(item) {
+      const raw = String((item && (item.mediaType || item.media_type)) || "").trim().toLowerCase();
+      if (["image", "video", "audio", "document", "file"].includes(raw)) return raw;
+      const contentType = String((item && item.contentType) || "").toLowerCase();
+      if (contentType.startsWith("image/")) return "image";
+      if (contentType.startsWith("video/")) return "video";
+      if (contentType.startsWith("audio/")) return "audio";
+      return mediaTypeFromUrl(String((item && item.url) || ""), "file");
+    }
+
+    function composerAttachmentIcon(item) {
+      const type = composerAttachmentType(item);
+      if (type === "audio") return "音频";
+      const name = String((item && item.name) || "文件");
+      const ext = name.includes(".") ? name.split(".").pop() : "文件";
+      return String(ext || "文件").slice(0, 6);
+    }
+
     function renderUploads() {
       const box = $("uploadPreview");
       if (!box) return;
@@ -15604,9 +15814,24 @@
       state.uploads.forEach((item, idx) => {
         const card = document.createElement("div");
         card.className = `upload-card ${item.status === "failed" ? "failed" : ""}`;
-        const img = document.createElement("img");
-        img.src = item.previewUrl || item.url || "";
-        img.alt = item.name || "上传图片";
+        const type = composerAttachmentType(item);
+        const source = item.previewUrl || item.url || "";
+        let media;
+        if (type === "image") {
+          media = document.createElement("img");
+          media.src = source;
+          media.alt = item.name || "图片素材";
+        } else if (type === "video") {
+          media = document.createElement("video");
+          media.src = source;
+          media.muted = true;
+          media.playsInline = true;
+          media.preload = "metadata";
+        } else {
+          media = document.createElement("span");
+          media.className = "upload-file-icon";
+          media.textContent = composerAttachmentIcon(item);
+        }
         const rm = document.createElement("button");
         rm.type = "button";
         rm.className = "upload-remove";
@@ -15621,27 +15846,44 @@
         });
         const status = document.createElement("div");
         status.className = "upload-status";
-        status.textContent = item.status === "uploading" ? "上传中..." : (item.status === "failed" ? (item.error || "上传失败") : "已上传");
-        card.appendChild(img);
+        const detail = item.status === "uploading" ? "上传中..." : (item.status === "failed" ? (item.error || "上传失败") : "已添加");
+        status.innerHTML = `<b>${escapeHtml(item.name || "素材")}</b><span>${escapeHtml(detail)}</span>`;
+        card.appendChild(media);
         card.appendChild(rm);
         card.appendChild(status);
         box.appendChild(card);
       });
     }
 
-    async function uploadImageFile(file) {
-      const item = { name: file.name || "图片", previewUrl: URL.createObjectURL(file), url: "", status: "uploading", error: "" };
+    async function uploadComposerFile(file) {
+      if (state.uploads.length >= 8) {
+        toast("每条消息最多添加 8 个素材");
+        return;
+      }
+      const item = {
+        name: file.name || "素材",
+        previewUrl: URL.createObjectURL(file),
+        url: "",
+        assetId: "",
+        mediaType: composerAttachmentType({ contentType: file.type, name: file.name }),
+        contentType: file.type || "",
+        size: Number(file.size || 0),
+        status: "uploading",
+        error: "",
+      };
       state.uploads.push(item);
       renderUploads();
       const fd = new FormData();
       fd.append("file", file);
       try {
-        const resp = await fetch(apiUrl("/api/h5-chat/uploads"), { method: "POST", headers: authHeaders(), body: fd });
+        const resp = await fetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.detail || "上传失败");
-        item.url = data.url || "";
-        item.status = item.url ? "ready" : "failed";
-        if (!item.url) item.error = "缺少图片链接";
+        item.assetId = String(data.asset_id || "");
+        item.url = String(data.source_url || data.url || "");
+        item.mediaType = String(data.media_type || item.mediaType || "file");
+        item.status = item.assetId && item.url ? "ready" : "failed";
+        if (item.status === "failed") item.error = "素材上传后缺少可用地址";
       } catch (err) {
         item.status = "failed";
         item.error = err.message || "上传失败";
@@ -15654,8 +15896,17 @@
       return state.uploads.some((item) => item.status === "uploading");
     }
 
-    function readyImageUrls() {
-      return state.uploads.filter((item) => item.status === "ready" && item.url).map((item) => item.url);
+    function readyAttachments() {
+      return state.uploads
+        .filter((item) => item.status === "ready" && item.url)
+        .map((item) => ({
+          asset_id: String(item.assetId || item.asset_id || ""),
+          url: String(item.url || ""),
+          name: String(item.name || "素材"),
+          media_type: composerAttachmentType(item),
+          content_type: String(item.contentType || item.content_type || ""),
+          size: Number(item.size || 0),
+        }));
     }
 
     function clearUploads() {
@@ -15669,10 +15920,7 @@
     }
 
     function buildMessageContent(raw) {
-      const content = `${(raw || "").trim()}${chatContextMarker()}`;
-      const urls = readyImageUrls();
-      if (!urls.length) return content;
-      return `${content}\n\n【用户已上传图片】\n${urls.map((url, idx) => `${idx + 1}. ${url}`).join("\n")}\n\n请在本轮任务中使用以上图片链接作为参考素材；如果用户要求图生视频，请直接基于图片生成视频，不要只写文案。`;
+      return `${(raw || "").trim()}${chatContextMarker()}`;
     }
 
     function normalizeMarkdownLinks(text) {
@@ -16245,12 +16493,67 @@
       return el;
     }
 
+    function renderBubbleAttachments(bubble, attachments) {
+      if (!bubble || !Array.isArray(attachments) || !attachments.length) return;
+      bubble.querySelector(".bubble-attachments")?.remove();
+      const host = document.createElement("div");
+      host.className = "bubble-attachments";
+      attachments.slice(0, 8).forEach((raw) => {
+        const item = raw && typeof raw === "object" ? raw : {};
+        const url = String(item.url || item.source_url || "").trim();
+        const name = String(item.name || item.filename || "素材").trim();
+        const type = composerAttachmentType({ ...item, url, name });
+        const card = document.createElement("div");
+        card.className = "bubble-attachment";
+        if (type === "image" && url) {
+          const img = document.createElement("img");
+          img.src = url;
+          img.alt = name;
+          card.appendChild(img);
+        } else if (type === "video" && url) {
+          const video = document.createElement("video");
+          video.src = url;
+          video.controls = true;
+          video.playsInline = true;
+          video.preload = "metadata";
+          card.appendChild(video);
+        } else if (type === "audio" && url) {
+          const audio = document.createElement("audio");
+          audio.src = url;
+          audio.controls = true;
+          audio.preload = "metadata";
+          card.appendChild(audio);
+        } else {
+          const file = document.createElement(url ? "a" : "div");
+          file.className = "bubble-attachment-file";
+          if (url) {
+            file.href = mediaProxyUrl(url, "inline", name);
+            file.target = "_blank";
+            file.rel = "noopener noreferrer";
+          }
+          file.innerHTML = `<i>${escapeHtml(composerAttachmentIcon({ ...item, name }))}</i><span>${escapeHtml(name)}</span>`;
+          card.appendChild(file);
+        }
+        if (type !== "document" && type !== "file") {
+          const label = document.createElement("div");
+          label.className = "bubble-attachment-name";
+          label.textContent = name;
+          card.appendChild(label);
+        }
+        host.appendChild(card);
+      });
+      bubble.appendChild(host);
+    }
+
     function addStep(bubble, text) {
       if (!SHOW_INTERNAL_STEPS || !bubble || !bubble._steps || !text) return;
+      const existing = Array.from(bubble._steps.children || []);
+      if (existing.length && existing[existing.length - 1].textContent === text) return;
       const s = document.createElement("span");
       s.className = "step";
       s.textContent = text;
       bubble._steps.appendChild(s);
+      while (bubble._steps.children.length > 6) bubble._steps.firstElementChild?.remove();
     }
 
     function setBubbleText(bubble, text) {
@@ -16270,12 +16573,13 @@
     function eventLabel(ev) {
       const p = ev.payload || {};
       if (!SHOW_INTERNAL_STEPS) return "";
-      if (ev.type === "queued") return "已进入云端队列";
-      if (ev.type === "claimed") return "本地设备已领取";
+      if (ev.type === "queued") return p.text || "已进入 AI 调度队列";
+      if (ev.type === "claimed") return p.text || "AI 调度助手已接收";
       if (ev.type === "thinking") return p.text || "正在处理";
       if (ev.type === "tool_start") return p.name ? `调用能力：${p.name}` : "调用能力";
       if (ev.type === "tool_end") return p.name ? `能力完成：${p.name}` : "能力完成";
       if (ev.type === "progress") return p.text || p.message || "处理中";
+      if (ev.type === "approval_required") return "等待确认后执行";
       return "";
     }
 
@@ -16321,7 +16625,20 @@
       }
       const label = eventLabel(ev);
       if (label) addStep(bubble, label);
-      if (ev.type === "delta" && ev.payload && ev.payload.text) appendBubbleText(bubble, ev.payload.text);
+      if (ev.type === "approval_required" && ev.payload) {
+        upsertPendingApproval(ev.payload);
+      }
+      if (ev.type === "delta" && ev.payload && ev.payload.text) {
+        if (bubble._placeholder) {
+          bubble._placeholder = false;
+          setBubbleText(bubble, "");
+        }
+        appendBubbleText(bubble, ev.payload.text);
+      }
+      if (ev.type === "progress" && ev.payload && ev.payload.reply_text) {
+        bubble._placeholder = false;
+        setBubbleText(bubble, ev.payload.reply_text);
+      }
       renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
       renderPublishDraftActions(bubble, ev.payload || {});
       if (ev.type === "final") {
@@ -16387,7 +16704,7 @@
       let last = 0;
       const es = new EventSource(apiUrl(`/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}`));
       state.streams.set(messageId, es);
-      ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error", "publish_pending", "publish_claimed", "publish_result"].forEach((type) => {
+      ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error", "approval_required", "publish_pending", "publish_claimed", "publish_result"].forEach((type) => {
         es.addEventListener(type, (evt) => {
           try {
             const ev = JSON.parse(evt.data || "{}");
@@ -16417,12 +16734,14 @@
       const events = Array.isArray(item.events) ? item.events : [];
       const isFinal = ["completed", "failed", "cancelled"].includes(msg.status);
       const hasDelta = events.some((ev) => ev && ev.type === "delta");
-      addBubble("user", msg.content || "");
-      let initialText = "已恢复，等待本地设备处理...";
+      const userBubble = addBubble("user", msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? `已添加 ${msg.attachments.length} 个素材` : ""));
+      renderBubbleAttachments(userBubble, msg.attachments || []);
+      let initialText = msg.mode === "mastra" ? "正在继续处理..." : "已恢复，等待本地设备处理...";
       if (msg.status === "completed") initialText = msg.reply_text || "处理完成。";
       if (msg.status === "failed") initialText = msg.error || "处理失败";
       if (!isFinal && hasDelta) initialText = "";
       const bot = addBubble("bot", initialText);
+      bot._placeholder = !isFinal && !hasDelta;
       if (msg.status === "failed") bot.classList.add("err");
       let finalPayload = null;
       for (const ev of events) {
@@ -16575,11 +16894,227 @@
       return out.slice(0, 8);
     }
 
+    function activeChatSession() {
+      return (state.chatSessions || []).find((row) => String(row.id || "") === String(state.activeChatSessionId || "")) || null;
+    }
+
+    function syncChatSessionUi() {
+      const current = activeChatSession();
+      const title = current ? (current.title || "新会话") : "新会话";
+      const permission = current && current.permission_mode === "full" ? "full" : "confirm";
+      if ($("chatSessionTitle")) $("chatSessionTitle").textContent = title;
+      if ($("chatSessionPermission")) $("chatSessionPermission").textContent = permission === "full" ? "完全授权" : "需要确认";
+      if ($("composerPermissionLabel")) $("composerPermissionLabel").textContent = permission === "full" ? "完全授权" : "需要确认";
+      document.querySelectorAll("[data-chat-permission]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.chatPermission === permission);
+      });
+      renderChatSessions();
+    }
+
+    function renderChatSessions() {
+      const host = $("chatSessionsList");
+      if (!host) return;
+      const rows = Array.isArray(state.chatSessions) ? state.chatSessions : [];
+      host.innerHTML = rows.length ? rows.map((row) => {
+        const active = String(row.id || "") === String(state.activeChatSessionId || "");
+        const permission = row.permission_mode === "full" ? "完全授权" : "需要确认";
+        return `<div class="chat-session-row${active ? " active" : ""}" data-chat-session-row="${escapeHtml(row.id || "")}">
+          <button class="chat-session-select" type="button" data-chat-session-select="${escapeHtml(row.id || "")}">
+            <strong>${escapeHtml(row.title || "新会话")}</strong>
+            <span>${escapeHtml(permission)} · ${escapeHtml(String(row.message_count || 0))} 条消息</span>
+          </button>
+          <div class="chat-session-actions">
+            <button type="button" data-chat-session-rename="${escapeHtml(row.id || "")}" aria-label="重命名" title="重命名">✎</button>
+            <button type="button" data-chat-session-delete="${escapeHtml(row.id || "")}" aria-label="删除" title="删除">×</button>
+          </div>
+        </div>`;
+      }).join("") : `<div class="hint">暂无会话</div>`;
+    }
+
+    function closeAllMessageStreams() {
+      Array.from(state.streams.keys()).forEach(closeStream);
+      Array.from(state.pollers.keys()).forEach(closeStream);
+    }
+
+    async function loadChatSessions() {
+      if (!state.token) return [];
+      const requestId = ++state.chatSessionsRequestSeq;
+      const data = await api("/api/mastra-chat/sessions");
+      if (requestId !== state.chatSessionsRequestSeq) return state.chatSessions;
+      state.chatSessions = Array.isArray(data.sessions) ? data.sessions : [];
+      if (!state.chatSessions.some((row) => row.id === state.activeChatSessionId)) {
+        state.activeChatSessionId = state.chatSessions[0] ? state.chatSessions[0].id : "";
+      }
+      if (state.activeChatSessionId) localStorage.setItem(brandStorageKey("lobster_h5_chat_session_id"), state.activeChatSessionId);
+      syncChatSessionUi();
+      return state.chatSessions;
+    }
+
+    async function createChatSession() {
+      const data = await api("/api/mastra-chat/sessions", {
+        method: "POST",
+        json: { title: "新会话", permission_mode: "confirm" },
+      });
+      const session = data.session || {};
+      if (!session.id) throw new Error("创建会话失败");
+      state.chatSessions = [session].concat((state.chatSessions || []).filter((row) => row.id !== session.id));
+      await switchChatSession(session.id);
+      $("chatSessionsModal")?.classList.add("hidden");
+    }
+
+    async function switchChatSession(sessionId) {
+      const id = String(sessionId || "").trim();
+      if (!id || id === state.activeChatSessionId && state.historyItems.length) {
+        syncChatSessionUi();
+        $("chatSessionsModal")?.classList.add("hidden");
+        return;
+      }
+      closeAllMessageStreams();
+      state.chatHistoryRequestSeq += 1;
+      state.chatApprovalRequestSeq += 1;
+      state.activeChatSessionId = id;
+      localStorage.setItem(brandStorageKey("lobster_h5_chat_session_id"), id);
+      state.historyItems = [];
+      state.pendingApprovals = [];
+      state.activeApprovalId = "";
+      $("chatApprovalModal")?.classList.add("hidden");
+      clearRenderedMessages();
+      syncChatSessionUi();
+      await Promise.all([loadHistory({ includeEvents: true }), loadPendingApprovals()]);
+      $("chatSessionsModal")?.classList.add("hidden");
+    }
+
+    async function updateChatPermission(permissionMode) {
+      const session = activeChatSession();
+      if (!session) return;
+      const mode = permissionMode === "full" ? "full" : "confirm";
+      const data = await api(`/api/mastra-chat/sessions/${encodeURIComponent(session.id)}`, {
+        method: "PATCH",
+        json: { permission_mode: mode },
+      });
+      Object.assign(session, data.session || { permission_mode: mode });
+      $("composerPermissionMenu")?.classList.add("hidden");
+      $("composerPermissionBtn")?.setAttribute("aria-expanded", "false");
+      syncChatSessionUi();
+    }
+
+    function openChatSessionManage(sessionId, mode) {
+      const session = (state.chatSessions || []).find((row) => row.id === sessionId);
+      if (!session) return;
+      state.chatSessionManageId = session.id;
+      state.chatSessionManageMode = mode === "delete" ? "delete" : "rename";
+      const deleting = state.chatSessionManageMode === "delete";
+      $("chatSessionManageTitle").textContent = deleting ? "删除会话" : "重命名会话";
+      $("chatSessionManageText").textContent = deleting
+        ? `删除“${session.title || "新会话"}”后，该会话将从列表中移除。`
+        : "输入一个便于识别的会话名称。";
+      $("chatSessionManageInput").classList.toggle("hidden", deleting);
+      $("chatSessionManageInput").value = session.title || "新会话";
+      $("chatSessionManageSubmit").textContent = deleting ? "删除" : "保存";
+      $("chatSessionManageSubmit").classList.toggle("danger", deleting);
+      $("chatSessionManageModal").classList.remove("hidden");
+      if (!deleting) setTimeout(() => $("chatSessionManageInput")?.select(), 30);
+    }
+
+    function closeChatSessionManage() {
+      state.chatSessionManageId = "";
+      $("chatSessionManageModal")?.classList.add("hidden");
+    }
+
+    async function submitChatSessionManage() {
+      const id = String(state.chatSessionManageId || "");
+      const session = (state.chatSessions || []).find((row) => row.id === id);
+      if (!session) return closeChatSessionManage();
+      const button = $("chatSessionManageSubmit");
+      if (button) button.disabled = true;
+      try {
+        if (state.chatSessionManageMode === "delete") {
+          await api(`/api/mastra-chat/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+          state.chatSessions = state.chatSessions.filter((row) => row.id !== id);
+          closeChatSessionManage();
+          if (state.activeChatSessionId === id) {
+            state.activeChatSessionId = "";
+            const nextId = state.chatSessions[0] ? state.chatSessions[0].id : "";
+            if (nextId) await switchChatSession(nextId);
+            else await createChatSession();
+          }
+          syncChatSessionUi();
+          return;
+        }
+        const title = String($("chatSessionManageInput").value || "").trim();
+        if (!title) throw new Error("请输入会话名称");
+        const data = await api(`/api/mastra-chat/sessions/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          json: { title },
+        });
+        Object.assign(session, data.session || { title });
+        closeChatSessionManage();
+        syncChatSessionUi();
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    function upsertPendingApproval(raw) {
+      const item = raw && typeof raw === "object" ? raw : null;
+      if (!item || !item.id || item.status && item.status !== "pending") return;
+      if (item.session_id && String(item.session_id) !== String(state.activeChatSessionId || "")) return;
+      state.pendingApprovals = [item].concat((state.pendingApprovals || []).filter((row) => row.id !== item.id));
+      showNextPendingApproval();
+    }
+
+    function showNextPendingApproval() {
+      if (!$("chatApprovalModal")?.classList.contains("hidden")) return;
+      const item = (state.pendingApprovals || []).find((row) => row && row.status === "pending");
+      if (!item) return;
+      state.activeApprovalId = item.id;
+      $("chatApprovalTask").textContent = item.task || "执行当前任务";
+      $("chatApprovalReason").textContent = item.reason || "确认后将开始调用相应能力执行。";
+      $("chatApprovalModal").classList.remove("hidden");
+    }
+
+    async function loadPendingApprovals() {
+      if (!state.token || !state.activeChatSessionId) return;
+      const sessionId = state.activeChatSessionId;
+      const requestId = ++state.chatApprovalRequestSeq;
+      const data = await api(`/api/mastra-chat/approvals?session_id=${encodeURIComponent(sessionId)}`);
+      if (requestId !== state.chatApprovalRequestSeq || sessionId !== state.activeChatSessionId) return;
+      state.pendingApprovals = Array.isArray(data.approvals) ? data.approvals : [];
+      showNextPendingApproval();
+    }
+
+    async function decideActiveApproval(decision) {
+      const id = String(state.activeApprovalId || "");
+      if (!id) return;
+      const approve = $("chatApprovalApprove");
+      const reject = $("chatApprovalReject");
+      if (approve) approve.disabled = true;
+      if (reject) reject.disabled = true;
+      try {
+        await api(`/api/mastra-chat/approvals/${encodeURIComponent(id)}/decision`, {
+          method: "POST",
+          json: { decision },
+        });
+        state.pendingApprovals = (state.pendingApprovals || []).filter((row) => row.id !== id);
+        state.activeApprovalId = "";
+        $("chatApprovalModal")?.classList.add("hidden");
+        if (decision === "approve") toast("已确认，正在执行");
+        setTimeout(showNextPendingApproval, 80);
+      } finally {
+        if (approve) approve.disabled = false;
+        if (reject) reject.disabled = false;
+      }
+    }
+
     async function loadHistory(options = {}) {
       if (!state.token) return;
       try {
+        if (!state.activeChatSessionId) await loadChatSessions();
+        const sessionId = state.activeChatSessionId;
+        const requestId = ++state.chatHistoryRequestSeq;
         const includeEvents = options.includeEvents !== false;
-        const data = await api(`/api/h5-chat/messages?limit=40&include_events=${includeEvents ? "true" : "false"}`);
+        const data = await api(`/api/h5-chat/messages?limit=40&include_events=${includeEvents ? "true" : "false"}&session_id=${encodeURIComponent(sessionId || "")}`);
+        if (requestId !== state.chatHistoryRequestSeq || sessionId !== state.activeChatSessionId) return;
         const items = Array.isArray(data.messages) ? data.messages : [];
         state.historyItems = items;
         state.messageStatusSnapshot = {};
@@ -16589,8 +17124,8 @@
         });
         state.messageStatusReady = true;
         renderOfficeEmployees();
-        if (!items.length) return;
         clearRenderedMessages();
+        if (!items.length) return;
         for (const item of items) renderHistoryItem(item);
       } catch (err) {
         console.warn("Load H5 history failed", err);
@@ -18281,7 +18816,7 @@
       }
       switchTab("messages");
       setMessageTemplate(btn.dataset.prompt || "");
-      if (btn.dataset.imageVideo === "1") setTimeout(() => $("imageInput").click(), 120);
+      if (btn.dataset.imageVideo === "1") setTimeout(() => $("composerFileInput")?.click(), 120);
       setTimeout(scrollMessagesToBottom, 160);
     });
 
@@ -18300,14 +18835,121 @@
     $("messageInput").addEventListener("input", autosizeMessageInput);
     $("messageInput").addEventListener("keydown", (evt) => {
       if (evt.key === "Enter" && !evt.shiftKey && !evt.isComposing) {
-        if ($("sendForm").classList.contains("expanded")) return;
         evt.preventDefault();
         $("sendForm").requestSubmit();
       }
     });
-    $("toggleComposerBtn").addEventListener("click", () => {
-      setComposerExpanded(!$("sendForm").classList.contains("expanded"));
+    $("composerAttachBtn")?.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      $("composerPermissionMenu")?.classList.add("hidden");
+      $("composerAttachMenu")?.classList.toggle("hidden");
     });
+    $("composerUploadBtn")?.addEventListener("click", () => {
+      $("composerAttachMenu")?.classList.add("hidden");
+      $("composerFileInput")?.click();
+    });
+    $("composerLibraryBtn")?.addEventListener("click", () => {
+      $("composerAttachMenu")?.classList.add("hidden");
+      if (state.uploads.length >= 8) {
+        toast("每条消息最多添加 8 个素材");
+        return;
+      }
+      const hidden = $("composerAssetPicker");
+      if (hidden) hidden.value = "";
+      delete state.assetPickerSelections.composerAssetPicker;
+      openAssetPickerModal("composerAssetPicker");
+    });
+    $("composerAssetPicker")?.addEventListener("change", () => {
+      const selected = state.assetPickerSelections.composerAssetPicker;
+      if (!selected || !assetPickerRowIdentity(selected)) return;
+      const item = normalizeUserUploadAsset(selected);
+      const identity = item.asset_id || item.source_url;
+      if (!state.uploads.some((row) => String(row.assetId || row.url || "") === identity)) {
+        state.uploads.push({
+          name: item.filename || "素材",
+          url: item.source_url || item.preview_url || "",
+          assetId: item.asset_id || "",
+          mediaType: item.media_type || "file",
+          contentType: "",
+          size: 0,
+          status: "ready",
+          error: "",
+        });
+        renderUploads();
+      }
+      const hidden = $("composerAssetPicker");
+      if (hidden) hidden.value = "";
+      delete state.assetPickerSelections.composerAssetPicker;
+    });
+    $("composerPermissionBtn")?.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      $("composerAttachMenu")?.classList.add("hidden");
+      const menu = $("composerPermissionMenu");
+      const opening = menu?.classList.contains("hidden");
+      menu?.classList.toggle("hidden", !opening);
+      $("composerPermissionBtn")?.setAttribute("aria-expanded", opening ? "true" : "false");
+    });
+    $("composerPermissionMenu")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-chat-permission]");
+      if (!button) return;
+      updateChatPermission(button.dataset.chatPermission).catch((err) => toast(err.message || "授权方式更新失败"));
+    });
+    document.addEventListener("click", (evt) => {
+      if (!evt.target.closest(".composer-attach-wrap")) $("composerAttachMenu")?.classList.add("hidden");
+      if (!evt.target.closest(".composer-permission-wrap")) {
+        $("composerPermissionMenu")?.classList.add("hidden");
+        $("composerPermissionBtn")?.setAttribute("aria-expanded", "false");
+      }
+    });
+    $("chatSessionsBtn")?.addEventListener("click", () => {
+      renderChatSessions();
+      $("chatSessionsModal")?.classList.remove("hidden");
+    });
+    $("chatSessionCurrentBtn")?.addEventListener("click", () => {
+      renderChatSessions();
+      $("chatSessionsModal")?.classList.remove("hidden");
+    });
+    $("chatSessionsBackdrop")?.addEventListener("click", () => $("chatSessionsModal")?.classList.add("hidden"));
+    $("newChatSessionBtn")?.addEventListener("click", () => createChatSession().catch((err) => toast(err.message || "创建会话失败")));
+    $("drawerNewChatSessionBtn")?.addEventListener("click", () => createChatSession().catch((err) => toast(err.message || "创建会话失败")));
+    $("chatSessionsList")?.addEventListener("click", async (evt) => {
+      const select = evt.target.closest("[data-chat-session-select]");
+      if (select) {
+        await switchChatSession(select.dataset.chatSessionSelect).catch((err) => toast(err.message || "切换会话失败"));
+        return;
+      }
+      const rename = evt.target.closest("[data-chat-session-rename]");
+      if (rename) {
+        openChatSessionManage(rename.dataset.chatSessionRename, "rename");
+        return;
+      }
+      const remove = evt.target.closest("[data-chat-session-delete]");
+      if (!remove) return;
+      openChatSessionManage(remove.dataset.chatSessionDelete, "delete");
+    });
+    $("chatApprovalApprove")?.addEventListener("click", () => decideActiveApproval("approve").catch((err) => toast(err.message || "确认失败")));
+    $("chatApprovalReject")?.addEventListener("click", () => decideActiveApproval("reject").catch((err) => toast(err.message || "取消失败")));
+    $("chatSessionManageBackdrop")?.addEventListener("click", closeChatSessionManage);
+    $("chatSessionManageCancel")?.addEventListener("click", closeChatSessionManage);
+    $("chatSessionManageSubmit")?.addEventListener("click", () => submitChatSessionManage().catch((err) => toast(err.message || "操作失败")));
+    $("chatSessionManageInput")?.addEventListener("keydown", (evt) => {
+      if (evt.key !== "Enter") return;
+      evt.preventDefault();
+      submitChatSessionManage().catch((err) => toast(err.message || "操作失败"));
+    });
+    $("composerVoiceBtn")?.addEventListener("pointerdown", (evt) => {
+      startComposerVoiceCapture(evt).catch((err) => {
+        cancelComposerVoiceCapture();
+        toast(err.message || "无法启动语音识别");
+      });
+    });
+    $("composerVoiceBtn")?.addEventListener("pointermove", moveComposerVoiceCapture);
+    $("composerVoiceBtn")?.addEventListener("pointerup", (evt) => finishComposerVoiceCapture(evt, false));
+    $("composerVoiceBtn")?.addEventListener("pointercancel", (evt) => finishComposerVoiceCapture(evt, true));
+    $("composerVoiceBtn")?.addEventListener("lostpointercapture", (evt) => {
+      if (state.composerVoicePointerId !== null) finishComposerVoiceCapture(evt, true);
+    });
+    $("composerVoiceBtn")?.addEventListener("contextmenu", (evt) => evt.preventDefault());
     $("voiceMicBtn")?.addEventListener("mousedown", startVoiceCapture);
     $("voiceMicBtn")?.addEventListener("touchstart", startVoiceCapture, { passive: false });
     document.addEventListener("mousedown", (evt) => {
@@ -18328,9 +18970,15 @@
         toast(err.message || "无法启动语音识别");
       });
     }, { passive: false });
-    window.addEventListener("mouseup", stopVoiceCapture);
-    window.addEventListener("touchend", stopVoiceCapture);
-    window.addEventListener("touchcancel", stopVoiceCapture);
+    window.addEventListener("mouseup", (evt) => {
+      if (state.voiceCaptureTarget !== "composer") stopVoiceCapture(evt);
+    });
+    window.addEventListener("touchend", (evt) => {
+      if (state.voiceCaptureTarget !== "composer") stopVoiceCapture(evt);
+    });
+    window.addEventListener("touchcancel", (evt) => {
+      if (state.voiceCaptureTarget !== "composer") stopVoiceCapture(evt);
+    });
     window.addEventListener("mouseup", stopOfficeVoiceCapture);
     window.addEventListener("touchend", stopOfficeVoiceCapture);
     window.addEventListener("touchcancel", stopOfficeVoiceCapture);
@@ -18396,21 +19044,15 @@
       sendVoiceDraftToMessages(false, card.dataset.voiceTemplate || "");
     });
 
-    $("imageInput").addEventListener("change", async () => {
-      const files = Array.from($("imageInput").files || []);
-      $("imageInput").value = "";
+    $("composerFileInput")?.addEventListener("change", async () => {
+      const files = Array.from($("composerFileInput").files || []);
+      $("composerFileInput").value = "";
       if (!files.length) return;
       if (!state.token) {
-        toast("请先登录后再上传图片");
+        toast("请先登录后再添加素材");
         return;
       }
-      for (const file of files) {
-        if (!/^image\//i.test(file.type || "")) {
-          toast("只能上传图片");
-          continue;
-        }
-        uploadImageFile(file);
-      }
+      for (const file of files.slice(0, Math.max(0, 8 - state.uploads.length))) uploadComposerFile(file);
     });
 
     $("loginForm").addEventListener("submit", async (evt) => {
@@ -18464,23 +19106,40 @@
       }
     });
 
-    $("sendForm").addEventListener("submit", async (evt) => {
-      evt.preventDefault();
+    async function submitChatMessage(rawContent = null, options = {}) {
       const input = $("messageInput");
-      const content = input.value.trim();
+      const fromComposer = rawContent === null;
+      const content = String(fromComposer ? input.value : rawContent || "").trim();
+      const attachments = readyAttachments();
       if (hasUploadingImages()) {
-        toast("图片还在上传中，请稍等");
-        return;
+        toast("素材还在上传中，请稍等");
+        return false;
       }
-      if (!content) return;
-      input.value = "";
-      autosizeMessageInput();
+      if (!content && !attachments.length) return false;
+      if ($("sendBtn").disabled) {
+        toast("上一条指令正在提交，请稍等");
+        return false;
+      }
+      if (fromComposer) {
+        input.value = "";
+        autosizeMessageInput();
+      }
       $("sendBtn").disabled = true;
       const messageContent = buildMessageContent(content);
-      addBubble("user", content);
-      const bot = addBubble("bot", "已发送，等待本地设备处理...");
+      const userBubble = addBubble("user", content || `已添加 ${attachments.length} 个素材`);
+      renderBubbleAttachments(userBubble, attachments);
+      const bot = addBubble("bot", "正在理解需求...");
+      bot._placeholder = true;
       try {
-        const data = await api("/api/h5-chat/messages", { method: "POST", json: { content: messageContent, mode: state.mode, installation_id: currentInstallationId() } });
+        const data = await api("/api/mastra-chat/messages", {
+          method: "POST",
+          json: {
+            content: messageContent,
+            installation_id: currentInstallationId(),
+            session_id: state.activeChatSessionId,
+            attachments,
+          },
+        });
         const msg = data.message || {};
         if (msg.id) {
           state.historyItems.push({ message: msg, events: [] });
@@ -18490,14 +19149,22 @@
         }
         if (msg.id) startSse(msg.id, bot);
         clearUploads();
-        await refreshDeviceStatus();
+        loadChatSessions().catch(() => {});
+        await Promise.all([refreshDeviceStatus(), refreshMastraStatus()]);
+        return true;
       } catch (err) {
         bot.classList.add("err");
         setBubbleText(bot, err.message || "发送失败");
+        return false;
       } finally {
         $("sendBtn").disabled = false;
-        input.focus();
+        if (options.source !== "voice") focusMessageInput();
       }
+    }
+
+    $("sendForm").addEventListener("submit", async (evt) => {
+      evt.preventDefault();
+      await submitChatMessage();
     });
 
     (async function init() {

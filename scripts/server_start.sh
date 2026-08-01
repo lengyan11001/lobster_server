@@ -18,6 +18,7 @@ if [ ! -f ".env" ]; then
 fi
 
 PY="$ROOT/.venv/bin/python"
+NODE="$ROOT/.runtime/node/bin/node"
 PORT="${PORT:-8000}"
 MCP_PORT="${MCP_PORT:-8001}"
 START_BACKGROUND="${START_BACKGROUND:-1}"
@@ -27,6 +28,11 @@ find "$ROOT" -maxdepth 1 -type f \( -name "mcp.log" -o -name "backend.log" -o -n
 find "$ROOT/diagnostics_uploads" -mindepth 2 -maxdepth 2 -type d -mtime +2 -exec rm -rf {} + 2>/dev/null || true
 TODAY="$(date +%F)"
 mkdir -p "$ROOT/logs"
+
+if [ ! -x "$NODE" ] || [ ! -f "$ROOT/mastra_server/.mastra/output/index.mjs" ]; then
+  echo "[ERR] Mastra 尚未安装或构建，请先执行 ./scripts/server_install.sh"
+  exit 1
+fi
 
 # 若 8001 已在监听则跳过，否则后台启动 MCP
 start_mcp() {
@@ -50,6 +56,10 @@ except Exception:
 }
 
 start_mcp
+
+echo "[Mastra] 启动 AI 调度服务端口 4111 ..."
+nohup "$NODE" "$ROOT/mastra_server/.mastra/output/index.mjs" >> "$ROOT/logs/mastra-stdout-$TODAY.log" 2>&1 &
+sleep 1
 
 if [ "$START_BACKGROUND" != "0" ]; then
   echo "[Background] 启动单例后台任务进程 ..."

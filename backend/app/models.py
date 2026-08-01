@@ -953,6 +953,22 @@ class MobileDeviceBinding(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class H5ChatSession(Base):
+    """A user-owned conversation with isolated Mastra context and permissions."""
+
+    __tablename__ = "h5_chat_sessions"
+    __table_args__ = (Index("ix_h5_chat_sessions_user_updated", "user_id", "updated_at"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(160), default="新会话", nullable=False)
+    permission_mode: Mapped[str] = mapped_column(String(32), default="confirm", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+
+
 class H5ChatMessage(Base):
     """Remote H5 chat mailbox: browser submits, the user's local online client claims and replies."""
 
@@ -964,16 +980,43 @@ class H5ChatMessage(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    parent_message_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     claimed_by_installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     mode: Mapped[str] = mapped_column(String(32), default="direct", nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    attachments: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
     reply_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class H5ChatApproval(Base):
+    """A side-effecting action waiting for explicit user confirmation."""
+
+    __tablename__ = "h5_chat_approvals"
+    __table_args__ = (
+        Index("ix_h5_chat_approvals_user_status", "user_id", "status"),
+        Index("ix_h5_chat_approvals_message_status", "message_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    message_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    task: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    execution_target: Mapped[str] = mapped_column(String(32), default="auto", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 

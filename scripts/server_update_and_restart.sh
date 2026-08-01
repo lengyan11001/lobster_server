@@ -48,6 +48,13 @@ if command -v journalctl >/dev/null 2>&1; then
   sudo journalctl --vacuum-time=3d >/dev/null 2>&1 || true
 fi
 
+echo "[Mastra] 安装固定 Node 运行时、依赖并构建 ..."
+"$ROOT/scripts/install_mastra_runtime.sh" "$ROOT"
+export PATH="$ROOT/.runtime/node/bin:$PATH"
+"$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/mastra_server" ci
+"$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/mastra_server" run typecheck
+"$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/mastra_server" run build
+
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service 2>/dev/null | grep -q lobster-backend; then
   echo "[重启] systemctl stop + 端口清理 + start ..."
   H5_UNIT=""
@@ -58,10 +65,18 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
   if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-background\.service'; then
     BG_UNIT="lobster-background"
   fi
-  sudo systemctl stop $H5_UNIT $BG_UNIT lobster-mcp lobster-backend 2>/dev/null || true
+  MASTRA_UNIT=""
+  if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-mastra\.service'; then
+    MASTRA_UNIT="lobster-mastra"
+  else
+    echo "[Mastra] 安装 systemd 服务 ..."
+    "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
+    MASTRA_UNIT="lobster-mastra"
+  fi
+  sudo systemctl stop $H5_UNIT $BG_UNIT $MASTRA_UNIT lobster-mcp lobster-backend 2>/dev/null || true
   sleep 1
   # 确保 8001/8000 端口无残留进程
-  for PORT in 8001 8000 8010; do
+  for PORT in 8001 8000 8010 4111; do
     PID_ON_PORT="$(sudo fuser "$PORT/tcp" 2>/dev/null | tr -d '[:space:]')" || true
     if [ -n "$PID_ON_PORT" ]; then
       echo "[清理] 端口 $PORT 仍被进程 $PID_ON_PORT 占用，强制结束"
@@ -69,7 +84,8 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
       sleep 1
     fi
   done
-  sudo systemctl start lobster-backend lobster-mcp
+  sudo systemctl start lobster-mcp lobster-backend
+  sudo systemctl start "$MASTRA_UNIT"
   if [ -n "$BG_UNIT" ]; then
     sudo systemctl start "$BG_UNIT"
   fi
@@ -89,7 +105,20 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
   if [ "$MCP_OK" = 0 ]; then
     echo "[WARN] MCP 可能未成功启动，检查 mcp.log"
   fi
-  sudo systemctl status lobster-backend lobster-mcp $BG_UNIT $H5_UNIT --no-pager || true
+  MASTRA_OK=0
+  for i in 1 2 3 4 5; do
+    if curl --fail --silent http://127.0.0.1:4111/health >/dev/null 2>&1; then
+      MASTRA_OK=1; break
+    fi
+    echo "[等待] Mastra 尚未就绪，等待 ${i}s..."
+    sleep "$i"
+  done
+  if [ "$MASTRA_OK" = 0 ]; then
+    echo "[ERR] Mastra 启动失败"
+    sudo journalctl -u lobster-mastra -n 80 --no-pager || true
+    exit 1
+  fi
+  sudo systemctl status lobster-backend lobster-mcp $MASTRA_UNIT $BG_UNIT $H5_UNIT --no-pager || true
   echo "[完成] 服务已重启"
 else
   echo "[重启] 无 systemd，结束旧进程并后台启动 MCP + Backend ..."
@@ -99,12 +128,15 @@ else
   pkill -f "backend.run" 2>/dev/null || true
   pkill -f "backend.background_worker" 2>/dev/null || true
   pkill -f "backend.h5_run" 2>/dev/null || true
+  pkill -f "mastra_server/.mastra/output/index.mjs" 2>/dev/null || true
   pkill -f "mcp --port 8001" 2>/dev/null || true
   pkill -f "python -m mcp" 2>/dev/null || true
   sleep 2
   TODAY="$(date +%F)"
   mkdir -p "$ROOT/logs"
   nohup "$PY" -m mcp --port "${MCP_PORT:-8001}" >> "$ROOT/logs/mcp-$TODAY.log" 2>&1 &
+  sleep 1
+  nohup "$ROOT/.runtime/node/bin/node" "$ROOT/mastra_server/.mastra/output/index.mjs" >> "$ROOT/logs/mastra-stdout-$TODAY.log" 2>&1 &
   sleep 1
   nohup "$PY" -m backend.background_worker >> "$ROOT/logs/background-stdout-$TODAY.log" 2>&1 &
   nohup "$PY" -m backend.run >> "$ROOT/logs/backend-stdout-$TODAY.log" 2>&1 &

@@ -8,7 +8,7 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="必火AI员工" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-mastra-voice-v1" />
   <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1" />
 </head>
 <body>
@@ -597,6 +597,14 @@
       <section class="view" id="messagesView">
         <div class="panel chat">
           <div class="chat-head">
+            <div class="chat-session-bar">
+              <button class="chat-session-icon" id="chatSessionsBtn" type="button" aria-label="会话列表" title="会话列表">☰</button>
+              <button class="chat-session-current" id="chatSessionCurrentBtn" type="button">
+                <strong id="chatSessionTitle">新会话</strong>
+                <span id="chatSessionPermission">需要确认</span>
+              </button>
+              <button class="chat-session-icon" id="newChatSessionBtn" type="button" aria-label="新建会话" title="新建会话">+</button>
+            </div>
             <div class="status">
               <div class="status-left">
                 <span class="dot" id="onlineDot"></span>
@@ -615,14 +623,62 @@
           <div class="messages" id="messages">
             <div class="empty" id="empty">发一条消息试试。</div>
           </div>
-          <div class="upload-preview" id="uploadPreview"></div>
           <form class="composer" id="sendForm">
-            <input type="file" id="imageInput" accept="image/*" multiple class="hidden" />
-            <div class="composer-input">
-              <textarea id="messageInput" rows="1" placeholder="输入消息，例如：帮我写一段产品短视频口播文案" autocomplete="off"></textarea>
-              <button class="composer-toggle" id="toggleComposerBtn" type="button" aria-expanded="false">展开</button>
+            <input type="file" id="composerFileInput" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md" multiple class="hidden" />
+            <div class="composer-library-picker hidden" data-asset-picker="composerAssetPicker" data-asset-media-type="" data-asset-output="asset_id">
+              <input id="composerAssetPicker" type="hidden">
+              <div id="composerAssetPickerPreview"></div>
             </div>
-            <button id="sendBtn" type="submit">发送</button>
+            <div class="composer-surface">
+              <div class="upload-preview" id="uploadPreview"></div>
+              <textarea id="messageInput" rows="1" placeholder="随心输入" autocomplete="off"></textarea>
+              <div class="composer-toolbar">
+                <div class="composer-toolbar-left">
+                  <div class="composer-attach-wrap">
+                    <button class="composer-icon-btn composer-add-btn" id="composerAttachBtn" type="button" aria-label="添加素材" title="添加素材">+</button>
+                    <div class="composer-attach-menu hidden" id="composerAttachMenu">
+                      <button type="button" id="composerUploadBtn">
+                        <span aria-hidden="true">↑</span><b>上传本机素材</b>
+                      </button>
+                      <button type="button" id="composerLibraryBtn">
+                        <span aria-hidden="true">▦</span><b>从素材库选择</b>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="composer-permission-wrap">
+                    <button class="composer-access" id="composerPermissionBtn" type="button" aria-haspopup="menu" aria-expanded="false"><i aria-hidden="true">!</i><span id="composerPermissionLabel">需要确认</span></button>
+                    <div class="composer-permission-menu hidden" id="composerPermissionMenu" role="menu">
+                      <button type="button" data-chat-permission="confirm" role="menuitem">
+                        <b>需要确认</b><span>执行任务前询问</span>
+                      </button>
+                      <button type="button" data-chat-permission="full" role="menuitem">
+                        <b>完全授权</b><span>直接调用技能执行</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div class="composer-toolbar-right">
+                  <span class="composer-model">5.6 Sol</span>
+                  <button class="composer-icon-btn composer-voice-btn" id="composerVoiceBtn" type="button" aria-label="按住说话" title="按住说话">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"></path>
+                      <path d="M17 11a5 5 0 0 1-10 0M12 16v5M9 21h6"></path>
+                    </svg>
+                  </button>
+                  <button class="composer-send-btn" id="sendBtn" type="submit" aria-label="发送" title="发送">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"></path></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="composer-voice-feedback hidden" id="composerVoiceFeedback" aria-live="polite">
+              <div class="composer-voice-meter" aria-hidden="true">
+                <i></i><i></i><i></i><i></i><i></i>
+              </div>
+              <strong id="composerVoiceStatus">松开发送</strong>
+              <span id="composerVoiceDuration">00:00</span>
+              <small>上滑取消</small>
+            </div>
           </form>
         </div>
       </section>
@@ -717,6 +773,16 @@
             <button class="danger" type="button" id="logoutBtn">退出登录</button>
           </div>
           <div class="panel settings profile-business-menu">
+            <button class="profile-entry ai-assistant-profile-entry" type="button" data-tab-target="messages">
+              <span class="profile-entry-icon tone-blue" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7v3a4 4 0 0 0 4 4h1l2 3 2-3h1a4 4 0 0 0 4-4v-3a7 7 0 0 0-7-7Z"></path><path d="M9 10h.01M15 10h.01M9.5 13h5"></path></svg>
+              </span>
+              <span>
+                <strong>AI 调度助手</strong>
+                <small>用文字或语音安排工作，自动调用现有技能</small>
+              </span>
+              <b>进入</b>
+            </button>
             <button class="profile-entry" type="button" data-tab-target="mountedAccounts">
               <span class="profile-entry-icon tone-blue" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><path d="M20 8v6m3-3h-6"></path></svg>
@@ -1522,6 +1588,46 @@
     </div>
   </div>
 
+  <div class="employee-modal chat-sessions-modal hidden" id="chatSessionsModal" role="dialog" aria-modal="true" aria-labelledby="chatSessionsTitle">
+    <button class="employee-modal-backdrop" type="button" id="chatSessionsBackdrop" aria-label="关闭"></button>
+    <aside class="chat-sessions-drawer">
+      <div class="chat-sessions-head">
+        <strong id="chatSessionsTitle">会话</strong>
+        <button class="chat-session-new" id="drawerNewChatSessionBtn" type="button">+ 新会话</button>
+      </div>
+      <div class="chat-sessions-list" id="chatSessionsList"></div>
+    </aside>
+  </div>
+
+  <div class="employee-modal chat-approval-modal hidden" id="chatApprovalModal" role="dialog" aria-modal="true" aria-labelledby="chatApprovalTitle">
+    <div class="employee-modal-backdrop" aria-hidden="true"></div>
+    <div class="chat-approval-dialog">
+      <div class="chat-approval-mark" aria-hidden="true">!</div>
+      <div class="chat-approval-copy">
+        <strong id="chatApprovalTitle">确认执行任务</strong>
+        <p id="chatApprovalTask"></p>
+        <span id="chatApprovalReason"></span>
+      </div>
+      <div class="chat-approval-actions">
+        <button class="ghost" id="chatApprovalReject" type="button">取消</button>
+        <button id="chatApprovalApprove" type="button">确认执行</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="employee-modal chat-session-manage-modal hidden" id="chatSessionManageModal" role="dialog" aria-modal="true" aria-labelledby="chatSessionManageTitle">
+    <button class="employee-modal-backdrop" type="button" id="chatSessionManageBackdrop" aria-label="关闭"></button>
+    <div class="chat-session-manage-dialog">
+      <strong id="chatSessionManageTitle">重命名会话</strong>
+      <p id="chatSessionManageText">输入一个便于识别的会话名称。</p>
+      <input id="chatSessionManageInput" type="text" maxlength="160" placeholder="会话名称">
+      <div class="chat-session-manage-actions">
+        <button class="ghost" id="chatSessionManageCancel" type="button">取消</button>
+        <button id="chatSessionManageSubmit" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
   <div class="employee-modal personal-digital-human-preview-modal hidden" id="personalDigitalHumanPreviewModal" role="dialog" aria-modal="true" aria-labelledby="personalDigitalHumanPreviewTitle">
     <button class="employee-modal-backdrop" type="button" id="personalDigitalHumanPreviewBackdrop" aria-label="关闭"></button>
     <div class="employee-popover personal-digital-human-preview">
@@ -1789,6 +1895,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-mastra-voice-v1"></script>
 </body>
 </html>

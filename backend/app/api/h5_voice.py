@@ -77,6 +77,7 @@ async def h5_voice_session(
     token: str = Query(""),
     brand: str = Query(""),
     installation_id: str = Query(""),
+    resolve_intent: bool = Query(True),
 ):
     await websocket.accept()
 
@@ -137,7 +138,7 @@ async def h5_voice_session(
                 if not event:
                     continue
                 await _send_json_safe(websocket, event)
-                if event.get("type") == "final":
+                if event.get("type") == "final" and resolve_intent:
                     intent = await resolve_voice_intent_with_llm(
                         text=str(event.get("text") or ""),
                         token=token,

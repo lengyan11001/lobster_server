@@ -29,6 +29,7 @@ from ..models import (
     DouyinDashboardDeviceState,
     H5ChatDevicePresence,
     H5ChatEvent,
+    H5ChatApproval,
     H5ChatMessage,
     H5MountedAccountDefault,
     PublishAccount,
@@ -483,7 +484,10 @@ def _serialize_message(
     data = {
         "id": row.id,
         "mode": row.mode,
+        "session_id": row.session_id,
+        "parent_message_id": row.parent_message_id,
         "content": row.content,
+        "attachments": row.attachments or [],
         "status": row.status,
         "installation_id": row.installation_id,
         "claimed_by_installation_id": row.claimed_by_installation_id,
@@ -518,6 +522,96 @@ def _message_for_user(db: Session, message_id: str, user_id: int) -> H5ChatMessa
     if row is None:
         raise HTTPException(status_code=404, detail="消息不存在")
     return row
+
+
+def _mirror_child_event_to_parent(
+    db: Session,
+    child: H5ChatMessage,
+    event_type: str,
+    payload: Optional[Dict[str, Any]] = None,
+) -> None:
+    parent_id = (child.parent_message_id or "").strip()
+    if not parent_id:
+        return
+    parent = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.id == parent_id, H5ChatMessage.user_id == child.user_id)
+        .first()
+    )
+    if not parent:
+        return
+    source = dict(payload or {})
+    source["online_message_id"] = child.id
+    source["online_event_type"] = event_type
+    source.setdefault("message", source.get("text") or source.get("message") or "Online 正在执行任务")
+    parent.updated_at = datetime.utcnow()
+    _add_event(db, parent, "progress", source)
+
+
+def _finish_mastra_parent_from_children(db: Session, child: H5ChatMessage) -> None:
+    parent_id = (child.parent_message_id or "").strip()
+    if not parent_id:
+        return
+    parent = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.id == parent_id, H5ChatMessage.user_id == child.user_id)
+        .first()
+    )
+    if not parent or parent.mode != "mastra":
+        return
+    children = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.parent_message_id == parent.id, H5ChatMessage.user_id == parent.user_id)
+        .order_by(H5ChatMessage.created_at.asc())
+        .all()
+    )
+    if not children or any(row.status not in _FINAL_STATUSES for row in children):
+        parent.status = "processing"
+        parent.updated_at = datetime.utcnow()
+        return
+    if not (parent.reply_text or "").strip():
+        # Online can finish before the orchestrator has produced its response.
+        # Keep the parent open until the runner stores that response, then merge.
+        parent.status = "processing"
+        parent.updated_at = datetime.utcnow()
+        return
+
+    details: List[str] = []
+    for index, row in enumerate(children, start=1):
+        if row.status == "completed":
+            result = (row.reply_text or "执行完成").strip()
+            details.append(f"{index}. Online 执行完成：{result}")
+        elif row.status == "cancelled":
+            details.append(f"{index}. Online 任务已取消。")
+        else:
+            details.append(f"{index}. Online 执行失败：{(row.error or '未知错误').strip()}")
+    base = (parent.reply_text or "任务已下发到 Online。").strip()
+    final_reply = f"{base}\n\nOnline 执行结果\n" + "\n".join(details)
+    now = datetime.utcnow()
+    parent.status = "completed"
+    parent.reply_text = final_reply
+    parent.error = None
+    parent.finished_at = now
+    parent.updated_at = now
+    _add_event(
+        db,
+        parent,
+        "final",
+        {
+            "reply_text": final_reply,
+            "online_message_ids": [row.id for row in children],
+            "online_statuses": [row.status for row in children],
+        },
+    )
+    now = datetime.utcnow()
+    approvals = db.query(H5ChatApproval).filter(
+        H5ChatApproval.message_id == parent.id,
+        H5ChatApproval.status == "executing",
+    ).all()
+    for approval in approvals:
+        approval.status = "completed"
+        approval.finished_at = now
+        approval.updated_at = now
 
 
 def _user_from_query_token(db: Session, token: str, brand_mark: str = "") -> User:
@@ -1016,17 +1110,18 @@ def create_h5_message(
 def list_h5_messages(
     limit: int = Query(40, ge=1, le=100),
     include_events: bool = Query(True),
+    session_id: str = Query("", max_length=64),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
-    rows = (
-        db.query(H5ChatMessage)
-        .filter(H5ChatMessage.user_id == owner_user.id)
-        .order_by(H5ChatMessage.created_at.desc())
-        .limit(limit)
-        .all()
+    query = db.query(H5ChatMessage).filter(
+        H5ChatMessage.user_id == owner_user.id,
+        H5ChatMessage.parent_message_id.is_(None),
     )
+    if session_id:
+        query = query.filter(H5ChatMessage.session_id == session_id)
+    rows = query.order_by(H5ChatMessage.created_at.desc()).limit(limit).all()
     rows = list(reversed(rows))
     message_ids = [row.id for row in rows]
     events_by_message: Dict[str, List[Dict[str, Any]]] = {message_id: [] for message_id in message_ids}
@@ -1445,6 +1540,7 @@ def h5_pending_messages(
         db.query(H5ChatMessage)
         .filter(
             H5ChatMessage.user_id == current_user_id,
+            H5ChatMessage.mode.in_(("direct", "client_command")),
             H5ChatMessage.status == "processing",
             H5ChatMessage.claimed_at.isnot(None),
             H5ChatMessage.claimed_at < stale_cutoff,
@@ -1462,7 +1558,7 @@ def h5_pending_messages(
     q = (
         db.query(H5ChatMessage)
         .filter(H5ChatMessage.user_id == current_user_id, H5ChatMessage.status == "pending")
-        .filter(H5ChatMessage.mode != "scheduled_task")
+        .filter(H5ChatMessage.mode.in_(("direct", "client_command")))
         .filter(or_(H5ChatMessage.installation_id.is_(None), H5ChatMessage.installation_id == xi))
         .order_by(H5ChatMessage.created_at.asc())
     )
@@ -1543,6 +1639,7 @@ def h5_submit_event(
     _assert_worker_can_update(row, _header_installation_id(request))
     row.updated_at = datetime.utcnow()
     _add_event(db, row, body.type, body.payload)
+    _mirror_child_event_to_parent(db, row, body.type, body.payload)
     db.commit()
     return {"ok": True}
 
@@ -1572,5 +1669,7 @@ def h5_complete_message(
     else:
         payload.setdefault("reply_text", reply)
         _add_event(db, row, "final", payload)
+    _mirror_child_event_to_parent(db, row, "error" if error else "final", payload)
+    _finish_mastra_parent_from_children(db, row)
     db.commit()
     return {"ok": True, "status": row.status}

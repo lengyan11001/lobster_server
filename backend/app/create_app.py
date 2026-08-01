@@ -36,6 +36,7 @@ from .api.cutcli_templates import router as cutcli_templates_router
 from .api.logs_api import router as logs_router
 from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
 from .api.h5_chat import router as h5_chat_router
+from .api.mastra_chat import router as mastra_chat_router
 from .api.h5_home import router as h5_home_router
 from .api.h5_workflows import router as h5_workflows_router
 from .api.h5_personal_settings import router as h5_personal_settings_router
@@ -210,6 +211,38 @@ def _migrate_h5_device_presence_account_payload():
                 conn.execute(text("ALTER TABLE h5_chat_device_presence ADD COLUMN account_payload JSON"))
     except Exception as e:
         logger.warning("Migration h5_chat_device_presence.account_payload skipped: %s", e)
+
+
+def _migrate_h5_chat_mastra_columns():
+    """Add fields used by Mastra conversations and their multimodal inputs."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("h5_chat_messages"):
+            return
+        cols = [c["name"] for c in insp.get_columns("h5_chat_messages")]
+        with engine.begin() as conn:
+            if "parent_message_id" not in cols:
+                conn.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN parent_message_id VARCHAR(64)"))
+            if "attachments" not in cols:
+                conn.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN attachments JSON"))
+            if "session_id" not in cols:
+                conn.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN session_id VARCHAR(64)"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_parent_message_id "
+                    "ON h5_chat_messages (parent_message_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_session_id "
+                    "ON h5_chat_messages (session_id)"
+                )
+            )
+    except Exception as e:
+        logger.warning("Migration h5_chat_messages Mastra columns skipped: %s", e)
 
 
 def _seed_capability_catalog():
@@ -1010,6 +1043,7 @@ def create_app() -> FastAPI:
         _migrate_juhe_wechat_config_owner_columns()
         _migrate_ip_content_schedule_template_memory_doc_ids()
         _migrate_h5_device_presence_account_payload()
+        _migrate_h5_chat_mastra_columns()
         _ensure_default_user()
         _seed_capability_catalog()
         _upsert_missing_capabilities_from_catalog()
@@ -1083,6 +1117,7 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, prefix="")
     app.include_router(douyin_dashboard_h5_router, prefix="")
     app.include_router(h5_chat_router, prefix="")
+    app.include_router(mastra_chat_router, prefix="")
     app.include_router(h5_home_router, prefix="")
     app.include_router(h5_workflows_router, prefix="")
     app.include_router(h5_personal_settings_router, prefix="")

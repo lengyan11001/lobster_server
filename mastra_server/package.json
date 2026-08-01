@@ -1,0 +1,25 @@
+{
+  "name": "lobster-mastra-orchestrator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "mastra dev",
+    "build": "mastra build",
+    "start": "node .mastra/output/index.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "4.0.27",
+    "@mastra/core": "1.55.0",
+    "@mastra/mcp": "1.15.0",
+    "@mastra/memory": "1.24.0",
+    "@mastra/pg": "1.18.1",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "22.13.10",
+    "mastra": "1.21.0",
+    "typescript": "5.9.3"
+  }
+}
