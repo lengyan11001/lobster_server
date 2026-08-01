@@ -36,6 +36,8 @@ def test_h5_chat_voice_permission_and_cancellation_are_race_safe():
     assert "function isTransientMicrophoneStartError" in script
     assert "function prepareAndroidMicrophoneCapture" in script
     assert "window.LobsterAndroid.prepareMicrophoneCapture()" in script
+    assert "function reportMicrophoneStartupFailure" in script
+    assert 'apiUrl("/api/h5-chat/voice/diagnostics")' in script
     assert "IS_ANDROID_APP ? [0, 700, 1600, 3000] : [0]" in script
     assert 'typeof canRetry === "function" && !canRetry()' in script
     assert "attempt === 0 ? constraints : { audio: true }" in script

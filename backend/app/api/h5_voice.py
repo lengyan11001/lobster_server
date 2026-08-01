@@ -6,9 +6,10 @@ import logging
 from typing import Any, Dict, Optional
 
 import websockets
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
@@ -25,10 +26,39 @@ from ..services.xfyun_realtime_asr import (
 )
 from ..services.voice_intent_llm import resolve_voice_intent_with_llm
 from ..services.brand_context import explicit_request_brand_mark
-from .auth import ALGORITHM, validate_token_brand
+from .auth import ALGORITHM, get_current_user, validate_token_brand
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class MicrophoneStartupDiagnostic(BaseModel):
+    error_name: str = Field(default="", max_length=80)
+    error_message: str = Field(default="", max_length=500)
+    diagnostics: str = Field(default="", max_length=1000)
+    user_agent: str = Field(default="", max_length=600)
+    brand: str = Field(default="", max_length=64)
+
+
+def _log_value(value: str, limit: int) -> str:
+    return str(value or "").replace("\r", " ").replace("\n", " ")[:limit]
+
+
+@router.post("/api/h5-chat/voice/diagnostics")
+async def h5_voice_diagnostics(
+    body: MicrophoneStartupDiagnostic,
+    current_user: User = Depends(get_current_user),
+):
+    logger.warning(
+        "[h5_voice] microphone_start_failed user_id=%s brand=%s error=%s message=%s diagnostics=%s ua=%s",
+        current_user.id,
+        _log_value(body.brand, 64),
+        _log_value(body.error_name, 80),
+        _log_value(body.error_message, 500),
+        _log_value(body.diagnostics, 1000),
+        _log_value(body.user_agent, 600),
+    )
+    return {"ok": True}
 
 
 @router.get("/api/h5-chat/voice/config")

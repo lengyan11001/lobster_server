@@ -1329,6 +1329,22 @@
       }
     }
 
+    function reportMicrophoneStartupFailure(error) {
+      if (!IS_ANDROID_APP || !state.token) return;
+      fetch(apiUrl("/api/h5-chat/voice/diagnostics"), {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          error_name: String(error && error.name || ""),
+          error_message: String(error && error.message || ""),
+          diagnostics: String(state.lastMicrophoneDiagnostics || ""),
+          user_agent: UA,
+          brand: H5_BRAND_MARK,
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    }
+
     async function requestMicrophoneStream(constraints = { audio: true }, canRetry = null) {
       const retryDelays = IS_ANDROID_APP ? [0, 700, 1600, 3000] : [0];
       let lastError = null;
@@ -1350,6 +1366,7 @@
           if (!IS_ANDROID_APP || !isTransientMicrophoneStartError(error)) throw error;
         }
       }
+      reportMicrophoneStartupFailure(lastError);
       throw lastError || new Error("Microphone startup failed");
     }
 
