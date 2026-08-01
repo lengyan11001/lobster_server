@@ -257,6 +257,8 @@ def user_can_use_capability(
     user_id: int,
     capability_id: str,
     installation_id: Optional[str] = None,
+    *,
+    require_installation: bool = True,
 ) -> bool:
     """该用户是否可使用此能力：若能力属于需付费解锁的技能包，则必须已解锁；在线版还需登记当前 installation_id（由路由先 parse_installation_id_strict）。"""
     cap_map = _capability_to_package_map()
@@ -266,7 +268,7 @@ def user_can_use_capability(
     unlocked = _user_unlocked_package_ids(db, user_id)
     if package_id not in unlocked:
         return False
-    if not installation_slots_enabled():
+    if not require_installation or not installation_slots_enabled():
         return True
     iid = (installation_id or "").strip()
     if not iid:

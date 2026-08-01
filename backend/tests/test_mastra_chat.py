@@ -72,6 +72,64 @@ def test_create_mastra_message_uses_server_orchestrator_mode(db_session_factory,
         assert event.event_type == "queued"
 
 
+def test_mastra_capability_discovery_does_not_require_online_installation(
+    db_session_factory, test_user, monkeypatch
+):
+    from backend.app.api import mastra_chat
+
+    checks = []
+    monkeypatch.setattr(
+        mastra_chat,
+        "_read_capability_catalog_json",
+        lambda: {
+            "cloud.allowed": {"enabled": True, "description": "cloud"},
+            "cloud.denied": {"enabled": True, "description": "locked"},
+            "cloud.disabled": {"enabled": False, "description": "disabled"},
+        },
+    )
+
+    def _can_use(_db, user_id, capability_id, installation_id=None, *, require_installation=True):
+        checks.append((user_id, capability_id, installation_id, require_installation))
+        return capability_id == "cloud.allowed"
+
+    monkeypatch.setattr(mastra_chat, "user_can_use_capability", _can_use)
+    response = _client(db_session_factory, test_user.id).get("/api/mastra-chat/capabilities")
+
+    assert response.status_code == 200, response.text
+    assert list(response.json()["capabilities"]) == ["cloud.allowed"]
+    assert checks == [
+        (test_user.id, "cloud.allowed", None, False),
+        (test_user.id, "cloud.denied", None, False),
+    ]
+
+
+def test_server_capability_discovery_skips_only_device_slot(monkeypatch):
+    from backend.app.api import skills
+
+    monkeypatch.setattr(skills, "_capability_to_package_map", lambda: {"paid.cloud": "paid-package"})
+    monkeypatch.setattr(skills, "installation_slots_enabled", lambda: True)
+    monkeypatch.setattr(skills, "_user_unlocked_package_ids", lambda _db, _user_id: set())
+    assert not skills.user_can_use_capability(
+        None,
+        42,
+        "paid.cloud",
+        require_installation=False,
+    )
+
+    monkeypatch.setattr(
+        skills,
+        "_user_unlocked_package_ids",
+        lambda _db, _user_id: {"paid-package"},
+    )
+    assert not skills.user_can_use_capability(None, 42, "paid.cloud")
+    assert skills.user_can_use_capability(
+        None,
+        42,
+        "paid.cloud",
+        require_installation=False,
+    )
+
+
 def test_dispatch_online_task_is_linked_and_deduplicated(db_session, db_session_factory, test_user):
     from backend.app.models import H5ChatDevicePresence, H5ChatMessage
 

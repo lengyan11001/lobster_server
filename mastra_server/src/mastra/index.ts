@@ -133,7 +133,7 @@ const listSystemCapabilities = createTool({
   }),
   execute: async ({ query }, executionContext) => {
     const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
-    const data = await backendJson('/api/capability-catalog', { method: 'GET' }, context)
+    const data = await backendJson('/api/mastra-chat/capabilities', { method: 'GET' }, context)
     const catalog = data?.capabilities && typeof data.capabilities === 'object'
       ? data.capabilities as Record<string, Record<string, unknown>>
       : {}

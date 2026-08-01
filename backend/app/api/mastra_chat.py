@@ -25,9 +25,11 @@ from ..models import (
     User,
 )
 from .auth import get_current_user
+from .capabilities import _read_capability_catalog_json
 from .h5_chat import _DEVICE_ONLINE_TTL_SECONDS, _add_event, _serialize_message
 from .installation_slots import optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
+from .skills import user_can_use_capability
 
 router = APIRouter()
 
@@ -484,6 +486,34 @@ async def mastra_chat_status(
             "oldest_pending_seconds": pending_age,
         },
     }
+
+
+@router.get("/api/mastra-chat/capabilities", summary="AI orchestrator capability catalog")
+def list_mastra_capabilities(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List unlocked capabilities without requiring an Online installation.
+
+    Installation slot checks belong to desktop execution. This server-only
+    discovery route still enforces user unlocks, and authentication enforces
+    the request brand before this function runs.
+    """
+    owner = online_user_for_mobile_user(db, current_user)
+    catalog = _read_capability_catalog_json()
+    filtered: dict[str, Any] = {}
+    for capability_id, definition in catalog.items():
+        if not isinstance(definition, dict) or not definition.get("enabled", True):
+            continue
+        if not user_can_use_capability(
+            db,
+            owner.id,
+            capability_id,
+            require_installation=False,
+        ):
+            continue
+        filtered[capability_id] = definition
+    return {"ok": True, "capabilities": filtered, "source": "server"}
 
 
 @router.post("/api/mastra-chat/messages", summary="创建 AI 调度会话消息")
