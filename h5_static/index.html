@@ -8,8 +8,8 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="必火AI员工" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-mastra-voice-v2" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fixed-v2" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1" />
 </head>
 <body>
   <main class="shell">
@@ -542,7 +542,6 @@
               <h2 id="departmentTitle">职能中心</h2>
             </div>
             <button class="hero-action floating-work-history-btn" type="button" id="departmentWorkHistoryBtn">工作历史</button>
-            <button class="hero-action floating-chat-btn" type="button" id="departmentChatBtn">进入对话</button>
           </div>
           <div class="department-day-board">
             <div class="department-calendar">
@@ -573,7 +572,6 @@
               <h2 id="abilityTitle">能力</h2>
             </div>
             <button class="hero-action floating-work-history-btn" type="button" id="abilityWorkHistoryBtn">工作历史</button>
-            <button class="hero-action floating-chat-btn" type="button" id="abilityChatBtn">进入对话</button>
           </div>
           <div class="department-breadcrumb" id="abilityBreadcrumb"></div>
           <div class="ability-workbench hidden" id="abilityWorkbench">
@@ -1107,6 +1105,13 @@
           <span>我的</span>
         </button>
       </nav>
+      <button class="global-chat-fab" type="button" id="globalChatFab" aria-label="打开 AI 调度助手" title="AI 调度助手">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5.5 17.5 4 21l4.2-1.35A9 9 0 1 0 5.5 17.5Z"></path>
+          <path d="M8.5 12h.01M12 12h.01M15.5 12h.01"></path>
+        </svg>
+        <span class="global-chat-fab-badge" aria-hidden="true"></span>
+      </button>
     </div>
   </main>
   <button class="scroll-top-btn hidden" type="button" id="scrollTopBtn" aria-label="返回顶部">↑</button>
@@ -1896,6 +1901,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-mastra-voice-v6"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1"></script>
 </body>
 </html>

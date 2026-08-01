@@ -740,6 +740,64 @@ body.messages-view-active {
   transform: rotate(45deg);
 }
 
+.global-chat-fab {
+  position: fixed;
+  z-index: 89;
+  right: max(18px, calc((100vw - 430px) / 2 + 18px));
+  bottom: max(96px, calc(82px + env(safe-area-inset-bottom)));
+  width: 54px;
+  min-width: 54px;
+  height: 54px;
+  min-height: 54px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, .82);
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(145deg, #2563eb, #0ea5e9);
+  box-shadow: 0 16px 34px rgba(37, 99, 235, .28), 0 6px 16px rgba(14, 165, 233, .2);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.global-chat-fab::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border: 1px solid rgba(255, 255, 255, .24);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.global-chat-fab svg {
+  width: 25px;
+  height: 25px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.global-chat-fab-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.global-chat-fab:active {
+  transform: scale(.96);
+}
+
+body.messages-view-active .global-chat-fab {
+  bottom: max(218px, calc(204px + env(safe-area-inset-bottom)));
+}
+
 .creation-quick-modal {
   z-index: 260;
   place-items: end center;

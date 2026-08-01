@@ -5294,7 +5294,7 @@
       const board = document.querySelector("#departmentView .department-day-board");
       if (shell) shell.classList.toggle("marketing-entry-mode", entryOnly);
       if (board) board.classList.toggle("hidden", entryOnly);
-      ["departmentWorkHistoryBtn", "departmentChatBtn"].forEach((id) => {
+      ["departmentWorkHistoryBtn"].forEach((id) => {
         const el = $(id);
         if (el) el.classList.toggle("hidden", entryOnly);
       });
@@ -17734,13 +17734,22 @@
       }
       openAbilityView(btn.dataset.abilityKey || "");
     });
-    $("departmentChatBtn")?.addEventListener("click", () => {
-      const department = departmentById(state.currentDepartmentId);
-      if (department) openContextChat(contextFromDepartment(department));
-    });
-    $("abilityChatBtn")?.addEventListener("click", () => {
-      const lookup = activeAbilityLookup();
-      if (lookup) openContextChat(contextFromAbility(lookup));
+    $("globalChatFab")?.addEventListener("click", () => {
+      const sourceView = activeViewKey();
+      if (sourceView === "messages") {
+        scrollMessagesToBottom();
+        focusMessageInput();
+        return;
+      }
+      let context = null;
+      if (sourceView === "department") {
+        const department = departmentById(state.currentDepartmentId);
+        if (department) context = contextFromDepartment(department);
+      } else if (sourceView === "ability") {
+        const lookup = activeAbilityLookup();
+        if (lookup) context = contextFromAbility(lookup);
+      }
+      openContextChat(context);
     });
     $("departmentWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(departmentScope(departmentById(state.currentDepartmentId))));
     $("abilityWorkHistoryBtn")?.addEventListener("click", () => openWorkHistory(abilityScope(activeAbilityLookup())));

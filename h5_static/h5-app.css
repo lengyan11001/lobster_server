@@ -4110,30 +4110,11 @@
     #abilityDispatchBtn {
       display: none !important;
     }
-    #departmentChatBtn,
-    #abilityChatBtn {
-      position: fixed !important;
-      right: max(18px, env(safe-area-inset-right));
-      bottom: max(22px, calc(env(safe-area-inset-bottom) + 18px));
-      z-index: 90;
-      width: 58px !important;
-      min-width: 58px !important;
-      height: 58px;
-      min-height: 58px;
-      padding: 0 !important;
-      border-radius: 50%;
-      color: #fff;
-      font-size: 0;
-      background:
-        radial-gradient(circle at 28% 22%, rgba(255,255,255,.35), transparent 24%),
-        linear-gradient(135deg, #0e9f7e, #245cff);
-      box-shadow: 0 18px 34px rgba(36,92,255,.28), 0 8px 18px rgba(10,132,101,.22);
-    }
     #departmentWorkHistoryBtn,
     #abilityWorkHistoryBtn {
       position: fixed !important;
       right: max(21px, env(safe-area-inset-right));
-      bottom: max(90px, calc(env(safe-area-inset-bottom) + 86px));
+      bottom: max(160px, calc(env(safe-area-inset-bottom) + 160px));
       z-index: 90;
       width: 52px !important;
       min-width: 52px !important;
@@ -4148,26 +4129,6 @@
         linear-gradient(135deg, rgba(255,255,255,.98), rgba(224,250,244,.98));
       border: 1px solid rgba(19,168,115,.22);
       box-shadow: 0 16px 30px rgba(20,74,112,.18), 0 8px 16px rgba(19,168,115,.16);
-    }
-    #departmentChatBtn::before,
-    #abilityChatBtn::before {
-      content: "";
-      width: 24px;
-      height: 18px;
-      border: 3px solid currentColor;
-      border-radius: 10px;
-    }
-    #departmentChatBtn::after,
-    #abilityChatBtn::after {
-      content: "";
-      position: absolute;
-      left: 21px;
-      bottom: 17px;
-      width: 9px;
-      height: 9px;
-      border-left: 3px solid currentColor;
-      border-bottom: 3px solid currentColor;
-      transform: rotate(-18deg);
     }
     #departmentWorkHistoryBtn::before,
     #abilityWorkHistoryBtn::before {
@@ -4192,7 +4153,7 @@
     .scroll-top-btn {
       position: fixed;
       right: max(18px, calc((100vw - 420px) / 2 + 18px));
-      bottom: max(96px, calc(env(safe-area-inset-bottom) + 96px));
+      bottom: max(160px, calc(env(safe-area-inset-bottom) + 160px));
       z-index: 88;
       width: 46px;
       min-width: 46px;
