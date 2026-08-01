@@ -2701,13 +2701,13 @@
           + taskFieldHtml("任务名称", workInputHtml("workflowParamHiflyTitle", "text", "数字人口播"));
       }
       if (id === "comfly.daihuo.pipeline") {
-        return taskFieldHtml("参考图片", assetPickerControlHtml("workflowParamComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }), true)
+        return taskFieldHtml("参考图片", assetPickerControlHtml("workflowParamComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }), true)
           + taskFieldHtml("视频要求", taskTextareaHtml("workflowParamComflyText", "视频生成要求"), true)
           + taskFieldHtml("分镜数量", workInputHtml("workflowParamComflyStoryboardCount", "number", "5", 'min="1" max="8"'))
           + taskFieldHtml("自动入库", workCheckboxHtml("workflowParamComflyAutoSave", "完成后保存到素材库", true));
       }
       if (id === "comfly.seedance.tvc.pipeline") {
-        return taskFieldHtml("参考图片", assetPickerControlHtml("workflowParamSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }), true)
+        return taskFieldHtml("参考图片", assetPickerControlHtml("workflowParamSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }), true)
           + taskFieldHtml("视频要求", taskTextareaHtml("workflowParamSeedanceText", "连续分镜和视频要求"), true)
           + taskFieldHtml("总时长", taskSelectHtml("workflowParamSeedanceDuration", [10,20,30,40,50,60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
           + taskFieldHtml("画幅", taskSelectHtml("workflowParamSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏")));
@@ -2952,7 +2952,7 @@
         };
       }
       if (capabilityId === "comfly.daihuo.pipeline") {
-        const asset = assetOrImagePayload(workflowParamValue("workflowParamComflyAsset"), "参考图片");
+        const asset = assetPickerImagePayload("workflowParamComflyAsset", "参考图片");
         return {
           title: node.label || "爆款TVC",
           task_kind: "capability",
@@ -2970,7 +2970,7 @@
         };
       }
       if (capabilityId === "comfly.seedance.tvc.pipeline") {
-        const asset = assetOrImagePayload(workflowParamValue("workflowParamSeedanceAsset"), "参考图片");
+        const asset = assetPickerImagePayload("workflowParamSeedanceAsset", "参考图片");
         return {
           title: node.label || "创意分镜头视频",
           task_kind: "capability",
@@ -3991,14 +3991,14 @@
         return;
       }
       if (capabilityId === "comfly.daihuo.pipeline") {
-        setFieldValue("workflowParamComflyAsset", inner.asset_id || inner.image_url || "");
+        setAssetPickerPayloadValue("workflowParamComflyAsset", inner);
         setFieldValue("workflowParamComflyText", inner.task_text || inner.prompt || node.note || "");
         setFieldValue("workflowParamComflyStoryboardCount", inner.storyboard_count || 5);
         setFieldValue("workflowParamComflyAutoSave", inner.auto_save !== false);
         return;
       }
       if (capabilityId === "comfly.seedance.tvc.pipeline") {
-        setFieldValue("workflowParamSeedanceAsset", inner.asset_id || inner.image_url || "");
+        setAssetPickerPayloadValue("workflowParamSeedanceAsset", inner);
         setFieldValue("workflowParamSeedanceText", inner.task_text || inner.prompt || node.note || "");
         setFieldValue("workflowParamSeedanceDuration", inner.total_duration_seconds || 20);
         setFieldValue("workflowParamSeedanceAspect", inner.aspect_ratio || "9:16");
@@ -6878,14 +6878,7 @@
       const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
       const hidden = $(id);
       if (!box || !hidden || !row) return;
-      const item = normalizeUserUploadAsset(row);
-      if (item.asset_origin === "user_upload") addUserUploadAssetToCache(item);
-      state.assetPickerSelections[id] = item;
-      hidden.value = assetPickerOutputValue(item, box.dataset.assetOutput || "asset_id");
-      hidden.dispatchEvent(new Event("change", { bubbles: true }));
-      renderAssetPickerControl(id);
-      applyAssetSelectionContext(id, item);
-      hydrateAssetSelectionContext(id, item);
+      setAssetPickerSelectionRows(id, [row]);
     }
 
     function setAssetDerivedField(id, value) {
@@ -6934,13 +6927,16 @@
       const expectedId = selected.asset_id;
       try {
         const detail = await api(`/api/assets/${encodeURIComponent(expectedId)}`);
-        const current = normalizeUserUploadAsset(state.assetPickerSelections[id]);
-        if (current.asset_id !== expectedId) return;
+        const currentRows = assetPickerSelectionRows(id);
+        const selectedIndex = currentRows.findIndex((item) => item.asset_id === expectedId);
+        if (selectedIndex < 0) return;
         const hydrated = normalizeUserUploadAsset({ ...selected, ...detail, asset_origin: selected.asset_origin });
-        state.assetPickerSelections[id] = hydrated;
+        currentRows[selectedIndex] = hydrated;
+        const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
+        state.assetPickerSelections[id] = assetPickerAllowsMultiple(box) ? currentRows : hydrated;
         if (hydrated.asset_origin === "user_upload") addUserUploadAssetToCache(hydrated);
         renderAssetPickerControl(id);
-        applyAssetSelectionContext(id, hydrated);
+        if (selectedIndex === 0) applyAssetSelectionContext(id, hydrated);
       } catch {}
     }
 
@@ -9535,6 +9531,22 @@
       if (document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`)) renderAssetPickerControl(id);
     }
 
+    function setAssetPickerPayloadValue(id, payload) {
+      const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
+      const source = payload && typeof payload === "object" ? payload : {};
+      const values = [];
+      const primary = String(source.asset_id || source.image_url || "").trim();
+      if (primary) values.push(primary);
+      [source.reference_asset_ids, source.reference_image_urls].forEach((items) => {
+        (Array.isArray(items) ? items : []).forEach((value) => {
+          const normalized = String(value || "").trim();
+          if (normalized && !values.includes(normalized)) values.push(normalized);
+        });
+      });
+      delete state.assetPickerSelections[id];
+      setFieldValue(id, assetPickerAllowsMultiple(box) ? JSON.stringify(values) : (values[0] || ""));
+    }
+
     function setTextareaList(id, values) {
       setFieldValue(id, Array.isArray(values) ? values.join("\n") : values || "");
     }
@@ -9578,11 +9590,11 @@
       setFieldValue("abilityVideoCandidateGroup", inner.candidate_group || "");
       bindGoalVideoModeControls("ability");
       loadVideoMemoryDocsForSelect().then(() => setMultiSelectValues("abilityVideoMemoryDocs", inner.memory_doc_ids || [])).catch(() => {});
-      setFieldValue("workSeedanceAsset", inner.asset_id || inner.image_url || "");
+      setAssetPickerPayloadValue("workSeedanceAsset", inner);
       setFieldValue("workSeedanceText", inner.task_text || inner.prompt || "");
       setFieldValue("workSeedanceDuration", inner.total_duration_seconds || "");
       setFieldValue("workSeedanceAspect", inner.aspect_ratio || "");
-      setFieldValue("workComflyAsset", inner.asset_id || inner.image_url || "");
+      setAssetPickerPayloadValue("workComflyAsset", inner);
       setFieldValue("workComflyText", inner.task_text || inner.prompt || "");
       setFieldValue("workComflyStoryboardCount", inner.storyboard_count || "");
       setFieldValue("workComflyAutoSave", inner.auto_save !== false);
@@ -13621,15 +13633,123 @@
       const output = String(opts.output || "asset_id");
       const uploadText = String(opts.uploadText || "上传");
       const selectText = String(opts.selectText || "选择素材");
-      return `<div class="asset-picker" data-asset-picker="${escapeHtml(id)}" data-asset-media-type="${escapeHtml(mediaType)}" data-asset-output="${escapeHtml(output)}">
+      const multiple = !!opts.multiple;
+      return `<div class="asset-picker" data-asset-picker="${escapeHtml(id)}" data-asset-media-type="${escapeHtml(mediaType)}" data-asset-output="${escapeHtml(output)}" data-asset-multiple="${multiple ? "1" : "0"}">
         <input id="${escapeHtml(id)}" type="hidden">
-        <input id="${escapeHtml(id)}File" type="file" accept="${escapeHtml(accept)}" data-asset-upload-input="${escapeHtml(id)}" hidden>
+        <input id="${escapeHtml(id)}File" type="file" accept="${escapeHtml(accept)}" data-asset-upload-input="${escapeHtml(id)}" ${multiple ? "multiple" : ""} hidden>
         <div class="asset-picker-row">
           <button class="ghost" type="button" data-asset-upload-trigger="${escapeHtml(id)}">${escapeHtml(uploadText)}</button>
           <button class="ghost" type="button" data-asset-picker-open="${escapeHtml(id)}">${escapeHtml(selectText)}</button>
         </div>
         <div class="asset-picker-preview" id="${escapeHtml(id)}Preview"></div>
       </div>`;
+    }
+
+    function assetPickerAllowsMultiple(boxOrId) {
+      const box = typeof boxOrId === "string"
+        ? document.querySelector(`[data-asset-picker="${cssEscape(boxOrId)}"]`)
+        : boxOrId;
+      return !!box && box.dataset.assetMultiple === "1";
+    }
+
+    function assetPickerSelectionRows(id) {
+      const current = state.assetPickerSelections[id];
+      const rows = Array.isArray(current) ? current : (current ? [current] : []);
+      const seen = new Set();
+      return rows.map(normalizeUserUploadAsset).filter((row) => {
+        const identity = assetPickerRowIdentity(row);
+        if (!identity || seen.has(identity)) return false;
+        seen.add(identity);
+        return true;
+      });
+    }
+
+    function assetPickerHiddenValues(id, box) {
+      const hidden = $(id);
+      const raw = String((hidden && hidden.value) || "").trim();
+      if (!raw) return [];
+      if (assetPickerAllowsMultiple(box)) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return parsed.map((value) => String(value || "").trim()).filter(Boolean);
+        } catch {}
+      }
+      return [raw];
+    }
+
+    function assetPickerRowsForValues(id, values, box) {
+      const output = (box && box.dataset.assetOutput) || "asset_id";
+      const mediaType = (box && box.dataset.assetMediaType) || "";
+      const rememberedRows = assetPickerSelectionRows(id);
+      const cachedRows = userUploadAssetRows(mediaType);
+      return (Array.isArray(values) ? values : []).map((rawValue) => {
+        const value = String(rawValue || "").trim();
+        return rememberedRows.find((row) => row.asset_id === value || assetPickerOutputValue(row, output) === value)
+          || cachedRows.find((row) => row.asset_id === value || assetPickerOutputValue(row, output) === value)
+          || normalizeUserUploadAsset({
+            asset_id: /^https?:\/\//i.test(value) ? "" : value,
+            source_url: /^https?:\/\//i.test(value) ? value : "",
+            media_type: mediaType || mediaTypeFromUrl(value),
+            filename: "已选择素材",
+          });
+      }).filter((row) => assetPickerRowIdentity(row));
+    }
+
+    function setAssetPickerSelectionRows(id, rows, applyContext = true) {
+      const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
+      const hidden = $(id);
+      if (!box || !hidden) return;
+      const multiple = assetPickerAllowsMultiple(box);
+      const normalized = [];
+      const seen = new Set();
+      (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const item = normalizeUserUploadAsset(row);
+        const identity = assetPickerRowIdentity(item);
+        if (!identity || seen.has(identity)) return;
+        seen.add(identity);
+        if (item.asset_origin === "user_upload") addUserUploadAssetToCache(item);
+        normalized.push(item);
+      });
+      const selected = multiple ? normalized : normalized.slice(0, 1);
+      if (selected.length) state.assetPickerSelections[id] = multiple ? selected : selected[0];
+      else delete state.assetPickerSelections[id];
+      const values = selected.map((item) => assetPickerOutputValue(item, box.dataset.assetOutput || "asset_id")).filter(Boolean);
+      hidden.value = multiple ? JSON.stringify(values) : (values[0] || "");
+      hidden.dispatchEvent(new Event("change", { bubbles: true }));
+      renderAssetPickerControl(id);
+      if (applyContext && selected[0]) {
+        applyAssetSelectionContext(id, selected[0]);
+        selected.forEach((item) => hydrateAssetSelectionContext(id, item));
+      }
+    }
+
+    function assetPickerSelectedValues(id) {
+      const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
+      if (!box) return [];
+      const hiddenValues = assetPickerHiddenValues(id, box);
+      if (hiddenValues.length) return hiddenValues;
+      const output = box.dataset.assetOutput || "asset_id";
+      const selected = assetPickerSelectionRows(id)
+        .map((row) => assetPickerOutputValue(row, output))
+        .filter(Boolean);
+      return selected;
+    }
+
+    function assetPickerImagePayload(id, fieldLabel) {
+      const values = assetPickerSelectedValues(id);
+      if (!values.length) throw new Error(`请选择${fieldLabel}`);
+      const primary = assetOrImagePayload(values[0], fieldLabel);
+      const referenceAssetIds = [];
+      const referenceImageUrls = [];
+      values.slice(1).forEach((value) => {
+        if (/^https?:\/\//i.test(value)) referenceImageUrls.push(value);
+        else referenceAssetIds.push(value);
+      });
+      return {
+        ...primary,
+        ...(referenceAssetIds.length ? { reference_asset_ids: referenceAssetIds } : {}),
+        ...(referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
+      };
     }
 
     function renderAssetPickerControl(id) {
@@ -13640,8 +13760,26 @@
       const mediaType = box.dataset.assetMediaType || "";
       const output = box.dataset.assetOutput || "asset_id";
       const rows = userUploadAssetRows(mediaType);
-      const current = String(hidden.value || "").trim();
-      const remembered = state.assetPickerSelections[id] ? normalizeUserUploadAsset(state.assetPickerSelections[id]) : null;
+      const multiple = assetPickerAllowsMultiple(box);
+      const currentValues = assetPickerHiddenValues(id, box);
+      const current = currentValues[0] || "";
+      const rememberedRows = assetPickerSelectionRows(id);
+      if (multiple) {
+        const selectedRows = assetPickerRowsForValues(id, currentValues, box);
+        if (!selectedRows.length) {
+          preview.innerHTML = "";
+          return;
+        }
+        preview.innerHTML = selectedRows.map((item, index) => {
+          const src = assetPickerPreviewUrl(item);
+          const media = item.media_type === "video"
+            ? `<video src="${escapeHtml(src)}" muted playsinline preload="metadata"></video>`
+            : (item.media_type === "image" ? `<img src="${escapeHtml(src)}" alt="">` : `<div class="asset-picker-file">${escapeHtml((item.filename || "FILE").split(".").pop() || "FILE")}</div>`);
+          return `<div class="asset-picker-preview-item"><div class="asset-picker-thumb">${media}</div><span>${escapeHtml(item.filename || item.asset_id || `素材 ${index + 1}`)}</span><button type="button" data-asset-picker-remove="${escapeHtml(id)}" data-asset-picker-remove-index="${index}" aria-label="移除">×</button></div>`;
+        }).join("");
+        return;
+      }
+      const remembered = rememberedRows[0] || null;
       const rememberedMatches = remembered && current && (remembered.asset_id === current || assetPickerOutputValue(remembered, output) === current);
       const matched = (rememberedMatches ? remembered : null)
         || rows.find((row) => row.asset_id === current || assetPickerOutputValue(row, output) === current)
@@ -13728,7 +13866,11 @@
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || data.message || `上传失败：HTTP ${resp.status}`);
       const item = addUserUploadAssetToCache({ ...data, asset_origin: "user_upload" });
-      selectAssetPickerRow(id, item);
+      if (assetPickerAllowsMultiple(box)) {
+        setAssetPickerSelectionRows(id, assetPickerSelectionRows(id).concat([item]));
+      } else {
+        selectAssetPickerRow(id, item);
+      }
       renderAssetPickerControls(item.media_type);
       renderAssetPickerControls("");
       toast("已上传，之后可直接选择");
@@ -13786,17 +13928,28 @@
       } else if (!rows.length) {
         grid.innerHTML = `<div class="asset-picker-library-empty">${state.assetPickerModalQuery ? "没有匹配的素材" : "这里还没有可选素材"}</div>`;
       } else {
-        const selectedId = assetPickerRowIdentity(state.assetPickerModalDraft);
+        const targetBox = state.assetPickerModalTarget
+          ? document.querySelector(`[data-asset-picker="${cssEscape(state.assetPickerModalTarget)}"]`)
+          : null;
+        const multiple = assetPickerAllowsMultiple(targetBox);
+        const drafts = Array.isArray(state.assetPickerModalDraft)
+          ? state.assetPickerModalDraft
+          : (state.assetPickerModalDraft ? [state.assetPickerModalDraft] : []);
+        const selectedIds = new Set(drafts.map(assetPickerRowIdentity).filter(Boolean));
         grid.innerHTML = rows.map((row, index) => {
           const item = normalizeUserUploadAsset(row);
-          const selected = !!selectedId && assetPickerRowIdentity(item) === selectedId;
-          return `<button class="asset-picker-library-card${selected ? " selected" : ""}" type="button" data-asset-picker-choice="${index}" role="radio" aria-checked="${selected ? "true" : "false"}">
+          const selected = selectedIds.has(assetPickerRowIdentity(item));
+          return `<button class="asset-picker-library-card${selected ? " selected" : ""}" type="button" data-asset-picker-choice="${index}" role="${multiple ? "checkbox" : "radio"}" aria-checked="${selected ? "true" : "false"}">
             <span class="asset-picker-library-cover">${assetPickerModalMediaHtml(item)}<i>${selected ? "已选择" : designerMediaTypeLabel(item.media_type)}</i></span>
             <span class="asset-picker-library-copy"><strong title="${escapeHtml(item.filename)}">${escapeHtml(item.filename || "素材")}</strong><small>${escapeHtml(fmtTime(item.created_at))}</small></span>
           </button>`;
         }).join("");
       }
-      if ($("assetPickerLibraryConfirm")) $("assetPickerLibraryConfirm").disabled = !state.assetPickerModalDraft;
+      if ($("assetPickerLibraryConfirm")) {
+        const drafts = Array.isArray(state.assetPickerModalDraft) ? state.assetPickerModalDraft : (state.assetPickerModalDraft ? [state.assetPickerModalDraft] : []);
+        $("assetPickerLibraryConfirm").disabled = !drafts.length;
+        $("assetPickerLibraryConfirm").textContent = drafts.length > 1 ? `确认选择（${drafts.length}）` : "确认选择";
+      }
     }
 
     async function loadAssetPickerModalRows() {
@@ -13837,26 +13990,34 @@
       const box = document.querySelector(`[data-asset-picker="${cssEscape(id)}"]`);
       const hidden = $(id);
       if (!box || !hidden) return;
-      const current = String(hidden.value || "").trim();
-      const remembered = state.assetPickerSelections[id] ? normalizeUserUploadAsset(state.assetPickerSelections[id]) : null;
+      const multiple = assetPickerAllowsMultiple(box);
+      const currentValues = assetPickerHiddenValues(id, box);
+      const current = currentValues[0] || "";
+      const rememberedRows = assetPickerSelectionRows(id);
+      const remembered = rememberedRows[0] || null;
       const rememberedMatches = remembered && current && (remembered.asset_id === current || assetPickerOutputValue(remembered, box.dataset.assetOutput || "asset_id") === current);
       const cachedRows = userUploadAssetRows(box.dataset.assetMediaType || "");
       const cached = cachedRows.find((row) => row.asset_id === current || assetPickerOutputValue(row, box.dataset.assetOutput || "asset_id") === current) || null;
       state.assetPickerModalTarget = id;
-      state.assetPickerModalDraft = (rememberedMatches ? remembered : null) || cached || (current ? normalizeUserUploadAsset({
+      const singleDraft = (rememberedMatches ? remembered : null) || cached || (current ? normalizeUserUploadAsset({
         asset_id: /^https?:\/\//i.test(current) ? "" : current,
         source_url: /^https?:\/\//i.test(current) ? current : "",
         media_type: box.dataset.assetMediaType || mediaTypeFromUrl(current),
         filename: "当前素材",
       }) : null);
-      state.assetPickerModalSource = state.assetPickerModalDraft && state.assetPickerModalDraft.asset_origin === "generated" ? "generated" : "user_upload";
+      const multipleDrafts = multiple ? assetPickerRowsForValues(id, currentValues, box) : [];
+      state.assetPickerModalDraft = multiple ? multipleDrafts : singleDraft;
+      const firstDraft = multiple ? multipleDrafts[0] : singleDraft;
+      state.assetPickerModalSource = firstDraft && firstDraft.asset_origin === "generated" ? "generated" : "user_upload";
       state.assetPickerModalQuery = "";
       state.assetPickerModalRows = [];
       state.assetPickerModalError = "";
       if ($("assetPickerLibrarySearch")) $("assetPickerLibrarySearch").value = "";
       if ($("assetPickerLibraryHint")) {
         const mediaType = String(box.dataset.assetMediaType || "").trim();
-        $("assetPickerLibraryHint").textContent = mediaType === "video" ? "选择一个视频素材" : (mediaType === "image" ? "选择一张图片素材" : "选择要使用的图片、视频或文件");
+        $("assetPickerLibraryHint").textContent = multiple
+          ? (mediaType === "image" ? "可选择多张图片素材" : "可选择多个素材")
+          : (mediaType === "video" ? "选择一个视频素材" : (mediaType === "image" ? "选择一张图片素材" : "选择要使用的图片、视频或文件"));
       }
       $("assetPickerLibraryModal")?.classList.remove("hidden");
       renderAssetPickerModal();
@@ -13874,7 +14035,12 @@
     function confirmAssetPickerModal() {
       const target = String(state.assetPickerModalTarget || "");
       if (!target || !state.assetPickerModalDraft) return;
-      selectAssetPickerRow(target, state.assetPickerModalDraft);
+      const box = document.querySelector(`[data-asset-picker="${cssEscape(target)}"]`);
+      if (assetPickerAllowsMultiple(box)) {
+        setAssetPickerSelectionRows(target, Array.isArray(state.assetPickerModalDraft) ? state.assetPickerModalDraft : [state.assetPickerModalDraft]);
+      } else {
+        selectAssetPickerRow(target, state.assetPickerModalDraft);
+      }
       closeAssetPickerModal();
     }
 
@@ -14026,13 +14192,13 @@
         return imageStudioFieldsHtml("workImage");
       }
       if (key === "comfly.seedance.tvc.pipeline") {
-        return taskFieldHtml("参考图片", assetPickerControlHtml("workSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }), true)
+        return taskFieldHtml("参考图片", assetPickerControlHtml("workSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }), true)
           + taskFieldHtml("视频需求", taskTextareaHtml("workSeedanceText", "例如：围绕护肤品做 3 个高级感分镜，突出补水和通透肤感"), true)
           + taskFieldHtml("视频时长", taskSelectHtml("workSeedanceDuration", [10, 20, 30, 40, 50, 60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
           + taskFieldHtml("画幅", taskSelectHtml("workSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏") + optionHtml("1:1", "1:1 方图")));
       }
       if (key === "comfly.daihuo.pipeline") {
-        return taskFieldHtml("参考图片", assetPickerControlHtml("workComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }), true)
+        return taskFieldHtml("参考图片", assetPickerControlHtml("workComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }), true)
           + taskFieldHtml("视频需求", taskTextareaHtml("workComflyText", "例如：生成一个突出产品卖点和使用场景的爆款TVC"), true)
           + taskFieldHtml("分镜数量", workInputHtml("workComflyStoryboardCount", "number", "5", 'min="1" max="8"'))
           + taskFieldHtml("自动入库", workCheckboxHtml("workComflyAutoSave", "完成后保存到素材库", true));
@@ -14150,7 +14316,7 @@
       }
       if (key === "comfly.seedance.tvc.pipeline") {
         const taskText = workValue("workSeedanceText");
-        const asset = assetOrImagePayload(workValue("workSeedanceAsset"), "参考图片");
+        const asset = assetPickerImagePayload("workSeedanceAsset", "参考图片");
         return {
           title: "创意分镜头视频",
           taskKind: "capability",
@@ -14169,7 +14335,7 @@
         };
       }
       if (key === "comfly.daihuo.pipeline") {
-        const asset = assetOrImagePayload(workValue("workComflyAsset"), "参考图片");
+        const asset = assetPickerImagePayload("workComflyAsset", "参考图片");
         return {
           title: "爆款TVC",
           taskKind: "capability",
@@ -14804,7 +14970,7 @@
         return;
       }
       if (state.taskAbility === "comfly.daihuo.pipeline") {
-        host.innerHTML = taskFieldHtml("参考图片", assetPickerControlHtml("taskComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }))
+        host.innerHTML = taskFieldHtml("参考图片", assetPickerControlHtml("taskComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }))
           + taskFieldHtml("视频要求", taskTextareaHtml("taskComflyText", "例如：生成一个突出产品卖点和使用场景的爆款TVC"), true)
           + taskFieldHtml("分镜数量", `<input id="taskComflyStoryboardCount" type="number" min="1" max="8" value="5" />`)
           + taskFieldHtml("自动入库", `<label class="task-checkbox"><input id="taskComflyAutoSave" type="checkbox" checked>完成后保存到素材库</label>`);
@@ -14812,7 +14978,7 @@
         return;
       }
       if (state.taskAbility === "comfly.seedance.tvc.pipeline") {
-        host.innerHTML = taskFieldHtml("参考图片", assetPickerControlHtml("taskSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片" }))
+        host.innerHTML = taskFieldHtml("参考图片", assetPickerControlHtml("taskSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }))
           + taskFieldHtml("视频要求", taskTextareaHtml("taskSeedanceText", "例如：明亮真实的品牌广告，镜头连续，适合投放"), true)
           + taskFieldHtml("总时长", taskSelectHtml("taskSeedanceDuration", [10,20,30,40,50,60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
           + taskFieldHtml("画幅", taskSelectHtml("taskSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏")));
@@ -15099,7 +15265,7 @@
         };
       }
       if (state.taskAbility === "comfly.daihuo.pipeline") {
-        const asset = assetOrImagePayload($("taskComflyAsset") && $("taskComflyAsset").value, "参考图片");
+        const asset = assetPickerImagePayload("taskComflyAsset", "参考图片");
         const storyboardCount = parseInt(($("taskComflyStoryboardCount") && $("taskComflyStoryboardCount").value) || "5", 10);
         return {
           action: "start_pipeline",
@@ -15110,7 +15276,7 @@
         };
       }
       if (state.taskAbility === "comfly.seedance.tvc.pipeline") {
-        const asset = assetOrImagePayload($("taskSeedanceAsset") && $("taskSeedanceAsset").value, "参考图片");
+        const asset = assetPickerImagePayload("taskSeedanceAsset", "参考图片");
         const totalDuration = parseInt(($("taskSeedanceDuration") && $("taskSeedanceDuration").value) || "20", 10);
         return {
           action: "start_pipeline",
@@ -18283,6 +18449,19 @@
       openPersonalTemplateSettings();
     });
     document.addEventListener("click", (evt) => {
+      const removeBtn = evt.target.closest("[data-asset-picker-remove]");
+      if (removeBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        const id = removeBtn.dataset.assetPickerRemove || "";
+        const index = Number(removeBtn.dataset.assetPickerRemoveIndex || -1);
+        const rows = assetPickerSelectionRows(id);
+        if (index >= 0 && rows[index]) {
+          rows.splice(index, 1);
+          setAssetPickerSelectionRows(id, rows, false);
+        }
+        return;
+      }
       const pickerBtn = evt.target.closest("[data-asset-picker-open]");
       if (pickerBtn) {
         evt.preventDefault();
@@ -18327,9 +18506,9 @@
       const input = evt.target.closest("[data-asset-upload-input]");
       if (input) {
         const id = input.dataset.assetUploadInput || "";
-        const file = input.files && input.files[0] ? input.files[0] : null;
+        const files = Array.from((input.files && input.files.length ? input.files : []) || []);
         input.value = "";
-        uploadUserAssetForPicker(id, file).catch((err) => {
+        files.reduce((promise, file) => promise.then(() => uploadUserAssetForPicker(id, file)), Promise.resolve()).catch((err) => {
           toast(err.message || "上传失败");
           renderAssetPickerControl(id);
         });
@@ -18442,7 +18621,19 @@
       const rows = filteredAssetPickerModalRows();
       const item = rows[Number(card.dataset.assetPickerChoice || -1)];
       if (!item) return;
-      state.assetPickerModalDraft = normalizeUserUploadAsset(item);
+      const targetBox = state.assetPickerModalTarget
+        ? document.querySelector(`[data-asset-picker="${cssEscape(state.assetPickerModalTarget)}"]`)
+        : null;
+      if (assetPickerAllowsMultiple(targetBox)) {
+        const drafts = Array.isArray(state.assetPickerModalDraft) ? state.assetPickerModalDraft.slice() : [];
+        const identity = assetPickerRowIdentity(item);
+        const selectedIndex = drafts.findIndex((row) => assetPickerRowIdentity(row) === identity);
+        if (selectedIndex >= 0) drafts.splice(selectedIndex, 1);
+        else drafts.push(normalizeUserUploadAsset(item));
+        state.assetPickerModalDraft = drafts;
+      } else {
+        state.assetPickerModalDraft = normalizeUserUploadAsset(item);
+      }
       renderAssetPickerModal();
     });
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
