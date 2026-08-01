@@ -251,6 +251,8 @@
       composerVoiceCancelled: false,
       composerVoicePendingSend: false,
       composerVoiceDurationTimer: null,
+      chatSubmitPending: false,
+      chatComposerScrollTimer: null,
       mastraReady: false,
       currentDepartmentId: "",
       currentAbilityKey: "",
@@ -9837,6 +9839,32 @@
       });
     }
 
+    function ensureConversationComposerReady(options = {}) {
+      if (!document.querySelector("#messagesView.active")) return;
+      const composer = $("sendForm");
+      const input = $("messageInput");
+      const send = $("sendBtn");
+      document.body.classList.add("messages-view-active");
+      if (composer) {
+        composer.hidden = false;
+        composer.classList.remove("hidden");
+      }
+      if (input) {
+        input.disabled = false;
+        input.placeholder = "继续输入下一条指令";
+      }
+      if (send) send.disabled = !!state.chatSubmitPending;
+      autosizeMessageInput();
+      if (options.scroll !== false) {
+        if (state.chatComposerScrollTimer) clearTimeout(state.chatComposerScrollTimer);
+        scrollMessagesToBottom();
+        state.chatComposerScrollTimer = setTimeout(() => {
+          state.chatComposerScrollTimer = null;
+          scrollMessagesToBottom();
+        }, 120);
+      }
+    }
+
     function focusMessageInput() {
       if (window.matchMedia && !window.matchMedia("(pointer: fine)").matches) return;
       const input = $("messageInput");
@@ -16722,6 +16750,7 @@
         renderMediaPreviews(bubble, collectMediaUrls(ev.payload || {}));
         renderPublishDraftActions(bubble, ev.payload || {});
         closeStream(messageId);
+        ensureConversationComposerReady();
       }
       if (ev.type === "publish_pending" || ev.type === "publish_claimed" || ev.type === "publish_result") {
         renderPublishDraftActions(bubble, ev.payload || {});
@@ -16730,6 +16759,7 @@
         bubble.classList.add("err");
         setBubbleText(bubble, (ev.payload && (ev.payload.error || ev.payload.detail)) || "处理失败");
         closeStream(messageId);
+        ensureConversationComposerReady();
       }
     }
 
@@ -16761,11 +16791,13 @@
               setBubbleText(bubble, data.message.error || "处理失败");
             }
             closeStream(messageId);
+            ensureConversationComposerReady();
           }
         } catch (err) {
           bubble.classList.add("err");
           setBubbleText(bubble, err.message || "查询失败");
           closeStream(messageId);
+          ensureConversationComposerReady();
         }
       }, 1400);
       state.pollers.set(messageId, timer);
@@ -17174,6 +17206,7 @@
         state.activeApprovalId = "";
         $("chatApprovalModal")?.classList.add("hidden");
         if (decision === "approve") toast("已确认，正在执行");
+        ensureConversationComposerReady({ scroll: false });
         setTimeout(showNextPendingApproval, 80);
       } finally {
         if (approve) approve.disabled = false;
@@ -19225,6 +19258,7 @@
         input.value = "";
         autosizeMessageInput();
       }
+      state.chatSubmitPending = true;
       $("sendBtn").disabled = true;
       const messageContent = buildMessageContent(content);
       const userBubble = addBubble("user", content || `已添加 ${attachments.length} 个素材`);
@@ -19258,7 +19292,9 @@
         setBubbleText(bot, err.message || "发送失败");
         return false;
       } finally {
+        state.chatSubmitPending = false;
         $("sendBtn").disabled = false;
+        ensureConversationComposerReady({ scroll: false });
         if (options.source !== "voice") focusMessageInput();
       }
     }

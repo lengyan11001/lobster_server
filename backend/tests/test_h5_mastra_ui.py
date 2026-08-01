@@ -58,6 +58,20 @@ def test_h5_voice_layout_is_stable_and_mobile_friendly():
     assert "body.messages-view-active" in designer_styles
     assert "#messagesView.active" in designer_styles
     assert "position: fixed" in designer_styles
+    assert "#messagesView .messages" in designer_styles
+    assert "flex: 1 1 0" in designer_styles
+    assert "overscroll-behavior: contain" in designer_styles
+
+
+def test_h5_chat_restores_composer_after_each_task_result():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert "function ensureConversationComposerReady" in script
+    assert 'input.placeholder = "继续输入下一条指令"' in script
+    assert "send.disabled = !!state.chatSubmitPending" in script
+    assert 'if (ev.type === "final")' in script
+    assert 'if (ev.type === "error")' in script
+    assert script.count("ensureConversationComposerReady();") >= 3
 
 
 def test_streaming_progress_is_visible_without_exposing_internal_reasoning():
