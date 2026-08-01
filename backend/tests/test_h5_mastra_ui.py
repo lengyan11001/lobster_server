@@ -175,6 +175,9 @@ def test_mastra_bounds_context_and_searches_large_tool_catalogs():
     assert "topK: 3" in mastra
     assert "list_system_capabilities" in mastra
     assert "conversation_summary" in mastra
+    assert "recent_history" in mastra
+    assert "function recentContextFor" in mastra
+    assert "options: { lastMessages: false }" in mastra
     assert "function runtimeContextFor" in mastra
     assert "context: runtimeContextFor(body)" in mastra
     assert "/internal/summarize" in mastra

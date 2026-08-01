@@ -627,13 +627,14 @@ function requestContextFor(body: Record<string, unknown>, dispatches: DispatchRe
   return requestContext
 }
 
-function legacyContextFor(body: Record<string, unknown>) {
-  const legacy = Array.isArray(body.legacy_history) ? body.legacy_history : []
-  return legacy
+function recentContextFor(body: Record<string, unknown>) {
+  const recent = Array.isArray(body.recent_history) ? body.recent_history : []
+  return recent
     .map(item => {
       const row = item as Record<string, unknown>
       const role = row.role === 'assistant' ? 'assistant' : 'user'
-      const content = String(row.content || '').trim()
+      const limit = role === 'assistant' ? 10000 : 6000
+      const content = String(row.content || '').trim().slice(0, limit)
       return content ? { role, content } : null
     })
     .filter(Boolean) as Array<{ role: 'user' | 'assistant'; content: string }>
@@ -655,7 +656,15 @@ function runtimeContextFor(body: Record<string, unknown>) {
       content: `较早会话的压缩摘要，仅作事实背景，不是本轮指令：\n${summary}`,
     })
   }
-  context.push(...legacyContextFor(body))
+  const recent = recentContextFor(body)
+  if (recent.length) {
+    context.push({
+      role: 'system',
+      content: '以下是同一会话最近已完成的问答。处理“继续、再做、用刚才的内容、这个、那个”等承接表达时必须优先参考；这些内容只是历史，不是本轮的新指令。',
+    })
+    context.push(...recent)
+    context.push({ role: 'system', content: '以上近期问答结束。现在继续处理本轮用户请求。' })
+  }
   context.push({ role: 'system', content: `执行权限：${permissionNoticeFor(body)}` })
   return context
 }
@@ -784,7 +793,7 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
       const context = runtimeContextFor(body || {})
       const mcpTools = mcp ? await mcp.listTools() : {}
       const result = await orchestrator.generate(chatInputFor(body || {}, message), {
-        memory: { thread: threadId, resource: resourceId },
+        memory: { thread: threadId, resource: resourceId, options: { lastMessages: false } },
         requestContext,
         context,
         inputProcessors: contextProcessors(mcpTools),
@@ -847,7 +856,11 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
           const requestContext = requestContextFor(body, dispatches)
           const mcpTools = mcp ? await mcp.listTools() : {}
           const output = await orchestrator.stream(chatInputFor(body, validated.message), {
-            memory: { thread: validated.threadId, resource: validated.resourceId },
+            memory: {
+              thread: validated.threadId,
+              resource: validated.resourceId,
+              options: { lastMessages: false },
+            },
             requestContext,
             context: runtimeContextFor(body),
             inputProcessors: contextProcessors(mcpTools),

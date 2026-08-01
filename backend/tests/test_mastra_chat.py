@@ -759,6 +759,88 @@ def test_runner_compacts_only_older_turns_in_the_same_session(
     assert jobs[0].summary_through_message_id == "summary-history-4"
 
 
+def test_runner_injects_only_recent_mastra_turns_without_old_h5_or_task_noise(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    chat_session = _session(db_session, test_user.id, permission_mode="full")
+    other_session = _session(db_session, test_user.id, permission_mode="full", title="其他会话")
+    base = datetime.utcnow() - timedelta(minutes=10)
+    rows = [
+        H5ChatMessage(
+            id="context-first",
+            user_id=test_user.id,
+            session_id=chat_session.id,
+            mode="mastra",
+            content="先写一条口播稿",
+            reply_text="这是已经生成的完整口播稿",
+            status="completed",
+            created_at=base,
+            updated_at=base,
+            finished_at=base,
+        ),
+        H5ChatMessage(
+            id="context-scheduled-noise",
+            user_id=test_user.id,
+            session_id=chat_session.id,
+            mode="scheduled_task",
+            content="[定时任务] 抖音自动养号",
+            reply_text="养号任务完成",
+            status="completed",
+            created_at=base + timedelta(minutes=1),
+            updated_at=base + timedelta(minutes=1),
+            finished_at=base + timedelta(minutes=1),
+        ),
+        H5ChatMessage(
+            id="context-legacy-direct",
+            user_id=test_user.id,
+            session_id=chat_session.id,
+            mode="direct",
+            content="旧版聊天问题",
+            reply_text="旧版聊天回答",
+            status="completed",
+            created_at=base + timedelta(minutes=2),
+            updated_at=base + timedelta(minutes=2),
+            finished_at=base + timedelta(minutes=2),
+        ),
+        H5ChatMessage(
+            id="context-other-session",
+            user_id=test_user.id,
+            session_id=other_session.id,
+            mode="mastra",
+            content="其他会话问题",
+            reply_text="其他会话回答",
+            status="completed",
+            created_at=base + timedelta(minutes=3),
+            updated_at=base + timedelta(minutes=3),
+            finished_at=base + timedelta(minutes=3),
+        ),
+    ]
+    current = H5ChatMessage(
+        id="context-current",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="用刚才的口播稿制作数字人视频",
+        status="pending",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add_all([*rows, current])
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    jobs = mastra_chat_runner._claim_jobs_sync(1)
+
+    assert len(jobs) == 1
+    assert jobs[0].recent_history == [
+        {"role": "user", "content": "先写一条口播稿"},
+        {"role": "assistant", "content": "这是已经生成的完整口播稿"},
+    ]
+
+
 def test_runner_does_not_claim_a_second_job_past_per_user_limit(
     db_session, db_session_factory, test_user, other_user, monkeypatch
 ):

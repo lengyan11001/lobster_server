@@ -38,7 +38,7 @@ class MastraChatJob:
     approval_granted: bool
     approval_id: str
     authorization: str
-    legacy_history: List[Dict[str, str]]
+    recent_history: List[Dict[str, str]]
     conversation_summary: str
     summary_messages: List[Dict[str, str]]
     summary_through_message_id: str
@@ -118,29 +118,30 @@ def _internal_secret() -> str:
     return hashlib.sha256(f"{app_secret}:lobster-mastra".encode("utf-8")).hexdigest()
 
 
-def _legacy_history(db, row: H5ChatMessage) -> List[Dict[str, str]]:
+def _recent_mastra_history(db, row: H5ChatMessage) -> List[Dict[str, str]]:
     previous = (
         db.query(H5ChatMessage)
         .filter(
             H5ChatMessage.user_id == row.user_id,
+            H5ChatMessage.session_id == row.session_id,
             H5ChatMessage.parent_message_id.is_(None),
             H5ChatMessage.id != row.id,
+            H5ChatMessage.mode == "mastra",
+            H5ChatMessage.status == "completed",
             H5ChatMessage.created_at < row.created_at,
-            H5ChatMessage.session_id == row.session_id,
-            H5ChatMessage.mode != "mastra",
         )
-        .order_by(H5ChatMessage.created_at.desc())
-        .limit(8)
+        .order_by(H5ChatMessage.created_at.desc(), H5ChatMessage.id.desc())
+        .limit(_summary_keep_turns())
         .all()
     )
     messages: List[Dict[str, str]] = []
     for previous_row in reversed(previous):
         content = (previous_row.content or "").strip()
         if content:
-            messages.append({"role": "user", "content": content[:8000]})
+            messages.append({"role": "user", "content": content[:6000]})
         reply = (previous_row.reply_text or previous_row.error or "").strip()
         if reply:
-            messages.append({"role": "assistant", "content": reply[:12000]})
+            messages.append({"role": "assistant", "content": reply[:10000]})
     return messages
 
 
@@ -309,7 +310,7 @@ def _claim_jobs_sync(
                     approval_granted=bool(approval),
                     approval_id=approval.id if approval else "",
                     authorization=create_access_token(access_token_claims(user)),
-                    legacy_history=_legacy_history(db, row),
+                    recent_history=_recent_mastra_history(db, row),
                     conversation_summary=conversation_summary,
                     summary_messages=summary_messages,
                     summary_through_message_id=summary_through_message_id,
@@ -571,7 +572,7 @@ async def _run_job(job: MastraChatJob) -> None:
         "parent_message_id": job.message_id,
         "thread_id": f"h5:{job.brand}:{job.user_id}:{job.session_id}",
         "resource_id": f"{job.brand}:{job.user_id}",
-        "legacy_history": job.legacy_history,
+        "recent_history": job.recent_history,
         "conversation_summary": conversation_summary,
         "permission_mode": job.permission_mode,
         "approval_granted": job.approval_granted,
