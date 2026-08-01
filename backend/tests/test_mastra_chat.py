@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI
@@ -40,7 +41,7 @@ def _session(db, user_id: int, *, permission_mode: str = "confirm", title: str =
     from backend.app.models import H5ChatSession
 
     row = H5ChatSession(
-        id=f"session-{user_id}-{permission_mode}-{datetime.utcnow().timestamp()}",
+        id=f"session-{user_id}-{permission_mode}-{uuid.uuid4().hex}",
         user_id=user_id,
         title=title,
         permission_mode=permission_mode,

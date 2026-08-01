@@ -87,4 +87,10 @@ def test_mastra_bounds_context_and_searches_large_tool_catalogs():
     assert "topK: 3" in mastra
     assert "list_system_capabilities" in mastra
     assert "conversation_summary" in mastra
+    assert "function runtimeContextFor" in mastra
+    assert "context: runtimeContextFor(body)" in mastra
     assert "/internal/summarize" in mastra
+
+    chat_input = mastra[mastra.index("function chatInputFor"):mastra.index("function validateChatBody")]
+    assert "conversation_summary" not in chat_input
+    assert "permissionNoticeFor" not in chat_input

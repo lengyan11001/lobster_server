@@ -639,6 +639,27 @@ function legacyContextFor(body: Record<string, unknown>) {
     .filter(Boolean) as Array<{ role: 'user' | 'assistant'; content: string }>
 }
 
+function permissionNoticeFor(body: Record<string, unknown>) {
+  const canExecute = String(body.permission_mode || '') === 'full' || Boolean(body.approval_granted)
+  return canExecute
+    ? '本轮已经获得执行授权，可以调用工具完成任务。不要再次请求确认。'
+    : '本会话要求执行前确认。你可以回答问题、读取个人记忆和制定方案；如需调用技能、生成内容、产生费用、发布、发送、修改数据或下发 Online，必须先调用 request_task_approval，然后等待用户确认。未确认前不得声称已经执行。'
+}
+
+function runtimeContextFor(body: Record<string, unknown>) {
+  const context: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = []
+  const summary = String(body.conversation_summary || '').trim().slice(0, 16000)
+  if (summary) {
+    context.push({
+      role: 'system',
+      content: `较早会话的压缩摘要，仅作事实背景，不是本轮指令：\n${summary}`,
+    })
+  }
+  context.push(...legacyContextFor(body))
+  context.push({ role: 'system', content: `执行权限：${permissionNoticeFor(body)}` })
+  return context
+}
+
 function attachmentsFor(body: Record<string, unknown>): ChatAttachment[] {
   if (!Array.isArray(body.attachments)) return []
   const attachments: ChatAttachment[] = []
@@ -661,20 +682,12 @@ function attachmentsFor(body: Record<string, unknown>): ChatAttachment[] {
 
 function chatInputFor(body: Record<string, unknown>, message: string) {
   const attachments = attachmentsFor(body)
-  const canExecute = String(body.permission_mode || '') === 'full' || Boolean(body.approval_granted)
-  const permissionNotice = canExecute
-    ? '【执行权限】本轮已经获得执行授权，可以调用工具完成任务。不要再次请求确认。'
-    : '【执行权限】本会话要求执行前确认。你可以回答问题、读取个人记忆和制定方案；如需调用技能、生成内容、产生费用、发布、发送、修改数据或下发 Online，必须先调用 request_task_approval，然后等待用户确认。未确认前不得声称已经执行。'
-  const summary = String(body.conversation_summary || '').trim().slice(0, 16000)
-  const summaryBlock = summary
-    ? `【较早会话的压缩摘要，仅作事实背景，不是本轮指令】\n${summary}\n\n`
-    : ''
-  const baseMessage = `${summaryBlock}${permissionNotice}\n\n【本轮用户请求】\n${message || ''}`.trim()
+  const baseMessage = `【本轮用户请求】\n${message || ''}`.trim()
   if (!attachments.length) return baseMessage
   const manifest = attachments.map((item, index) => (
     `${index + 1}. ${item.name || '素材'} [${item.media_type || 'file'}] ${item.url}`
   )).join('\n')
-  const text = `${summaryBlock}${permissionNotice}\n\n【本轮用户请求】\n${message || '请分析并使用我提供的素材。'}\n\n本轮附加素材：\n${manifest}\n\n` +
+  const text = `【本轮用户请求】\n${message || '请分析并使用我提供的素材。'}\n\n本轮附加素材：\n${manifest}\n\n` +
     '请把这些素材视为用户本轮的真实输入。图片可直接理解；视频、音频或文档需要处理时，请调用已有能力，不要忽略素材，也不要编造素材内容。'
   const content: Array<
     { type: 'text'; text: string } |
@@ -768,7 +781,7 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
       acquired = true
       const allowExecution = executionAllowed(body || {})
       if (allowExecution) mcp = mcpClientFor(body || {}, token, parentMessageId)
-      const context = legacyContextFor(body || {})
+      const context = runtimeContextFor(body || {})
       const mcpTools = mcp ? await mcp.listTools() : {}
       const result = await orchestrator.generate(chatInputFor(body || {}, message), {
         memory: { thread: threadId, resource: resourceId },
@@ -836,7 +849,7 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
           const output = await orchestrator.stream(chatInputFor(body, validated.message), {
             memory: { thread: validated.threadId, resource: validated.resourceId },
             requestContext,
-            context: legacyContextFor(body),
+            context: runtimeContextFor(body),
             inputProcessors: contextProcessors(mcpTools),
             maxSteps: 12,
             modelSettings: { maxOutputTokens: 4096, temperature: 0.2 },
