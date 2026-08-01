@@ -1031,7 +1031,12 @@ def _openmind_video_body(body: Dict[str, Any], model: str, entry: Dict[str, Any]
     forwarded.setdefault("aspect_ratio", "9:16")
     forwarded.setdefault("resolution", "720p")
     if not forwarded.get("size"):
-        forwarded["size"] = "720x1280" if str(forwarded.get("aspect_ratio") or "") == "9:16" else "1280x720"
+        forwarded["size"] = {
+            "9:16": "720x1280",
+            "16:9": "1280x720",
+            "1:1": "1024x1024",
+            "4:5": "864x1080",
+        }.get(str(forwarded.get("aspect_ratio") or ""), "720x1280")
     _image_ref, images = _normalized_image_refs_from_payload(forwarded)
     if images:
         forwarded["images"] = images
@@ -1234,6 +1239,12 @@ def _xai_video_body(body: Dict[str, Any], model: str) -> Dict[str, Any]:
         "prompt": prompt,
         "duration": duration,
     }
+    aspect_ratio = str(source.get("aspect_ratio") or source.get("ratio") or "").strip()
+    if aspect_ratio:
+        forwarded["aspect_ratio"] = aspect_ratio
+    resolution = str(source.get("resolution") or "").strip().lower()
+    if resolution:
+        forwarded["resolution"] = resolution
     if image_url:
         forwarded["image"] = {"url": image_url}
     return forwarded

@@ -54,6 +54,7 @@ def test_openmind_video_body_uses_integer_duration_and_all_references():
         {
             "prompt": "product video",
             "duration": 8,
+            "aspect_ratio": "4:5",
             "image_urls": ["https://example.com/a.png", "https://example.com/b.png"],
         },
         "grok-video-3",
@@ -64,6 +65,8 @@ def test_openmind_video_body_uses_integer_duration_and_all_references():
     assert "seconds" not in body
     assert body["images"] == ["https://example.com/a.png", "https://example.com/b.png"]
     assert body["image_urls"] == body["images"]
+    assert body["aspect_ratio"] == "4:5"
+    assert body["size"] == "864x1080"
 
 
 def test_xai_video_body_maps_duration_and_first_image():
@@ -71,6 +74,8 @@ def test_xai_video_body_maps_duration_and_first_image():
         {
             "prompt": "product video",
             "seconds": "8",
+            "aspect_ratio": "1:1",
+            "resolution": "720P",
             "image_urls": ["https://example.com/a.png", "https://example.com/b.png"],
         },
         "grok-imagine-video-1.5",
@@ -80,6 +85,8 @@ def test_xai_video_body_maps_duration_and_first_image():
         "model": "grok-imagine-video-1.5",
         "prompt": "product video",
         "duration": 8,
+        "aspect_ratio": "1:1",
+        "resolution": "720p",
         "image": {"url": "https://example.com/a.png"},
     }
 
