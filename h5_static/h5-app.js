@@ -1311,6 +1311,22 @@
     const IS_ANDROID = /Android/i.test(UA);
     const IS_ANDROID_APP = /LobsterH5Android/i.test(UA) || Boolean(window.LobsterAndroid);
 
+    function isTransientMicrophoneStartError(error) {
+      const name = String(error && error.name || "");
+      return name === "NotReadableError" || name === "TrackStartError" || name === "AbortError";
+    }
+
+    async function requestMicrophoneStream(constraints = { audio: true }, canRetry = null) {
+      try {
+        return await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (error) {
+        if (!IS_ANDROID_APP || !isTransientMicrophoneStartError(error)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        if (typeof canRetry === "function" && !canRetry()) throw error;
+        return navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+    }
+
     async function copyText(text) {
       const value = String(text || "");
       if (!value) return false;
@@ -7821,7 +7837,7 @@
       if ($("assetVoiceRecordState")) $("assetVoiceRecordState").textContent = "正在请求麦克风权限";
       syncAssetVoiceRecordUi();
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const stream = await requestMicrophoneStream({ audio: true }, () => state.assetVoiceRecordPending);
         if (!state.assetVoiceRecordPending) {
           stream.getTracks().forEach((track) => track.stop());
           return;
@@ -10570,7 +10586,9 @@
         return "没有检测到可用麦克风";
       }
       if (name === "NotReadableError" || name === "TrackStartError") {
-        return "麦克风正被其他应用占用，请关闭占用后重试";
+        return IS_ANDROID_APP
+          ? "麦克风启动失败，请确认没有其他应用正在录音后重试"
+          : "麦克风正被其他应用占用，请关闭占用后重试";
       }
       return String(error && error.message || "无法启动麦克风");
     }
@@ -10588,9 +10606,10 @@
 
       let stream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        });
+        stream = await requestMicrophoneStream(
+          { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } },
+          () => sessionNonce === state.voiceSessionNonce && state.voiceRecording,
+        );
       } catch (error) {
         throw new Error(microphonePermissionMessage(error));
       }
@@ -10749,6 +10768,7 @@
           return false;
         }
       } catch (err) {
+        if (sessionNonce !== state.voiceSessionNonce) return false;
         if (target === "composer") {
           resetComposerVoiceCapture({ status: "error", clearTranscript: true });
         } else {

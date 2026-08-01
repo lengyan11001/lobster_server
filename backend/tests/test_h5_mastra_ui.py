@@ -29,10 +29,15 @@ def test_h5_chat_voice_permission_and_cancellation_are_race_safe():
     open_voice_start = script.index("async function openVoiceRealtimeSession")
     open_voice_end = script.index("async function startVoiceCapture", open_voice_start)
     open_voice = script[open_voice_start:open_voice_end]
-    assert open_voice.index("navigator.mediaDevices.getUserMedia") < open_voice.index("new WebSocket")
+    assert open_voice.index("requestMicrophoneStream") < open_voice.index("new WebSocket")
     assert "sessionNonce !== state.voiceSessionNonce || !state.voiceRecording" in open_voice
     assert 'new Error("语音识别连接超时，请重试")' in open_voice
     assert "}, 8000);" in open_voice
+    assert "function isTransientMicrophoneStartError" in script
+    assert "if (!IS_ANDROID_APP || !isTransientMicrophoneStartError(error)) throw error" in script
+    assert "setTimeout(resolve, 450)" in script
+    assert 'typeof canRetry === "function" && !canRetry()' in script
+    assert "return navigator.mediaDevices.getUserMedia({ audio: true })" in script
 
     stop_voice_start = script.index("function stopVoiceCapture")
     stop_voice_end = script.index("function stopComposerVoiceDurationTimer", stop_voice_start)
