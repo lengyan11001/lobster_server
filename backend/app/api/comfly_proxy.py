@@ -76,6 +76,9 @@ _TIMEOUT_VIDEO_POLL = 30.0
 _MAX_PROXY_VIDEO_TASK_TRACK = 5000
 _MAX_GROK_REFERENCE_BYTES = 30 * 1024 * 1024
 _proxy_video_task_meta: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
+_openmind_tos_url_cache: "OrderedDict[str, str]" = OrderedDict()
+_MAX_OPENMIND_TOS_URL_CACHE = 1000
+_MAX_OPENMIND_VIDEO_BYTES = 512 * 1024 * 1024
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -1070,6 +1073,106 @@ async def _openmind_video_submit(body: Dict[str, Any], model: str, entry: Dict[s
     return payload
 
 
+def _extract_openmind_video_url(payload: Dict[str, Any]) -> str:
+    """Find the completed video URL without mistaking an input image URL for output."""
+    if not isinstance(payload, dict):
+        return ""
+    direct_keys = (
+        "video_url", "videoUrl", "content_url", "contentUrl",
+        "download_url", "downloadUrl", "output_url", "outputUrl",
+    )
+    for key in direct_keys:
+        value = str(payload.get(key) or "").strip()
+        if value.startswith(("http://", "https://")):
+            return value
+    for container_key in ("video", "output", "result", "data", "content"):
+        container = payload.get(container_key)
+        if isinstance(container, str):
+            value = container.strip()
+            if value.startswith(("http://", "https://")):
+                return value
+        if isinstance(container, dict):
+            for key in direct_keys + ("url",):
+                value = str(container.get(key) or "").strip()
+                if value.startswith(("http://", "https://")):
+                    return value
+    return ""
+
+
+def _replace_openmind_video_url(payload: Dict[str, Any], source_url: str, public_url: str) -> None:
+    video = payload.get("video")
+    if isinstance(video, dict):
+        video["source_url"] = source_url
+        video["url"] = public_url
+    payload["video_url"] = public_url
+    payload["tos_url"] = public_url
+    payload["source_video_url"] = source_url
+
+
+async def _mirror_openmind_video_to_tos(payload: Dict[str, Any], task_id: str) -> Dict[str, Any]:
+    source_url = _extract_openmind_video_url(payload)
+    if not source_url:
+        return payload
+    public_domain = ""
+    try:
+        from .assets import _get_tos_config
+        cfg = _get_tos_config() or {}
+        public_domain = str(cfg.get("public_domain") or "").strip().rstrip("/")
+    except Exception:
+        pass
+    if public_domain and source_url.startswith(public_domain + "/"):
+        return payload
+
+    cache_key = f"{task_id}:{source_url}"
+    cached_url = _openmind_tos_url_cache.get(cache_key)
+    if cached_url:
+        _replace_openmind_video_url(payload, source_url, cached_url)
+        return payload
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(300.0, connect=30.0),
+            follow_redirects=True,
+            trust_env=False,
+            headers=_openmind_video_headers(),
+        ) as client:
+            response = await client.get(source_url)
+        if response.status_code >= 400:
+            raise RuntimeError(f"OpenMind video content HTTP {response.status_code}")
+        content_length = response.headers.get("content-length")
+        if content_length and int(content_length) > _MAX_OPENMIND_VIDEO_BYTES:
+            raise RuntimeError("OpenMind video content exceeds 512MB")
+        data = response.content
+        if not data:
+            raise RuntimeError("OpenMind video content is empty")
+        if len(data) > _MAX_OPENMIND_VIDEO_BYTES:
+            raise RuntimeError("OpenMind video content exceeds 512MB")
+
+        _asset_id, _filename, _size, tos_public_url = _save_bytes_or_tos(
+            data, ".mp4", "video/mp4"
+        )
+        if not tos_public_url:
+            raise RuntimeError("TOS upload returned no public URL")
+        _openmind_tos_url_cache[cache_key] = tos_public_url
+        while len(_openmind_tos_url_cache) > _MAX_OPENMIND_TOS_URL_CACHE:
+            _openmind_tos_url_cache.popitem(last=False)
+        _replace_openmind_video_url(payload, source_url, tos_public_url)
+        logger.info(
+            "OpenMind video mirrored to TOS task_id=%s size=%s url=%s",
+            task_id,
+            len(data),
+            tos_public_url[:100],
+        )
+    except Exception as exc:
+        payload["tos_transfer_error"] = str(exc)[:300]
+        logger.warning(
+            "OpenMind video TOS transfer failed task_id=%s error=%s",
+            task_id,
+            str(exc)[:300],
+        )
+    return payload
+
+
 async def _openmind_video_poll(task_id: str) -> Dict[str, Any]:
     if not _openmind_enabled_for_video():
         raise RuntimeError("OpenMind video channel disabled")
@@ -1084,6 +1187,8 @@ async def _openmind_video_poll(task_id: str) -> Dict[str, Any]:
         payload = {"_raw_text": r.text}
     if isinstance(payload, dict):
         payload.setdefault("_provider", "openmind")
+        if _extract_openmind_video_url(payload):
+            payload = await _mirror_openmind_video_to_tos(payload, task_id)
     return payload
 
 
