@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
-NODE_VERSION="${LOBSTER_NODE_VERSION:-22.14.0}"
+NODE_VERSION="${LOBSTER_NODE_VERSION:-22.22.0}"
 RUNTIME_ROOT="$ROOT/.runtime"
 ARCH="$(uname -m)"
 

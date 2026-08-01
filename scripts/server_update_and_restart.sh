@@ -70,7 +70,7 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     MASTRA_UNIT="lobster-mastra"
   else
     echo "[Mastra] 安装 systemd 服务 ..."
-    "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
+    bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
     MASTRA_UNIT="lobster-mastra"
   fi
   sudo systemctl stop $H5_UNIT $BG_UNIT $MASTRA_UNIT lobster-mcp lobster-backend 2>/dev/null || true
