@@ -454,6 +454,24 @@ def _maybe_convert_h5_digital_human_task(
     return "client_workflow", converted_payload
 
 
+def _normalize_sales_digital_human_run_payload(
+    task_kind: str,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    source = dict(payload or {})
+    if task_kind != "client_workflow":
+        return source
+    if _h5_dh_clean_text(source.get("action"), 128) != _SHANJIAN_DIGITAL_HUMAN_ACTION:
+        return source
+    params = source.get("params") if isinstance(source.get("params"), dict) else {}
+    if _h5_dh_clean_text(params.get("script_source"), 128) != "ip_daily_industry_hot_oral":
+        return source
+    normalized_params = dict(params)
+    normalized_params.pop("prompt", None)
+    source["params"] = normalized_params
+    return source
+
+
 def _server_side_timeout_seconds(task_kind: str) -> float:
     defaults = {
         "ip_content_daily": ("LOBSTER_IP_CONTENT_SCHEDULE_TIMEOUT_SEC", 1800.0),
@@ -1058,6 +1076,7 @@ def _serialize_task(row: ScheduledTask) -> Dict[str, Any]:
 
 
 def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
+    payload = _normalize_sales_digital_human_run_payload(row.task_kind, row.payload or {})
     return {
         "id": row.id,
         "task_id": row.task_id,
@@ -1069,7 +1088,7 @@ def _serialize_run(row: ScheduledTaskRun) -> Dict[str, Any]:
         "title": row.title,
         "task_kind": row.task_kind,
         "content": row.content,
-        "payload": row.payload or {},
+        "payload": payload,
         "status": row.status,
         "progress": row.progress or {},
         "server_side": _is_server_side_task(row),
@@ -1305,6 +1324,7 @@ def _enrich_run_with_creative_video(db: Session, row: ScheduledTaskRun, data: Di
 
 
 def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
+    payload = _normalize_sales_digital_human_run_payload(row.task_kind, row.payload or {})
     return {
         "id": row.id,
         "task_id": row.task_id,
@@ -1313,7 +1333,7 @@ def _serialize_run_compact(row: ScheduledTaskRun) -> Dict[str, Any]:
         "claimed_by_installation_id": row.claimed_by_installation_id,
         "title": row.title,
         "task_kind": row.task_kind,
-        "payload": row.payload or {},
+        "payload": payload,
         "status": row.status,
         "progress": row.progress or {},
         "error": row.error,
@@ -1835,6 +1855,7 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
             target_user_id=task.user_id,
         )
     if task.task_kind == "client_workflow":
+        run_payload = _normalize_sales_digital_human_run_payload(task.task_kind, dict(run_payload))
         run_payload = _enrich_local_bestseller_workflow_payload(
             db,
             payload=dict(run_payload),
