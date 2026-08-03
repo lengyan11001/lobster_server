@@ -177,6 +177,7 @@ class ModelUsageEvent(Base):
 
 class Asset(Base):
     __tablename__ = "assets"
+    __table_args__ = (Index("ix_assets_user_created", "user_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     asset_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)

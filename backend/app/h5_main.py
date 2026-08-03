@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import models  # noqa: F401
 from .api.auth import router as auth_router
-from .api.assets import router as assets_router
+from .api.assets import ensure_asset_library_indexes, router as assets_router
 from .api.branding import router as branding_router
 from .api.content_records import router as content_records_router
 from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
@@ -82,6 +82,7 @@ def create_h5_app() -> FastAPI:
     """Dedicated H5 app: auth, remote chat, scheduled tasks, and lightweight HiFly resources."""
     logger.info("[H5] create_h5_app start")
     Base.metadata.create_all(bind=engine)
+    ensure_asset_library_indexes(engine)
     _ensure_h5_chat_mastra_columns()
     ensure_user_brand_schema(engine)
     seed_brand_configs(SessionLocal)

@@ -25,6 +25,10 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert 'add("generate_avatar", "生成数字人")' in script
     assert 'add("regenerate", "重新生成")' in script
     assert 'add("publish", "发布")' in script
+    assert 'add("delete", "删除")' in script
+    assert "async function deleteLibraryContent(item)" in script
+    assert 'await api(`/api/assets/${encodeURIComponent(source.assetId)}`, { method: "DELETE" })' in script
+    assert 'await api(`/api/content-records?${params.toString()}`, { method: "DELETE" })' in script
     assert 'openContentActionAbility("image_composer_studio", "workImagePrompt"' in script
     assert 'openContentActionAbility("goal.video.pipeline", "abilityVideoPrompt"' in script
     assert 'openContentActionAbility("hifly.video.create_by_tts", "workHiflyScript"' in script
@@ -120,6 +124,18 @@ def test_document_cards_only_use_real_images_and_render_article_images():
     assert "top: 50%;" in styles
     assert "data-content-document-cover" in script
     assert 'image.matches("[data-content-document-cover], [data-asset-picker-library-image]")' in script
+    assert 'compact: "true"' in script
+    assert '/api/content-records/detail?' in script
+
+
+def test_library_page_sizes_and_failed_clone_delete_controls():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert "assetLibraryPageSize: 20" in script
+    assert "contentRecordPageSize: 20" in script
+    assert 'class="hifly-card-delete danger-text"' in script
+    assert 'data-delete-hifly-asset="avatar"' in script
+    assert 'data-delete-hifly-asset="voice"' in script
 
 
 def test_asset_picker_uses_library_modal_instead_of_native_dropdown():

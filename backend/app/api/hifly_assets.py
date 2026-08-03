@@ -3771,20 +3771,26 @@ def list_h5_digital_library(
             "total": total,
         }
 
+    page_offset = (page - 1) * size
+    fetch_size = page_offset + size
+    hifly_query = db.query(UserHiflyAvatarAsset).filter(
+        UserHiflyAvatarAsset.user_id == current_user.id,
+        UserHiflyAvatarAsset.status != "deleted",
+    )
+    shanjian_query = db.query(ShanjianDigitalHumanProfile).filter(
+        ShanjianDigitalHumanProfile.user_id == int(current_user.id),
+        ShanjianDigitalHumanProfile.status != "deleted",
+    )
+    hifly_total = hifly_query.count()
+    shanjian_total = shanjian_query.count()
     hifly_rows = (
-        db.query(UserHiflyAvatarAsset)
-        .filter(
-            UserHiflyAvatarAsset.user_id == current_user.id,
-            UserHiflyAvatarAsset.status != "deleted",
-        )
+        hifly_query.order_by(UserHiflyAvatarAsset.updated_at.desc(), UserHiflyAvatarAsset.id.desc())
+        .limit(fetch_size)
         .all()
     )
     shanjian_rows = (
-        db.query(ShanjianDigitalHumanProfile)
-        .filter(
-            ShanjianDigitalHumanProfile.user_id == int(current_user.id),
-            ShanjianDigitalHumanProfile.status != "deleted",
-        )
+        shanjian_query.order_by(ShanjianDigitalHumanProfile.updated_at.desc(), ShanjianDigitalHumanProfile.id.desc())
+        .limit(fetch_size)
         .all()
     )
     merged: List[tuple[datetime, str, Any]] = []
@@ -3793,8 +3799,8 @@ def list_h5_digital_library(
     for row in shanjian_rows:
         merged.append((row.updated_at or row.created_at or datetime.min, "shanjian", row))
     merged.sort(key=lambda item: (item[0], str(getattr(item[2], "id", ""))), reverse=True)
-    total = len(merged)
-    selected = merged[(page - 1) * size : page * size]
+    total = int(hifly_total) + int(shanjian_total)
+    selected = merged[page_offset : page_offset + size]
 
     changed = False
     for _, source, row in selected:

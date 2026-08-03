@@ -9,6 +9,9 @@ if str(ROOT) not in sys.path:
 
 
 def main() -> None:
+    import pypdf
+    import xlrd
+
     from backend.app.api.capabilities import router as capabilities_router
     from backend.app.services.sutui_billing_gate import assert_pricing_pre_deduct_allows_upstream_or_http
     from backend.app.services.sutui_pricing import (
@@ -22,6 +25,8 @@ def main() -> None:
     assert callable(estimate_credits_from_pricing)
     assert callable(pricing_is_free_fixed)
     assert callable(_call_tool)
+    assert pypdf.PdfReader is not None
+    assert callable(xlrd.open_workbook)
     print("[OK] deploy preflight import check passed")
 
 

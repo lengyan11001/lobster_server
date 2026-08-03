@@ -19,6 +19,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from .auth import get_current_user
@@ -44,6 +45,15 @@ _VIDEO_SEGMENT_MAX_COUNT = 120
 
 # 临时文件跟踪：task_id -> [temp_file_paths]，用于任务完成后清理
 _temp_files_by_task: dict[str, list[Path]] = {}
+
+
+def ensure_asset_library_indexes(bind) -> None:
+    """Create indexes needed by paged H5 asset-library queries on existing databases."""
+    try:
+        with bind.begin() as connection:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_assets_user_created ON assets (user_id, created_at)"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("asset library index migration skipped: %s", exc)
 
 
 def _get_tos_config() -> Optional[dict]:
@@ -1225,20 +1235,39 @@ def list_assets(
             | (Asset.prompt.ilike(pat))
             | (Asset.filename.ilike(pat))
         )
-    max_limit = min(limit, 200)
+    max_limit = max(1, min(int(limit or 50), 200))
+    clean_offset = max(0, int(offset or 0))
+    meta_origin = func.lower(
+        func.coalesce(
+            Asset.meta["asset_origin"].as_string(),
+            Asset.meta["origin"].as_string(),
+            "",
+        )
+    )
+    meta_visibility = func.lower(
+        func.coalesce(
+            Asset.meta["content_visibility"].as_string(),
+            Asset.meta["library_visibility"].as_string(),
+            "",
+        )
+    )
+    query = query.filter(
+        ~meta_visibility.in_(("hidden", "internal", "intermediate")),
+        ~meta_origin.in_(("internal", "intermediate")),
+        func.coalesce(Asset.model, "") != "shanjian-digital-human-template-media",
+    )
     origin_filter = _normalize_asset_origin_filter(origin or asset_origin or source)
-    if origin_filter:
-        matched = [
-            row
-            for row in query.order_by(Asset.created_at.desc()).all()
-            if _asset_origin(row.meta) == origin_filter and not _asset_hidden_from_library(row)
-        ]
-        total = len(matched)
-        rows = matched[offset : offset + max_limit]
-    else:
-        matched = [row for row in query.order_by(Asset.created_at.desc()).all() if not _asset_hidden_from_library(row)]
-        total = len(matched)
-        rows = matched[offset : offset + max_limit]
+    if origin_filter == "user_upload":
+        query = query.filter(meta_origin == "user_upload")
+    elif origin_filter == "generated":
+        query = query.filter(meta_origin != "user_upload")
+    total = query.with_entities(func.count(Asset.id)).scalar() or 0
+    rows = (
+        query.order_by(Asset.created_at.desc(), Asset.id.desc())
+        .offset(clean_offset)
+        .limit(max_limit)
+        .all()
+    )
     def payload(row: Asset) -> dict:
         context = _stored_asset_content_context(row)
         return {

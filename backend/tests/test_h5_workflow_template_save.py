@@ -102,6 +102,8 @@ def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
 def test_workflow_action_menu_stays_above_children_and_closes_before_modal():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     styles = (ROOT / "h5_static" / "h5-app.css").read_text(encoding="utf-8")
+    designer_styles = (ROOT / "h5_static" / "h5-designer-v2.css").read_text(encoding="utf-8")
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
 
     modal_start = script.index('function openWorkflowActionModal(parentNodeId, actionId = "")')
     modal_body = script[modal_start : modal_start + 240]
@@ -113,9 +115,16 @@ def test_workflow_action_menu_stays_above_children_and_closes_before_modal():
     assert ".workflow-timeline-entry.task-menu-open > .workflow-child-list" in styles
     assert ".designer-workflow-group.task-menu-open" in styles
     assert ".workflow-node-card.task-menu-open .task-action-list" in styles
+    assert 'const childList = menu.closest(".workflow-child-list");' in script
+    assert 'childList?.classList.add("task-menu-open");' in script
+    assert "if (exceptMenu && item.contains(exceptMenu)) return;" in script
+    assert ".workflow-timeline-entry:has(.task-action-menu[open])" in designer_styles
+    assert ".workflow-child-list .workflow-node-card:has(.task-action-menu[open])" in designer_styles
+    assert ".workflow-node-card:has(.task-action-menu[open]) .task-action-list" in designer_styles
+    assert "20260803-workflow-child-menu-v3" in html
 
 
-def test_workflow_title_and_controls_are_fixed_at_top():
+def test_workflow_title_and_controls_use_an_operation_menu_in_normal_flow():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     styles = (ROOT / "h5_static" / "h5-designer-v2.css").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
@@ -123,15 +132,30 @@ def test_workflow_title_and_controls_are_fixed_at_top():
     shell_start = styles.index("#workflowView .workflow-shell {")
     shell_styles = styles[shell_start : shell_start + 180]
     control_start = styles.index("#workflowView .workflow-control-card {")
-    control_styles = styles[control_start : control_start + 320]
+    control_styles = styles[control_start : control_start + 180]
     assert 'workflow: ["我的AI员工", "24小时任务编排"]' in script
-    assert "padding-top: 207px;" in shell_styles
-    assert "position: fixed;" in control_styles
-    assert "top: 76px;" in control_styles
-    assert "left: var(--workflow-control-left" in control_styles
-    assert "width: var(--workflow-control-width" in control_styles
-    assert "function syncWorkflowControlCardBounds()" in script
-    assert 'const rect = shell.getBoundingClientRect();' in script
-    assert 'card.style.setProperty("--workflow-control-left", `${rect.left}px`);' in script
-    assert 'card.style.setProperty("--workflow-control-width", `${rect.width}px`);' in script
-    assert "20260730-workflow-aligned-v3" in html
+    assert "padding-top: 0;" in shell_styles
+    assert "position: relative;" in control_styles
+    assert "position: fixed;" not in control_styles
+    assert "syncWorkflowControlCardBounds" not in script
+    assert 'id="workflowOperationMenu"' in html
+    assert 'id="workflowOperationList"' in html
+    assert "#workflowView .workflow-operation-list {" in styles
+    assert "20260803-workflow-dialog-keyboard-v2" in html
+
+
+def test_workflow_day_dialog_and_template_drawer_stay_above_page_content():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    styles = (ROOT / "h5_static" / "h5-designer-v2.css").read_text(encoding="utf-8")
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+
+    assert "function syncWorkflowPlanDayViewport()" in script
+    assert "window.visualViewport?.addEventListener(\"resize\", syncWorkflowPlanDayViewport);" in script
+    assert 'input?.focus({ preventScroll: true });' in script
+    assert 'input?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });' in script
+    assert "#workflowPlanDayModal {" in styles
+    assert "z-index: 320;" in styles
+    assert "height: var(--workflow-plan-viewport-height, 100dvh);" in styles
+    assert "#workflowView .workflow-template-drawer {" in styles
+    assert "z-index: 300;" in styles
+    assert "20260803-workflow-dialog-keyboard-v2" in html

@@ -9,7 +9,7 @@
   <link id="h5AppleIcon" rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
   <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v1" />
 </head>
 <body>
   <main class="shell">
@@ -212,17 +212,16 @@
                 <select id="workflowDeviceSelect"></select>
                 <span id="workflowActiveText">未启用员工定制</span>
               </div>
-            </div>
-
-            <div class="workflow-actions">
-              <button class="ghost" type="button" id="workflowSaveTemplateBtn">保存模板</button>
-              <button type="button" id="workflowActivateBtn">启用到设备</button>
-              <button class="ghost" type="button" id="workflowStopBtn">停用</button>
-            </div>
-
-            <div class="workflow-head-actions">
-              <button type="button" id="workflowOpenAddNodeBtn">添加节点</button>
-              <button class="ghost" type="button" id="workflowTemplateListBtn">模板列表</button>
+              <details class="workflow-operation-menu" id="workflowOperationMenu">
+                <summary>操作</summary>
+                <div class="workflow-operation-list" id="workflowOperationList">
+                  <button class="ghost" type="button" id="workflowSaveTemplateBtn">保存模板</button>
+                  <button type="button" id="workflowActivateBtn">启用到设备</button>
+                  <button class="ghost" type="button" id="workflowStopBtn">停用</button>
+                  <button type="button" id="workflowOpenAddNodeBtn">添加节点</button>
+                  <button class="ghost" type="button" id="workflowTemplateListBtn">模板列表</button>
+                </div>
+              </details>
             </div>
           </div>
 
@@ -745,6 +744,11 @@
               <h2 id="profileName">已登录</h2>
               <div class="hint" id="profileDeviceText">设备状态检查中</div>
             </div>
+            <div class="profile-credit-summary" aria-label="算力余额">
+              <span aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"></path></svg></span>
+              <strong id="profileCreditBalance">--</strong>
+              <small>算力余额</small>
+            </div>
           </div>
           <div class="panel settings profile-account-actions">
             <div class="setting-row">
@@ -883,17 +887,16 @@
           <div class="personal-panel" data-personal-panel="profile">
             <div class="personal-template-stack">
               <div class="personal-survey-wizard">
-                <div class="personal-survey-top">
-                  <span id="personalSurveyStepText">1/14</span>
-                  <div class="personal-survey-bar"><i id="personalSurveyProgress"></i></div>
+                <div class="personal-survey-heading">
+                  <div class="personal-survey-heading-icon" aria-hidden="true">资</div>
+                  <div>
+                    <strong>告诉 AI 你是谁</strong>
+                    <p>信息越具体，生成的内容越贴合你</p>
+                  </div>
+                  <span id="personalSurveyCompletionText">已填写 0/14</span>
                 </div>
-                <div class="personal-survey-card">
-                  <strong id="personalSurveyQuestionTitle">名字</strong>
-                  <div id="personalSurveyAnswerHost" class="personal-survey-answer"></div>
-                </div>
+                <div id="personalSurveyQuestionList" class="personal-survey-list"></div>
                 <div class="personal-survey-actions">
-                  <button class="ghost" type="button" id="personalSurveyPrevBtn">上一步</button>
-                  <button type="button" id="personalSurveyNextBtn">下一步</button>
                   <button type="button" id="personalSaveProfileBtn">保存资料调查</button>
                 </div>
                 <div class="personal-survey-hidden" aria-hidden="true">
@@ -1504,7 +1507,7 @@
         <div class="personal-upload-zone">
           <label class="personal-field">
             <span>文件</span>
-            <input id="personalMemoryFiles" type="file" multiple accept=".txt,.md,.csv,.json,.yaml,.yml,.html,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.pptx,.jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.m4v,.avi,.mkv,.webm,.mp3,.wav,.m4a,.aac,.ogg,.flac,.amr,.wma,audio/*">
+            <input id="personalMemoryFiles" type="file" multiple accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.html,.htm,.log,.pdf,.docx,.xls,.xlsx,.xlsm,.pptx,.jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.m4v,.avi,.mkv,.webm,.mp3,.wav,.m4a,.aac,.ogg,.flac,.amr,.wma,audio/*">
           </label>
           <div class="personal-file-list" id="personalSelectedFiles"></div>
         </div>
@@ -1712,7 +1715,7 @@
           </div>
           <div class="personal-field">
             <label for="personalCustomReferenceFile">自定义参考文档</label>
-            <input id="personalCustomReferenceFile" type="file" accept=".txt,.md,.csv,.json,.yaml,.yml,.html,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.pptx">
+            <input id="personalCustomReferenceFile" type="file" accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.html,.htm,.log,.pdf,.docx,.xls,.xlsx,.xlsm,.pptx">
             <div class="personal-file-list" id="personalCustomReferenceInfo"></div>
           </div>
           <button type="button" id="personalGenerateMemoryBtn">生成记忆文件</button>
@@ -1901,6 +1904,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v1"></script>
 </body>
 </html>

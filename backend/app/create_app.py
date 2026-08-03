@@ -29,7 +29,7 @@ from .api.billing import router as billing_router
 # from .api.consumption_accounts import router as consumption_accounts_router
 from .api.mcp_registry import router as mcp_registry_router
 # 发布/列表等主要在客户端；服务器须保留 assets（upload-temp + /api/assets/temp/*），供本机无 TOS 时中转公网 URL
-from .api.assets import router as assets_router
+from .api.assets import ensure_asset_library_indexes, router as assets_router
 from .api.creative_jobs import router as creative_jobs_router
 from .api.cutcli_templates import router as cutcli_templates_router
 # from .api.publish import router as publish_router
@@ -1028,6 +1028,7 @@ def create_app() -> FastAPI:
     logger.info("[启动] create_app 开始")
     with _startup_db_lock():
         Base.metadata.create_all(bind=engine)
+        ensure_asset_library_indexes(engine)
         _migrate_user_sutui_token()
         _migrate_user_wechat_openid()
         _migrate_user_phone_default_passwords()

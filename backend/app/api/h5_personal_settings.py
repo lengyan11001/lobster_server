@@ -605,10 +605,12 @@ async def _collect_sources(
     *,
     db: Session,
     stt_user: User,
+    file_results: Optional[list[dict[str, str]]] = None,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     parts: list[str] = []
     visual_blocks: list[dict[str, Any]] = []
     source_images: list[dict[str, Any]] = []
+    results = file_results if file_results is not None else []
     if raw_text.strip():
         parts.append("【粘贴资料】\n" + raw_text.strip())
     if urls.strip():
@@ -666,50 +668,61 @@ async def _collect_sources(
     for file in files or []:
         if not file or not file.filename:
             continue
-        filename, suffix, data = await _read_upload(file)
-        if suffix in IMAGE_SUFFIXES and _append_visual_block(visual_blocks, filename, data):
-            _add_reference_image(
-                source_images,
-                installation_id=installation_id,
-                filename=filename,
-                suffix=suffix,
-                data=data,
-                source="upload",
-            )
-            parts.append(f"【图片】{filename}")
-            continue
-        if suffix in VIDEO_SUFFIXES:
-            frames = _extract_video_frames(data, filename, max_frames=3) if len(data) <= MAX_VIDEO_BYTES else []
-            if frames:
-                parts.append(f"【视频】{filename}\n已抽取 {len(frames)} 张关键帧用于理解。")
-                for frame_name, frame_data in frames:
-                    _append_visual_block(visual_blocks, f"{filename}-{frame_name}", frame_data)
-                    _add_reference_image(
-                        source_images,
-                        installation_id=installation_id,
-                        filename=f"{filename}-{frame_name}",
-                        suffix=Path(frame_name).suffix.lower(),
-                        data=frame_data,
-                        source="video_frame",
-                    )
+        original_name = os.path.basename(file.filename or "upload")
+        try:
+            filename, suffix, data = await _read_upload(file)
+            if suffix in IMAGE_SUFFIXES:
+                if not _append_visual_block(visual_blocks, filename, data):
+                    raise HTTPException(status_code=400, detail="图片数量超过 8 张或单张超过 12MB。")
+                _add_reference_image(
+                    source_images,
+                    installation_id=installation_id,
+                    filename=filename,
+                    suffix=suffix,
+                    data=data,
+                    source="upload",
+                )
+                parts.append(f"【图片】{filename}")
+            elif suffix in VIDEO_SUFFIXES:
+                frames = _extract_video_frames(data, filename, max_frames=3) if len(data) <= MAX_VIDEO_BYTES else []
+                if frames:
+                    parts.append(f"【视频】{filename}\n已抽取 {len(frames)} 张关键帧用于理解。")
+                    for frame_name, frame_data in frames:
+                        _append_visual_block(visual_blocks, f"{filename}-{frame_name}", frame_data)
+                        _add_reference_image(
+                            source_images,
+                            installation_id=installation_id,
+                            filename=f"{filename}-{frame_name}",
+                            suffix=Path(frame_name).suffix.lower(),
+                            data=frame_data,
+                            source="video_frame",
+                        )
+                else:
+                    parts.append(_media_text(filename, suffix, data) + "\n关键帧抽取失败。")
+            elif suffix in AUDIO_SUFFIXES:
+                text = _transcribe_audio_attachment(
+                    db=db,
+                    user=stt_user,
+                    installation_id=installation_id,
+                    filename=filename,
+                    suffix=suffix,
+                    data=data,
+                )
+                parts.append(f"【音频：{filename}】\n{text}")
             else:
-                parts.append(_media_text(filename, suffix, data) + "\n关键帧抽取失败。")
-            continue
-        if suffix in AUDIO_SUFFIXES:
-            text = _transcribe_audio_attachment(
-                db=db,
-                user=stt_user,
-                installation_id=installation_id,
-                filename=filename,
-                suffix=suffix,
-                data=data,
-            )
-            parts.append(f"【音频：{filename}】\n{text}")
-            continue
-        text = _file_to_text(filename, suffix, data)
-        parts.append(f"【文件：{filename}】\n{text}")
+                text = _file_to_text(filename, suffix, data)
+                parts.append(f"【文件：{filename}】\n{text}")
+            results.append({"filename": filename, "status": "processed", "error": ""})
+        except Exception as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            message = str(detail or "文件读取失败")[:300]
+            results.append({"filename": original_name, "status": "skipped", "error": message})
     merged = _limit_text("\n\n".join(part for part in parts if part.strip()))
     if not merged and not visual_blocks:
+        failed = [item for item in results if item.get("status") == "skipped"]
+        if failed:
+            summary = "；".join(f"{item['filename']}：{item['error']}" for item in failed[:5])
+            raise HTTPException(status_code=400, detail=f"所选文件均未能读取：{summary}")
         raise HTTPException(status_code=400, detail="请上传资料、填写链接或粘贴资料内容。")
     return merged, visual_blocks, source_images
 
@@ -1013,6 +1026,7 @@ async def save_uploaded_memory_document(
     installation_id = _installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
+    file_results: list[dict[str, str]] = []
     source_text, _visual_blocks, source_images = await _collect_sources(
         request,
         installation_id,
@@ -1021,6 +1035,7 @@ async def save_uploaded_memory_document(
         urls,
         db=db,
         stt_user=target_user,
+        file_results=file_results,
     )
     source_text = await _describe_visual_sources(request, installation_id, source_text, _visual_blocks)
     source_image_urls = _reference_image_urls_from_sources(source_images)
@@ -1047,6 +1062,7 @@ async def save_uploaded_memory_document(
         "content_text": source_text,
         "document": _doc_summary(row, include_content=True),
         "documents": [_doc_summary(row, include_content=True)],
+        "file_results": file_results,
     }
 
 
@@ -1074,6 +1090,7 @@ async def generate_memory_documents(
 
     raw_parts = [direct_intro.strip(), direct_faq.strip(), direct_scripts.strip()]
     raw_text = "\n\n".join(part for part in raw_parts if part)
+    file_results: list[dict[str, str]] = []
     source_text, visual_blocks, source_images = await _collect_sources(
         request,
         installation_id,
@@ -1082,6 +1099,7 @@ async def generate_memory_documents(
         urls,
         db=db,
         stt_user=target_user,
+        file_results=file_results,
     )
     source_text = await _describe_visual_sources(request, installation_id, source_text, visual_blocks)
     visual_blocks = []
@@ -1135,4 +1153,5 @@ async def generate_memory_documents(
         "raw_text": text,
         "source_images": source_images,
         "reference_image_urls": _reference_image_urls_from_sources(source_images),
+        "file_results": file_results,
     }

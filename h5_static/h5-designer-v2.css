@@ -1318,6 +1318,38 @@ body.messages-view-active .global-chat-fab {
   box-shadow: var(--designer-shadow);
 }
 
+.hifly-library-card {
+  position: relative;
+  display: grid;
+  align-content: start;
+}
+
+.hifly-card-preview {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  box-shadow: none;
+}
+
+.hifly-card-delete {
+  min-height: 28px;
+  margin-top: 7px;
+  padding: 0 8px;
+  border: 1px solid #fee2e2;
+  border-radius: 8px;
+  color: #dc2626;
+  background: #fff7f7;
+  box-shadow: none;
+  font-size: 10px;
+  font-weight: 400;
+}
+
 .asset-library-pager {
   padding: 4px 2px 0;
 }
@@ -1667,20 +1699,193 @@ body.messages-view-active .global-chat-fab {
   background: rgba(248, 250, 252, .72);
 }
 
-.personal-survey-card {
-  min-height: 180px;
-  border-radius: 24px;
+.personal-survey-wizard {
+  display: block;
+  padding: 15px 16px 12px;
+  background: rgba(255, 255, 255, .9);
+}
+
+.personal-survey-heading {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 2px 0 13px;
+  border-bottom: 1px solid #edf1f7;
+}
+
+.personal-survey-heading-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #2f6fed;
+  background: #edf3ff;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.personal-survey-heading strong {
+  display: block;
+  color: #17233d;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.personal-survey-heading p {
+  margin: 3px 0 0;
+  color: #8792a6;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.personal-survey-heading > span {
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #2f8f70;
+  background: #eaf8f1;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.personal-survey-list {
+  display: block;
+}
+
+.personal-survey-item {
+  padding: 13px 0 14px;
+  border-bottom: 1px solid #edf1f7;
+}
+
+.personal-survey-item:last-child {
+  border-bottom: 0;
+}
+
+.personal-survey-question {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.personal-survey-question > span {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #2f6fed;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.personal-survey-question strong,
+.personal-survey-question small {
+  display: block;
+  letter-spacing: 0;
+}
+
+.personal-survey-question strong {
+  color: #17233d;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.personal-survey-question small {
+  margin-top: 2px;
+  color: #8a94a6;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.personal-survey-answer {
+  margin-top: 9px;
+}
+
+.personal-survey-answer input,
+.personal-survey-answer select,
+.personal-survey-answer textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid #e8edf5;
+  border-radius: 12px;
+  outline: 0;
+  color: #17233d;
+  background: #f6f8fc;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.personal-survey-answer input,
+.personal-survey-answer select {
+  min-height: 44px;
+  padding: 0 12px;
+}
+
+.personal-survey-answer textarea {
+  min-height: 78px;
+  padding: 11px 12px;
+  resize: vertical;
+}
+
+.personal-survey-answer input:focus,
+.personal-survey-answer select:focus,
+.personal-survey-answer textarea:focus {
+  border-color: rgba(47, 111, 237, .48);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, .08);
+}
+
+.personal-survey-answer input::placeholder,
+.personal-survey-answer textarea::placeholder {
+  color: #a1a9b8;
+}
+
+.personal-survey-answer .asset-picker-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.personal-survey-answer .asset-picker-row button {
+  min-height: 42px;
+  border-radius: 12px;
+  font-weight: 400;
+}
+
+.personal-survey-placeholder {
+  margin: 6px 2px 0;
+  color: #98a1b2;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .personal-survey-actions {
   position: sticky;
-  bottom: calc(80px + max(12px, env(safe-area-inset-bottom)));
   z-index: 6;
-  padding: 8px;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, .92);
+  bottom: calc(80px + max(10px, env(safe-area-inset-bottom)));
+  display: block;
+  margin: 8px -4px 0;
+  padding: 7px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .94);
   box-shadow: var(--designer-shadow-raised);
   backdrop-filter: blur(16px);
+}
+
+.personal-survey-actions #personalSaveProfileBtn {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .personal-settings-page .inline-form.three {
@@ -2394,6 +2599,32 @@ body * {
   margin-left: 0;
   background: rgba(248, 250, 252, .96);
   box-shadow: none;
+}
+
+/* Lift the full branch while an action menu is open so later timeline rows cannot cover it. */
+.workflow-timeline-entry.task-menu-open,
+.workflow-timeline-entry:has(.task-action-menu[open]) {
+  z-index: 400 !important;
+}
+
+.workflow-timeline-entry > .workflow-node-card.task-menu-open,
+.workflow-timeline-entry > .workflow-node-card:has(.task-action-menu[open]),
+.workflow-timeline-entry > .workflow-child-list.task-menu-open,
+.workflow-timeline-entry:has(> .workflow-child-list .task-action-menu[open]) > .workflow-child-list {
+  position: relative;
+  z-index: 420 !important;
+  overflow: visible;
+}
+
+.workflow-child-list .workflow-node-card.task-menu-open,
+.workflow-child-list .workflow-node-card:has(.task-action-menu[open]) {
+  z-index: 440 !important;
+  overflow: visible;
+}
+
+.workflow-node-card.task-menu-open .task-action-list,
+.workflow-node-card:has(.task-action-menu[open]) .task-action-list {
+  z-index: 460 !important;
 }
 
 .custom-employee-node-list {
@@ -4176,7 +4407,7 @@ body * {
 #workflowView .workflow-shell {
   display: grid;
   gap: 14px;
-  padding-top: 207px;
+  padding-top: 0;
   padding-bottom: 28px;
 }
 
@@ -4191,24 +4422,17 @@ body * {
 }
 
 #workflowView .workflow-control-card {
-  position: fixed;
-  top: 76px;
-  left: var(--workflow-control-left, max(20px, calc(50vw - 195px)));
-  z-index: 190;
-  width: var(--workflow-control-width, min(390px, calc(100vw - 40px)));
-  display: grid;
-  gap: 10px;
+  position: relative;
+  z-index: 5;
+  width: 100%;
   padding: 12px;
 }
 
-@media (max-width: 380px) {
-  #workflowView .workflow-control-card {
-    left: var(--workflow-control-left, 14px);
-    width: var(--workflow-control-width, calc(100vw - 28px));
-  }
-}
-
 #workflowView .workflow-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -4218,8 +4442,10 @@ body * {
 }
 
 #workflowView .workflow-device-box {
+  flex: 1 1 auto;
+  min-width: 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
 }
@@ -4242,7 +4468,9 @@ body * {
 }
 
 #workflowView #workflowActiveText {
-  max-width: 112px;
+  grid-column: 1 / -1;
+  justify-self: start;
+  max-width: 100%;
   overflow: hidden;
   padding: 6px 9px;
   border-radius: 8px;
@@ -4252,6 +4480,90 @@ body * {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#workflowView .workflow-operation-menu {
+  position: relative;
+  z-index: 12;
+  flex: 0 0 auto;
+}
+
+#workflowView .workflow-operation-menu > summary {
+  min-width: 72px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  cursor: pointer;
+  list-style: none;
+  border: 1px solid #dbe4f0;
+  border-radius: 11px;
+  color: #334155;
+  background: #fff;
+  box-shadow: none;
+  font-size: 12px;
+  user-select: none;
+}
+
+#workflowView .workflow-operation-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+#workflowView .workflow-operation-menu > summary::after {
+  content: "⌄";
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1;
+}
+
+#workflowView .workflow-operation-menu[open] > summary {
+  color: #2563eb;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+#workflowView .workflow-operation-menu[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+#workflowView .workflow-operation-list {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 220;
+  width: 176px;
+  display: grid;
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid #e2e8f0;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, .18);
+}
+
+#workflowView .workflow-operation-list button {
+  width: 100%;
+  min-height: 38px;
+  justify-content: flex-start;
+  padding: 0 11px;
+  color: #334155;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+  text-align: left;
+}
+
+#workflowView .workflow-operation-list button:active {
+  background: #f1f5f9;
+}
+
+#workflowView .workflow-operation-list #workflowActivateBtn {
+  color: #fff;
+  background: #2563eb;
 }
 
 #workflowView .workflow-actions {
@@ -4570,7 +4882,7 @@ body * {
 #profileView .profile-head {
   min-height: 92px;
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
+  grid-template-columns: 52px minmax(0, 1fr) auto;
   gap: 14px;
   padding: 18px;
   border: 1px solid rgba(255, 255, 255, .24);
@@ -4578,6 +4890,61 @@ body * {
   color: #fff;
   background: linear-gradient(135deg, #2f6cf2, #3746ef);
   box-shadow: 0 12px 28px rgba(37, 99, 235, .2);
+}
+
+#profileView .profile-credit-summary {
+  min-width: 76px;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-content: center;
+  justify-content: end;
+  column-gap: 4px;
+  color: #fff;
+  text-align: right;
+}
+
+#profileView .profile-credit-summary > span {
+  align-self: center;
+  color: #bfdbfe;
+  font-size: 15px;
+}
+
+#profileView .profile-credit-summary > span svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
+#profileView .profile-credit-summary > strong {
+  max-width: 108px;
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+#profileView .profile-credit-summary > small {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  color: rgba(255, 255, 255, .72);
+  font-size: 9px;
+}
+
+@media (max-width: 360px) {
+  #profileView .profile-head {
+    grid-template-columns: 46px minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 15px;
+  }
+
+  #profileView .profile-head .profile-avatar {
+    width: 46px;
+    height: 46px;
+  }
+
+  #profileView .profile-credit-summary {
+    min-width: 62px;
+  }
 }
 
 #profileView .profile-avatar {
@@ -5099,6 +5466,31 @@ body * {
   max-width: 420px;
 }
 
+#workflowPlanDayModal {
+  top: var(--workflow-plan-viewport-top, 0px);
+  right: 0;
+  bottom: auto;
+  left: 0;
+  z-index: 320;
+  box-sizing: border-box;
+  height: var(--workflow-plan-viewport-height, 100dvh);
+  min-height: 0;
+  overflow: hidden;
+  padding: max(10px, env(safe-area-inset-top)) 16px max(10px, env(safe-area-inset-bottom));
+}
+
+#workflowPlanDayModal.keyboard-open {
+  place-items: start center;
+}
+
+#workflowPlanDayModal .workflow-plan-day-popover {
+  max-height: calc(var(--workflow-plan-viewport-height, 100dvh) - 20px);
+  overscroll-behavior: contain;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scroll-padding-block: 18px 72px;
+}
+
 .workflow-plan-day-popover form,
 .workflow-plan-day-popover .field {
   display: grid;
@@ -5116,6 +5508,20 @@ body * {
   font-size: 12px;
   font-weight: 400;
   line-height: 1.6;
+}
+
+#workflowPlanDayModal .workflow-plan-day-popover .work-dispatch-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 2px -4px -4px;
+  padding: 12px 4px 4px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, .98) 30%);
+}
+
+#workflowView .workflow-template-drawer {
+  z-index: 300;
+  isolation: isolate;
 }
 
 main.shell:has(#contentRecordsView.active) #pageTitle,

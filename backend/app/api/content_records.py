@@ -137,7 +137,7 @@ def _apply_sync_item(row: UserContentRecord, item: ContentRecordSyncItem, *, kin
     row.updated_at = datetime.utcnow()
 
 
-def _synced_payload(row: UserContentRecord) -> dict[str, Any]:
+def _synced_payload(row: UserContentRecord, *, compact: bool = False) -> dict[str, Any]:
     content_id = f"content:{row.source}:{row.source_id}"
     meta = row.meta if isinstance(row.meta, dict) else {}
     image_urls = _content_image_urls(cover_url=row.cover_url, content=row.content, meta=meta)
@@ -150,8 +150,8 @@ def _synced_payload(row: UserContentRecord) -> dict[str, Any]:
         "source_id": row.source_id,
         "kind": row.kind,
         "title": row.title or "",
-        "summary": row.summary or "",
-        "content": row.content or "",
+        "summary": _compact_summary(row.summary) if compact else (row.summary or ""),
+        "content": "" if compact else (row.content or ""),
         "cover_url": cover_url,
         "image_urls": image_urls,
         "file_url": row.file_url or "",
@@ -160,15 +160,16 @@ def _synced_payload(row: UserContentRecord) -> dict[str, Any]:
         "media_type": "document",
         "status": row.status or "completed",
         "tags": f"content-record,{row.kind},{row.source}",
-        "prompt": row.summary or "",
-        "meta": meta,
+        "prompt": _compact_summary(row.summary) if compact else (row.summary or ""),
+        "meta": {} if compact else meta,
         "created_at": row.source_created_at.isoformat() if row.source_created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         "_content_record": True,
+        "_compact": compact,
     }
 
 
-def _ip_draft_payload(row: IPContentDraftRecord) -> dict[str, Any]:
+def _ip_draft_payload(row: IPContentDraftRecord, *, compact: bool = False) -> dict[str, Any]:
     meta = dict(row.meta) if isinstance(row.meta, dict) else {}
     images = meta.get("images") if isinstance(meta.get("images"), list) else []
     content = row.content or ""
@@ -186,7 +187,7 @@ def _ip_draft_payload(row: IPContentDraftRecord) -> dict[str, Any]:
         "kind": "article",
         "title": title,
         "summary": _compact_summary(content),
-        "content": content,
+        "content": "" if compact else content,
         "cover_url": cover_url,
         "image_urls": image_urls,
         "file_url": "",
@@ -196,10 +197,11 @@ def _ip_draft_payload(row: IPContentDraftRecord) -> dict[str, Any]:
         "status": "completed",
         "tags": f"content-record,article,ip-daily,{row.task}",
         "prompt": row.image_prompt or "",
-        "meta": meta,
+        "meta": {} if compact else meta,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         "_content_record": True,
+        "_compact": compact,
     }
 
 
@@ -243,6 +245,10 @@ def sync_content_records(
                 db.add(row)
                 created_count += 1
             else:
+                row_meta = row.meta if isinstance(row.meta, dict) else {}
+                if row.status == "deleted" and row_meta.get("deleted_from_h5") is True:
+                    applied_rows.append(row)
+                    continue
                 updated_count += 1
             _apply_sync_item(row, sync_item, kind=item_kind)
             applied_rows.append(row)
@@ -266,6 +272,7 @@ def list_content_records(
     kind: str = Query("article"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    compact: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -276,6 +283,7 @@ def list_content_records(
     synced_query = db.query(UserContentRecord).filter(
         UserContentRecord.user_id == owner.id,
         UserContentRecord.kind == normalized_kind,
+        UserContentRecord.status != "deleted",
     )
     synced_total = synced_query.with_entities(func.count(UserContentRecord.id)).scalar() or 0
     fetch_size = offset + limit
@@ -284,7 +292,7 @@ def list_content_records(
         .limit(fetch_size)
         .all()
     )
-    items = [_synced_payload(row) for row in synced_rows]
+    items = [_synced_payload(row, compact=compact) for row in synced_rows]
 
     ip_total = 0
     if normalized_kind == "article":
@@ -295,7 +303,7 @@ def list_content_records(
             .limit(fetch_size)
             .all()
         )
-        items.extend(_ip_draft_payload(row) for row in ip_rows)
+        items.extend(_ip_draft_payload(row, compact=compact) for row in ip_rows)
 
     items.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
     total = int(synced_total) + int(ip_total)
@@ -309,3 +317,69 @@ def list_content_records(
             "has_next": offset + limit < total,
         },
     }
+
+
+def _content_record_by_source(
+    db: Session,
+    owner: User,
+    *,
+    source: str,
+    source_id: str,
+) -> tuple[str, UserContentRecord | IPContentDraftRecord]:
+    clean_source = _clean_text(source, 64).lower()
+    clean_source_id = _clean_text(source_id, 128)
+    if not clean_source_id:
+        raise HTTPException(status_code=400, detail="内容记录 ID 不能为空")
+    if clean_source == "ip_daily":
+        row = db.query(IPContentDraftRecord).filter(
+            IPContentDraftRecord.user_id == owner.id,
+            IPContentDraftRecord.record_id == clean_source_id,
+        ).first()
+        record_type = "ip_daily"
+    else:
+        row = db.query(UserContentRecord).filter(
+            UserContentRecord.user_id == owner.id,
+            UserContentRecord.source == clean_source,
+            UserContentRecord.source_id == clean_source_id,
+            UserContentRecord.status != "deleted",
+        ).first()
+        record_type = "synced"
+    if row is None:
+        raise HTTPException(status_code=404, detail="内容记录不存在")
+    return record_type, row
+
+
+@router.get("/api/content-records/detail", summary="Get one shared content record")
+def get_content_record_detail(
+    source: str = Query(...),
+    source_id: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    record_type, row = _content_record_by_source(db, owner, source=source, source_id=source_id)
+    item = _ip_draft_payload(row) if record_type == "ip_daily" else _synced_payload(row)
+    return {"ok": True, "item": item}
+
+
+@router.delete("/api/content-records", summary="Delete one shared content record")
+def delete_content_record(
+    source: str = Query(...),
+    source_id: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    record_type, row = _content_record_by_source(db, owner, source=source, source_id=source_id)
+    if record_type == "ip_daily":
+        db.delete(row)
+    else:
+        meta = dict(row.meta or {})
+        meta["deleted_from_h5"] = True
+        meta["deleted_at"] = datetime.utcnow().isoformat()
+        row.meta = meta
+        row.status = "deleted"
+        row.updated_at = datetime.utcnow()
+        db.add(row)
+    db.commit()
+    return {"ok": True, "source": source, "source_id": source_id}

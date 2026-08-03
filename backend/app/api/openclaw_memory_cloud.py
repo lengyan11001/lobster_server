@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import logging
+import posixpath
 import re
 import zipfile
 from datetime import datetime
@@ -52,7 +53,7 @@ _ALLOWED_TEXT_SUFFIXES = {
     ".htm",
     ".log",
 }
-_ALLOWED_DOCUMENT_SUFFIXES = {".pdf", ".doc", ".docx", ".xlsx", ".xlsm", ".xls", ".pptx"}
+_ALLOWED_DOCUMENT_SUFFIXES = {".pdf", ".docx", ".xlsx", ".xlsm", ".xls", ".pptx"}
 _SUPPORTED_SUFFIXES = _ALLOWED_TEXT_SUFFIXES | _ALLOWED_DOCUMENT_SUFFIXES
 
 
@@ -120,24 +121,113 @@ def _extract_docx_text(data: bytes) -> str:
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         names = ["word/document.xml"]
         names.extend(
-            sorted(n for n in zf.namelist() if re.match(r"word/(header|footer)\d+\.xml$", n))
+            name
+            for name in ("word/footnotes.xml", "word/endnotes.xml", "word/comments.xml")
+            if name in zf.namelist()
+        )
+        names.extend(
+            sorted(
+                (n for n in zf.namelist() if re.match(r"word/(header|footer)\d+\.xml$", n)),
+                key=_ooxml_part_sort_key,
+            )
         )
     return _zip_xml_text(data, names)
+
+
+def _ooxml_part_sort_key(name: str) -> tuple[str, int, str]:
+    match = re.search(r"^(.*?)(\d+)\.xml$", name)
+    if not match:
+        return name, 0, name
+    return match.group(1), int(match.group(2)), name
+
+
+def _ooxml_relationships(zf: zipfile.ZipFile, source_name: str) -> list[tuple[str, str, str]]:
+    source_dir = posixpath.dirname(source_name)
+    rels_name = posixpath.join(source_dir, "_rels", posixpath.basename(source_name) + ".rels")
+    if rels_name not in zf.namelist():
+        return []
+    root = ET.fromstring(zf.read(rels_name))
+    relationships: list[tuple[str, str, str]] = []
+    for rel in root:
+        rel_id = str(rel.attrib.get("Id") or "").strip()
+        rel_type = str(rel.attrib.get("Type") or "").strip()
+        target = str(rel.attrib.get("Target") or "").strip()
+        if not rel_id or not target or rel.attrib.get("TargetMode") == "External":
+            continue
+        resolved = (
+            posixpath.normpath(target.lstrip("/"))
+            if target.startswith("/")
+            else posixpath.normpath(posixpath.join(source_dir, target))
+        )
+        relationships.append((rel_id, rel_type, resolved))
+    return relationships
+
+
+def _presentation_slide_names(zf: zipfile.ZipFile) -> list[str]:
+    presentation = "ppt/presentation.xml"
+    if presentation not in zf.namelist():
+        return []
+    relationship_map = {
+        rel_id: target
+        for rel_id, rel_type, target in _ooxml_relationships(zf, presentation)
+        if rel_type.endswith("/slide")
+    }
+    root = ET.fromstring(zf.read(presentation))
+    ordered: list[str] = []
+    rel_namespace = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    for elem in root.iter():
+        if elem.tag.rsplit("}", 1)[-1] != "sldId":
+            continue
+        target = relationship_map.get(str(elem.attrib.get(rel_namespace) or ""))
+        if target and target in zf.namelist() and target not in ordered:
+            ordered.append(target)
+    return ordered
+
+
+def _xml_text(zf: zipfile.ZipFile, name: str) -> str:
+    if name not in zf.namelist():
+        return ""
+    root = ET.fromstring(zf.read(name))
+    lines: list[str] = []
+    current: list[str] = []
+    for elem in root.iter():
+        tag = elem.tag.rsplit("}", 1)[-1]
+        if tag == "t" and elem.text:
+            current.append(elem.text)
+        elif tag in {"br", "cr"}:
+            current.append("\n")
+        elif tag == "p" and current:
+            lines.append("".join(current).strip())
+            current = []
+    if current:
+        lines.append("".join(current).strip())
+    return "\n".join(line for line in lines if line)
 
 
 def _extract_pptx_text(data: bytes) -> str:
     slide_texts: list[str] = []
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        names = sorted(n for n in zf.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n))
+        names = _presentation_slide_names(zf)
+        if not names:
+            names = sorted(
+                (n for n in zf.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n)),
+                key=_ooxml_part_sort_key,
+            )
         for idx, name in enumerate(names, start=1):
-            root = ET.fromstring(zf.read(name))
-            texts = [
-                elem.text
-                for elem in root.iter()
-                if elem.tag.rsplit("}", 1)[-1] == "t" and elem.text
-            ]
-            if texts:
-                slide_texts.append(f"## Slide {idx}\n" + "\n".join(texts))
+            sections: list[str] = []
+            body = _xml_text(zf, name)
+            if body:
+                sections.append(body)
+            for _rel_id, rel_type, target in _ooxml_relationships(zf, name):
+                if not rel_type.endswith(("/notesSlide", "/chart", "/diagramData")):
+                    continue
+                extra = _xml_text(zf, target)
+                if not extra:
+                    continue
+                label = "备注" if rel_type.endswith("/notesSlide") else "图表/图示"
+                sections.append(f"【{label}】\n{extra}")
+            if sections:
+                slide_texts.append(f"## 第 {idx} 页\n" + "\n".join(sections))
     return "\n\n".join(slide_texts)
 
 
@@ -180,7 +270,10 @@ def _extract_xlsx_text(data: bytes) -> str:
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         shared = _xlsx_shared_strings(zf)
         sheet_names = _xlsx_sheet_names(zf)
-        paths = sorted(n for n in zf.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", n))
+        paths = sorted(
+            (n for n in zf.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", n)),
+            key=_ooxml_part_sort_key,
+        )
         for idx, name in enumerate(paths, start=1):
             root = ET.fromstring(zf.read(name))
             rows: list[str] = []
@@ -278,8 +371,6 @@ def _decode_text_payload(data: bytes, filename: str) -> str:
         text = _extract_pdf_text(data)
     elif suffix == ".docx":
         text = _extract_docx_text(data)
-    elif suffix == ".doc":
-        raise HTTPException(status_code=400, detail="旧版 .doc 暂不支持云端抽取；请另存为 .docx 或 PDF 后上传。")
     elif suffix in {".xlsx", ".xlsm"}:
         text = _extract_xlsx_text(data)
     elif suffix == ".xls":

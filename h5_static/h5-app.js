@@ -104,7 +104,7 @@
       assetLibrarySection: "uploads",
       assetLibraryOrigin: "user_upload",
       assetLibraryPage: { user_upload: 1, generated: 1 },
-      assetLibraryPageSize: 10,
+      assetLibraryPageSize: 20,
       assetLibraryRows: { user_upload: [], generated: [] },
       assetLibraryTotals: { user_upload: 0, generated: 0 },
       assetLibraryLoading: false,
@@ -117,7 +117,7 @@
       assetLibraryDigitalLoading: false,
       contentRecordMediaType: "image",
       contentRecordPage: 1,
-      contentRecordPageSize: 6,
+      contentRecordPageSize: 20,
       contentRecordRows: [],
       contentRecordTotal: 0,
       contentRecordLoading: false,
@@ -175,7 +175,6 @@
       personalSettingsLoaded: false,
       personalSettingsLoading: false,
       personalSettingsTab: "keywords",
-      personalSurveyIndex: 0,
       personalKeywords: [],
       personalCompetitors: [],
       personalMemoryDocs: [],
@@ -1198,10 +1197,28 @@
     }
 
     function closeWorkflowPlanDayDialog(value = null) {
-      $("workflowPlanDayModal")?.classList.add("hidden");
+      const modal = $("workflowPlanDayModal");
+      $("workflowPlanDayInput")?.blur();
+      modal?.classList.add("hidden");
+      modal?.classList.remove("keyboard-open");
+      modal?.style.removeProperty("--workflow-plan-viewport-top");
+      modal?.style.removeProperty("--workflow-plan-viewport-height");
       const resolve = state.workflowPlanDayResolve;
       state.workflowPlanDayResolve = null;
       if (typeof resolve === "function") resolve(value);
+    }
+
+    function syncWorkflowPlanDayViewport() {
+      const modal = $("workflowPlanDayModal");
+      if (!modal || modal.classList.contains("hidden")) return;
+      const viewport = window.visualViewport;
+      const viewportHeight = Math.max(240, Number(viewport?.height || window.innerHeight || document.documentElement.clientHeight || 0));
+      const viewportTop = Math.max(0, Number(viewport?.offsetTop || 0));
+      const layoutHeight = Math.max(viewportHeight, Number(window.innerHeight || document.documentElement.clientHeight || viewportHeight));
+      const keyboardOpen = viewportHeight < 560 || layoutHeight - viewportHeight - viewportTop > 100;
+      modal.style.setProperty("--workflow-plan-viewport-top", `${Math.round(viewportTop)}px`);
+      modal.style.setProperty("--workflow-plan-viewport-height", `${Math.round(viewportHeight)}px`);
+      modal.classList.toggle("keyboard-open", keyboardOpen);
     }
 
     function requestWorkflowPlanDay() {
@@ -1211,10 +1228,20 @@
       const input = $("workflowPlanDayInput");
       if (input) input.value = "1";
       $("workflowPlanDayModal")?.classList.remove("hidden");
+      syncWorkflowPlanDayViewport();
       setTimeout(() => {
-        input?.focus();
+        try {
+          input?.focus({ preventScroll: true });
+        } catch (_) {
+          input?.focus();
+        }
         input?.select();
-      }, 30);
+        syncWorkflowPlanDayViewport();
+        setTimeout(() => {
+          syncWorkflowPlanDayViewport();
+          input?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+        }, 120);
+      }, 40);
       return new Promise((resolve) => {
         state.workflowPlanDayResolve = resolve;
       });
@@ -4190,7 +4217,10 @@
     function renderWorkflowTimelineLegacy() {
       const box = $("workflowTimeline");
       if (!box) return;
-      const nodes = (state.workflowNodesDraft || []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      const nodes = (state.workflowNodesDraft || [])
+        .filter((node) => !workflowNodeIsPlaceholder(node))
+        .slice()
+        .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
       if (!nodes.length) {
         box.innerHTML = `<div class="workflow-empty">还没有节点</div>`;
         return;
@@ -4299,7 +4329,7 @@
         list.innerHTML = `<div class="hint">加载中...</div>`;
         return;
       }
-      const rows = sortWorkflowTemplatesForDisplay(workflowTemplateRows());
+      const rows = sortWorkflowTemplatesForDisplay(workflowTemplateRows().filter((tpl) => !workflowTemplateIsComingSoon(tpl)));
       if (!rows.length) {
         list.innerHTML = `<div class="hint">暂无模板</div>`;
         return;
@@ -4340,7 +4370,7 @@
     }
 
     function customWorkflowTemplateRows() {
-      return userWorkflowTemplateRows().filter((tpl) => !workflowSystemTemplateKey(tpl));
+      return userWorkflowTemplateRows().filter((tpl) => !workflowSystemTemplateKey(tpl) && !workflowTemplateIsComingSoon(tpl));
     }
 
     function workflowTemplateRows() {
@@ -4422,7 +4452,8 @@
     }
 
     function workflowTemplateNodeCount(tpl) {
-      return workflowActionNodeCount(tpl && tpl.nodes);
+      const nodes = Array.isArray(tpl && tpl.nodes) ? tpl.nodes.filter((node) => !workflowNodeIsPlaceholder(node)) : [];
+      return workflowActionNodeCount(nodes);
     }
 
     function workflowTemplateSourceText(tpl) {
@@ -4450,7 +4481,10 @@
     }
 
     function workflowTemplateNodeListHtmlLegacy(tpl) {
-      const nodes = (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      const nodes = (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : [])
+        .filter((node) => !workflowNodeIsPlaceholder(node))
+        .slice()
+        .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
       if (!nodes.length) return `<div class="custom-employee-empty">暂无任务节点</div>`;
       return `<div class="custom-employee-node-list">${nodes.map((node, index) => {
         const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
@@ -4465,7 +4499,10 @@
     }
 
     function workflowTemplateNodeListHtml(tpl) {
-      const nodes = (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      const nodes = (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : [])
+        .filter((node) => !workflowNodeIsPlaceholder(node))
+        .slice()
+        .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
       if (!nodes.length) return `<div class="custom-employee-empty">暂无任务节点</div>`;
       return `<div class="custom-employee-node-list">${nodes.map((node, index) => {
         const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
@@ -6349,9 +6386,6 @@
       const onlineCount = workingCount + idleCount;
       const roles = [
         { id: "sales", name: "销售", status: "待命", target: "salesWorkflow", systemTemplateId: "system_sales" },
-        { id: "customer_service", name: "客服", status: "敬请期待", comingSoon: true, systemTemplateId: "system_customer_service" },
-        { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true, systemTemplateId: "system_overseas" },
-        { id: "hr", name: "HR", status: "敬请期待", comingSoon: true, systemTemplateId: "system_hr" },
       ].map((role) => {
         const active = !role.comingSoon && activeWorkflowTemplateKey() === String(role.systemTemplateId || "");
         return active ? { ...role, status: "启用中", active } : role;
@@ -6701,6 +6735,11 @@
         mediaType,
         recordKind,
         sourceKind,
+        assetOrigin: String(item.asset_origin || "").trim(),
+        contentRecord: !!item._content_record,
+        contentRecordCompact: !!item._compact,
+        recordSource: String(item.source || "").trim(),
+        recordSourceId: String(item.source_id || "").trim(),
         meta,
       };
     }
@@ -6720,7 +6759,7 @@
       const source = item && typeof item === "object" ? item : {};
       const mediaType = String(source.mediaType || mediaTypeFromUrl(source.url) || "").trim().toLowerCase();
       const hasText = !!contentActionTextValue(source.text, source.script);
-      const textBased = hasText && (mediaType === "text" || ["article", "wechat_article"].includes(String(source.recordKind || "").toLowerCase()));
+      const textBased = (hasText || source.contentRecordCompact) && (mediaType === "text" || ["article", "wechat_article"].includes(String(source.recordKind || "").toLowerCase()));
       const hasMaterial = !!String(source.url || source.assetId || "").trim();
       const actions = [];
       const add = (action, label) => {
@@ -6740,6 +6779,7 @@
       }
       if (mediaType === "video") add("generate_avatar", "生成数字人");
       if (hasMaterial && ["image", "video", "document", "file"].includes(mediaType)) add("publish", "发布");
+      if (source.contentRecord || source.assetId) add("delete", "删除");
       return actions;
     }
 
@@ -6766,6 +6806,12 @@
 
     async function resolveContentActionItem(item) {
       const source = item && typeof item === "object" ? { ...item } : {};
+      if (source.contentRecord && source.contentRecordCompact && source.recordSource && source.recordSourceId) {
+        const params = new URLSearchParams({ source: source.recordSource, source_id: source.recordSourceId });
+        const data = await api(`/api/content-records/detail?${params.toString()}`);
+        const detail = contentActionItemFromAsset({ ...data.item, _content_record: true, _compact: false });
+        Object.assign(source, detail, { contentRecordCompact: false });
+      }
       const sourceTitle = String(source.title || "").trim();
       const sourceTitleLooksLikeFile = !!sourceTitle && (sourceTitle === String(source.filename || "").trim() || /\.[a-z0-9]{2,6}$/i.test(sourceTitle));
       const needsDetail = !source.url || !source.text || !source.creativePrompt || !source.tags || !sourceTitle || sourceTitleLooksLikeFile;
@@ -6794,6 +6840,36 @@
       source.url = contentActionMediaUrl(source.url);
       source.imageUrl = contentActionMediaUrl(source.imageUrl);
       return source;
+    }
+
+    async function deleteLibraryContent(item) {
+      const source = item && typeof item === "object" ? item : {};
+      if (!confirm(`删除“${String(source.title || "这条记录").trim()}”？删除后不可恢复。`)) return;
+      if (source.contentRecord) {
+        const params = new URLSearchParams({
+          source: String(source.recordSource || ""),
+          source_id: String(source.recordSourceId || ""),
+        });
+        await api(`/api/content-records?${params.toString()}`, { method: "DELETE" });
+      } else if (source.assetId) {
+        await api(`/api/assets/${encodeURIComponent(source.assetId)}`, { method: "DELETE" });
+      } else {
+        throw new Error("当前记录缺少删除标识");
+      }
+      closeAssetPreviewDialog();
+      if (activeViewKey() === "contentRecords") {
+        if ((state.contentRecordRows || []).length <= 1 && Number(state.contentRecordPage || 1) > 1) {
+          state.contentRecordPage -= 1;
+        }
+        await loadContentRecords();
+      } else {
+        const origin = state.assetLibraryOrigin || "user_upload";
+        if (((state.assetLibraryRows && state.assetLibraryRows[origin]) || []).length <= 1 && Number(state.assetLibraryPage[origin] || 1) > 1) {
+          state.assetLibraryPage[origin] -= 1;
+        }
+        await loadAssetLibrary(origin);
+      }
+      toast("已删除");
     }
 
     async function resolveContentActionCreativePrompt(item) {
@@ -6966,6 +7042,10 @@
     async function performContentAction(action, key) {
       const registered = state.contentActionItems.get(String(key || ""));
       if (!registered) throw new Error("当前资源已刷新，请重新选择操作");
+      if (action === "delete") {
+        await deleteLibraryContent(registered);
+        return;
+      }
       const item = await resolveContentActionItem(registered);
       const title = String(item.title || "内容创作").trim();
       const text = contentActionTextValue(item.text);
@@ -7169,28 +7249,38 @@
       const thumb = img
         ? `<img class="asset-library-thumb" src="${escapeHtml(mediaProxyUrl(img, "inline", filenameFromUrl(img, "avatar")))}" alt="" loading="lazy">`
         : `<div class="asset-library-thumb asset-library-thumb-empty">形象</div>`;
-      return `<button class="asset-library-card designer-avatar-card" type="button" data-hifly-asset-kind="avatar" data-hifly-asset-id="${escapeHtml(id)}">
-        <span class="designer-avatar-thumb">${thumb}</span>
-        <div class="asset-library-card-main designer-avatar-meta">
-          <strong>${escapeHtml(title)}</strong>
-          <span>${escapeHtml(sourceLabel)}</span>
-          <em class="asset-status${hiflyStatusClass(row)}">${escapeHtml(row && row.status_text || row && row.status || "处理中")}</em>
-        </div>
-      </button>`;
+      const source = String((row && row.source) || "hifly");
+      const deleteId = String((row && (row.source_record_id || row.id)) || "");
+      return `<article class="asset-library-card designer-avatar-card hifly-library-card">
+        <button class="hifly-card-preview" type="button" data-hifly-asset-kind="avatar" data-hifly-asset-id="${escapeHtml(id)}">
+          <span class="designer-avatar-thumb">${thumb}</span>
+          <span class="asset-library-card-main designer-avatar-meta">
+            <strong>${escapeHtml(title)}</strong>
+            <span>${escapeHtml(sourceLabel)}</span>
+            <em class="asset-status${hiflyStatusClass(row)}">${escapeHtml(row && row.status_text || row && row.status || "处理中")}</em>
+          </span>
+        </button>
+        <button class="hifly-card-delete danger-text" type="button" data-delete-hifly-asset="avatar" data-delete-hifly-id="${escapeHtml(deleteId)}" data-delete-hifly-source="${escapeHtml(source)}">删除</button>
+      </article>`;
     }
 
     function hiflyVoiceCardHtml(row) {
       const id = String((row && row.id) || "");
       const title = String((row && row.title) || "未命名声音");
       const provider = String((row && (row.source_label || row.provider)) || "");
-      return `<button class="asset-library-card designer-voice-card" type="button" data-hifly-asset-kind="voice" data-hifly-asset-id="${escapeHtml(id)}">
-        <div class="asset-audio-thumb designer-voice-thumb">${designerMediaIcon("audio")}</div>
-        <div class="asset-library-card-main designer-voice-meta">
-          <strong>${escapeHtml(title)}</strong>
-          <span>${escapeHtml(provider || "voice")}</span>
-          <em class="asset-status${hiflyStatusClass(row)}">${escapeHtml(row && row.status_text || row && row.status || "处理中")}</em>
-        </div>
-      </button>`;
+      const source = String((row && row.source) || "hifly");
+      const deleteId = String((row && (row.source_record_id || row.id)) || "");
+      return `<article class="asset-library-card designer-voice-card hifly-library-card">
+        <button class="hifly-card-preview" type="button" data-hifly-asset-kind="voice" data-hifly-asset-id="${escapeHtml(id)}">
+          <span class="asset-audio-thumb designer-voice-thumb">${designerMediaIcon("audio")}</span>
+          <span class="asset-library-card-main designer-voice-meta">
+            <strong>${escapeHtml(title)}</strong>
+            <span>${escapeHtml(provider || "voice")}</span>
+            <em class="asset-status${hiflyStatusClass(row)}">${escapeHtml(row && row.status_text || row && row.status || "处理中")}</em>
+          </span>
+        </button>
+        <button class="hifly-card-delete danger-text" type="button" data-delete-hifly-asset="voice" data-delete-hifly-id="${escapeHtml(deleteId)}" data-delete-hifly-source="${escapeHtml(source)}">删除</button>
+      </article>`;
     }
 
     function assetPreviewLargeHtml(asset) {
@@ -7218,13 +7308,24 @@
       return (rows || []).find((row) => String(row && row.id || "") === String(id || "")) || null;
     }
 
-    function openAssetPreview(assetId) {
-      const asset = findAssetInLibrary(assetId);
+    async function openAssetPreview(assetId) {
+      let asset = findAssetInLibrary(assetId);
       if (!asset) return;
       const modal = $("assetPreviewDialog");
       const body = $("assetPreviewBody");
       const title = $("assetPreviewTitle");
       if (!modal || !body) return;
+      if (asset._content_record && asset._compact && asset.source && asset.source_id) {
+        if (title) title.textContent = assetTitle(asset);
+        body.innerHTML = `<div class="asset-library-empty">正在加载详情...</div>`;
+        modal.classList.remove("hidden");
+        const params = new URLSearchParams({ source: String(asset.source), source_id: String(asset.source_id) });
+        const data = await api(`/api/content-records/detail?${params.toString()}`);
+        asset = { ...asset, ...(data.item || {}), _content_record: true, _compact: false };
+        state.contentRecordRows = (state.contentRecordRows || []).map((row) => (
+          String(row && row.asset_id || "") === String(assetId || "") ? asset : row
+        ));
+      }
       if (title) title.textContent = assetTitle(asset);
       if (asset._content_record) {
         const kind = String(asset.kind || asset._designer_content_kind || "article");
@@ -7501,7 +7602,7 @@
       renderContentRecords();
       try {
         if (documentMode) {
-          const params = new URLSearchParams({ kind: uiType, limit: String(pageSize), offset: String(offset) });
+          const params = new URLSearchParams({ kind: uiType, limit: String(pageSize), offset: String(offset), compact: "true" });
           const data = await api(`/api/content-records?${params.toString()}`);
           state.contentRecordRows = (Array.isArray(data.items) ? data.items : []).map((item) => ({
             ...item,
@@ -10039,17 +10140,6 @@
       return state.officeSummaryLoading;
     }
 
-    function syncWorkflowControlCardBounds() {
-      const view = $("workflowView");
-      const shell = view && view.querySelector(".workflow-shell");
-      const card = view && view.querySelector(".workflow-control-card");
-      if (!view?.classList.contains("active") || !shell || !card) return;
-      const rect = shell.getBoundingClientRect();
-      if (!rect.width) return;
-      card.style.setProperty("--workflow-control-left", `${rect.left}px`);
-      card.style.setProperty("--workflow-control-width", `${rect.width}px`);
-    }
-
     function switchTab(tab) {
       const key = tab || "office";
       const previousViewId = (document.querySelector(".view.active") || {}).id || "";
@@ -10107,7 +10197,6 @@
       }
       if (key === "workflow") {
         renderWorkflow();
-        requestAnimationFrame(syncWorkflowControlCardBounds);
         Promise.all([
           refreshDeviceStatus().catch(() => {}),
           loadTaskSkills().catch(() => {}),
@@ -10120,7 +10209,6 @@
             .catch(() => {}),
         ]).then(() => {
           renderWorkflow();
-          syncWorkflowControlCardBounds();
         });
       }
       if (key === "mountedAccounts") {
@@ -11109,15 +11197,26 @@
       smsTimer = setInterval(tick, 1000);
     }
 
+    function renderCurrentUser() {
+      const user = state.user || {};
+      const name = user.email || "已登录";
+      if ($("profileName")) $("profileName").textContent = name;
+      if ($("avatarMini")) $("avatarMini").textContent = firstChar(name);
+      if ($("profileAvatar")) $("profileAvatar").textContent = firstChar(name);
+      if ($("profileCreditBalance")) $("profileCreditBalance").textContent = compactNumber(user.credits, 2);
+      syncAgentManageEntry();
+    }
+
+    async function refreshCurrentUser() {
+      state.user = await api("/auth/me");
+      renderCurrentUser();
+      return state.user;
+    }
+
     async function loadMe() {
       if (!state.token) return false;
       try {
-        state.user = await api("/auth/me");
-        const name = state.user.email || "已登录";
-        $("profileName").textContent = name;
-        $("avatarMini").textContent = firstChar(name);
-        $("profileAvatar").textContent = firstChar(name);
-        syncAgentManageEntry();
+        await refreshCurrentUser();
         $("loginPanel").classList.add("hidden");
         $("appPanel").classList.remove("hidden");
         switchTab("office");
@@ -11983,90 +12082,85 @@
 
     function personalSurveyQuestions() {
       return [
-        { field: "personalProfileName", label: "名字", type: "input", placeholder: "填写出镜称呼" },
-        { field: "personalGender", label: "性别", type: "select", placeholder: "选择性别", options: [{ value: "female", label: "女" }, { value: "male", label: "男" }] },
-        { field: "personalProfilePhoto", label: "人物照片", type: "asset_image", placeholder: "上传正脸或半身照" },
-        { field: "personalBirthEra", label: "出生年代", type: "input", placeholder: "如 80后、90后" },
-        { field: "personalCurrentProvince", label: "现居省份", type: "input", placeholder: "填写现居省份" },
-        { field: "personalCurrentCity", label: "现居城市", type: "input", placeholder: "填写现居城市" },
-        { field: "personalHometown", label: "籍贯", type: "input", placeholder: "填写籍贯城市" },
-        { field: "personalRole", label: "你是做什么的", type: "input", placeholder: "写身份或岗位" },
-        { field: "personalShareTopic", label: "主要分享什么", type: "input", placeholder: "写内容方向" },
-        { field: "personalVideoStyle", label: "视频风格", type: "input", placeholder: "写口播/画面风格" },
-        { field: "personalAfterViewAction", label: "看完后希望用户做什么", type: "input", placeholder: "如关注、私信、到店" },
-        { field: "personalBusinessProduct", label: "你在做什么/什么产品", type: "textarea", placeholder: "写产品、服务和卖点" },
-        { field: "personalTargetCustomer", label: "想卖给谁/哪些年代的人", type: "textarea", placeholder: "写目标人群和痛点" },
-        { field: "personalAdvantages", label: "优势/比同行好在哪", type: "textarea", placeholder: "写差异化优势" },
+        { field: "personalProfileName", label: "希望怎么称呼你？", type: "input", hint: "填写出镜或文案中使用的称呼", placeholder: "例如：张老师、Lisa、陈总" },
+        { field: "personalGender", label: "你的性别是？", type: "select", hint: "用于匹配称谓和表达语气", placeholder: "请选择性别", options: [{ value: "female", label: "女" }, { value: "male", label: "男" }] },
+        { field: "personalProfilePhoto", label: "你的形象照片", type: "asset_image", hint: "上传清晰正脸或半身照，便于保持人物形象一致", placeholder: "建议使用光线清楚、无遮挡的单人照片" },
+        { field: "personalBirthEra", label: "你的出生年代", type: "input", hint: "帮助 AI 匹配适合你的表达方式", placeholder: "例如：80后、90后、1992年" },
+        { field: "personalCurrentProvince", label: "你现在所在的省份", type: "input", hint: "填写长期生活或开展业务的省份", placeholder: "例如：广东省" },
+        { field: "personalCurrentCity", label: "你现在所在的城市", type: "input", hint: "用于同城内容和本地化表达", placeholder: "例如：深圳市" },
+        { field: "personalHometown", label: "你的籍贯是哪里？", type: "input", hint: "可用于人物故事和地域身份表达", placeholder: "例如：湖南长沙" },
+        { field: "personalRole", label: "你是做什么的？", type: "input", hint: "写清你的身份、行业和岗位", placeholder: "例如：深圳餐饮品牌创始人" },
+        { field: "personalShareTopic", label: "你主要分享什么？", type: "textarea", hint: "列出你希望长期输出的内容方向", placeholder: "例如：门店经营、产品知识、创业经验" },
+        { field: "personalVideoStyle", label: "你希望呈现什么视频风格？", type: "input", hint: "描述画面、口播语气或内容节奏", placeholder: "例如：专业口播、轻松聊天、剧情演绎" },
+        { field: "personalAfterViewAction", label: "希望用户看完后做什么？", type: "input", hint: "填写你希望用户采取的下一步动作", placeholder: "例如：关注账号、私信咨询、到店体验" },
+        { field: "personalBusinessProduct", label: "你在做什么产品或服务？", type: "textarea", hint: "写清产品、服务、主要卖点、价格带和交付方式", placeholder: "例如：为本地餐饮门店提供短视频获客服务，包含拍摄、运营和线索转化" },
+        { field: "personalTargetCustomer", label: "你最想服务哪类客户？", type: "textarea", hint: "描述客户身份、年龄、地区、需求和主要痛点", placeholder: "例如：25-45 岁的餐饮门店老板，希望稳定获取同城客流" },
+        { field: "personalAdvantages", label: "你比同行好在哪里？", type: "textarea", hint: "说明资历、案例、产品、服务或价格方面的差异化优势", placeholder: "例如：10 年行业经验，服务过 300 家门店，提供从内容到成交的完整方案" },
       ];
     }
 
     function syncPersonalSurveyAnswerToField() {
+      document.querySelectorAll("[data-personal-survey-answer]").forEach((answer) => {
+        const field = String(answer.dataset.personalSurveyAnswer || "").trim();
+        if (field) setPersonalFieldValue(field, answer.value || "");
+      });
+      updatePersonalSurveyCompletion();
+    }
+
+    function updatePersonalSurveyCompletion() {
       const questions = personalSurveyQuestions();
-      const idx = Math.max(0, Math.min(Number(state.personalSurveyIndex || 0), questions.length - 1));
-      const question = questions[idx];
-      if (question && question.type === "asset_image") {
-        const picker = $(`${question.field}Picker`);
-        if (picker) setPersonalFieldValue(question.field, picker.value || "");
-        return;
-      }
-      const answer = $("personalSurveyAnswer");
-      if (question && answer) setPersonalFieldValue(question.field, answer.value || "");
+      const completed = questions.filter((question) => personalFieldValue(question.field)).length;
+      const text = $("personalSurveyCompletionText");
+      if (text) text.textContent = `已填写 ${completed}/${questions.length}`;
     }
 
     function renderPersonalSurveyWizard() {
-      const host = $("personalSurveyAnswerHost");
-      const title = $("personalSurveyQuestionTitle");
-      const step = $("personalSurveyStepText");
-      const progress = $("personalSurveyProgress");
-      const prev = $("personalSurveyPrevBtn");
-      const next = $("personalSurveyNextBtn");
-      const save = $("personalSaveProfileBtn");
-      if (!host || !title) return;
+      const host = $("personalSurveyQuestionList");
+      if (!host) return;
       const questions = personalSurveyQuestions();
-      const maxIdx = Math.max(0, questions.length - 1);
-      const idx = Math.max(0, Math.min(Number(state.personalSurveyIndex || 0), maxIdx));
-      state.personalSurveyIndex = idx;
-      const question = questions[idx];
-      title.textContent = question.label;
-      if (step) step.textContent = `${idx + 1}/${questions.length}`;
-      if (progress) progress.style.width = `${Math.round(((idx + 1) / questions.length) * 100)}%`;
-      const value = personalFieldValue(question.field);
-      if (question.type === "asset_image") {
-        const pickerId = `${question.field}Picker`;
-        host.innerHTML = assetPickerControlHtml(pickerId, { mediaType: "image", output: "asset_id", uploadText: "上传人物照片", selectText: "选择已上传照片" })
-          + `<p class="personal-survey-placeholder">${escapeHtml(question.placeholder || "")}</p>`;
-        setFieldValue(pickerId, value);
-        initAssetPickerControls(host);
-        renderAssetPickerControl(pickerId);
-        $(`${pickerId}`)?.addEventListener("change", (evt) => setPersonalFieldValue(question.field, evt.target.value || ""));
-      } else if (question.type === "select") {
-        const options = Array.isArray(question.options) ? question.options : [];
-        host.innerHTML = `<select id="personalSurveyAnswer">${optionHtml("", question.placeholder || "请选择")}${options.map((item) => optionHtml(item.value, item.label)).join("")}</select>`;
-      } else {
-        const tag = question.type === "textarea" ? "textarea" : "input";
+      host.innerHTML = questions.map((question, idx) => {
+        const value = personalFieldValue(question.field);
         const placeholder = escapeHtml(question.placeholder || "");
-        host.innerHTML = tag === "textarea"
-          ? `<textarea id="personalSurveyAnswer" rows="5" placeholder="${placeholder}"></textarea>`
-          : `<input id="personalSurveyAnswer" type="text" placeholder="${placeholder}">`;
-      }
-      const answer = $("personalSurveyAnswer");
-      if (answer) {
-        answer.value = value;
+        let control = "";
+        if (question.type === "asset_image") {
+          control = assetPickerControlHtml(`${question.field}Picker`, { mediaType: "image", output: "asset_id", uploadText: "上传人物照片", selectText: "从素材库选择" })
+            + `<p class="personal-survey-placeholder">${placeholder}</p>`;
+        } else if (question.type === "select") {
+          const options = Array.isArray(question.options) ? question.options : [];
+          control = `<select data-personal-survey-answer="${escapeHtml(question.field)}">${optionHtml("", question.placeholder || "请选择")}${options.map((item) => optionHtml(item.value, item.label)).join("")}</select>`;
+        } else if (question.type === "textarea") {
+          control = `<textarea rows="3" data-personal-survey-answer="${escapeHtml(question.field)}" placeholder="${placeholder}">${escapeHtml(value)}</textarea>`;
+        } else {
+          control = `<input type="text" data-personal-survey-answer="${escapeHtml(question.field)}" value="${escapeHtml(value)}" placeholder="${placeholder}">`;
+        }
+        return `<article class="personal-survey-item">
+          <div class="personal-survey-question">
+            <span>${idx + 1}</span>
+            <div><strong>${escapeHtml(question.label)}</strong><small>${escapeHtml(question.hint || question.placeholder || "")}</small></div>
+          </div>
+          <div class="personal-survey-answer">${control}</div>
+        </article>`;
+      }).join("");
+      questions.filter((question) => question.type === "asset_image").forEach((question) => {
+        const pickerId = `${question.field}Picker`;
+        setFieldValue(pickerId, personalFieldValue(question.field));
+      });
+      initAssetPickerControls(host);
+      questions.filter((question) => question.type === "asset_image").forEach((question) => {
+        const pickerId = `${question.field}Picker`;
+        renderAssetPickerControl(pickerId);
+        const picker = $(pickerId);
+        if (picker) {
+          picker.dataset.personalSurveyAnswer = question.field;
+          picker.addEventListener("change", syncPersonalSurveyAnswerToField);
+        }
+      });
+      host.querySelectorAll("[data-personal-survey-answer]").forEach((answer) => {
+        if (answer.tagName === "SELECT") answer.value = personalFieldValue(answer.dataset.personalSurveyAnswer || "");
         answer.addEventListener("input", syncPersonalSurveyAnswerToField);
         answer.addEventListener("change", syncPersonalSurveyAnswerToField);
-        setTimeout(() => answer.focus(), 0);
-      }
-      if (prev) prev.disabled = idx <= 0;
-      if (next) next.hidden = idx >= maxIdx;
-      if (save) save.hidden = idx < maxIdx;
-    }
-
-    function movePersonalSurvey(delta) {
-      syncPersonalSurveyAnswerToField();
-      const questions = personalSurveyQuestions();
-      const maxIdx = Math.max(0, questions.length - 1);
-      state.personalSurveyIndex = Math.max(0, Math.min(Number(state.personalSurveyIndex || 0) + delta, maxIdx));
-      renderPersonalSurveyWizard();
+      });
+      updatePersonalSurveyCompletion();
     }
 
     function personalProfileRequirements() {
@@ -13297,7 +13391,16 @@
         if (title && (($("personalSaveMode") && $("personalSaveMode").value) || "new") === "new") title.value = recommendPersonalMemoryTitle(state.personalGeneratedDocOrder, !!reference);
         setPersonalSettingsTab("memory");
         renderPersonalGeneratedDocs();
-        personalSetStatus("AI 理解完成，审核后存入记忆。");
+        const fileResults = Array.isArray(data.file_results) ? data.file_results : [];
+        const processed = fileResults.filter((item) => item && item.status === "processed");
+        const skipped = fileResults.filter((item) => item && item.status === "skipped");
+        if (skipped.length) {
+          const details = skipped.map((item) => `${item.filename || "未命名文件"}：${item.error || "读取失败"}`).join("；");
+          personalSetStatus(`AI 理解完成，已读取 ${processed.length} 个文件；未读取 ${details}`, true);
+        } else {
+          const countText = processed.length ? `，已读取 ${processed.length} 个文件` : "";
+          personalSetStatus(`AI 理解完成${countText}，审核后存入记忆。`);
+        }
       } finally {
         personalSetBusy(btn, false);
       }
@@ -13359,6 +13462,7 @@
         await refreshPersonalDataPreserveSelection({ memories: true });
         await savePersonalDefaultSilently();
         personalSetStatus("已存入记忆。");
+        return data;
       } finally {
         personalSetBusy(btn, false);
       }
@@ -13369,6 +13473,8 @@
       if (!files.length) throw new Error("请先上传文件。");
       personalSetBusy(btn, true, "保存中...");
       try {
+        const savedKeys = new Set();
+        const failed = [];
         for (const file of files) {
           const fd = new FormData();
           fd.append("files", file, file.name || "upload");
@@ -13378,12 +13484,22 @@
           fd.append("urls", "");
           fd.append("mode", "new");
           fd.append("target_doc_id", "");
-          await savePersonalUploadedMemory(null, fd);
+          try {
+            await savePersonalUploadedMemory(null, fd);
+            savedKeys.add(personalUploadFileKey(file));
+          } catch (err) {
+            failed.push(`${file.name || "未命名文件"}：${(err && err.message) || "读取失败"}`);
+          }
         }
-        state.personalUploadFiles = [];
+        state.personalUploadFiles = files.filter((file) => !savedKeys.has(personalUploadFileKey(file)));
         renderPersonalSelectedFiles();
         renderPersonalMemorySourceSelectors();
-        closePersonalUploadModal();
+        if (failed.length) {
+          personalSetStatus(`已存入 ${savedKeys.size} 个文件；未读取 ${failed.join("；")}`, true);
+        } else {
+          closePersonalUploadModal();
+          personalSetStatus(`已存入 ${savedKeys.size} 个文件。`);
+        }
       } finally {
         personalSetBusy(btn, false);
       }
@@ -17688,11 +17804,13 @@
     function setTaskActionMenuLayer(menu, open) {
       if (!menu) return;
       const card = menu.closest(".workflow-node-card");
+      const childList = menu.closest(".workflow-child-list");
       const entry = menu.closest(".workflow-timeline-entry");
       const group = menu.closest(".designer-workflow-group");
       const contentHost = menu.closest(".content-action-card, .content-action-host");
       if (open) {
         card?.classList.add("task-menu-open");
+        childList?.classList.add("task-menu-open");
         entry?.classList.add("task-menu-open");
         group?.classList.add("task-menu-open");
         contentHost?.classList.add("task-menu-open");
@@ -17700,6 +17818,7 @@
       }
       card?.classList.remove("task-menu-open");
       contentHost?.classList.remove("task-menu-open");
+      if (childList && !childList.querySelector(".task-action-menu[open]")) childList.classList.remove("task-menu-open");
       if (entry && !entry.querySelector(".task-action-menu[open]")) entry.classList.remove("task-menu-open");
       if (group && !group.querySelector(".task-action-menu[open]")) group.classList.remove("task-menu-open");
     }
@@ -17711,7 +17830,7 @@
         setTaskActionMenuLayer(menu, false);
       });
       document.querySelectorAll(".task-menu-open").forEach((item) => {
-        if (exceptMenu && (item === exceptMenu.closest(".workflow-node-card") || item === exceptMenu.closest(".workflow-timeline-entry") || item === exceptMenu.closest(".designer-workflow-group"))) return;
+        if (exceptMenu && item.contains(exceptMenu)) return;
         item.classList.remove("task-menu-open");
       });
     }
@@ -18082,7 +18201,7 @@
     $("contentRecordList")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-asset-preview-id]");
       if (!btn) return;
-      openAssetPreview(btn.dataset.assetPreviewId || "");
+      openAssetPreview(btn.dataset.assetPreviewId || "").catch((err) => toast(err.message || "详情加载失败"));
     });
     $("customEmployeeCreateBtn")?.addEventListener("click", () => openHomeTarget("workflowNew", "office"));
     $("customEmployeeMoreBtn")?.addEventListener("click", () => {
@@ -18202,6 +18321,9 @@
       if (input) input.value = String(value);
       closeWorkflowPlanDayDialog(value);
     });
+    window.visualViewport?.addEventListener("resize", syncWorkflowPlanDayViewport);
+    window.visualViewport?.addEventListener("scroll", syncWorkflowPlanDayViewport);
+    window.addEventListener("resize", syncWorkflowPlanDayViewport);
     $("workflowMissingList")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-workflow-missing-goto]");
       if (!btn) return;
@@ -18295,6 +18417,14 @@
     $("workflowTemplateListBtn")?.addEventListener("click", () => {
       $("workflowTemplateDrawer")?.classList.toggle("hidden");
       loadWorkflowTemplates(true).catch((err) => toast(err.message || "模板加载失败"));
+    });
+    $("workflowOperationList")?.addEventListener("click", () => {
+      const menu = $("workflowOperationMenu");
+      if (menu) menu.open = false;
+    });
+    document.addEventListener("pointerdown", (evt) => {
+      const menu = $("workflowOperationMenu");
+      if (menu?.open && !menu.contains(evt.target)) menu.open = false;
     });
     $("workflowTemplateCloseBtn")?.addEventListener("click", () => $("workflowTemplateDrawer")?.classList.add("hidden"));
     $("workflowTemplateList")?.addEventListener("click", (evt) => {
@@ -18392,6 +18522,14 @@
       renderLeadCenter();
     });
     $("assetLibraryList")?.addEventListener("click", (evt) => {
+      const deleteBtn = evt.target.closest("[data-delete-hifly-asset]");
+      if (deleteBtn) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        deleteHiflyAsset(deleteBtn.dataset.deleteHiflyAsset || "", deleteBtn.dataset.deleteHiflyId || "", deleteBtn.dataset.deleteHiflySource || "hifly")
+          .catch((err) => toast(err.message || "删除失败"));
+        return;
+      }
       const hiflyBtn = evt.target.closest("[data-hifly-asset-kind]");
       if (hiflyBtn) {
         openHiflyAssetPreview(hiflyBtn.dataset.hiflyAssetKind || "", hiflyBtn.dataset.hiflyAssetId || "");
@@ -18399,7 +18537,7 @@
       }
       const btn = evt.target.closest("[data-asset-preview-id]");
       if (!btn) return;
-      openAssetPreview(btn.dataset.assetPreviewId || "");
+      openAssetPreview(btn.dataset.assetPreviewId || "").catch((err) => toast(err.message || "详情加载失败"));
     });
     $("leadCenterList")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-lead-detail-index]");
@@ -18514,7 +18652,9 @@
         });
       }
     });
-    $("refreshProfileBtn").addEventListener("click", refreshDeviceStatus);
+    $("refreshProfileBtn").addEventListener("click", () => {
+      Promise.all([refreshDeviceStatus(), refreshCurrentUser()]).catch((err) => toast(err.message || "刷新失败"));
+    });
     $("profileDeviceSelect")?.addEventListener("change", (evt) => setSelectedInstallationId(evt.target.value || ""));
     $("mountedAccountRefreshBtn")?.addEventListener("click", () => {
       refreshDeviceStatus().catch((err) => toast(err.message || "刷新失败"));
@@ -18541,8 +18681,6 @@
       if (btn) setPersonalSettingsTab(btn.dataset.personalTab || "template");
     });
     $("personalSettingsRefreshBtn")?.addEventListener("click", () => loadPersonalSettings(true));
-    $("personalSurveyPrevBtn")?.addEventListener("click", () => movePersonalSurvey(-1));
-    $("personalSurveyNextBtn")?.addEventListener("click", () => movePersonalSurvey(1));
     $("personalSaveProfileBtn")?.addEventListener("click", (evt) => savePersonalProfile(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
     $("personalSaveDefaultBtn")?.addEventListener("click", () => savePersonalDefault().then(closePersonalTemplateModal).catch((err) => toast(err.message || "保存失败")));
     $("personalNewTemplateBtn")?.addEventListener("click", startNewPersonalTemplate);
@@ -18921,7 +19059,6 @@
     });
     window.addEventListener("resize", () => {
       if (document.querySelector("#officeView.active")) renderOfficeEmployees();
-      if (document.querySelector("#workflowView.active")) syncWorkflowControlCardBounds();
     });
     $("workTimeline").addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-run-task-now]");
