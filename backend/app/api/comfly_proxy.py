@@ -44,6 +44,7 @@ from ..services.credit_ledger import append_credit_ledger
 from ..services.brand_context import explicit_request_brand_mark
 from ..services.credits_amount import quantize_credits, credits_json_float, user_balance_decimal
 from ..services.model_usage_monitor import log_model_usage_event
+from ..services.runtime_cache import cache_get, cache_set, cache_set_if_absent
 from ..services.user_feature_flags import OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID, user_has_feature
 from .assets import _save_bytes_or_tos
 from .auth import ALGORITHM, get_current_user, validate_token_brand
@@ -79,6 +80,57 @@ _proxy_video_task_meta: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 _openmind_tos_url_cache: "OrderedDict[str, str]" = OrderedDict()
 _MAX_OPENMIND_TOS_URL_CACHE = 1000
 _MAX_OPENMIND_VIDEO_BYTES = 512 * 1024 * 1024
+_MAX_VIDEO_IMAGE_RETRY_CONTEXTS = 5000
+_VIDEO_IMAGE_RETRY_TTL_SECONDS = 2 * 60 * 60
+_video_image_retry_contexts: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+_video_image_retry_roots: "OrderedDict[str, str]" = OrderedDict()
+_video_image_retry_lock = asyncio.Lock()
+
+
+def _video_image_retry_context_key(root_task_id: str) -> str:
+    return f"comfly:video-image-retry:context:{root_task_id}"
+
+
+def _video_image_retry_root_key(task_id: str) -> str:
+    return f"comfly:video-image-retry:root:{task_id}"
+
+
+def _video_image_retry_claim_key(root_task_id: str) -> str:
+    return f"comfly:video-image-retry:claim:{root_task_id}"
+
+
+def _store_video_image_retry_context(root_task_id: str, context: Dict[str, Any]) -> None:
+    _video_image_retry_contexts[root_task_id] = context
+    _video_image_retry_contexts.move_to_end(root_task_id)
+    cache_set(
+        _video_image_retry_context_key(root_task_id),
+        json.dumps(context, ensure_ascii=False, default=str),
+        _VIDEO_IMAGE_RETRY_TTL_SECONDS,
+    )
+
+
+def _store_video_image_retry_root(task_id: str, root_task_id: str) -> None:
+    _video_image_retry_roots[task_id] = root_task_id
+    _video_image_retry_roots.move_to_end(task_id)
+    cache_set(
+        _video_image_retry_root_key(task_id),
+        root_task_id,
+        _VIDEO_IMAGE_RETRY_TTL_SECONDS,
+    )
+
+
+def _load_video_image_retry_context(root_task_id: str) -> Optional[Dict[str, Any]]:
+    cached = cache_get(_video_image_retry_context_key(root_task_id))
+    if cached:
+        try:
+            parsed = json.loads(cached)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict):
+            _video_image_retry_contexts[root_task_id] = parsed
+            _video_image_retry_contexts.move_to_end(root_task_id)
+            return parsed
+    return _video_image_retry_contexts.get(root_task_id)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -94,6 +146,76 @@ def _env_int(name: str, default: int, *, min_value: int = 1, max_value: int = 5)
     except (TypeError, ValueError):
         value = default
     return max(min_value, min(max_value, value))
+
+
+def _remember_video_image_retry_context(
+    task_id: str,
+    *,
+    provider: str,
+    body: Dict[str, Any],
+    model: str,
+    request_user_id: int,
+) -> None:
+    root_task_id = str(task_id or "").strip()
+    if not root_task_id:
+        return
+    context = {
+        "provider": str(provider or "").strip().lower(),
+        "body": dict(body or {}),
+        "model": str(model or "").strip(),
+        "request_user_id": int(request_user_id),
+        "active_task_id": root_task_id,
+        "resubmit_count": 0,
+        "resubmit_state": "ready",
+    }
+    _store_video_image_retry_context(root_task_id, context)
+    _store_video_image_retry_root(root_task_id, root_task_id)
+    while len(_video_image_retry_contexts) > _MAX_VIDEO_IMAGE_RETRY_CONTEXTS:
+        expired_root, _expired = _video_image_retry_contexts.popitem(last=False)
+        stale_task_ids = [
+            tracked_task_id
+            for tracked_task_id, tracked_root in _video_image_retry_roots.items()
+            if tracked_root == expired_root
+        ]
+        for stale_task_id in stale_task_ids:
+            _video_image_retry_roots.pop(stale_task_id, None)
+    while len(_video_image_retry_roots) > _MAX_VIDEO_IMAGE_RETRY_CONTEXTS * 2:
+        _video_image_retry_roots.popitem(last=False)
+
+
+def _video_image_retry_poll_target(
+    task_id: str,
+    *,
+    provider: str,
+    request_user_id: int,
+) -> Tuple[str, str, Optional[Dict[str, Any]]]:
+    requested_task_id = str(task_id or "").strip()
+    root_task_id = (
+        cache_get(_video_image_retry_root_key(requested_task_id))
+        or _video_image_retry_roots.get(requested_task_id)
+        or requested_task_id
+    )
+    context = _load_video_image_retry_context(root_task_id)
+    if not context:
+        return requested_task_id, requested_task_id, None
+    if context.get("provider") != str(provider or "").strip().lower():
+        return requested_task_id, requested_task_id, None
+    if int(context.get("request_user_id") or 0) != int(request_user_id):
+        return requested_task_id, requested_task_id, None
+    _video_image_retry_contexts.move_to_end(root_task_id)
+    active_task_id = str(context.get("active_task_id") or root_task_id).strip()
+    return root_task_id, active_task_id, context
+
+
+def _is_image_download_interrupted_payload(payload: Any) -> bool:
+    try:
+        text = json.dumps(payload, ensure_ascii=False, default=str).lower()
+    except Exception:
+        text = str(payload or "").lower()
+    return "image_download_interrupted" in text or (
+        "failed to download the provided image" in text
+        and "connection dropped while downloading the image" in text
+    )
 
 
 def _should_deduct_credits() -> bool:
@@ -1109,6 +1231,73 @@ def _replace_openmind_video_url(payload: Dict[str, Any], source_url: str, public
     payload["source_video_url"] = source_url
 
 
+def _video_transfer_base_url() -> str:
+    return (
+        os.environ.get("VIDEO_TRANSFER_API_BASE")
+        or os.environ.get("XAI_API_BASE")
+        or ""
+    ).strip().rstrip("/")
+
+
+def _video_transfer_token() -> str:
+    return (os.environ.get("VIDEO_TRANSFER_TOKEN") or "").strip()
+
+
+async def _transfer_video_to_tos_via_proxy(source_url: str, *, task_id: str) -> Tuple[str, int]:
+    base_url = _video_transfer_base_url()
+    token = _video_transfer_token()
+    if not base_url:
+        raise RuntimeError("VIDEO_TRANSFER_API_BASE is not configured")
+    if not token:
+        raise RuntimeError("VIDEO_TRANSFER_TOKEN is not configured")
+
+    safe_task_id = "".join(
+        char if char.isalnum() or char in "-_" else "_"
+        for char in str(task_id or "video")
+    )[:120]
+    request_body = {
+        "url": source_url,
+        "filename": f"openmind-{safe_task_id or 'video'}.mp4",
+        "content_type": "video/mp4",
+    }
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(330.0, connect=30.0),
+        follow_redirects=True,
+        trust_env=False,
+    ) as client:
+        response = await client.post(
+            f"{base_url}/media/transfer-to-tos",
+            headers={
+                "X-Video-Transfer-Token": token,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json=request_body,
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"video transfer proxy HTTP {response.status_code}: {(response.text or '')[:300]}"
+        )
+    try:
+        result = response.json() if response.content else {}
+    except Exception as exc:
+        raise RuntimeError("video transfer proxy returned invalid JSON") from exc
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        detail = result.get("detail") if isinstance(result, dict) else "invalid response"
+        raise RuntimeError(f"video transfer proxy failed: {str(detail or result)[:300]}")
+
+    tos_url = str(result.get("tos_url") or "").strip()
+    if not tos_url.startswith(("http://", "https://")):
+        raise RuntimeError("video transfer proxy returned no public TOS URL")
+    try:
+        size = int(result.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size > _MAX_OPENMIND_VIDEO_BYTES:
+        raise RuntimeError("transferred OpenMind video exceeds 512MB")
+    return tos_url, size
+
+
 async def _mirror_openmind_video_to_tos(payload: Dict[str, Any], task_id: str) -> Dict[str, Any]:
     source_url = _extract_openmind_video_url(payload)
     if not source_url:
@@ -1130,37 +1319,24 @@ async def _mirror_openmind_video_to_tos(payload: Dict[str, Any], task_id: str) -
         return payload
 
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(300.0, connect=30.0),
-            follow_redirects=True,
-            trust_env=False,
-            headers=_openmind_video_headers(),
-        ) as client:
-            response = await client.get(source_url)
-        if response.status_code >= 400:
-            raise RuntimeError(f"OpenMind video content HTTP {response.status_code}")
-        content_length = response.headers.get("content-length")
-        if content_length and int(content_length) > _MAX_OPENMIND_VIDEO_BYTES:
-            raise RuntimeError("OpenMind video content exceeds 512MB")
-        data = response.content
-        if not data:
-            raise RuntimeError("OpenMind video content is empty")
-        if len(data) > _MAX_OPENMIND_VIDEO_BYTES:
-            raise RuntimeError("OpenMind video content exceeds 512MB")
-
-        _asset_id, _filename, _size, tos_public_url = _save_bytes_or_tos(
-            data, ".mp4", "video/mp4"
+        tos_public_url, transferred_size = await _transfer_video_to_tos_via_proxy(
+            source_url,
+            task_id=task_id,
         )
-        if not tos_public_url:
-            raise RuntimeError("TOS upload returned no public URL")
         _openmind_tos_url_cache[cache_key] = tos_public_url
         while len(_openmind_tos_url_cache) > _MAX_OPENMIND_TOS_URL_CACHE:
             _openmind_tos_url_cache.popitem(last=False)
         _replace_openmind_video_url(payload, source_url, tos_public_url)
+        payload.pop("tos_transfer_error", None)
+        try:
+            source_host = httpx.URL(source_url).host or "unknown"
+        except Exception:
+            source_host = "unknown"
         logger.info(
-            "OpenMind video mirrored to TOS task_id=%s size=%s url=%s",
+            "OpenMind video mirrored to TOS via proxy task_id=%s source_host=%s size=%s url=%s",
             task_id,
-            len(data),
+            source_host,
+            transferred_size,
             tos_public_url[:100],
         )
     except Exception as exc:
@@ -1424,6 +1600,129 @@ async def _xai_video_poll(request_id: str) -> Dict[str, Any]:
         payload.setdefault("request_id", safe_request_id)
         payload.setdefault("task_id", safe_request_id)
     return payload
+
+
+def _video_image_resubmit_pending_payload(
+    root_task_id: str,
+    *,
+    provider: str,
+    provider_task_id: str,
+) -> Dict[str, Any]:
+    return {
+        "status": "pending",
+        "progress": 0,
+        "request_id": root_task_id,
+        "task_id": root_task_id,
+        "_provider": provider,
+        "_resubmitted": True,
+        "_resubmit_reason": "image_download_interrupted",
+        "_provider_task_id": provider_task_id,
+    }
+
+
+async def _maybe_resubmit_interrupted_video(
+    root_task_id: str,
+    *,
+    provider: str,
+    payload: Dict[str, Any],
+    request_user_id: int,
+) -> Optional[Dict[str, Any]]:
+    if not _is_image_download_interrupted_payload(payload):
+        return None
+    normalized_provider = str(provider or "").strip().lower()
+    if normalized_provider not in {"xai", "openmind"}:
+        return None
+
+    async with _video_image_retry_lock:
+        resolved_root, active_task_id, context = _video_image_retry_poll_target(
+            root_task_id,
+            provider=normalized_provider,
+            request_user_id=request_user_id,
+        )
+        if not context or int(context.get("resubmit_count") or 0) >= 1:
+            return None
+
+        claimed = cache_set_if_absent(
+            _video_image_retry_claim_key(resolved_root),
+            str(os.getpid()),
+            120,
+        )
+        if not claimed:
+            return _video_image_resubmit_pending_payload(
+                resolved_root,
+                provider=normalized_provider,
+                provider_task_id=active_task_id,
+            )
+
+        context["resubmit_count"] = 1
+        context["resubmit_state"] = "submitting"
+        _store_video_image_retry_context(resolved_root, context)
+        body = dict(context.get("body") or {})
+        model = str(context.get("model") or "").strip()
+        try:
+            if normalized_provider == "xai":
+                replacement = await _xai_video_submit(body, model)
+            else:
+                replacement = await _openmind_video_submit(
+                    body,
+                    model,
+                    _require_model_entry(model),
+                )
+            replacement_task_id = _task_id_from_response(replacement)
+            if not replacement_task_id:
+                raise RuntimeError(f"{normalized_provider} retry submit returned no task id")
+        except Exception as exc:
+            context["resubmit_error"] = str(exc)[:500]
+            context["resubmit_state"] = "failed"
+            _store_video_image_retry_context(resolved_root, context)
+            _audit(
+                "video_image_download_resubmit_failed",
+                user_id=request_user_id,
+                provider=normalized_provider,
+                model=model,
+                root_task_id=resolved_root,
+                failed_task_id=active_task_id,
+                error=str(exc)[:300],
+                billing_reused=True,
+            )
+            return None
+
+        context["active_task_id"] = replacement_task_id
+        context["replacement_task_id"] = replacement_task_id
+        context["resubmit_state"] = "active"
+        _store_video_image_retry_context(resolved_root, context)
+        _store_video_image_retry_root(replacement_task_id, resolved_root)
+        _audit(
+            "video_image_download_resubmit_ok",
+            user_id=request_user_id,
+            provider=normalized_provider,
+            model=model,
+            root_task_id=resolved_root,
+            failed_task_id=active_task_id,
+            replacement_task_id=replacement_task_id,
+            billing_reused=True,
+        )
+        return _video_image_resubmit_pending_payload(
+            resolved_root,
+            provider=normalized_provider,
+            provider_task_id=replacement_task_id,
+        )
+
+
+def _normalize_retried_video_poll_payload(
+    payload: Dict[str, Any],
+    *,
+    root_task_id: str,
+    active_task_id: str,
+) -> Dict[str, Any]:
+    if root_task_id == active_task_id or not isinstance(payload, dict):
+        return payload
+    normalized = dict(payload)
+    normalized["_provider_task_id"] = active_task_id
+    normalized["_resubmitted"] = True
+    normalized["request_id"] = root_task_id
+    normalized["task_id"] = root_task_id
+    return normalized
 
 
 async def _openmind_video_content(task_id: str) -> Response:
@@ -2733,6 +3032,13 @@ async def proxy_openmind_video_submit(
         task_id=_task_id_from_response(resp),
         pre=credits_json_float(pre),
     )
+    _remember_video_image_retry_context(
+        _task_id_from_response(resp),
+        provider="openmind",
+        body=body,
+        model=model,
+        request_user_id=request_user_id,
+    )
     log_model_usage_event(
         None,
         category="video",
@@ -2758,11 +3064,38 @@ async def proxy_openmind_video_poll(
     current_user: User = Depends(get_current_user),
 ):
     _check_request_authorized_for_billing(request)
-    task_id = (task_id or "").strip()
-    if not task_id:
+    requested_task_id = (task_id or "").strip()
+    if not requested_task_id:
         raise HTTPException(400, "missing task_id")
+    root_task_id, active_task_id, retry_context = _video_image_retry_poll_target(
+        requested_task_id,
+        provider="openmind",
+        request_user_id=current_user.id,
+    )
+    if retry_context and retry_context.get("resubmit_state") == "submitting":
+        return JSONResponse(
+            _video_image_resubmit_pending_payload(
+                root_task_id,
+                provider="openmind",
+                provider_task_id=active_task_id,
+            )
+        )
     try:
-        resp = await _openmind_video_poll(task_id)
+        resp = await _openmind_video_poll(active_task_id)
+        replacement = await _maybe_resubmit_interrupted_video(
+            root_task_id,
+            provider="openmind",
+            payload=resp,
+            request_user_id=current_user.id,
+        )
+        if replacement is not None:
+            resp = replacement
+        else:
+            resp = _normalize_retried_video_poll_payload(
+                resp,
+                root_task_id=root_task_id,
+                active_task_id=active_task_id,
+            )
     except Exception as e:
         raise HTTPException(502, f"OpenMind video poll failed: {e}")
     return JSONResponse(resp)
@@ -2885,6 +3218,13 @@ async def proxy_xai_video_submit(request: Request):
         raise HTTPException(502, f"xAI video submit failed: {exc}")
     task_id = _task_id_from_response(response)
     _remember_proxy_video_task(task_id, "xai", model)
+    _remember_video_image_retry_context(
+        task_id,
+        provider="xai",
+        body=body,
+        model=model,
+        request_user_id=request_user_id,
+    )
     _audit("xai_video_submit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model, task_id=task_id, pre=credits_json_float(pre))
     return JSONResponse(response)
 
@@ -2896,8 +3236,35 @@ async def proxy_xai_video_poll(
     current_user: User = Depends(get_current_user),
 ):
     _check_request_authorized_for_billing(request)
+    root_task_id, active_task_id, retry_context = _video_image_retry_poll_target(
+        request_id,
+        provider="xai",
+        request_user_id=current_user.id,
+    )
+    if retry_context and retry_context.get("resubmit_state") == "submitting":
+        return JSONResponse(
+            _video_image_resubmit_pending_payload(
+                root_task_id,
+                provider="xai",
+                provider_task_id=active_task_id,
+            )
+        )
     try:
-        response = await _xai_video_poll(request_id)
+        response = await _xai_video_poll(active_task_id)
+        replacement = await _maybe_resubmit_interrupted_video(
+            root_task_id,
+            provider="xai",
+            payload=response,
+            request_user_id=current_user.id,
+        )
+        if replacement is not None:
+            response = replacement
+        else:
+            response = _normalize_retried_video_poll_payload(
+                response,
+                root_task_id=root_task_id,
+                active_task_id=active_task_id,
+            )
     except Exception as exc:
         raise HTTPException(502, f"xAI video poll failed: {exc}")
     return JSONResponse(response)
