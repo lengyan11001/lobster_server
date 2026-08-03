@@ -11,6 +11,7 @@ from backend.app.api.comfly_proxy import (
     _is_image_download_interrupted_payload,
     _is_trusted_internal_video_fallback,
     _maybe_resubmit_interrupted_video,
+    _mirror_openmind_video_to_tos,
     _openmind_video_body,
     _remember_video_image_retry_context,
     _video_image_retry_contexts,
@@ -248,3 +249,55 @@ def test_openmind_interrupted_image_download_resubmits_once(monkeypatch):
     assert result["status"] == "pending"
     assert result["_provider_task_id"] == "openmind-replacement"
     submit.assert_awaited_once()
+
+
+def test_openmind_video_uses_proxy_transfer_and_replaces_output_url(monkeypatch):
+    from backend.app.api import comfly_proxy
+
+    source_url = "https://vidgen.x.ai/example.mp4"
+    tos_url = "https://assets.example.com/openmind-task-1.mp4"
+    transfer = AsyncMock(return_value=(tos_url, 12345))
+    local_save = AsyncMock(side_effect=AssertionError("main server must not download or save the video"))
+    monkeypatch.setattr(comfly_proxy, "_transfer_video_to_tos_via_proxy", transfer)
+    monkeypatch.setattr(comfly_proxy, "_save_bytes_or_tos", local_save)
+    comfly_proxy._openmind_tos_url_cache.clear()
+
+    result = asyncio.run(
+        _mirror_openmind_video_to_tos(
+            {
+                "status": "completed",
+                "video_url": source_url,
+                "video": {"url": source_url},
+            },
+            "task-1",
+        )
+    )
+
+    assert result["video_url"] == tos_url
+    assert result["tos_url"] == tos_url
+    assert result["source_video_url"] == source_url
+    assert result["video"]["url"] == tos_url
+    assert result["video"]["source_url"] == source_url
+    assert "tos_transfer_error" not in result
+    transfer.assert_awaited_once_with(source_url, task_id="task-1")
+    local_save.assert_not_called()
+
+
+def test_openmind_video_proxy_transfer_failure_is_reported(monkeypatch):
+    from backend.app.api import comfly_proxy
+
+    source_url = "https://vidgen.x.ai/example-failed.mp4"
+    transfer = AsyncMock(side_effect=RuntimeError("proxy download timed out"))
+    monkeypatch.setattr(comfly_proxy, "_transfer_video_to_tos_via_proxy", transfer)
+    comfly_proxy._openmind_tos_url_cache.clear()
+
+    result = asyncio.run(
+        _mirror_openmind_video_to_tos(
+            {"status": "completed", "video_url": source_url},
+            "task-failed",
+        )
+    )
+
+    assert result["video_url"] == source_url
+    assert result["tos_transfer_error"] == "proxy download timed out"
+    transfer.assert_awaited_once_with(source_url, task_id="task-failed")
