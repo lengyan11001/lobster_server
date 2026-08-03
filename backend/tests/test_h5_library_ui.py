@@ -30,7 +30,7 @@ def test_profile_displays_real_credit_balance():
 
     assert 'id="profileCreditBalance"' in html
     assert '$("profileCreditBalance").textContent = compactNumber(user.credits, 2)' in script
-    assert "20260803-library-v3" in html
+    assert "20260803-library-v4" in html
 
 
 def test_workflow_missing_dialog_is_a_bounded_single_action_sheet():
@@ -44,3 +44,14 @@ def test_workflow_missing_dialog_is_a_bounded_single_action_sheet():
     assert "#workflowMissingModal .workflow-missing-popover" in styles
     assert "box-sizing: border-box" in styles
     assert "overflow-x: hidden" in styles
+
+
+def test_active_workflow_timeline_filters_saved_placeholder_nodes():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    start = script.index("function renderWorkflowTimeline()")
+    end = script.index("function renderWorkflowTemplates()", start)
+    timeline = script[start:end]
+
+    assert ".filter((node) => !workflowNodeIsPlaceholder(node))" in timeline
+    assert ".filter((action) => !workflowNodeIsPlaceholder(action))" in timeline
+    assert 'markerText.includes("敬请期待")' in script

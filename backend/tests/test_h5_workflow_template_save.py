@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from backend.app.api.h5_workflows import WorkflowTemplateIn, create_workflow_template, update_workflow_template
+from backend.app.api.h5_workflows import (
+    WorkflowTemplateIn,
+    _template_payload,
+    create_workflow_template,
+    update_workflow_template,
+)
 from backend.app.models import H5WorkflowTemplate
 
 
@@ -76,6 +81,45 @@ def test_plain_save_creates_blank_editor_template(db_session, test_user):
     assert created["created"] is True
     assert created["template"]["name"] == "普通保存"
     assert db_session.query(H5WorkflowTemplate).count() == 1
+
+
+def test_saved_workflow_drops_placeholder_nodes(db_session, test_user):
+    normal_node = _sales_body("正常任务").nodes[0]
+    placeholder_node = {
+        "id": "sales_placeholder",
+        "time": "15:00",
+        "ability_label": "视频号评论区接管（敬请期待）",
+        "comingSoon": True,
+        "plan": {
+            "task_kind": "workflow_placeholder",
+            "payload": {"action": "workflow_coming_soon", "skip_execution": True},
+        },
+    }
+
+    created = create_workflow_template(
+        WorkflowTemplateIn(name="销售", nodes=[normal_node, placeholder_node]),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    assert [node["ability_label"] for node in created["template"]["nodes"]] == ["正常任务"]
+    row = db_session.query(H5WorkflowTemplate).one()
+    assert [node["ability_label"] for node in row.nodes] == ["正常任务"]
+
+
+def test_existing_workflow_payload_hides_legacy_placeholder_nodes():
+    normal_node = _sales_body("正常任务").nodes[0]
+    legacy_placeholder = {
+        "id": "legacy_placeholder",
+        "time": "15:15",
+        "ability_label": "视频号私信接管（敬请期待）",
+        "plan": {"task_kind": "client_workflow", "payload": {"action": "legacy_action"}},
+    }
+    row = H5WorkflowTemplate(owner_user_id=1, name="旧销售", nodes=[normal_node, legacy_placeholder])
+
+    payload = _template_payload(row)
+
+    assert [node["ability_label"] for node in payload["nodes"]] == ["正常任务"]
 
 
 def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():

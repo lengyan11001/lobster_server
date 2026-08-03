@@ -933,7 +933,18 @@
       if (!node || typeof node !== "object") return false;
       const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
       const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
-      return !!(node.comingSoon || node.workflow_placeholder || payload.skip_execution || payload.action === "workflow_coming_soon");
+      const markerText = [node.ability_label, node.label, node.note, plan.title, payload.note]
+        .map((value) => String(value || ""))
+        .join(" ");
+      return !!(
+        node.comingSoon
+        || node.coming_soon
+        || node.workflow_placeholder
+        || node.placeholder
+        || payload.skip_execution
+        || payload.action === "workflow_coming_soon"
+        || markerText.includes("敬请期待")
+      );
     }
 
     function normalizeSalesWorkflowNode(node) {
@@ -3790,7 +3801,11 @@
     }
 
     function workflowActionNodeCount(nodes) {
-      return (Array.isArray(nodes) ? nodes : []).reduce((sum, node) => sum + 1 + workflowChildActions(node).length, 0);
+      return (Array.isArray(nodes) ? nodes : []).reduce((sum, node) => {
+        if (workflowNodeIsPlaceholder(node)) return sum;
+        const childCount = workflowChildActions(node).filter((child) => !workflowNodeIsPlaceholder(child)).length;
+        return sum + 1 + childCount;
+      }, 0);
     }
 
     function workflowParentNodeById(nodeId) {
@@ -4238,7 +4253,10 @@
     function renderWorkflowTimeline() {
       const box = $("workflowTimeline");
       if (!box) return;
-      const nodes = (state.workflowNodesDraft || []).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+      const nodes = (state.workflowNodesDraft || [])
+        .filter((node) => !workflowNodeIsPlaceholder(node))
+        .slice()
+        .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
       if (!nodes.length) {
         box.classList.remove("designer-workflow-groups");
         box.classList.remove("workflow-time-list");
@@ -4252,7 +4270,10 @@
         .map((item) => String(item.dataset.workflowTimelineNode || "")));
       const nodeHtml = (node) => {
         const placeholder = workflowNodeIsPlaceholder(node);
-        const children = workflowChildActions(node).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+        const children = workflowChildActions(node)
+          .filter((action) => !workflowNodeIsPlaceholder(action))
+          .slice()
+          .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
         const nodeId = String(node.id || "");
         const expanded = !!nodeId && expandedNodes.has(nodeId);
         const nodeStatus = workflowStatusInfo(node, workflowTaskForNodeDateOrCurrent(node, tasks, selectedKey), workflowLatestRunForNode(node, runs), selectedKey);
@@ -4499,7 +4520,10 @@
       return `<div class="custom-employee-node-list">${nodes.map((node, index) => {
         const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
         const nodeKey = `${tpl.id || ""}@@${node.id || index}`;
-        const children = workflowChildActions(node).slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+        const children = workflowChildActions(node)
+          .filter((action) => !workflowNodeIsPlaceholder(action))
+          .slice()
+          .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
         const childHtml = children.map((action) => `
           <div class="custom-employee-node custom-employee-child-node">
             <time>${escapeHtml(action.time || "--:--")}</time>
@@ -5868,10 +5892,10 @@
     function workflowVisibleNodes() {
       const rows = [];
       (state.workflowNodesDraft || []).forEach((node) => {
-        if (!node) return;
+        if (!node || workflowNodeIsPlaceholder(node)) return;
         rows.push(node);
         workflowChildActions(node).forEach((child) => {
-          if (child) rows.push(child);
+          if (child && !workflowNodeIsPlaceholder(child)) rows.push(child);
         });
       });
       return rows;

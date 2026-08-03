@@ -112,7 +112,7 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
         return actions
     parent_id = str(parent.get("id") or "").strip()
     for raw in raw_actions[:12]:
-        if not isinstance(raw, dict):
+        if not isinstance(raw, dict) or _is_workflow_placeholder(raw):
             continue
         action_type = str(raw.get("action_type") or raw.get("type") or "publish").strip().lower()
         if action_type != "publish":
@@ -223,6 +223,17 @@ def _is_workflow_placeholder(node: Any) -> bool:
         return False
     plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
     payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    marker_text = " ".join(
+        str(value or "")
+        for value in (
+            node.get("ability_label"),
+            node.get("abilityLabel"),
+            node.get("label"),
+            node.get("note"),
+            plan.get("title"),
+            payload.get("note"),
+        )
+    )
     return bool(
         node.get("comingSoon")
         or node.get("coming_soon")
@@ -230,7 +241,26 @@ def _is_workflow_placeholder(node: Any) -> bool:
         or node.get("placeholder")
         or payload.get("skip_execution")
         or payload.get("action") == "workflow_coming_soon"
+        or "敬请期待" in marker_text
     )
+
+
+def _visible_workflow_nodes(nodes: Any) -> list[dict[str, Any]]:
+    visible: list[dict[str, Any]] = []
+    for raw in nodes if isinstance(nodes, list) else []:
+        if not isinstance(raw, dict) or _is_workflow_placeholder(raw):
+            continue
+        item = copy.deepcopy(raw)
+        if isinstance(item.get("children"), list):
+            child_key = "children"
+        elif isinstance(item.get("actions"), list):
+            child_key = "actions"
+        else:
+            child_key = ""
+        if child_key:
+            item[child_key] = _visible_workflow_nodes(item.get(child_key))
+        visible.append(item)
+    return visible
 
 
 def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -244,30 +274,6 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         title = str(plan.get("title") or raw.get("label") or raw.get("ability_label") or "工作流任务").strip()[:160]
         content = str(plan.get("content") or f"H5 工作流：{title}").strip()[:12000]
         if _is_workflow_placeholder(raw) or payload.get("action") == "workflow_coming_soon":
-            placeholder_payload = dict(payload)
-            placeholder_payload["action"] = "workflow_coming_soon"
-            placeholder_payload["skip_execution"] = True
-            cleaned.append(
-                {
-                    "id": str(raw.get("id") or f"node_{len(cleaned) + 1}")[:64],
-                    "time": _clean_time(raw.get("time")),
-                    "ability_key": str(raw.get("ability_key") or raw.get("abilityKey") or "").strip()[:128],
-                    "ability_label": str(raw.get("ability_label") or raw.get("abilityLabel") or raw.get("label") or title).strip()[:160],
-                    "department_id": str(raw.get("department_id") or raw.get("departmentId") or "").strip()[:64],
-                    "department_name": str(raw.get("department_name") or raw.get("departmentName") or "").strip()[:80],
-                    "note": str(raw.get("note") or "").strip()[:2000],
-                    "sales_preset": bool(raw.get("sales_preset") or raw.get("salesPreset")),
-                    "comingSoon": True,
-                    "workflow_placeholder": True,
-                    "param_configured": bool(raw.get("param_configured")),
-                    "plan": {
-                        "title": title,
-                        "task_kind": "workflow_placeholder",
-                        "content": content,
-                        "payload": placeholder_payload,
-                    },
-                }
-            )
             continue
         if not task_kind:
             raise HTTPException(status_code=400, detail=f"{title} 缺少任务类型")
@@ -1268,7 +1274,7 @@ def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, 
         "owner_user_id": row.owner_user_id,
         "owner_name": owner.email if owner else "",
         "name": row.name,
-        "nodes": row.nodes or [],
+        "nodes": _visible_workflow_nodes(row.nodes),
         "status": row.status,
         "source": source,
         "meta": row.meta or {},
@@ -1291,7 +1297,7 @@ def _activation_payload(row: H5WorkflowActivation, template: Optional[H5Workflow
         "template_key": snapshot.get("template_key") or "",
         "template_source": snapshot.get("source") or "",
         "template_name": template.name if template else snapshot.get("name", ""),
-        "template_nodes": template_nodes or [],
+        "template_nodes": _visible_workflow_nodes(template_nodes),
         "status": row.status,
         "scheduled_task_ids": row.scheduled_task_ids or [],
         "started_at": _iso(row.started_at),
