@@ -5552,3 +5552,194 @@ main.shell:has(#contentRecordsView.active) #pageTitle,
     grid-template-columns: 1fr;
   }
 }
+
+/* Sales activation prerequisites use a dedicated sheet instead of employee-card styling. */
+#workflowMissingModal {
+  overflow: hidden;
+}
+
+#workflowMissingModal .workflow-missing-popover {
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - 32px));
+  max-width: 100%;
+  max-height: min(76dvh, 620px);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow: hidden;
+  color: #172033;
+  border: 1px solid #e5e9f0;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, .2);
+  backdrop-filter: none;
+}
+
+#workflowMissingModal .workflow-missing-popover::after {
+  display: none;
+}
+
+#workflowMissingModal .employee-popover-close {
+  top: 16px;
+  right: 16px;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  color: #6f7887;
+  border-radius: 50%;
+  background: #f2f4f7;
+  font-size: 19px;
+  line-height: 1;
+}
+
+#workflowMissingModal .workflow-missing-head {
+  gap: 12px;
+  padding-right: 42px;
+}
+
+#workflowMissingModal .workflow-missing-mark {
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  color: #c45b27;
+  border: 1px solid #f4d8c8;
+  border-radius: 14px;
+  background: #fff5ee;
+  font-size: 20px;
+  font-weight: 500 !important;
+}
+
+#workflowMissingModal .employee-popover-title {
+  gap: 5px;
+}
+
+#workflowMissingModal .employee-popover-title strong {
+  overflow: visible;
+  color: #172033;
+  font-size: 18px;
+  font-weight: 500 !important;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+#workflowMissingModal .employee-popover-title span {
+  color: #7b8493;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+#workflowMissingModal .workflow-missing-body {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  display: block;
+  overflow: hidden;
+  border-radius: 0;
+  background: transparent;
+}
+
+#workflowMissingModal .workflow-missing-list {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: min(44dvh, 360px);
+  margin: 0;
+  padding: 0 2px 0 0;
+  display: grid;
+  gap: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+#workflowMissingModal .workflow-missing-list li {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #e6eaf0;
+  border-radius: 12px;
+  background: #f8f9fb;
+}
+
+#workflowMissingModal .workflow-missing-list li::before {
+  width: 26px;
+  height: 26px;
+  color: #315efb;
+  background: #eaf0ff;
+  font-size: 12px;
+  font-weight: 500 !important;
+}
+
+#workflowMissingModal .workflow-missing-list span {
+  min-width: 0;
+  color: #252d3a;
+  font-size: 14px;
+  font-weight: 400 !important;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+#workflowMissingModal .workflow-missing-list button {
+  min-width: 76px;
+  min-height: 34px;
+  padding: 0 12px;
+  color: #315efb;
+  border: 1px solid #d9e1ef;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 400 !important;
+  white-space: nowrap;
+}
+
+#workflowMissingModal .workflow-missing-actions {
+  margin: 0;
+  padding-top: 2px;
+  display: block;
+}
+
+#workflowMissingModal .workflow-missing-actions button {
+  width: 100%;
+  min-height: 44px;
+  color: #566171;
+  border: 1px solid #dfe4eb;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: none;
+  font-weight: 400 !important;
+}
+
+@media (max-width: 640px) {
+  #workflowMissingModal {
+    place-items: end center;
+    padding: 12px 0 0;
+  }
+
+  #workflowMissingModal .workflow-missing-popover {
+    width: 100%;
+    max-width: 100%;
+    max-height: min(82dvh, 680px);
+    padding: 20px 18px max(18px, env(safe-area-inset-bottom));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 24px 24px 0 0;
+  }
+}
+
+@media (max-width: 360px) {
+  #workflowMissingModal .workflow-missing-list li {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  #workflowMissingModal .workflow-missing-list button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

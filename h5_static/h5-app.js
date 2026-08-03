@@ -1173,16 +1173,8 @@
           <button class="ghost" type="button" ${workflowMissingTargetAttrs(item.target)}>${escapeHtml(item.target.label || "去处理")}</button>
         </li>`).join("");
       }
-      const primary = $("workflowMissingPrimary");
-      if (primary) {
-        primary.hidden = !items[0];
-        primary.textContent = items[0] ? items[0].target.label || "去处理第 1 项" : "去处理第 1 项";
-        const target = items[0] && items[0].target || {};
-        primary.dataset.workflowMissingGoto = target.view || "";
-        primary.dataset.personalTab = target.personalTab || "";
-        primary.dataset.assetSection = target.assetSection || "";
-        primary.dataset.mountedTab = target.mountedTab || "";
-      }
+      const subtitle = $("workflowMissingSubtitle");
+      if (subtitle) subtitle.textContent = `补齐以下 ${items.length} 项信息后即可启用销售员工`;
       $("workflowMissingModal")?.classList.remove("hidden");
       return true;
     }
@@ -4329,7 +4321,7 @@
         list.innerHTML = `<div class="hint">加载中...</div>`;
         return;
       }
-      const rows = sortWorkflowTemplatesForDisplay(workflowTemplateRows().filter((tpl) => !workflowTemplateIsComingSoon(tpl)));
+      const rows = sortWorkflowTemplatesForDisplay(workflowTemplateRows());
       if (!rows.length) {
         list.innerHTML = `<div class="hint">暂无模板</div>`;
         return;
@@ -4370,7 +4362,7 @@
     }
 
     function customWorkflowTemplateRows() {
-      return userWorkflowTemplateRows().filter((tpl) => !workflowSystemTemplateKey(tpl) && !workflowTemplateIsComingSoon(tpl));
+      return userWorkflowTemplateRows().filter((tpl) => !workflowSystemTemplateKey(tpl));
     }
 
     function workflowTemplateRows() {
@@ -6386,6 +6378,9 @@
       const onlineCount = workingCount + idleCount;
       const roles = [
         { id: "sales", name: "销售", status: "待命", target: "salesWorkflow", systemTemplateId: "system_sales" },
+        { id: "customer_service", name: "客服", status: "敬请期待", comingSoon: true, systemTemplateId: "system_customer_service" },
+        { id: "overseas", name: "海外员工", status: "敬请期待", comingSoon: true, systemTemplateId: "system_overseas" },
+        { id: "hr", name: "HR", status: "敬请期待", comingSoon: true, systemTemplateId: "system_hr" },
       ].map((role) => {
         const active = !role.comingSoon && activeWorkflowTemplateKey() === String(role.systemTemplateId || "");
         return active ? { ...role, status: "启用中", active } : role;
@@ -18310,7 +18305,6 @@
     $("workflowMissingBackdrop")?.addEventListener("click", closeWorkflowMissingDialog);
     $("workflowMissingClose")?.addEventListener("click", closeWorkflowMissingDialog);
     $("workflowMissingCancel")?.addEventListener("click", closeWorkflowMissingDialog);
-    $("workflowMissingPrimary")?.addEventListener("click", (evt) => navigateWorkflowMissingTarget(workflowMissingTargetFromButton(evt.currentTarget)));
     $("workflowPlanDayBackdrop")?.addEventListener("click", () => closeWorkflowPlanDayDialog(null));
     $("workflowPlanDayClose")?.addEventListener("click", () => closeWorkflowPlanDayDialog(null));
     $("workflowPlanDayCancel")?.addEventListener("click", () => closeWorkflowPlanDayDialog(null));

@@ -9,7 +9,7 @@
   <link id="h5AppleIcon" rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
   <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v3" />
 </head>
 <body>
   <main class="shell">
@@ -1775,20 +1775,18 @@
     <button class="employee-modal-backdrop" type="button" id="workflowMissingBackdrop" aria-label="关闭"></button>
     <div class="employee-popover work-dispatch-popover workflow-missing-popover">
       <button class="employee-popover-close" type="button" id="workflowMissingClose" aria-label="关闭">×</button>
-      <div class="employee-popover-head">
-        <div class="employee-mini-avatar">缺</div>
+      <div class="employee-popover-head workflow-missing-head">
+        <div class="employee-mini-avatar workflow-missing-mark" aria-hidden="true">!</div>
         <div class="employee-popover-title">
-          <strong id="workflowMissingTitle">启动前需要补充信息</strong>
-          <span>补齐后再启用销售员工</span>
+          <strong id="workflowMissingTitle">启动前还差一步</strong>
+          <span id="workflowMissingSubtitle">补齐以下信息后即可启用销售员工</span>
         </div>
       </div>
       <div class="workflow-missing-body">
-        <p>销售员工暂时无法启动，请先处理下面这些信息：</p>
         <ol class="workflow-missing-list" id="workflowMissingList"></ol>
       </div>
-      <div class="work-dispatch-actions">
-        <button class="ghost" type="button" id="workflowMissingCancel">稍后处理</button>
-        <button type="button" id="workflowMissingPrimary">去处理第 1 项</button>
+      <div class="work-dispatch-actions workflow-missing-actions">
+        <button class="ghost" type="button" id="workflowMissingCancel">暂不启用</button>
       </div>
     </div>
   </div>
@@ -1904,6 +1902,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v3"></script>
 </body>
 </html>
