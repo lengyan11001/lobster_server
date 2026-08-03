@@ -140,6 +140,28 @@ def test_interrupted_image_download_payload_detection():
     )
 
 
+def test_video_retry_context_can_reload_from_shared_cache():
+    _video_image_retry_contexts.clear()
+    _video_image_retry_roots.clear()
+    _remember_video_image_retry_context(
+        "shared-original",
+        provider="xai",
+        body={"model": "grok-imagine-video-1.5", "prompt": "test"},
+        model="grok-imagine-video-1.5",
+        request_user_id=54,
+    )
+    _video_image_retry_contexts.clear()
+    _video_image_retry_roots.clear()
+
+    root, active, context = _video_image_retry_poll_target(
+        "shared-original", provider="xai", request_user_id=54
+    )
+
+    assert root == "shared-original"
+    assert active == "shared-original"
+    assert context["body"]["prompt"] == "test"
+
+
 def test_xai_interrupted_image_download_resubmits_once_without_billing(monkeypatch):
     from backend.app.api import comfly_proxy
 

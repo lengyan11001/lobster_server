@@ -101,6 +101,34 @@ def cache_set(key: str, value: str = "1", ttl_seconds: float = 10.0) -> None:
     _memory_prune(now)
 
 
+def cache_set_if_absent(key: str, value: str = "1", ttl_seconds: float = 10.0) -> bool:
+    global _redis_client, _redis_disabled_until
+    if not key or ttl_seconds <= 0:
+        return False
+    client = _redis()
+    if client is not None:
+        try:
+            return bool(
+                client.set(
+                    key,
+                    value,
+                    ex=max(1, int(ttl_seconds)),
+                    nx=True,
+                )
+            )
+        except Exception as exc:
+            _redis_client = None
+            _redis_disabled_until = time.monotonic() + 10.0
+            logger.warning("runtime cache redis set-if-absent failed; fallback to memory: %s", exc)
+    now = time.monotonic()
+    current = _memory_cache.get(key)
+    if current and current[0] > now:
+        return False
+    _memory_cache[key] = (now + float(ttl_seconds), value)
+    _memory_prune(now)
+    return True
+
+
 def cache_delete(key: str) -> None:
     global _redis_client, _redis_disabled_until
     if not key:
