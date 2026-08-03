@@ -108,6 +108,8 @@
       assetLibraryRows: { user_upload: [], generated: [] },
       assetLibraryTotals: { user_upload: 0, generated: 0 },
       assetLibraryLoading: false,
+      assetLibraryPageCache: {},
+      assetLibraryRequest: 0,
       assetLibraryAvatarPage: 1,
       assetLibraryVoicePage: 1,
       assetLibraryAvatarRows: [],
@@ -121,6 +123,8 @@
       contentRecordRows: [],
       contentRecordTotal: 0,
       contentRecordLoading: false,
+      contentRecordPageCache: {},
+      contentRecordRequest: 0,
       contentActionItems: new Map(),
       contentActionSequence: 0,
       contentActionPromptCache: new Map(),
@@ -6520,16 +6524,42 @@
       return `/h5-static/${prefix}-${String(fileIndex).padStart(2, "0")}.jpg`;
     }
 
+    function libraryMediaSource(url, filename) {
+      const clean = String(url || "").trim();
+      const proxy = mediaProxyUrl(clean, "inline", filename || filenameFromUrl(clean, "asset"));
+      return {
+        src: /^https:\/\//i.test(clean) ? clean : proxy,
+        fallback: proxy,
+      };
+    }
+
+    function libraryMediaFallbackAttr(source) {
+      if (!source || !source.fallback || source.src === source.fallback) return "";
+      return ` data-library-media-fallback="${escapeHtml(source.fallback)}"`;
+    }
+
+    if (!window.__libraryMediaFallbackBound) {
+      window.__libraryMediaFallbackBound = true;
+      document.addEventListener("error", (event) => {
+        const media = event.target;
+        if (!media || !media.getAttribute) return;
+        const fallback = String(media.getAttribute("data-library-media-fallback") || "").trim();
+        if (!fallback || media.src === fallback) return;
+        media.removeAttribute("data-library-media-fallback");
+        media.src = fallback;
+      }, true);
+    }
+
     function assetPreviewHtml(asset, index = 0) {
       const url = String((asset && asset.source_url) || "").trim();
       const type = String((asset && asset.media_type) || mediaTypeFromUrl(url) || "").toLowerCase();
       if (!url) return `<img class="asset-library-thumb" src="${designerFallbackMedia(asset, index)}" alt="" loading="lazy">`;
-      const src = mediaProxyUrl(url, "inline", filenameFromUrl(url, asset && asset.filename || "asset"));
+      const source = libraryMediaSource(url, filenameFromUrl(url, asset && asset.filename || "asset"));
       if (type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url)) {
-        return `<video class="asset-library-thumb" src="${escapeHtml(src)}" muted playsinline preload="metadata"></video>`;
+        return `<video class="asset-library-thumb" src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)} muted playsinline preload="metadata"></video>`;
       }
       if (type === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(url)) {
-        return `<img class="asset-library-thumb" src="${escapeHtml(src)}" alt="" loading="lazy">`;
+        return `<img class="asset-library-thumb" src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)} alt="" loading="lazy" decoding="async">`;
       }
       return `<div class="asset-library-thumb asset-library-thumb-empty">${escapeHtml(type || "文件")}</div>`;
     }
@@ -6584,8 +6614,8 @@
     }
 
     function contentRecordImageHtml(url, className = "") {
-      const src = mediaProxyUrl(url, "inline", filenameFromUrl(url, "article-image"));
-      return `<img class="${escapeHtml(className)}" src="${escapeHtml(src)}" alt="" loading="lazy">`;
+      const source = libraryMediaSource(url, filenameFromUrl(url, "article-image"));
+      return `<img class="${escapeHtml(className)}" src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)} alt="" loading="lazy" decoding="async">`;
     }
 
     function contentRecordArticleBodyHtml(content, imageUrls = []) {
@@ -6870,8 +6900,10 @@
           source_id: String(source.recordSourceId || ""),
         });
         await api(`/api/content-records?${params.toString()}`, { method: "DELETE" });
+        state.contentRecordPageCache = {};
       } else if (source.assetId) {
         await api(`/api/assets/${encodeURIComponent(source.assetId)}`, { method: "DELETE" });
+        state.assetLibraryPageCache = {};
       } else {
         throw new Error("当前记录缺少删除标识");
       }
@@ -7238,9 +7270,11 @@
       const coverUrl = contentRecordImageUrls(asset)[0] || "";
       const emptyLabels = { article: "文章", wechat_article: "公众号", ppt: "PPT" };
       const emptyCover = `<span class="content-document-cover-empty ${escapeHtml(kind)}"><b>${escapeHtml(emptyLabels[kind] || "文档")}</b></span>`;
-      const cover = coverUrl
-        ? `<img data-content-document-cover class="content-document-cover-image" src="${escapeHtml(mediaProxyUrl(coverUrl, "inline", filenameFromUrl(coverUrl, "content-cover")))}" alt="" loading="lazy">${emptyCover.replace('class="', 'class="hidden ')}`
-        : emptyCover;
+      let cover = emptyCover;
+      if (coverUrl) {
+        const coverSource = libraryMediaSource(coverUrl, filenameFromUrl(coverUrl, "content-cover"));
+        cover = `<img data-content-document-cover class="content-document-cover-image" src="${escapeHtml(coverSource.src)}"${libraryMediaFallbackAttr(coverSource)} alt="" loading="lazy" decoding="async">${emptyCover.replace('class="', 'class="hidden ')}`;
+      }
       return `<article class="content-document-card ${escapeHtml(kind)} content-action-card">
         <button class="content-document-preview" type="button" data-asset-preview-id="${escapeHtml(id)}">
           <span class="content-document-cover">${cover}</span>
@@ -7265,9 +7299,11 @@
       const title = String((row && row.title) || "未命名形象");
       const img = String((row && (row.image_url || row.cover_url || row.detail_url)) || "").trim();
       const sourceLabel = String((row && (row.source_label || row.section_label || row.source_type)) || "image");
-      const thumb = img
-        ? `<img class="asset-library-thumb" src="${escapeHtml(mediaProxyUrl(img, "inline", filenameFromUrl(img, "avatar")))}" alt="" loading="lazy">`
-        : `<div class="asset-library-thumb asset-library-thumb-empty">形象</div>`;
+      let thumb = `<div class="asset-library-thumb asset-library-thumb-empty">形象</div>`;
+      if (img) {
+        const imageSource = libraryMediaSource(img, filenameFromUrl(img, "avatar"));
+        thumb = `<img class="asset-library-thumb" src="${escapeHtml(imageSource.src)}"${libraryMediaFallbackAttr(imageSource)} alt="" loading="lazy" decoding="async">`;
+      }
       const source = String((row && row.source) || "hifly");
       const deleteId = String((row && (row.source_record_id || row.id)) || "");
       return `<article class="asset-library-card designer-avatar-card hifly-library-card">
@@ -7496,22 +7532,38 @@
       if ($("assetLibraryNextBtn")) $("assetLibraryNextBtn").disabled = page >= pageCount || loading;
     }
 
-    async function loadAssetLibrary(origin = state.assetLibraryOrigin) {
+    async function loadAssetLibrary(origin = state.assetLibraryOrigin, options = {}) {
       if (!state.token) return;
       const cleanOrigin = origin === "generated" ? "generated" : "user_upload";
       const pageSize = Number(state.assetLibraryPageSize || 10);
       const page = Math.max(1, Number((state.assetLibraryPage || {})[cleanOrigin]) || 1);
       const offset = (page - 1) * pageSize;
-      state.assetLibraryLoading = true;
+      const cacheKey = `${cleanOrigin}:${page}:${pageSize}`;
+      const cached = state.assetLibraryPageCache[cacheKey];
+      const hasFreshCache = !options.force && cached && Date.now() - Number(cached.savedAt || 0) < 30000;
+      if (hasFreshCache) {
+        state.assetLibraryRows[cleanOrigin] = cached.rows;
+        state.assetLibraryTotals[cleanOrigin] = cached.total;
+      }
+      const requestId = Number(state.assetLibraryRequest || 0) + 1;
+      state.assetLibraryRequest = requestId;
+      state.assetLibraryLoading = !hasFreshCache;
       renderAssetLibrary();
       try {
         const data = await api(`/api/assets?origin=${encodeURIComponent(cleanOrigin)}&limit=${pageSize}&offset=${offset}`);
-        state.assetLibraryRows[cleanOrigin] = Array.isArray(data.assets) ? data.assets : [];
-        state.assetLibraryTotals[cleanOrigin] = Number(data.total || 0);
+        if (requestId !== state.assetLibraryRequest) return;
+        const rows = Array.isArray(data.assets) ? data.assets : [];
+        const total = Number(data.total || 0);
+        state.assetLibraryRows[cleanOrigin] = rows;
+        state.assetLibraryTotals[cleanOrigin] = total;
+        state.assetLibraryPageCache[cacheKey] = { rows, total, savedAt: Date.now() };
       } catch (err) {
+        if (requestId !== state.assetLibraryRequest) return;
+        if (hasFreshCache) return;
         state.assetLibraryRows[cleanOrigin] = [];
         toast(err.message || "素材加载失败");
       } finally {
+        if (requestId !== state.assetLibraryRequest) return;
         state.assetLibraryLoading = false;
         renderAssetLibrary();
       }
@@ -7610,24 +7662,35 @@
       if ($("contentRecordNextBtn")) $("contentRecordNextBtn").disabled = page >= pageCount || state.contentRecordLoading;
     }
 
-    async function loadContentRecords() {
+    async function loadContentRecords(options = {}) {
       if (!state.token) return;
       const pageSize = Number(state.contentRecordPageSize || 10);
       const page = Math.max(1, Number(state.contentRecordPage || 1));
       const offset = (page - 1) * pageSize;
       const uiType = String(state.contentRecordMediaType || "image").trim().toLowerCase();
       const documentMode = ["article", "wechat_article", "ppt"].includes(uiType);
-      state.contentRecordLoading = true;
+      const cacheKey = `${uiType}:${page}:${pageSize}`;
+      const cached = state.contentRecordPageCache[cacheKey];
+      const hasFreshCache = !options.force && cached && Date.now() - Number(cached.savedAt || 0) < 30000;
+      if (hasFreshCache) {
+        state.contentRecordRows = cached.rows;
+        state.contentRecordTotal = cached.total;
+      }
+      const requestId = Number(state.contentRecordRequest || 0) + 1;
+      state.contentRecordRequest = requestId;
+      state.contentRecordLoading = !hasFreshCache;
       renderContentRecords();
       try {
         if (documentMode) {
           const params = new URLSearchParams({ kind: uiType, limit: String(pageSize), offset: String(offset), compact: "true" });
           const data = await api(`/api/content-records?${params.toString()}`);
-          state.contentRecordRows = (Array.isArray(data.items) ? data.items : []).map((item) => ({
+          const rows = (Array.isArray(data.items) ? data.items : []).map((item) => ({
             ...item,
             _content_record: true,
             _designer_content_kind: uiType,
           }));
+          if (requestId !== state.contentRecordRequest) return;
+          state.contentRecordRows = rows;
           state.contentRecordTotal = Number(data.pagination && data.pagination.total || 0);
         } else {
           const params = new URLSearchParams({
@@ -7637,16 +7700,25 @@
             media_type: uiType,
           });
           const data = await api(`/api/assets?${params.toString()}`);
+          if (requestId !== state.contentRecordRequest) return;
           const assets = Array.isArray(data.assets) ? data.assets : [];
           state.contentRecordRows = assets.map((asset) => ({ ...asset, _designer_content_kind: uiType }));
           state.contentRecordTotal = Number(data.total || 0);
         }
         state.assetLibraryRows.generated = state.contentRecordRows;
         state.assetLibraryTotals.generated = state.contentRecordTotal;
+        state.contentRecordPageCache[cacheKey] = {
+          rows: state.contentRecordRows,
+          total: state.contentRecordTotal,
+          savedAt: Date.now(),
+        };
       } catch (err) {
+        if (requestId !== state.contentRecordRequest) return;
+        if (hasFreshCache) return;
         state.contentRecordRows = [];
         toast(err.message || "内容记录加载失败");
       } finally {
+        if (requestId !== state.contentRecordRequest) return;
         state.contentRecordLoading = false;
         renderContentRecords();
       }
@@ -7677,7 +7749,8 @@
         }
         if (input) input.value = "";
         state.assetLibraryPage.user_upload = 1;
-        await refreshAssetLibrary();
+        state.assetLibraryPageCache = {};
+        await loadAssetLibrary("user_upload", { force: true });
         toast("上传完成");
         closeAssetUploadModal();
       } finally {

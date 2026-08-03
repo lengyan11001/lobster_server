@@ -152,7 +152,8 @@ def test_asset_picker_uses_library_modal_instead_of_native_dropdown():
     assert "function openAssetPickerModal(id)" in script
     assert "function loadAssetPickerModalRows()" in script
     assert 'origin: source' in script
-    assert "state.assetPickerSelections[id] = item" in script
+    assert "state.assetPickerSelections[id] = multiple ? selected : selected[0]" in script
+    assert "assetPickerAllowsMultiple(box)" in script
     assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in base_styles
     assert ".asset-picker-library-grid" in designer_styles
     assert ".asset-picker-library-card.selected" in designer_styles

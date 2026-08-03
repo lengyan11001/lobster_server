@@ -14,6 +14,14 @@ def test_library_uses_twenty_item_pages_and_lazy_document_details():
     assert "/api/content-records/detail?" in script
 
 
+def test_library_reuses_recent_pages_and_falls_back_when_direct_media_fails():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert "assetLibraryPageCache" in script
+    assert "contentRecordPageCache" in script
+    assert "data-library-media-fallback" in script
+
+
 def test_placeholder_employees_remain_visible_while_placeholder_nodes_are_filtered():
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
 
