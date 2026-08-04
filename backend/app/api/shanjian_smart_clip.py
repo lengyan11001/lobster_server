@@ -418,12 +418,25 @@ async def submit_clip(
 async def task_info(body: TaskBody):
     payload = await _get("/v1/task/info", body.token, {"taskId": body.task_id.strip()})
     data = _data(payload)
+    raw_status = str(data.get("status") or "").strip().lower()
+    if raw_status in {"3", "success", "succeeded", "succeed", "completed", "complete", "done"}:
+        status = "succeed"
+    elif raw_status in {"4", "failure", "failed", "error", "cancelled", "canceled"}:
+        status = "failed"
+    else:
+        status = "processing"
     result = data.get("result") if isinstance(data.get("result"), dict) else {}
     return {
-        "ok": str(data.get("status") or "").strip() != "failed",
-        "status": str(data.get("status") or "").strip() or "processing",
+        "ok": status != "failed",
+        "task_id": data.get("taskId") or body.task_id.strip(),
+        "status": status,
+        "status_text": {"processing": "处理中", "succeed": "已完成", "failed": "失败"}[status],
+        "video_url": result.get("videoUrl") or result.get("video_url") or data.get("videoUrl") or "",
+        "cover_url": result.get("coverUrl") or result.get("cover_url") or data.get("coverUrl") or "",
+        "duration": result.get("duration") if result.get("duration") is not None else data.get("duration"),
         "result": result,
         "cost_rights": data.get("costRights") or {},
+        "error_code": data.get("errorCode") or "",
         "message": str(data.get("errorMessage") or payload.get("message") or "").strip(),
         "raw": payload,
     }
