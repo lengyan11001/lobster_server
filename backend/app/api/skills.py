@@ -88,6 +88,7 @@ DEFAULT_VISIBLE_PACKAGES_DOMESTIC: tuple[str, ...] = (
     "create_ppt_skill",
     "local_bestseller_skill",
     "viral_video_remix_skill",
+    "multi_clip_mixer_skill",
 )
 
 
@@ -124,6 +125,7 @@ DEFAULT_VISIBLE_PACKAGES_OVERSEAS: tuple[str, ...] = (
     "create_video_pipeline_skill",
     "local_bestseller_skill",
     "viral_video_remix_skill",
+    "multi_clip_mixer_skill",
 )
 
 

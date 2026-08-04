@@ -84,6 +84,7 @@ def test_skill_store_default_visibility_domestic_vs_overseas(db_session, db_sess
     assert "messenger_reply" not in domestic_ids
     assert "twilio_whatsapp" not in domestic_ids
     assert "bihuo_25_video_skill" not in domestic_ids
+    assert "multi_clip_mixer_skill" in domestic_ids
 
     assert "twilio_whatsapp" in overseas_ids
     assert "youtube_publish" in overseas_ids
@@ -101,6 +102,7 @@ def test_skill_store_default_visibility_domestic_vs_overseas(db_session, db_sess
     assert "xiaohongshu_publish" not in overseas_ids
     assert "toutiao_publish" not in overseas_ids
     assert "bihuo_25_video_skill" not in overseas_ids
+    assert "multi_clip_mixer_skill" in overseas_ids
 
 
 def test_skill_store_visibility_depends_on_client_header_not_user_origin(db_session, db_session_factory, monkeypatch):

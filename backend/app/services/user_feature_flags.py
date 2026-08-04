@@ -28,6 +28,7 @@ PERSONAL_SETTINGS_ENTRY_ID = "personal_settings_entry"
 AGENT_ENTRY_ID = "agent_entry"
 LOCAL_BESTSELLER_SKILL_ID = "local_bestseller_skill"
 VIRAL_VIDEO_REMIX_SKILL_ID = "viral_video_remix_skill"
+MULTI_CLIP_MIXER_SKILL_ID = "multi_clip_mixer_skill"
 BIHUO_25_VIDEO_SKILL_ID = "bihuo_25_video_skill"
 HOMEPAGE_FEATURE_GATES_MARKER = "__homepage_feature_gates_v1"
 HOMEPAGE_ENTRY_SEEDED_MARKER = "__homepage_entry_permissions_seeded_v1"
@@ -219,6 +220,15 @@ FEATURE_FLAG_PACKAGES: tuple[dict, ...] = (
         "unlock_price_credits": None,
         "capabilities_count": 0,
         "feature_key": VIRAL_VIDEO_REMIX_SKILL_ID,
+    },
+    {
+        "id": MULTI_CLIP_MIXER_SKILL_ID,
+        "name": "多段视频混剪入口",
+        "store_visibility": "入口权限",
+        "unlock_price_yuan": None,
+        "unlock_price_credits": None,
+        "capabilities_count": 0,
+        "feature_key": MULTI_CLIP_MIXER_SKILL_ID,
     },
     {
         "id": BIHUO_25_VIDEO_SKILL_ID,
