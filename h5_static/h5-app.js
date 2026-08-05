@@ -1034,9 +1034,33 @@
     ];
 
     const DOUYIN_TASK_ACTIONS = {
+      account_nurture: {
+        label: "自动养号",
+        description: "按 Online 已配置的养号参数执行。",
+      },
       search_collect: {
         label: "采集客户",
         description: "按行业关键词搜索抖音内容，先把视频和客户线索沉淀下来。",
+      },
+      reply_comments: {
+        label: "回复视频评论",
+        description: "按 Online 已配置的话术回复可执行的视频评论任务。",
+      },
+      mention_comment: {
+        label: "评论并@精准客户",
+        description: "在自己的作品评论区触达精准客户。",
+      },
+      follow_comment: {
+        label: "关注并评论精准客户",
+        description: "关注精准客户并评论其主页作品。",
+      },
+      direct_message: {
+        label: "主动私信精准客户",
+        description: "按 Online 已配置的话术主动私信精准客户。",
+      },
+      stranger_message: {
+        label: "私信接管",
+        description: "读取新私信并按 Online 已配置的接管策略回复。",
       },
       comment_collect: {
         label: "视频评论",
@@ -9309,20 +9333,72 @@
       function douyinLeadActionLabel(action) {
         return ((DOUYIN_TASK_ACTIONS[action] || {}).label || action || "抖音获客");
       }
+      function douyinLeadStatusLabel(status) {
+        const raw = String(status == null ? "" : status).trim().toLowerCase();
+        return ({
+          done: "已完成",
+          completed: "已完成",
+          commented: "已评论",
+          sent: "已发送",
+          success: "成功",
+          failed: "失败",
+          timeout: "仍在执行",
+          running: "执行中",
+          processing: "处理中",
+          queued: "等待执行",
+          pending: "待处理",
+          skipped: "已跳过",
+          interrupted: "已中断",
+          disabled: "未启用",
+        })[raw] || String(status || "");
+      }
       function renderDouyinLeadSummary(data) {
         const action = String(data.action || "").trim();
         const stats = data.stats && typeof data.stats === "object" ? data.stats : {};
         const finalStatus = data.final_status && typeof data.final_status === "object" ? data.final_status : {};
-        const finalState = finalStatus.state && typeof finalStatus.state === "object" ? finalStatus.state : {};
+        const finalState = data.final_state && typeof data.final_state === "object"
+          ? data.final_state
+          : (finalStatus.state && typeof finalStatus.state === "object" ? finalStatus.state : {});
+        const rawResult = data.mcp_result && typeof data.mcp_result === "object" ? data.mcp_result : {};
+        const statValue = (key, fallback = "") => stats[key] != null
+          ? stats[key]
+          : (finalState[key] != null ? finalState[key] : (rawResult[key] != null ? rawResult[key] : fallback));
+        const accountValue = data.account_id || rawResult.account_id || finalState.account_id || "";
         const rows = action ? [["执行动作", douyinLeadActionLabel(action)]] : [];
+        rows.push(
+          ["执行状态", douyinLeadStatusLabel(data.status || finalState.status || finalState.last_cycle_status || "")],
+          ["执行账号", accountValue],
+        );
         if (action === "search_collect") {
           rows.push(
             ["执行模式", data.search_mode === "script" ? "脚本模式" : (data.search_mode || "")],
-            ["执行账号", data.account_id || ""],
-            ["搜索视频", data.search_videos_total != null ? `${compactNumber(data.search_videos_total)} 个` : (data.total != null ? `${compactNumber(data.total)} 个` : "")],
-            ["采集客户", stats.comments_collected != null ? `${compactNumber(stats.comments_collected)} 人` : ""],
-            ["精准客户", stats.high_intent_users != null ? `${compactNumber(stats.high_intent_users)} 人` : ""],
+            ["搜索视频", data.search_videos_total != null ? `${compactNumber(data.search_videos_total)} 个` : (data.search_total != null ? `${compactNumber(data.search_total)} 个` : "")],
+            ["采集客户", `${compactNumber(data.total_customers != null ? data.total_customers : statValue("comments_collected", 0))} 人`],
+            ["精准客户", `${compactNumber(data.total_high_intent != null ? data.total_high_intent : statValue("high_intent_users", 0))} 人`],
           );
+        } else if (action === "stranger_message") {
+          rows.push(
+            ["读取会话", `${compactNumber(statValue("total", 0))} 条`],
+            ["新增未读", `${compactNumber(statValue("new", 0))} 条`],
+            ["当前未读", `${compactNumber(statValue("unread", 0))} 条`],
+            ["自动回复", `${compactNumber(statValue("reply_success", 0))} 条成功${Number(statValue("reply_failed", 0)) ? `，${compactNumber(statValue("reply_failed", 0))} 条失败` : ""}`],
+          );
+        } else if (action === "account_nurture") {
+          rows.push(
+            ["执行账号数", compactNumber(statValue("total", 0))],
+            ["完成账号数", compactNumber(statValue("success", 0))],
+            ["异常账号数", compactNumber(statValue("failed", 0))],
+          );
+        } else if (["reply_comments", "mention_comment", "follow_comment", "direct_message"].includes(action)) {
+          rows.push(
+            ["目标数量", compactNumber(statValue("total", 0))],
+            ["已处理", compactNumber(statValue("processed", 0))],
+            ["成功数量", compactNumber(statValue("success", 0))],
+            ["失败数量", compactNumber(statValue("failed", 0))],
+          );
+          if (action === "follow_comment") {
+            rows.push(["评论成功", compactNumber(statValue("commented", 0))]);
+          }
         } else if (action === "tasks_from_search") {
           rows.push(
             ["本次同步", data.selected_total != null ? `${compactNumber(data.selected_total)} 条` : ""],
@@ -9381,37 +9457,81 @@
           if (!rows.length) return "";
           return `<div class="task-detail-section"><h4>搜索结果与采集结果</h4>${rows.join("")}</div>`;
         }
-        if (action === "comment_collect") {
-          const tasks = Array.isArray(data.tasks) ? data.tasks : [];
-          tasks.slice(0, 6).forEach((row, idx) => {
+        if (action === "account_nurture") {
+          const items = Array.isArray(data.items) ? data.items : [];
+          items.slice(0, 20).forEach((row, idx) => {
             const item = row && typeof row === "object" ? row : {};
-            const title = String(item.title || item.url || item.id || `任务 ${idx + 1}`).trim();
-            const meta = [
-              item.status ? `状态：${item.status}` : "",
+            const title = `账号 ${item.account_id || idx + 1}`;
+            const lines = [
+              item.worker_status ? `状态：${douyinLeadStatusLabel(item.worker_status)}` : "",
+              item.completed_sessions != null ? `完成次数：${compactNumber(item.completed_sessions)}` : "",
+              item.current_video_count != null ? `浏览视频：${compactNumber(item.current_video_count)}` : "",
+              item.likes_sent != null ? `点赞：${compactNumber(item.likes_sent)}` : "",
+              item.last_action ? `最后动作：${item.last_action}` : "",
+              item.last_error ? `异常：${item.last_error}` : "",
+            ].filter(Boolean);
+            rows.push(renderTaskDetailRecord(title, lines));
+          });
+          if (!rows.length) return "";
+          return `<div class="task-detail-section"><h4>养号结果明细</h4>${rows.join("")}</div>`;
+        }
+        if (action === "comment_collect" || action === "reply_comments") {
+          const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+          tasks.slice(0, 20).forEach((row, idx) => {
+            const item = row && typeof row === "object" ? row : {};
+            const title = String(item.title || item.url || item.task_id || item.id || `任务 ${idx + 1}`).trim();
+            const lines = [
+              item.status ? `状态：${douyinLeadStatusLabel(item.status)}` : "",
               item.comment_count != null ? `评论：${compactNumber(item.comment_count)}` : "",
               item.high_intent_count != null ? `高意向：${compactNumber(item.high_intent_count)}` : "",
               item.author ? `作者：${item.author}` : "",
-            ].filter(Boolean).join(" · ");
-            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title || `任务 ${idx + 1}`}`, meta));
+              item.sent_text ? `发送内容：${item.sent_text}` : "",
+              item.error ? `失败原因：${item.error}` : "",
+            ].filter(Boolean);
+            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title || `任务 ${idx + 1}`}`, lines));
           });
           if (!rows.length) return "";
-          return `<div class="task-detail-section"><h4>评论任务预览</h4>${rows.join("")}</div>`;
+          return `<div class="task-detail-section"><h4>评论结果明细</h4>${rows.join("")}</div>`;
         }
-        if (action === "interaction") {
-          const users = Array.isArray(data.users) ? data.users : [];
-          users.slice(0, 6).forEach((row, idx) => {
+        if (action === "stranger_message") {
+          const conversations = Array.isArray(data.conversations) ? data.conversations : [];
+          conversations.slice(0, 20).forEach((row, idx) => {
             const item = row && typeof row === "object" ? row : {};
-            const title = String(item.nickname || item.name || item.user_name || item.uid || `客户 ${idx + 1}`).trim();
-            const meta = [
-              item.interaction_status ? `状态：${item.interaction_status}` : "",
-              item.interaction_account_id ? `执行账号：${item.interaction_account_id}` : "",
-              item.uid ? `用户ID：${item.uid}` : "",
-              item.sec_uid ? `SecUID：${item.sec_uid}` : "",
-            ].filter(Boolean).join(" · ");
-            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title || `客户 ${idx + 1}`}`, meta));
+            const title = String(item.username || `会话 ${idx + 1}`).trim();
+            const lines = [
+              item.incoming_message || item.preview_text ? `客户消息：${item.incoming_message || item.preview_text}` : "",
+              item.unread_count != null ? `未读：${compactNumber(item.unread_count)} 条` : "",
+              item.reply_status ? `回复状态：${douyinLeadStatusLabel(item.reply_status)}` : "",
+              item.reply_message ? `回复内容：${item.reply_message}` : "",
+              item.reply_error ? `回复失败原因：${item.reply_error}` : "",
+              item.time_text || item.collected_at ? `消息时间：${item.time_text || item.collected_at}` : "",
+            ].filter(Boolean);
+            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title}`, lines));
+          });
+          if (!rows.length) {
+            return `<div class="task-detail-section"><h4>接管消息明细</h4>${renderTaskDetailRecord("本轮没有读取到新消息", data.summary || data.message || "监控已开启，等待客户发来私信。")}</div>`;
+          }
+          const scopeText = data.conversation_scope === "recent" ? "本轮无新增，以下展示最近会话" : "本轮新增或更新的会话";
+          return `<div class="task-detail-section"><h4>接管消息明细</h4><div class="task-detail-record"><pre>${escapeHtml(scopeText)}</pre></div>${rows.join("")}</div>`;
+        }
+        if (action === "interaction" || ["mention_comment", "follow_comment", "direct_message"].includes(action)) {
+          const users = Array.isArray(data.users) ? data.users : [];
+          users.slice(0, 20).forEach((row, idx) => {
+            const item = row && typeof row === "object" ? row : {};
+            const title = String(item.username || item.nickname || item.name || item.user_name || item.uid || `客户 ${idx + 1}`).trim();
+            const lines = [
+              item.status || item.interaction_status ? `状态：${douyinLeadStatusLabel(item.status || item.interaction_status)}` : "",
+              item.comment ? `客户原评论：${item.comment}` : "",
+              item.sent_text ? `${action === "direct_message" ? "私信内容" : "评论内容"}：${item.sent_text}` : "",
+              item.source_video ? `来源视频：${item.source_video}` : "",
+              item.region ? `地区：${item.region}` : "",
+              item.account_id || item.interaction_account_id ? `执行账号：${item.account_id || item.interaction_account_id}` : "",
+              item.error ? `失败原因：${item.error}` : "",
+            ].filter(Boolean);
+            rows.push(renderTaskDetailRecord(`${idx + 1}. ${title || `客户 ${idx + 1}`}`, lines));
           });
           if (!rows.length) return "";
-          return `<div class="task-detail-section"><h4>私信结果预览</h4>${rows.join("")}</div>`;
+          return `<div class="task-detail-section"><h4>客户执行明细</h4>${rows.join("")}</div>`;
         }
         if (action === "tasks_from_search") {
           const rawResult = data.raw_result && typeof data.raw_result === "object" ? data.raw_result : {};

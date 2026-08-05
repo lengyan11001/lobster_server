@@ -53,3 +53,23 @@ def test_h5_sales_preset_dispatches_douyin_without_business_params():
     assert "payload: { action: salesAction }" in script
     assert "next.payload = { action: salesWorkflowActionForNote" in script
     assert 'payload: { action: "search_collect", params: { keyword: prompt, sales_action:' not in script
+
+
+def test_h5_renders_all_sales_douyin_results_and_private_message_content():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    for action in (
+        "account_nurture",
+        "search_collect",
+        "reply_comments",
+        "mention_comment",
+        "follow_comment",
+        "direct_message",
+        "stranger_message",
+    ):
+        assert f"{action}: {{" in script
+
+    assert 'item.incoming_message || item.preview_text ? `客户消息：' in script
+    assert 'item.reply_message ? `回复内容：${item.reply_message}`' in script
+    assert 'item.reply_error ? `回复失败原因：${item.reply_error}`' in script
+    assert 'data.conversation_scope === "recent" ? "本轮无新增，以下展示最近会话"' in script
