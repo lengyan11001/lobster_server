@@ -139,6 +139,9 @@ class H5WechatAutoReplyIn(BaseModel):
     account_key: Optional[str] = Field(default="wechat:pc-default", max_length=255)
     account_id: Optional[str] = Field(default="pc-wechat-default", max_length=160)
     interval_seconds: int = Field(default=1800, ge=300, le=86400)
+    memory_doc_ids: Optional[List[str]] = Field(default=None, max_length=20)
+    group_invite_keywords: Optional[str] = Field(default=None, max_length=2000)
+    group_invite_contacts: Optional[List[str]] = Field(default=None, max_length=20)
 
 
 def _normalize_publish_account_snapshot(accounts: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
@@ -461,6 +464,17 @@ def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
         if row.get("scope") == "wechat":
             row["auto_reply_enabled"] = bool(auto_reply_payload.get("enabled") or auto_reply_payload.get("auto_reply_enabled"))
             row["auto_reply_interval_seconds"] = int(auto_reply_payload.get("interval_seconds") or 1800)
+            row["auto_reply_memory_doc_ids"] = [
+                str(item or "").strip()
+                for item in (auto_reply_payload.get("memory_doc_ids") or [])
+                if str(item or "").strip()
+            ][:20]
+            row["group_invite_keywords"] = str(auto_reply_payload.get("group_invite_keywords") or "").strip()
+            row["group_invite_contacts"] = [
+                str(item or "").strip()
+                for item in (auto_reply_payload.get("group_invite_contacts") or [])
+                if str(item or "").strip()
+            ][:20]
     return {"ok": True, "accounts": accounts, "defaults": default_payload, "devices": device_rows}
 
 
@@ -1419,11 +1433,36 @@ def h5_set_wechat_auto_reply(
     pref.account_label = str(account.get("nickname") or "本机微信")[:255]
     pref.installation_id = installation_id
     pref.source = "pc_wechat"
+    current_pref_payload = pref.payload if isinstance(pref.payload, dict) else {}
+    memory_doc_ids = current_pref_payload.get("memory_doc_ids") if body.memory_doc_ids is None else body.memory_doc_ids
+    memory_doc_ids = list(
+        dict.fromkeys(
+            re.sub(r"[^a-zA-Z0-9_-]", "", str(item or "").strip())[:64]
+            for item in (memory_doc_ids or [])
+            if re.sub(r"[^a-zA-Z0-9_-]", "", str(item or "").strip())
+        )
+    )[:20]
+    group_invite_keywords = (
+        current_pref_payload.get("group_invite_keywords")
+        if body.group_invite_keywords is None
+        else body.group_invite_keywords
+    )
+    group_invite_contacts = (
+        current_pref_payload.get("group_invite_contacts")
+        if body.group_invite_contacts is None
+        else body.group_invite_contacts
+    )
+    group_invite_contacts = list(
+        dict.fromkeys(str(item or "").strip()[:240] for item in (group_invite_contacts or []) if str(item or "").strip())
+    )[:20]
     pref.payload = {
         "enabled": bool(body.enabled),
         "interval_seconds": interval_seconds,
         "account_id": account_id,
         "account_key": account_key,
+        "memory_doc_ids": memory_doc_ids,
+        "group_invite_keywords": str(group_invite_keywords or "").strip()[:2000],
+        "group_invite_contacts": group_invite_contacts,
     }
     pref.updated_at = now
 
@@ -1432,6 +1471,9 @@ def h5_set_wechat_auto_reply(
         "account_id": account_id,
         "enabled": bool(body.enabled),
         "interval_seconds": interval_seconds,
+        "memory_doc_ids": memory_doc_ids,
+        "group_invite_keywords": str(group_invite_keywords or "").strip()[:2000],
+        "group_invite_contacts": group_invite_contacts,
     }
     message = H5ChatMessage(
         id=uuid.uuid4().hex,

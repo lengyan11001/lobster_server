@@ -2517,6 +2517,44 @@
       font-size: 12px;
       font-weight: 800;
     }
+    .mounted-wechat-takeover {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid rgba(19,168,115,.2);
+      border-radius: 16px;
+      background: rgba(247,252,250,.94);
+    }
+    .mounted-wechat-takeover.hidden { display: none; }
+    .mounted-wechat-takeover-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .mounted-wechat-takeover-head > div { display: grid; gap: 3px; min-width: 0; }
+    .mounted-wechat-takeover-head strong { color: #17362f; font-size: 14px; font-weight: 600; }
+    .mounted-wechat-takeover-head small { color: #71827d; font-size: 11px; line-height: 1.45; }
+    .mounted-wechat-takeover-head button { min-height: 34px; padding: 0 14px; flex: 0 0 auto; }
+    .mounted-wechat-takeover-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .mounted-wechat-takeover-grid label {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+      color: #526178;
+      font-size: 12px;
+    }
+    .mounted-wechat-takeover-grid label.full { grid-column: 1 / -1; }
+    .mounted-wechat-takeover-grid input,
+    .mounted-wechat-takeover-grid select { width: 100%; min-width: 0; height: 40px; }
+    @media (max-width: 520px) {
+      .mounted-wechat-takeover-grid { grid-template-columns: 1fr; }
+      .mounted-wechat-takeover-grid label.full { grid-column: auto; }
+    }
     .setting-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .profile-entry {
       width: 100%;

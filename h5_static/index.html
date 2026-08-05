@@ -905,6 +905,28 @@
           <div class="mounted-account-list" id="mountedAccountList">
             <div class="mounted-account-empty">正在加载...</div>
           </div>
+          <div class="mounted-wechat-takeover" id="mountedWechatTakeoverConfig">
+            <div class="mounted-wechat-takeover-head">
+              <div>
+                <strong>微信接管设置</strong>
+                <small>AI 根据消息上下文、关键词和记忆判断拉群条件</small>
+              </div>
+              <button class="hero-action" type="button" id="mountedWechatTakeoverSaveBtn">保存</button>
+            </div>
+            <div class="mounted-wechat-takeover-grid">
+              <label class="full">记忆文件
+                <select id="mountedWechatMemoryDocSelect">
+                  <option value="">不指定，使用系统优先记忆</option>
+                </select>
+              </label>
+              <label>拉群条件关键词
+                <input id="mountedWechatGroupInviteKeywords" type="text" placeholder="咨询报价、预约体验、确定合作">
+              </label>
+              <label>拉群陪同联系人
+                <input id="mountedWechatGroupInviteContacts" type="text" placeholder="多个联系人用逗号分隔">
+              </label>
+            </div>
+          </div>
         </div>
       </section>
 

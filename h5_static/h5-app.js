@@ -92,6 +92,7 @@
       mountedAccountsLoaded: false,
       mountedAccountsLoading: false,
       mountedAccountTab: "wechat",
+      mountedWechatMemoryLoading: false,
       publishRunDraft: null,
       publishRunSubmitting: false,
       userUploadAssetCache: {},
@@ -786,7 +787,7 @@
     const SALES_WORKFLOW_PRESET = [
       { time: "06:00", endTime: "06:30", key: "local_bestseller", label: "创作同城爆款视频", note: "创作一条同城爆款视频（用于发公域平台）", actions: [{ time: "08:45", platform: "douyin", label: "同城爆款视频发布抖音", note: "同城爆款视频发布抖音，配文案、带标签发布" }, { time: "09:00", platform: "wechat_channels", label: "同城爆款视频发布视频号", note: "同城爆款视频发布视频号，配文案、带标签发布" }] },
       { time: "06:30", endTime: "07:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "09:30", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
-      { time: "07:00", endTime: "07:15", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中提取明确微信号后加好友，没有明确微信号则跳过", params: { source_mode: "douyin_private_message_wechat_id", trigger: "clear_wechat_id", skip_without_clear_wechat_id: true } },
+      { time: "07:00", endTime: "07:15", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中识别客户发送的手机号并加好友，没有手机号则跳过", params: { source_mode: "douyin_private_message_phone", trigger: "clear_mobile", skip_without_clear_mobile: true } },
       { time: "07:15", endTime: "07:30", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
       { time: "07:30", endTime: "07:45", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "07:45", endTime: "08:15", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
@@ -801,7 +802,7 @@
       { time: "12:00", endTime: "12:15", key: "douyin_leads", label: "抖音回复精准客户评论10个", note: "抖音回复精准客户评论10个" },
       { time: "12:15", endTime: "12:30", key: "douyin_leads", label: "抖音自己评论区接管", note: "抖音自己评论区接管，评论并@10个精准客户" },
       { time: "12:30", endTime: "12:45", key: "douyin_leads", label: "抖音关注精准客户并评论首条作品", note: "抖音关注10个精准客户，并找到他的首条作品去评论" },
-      { time: "12:45", endTime: "13:00", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中提取明确微信号后加好友，没有明确微信号则跳过", params: { source_mode: "douyin_private_message_wechat_id", trigger: "clear_wechat_id", skip_without_clear_wechat_id: true } },
+      { time: "12:45", endTime: "13:00", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中识别客户发送的手机号并加好友，没有手机号则跳过", params: { source_mode: "douyin_private_message_phone", trigger: "clear_mobile", skip_without_clear_mobile: true } },
       { time: "13:00", endTime: "13:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
       { time: "13:15", endTime: "13:30", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "13:30", endTime: "13:45", key: "native_wechat_moments_engage", label: "微信朋友圈自己评论区接管", note: "微信朋友圈自己评论区接管", params: { moment_action: "comment" } },
@@ -819,7 +820,7 @@
       { time: "17:30", endTime: "17:45", key: "douyin_leads", label: "抖音回复精准客户评论10个", note: "抖音回复精准客户评论10个" },
       { time: "17:45", endTime: "18:00", key: "douyin_leads", label: "抖音自己评论区接管", note: "抖音自己评论区接管，评论并@10个精准客户" },
       { time: "18:00", endTime: "18:15", key: "douyin_leads", label: "抖音关注精准客户并评论首条作品", note: "抖音关注10个精准客户，并找到他的首条作品去评论" },
-      { time: "18:15", endTime: "18:30", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中提取明确微信号后加好友，没有明确微信号则跳过", params: { source_mode: "douyin_private_message_wechat_id", trigger: "clear_wechat_id", skip_without_clear_wechat_id: true } },
+      { time: "18:15", endTime: "18:30", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中识别客户发送的手机号并加好友，没有手机号则跳过", params: { source_mode: "douyin_private_message_phone", trigger: "clear_mobile", skip_without_clear_mobile: true } },
       { time: "18:30", endTime: "18:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
       { time: "18:45", endTime: "19:00", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "19:00", endTime: "19:15", key: "douyin_leads", label: "抖音主动私信精准客户", note: "抖音主动私信10个精准客户" },
@@ -827,7 +828,7 @@
       { time: "19:30", endTime: "20:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "20:00", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
       { time: "20:15", endTime: "20:30", key: "wechat_channels_comment", label: "视频号评论区接管（敬请期待）", note: "视频号评论区接管", comingSoon: true },
       { time: "20:30", endTime: "20:45", key: "wechat_channels_message", label: "视频号私信接管（敬请期待）", note: "视频号私信接管", comingSoon: true },
-      { time: "20:45", endTime: "21:00", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中提取明确微信号后加好友，没有明确微信号则跳过", params: { source_mode: "douyin_private_message_wechat_id", trigger: "clear_wechat_id", skip_without_clear_wechat_id: true } },
+      { time: "20:45", endTime: "21:00", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中识别客户发送的手机号并加好友，没有手机号则跳过", params: { source_mode: "douyin_private_message_phone", trigger: "clear_mobile", skip_without_clear_mobile: true } },
       { time: "21:00", endTime: "22:00", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
       { time: "22:00", endTime: "22:15", key: "native_wechat_poll", label: "微信自动拉群", note: "微信私信接管后判断特殊意向，命中后拉群；拉群成员规则待配置", params: { followup_action: "group_invite", group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "22:15", endTime: "22:30", key: "native_wechat_moments_engage", label: "朋友圈点赞评论（微信）", note: "朋友圈点赞评论（微信）" },
@@ -988,7 +989,8 @@
     }
 
     function normalizeSalesWorkflowNodes(nodes) {
-      return (Array.isArray(nodes) ? nodes : []).map(normalizeSalesWorkflowNode).filter(Boolean);
+      const normalized = (Array.isArray(nodes) ? nodes : []).map(normalizeSalesWorkflowNode).filter(Boolean);
+      return migrateSalesDouyinAddFriendChildren(normalized);
     }
 
     function salesWorkflowActionForNote(note) {
@@ -3467,6 +3469,13 @@
       return Math.max(0, e - s);
     }
 
+    function salesWorkflowTimeAfter(value, minutes = 15) {
+      const match = /^(\d{2}):(\d{2})$/.exec(String(value || ""));
+      if (!match) return "00:15";
+      const total = (Number(match[1]) * 60 + Number(match[2]) + Number(minutes || 0)) % (24 * 60);
+      return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+    }
+
     function mergeSalesWorkflowPresetParams(plan, row) {
       const next = JSON.parse(JSON.stringify(plan || {}));
       const payload = next.payload && typeof next.payload === "object" ? next.payload : {};
@@ -3526,7 +3535,10 @@
     }
 
     function isSalesWechatAddFriendRow(row) {
-      return String(row && row.key || "") === "native_wechat_add_friend" || salesWorkflowRowText(row).includes("微信自动加好友");
+      const plan = row && row.plan && typeof row.plan === "object" ? row.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      return [row && row.key, row && row.ability_key, payload.action].some((value) => String(value || "") === "native_wechat_add_friend")
+        || salesWorkflowRowText(row).includes("微信自动加好友");
     }
 
     function isSalesWechatPrivateNode(node) {
@@ -3632,37 +3644,79 @@
       const child = salesWorkflowNativeChild(parentNode, row, index, {
         action_type: "native_wechat_add_friend",
         params: {
-          source_mode: "douyin_private_message_wechat_id",
-          trigger: "clear_wechat_id",
-          skip_without_clear_wechat_id: true,
+          source_mode: "douyin_private_message_phone",
+          trigger: "clear_mobile",
+          skip_without_clear_mobile: true,
           targets: [],
         },
       });
       if (!appendSalesWorkflowChild(parentNode, child)) return false;
       const existingRules = (((parentNode.plan || {}).payload || {}).params || {}).wechat_add_friend_rules;
+      const rules = (Array.isArray(existingRules) ? existingRules : []).filter((item) => String(item && item.child_node_id || "") !== String(child.id || ""));
       mergeSalesWorkflowParentParams(parentNode, {
         wechat_add_friend_enabled: true,
-        wechat_add_friend_targets_source: "douyin_private_message_wechat_id",
+        wechat_add_friend_targets_source: "douyin_private_message_phone",
         wechat_add_friend_rules: [
-          ...(Array.isArray(existingRules) ? existingRules : []),
+          ...rules,
           {
             child_node_id: child.id,
             time: child.time,
-            trigger: "clear_wechat_id",
-            skip_without_clear_wechat_id: true,
+            trigger: "clear_mobile",
+            skip_without_clear_mobile: true,
           },
         ],
       });
       return true;
     }
 
+    function migrateSalesDouyinAddFriendChildren(nodes) {
+      const list = Array.isArray(nodes) ? nodes : [];
+      const parents = list.filter(isSalesDouyinPrivateNode);
+      if (!parents.length) return list;
+      const legacyRows = list.filter(isSalesWechatAddFriendRow);
+      const legacy = legacyRows[0] || {};
+      const legacyPayload = legacy.plan && legacy.plan.payload && typeof legacy.plan.payload === "object" ? legacy.plan.payload : {};
+      const legacyParams = legacyPayload.params && typeof legacyPayload.params === "object" ? legacyPayload.params : {};
+      const prepared = list.filter((node) => !isSalesWechatAddFriendRow(node));
+      parents.forEach((parentNode, index) => {
+        const children = workflowChildActions(parentNode).slice();
+        const existing = children.find(isSalesWechatAddFriendRow);
+        if (!existing) {
+          attachSalesWechatAddFriend(parentNode, {
+            key: "native_wechat_add_friend",
+            time: parentNode.end_time || salesWorkflowTimeAfter(parentNode.time, 15),
+            label: "微信自动加好友",
+            note: "识别抖音私信中客户发送的手机号并自动加好友，没有手机号则跳过",
+            params: legacyParams,
+          }, index);
+          return;
+        }
+        const plan = existing.plan && typeof existing.plan === "object" ? existing.plan : {};
+        const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+        const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+        existing.parent_node_id = String(parentNode.id || "");
+        existing.action_type = "native_wechat_add_friend";
+        existing.type = "native_wechat_add_friend";
+        existing.ability_key = "native_wechat_add_friend";
+        existing.plan = nativeWechatWorkflowPlan("native_wechat_add_friend", existing.note || existing.ability_label, {
+          ...legacyParams,
+          ...params,
+          source_workflow_node_id: String(parentNode.id || ""),
+          source_workflow_node_label: String(parentNode.ability_label || parentNode.note || ""),
+          source_mode: "douyin_private_message_phone",
+          trigger: "clear_mobile",
+          skip_without_clear_mobile: true,
+          targets: [],
+        });
+      });
+      return prepared;
+    }
+
     function buildSalesWorkflowPresetNodes() {
       const nodes = [];
-      const pendingAddFriendRows = [];
+      const addFriendPreset = SALES_WORKFLOW_PRESET.find(isSalesWechatAddFriendRow);
       SALES_WORKFLOW_PRESET.forEach((row, index) => {
         if (isSalesWechatAddFriendRow(row)) {
-          const parent = nodes.slice().reverse().find(isSalesDouyinPrivateNode);
-          if (!attachSalesWechatAddFriend(parent, row, index)) pendingAddFriendRows.push({ row, index });
           return;
         }
         if (isSalesWechatGroupInviteRow(row)) {
@@ -3692,11 +3746,13 @@
           node.children = actions.map((action, actionIndex) => salesWorkflowPublishAction(node, action, actionIndex));
         }
         nodes.push(node);
-        if (isSalesDouyinPrivateNode(node) && pendingAddFriendRows.length) {
-          const item = pendingAddFriendRows[0];
-          const rowAfterParent = { ...item.row, time: node.end_time || node.time || item.row.time, endTime: "" };
-          attachSalesWechatAddFriend(node, rowAfterParent, item.index);
-          pendingAddFriendRows.splice(0);
+        if (isSalesDouyinPrivateNode(node) && addFriendPreset) {
+          const rowAfterParent = {
+            ...addFriendPreset,
+            time: node.end_time || node.time || addFriendPreset.time,
+            endTime: "",
+          };
+          attachSalesWechatAddFriend(node, rowAfterParent, index);
         }
       });
       return nodes.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
@@ -11784,6 +11840,44 @@
       });
     }
 
+    function mountedWechatAccountRow() {
+      return mountedAccountRowsForTab("wechat")[0] || null;
+    }
+
+    function splitMountedWechatValues(value) {
+      return String(value || "").split(/[,，;；\n]+/).map((item) => item.trim()).filter(Boolean);
+    }
+
+    function renderMountedWechatTakeoverConfig() {
+      const panel = $("mountedWechatTakeoverConfig");
+      if (!panel) return;
+      const row = mountedWechatAccountRow();
+      const visible = state.mountedAccountTab === "wechat" && !!row;
+      panel.classList.toggle("hidden", !visible);
+      if (!visible) return;
+      const select = $("mountedWechatMemoryDocSelect");
+      if (select) {
+        const selected = Array.isArray(row.auto_reply_memory_doc_ids) && row.auto_reply_memory_doc_ids.length
+          ? String(row.auto_reply_memory_doc_ids[0] || "")
+          : "";
+        select.innerHTML = [
+          '<option value="">不指定，使用系统优先记忆</option>',
+          ...(state.personalMemoryDocs || []).map((doc) => {
+            const id = String(doc.doc_id || doc.id || "");
+            if (!id) return "";
+            return `<option value="${escapeHtml(id)}">${escapeHtml(doc.title || doc.filename || id)}</option>`;
+          }),
+        ].join("");
+        select.value = selected;
+      }
+      const keywords = $("mountedWechatGroupInviteKeywords");
+      if (keywords && document.activeElement !== keywords) keywords.value = row.group_invite_keywords || "";
+      const contacts = $("mountedWechatGroupInviteContacts");
+      if (contacts && document.activeElement !== contacts) {
+        contacts.value = Array.isArray(row.group_invite_contacts) ? row.group_invite_contacts.join("，") : "";
+      }
+    }
+
     function renderMountedAccounts() {
       const list = $("mountedAccountList");
       const summary = $("mountedAccountSummary");
@@ -11801,6 +11895,7 @@
       const rows = mountedAccountRowsForTab().slice();
       if (!rows.length) {
         list.innerHTML = `<div class="mounted-account-empty">暂无在线${escapeHtml(mountedScopeLabel(state.mountedAccountTab))}账号</div>`;
+        renderMountedWechatTakeoverConfig();
         return;
       }
       const scopeOrder = { wechat: 0, publish: 1, douyin: 2 };
@@ -11836,6 +11931,7 @@
           ${action}
         </div>`;
       }).join("");
+      renderMountedWechatTakeoverConfig();
     }
 
     async function loadMountedAccounts(force = false) {
@@ -11852,6 +11948,13 @@
         state.mountedAccountDefaults = data.defaults || {};
         if (state.publishAccountsLoaded) state.publishAccounts = applyPublishAccountDefaults(state.publishAccounts);
         state.mountedAccountsLoaded = true;
+        if (state.mountedAccountTab === "wechat" && !state.personalMemoryDocs.length && !state.mountedWechatMemoryLoading) {
+          state.mountedWechatMemoryLoading = true;
+          loadPersonalMemoryDocs().then((rows) => {
+            state.personalMemoryDocs = Array.isArray(rows) ? rows : [];
+            renderMountedWechatTakeoverConfig();
+          }).catch(() => {}).finally(() => { state.mountedWechatMemoryLoading = false; });
+        }
       } catch (err) {
         state.mountedAccounts = [];
         state.mountedAccountDefaults = {};
@@ -11896,6 +11999,34 @@
         state.mountedAccountDefaults = data.defaults || state.mountedAccountDefaults || {};
         renderMountedAccounts();
         toast(enabled ? "个人微信自动回复已开启" : "个人微信自动回复已关闭");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function saveMountedWechatTakeoverConfig(btn) {
+      const row = mountedWechatAccountRow();
+      if (!row) throw new Error("未找到在线微信设备");
+      if (btn) btn.disabled = true;
+      try {
+        const memoryDocId = String($("mountedWechatMemoryDocSelect")?.value || "").trim();
+        const data = await api("/api/h5-chat/mounted-accounts/wechat-auto-reply", {
+          method: "POST",
+          json: {
+            enabled: !!row.auto_reply_enabled,
+            installation_id: row.installation_id || state.selectedInstallationId || "",
+            account_key: row.account_key || "wechat:pc-default",
+            account_id: row.account_id || "pc-wechat-default",
+            interval_seconds: Number(row.auto_reply_interval_seconds || 1800),
+            memory_doc_ids: memoryDocId ? [memoryDocId] : [],
+            group_invite_keywords: String($("mountedWechatGroupInviteKeywords")?.value || "").trim(),
+            group_invite_contacts: splitMountedWechatValues($("mountedWechatGroupInviteContacts")?.value || ""),
+          },
+        });
+        state.mountedAccounts = Array.isArray(data.accounts) ? data.accounts : state.mountedAccounts;
+        state.mountedAccountDefaults = data.defaults || state.mountedAccountDefaults || {};
+        renderMountedAccounts();
+        toast("微信接管设置已保存");
       } finally {
         if (btn) btn.disabled = false;
       }
@@ -19158,6 +19289,9 @@
       const btn = evt.target.closest("[data-mounted-default-key]");
       if (!btn) return;
       setMountedAccountDefault(btn.dataset.mountedDefaultScope || "", btn.dataset.mountedDefaultKey || "").catch((err) => toast(err.message || "设置默认账号失败"));
+    });
+    $("mountedWechatTakeoverSaveBtn")?.addEventListener("click", (evt) => {
+      saveMountedWechatTakeoverConfig(evt.currentTarget).catch((err) => toast(err.message || "微信接管设置保存失败"));
     });
     $("personalSettingsTabs")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-personal-tab]");

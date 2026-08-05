@@ -130,9 +130,9 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
                 }
             )
             if action == "native_wechat_add_friend":
-                params.setdefault("source_mode", "douyin_private_message_wechat_id")
-                params.setdefault("trigger", "clear_wechat_id")
-                params.setdefault("skip_without_clear_wechat_id", True)
+                params.setdefault("source_mode", "douyin_private_message_phone")
+                params.setdefault("trigger", "clear_mobile")
+                params.setdefault("skip_without_clear_mobile", True)
                 params.setdefault("targets", [])
             if action == "native_wechat_poll" and (
                 action_type == "native_wechat_group_invite"
@@ -981,6 +981,133 @@ def _normalize_sales_native_wechat_node(node: dict[str, Any]) -> None:
         _normalize_sales_native_wechat_node(child)
 
 
+def _workflow_time_after(value: Any, minutes: int = 15) -> str:
+    text = _clean_text(value, 5)
+    match = _TIME_RE.match(text)
+    if not match:
+        return "00:15"
+    total = (int(match.group(1)) * 60 + int(match.group(2)) + minutes) % (24 * 60)
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def _is_douyin_private_takeover_node(node: dict[str, Any]) -> bool:
+    payload = _node_payload(node)
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    text = _clean_text(
+        " ".join(
+            str(value or "")
+            for value in (node.get("ability_label"), node.get("note"), plan.get("title"))
+        ),
+        500,
+    )
+    return (
+        _clean_text(plan.get("task_kind"), 64) == "douyin_leads"
+        and (
+            _clean_text(payload.get("action"), 64) == "stranger_message"
+            or "抖音私信接管" in text
+        )
+    )
+
+
+def _is_native_wechat_add_friend_node(node: dict[str, Any]) -> bool:
+    payload = _node_payload(node)
+    return (
+        _clean_text(node.get("ability_key"), 128) == "native_wechat_add_friend"
+        or _clean_text(payload.get("action"), 128) == "native_wechat_add_friend"
+    )
+
+
+def _ensure_sales_douyin_add_friend_children(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Migrate legacy top-level add-friend rows under every Douyin takeover node."""
+    parents = [node for node in nodes if isinstance(node, dict) and _is_douyin_private_takeover_node(node)]
+    if not parents:
+        return nodes
+
+    legacy_rows = [node for node in nodes if isinstance(node, dict) and _is_native_wechat_add_friend_node(node)]
+    prepared = [node for node in nodes if not (isinstance(node, dict) and _is_native_wechat_add_friend_node(node))]
+    legacy_params: dict[str, Any] = {}
+    if legacy_rows:
+        raw_params = _node_payload(legacy_rows[0]).get("params")
+        if isinstance(raw_params, dict):
+            legacy_params = dict(raw_params)
+
+    for parent in parents:
+        parent_id = _clean_text(parent.get("id"), 64)
+        children = list(_workflow_child_nodes(parent))
+        existing = next((child for child in children if _is_native_wechat_add_friend_node(child)), None)
+        if existing is None:
+            child_time = _workflow_time_after(parent.get("time"), 15)
+            existing = {
+                "id": f"{parent_id}_native_add_friend"[:64],
+                "time": child_time,
+                "parent_node_id": parent_id,
+                "action_type": "native_wechat_add_friend",
+                "type": "native_wechat_add_friend",
+                "ability_key": "native_wechat_add_friend",
+                "ability_label": "微信自动加好友",
+                "department_id": _clean_text(parent.get("department_id"), 64) or "sales",
+                "department_name": _clean_text(parent.get("department_name"), 80) or "销售部",
+                "note": "识别抖音私信中客户发送的手机号并自动加好友，没有手机号则跳过",
+                "sales_preset": True,
+                "is_action_node": True,
+                "param_configured": True,
+            }
+            children.append(existing)
+
+        params = dict(legacy_params)
+        current_params = _node_payload(existing).get("params")
+        if isinstance(current_params, dict):
+            params.update(current_params)
+        params.update(
+            {
+                "source_workflow_node_id": parent_id,
+                "source_workflow_node_label": _clean_text(parent.get("ability_label") or parent.get("note"), 160),
+                "source_mode": "douyin_private_message_phone",
+                "trigger": "clear_mobile",
+                "skip_without_clear_mobile": True,
+                "targets": [],
+            }
+        )
+        existing["parent_node_id"] = parent_id
+        existing["action_type"] = "native_wechat_add_friend"
+        existing["type"] = "native_wechat_add_friend"
+        existing["ability_key"] = "native_wechat_add_friend"
+        if _clean_text(existing.get("time"), 5) in {"", _clean_text(parent.get("time"), 5)}:
+            existing["time"] = _workflow_time_after(parent.get("time"), 15)
+        existing["plan"] = _native_wechat_plan("native_wechat_add_friend", existing.get("note"), params)
+        children.sort(key=lambda child: _clean_text(child.get("time"), 5))
+        parent["children"] = children
+
+        parent_plan = parent.get("plan") if isinstance(parent.get("plan"), dict) else {}
+        parent_payload = parent_plan.get("payload") if isinstance(parent_plan.get("payload"), dict) else {}
+        parent_params = dict(parent_payload.get("params") if isinstance(parent_payload.get("params"), dict) else {})
+        rules = [
+            rule
+            for rule in parent_params.get("wechat_add_friend_rules", [])
+            if isinstance(rule, dict) and _clean_text(rule.get("child_node_id"), 64) != _clean_text(existing.get("id"), 64)
+        ]
+        rules.append(
+            {
+                "child_node_id": existing.get("id"),
+                "time": existing.get("time"),
+                "trigger": "clear_mobile",
+                "skip_without_clear_mobile": True,
+            }
+        )
+        parent_params.update(
+            {
+                "wechat_add_friend_enabled": True,
+                "wechat_add_friend_targets_source": "douyin_private_message_phone",
+                "wechat_add_friend_rules": rules,
+            }
+        )
+        parent_payload["params"] = parent_params
+        parent_plan["payload"] = parent_payload
+        parent["plan"] = parent_plan
+
+    return prepared
+
+
 def _prepare_sales_workflow_nodes(
     *,
     db: Session,
@@ -996,6 +1123,7 @@ def _prepare_sales_workflow_nodes(
     prepared = copy.deepcopy(nodes)
     for node in prepared:
         _normalize_sales_native_wechat_node(node)
+    prepared = _ensure_sales_douyin_add_friend_children(prepared)
     personal = _personal_default_template(db, owner.id)
     current_template = _current_personal_schedule_template(db, owner.id, personal)
     reference_template = current_template or personal
