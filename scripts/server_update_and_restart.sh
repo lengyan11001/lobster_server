@@ -48,12 +48,9 @@ if command -v journalctl >/dev/null 2>&1; then
   sudo journalctl --vacuum-time=3d >/dev/null 2>&1 || true
 fi
 
-echo "[Mastra] 安装固定 Node 运行时、依赖并构建 ..."
-"$ROOT/scripts/install_mastra_runtime.sh" "$ROOT"
+echo "[Mastra] 检查源码指纹与构建产物 ..."
+bash "$ROOT/scripts/build_mastra_if_needed.sh" "$ROOT"
 export PATH="$ROOT/.runtime/node/bin:$PATH"
-"$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/mastra_server" ci
-"$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/mastra_server" run typecheck
-"$ROOT/.runtime/node/bin/npm" --prefix "$ROOT/mastra_server" run build
 
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service 2>/dev/null | grep -q lobster-backend; then
   echo "[重启] systemctl stop + 端口清理 + start ..."
