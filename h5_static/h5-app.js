@@ -11872,9 +11872,30 @@
       }
       const keywords = $("mountedWechatGroupInviteKeywords");
       if (keywords && document.activeElement !== keywords) keywords.value = row.group_invite_keywords || "";
-      const contacts = $("mountedWechatGroupInviteContacts");
-      if (contacts && document.activeElement !== contacts) {
-        contacts.value = Array.isArray(row.group_invite_contacts) ? row.group_invite_contacts.join("，") : "";
+      const primarySelect = $("mountedWechatGroupInvitePrimaryContact");
+      if (primarySelect) {
+        const selected = String(
+          row.group_invite_primary_contact
+          || (Array.isArray(row.group_invite_contacts) ? row.group_invite_contacts[0] : "")
+          || ""
+        ).trim();
+        const contacts = Array.isArray(row.wechat_contacts) ? row.wechat_contacts : [];
+        const options = contacts.map((item) => {
+          const value = String(item && item.value || "").trim();
+          if (!value) return "";
+          const name = String(item.name || value).trim();
+          const detail = [item.remark && item.remark !== name ? `备注 ${item.remark}` : "", item.wx_no || ""].filter(Boolean).join(" · ");
+          return `<option value="${escapeHtml(value)}">${escapeHtml(name)}${detail ? ` · ${escapeHtml(detail)}` : ""}</option>`;
+        }).filter(Boolean);
+        if (selected && !contacts.some((item) => String(item && item.value || "") === selected)) {
+          options.unshift(`<option value="${escapeHtml(selected)}">${escapeHtml(row.group_invite_primary_contact_name || selected)}（已保存）</option>`);
+        }
+        primarySelect.innerHTML = `<option value="">${contacts.length ? "请从微信通讯录选择" : "暂无通讯录，请先在 Online 同步"}</option>${options.join("")}`;
+        primarySelect.value = selected;
+      }
+      const welcome = $("mountedWechatGroupInviteWelcomeMessage");
+      if (welcome && document.activeElement !== welcome) {
+        welcome.value = row.group_invite_welcome_message || "";
       }
     }
 
@@ -12010,6 +12031,12 @@
       if (btn) btn.disabled = true;
       try {
         const memoryDocId = String($("mountedWechatMemoryDocSelect")?.value || "").trim();
+        const primarySelect = $("mountedWechatGroupInvitePrimaryContact");
+        const primaryContact = String(primarySelect?.value || "").trim();
+        const primaryOption = primarySelect?.selectedOptions?.[0];
+        const primaryContactName = primaryContact
+          ? String(primaryOption?.textContent || primaryContact).replace(/（已保存）$/, "").split(" · ")[0].trim()
+          : "";
         const data = await api("/api/h5-chat/mounted-accounts/wechat-auto-reply", {
           method: "POST",
           json: {
@@ -12020,7 +12047,10 @@
             interval_seconds: Number(row.auto_reply_interval_seconds || 1800),
             memory_doc_ids: memoryDocId ? [memoryDocId] : [],
             group_invite_keywords: String($("mountedWechatGroupInviteKeywords")?.value || "").trim(),
-            group_invite_contacts: splitMountedWechatValues($("mountedWechatGroupInviteContacts")?.value || ""),
+            group_invite_contacts: primaryContact ? [primaryContact] : [],
+            group_invite_primary_contact: primaryContact,
+            group_invite_primary_contact_name: primaryContactName,
+            group_invite_welcome_message: String($("mountedWechatGroupInviteWelcomeMessage")?.value || "").trim(),
           },
         });
         state.mountedAccounts = Array.isArray(data.accounts) ? data.accounts : state.mountedAccounts;

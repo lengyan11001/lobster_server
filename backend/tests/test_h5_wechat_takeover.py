@@ -40,6 +40,9 @@ def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_sessio
             memory_doc_ids=["faq-doc"],
             group_invite_keywords="咨询报价，预约体验",
             group_invite_contacts=["销售经理"],
+            group_invite_primary_contact="销售经理",
+            group_invite_primary_contact_name="王经理",
+            group_invite_welcome_message="您好，我把负责接待的王经理拉进群了。",
         ),
         current_user=test_user,
         db=db_session,
@@ -54,11 +57,16 @@ def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_sessio
     assert pref.payload["memory_doc_ids"] == ["faq-doc"]
     assert pref.payload["group_invite_keywords"] == "咨询报价，预约体验"
     assert pref.payload["group_invite_contacts"] == ["销售经理"]
+    assert pref.payload["group_invite_primary_contact"] == "销售经理"
+    assert pref.payload["group_invite_primary_contact_name"] == "王经理"
+    assert pref.payload["group_invite_welcome_message"].startswith("您好")
 
     message = db_session.query(H5ChatMessage).order_by(H5ChatMessage.created_at.desc()).first()
     command = json.loads(message.content.removeprefix(h5_chat._H5_CLIENT_COMMAND_PREFIX))
     assert command["memory_doc_ids"] == ["faq-doc"]
     assert command["group_invite_contacts"] == ["销售经理"]
+    assert command["group_invite_primary_contact"] == "销售经理"
+    assert command["group_invite_welcome_message"].startswith("您好")
 
 
 def test_add_friend_child_defaults_to_douyin_private_message_phone():
@@ -89,11 +97,38 @@ def test_h5_exposes_wechat_memory_and_group_condition_settings():
 
     assert 'id="mountedWechatMemoryDocSelect"' in html
     assert 'id="mountedWechatGroupInviteKeywords"' in html
-    assert 'id="mountedWechatGroupInviteContacts"' in html
+    assert 'id="mountedWechatGroupInvitePrimaryContact"' in html
+    assert 'id="mountedWechatGroupInviteWelcomeMessage"' in html
     assert "function saveMountedWechatTakeoverConfig" in script
     assert 'source_mode: "douyin_private_message_phone"' in script
     assert "if (isSalesDouyinPrivateNode(node) && addFriendPreset)" in script
     assert "attachSalesWechatAddFriend(node, rowAfterParent, index);" in script
+
+
+def test_wechat_contact_snapshot_only_keeps_contact_selector_fields():
+    rows = h5_chat._normalize_wechat_contact_snapshot(
+        [
+            {
+                "value": "王经理",
+                "name": "王伟",
+                "contact_key": "wxid-manager",
+                "remark": "王经理",
+                "wx_no": "manager_wang",
+                "raw_json": {"private": "not exposed"},
+            },
+            {"value": "王经理", "name": "重复项"},
+        ]
+    )
+
+    assert rows == [
+        {
+            "value": "王经理",
+            "name": "王伟",
+            "contact_key": "wxid-manager",
+            "remark": "王经理",
+            "wx_no": "manager_wang",
+        }
+    ]
 
 
 def test_legacy_sales_add_friend_rows_migrate_under_each_douyin_takeover():

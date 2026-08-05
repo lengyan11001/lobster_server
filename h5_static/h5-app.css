@@ -2550,7 +2550,11 @@
     }
     .mounted-wechat-takeover-grid label.full { grid-column: 1 / -1; }
     .mounted-wechat-takeover-grid input,
-    .mounted-wechat-takeover-grid select { width: 100%; min-width: 0; height: 40px; }
+    .mounted-wechat-takeover-grid select,
+    .mounted-wechat-takeover-grid textarea { width: 100%; min-width: 0; }
+    .mounted-wechat-takeover-grid input,
+    .mounted-wechat-takeover-grid select { height: 40px; }
+    .mounted-wechat-takeover-grid textarea { min-height: 76px; resize: vertical; }
     @media (max-width: 520px) {
       .mounted-wechat-takeover-grid { grid-template-columns: 1fr; }
       .mounted-wechat-takeover-grid label.full { grid-column: auto; }

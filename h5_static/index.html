@@ -922,8 +922,13 @@
               <label>拉群条件关键词
                 <input id="mountedWechatGroupInviteKeywords" type="text" placeholder="咨询报价、预约体验、确定合作">
               </label>
-              <label>拉群陪同联系人
-                <input id="mountedWechatGroupInviteContacts" type="text" placeholder="多个联系人用逗号分隔">
+              <label>拉群主联系人
+                <select id="mountedWechatGroupInvitePrimaryContact">
+                  <option value="">请从微信通讯录选择</option>
+                </select>
+              </label>
+              <label class="full">建群欢迎话术
+                <textarea id="mountedWechatGroupInviteWelcomeMessage" rows="3" placeholder="建群成功后自动发送，之后由主联系人继续接待"></textarea>
               </label>
             </div>
           </div>

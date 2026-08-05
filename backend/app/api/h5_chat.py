@@ -122,6 +122,7 @@ class H5ChatCompleteIn(BaseModel):
 class H5HeartbeatIn(BaseModel):
     display_name: Optional[str] = None
     publish_accounts: Optional[List[Dict[str, Any]]] = None
+    wechat_contacts: Optional[List[Dict[str, Any]]] = None
 
 
 class H5DeviceDisplayNameIn(BaseModel):
@@ -142,6 +143,9 @@ class H5WechatAutoReplyIn(BaseModel):
     memory_doc_ids: Optional[List[str]] = Field(default=None, max_length=20)
     group_invite_keywords: Optional[str] = Field(default=None, max_length=2000)
     group_invite_contacts: Optional[List[str]] = Field(default=None, max_length=20)
+    group_invite_primary_contact: Optional[str] = Field(default=None, max_length=240)
+    group_invite_primary_contact_name: Optional[str] = Field(default=None, max_length=240)
+    group_invite_welcome_message: Optional[str] = Field(default=None, max_length=4000)
 
 
 def _normalize_publish_account_snapshot(accounts: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
@@ -172,6 +176,33 @@ def _normalize_publish_account_snapshot(accounts: Optional[List[Dict[str, Any]]]
             row["is_origin_slot"] = bool(item.get("is_origin_slot"))
         out.append(row)
         if len(out) >= 200:
+            break
+    return out
+
+
+def _normalize_wechat_contact_snapshot(contacts: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, str]]]:
+    if contacts is None:
+        return None
+    out: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for item in contacts:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("value") or item.get("remark") or item.get("name") or "").strip()[:240]
+        name = str(item.get("name") or value).strip()[:240]
+        if not value or value.lower() in seen:
+            continue
+        seen.add(value.lower())
+        out.append(
+            {
+                "value": value,
+                "name": name or value,
+                "contact_key": str(item.get("contact_key") or "").strip()[:240],
+                "remark": str(item.get("remark") or "").strip()[:240],
+                "wx_no": str(item.get("wx_no") or "").strip()[:240],
+            }
+        )
+        if len(out) >= 500:
             break
     return out
 
@@ -285,7 +316,11 @@ def _mounted_account_row(
     return row
 
 
-def _collect_device_publish_accounts(db: Session, user_id: int, now: datetime) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
+def _collect_device_publish_accounts(
+    db: Session,
+    user_id: int,
+    now: datetime,
+) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]], Dict[str, list[Dict[str, str]]]]:
     devices = (
         db.query(H5ChatDevicePresence)
         .filter(H5ChatDevicePresence.user_id == user_id)
@@ -295,9 +330,12 @@ def _collect_device_publish_accounts(db: Session, user_id: int, now: datetime) -
     )
     device_rows = [_device_payload(row, now) for row in devices]
     out: list[Dict[str, Any]] = []
+    wechat_contacts_by_device: Dict[str, list[Dict[str, str]]] = {}
     seen: set[str] = set()
     for device, device_info in zip(devices, device_rows):
         payload = device.account_payload if isinstance(device.account_payload, dict) else {}
+        contacts = payload.get("wechat_contacts") if isinstance(payload.get("wechat_contacts"), list) else []
+        wechat_contacts_by_device[str(device.installation_id or "")] = [item for item in contacts if isinstance(item, dict)][:500]
         accounts = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
         for item in accounts:
             if not isinstance(item, dict):
@@ -336,7 +374,7 @@ def _collect_device_publish_accounts(db: Session, user_id: int, now: datetime) -
                     },
                 )
             )
-    return out, device_rows
+    return out, device_rows, wechat_contacts_by_device
 
 
 def _collect_server_publish_accounts(db: Session, user_id: int) -> list[Dict[str, Any]]:
@@ -419,7 +457,10 @@ def _collect_douyin_lead_accounts(db: Session, user_id: int, device_by_id: Dict[
     return out
 
 
-def _collect_wechat_account(device_rows: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+def _collect_wechat_account(
+    device_rows: list[Dict[str, Any]],
+    wechat_contacts_by_device: Optional[Dict[str, list[Dict[str, str]]]] = None,
+) -> list[Dict[str, Any]]:
     if not device_rows:
         return []
     selected = next((row for row in device_rows if row.get("online")), device_rows[0])
@@ -439,16 +480,21 @@ def _collect_wechat_account(device_rows: list[Dict[str, Any]]) -> list[Dict[str,
             device_name=str(selected.get("device_name") or ""),
             last_seen_at=str(selected.get("last_seen_at") or ""),
             defaultable=False,
+            extra={
+                "wechat_contacts": list(
+                    (wechat_contacts_by_device or {}).get(str(selected.get("installation_id") or ""), [])
+                )[:500]
+            },
         )
     ]
 
 
 def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
     now = datetime.utcnow()
-    publish_device_accounts, device_rows = _collect_device_publish_accounts(db, user_id, now)
+    publish_device_accounts, device_rows, wechat_contacts_by_device = _collect_device_publish_accounts(db, user_id, now)
     device_by_id = {str(row.get("installation_id") or ""): row for row in device_rows}
     accounts = (
-        _collect_wechat_account(device_rows)
+        _collect_wechat_account(device_rows, wechat_contacts_by_device)
         + publish_device_accounts
         + _collect_server_publish_accounts(db, user_id)
         + _collect_douyin_lead_accounts(db, user_id, device_by_id)
@@ -475,6 +521,9 @@ def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
                 for item in (auto_reply_payload.get("group_invite_contacts") or [])
                 if str(item or "").strip()
             ][:20]
+            row["group_invite_primary_contact"] = str(auto_reply_payload.get("group_invite_primary_contact") or "").strip()
+            row["group_invite_primary_contact_name"] = str(auto_reply_payload.get("group_invite_primary_contact_name") or "").strip()
+            row["group_invite_welcome_message"] = str(auto_reply_payload.get("group_invite_welcome_message") or "").strip()
     return {"ok": True, "accounts": accounts, "defaults": default_payload, "devices": device_rows}
 
 
@@ -1262,7 +1311,8 @@ def h5_device_heartbeat(
         raise HTTPException(status_code=400, detail="缺少 X-Installation-Id")
     heartbeat_key = _heartbeat_cache_key(current_user_id, xi)
     account_snapshot = _normalize_publish_account_snapshot(body.publish_accounts)
-    if account_snapshot is None and _heartbeat_fast_ack_recent(heartbeat_key):
+    wechat_contact_snapshot = _normalize_wechat_contact_snapshot(body.wechat_contacts)
+    if account_snapshot is None and wechat_contact_snapshot is None and _heartbeat_fast_ack_recent(heartbeat_key):
         return {"ok": True, "installation_id": xi, "throttled": True}
     _mark_heartbeat_fast_ack(heartbeat_key)
     now = datetime.utcnow()
@@ -1295,19 +1345,37 @@ def h5_device_heartbeat(
             and (now - previous_seen_at).total_seconds() < _DEVICE_HEARTBEAT_WRITE_MIN_SECONDS
             and not should_set_display_name
             and account_snapshot is None
+            and wechat_contact_snapshot is None
         ):
             return {"ok": True, "installation_id": xi, "last_seen_at": _iso(previous_seen_at), "throttled": True}
         row.last_seen_at = now
         if should_set_display_name:
             row.display_name = body.display_name.strip()[:128] or None
-        if account_snapshot is not None:
-            row.account_payload = {"accounts": account_snapshot, "reported_at": now.isoformat()}
+        if account_snapshot is not None or wechat_contact_snapshot is not None:
+            previous_payload = row.account_payload if isinstance(row.account_payload, dict) else {}
+            row.account_payload = {
+                "accounts": account_snapshot if account_snapshot is not None else previous_payload.get("accounts", []),
+                "wechat_contacts": (
+                    wechat_contact_snapshot
+                    if wechat_contact_snapshot is not None
+                    else previous_payload.get("wechat_contacts", [])
+                ),
+                "reported_at": now.isoformat(),
+            }
     else:
         row = H5ChatDevicePresence(
             user_id=current_user_id,
             installation_id=xi,
             display_name=(body.display_name or "").strip()[:128] or None,
-            account_payload={"accounts": account_snapshot, "reported_at": now.isoformat()} if account_snapshot is not None else None,
+            account_payload=(
+                {
+                    "accounts": account_snapshot or [],
+                    "wechat_contacts": wechat_contact_snapshot or [],
+                    "reported_at": now.isoformat(),
+                }
+                if account_snapshot is not None or wechat_contact_snapshot is not None
+                else None
+            ),
             last_seen_at=now,
             created_at=now,
         )
@@ -1455,6 +1523,26 @@ def h5_set_wechat_auto_reply(
     group_invite_contacts = list(
         dict.fromkeys(str(item or "").strip()[:240] for item in (group_invite_contacts or []) if str(item or "").strip())
     )[:20]
+    primary_contact = (
+        current_pref_payload.get("group_invite_primary_contact")
+        if body.group_invite_primary_contact is None
+        else body.group_invite_primary_contact
+    )
+    primary_contact = str(primary_contact or "").strip()[:240]
+    primary_contact_name = (
+        current_pref_payload.get("group_invite_primary_contact_name")
+        if body.group_invite_primary_contact_name is None
+        else body.group_invite_primary_contact_name
+    )
+    primary_contact_name = str(primary_contact_name or "").strip()[:240]
+    welcome_message = (
+        current_pref_payload.get("group_invite_welcome_message")
+        if body.group_invite_welcome_message is None
+        else body.group_invite_welcome_message
+    )
+    welcome_message = str(welcome_message or "").strip()[:4000]
+    if primary_contact:
+        group_invite_contacts = [primary_contact]
     pref.payload = {
         "enabled": bool(body.enabled),
         "interval_seconds": interval_seconds,
@@ -1463,6 +1551,9 @@ def h5_set_wechat_auto_reply(
         "memory_doc_ids": memory_doc_ids,
         "group_invite_keywords": str(group_invite_keywords or "").strip()[:2000],
         "group_invite_contacts": group_invite_contacts,
+        "group_invite_primary_contact": primary_contact,
+        "group_invite_primary_contact_name": primary_contact_name,
+        "group_invite_welcome_message": welcome_message,
     }
     pref.updated_at = now
 
@@ -1474,6 +1565,9 @@ def h5_set_wechat_auto_reply(
         "memory_doc_ids": memory_doc_ids,
         "group_invite_keywords": str(group_invite_keywords or "").strip()[:2000],
         "group_invite_contacts": group_invite_contacts,
+        "group_invite_primary_contact": primary_contact,
+        "group_invite_primary_contact_name": primary_contact_name,
+        "group_invite_welcome_message": welcome_message,
     }
     message = H5ChatMessage(
         id=uuid.uuid4().hex,
