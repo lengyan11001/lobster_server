@@ -26,7 +26,8 @@ from ..models import (
 )
 from .auth import get_current_user
 from .capabilities import _read_capability_catalog_json
-from .h5_chat import _DEVICE_ONLINE_TTL_SECONDS, _add_event, _serialize_message
+from ..services.device_presence import DEVICE_ONLINE_TTL_SECONDS
+from .h5_chat import _add_event, _serialize_message
 from .installation_slots import optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
 from .skills import user_can_use_capability
@@ -128,7 +129,7 @@ def _selected_installation(request: Request, explicit: Optional[str]) -> Optiona
 
 
 def _online_available(db: Session, user_id: int, installation_id: Optional[str]) -> bool:
-    cutoff = datetime.utcnow() - timedelta(seconds=_DEVICE_ONLINE_TTL_SECONDS)
+    cutoff = datetime.utcnow() - timedelta(seconds=DEVICE_ONLINE_TTL_SECONDS)
     query = db.query(H5ChatDevicePresence).filter(
         H5ChatDevicePresence.user_id == user_id,
         H5ChatDevicePresence.last_seen_at >= cutoff,

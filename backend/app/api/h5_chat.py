@@ -37,6 +37,7 @@ from ..models import (
     UserInstallation,
 )
 from ..services.brand_context import explicit_request_brand_mark, public_brand_config, request_brand_mark
+from ..services.device_presence import is_device_online
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token, validate_token_brand
 from .installation_slots import (
@@ -70,7 +71,6 @@ _CHAT_TURN_BILLING_SUPPORT_HEADER = "X-Lobster-Chat-Turn-Billing"
 _UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _MAX_H5_UPLOAD_BYTES = 15 * 1024 * 1024
 _MAX_MEDIA_PROXY_BYTES = 1024 * 1024 * 1024
-_DEVICE_ONLINE_TTL_SECONDS = 90
 _DEVICE_HEARTBEAT_WRITE_MIN_SECONDS = 20
 _DEVICE_HEARTBEAT_FAST_ACK_SECONDS = 55.0
 _PENDING_INSTALLATION_TOUCH_MIN_SECONDS = 60
@@ -179,12 +179,11 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
 
 def _device_payload(row: H5ChatDevicePresence, now: Optional[datetime] = None) -> Dict[str, Any]:
     current = now or datetime.utcnow()
-    age = (current - row.last_seen_at).total_seconds() if row.last_seen_at else 999999
     return {
         "installation_id": row.installation_id,
         "device_name": row.display_name or row.installation_id,
         "last_seen_at": _iso(row.last_seen_at),
-        "online": age <= _DEVICE_ONLINE_TTL_SECONDS,
+        "online": is_device_online(row.last_seen_at, now=current),
     }
 
 
@@ -1326,14 +1325,13 @@ def h5_update_device_display_name(
     db.commit()
     db.refresh(row)
     now = datetime.utcnow()
-    age = (now - row.last_seen_at).total_seconds() if row.last_seen_at else 999999
     return {
         "ok": True,
         "device": {
             "installation_id": row.installation_id,
             "display_name": row.display_name,
             "last_seen_at": _iso(row.last_seen_at),
-            "online": age <= _DEVICE_ONLINE_TTL_SECONDS,
+            "online": is_device_online(row.last_seen_at, now=now),
             "publish_account_count": len((row.account_payload or {}).get("accounts") or []) if isinstance(row.account_payload, dict) else 0,
         },
     }
@@ -1355,13 +1353,12 @@ def h5_devices_status(
     )
     devices = []
     for r in rows:
-        age = (now - r.last_seen_at).total_seconds() if r.last_seen_at else 999999
         devices.append(
             {
                 "installation_id": r.installation_id,
                 "display_name": r.display_name,
                 "last_seen_at": _iso(r.last_seen_at),
-                "online": age <= _DEVICE_ONLINE_TTL_SECONDS,
+                "online": is_device_online(r.last_seen_at, now=now),
                 "publish_account_count": len((r.account_payload or {}).get("accounts") or []) if isinstance(r.account_payload, dict) else 0,
             }
         )

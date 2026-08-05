@@ -55,6 +55,7 @@ from .wechat_channels_transcript import run_wechat_channels_transcript_payload_t
 from .installation_slots import ensure_installation_slot, installation_slot_id_for_user
 from .mobile_identity import online_user_for_mobile_user
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
+from ..services.device_presence import is_device_online
 
 router = APIRouter()
 
@@ -1552,6 +1553,22 @@ def _normalize_scheduled_completion_error(body: ScheduledTaskCompleteIn) -> str:
     payload = body.result_payload or {}
     if not isinstance(payload, dict):
         return ""
+    action = str(payload.get("action") or "").strip()
+    if action == "publish_content":
+        local_result = payload.get("local_result") if isinstance(payload.get("local_result"), dict) else {}
+        publish_result = local_result.get("publish_result") if isinstance(local_result.get("publish_result"), dict) else {}
+        if publish_result:
+            status = str(publish_result.get("status") or publish_result.get("state") or "").strip().lower()
+            nested_error = str(
+                publish_result.get("error")
+                or publish_result.get("message")
+                or publish_result.get("detail")
+                or ""
+            ).strip()
+            if bool(publish_result.get("need_login")) or status in {"need_login", "login_required"}:
+                return nested_error or "发布账号未登录，请登录后重试"
+            if publish_result.get("ok") is False or status in {"failed", "failure", "error", "timeout", "cancelled", "canceled"}:
+                return nested_error or f"发布失败{f'（{status}）' if status else ''}"
     capability_id = str(payload.get("capability_id") or "").strip()
     if capability_id != "goal.video.pipeline":
         return ""
@@ -1685,8 +1702,7 @@ def _reported_publish_accounts_from_devices(
     for device in devices:
         payload = device.account_payload if isinstance(device.account_payload, dict) else {}
         rows = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
-        age = (now - device.last_seen_at).total_seconds() if device.last_seen_at else 999999
-        device_online = age <= 90
+        device_online = is_device_online(device.last_seen_at, now=now)
         for item in rows:
             if not isinstance(item, dict):
                 continue
@@ -3357,7 +3373,7 @@ def admin_list_task_devices(
                 "installation_id": r.installation_id,
                 "display_name": r.display_name,
                 "last_seen_at": _iso(r.last_seen_at),
-                "online": ((now - r.last_seen_at).total_seconds() <= 20) if r.last_seen_at else False,
+                "online": is_device_online(r.last_seen_at, now=now),
             }
             for r in rows
         ],
@@ -3416,7 +3432,7 @@ def agent_list_task_devices(
                 "installation_id": r.installation_id,
                 "display_name": r.display_name,
                 "last_seen_at": _iso(r.last_seen_at),
-                "online": ((now - r.last_seen_at).total_seconds() <= 20) if r.last_seen_at else False,
+                "online": is_device_online(r.last_seen_at, now=now),
             }
             for r in rows
         ],

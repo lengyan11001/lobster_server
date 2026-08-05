@@ -29,6 +29,7 @@ from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, Cont
 from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, normalize_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
+from ..services.device_presence import is_device_online
 from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
 from ..services.juhe_wechat import extract_friend_add_target, guid_request, mask_secret, safe_request_snapshot
 
@@ -476,7 +477,7 @@ def admin_user_detail(
                 "installation_id": r.installation_id,
                 "display_name": r.display_name,
                 "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else None,
-                "online": ((now - r.last_seen_at).total_seconds() <= 20) if r.last_seen_at else False,
+                "online": is_device_online(r.last_seen_at, now=now),
             }
             for r in devices
         ],

@@ -38,6 +38,7 @@ from ..services.brand_context import (
     user_brand_mark,
     user_for_account,
 )
+from ..services.device_presence import is_device_online
 from .auth import REGISTER_INITIAL_CREDITS, SMS_CODE_TTL_SEC, access_token_claims, create_access_token, get_current_user, get_password_hash, initialize_phone_default_password
 from .auth import _check_and_update_sms_send_limit, _clear_sms_code, _create_auth_challenge, _sms_challenge_target, _verify_sms_challenge
 from .auth import _get_wechat_access_token
@@ -54,7 +55,6 @@ logger = logging.getLogger(__name__)
 
 _PHONE_EMAIL_SUFFIX = "@sms.lobster.local"
 _CN_MOBILE_RE = re.compile(r"^1[3-9]\d{9}$")
-_ONLINE_DEVICE_TTL_SECONDS = 90
 _MEDIA_EXTS = {".mp4", ".webm", ".mov", ".m4v", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _URL_RE = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
 _DEFAULT_PHONE_UNLOCK_PACKAGES = (
@@ -822,11 +822,7 @@ def list_mobile_devices(
                 "installation_id": r.installation_id,
                 "display_name": r.display_name or "",
                 "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else "",
-                "online": (
-                    (now - r.last_seen_at).total_seconds() <= _ONLINE_DEVICE_TTL_SECONDS
-                    if r.last_seen_at
-                    else False
-                ),
+                "online": is_device_online(r.last_seen_at, now=now),
             }
             for r in online_rows
         ],

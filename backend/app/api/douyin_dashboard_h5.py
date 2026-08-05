@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import DouyinDashboardDeviceState, H5ChatDevicePresence, User
+from ..services.device_presence import is_device_online
 from .auth import get_current_user
 from .installation_slots import INSTALLATION_ID_HEADER, ensure_installation_slot
 from .mobile_identity import online_user_for_mobile_user
@@ -39,8 +40,7 @@ def _device_online_map(rows: List[H5ChatDevicePresence]) -> Dict[str, bool]:
         iid = str(row.installation_id or "").strip()
         if not iid:
             continue
-        age = (now - row.last_seen_at).total_seconds() if row.last_seen_at else 999999
-        result[iid] = age <= 20
+        result[iid] = is_device_online(row.last_seen_at, now=now)
     return result
 
 
