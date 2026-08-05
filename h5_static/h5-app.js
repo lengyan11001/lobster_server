@@ -996,7 +996,7 @@
       if (text.includes("养号")) return "account_nurture";
       if (text.includes("发布后采集") || text.includes("关键词抓取")) return "search_collect";
       if (text.includes("回复") && text.includes("评论")) return "reply_comments";
-      if (text.includes("@精准")) return "mention_comment";
+      if (text.includes("@精准") || text.includes("评论并@") || text.includes("自己评论区接管")) return "mention_comment";
       if (text.includes("关注") && text.includes("评论")) return "follow_comment";
       if (text.includes("主动私信") || text.includes("私信10")) return "direct_message";
       if (text.includes("私信接管") || text.includes("私信引流")) return "stranger_message";
@@ -3242,12 +3242,11 @@
       }
       if (node.key === "douyin_leads" || node.workQuickKey === "douyin_leads") {
         const salesAction = salesWorkflowActionForNote(prompt);
-        const maxUsers = salesAction !== "search_collect" && salesAction !== "account_nurture" ? 10 : 50;
         return {
           title: `抖音获客 - ${prompt.slice(0, 24)}`,
           task_kind: "douyin_leads",
           content: "H5 工作流：抖音获客",
-          payload: { action: "search_collect", params: { keyword: prompt, sales_action: salesAction, max_results: maxUsers, max_users: maxUsers, regions: ["全国"], mode: "script" } },
+          payload: { action: salesAction },
         };
       }
       if (isNativeWechatWorkflowKey(node.key) || isNativeWechatWorkflowKey(node.workQuickKey)) {
@@ -3447,6 +3446,10 @@
     function mergeSalesWorkflowPresetParams(plan, row) {
       const next = JSON.parse(JSON.stringify(plan || {}));
       const payload = next.payload && typeof next.payload === "object" ? next.payload : {};
+      if (next.task_kind === "douyin_leads") {
+        next.payload = { action: salesWorkflowActionForNote(row && (row.note || row.label)) };
+        return next;
+      }
       const params = payload.params && typeof payload.params === "object" ? payload.params : {};
       const mergedParams = {
         ...params,
@@ -3456,19 +3459,6 @@
         sales_schedule_duration_minutes: salesWorkflowDurationMinutes(row),
         sales_node_label: row && (row.label || row.note) || params.sales_node_label || "",
       };
-      if (next.task_kind === "douyin_leads") {
-        const salesAction = salesWorkflowActionForNote(row && (row.note || row.label));
-        mergedParams.sales_action = salesAction;
-        if (salesAction !== "search_collect" && salesAction !== "account_nurture") {
-          mergedParams.max_results = row && row.maxResults || 10;
-          mergedParams.max_users = row && row.maxUsers || 10;
-        }
-        if (salesAction === "stranger_message") {
-          mergedParams.extract_wechat_id = true;
-          mergedParams.followup_action = "native_wechat_add_friend";
-          mergedParams.skip_followup_without_clear_wechat_id = true;
-        }
-      }
       payload.params = mergedParams;
       next.payload = payload;
       return next;

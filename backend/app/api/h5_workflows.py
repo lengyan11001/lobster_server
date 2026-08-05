@@ -849,7 +849,7 @@ def _sales_action_from_note(note: Any) -> str:
         return "search_collect"
     if "回复" in text and "评论" in text:
         return "reply_comments"
-    if "@精准" in text:
+    if "@精准" in text or "评论并@" in text or "自己评论区接管" in text:
         return "mention_comment"
     if "关注" in text and "评论" in text:
         return "follow_comment"
@@ -858,6 +858,22 @@ def _sales_action_from_note(note: Any) -> str:
     if "私信接管" in text or "私信引流" in text:
         return "stranger_message"
     return "search_collect"
+
+
+def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a sales Douyin node to the action-only Online contract."""
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    inferred_action = _sales_action_from_note(node.get("note") or node.get("ability_label"))
+    action = inferred_action
+    if action == "search_collect":
+        action = _clean_text(params.get("sales_action"), 64)
+    if not action or action == "search_collect":
+        requested_action = _clean_text(payload.get("action"), 64)
+        if requested_action and requested_action != "search_collect":
+            action = requested_action
+    if not action:
+        action = inferred_action
+    return {"action": action or "search_collect"}
 
 
 _NATIVE_WECHAT_WORKFLOW_ACTIONS = _WORKFLOW_CHILD_CLIENT_ACTIONS
@@ -1021,11 +1037,6 @@ def _prepare_sales_workflow_nodes(
             for row in memory_rows
         ]
     keyword_texts = [_clean_text(row.display_name or row.keyword, 120) for row in keywords if _clean_text(row.display_name or row.keyword, 120)]
-    city = _first_req_text(requirements, "current_city")
-    province = _first_req_text(requirements, "current_province")
-    regions = [x for x in [city, province] if x] or ["全国"]
-    douyin_default = _mounted_default(db, owner.id, "douyin")
-    douyin_iid = _clean_text(douyin_default.installation_id if douyin_default else "", 128)
     digital_human_provider = _sales_digital_human_provider(snapshot_extra, reference_template)
     hifly_avatar = _latest_hifly_avatar(db, owner.id) if digital_human_provider == _SALES_DH_PROVIDER_LEGACY else ""
     shanjian_virtualman = _latest_shanjian_virtualman(db, owner.id)
@@ -1034,7 +1045,6 @@ def _prepare_sales_workflow_nodes(
     template_language = _template_language(requirements, reference_template)
 
     has_hifly = False
-    has_douyin = False
     has_ip_daily = False
     has_local_bestseller = False
     has_wechat = False
@@ -1077,34 +1087,8 @@ def _prepare_sales_workflow_nodes(
             plan["payload"] = payload
 
         if task_kind == "douyin_leads":
-            has_douyin = True
-            payload = dict(payload)
-            params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
-            params = dict(params)
-            sales_action = _clean_text(params.get("sales_action"), 64) or _sales_action_from_note(node.get("note") or node.get("ability_label"))
-            params["sales_action"] = sales_action
-            params["sales_node_label"] = _clean_text(node.get("ability_label") or node.get("note"), 160)
-            if sales_action and sales_action != "search_collect":
-                params["max_results"] = _safe_int(params.get("max_results") or params.get("max_users") or 10, 10)
-                params["max_users"] = _safe_int(params.get("max_users") or params.get("max_results") or 10, 10)
-            if keyword_texts:
-                params["keywords"] = keyword_texts
-                # 定时任务执行时只允许模板关键词进入搜索字段；节点标题只是动作说明。
-                params["keyword"] = keyword_texts[0]
-                params["query"] = keyword_texts[0]
-                params["search_keyword"] = keyword_texts[0]
-                if _clean_text(params.get("prompt"), 200) == params["sales_node_label"]:
-                    params["prompt"] = keyword_texts[0]
-            if not params.get("regions") or params.get("regions") == ["全国"]:
-                params["regions"] = regions
-            if douyin_default:
-                params["account_key"] = _clean_text(douyin_default.account_key, 255)
-                params["account_id"] = _clean_text(douyin_default.account_id, 128)
-                params["account_label"] = _clean_text(douyin_default.account_label, 255)
-                params["douyin_installation_id"] = douyin_iid
-            payload["params"] = params
-            payload["action"] = _clean_text(payload.get("action"), 64) or "search_collect"
-            plan["payload"] = payload
+            # 销售工作流只触发动作；关键词、账号、话术和节奏统一由 Online 本机配置决定。
+            plan["payload"] = _sales_douyin_action_payload(node, payload)
 
         if task_kind == "client_workflow" and action.startswith("local_bestseller"):
             has_local_bestseller = True
@@ -1236,15 +1220,6 @@ def _prepare_sales_workflow_nodes(
 
     if has_ip_daily and not personal:
         missing.append("IP日更：缺少当前使用模板")
-    if has_douyin:
-        if not douyin_default:
-            missing.append("平台账号：请在个人中心设置默认抖音获客账号")
-        elif not douyin_iid:
-            missing.append("平台账号：默认抖音账号缺少设备信息")
-        elif douyin_iid != _clean_text(installation_id, 128):
-            missing.append("平台账号：默认抖音账号不在当前启用设备上")
-        elif not _device_is_online(db, owner.id, douyin_iid):
-            missing.append("平台账号：默认抖音账号所在设备不在线")
     if has_wechat and not _device_is_online(db, owner.id, _clean_text(installation_id, 128)):
         missing.append("平台账号：当前启用设备不在线，无法执行个人微信节点")
     if has_hifly:
