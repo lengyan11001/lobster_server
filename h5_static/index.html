@@ -8,7 +8,7 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="必火AI员工" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1" />
   <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4" />
 </head>
 <body>
@@ -856,18 +856,21 @@
             <div>
               <h2>智能录音</h2>
               <div class="hint" id="recorderDeviceStatus">等待连接录音设备</div>
+              <div class="recorder-duration hidden" id="recorderDuration">00:00</div>
             </div>
             <div class="recorder-actions">
               <button type="button" id="recorderConnectBtn">连接设备</button>
-              <button type="button" class="ghost" id="recorderRefreshBtn">刷新</button>
+              <button type="button" id="recorderStartBtn" disabled>开始录音</button>
+              <button type="button" class="ghost danger-text" id="recorderStopBtn" disabled>停止录音</button>
+              <button type="button" class="ghost" id="recorderRefreshBtn" disabled>同步最新</button>
             </div>
           </div>
           <div class="panel recorder-section">
-            <div class="section-title"><h3>设备录音</h3><span class="hint">点击文件下载并自动上传转写</span></div>
+            <div class="section-title"><h3>设备录音</h3><span class="hint">仅显示最新 20 条，点击同步后自动上传转写</span></div>
             <div id="recorderDeviceFiles" class="recorder-list"><div class="empty">连接设备后显示录音文件。</div></div>
           </div>
           <div class="panel recorder-section">
-            <div class="section-title"><h3>转写与总结</h3><span class="hint">支持多文件并行处理</span></div>
+            <div class="section-title"><h3>转写与总结</h3><span class="hint">显示最新 20 条，支持多文件并行处理</span></div>
             <div id="recorderServerFiles" class="recorder-list"><div class="empty">还没有上传的录音。</div></div>
           </div>
           <div class="panel recorder-detail hidden" id="recorderDetailPanel">
@@ -1941,6 +1944,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1"></script>
 </body>
 </html>

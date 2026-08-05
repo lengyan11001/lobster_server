@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
@@ -28,6 +28,19 @@ from .h5_personal_settings import _call_llm
 router = APIRouter()
 MAX_AUDIO_BYTES = 200 * 1024 * 1024
 DATA_ROOT = Path(__file__).resolve().parents[3] / "data" / "recorder_audio"
+
+
+def _remove_recording_files(audio_path: str) -> None:
+    if not audio_path:
+        return
+    try:
+        root = DATA_ROOT.resolve()
+        source = Path(audio_path).resolve()
+        recording_dir = source.parent
+        if recording_dir != root and root in recording_dir.parents:
+            shutil.rmtree(recording_dir, ignore_errors=True)
+    except (OSError, RuntimeError):
+        return
 
 
 def _serialize(row: RecorderAudioRecord, detail: bool = False) -> dict[str, Any]:
@@ -191,8 +204,18 @@ async def upload_recording(
 
 
 @router.get("/api/h5/recorder/files")
-def list_recordings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    rows = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.user_id == current_user.id).order_by(RecorderAudioRecord.id.desc()).limit(100).all()
+def list_recordings(
+    limit: int = Query(default=20, ge=1, le=50),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(RecorderAudioRecord)
+        .filter(RecorderAudioRecord.user_id == current_user.id)
+        .order_by(RecorderAudioRecord.id.desc())
+        .limit(limit)
+        .all()
+    )
     return {"items": [_serialize(row) for row in rows]}
 
 
@@ -202,3 +225,18 @@ def recording_detail(record_id: int, current_user: User = Depends(get_current_us
     if not row:
         raise HTTPException(status_code=404, detail="录音不存在")
     return _serialize(row, detail=True)
+
+
+@router.delete("/api/h5/recorder/files/{record_id}")
+def delete_recording(record_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = db.query(RecorderAudioRecord).filter(
+        RecorderAudioRecord.id == record_id,
+        RecorderAudioRecord.user_id == current_user.id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="录音不存在")
+    audio_path = row.audio_path
+    db.delete(row)
+    db.commit()
+    _remove_recording_files(audio_path)
+    return {"ok": True, "id": record_id}

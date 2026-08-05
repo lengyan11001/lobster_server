@@ -20,6 +20,7 @@ from .api.mastra_chat import router as mastra_chat_router
 from .api.h5_home import router as h5_home_router
 from .api.h5_agent_management import router as h5_agent_management_router
 from .api.h5_personal_settings import router as h5_personal_settings_router
+from .api.h5_recorder import router as h5_recorder_router
 from .api.h5_voice import router as h5_voice_router
 from .api.h5_workflows import router as h5_workflows_router
 from .api.hifly_assets import router as hifly_assets_router
@@ -115,6 +116,7 @@ def create_h5_app() -> FastAPI:
     app.include_router(h5_home_router, prefix="")
     app.include_router(h5_agent_management_router, prefix="")
     app.include_router(h5_personal_settings_router, prefix="")
+    app.include_router(h5_recorder_router, prefix="")
     app.include_router(h5_voice_router, prefix="")
     app.include_router(h5_workflows_router, prefix="")
     app.include_router(hifly_assets_router, prefix="")
