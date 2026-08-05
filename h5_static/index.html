@@ -8,7 +8,7 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="必火AI员工" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="/h5-static/bihu_256.png" />
   <title>必火AI员工</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1-20260805-wechat-contact-picker-v1" />
   <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4" />
 </head>
 <body>
@@ -919,13 +919,17 @@
                   <option value="">不指定，使用系统优先记忆</option>
                 </select>
               </label>
-              <label>拉群条件关键词
-                <input id="mountedWechatGroupInviteKeywords" type="text" placeholder="咨询报价、预约体验、确定合作">
+              <label>拉群判断记忆文件
+                <select id="mountedWechatGroupInviteMemoryDocSelect">
+                  <option value="">不启用自动拉群</option>
+                </select>
               </label>
               <label>拉群主联系人
-                <select id="mountedWechatGroupInvitePrimaryContact">
-                  <option value="">请从微信通讯录选择</option>
-                </select>
+                <input id="mountedWechatGroupInvitePrimaryContact" type="hidden">
+                <button class="mounted-wechat-contact-trigger" type="button" id="mountedWechatGroupInvitePrimaryContactChooseBtn">
+                  <span id="mountedWechatGroupInvitePrimaryContactText">请选择主联系人</span>
+                  <small>搜索通讯录</small>
+                </button>
               </label>
               <label class="full">建群欢迎话术
                 <textarea id="mountedWechatGroupInviteWelcomeMessage" rows="3" placeholder="建群成功后自动发送，之后由主联系人继续接待"></textarea>
@@ -1666,6 +1670,25 @@
     </div>
   </div>
 
+  <div class="employee-modal mounted-wechat-contact-modal hidden" id="mountedWechatContactModal" role="dialog" aria-modal="true" aria-labelledby="mountedWechatContactTitle">
+    <button class="employee-modal-backdrop" type="button" id="mountedWechatContactBackdrop" aria-label="关闭"></button>
+    <div class="mounted-wechat-contact-picker">
+      <div class="mounted-wechat-contact-picker-head">
+        <div>
+          <strong id="mountedWechatContactTitle">选择拉群主联系人</strong>
+          <span id="mountedWechatContactCount">0 位联系人</span>
+        </div>
+        <button class="ghost mounted-wechat-contact-close" type="button" id="mountedWechatContactClose" aria-label="关闭">×</button>
+      </div>
+      <input id="mountedWechatContactSearch" class="mounted-wechat-contact-search" type="search" placeholder="搜索昵称、备注或微信号" autocomplete="off">
+      <div class="mounted-wechat-contact-list" id="mountedWechatContactList"></div>
+      <div class="mounted-wechat-contact-picker-actions">
+        <button class="ghost" type="button" id="mountedWechatContactClear">清除选择</button>
+        <button class="ghost" type="button" id="mountedWechatContactCancel">取消</button>
+      </div>
+    </div>
+  </div>
+
   <div class="employee-modal chat-sessions-modal hidden" id="chatSessionsModal" role="dialog" aria-modal="true" aria-labelledby="chatSessionsTitle">
     <button class="employee-modal-backdrop" type="button" id="chatSessionsBackdrop" aria-label="关闭"></button>
     <aside class="chat-sessions-drawer">
@@ -1971,6 +1994,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1"></script>
 </body>
 </html>

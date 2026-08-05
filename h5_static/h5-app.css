@@ -2555,6 +2555,28 @@
     .mounted-wechat-takeover-grid input,
     .mounted-wechat-takeover-grid select { height: 40px; }
     .mounted-wechat-takeover-grid textarea { min-height: 76px; resize: vertical; }
+    .mounted-wechat-contact-trigger { width: 100%; min-width: 0; height: 48px; padding: 7px 11px; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #25324a; border: 1px solid #dfe5ef; border-radius: 9px; background: #fff; box-shadow: none; text-align: left; }
+    .mounted-wechat-contact-trigger span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 400; }
+    .mounted-wechat-contact-trigger small { flex: 0 0 auto; color: #738096; font-size: 11px; font-weight: 400; }
+    .mounted-wechat-contact-modal { z-index: 170; align-items: end; padding: 0; }
+    .mounted-wechat-contact-picker { position: relative; z-index: 1; width: min(560px, 100%); max-height: min(78vh, 720px); padding: 16px 14px max(14px, env(safe-area-inset-bottom)); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 12px; color: #283142; border-radius: 18px 18px 0 0; background: #fff; box-shadow: 0 -18px 52px rgba(15,23,42,.2); }
+    .mounted-wechat-contact-picker-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .mounted-wechat-contact-picker-head > div { min-width: 0; display: grid; gap: 3px; }
+    .mounted-wechat-contact-picker-head strong { font-size: 16px; font-weight: 500; }
+    .mounted-wechat-contact-picker-head span { color: #7a8493; font-size: 11px; }
+    .mounted-wechat-contact-close { width: 34px; min-width: 34px; height: 34px; padding: 0; display: grid; place-items: center; border-radius: 50%; font-size: 20px; }
+    .mounted-wechat-contact-search { width: 100%; height: 42px; padding: 0 12px; border: 1px solid #dfe5ef; border-radius: 9px; background: #f8fafc; }
+    .mounted-wechat-contact-list { min-height: 180px; overflow-y: auto; display: grid; align-content: start; gap: 4px; }
+    .mounted-wechat-contact-row { width: 100%; min-width: 0; padding: 10px 11px; display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; color: #263146; border: 0; border-radius: 9px; background: transparent; box-shadow: none; text-align: left; }
+    .mounted-wechat-contact-row.selected { background: #eef4ff; }
+    .mounted-wechat-contact-avatar { width: 38px; height: 38px; display: grid; place-items: center; color: #31517d; border-radius: 50%; background: #e7eef8; font-size: 13px; font-weight: 500; }
+    .mounted-wechat-contact-copy { min-width: 0; display: grid; gap: 2px; }
+    .mounted-wechat-contact-copy strong, .mounted-wechat-contact-copy small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 400; }
+    .mounted-wechat-contact-copy strong { font-size: 13px; }
+    .mounted-wechat-contact-copy small { color: #7b8697; font-size: 11px; }
+    .mounted-wechat-contact-check { color: #356ad2; font-size: 12px; }
+    .mounted-wechat-contact-empty { padding: 42px 14px; color: #7d8796; text-align: center; }
+    .mounted-wechat-contact-picker-actions { display: flex; justify-content: flex-end; gap: 8px; }
     @media (max-width: 520px) {
       .mounted-wechat-takeover-grid { grid-template-columns: 1fr; }
       .mounted-wechat-takeover-grid label.full { grid-column: auto; }

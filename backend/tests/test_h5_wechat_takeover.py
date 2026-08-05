@@ -38,6 +38,7 @@ def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_sessio
             enabled=True,
             installation_id="device-1",
             memory_doc_ids=["faq-doc"],
+            group_invite_memory_doc_id="group-rule-doc",
             group_invite_keywords="咨询报价，预约体验",
             group_invite_contacts=["销售经理"],
             group_invite_primary_contact="销售经理",
@@ -55,6 +56,7 @@ def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_sessio
 
     pref = db_session.query(H5MountedAccountDefault).filter_by(user_id=test_user.id, scope="wechat_auto_reply").one()
     assert pref.payload["memory_doc_ids"] == ["faq-doc"]
+    assert pref.payload["group_invite_memory_doc_id"] == "group-rule-doc"
     assert pref.payload["group_invite_keywords"] == "咨询报价，预约体验"
     assert pref.payload["group_invite_contacts"] == ["销售经理"]
     assert pref.payload["group_invite_primary_contact"] == "销售经理"
@@ -64,6 +66,7 @@ def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_sessio
     message = db_session.query(H5ChatMessage).order_by(H5ChatMessage.created_at.desc()).first()
     command = json.loads(message.content.removeprefix(h5_chat._H5_CLIENT_COMMAND_PREFIX))
     assert command["memory_doc_ids"] == ["faq-doc"]
+    assert command["group_invite_memory_doc_id"] == "group-rule-doc"
     assert command["group_invite_contacts"] == ["销售经理"]
     assert command["group_invite_primary_contact"] == "销售经理"
     assert command["group_invite_welcome_message"].startswith("您好")
@@ -96,8 +99,10 @@ def test_h5_exposes_wechat_memory_and_group_condition_settings():
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
 
     assert 'id="mountedWechatMemoryDocSelect"' in html
-    assert 'id="mountedWechatGroupInviteKeywords"' in html
     assert 'id="mountedWechatGroupInvitePrimaryContact"' in html
+    assert 'id="mountedWechatGroupInviteMemoryDocSelect"' in html
+    assert 'id="mountedWechatContactSearch"' in html
+    assert 'id="mountedWechatGroupInviteKeywords"' not in html
     assert 'id="mountedWechatGroupInviteWelcomeMessage"' in html
     assert "function saveMountedWechatTakeoverConfig" in script
     assert 'source_mode: "douyin_private_message_phone"' in script

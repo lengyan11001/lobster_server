@@ -141,6 +141,7 @@ class H5WechatAutoReplyIn(BaseModel):
     account_id: Optional[str] = Field(default="pc-wechat-default", max_length=160)
     interval_seconds: int = Field(default=1800, ge=300, le=86400)
     memory_doc_ids: Optional[List[str]] = Field(default=None, max_length=20)
+    group_invite_memory_doc_id: Optional[str] = Field(default=None, max_length=64)
     group_invite_keywords: Optional[str] = Field(default=None, max_length=2000)
     group_invite_contacts: Optional[List[str]] = Field(default=None, max_length=20)
     group_invite_primary_contact: Optional[str] = Field(default=None, max_length=240)
@@ -515,6 +516,7 @@ def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
                 for item in (auto_reply_payload.get("memory_doc_ids") or [])
                 if str(item or "").strip()
             ][:20]
+            row["group_invite_memory_doc_id"] = str(auto_reply_payload.get("group_invite_memory_doc_id") or "").strip()
             row["group_invite_keywords"] = str(auto_reply_payload.get("group_invite_keywords") or "").strip()
             row["group_invite_contacts"] = [
                 str(item or "").strip()
@@ -1515,6 +1517,12 @@ def h5_set_wechat_auto_reply(
         if body.group_invite_keywords is None
         else body.group_invite_keywords
     )
+    group_invite_memory_doc_id = (
+        current_pref_payload.get("group_invite_memory_doc_id")
+        if body.group_invite_memory_doc_id is None
+        else body.group_invite_memory_doc_id
+    )
+    group_invite_memory_doc_id = str(group_invite_memory_doc_id or "").strip()[:64]
     group_invite_contacts = (
         current_pref_payload.get("group_invite_contacts")
         if body.group_invite_contacts is None
@@ -1549,6 +1557,7 @@ def h5_set_wechat_auto_reply(
         "account_id": account_id,
         "account_key": account_key,
         "memory_doc_ids": memory_doc_ids,
+        "group_invite_memory_doc_id": group_invite_memory_doc_id,
         "group_invite_keywords": str(group_invite_keywords or "").strip()[:2000],
         "group_invite_contacts": group_invite_contacts,
         "group_invite_primary_contact": primary_contact,
@@ -1563,6 +1572,7 @@ def h5_set_wechat_auto_reply(
         "enabled": bool(body.enabled),
         "interval_seconds": interval_seconds,
         "memory_doc_ids": memory_doc_ids,
+        "group_invite_memory_doc_id": group_invite_memory_doc_id,
         "group_invite_keywords": str(group_invite_keywords or "").strip()[:2000],
         "group_invite_contacts": group_invite_contacts,
         "group_invite_primary_contact": primary_contact,
