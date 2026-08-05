@@ -9869,7 +9869,13 @@
       setFieldValue("workWecomNote", params.note || "");
       setFieldValue("workPublishMaterial", params.asset_id || params.url || params.source_url || params.material || "");
       setFieldValue("workPublishMediaType", params.media_type || "video");
-      setFieldValue("workPublishAccount", params.account_nickname || params.account || "");
+      const workPublishAccount = $("workPublishAccount");
+      if (workPublishAccount) {
+        workPublishAccount.dataset.preferredAccountId = String(params.account_id || "");
+        workPublishAccount.dataset.preferredInstallationId = String(params.publish_installation_id || params.installation_id || "");
+        workPublishAccount.dataset.preferredNickname = String(params.account_nickname || params.account || "");
+        fillWorkPublishAccountSelect();
+      }
       setFieldValue("workPublishTitle", params.title || "");
       setFieldValue("workPublishDescription", params.description || "");
       setFieldValue("workPublishTags", params.tags || "");
@@ -12136,6 +12142,37 @@
       if (current && rows.some((row) => publishAccountSelectId(row) === current)) sel.value = current;
     }
 
+    function fillWorkPublishAccountSelect() {
+      const sel = $("workPublishAccount");
+      if (!sel) return;
+      if (!state.publishAccountsLoaded) {
+        sel.innerHTML = optionHtml("", state.publishAccountsLoading ? "账号加载中..." : "正在加载账号...");
+        return;
+      }
+      const rows = [...(state.publishAccounts || [])].sort((left, right) => {
+        const defaultDiff = Number(!!right.is_default) - Number(!!left.is_default);
+        if (defaultDiff) return defaultDiff;
+        const platformDiff = publishPlatformOrder(left.platform) - publishPlatformOrder(right.platform);
+        if (platformDiff) return platformDiff;
+        return String(left.nickname || "").localeCompare(String(right.nickname || ""), "zh-CN");
+      });
+      const current = String(sel.value || "");
+      const preferredAccountId = String(sel.dataset.preferredAccountId || "");
+      const preferredInstallationId = String(sel.dataset.preferredInstallationId || "");
+      const preferredNickname = String(sel.dataset.preferredNickname || "");
+      const remembered = rows.find((row) => {
+        if (preferredInstallationId && String(row.installation_id || "") !== preferredInstallationId) return false;
+        if (preferredAccountId && String(publishAccountLocalId(row)) === preferredAccountId) return true;
+        return !!(preferredNickname && String(row.nickname || "") === preferredNickname);
+      });
+      const preferred = remembered || defaultPublishAccount();
+      const selectedId = current || (preferred ? publishAccountSelectId(preferred) : "");
+      sel.innerHTML = rows.length
+        ? optionHtml("", "请选择发布账号") + rows.map((row) => optionHtml(publishAccountSelectId(row), publishAccountOptionLabel(row))).join("")
+        : optionHtml("", "暂无发布账号，请先到个人中心添加");
+      if (selectedId && rows.some((row) => publishAccountSelectId(row) === selectedId)) sel.value = selectedId;
+    }
+
     function findPublishAccountForDraft(draft = {}, platform = "") {
       const rows = state.publishAccounts || [];
       const draftPlatform = String(platform || draft.platform || "").trim();
@@ -12205,6 +12242,7 @@
       if (state.publishAccountsLoaded || state.publishAccountsLoading) {
         fillPublishPlatformSelect();
         fillPublishRunPlatformSelect();
+        fillWorkPublishAccountSelect();
         return;
       }
       if (!state.mountedAccountsLoaded && !state.mountedAccountsLoading) {
@@ -12224,6 +12262,7 @@
         state.publishAccountsLoading = false;
         fillPublishPlatformSelect();
         fillPublishRunPlatformSelect();
+        fillWorkPublishAccountSelect();
       }
     }
 
@@ -14651,7 +14690,7 @@
       if (key === "publish_center") {
         return taskFieldHtml("发布素材", assetPickerControlHtml("workPublishMaterial", { mediaType: "", output: "url", accept: "image/*,video/*,.pdf,.doc,.docx,.ppt,.pptx", uploadText: "上传素材" }), true)
           + taskFieldHtml("素材类型", taskSelectHtml("workPublishMediaType", optionHtml("video", "视频") + optionHtml("image", "图片") + optionHtml("document", "文档")), true)
-          + taskFieldHtml("发布账号", workInputHtml("workPublishAccount", "text", "", 'placeholder="填写 Online 发布中心中的账号昵称"'), true)
+          + taskFieldHtml("发布账号", taskSelectHtml("workPublishAccount", optionHtml("", "账号加载中...")), true)
           + taskFieldHtml("标题", workInputHtml("workPublishTitle", "text", "", 'placeholder="可选，不填可让 AI 补全"'), true)
           + taskFieldHtml("正文/描述", taskTextareaHtml("workPublishDescription", "可选：发布正文、卖点或备注"), true)
           + taskFieldHtml("话题标签", workInputHtml("workPublishTags", "text", "", 'placeholder="#品牌 #同城 或逗号分隔"'), true)
@@ -14678,6 +14717,7 @@
         bindWorkHiflyControls();
       }
       if (item.key === "publish_center") {
+        fillWorkPublishAccountSelect();
         loadPublishAccounts().catch((err) => toast(err.message || "发布账号加载失败"));
       }
       const first = modal.querySelector("input, textarea, select");
@@ -14858,9 +14898,9 @@
       }
       if (key === "publish_center") {
         const material = workMaterialPayload(workValue("workPublishMaterial"));
-        const accountNickname = workValue("workPublishAccount");
-        const account = accountNickname ? null : defaultPublishAccount();
-        if (!accountNickname && !account) throw new Error("请先在个人中心设置默认发布账号，或填写发布账号昵称");
+        const accountSelectId = workValue("workPublishAccount");
+        const account = (state.publishAccounts || []).find((row) => publishAccountSelectId(row) === accountSelectId) || null;
+        if (!account) throw new Error("请选择发布账号");
         return {
           title: "发布中心入库",
           taskKind: "client_workflow",
@@ -14873,9 +14913,9 @@
               platform: account ? (account.platform || "") : "",
               platform_name: account ? (account.platform_name || platformDisplayName(account.platform)) : "",
               account_id: account ? publishAccountLocalId(account) : "",
-              account_nickname: accountNickname || (account ? (account.nickname || "") : ""),
-              publish_installation_id: account ? (account.installation_id || "") : "",
-              installation_id: account ? (account.installation_id || "") : "",
+              account_nickname: account.nickname || "",
+              publish_installation_id: account.installation_id || "",
+              installation_id: account.installation_id || "",
               title: workValue("workPublishTitle"),
               description: workValue("workPublishDescription"),
               tags: workValue("workPublishTags"),

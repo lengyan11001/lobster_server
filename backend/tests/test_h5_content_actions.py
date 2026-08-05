@@ -170,3 +170,12 @@ def test_media_paths_are_not_used_as_creative_prompts():
     assert "meta.image_prompts," in script
     assert 'state.contentActionPromptCache.set(assetId, request)' in script
     assert "field.dataset.contentPromptRequest !== requestId" in script
+
+
+def test_publish_workbench_uses_account_select_instead_of_nickname_input():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'taskSelectHtml("workPublishAccount", optionHtml("", "账号加载中..."))' in script
+    assert "function fillWorkPublishAccountSelect()" in script
+    assert 'publishAccountSelectId(row) === accountSelectId' in script
+    assert 'placeholder="填写 Online 发布中心中的账号昵称"' not in script
