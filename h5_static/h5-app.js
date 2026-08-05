@@ -67,6 +67,9 @@
       socialLeadJobs: [],
       linkedinJobs: [],
       wechatTranscriptJobs: [],
+      recorderDeviceFiles: [],
+      recorderRecords: [],
+      recorderPoller: null,
       companyName: localStorage.getItem(brandStorageKey("lobster_h5_company_name")) || "我的AI公司",
       officeDeviceFilter: "all",
       departmentSelectedDate: "",
@@ -10232,6 +10235,103 @@
       return state.officeSummaryLoading;
     }
 
+    function recorderNative() {
+      return window.LobsterAndroid && typeof window.LobsterAndroid.startRecorderScan === "function" ? window.LobsterAndroid : null;
+    }
+
+    function recorderStatusLabel(status) {
+      return ({ processing: "正在转写和总结", completed: "已完成", failed: "处理失败" })[status] || status || "等待处理";
+    }
+
+    function recorderFormatBytes(value) {
+      const size = Math.max(0, Number(value || 0));
+      if (size < 1024) return `${size} B`;
+      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+      return `${(size / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function renderRecorderDeviceFiles() {
+      const host = $("recorderDeviceFiles");
+      if (!host) return;
+      const rows = state.recorderDeviceFiles || [];
+      host.innerHTML = rows.length ? rows.map((row) => `
+        <div class="recorder-item">
+          <div class="recorder-item-main"><strong>${escapeHtml(row.fileName || "未命名录音")}</strong><div class="recorder-meta"><span>${recorderFormatBytes(row.fileSize)}</span></div></div>
+          <button type="button" data-recorder-download="${escapeHtml(row.fileName || "")}">下载并转写</button>
+        </div>`).join("") : '<div class="empty">连接设备后显示录音文件。</div>';
+    }
+
+    function renderRecorderRecords() {
+      const host = $("recorderServerFiles");
+      if (!host) return;
+      const rows = state.recorderRecords || [];
+      host.innerHTML = rows.length ? rows.map((row) => `
+        <div class="recorder-item">
+          <div class="recorder-item-main">
+            <strong>${escapeHtml(row.file_name || "未命名录音")}</strong>
+            <div class="recorder-meta"><span>${recorderFormatBytes(row.file_size)}</span><span>${escapeHtml(row.device_name || "录音设备")}</span><span>${escapeHtml(String(row.created_at || "").replace("T", " ").slice(0, 16))}</span></div>
+            <span class="recorder-status ${escapeHtml(row.status || "")}">${escapeHtml(recorderStatusLabel(row.status))}${row.error_message ? `：${escapeHtml(row.error_message)}` : ""}</span>
+          </div>
+          ${row.status === "completed" ? `<button type="button" class="ghost" data-recorder-detail="${Number(row.id)}">查看内容</button>` : ""}
+        </div>`).join("") : '<div class="empty">还没有上传的录音。</div>';
+    }
+
+    async function loadRecorderRecords() {
+      const data = await api("/api/h5/recorder/files");
+      state.recorderRecords = Array.isArray(data.items) ? data.items : [];
+      renderRecorderRecords();
+      const pending = state.recorderRecords.some((row) => row.status === "processing");
+      clearTimeout(state.recorderPoller);
+      if (pending && document.querySelector("#recorderView.active")) state.recorderPoller = setTimeout(() => loadRecorderRecords().catch(() => {}), 4000);
+    }
+
+    function syncRecorderNativeAuth() {
+      const native = recorderNative();
+      if (native && typeof native.setRecorderAuth === "function") native.setRecorderAuth(state.token || "", state.selectedInstallationId || "", H5_BRAND_MARK);
+    }
+
+    function loadRecorderPage() {
+      const native = recorderNative();
+      const status = $("recorderDeviceStatus");
+      if (!native) {
+        if (status) status.textContent = "请在最新版安卓 APK 中使用录音设备功能";
+      } else {
+        syncRecorderNativeAuth();
+        try {
+          const value = JSON.parse(native.getRecorderState() || "{}");
+          if (status) status.textContent = value.connected ? `已连接 ${value.name || "录音设备"}` : "尚未连接录音设备";
+        } catch {}
+      }
+      renderRecorderDeviceFiles();
+      loadRecorderRecords().catch((err) => toast(err.message || "录音记录加载失败"));
+    }
+
+    async function showRecorderDetail(id) {
+      const row = await api(`/api/h5/recorder/files/${encodeURIComponent(id)}`);
+      $("recorderDetailTitle").textContent = row.file_name || "录音内容";
+      $("recorderSummary").textContent = row.summary_text || "暂无总结";
+      $("recorderKeyPoints").innerHTML = (row.key_points || []).map((item) => `<div class="recorder-key-point">${escapeHtml(String(item))}</div>`).join("");
+      $("recorderDialogue").innerHTML = (row.segments || []).length
+        ? row.segments.map((item) => `<div class="recorder-line"><b>${escapeHtml(item.speaker || "未知")}：</b>${escapeHtml(item.text || "")}</div>`).join("")
+        : `<div class="recorder-line">${escapeHtml(row.transcript_text || "暂无转写")}</div>`;
+      $("recorderDetailPanel").classList.remove("hidden");
+      $("recorderDetailPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    window.addEventListener("lobster-recorder", (event) => {
+      const detail = event.detail || {};
+      if (detail.type === "connected") {
+        if ($("recorderDeviceStatus")) $("recorderDeviceStatus").textContent = `已连接 ${detail.name || "录音设备"}`;
+      } else if (detail.type === "fileList") {
+        state.recorderDeviceFiles = detail.files || [];
+        renderRecorderDeviceFiles();
+      } else if (detail.type === "downloadComplete" || detail.type === "uploadComplete") {
+        loadRecorderRecords().catch(() => {});
+      } else if (detail.type === "uploadFailed") {
+        toast(detail.reason || "录音上传失败");
+      }
+    });
+
     function switchTab(tab) {
       const key = tab || "office";
       const previousViewId = (document.querySelector(".view.active") || {}).id || "";
@@ -10256,6 +10356,7 @@
         messages: ["AI 调度助手", "用文字或语音安排工作"],
         voice: ["龙虾AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
+        recorder: ["智能录音", "设备录音、对话转写和 AI 总结"],
         mountedAccounts: ["平台账号", ""],
         personalSettings: ["IP人设定位", "模板、关键词、同行账号和记忆文件"],
         taskList: ["定时任务", "默认展示 10 条，更多用翻页加载"],
@@ -10307,6 +10408,7 @@
         renderProfileDeviceSelect();
         refreshDeviceStatus().catch(() => loadMountedAccounts(true).catch(() => {}));
       }
+      if (key === "recorder") loadRecorderPage();
       if (key === "personalSettings" && !state.personalSettingsBackTab) state.personalSettingsBackTab = "profile";
       if (key === "agentManage") {
         renderAgentManage();
@@ -18010,6 +18112,30 @@
         switchTab(target);
       });
     });
+    if ($("recorderConnectBtn")) $("recorderConnectBtn").addEventListener("click", () => {
+      const native = recorderNative();
+      if (!native) return toast("请在最新版安卓 APK 中连接录音设备");
+      syncRecorderNativeAuth();
+      native.startRecorderScan();
+    });
+    if ($("recorderRefreshBtn")) $("recorderRefreshBtn").addEventListener("click", () => {
+      const native = recorderNative();
+      if (native) native.fetchRecorderFiles();
+      loadRecorderRecords().catch((err) => toast(err.message || "刷新失败"));
+    });
+    if ($("recorderDetailClose")) $("recorderDetailClose").addEventListener("click", () => $("recorderDetailPanel").classList.add("hidden"));
+    if ($("recorderDeviceFiles")) $("recorderDeviceFiles").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-recorder-download]");
+      if (!button) return;
+      const native = recorderNative();
+      if (!native) return toast("请在最新版安卓 APK 中下载录音");
+      syncRecorderNativeAuth();
+      native.downloadRecorderFile(button.dataset.recorderDownload || "");
+    });
+    if ($("recorderServerFiles")) $("recorderServerFiles").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-recorder-detail]");
+      if (button) showRecorderDetail(button.dataset.recorderDetail).catch((err) => toast(err.message || "详情加载失败"));
+    });
     document.querySelectorAll("[data-auth-tab]").forEach((btn) => {
       btn.addEventListener("click", () => setAuthTab(btn.dataset.authTab));
     });
@@ -18072,6 +18198,10 @@
         return;
       }
       if (activeId === "mountedAccountsView") {
+        switchTab("profile");
+        return;
+      }
+      if (activeId === "recorderView") {
         switchTab("profile");
         return;
       }

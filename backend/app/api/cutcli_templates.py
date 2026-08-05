@@ -1857,7 +1857,7 @@ def _upload_job_file_to_tos(path: Path, *, object_key: str, content_type: str) -
     return url
 
 
-def _stt_create_task(token: str, audio_url: str, *, job_dir: Path) -> Dict[str, Any]:
+def _stt_create_task(token: str, audio_url: str, *, job_dir: Path, enable_speaker_info: bool = False) -> Dict[str, Any]:
     body = {
         "model": _STT_MODEL,
         "params": {
@@ -1868,7 +1868,7 @@ def _stt_create_task(token: str, audio_url: str, *, job_dir: Path) -> Dict[str, 
             "enable_punc": True,
             "enable_itn": True,
             "enable_ddc": False,
-            "enable_speaker_info": False,
+            "enable_speaker_info": bool(enable_speaker_info),
             "vad_segment": False,
         },
         "channel": None,

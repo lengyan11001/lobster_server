@@ -2536,6 +2536,27 @@
     .profile-entry strong { font-size: 16px; }
     .profile-entry small { color: var(--muted); line-height: 1.5; }
     .profile-entry b { flex: 0 0 auto; color: var(--blue); font-size: 13px; }
+    .recorder-profile-entry { border-color: rgba(15,143,122,.2); background: linear-gradient(135deg, #f7fffc, #eefaf6); }
+    .recorder-page { display: grid; gap: 14px; }
+    .recorder-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 18px; }
+    .recorder-toolbar h2, .recorder-section h3, .recorder-detail h3 { margin: 0; }
+    .recorder-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .recorder-section, .recorder-detail { padding: 16px; }
+    .recorder-list { display: grid; gap: 10px; margin-top: 12px; }
+    .recorder-item { border: 1px solid rgba(21,35,64,.11); border-radius: 14px; background: #fff; padding: 12px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center; }
+    .recorder-item-main { min-width: 0; display: grid; gap: 4px; }
+    .recorder-item-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .recorder-meta { color: var(--muted); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .recorder-status { font-size: 12px; font-weight: 800; color: #8a5b00; }
+    .recorder-status.completed { color: #08745f; }
+    .recorder-status.failed { color: #b42318; }
+    .recorder-summary { white-space: pre-wrap; line-height: 1.7; padding: 14px; background: #f2faf7; border-radius: 14px; margin-top: 12px; }
+    .recorder-key-points { display: grid; gap: 6px; margin: 12px 0; }
+    .recorder-key-point { padding: 9px 12px; border-left: 3px solid #0f8f7a; background: #f8fafc; }
+    .recorder-dialogue { display: grid; gap: 8px; max-height: 58vh; overflow: auto; }
+    .recorder-line { border-radius: 12px; background: #f6f8fc; padding: 10px 12px; line-height: 1.6; }
+    .recorder-line b { color: var(--blue); margin-right: 6px; }
+    @media (max-width: 640px) { .recorder-toolbar { align-items: flex-start; flex-direction: column; } .recorder-item { grid-template-columns: 1fr; } }
     .agent-profile-entry {
       background:
         radial-gradient(circle at 10% 20%, rgba(36,92,255,.15), transparent 38%),

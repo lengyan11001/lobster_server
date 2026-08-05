@@ -1596,6 +1596,30 @@ class ShanjianDigitalHumanProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class RecorderAudioRecord(Base):
+    __tablename__ = "recorder_audio_records"
+    __table_args__ = (
+        Index("ix_recorder_audio_user_created", "user_id", "created_at"),
+        Index("ix_recorder_audio_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    device_name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="processing", nullable=False, index=True)
+    audio_path: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    transcript_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    transcript_segments: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    summary_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    key_points: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    stt_task_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class ShanjianDigitalHumanVideoTask(Base):
     __tablename__ = "shanjian_digital_human_video_tasks"
     __table_args__ = (

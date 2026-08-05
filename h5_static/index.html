@@ -806,6 +806,16 @@
               </span>
               <b>进入</b>
             </button>
+            <button class="profile-entry recorder-profile-entry" type="button" data-tab-target="recorder">
+              <span class="profile-entry-icon tone-green" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"></path></svg>
+              </span>
+              <span>
+                <strong>智能录音</strong>
+                <small>连接录音设备，转写对话并生成 AI 核心总结</small>
+              </span>
+              <b>进入</b>
+            </button>
             <button class="profile-entry agent-profile-entry" type="button" data-tab-target="agentManage" id="profileAgentManageEntry">
               <span class="profile-entry-icon tone-slate" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6"></path><path d="M7 3h7l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"></path><path d="M14 3v5h5"></path></svg>
@@ -836,6 +846,35 @@
               </span>
               <b>进入</b>
             </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="recorderView">
+        <div class="recorder-page">
+          <div class="panel recorder-toolbar">
+            <div>
+              <h2>智能录音</h2>
+              <div class="hint" id="recorderDeviceStatus">等待连接录音设备</div>
+            </div>
+            <div class="recorder-actions">
+              <button type="button" id="recorderConnectBtn">连接设备</button>
+              <button type="button" class="ghost" id="recorderRefreshBtn">刷新</button>
+            </div>
+          </div>
+          <div class="panel recorder-section">
+            <div class="section-title"><h3>设备录音</h3><span class="hint">点击文件下载并自动上传转写</span></div>
+            <div id="recorderDeviceFiles" class="recorder-list"><div class="empty">连接设备后显示录音文件。</div></div>
+          </div>
+          <div class="panel recorder-section">
+            <div class="section-title"><h3>转写与总结</h3><span class="hint">支持多文件并行处理</span></div>
+            <div id="recorderServerFiles" class="recorder-list"><div class="empty">还没有上传的录音。</div></div>
+          </div>
+          <div class="panel recorder-detail hidden" id="recorderDetailPanel">
+            <div class="section-title"><h3 id="recorderDetailTitle">录音内容</h3><button type="button" class="ghost" id="recorderDetailClose">关闭</button></div>
+            <div class="recorder-summary" id="recorderSummary"></div>
+            <div class="recorder-key-points" id="recorderKeyPoints"></div>
+            <div class="recorder-dialogue" id="recorderDialogue"></div>
           </div>
         </div>
       </section>
