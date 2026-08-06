@@ -62,7 +62,7 @@ def test_hikong_ios_webclip_uses_server_oem_icon(db_session_factory):
     clip = profile["PayloadContent"][0]
     assert clip["Label"] == "海康AI智能体"
     assert clip["URL"] == "https://h5.bhzn.top/?brand=hikong"
-    assert clip["Icon"] == (_ROOT / "client_static" / "oem" / "hikong" / "icon_256.png").read_bytes()
+    assert clip["Icon"] == (_ROOT / "client_static" / "oem" / "hikong" / "icon_256_v2.png").read_bytes()
 
 
 def test_h5_ios_download_passes_current_brand():

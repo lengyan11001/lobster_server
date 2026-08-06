@@ -12,9 +12,10 @@ OEM_ROOT = ROOT / "client_static" / "oem"
 MANIFEST_PATH = OEM_ROOT / "manifest.json"
 ICON_SIZES = (16, 24, 32, 48, 64, 128, 256, 512, 1024)
 BRAND_VERSIONS = {
-    "hikong": "2026.08.06.2",
-    "jinghai": "2026.08.06.2",
+    "hikong": "2026.08.06.3",
+    "jinghai": "2026.08.06.3",
 }
+WEB_ICON_REVISION = "v2"
 
 
 def _trim(image: Image.Image) -> Image.Image:
@@ -95,6 +96,8 @@ def _generate_brand(brand: str, mark: Image.Image, width_ratio: float) -> None:
     for size in ICON_SIZES:
         image = _render_icon(mark, size, width_ratio)
         image.save(brand_root / f"icon_{size}.png", optimize=True)
+        if size in {32, 64, 256}:
+            image.save(brand_root / f"icon_{size}_{WEB_ICON_REVISION}.png", optimize=True)
         rendered[size] = image
 
     rendered[1024].save(

@@ -54,9 +54,9 @@ def test_oem_manifest_registers_brand_without_a_second_code_map():
     from backend.app.services.brand_context import BUILTIN_BRANDS
 
     assert BUILTIN_BRANDS["jinghai"]["display_name"] == "鲸海AI员工"
-    assert BUILTIN_BRANDS["jinghai"]["icon_32"] == "/client/oem/jinghai/icon_32.png"
+    assert BUILTIN_BRANDS["jinghai"]["icon_32"] == "/client/oem/jinghai/icon_32_v2.png"
     assert BUILTIN_BRANDS["hikong"]["display_name"] == "海康AI智能体"
-    assert BUILTIN_BRANDS["hikong"]["icon_32"] == "/client/oem/hikong/icon_32.png"
+    assert BUILTIN_BRANDS["hikong"]["icon_32"] == "/client/oem/hikong/icon_32_v2.png"
 
 
 def test_oem_manifest_assets_exist_and_match_checksums():

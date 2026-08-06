@@ -1635,7 +1635,8 @@
     const H5_BRAND_FALLBACKS = {
       bihuo: { display_name: "必火AI员工", icon_32: "/h5-static/bihu_32.png", icon_256: "/h5-static/bihu_256.png", primary_color: "#245cff" },
       daka: { display_name: "大咖AI员工", icon_32: "/h5-static/daka_32.png", icon_256: "/h5-static/daka_256.png", primary_color: "#00a9c7" },
-      hikong: { display_name: "海康AI智能体", icon_32: "/client/oem/hikong/icon_32.png", icon_256: "/client/oem/hikong/icon_256.png", primary_color: "#0874b9" },
+      jinghai: { display_name: "鲸海AI员工", icon_32: "/client/oem/jinghai/icon_32_v2.png", icon_256: "/client/oem/jinghai/icon_256_v2.png", primary_color: "#0B7895" },
+      hikong: { display_name: "海康AI智能体", icon_32: "/client/oem/hikong/icon_32_v2.png", icon_256: "/client/oem/hikong/icon_256_v2.png", primary_color: "#0874b9" },
     };
     const initialBrandMark = String(document.documentElement.dataset.brand || "").trim().toLowerCase();
     if (initialBrandMark === H5_BRAND_MARK) {
