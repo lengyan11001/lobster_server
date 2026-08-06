@@ -6,13 +6,52 @@
     "0300": "jinghai",
     "0400": "hikong"
   },
-  "pending_brands": {
-    "jinghai": {
-      "display_name": "鲸海AI员工",
-      "status": "pending_assets"
-    }
-  },
+  "pending_brands": {},
   "brands": {
+    "jinghai": {
+      "version": "2026.08.06.1",
+      "profile": {
+        "mark": "jinghai",
+        "display_name": "鲸海AI员工",
+        "document_title": "鲸海AI员工",
+        "logo_primary": "鲸海",
+        "logo_accent": "AI员工",
+        "hero_title": "鲸海AI员工 - 您的私人 AI 助手",
+        "hero_subtitle": "让AI员工持续执行营销、创作与客户运营",
+        "primary_color": "#0B7895",
+        "icons": {
+          "favicon_32": "/client/oem/jinghai/icon_32.png",
+          "apple_touch": "/client/oem/jinghai/icon_256.png",
+          "loading_mark": "/client/oem/jinghai/icon_64.png",
+          "home_visual": "/client/oem/jinghai/logo_source.png",
+          "logo_mark": "/client/oem/jinghai/icon_32.png",
+          "logo_mark_width": 32,
+          "logo_mark_height": 32
+        },
+        "install": {
+          "desktop_ico": "/client/oem/jinghai/desktop.ico",
+          "launcher_exe": "/client/oem/jinghai/client_launcher.exe",
+          "launcher_filename": "鲸海AI员工.exe",
+          "shortcut_lnk_name": "鲸海AI员工.lnk",
+          "shortcut_description": "鲸海AI员工 - 本地客户端",
+          "install_complete_hint": "双击桌面 鲸海AI员工.lnk 或本目录 start.bat 启动"
+        }
+      },
+      "assets": [
+        {"key": "icon_16", "url": "/client/oem/jinghai/icon_16.png", "size": 810, "sha256": "0792c91fdef4d0c9c1793abd55fb98c3d674df18c1d1d9181ea04ccb77dd4d89"},
+        {"key": "icon_24", "url": "/client/oem/jinghai/icon_24.png", "size": 1453, "sha256": "31a03afb03eb7a9bdcd72ac07c2925ed55775c9406bb7b634b2a91020636a38d"},
+        {"key": "icon_32", "url": "/client/oem/jinghai/icon_32.png", "size": 2152, "sha256": "3382c2974e2fa14e4026889eec1dbaee05681757d9b2e7c83088d3f51fe03350"},
+        {"key": "icon_48", "url": "/client/oem/jinghai/icon_48.png", "size": 3820, "sha256": "c0019a12bfba4d55aeab5bdabac63b00381be0747cb675c25e897a9d6f3ecca1"},
+        {"key": "icon_64", "url": "/client/oem/jinghai/icon_64.png", "size": 5688, "sha256": "c0c75d7bc84bd932782fb210f23548457ec6e456714b2a2ca22e94585fb8fde8"},
+        {"key": "icon_128", "url": "/client/oem/jinghai/icon_128.png", "size": 14391, "sha256": "0a685a1ae1fbe03c827b5b4256a0935703e73eeb08cb717356d67b5c67b57e8d"},
+        {"key": "icon_256", "url": "/client/oem/jinghai/icon_256.png", "size": 37103, "sha256": "caea8350afb30d35961c41456cc1a690a4a7fe9ccddd19f8d949df5a58391171"},
+        {"key": "icon_512", "url": "/client/oem/jinghai/icon_512.png", "size": 91660, "sha256": "c60ed63b3c97d41e51af25da1789ea369bd172f6bded513dfa9996d75ae992aa"},
+        {"key": "icon_1024", "url": "/client/oem/jinghai/icon_1024.png", "size": 181791, "sha256": "103ab643b953aed2947b2cf4b7814493a6e9e0f9db85b9de32dc546c0ee04531"},
+        {"key": "logo_source", "url": "/client/oem/jinghai/logo_source.png", "size": 181791, "sha256": "103ab643b953aed2947b2cf4b7814493a6e9e0f9db85b9de32dc546c0ee04531"},
+        {"key": "desktop_ico", "url": "/client/oem/jinghai/desktop.ico", "size": 67798, "sha256": "be631ec5a25a66b3158fe2eba5c8ac7eb40f1120d90b5a17166a245425e8f30c"},
+        {"key": "launcher_exe", "url": "/client/oem/jinghai/client_launcher.exe", "size": 74240, "sha256": "1440424882e9514e2004df419ce311026bede0094d3c03e99ee355f4b506add7"}
+      ]
+    },
     "bihuo": {
       "version": "2026.08.06.1",
       "profile": {
