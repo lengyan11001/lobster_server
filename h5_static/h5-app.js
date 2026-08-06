@@ -10715,7 +10715,8 @@
         toast("设备正在录音，请先停止后再同步");
       } else if (detail.type === "syncInterrupted") {
         state.recorderSyncActive = false;
-        if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = "同步已中断，重新连接后可继续";
+        if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = detail.reason === "background" ? "已切到后台，本次同步已停止，可重新选择该录音" : "同步已中断，重新连接后可继续";
+        renderRecorderDeviceFiles();
       } else if (detail.type === "downloadFailed") {
         state.recorderSyncActive = false;
         if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = `同步失败：${detail.reason || "设备下载失败"}`;
@@ -18746,7 +18747,7 @@
       if (!native) return toast("请在最新版安卓 APK 中下载录音");
       if (state.recorderSyncActive) return toast("当前录音同步完成后再选择下一条");
       state.recorderSyncActive = true;
-      if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = `正在准备同步 ${button.dataset.recorderDownload || "录音"}…`;
+      if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = `正在准备同步 ${button.dataset.recorderDownload || "录音"}，请保持页面亮屏…`;
       renderRecorderDeviceFiles();
       syncRecorderNativeAuth();
       native.downloadRecorderFile(button.dataset.recorderDownload || "");
