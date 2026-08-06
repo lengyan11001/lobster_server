@@ -239,6 +239,23 @@ def _h5_dh_latest_voice(db: Session, user_id: int) -> str:
     return _h5_dh_clean_text(row.hifly_voice_id if row else "", 128)
 
 
+def _h5_dh_resolve_voice(db: Session, user_id: int, requested_voice: Any = "") -> str:
+    requested = _h5_dh_clean_text(requested_voice, 128)
+    if requested:
+        active = (
+            db.query(UserHiflyVoiceAsset.id)
+            .filter(
+                UserHiflyVoiceAsset.user_id == user_id,
+                UserHiflyVoiceAsset.status == "success",
+                UserHiflyVoiceAsset.hifly_voice_id == requested,
+            )
+            .first()
+        )
+        if active:
+            return requested
+    return _h5_dh_latest_voice(db, user_id)
+
+
 def _h5_dh_template_language(requirements: Dict[str, Any], template: Optional[IPContentScheduleTemplate]) -> str:
     req = requirements if isinstance(requirements, dict) else {}
     meta = template.meta if template and isinstance(template.meta, dict) else {}
@@ -431,7 +448,11 @@ def _maybe_convert_h5_digital_human_task(
     requested_virtualman_id = _h5_dh_clean_text(params.get("virtualman_id"), 128)
     virtualman_id = _h5_dh_latest_virtualman(db, target_user_id)
     virtualman_candidates = _h5_dh_available_virtualmans(db, target_user_id)
-    voice = _h5_dh_latest_voice(db, target_user_id)
+    voice = _h5_dh_resolve_voice(
+        db,
+        target_user_id,
+        params.get("speaker_id") or params.get("voice"),
+    )
     if requested_virtualman_id:
         params["virtualman_selection_mode"] = "fixed"
     elif virtualman_candidates:
@@ -440,8 +461,11 @@ def _maybe_convert_h5_digital_human_task(
     if virtualman_id:
         params.setdefault("virtualman_id", virtualman_id)
     if voice:
-        params.setdefault("voice", voice)
-        params.setdefault("speaker_id", voice)
+        params["voice"] = voice
+        params["speaker_id"] = voice
+    else:
+        params.pop("voice", None)
+        params.pop("speaker_id", None)
     converted_payload = {
         "action": _SHANJIAN_DIGITAL_HUMAN_ACTION,
         "params": params,
@@ -471,6 +495,31 @@ def _normalize_sales_digital_human_run_payload(
     normalized_params = dict(params)
     normalized_params.pop("prompt", None)
     source["params"] = normalized_params
+    return source
+
+
+def _enrich_digital_human_voice_payload(
+    db: Session,
+    *,
+    payload: Dict[str, Any],
+    target_user_id: int,
+) -> Dict[str, Any]:
+    source = dict(payload or {})
+    if _h5_dh_clean_text(source.get("action"), 128) != _SHANJIAN_DIGITAL_HUMAN_ACTION:
+        return source
+    params = dict(source.get("params") if isinstance(source.get("params"), dict) else {})
+    voice = _h5_dh_resolve_voice(
+        db,
+        target_user_id,
+        params.get("speaker_id") or params.get("voice"),
+    )
+    if voice:
+        params["voice"] = voice
+        params["speaker_id"] = voice
+    else:
+        params.pop("voice", None)
+        params.pop("speaker_id", None)
+    source["params"] = params
     return source
 
 
@@ -1907,6 +1956,11 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
             target_user_id=task.user_id,
             now=now,
         )
+        run_payload = _enrich_digital_human_voice_payload(
+            db,
+            payload=run_payload,
+            target_user_id=task.user_id,
+        )
         run_payload = _enrich_digital_human_rotation_payload(
             db,
             task=task,
@@ -3021,6 +3075,14 @@ def pending_scheduled_task_runs(
         row = _claim_pending_run(db, run_id=candidate.id, user_id=current_user_id, installation_id=xi, now=now)
         if not row:
             continue
+        refreshed_payload = _enrich_digital_human_voice_payload(
+            db,
+            payload=dict(row.payload or {}),
+            target_user_id=row.user_id,
+        )
+        if refreshed_payload != (row.payload or {}):
+            row.payload = refreshed_payload
+            row.updated_at = now
         if row.h5_message_id:
             msg = db.query(H5ChatMessage).filter(H5ChatMessage.id == row.h5_message_id).first()
             if msg:
