@@ -68,6 +68,18 @@ def test_oem_manifest_assets_exist_and_match_checksums():
             assert hashlib.sha256(path.read_bytes()).hexdigest() == item["sha256"]
 
 
+def test_h5_app_serves_oem_brand_assets_on_the_h5_origin():
+    from backend.app.h5_main import app
+
+    response = TestClient(app).get("/client/oem/daka/icon_32.png")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == (
+        Path(__file__).resolve().parents[2] / "client_static" / "oem" / "daka" / "icon_32.png"
+    ).read_bytes()
+
+
 def test_unknown_oem_code_is_rejected():
     response = _client().get("/api/oem/bootstrap?code=9999")
 

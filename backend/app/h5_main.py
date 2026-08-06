@@ -137,6 +137,13 @@ def create_h5_app() -> FastAPI:
         StaticFiles(directory=str(miniprogram_static_dir)),
         name="client_miniprogram",
     )
+    oem_static_dir = Path(__file__).resolve().parent.parent.parent / "client_static" / "oem"
+    oem_static_dir.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/client/oem",
+        StaticFiles(directory=str(oem_static_dir)),
+        name="client_oem",
+    )
     return app
 
 
