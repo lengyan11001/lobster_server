@@ -1,3 +1,5 @@
+import pytest
+
 from backend.app.api import cutcli_templates as templates
 from backend.app.models import CreativeGenerationJob
 
@@ -22,6 +24,42 @@ def _captions_for_template(template_id, stt_data, video_width=None):
         caption_style=style,
         video_width=video_width,
     )
+
+
+def test_stt_poll_rejects_failed_payload_even_when_output_is_present(monkeypatch, tmp_path):
+    payload = {
+        "data": {
+            "status": "failed",
+            "output": {"error": "no valid speech in audio"},
+        }
+    }
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return payload
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(templates.httpx, "Client", FakeClient)
+
+    with pytest.raises(templates.AutoCaptionJobError) as exc_info:
+        templates._stt_poll_task("token", "task-id", job_dir=tmp_path)
+
+    assert exc_info.value.code == "stt_task_failed"
 
 
 def test_caption_split_keeps_next_sentence_initial_out_of_previous_caption():

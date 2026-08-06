@@ -158,6 +158,8 @@ def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
         text = str(output.get("text") or output.get("transcript") or "").strip()
         if not text:
             text = "\n".join((f"{x['speaker']}：{x['text']}" if x["speaker"] != "未知" else x["text"]) for x in segments)
+        if not text.strip():
+            raise RuntimeError("录音未识别到有效语音，请确认录音内容清晰后重试")
         return text, segments, created["task_id"]
     finally:
         db.close()

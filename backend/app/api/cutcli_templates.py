@@ -1954,10 +1954,10 @@ def _stt_poll_task(token: str, task_id: str, *, job_dir: Path, timeout_seconds: 
             )
             data = last_payload.get("data") if isinstance(last_payload.get("data"), dict) else last_payload
             status = str((data or {}).get("status") or "").strip().lower()
-            if status in _STT_TERMINAL_SUCCESS or (isinstance(data, dict) and data.get("output")):
-                return data if isinstance(data, dict) else last_payload
             if status in _STT_TERMINAL_FAILURE:
                 raise AutoCaptionJobError("stt_task_failed", _safe_error_text(data), detail=last_payload)
+            if status in _STT_TERMINAL_SUCCESS or (isinstance(data, dict) and data.get("output")):
+                return data if isinstance(data, dict) else last_payload
             if resp.status_code >= 400:
                 msg = _safe_error_text(last_payload)
                 code = "stt_balance_insufficient" if "浣欓涓嶈冻" in msg or "balance" in msg.lower() else "stt_query_failed"
