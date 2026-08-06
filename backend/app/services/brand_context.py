@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import hashlib
+import json
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import HTTPException, Request
@@ -40,6 +42,34 @@ BUILTIN_BRANDS: dict[str, dict[str, Any]] = {
         "primary_color": "#00a9c7",
     },
 }
+
+
+def _manifest_oem_brands() -> dict[str, dict[str, Any]]:
+    manifest_path = Path(__file__).resolve().parents[3] / "client_static" / "oem" / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    raw_brands = manifest.get("brands") if isinstance(manifest, dict) else None
+    if not isinstance(raw_brands, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for raw_mark, entry in raw_brands.items():
+        mark = str(raw_mark or "").strip().lower()
+        profile = entry.get("profile") if isinstance(entry, dict) else None
+        if not BRAND_MARK_RE.fullmatch(mark) or not isinstance(profile, dict):
+            continue
+        config = dict(profile)
+        icons = config.get("icons") if isinstance(config.get("icons"), dict) else {}
+        config["mark"] = mark
+        config["icon_32"] = icons.get("favicon_32") or icons.get("logo_mark") or config.get("icon_32")
+        config["icon_128"] = icons.get("loading_mark") or icons.get("apple_touch") or config.get("icon_128")
+        config["icon_256"] = icons.get("apple_touch") or config.get("icon_256") or config.get("icon_128")
+        result[mark] = config
+    return result
+
+
+BUILTIN_BRANDS.update(_manifest_oem_brands())
 
 
 def ensure_user_brand_schema(db_engine) -> None:

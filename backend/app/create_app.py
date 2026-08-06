@@ -1225,6 +1225,14 @@ def create_app() -> FastAPI:
         name="client_client_code",
     )
 
+    _oem_static_dir = Path(__file__).resolve().parent.parent.parent / "client_static" / "oem"
+    _oem_static_dir.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/client/oem",
+        StaticFiles(directory=str(_oem_static_dir)),
+        name="client_oem",
+    )
+
     _miniprogram_static_dir = Path(__file__).resolve().parent.parent.parent / "client_static" / "miniprogram"
     _miniprogram_static_dir.mkdir(parents=True, exist_ok=True)
     app.mount(

@@ -1632,6 +1632,7 @@
     const H5_BRAND_FALLBACKS = {
       bihuo: { display_name: "必火AI员工", icon_32: "/h5-static/bihu_32.png", icon_256: "/h5-static/bihu_256.png", primary_color: "#245cff" },
       daka: { display_name: "大咖AI员工", icon_32: "/h5-static/daka_32.png", icon_256: "/h5-static/daka_256.png", primary_color: "#00a9c7" },
+      hikong: { display_name: "海康AI智能体", icon_32: "/client/oem/hikong/icon_32.png", icon_256: "/client/oem/hikong/icon_256.png", primary_color: "#0874b9" },
     };
 
     function applyH5Branding(branding = {}) {

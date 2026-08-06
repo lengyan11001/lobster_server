@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "codes": {
+    "0100": "bihuo",
+    "0200": "daka",
+    "0300": "jinghai",
+    "0400": "hikong"
+  },
+  "pending_brands": {
+    "jinghai": {
+      "display_name": "鲸海AI员工",
+      "status": "pending_assets"
+    }
+  },
+  "brands": {
+    "bihuo": {
+      "version": "2026.08.06.1",
+      "profile": {
+        "mark": "bihuo",
+        "display_name": "必火AI员工",
+        "document_title": "必火AI员工",
+        "logo_primary": "必火",
+        "logo_accent": "AI员工",
+        "hero_title": "龙虾 - 您的私人 AI 助手",
+        "hero_subtitle": "必火智能的远景：\n成为全球领先的企业AI员工解决方案服务商",
+        "primary_color": "#2f6fed",
+        "icons": {
+          "favicon_32": "/client/oem/bihuo/icon_32.png",
+          "apple_touch": "/client/oem/bihuo/icon_256.png",
+          "loading_mark": "/client/oem/bihuo/icon_64.png",
+          "home_visual": "/client/oem/bihuo/logo_source.png",
+          "logo_mark": "/client/oem/bihuo/icon_32.png",
+          "logo_mark_width": 32,
+          "logo_mark_height": 32
+        },
+        "install": {
+          "desktop_ico": "/client/oem/bihuo/desktop.ico",
+          "launcher_exe": "/client/oem/bihuo/client_launcher.exe",
+          "launcher_filename": "必火智能AI.exe",
+          "shortcut_lnk_name": "必火智能AI.lnk",
+          "shortcut_description": "必火智能AI - 本地客户端",
+          "install_complete_hint": "双击桌面 必火智能AI.lnk 或本目录 start.bat 启动"
+        }
+      },
+      "assets": [
+        {"key": "icon_16", "url": "/client/oem/bihuo/icon_16.png", "size": 670, "sha256": "5ead7eb4161325aa117cd94c256fa9e03ce8d395998ceaa6dc85eaf84d95c3cd"},
+        {"key": "icon_24", "url": "/client/oem/bihuo/icon_24.png", "size": 1311, "sha256": "dd1c521dc774e1cca5da5d899539dba8ae93364fd14c4cab328ef8265b58fd18"},
+        {"key": "icon_32", "url": "/client/oem/bihuo/icon_32.png", "size": 1889, "sha256": "d0a2f741a3273ccf69095b8971c512aacf36d975e7edfae3513ed5a9736ca647"},
+        {"key": "icon_48", "url": "/client/oem/bihuo/icon_48.png", "size": 3708, "sha256": "bff28182dd7823691ab964de83f561aa53325af381cf8ba2a133ababa4c844fd"},
+        {"key": "icon_64", "url": "/client/oem/bihuo/icon_64.png", "size": 6382, "sha256": "39e72c9db08de562bf5bb4c17197b5335e0e8135d9134a7d5c4c4c4ff94539bd"},
+        {"key": "icon_128", "url": "/client/oem/bihuo/icon_128.png", "size": 20779, "sha256": "a3bacb0a9dfcb4da4339090119752947effca7c5c3231da926797680d590861f"},
+        {"key": "icon_256", "url": "/client/oem/bihuo/icon_256.png", "size": 63547, "sha256": "13ac5d2581c78b566828f85f9d98709df9e85a89e05d3baaf4135d2c9c67c8ba"},
+        {"key": "icon_512", "url": "/client/oem/bihuo/icon_512.png", "size": 146589, "sha256": "27305f1a4940e2e91f8df5a848cbce64a9f3408049937a4098e46dcee68de60c"},
+        {"key": "icon_1024", "url": "/client/oem/bihuo/icon_1024.png", "size": 390834, "sha256": "9d58fedc2853336d945394839dc255279e4295439910856d834bdb8ba734559e"},
+        {"key": "logo_source", "url": "/client/oem/bihuo/logo_source.png", "size": 17160, "sha256": "3e60f414771bbdd156db657c7c566eaeb8b364595f487c303ae469ecb2beab8d"},
+        {"key": "desktop_ico", "url": "/client/oem/bihuo/desktop.ico", "size": 98404, "sha256": "06d0b271fdcf3412a34f0eafd08543b225dc19afd94b62dd53daf24decdbc45e"},
+        {"key": "launcher_exe", "url": "/client/oem/bihuo/client_launcher.exe", "size": 104960, "sha256": "ca2b20962a20bc1e60a0339320a7deb65788787de9703acf4569b6d1dc21aee9"}
+      ]
+    },
+    "daka": {
+      "version": "2026.08.06.1",
+      "profile": {
+        "mark": "daka",
+        "display_name": "大咖AI员工",
+        "document_title": "大咖AI员工",
+        "logo_primary": "大咖",
+        "logo_accent": "AI员工",
+        "hero_title": "大咖AI员工 - 您的私人 AI 助手",
+        "hero_subtitle": "让AI员工持续执行营销、创作与客户运营",
+        "primary_color": "#00a9c7",
+        "icons": {
+          "favicon_32": "/client/oem/daka/icon_32.png",
+          "apple_touch": "/client/oem/daka/icon_256.png",
+          "loading_mark": "/client/oem/daka/icon_64.png",
+          "home_visual": "/client/oem/daka/logo_source.png",
+          "logo_mark": "/client/oem/daka/icon_32.png",
+          "logo_mark_width": 32,
+          "logo_mark_height": 32,
+          "header_partner_logo": "/client/oem/daka/header_partner.jpg",
+          "header_partner_logo_alt": "三域变现商学院"
+        },
+        "install": {
+          "desktop_ico": "/client/oem/daka/desktop.ico",
+          "launcher_exe": "/client/oem/daka/client_launcher.exe",
+          "launcher_filename": "大咖AI员工.exe",
+          "shortcut_lnk_name": "大咖AI员工.lnk",
+          "shortcut_description": "大咖AI员工 - 本地客户端",
+          "install_complete_hint": "双击桌面 大咖AI员工.lnk 或本目录 start.bat 启动"
+        }
+      },
+      "assets": [
+        {"key": "icon_16", "url": "/client/oem/daka/icon_16.png", "size": 764, "sha256": "c48f9ce042c1d3641ab4205a674311abee076464e4bf551968b25fd61c0f9ed0"},
+        {"key": "icon_32", "url": "/client/oem/daka/icon_32.png", "size": 2355, "sha256": "1b81b5826f520f1f386b83f835d75b7154aabef10d50e6b9419a84618a2b9f65"},
+        {"key": "icon_48", "url": "/client/oem/daka/icon_48.png", "size": 4621, "sha256": "3f6b50155724fbc038a640c481fe8066e460c28c35472631e1f86bb9b7631d71"},
+        {"key": "icon_64", "url": "/client/oem/daka/icon_64.png", "size": 7448, "sha256": "cc8f9420a72a7a678de6e73f6b4e91eb762a3a86a910adebc488a95105d3d6b3"},
+        {"key": "icon_128", "url": "/client/oem/daka/icon_128.png", "size": 22948, "sha256": "9830c395311939269f234e54d36cf2fdb66b02c61b0a5cb4781f2327e408ec20"},
+        {"key": "icon_256", "url": "/client/oem/daka/icon_256.png", "size": 70671, "sha256": "0a9ddce550136230ed9310abfc6fb3409ae61a09c67c41a9d99ceb32f248d7a3"},
+        {"key": "icon_512", "url": "/client/oem/daka/icon_512.png", "size": 216333, "sha256": "d747926f745c8cb9ee4bbc56930045c221984ab6ef7a65640ec8dfdc818e1d6f"},
+        {"key": "icon_1024", "url": "/client/oem/daka/icon_1024.png", "size": 694652, "sha256": "ea1527ff91a64cf7ee176a9da4f3205fab525c5ebb4d9e0f41a1b905d2d4c21a"},
+        {"key": "logo_source", "url": "/client/oem/daka/logo_source.png", "size": 676831, "sha256": "8b7b1e1c57ad066d4db3f9e6d110aed8d19d3b0de625be89cf6197b75addcce0"},
+        {"key": "header_partner", "url": "/client/oem/daka/header_partner.jpg", "size": 92750, "sha256": "08021b64c58b38c338ac8c841558ffdd83dfa297a3988438e841881df65a36ff"},
+        {"key": "desktop_ico", "url": "/client/oem/daka/desktop.ico", "size": 107270, "sha256": "437398cfa6a558683bb7b0bedf88bc2e15c1d45cd5e750d8d34a51a888fbf011"},
+        {"key": "launcher_exe", "url": "/client/oem/daka/client_launcher.exe", "size": 113664, "sha256": "8606b6245fda808cb95f1798cbfad8b1ab4696834c55d9ac7219147975e2e820"}
+      ]
+    },
+    "hikong": {
+      "version": "2026.08.06.1",
+      "profile": {
+        "mark": "hikong",
+        "display_name": "海康AI智能体",
+        "document_title": "海康AI智能体",
+        "logo_primary": "海康",
+        "logo_accent": "AI智能体",
+        "hero_title": "海康AI智能体 - 您的私人 AI 助手",
+        "hero_subtitle": "让AI智能体持续执行营销、创作与客户运营",
+        "primary_color": "#0874b9",
+        "icons": {
+          "favicon_32": "/client/oem/hikong/icon_32.png",
+          "apple_touch": "/client/oem/hikong/icon_256.png",
+          "loading_mark": "/client/oem/hikong/icon_128.png",
+          "home_visual": "/client/oem/hikong/logo_1024.png",
+          "logo_mark": "/client/oem/hikong/icon_32.png",
+          "logo_mark_width": 32,
+          "logo_mark_height": 32
+        },
+        "install": {
+          "desktop_ico": "/client/oem/hikong/desktop.ico",
+          "launcher_exe": "/client/oem/hikong/client_launcher.exe",
+          "launcher_filename": "海康AI智能体.exe",
+          "shortcut_lnk_name": "海康AI智能体.lnk",
+          "shortcut_description": "海康AI智能体 - 本地客户端",
+          "install_complete_hint": "双击桌面 海康AI智能体.lnk 或本目录 start.bat 启动"
+        }
+      },
+      "assets": [
+        {"key": "icon_16", "url": "/client/oem/hikong/icon_16.png", "size": 396, "sha256": "7a739ca95ed1479ef32d756fe9934e05c5c88eaef426a9b300b1c424d168f0f9"},
+        {"key": "icon_24", "url": "/client/oem/hikong/icon_24.png", "size": 589, "sha256": "553b654b575b9c31aa9d7ba59ed44fd2e0bfc085fc1666d68873916419904bb7"},
+        {"key": "icon_32", "url": "/client/oem/hikong/icon_32.png", "size": 830, "sha256": "5ade3fadb10971bb8fd175d474a3afaae1e18be49a7ee0e00d5cbccc46c4a872"},
+        {"key": "icon_48", "url": "/client/oem/hikong/icon_48.png", "size": 1463, "sha256": "d339aadad6c723bfcc30f1ac1fca7607a41abd52145cfad0cf10514697e86655"},
+        {"key": "icon_64", "url": "/client/oem/hikong/icon_64.png", "size": 2267, "sha256": "2638a0f9fc2be9b9c4a48b9db8ffd7ea599d8041a0c92b4a787b5a25d10b13b0"},
+        {"key": "icon_128", "url": "/client/oem/hikong/icon_128.png", "size": 6196, "sha256": "e8100009cd041b8aaec2617626d77675722f2b939e4ab43bbdd16c85693581aa"},
+        {"key": "icon_256", "url": "/client/oem/hikong/icon_256.png", "size": 15725, "sha256": "153596c5f9e09a26513e3afd1aa148bcd5a2484bf43513fc9541e0f5a34f3fe1"},
+        {"key": "icon_512", "url": "/client/oem/hikong/icon_512.png", "size": 41105, "sha256": "15a9272df3981f8715e135a3cd5ee5f5a7887229a68b22a4551b6f3a0ea86d2f"},
+        {"key": "icon_1024", "url": "/client/oem/hikong/icon_1024.png", "size": 92442, "sha256": "f791f2b45ba084eff6c4d1070d382f106777744b317d66e3bd60d9bc5d26f9a7"},
+        {"key": "logo_1024", "url": "/client/oem/hikong/logo_1024.png", "size": 204142, "sha256": "c0c79c06d6d01cf1cea92d9d00c5e13f821426cf1fd2948fa8527279e233da91"},
+        {"key": "desktop_ico", "url": "/client/oem/hikong/desktop.ico", "size": 28215, "sha256": "a3d37bf25118a4a2e505a11e53bc3eec088f77ab14580163d06b02362aed3875"},
+        {"key": "launcher_exe", "url": "/client/oem/hikong/client_launcher.exe", "size": 34816, "sha256": "347853a984061c8cec0818eda43edf00d87e97323cfa74f7c2156d681907f27e"}
+      ]
+    }
+  }
+}

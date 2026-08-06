@@ -839,8 +839,17 @@ def _webclip_icon_xml(branding: Dict[str, Any]) -> str:
         candidates.extend(("/h5-static/bihu_256.png", "/h5-static/bihu_32.png"))
     icon_path: Path | None = None
     static_root = _H5_STATIC_DIR.resolve()
+    oem_root = (_ROOT / "client_static" / "oem").resolve()
     for raw in candidates:
-        filename = unquote(urlparse(raw).path).replace("\\", "/").rsplit("/", 1)[-1].strip()
+        url_path = unquote(urlparse(raw).path).replace("\\", "/")
+        if url_path.startswith("/client/oem/"):
+            relative = url_path.removeprefix("/client/oem/").lstrip("/")
+            candidate = (oem_root / relative).resolve()
+            if oem_root in candidate.parents and candidate.is_file() and candidate.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+                icon_path = candidate
+                break
+            continue
+        filename = url_path.rsplit("/", 1)[-1].strip()
         if not filename or not _UPLOAD_NAME_RE.fullmatch(filename):
             continue
         candidate = (_H5_STATIC_DIR / filename).resolve()
