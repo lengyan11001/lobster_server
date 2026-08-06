@@ -68,13 +68,16 @@
       linkedinJobs: [],
       wechatTranscriptJobs: [],
       recorderDeviceFiles: [],
+      recorderSyncedFiles: [],
+      recorderKnownNames: [],
       recorderRecords: [],
       recorderPage: 1,
-      recorderPageSize: 10,
+      recorderPageSize: 20,
       recorderTotal: 0,
       recorderSubtab: "device",
       recorderDetailId: null,
       recorderPoller: null,
+      recorderSyncActive: false,
       recorderDeviceState: { connected: false, recording: false, paused: false, duration: 0, name: "" },
       companyName: localStorage.getItem(brandStorageKey("lobster_h5_company_name")) || "我的AI公司",
       officeDeviceFilter: "all",
@@ -10510,17 +10513,45 @@
     function renderRecorderDeviceFiles() {
       const host = $("recorderDeviceFiles");
       if (!host) return;
-      const rows = (state.recorderDeviceFiles || []).slice().sort((a, b) => String(b.fileName || b.createTime || "").localeCompare(String(a.fileName || a.createTime || "")));
+      const canonicalName = (name) => String(name || "").trim().toLowerCase().replace(/(?:\.(?:opus|atw|wav|mp3|m4a|aac|ogg))+$/i, "");
+      const syncedRows = Array.isArray(state.recorderSyncedFiles) ? state.recorderSyncedFiles : [];
+      const syncedByName = new Map(syncedRows.map((row) => [canonicalName(row.file_name), row]));
+      const knownNames = new Set((state.recorderKnownNames || []).map(canonicalName));
+      const rows = (state.recorderDeviceFiles || []).map((row) => {
+        const serverRecord = syncedByName.get(canonicalName(row.fileName)) || null;
+        return {
+          ...row,
+          onDevice: true,
+          serverRecord,
+          synced: !!serverRecord || knownNames.has(canonicalName(row.fileName)),
+        };
+      });
+      const deviceNames = new Set(rows.map((row) => canonicalName(row.fileName)));
+      syncedRows.forEach((record) => {
+        if (!deviceNames.has(canonicalName(record.file_name))) {
+          rows.push({
+            fileName: record.display_name || record.file_name,
+            fileSize: record.file_size,
+            createTime: String(record.recorded_at || record.created_at || "").replace("T", " ").slice(0, 19),
+            onDevice: false,
+            serverRecord: record,
+          });
+        }
+      });
+      rows.sort((a, b) => String(b.createTime || b.fileName || "").localeCompare(String(a.createTime || a.fileName || "")));
       host.innerHTML = rows.length ? rows.map((row) => `
         <div class="recorder-item">
           <div class="recorder-item-main">
             <strong>${escapeHtml(row.fileName || "未命名录音")}</strong>
             <div class="recorder-meta"><span>${recorderFormatBytes(row.fileSize)}</span>${row.durationSec ? `<span>${recorderFormatDuration(row.durationSec)}</span>` : ""}${row.createTime ? `<span>${escapeHtml(row.createTime)}</span>` : ""}</div>
+            <span class="recorder-status ${escapeHtml(row.serverRecord?.status || "")}">${row.onDevice ? (row.synced ? "已同步" : "待同步") : escapeHtml(recorderStatusLabel(row.serverRecord?.status))}</span>
           </div>
           <div class="recorder-item-actions">
-            <button type="button" class="ghost danger-text" data-recorder-device-delete="${escapeHtml(row.fileName || "")}">删除</button>
+            ${row.serverRecord?.id ? `<button type="button" class="ghost" data-recorder-detail="${Number(row.serverRecord.id)}">查看</button>` : ""}
+            ${row.onDevice && !row.synced ? `<button type="button" data-recorder-download="${escapeHtml(row.fileName || "")}" ${state.recorderSyncActive ? "disabled" : ""}>同步</button>` : ""}
+            ${row.onDevice ? `<button type="button" class="ghost danger-text" data-recorder-device-delete="${escapeHtml(row.fileName || "")}">删除</button>` : ""}
           </div>
-        </div>`).join("") : '<div class="empty">连接设备后显示录音文件。</div>';
+        </div>`).join("") : '<div class="empty">还没有同步录音，连接设备后可增量同步。</div>';
     }
 
     function renderRecorderRecords() {
@@ -10553,11 +10584,19 @@
       state.recorderPage = Number(data.page || 1);
       state.recorderTotal = Number(data.total || 0);
       state.recorderRecords = Array.isArray(data.items) ? data.items : [];
+      if (state.recorderPage === 1) state.recorderSyncedFiles = state.recorderRecords.slice();
       renderRecorderRecords();
+      renderRecorderDeviceFiles();
       const pending = state.recorderRecords.some((row) => row.status === "processing");
       if (pending && state.recorderDetailId) showRecorderDetail(state.recorderDetailId, false).catch(() => {});
       clearTimeout(state.recorderPoller);
       if (pending && document.querySelector("#recorderView.active")) state.recorderPoller = setTimeout(() => loadRecorderRecords().catch(() => {}), 4000);
+    }
+
+    async function loadRecorderKnownNames() {
+      const data = await api("/api/h5/recorder/known-names");
+      state.recorderKnownNames = Array.isArray(data.items) ? data.items : [];
+      renderRecorderDeviceFiles();
     }
 
     async function renameRecorderRecord(id, oldName) {
@@ -10580,10 +10619,15 @@
         renderRecorderDeviceState({ connected: false, recording: false, paused: false, duration: 0, name: "" });
       } else {
         syncRecorderNativeAuth();
-        readRecorderNativeState();
+        const nativeState = readRecorderNativeState();
+        state.recorderSyncActive = !!nativeState?.syncing;
+        if ($("recorderSyncStatus") && !state.recorderSyncActive) {
+          $("recorderSyncStatus").textContent = nativeState?.connected ? "刷新设备列表后，可逐条同步新录音" : "已同步录音可离线查看";
+        }
       }
       renderRecorderDeviceFiles();
       loadRecorderRecords().catch((err) => toast(String(err.message || "录音记录加载失败") === "Not Found" ? "录音服务暂不可用，请稍后刷新" : (err.message || "录音记录加载失败")));
+      loadRecorderKnownNames().catch(() => {});
     }
 
     async function showRecorderDetail(id, scrollToDetail = true) {
@@ -10607,6 +10651,7 @@
       await api(`/api/h5/recorder/files/${encodeURIComponent(id)}`, { method: "DELETE" });
       if ($("recorderDetailPanel")) $("recorderDetailPanel").classList.add("hidden");
       await loadRecorderRecords();
+      await loadRecorderKnownNames();
       toast("已删除");
     }
 
@@ -10614,15 +10659,13 @@
       const native = recorderNative();
       if (!native) return toast("请在最新版安卓 APK 中连接录音设备");
       const value = readRecorderNativeState() || state.recorderDeviceState;
+      if (!value.connected) return toast("请先连接录音设备；已同步录音仍可在当前列表查看");
       if (value.recording) {
-        if (!confirm("设备正在录音，需要先停止才能同步文件。现在停止并同步最新录音吗？")) return;
-        if (typeof native.stopRecorderRecording === "function") native.stopRecorderRecording(true);
-        return;
+        return toast("设备正在录音，请停止后再刷新文件列表");
       }
       syncRecorderNativeAuth();
-      const known = await api("/api/h5/recorder/known-names");
-      if (typeof native.syncNewRecorderFiles === "function") native.syncNewRecorderFiles(JSON.stringify(known.items || []));
-      else native.fetchRecorderFiles();
+      if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = "正在读取设备最新文件列表…";
+      native.fetchRecorderFiles();
     }
 
     window.addEventListener("lobster-recorder", (event) => {
@@ -10631,6 +10674,8 @@
         renderRecorderDeviceState({ connected: true, name: detail.name || "录音设备", recording: !!detail.recording, paused: !!detail.paused, duration: Number(detail.duration || 0) });
       } else if (detail.type === "disconnected") {
         renderRecorderDeviceState({ connected: false, recording: false, paused: false, duration: 0, name: "" });
+        state.recorderSyncActive = false;
+        if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = "设备已断开，已同步录音仍可查看";
       } else if (detail.type === "recordState") {
         renderRecorderDeviceState({ connected: true, recording: !!detail.recording, paused: !!detail.paused, duration: Number(detail.duration || state.recorderDeviceState.duration || 0) });
       } else if (detail.type === "recordDuration") {
@@ -10638,14 +10683,17 @@
       } else if (detail.type === "fileList") {
         state.recorderDeviceFiles = (detail.files || []).slice().sort((a, b) => String(b.fileName || b.createTime || "").localeCompare(String(a.fileName || a.createTime || ""))).slice(0, 20);
         renderRecorderDeviceFiles();
+        if (!state.recorderSyncActive && $("recorderSyncStatus")) $("recorderSyncStatus").textContent = "设备列表已更新，未同步录音可逐条选择";
       } else if (detail.type === "syncStarted") {
-        if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = Number(detail.total || 0) ? `正在同步 ${Number(detail.total)} 个新文件` : "没有新文件";
+        state.recorderSyncActive = Number(detail.total || 0) > 0;
+        if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = Number(detail.total || 0) ? `正在同步 ${Number(detail.total)} 个新文件` : "没有新增录音";
       } else if (detail.type === "downloadProgress") {
+        state.recorderSyncActive = true;
         if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = `正在同步 ${detail.fileName || "录音"} · ${Number(detail.progress || 0)}%`;
       } else if (detail.type === "syncComplete") {
+        state.recorderSyncActive = false;
         if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = "同步完成";
         state.recorderPage = 1;
-        setRecorderSubtab("records");
         loadRecorderRecords().catch(() => {});
       } else if (detail.type === "fileDeleted") {
         if (detail.success) {
@@ -10654,11 +10702,28 @@
         } else {
           toast(detail.reason || "设备录音删除失败");
         }
-      } else if (detail.type === "downloadComplete" || detail.type === "uploadComplete") {
+      } else if (detail.type === "downloadComplete") {
+        if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = "录音已下载，正在上传并创建转写任务…";
+      } else if (detail.type === "uploadComplete") {
+        state.recorderSyncActive = false;
+        if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = "该录音同步完成";
+        state.recorderPage = 1;
+        renderRecorderDeviceFiles();
         loadRecorderRecords().catch(() => {});
+        loadRecorderKnownNames().catch(() => {});
       } else if (detail.type === "syncBlocked") {
         toast("设备正在录音，请先停止后再同步");
+      } else if (detail.type === "syncInterrupted") {
+        state.recorderSyncActive = false;
+        if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = "同步已中断，重新连接后可继续";
+      } else if (detail.type === "downloadFailed") {
+        state.recorderSyncActive = false;
+        if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = `同步失败：${detail.reason || "设备下载失败"}`;
+        renderRecorderDeviceFiles();
       } else if (detail.type === "uploadFailed") {
+        state.recorderSyncActive = false;
+        if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = `同步失败：${detail.reason || "录音上传失败"}`;
+        renderRecorderDeviceFiles();
         toast(detail.reason || "录音上传失败");
       }
     });
@@ -18655,6 +18720,7 @@
     if ($("recorderRefreshBtn")) $("recorderRefreshBtn").addEventListener("click", () => {
       refreshLatestRecorderFiles().catch((err) => { if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = err.message || "同步失败"; });
       loadRecorderRecords().catch((err) => toast(err.message || "刷新失败"));
+      loadRecorderKnownNames().catch(() => {});
     });
     if ($("recorderDetailClose")) $("recorderDetailClose").addEventListener("click", () => {
       state.recorderDetailId = null;
@@ -18662,7 +18728,12 @@
     });
     if ($("recorderDeviceFiles")) $("recorderDeviceFiles").addEventListener("click", (event) => {
       const deleteButton = event.target.closest("[data-recorder-device-delete]");
+      const detailButton = event.target.closest("[data-recorder-detail]");
       const button = event.target.closest("[data-recorder-download]");
+      if (detailButton) {
+        showRecorderDetail(Number(detailButton.dataset.recorderDetail)).catch((err) => toast(err.message || "录音详情加载失败"));
+        return;
+      }
       if (deleteButton) {
         const native = recorderNative();
         if (!native || typeof native.deleteRecorderFile !== "function") return toast("请更新到最新版 APK 后删除设备录音");
@@ -18673,6 +18744,10 @@
       if (!button) return;
       const native = recorderNative();
       if (!native) return toast("请在最新版安卓 APK 中下载录音");
+      if (state.recorderSyncActive) return toast("当前录音同步完成后再选择下一条");
+      state.recorderSyncActive = true;
+      if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = `正在准备同步 ${button.dataset.recorderDownload || "录音"}…`;
+      renderRecorderDeviceFiles();
       syncRecorderNativeAuth();
       native.downloadRecorderFile(button.dataset.recorderDownload || "");
     });

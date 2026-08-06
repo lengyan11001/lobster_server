@@ -862,7 +862,7 @@
               <button type="button" id="recorderConnectBtn">连接设备</button>
               <button type="button" id="recorderStartBtn" disabled>开始录音</button>
               <button type="button" class="ghost danger-text" id="recorderStopBtn" disabled>停止录音</button>
-              <button type="button" class="ghost" id="recorderRefreshBtn" disabled>同步最新</button>
+              <button type="button" class="ghost" id="recorderRefreshBtn" disabled>刷新列表</button>
             </div>
             <div class="recorder-sync-status" id="recorderSyncStatus" aria-live="polite"></div>
           </div>
@@ -871,8 +871,8 @@
             <button type="button" data-recorder-tab="records" role="tab">转写记录</button>
           </div>
           <div class="panel recorder-section" data-recorder-panel="device">
-            <div class="section-title"><h3>设备录音</h3><span class="hint">按录音日期倒序，点击顶部同步仅获取新文件</span></div>
-            <div id="recorderDeviceFiles" class="recorder-list"><div class="empty">连接设备后显示录音文件。</div></div>
+            <div class="section-title"><h3>设备录音</h3><span class="hint">刷新只读取目录，选择未同步录音后再上传</span></div>
+            <div id="recorderDeviceFiles" class="recorder-list"><div class="empty">正在加载已同步录音…</div></div>
           </div>
           <div class="panel recorder-section hidden" data-recorder-panel="records">
             <div class="section-title"><h3>转写与总结</h3><span class="hint">按录音日期倒序，可翻页和改名</span></div>

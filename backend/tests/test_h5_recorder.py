@@ -1,5 +1,10 @@
+from pathlib import Path
+
 from backend.app.api.h5_recorder import _recorded_at, _segments
 from backend.app.h5_main import app as h5_app
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_recorder_segments_map_speakers_in_first_seen_order():
@@ -34,3 +39,20 @@ def test_recorder_timestamp_is_read_from_device_file_name():
     assert value is not None
     assert value.isoformat() == "2026-08-06T05:43:47"
     assert _recorded_at("recording.opus") is None
+
+
+def test_recorder_device_refresh_does_not_start_batch_audio_sync():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    refresh_body = script.split("async function refreshLatestRecorderFiles()", 1)[1].split(
+        'window.addEventListener("lobster-recorder"', 1
+    )[0]
+    assert "native.fetchRecorderFiles();" in refresh_body
+    assert "native.syncNewRecorderFiles" not in refresh_body
+    assert 'data-recorder-download="${escapeHtml(row.fileName || "")}"' in script
+    assert "loadRecorderKnownNames" in script
+
+
+def test_recorder_page_explains_manual_per_file_sync():
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+    assert 'id="recorderRefreshBtn" disabled>刷新列表</button>' in html
+    assert "刷新只读取目录，选择未同步录音后再上传" in html
