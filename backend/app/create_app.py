@@ -143,6 +143,25 @@ def _migrate_model_usage_events_table():
         logger.warning("Migration model_usage_events skipped: %s", e)
 
 
+def _migrate_recorder_audio_columns():
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("recorder_audio_records"):
+            return
+        cols = {c["name"] for c in insp.get_columns("recorder_audio_records")}
+        with engine.begin() as conn:
+            if "display_name" not in cols:
+                conn.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN display_name VARCHAR(255) NOT NULL DEFAULT ''"))
+            if "recorded_at" not in cols:
+                conn.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN recorded_at TIMESTAMP"))
+            if "process_stage" not in cols:
+                conn.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN process_stage VARCHAR(32) NOT NULL DEFAULT 'uploaded'"))
+    except Exception as e:
+        logger.warning("Migration recorder audio columns skipped: %s", e)
+
+
 def _migrate_juhe_wechat_config_owner_columns():
     """Add Juhe WeChat config columns introduced after the initial table."""
     from sqlalchemy import inspect, text
@@ -1052,6 +1071,7 @@ def create_app() -> FastAPI:
         _migrate_sutui_recon_balance_remote_prev()
         _migrate_capability_configs_extra_config()
         _migrate_model_usage_events_table()
+        _migrate_recorder_audio_columns()
         _migrate_juhe_wechat_config_owner_columns()
         _migrate_ip_content_schedule_template_memory_doc_ids()
         _migrate_h5_device_presence_account_payload()

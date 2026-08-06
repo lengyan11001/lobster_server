@@ -1851,10 +1851,23 @@ def _extract_audio_wav(*, ffmpeg: str, source: str, out_path: Path) -> None:
 
 def _upload_job_file_to_tos(path: Path, *, object_key: str, content_type: str) -> str:
     data = path.read_bytes()
-    url = _upload_to_tos(data, object_key, content_type)
-    if not url:
-        raise AutoCaptionJobError("tos_upload_failed", f"failed to upload {path.name} to TOS")
-    return url
+    for attempt in range(1, 4):
+        url = _upload_to_tos(data, object_key, content_type)
+        if url:
+            return url
+        logger.warning(
+            "[TOS] job upload returned no URL path=%s object_key=%s attempt=%s/3 size=%s",
+            path.name,
+            object_key,
+            attempt,
+            len(data),
+        )
+        if attempt < 3:
+            time.sleep(attempt)
+    raise AutoCaptionJobError(
+        "tos_upload_failed",
+        f"failed to upload {path.name} to TOS after 3 attempts (size={len(data)}, object_key={object_key})",
+    )
 
 
 def _stt_create_task(token: str, audio_url: str, *, job_dir: Path, enable_speaker_info: bool = False) -> Dict[str, Any]:

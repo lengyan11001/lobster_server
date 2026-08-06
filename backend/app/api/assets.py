@@ -88,6 +88,7 @@ def _upload_to_tos(data: bytes, object_key: str, content_type: str) -> Optional[
     """上传字节到 TOS，返回公网可访问 URL；失败返回 None。"""
     cfg = _get_tos_config()
     if not cfg:
+        logger.warning("[TOS] 配置未读取到，object_key=%s", object_key)
         return None
     try:
         import tos

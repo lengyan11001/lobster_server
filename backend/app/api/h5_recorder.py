@@ -5,10 +5,12 @@ import json
 import re
 import shutil
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
@@ -30,6 +32,20 @@ MAX_AUDIO_BYTES = 200 * 1024 * 1024
 DATA_ROOT = Path(__file__).resolve().parents[3] / "data" / "recorder_audio"
 
 
+class RecorderRenameBody(BaseModel):
+    display_name: str = Field(min_length=1, max_length=255)
+
+
+def _recorded_at(file_name: str) -> datetime | None:
+    match = re.search(r"(?<!\d)(\d{14})(?!\d)", file_name or "")
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+
+
 def _remove_recording_files(audio_path: str) -> None:
     if not audio_path:
         return
@@ -47,13 +63,16 @@ def _serialize(row: RecorderAudioRecord, detail: bool = False) -> dict[str, Any]
     data = {
         "id": row.id,
         "file_name": row.file_name,
+        "display_name": row.display_name or row.file_name,
         "device_name": row.device_name,
         "file_size": row.file_size,
         "status": row.status,
+        "process_stage": row.process_stage,
         "error_message": row.error_message,
         "summary_text": row.summary_text,
         "key_points": row.key_points or [],
         "created_at": row.created_at.isoformat() if row.created_at else "",
+        "recorded_at": row.recorded_at.isoformat() if row.recorded_at else "",
         "updated_at": row.updated_at.isoformat() if row.updated_at else "",
     }
     if detail:
@@ -113,6 +132,8 @@ def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
         row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).first()
         if not row:
             raise RuntimeError("录音记录不存在")
+        row.process_stage = "transcribing"
+        db.commit()
         source = Path(row.audio_path)
         job_dir = source.parent / "stt"
         job_dir.mkdir(parents=True, exist_ok=True)
@@ -137,6 +158,14 @@ def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
 async def _process(record_id: int, request: Request, installation_id: str) -> None:
     try:
         text, segments, task_id = await asyncio.to_thread(_run_stt, record_id)
+        db = SessionLocal()
+        try:
+            row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).first()
+            if row:
+                row.process_stage = "summarizing"
+                db.commit()
+        finally:
+            db.close()
         dialogue = "\n".join(f"{x['speaker']}：{x['text']}" for x in segments) or text
         answer = await _call_llm(request, installation_id, [
             {"role": "system", "content": "你是会议录音整理助手。只依据转写内容，输出严格 JSON：summary 为核心内容摘要；key_points 为关键事项数组。不要编造人物身份。"},
@@ -153,6 +182,7 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
                 row.key_points = parsed.get("key_points") if isinstance(parsed.get("key_points"), list) else []
                 row.stt_task_id = task_id
                 row.status = "completed"
+                row.process_stage = "completed"
                 db.commit()
         finally:
             db.close()
@@ -162,6 +192,7 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
             row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).first()
             if row:
                 row.status = "failed"
+                row.process_stage = "failed"
                 row.error_message = str(exc)[:2000]
                 db.commit()
         finally:
@@ -179,6 +210,12 @@ async def upload_recording(
     db: Session = Depends(get_db),
 ):
     name = Path(file.filename or "recording.opus").name[:255]
+    existing = db.query(RecorderAudioRecord).filter(
+        RecorderAudioRecord.user_id == current_user.id,
+        RecorderAudioRecord.file_name == name,
+    ).first()
+    if existing:
+        return {"ok": True, "duplicate": True, "record": _serialize(existing, detail=True)}
     target_dir = DATA_ROOT / str(current_user.id) / uuid.uuid4().hex
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / name
@@ -194,7 +231,7 @@ async def upload_recording(
                 shutil.rmtree(target_dir, ignore_errors=True)
                 raise HTTPException(status_code=413, detail="录音文件不能超过 200MB")
             out.write(chunk)
-    row = RecorderAudioRecord(user_id=current_user.id, file_name=name, device_name=device_name[:128], file_size=size, audio_path=str(target), status="processing")
+    row = RecorderAudioRecord(user_id=current_user.id, file_name=name, display_name=name, device_name=device_name[:128], file_size=size, audio_path=str(target), status="processing", process_stage="uploaded", recorded_at=_recorded_at(name))
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -205,18 +242,32 @@ async def upload_recording(
 
 @router.get("/api/h5/recorder/files")
 def list_recordings(
-    limit: int = Query(default=20, ge=1, le=50),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=50),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    rows = (
-        db.query(RecorderAudioRecord)
-        .filter(RecorderAudioRecord.user_id == current_user.id)
-        .order_by(RecorderAudioRecord.id.desc())
-        .limit(limit)
-        .all()
-    )
-    return {"items": [_serialize(row) for row in rows]}
+    query = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.user_id == current_user.id)
+    total = query.count()
+    rows = query.order_by(RecorderAudioRecord.recorded_at.desc().nullslast(), RecorderAudioRecord.created_at.desc(), RecorderAudioRecord.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": [_serialize(row) for row in rows], "page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}
+
+
+@router.get("/api/h5/recorder/known-names")
+def recorder_known_names(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    rows = db.query(RecorderAudioRecord.file_name).filter(RecorderAudioRecord.user_id == current_user.id).all()
+    return {"items": [row[0] for row in rows]}
+
+
+@router.patch("/api/h5/recorder/files/{record_id}")
+def rename_recording(record_id: int, body: RecorderRenameBody, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id, RecorderAudioRecord.user_id == current_user.id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="录音不存在")
+    row.display_name = body.display_name.strip()
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "record": _serialize(row)}
 
 
 @router.get("/api/h5/recorder/files/{record_id}")

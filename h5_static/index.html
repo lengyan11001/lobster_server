@@ -864,17 +864,24 @@
               <button type="button" class="ghost danger-text" id="recorderStopBtn" disabled>停止录音</button>
               <button type="button" class="ghost" id="recorderRefreshBtn" disabled>同步最新</button>
             </div>
+            <div class="recorder-sync-status" id="recorderSyncStatus" aria-live="polite"></div>
           </div>
-          <div class="panel recorder-section">
-            <div class="section-title"><h3>设备录音</h3><span class="hint">仅显示最新 20 条，点击同步后自动上传转写</span></div>
+          <div class="recorder-subtabs" id="recorderSubtabs" role="tablist">
+            <button type="button" class="active" data-recorder-tab="device" role="tab">设备录音</button>
+            <button type="button" data-recorder-tab="records" role="tab">转写记录</button>
+          </div>
+          <div class="panel recorder-section" data-recorder-panel="device">
+            <div class="section-title"><h3>设备录音</h3><span class="hint">按录音日期倒序，点击顶部同步仅获取新文件</span></div>
             <div id="recorderDeviceFiles" class="recorder-list"><div class="empty">连接设备后显示录音文件。</div></div>
           </div>
-          <div class="panel recorder-section">
-            <div class="section-title"><h3>转写与总结</h3><span class="hint">显示最新 20 条，支持多文件并行处理</span></div>
+          <div class="panel recorder-section hidden" data-recorder-panel="records">
+            <div class="section-title"><h3>转写与总结</h3><span class="hint">按录音日期倒序，可翻页和改名</span></div>
             <div id="recorderServerFiles" class="recorder-list"><div class="empty">还没有上传的录音。</div></div>
+            <div id="recorderPager" class="recorder-pager"></div>
           </div>
-          <div class="panel recorder-detail hidden" id="recorderDetailPanel">
+          <div class="panel recorder-detail hidden" id="recorderDetailPanel" data-recorder-panel="records">
             <div class="section-title"><h3 id="recorderDetailTitle">录音内容</h3><button type="button" class="ghost" id="recorderDetailClose">关闭</button></div>
+            <div class="recorder-progress" id="recorderDetailProgress"></div>
             <div class="recorder-summary" id="recorderSummary"></div>
             <div class="recorder-key-points" id="recorderKeyPoints"></div>
             <div class="recorder-dialogue" id="recorderDialogue"></div>

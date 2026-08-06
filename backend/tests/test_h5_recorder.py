@@ -1,4 +1,4 @@
-from backend.app.api.h5_recorder import _segments
+from backend.app.api.h5_recorder import _recorded_at, _segments
 from backend.app.h5_main import app as h5_app
 
 
@@ -25,3 +25,12 @@ def test_h5_recorder_routes_are_available_on_standalone_h5_app():
     assert ("/api/h5/recorder/files", "GET") in routes
     assert ("/api/h5/recorder/files", "POST") in routes
     assert ("/api/h5/recorder/files/{record_id}", "DELETE") in routes
+    assert ("/api/h5/recorder/files/{record_id}", "PATCH") in routes
+    assert ("/api/h5/recorder/known-names", "GET") in routes
+
+
+def test_recorder_timestamp_is_read_from_device_file_name():
+    value = _recorded_at("20260806054347.opus")
+    assert value is not None
+    assert value.isoformat() == "2026-08-06T05:43:47"
+    assert _recorded_at("recording.opus") is None

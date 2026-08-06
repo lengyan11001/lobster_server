@@ -2607,6 +2607,11 @@
     .recorder-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .recorder-actions button { min-height: 38px; }
     .recorder-actions button:disabled { opacity: .45; cursor: not-allowed; }
+    .recorder-sync-status { width: 100%; color: var(--muted); font-size: 12px; }
+    .recorder-subtabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: #f4f7fb; }
+    .recorder-subtabs button { min-height: 38px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; box-shadow: none; }
+    .recorder-subtabs button.active { color: #fff; background: var(--blue); }
+    .recorder-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; font-size: 13px; color: var(--muted); }
     .recorder-duration { margin-top: 6px; color: #d9483b; font-size: 22px; font-variant-numeric: tabular-nums; }
     .recorder-section, .recorder-detail { padding: 16px; }
     .recorder-list { display: grid; gap: 10px; margin-top: 12px; }
@@ -2617,6 +2622,11 @@
     .recorder-status { font-size: 12px; font-weight: 800; color: #8a5b00; }
     .recorder-status.completed { color: #08745f; }
     .recorder-status.failed { color: #b42318; }
+    .recorder-progress-compact, .recorder-progress-track { height: 5px; overflow: hidden; border-radius: 3px; background: #e8edf5; }
+    .recorder-progress-compact i, .recorder-progress-track i { display: block; height: 100%; border-radius: inherit; background: #0f8f7a; transition: width .25s ease; }
+    .recorder-progress { display: grid; gap: 8px; margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
+    .recorder-progress > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+    .recorder-progress p { margin: 0; color: #b42318; font-size: 12px; }
     .recorder-item-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     .recorder-item-actions button { min-height: 34px; padding: 7px 11px; }
     .recorder-summary { white-space: pre-wrap; line-height: 1.7; padding: 14px; background: #f2faf7; border-radius: 14px; margin-top: 12px; }
