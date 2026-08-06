@@ -777,9 +777,9 @@ body{background:#edf2f7}
 
 <script>
 const API = location.origin;
-const REQUESTED_BRAND_MARK = (new URLSearchParams(location.search).get('brand') || 'bihuo').trim().toLowerCase();
 const ADMIN_BRAND_MARKS = new Set(['bihuo', 'daka', 'jinghai', 'hikong']);
-const BRAND_MARK = ADMIN_BRAND_MARKS.has(REQUESTED_BRAND_MARK) ? REQUESTED_BRAND_MARK : 'bihuo';
+const SERVER_BRAND_MARK = String(document.documentElement.dataset.brand || '').trim().toLowerCase();
+const BRAND_MARK = ADMIN_BRAND_MARKS.has(SERVER_BRAND_MARK) ? SERVER_BRAND_MARK : 'bihuo';
 const SESSION_SUFFIX = ':' + BRAND_MARK;
 let TOKEN = localStorage.getItem('admin_token' + SESSION_SUFFIX) || '';
 let ROLE = localStorage.getItem('admin_role' + SESSION_SUFFIX) || '';

@@ -638,9 +638,10 @@ def test_admin_brand_is_driven_by_url_without_brand_selectors():
 
     assert 'id="loginBrandSelect"' not in html
     assert 'id="adminBrandSelect"' not in html
-    assert "new URLSearchParams(location.search).get('brand')" in html
+    assert "document.documentElement.dataset.brand" in html
+    assert "new URLSearchParams(location.search)" not in html
     assert "new Set(['bihuo', 'daka', 'jinghai', 'hikong'])" in html
-    assert "ADMIN_BRAND_MARKS.has(REQUESTED_BRAND_MARK) ? REQUESTED_BRAND_MARK : 'bihuo'" in html
+    assert "ADMIN_BRAND_MARKS.has(SERVER_BRAND_MARK) ? SERVER_BRAND_MARK : 'bihuo'" in html
     assert "jinghai: { name: '鲸海AI员工'" in html
     assert "icon32: '/client/oem/jinghai/icon_32_v3.png'" in html
     assert "hikong: { name: '海康AI智能体'" in html
