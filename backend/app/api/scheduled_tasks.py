@@ -80,6 +80,7 @@ _SERIAL_CLIENT_TASK_KINDS = {"douyin_leads"}
 _WECHAT_MOMENTS_PLATFORM = "wechat_moments"
 _WECHAT_MOMENTS_ACCOUNT_ID = "pc-wechat-default"
 _WECHAT_MOMENTS_PLATFORM_NAME = "微信朋友圈"
+_WECHAT_CHANNELS_PLATFORMS = {"wechat_channels", "channels", "sph"}
 
 
 _HIFLY_TTS_CAPABILITY_ID = "hifly.video.create_by_tts"
@@ -1631,14 +1632,42 @@ def _refresh_ip_content_daily_payload(db: Session, row: ScheduledTaskRun) -> Dic
     return payload
 
 
+def _wechat_channels_short_title(value: Any, fallback: Any = "") -> str:
+    raw = str(value or fallback or "").strip()
+    chars: List[str] = []
+    for char in raw:
+        if char.isalnum():
+            chars.append(char)
+        elif char.isspace() and chars and chars[-1] != " ":
+            chars.append(" ")
+    return ("".join(chars).strip() or "作品分享")[:16]
+
+
+def _normalize_publish_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(draft or {})
+    platform = str(normalized.get("platform") or "").strip().lower()
+    if platform in _WECHAT_CHANNELS_PLATFORMS:
+        title = _wechat_channels_short_title(
+            normalized.get("short_title") or normalized.get("title"),
+            normalized.get("description") or normalized.get("content"),
+        )
+        normalized["title"] = title
+        if "short_title" in normalized:
+            normalized["short_title"] = title
+    return normalized
+
+
 def _publish_draft_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     draft = payload.get("publish_draft") if isinstance(payload, dict) else None
-    return dict(draft or {}) if isinstance(draft, dict) else {}
+    return _normalize_publish_draft(draft) if isinstance(draft, dict) else {}
 
 
 def _set_publish_draft(row: ScheduledTaskRun, draft: Dict[str, Any]) -> Dict[str, Any]:
     payload = _run_result_payload(row)
-    payload["publish_draft"] = dict(draft or {})
+    normalized = _normalize_publish_draft(draft)
+    draft.clear()
+    draft.update(normalized)
+    payload["publish_draft"] = normalized
     row.result_payload = payload
     return payload
 
