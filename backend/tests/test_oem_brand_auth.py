@@ -639,7 +639,12 @@ def test_admin_brand_is_driven_by_url_without_brand_selectors():
     assert 'id="loginBrandSelect"' not in html
     assert 'id="adminBrandSelect"' not in html
     assert "new URLSearchParams(location.search).get('brand')" in html
-    assert "REQUESTED_BRAND_MARK === 'daka' ? 'daka' : 'bihuo'" in html
+    assert "new Set(['bihuo', 'daka', 'jinghai', 'hikong'])" in html
+    assert "ADMIN_BRAND_MARKS.has(REQUESTED_BRAND_MARK) ? REQUESTED_BRAND_MARK : 'bihuo'" in html
+    assert "jinghai: { name: '鲸海AI员工'" in html
+    assert "icon32: '/client/oem/jinghai/icon_32.png'" in html
+    assert "hikong: { name: '海康AI智能体'" in html
+    assert "icon32: '/client/oem/hikong/icon_32.png'" in html
 
 
 def test_agent_user_list_remains_scoped_to_its_brand(db_session, db_session_factory, monkeypatch):
