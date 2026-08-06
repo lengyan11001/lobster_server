@@ -1037,11 +1037,33 @@ async def _remote_media_response(request: Request, url: str, disposition: str, f
         raise HTTPException(status_code=502, detail="远端素材下载失败") from exc
 
 
-@router.get("/h5", include_in_schema=False)
-def h5_page():
+def _h5_index_response(branding: Dict[str, Any]) -> Response:
     if not _H5_INDEX.is_file():
         raise HTTPException(status_code=404, detail="H5 页面未打包")
-    return FileResponse(str(_H5_INDEX), headers=_H5_INDEX_HEADERS)
+    mark = str(branding.get("mark") or "bihuo").strip().lower()
+    title = str(branding.get("document_title") or branding.get("display_name") or "AI员工").strip() or "AI员工"
+    icon_32 = str(branding.get("icon_32") or "/h5-static/bihu_32.png").strip()
+    icon_256 = str(branding.get("icon_256") or branding.get("icon_128") or icon_32).strip()
+    primary_color = str(branding.get("primary_color") or "#245cff").strip()
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", primary_color):
+        primary_color = "#245cff"
+    replacements = {
+        "__H5_BRAND_MARK__": mark,
+        "__H5_BRAND_TITLE__": title,
+        "__H5_BRAND_ICON_32__": icon_32,
+        "__H5_BRAND_ICON_256__": icon_256,
+        "__H5_PRIMARY_COLOR__": primary_color,
+    }
+    content = _H5_INDEX.read_text(encoding="utf-8")
+    for placeholder, value in replacements.items():
+        content = content.replace(placeholder, html.escape(value, quote=True))
+    return Response(content=content, media_type="text/html", headers=_H5_INDEX_HEADERS)
+
+
+@router.get("/h5", include_in_schema=False)
+def h5_page(request: Request, db: Session = Depends(get_db)):
+    branding = public_brand_config(db, request_brand_mark(request))
+    return _h5_index_response(branding)
 
 
 @router.get("/h5-static/{filename}", include_in_schema=False)
@@ -1071,10 +1093,11 @@ def ios_webclip_mobileconfig(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/", include_in_schema=False)
-def h5_root(request: Request):
+def h5_root(request: Request, db: Session = Depends(get_db)):
     host = (request.headers.get("host") or "").split(":", 1)[0].lower()
     if host == "h5.bhzn.top" or host.startswith("h5."):
-        return h5_page()
+        branding = public_brand_config(db, request_brand_mark(request))
+        return _h5_index_response(branding)
     raise HTTPException(status_code=404, detail="Not Found")
 
 

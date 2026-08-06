@@ -70,3 +70,31 @@ def test_h5_ios_download_passes_current_brand():
 
     script = (_H5_STATIC_DIR / "h5-app.js").read_text(encoding="utf-8")
     assert 'window.location.href = apiUrl("/install/ios-webclip.mobileconfig")' in script
+
+
+def test_h5_first_paint_is_rendered_for_daka_without_bihuo_placeholder(db_session_factory):
+    response = _client(db_session_factory).get("/h5?brand=daka")
+
+    assert response.status_code == 200
+    assert '<html lang="zh-CN" data-brand="daka"' in response.text
+    assert '<title>大咖AI员工</title>' in response.text
+    assert 'id="h5BrandLogo" src="/client/oem/daka/icon_32.png"' in response.text
+    assert 'id="pageTitle">大咖AI员工</h1>' in response.text
+    assert "/h5-static/bihu_32.png" not in response.text
+
+
+def test_h5_first_paint_defaults_to_bihuo_without_brand_parameter(db_session_factory):
+    response = _client(db_session_factory).get("/h5")
+
+    assert response.status_code == 200
+    assert '<html lang="zh-CN" data-brand="bihuo"' in response.text
+    assert '<title>必火AI员工</title>' in response.text
+
+
+def test_h5_runtime_preserves_the_server_rendered_brand_during_boot():
+    from backend.app.api.h5_chat import _H5_STATIC_DIR
+
+    script = (_H5_STATIC_DIR / "h5-app.js").read_text(encoding="utf-8")
+    assert 'initialBrandMark === H5_BRAND_MARK' in script
+    assert 'display_name: String(document.title || H5_BRAND_MARK)' in script
+    assert 'icon_32: String($("h5BrandLogo")?.getAttribute("src") || "")' in script
