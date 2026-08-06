@@ -10568,6 +10568,7 @@
           </div>
           <div class="recorder-item-actions">
             <button type="button" class="ghost" data-recorder-detail="${Number(row.id)}">${row.status === "completed" ? "查看结果" : "查看进度"}</button>
+            ${row.status === "failed" ? `<button type="button" data-recorder-retry="${Number(row.id)}">重新处理</button>` : ""}
             <button type="button" class="ghost" data-recorder-rename="${Number(row.id)}" data-recorder-name="${escapeHtml(row.display_name || row.file_name || "")}">改名</button>
             <button type="button" class="ghost danger-text" data-recorder-server-delete="${Number(row.id)}">删除</button>
           </div>
@@ -10604,6 +10605,14 @@
       if (displayName === null || !displayName.trim() || displayName.trim() === oldName) return;
       await api(`/api/h5/recorder/files/${encodeURIComponent(id)}`, { method: "PATCH", body: { display_name: displayName.trim() } });
       await loadRecorderRecords();
+    }
+
+    async function retryRecorderRecord(id) {
+      await api(`/api/h5/recorder/files/${encodeURIComponent(id)}/retry`, { method: "POST" });
+      state.recorderDetailId = Number(id);
+      await loadRecorderRecords();
+      await showRecorderDetail(id, false);
+      toast("已重新开始转写");
     }
 
     function syncRecorderNativeAuth() {
@@ -18755,7 +18764,12 @@
     if ($("recorderServerFiles")) $("recorderServerFiles").addEventListener("click", (event) => {
       const renameButton = event.target.closest("[data-recorder-rename]");
       const deleteButton = event.target.closest("[data-recorder-server-delete]");
+      const retryButton = event.target.closest("[data-recorder-retry]");
       const button = event.target.closest("[data-recorder-detail]");
+      if (retryButton) {
+        retryRecorderRecord(retryButton.dataset.recorderRetry).catch((err) => toast(err.message || "重新处理失败"));
+        return;
+      }
       if (renameButton) {
         renameRecorderRecord(renameButton.dataset.recorderRename, renameButton.dataset.recorderName || "").catch((err) => toast(err.message || "改名失败"));
         return;

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from backend.app.api.h5_recorder import _recorded_at, _segments
+from backend.app.api.h5_recorder import _recorded_at, _recorder_tos_object_key, _segments
 from backend.app.h5_main import app as h5_app
 
 
@@ -31,6 +31,7 @@ def test_h5_recorder_routes_are_available_on_standalone_h5_app():
     assert ("/api/h5/recorder/files", "POST") in routes
     assert ("/api/h5/recorder/files/{record_id}", "DELETE") in routes
     assert ("/api/h5/recorder/files/{record_id}", "PATCH") in routes
+    assert ("/api/h5/recorder/files/{record_id}/retry", "POST") in routes
     assert ("/api/h5/recorder/known-names", "GET") in routes
 
 
@@ -39,6 +40,10 @@ def test_recorder_timestamp_is_read_from_device_file_name():
     assert value is not None
     assert value.isoformat() == "2026-08-06T05:43:47"
     assert _recorded_at("recording.opus") is None
+
+
+def test_recorder_audio_uses_tos_allowed_assets_prefix():
+    assert _recorder_tos_object_key(31, 7) == "assets/recorder/31/7.wav"
 
 
 def test_recorder_device_refresh_does_not_start_batch_audio_sync():

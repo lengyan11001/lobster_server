@@ -126,6 +126,10 @@ def _json_object(text: str) -> dict[str, Any]:
         return {"summary": str(text or "").strip(), "key_points": []}
 
 
+def _recorder_tos_object_key(user_id: int, record_id: int) -> str:
+    return f"assets/recorder/{int(user_id)}/{int(record_id)}.wav"
+
+
 def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
     db = SessionLocal()
     try:
@@ -139,7 +143,11 @@ def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
         job_dir.mkdir(parents=True, exist_ok=True)
         wav = job_dir / "audio.wav"
         _extract_audio_wav(ffmpeg=_find_ffmpeg_bin(), source=str(source), out_path=wav)
-        audio_url = _upload_job_file_to_tos(wav, object_key=f"recorder/{row.user_id}/{row.id}.wav", content_type="audio/wav")
+        audio_url = _upload_job_file_to_tos(
+            wav,
+            object_key=_recorder_tos_object_key(row.user_id, row.id),
+            content_type="audio/wav",
+        )
         token, _ = _load_sutui_token_for_stt(db, row.user_id)
         created = _stt_create_task(token, audio_url, job_dir=job_dir, enable_speaker_info=True)
         row.stt_task_id = created["task_id"]
@@ -276,6 +284,40 @@ def recording_detail(record_id: int, current_user: User = Depends(get_current_us
     if not row:
         raise HTTPException(status_code=404, detail="录音不存在")
     return _serialize(row, detail=True)
+
+
+@router.post("/api/h5/recorder/files/{record_id}/retry")
+async def retry_recording(
+    record_id: int,
+    request: Request,
+    background: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(RecorderAudioRecord).filter(
+        RecorderAudioRecord.id == record_id,
+        RecorderAudioRecord.user_id == current_user.id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="录音不存在")
+    if row.status == "processing":
+        return {"ok": True, "already_processing": True, "record": _serialize(row, detail=True)}
+    if not row.audio_path or not Path(row.audio_path).is_file():
+        raise HTTPException(status_code=410, detail="原始录音文件已不存在，请重新同步")
+
+    row.status = "processing"
+    row.process_stage = "uploaded"
+    row.error_message = ""
+    row.stt_task_id = ""
+    row.transcript_text = ""
+    row.transcript_segments = []
+    row.summary_text = ""
+    row.key_points = []
+    db.commit()
+    db.refresh(row)
+    iid = request.headers.get("X-Installation-Id", "").strip()
+    background.add_task(_process, row.id, request, iid)
+    return {"ok": True, "record": _serialize(row, detail=True)}
 
 
 @router.delete("/api/h5/recorder/files/{record_id}")
