@@ -158,6 +158,10 @@ def _migrate_recorder_audio_columns():
                 conn.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN recorded_at TIMESTAMP"))
             if "process_stage" not in cols:
                 conn.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN process_stage VARCHAR(32) NOT NULL DEFAULT 'uploaded'"))
+            if "source_type" not in cols:
+                conn.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN source_type VARCHAR(32) NOT NULL DEFAULT 'device'"))
+            if "source_doc_id" not in cols:
+                conn.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN source_doc_id VARCHAR(64)"))
     except Exception as e:
         logger.warning("Migration recorder audio columns skipped: %s", e)
 

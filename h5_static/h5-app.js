@@ -71,11 +71,15 @@
       recorderSyncedFiles: [],
       recorderKnownNames: [],
       recorderRecords: [],
+      recorderLocalFiles: [],
+      recorderMemoryFiles: [],
+      recorderMemoryLoading: false,
       recorderPage: 1,
       recorderPageSize: 20,
       recorderTotal: 0,
-      recorderSubtab: "device",
+      recorderSubtab: "local",
       recorderDetailId: null,
+      recorderDetailRecord: null,
       recorderDetailTab: "summary",
       recorderAudioObjectUrl: "",
       recorderPoller: null,
@@ -226,6 +230,9 @@
       personalMemorySourceCompetitors: {},
       personalMemorySourceDocs: {},
       personalMemorySourceFiles: {},
+      personalRecorderRecords: [],
+      personalRecorderRecordsLoading: false,
+      personalMemorySourceRecordings: {},
       taskSkillPackages: [],
       taskAllowedCapabilityIds: [],
       taskSkillsLoaded: false,
@@ -10514,13 +10521,14 @@
     }
 
     function setRecorderSubtab(tab) {
-      const value = tab === "records" ? "records" : "device";
+      const value = ["local", "memory", "device", "records"].includes(tab) ? tab : "local";
       state.recorderSubtab = value;
       document.querySelectorAll("[data-recorder-tab]").forEach((button) => button.classList.toggle("active", button.dataset.recorderTab === value));
       document.querySelectorAll("[data-recorder-panel]").forEach((panel) => {
         panel.classList.toggle("hidden", panel.dataset.recorderPanel !== value);
       });
       if (value === "records") loadRecorderRecords().catch(() => {});
+      if (value === "memory") loadRecorderMemoryFiles().catch((err) => toast(err.message || "记忆文件加载失败"));
     }
 
     function setRecorderDetailTab(tab) {
@@ -10534,6 +10542,63 @@
       document.querySelectorAll("[data-recorder-detail-panel]").forEach((panel) => {
         panel.classList.toggle("hidden", panel.dataset.recorderDetailPanel !== value);
       });
+    }
+
+    function recorderSpeakerLabel(value) {
+      const speaker = String(value || "").trim();
+      if (!speaker || speaker === "未知") return "说话人";
+      return /^[A-Z]$/.test(speaker) ? `说话人 ${speaker}` : speaker;
+    }
+
+    function recorderSummaryText(row) {
+      if (!row) return "";
+      const points = Array.isArray(row.key_points) ? row.key_points.map((item) => String(item || "").trim()).filter(Boolean) : [];
+      return [
+        row.display_name || row.file_name || "音频转写",
+        row.summary_text ? `AI 摘要\n${String(row.summary_text).trim()}` : "",
+        points.length ? `重点事项\n${points.map((item, index) => `${index + 1}. ${item}`).join("\n")}` : "",
+      ].filter(Boolean).join("\n\n");
+    }
+
+    function recorderTranscriptText(row) {
+      if (!row) return "";
+      const segments = Array.isArray(row.segments) ? row.segments : [];
+      const body = segments.length
+        ? segments.map((item) => `${recorderSpeakerLabel(item.speaker)}：${String(item.text || "").trim()}`).filter((item) => !item.endsWith("：")).join("\n")
+        : String(row.transcript_text || "").trim();
+      return [row.display_name || row.file_name || "音频转写", "完整转写", body].filter(Boolean).join("\n\n");
+    }
+
+    function downloadRecorderText(kind) {
+      const row = state.recorderDetailRecord;
+      const value = kind === "transcript" ? recorderTranscriptText(row) : recorderSummaryText(row);
+      if (!value) return toast("当前没有可导出的内容");
+      const blob = new Blob([`\uFEFF${value}`], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const baseName = String(row?.display_name || row?.file_name || "音频转写").replace(/[\\/:*?"<>|]+/g, "-").slice(0, 80);
+      anchor.href = url;
+      anchor.download = `${baseName}-${kind === "transcript" ? "完整转写" : "AI摘要"}.txt`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async function renameRecorderSpeaker(speaker) {
+      const row = state.recorderDetailRecord;
+      if (!row || !row.id) return;
+      const currentName = String(speaker || "").trim();
+      const displayName = prompt("输入说话人姓名，本条记录中所有同名说话人会一起修改", recorderSpeakerLabel(currentName));
+      if (displayName === null) return;
+      const nextName = displayName.trim();
+      if (!nextName || nextName === currentName || nextName === recorderSpeakerLabel(currentName)) return;
+      await api(`/api/h5/recorder/files/${encodeURIComponent(row.id)}/speakers`, {
+        method: "PATCH",
+        body: { speaker: currentName, display_name: nextName },
+      });
+      await showRecorderDetail(row.id, false);
+      toast("说话人名称已批量更新");
     }
 
     function releaseRecorderAudio() {
@@ -10591,6 +10656,150 @@
       const minutes = Math.floor((seconds % 3600) / 60);
       const remain = seconds % 60;
       return `${hours ? `${String(hours).padStart(2, "0")}:` : ""}${String(minutes).padStart(2, "0")}:${String(remain).padStart(2, "0")}`;
+    }
+
+    function recorderAudioFileKey(file) {
+      return [file && file.name || "", file && file.size || 0, file && file.lastModified || 0, file && file.type || ""].join("|");
+    }
+
+    function isRecorderAudioFile(file) {
+      const name = String(file && file.name || "").toLowerCase();
+      const type = String(file && file.type || "").toLowerCase();
+      return type.startsWith("audio/") || /\.(mp3|wav|m4a|aac|ogg|flac|amr|wma|opus|webm)$/.test(name);
+    }
+
+    function renderRecorderLocalFiles() {
+      const host = $("recorderLocalFiles");
+      if (!host) return;
+      const files = Array.isArray(state.recorderLocalFiles) ? state.recorderLocalFiles : [];
+      host.innerHTML = files.length ? files.map((file, index) => `
+        <div class="recorder-item">
+          <div class="recorder-item-main">
+            <strong>${escapeHtml(file.name || "未命名音频")}</strong>
+            <div class="recorder-meta"><span>${recorderFormatBytes(file.size)}</span><span>本地音频</span></div>
+          </div>
+          <div class="recorder-item-actions">
+            <button type="button" data-recorder-local-transcribe="${index}">开始转写</button>
+            <button type="button" class="ghost danger-text" data-recorder-local-remove="${index}">移除</button>
+          </div>
+        </div>`).join("") : '<div class="empty">请选择需要转写的音频。</div>';
+    }
+
+    function addRecorderLocalFiles(files) {
+      const seen = new Set((state.recorderLocalFiles || []).map(recorderAudioFileKey));
+      const rejected = [];
+      (files || []).forEach((file) => {
+        const key = recorderAudioFileKey(file);
+        if (!file || !key || seen.has(key)) return;
+        if (!isRecorderAudioFile(file)) {
+          rejected.push(file.name || "未命名文件");
+          return;
+        }
+        if (Number(file.size || 0) > 200 * 1024 * 1024) {
+          rejected.push(`${file.name || "未命名文件"}（超过 200MB）`);
+          return;
+        }
+        seen.add(key);
+        state.recorderLocalFiles.push(file);
+      });
+      renderRecorderLocalFiles();
+      if (rejected.length) toast(`以下文件不能转写：${rejected.join("、")}`);
+    }
+
+    async function uploadRecorderAudioFile(file, sourceType = "local", sourceName = "") {
+      if (!file || !isRecorderAudioFile(file)) throw new Error("请选择音频文件");
+      if (Number(file.size || 0) > 200 * 1024 * 1024) throw new Error("单个音频文件不能超过 200MB");
+      const iid = currentInstallationId();
+      const form = new FormData();
+      form.append("file", file, file.name || "audio.wav");
+      form.append("source_type", sourceType);
+      form.append("source_name", sourceName || ({ local: "本地音频", personal: "个人 IP 资料" }[sourceType] || "音频文件"));
+      form.append("installation_id", iid || "");
+      const response = await fetch(apiUrl("/api/h5/recorder/files"), {
+        method: "POST",
+        headers: authHeaders(iid ? { "X-Installation-Id": iid } : {}),
+        body: form,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.detail || data.message || "音频上传失败");
+      return data.record || {};
+    }
+
+    async function transcribeRecorderLocalFile(index, button = null) {
+      const file = (state.recorderLocalFiles || [])[Number(index)];
+      if (!file) return;
+      personalSetBusy(button, true, "上传中...");
+      try {
+        const key = recorderAudioFileKey(file);
+        const record = await uploadRecorderAudioFile(file, "local", "本地音频");
+        state.recorderLocalFiles = (state.recorderLocalFiles || []).filter((item) => recorderAudioFileKey(item) !== key);
+        state.recorderPage = 1;
+        renderRecorderLocalFiles();
+        await loadRecorderRecords();
+        toast(`“${file.name || "音频"}”已开始转写`);
+        if (record.id) showRecorderDetail(record.id).catch(() => {});
+      } finally {
+        personalSetBusy(button, false);
+      }
+    }
+
+    function renderRecorderMemoryFiles() {
+      const host = $("recorderMemoryFiles");
+      if (!host) return;
+      if (state.recorderMemoryLoading) {
+        host.innerHTML = '<div class="empty">正在读取记忆文件…</div>';
+        return;
+      }
+      const rows = Array.isArray(state.recorderMemoryFiles) ? state.recorderMemoryFiles : [];
+      host.innerHTML = rows.length ? rows.map((row) => `
+        <div class="recorder-item">
+          <div class="recorder-item-main">
+            <strong>${escapeHtml(row.title || row.filename || "记忆音频")}</strong>
+            <div class="recorder-meta"><span>${escapeHtml(row.filename || "音频文件")}</span>${row.file_size ? `<span>${recorderFormatBytes(row.file_size)}</span>` : ""}</div>
+            ${row.existing_record_id ? `<span class="recorder-status ${escapeHtml(row.existing_status || "")}">${escapeHtml(recorderStatusLabel(row.existing_status))}</span>` : ""}
+          </div>
+          <div class="recorder-item-actions">
+            ${row.existing_record_id
+              ? `<button type="button" class="ghost" data-recorder-detail="${Number(row.existing_record_id)}">查看转写</button>`
+              : `<button type="button" data-recorder-memory-transcribe="${escapeHtml(row.doc_id || "")}" data-recorder-memory-index="${Number(row.source_index || 0)}">开始转写</button>`}
+          </div>
+        </div>`).join("") : '<div class="empty">记忆中暂无保留原始音频的文件。</div>';
+    }
+
+    async function loadRecorderMemoryFiles() {
+      const iid = currentInstallationId();
+      if (!iid) {
+        state.recorderMemoryFiles = [];
+        state.recorderMemoryLoading = false;
+        renderRecorderMemoryFiles();
+        throw new Error("请先选择在线设备");
+      }
+      state.recorderMemoryLoading = true;
+      renderRecorderMemoryFiles();
+      try {
+        const data = await api("/api/h5/recorder/memory-files", { headers: { "X-Installation-Id": iid }, cache: "no-store" });
+        state.recorderMemoryFiles = Array.isArray(data.items) ? data.items : [];
+      } finally {
+        state.recorderMemoryLoading = false;
+        renderRecorderMemoryFiles();
+      }
+    }
+
+    async function transcribeRecorderMemoryFile(docId, sourceIndex, button = null) {
+      const iid = currentInstallationId();
+      if (!iid) throw new Error("请先选择在线设备");
+      personalSetBusy(button, true, "提交中...");
+      try {
+        const data = await api(`/api/h5/recorder/memory-files/${encodeURIComponent(docId)}/transcribe?source_index=${Math.max(0, Number(sourceIndex || 0))}`, {
+          method: "POST",
+          headers: { "X-Installation-Id": iid },
+        });
+        state.recorderPage = 1;
+        await Promise.all([loadRecorderRecords(), loadRecorderMemoryFiles()]);
+        if (data.record && data.record.id) await showRecorderDetail(data.record.id);
+      } finally {
+        personalSetBusy(button, false);
+      }
     }
 
     function renderRecorderDeviceState(next = {}) {
@@ -10681,7 +10890,7 @@
         <div class="recorder-item">
           <div class="recorder-item-main">
             <strong>${escapeHtml(row.display_name || row.file_name || "未命名录音")}</strong>
-            <div class="recorder-meta"><span>${recorderFormatBytes(row.file_size)}</span><span>${escapeHtml(row.device_name || "录音设备")}</span><span>${escapeHtml(String(row.created_at || "").replace("T", " ").slice(0, 16))}</span></div>
+            <div class="recorder-meta"><span>${recorderFormatBytes(row.file_size)}</span><span>${escapeHtml(row.source_label || row.device_name || "音频文件")}</span><span>${escapeHtml(String(row.created_at || "").replace("T", " ").slice(0, 16))}</span></div>
             <span class="recorder-status ${escapeHtml(row.status || "")}">${escapeHtml(recorderStatusLabel(row.status))}${row.error_message ? `：${escapeHtml(row.error_message)}` : ""}</span>
             <div class="recorder-progress-compact"><i style="width:${recorderProgress(row).percent}%"></i></div>
           </div>
@@ -10704,7 +10913,7 @@
       state.recorderPage = Number(data.page || 1);
       state.recorderTotal = Number(data.total || 0);
       state.recorderRecords = Array.isArray(data.items) ? data.items : [];
-      if (state.recorderPage === 1) state.recorderSyncedFiles = state.recorderRecords.slice();
+      if (state.recorderPage === 1) state.recorderSyncedFiles = state.recorderRecords.filter((row) => (row.source_type || "device") === "device");
       renderRecorderRecords();
       renderRecorderDeviceFiles();
       const pending = state.recorderRecords.some((row) => row.status === "processing");
@@ -10756,6 +10965,8 @@
         }
       }
       renderRecorderDeviceFiles();
+      renderRecorderLocalFiles();
+      setRecorderSubtab(state.recorderSubtab || "local");
       loadRecorderRecords().catch((err) => toast(String(err.message || "录音记录加载失败") === "Not Found" ? "录音服务暂不可用，请稍后刷新" : (err.message || "录音记录加载失败")));
       loadRecorderKnownNames().catch(() => {});
     }
@@ -10764,16 +10975,25 @@
       const row = await api(`/api/h5/recorder/files/${encodeURIComponent(id)}`);
       const previousId = Number(state.recorderDetailId || 0);
       state.recorderDetailId = Number(id);
+      state.recorderDetailRecord = row;
       $("recorderDetailTitle").textContent = row.display_name || row.file_name || "录音内容";
       const recordedAt = String(row.recorded_at || row.created_at || "").replace("T", " ").slice(0, 16);
       $("recorderDetailMeta").innerHTML = [
         recordedAt,
-        row.device_name || "录音设备",
+        row.source_label || row.device_name || "音频文件",
         recorderFormatBytes(row.file_size),
       ].filter(Boolean).map((item) => `<span>${escapeHtml(String(item))}</span>`).join("");
       const status = $("recorderDetailStatus");
       status.textContent = recorderStatusLabel(row.status);
       status.className = `recorder-detail-status ${escapeHtml(row.status || "")}`;
+      const faqButton = $("recorderFaqBtn");
+      if (faqButton) {
+        faqButton.classList.toggle("hidden", row.status !== "completed");
+        faqButton.dataset.recorderFaq = String(row.id || "");
+      }
+      document.querySelectorAll("#recorderDetailView [data-recorder-copy], #recorderDetailView [data-recorder-export]").forEach((button) => {
+        button.disabled = row.status !== "completed";
+      });
       const progress = recorderProgress(row);
       $("recorderDetailProgress").innerHTML = `<div><span>${escapeHtml(progress.label)}</span><b>${progress.percent}%</b></div><div class="recorder-progress-track"><i style="width:${progress.percent}%"></i></div>${row.error_message ? `<p>${escapeHtml(row.error_message)}</p>` : ""}`;
       $("recorderSummary").textContent = row.status === "completed" ? (row.summary_text || "暂无总结") : "处理完成后将在这里显示核心内容总结。";
@@ -10790,7 +11010,7 @@
         ? keyPoints.map((item, index) => `<div class="recorder-key-point"><span>${index + 1}</span><p>${escapeHtml(String(item))}</p></div>`).join("")
         : `<div class="recorder-empty-result">${shortRecording ? "内容较短，结论已涵盖全部信息，不再重复罗列。" : "录音中未提取到明确的重点事项。"}</div>`;
       $("recorderDialogue").innerHTML = (row.segments || []).length
-        ? row.segments.map((item) => `<div class="recorder-line"><b>${escapeHtml(item.speaker === "未知" ? "说话人" : `说话人 ${item.speaker || ""}`)}</b><p>${escapeHtml(item.text || "")}</p></div>`).join("")
+        ? row.segments.map((item) => `<div class="recorder-line"><button type="button" class="recorder-speaker" data-recorder-speaker="${escapeHtml(item.speaker || "未知")}" title="修改该说话人的名称">${escapeHtml(recorderSpeakerLabel(item.speaker))}</button><p>${escapeHtml(item.text || "")}</p></div>`).join("")
         : `<div class="recorder-line">${escapeHtml(row.transcript_text || (row.status === "processing" ? "正在生成对话转写…" : "暂无转写"))}</div>`;
       if (navigate) {
         setRecorderDetailTab("summary");
@@ -10809,6 +11029,33 @@
       await loadRecorderRecords();
       await loadRecorderKnownNames();
       toast("已删除");
+    }
+
+    async function useRecorderForFaq(id, button = null) {
+      personalSetBusy(button, true, "准备中...");
+      try {
+        await loadPersonalSettings(true);
+        await loadPersonalRecorderSources();
+        if (!(state.personalRecorderRecords || []).some((row) => Number(row.id) === Number(id))) {
+          throw new Error("该录音尚未完成转写");
+        }
+        state.personalMemoryUseProfile = false;
+        state.personalMemorySourceKeywords = {};
+        state.personalMemorySourceCompetitors = {};
+        state.personalMemorySourceFiles = {};
+        state.personalMemorySourceDocs = {};
+        state.personalMemorySourceRecordings = { [String(id)]: true };
+        document.querySelectorAll("[data-personal-doc-type]").forEach((input) => {
+          input.checked = input.value === "product_service_faq";
+        });
+        switchTab("personalSettings");
+        setPersonalSettingsTab("memory");
+        openPersonalMemoryGenerateModal();
+        setPersonalMemoryStep("source");
+        personalSetStatus("已选择该音频的转写与摘要，可直接生成百问百答。");
+      } finally {
+        personalSetBusy(button, false);
+      }
     }
 
     async function refreshLatestRecorderFiles() {
@@ -10909,8 +11156,8 @@
         messages: ["AI 调度助手", "用文字或语音安排工作"],
         voice: ["龙虾AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
-        recorder: ["智能录音", "设备录音、对话转写和 AI 总结"],
-        recorderDetail: ["录音结果", "先看结论，需要时再查看完整转写"],
+        recorder: ["音频转写", "本地音频、记忆文件和录音设备"],
+        recorderDetail: ["转写结果", "摘要、重点事项和完整转写"],
         mountedAccounts: ["平台账号", ""],
         personalSettings: ["IP人设定位", "模板、关键词、同行账号和记忆文件"],
         taskList: ["定时任务", "默认展示 10 条，更多用翻页加载"],
@@ -13390,6 +13637,11 @@
         state.personalMemorySourceFiles || {},
         selectedPersonalUploadFiles().map(personalUploadFileKey)
       );
+      state.personalMemorySourceRecordings = personalSyncSelectionMap(
+        state.personalMemorySourceRecordings || {},
+        (state.personalRecorderRecords || []).map((row) => row.id),
+        false
+      );
     }
 
     function selectedPersonalMemoryKeywordRows() {
@@ -13410,6 +13662,23 @@
     function selectedPersonalMemoryUploadFiles() {
       ensurePersonalMemorySourceSelections();
       return selectedPersonalUploadFiles().filter((file) => state.personalMemorySourceFiles[personalUploadFileKey(file)]);
+    }
+
+    function selectedPersonalRecorderRecords() {
+      ensurePersonalMemorySourceSelections();
+      return (state.personalRecorderRecords || []).filter((row) => state.personalMemorySourceRecordings[String(row.id || "")]);
+    }
+
+    async function loadPersonalRecorderSources() {
+      state.personalRecorderRecordsLoading = true;
+      renderPersonalMemorySourceSelectors();
+      try {
+        const data = await api("/api/h5/recorder/files?page=1&page_size=50", { cache: "no-store" });
+        state.personalRecorderRecords = (Array.isArray(data.items) ? data.items : []).filter((row) => row.status === "completed");
+      } finally {
+        state.personalRecorderRecordsLoading = false;
+        renderPersonalMemorySourceSelectors();
+      }
     }
 
     function renderPersonalSourceOptions(targetId, rows, selectedMap, kind, titleFn, subtitleFn) {
@@ -13469,6 +13738,19 @@
           </label>`;
         }).join("");
         if (box) box.innerHTML = (box.innerHTML && !box.innerHTML.includes("personal-empty") ? box.innerHTML : "") + fileHtml;
+      }
+      const recorderBox = $("personalMemoryRecorderSourceList");
+      if (state.personalRecorderRecordsLoading && recorderBox) {
+        recorderBox.innerHTML = `<div class="personal-empty">正在读取转写记录...</div>`;
+      } else {
+        renderPersonalSourceOptions(
+          "personalMemoryRecorderSourceList",
+          state.personalRecorderRecords || [],
+          state.personalMemorySourceRecordings,
+          "recording",
+          (row) => row.display_name || row.file_name || `转写 #${row.id}`,
+          (row) => `${String(row.recorded_at || row.created_at || "").replace("T", " ").slice(0, 16)}${row.source_label ? ` · ${row.source_label}` : ""}`
+        );
       }
     }
 
@@ -14050,7 +14332,10 @@
 
     function personalFileChip(file, idx, attr) {
       const size = file && file.size ? ` · ${Math.ceil(file.size / 1024)}KB` : "";
-      return `<div class="personal-file-chip"><span>${escapeHtml(file.name || "未命名文件")}${escapeHtml(size)}</span><button type="button" ${attr}="${idx}">移除</button></div>`;
+      const transcribe = attr === "data-remove-personal-upload" && isRecorderAudioFile(file)
+        ? `<button type="button" data-transcribe-personal-upload="${idx}">转写</button>`
+        : "";
+      return `<div class="personal-file-chip"><span>${escapeHtml(file.name || "未命名文件")}${escapeHtml(size)}</span><div class="personal-file-actions">${transcribe}<button type="button" class="ghost danger-text" ${attr}="${idx}">移除</button></div></div>`;
     }
 
     function renderPersonalSelectedFiles() {
@@ -14082,6 +14367,25 @@
       renderPersonalMemorySourceSelectors();
     }
 
+    async function transcribePersonalUploadFile(index, button = null) {
+      const files = selectedPersonalUploadFiles();
+      const file = files[Number(index)];
+      if (!file || !isRecorderAudioFile(file)) throw new Error("请选择音频文件");
+      personalSetBusy(button, true, "上传中...");
+      try {
+        const key = personalUploadFileKey(file);
+        await uploadRecorderAudioFile(file, "personal", "个人 IP 资料");
+        state.personalUploadFiles = selectedPersonalUploadFiles().filter((item) => personalUploadFileKey(item) !== key);
+        state.recorderPage = 1;
+        renderPersonalSelectedFiles();
+        renderPersonalMemorySourceSelectors();
+        await loadRecorderRecords();
+        toast(`“${file.name || "音频"}”已提交转写，可在音频转写记录中查看`);
+      } finally {
+        personalSetBusy(button, false);
+      }
+    }
+
     function renderPersonalCustomReference() {
       const box = $("personalCustomReferenceInfo");
       if (!box) return;
@@ -14105,10 +14409,24 @@
       $("personalUploadModal")?.classList.add("hidden");
     }
 
+    function setPersonalMemoryStep(step) {
+      const value = step === "review" ? "review" : "source";
+      document.querySelectorAll("[data-personal-memory-step]").forEach((button) => {
+        const active = button.dataset.personalMemoryStep === value;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      document.querySelectorAll("[data-personal-memory-panel]").forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.personalMemoryPanel !== value);
+      });
+    }
+
     function openPersonalMemoryGenerateModal() {
       renderPersonalMemorySourceSelectors();
       renderPersonalGeneratedDocs();
+      setPersonalMemoryStep("source");
       $("personalMemoryGenerateModal")?.classList.remove("hidden");
+      loadPersonalRecorderSources().catch((err) => personalSetStatus(err.message || "录音转写记录加载失败", true));
     }
 
     function closePersonalMemoryGenerateModal() {
@@ -14307,6 +14625,7 @@
       const keywordRows = selectedPersonalMemoryKeywordRows();
       const competitorRows = selectedPersonalMemoryCompetitorRows();
       const sourceDocs = selectedPersonalMemorySourceDocs();
+      const recorderRows = selectedPersonalRecorderRecords();
       const docTypes = selectedPersonalDocTypes();
       const reference = state.personalCustomReferenceFile;
       const contextText = personalMemoryContextText({
@@ -14316,7 +14635,7 @@
         sourceDocs,
       });
       const competitorText = await personalCompetitorSourceText(competitorRows.map((row) => row.id));
-      if (!files.length && !contextText && !competitorText) throw new Error("请选择要生成的资料来源。");
+      if (!files.length && !contextText && !competitorText && !recorderRows.length) throw new Error("请选择要生成的资料来源。");
       if (!docTypes.length && !reference) throw new Error("请选择生成类型，或上传自定义参考文档。");
       const fd = new FormData();
       files.forEach((file) => fd.append("files", file, file.name || "upload"));
@@ -14329,6 +14648,7 @@
       if (reference) fd.append("custom_reference_file", reference, reference.name || "reference");
       fd.append("reference_doc_ids", "");
       fd.append("source_doc_ids", sourceDocs.map(personalDocId).filter(Boolean).join(","));
+      fd.append("recorder_record_ids", recorderRows.map((row) => row.id).filter(Boolean).join(","));
       personalSetBusy(btn, true, "理解中...");
       personalSetStatus("正在理解资料...");
       try {
@@ -14342,6 +14662,7 @@
         if (title && (($("personalSaveMode") && $("personalSaveMode").value) || "new") === "new") title.value = recommendPersonalMemoryTitle(state.personalGeneratedDocOrder, !!reference);
         setPersonalSettingsTab("memory");
         renderPersonalGeneratedDocs();
+        setPersonalMemoryStep("review");
         const fileResults = Array.isArray(data.file_results) ? data.file_results : [];
         const processed = fileResults.filter((item) => item && item.status === "processed");
         const skipped = fileResults.filter((item) => item && item.status === "skipped");
@@ -18880,9 +19201,62 @@
       const button = event.target.closest("[data-recorder-tab]");
       if (button) setRecorderSubtab(button.dataset.recorderTab);
     });
+    $("recorderLocalFileInput")?.addEventListener("change", (event) => {
+      const input = event.currentTarget;
+      addRecorderLocalFiles(Array.from(input && input.files || []));
+      if (input) input.value = "";
+    });
+    $("recorderLocalFiles")?.addEventListener("click", (event) => {
+      const removeButton = event.target.closest("[data-recorder-local-remove]");
+      const transcribeButton = event.target.closest("[data-recorder-local-transcribe]");
+      if (removeButton) {
+        state.recorderLocalFiles = (state.recorderLocalFiles || []).filter((_file, index) => index !== Number(removeButton.dataset.recorderLocalRemove));
+        renderRecorderLocalFiles();
+        return;
+      }
+      if (transcribeButton) transcribeRecorderLocalFile(Number(transcribeButton.dataset.recorderLocalTranscribe), transcribeButton).catch((err) => toast(err.message || "转写提交失败"));
+    });
+    $("recorderMemoryRefreshBtn")?.addEventListener("click", () => loadRecorderMemoryFiles().catch((err) => toast(err.message || "记忆文件加载失败")));
+    $("recorderMemoryFiles")?.addEventListener("click", (event) => {
+      const detailButton = event.target.closest("[data-recorder-detail]");
+      const transcribeButton = event.target.closest("[data-recorder-memory-transcribe]");
+      if (detailButton) {
+        showRecorderDetail(detailButton.dataset.recorderDetail).catch((err) => toast(err.message || "转写详情加载失败"));
+        return;
+      }
+      if (transcribeButton) {
+        transcribeRecorderMemoryFile(
+          transcribeButton.dataset.recorderMemoryTranscribe || "",
+          Number(transcribeButton.dataset.recorderMemoryIndex || 0),
+          transcribeButton,
+        ).catch((err) => toast(err.message || "转写提交失败"));
+      }
+    });
     if ($("recorderDetailTabs")) $("recorderDetailTabs").addEventListener("click", (event) => {
       const button = event.target.closest("[data-recorder-detail-tab]");
       if (button) setRecorderDetailTab(button.dataset.recorderDetailTab);
+    });
+    $("recorderDetailView")?.addEventListener("click", (event) => {
+      const speakerButton = event.target.closest("[data-recorder-speaker]");
+      const copyButton = event.target.closest("[data-recorder-copy]");
+      const exportButton = event.target.closest("[data-recorder-export]");
+      if (speakerButton) {
+        renameRecorderSpeaker(speakerButton.dataset.recorderSpeaker || "").catch((err) => toast(err.message || "说话人改名失败"));
+        return;
+      }
+      if (copyButton) {
+        const value = copyButton.dataset.recorderCopy === "transcript"
+          ? recorderTranscriptText(state.recorderDetailRecord)
+          : recorderSummaryText(state.recorderDetailRecord);
+        copyText(value).then((ok) => toast(ok ? "已复制" : "复制失败"));
+        return;
+      }
+      if (exportButton) downloadRecorderText(exportButton.dataset.recorderExport || "summary");
+    });
+    $("recorderFaqBtn")?.addEventListener("click", (event) => {
+      const button = event.currentTarget;
+      const id = Number(button.dataset.recorderFaq || state.recorderDetailId || 0);
+      if (id) useRecorderForFaq(id, button).catch((err) => toast(err.message || "百问百答资料准备失败"));
     });
     if ($("recorderStartBtn")) $("recorderStartBtn").addEventListener("click", () => {
       const native = recorderNative();
@@ -19841,12 +20215,21 @@
     $("personalOpenMemoryGenerateBtn")?.addEventListener("click", openPersonalMemoryGenerateModal);
     $("personalMemoryGenerateBackdrop")?.addEventListener("click", closePersonalMemoryGenerateModal);
     $("personalMemoryGenerateClose")?.addEventListener("click", closePersonalMemoryGenerateModal);
+    $("personalMemoryStepTabs")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-personal-memory-step]");
+      if (button) setPersonalMemoryStep(button.dataset.personalMemoryStep || "source");
+    });
     $("personalGenerateMemoryBtn")?.addEventListener("click", (evt) => generatePersonalMemoryDocs(evt.currentTarget).catch((err) => personalSetStatus(err.message || "AI 理解失败", true)));
     $("personalSaveMemoryBtn")?.addEventListener("click", (evt) => savePersonalMemory(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
     $("personalSaveRawMemoryBtn")?.addEventListener("click", (evt) => savePersonalRawMemory(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
     $("personalMemoryFiles")?.addEventListener("change", handlePersonalUploadFilesChange);
     $("personalSelectedFiles")?.addEventListener("click", (evt) => {
+      const transcribeBtn = evt.target.closest("[data-transcribe-personal-upload]");
       const removeBtn = evt.target.closest("[data-remove-personal-upload]");
+      if (transcribeBtn) {
+        transcribePersonalUploadFile(Number(transcribeBtn.dataset.transcribePersonalUpload || "-1"), transcribeBtn).catch((err) => toast(err.message || "转写提交失败"));
+        return;
+      }
       if (!removeBtn) return;
       removePersonalUploadFile(Number(removeBtn.dataset.removePersonalUpload || "-1"));
     });
@@ -19865,7 +20248,7 @@
       const id = ($("personalTargetMemorySelect") && $("personalTargetMemorySelect").value) || "";
       if (id) previewPersonalMemory(id).catch((err) => personalSetStatus(err.message || "读取失败", true));
     });
-    $("personalSettingsView")?.addEventListener("change", (evt) => {
+    const handlePersonalMemorySourceChange = (evt) => {
       const input = evt.target.closest("[data-personal-memory-source]");
       if (!input) return;
       const kind = input.dataset.personalMemorySource || "";
@@ -19873,9 +20256,13 @@
         ? state.personalMemorySourceKeywords
         : (kind === "competitor"
           ? state.personalMemorySourceCompetitors
-          : (kind === "source_doc" ? state.personalMemorySourceDocs : state.personalMemorySourceFiles));
+          : (kind === "source_doc"
+            ? state.personalMemorySourceDocs
+            : (kind === "recording" ? state.personalMemorySourceRecordings : state.personalMemorySourceFiles)));
       if (input.value) map[String(input.value)] = !!input.checked;
-    });
+    };
+    $("personalSettingsView")?.addEventListener("change", handlePersonalMemorySourceChange);
+    $("personalMemoryGenerateModal")?.addEventListener("change", handlePersonalMemorySourceChange);
     $("personalSettingsView")?.addEventListener("click", async (evt) => {
       const keywordBtn = evt.target.closest("[data-delete-personal-keyword]");
       const competitorBtn = evt.target.closest("[data-delete-personal-competitor]");

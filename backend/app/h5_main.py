@@ -79,12 +79,31 @@ def _ensure_h5_chat_mastra_columns() -> None:
         logger.warning("H5 Mastra column migration skipped: %s", exc)
 
 
+def _ensure_recorder_audio_columns() -> None:
+    """Keep the standalone H5 process compatible with existing recorder tables."""
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(engine)
+        if not inspector.has_table("recorder_audio_records"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("recorder_audio_records")}
+        with engine.begin() as connection:
+            if "source_type" not in columns:
+                connection.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN source_type VARCHAR(32) NOT NULL DEFAULT 'device'"))
+            if "source_doc_id" not in columns:
+                connection.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN source_doc_id VARCHAR(64)"))
+    except Exception as exc:
+        logger.warning("H5 recorder column migration skipped: %s", exc)
+
+
 def create_h5_app() -> FastAPI:
     """Dedicated H5 app: auth, remote chat, scheduled tasks, and lightweight HiFly resources."""
     logger.info("[H5] create_h5_app start")
     Base.metadata.create_all(bind=engine)
     ensure_asset_library_indexes(engine)
     _ensure_h5_chat_mastra_columns()
+    _ensure_recorder_audio_columns()
     ensure_user_brand_schema(engine)
     seed_brand_configs(SessionLocal)
     interrupted_recordings = mark_interrupted_recordings_failed()

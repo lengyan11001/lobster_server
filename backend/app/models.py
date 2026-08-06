@@ -1608,6 +1608,8 @@ class RecorderAudioRecord(Base):
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     device_name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), default="device", nullable=False, index=True)
+    source_doc_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     file_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="processing", nullable=False, index=True)
     process_stage: Mapped[str] = mapped_column(String(32), default="uploaded", nullable=False)

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import H5AgentMemoryGrant, OpenClawMemoryDocument, User
+from ..models import H5AgentMemoryGrant, OpenClawMemoryDocument, RecorderAudioRecord, User
 from .auth import get_current_user
 from .cutcli_templates import (
     AutoCaptionJobError,
@@ -568,7 +568,7 @@ def _transcribe_audio_attachment(
     filename: str,
     suffix: str,
     data: bytes,
-) -> str:
+) -> tuple[str, str]:
     with tempfile.TemporaryDirectory(prefix="lobster-h5-audio-") as tmp:
         tmp_dir = Path(tmp)
         src = tmp_dir / ("source" + (suffix if suffix in AUDIO_SUFFIXES else ".audio"))
@@ -593,7 +593,7 @@ def _transcribe_audio_attachment(
     text = _extract_stt_text(stt_data)
     if not text.strip():
         raise HTTPException(status_code=502, detail=f"音频理解失败：{filename} 没有识别到文本。")
-    return text
+    return text, audio_url
 
 
 async def _collect_sources(
@@ -606,11 +606,13 @@ async def _collect_sources(
     db: Session,
     stt_user: User,
     file_results: Optional[list[dict[str, str]]] = None,
+    audio_sources: Optional[list[dict[str, Any]]] = None,
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     parts: list[str] = []
     visual_blocks: list[dict[str, Any]] = []
     source_images: list[dict[str, Any]] = []
     results = file_results if file_results is not None else []
+    retained_audio = audio_sources if audio_sources is not None else []
     if raw_text.strip():
         parts.append("【粘贴资料】\n" + raw_text.strip())
     if urls.strip():
@@ -652,7 +654,7 @@ async def _collect_sources(
                 try:
                     data = await _download_media_url(url, max_bytes=MAX_AUDIO_BYTES)
                     suffix = Path(url.split("?", 1)[0]).suffix.lower()
-                    text = _transcribe_audio_attachment(
+                    text, audio_url = _transcribe_audio_attachment(
                         db=db,
                         user=stt_user,
                         installation_id=installation_id,
@@ -660,6 +662,11 @@ async def _collect_sources(
                         suffix=suffix,
                         data=data,
                     )
+                    retained_audio.append({
+                        "filename": Path(url).name or "audio-url.wav",
+                        "source_url": audio_url,
+                        "file_size": len(data),
+                    })
                     parts.append(f"【音频链接】{url}\n{text}")
                 except HTTPException:
                     raise
@@ -700,7 +707,7 @@ async def _collect_sources(
                 else:
                     parts.append(_media_text(filename, suffix, data) + "\n关键帧抽取失败。")
             elif suffix in AUDIO_SUFFIXES:
-                text = _transcribe_audio_attachment(
+                text, audio_url = _transcribe_audio_attachment(
                     db=db,
                     user=stt_user,
                     installation_id=installation_id,
@@ -708,6 +715,11 @@ async def _collect_sources(
                     suffix=suffix,
                     data=data,
                 )
+                retained_audio.append({
+                    "filename": filename,
+                    "source_url": audio_url,
+                    "file_size": len(data),
+                })
                 parts.append(f"【音频：{filename}】\n{text}")
             else:
                 text = _file_to_text(filename, suffix, data)
@@ -730,6 +742,54 @@ async def _collect_sources(
 def _limit_local(text: str, max_chars: int = 120_000) -> str:
     text = str(text or "")
     return text[:max_chars]
+
+
+def _parse_recorder_record_ids(value: str, *, limit: int = 20) -> list[int]:
+    record_ids: list[int] = []
+    for item in str(value or "").split(","):
+        try:
+            record_id = int(item.strip())
+        except (TypeError, ValueError):
+            continue
+        if record_id > 0 and record_id not in record_ids:
+            record_ids.append(record_id)
+        if len(record_ids) >= limit:
+            break
+    return record_ids
+
+
+def _recorder_records_source_text(db: Session, user_id: int, value: str) -> str:
+    record_ids = _parse_recorder_record_ids(value)
+    if not record_ids:
+        return ""
+    rows = db.query(RecorderAudioRecord).filter(
+        RecorderAudioRecord.user_id == user_id,
+        RecorderAudioRecord.id.in_(record_ids),
+    ).all()
+    rows_by_id = {row.id: row for row in rows}
+    if any(record_id not in rows_by_id for record_id in record_ids):
+        raise HTTPException(status_code=404, detail="所选录音转写不存在或不属于当前账号。")
+
+    sections: list[str] = []
+    for record_id in record_ids:
+        row = rows_by_id[record_id]
+        if row.status != "completed" or not str(row.transcript_text or "").strip():
+            raise HTTPException(status_code=409, detail=f"“{row.display_name or row.file_name}”尚未完成转写。")
+        key_points = [str(item or "").strip() for item in (row.key_points or []) if str(item or "").strip()]
+        segments = [item for item in (row.transcript_segments or []) if isinstance(item, dict)]
+        transcript = "\n".join(
+            f"{str(item.get('speaker') or '说话人').strip()}：{str(item.get('text') or '').strip()}"
+            for item in segments
+            if str(item.get("text") or "").strip()
+        ) or str(row.transcript_text or "").strip()
+        parts = [f"【录音转写：{row.display_name or row.file_name}】"]
+        if str(row.summary_text or "").strip():
+            parts.append(f"摘要：\n{str(row.summary_text).strip()}")
+        if key_points:
+            parts.append("重点事项：\n" + "\n".join(f"- {item}" for item in key_points))
+        parts.append(f"完整转写：\n{transcript}")
+        sections.append("\n\n".join(parts))
+    return _limit_local("\n\n".join(sections))
 
 
 async def _read_reference(custom_reference_file: Optional[UploadFile]) -> str:
@@ -1027,6 +1087,7 @@ async def save_uploaded_memory_document(
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
     file_results: list[dict[str, str]] = []
+    audio_sources: list[dict[str, Any]] = []
     source_text, _visual_blocks, source_images = await _collect_sources(
         request,
         installation_id,
@@ -1036,10 +1097,15 @@ async def save_uploaded_memory_document(
         db=db,
         stt_user=target_user,
         file_results=file_results,
+        audio_sources=audio_sources,
     )
     source_text = await _describe_visual_sources(request, installation_id, source_text, _visual_blocks)
     source_image_urls = _reference_image_urls_from_sources(source_images)
-    source_meta = {"source_images": source_images, "reference_image_urls": source_image_urls} if source_image_urls else {}
+    source_meta: dict[str, Any] = {}
+    if source_image_urls:
+        source_meta.update({"source_images": source_images, "reference_image_urls": source_image_urls})
+    if audio_sources:
+        source_meta["source_audio_files"] = audio_sources
     mode = (mode or "new").strip().lower()
     if mode == "overwrite":
         row = _memory_row(db, target_user.id, installation_id, target_doc_id)
@@ -1079,6 +1145,7 @@ async def generate_memory_documents(
     custom_reference_file: Optional[UploadFile] = File(default=None),
     reference_doc_ids: str = Form(default=""),
     source_doc_ids: str = Form(default=""),
+    recorder_record_ids: str = Form(default=""),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1088,7 +1155,8 @@ async def generate_memory_documents(
     reference_text = await _read_reference(custom_reference_file)
     selected_doc_types = _doc_type_list(doc_types, doc_type, bool(reference_text))
 
-    raw_parts = [direct_intro.strip(), direct_faq.strip(), direct_scripts.strip()]
+    recorder_text = _recorder_records_source_text(db, current_user.id, recorder_record_ids)
+    raw_parts = [direct_intro.strip(), direct_faq.strip(), direct_scripts.strip(), recorder_text]
     raw_text = "\n\n".join(part for part in raw_parts if part)
     file_results: list[dict[str, str]] = []
     source_text, visual_blocks, source_images = await _collect_sources(

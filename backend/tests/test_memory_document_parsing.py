@@ -13,6 +13,7 @@ import pytest
 from fastapi import HTTPException, UploadFile
 from starlette.requests import Request
 
+from backend.app.api import h5_personal_settings
 from backend.app.api.h5_personal_settings import _collect_sources
 from backend.app.api.openclaw_memory_cloud import (
     _decode_text_payload,
@@ -135,6 +136,37 @@ def test_multi_file_collection_keeps_successful_files() -> None:
         {"filename": "bad.doc", "status": "skipped", "error": ANY},
         {"filename": "good.txt", "status": "processed", "error": ""},
     ]
+
+
+def test_audio_collection_retains_reusable_audio_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
+    upload = UploadFile(file=io.BytesIO(b"audio"), filename="访谈.mp3")
+    retained: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        h5_personal_settings,
+        "_transcribe_audio_attachment",
+        lambda **_kwargs: ("客户希望下周交付", "https://example.test/retained.wav"),
+    )
+
+    source_text, _visual_blocks, _source_images = asyncio.run(
+        _collect_sources(
+            request,
+            "test-installation",
+            [upload],
+            "",
+            "",
+            db=None,  # type: ignore[arg-type]
+            stt_user=None,  # type: ignore[arg-type]
+            audio_sources=retained,
+        )
+    )
+
+    assert "客户希望下周交付" in source_text
+    assert retained == [{
+        "filename": "访谈.mp3",
+        "source_url": "https://example.test/retained.wav",
+        "file_size": 5,
+    }]
 
 
 def test_runtime_and_h5_formats_match_actual_support() -> None:

@@ -4723,6 +4723,51 @@ def list_draft_records(
     }
 
 
+@router.delete("/api/ip-content/draft-records/{record_id}", summary="Delete one IP content draft record")
+def delete_draft_record(
+    record_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    clean_record_id = _clean_text(record_id, 64)
+    row = (
+        db.query(IPContentDraftRecord)
+        .filter(
+            IPContentDraftRecord.user_id == current_user.id,
+            IPContentDraftRecord.record_id == clean_record_id,
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="生成记录不存在")
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "deleted": 1, "record_id": clean_record_id}
+
+
+@router.delete("/api/ip-content/draft-record-groups/{group_id}", summary="Delete one IP content draft record group")
+def delete_draft_record_group(
+    group_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    clean_group_id = _clean_group_id(group_id)
+    if not clean_group_id:
+        raise HTTPException(status_code=400, detail="生成批次编号无效")
+    rows = db.query(IPContentDraftRecord).filter(IPContentDraftRecord.user_id == current_user.id).all()
+    matched = [
+        row
+        for row in rows
+        if isinstance(row.meta, dict) and str(row.meta.get("group_id") or "") == clean_group_id
+    ]
+    if not matched:
+        raise HTTPException(status_code=404, detail="生成批次不存在")
+    for row in matched:
+        db.delete(row)
+    db.commit()
+    return {"ok": True, "deleted": len(matched), "group_id": clean_group_id}
+
+
 @router.post("/api/ip-content/draft-records/{record_id}/image", summary="Attach selected image to IP content draft record")
 def attach_draft_record_image(
     record_id: str,

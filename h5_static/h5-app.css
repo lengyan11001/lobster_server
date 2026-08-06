@@ -2602,18 +2602,25 @@
     .profile-entry b { flex: 0 0 auto; color: var(--blue); font-size: 13px; }
     .recorder-profile-entry { border-color: rgba(15,143,122,.2); background: linear-gradient(135deg, #f7fffc, #eefaf6); }
     .recorder-page { display: grid; gap: 14px; }
-    .recorder-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 18px; }
-    .recorder-toolbar h2, .recorder-section h3, .recorder-detail-page h2, .recorder-detail-page h3 { margin: 0; }
+    .recorder-heading { padding: 18px; }
+    .recorder-heading h2, .recorder-section h3, .recorder-detail-page h2, .recorder-detail-page h3 { margin: 0; }
+    .recorder-heading .hint { margin-top: 5px; }
+    .recorder-device-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
     .recorder-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .recorder-actions button { min-height: 38px; }
     .recorder-actions button:disabled { opacity: .45; cursor: not-allowed; }
     .recorder-sync-status { width: 100%; color: var(--muted); font-size: 12px; }
-    .recorder-subtabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: #f4f7fb; }
-    .recorder-subtabs button { min-height: 38px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; box-shadow: none; }
+    .recorder-subtabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: #f4f7fb; }
+    .recorder-subtabs button { min-width: 88px; min-height: 38px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; box-shadow: none; }
     .recorder-subtabs button.active { color: #fff; background: var(--blue); }
     .recorder-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; font-size: 13px; color: var(--muted); }
     .recorder-duration { margin-top: 6px; color: #d9483b; font-size: 22px; font-variant-numeric: tabular-nums; }
     .recorder-section { padding: 16px; }
+    .recorder-upload-zone { min-height: 148px; display: grid; place-items: center; align-content: center; gap: 5px; margin-top: 12px; padding: 18px; border: 1px dashed rgba(36,92,255,.35); border-radius: 8px; color: #2d405f; background: #f8faff; cursor: pointer; text-align: center; }
+    .recorder-upload-zone:hover { border-color: var(--blue); background: #f2f6ff; }
+    .recorder-upload-zone input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+    .recorder-upload-zone small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .recorder-upload-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: var(--blue); font-size: 24px; font-weight: 300; line-height: 1; }
     .recorder-list { display: grid; gap: 10px; margin-top: 12px; }
     .recorder-item { border: 1px solid rgba(21,35,64,.11); border-radius: 14px; background: #fff; padding: 12px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center; }
     .recorder-item-main { min-width: 0; display: grid; gap: 4px; }
@@ -2632,6 +2639,7 @@
     .recorder-detail-page { display: grid; gap: 12px; padding: 2px 0 18px; }
     .recorder-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 4px 2px; }
     .recorder-detail-heading > div { min-width: 0; }
+    .recorder-detail-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     .recorder-detail-eyebrow { display: block; margin-bottom: 5px; color: #68758a; font-size: 12px; }
     .recorder-detail-heading h2 { overflow: hidden; color: #17233d; font-size: 24px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
     .recorder-detail-meta { display: flex; gap: 6px 12px; flex-wrap: wrap; margin-top: 8px; color: #748096; font-size: 12px; }
@@ -2650,6 +2658,9 @@
     .recorder-result-section { padding: 16px; }
     .recorder-result-section + .recorder-result-section { border-top: 1px solid #edf0f5; }
     .recorder-result-section h3 { color: #25324a; font-size: 16px; font-weight: 600; }
+    .recorder-result-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .recorder-result-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+    .recorder-result-actions button { min-height: 32px; padding: 5px 10px; border-radius: 6px; font-size: 12px; }
     .recorder-result-note { margin: 6px 0 0; color: #7b8698; font-size: 12px; line-height: 1.55; }
     .recorder-summary { margin-top: 12px; padding-left: 11px; border-left: 3px solid #0f8f7a; color: #27364e; white-space: pre-wrap; line-height: 1.75; }
     .recorder-key-points { display: grid; gap: 10px; margin-top: 12px; }
@@ -2660,13 +2671,18 @@
     .recorder-dialogue { display: grid; gap: 10px; margin-top: 12px; }
     .recorder-line { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; border-bottom: 1px solid #edf0f5; padding: 0 0 12px; line-height: 1.65; }
     .recorder-line:last-child { border-bottom: 0; padding-bottom: 0; }
-    .recorder-line b { color: var(--blue); font-weight: 500; white-space: nowrap; }
+    .recorder-speaker { align-self: start; min-height: 30px; padding: 4px 8px; border: 1px solid rgba(36,92,255,.18); border-radius: 6px; color: var(--blue); background: rgba(36,92,255,.06); box-shadow: none; font-size: 13px; font-weight: 500; white-space: nowrap; }
     .recorder-line p { margin: 0; color: #314059; }
     @media (max-width: 640px) {
-      .recorder-toolbar { align-items: flex-start; flex-direction: column; }
+      .recorder-subtabs { display: flex; overflow-x: auto; scrollbar-width: none; }
+      .recorder-subtabs::-webkit-scrollbar { display: none; }
+      .recorder-subtabs button { flex: 1 0 88px; }
+      .recorder-device-head { flex-direction: column; }
       .recorder-item { grid-template-columns: 1fr; }
       .recorder-audio-row { grid-template-columns: 1fr; }
       .recorder-detail-heading h2 { font-size: 21px; }
+      .recorder-result-head { align-items: stretch; flex-direction: column; }
+      .recorder-result-actions { justify-content: flex-end; }
     }
     .agent-profile-entry {
       background:
@@ -3053,7 +3069,9 @@
       font-size: 12px;
     }
     .personal-file-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .personal-file-chip button { flex: 0 0 auto; padding: 4px 8px; color: #b42318; background: transparent; box-shadow: none; }
+    .personal-file-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+    .personal-file-chip button { flex: 0 0 auto; padding: 4px 8px; color: var(--blue); background: rgba(36,92,255,.08); box-shadow: none; }
+    .personal-file-chip button.danger-text { color: #b42318; background: transparent; }
     .personal-memory-sources { display: grid; gap: 8px; }
     .personal-source-card {
       display: grid;
@@ -5461,8 +5479,36 @@
       overflow: auto;
     }
     .personal-memory-popover {
-      width: min(880px, calc(100vw - 28px));
+      width: min(680px, calc(100vw - 28px));
+      max-height: min(88vh, 760px);
+      overflow-x: hidden;
     }
+    .personal-memory-popover .personal-grid { display: block; min-width: 0; }
+    .personal-memory-popover .personal-block { min-width: 0; padding: 12px; }
+    .personal-memory-step-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px;
+      margin-bottom: 8px;
+      padding: 4px;
+      border: 1px solid rgba(26,48,88,.1);
+      border-radius: 8px;
+      background: #f4f7fb;
+    }
+    .personal-memory-step-tabs button { min-height: 36px; border: 0; border-radius: 6px; color: #68758a; background: transparent; box-shadow: none; font-size: 13px; font-weight: 500; }
+    .personal-memory-step-tabs button.active { color: #fff; background: var(--blue); }
+    .personal-memory-popover .personal-memory-sources { gap: 6px; }
+    .personal-memory-popover .personal-source-card { min-width: 0; gap: 5px; padding: 8px 10px; border-radius: 8px; }
+    .personal-memory-popover details.personal-source-card > summary { color: #263858; font-size: 13px; font-weight: 600; cursor: pointer; list-style-position: inside; }
+    .personal-memory-popover .personal-source-list { max-height: 116px; min-width: 0; overflow-y: auto; overflow-x: hidden; padding-right: 2px; }
+    .personal-memory-popover .personal-source-option { min-width: 0; padding: 2px 0; }
+    .personal-memory-popover .personal-source-option > span { min-width: 0; }
+    .personal-memory-popover .personal-source-option strong,
+    .personal-memory-popover .personal-source-option small { max-width: 100%; }
+    .personal-memory-popover .personal-field { min-width: 0; margin-top: 9px; }
+    .personal-memory-popover input[type="file"] { width: 100%; max-width: 100%; box-sizing: border-box; overflow: hidden; }
+    .personal-memory-popover .personal-doc-types { gap: 6px; }
+    .personal-memory-popover .personal-doc-types label { min-height: 38px; border-radius: 8px; }
     .personal-template-popover {
       width: min(680px, calc(100vw - 28px));
     }
