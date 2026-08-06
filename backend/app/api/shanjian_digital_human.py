@@ -28,6 +28,12 @@ from .shanjian_smart_clip import _data, _get, _post
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+def _release_db_transaction(db: Session) -> None:
+    """Return the request connection before potentially slow external I/O."""
+    if db.in_transaction():
+        db.commit()
+
 _SHANJIAN_BILLING_CAPABILITY_ID = "hifly.video.create_by_tts"
 _SHANJIAN_UNIT_CREDITS_PER_SECOND = 10
 _SHANJIAN_TEMPLATE_UNIT_CREDITS_PER_SECOND = 15
@@ -408,6 +414,7 @@ async def _persist_audio_for_shanjian(
     title: str,
 ) -> tuple[str, str]:
     raw = _clean_text(audio_url)
+    _release_db_transaction(db)
     data, content_type = await _download_audio_bytes(raw)
     if not data:
         raise HTTPException(status_code=400, detail="音频内容为空，无法提交数字人任务")
@@ -433,7 +440,7 @@ async def _persist_audio_for_shanjian(
         },
     )
     db.add(asset)
-    db.flush()
+    db.commit()
     logger.info(
         "[shanjian-dh] audio rehosted user_id=%s asset_id=%s size=%s from=%s to=%s",
         getattr(current_user, "id", ""),
@@ -693,7 +700,7 @@ def _register_final_video_asset(
             },
         )
     )
-    db.flush()
+    db.commit()
     return asset_id
 
 
@@ -705,6 +712,7 @@ async def _apply_video_duration_limit(
     source_video_url: str,
     source_duration: Any,
 ) -> tuple[str, Any, Optional[Dict[str, Any]]]:
+    _release_db_transaction(db)
     submit_payload = dict(row.submit_payload or {})
     limit_seconds = _requested_video_duration_limit(submit_payload)
     constraints = dict(submit_payload.get("output_constraints") or {})
@@ -778,7 +786,7 @@ async def _apply_video_duration_limit(
             },
         )
     )
-    db.flush()
+    db.commit()
     constraints.update(
         {
             "duration_status": "trimmed",
@@ -811,6 +819,7 @@ async def _persist_media_for_shanjian(
     label: str,
 ) -> tuple[str, str]:
     raw = _clean_text(media_url)
+    _release_db_transaction(db)
     accept = "video/*,*/*;q=0.8" if media_type == "video" else ("image/*,*/*;q=0.8" if media_type == "image" else "*/*")
     data, content_type = await _download_media_bytes(raw, accept=accept)
     if not data:
@@ -841,7 +850,7 @@ async def _persist_media_for_shanjian(
         },
     )
     db.add(asset)
-    db.flush()
+    db.commit()
     logger.info(
         "[shanjian-dh] media rehosted user_id=%s label=%s media_type=%s asset_id=%s size=%s from=%s to=%s",
         getattr(current_user, "id", ""),
@@ -1068,6 +1077,7 @@ async def _prepare_template_media_urls(
             if not row:
                 raise HTTPException(status_code=404, detail=f"???????{index + 1}")
             row_url = _clean_text(getattr(row, "source_url", None))
+            _release_db_transaction(db)
             if _is_reusable_shanjian_media_url(row_url):
                 logger.info("[shanjian-dh] reuse template material user_id=%s asset_id=%s type=%s url=%s", getattr(current_user, "id", ""), asset_id, kind, _url_hint(row_url))
                 materials.append({"type": kind, "fileUrl": row_url})
@@ -1472,6 +1482,7 @@ async def create_profile(
         db=db,
         current_user=current_user,
     )
+    _release_db_transaction(db)
     upstream = await _post(endpoint, body.token, payload)
     data = _data(upstream)
     task_id = _clean_text(data.get("taskId"))
@@ -1527,6 +1538,7 @@ async def query_profile_task(
     if not row:
         raise HTTPException(status_code=404, detail="未找到对应的闪剪数字人任务")
 
+    _release_db_transaction(db)
     payload = await _get("/v1/task/info", body.token, {"taskId": row.task_id})
     data = _data(payload)
     result = data.get("result") if isinstance(data.get("result"), dict) else {}
@@ -1609,6 +1621,7 @@ async def create_video(
         raise HTTPException(status_code=400, detail="Please provide audio_url / audio_asset_id, or text + speaker_id")
 
     if audio_url:
+        _release_db_transaction(db)
         audio_url, persisted_audio_asset_id = await _persist_audio_for_shanjian(
             audio_url=audio_url,
             db=db,
@@ -1642,6 +1655,7 @@ async def create_video(
     if template_meta:
         submit_payload["template"] = template_meta
         submit_payload["template_source"] = template_source
+    _release_db_transaction(db)
     billing = await _shanjian_pre_deduct(
         request=request,
         template_meta=template_meta,
@@ -1725,7 +1739,9 @@ async def query_video_task(
 
     submit_payload = row.submit_payload if isinstance(row.submit_payload, dict) else {}
     template_meta = _template_meta_from_submit_payload(submit_payload)
+    base_task_id = _clean_text(row.task_id)
     clip_task_id = _clean_text((template_meta or {}).get("clip_task_id"))
+    _release_db_transaction(db)
 
     if clip_task_id:
         payload = await _get("/v1/task/info", body.token, {"taskId": clip_task_id})
@@ -1762,6 +1778,8 @@ async def query_video_task(
             row.result_payload["postprocess"] = postprocess
         row.error_message = error_message or None
         row.updated_at = datetime.utcnow()
+        db.add(row)
+        db.commit()
         await _finalize_row_billing(
             request=request,
             row=row,
@@ -1772,7 +1790,6 @@ async def query_video_task(
             error_message=error_message,
         )
 
-        db.add(row)
         db.commit()
         db.refresh(row)
         return {
@@ -1789,7 +1806,7 @@ async def query_video_task(
             "raw": payload,
         }
 
-    payload = await _get("/v1/task/info", body.token, {"taskId": row.task_id})
+    payload = await _get("/v1/task/info", body.token, {"taskId": base_task_id})
     data = _data(payload)
     result = data.get("result") if isinstance(data.get("result"), dict) else {}
     status = _clean_text(data.get("status")) or "processing"
@@ -1820,6 +1837,8 @@ async def query_video_task(
             row.result_payload = {"base": payload, "clip_error": getattr(exc, "detail", str(exc))}
             row.error_message = f"模板剪辑提交失败：{getattr(exc, 'detail', str(exc))}"
             row.updated_at = datetime.utcnow()
+            db.add(row)
+            db.commit()
             await _finalize_row_billing(
                 request=request,
                 row=row,
@@ -1829,7 +1848,6 @@ async def query_video_task(
                 stage="clip_submit",
                 error_message=row.error_message or "",
             )
-            db.add(row)
             db.commit()
             db.refresh(row)
             logger.warning(
@@ -1882,6 +1900,8 @@ async def query_video_task(
     row.result_payload = payload if not postprocess else {"base": payload, "postprocess": postprocess}
     row.error_message = error_message or None
     row.updated_at = datetime.utcnow()
+    db.add(row)
+    db.commit()
     await _finalize_row_billing(
         request=request,
         row=row,
@@ -1892,7 +1912,6 @@ async def query_video_task(
         error_message=error_message,
     )
 
-    db.add(row)
     db.commit()
     db.refresh(row)
     return {

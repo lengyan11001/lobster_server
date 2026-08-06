@@ -1,5 +1,6 @@
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from backend.app.api import shanjian_digital_human as digital_human_api
 from backend.app.api.assets import _asset_hidden_from_library, list_assets
@@ -255,6 +256,102 @@ async def test_video_within_template_duration_is_not_reencoded(db_session, test_
     final_asset = db_session.query(Asset).filter(Asset.asset_id == postprocess["final_asset_id"]).one()
     assert final_asset.model == "shanjian-digital-human-final"
     assert final_asset.source_url == final_url
+
+
+@pytest.mark.asyncio
+async def test_video_task_poll_releases_db_transaction_during_external_io(db_session, test_user, monkeypatch):
+    db_session.expire_on_commit = False
+    row = ShanjianDigitalHumanVideoTask(
+        user_id=test_user.id,
+        title="transaction boundary",
+        status="processing",
+        task_id="base-task-transaction",
+        submit_payload={},
+    )
+    db_session.add(row)
+    db_session.commit()
+
+    async def fake_get(path, token, params):
+        assert path == "/v1/task/info"
+        assert params == {"taskId": "base-task-transaction"}
+        assert not db_session.in_transaction()
+        return {
+            "data": {
+                "status": "succeed",
+                "result": {
+                    "videoUrl": "https://cdn.test/final.mp4",
+                    "duration": 24.2,
+                },
+            }
+        }
+
+    async def fake_finalize(**_kwargs):
+        assert not db_session.in_transaction()
+
+    monkeypatch.setattr(digital_human_api, "_get", fake_get)
+    monkeypatch.setattr(digital_human_api, "_finalize_row_billing", fake_finalize)
+
+    result = await digital_human_api.query_video_task(
+        digital_human_api.VideoTaskBody(record_id=row.id),
+        Request({"type": "http", "method": "POST", "path": "/", "headers": []}),
+        test_user,
+        db_session,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "succeed"
+    assert result["video_url"] == "https://cdn.test/final.mp4"
+    assert db_session.query(Asset).filter(Asset.user_id == test_user.id).count() == 1
+
+
+@pytest.mark.asyncio
+async def test_template_clip_submit_releases_db_transaction_during_external_io(db_session, test_user, monkeypatch):
+    db_session.expire_on_commit = False
+    row = ShanjianDigitalHumanVideoTask(
+        user_id=test_user.id,
+        title="clip transaction boundary",
+        status="succeed",
+        task_id="base-task-clip-transaction",
+        video_url="https://upstream.test/base.mp4",
+        submit_payload={"template": {"style_id": "style-1"}},
+    )
+    db_session.add(row)
+    db_session.commit()
+
+    async def fake_download(url, *, accept="*/*"):
+        assert url == "https://upstream.test/base.mp4"
+        assert accept.startswith("video/")
+        assert not db_session.in_transaction()
+        return b"base-video", "video/mp4"
+
+    def fake_save(data, ext, content_type):
+        assert data == b"base-video"
+        assert ext == ".mp4"
+        assert content_type == "video/mp4"
+        return "base-asset", "assets/base-asset.mp4", len(data), "https://cdn.test/base-asset.mp4"
+
+    async def fake_post(path, token, payload):
+        assert path == "/v1/clip/video/realman_broadcast"
+        assert payload["videoUrl"] == "https://cdn.test/base-asset.mp4"
+        assert not db_session.in_transaction()
+        return {"requestId": "clip-request", "data": {"taskId": "clip-task"}}
+
+    monkeypatch.setattr(digital_human_api, "_download_media_bytes", fake_download)
+    monkeypatch.setattr(digital_human_api, "_save_bytes_or_tos", fake_save)
+    monkeypatch.setattr(digital_human_api, "_post", fake_post)
+
+    result = await digital_human_api._submit_realman_clip_task(
+        body=digital_human_api.VideoTaskBody(),
+        db=db_session,
+        current_user=test_user,
+        row=row,
+        template_meta={"style_id": "style-1", "materials": []},
+        base_result_payload={},
+    )
+
+    assert result["clip_task_id"] == "clip-task"
+    assert row.status == "processing"
+    assert row.submit_payload["template"]["base_asset_id"] == "base-asset"
 
 
 def test_shanjian_template_intermediate_asset_is_hidden_from_content_library(db_session, test_user):
