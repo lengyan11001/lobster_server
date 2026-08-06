@@ -149,6 +149,52 @@ def test_h5_background_run_refresh_is_compact_and_non_overlapping():
     assert 'loadRuns({ reset: true });\n      }, 5000);' not in init
 
 
+def test_h5_background_refresh_does_not_rebuild_hidden_resource_pages():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[2] / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    refresh_devices = script.split("async function refreshDeviceStatus()", 1)[1].split(
+        "function normalizeAvatarRows", 1
+    )[0]
+    load_runs = script.split("async function loadRuns(options = {})", 1)[1].split(
+        "async function loadWorkflowRunsForDate", 1
+    )[0]
+    init = script.split("(async function init()", 1)[1]
+
+    assert "if (state.deviceStatusPromise) return state.deviceStatusPromise;" in refresh_devices
+    assert "loadMountedAccounts" not in refresh_devices
+    assert 'if (view === "office") renderOfficeEmployees();' in refresh_devices
+    assert 'if (!box || !document.querySelector("#runListView.active")) return true;' in load_runs
+    assert 'if (activeViewKey() === "office") renderOfficeEmployees();' in load_runs
+    assert '["assetLibrary", "mountedAccounts"].includes(activeViewKey())' in init
+    assert '["office", "workflow", "workList", "runList", "runDetail", "department", "secretary"]' in init
+
+
+def test_h5_mounted_accounts_refresh_once_on_entry_or_manual_action():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[2] / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    switch_tab = script.split("function switchTab(tab)", 1)[1].split("function openDepartmentView", 1)[0]
+
+    assert 'if (key === "mountedAccounts")' in switch_tab
+    assert "refreshMountedAccounts().catch(() => {});" in switch_tab
+    assert '$("mountedAccountRefreshBtn")?.addEventListener("click", () => {' in script
+    assert 'refreshMountedAccounts().catch((err) => toast(err.message || "刷新失败"));' in script
+
+
+def test_h5_closing_asset_preview_releases_media_resources():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[2] / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    close_preview = script.split("function closeAssetPreviewDialog()", 1)[1].split(
+        "function closeLeadDetailDialog", 1
+    )[0]
+
+    assert 'media.removeAttribute("src");' in close_preview
+    assert "media.load();" in close_preview
+    assert "body.replaceChildren();" in close_preview
+
+
 def test_h5_run_list_requests_compactness_explicitly():
     from pathlib import Path
 

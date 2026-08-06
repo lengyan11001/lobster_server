@@ -101,6 +101,7 @@
       mountedAccountDefaults: {},
       mountedAccountsLoaded: false,
       mountedAccountsLoading: false,
+      deviceStatusPromise: null,
       mountedAccountTab: "wechat",
       mountedWechatMemoryLoading: false,
       mountedWechatContactSearch: "",
@@ -1138,8 +1139,14 @@
       if (!modal) return;
       modal.querySelectorAll("video, audio").forEach((media) => {
         try { media.pause(); } catch (_) {}
+        try {
+          media.removeAttribute("src");
+          media.load();
+        } catch (_) {}
       });
       modal.classList.add("hidden");
+      const body = $("assetPreviewBody");
+      if (body) body.replaceChildren();
     }
 
     function closeLeadDetailDialog() {
@@ -10953,7 +10960,7 @@
       }
       if (key === "mountedAccounts") {
         renderProfileDeviceSelect();
-        refreshDeviceStatus().catch(() => loadMountedAccounts(true).catch(() => {}));
+        refreshMountedAccounts().catch(() => {});
       }
       if (key === "recorder") loadRecorderPage();
       if (key === "personalSettings" && !state.personalSettingsBackTab) state.personalSettingsBackTab = "profile";
@@ -12294,6 +12301,7 @@
 
     async function loadMountedAccounts(force = false) {
       if (!state.token) return;
+      if (state.mountedAccountsLoading) return;
       if (!force && state.mountedAccountsLoaded) {
         renderMountedAccounts();
         return;
@@ -12321,6 +12329,11 @@
         state.mountedAccountsLoading = false;
         renderMountedAccounts();
       }
+    }
+
+    async function refreshMountedAccounts() {
+      await refreshDeviceStatus();
+      await loadMountedAccounts(true);
     }
 
     async function setMountedAccountDefault(scope, accountKey) {
@@ -12428,27 +12441,36 @@
 
     async function refreshDeviceStatus() {
       if (!state.token) return;
+      if (state.deviceStatusPromise) return state.deviceStatusPromise;
+      const request = (async () => {
+        try {
+          const data = await api("/api/h5-chat/devices/status");
+          state.devices = Array.isArray(data.devices) ? data.devices : [];
+          ensureSelectedInstallationId();
+          state.publishAccountsLoaded = false;
+          const online = state.devices.filter((d) => d.online).length;
+          const total = state.devices.length;
+          const text = data.online ? `本地在线：${online}/${total || online} 台` : "未检测到本地 online";
+          $("profileDeviceText").textContent = text;
+          renderChatAvailabilityStatus();
+          const view = activeViewKey();
+          if (view === "profile" || view === "mountedAccounts") renderProfileDeviceSelect();
+          if (view === "workflow") renderWorkflowDeviceSelect();
+          if (view === "office") renderOfficeEmployees();
+        } catch (err) {
+          const view = activeViewKey();
+          if (view === "profile" || view === "mountedAccounts") renderProfileDeviceSelect();
+          if (view === "workflow") renderWorkflowDeviceSelect();
+          $("profileDeviceText").textContent = "设备状态获取失败";
+          renderChatAvailabilityStatus();
+          if (view === "office") renderOfficeEmployees();
+        }
+      })();
+      state.deviceStatusPromise = request;
       try {
-        const data = await api("/api/h5-chat/devices/status");
-        state.devices = Array.isArray(data.devices) ? data.devices : [];
-        ensureSelectedInstallationId();
-        state.publishAccountsLoaded = false;
-        const online = state.devices.filter((d) => d.online).length;
-        const total = state.devices.length;
-        const text = data.online ? `本地在线：${online}/${total || online} 台` : "未检测到本地 online";
-        $("profileDeviceText").textContent = text;
-        renderChatAvailabilityStatus();
-        renderProfileDeviceSelect();
-        renderWorkflowDeviceSelect();
-        renderOfficeEmployees();
-        if (activeViewKey() === "mountedAccounts") loadMountedAccounts(true).catch(() => {});
-      } catch (err) {
-        renderProfileDeviceSelect();
-        renderWorkflowDeviceSelect();
-        $("profileDeviceText").textContent = "设备状态获取失败";
-        renderChatAvailabilityStatus();
-        renderOfficeEmployees();
-        if (activeViewKey() === "mountedAccounts") loadMountedAccounts(true).catch(() => {});
+        return await request;
+      } finally {
+        if (state.deviceStatusPromise === request) state.deviceStatusPromise = null;
       }
     }
 
@@ -18638,7 +18660,7 @@
         state.workflowRunDateLoaded = {};
       }
       const offset = append ? state.runListOffset : 0;
-      if (box && !append && !silent) box.innerHTML = `<div class="hint">加载中...</div>`;
+      if (box && document.querySelector("#runListView.active") && !append && !silent) box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
         const data = await api(`/api/scheduled-tasks/runs?limit=${pageSize}&offset=${offset}&compact=${compact ? "1" : "0"}`);
         if (requestId !== state.runListRequestSeq) return false;
@@ -18656,11 +18678,11 @@
         });
         state.runs = Array.from(rowsById.values()).sort((a, b) => itemTimeMs(b.updated_at, b.created_at) - itemTimeMs(a.updated_at, a.created_at));
         captureRunStatusSnapshot(state.runs, { announce: true });
-        renderOfficeEmployees();
-        renderWorkList();
+        if (activeViewKey() === "office") renderOfficeEmployees();
+        if (activeViewKey() === "workList") renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
         if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
-        if (!box) return;
+        if (!box || !document.querySelector("#runListView.active")) return true;
         const allRows = state.runs || [];
         if (!allRows.length) {
           box.innerHTML = `<div class="hint">暂无执行记录。</div>`;
@@ -18688,12 +18710,12 @@
           state.runListTotal = 0;
         }
         if (!preserveExisting) captureRunStatusSnapshot([], { announce: false });
-        renderOfficeEmployees();
-        renderWorkList();
+        if (activeViewKey() === "office") renderOfficeEmployees();
+        if (activeViewKey() === "workList") renderWorkList();
         if (document.querySelector("#departmentView.active")) renderDepartmentDayBoard();
         if (document.querySelector("#workflowView.active")) renderWorkflowDayBoard();
-        if (box && !append && !silent) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
-        if (!append && !silent) $("loadMoreRunsBtn")?.classList.add("hidden");
+        if (box && document.querySelector("#runListView.active") && !append && !silent) box.innerHTML = `<div class="hint">${escapeHtml(err.message || "执行记录加载失败")}</div>`;
+        if (document.querySelector("#runListView.active") && !append && !silent) $("loadMoreRunsBtn")?.classList.add("hidden");
         return false;
       } finally {
         if (requestId === state.runListRequestSeq) {
@@ -19677,7 +19699,7 @@
     });
     $("profileDeviceSelect")?.addEventListener("change", (evt) => setSelectedInstallationId(evt.target.value || ""));
     $("mountedAccountRefreshBtn")?.addEventListener("click", () => {
-      refreshDeviceStatus().catch((err) => toast(err.message || "刷新失败"));
+      refreshMountedAccounts().catch((err) => toast(err.message || "刷新失败"));
     });
     $("mountedAccountTabs")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-mounted-account-tab]");
@@ -20776,10 +20798,15 @@
         $("topActions").classList.add("hidden");
         await refreshCaptcha();
       }
-      setInterval(refreshDeviceStatus, 7000);
+      setInterval(() => {
+        if (!state.token || document.visibilityState === "hidden") return;
+        if (["assetLibrary", "mountedAccounts"].includes(activeViewKey())) return;
+        refreshDeviceStatus();
+      }, 7000);
       setInterval(() => {
         if (!state.token) return;
         if (document.visibilityState === "hidden") return;
+        if (!["office", "workflow", "workList", "runList", "runDetail", "department", "secretary"].includes(activeViewKey())) return;
         const activeStatuses = new Set(["pending", "claimed", "processing", "running"]);
         if (!(state.runs || []).some((row) => activeStatuses.has(String(row && row.status || "").toLowerCase()))) return;
         loadRuns({
