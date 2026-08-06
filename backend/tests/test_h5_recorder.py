@@ -31,6 +31,7 @@ def test_h5_recorder_routes_are_available_on_standalone_h5_app():
     assert ("/api/h5/recorder/files", "POST") in routes
     assert ("/api/h5/recorder/files/{record_id}", "DELETE") in routes
     assert ("/api/h5/recorder/files/{record_id}", "PATCH") in routes
+    assert ("/api/h5/recorder/files/{record_id}/audio", "GET") in routes
     assert ("/api/h5/recorder/files/{record_id}/retry", "POST") in routes
     assert ("/api/h5/recorder/known-names", "GET") in routes
 
@@ -61,3 +62,20 @@ def test_recorder_page_explains_manual_per_file_sync():
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
     assert 'id="recorderRefreshBtn" disabled>刷新列表</button>' in html
     assert "刷新只读取目录，选择未同步录音后再上传" in html
+
+
+def test_recorder_detail_uses_a_separate_view_with_result_tabs():
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    assert 'id="recorderDetailView"' in html
+    assert 'data-recorder-detail-tab="summary"' in html
+    assert 'data-recorder-detail-tab="transcript"' in html
+    assert 'id="recorderAudio"' in html
+    assert 'switchTab("recorderDetail")' in script
+
+
+def test_h5_api_hides_gateway_html_and_retries_transient_gets():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    assert "function readableApiError" in script
+    assert "服务器暂时不可用，请稍后重试" in script
+    assert "transientStatuses.has(resp.status)" in script

@@ -76,6 +76,8 @@
       recorderTotal: 0,
       recorderSubtab: "device",
       recorderDetailId: null,
+      recorderDetailTab: "summary",
+      recorderAudioObjectUrl: "",
       recorderPoller: null,
       recorderSyncActive: false,
       recorderDeviceState: { connected: false, recording: false, paused: false, duration: 0, name: "" },
@@ -1087,9 +1089,25 @@
       },
     };
 
+    function readableApiError(status, text, data = {}) {
+      const raw = String((data && (data.detail || data.message)) || text || "").trim();
+      if ([502, 503, 504].includes(Number(status)) || /<!doctype|<html|<head|<body|nginx\//i.test(raw)) {
+        return "服务器暂时不可用，请稍后重试";
+      }
+      if (!raw || /^HTTP\s+\d+$/i.test(raw)) return "请求未完成，请稍后重试";
+      return raw.length > 240 ? `${raw.slice(0, 240)}…` : raw;
+    }
+
     function toast(text) {
       const el = $("toast");
-      el.textContent = text;
+      const message = readableApiError(0, text);
+      const isAuthNoise = /not authenticated|could not validate credentials|invalid credentials|无法验证凭证|未提供认证凭证/i.test(message);
+      if (isAuthNoise && (!state.token || !$("loginPanel")?.classList.contains("hidden"))) {
+        el.classList.remove("show");
+        el.textContent = "";
+        return;
+      }
+      el.textContent = isAuthNoise ? "登录已过期，请重新登录" : message;
       el.classList.add("show");
       setTimeout(() => el.classList.remove("show"), 2600);
     }
@@ -1617,26 +1635,76 @@
       }
     }
 
-    function api(path, options = {}) {
-      const headers = { ...(options.headers || {}), ...authHeaders() };
-      if (options.json) {
+    async function api(path, options = {}) {
+      const requestOptions = { ...options };
+      const headers = { ...(requestOptions.headers || {}), ...authHeaders() };
+      if (requestOptions.json) {
         headers["Content-Type"] = "application/json";
-        options.body = JSON.stringify(options.json);
+        requestOptions.body = JSON.stringify(requestOptions.json);
       }
-      return fetch(apiUrl(path), { ...options, headers }).then(async (resp) => {
+      delete requestOptions.json;
+      const method = String(requestOptions.method || "GET").toUpperCase();
+      const transientStatuses = new Set([502, 503, 504]);
+      const maxAttempts = method === "GET" ? 3 : 1;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        let resp;
+        try {
+          resp = await fetch(apiUrl(path), { ...requestOptions, headers });
+        } catch (err) {
+          if (attempt < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, attempt * 700));
+            continue;
+          }
+          throw new Error("网络连接异常，请检查网络后重试");
+        }
         const text = await resp.text();
         let data = {};
         try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
-        if (!resp.ok) throw new Error(data.detail || data.message || `HTTP ${resp.status}`);
+        if (!resp.ok) {
+          if (attempt < maxAttempts && transientStatuses.has(resp.status)) {
+            await new Promise((resolve) => setTimeout(resolve, attempt * 700));
+            continue;
+          }
+          const error = new Error(readableApiError(resp.status, text, data));
+          error.status = resp.status;
+          throw error;
+        }
         return data;
-      });
+      }
+      throw new Error("请求未完成，请稍后重试");
+    }
+
+    async function apiBlob(path) {
+      const transientStatuses = new Set([502, 503, 504]);
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        let resp;
+        try {
+          resp = await fetch(apiUrl(path), { headers: authHeaders() });
+        } catch {
+          if (attempt < 3) {
+            await new Promise((resolve) => setTimeout(resolve, attempt * 700));
+            continue;
+          }
+          throw new Error("网络连接异常，请检查网络后重试");
+        }
+        if (resp.ok) return resp.blob();
+        const text = await resp.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
+        if (attempt < 3 && transientStatuses.has(resp.status)) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 700));
+          continue;
+        }
+        throw new Error(readableApiError(resp.status, text, data));
+      }
+      throw new Error("录音加载失败，请稍后重试");
     }
 
     const H5_BRAND_FALLBACKS = {
       bihuo: { display_name: "必火AI员工", icon_32: "/h5-static/bihu_32.png", icon_256: "/h5-static/bihu_256.png", primary_color: "#245cff" },
       daka: { display_name: "大咖AI员工", icon_32: "/h5-static/daka_32.png", icon_256: "/h5-static/daka_256.png", primary_color: "#00a9c7" },
-      jinghai: { display_name: "鲸海AI员工", icon_32: "/client/oem/jinghai/icon_32_v2.png", icon_256: "/client/oem/jinghai/icon_256_v2.png", primary_color: "#0B7895" },
-      hikong: { display_name: "海康AI智能体", icon_32: "/client/oem/hikong/icon_32_v2.png", icon_256: "/client/oem/hikong/icon_256_v2.png", primary_color: "#0874b9" },
+      jinghai: { display_name: "鲸海AI员工", icon_32: "/client/oem/jinghai/icon_32_v3.png", icon_256: "/client/oem/jinghai/icon_256_v3.png", primary_color: "#0B7895" },
+      hikong: { display_name: "海康AI智能体", icon_32: "/client/oem/hikong/icon_32_v3.png", icon_256: "/client/oem/hikong/icon_256_v3.png", primary_color: "#0874b9" },
     };
     const initialBrandMark = String(document.documentElement.dataset.brand || "").trim().toLowerCase();
     if (initialBrandMark === H5_BRAND_MARK) {
@@ -10443,10 +10511,53 @@
       state.recorderSubtab = value;
       document.querySelectorAll("[data-recorder-tab]").forEach((button) => button.classList.toggle("active", button.dataset.recorderTab === value));
       document.querySelectorAll("[data-recorder-panel]").forEach((panel) => {
-        if (panel.id === "recorderDetailPanel" && panel.classList.contains("hidden")) return;
         panel.classList.toggle("hidden", panel.dataset.recorderPanel !== value);
       });
       if (value === "records") loadRecorderRecords().catch(() => {});
+    }
+
+    function setRecorderDetailTab(tab) {
+      const value = tab === "transcript" ? "transcript" : "summary";
+      state.recorderDetailTab = value;
+      document.querySelectorAll("[data-recorder-detail-tab]").forEach((button) => {
+        const active = button.dataset.recorderDetailTab === value;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      document.querySelectorAll("[data-recorder-detail-panel]").forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.recorderDetailPanel !== value);
+      });
+    }
+
+    function releaseRecorderAudio() {
+      const audio = $("recorderAudio");
+      if (audio) {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+      }
+      if (state.recorderAudioObjectUrl) URL.revokeObjectURL(state.recorderAudioObjectUrl);
+      state.recorderAudioObjectUrl = "";
+    }
+
+    async function loadRecorderAudio(id) {
+      const audio = $("recorderAudio");
+      const hint = $("recorderAudioHint");
+      if (!audio) return;
+      releaseRecorderAudio();
+      if (hint) hint.textContent = "正在加载录音…";
+      try {
+        const blob = await apiBlob(`/api/h5/recorder/files/${encodeURIComponent(id)}/audio`);
+        if (Number(state.recorderDetailId) !== Number(id)) return;
+        state.recorderAudioObjectUrl = URL.createObjectURL(blob);
+        audio.src = state.recorderAudioObjectUrl;
+        audio.onloadedmetadata = () => {
+          if (hint) hint.textContent = Number.isFinite(audio.duration) ? `时长 ${recorderFormatDuration(audio.duration)}` : "可播放原始录音";
+        };
+        audio.onerror = () => { if (hint) hint.textContent = "当前设备无法播放该录音格式"; };
+      } catch (err) {
+        if (hint) hint.textContent = err.message || "原始录音加载失败";
+      }
     }
 
     function recorderProgress(row) {
@@ -10590,7 +10701,9 @@
       renderRecorderRecords();
       renderRecorderDeviceFiles();
       const pending = state.recorderRecords.some((row) => row.status === "processing");
-      if (pending && state.recorderDetailId) showRecorderDetail(state.recorderDetailId, false).catch(() => {});
+      if (pending && state.recorderDetailId && document.querySelector("#recorderDetailView.active")) {
+        showRecorderDetail(state.recorderDetailId, false).catch(() => {});
+      }
       clearTimeout(state.recorderPoller);
       if (pending && document.querySelector("#recorderView.active")) state.recorderPoller = setTimeout(() => loadRecorderRecords().catch(() => {}), 4000);
     }
@@ -10640,26 +10753,52 @@
       loadRecorderKnownNames().catch(() => {});
     }
 
-    async function showRecorderDetail(id, scrollToDetail = true) {
+    async function showRecorderDetail(id, navigate = true) {
       const row = await api(`/api/h5/recorder/files/${encodeURIComponent(id)}`);
+      const previousId = Number(state.recorderDetailId || 0);
       state.recorderDetailId = Number(id);
-      setRecorderSubtab("records");
       $("recorderDetailTitle").textContent = row.display_name || row.file_name || "录音内容";
+      const recordedAt = String(row.recorded_at || row.created_at || "").replace("T", " ").slice(0, 16);
+      $("recorderDetailMeta").innerHTML = [
+        recordedAt,
+        row.device_name || "录音设备",
+        recorderFormatBytes(row.file_size),
+      ].filter(Boolean).map((item) => `<span>${escapeHtml(String(item))}</span>`).join("");
+      const status = $("recorderDetailStatus");
+      status.textContent = recorderStatusLabel(row.status);
+      status.className = `recorder-detail-status ${escapeHtml(row.status || "")}`;
       const progress = recorderProgress(row);
       $("recorderDetailProgress").innerHTML = `<div><span>${escapeHtml(progress.label)}</span><b>${progress.percent}%</b></div><div class="recorder-progress-track"><i style="width:${progress.percent}%"></i></div>${row.error_message ? `<p>${escapeHtml(row.error_message)}</p>` : ""}`;
       $("recorderSummary").textContent = row.status === "completed" ? (row.summary_text || "暂无总结") : "处理完成后将在这里显示核心内容总结。";
-      $("recorderKeyPoints").innerHTML = (row.key_points || []).map((item) => `<div class="recorder-key-point">${escapeHtml(String(item))}</div>`).join("");
+      const segments = Array.isArray(row.segments) ? row.segments : [];
+      const transcriptLength = String(row.transcript_text || "").replace(/\s/g, "").length;
+      const shortRecording = row.status === "completed" && transcriptLength > 0 && transcriptLength < 80;
+      $("recorderResultNote").textContent = row.status === "completed"
+        ? shortRecording
+          ? `本段录音内容较短，已展示识别到的全部信息；可播放原始录音核对转写是否完整。`
+          : `已识别 ${Math.max(segments.length, transcriptLength ? 1 : 0)} 段内容。摘要只依据原始录音整理，不补写录音中没有的信息。`
+        : "处理完成后会在这里先给出结论，完整原文可在“完整转写”中查看。";
+      const keyPoints = Array.isArray(row.key_points) ? row.key_points : [];
+      $("recorderKeyPoints").innerHTML = keyPoints.length && !shortRecording
+        ? keyPoints.map((item, index) => `<div class="recorder-key-point"><span>${index + 1}</span><p>${escapeHtml(String(item))}</p></div>`).join("")
+        : `<div class="recorder-empty-result">${shortRecording ? "内容较短，结论已涵盖全部信息，不再重复罗列。" : "录音中未提取到明确的重点事项。"}</div>`;
       $("recorderDialogue").innerHTML = (row.segments || []).length
-        ? row.segments.map((item) => `<div class="recorder-line"><b>${escapeHtml(item.speaker || "未知")}：</b>${escapeHtml(item.text || "")}</div>`).join("")
+        ? row.segments.map((item) => `<div class="recorder-line"><b>${escapeHtml(item.speaker === "未知" ? "说话人" : `说话人 ${item.speaker || ""}`)}</b><p>${escapeHtml(item.text || "")}</p></div>`).join("")
         : `<div class="recorder-line">${escapeHtml(row.transcript_text || (row.status === "processing" ? "正在生成对话转写…" : "暂无转写"))}</div>`;
-      $("recorderDetailPanel").classList.remove("hidden");
-      if (scrollToDetail) $("recorderDetailPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+      if (navigate) {
+        setRecorderDetailTab("summary");
+        switchTab("recorderDetail");
+      }
+      if (navigate || previousId !== Number(id) || !state.recorderAudioObjectUrl) loadRecorderAudio(id).catch(() => {});
+      clearTimeout(state.recorderPoller);
+      if (row.status === "processing" && document.querySelector("#recorderDetailView.active")) {
+        state.recorderPoller = setTimeout(() => showRecorderDetail(id, false).catch(() => {}), 4000);
+      }
     }
 
     async function deleteRecorderRecord(id) {
       if (!confirm("删除这条录音及转写结果？删除后不可恢复。")) return;
       await api(`/api/h5/recorder/files/${encodeURIComponent(id)}`, { method: "DELETE" });
-      if ($("recorderDetailPanel")) $("recorderDetailPanel").classList.add("hidden");
       await loadRecorderRecords();
       await loadRecorderKnownNames();
       toast("已删除");
@@ -10764,6 +10903,7 @@
         voice: ["龙虾AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
         recorder: ["智能录音", "设备录音、对话转写和 AI 总结"],
+        recorderDetail: ["录音结果", "先看结论，需要时再查看完整转写"],
         mountedAccounts: ["平台账号", ""],
         personalSettings: ["IP人设定位", "模板、关键词、同行账号和记忆文件"],
         taskList: ["定时任务", "默认展示 10 条，更多用翻页加载"],
@@ -18718,6 +18858,10 @@
       const button = event.target.closest("[data-recorder-tab]");
       if (button) setRecorderSubtab(button.dataset.recorderTab);
     });
+    if ($("recorderDetailTabs")) $("recorderDetailTabs").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-recorder-detail-tab]");
+      if (button) setRecorderDetailTab(button.dataset.recorderDetailTab);
+    });
     if ($("recorderStartBtn")) $("recorderStartBtn").addEventListener("click", () => {
       const native = recorderNative();
       if (!native || typeof native.startRecorderRecording !== "function") return toast("请更新到最新版 APK 后使用设备录音控制");
@@ -18732,10 +18876,6 @@
       refreshLatestRecorderFiles().catch((err) => { if ($("recorderSyncStatus")) $("recorderSyncStatus").textContent = err.message || "同步失败"; });
       loadRecorderRecords().catch((err) => toast(err.message || "刷新失败"));
       loadRecorderKnownNames().catch(() => {});
-    });
-    if ($("recorderDetailClose")) $("recorderDetailClose").addEventListener("click", () => {
-      state.recorderDetailId = null;
-      $("recorderDetailPanel").classList.add("hidden");
     });
     if ($("recorderDeviceFiles")) $("recorderDeviceFiles").addEventListener("click", (event) => {
       const deleteButton = event.target.closest("[data-recorder-device-delete]");
@@ -18854,6 +18994,14 @@
       }
       if (activeId === "recorderView") {
         switchTab("profile");
+        return;
+      }
+      if (activeId === "recorderDetailView") {
+        clearTimeout(state.recorderPoller);
+        state.recorderDetailId = null;
+        releaseRecorderAudio();
+        setRecorderSubtab("records");
+        switchTab("recorder");
         return;
       }
       if (activeId === "personalSettingsView") {

@@ -53,7 +53,7 @@ bash "$ROOT/scripts/build_mastra_if_needed.sh" "$ROOT"
 export PATH="$ROOT/.runtime/node/bin:$PATH"
 
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service 2>/dev/null | grep -q lobster-backend; then
-  echo "[重启] systemctl stop + 端口清理 + start ..."
+  echo "[重启] 后端服务先更新，H5 保持在线并在最后快速重启 ..."
   H5_UNIT=""
   if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^lobster-h5\.service'; then
     H5_UNIT="lobster-h5"
@@ -70,10 +70,10 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     bash "$ROOT/scripts/install_systemd_units.sh" "$ROOT"
     MASTRA_UNIT="lobster-mastra"
   fi
-  sudo systemctl stop $H5_UNIT $BG_UNIT $MASTRA_UNIT lobster-mcp lobster-backend 2>/dev/null || true
+  sudo systemctl stop $BG_UNIT $MASTRA_UNIT lobster-mcp lobster-backend 2>/dev/null || true
   sleep 1
   # 确保 8001/8000 端口无残留进程
-  for PORT in 8001 8000 8010 4111; do
+  for PORT in 8001 8000 4111; do
     PID_ON_PORT="$(sudo fuser "$PORT/tcp" 2>/dev/null | tr -d '[:space:]')" || true
     if [ -n "$PID_ON_PORT" ]; then
       echo "[清理] 端口 $PORT 仍被进程 $PID_ON_PORT 占用，强制结束"
@@ -85,9 +85,6 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
   sudo systemctl start "$MASTRA_UNIT"
   if [ -n "$BG_UNIT" ]; then
     sudo systemctl start "$BG_UNIT"
-  fi
-  if [ -n "$H5_UNIT" ]; then
-    sudo systemctl start "$H5_UNIT"
   fi
   sleep 2
   # 验证 MCP 是否成功监听
@@ -114,6 +111,22 @@ if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=serv
     echo "[ERR] Mastra 启动失败"
     sudo journalctl -u lobster-mastra -n 80 --no-pager || true
     exit 1
+  fi
+  if [ -n "$H5_UNIT" ]; then
+    echo "[重启] H5 服务最后切换 ..."
+    sudo systemctl restart "$H5_UNIT"
+    H5_OK=0
+    for i in 1 2 3 4 5; do
+      if curl --fail --silent "http://127.0.0.1:8010/api/branding?brand=bihuo" >/dev/null 2>&1; then
+        H5_OK=1; break
+      fi
+      sleep "$i"
+    done
+    if [ "$H5_OK" = 0 ]; then
+      echo "[ERR] H5 启动失败"
+      sudo journalctl -u "$H5_UNIT" -n 80 --no-pager || true
+      exit 1
+    fi
   fi
   sudo systemctl status lobster-backend lobster-mcp $MASTRA_UNIT $BG_UNIT $H5_UNIT --no-pager || true
   echo "[完成] 服务已重启"

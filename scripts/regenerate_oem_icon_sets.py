@@ -12,10 +12,10 @@ OEM_ROOT = ROOT / "client_static" / "oem"
 MANIFEST_PATH = OEM_ROOT / "manifest.json"
 ICON_SIZES = (16, 24, 32, 48, 64, 128, 256, 512, 1024)
 BRAND_VERSIONS = {
-    "hikong": "2026.08.06.3",
-    "jinghai": "2026.08.06.3",
+    "hikong": "2026.08.06.4",
+    "jinghai": "2026.08.06.4",
 }
-WEB_ICON_REVISION = "v2"
+WEB_ICON_REVISION = "v3"
 
 
 def _trim(image: Image.Image) -> Image.Image:
@@ -75,7 +75,7 @@ def _jinghai_mark() -> Image.Image:
     return _trim(mark)
 
 
-def _render_icon(mark: Image.Image, size: int, width_ratio: float) -> Image.Image:
+def _render_icon(mark: Image.Image, size: int, width_ratio: float, *, transparent: bool = False) -> Image.Image:
     target_width = round(size * width_ratio)
     target_height = round(size * 0.76)
     scale = min(target_width / mark.width, target_height / mark.height)
@@ -84,7 +84,7 @@ def _render_icon(mark: Image.Image, size: int, width_ratio: float) -> Image.Imag
         max(1, round(mark.height * scale)),
     )
     resized = mark.resize(dimensions, Image.Resampling.LANCZOS)
-    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
+    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 0 if transparent else 255))
     offset = ((size - resized.width) // 2, (size - resized.height) // 2)
     canvas.alpha_composite(resized, offset)
     return canvas
@@ -97,7 +97,8 @@ def _generate_brand(brand: str, mark: Image.Image, width_ratio: float) -> None:
         image = _render_icon(mark, size, width_ratio)
         image.save(brand_root / f"icon_{size}.png", optimize=True)
         if size in {32, 64, 256}:
-            image.save(brand_root / f"icon_{size}_{WEB_ICON_REVISION}.png", optimize=True)
+            web_image = _render_icon(mark, size, width_ratio, transparent=True)
+            web_image.save(brand_root / f"icon_{size}_{WEB_ICON_REVISION}.png", optimize=True)
         rendered[size] = image
 
     rendered[1024].save(
@@ -129,6 +130,7 @@ def _update_manifest() -> None:
         brand_root = OEM_ROOT / brand
 
         def update_section(section: str) -> str:
+            section = section.replace("_v2.png", f"_{WEB_ICON_REVISION}.png").replace('"icon_32_v2"', f'"icon_32_{WEB_ICON_REVISION}"').replace('"icon_64_v2"', f'"icon_64_{WEB_ICON_REVISION}"').replace('"icon_256_v2"', f'"icon_256_{WEB_ICON_REVISION}"')
             section = re.sub(
                 r'("version":\s*")[^"]+("[,])',
                 rf'\g<1>{version}\2',

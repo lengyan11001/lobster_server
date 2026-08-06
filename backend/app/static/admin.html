@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-brand="__ADMIN_BRAND_MARK__">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>必火AI员工管理后台</title>
-<link rel="icon" id="adminFavicon" type="image/png" href="/admin/static/bihu_32.png">
+<title>__ADMIN_BRAND_TITLE__管理后台</title>
+<link rel="icon" id="adminFavicon" type="image/png" href="__ADMIN_BRAND_ICON_32__">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#f5f7fa;--card:#fff;--primary:#4f46e5;--primary-hover:#4338ca;--danger:#ef4444;--success:#22c55e;--text:#1e293b;--text-secondary:#64748b;--border:#e2e8f0;--radius:10px;--shadow:0 1px 3px rgba(0,0,0,.08);--agent-color:#f59e0b;--agent-bg:#fffbeb}
@@ -297,8 +297,8 @@ body{background:#edf2f7}
 <!-- Login -->
 <div class="login-wrap" id="loginView">
   <div class="login-card">
-    <div style="text-align:center;margin-bottom:12px"><img id="loginBrandIcon" src="/admin/static/bihu_64.png" width="56" height="56" style="border-radius:12px"></div>
-    <h1 id="loginBrandTitle">必火AI员工管理后台</h1>
+    <div style="text-align:center;margin-bottom:12px"><img id="loginBrandIcon" src="__ADMIN_BRAND_ICON_64__" width="56" height="56" style="object-fit:contain"></div>
+    <h1 id="loginBrandTitle">__ADMIN_BRAND_TITLE__管理后台</h1>
     <div class="login-tabs">
       <button class="login-tab active" type="button" data-login-tab="password" onclick="switchLoginTab('password')">账号密码登录</button>
       <button class="login-tab" type="button" data-login-tab="sms" onclick="switchLoginTab('sms')">手机号验证码登录</button>
@@ -343,9 +343,9 @@ body{background:#edf2f7}
 <div class="dashboard" id="dashboardView">
   <aside class="admin-sidebar">
     <div class="admin-brand">
-      <img id="sidebarBrandIcon" src="/admin/static/bihu_32.png" alt="">
+      <img id="sidebarBrandIcon" src="__ADMIN_BRAND_ICON_32__" alt="">
       <div>
-        <strong id="sidebarBrandTitle">必火AI中控台</strong>
+        <strong id="sidebarBrandTitle">__ADMIN_BRAND_CONSOLE__</strong>
         <span id="sidebarBrandSub">运营管理后台</span>
       </div>
     </div>
@@ -815,8 +815,8 @@ const TEMPLATE_PAGE_SIZE = 20;
 const ADMIN_BRANDS = {
   bihuo: { name: '必火AI员工', console: '必火AI中控台', icon32: '/admin/static/bihu_32.png', icon64: '/admin/static/bihu_64.png' },
   daka: { name: '大咖AI员工', console: '大咖AI中控台', icon32: '/admin/static/daka_32.png', icon64: '/admin/static/daka_64.png' },
-  jinghai: { name: '鲸海AI员工', console: '鲸海AI中控台', icon32: '/client/oem/jinghai/icon_32_v2.png', icon64: '/client/oem/jinghai/icon_64_v2.png' },
-  hikong: { name: '海康AI智能体', console: '海康AI中控台', icon32: '/client/oem/hikong/icon_32_v2.png', icon64: '/client/oem/hikong/icon_64_v2.png' }
+  jinghai: { name: '鲸海AI员工', console: '鲸海AI中控台', icon32: '/client/oem/jinghai/icon_32_v3.png', icon64: '/client/oem/jinghai/icon_64_v3.png' },
+  hikong: { name: '海康AI智能体', console: '海康AI中控台', icon32: '/client/oem/hikong/icon_32_v3.png', icon64: '/client/oem/hikong/icon_64_v3.png' }
 };
 
 if (TOKEN) { showDashboard(); }

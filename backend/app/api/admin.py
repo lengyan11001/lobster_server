@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,7 @@ from typing import Optional
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, Request
 from fastapi.responses import HTMLResponse, FileResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
@@ -26,7 +27,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from ..models import AgentCommissionLedger, BrandConfig, CapabilityCallLog, ContentCompetitorAccount, CreditLedger, H5AgentTemplateGrant, H5ChatDevicePresence, IPContentKeyword, IPContentScheduleTemplate, JuheWechatCallLog, JuheWechatConfig, JuheWechatFriendAddBatch, JuheWechatFriendAddItem, OpenClawMemoryDocument, RechargeOrder, ScheduledTask, ScheduledTaskRun, SkillUnlock, User, UserSkillVisibility
-from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, normalize_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
+from ..services.brand_context import BUILTIN_BRANDS, DEFAULT_BRAND_MARK, normalize_brand_mark, public_brand_config, request_brand_mark, resolve_brand_mark_candidates, unscoped_account_email, user_brand_mark, user_for_account
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import quantize_credits, quantize_credits_signed
 from ..services.device_presence import is_device_online
@@ -244,12 +245,28 @@ def _capability_source_label(source: Optional[str]) -> str:
 
 @router.get("/admin", include_in_schema=False)
 @router.get("/admin/", include_in_schema=False)
-def admin_page():
+def admin_page(request: Request, db: Session = Depends(get_db)):
     html_path = Path(__file__).resolve().parent.parent / "static" / "admin.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="管理后台页面未找到")
+    branding = public_brand_config(db, request_brand_mark(request))
+    mark = str(branding.get("mark") or DEFAULT_BRAND_MARK)
+    title = str(branding.get("display_name") or branding.get("document_title") or "AI员工")
+    icon_32 = str(branding.get("icon_32") or "/admin/static/bihu_32.png")
+    icon_64 = str(branding.get("icon_128") or branding.get("icon_256") or icon_32)
+    console_title = f"{title.removesuffix('AI员工').removesuffix('AI智能体')}AI中控台"
+    content = html_path.read_text(encoding="utf-8")
+    replacements = {
+        "__ADMIN_BRAND_MARK__": mark,
+        "__ADMIN_BRAND_TITLE__": title,
+        "__ADMIN_BRAND_ICON_32__": icon_32,
+        "__ADMIN_BRAND_ICON_64__": icon_64,
+        "__ADMIN_BRAND_CONSOLE__": console_title,
+    }
+    for placeholder, value in replacements.items():
+        content = content.replace(placeholder, html.escape(value, quote=True))
     return HTMLResponse(
-        html_path.read_text(encoding="utf-8"),
+        content,
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",

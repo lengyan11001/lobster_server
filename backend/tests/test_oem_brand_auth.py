@@ -642,9 +642,34 @@ def test_admin_brand_is_driven_by_url_without_brand_selectors():
     assert "new Set(['bihuo', 'daka', 'jinghai', 'hikong'])" in html
     assert "ADMIN_BRAND_MARKS.has(REQUESTED_BRAND_MARK) ? REQUESTED_BRAND_MARK : 'bihuo'" in html
     assert "jinghai: { name: '鲸海AI员工'" in html
-    assert "icon32: '/client/oem/jinghai/icon_32_v2.png'" in html
+    assert "icon32: '/client/oem/jinghai/icon_32_v3.png'" in html
     assert "hikong: { name: '海康AI智能体'" in html
-    assert "icon32: '/client/oem/hikong/icon_32_v2.png'" in html
+    assert "icon32: '/client/oem/hikong/icon_32_v3.png'" in html
+
+
+def test_admin_first_html_is_rendered_with_requested_brand(db_session_factory):
+    from backend.app.api.admin import router as admin_router
+    from backend.app.db import get_db
+
+    app = FastAPI()
+    app.include_router(admin_router)
+
+    def _get_db_override():
+        session = db_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    response = TestClient(app).get("/admin?brand=jinghai")
+
+    assert response.status_code == 200
+    assert '<html lang="zh-CN" data-brand="jinghai">' in response.text
+    assert "<title>鲸海AI员工管理后台</title>" in response.text
+    assert 'id="loginBrandIcon" src="/client/oem/jinghai/icon_64_v3.png"' in response.text
+    assert 'id="sidebarBrandIcon" src="/client/oem/jinghai/icon_32_v3.png"' in response.text
+    assert "__ADMIN_BRAND_" not in response.text
 
 
 def test_agent_user_list_remains_scoped_to_its_brand(db_session, db_session_factory, monkeypatch):

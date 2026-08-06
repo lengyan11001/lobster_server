@@ -9,7 +9,7 @@
   "pending_brands": {},
   "brands": {
     "jinghai": {
-      "version": "2026.08.06.3",
+      "version": "2026.08.06.4",
       "profile": {
         "mark": "jinghai",
         "display_name": "鲸海AI员工",
@@ -20,11 +20,11 @@
         "hero_subtitle": "让AI员工持续执行营销、创作与客户运营",
         "primary_color": "#0B7895",
         "icons": {
-          "favicon_32": "/client/oem/jinghai/icon_32_v2.png",
-          "apple_touch": "/client/oem/jinghai/icon_256_v2.png",
-          "loading_mark": "/client/oem/jinghai/icon_64_v2.png",
+          "favicon_32": "/client/oem/jinghai/icon_32_v3.png",
+          "apple_touch": "/client/oem/jinghai/icon_256_v3.png",
+          "loading_mark": "/client/oem/jinghai/icon_64_v3.png",
           "home_visual": "/client/oem/jinghai/logo_mark_1024.png",
-          "logo_mark": "/client/oem/jinghai/icon_32_v2.png",
+          "logo_mark": "/client/oem/jinghai/icon_32_v3.png",
           "logo_mark_width": 32,
           "logo_mark_height": 32
         },
@@ -47,9 +47,9 @@
         {"key": "icon_256", "url": "/client/oem/jinghai/icon_256.png", "size": 13653, "sha256": "2c6f462b4fe32a75a96600094d1e5f789fda276ef25b7d45ed9f2d6ff660af02"},
         {"key": "icon_512", "url": "/client/oem/jinghai/icon_512.png", "size": 30205, "sha256": "b5275497cb80f99cd52b8fe3a766396a5d0c0e957a37f7ebd615486d8696d12f"},
         {"key": "icon_1024", "url": "/client/oem/jinghai/icon_1024.png", "size": 81642, "sha256": "c13aca2ca0042715727d897cf2e287ecc05a026af7aa1fe5e2fe980b47292f5d"},
-        {"key": "icon_32_v2", "url": "/client/oem/jinghai/icon_32_v2.png", "size": 1215, "sha256": "0305b7005a62bb8cd4a19dde28ab8bc6aba473ecbb0a676aa9936c96ab287297"},
-        {"key": "icon_64_v2", "url": "/client/oem/jinghai/icon_64_v2.png", "size": 2975, "sha256": "19e454fba24c6fa0e743d478886d9ec20eb0e330be968d8fd0940cb33c5d4128"},
-        {"key": "icon_256_v2", "url": "/client/oem/jinghai/icon_256_v2.png", "size": 13653, "sha256": "2c6f462b4fe32a75a96600094d1e5f789fda276ef25b7d45ed9f2d6ff660af02"},
+        {"key": "icon_32_v3", "url": "/client/oem/jinghai/icon_32_v3.png", "size": 1146, "sha256": "aa76e8a9ee5bf9759259424b05f4f93b6a5d7183e7d2b0a7b200a86e5c04cb13"},
+        {"key": "icon_64_v3", "url": "/client/oem/jinghai/icon_64_v3.png", "size": 2709, "sha256": "2abfcf7040b741e017041a51d04bcc6b5b5647124721c6f093ca916ab8e58fbf"},
+        {"key": "icon_256_v3", "url": "/client/oem/jinghai/icon_256_v3.png", "size": 12899, "sha256": "46bea62eeefb14076e2cb237a5775cfe8d35b9499c8cf4739deb862e9c946c1f"},
         {"key": "logo_source", "url": "/client/oem/jinghai/logo_source.png", "size": 181791, "sha256": "103ab643b953aed2947b2cf4b7814493a6e9e0f9db85b9de32dc546c0ee04531"},
         {"key": "logo_mark_1024", "url": "/client/oem/jinghai/logo_mark_1024.png", "size": 81642, "sha256": "c13aca2ca0042715727d897cf2e287ecc05a026af7aa1fe5e2fe980b47292f5d"},
         {"key": "desktop_ico", "url": "/client/oem/jinghai/desktop.ico", "size": 27170, "sha256": "1c68c9278ed20511ecd45a93960ffaa58cb95b6b74c6c52fb41e630a9f72c73d"},
@@ -147,7 +147,7 @@
       ]
     },
     "hikong": {
-      "version": "2026.08.06.3",
+      "version": "2026.08.06.4",
       "profile": {
         "mark": "hikong",
         "display_name": "海康AI智能体",
@@ -158,11 +158,11 @@
         "hero_subtitle": "让AI智能体持续执行营销、创作与客户运营",
         "primary_color": "#0874b9",
         "icons": {
-          "favicon_32": "/client/oem/hikong/icon_32_v2.png",
-          "apple_touch": "/client/oem/hikong/icon_256_v2.png",
-          "loading_mark": "/client/oem/hikong/icon_64_v2.png",
+          "favicon_32": "/client/oem/hikong/icon_32_v3.png",
+          "apple_touch": "/client/oem/hikong/icon_256_v3.png",
+          "loading_mark": "/client/oem/hikong/icon_64_v3.png",
           "home_visual": "/client/oem/hikong/logo_1024.png",
-          "logo_mark": "/client/oem/hikong/icon_32_v2.png",
+          "logo_mark": "/client/oem/hikong/icon_32_v3.png",
           "logo_mark_width": 32,
           "logo_mark_height": 32
         },
@@ -185,9 +185,9 @@
         {"key": "icon_256", "url": "/client/oem/hikong/icon_256.png", "size": 28021, "sha256": "9da600be03281158859f4769a4ad0ce3e66e7a7e12f3ff0b914854d15221a505"},
         {"key": "icon_512", "url": "/client/oem/hikong/icon_512.png", "size": 78276, "sha256": "5ab511a22900564d22c5027d0f3280a8f3d943da028f8af8141b1cf4370f6b16"},
         {"key": "icon_1024", "url": "/client/oem/hikong/icon_1024.png", "size": 224427, "sha256": "afd2a469130c210630e6f582e0d25c254e5ec07049016da9a9b3ad1a97ae6809"},
-        {"key": "icon_32_v2", "url": "/client/oem/hikong/icon_32_v2.png", "size": 1582, "sha256": "5d5ea36cf583342ce808f59a47c37c2c2df2b44425a90bfb5fdcea8839a38a06"},
-        {"key": "icon_64_v2", "url": "/client/oem/hikong/icon_64_v2.png", "size": 4278, "sha256": "80aaff9593bd3921dab8dea7940690f840aa337d31a04d2cd92c4718ad1b2112"},
-        {"key": "icon_256_v2", "url": "/client/oem/hikong/icon_256_v2.png", "size": 28021, "sha256": "9da600be03281158859f4769a4ad0ce3e66e7a7e12f3ff0b914854d15221a505"},
+        {"key": "icon_32_v3", "url": "/client/oem/hikong/icon_32_v3.png", "size": 1863, "sha256": "4de33a37a68f2a7811b96210f133333cd100f9c4e36f59ff306e087c49a663a0"},
+        {"key": "icon_64_v3", "url": "/client/oem/hikong/icon_64_v3.png", "size": 5312, "sha256": "43a57be0f32c1a41d8c2e25b7c8795b03a1d63e276537ac68bc6cc614eca005d"},
+        {"key": "icon_256_v3", "url": "/client/oem/hikong/icon_256_v3.png", "size": 34390, "sha256": "ab57972f414c788a5438c4319307ca06a7b9ef4430806ee18d4ce45a5fa518bb"},
         {"key": "logo_1024", "url": "/client/oem/hikong/logo_1024.png", "size": 204142, "sha256": "c0c79c06d6d01cf1cea92d9d00c5e13f821426cf1fd2948fa8527279e233da91"},
         {"key": "desktop_ico", "url": "/client/oem/hikong/desktop.ico", "size": 52926, "sha256": "5140e644a6e9291c67c9e0ef1c6cd48f4674fb0051fb8e38b37a0e5c1f340642"},
         {"key": "launcher_exe", "url": "/client/oem/hikong/client_launcher.exe", "size": 59392, "sha256": "d3999fc556372089047027e3a6c4b2c4a78cc513f9bed4326eed4053833e13b3"}

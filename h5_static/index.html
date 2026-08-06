@@ -8,7 +8,7 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="__H5_BRAND_TITLE__" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1-20260805-wechat-contact-picker-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1-20260805-wechat-contact-picker-v1-20260806-recorder-detail-v2" />
   <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4" />
 </head>
 <body>
@@ -879,13 +879,48 @@
             <div id="recorderServerFiles" class="recorder-list"><div class="empty">还没有上传的录音。</div></div>
             <div id="recorderPager" class="recorder-pager"></div>
           </div>
-          <div class="panel recorder-detail hidden" id="recorderDetailPanel" data-recorder-panel="records">
-            <div class="section-title"><h3 id="recorderDetailTitle">录音内容</h3><button type="button" class="ghost" id="recorderDetailClose">关闭</button></div>
-            <div class="recorder-progress" id="recorderDetailProgress"></div>
-            <div class="recorder-summary" id="recorderSummary"></div>
-            <div class="recorder-key-points" id="recorderKeyPoints"></div>
-            <div class="recorder-dialogue" id="recorderDialogue"></div>
+        </div>
+      </section>
+
+      <section class="view" id="recorderDetailView">
+        <div class="recorder-detail-page">
+          <header class="recorder-detail-heading">
+            <div>
+              <span class="recorder-detail-eyebrow">录音记录</span>
+              <h2 id="recorderDetailTitle">录音内容</h2>
+              <div class="recorder-detail-meta" id="recorderDetailMeta"></div>
+            </div>
+            <span class="recorder-detail-status" id="recorderDetailStatus">处理中</span>
+          </header>
+          <div class="recorder-progress" id="recorderDetailProgress"></div>
+          <div class="recorder-audio-row">
+            <div>
+              <strong>原始录音</strong>
+              <small id="recorderAudioHint">正在加载录音…</small>
+            </div>
+            <audio id="recorderAudio" controls preload="metadata"></audio>
           </div>
+          <div class="recorder-detail-tabs" id="recorderDetailTabs" role="tablist">
+            <button type="button" class="active" data-recorder-detail-tab="summary" role="tab">AI 摘要</button>
+            <button type="button" data-recorder-detail-tab="transcript" role="tab">完整转写</button>
+          </div>
+          <section class="recorder-result-panel" data-recorder-detail-panel="summary">
+            <div class="recorder-result-section">
+              <h3>内容结论</h3>
+              <p class="recorder-result-note" id="recorderResultNote"></p>
+              <div class="recorder-summary" id="recorderSummary"></div>
+            </div>
+            <div class="recorder-result-section">
+              <h3>重点事项</h3>
+              <div class="recorder-key-points" id="recorderKeyPoints"></div>
+            </div>
+          </section>
+          <section class="recorder-result-panel hidden" data-recorder-detail-panel="transcript">
+            <div class="recorder-result-section">
+              <h3>逐句转写</h3>
+              <div class="recorder-dialogue" id="recorderDialogue"></div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -2001,6 +2036,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2"></script>
 </body>
 </html>

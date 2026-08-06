@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import re
 import shutil
 import uuid
@@ -10,7 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
@@ -130,6 +134,29 @@ def _recorder_tos_object_key(user_id: int, record_id: int) -> str:
     return f"assets/recorder/{int(user_id)}/{int(record_id)}.wav"
 
 
+def mark_interrupted_recordings_failed() -> int:
+    """Make records interrupted by an H5 restart explicitly retryable."""
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            text(
+                "UPDATE recorder_audio_records "
+                "SET status = 'failed', process_stage = 'failed', "
+                "error_message = '服务更新中断了本次处理，请点击重新处理' "
+                "WHERE status = 'processing'"
+            )
+        )
+        count = max(0, int(result.rowcount or 0))
+        if count:
+            db.commit()
+        return count
+    except SQLAlchemyError:
+        db.rollback()
+        return 0
+    finally:
+        db.close()
+
+
 def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
     db = SessionLocal()
     try:
@@ -178,7 +205,16 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
             db.close()
         dialogue = "\n".join(f"{x['speaker']}：{x['text']}" for x in segments) or text
         answer = await _call_llm(request, installation_id, [
-            {"role": "system", "content": "你是会议录音整理助手。只依据转写内容，输出严格 JSON：summary 为核心内容摘要；key_points 为关键事项数组。不要编造人物身份。"},
+            {
+                "role": "system",
+                "content": (
+                    "你是会议录音整理助手。只依据转写内容输出严格 JSON："
+                    "summary 为一段明确结论，key_points 为去重后的关键事实、决定或待办数组。"
+                    "不要重复改写同一句话，不要编造人物身份、背景、决定或待办。"
+                    "如果录音只是测试、操作说明或内容很短，要在 summary 中直接说明录音实际包含什么，"
+                    "以及未包含业务结论或待办；key_points 只保留确实存在的信息。"
+                ),
+            },
             {"role": "user", "content": f"请总结以下录音转写：\n\n{dialogue[:120000]}"},
         ], timeout_seconds=300)
         parsed = _json_object(answer)
@@ -286,6 +322,21 @@ def recording_detail(record_id: int, current_user: User = Depends(get_current_us
     if not row:
         raise HTTPException(status_code=404, detail="录音不存在")
     return _serialize(row, detail=True)
+
+
+@router.get("/api/h5/recorder/files/{record_id}/audio")
+def recording_audio(record_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = db.query(RecorderAudioRecord).filter(
+        RecorderAudioRecord.id == record_id,
+        RecorderAudioRecord.user_id == current_user.id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="录音不存在")
+    source = Path(row.audio_path or "")
+    if not source.is_file():
+        raise HTTPException(status_code=410, detail="原始录音文件已不存在")
+    media_type = mimetypes.guess_type(source.name)[0] or ("audio/ogg" if source.suffix.lower() == ".opus" else "application/octet-stream")
+    return FileResponse(str(source), media_type=media_type)
 
 
 @router.post("/api/h5/recorder/files/{record_id}/retry")

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from PIL import Image
 
 
 def _client() -> TestClient:
@@ -54,9 +55,18 @@ def test_oem_manifest_registers_brand_without_a_second_code_map():
     from backend.app.services.brand_context import BUILTIN_BRANDS
 
     assert BUILTIN_BRANDS["jinghai"]["display_name"] == "鲸海AI员工"
-    assert BUILTIN_BRANDS["jinghai"]["icon_32"] == "/client/oem/jinghai/icon_32_v2.png"
+    assert BUILTIN_BRANDS["jinghai"]["icon_32"] == "/client/oem/jinghai/icon_32_v3.png"
     assert BUILTIN_BRANDS["hikong"]["display_name"] == "海康AI智能体"
-    assert BUILTIN_BRANDS["hikong"]["icon_32"] == "/client/oem/hikong/icon_32_v2.png"
+    assert BUILTIN_BRANDS["hikong"]["icon_32"] == "/client/oem/hikong/icon_32_v3.png"
+
+
+@pytest.mark.parametrize("brand", ["jinghai", "hikong"])
+def test_oem_web_icons_have_transparent_corners(brand):
+    root = Path(__file__).resolve().parents[2] / "client_static" / "oem" / brand
+    for size in (32, 64, 256):
+        image = Image.open(root / f"icon_{size}_v3.png").convert("RGBA")
+        assert image.getpixel((0, 0))[3] == 0
+        assert image.getpixel((size - 1, size - 1))[3] == 0
 
 
 def test_oem_manifest_assets_exist_and_match_checksums():
