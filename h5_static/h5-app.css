@@ -2800,6 +2800,16 @@
     .task-detail-actions .task-action-list { left: 0; right: auto; }
     .task-detail-popover { max-width: min(760px, 94vw); width: 760px; max-height: 84vh; overflow: auto; }
     .task-detail-body, .detail-body { display: grid; gap: 12px; margin-top: 14px; color: #17233d; }
+    .detail-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: #f4f7fb; }
+    .detail-tabs button { min-height: 38px; border: 0; border-radius: 6px; color: #6f7b90; background: transparent; box-shadow: none; font-size: 13px; }
+    .detail-tabs button.active { color: #fff; background: var(--blue); }
+    .content-record-detail-page,
+    .personal-memory-detail-page { min-height: calc(100dvh - 110px); }
+    .content-record-detail-body { align-content: start; }
+    .content-record-detail-body .asset-preview-large { max-height: min(48vh, 420px); }
+    .content-record-detail-actions { display: flex; align-items: center; justify-content: flex-start; gap: 10px; flex-wrap: wrap; }
+    .content-record-detail-action-menu { min-width: 140px; }
+    .personal-memory-detail-content { min-height: 58vh; max-height: none; margin: 0; padding: 16px; overflow: auto; border: 1px solid var(--line); border-radius: 12px; color: #263858; background: #fff; white-space: pre-wrap; word-break: break-word; line-height: 1.75; }
     .task-detail-section { border: 1px solid rgba(223,230,242,.92); border-radius: 14px; background: rgba(248,251,255,.9); padding: 12px; }
     .task-detail-section h4 { margin: 0 0 8px; font-size: 15px; }
     .task-detail-section pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; color: #263858; max-height: 180px; overflow: auto; }
@@ -5497,6 +5507,9 @@
     }
     .personal-memory-step-tabs button { min-height: 36px; border: 0; border-radius: 6px; color: #68758a; background: transparent; box-shadow: none; font-size: 13px; font-weight: 500; }
     .personal-memory-step-tabs button.active { color: #fff; background: var(--blue); }
+    .personal-memory-source-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-bottom: 8px; }
+    .personal-memory-source-tabs button { min-height: 34px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 8px; color: #68758a; background: #fff; box-shadow: none; font-size: 12px; }
+    .personal-memory-source-tabs button.active { color: var(--blue); border-color: rgba(36,92,255,.35); background: #eef4ff; }
     .personal-memory-popover .personal-memory-sources { gap: 6px; }
     .personal-memory-popover .personal-source-card { min-width: 0; gap: 5px; padding: 8px 10px; border-radius: 8px; }
     .personal-memory-popover details.personal-source-card > summary { color: #263858; font-size: 13px; font-weight: 600; cursor: pointer; list-style-position: inside; }

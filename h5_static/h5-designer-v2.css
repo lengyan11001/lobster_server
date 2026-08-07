@@ -6149,3 +6149,52 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   font-weight: 500;
   cursor: pointer;
 }
+
+/* Final width guard for Android WebView file controls and every upload dialog. */
+.upload-dialog {
+  width: 100%;
+  min-width: 0;
+  max-width: 100vw;
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+  overflow-x: hidden;
+}
+
+.upload-dialog > .work-dispatch-popover,
+.upload-dialog > .employee-popover,
+.upload-dialog .work-dispatch-form,
+.upload-dialog .personal-upload-zone,
+.upload-dialog .personal-field,
+.upload-dialog .work-dispatch-fields,
+.upload-dialog .work-dispatch-actions,
+.upload-dialog label,
+.upload-dialog input,
+.upload-dialog select,
+.upload-dialog textarea,
+.upload-dialog small {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.upload-dialog > .work-dispatch-popover,
+.upload-dialog > .employee-popover {
+  flex: 0 1 520px;
+  overflow-x: hidden;
+}
+
+.upload-dialog .asset-field-hint,
+.upload-dialog .asset-upload-status,
+.upload-dialog .personal-file-chip span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 560px) {
+  .upload-dialog > .work-dispatch-popover,
+  .upload-dialog > .employee-popover {
+    width: 100%;
+    max-width: 100%;
+  }
+}

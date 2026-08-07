@@ -47,11 +47,17 @@
       runListRequestSeq: 0,
       runDetailBackTab: "runList",
       taskDetailBackTab: "taskList",
+      contentRecordDetailBackTab: "contentRecords",
+      contentRecordDetailId: "",
+      contentRecordDetailTab: "content",
       taskListBackTab: "profile",
       taskListBackTarget: null,
       workListBackTab: "profile",
       workListBackTarget: null,
       personalSettingsBackTab: "profile",
+      personalMemoryDetailBackTab: "personalSettings",
+      personalMemoryDetailId: "",
+      personalMemoryDetailText: "",
       agentManageBackTab: "profile",
       workListScope: { type: "all", label: "全部记录" },
       workListScopeOptions: [],
@@ -7544,9 +7550,103 @@
       return (rows || []).find((row) => String(row && row.id || "") === String(id || "")) || null;
     }
 
+    function contentRecordDetailHtml(asset, tab = state.contentRecordDetailTab || "content") {
+      const row = asset || {};
+      const kind = String(row.kind || row._designer_content_kind || row.media_type || "article").toLowerCase();
+      const imageUrls = contentRecordImageUrls(row);
+      const coverUrl = imageUrls[0] || "";
+      const fileUrl = String(row.file_url || row.source_url || row.url || "").trim();
+      const sourceLabels = {
+        generated: "内容创作",
+        ip_daily: "每日 IP",
+        online_wechat_article: "公众号文章创作",
+        online_ppt: "PPT 创作",
+      };
+      const kindLabels = {
+        image: "图片",
+        video: "视频",
+        article: "文章",
+        wechat_article: "公众号文章",
+        ppt: "PPT",
+      };
+      const statusLabels = { completed: "已完成", local_saved: "已保存", pushed: "已推送", failed: "生成失败" };
+      const meta = row.meta && typeof row.meta === "object" ? row.meta : {};
+      const metadata = `<div class="asset-preview-meta">
+        <div><span>来源</span><strong>${escapeHtml(sourceLabels[row.source] || "内容创作")}</strong></div>
+        <div><span>类型</span><strong>${escapeHtml(kindLabels[kind] || kind || "文件")}</strong></div>
+        <div><span>状态</span><strong>${escapeHtml(statusLabels[String(row.status || "").toLowerCase()] || row.status || "已完成")}</strong></div>
+        <div><span>时间</span><strong>${escapeHtml(fmtTime(row.created_at))}</strong></div>
+        ${meta.slide_count ? `<div><span>页数</span><strong>${escapeHtml(String(meta.slide_count))} 页</strong></div>` : ""}
+        ${row.asset_id ? `<div><span>ID</span><strong>${escapeHtml(String(row.asset_id))}</strong></div>` : ""}
+      </div>`;
+      const cover = kind === "ppt" && coverUrl
+        ? `<img class="asset-preview-large content-record-cover" src="${escapeHtml(mediaProxyUrl(coverUrl, "inline", filenameFromUrl(coverUrl, "cover")))}" alt="">`
+        : (kind === "ppt" ? `<div class="asset-preview-large asset-preview-large-empty content-record-file-mark">PPT</div>` : "");
+      const summary = String(row.summary || "").trim();
+      const content = String(row.content || row.text || row.prompt || "").trim();
+      const actionItem = contentActionItemFromAsset(row);
+      const actions = `<div class="content-record-detail-actions">
+        ${contentActionMenuHtml(actionItem, "content-record-detail-action-menu")}
+        ${fileUrl ? mediaActionHtml(fileUrl, kind === "ppt" ? "下载 PPT" : "下载内容", row.filename || row.asset_id || "content") : ""}
+      </div>`;
+      if (tab === "info") return metadata;
+      if (tab === "actions") return actions;
+      if (row._content_record || ["article", "wechat_article", "ppt"].includes(kind)) {
+        return `${cover}${summary ? `<div class="content-record-summary">${escapeHtml(summary)}</div>` : ""}${kind !== "ppt" ? contentRecordArticleBodyHtml(content, imageUrls) : ""}`;
+      }
+      return `${assetPreviewLargeHtml(row)}${content ? `<div class="asset-preview-text">${escapeHtml(content)}</div>` : ""}`;
+    }
+
+    function renderContentRecordDetail() {
+      const body = $("contentRecordDetailBody");
+      const row = findAssetInLibrary(state.contentRecordDetailId);
+      if (!body) return;
+      document.querySelectorAll("[data-content-record-detail-tab]").forEach((button) => {
+        const active = button.dataset.contentRecordDetailTab === (state.contentRecordDetailTab || "content");
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      body.innerHTML = row ? contentRecordDetailHtml(row) : `<div class="hint">内容记录不存在</div>`;
+    }
+
+    async function openContentRecordDetail(assetId) {
+      const id = String(assetId || "").trim();
+      if (!id) return;
+      let asset = findAssetInLibrary(id);
+      if (!asset) return;
+      state.contentRecordDetailId = id;
+      state.contentRecordDetailTab = "content";
+      const title = $("contentRecordDetailTitle");
+      const subtitle = $("contentRecordDetailSubtitle");
+      const body = $("contentRecordDetailBody");
+      if (title) title.textContent = assetTitle(asset);
+      if (subtitle) subtitle.textContent = "正在读取内容";
+      if (body) body.innerHTML = `<div class="hint">正在读取内容...</div>`;
+      switchTab("contentRecordDetail");
+      try {
+        if (asset._content_record && asset._compact && asset.source && asset.source_id) {
+          const params = new URLSearchParams({ source: String(asset.source), source_id: String(asset.source_id) });
+          const data = await api(`/api/content-records/detail?${params.toString()}`);
+          asset = { ...asset, ...(data.item || {}), _content_record: true, _compact: false };
+          state.contentRecordRows = (state.contentRecordRows || []).map((row) => String(row && row.asset_id || "") === id ? asset : row);
+          state.assetLibraryRows.generated = (state.assetLibraryRows.generated || []).map((row) => String(row && row.asset_id || "") === id ? asset : row);
+        }
+        if (state.contentRecordDetailId !== id) return;
+        if (title) title.textContent = assetTitle(asset);
+        if (subtitle) subtitle.textContent = `${designerMediaTypeLabel(asset.kind || asset._designer_content_kind || asset.media_type || "file")} · ${fmtTime(asset.created_at)}`;
+        renderContentRecordDetail();
+      } catch (err) {
+        if (body) body.innerHTML = `<div class="hint">${escapeHtml(err.message || "内容详情加载失败")}</div>`;
+        if (subtitle) subtitle.textContent = "详情读取失败";
+      }
+    }
+
     async function openAssetPreview(assetId) {
       let asset = findAssetInLibrary(assetId);
       if (!asset) return;
+      if (activeViewKey() === "contentRecords") {
+        return openContentRecordDetail(assetId);
+      }
       const modal = $("assetPreviewDialog");
       const body = $("assetPreviewBody");
       const title = $("assetPreviewTitle");
@@ -11212,6 +11312,7 @@
         workList: ["工作列表", "已完成、当前和待执行的工作节点"],
         assetLibrary: ["素材库", ""],
         contentRecords: ["内容记录", ""],
+        contentRecordDetail: ["内容详情", ""],
         leadCenter: ["客资线索", ""],
         tutorial: ["教程", ""],
         messages: ["AI 调度助手", "用文字或语音安排工作"],
@@ -11219,6 +11320,7 @@
         profile: ["个人中心", "账号和功能入口"],
         recorder: ["音频转写", "本地音频、记忆文件和录音设备"],
         recorderDetail: ["转写结果", "摘要、重点事项和完整转写"],
+        personalMemoryDetail: ["记忆文件", "查看完整内容"],
         mountedAccounts: ["平台账号", ""],
         personalSettings: ["IP人设定位", "模板、关键词、同行账号和记忆文件"],
         taskList: ["定时任务", "默认展示 10 条，更多用翻页加载"],
@@ -14556,10 +14658,23 @@
       });
     }
 
+    function setPersonalMemorySourceSection(section) {
+      const value = ["profile", "keywords", "competitors", "uploads", "recordings", "settings"].includes(section) ? section : "keywords";
+      document.querySelectorAll("[data-personal-memory-source-tab]").forEach((button) => {
+        const active = button.dataset.personalMemorySourceTab === value;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      document.querySelectorAll("[data-personal-memory-source-panel]").forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.personalMemorySourcePanel !== value);
+      });
+    }
+
     function openPersonalMemoryGenerateModal() {
       renderPersonalMemorySourceSelectors();
       renderPersonalGeneratedDocs();
       setPersonalMemoryStep("source");
+      setPersonalMemorySourceSection("keywords");
       $("personalMemoryGenerateModal")?.classList.remove("hidden");
       loadPersonalRecorderSources().catch((err) => personalSetStatus(err.message || "录音转写记录加载失败", true));
     }
@@ -14986,12 +15101,37 @@
       await savePersonalMemoryContent(btn, title, content, "IP人设定位保存", mode, targetDocId);
     }
 
-    async function previewPersonalMemory(docId) {
+    async function fetchPersonalMemoryPreviewText(docId) {
       const iid = currentInstallationId();
-      const box = $("personalMemoryPreview");
-      if (box) box.textContent = "正在读取...";
       const data = await api(`/api/personal-settings/memory-documents/${encodeURIComponent(docId)}/preview`, { headers: { "X-Installation-Id": iid } });
-      if (box) box.textContent = data.content_text || "没有内容。";
+      return String(data.content_text || "没有内容。");
+    }
+
+    async function previewPersonalMemory(docId) {
+      const id = String(docId || "").trim();
+      if (!id) return;
+      const doc = (state.personalMemoryDocs || []).find((row) => personalDocId(row) === id)
+        || personalUploadedDocRows().find((row) => personalDocId(row) === id);
+      state.personalMemoryDetailId = id;
+      state.personalMemoryDetailBackTab = "personalSettings";
+      const title = $("personalMemoryDetailTitle");
+      const subtitle = $("personalMemoryDetailSubtitle");
+      const box = $("personalMemoryPreview");
+      if (title) title.textContent = doc ? personalMemoryTitle(doc) : "记忆文件";
+      if (subtitle) subtitle.textContent = "正在读取内容";
+      if (box) box.textContent = "正在读取...";
+      switchTab("personalMemoryDetail");
+      try {
+        const text = await fetchPersonalMemoryPreviewText(id);
+        if (state.personalMemoryDetailId !== id) return;
+        state.personalMemoryDetailText = text;
+        if (box) box.textContent = text;
+        if (subtitle) subtitle.textContent = `${doc && doc.source === "agent" ? "代理商记忆" : "个人记忆"} · ${fmtTime(doc && doc.updated_at || doc && doc.created_at)}`;
+      } catch (err) {
+        if (box) box.textContent = err.message || "内容读取失败";
+        if (subtitle) subtitle.textContent = "详情读取失败";
+        throw err;
+      }
     }
 
     async function deletePersonalMemory(docId) {
@@ -19565,6 +19705,11 @@
         switchTab(state.runDetailBackTab || "runList");
         return;
       }
+      if (activeId === "contentRecordDetailView") {
+        state.contentRecordDetailId = "";
+        switchTab(state.contentRecordDetailBackTab || "contentRecords");
+        return;
+      }
       if (activeId === "workListView") {
         restoreViewTarget(state.workListBackTarget || state.workListBackTab || "profile", "profile");
         return;
@@ -19595,6 +19740,12 @@
       }
       if (activeId === "personalSettingsView") {
         switchTab(state.personalSettingsBackTab || "profile");
+        return;
+      }
+      if (activeId === "personalMemoryDetailView") {
+        state.personalMemoryDetailId = "";
+        switchTab(state.personalMemoryDetailBackTab || "personalSettings");
+        setPersonalSettingsTab("memory");
         return;
       }
       if (activeId === "agentManageView") {
@@ -19811,7 +19962,13 @@
     $("contentRecordList")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-asset-preview-id]");
       if (!btn) return;
-      openAssetPreview(btn.dataset.assetPreviewId || "").catch((err) => toast(err.message || "详情加载失败"));
+      openContentRecordDetail(btn.dataset.assetPreviewId || "").catch((err) => toast(err.message || "详情加载失败"));
+    });
+    $("contentRecordDetailTabs")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-content-record-detail-tab]");
+      if (!button) return;
+      state.contentRecordDetailTab = button.dataset.contentRecordDetailTab || "content";
+      renderContentRecordDetail();
     });
     $("customEmployeeCreateBtn")?.addEventListener("click", () => openHomeTarget("workflowNew", "office"));
     $("customEmployeeMoreBtn")?.addEventListener("click", () => {
@@ -20406,11 +20563,20 @@
     $("personalUploadClose")?.addEventListener("click", closePersonalUploadModal);
     $("personalUploadCancel")?.addEventListener("click", closePersonalUploadModal);
     $("personalOpenMemoryGenerateBtn")?.addEventListener("click", openPersonalMemoryGenerateModal);
+    $("personalMemoryDetailCopyBtn")?.addEventListener("click", async () => {
+      const text = state.personalMemoryDetailText || $("personalMemoryPreview")?.textContent || "";
+      const ok = await copyText(text);
+      toast(ok ? "已复制记忆内容" : "复制失败，请长按内容复制");
+    });
     $("personalMemoryGenerateBackdrop")?.addEventListener("click", closePersonalMemoryGenerateModal);
     $("personalMemoryGenerateClose")?.addEventListener("click", closePersonalMemoryGenerateModal);
     $("personalMemoryStepTabs")?.addEventListener("click", (evt) => {
       const button = evt.target.closest("[data-personal-memory-step]");
       if (button) setPersonalMemoryStep(button.dataset.personalMemoryStep || "source");
+    });
+    $("personalMemorySourceTabs")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-personal-memory-source-tab]");
+      if (button) setPersonalMemorySourceSection(button.dataset.personalMemorySourceTab || "keywords");
     });
     $("personalGenerateMemoryBtn")?.addEventListener("click", (evt) => generatePersonalMemoryDocs(evt.currentTarget).catch((err) => personalSetStatus(err.message || "AI 理解失败", true)));
     $("personalSaveMemoryBtn")?.addEventListener("click", (evt) => savePersonalMemory(evt.currentTarget).catch((err) => personalSetStatus(err.message || "保存失败", true)));
@@ -20439,7 +20605,9 @@
     $("personalTargetMemorySelect")?.addEventListener("change", () => {
       syncPersonalSaveMode();
       const id = ($("personalTargetMemorySelect") && $("personalTargetMemorySelect").value) || "";
-      if (id) previewPersonalMemory(id).catch((err) => personalSetStatus(err.message || "读取失败", true));
+      if (id) fetchPersonalMemoryPreviewText(id)
+        .then((text) => { if ($("personalMemoryReviewText")) $("personalMemoryReviewText").value = text; })
+        .catch((err) => personalSetStatus(err.message || "读取失败", true));
     });
     const handlePersonalMemorySourceChange = (evt) => {
       const input = evt.target.closest("[data-personal-memory-source]");

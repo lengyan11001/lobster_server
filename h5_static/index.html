@@ -8,8 +8,8 @@
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="__H5_BRAND_TITLE__" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
-  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1-20260805-wechat-contact-picker-v1-20260806-recorder-detail-v2-20260806-audio-transcription-v2" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3" />
+  <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1-20260805-wechat-contact-picker-v1-20260806-recorder-detail-v2-20260806-audio-transcription-v2-20260807-detail-pages-v2" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3-20260807-upload-width-v1-20260807-detail-pages-v1" />
 </head>
 <body>
   <main class="shell">
@@ -288,6 +288,23 @@
             <span id="contentRecordPageText">1 / 1</span>
             <button type="button" id="contentRecordNextBtn">下一页</button>
           </div>
+        </div>
+      </section>
+
+      <section class="view" id="contentRecordDetailView">
+        <div class="panel detail-page content-record-detail-page">
+          <div class="section-title">
+            <div>
+              <h2 id="contentRecordDetailTitle">内容详情</h2>
+              <div class="hint" id="contentRecordDetailSubtitle">正在读取内容</div>
+            </div>
+          </div>
+          <div class="detail-tabs content-record-detail-tabs" id="contentRecordDetailTabs" role="tablist" aria-label="内容详情">
+            <button type="button" class="active" data-content-record-detail-tab="content" role="tab">内容</button>
+            <button type="button" data-content-record-detail-tab="info" role="tab">信息</button>
+            <button type="button" data-content-record-detail-tab="actions" role="tab">操作</button>
+          </div>
+          <div class="detail-body content-record-detail-body" id="contentRecordDetailBody"></div>
         </div>
       </section>
 
@@ -1126,11 +1143,20 @@
               <strong>已保存记忆文件</strong>
               <div class="personal-list" id="personalMemoryList"></div>
             </div>
-            <div class="personal-block">
-              <strong>内容预览</strong>
-              <pre class="personal-memory-preview" id="personalMemoryPreview">点击预览查看内容。</pre>
-            </div>
           </div>
+        </div>
+      </section>
+
+      <section class="view" id="personalMemoryDetailView">
+        <div class="panel detail-page personal-memory-detail-page">
+          <div class="section-title">
+            <div>
+              <h2 id="personalMemoryDetailTitle">记忆文件</h2>
+              <div class="hint" id="personalMemoryDetailSubtitle">正在读取内容</div>
+            </div>
+            <button class="ghost" type="button" id="personalMemoryDetailCopyBtn">复制</button>
+          </div>
+          <pre class="personal-memory-detail-content" id="personalMemoryPreview">点击列表中的记忆文件查看内容。</pre>
         </div>
       </section>
 
@@ -1860,35 +1886,44 @@
           <strong id="personalMemoryGenerateTitle">生成记忆文件</strong>
         </div>
       </div>
-      <div class="personal-memory-step-tabs" id="personalMemoryStepTabs" role="tablist">
-        <button type="button" class="active" data-personal-memory-step="source" role="tab">选择资料</button>
-        <button type="button" data-personal-memory-step="review" role="tab">审核保存</button>
-      </div>
-      <div class="personal-grid">
-        <div class="personal-block" data-personal-memory-panel="source">
-          <div class="personal-memory-sources">
-            <label class="personal-source-card personal-source-profile">
-              <input id="personalMemoryUseProfile" type="checkbox" checked>
-              <span>资料调查</span>
-            </label>
-            <details class="personal-source-card" open>
-              <summary>关键词</summary>
-              <div class="personal-source-list" id="personalMemoryKeywordSourceList"></div>
-            </details>
-            <details class="personal-source-card">
-              <summary>同行账号</summary>
-              <div class="personal-source-list" id="personalMemoryCompetitorSourceList"></div>
-            </details>
-            <details class="personal-source-card">
-              <summary>上传资料</summary>
-              <div class="personal-source-list" id="personalMemoryUploadSourceList"></div>
-            </details>
-            <details class="personal-source-card" open>
-              <summary>录音转写</summary>
-              <div class="personal-source-list" id="personalMemoryRecorderSourceList"></div>
-            </details>
-          </div>
-          <div class="personal-field">
+       <div class="personal-memory-step-tabs" id="personalMemoryStepTabs" role="tablist">
+         <button type="button" class="active" data-personal-memory-step="source" role="tab">选择资料</button>
+         <button type="button" data-personal-memory-step="review" role="tab">审核保存</button>
+       </div>
+       <div class="personal-grid">
+         <div class="personal-block" data-personal-memory-panel="source">
+           <div class="personal-memory-source-tabs" id="personalMemorySourceTabs" role="tablist" aria-label="资料来源">
+             <button type="button" class="active" data-personal-memory-source-tab="keywords" role="tab">关键词</button>
+             <button type="button" data-personal-memory-source-tab="profile" role="tab">资料调查</button>
+             <button type="button" data-personal-memory-source-tab="competitors" role="tab">同行账号</button>
+             <button type="button" data-personal-memory-source-tab="uploads" role="tab">上传资料</button>
+             <button type="button" data-personal-memory-source-tab="recordings" role="tab">录音转写</button>
+             <button type="button" data-personal-memory-source-tab="settings" role="tab">生成设置</button>
+           </div>
+           <div class="personal-memory-sources">
+             <label class="personal-source-card personal-source-profile" data-personal-memory-source-panel="profile">
+               <input id="personalMemoryUseProfile" type="checkbox" checked>
+               <span>资料调查</span>
+             </label>
+             <details class="personal-source-card" open data-personal-memory-source-panel="keywords">
+               <summary>关键词</summary>
+               <div class="personal-source-list" id="personalMemoryKeywordSourceList"></div>
+             </details>
+             <details class="personal-source-card" data-personal-memory-source-panel="competitors">
+               <summary>同行账号</summary>
+               <div class="personal-source-list" id="personalMemoryCompetitorSourceList"></div>
+             </details>
+             <details class="personal-source-card" data-personal-memory-source-panel="uploads">
+               <summary>上传资料</summary>
+               <div class="personal-source-list" id="personalMemoryUploadSourceList"></div>
+             </details>
+             <details class="personal-source-card" open data-personal-memory-source-panel="recordings">
+               <summary>录音转写</summary>
+               <div class="personal-source-list" id="personalMemoryRecorderSourceList"></div>
+             </details>
+           </div>
+           <div class="personal-memory-source-settings" data-personal-memory-source-panel="settings">
+           <div class="personal-field">
             <label>AI 生成类型</label>
             <div class="personal-doc-types" id="personalGenerateDocTypes">
               <label><input type="checkbox" data-personal-doc-type value="brand_product_intro" checked><span>产品介绍</span></label>
@@ -1901,8 +1936,9 @@
             <input id="personalCustomReferenceFile" type="file" accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.html,.htm,.log,.pdf,.docx,.xls,.xlsx,.xlsm,.pptx">
             <div class="personal-file-list" id="personalCustomReferenceInfo"></div>
           </div>
-          <button type="button" id="personalGenerateMemoryBtn">生成记忆文件</button>
-        </div>
+           <button type="button" id="personalGenerateMemoryBtn">生成记忆文件</button>
+           </div>
+         </div>
         <div class="personal-block hidden" data-personal-memory-panel="review">
           <strong>审核后存入记忆</strong>
           <div class="personal-generated-list" id="personalGeneratedDocList"></div>
@@ -2085,6 +2121,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1-20260807-detail-pages-v2"></script>
 </body>
 </html>

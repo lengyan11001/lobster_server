@@ -176,4 +176,22 @@ def test_upload_dialogs_use_the_shared_overflow_safe_layout():
     assert "grid-template-rows: minmax(0, 1fr) auto" in css
     assert "overflow-x: hidden" in css
     assert "20260807-upload-dialog-v3" in html
+    assert ".upload-dialog > .work-dispatch-popover" in css
+    assert "max-width: 100vw" in css
     assert ":is(#assetUploadModal" not in css
+
+
+def test_content_and_memory_previews_use_separate_detail_views():
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'id="contentRecordDetailView"' in html
+    assert 'id="contentRecordDetailTabs"' in html
+    assert 'id="personalMemoryDetailView"' in html
+    assert 'id="personalMemoryPreview"' in html
+    assert 'id="personalMemorySourceTabs"' in html
+    assert 'function openContentRecordDetail' in script
+    assert 'function previewPersonalMemory' in script
+    assert 'function setPersonalMemorySourceSection' in script
+    assert 'activeId === "contentRecordDetailView"' in script
+    assert 'activeId === "personalMemoryDetailView"' in script
