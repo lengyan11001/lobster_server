@@ -31,6 +31,7 @@ def test_manifest_paths_only_include_files_present_in_ota(tmp_path):
     paths = module.manifest_paths_for_zip(zip_path)
 
     assert ".env" not in paths
+    assert "必火智能AI.exe" not in paths
     with zipfile.ZipFile(zip_path) as archive:
         names = {name.rstrip("/") for name in archive.namelist()}
     for path in paths:
