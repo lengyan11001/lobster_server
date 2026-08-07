@@ -171,7 +171,9 @@ def test_upload_dialogs_use_the_shared_overflow_safe_layout():
 
     assert "Upload dialogs share one stable layout" in css
     assert 'input[type="file"]::file-selector-button' in css
+    assert ".employee-modal .work-dispatch-popover .employee-popover-title strong" in css
+    assert 'id="personalMemoryGenerateModal"' in html
     assert "grid-template-rows: minmax(0, 1fr) auto" in css
     assert "overflow-x: hidden" in css
-    assert "20260807-upload-dialog-v2" in html
+    assert "20260807-upload-dialog-v3" in html
     assert ":is(#assetUploadModal" not in css

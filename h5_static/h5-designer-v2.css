@@ -6094,3 +6094,58 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
     min-width: 0;
   }
 }
+
+/* All business popovers use the same light surface, including memory generation. */
+.employee-modal .work-dispatch-popover {
+  overflow-x: hidden;
+  color: #172033;
+}
+
+.employee-modal .work-dispatch-popover::after {
+  display: none;
+}
+
+.employee-modal .work-dispatch-popover .employee-popover-title strong {
+  color: #172033;
+}
+
+.employee-modal .work-dispatch-popover .employee-popover-title span {
+  color: #7b8493;
+}
+
+.employee-modal .work-dispatch-popover .employee-popover-close {
+  color: #697386;
+  background: #f2f4f7;
+  box-shadow: none;
+}
+
+.employee-modal .work-dispatch-popover input[type="file"] {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 5px;
+  overflow: hidden;
+  color: #64748b;
+  border: 1px solid #dce4ee;
+  border-radius: 12px;
+  background: #f8fafc;
+  font-size: 13px;
+  line-height: 36px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-modal .work-dispatch-popover input[type="file"]::file-selector-button {
+  height: 36px;
+  margin: 0 10px 0 0;
+  padding: 0 13px;
+  color: #2563eb;
+  border: 0;
+  border-radius: 8px;
+  background: #eaf2ff;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
