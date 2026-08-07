@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import threading
 from datetime import datetime
 from types import SimpleNamespace
 
 from starlette.requests import Request
+from starlette.datastructures import UploadFile
 
 
 def _request(brand_mark: str = "bihuo") -> Request:
@@ -130,6 +132,80 @@ def test_save_url_releases_db_and_offloads_tos_upload(db_session, test_user, mon
 
     assert result["asset_id"] == "asset-save-url"
     assert result["source_url"] == "https://cdn.example.com/asset-save-url.mp4"
+
+
+def test_asset_upload_releases_db_and_offloads_tos_upload(db_session, test_user, monkeypatch):
+    from backend.app.api import assets
+
+    caller_thread = threading.get_ident()
+
+    def fake_save(data, ext, content_type):
+        assert not db_session.in_transaction()
+        assert threading.get_ident() != caller_thread
+        assert data == b"image-bytes"
+        return "asset-upload", "assets/asset-upload.png", len(data), "https://cdn.example.com/asset-upload.png"
+
+    monkeypatch.setattr(assets, "_save_bytes_or_tos", fake_save)
+    upload = UploadFile(filename="demo.png", file=io.BytesIO(b"image-bytes"))
+
+    result = asyncio.run(
+        assets.upload_asset(
+            file=upload,
+            split_video=False,
+            current_user=test_user,
+            db=db_session,
+        )
+    )
+
+    assert result["asset_id"] == "asset-upload"
+    assert result["source_url"] == "https://cdn.example.com/asset-upload.png"
+
+
+def test_split_video_upload_offloads_ffmpeg_and_tos(db_session, test_user, monkeypatch):
+    from backend.app.api import assets
+
+    caller_thread = threading.get_ident()
+
+    def fake_split(data, ext):
+        assert not db_session.in_transaction()
+        assert threading.get_ident() != caller_thread
+        assert data == b"video-bytes"
+        assert ext == ".mp4"
+        return [("segment_001.mp4", b"one"), ("segment_002.mp4", b"two")]
+
+    def fake_save(data, ext, content_type):
+        assert not db_session.in_transaction()
+        assert threading.get_ident() != caller_thread
+        asset_id = f"asset-{data.decode('ascii')}"
+        return asset_id, f"assets/{asset_id}.mp4", len(data), f"https://cdn.example.com/{asset_id}.mp4"
+
+    monkeypatch.setattr(assets, "_split_video_bytes", fake_split)
+    monkeypatch.setattr(assets, "_save_bytes_or_tos", fake_save)
+    upload = UploadFile(filename="demo.mp4", file=io.BytesIO(b"video-bytes"))
+
+    result = asyncio.run(
+        assets.upload_asset(
+            file=upload,
+            split_video=True,
+            current_user=test_user,
+            db=db_session,
+        )
+    )
+
+    assert result["split_video"] is True
+    assert result["total"] == 2
+
+
+def test_h5_composer_limits_parallel_asset_uploads():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[2] / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    upload_many = script.split("async function uploadComposerFiles(files)", 1)[1].split(
+        "function hasUploadingImages", 1
+    )[0]
+
+    assert "index += 2" in upload_many
+    assert "queue.slice(index, index + 2)" in upload_many
 
 
 def test_h5_background_run_refresh_is_compact_and_non_overlapping():

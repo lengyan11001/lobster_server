@@ -17620,6 +17620,13 @@
       }
     }
 
+    async function uploadComposerFiles(files) {
+      const queue = Array.from(files || []).filter(Boolean);
+      for (let index = 0; index < queue.length; index += 2) {
+        await Promise.all(queue.slice(index, index + 2).map((file) => uploadComposerFile(file)));
+      }
+    }
+
     function hasUploadingImages() {
       return state.uploads.some((item) => item.status === "uploading");
     }
@@ -21056,7 +21063,9 @@
         toast("请先登录后再添加素材");
         return;
       }
-      for (const file of files.slice(0, Math.max(0, 8 - state.uploads.length))) uploadComposerFile(file);
+      uploadComposerFiles(files.slice(0, Math.max(0, 8 - state.uploads.length))).catch((err) => {
+        toast(err.message || "素材上传失败");
+      });
     });
 
     $("loginForm").addEventListener("submit", async (evt) => {

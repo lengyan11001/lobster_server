@@ -34,7 +34,7 @@ from .api.shanjian_smart_clip import router as shanjian_smart_clip_router
 from .api.skills import router as skills_router
 from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
 from .core.config import settings
-from .db import Base, SessionLocal, engine
+from .db import Base, SessionLocal, engine, reset_db_request_context, set_db_request_context
 from .services.brand_context import ensure_user_brand_schema, seed_brand_configs
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,19 @@ def create_h5_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def db_pool_request_context(request: Request, call_next):
+        token = set_db_request_context(
+            method=request.method,
+            path=request.url.path,
+            request_id=request.headers.get("x-request-id") or request.headers.get("x-trace-id") or "",
+            client=request.client.host if request.client else "",
+        )
+        try:
+            return await call_next(request)
+        finally:
+            reset_db_request_context(token)
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):

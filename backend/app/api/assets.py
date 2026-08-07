@@ -11,7 +11,9 @@ import subprocess
 import tempfile
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from functools import partial, wraps
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -42,6 +44,20 @@ _CUSTOM_CONFIGS_FILE = _BASE_DIR / "custom_configs.json"
 _ASSET_FILE_EXPIRY_SEC = 86400  # 24 hours
 _VIDEO_SEGMENT_SECONDS = 3
 _VIDEO_SEGMENT_MAX_COUNT = 120
+_ASSET_UPLOAD_IO_WORKERS = max(1, int(os.environ.get("ASSET_UPLOAD_IO_WORKERS") or "8"))
+_ASSET_VIDEO_WORKERS = max(1, int(os.environ.get("ASSET_VIDEO_WORKERS") or "1"))
+_asset_upload_executor = ThreadPoolExecutor(
+    max_workers=_ASSET_UPLOAD_IO_WORKERS,
+    thread_name_prefix="asset-upload",
+)
+_asset_video_executor = ThreadPoolExecutor(
+    max_workers=_ASSET_VIDEO_WORKERS,
+    thread_name_prefix="asset-video",
+)
+_asset_upload_gate = asyncio.Semaphore(_ASSET_UPLOAD_IO_WORKERS)
+_asset_video_gate = asyncio.Semaphore(_ASSET_VIDEO_WORKERS)
+_asset_upload_request_gate = asyncio.Semaphore(max(_ASSET_UPLOAD_IO_WORKERS * 2, 8))
+_asset_video_request_gate = asyncio.Semaphore(max(_ASSET_VIDEO_WORKERS * 2, 2))
 
 # 临时文件跟踪：task_id -> [temp_file_paths]，用于任务完成后清理
 _temp_files_by_task: dict[str, list[Path]] = {}
@@ -299,7 +315,10 @@ def _run_ffmpeg_segment(ffmpeg: str, source: Path, out_pattern: Path) -> None:
         "1",
         str(out_pattern),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="视频切片处理超时，请缩短视频或压缩后重试") from exc
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "ffmpeg segment failed").strip()[-800:]
         raise HTTPException(status_code=500, detail=f"视频切片失败：{detail}")
@@ -347,6 +366,42 @@ def _save_bytes_or_tos(
     path = ASSETS_DIR / fname
     path.write_bytes(data)
     return aid, fname, len(data), None
+
+
+async def _run_asset_upload_io(func, *args):
+    """Run blocking TOS work in a bounded pool that cannot starve API workers."""
+    async with _asset_upload_gate:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_asset_upload_executor, partial(func, *args))
+
+
+async def _run_asset_video_io(func, *args):
+    """Serialize CPU-heavy FFmpeg work separately from ordinary uploads."""
+    async with _asset_video_gate:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_asset_video_executor, partial(func, *args))
+
+
+def _release_asset_db_before_io(db: Session) -> None:
+    """Return the request connection before waiting on file, FFmpeg, or TOS I/O."""
+    if db.in_transaction():
+        db.commit()
+
+
+def _limit_asset_upload_requests(func):
+    """Bound retained upload bodies while keeping ordinary uploads responsive."""
+    @wraps(func)
+    async def wrapped(*args, **kwargs):
+        upload = kwargs.get("file")
+        filename = str(getattr(upload, "filename", "") or "").lower()
+        is_split_video = bool(kwargs.get("split_video")) and Path(filename).suffix in {
+            ".mp4", ".webm", ".mov", ".avi", ".mkv", ".flv", ".wmv",
+        }
+        gate = _asset_video_request_gate if is_split_video else _asset_upload_request_gate
+        async with gate:
+            return await func(*args, **kwargs)
+
+    return wrapped
 
 
 # ── Download from URL ─────────────────────────────────────────────
@@ -878,6 +933,7 @@ async def save_asset_from_url(
 # ── Upload file ───────────────────────────────────────────────────
 
 @router.post("/api/assets/upload", summary="上传素材文件")
+@_limit_asset_upload_requests
 async def upload_asset(
     file: UploadFile = File(...),
     split_video: bool = Form(False),
@@ -885,6 +941,8 @@ async def upload_asset(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
+    owner_user_id = int(owner_user.id)
+    _release_asset_db_before_io(db)
     data = await file.read()
     if not data:
         raise HTTPException(400, detail="文件为空")
@@ -902,10 +960,26 @@ async def upload_asset(
         mtype = "document"
 
     content_type = getattr(file, "content_type", "") or ""
+    started_at = time.monotonic()
+    logger.info(
+        "[asset-upload] processing start user_id=%s filename=%s size=%s media_type=%s split_video=%s",
+        owner_user_id,
+        name,
+        len(data),
+        mtype,
+        bool(split_video and mtype == "video"),
+    )
     if split_video and mtype == "video":
         segment_rows = []
-        for idx, (segment_name, segment_bytes) in enumerate(_split_video_bytes(data, ext), start=1):
-            aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(segment_bytes, ".mp4", "video/mp4")
+        segment_assets = []
+        segments = await _run_asset_video_io(_split_video_bytes, data, ext)
+        for idx, (segment_name, segment_bytes) in enumerate(segments, start=1):
+            aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
+                _save_bytes_or_tos,
+                segment_bytes,
+                ".mp4",
+                "video/mp4",
+            )
             if not tos_public_url:
                 local_path = ASSETS_DIR / fname_or_key
                 try:
@@ -916,7 +990,7 @@ async def upload_asset(
                 raise HTTPException(status_code=503, detail="服务器未成功写入 TOS 公网链接，视频片段无法入库")
             asset = Asset(
                 asset_id=aid,
-                user_id=owner_user.id,
+                user_id=owner_user_id,
                 filename=fname_or_key,
                 media_type="video",
                 file_size=fsize,
@@ -930,7 +1004,7 @@ async def upload_asset(
                     "segment_name": segment_name,
                 },
             )
-            db.add(asset)
+            segment_assets.append(asset)
             segment_rows.append(
                 {
                     "asset_id": aid,
@@ -944,6 +1018,7 @@ async def upload_asset(
                     "segment_index": idx,
                 }
             )
+        db.add_all(segment_assets)
         db.commit()
         logger.info("[素材库视频切片] user_id=%s filename=%s segments=%d", owner_user.id, name, len(segment_rows))
         first = segment_rows[0] if segment_rows else {}
@@ -955,7 +1030,12 @@ async def upload_asset(
             "assets": segment_rows,
         }
 
-    aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(data, ext, content_type)
+    aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
+        _save_bytes_or_tos,
+        data,
+        ext,
+        content_type,
+    )
     if not tos_public_url:
         local_path = ASSETS_DIR / fname_or_key
         try:
@@ -976,7 +1056,7 @@ async def upload_asset(
         )
     asset = Asset(
         asset_id=aid,
-        user_id=owner_user.id,
+        user_id=owner_user_id,
         filename=fname_or_key,
         media_type=mtype,
         file_size=fsize,
