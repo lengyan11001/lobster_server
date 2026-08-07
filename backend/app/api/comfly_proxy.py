@@ -1155,8 +1155,8 @@ def _openmind_video_model(model: str) -> str:
         "veo3.1-fast": os.environ.get("OPENMIND_VEO31_FAST_MODEL") or "veo31-fast",
         "veo31": os.environ.get("OPENMIND_VEO31_MODEL") or "veo31",
         "veo31-fast": os.environ.get("OPENMIND_VEO31_FAST_MODEL") or "veo31-fast",
-        "grok-video-3": os.environ.get("OPENMIND_GROK_VIDEO_MODEL") or "grok-imagine-video-1.5-preview",
-        "grok-imagine-video-1.5-preview": os.environ.get("OPENMIND_GROK_VIDEO_MODEL") or "grok-imagine-video-1.5-preview",
+        "grok-video-3": os.environ.get("OPENMIND_GROK_VIDEO_MODEL") or "grok-imagine-video-1.5",
+        "grok-imagine-video-1.5-preview": os.environ.get("OPENMIND_GROK_VIDEO_MODEL") or "grok-imagine-video-1.5",
         "doubao-seedance-2-0-260128": os.environ.get("OPENMIND_SEEDANCE_MODEL") or "doubao-seedance-2-0-260128",
         "doubao-seedance-2-0-fast-260128": os.environ.get("OPENMIND_SEEDANCE_FAST_MODEL") or "doubao-seedance-2-0-260128",
     }
@@ -2946,8 +2946,8 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             "ok": True,
             "model_family": "grok",
             "providers": [
-                {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
                 {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
+                {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
                 {"channel": "comfly", "model": "grok-video-3", "base_url": proxy_base},
                 {"channel": "yunwu", "model": "grok-video-3", "base_url": proxy_base},
             ],
