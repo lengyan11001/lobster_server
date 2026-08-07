@@ -165,10 +165,13 @@ def test_upload_dialogs_use_the_shared_overflow_safe_layout():
         "personalUploadModal",
     ):
         assert f'id="{modal_id}"' in html
-        assert f"#{modal_id}" in css
+        assert f'class="employee-modal upload-dialog hidden"' in html
+
+    assert css.count(".upload-dialog") >= 4
 
     assert "Upload dialogs share one stable layout" in css
     assert 'input[type="file"]::file-selector-button' in css
     assert "grid-template-rows: minmax(0, 1fr) auto" in css
     assert "overflow-x: hidden" in css
-    assert "20260807-upload-dialog-v1" in html
+    assert "20260807-upload-dialog-v2" in html
+    assert ":is(#assetUploadModal" not in css

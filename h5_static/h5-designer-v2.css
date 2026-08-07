@@ -5880,11 +5880,11 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
 }
 
 /* Upload dialogs share one stable layout across every H5 entry point. */
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) {
+.upload-dialog {
   overflow: hidden;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-popover {
+.upload-dialog .work-dispatch-popover {
   box-sizing: border-box;
   width: min(520px, calc(100vw - 28px));
   max-width: 100%;
@@ -5902,11 +5902,11 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   backdrop-filter: none;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-popover::after {
+.upload-dialog .work-dispatch-popover::after {
   display: none;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .employee-popover-head {
+.upload-dialog .employee-popover-head {
   flex: 0 0 auto;
   min-width: 0;
   gap: 11px;
@@ -5914,7 +5914,7 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   border-bottom: 1px solid #edf1f6;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .employee-mini-avatar {
+.upload-dialog .employee-mini-avatar {
   width: 38px;
   height: 38px;
   flex: 0 0 38px;
@@ -5926,7 +5926,7 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   font-weight: 500;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .employee-popover-title strong {
+.upload-dialog .employee-popover-title strong {
   display: block;
   color: #172033;
   font-size: 17px;
@@ -5934,13 +5934,13 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   line-height: 1.4;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .employee-popover-title span {
+.upload-dialog .employee-popover-title span {
   color: #7b8493;
   font-size: 12px;
   line-height: 1.5;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .employee-popover-close {
+.upload-dialog .employee-popover-close {
   top: 14px;
   right: 14px;
   width: 34px;
@@ -5957,7 +5957,7 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   line-height: 1;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) > .work-dispatch-popover > .work-dispatch-form {
+.upload-dialog > .work-dispatch-popover > .work-dispatch-form {
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
@@ -5967,7 +5967,7 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   overflow: hidden;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-fields,
+.upload-dialog .work-dispatch-fields,
 #personalUploadModal .personal-upload-zone {
   box-sizing: border-box;
   min-width: 0;
@@ -5981,28 +5981,28 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   scrollbar-width: thin;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-fields::-webkit-scrollbar,
+.upload-dialog .work-dispatch-fields::-webkit-scrollbar,
 #personalUploadModal .personal-upload-zone::-webkit-scrollbar {
   width: 4px;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-fields::-webkit-scrollbar-thumb,
+.upload-dialog .work-dispatch-fields::-webkit-scrollbar-thumb,
 #personalUploadModal .personal-upload-zone::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: #cbd5e1;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .field,
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .personal-field,
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) input,
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) select,
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) textarea {
+.upload-dialog .field,
+.upload-dialog .personal-field,
+.upload-dialog input,
+.upload-dialog select,
+.upload-dialog textarea {
   box-sizing: border-box;
   min-width: 0;
   max-width: 100%;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) input[type="file"] {
+.upload-dialog input[type="file"] {
   width: 100%;
   min-height: 48px;
   padding: 5px;
@@ -6017,7 +6017,7 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   white-space: nowrap;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) input[type="file"]::file-selector-button {
+.upload-dialog input[type="file"]::file-selector-button {
   height: 36px;
   margin: 0 10px 0 0;
   padding: 0 13px;
@@ -6030,13 +6030,13 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   cursor: pointer;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .asset-upload-status {
+.upload-dialog .asset-upload-status {
   max-width: 100%;
   overflow-wrap: anywhere;
   font-weight: 400;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-actions {
+.upload-dialog .work-dispatch-actions {
   flex: 0 0 auto;
   margin: 0;
   padding: 12px 18px max(12px, env(safe-area-inset-bottom));
@@ -6045,21 +6045,21 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   background: #fff;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-actions button {
+.upload-dialog .work-dispatch-actions button {
   min-width: 92px;
   min-height: 42px;
   border-radius: 10px;
   font-weight: 400;
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-actions button:not(.ghost) {
+.upload-dialog .work-dispatch-actions button:not(.ghost) {
   color: #fff;
   border: 1px solid #2f6fed;
   background: #2f6fed;
   box-shadow: 0 8px 18px rgba(47, 111, 237, .2);
 }
 
-:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-actions .ghost {
+.upload-dialog .work-dispatch-actions .ghost {
   color: #596579;
   border: 1px solid #dfe5ed;
   background: #fff;
@@ -6067,12 +6067,12 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
 }
 
 @media (max-width: 560px) {
-  :is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) {
+  .upload-dialog {
     place-items: end center;
     padding: 0;
   }
 
-  :is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-popover {
+  .upload-dialog .work-dispatch-popover {
     width: 100%;
     max-height: min(90dvh, 720px);
     border-right: 0;
@@ -6081,15 +6081,15 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
     border-radius: 20px 20px 0 0;
   }
 
-  :is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-fields {
+  .upload-dialog .work-dispatch-fields {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  :is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-fields .field.full {
+  .upload-dialog .work-dispatch-fields .field.full {
     grid-column: auto;
   }
 
-  :is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-actions button {
+  .upload-dialog .work-dispatch-actions button {
     flex: 1 1 0;
     min-width: 0;
   }
