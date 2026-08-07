@@ -152,3 +152,23 @@ def test_work_history_uses_twenty_item_infinite_loading():
     assert "function loadMoreWorkList()" in script
     assert "function setupWorkListInfiniteScroll()" in script
     assert "new IntersectionObserver" in script
+
+
+def test_upload_dialogs_use_the_shared_overflow_safe_layout():
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
+
+    for modal_id in (
+        "assetUploadModal",
+        "assetAvatarModal",
+        "assetVoiceModal",
+        "personalUploadModal",
+    ):
+        assert f'id="{modal_id}"' in html
+        assert f"#{modal_id}" in css
+
+    assert "Upload dialogs share one stable layout" in css
+    assert 'input[type="file"]::file-selector-button' in css
+    assert "grid-template-rows: minmax(0, 1fr) auto" in css
+    assert "overflow-x: hidden" in css
+    assert "20260807-upload-dialog-v1" in html

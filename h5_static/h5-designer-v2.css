@@ -5878,3 +5878,219 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
   color: #fff;
   background: rgba(255, 255, 255, .16);
 }
+
+/* Upload dialogs share one stable layout across every H5 entry point. */
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) {
+  overflow: hidden;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-popover {
+  box-sizing: border-box;
+  width: min(520px, calc(100vw - 28px));
+  max-width: 100%;
+  max-height: min(88dvh, 720px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  color: #172033;
+  border: 1px solid #e4e9f0;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, .22);
+  backdrop-filter: none;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-popover::after {
+  display: none;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .employee-popover-head {
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: 11px;
+  padding: 17px 56px 14px 18px;
+  border-bottom: 1px solid #edf1f6;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .employee-mini-avatar {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border-radius: 11px;
+  color: #2563eb;
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, .08);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .employee-popover-title strong {
+  display: block;
+  color: #172033;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .employee-popover-title span {
+  color: #7b8493;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .employee-popover-close {
+  top: 14px;
+  right: 14px;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: #697386;
+  border-radius: 50%;
+  background: #f2f4f7;
+  box-shadow: none;
+  font-size: 19px;
+  line-height: 1;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) > .work-dispatch-popover > .work-dispatch-form {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0;
+  overflow: hidden;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-fields,
+#personalUploadModal .personal-upload-zone {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  padding: 16px 18px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: thin;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-fields::-webkit-scrollbar,
+#personalUploadModal .personal-upload-zone::-webkit-scrollbar {
+  width: 4px;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-fields::-webkit-scrollbar-thumb,
+#personalUploadModal .personal-upload-zone::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .field,
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .personal-field,
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) input,
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) select,
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) textarea {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) input[type="file"] {
+  width: 100%;
+  min-height: 48px;
+  padding: 5px;
+  overflow: hidden;
+  color: #64748b;
+  border: 1px solid #dce4ee;
+  border-radius: 12px;
+  background: #f8fafc;
+  font-size: 13px;
+  line-height: 36px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) input[type="file"]::file-selector-button {
+  height: 36px;
+  margin: 0 10px 0 0;
+  padding: 0 13px;
+  color: #2563eb;
+  border: 0;
+  border-radius: 8px;
+  background: #eaf2ff;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .asset-upload-status {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-weight: 400;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-actions {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 12px 18px max(12px, env(safe-area-inset-bottom));
+  flex-wrap: nowrap;
+  border-top: 1px solid #edf1f6;
+  background: #fff;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-actions button {
+  min-width: 92px;
+  min-height: 42px;
+  border-radius: 10px;
+  font-weight: 400;
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-actions button:not(.ghost) {
+  color: #fff;
+  border: 1px solid #2f6fed;
+  background: #2f6fed;
+  box-shadow: 0 8px 18px rgba(47, 111, 237, .2);
+}
+
+:is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-actions .ghost {
+  color: #596579;
+  border: 1px solid #dfe5ed;
+  background: #fff;
+  box-shadow: none;
+}
+
+@media (max-width: 560px) {
+  :is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) {
+    place-items: end center;
+    padding: 0;
+  }
+
+  :is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-popover {
+    width: 100%;
+    max-height: min(90dvh, 720px);
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 20px 20px 0 0;
+  }
+
+  :is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-fields .field.full {
+    grid-column: auto;
+  }
+
+  :is(#assetUploadModal, #assetAvatarModal, #assetVoiceModal, #personalUploadModal) .work-dispatch-actions button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
