@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
+from ..services.brand_context import brand_short_name, normalize_brand_mark, user_brand_mark
 from .assets import _find_asset_ffmpeg, _gen_asset_id, _get_tos_config, _save_bytes_or_tos, get_asset_public_url
 from .auth import get_current_user
 from .shanjian_smart_clip import _data, _get, _post
@@ -55,6 +56,7 @@ class ProfileTrainBody(_TokenBody):
     auth_video_url: Optional[str] = None
     auth_video_asset_id: Optional[str] = None
     auth_text: str = Field(..., min_length=2, max_length=500)
+    brand_mark: Optional[str] = None
     callback_url: str = ""
     make_default: bool = True
 
@@ -108,6 +110,20 @@ class VideoTaskBody(_TokenBody):
 
 def _clean_text(value: Optional[str]) -> str:
     return str(value or "").strip()
+
+
+def _validated_profile_auth_text(db: Session, current_user: User, body: ProfileTrainBody) -> tuple[str, str]:
+    user_brand = user_brand_mark(current_user)
+    if _clean_text(body.brand_mark) and normalize_brand_mark(body.brand_mark) != user_brand:
+        raise HTTPException(status_code=400, detail="数字人克隆品牌与当前登录品牌不一致，请刷新页面后重试")
+    auth_text = _clean_text(body.auth_text)
+    current_brand_name = brand_short_name(db, user_brand)
+    if "本平台" in auth_text or current_brand_name not in auth_text:
+        raise HTTPException(
+            status_code=400,
+            detail=f"授权说明必须使用当前品牌“{current_brand_name}”，请使用页面提供的授权文案重新录制",
+        )
+    return auth_text, user_brand
 
 
 def _bearer_from_request(request: Optional[Request]) -> str:
@@ -1341,6 +1357,7 @@ def _profile_endpoint_and_payload(
     current_user: User,
 ) -> tuple[str, Dict[str, Any], str, Optional[str], Optional[str]]:
     mode = _normalize_mode(body.mode)
+    auth_text, _ = _validated_profile_auth_text(db, current_user, body)
     source_asset_id = _clean_text(body.image_asset_id if mode == "image" else body.video_asset_id) or None
     auth_asset_id = _clean_text(body.auth_video_asset_id) or None
     auth_video_url = _resolve_asset_or_url(
@@ -1354,7 +1371,7 @@ def _profile_endpoint_and_payload(
     payload: Dict[str, Any] = {
         "title": _clean_text(body.title)[:80] or "未命名数字人",
         "authVideoUrl": auth_video_url,
-        "authText": _clean_text(body.auth_text),
+        "authText": auth_text,
     }
     if _clean_text(body.callback_url):
         payload["callbackUrl"] = _clean_text(body.callback_url)
@@ -1509,7 +1526,7 @@ async def create_profile(
         source_url=source_url,
         auth_video_asset_id=auth_asset_id,
         auth_video_url=_clean_text(payload.get("authVideoUrl")),
-        auth_text=_clean_text(body.auth_text),
+        auth_text=_clean_text(payload.get("authText")),
         train_payload=payload,
         train_result=upstream,
     )

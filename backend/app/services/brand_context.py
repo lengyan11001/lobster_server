@@ -249,3 +249,10 @@ def public_brand_config(db: Session, raw: Optional[str]) -> dict[str, Any]:
     base["display_name"] = (row.display_name if row else "") or base.get("display_name") or mark
     base["enabled"] = True
     return base
+
+
+def brand_short_name(db: Session, raw: Optional[str]) -> str:
+    config = public_brand_config(db, raw)
+    display_name = str(config.get("display_name") or config.get("document_title") or config.get("mark") or "").strip()
+    short_name = re.sub(r"\s*(?:AI员工|AI智能体|AI助手)\s*$", "", display_name, flags=re.IGNORECASE).strip()
+    return short_name or display_name or normalize_brand_mark(raw, strict=False)

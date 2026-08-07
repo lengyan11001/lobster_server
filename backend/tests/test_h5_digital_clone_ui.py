@@ -24,6 +24,16 @@ def test_avatar_clone_dispatches_to_the_selected_provider():
     assert '"/api/shanjian-digital-human/profile/train"' in script
     assert 'auth_video_asset_id: authAsset.asset_id' in script
     assert 'mode: sourceType === "video" ? "fast_video" : "image"' in script
+    assert 'brand_mark: H5_BRAND_MARK' in script
+
+
+def test_avatar_clone_uses_the_current_oem_in_authorization_copy():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert "function currentH5BrandShortName()" in script
+    assert "AI员工|AI智能体|AI助手" in script
+    assert 'authText.includes("本平台") || !authText.includes(brandName)' in script
+    assert 'label: "必火数字人"' not in script
 
 
 def test_h5_app_exposes_digital_human_v2_profile_routes():

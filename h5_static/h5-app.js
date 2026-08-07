@@ -310,7 +310,7 @@
         department: "市场部",
       },
       "hifly.video.create_by_tts": {
-        label: "必火数字人",
+        label: "数字人口播",
         description: "选择本机已有数字人模板和声音，生成数字人口播视频。",
         packageId: "hifly_digital_human_skill",
         department: "市场部",
@@ -1990,7 +1990,7 @@
       return {
         "goal.video.pipeline": "创意成片",
         "goal.image.pipeline": "文案+创意图片",
-        "hifly.video.create_by_tts": "必火数字人",
+        "hifly.video.create_by_tts": "数字人口播",
         "ip_content_daily": "IP日更文案",
         "douyin_leads": "抖音获客",
         "comfly.daihuo.pipeline": "爆款TVC",
@@ -7637,7 +7637,9 @@
       if (title) title.textContent = row.title || (kind === "voice" ? "声音分身" : "形象分身");
       const isVoice = kind === "voice";
       const source = String((row && row.source) || "hifly");
-      const sourceLabel = String((row && (row.source_label || row.section_label)) || (source === "hifly" ? "必火数字人" : "Online"));
+      const sourceLabel = source === "hifly"
+        ? `${currentH5BrandShortName()}数字人`
+        : String((row && (row.source_label || row.section_label)) || "Online");
       const mediaUrl = String((isVoice ? row.demo_url : (row.image_url || row.cover_url || row.detail_url)) || "").trim();
       let preview = `<div class="asset-preview-large asset-preview-large-empty">${isVoice ? "暂无试听" : "暂无预览"}</div>`;
       if (mediaUrl) {
@@ -8031,9 +8033,13 @@
       $("assetUploadModal")?.classList.remove("hidden");
     }
 
+    function currentH5BrandShortName() {
+      const brandName = String((H5_BRAND_FALLBACKS[H5_BRAND_MARK] || H5_BRAND_FALLBACKS.bihuo).display_name || H5_BRAND_MARK).trim();
+      return brandName.replace(/\s*(?:AI员工|AI智能体|AI助手)\s*$/i, "").trim() || brandName || H5_BRAND_MARK;
+    }
+
     function defaultAssetAvatarAuthText() {
-      const brandName = String((H5_BRAND_FALLBACKS[H5_BRAND_MARK] || H5_BRAND_FALLBACKS.bihuo).display_name || "必火AI员工")
-        .replace(/AI员工$/i, "") || "必火";
+      const brandName = currentH5BrandShortName();
       return `案例：我是xxx（真实姓名），我授权【${brandName}】使用视频中的肖像、声音，为我生成定制数字人及声音，并在本人【${brandName}】账号中创作使用。`;
     }
 
@@ -8090,6 +8096,10 @@
         const authError = avatarCloneFileError(authFile, "auth", version);
         if (authError) return toast(authError);
         if (authText.length < 2) return toast("请填写授权说明");
+        const brandName = currentH5BrandShortName();
+        if (authText.includes("本平台") || !authText.includes(brandName)) {
+          return toast(`授权说明必须使用当前品牌“${brandName}”`);
+        }
         if (!$("assetAvatarAgree")?.checked) return toast("请先确认已取得形象本人授权");
       }
       const btn = $("assetAvatarSubmit");
@@ -8124,6 +8134,7 @@
               video_asset_id: sourceType === "video" ? sourceAsset.asset_id : "",
               auth_video_asset_id: authAsset.asset_id,
               auth_text: authText,
+              brand_mark: H5_BRAND_MARK,
               make_default: true,
             },
           });

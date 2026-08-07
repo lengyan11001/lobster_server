@@ -221,7 +221,7 @@ def test_oem_background_heartbeat_accepts_signed_token_brand_without_header(
             "Authorization": f"Bearer {token}",
             "X-Installation-Id": "same-device",
         },
-        json={"display_name": "local-online"},
+        json={"display_name": "local-online", "capabilities": ["asset_video_split_v1"]},
     )
 
     assert response.status_code == 200, response.text
@@ -235,6 +235,7 @@ def test_oem_background_heartbeat_accepts_signed_token_brand_without_header(
             .one()
         )
         assert presence.display_name == "local-online"
+        assert presence.account_payload["capabilities"] == ["asset_video_split_v1"]
         installation_ids = {
             row.installation_id
             for row in session.query(UserInstallation).filter(UserInstallation.user_id == user.id).all()
