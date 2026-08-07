@@ -69,6 +69,13 @@ _PROXY_AUDIT_LOGGER = logging.getLogger("comfly_proxy_audit")
 # Comfly 上游超时（与 pipeline 默认 poll 间隔对齐，video submit 通常很快返回 task_id）
 _TIMEOUT_CHAT = 120.0
 _TIMEOUT_IMAGE = 300.0
+try:
+    _TIMEOUT_OPENMIND_IMAGE_READ = max(
+        30.0,
+        min(180.0, float(os.environ.get("OPENMIND_IMAGE_TIMEOUT_SECONDS") or "120")),
+    )
+except (TypeError, ValueError):
+    _TIMEOUT_OPENMIND_IMAGE_READ = 120.0
 _TIMEOUT_FILE_UPLOAD = 120.0
 _TIMEOUT_VIDEO_SUBMIT = 60.0
 _TIMEOUT_OPENMIND_VIDEO_SUBMIT = 60.0
@@ -1062,8 +1069,21 @@ async def _save_generated_images_best_effort(
 
 async def _openmind_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]:
     body = _openmind_image_body(source_body)
-    async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
-        resp = await client.post(_openmind_image_url(), headers=_openmind_image_headers(), json=body)
+    timeout = httpx.Timeout(
+        connect=10.0,
+        read=_TIMEOUT_OPENMIND_IMAGE_READ,
+        write=30.0,
+        pool=8.0,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            resp = await client.post(_openmind_image_url(), headers=_openmind_image_headers(), json=body)
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(
+            f"OpenMind image request timed out after {_TIMEOUT_OPENMIND_IMAGE_READ:.0f}s"
+        ) from exc
+    except httpx.TransportError as exc:
+        raise RuntimeError(f"OpenMind image transport error: {exc!r}") from exc
     if resp.status_code >= 400:
         raise RuntimeError(f"OpenMind HTTP {resp.status_code}: {(resp.text or '')[:500]}")
     try:

@@ -162,6 +162,8 @@ _HEAVY_EXACT_PATHS = {
     "/api/assets/save-url",
     "/api/assets/upload-temp",
     "/api/comfly-proxy/v1/files",
+    "/api/comfly-proxy/v1/chat/completions",
+    "/api/comfly-proxy/v1/images/generations",
     "/api/comfly-proxy/v1/images/edits",
     "/api/diagnostics/upload",
     "/api/global-leads/jobs",
@@ -195,12 +197,23 @@ _HEAVY_EXACT_PATHS = {
 def heavy_workload_kind(method: str, path: str) -> str:
     method = str(method or "").upper()
     path = str(path or "").rstrip("/") or "/"
+    if method == "GET" and path.startswith("/api/comfly-proxy/openmind/v1/videos/") and not path.endswith("/content"):
+        # Polling may include a synchronous TOS mirror for a completed video.
+        return "heavy"
     if method not in {"POST", "PUT", "PATCH"}:
         return ""
     if path in _HEAVY_EXACT_PATHS:
         return "heavy"
     if path == "/api/h5/recorder/files" and method == "POST":
         return "heavy"
+    if path.startswith("/api/comfly-proxy/"):
+        if method in {"POST", "PUT", "PATCH"} and (
+            path.endswith("/videos")
+            or path.endswith("/videos/generations")
+            or path.endswith("/video/create")
+            or path.endswith("/contents/generations/tasks")
+        ):
+            return "heavy"
     if path.startswith("/api/h5/recorder/memory-files/") and path.endswith("/transcribe"):
         return "heavy"
     if path.startswith("/api/h5/recorder/files/") and path.endswith("/retry"):

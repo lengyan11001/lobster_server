@@ -35,6 +35,9 @@ Environment=PYTHONPATH=$ROOT
 Environment=BACKEND_WORKERS=2
 Environment=LOBSTER_BACKEND_AUTOSTART_MCP=0
 EnvironmentFile=$ROOT/.env
+# Uvicorn workers otherwise inherit the systemd soft default of 1024. A burst
+# of clients that time out upstream must not exhaust the accept loop at 1024.
+LimitNOFILE=65536
 ExecStart=$PY -m backend.run
 Restart=always
 RestartSec=5

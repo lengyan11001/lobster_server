@@ -114,7 +114,12 @@ def test_bounded_work_gate_caps_total_admitted_work_during_concurrent_entry() ->
     [
         ("POST", "/api/assets/upload"),
         ("POST", "/api/comfly-proxy/v1/files"),
+        ("POST", "/api/comfly-proxy/v1/chat/completions"),
+        ("POST", "/api/comfly-proxy/v1/images/generations"),
         ("POST", "/api/comfly-proxy/v1/images/edits"),
+        ("POST", "/api/comfly-proxy/v2/videos/generations"),
+        ("POST", "/api/comfly-proxy/openmind/v1/videos"),
+        ("GET", "/api/comfly-proxy/openmind/v1/videos/task-123"),
         ("POST", "/api/personal-settings/memory-documents/generate"),
         ("POST", "/api/personal-settings/memory-documents/complete-online-generation-upload"),
         ("POST", "/api/cutcli/templates/demo/render"),
