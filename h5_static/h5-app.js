@@ -10798,6 +10798,13 @@
       if (row && row.status === "completed") return { percent: 100, label: "转写与 AI 总结已完成" };
       if (row && row.status === "failed") return { percent: 100, label: "处理失败" };
       if (stage === "summarizing") return { percent: 85, label: "正在生成 AI 总结" };
+      const chunkMatch = /^transcribing:(\d+)\/(\d+)$/.exec(String(stage || ""));
+      if (chunkMatch) {
+        const current = Math.max(1, Number(chunkMatch[1] || 1));
+        const total = Math.max(current, Number(chunkMatch[2] || 1));
+        const percent = total === 1 ? 55 : Math.min(80, 35 + Math.round(45 * (current - 1) / total));
+        return { percent, label: `正在识别第 ${current} / ${total} 段音频` };
+      }
       if (stage === "transcribing") return { percent: 55, label: "正在识别语音和区分说话人" };
       return { percent: 20, label: "音频已上传，等待处理" };
     }

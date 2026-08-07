@@ -2645,17 +2645,114 @@ def _caption_utterance_segments(utterances: Any) -> List[Dict[str, Any]]:
     return segments
 
 
+_STT_TEXT_KEYS = ("text", "transcript", "content", "result_text")
+
+
+def _decode_stt_string_fragment(raw: str, start: int) -> str:
+    """Decode a possibly incomplete JSON string without losing its readable prefix."""
+    escapes = {
+        '"': '"',
+        "\\": "\\",
+        "/": "/",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+    }
+    chars: list[str] = []
+    index = max(0, int(start))
+    while index < len(raw):
+        char = raw[index]
+        if char == '"':
+            break
+        if char != "\\":
+            chars.append(char)
+            index += 1
+            continue
+        index += 1
+        if index >= len(raw):
+            break
+        escaped = raw[index]
+        if escaped == "u" and index + 4 < len(raw):
+            code = raw[index + 1 : index + 5]
+            if re.fullmatch(r"[0-9a-fA-F]{4}", code):
+                chars.append(chr(int(code, 16)))
+                index += 5
+                continue
+        chars.append(escapes.get(escaped, escaped))
+        index += 1
+    return "".join(chars)
+
+
+def _extract_truncated_stt_text(raw: str) -> str:
+    """Recover the text field when an upstream JSON string ends mid-document."""
+    for key in _STT_TEXT_KEYS:
+        match = re.search(r'"' + re.escape(key) + r'"\s*:\s*"', raw)
+        if not match:
+            continue
+        text = _decode_stt_string_fragment(raw, match.end())
+        if text.strip():
+            return text.strip()
+    return ""
+
+
+def _stt_object_from_value(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return {}
+    raw = value.strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed = None
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, str) and parsed.strip() and parsed.strip() != raw:
+        nested = _stt_object_from_value(parsed)
+        if nested:
+            return nested
+    partial_text = _extract_truncated_stt_text(raw)
+    if partial_text:
+        return {"text": partial_text, "_stt_partial": True}
+    # A few gateways return the transcript as plain text instead of an object.
+    if not raw.startswith(("{", "[")):
+        return {"text": raw}
+    return {}
+
+
+def _stt_output_has_content(value: Dict[str, Any]) -> bool:
+    if any(str(value.get(key) or "").strip() for key in _STT_TEXT_KEYS):
+        return True
+    return any(
+        isinstance(value.get(key), list) and bool(value.get(key))
+        for key in ("utterances", "sentences", "segments")
+    )
+
+
 def _extract_stt_output(stt_data: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(stt_data, dict):
         return {}
+    fallback: Dict[str, Any] = {}
     for key in ("output", "result"):
-        value = stt_data.get(key)
-        if isinstance(value, dict):
-            return value
+        parsed = _stt_object_from_value(stt_data.get(key))
+        if parsed and _stt_output_has_content(parsed):
+            return parsed
+        if parsed and not fallback:
+            fallback = parsed
     data = stt_data.get("data")
     if isinstance(data, dict):
-        return _extract_stt_output(data)
-    return stt_data
+        nested = _extract_stt_output(data)
+        if nested and _stt_output_has_content(nested):
+            return nested
+        if nested and not fallback:
+            fallback = nested
+    if _stt_output_has_content(stt_data):
+        return stt_data
+    return fallback or stt_data
 
 
 def _caption_alignment_text(text: Any) -> str:

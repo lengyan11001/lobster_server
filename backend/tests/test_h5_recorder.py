@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -9,10 +10,15 @@ from starlette.requests import Request
 from backend.app.api import h5_recorder
 from backend.app.api.h5_recorder import (
     RecorderSpeakerRenameBody,
+    _merge_stt_parts,
     _memory_audio_sources,
     _recorded_at,
     _recorder_tos_object_key,
+    _run_stt,
+    _extract_stt_output,
     _segments,
+    _stt_chunk_plan,
+    _transcribe_stt_range,
     list_recordings,
     list_memory_audio_files,
     rename_recording_speaker,
@@ -42,6 +48,150 @@ def test_recorder_segments_map_speakers_in_first_seen_order():
 def test_recorder_segments_do_not_invent_unknown_speaker():
     rows = _segments({"utterances": [{"text": "只有一段文本"}]})
     assert rows[0]["speaker"] == "未知"
+
+
+def test_stt_output_decodes_nested_json_string():
+    nested = json.dumps({"text": "decoded transcript"}, ensure_ascii=False)
+
+    output = _extract_stt_output({"data": {"output": nested}})
+
+    assert output["text"] == "decoded transcript"
+
+
+def test_stt_output_recovers_text_from_truncated_json_string():
+    truncated = '{"text": "partial transcript'
+
+    output = _extract_stt_output({"data": {"result": truncated}})
+
+    assert output["text"] == "partial transcript"
+    assert output["_stt_partial"] is True
+
+
+def test_long_audio_is_split_into_bounded_stt_chunks():
+    assert _stt_chunk_plan(1300, chunk_seconds=600) == [
+        (0.0, 600.0),
+        (600.0, 600.0),
+        (1200.0, 100.0),
+    ]
+
+
+def test_stt_chunk_merge_restores_original_timeline_order():
+    text, segments = _merge_stt_parts([
+        (600.0, {
+            "text": "second chunk",
+            "utterances": [{"speaker_id": "speaker-1", "text": "second", "start_time": 100, "end_time": 500}],
+        }),
+        (0.0, {
+            "text": "first chunk",
+            "utterances": [{"speaker_id": "speaker-1", "text": "first", "start_time": 50, "end_time": 300}],
+        }),
+    ])
+
+    assert text == "first chunk\nsecond chunk"
+    assert [item["text"] for item in segments] == ["first", "second"]
+    assert [item["start_ms"] for item in segments] == [50, 600100]
+
+
+def test_truncated_stt_chunk_is_retried_as_smaller_ranges(monkeypatch, tmp_path):
+    poll_count = 0
+
+    def fake_extract(**kwargs):
+        kwargs["out_path"].write_bytes(b"x" * 256)
+
+    def fake_create(_token, _audio_url, *, job_dir, enable_speaker_info):
+        assert enable_speaker_info is True
+        return {"task_id": f"task-{job_dir.name}"}
+
+    def fake_poll(_token, _task_id, *, job_dir, timeout_seconds):
+        nonlocal poll_count
+        assert timeout_seconds == 1800
+        poll_count += 1
+        if poll_count == 1:
+            return {"status": "completed", "output": '{"text": "truncated'}
+        return {"status": "completed", "output": {"text": f"part-{poll_count}"}}
+
+    monkeypatch.setattr(h5_recorder, "STT_MIN_SPLIT_SECONDS", 90)
+    monkeypatch.setattr(h5_recorder, "_extract_audio_wav_chunk", fake_extract)
+    monkeypatch.setattr(h5_recorder, "_upload_job_file_to_tos", lambda *_args, **_kwargs: "https://audio.test/chunk.wav")
+    monkeypatch.setattr(h5_recorder, "_stt_create_task", fake_create)
+    monkeypatch.setattr(h5_recorder, "_stt_poll_task", fake_poll)
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"source")
+
+    parts, task_ids = _transcribe_stt_range(
+        token="test-token",
+        ffmpeg="ffmpeg",
+        source=source,
+        job_dir=tmp_path / "stt",
+        user_id=1,
+        record_id=2,
+        start_seconds=0,
+        duration_seconds=180,
+    )
+
+    assert [start for start, _output in parts] == [0, 90]
+    assert [output["text"] for _start, output in parts] == ["part-2", "part-3"]
+    assert len(task_ids) == 3
+    assert poll_count == 3
+
+
+def test_run_stt_merges_all_chunks_and_persists_batch_progress(
+    monkeypatch,
+    tmp_path,
+    db_session_factory,
+    test_user,
+):
+    source = tmp_path / "long-audio.mp3"
+    source.write_bytes(b"source")
+    with db_session_factory() as db:
+        row = RecorderAudioRecord(
+            user_id=test_user.id,
+            file_name=source.name,
+            display_name=source.name,
+            device_name="local",
+            source_type="local",
+            file_size=source.stat().st_size,
+            audio_path=str(source),
+            status="processing",
+            process_stage="uploaded",
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        record_id = row.id
+
+    observed: list[tuple[float, float]] = []
+
+    def fake_transcribe(**kwargs):
+        start = float(kwargs["start_seconds"])
+        duration = float(kwargs["duration_seconds"])
+        observed.append((start, duration))
+        part_number = len(observed)
+        return [(
+            start,
+            {
+                "text": f"chunk-{part_number}",
+                "utterances": [{"speaker_id": "speaker-1", "text": f"line-{part_number}", "start_time": 0, "end_time": 100}],
+            },
+        )], [f"task-{part_number}"]
+
+    monkeypatch.setattr(h5_recorder, "SessionLocal", db_session_factory)
+    monkeypatch.setattr(h5_recorder, "STT_CHUNK_SECONDS", 600)
+    monkeypatch.setattr(h5_recorder, "_find_ffmpeg_bin", lambda: "ffmpeg")
+    monkeypatch.setattr(h5_recorder, "_audio_duration_seconds", lambda _source: 1300)
+    monkeypatch.setattr(h5_recorder, "_load_sutui_token_for_stt", lambda _db, _user_id: ("token", "test"))
+    monkeypatch.setattr(h5_recorder, "_transcribe_stt_range", fake_transcribe)
+
+    text, segments, task_reference = _run_stt(record_id)
+
+    assert observed == [(0.0, 600.0), (600.0, 600.0), (1200.0, 100.0)]
+    assert text == "chunk-1\nchunk-2\nchunk-3"
+    assert [item["start_ms"] for item in segments] == [0, 600000, 1200000]
+    assert task_reference.startswith("batch:3:")
+    with db_session_factory() as db:
+        saved = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).one()
+        assert saved.process_stage == "transcribing:3/3"
+        assert saved.stt_task_id == task_reference
 
 
 def test_h5_recorder_routes_are_available_on_standalone_h5_app():

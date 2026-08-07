@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import mimetypes
+import os
 import re
 import shutil
 import uuid
@@ -22,10 +24,11 @@ from ..models import OpenClawMemoryDocument, RecorderAudioRecord, User
 from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot
 from .auth import get_current_user
 from .cutcli_templates import (
-    _extract_audio_wav,
     _extract_stt_output,
     _find_ffmpeg_bin,
+    _find_ffprobe_bin,
     _load_sutui_token_for_stt,
+    _run_cmd,
     _stt_create_task,
     _stt_poll_task,
     _upload_job_file_to_tos,
@@ -44,6 +47,34 @@ router = APIRouter()
 MAX_AUDIO_BYTES = 200 * 1024 * 1024
 DATA_ROOT = Path(__file__).resolve().parents[3] / "data" / "recorder_audio"
 UPLOAD_AUDIO_SUFFIXES = AUDIO_SUFFIXES | {".opus", ".webm"}
+
+
+def _bounded_env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+STT_CHUNK_SECONDS = _bounded_env_int(
+    "RECORDER_STT_CHUNK_SECONDS",
+    10 * 60,
+    minimum=2 * 60,
+    maximum=30 * 60,
+)
+STT_MIN_SPLIT_SECONDS = _bounded_env_int(
+    "RECORDER_STT_MIN_SPLIT_SECONDS",
+    90,
+    minimum=30,
+    maximum=5 * 60,
+)
+STT_MAX_AUDIO_SECONDS = _bounded_env_int(
+    "RECORDER_STT_MAX_AUDIO_SECONDS",
+    6 * 60 * 60,
+    minimum=30 * 60,
+    maximum=24 * 60 * 60,
+)
 SOURCE_LABELS = {
     "device": "录音设备",
     "local": "本地音频",
@@ -238,6 +269,263 @@ def _recorder_tos_object_key(user_id: int, record_id: int) -> str:
     return f"assets/recorder/{int(user_id)}/{int(record_id)}.wav"
 
 
+def _recorder_tos_chunk_object_key(user_id: int, record_id: int, chunk_key: str) -> str:
+    return f"assets/recorder/{int(user_id)}/{int(record_id)}/chunks/{chunk_key}.wav"
+
+
+def _audio_duration_seconds(source: Path) -> float:
+    raw = _run_cmd(
+        [
+            _find_ffprobe_bin(),
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(source),
+        ],
+        timeout=60,
+    )
+    try:
+        duration = float(str(raw or "").strip().splitlines()[0])
+    except (IndexError, TypeError, ValueError) as exc:
+        raise RuntimeError("无法读取音频时长，请确认音频文件可以正常播放") from exc
+    if not math.isfinite(duration) or duration <= 0:
+        raise RuntimeError("音频时长无效，请确认音频文件可以正常播放")
+    if duration > STT_MAX_AUDIO_SECONDS:
+        max_hours = STT_MAX_AUDIO_SECONDS / 3600
+        raise RuntimeError(f"单个音频不能超过 {max_hours:g} 小时，请拆分后再转写")
+    return duration
+
+
+def _stt_chunk_plan(duration_seconds: float, chunk_seconds: int | None = None) -> list[tuple[float, float]]:
+    duration = max(0.001, float(duration_seconds or 0))
+    chunk = max(1, int(chunk_seconds or STT_CHUNK_SECONDS))
+    count = max(1, int(math.ceil(duration / chunk)))
+    return [
+        (float(index * chunk), min(float(chunk), max(0.001, duration - index * chunk)))
+        for index in range(count)
+    ]
+
+
+def _extract_audio_wav_chunk(
+    *,
+    ffmpeg: str,
+    source: Path,
+    out_path: Path,
+    start_seconds: float,
+    duration_seconds: float,
+) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    _run_cmd(
+        [
+            ffmpeg,
+            "-y",
+            "-ss",
+            f"{max(0.0, float(start_seconds)):.3f}",
+            "-i",
+            str(source),
+            "-t",
+            f"{max(0.1, float(duration_seconds)):.3f}",
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-f",
+            "wav",
+            str(out_path),
+        ],
+        timeout=600,
+    )
+    if not out_path.exists() or out_path.stat().st_size <= 128:
+        raise RuntimeError("切分后的音频为空，请确认原始音频可以正常播放")
+
+
+def _chunk_cache_key(start_seconds: float, duration_seconds: float) -> str:
+    return f"{round(max(0.0, start_seconds) * 1000):012d}_{round(max(0.1, duration_seconds) * 1000):010d}"
+
+
+def _read_cached_stt_chunk(chunk_dir: Path) -> tuple[dict[str, Any], str] | None:
+    complete_path = chunk_dir / "stt_complete.json"
+    if complete_path.is_file():
+        try:
+            value = json.loads(complete_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            value = None
+        if isinstance(value, dict) and isinstance(value.get("stt_data"), dict):
+            return value["stt_data"], str(value.get("task_id") or "").strip()
+
+    latest_path = chunk_dir / "stt_result_latest.json"
+    if not latest_path.is_file():
+        return None
+    try:
+        latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(latest, dict):
+        return None
+    data = latest.get("data") if isinstance(latest.get("data"), dict) else latest
+    status = str(data.get("status") or "").strip().lower() if isinstance(data, dict) else ""
+    if status not in {"completed", "complete", "success", "succeeded", "finished", "done"}:
+        return None
+    return data, _created_stt_task_id(chunk_dir)
+
+
+def _created_stt_task_id(chunk_dir: Path) -> str:
+    path = chunk_dir / "stt_create_response.json"
+    if not path.is_file():
+        return ""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(value, dict):
+        return ""
+    data = value.get("data") if isinstance(value.get("data"), dict) else value
+    return str(data.get("task_id") or data.get("taskId") or data.get("id") or "").strip()
+
+
+def _resumable_stt_task_id(chunk_dir: Path) -> str:
+    task_id = _created_stt_task_id(chunk_dir)
+    if not task_id:
+        return ""
+    path = chunk_dir / "stt_result_latest.json"
+    if not path.is_file():
+        return task_id
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return task_id
+    data = value.get("data") if isinstance(value, dict) and isinstance(value.get("data"), dict) else value
+    status = str(data.get("status") or "").strip().lower() if isinstance(data, dict) else ""
+    if status in {"failed", "error", "cancelled", "canceled", "timeout", "rejected"}:
+        return ""
+    return task_id
+
+
+def _write_cached_stt_chunk(chunk_dir: Path, stt_data: dict[str, Any], task_id: str) -> None:
+    path = chunk_dir / "stt_complete.json"
+    temp = path.with_suffix(".tmp")
+    temp.write_text(
+        json.dumps({"task_id": task_id, "stt_data": stt_data}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    temp.replace(path)
+
+
+def _stt_text(output: dict[str, Any]) -> str:
+    for key in ("text", "transcript", "content", "result_text"):
+        value = output.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _merge_stt_parts(parts: list[tuple[float, dict[str, Any]]]) -> tuple[str, list[dict[str, Any]]]:
+    texts: list[str] = []
+    merged_segments: list[dict[str, Any]] = []
+    for start_seconds, output in sorted(parts, key=lambda item: item[0]):
+        chunk_segments = _segments(output)
+        offset_ms = round(max(0.0, float(start_seconds)) * 1000)
+        for segment in chunk_segments:
+            item = dict(segment)
+            item["start_ms"] = offset_ms + int(item.get("start_ms") or 0)
+            item["end_ms"] = offset_ms + int(item.get("end_ms") or 0)
+            merged_segments.append(item)
+        text_value = _stt_text(output)
+        if not text_value and chunk_segments:
+            text_value = "\n".join(
+                f"{item['speaker']}：{item['text']}" if item["speaker"] != "未知" else item["text"]
+                for item in chunk_segments
+            )
+        if text_value:
+            texts.append(text_value)
+    merged_segments.sort(key=lambda item: (int(item.get("start_ms") or 0), int(item.get("end_ms") or 0)))
+    return "\n".join(texts).strip(), merged_segments
+
+
+def _stt_task_reference(task_ids: list[str]) -> str:
+    unique = list(dict.fromkeys(task_id for task_id in task_ids if task_id))
+    if not unique:
+        return ""
+    if len(unique) == 1:
+        return unique[0][:128]
+    return f"batch:{len(unique)}:{unique[0][:36]}:{unique[-1][:36]}"[:128]
+
+
+def _transcribe_stt_range(
+    *,
+    token: str,
+    ffmpeg: str,
+    source: Path,
+    job_dir: Path,
+    user_id: int,
+    record_id: int,
+    start_seconds: float,
+    duration_seconds: float,
+) -> tuple[list[tuple[float, dict[str, Any]]], list[str]]:
+    chunk_key = _chunk_cache_key(start_seconds, duration_seconds)
+    chunk_dir = job_dir / "chunks" / chunk_key
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    cached = _read_cached_stt_chunk(chunk_dir)
+    if cached:
+        stt_data, task_id = cached
+    else:
+        task_id = _resumable_stt_task_id(chunk_dir)
+        if not task_id:
+            wav = chunk_dir / "audio.wav"
+            _extract_audio_wav_chunk(
+                ffmpeg=ffmpeg,
+                source=source,
+                out_path=wav,
+                start_seconds=start_seconds,
+                duration_seconds=duration_seconds,
+            )
+            try:
+                audio_url = _upload_job_file_to_tos(
+                    wav,
+                    object_key=_recorder_tos_chunk_object_key(user_id, record_id, chunk_key),
+                    content_type="audio/wav",
+                )
+                created = _stt_create_task(token, audio_url, job_dir=chunk_dir, enable_speaker_info=True)
+                task_id = created["task_id"]
+            finally:
+                wav.unlink(missing_ok=True)
+        stt_data = _stt_poll_task(token, task_id, job_dir=chunk_dir, timeout_seconds=1800)
+        _write_cached_stt_chunk(chunk_dir, stt_data, task_id)
+
+    output = _extract_stt_output(stt_data)
+    if output.get("_stt_partial"):
+        if duration_seconds <= STT_MIN_SPLIT_SECONDS:
+            raise RuntimeError("语音服务返回结果被截断，请稍后重新处理该音频")
+        first_duration = duration_seconds / 2
+        second_duration = duration_seconds - first_duration
+        first_parts, first_tasks = _transcribe_stt_range(
+            token=token,
+            ffmpeg=ffmpeg,
+            source=source,
+            job_dir=job_dir,
+            user_id=user_id,
+            record_id=record_id,
+            start_seconds=start_seconds,
+            duration_seconds=first_duration,
+        )
+        second_parts, second_tasks = _transcribe_stt_range(
+            token=token,
+            ffmpeg=ffmpeg,
+            source=source,
+            job_dir=job_dir,
+            user_id=user_id,
+            record_id=record_id,
+            start_seconds=start_seconds + first_duration,
+            duration_seconds=second_duration,
+        )
+        return first_parts + second_parts, [task_id] + first_tasks + second_tasks
+    return [(start_seconds, output)], [task_id] if task_id else []
+
+
 def mark_interrupted_recordings_failed() -> int:
     """Make records interrupted by an H5 restart explicitly retryable."""
     db = SessionLocal()
@@ -269,35 +557,65 @@ def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
             raise RuntimeError("录音记录不存在")
         row.process_stage = "transcribing"
         source = Path(row.audio_path)
+        if not source.is_file():
+            raise RuntimeError("原始录音文件已不存在，请重新上传")
         user_id = int(row.user_id)
         stored_record_id = int(row.id)
         db.commit()
         job_dir = source.parent / "stt"
         job_dir.mkdir(parents=True, exist_ok=True)
-        wav = job_dir / "audio.wav"
-        _extract_audio_wav(ffmpeg=_find_ffmpeg_bin(), source=str(source), out_path=wav)
-        audio_url = _upload_job_file_to_tos(
-            wav,
-            object_key=_recorder_tos_object_key(user_id, stored_record_id),
-            content_type="audio/wav",
-        )
+        ffmpeg = _find_ffmpeg_bin()
+        duration_seconds = _audio_duration_seconds(source)
+        plan = _stt_chunk_plan(duration_seconds)
         token, _ = _load_sutui_token_for_stt(db, user_id)
         db.commit()
-        created = _stt_create_task(token, audio_url, job_dir=job_dir, enable_speaker_info=True)
-        db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == stored_record_id).update(
-            {"stt_task_id": created["task_id"]},
-            synchronize_session=False,
-        )
-        db.commit()
-        polled = _stt_poll_task(token, created["task_id"], job_dir=job_dir, timeout_seconds=1800)
-        output = _extract_stt_output(polled)
-        segments = _segments(output)
-        text = str(output.get("text") or output.get("transcript") or "").strip()
-        if not text:
-            text = "\n".join((f"{x['speaker']}：{x['text']}" if x["speaker"] != "未知" else x["text"]) for x in segments)
+        parts: list[tuple[float, dict[str, Any]]] = []
+        task_ids: list[str] = []
+        for index, (start_seconds, chunk_duration) in enumerate(plan, start=1):
+            db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == stored_record_id).update(
+                {"process_stage": f"transcribing:{index}/{len(plan)}"},
+                synchronize_session=False,
+            )
+            db.commit()
+            chunk_parts, chunk_task_ids = _transcribe_stt_range(
+                token=token,
+                ffmpeg=ffmpeg,
+                source=source,
+                job_dir=job_dir,
+                user_id=user_id,
+                record_id=stored_record_id,
+                start_seconds=start_seconds,
+                duration_seconds=chunk_duration,
+            )
+            parts.extend(chunk_parts)
+            task_ids.extend(chunk_task_ids)
+            task_reference = _stt_task_reference(task_ids)
+            if task_reference:
+                db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == stored_record_id).update(
+                    {"stt_task_id": task_reference},
+                    synchronize_session=False,
+                )
+                db.commit()
+
+        text, segments = _merge_stt_parts(parts)
         if not text.strip():
             raise RuntimeError("录音未识别到有效语音，请确认录音内容清晰后重试")
-        return text, segments, created["task_id"]
+        task_reference = _stt_task_reference(task_ids)
+        (job_dir / "stt_manifest.json").write_text(
+            json.dumps(
+                {
+                    "duration_seconds": duration_seconds,
+                    "chunk_seconds": STT_CHUNK_SECONDS,
+                    "planned_chunks": len(plan),
+                    "completed_parts": len(parts),
+                    "task_ids": list(dict.fromkeys(task_ids)),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return text, segments, task_reference
     finally:
         db.close()
 
