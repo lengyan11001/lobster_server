@@ -292,6 +292,9 @@
       speechLastAt: 0,
     };
     const SHOW_INTERNAL_STEPS = true;
+    const PERSONAL_DOCUMENT_MAX_BYTES = 30 * 1024 * 1024;
+    const PERSONAL_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
+    const PERSONAL_MEDIA_MAX_BYTES = 80 * 1024 * 1024;
     const IMAGE_TO_VIDEO_PROMPT = "用这个图片，提示词：";
     const TASK_CAPABILITIES = {
       "goal.video.pipeline": {
@@ -7902,6 +7905,37 @@
       }
     }
 
+    async function monitorOnlineVideoSplit(messageId) {
+      if (!messageId) return;
+      state.onlineVideoSplitMonitors = state.onlineVideoSplitMonitors || new Set();
+      if (state.onlineVideoSplitMonitors.has(messageId)) return;
+      state.onlineVideoSplitMonitors.add(messageId);
+      try {
+        for (let attempt = 0; attempt < 600; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          const data = await api(`/api/h5-chat/messages/${encodeURIComponent(messageId)}`);
+          const message = data && data.message ? data.message : {};
+          if (message.status === "completed") {
+            state.assetLibraryPage.user_upload = 1;
+            state.assetLibraryPageCache = {};
+            state.userUploadAssetCache = {};
+            await loadAssetLibrary("user_upload", { force: true });
+            toast(message.reply_text || "视频切片完成，素材库已更新");
+            return;
+          }
+          if (["failed", "cancelled"].includes(message.status)) {
+            toast(message.error || "Online 视频切片失败");
+            return;
+          }
+        }
+        toast("视频切片仍在 Online 处理中，可稍后刷新素材库查看");
+      } catch (err) {
+        toast(err.message || "视频切片状态查询失败，可稍后刷新素材库查看");
+      } finally {
+        state.onlineVideoSplitMonitors.delete(messageId);
+      }
+    }
+
     async function uploadAssetLibraryFiles(btn) {
       const input = $("assetLibraryUploadInput");
       const files = input && input.files ? Array.from(input.files).filter(Boolean) : [];
@@ -7913,7 +7947,18 @@
         btn.textContent = "上传中...";
       }
       if (status) status.textContent = `0/${files.length}`;
+      let queuedVideoCount = 0;
       try {
+        const hasVideo = files.some((file) => String(file && file.type || "").toLowerCase().startsWith("video/")
+          || /\.(mp4|webm|mov|avi|mkv|flv|wmv)$/i.test(String(file && file.name || "")));
+        if (hasVideo) {
+          const deviceStatus = await api("/api/h5-chat/devices/status");
+          const onlineDevices = (Array.isArray(deviceStatus.devices) ? deviceStatus.devices : []).filter((item) => item && item.online);
+          if (!onlineDevices.length) throw new Error("视频切片需要先启动并登录 Online");
+          const capable = onlineDevices.some((item) => Array.isArray(item.capabilities)
+            && item.capabilities.includes("asset_video_split_v1"));
+          if (!capable) throw new Error("当前 Online 版本不支持本机视频切片，请升级最新 OTA 后重试");
+        }
         for (let i = 0; i < files.length; i += 1) {
           const fd = new FormData();
           fd.append("file", files[i], files[i].name || "upload");
@@ -7921,15 +7966,20 @@
           const resp = await fetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd });
           const data = await resp.json().catch(() => ({}));
           if (!resp.ok) throw new Error(data.detail || data.message || `上传失败：HTTP ${resp.status}`);
-          const rows = Array.isArray(data.assets) && data.assets.length ? data.assets : [data];
-          rows.forEach((row) => addUserUploadAssetToCache({ ...row, asset_origin: "user_upload" }));
+          if (data.processing === "online" && data.message_id) {
+            queuedVideoCount += 1;
+            monitorOnlineVideoSplit(data.message_id);
+          } else {
+            const rows = Array.isArray(data.assets) && data.assets.length ? data.assets : [data];
+            rows.forEach((row) => addUserUploadAssetToCache({ ...row, asset_origin: "user_upload" }));
+          }
           if (status) status.textContent = `${i + 1}/${files.length}`;
         }
         if (input) input.value = "";
         state.assetLibraryPage.user_upload = 1;
         state.assetLibraryPageCache = {};
         await loadAssetLibrary("user_upload", { force: true });
-        toast("上传完成");
+        toast(queuedVideoCount ? `已提交 ${queuedVideoCount} 个视频到 Online 切片` : "上传完成");
         closeAssetUploadModal();
       } finally {
         if (btn) {
@@ -14330,8 +14380,73 @@
       return (state.personalUploadFiles || []).filter((file) => file && (file.name || file.size > 0));
     }
 
+    function personalUploadMaxBytes(file) {
+      const name = String(file && file.name || "").toLowerCase();
+      const type = String(file && file.type || "").toLowerCase();
+      if (type.startsWith("image/") || /\.(jpe?g|png|webp|gif)$/.test(name)) return PERSONAL_IMAGE_MAX_BYTES;
+      if (type.startsWith("audio/") || type.startsWith("video/") || /\.(mp3|wav|m4a|aac|ogg|flac|amr|wma|mp4|mov|m4v|avi|mkv|webm)$/.test(name)) return PERSONAL_MEDIA_MAX_BYTES;
+      return PERSONAL_DOCUMENT_MAX_BYTES;
+    }
+
+    function personalUploadSizeError(file) {
+      const maxBytes = personalUploadMaxBytes(file);
+      if (Number(file && file.size || 0) <= maxBytes) return "";
+      return `${file && file.name || "未命名文件"} 超过 ${Math.round(maxBytes / 1024 / 1024)}MB，请压缩或拆分后上传`;
+    }
+
+    function personalFileNeedsOnlineDocumentParse(file) {
+      const name = String(file && file.name || "").toLowerCase();
+      return /\.(txt|md|markdown|csv|tsv|json|jsonl|ya?ml|html?|log|pdf|docx|xlsx|xlsm|xls|pptx)$/.test(name);
+    }
+
+    async function requireOnlineMemoryParser(files) {
+      if (!(files || []).some(personalFileNeedsOnlineDocumentParse)) return;
+      const deviceStatus = await api("/api/h5-chat/devices/status");
+      const onlineDevices = (Array.isArray(deviceStatus.devices) ? deviceStatus.devices : []).filter((item) => item && item.online);
+      if (!onlineDevices.length) throw new Error("资料解析需要先启动并登录 Online");
+      const capable = onlineDevices.some((item) => Array.isArray(item.capabilities)
+        && item.capabilities.includes("memory_document_parse_v1"));
+      if (!capable) throw new Error("当前 Online 版本不支持本机资料解析，请升级最新 OTA 后重试");
+    }
+
+    async function monitorOnlineMemoryParse(messageId, filename) {
+      if (!messageId) return;
+      state.onlineMemoryParseMonitors = state.onlineMemoryParseMonitors || new Set();
+      if (state.onlineMemoryParseMonitors.has(messageId)) return;
+      state.onlineMemoryParseMonitors.add(messageId);
+      try {
+        for (let attempt = 0; attempt < 600; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          const data = await api(`/api/h5-chat/messages/${encodeURIComponent(messageId)}`);
+          const message = data && data.message ? data.message : {};
+          if (message.status === "completed") {
+            await refreshPersonalDataPreserveSelection({ memories: true });
+            await savePersonalDefaultSilently();
+            toast(`“${filename || "资料"}”已解析并存入资料`);
+            return;
+          }
+          if (["failed", "cancelled"].includes(message.status)) {
+            toast(message.error || `“${filename || "资料"}”解析失败`);
+            return;
+          }
+        }
+        toast(`“${filename || "资料"}”仍在 Online 解析，可稍后刷新资料列表查看`);
+      } catch (err) {
+        toast(err.message || "资料解析状态查询失败，可稍后刷新资料列表查看");
+      } finally {
+        state.onlineMemoryParseMonitors.delete(messageId);
+      }
+    }
+
+    function setPersonalUploadStatus(message, isError = false) {
+      const status = $("personalUploadStatus");
+      if (!status) return;
+      status.textContent = message || "";
+      status.classList.toggle("error", !!isError);
+    }
+
     function personalFileChip(file, idx, attr) {
-      const size = file && file.size ? ` · ${Math.ceil(file.size / 1024)}KB` : "";
+      const size = file && file.size ? ` · ${recorderFormatBytes(file.size)}` : "";
       const transcribe = attr === "data-remove-personal-upload" && isRecorderAudioFile(file)
         ? `<button type="button" data-transcribe-personal-upload="${idx}">转写</button>`
         : "";
@@ -14355,8 +14470,10 @@
     function handlePersonalUploadFilesChange() {
       const input = $("personalMemoryFiles");
       const picked = input && input.files ? Array.from(input.files) : [];
+      const rejected = picked.map(personalUploadSizeError).filter(Boolean);
+      const accepted = picked.filter((file) => !personalUploadSizeError(file));
       const seen = {};
-      state.personalUploadFiles = selectedPersonalUploadFiles().concat(picked).filter((file) => {
+      state.personalUploadFiles = selectedPersonalUploadFiles().concat(accepted).filter((file) => {
         const key = personalUploadFileKey(file);
         if (!key || seen[key]) return false;
         seen[key] = true;
@@ -14365,6 +14482,12 @@
       if (input) input.value = "";
       renderPersonalSelectedFiles();
       renderPersonalMemorySourceSelectors();
+      if (rejected.length) {
+        setPersonalUploadStatus(rejected.join("；"), true);
+        toast(rejected.join("；"));
+      } else if (accepted.length) {
+        setPersonalUploadStatus(`已选择 ${accepted.length} 个文件`);
+      }
     }
 
     async function transcribePersonalUploadFile(index, button = null) {
@@ -14402,6 +14525,7 @@
     }
 
     function openPersonalUploadModal() {
+      setPersonalUploadStatus("");
       $("personalUploadModal")?.classList.remove("hidden");
     }
 
@@ -14616,6 +14740,30 @@
       renderPersonalSettings();
     }
 
+    async function waitForOnlineMemoryGeneration(messageId) {
+      for (let attempt = 0; attempt < 600; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const status = await api(`/api/h5-chat/messages/${encodeURIComponent(messageId)}`);
+        const message = status && status.message ? status.message : {};
+        const events = Array.isArray(status && status.events) ? status.events : [];
+        const resultEvent = [...events].reverse().find((event) => {
+          const payload = event && event.payload && typeof event.payload === "object" ? event.payload : {};
+          return payload.documents && typeof payload.documents === "object";
+        });
+        if (resultEvent) return resultEvent.payload;
+        if (["failed", "cancelled"].includes(message.status)) {
+          throw new Error(message.error || "Online 资料理解失败");
+        }
+        if (message.status === "completed") {
+          throw new Error("Online 已完成解析，但没有返回可审核内容，请重试");
+        }
+        const progressEvent = [...events].reverse().find((event) => event && event.type === "progress");
+        const progressText = progressEvent && progressEvent.payload ? progressEvent.payload.text : "";
+        if (progressText) personalSetStatus(progressText);
+      }
+      throw new Error("资料仍在 Online 处理中，请稍后重试");
+    }
+
     async function generatePersonalMemoryDocs(btn) {
       const iid = currentInstallationId();
       if (!iid) throw new Error("请先选择在线设备");
@@ -14653,8 +14801,12 @@
       personalSetStatus("正在理解资料...");
       try {
         const resp = await fetch(apiUrl("/api/personal-settings/memory-documents/generate"), { method: "POST", headers: authHeaders({ "X-Installation-Id": iid }), body: fd });
-        const data = await resp.json().catch(() => ({}));
+        let data = await resp.json().catch(() => ({}));
         if (!resp.ok || data.ok === false) throw new Error(data.detail || data.message || "AI 理解失败");
+        if (data.processing === "online" && data.message_id) {
+          personalSetStatus("已下发 Online，正在本机解析资料...");
+          data = await waitForOnlineMemoryGeneration(data.message_id);
+        }
         state.personalGeneratedDocuments = data.documents || {};
         state.personalGeneratedDocOrder = Array.isArray(data.doc_types) && data.doc_types.length ? data.doc_types : docTypes;
         state.personalGeneratedSourceImages = Array.isArray(data.source_images) ? data.source_images : [];
@@ -14718,7 +14870,7 @@
       }
     }
 
-    async function savePersonalUploadedMemory(btn, formData) {
+    async function savePersonalUploadedMemory(btn, formData, options = {}) {
       const iid = currentInstallationId();
       personalSetBusy(btn, true, "保存中...");
       try {
@@ -14731,9 +14883,11 @@
         state.personalGeneratedDocOrder = [];
         state.personalGeneratedSourceImages = [];
         renderPersonalGeneratedDocs();
-        await refreshPersonalDataPreserveSelection({ memories: true });
-        await savePersonalDefaultSilently();
-        personalSetStatus("已存入记忆。");
+        if (options.refresh !== false) {
+          await refreshPersonalDataPreserveSelection({ memories: true });
+          await savePersonalDefaultSilently();
+        }
+        if (options.status !== false) personalSetStatus("已存入记忆。");
         return data;
       } finally {
         personalSetBusy(btn, false);
@@ -14743,11 +14897,18 @@
     async function savePersonalRawMemory(btn) {
       const files = selectedPersonalUploadFiles();
       if (!files.length) throw new Error("请先上传文件。");
+      const invalid = files.map(personalUploadSizeError).filter(Boolean);
+      if (invalid.length) throw new Error(invalid.join("；"));
       personalSetBusy(btn, true, "保存中...");
       try {
+        await requireOnlineMemoryParser(files);
         const savedKeys = new Set();
         const failed = [];
-        for (const file of files) {
+        const queued = [];
+        let savedImmediately = 0;
+        for (const [index, file] of files.entries()) {
+          personalSetBusy(btn, true, `保存 ${index + 1}/${files.length}...`);
+          setPersonalUploadStatus(`正在上传并解析 ${index + 1}/${files.length}：${file.name || "未命名文件"}`);
           const fd = new FormData();
           fd.append("files", file, file.name || "upload");
           fd.append("title", file.name || "上传资料");
@@ -14757,7 +14918,12 @@
           fd.append("mode", "new");
           fd.append("target_doc_id", "");
           try {
-            await savePersonalUploadedMemory(null, fd);
+            const result = await savePersonalUploadedMemory(null, fd, { refresh: false, status: false });
+            if (result && result.processing === "online" && result.message_id) {
+              queued.push({ messageId: result.message_id, filename: file.name || "资料" });
+            } else {
+              savedImmediately += 1;
+            }
             savedKeys.add(personalUploadFileKey(file));
           } catch (err) {
             failed.push(`${file.name || "未命名文件"}：${(err && err.message) || "读取失败"}`);
@@ -14766,11 +14932,20 @@
         state.personalUploadFiles = files.filter((file) => !savedKeys.has(personalUploadFileKey(file)));
         renderPersonalSelectedFiles();
         renderPersonalMemorySourceSelectors();
+        if (savedImmediately) {
+          setPersonalUploadStatus("正在刷新资料列表...");
+          await refreshPersonalDataPreserveSelection({ memories: true });
+          await savePersonalDefaultSilently();
+        }
+        queued.forEach((item) => monitorOnlineMemoryParse(item.messageId, item.filename));
         if (failed.length) {
+          setPersonalUploadStatus(`已保存 ${savedKeys.size} 个，${failed.length} 个失败`, true);
           personalSetStatus(`已存入 ${savedKeys.size} 个文件；未读取 ${failed.join("；")}`, true);
         } else {
           closePersonalUploadModal();
-          personalSetStatus(`已存入 ${savedKeys.size} 个文件。`);
+          personalSetStatus(queued.length
+            ? `已提交 ${queued.length} 个文件到 Online 解析，完成后自动存入资料。`
+            : `已存入 ${savedKeys.size} 个文件。`);
         }
       } finally {
         personalSetBusy(btn, false);

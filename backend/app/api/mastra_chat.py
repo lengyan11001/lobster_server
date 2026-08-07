@@ -705,9 +705,14 @@ async def import_mastra_memory_asset(
     if not installation_id:
         raise HTTPException(status_code=400, detail="请先选择在线设备")
     ensure_installation_slot(db, owner.id, installation_id)
+    asset_url = (asset.source_url or "").strip()
+    asset_filename = asset.filename or f"{asset.asset_id}.bin"
+    asset_id = asset.asset_id
+    # Downloading and understanding an asset must not retain approval/asset reads.
+    db.commit()
     try:
-        data = await _download_media_url((asset.source_url or "").strip(), max_bytes=80 * 1024 * 1024)
-        upload = UploadFile(file=io.BytesIO(data), filename=asset.filename or f"{asset.asset_id}.bin")
+        data = await _download_media_url(asset_url, max_bytes=80 * 1024 * 1024)
+        upload = UploadFile(file=io.BytesIO(data), filename=asset_filename)
         source_text, visual_blocks, source_images = await _collect_sources(
             request,
             installation_id,
@@ -722,7 +727,7 @@ async def import_mastra_memory_asset(
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"素材读取失败：{str(exc)[:300]}") from exc
-    title = _short_title(body.title, asset.filename or "素材记忆")
+    title = _short_title(body.title, asset_filename or "素材记忆")
     row = _create_document(
         db,
         target_user=owner,
@@ -734,7 +739,7 @@ async def import_mastra_memory_asset(
         content_text=source_text,
         meta={
             "source": "mastra_chat_asset",
-            "source_asset_id": asset.asset_id,
+            "source_asset_id": asset_id,
             "source_images": source_images,
             "parent_message_id": body.parent_message_id,
         },

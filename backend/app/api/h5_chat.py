@@ -123,6 +123,7 @@ class H5HeartbeatIn(BaseModel):
     display_name: Optional[str] = None
     publish_accounts: Optional[List[Dict[str, Any]]] = None
     wechat_contacts: Optional[List[Dict[str, Any]]] = None
+    capabilities: Optional[List[str]] = None
 
 
 class H5DeviceDisplayNameIn(BaseModel):
@@ -1109,6 +1110,8 @@ async def upload_h5_chat_image(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
+    owner_user_id = int(owner_user.id)
+    db.commit()
     content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
     if content_type not in _IMAGE_EXT_BY_TYPE:
         raise HTTPException(status_code=400, detail="仅支持上传图片")
@@ -1118,9 +1121,9 @@ async def upload_h5_chat_image(
     if len(raw) > _MAX_H5_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="图片不能超过 15MB")
     _H5_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    filename = f"u{owner_user.id}_{uuid.uuid4().hex}{_IMAGE_EXT_BY_TYPE[content_type]}"
+    filename = f"u{owner_user_id}_{uuid.uuid4().hex}{_IMAGE_EXT_BY_TYPE[content_type]}"
     path = _H5_UPLOAD_DIR / filename
-    path.write_bytes(raw)
+    await asyncio.to_thread(path.write_bytes, raw)
     url = f"{_public_base_url(request)}/api/h5-chat/uploads/{filename}"
     return {
         "ok": True,
@@ -1346,7 +1349,23 @@ def h5_device_heartbeat(
     heartbeat_key = _heartbeat_cache_key(current_user_id, xi)
     account_snapshot = _normalize_publish_account_snapshot(body.publish_accounts)
     wechat_contact_snapshot = _normalize_wechat_contact_snapshot(body.wechat_contacts)
-    if account_snapshot is None and wechat_contact_snapshot is None and _heartbeat_fast_ack_recent(heartbeat_key):
+    capability_snapshot = (
+        list(
+            dict.fromkeys(
+                re.sub(r"[^a-zA-Z0-9_.-]", "", str(item or "").strip())[:64]
+                for item in body.capabilities
+                if re.sub(r"[^a-zA-Z0-9_.-]", "", str(item or "").strip())
+            )
+        )[:50]
+        if body.capabilities is not None
+        else None
+    )
+    if (
+        account_snapshot is None
+        and wechat_contact_snapshot is None
+        and capability_snapshot is None
+        and _heartbeat_fast_ack_recent(heartbeat_key)
+    ):
         return {"ok": True, "installation_id": xi, "throttled": True}
     _mark_heartbeat_fast_ack(heartbeat_key)
     now = datetime.utcnow()
@@ -1380,12 +1399,13 @@ def h5_device_heartbeat(
             and not should_set_display_name
             and account_snapshot is None
             and wechat_contact_snapshot is None
+            and capability_snapshot is None
         ):
             return {"ok": True, "installation_id": xi, "last_seen_at": _iso(previous_seen_at), "throttled": True}
         row.last_seen_at = now
         if should_set_display_name:
             row.display_name = body.display_name.strip()[:128] or None
-        if account_snapshot is not None or wechat_contact_snapshot is not None:
+        if account_snapshot is not None or wechat_contact_snapshot is not None or capability_snapshot is not None:
             previous_payload = row.account_payload if isinstance(row.account_payload, dict) else {}
             row.account_payload = {
                 "accounts": account_snapshot if account_snapshot is not None else previous_payload.get("accounts", []),
@@ -1393,6 +1413,11 @@ def h5_device_heartbeat(
                     wechat_contact_snapshot
                     if wechat_contact_snapshot is not None
                     else previous_payload.get("wechat_contacts", [])
+                ),
+                "capabilities": (
+                    capability_snapshot
+                    if capability_snapshot is not None
+                    else previous_payload.get("capabilities", [])
                 ),
                 "reported_at": now.isoformat(),
             }
@@ -1405,9 +1430,10 @@ def h5_device_heartbeat(
                 {
                     "accounts": account_snapshot or [],
                     "wechat_contacts": wechat_contact_snapshot or [],
+                    "capabilities": capability_snapshot or [],
                     "reported_at": now.isoformat(),
                 }
-                if account_snapshot is not None or wechat_contact_snapshot is not None
+                if account_snapshot is not None or wechat_contact_snapshot is not None or capability_snapshot is not None
                 else None
             ),
             last_seen_at=now,
@@ -1469,6 +1495,8 @@ def h5_devices_status(
     )
     devices = []
     for r in rows:
+        account_payload = r.account_payload if isinstance(r.account_payload, dict) else {}
+        capabilities = account_payload.get("capabilities") if isinstance(account_payload.get("capabilities"), list) else []
         devices.append(
             {
                 "installation_id": r.installation_id,
@@ -1476,6 +1504,7 @@ def h5_devices_status(
                 "last_seen_at": _iso(r.last_seen_at),
                 "online": is_device_online(r.last_seen_at, now=now),
                 "publish_account_count": len((r.account_payload or {}).get("accounts") or []) if isinstance(r.account_payload, dict) else 0,
+                "capabilities": capabilities,
             }
         )
     return {"ok": True, "online": any(d["online"] for d in devices), "devices": devices}
@@ -1814,7 +1843,10 @@ def h5_submit_event(
 ):
     row = _message_for_user(db, message_id, current_user.id)
     _assert_worker_can_update(row, _header_installation_id(request))
-    row.updated_at = datetime.utcnow()
+    now = datetime.utcnow()
+    row.updated_at = now
+    if row.status == "processing":
+        row.claimed_at = now
     _add_event(db, row, body.type, body.payload)
     _mirror_child_event_to_parent(db, row, body.type, body.payload)
     db.commit()

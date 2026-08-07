@@ -748,6 +748,7 @@ async def _apply_video_duration_limit(
         row.submit_payload = submit_payload
         return source_video_url, actual_source_duration, constraints
 
+    _release_db_transaction(db)
     video_data, _content_type = await _download_media_bytes(source_video_url, accept="video/*,*/*;q=0.8")
     try:
         trimmed_data, final_duration = await asyncio.to_thread(_run_ffmpeg_duration_cap, video_data, limit_seconds)
@@ -827,7 +828,12 @@ async def _persist_media_for_shanjian(
     media_type_header = (content_type or "application/octet-stream").split(";", 1)[0].strip() or "application/octet-stream"
     fallback = ".mp4" if media_type == "video" else (".jpg" if media_type == "image" else ".bin")
     ext = _media_ext_from_content(media_type_header, raw, fallback=fallback)
-    asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, media_type_header)
+    asset_id, filename_or_key, file_size, public_url = await asyncio.to_thread(
+        _save_bytes_or_tos,
+        data,
+        ext,
+        media_type_header,
+    )
     if not public_url:
         raise HTTPException(status_code=503, detail=f"{label}转存 TOS 失败，无法继续模板剪辑")
     asset = Asset(
@@ -1180,6 +1186,7 @@ async def _submit_realman_clip_task(
         len(clip_payload.get("materials") or []),
         str(clip_payload)[:2000],
     )
+    _release_db_transaction(db)
     clip_upstream = await _post("/v1/clip/video/realman_broadcast", body.token, clip_payload)
     clip_data = _data(clip_upstream)
     clip_task_id = _clean_text(clip_data.get("taskId"))
@@ -1538,6 +1545,7 @@ async def query_profile_task(
     if not row:
         raise HTTPException(status_code=404, detail="未找到对应的闪剪数字人任务")
 
+    db.expire_on_commit = False
     _release_db_transaction(db)
     payload = await _get("/v1/task/info", body.token, {"taskId": row.task_id})
     data = _data(payload)
@@ -1737,6 +1745,7 @@ async def query_video_task(
     if not row:
         raise HTTPException(status_code=404, detail="未找到对应的闪剪视频任务")
 
+    db.expire_on_commit = False
     submit_payload = row.submit_payload if isinstance(row.submit_payload, dict) else {}
     template_meta = _template_meta_from_submit_payload(submit_payload)
     base_task_id = _clean_text(row.task_id)

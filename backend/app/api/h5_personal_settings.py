@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -9,7 +10,9 @@ import re
 import subprocess
 import tempfile
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Optional
 
@@ -20,8 +23,16 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import H5AgentMemoryGrant, OpenClawMemoryDocument, RecorderAudioRecord, User
+from ..models import Asset, H5AgentMemoryGrant, H5ChatEvent, H5ChatMessage, OpenClawMemoryDocument, RecorderAudioRecord, User
 from .auth import get_current_user
+from .assets import (
+    ASSETS_DIR,
+    _delete_tos_object,
+    _online_capability_device,
+    _run_asset_upload_io,
+    _save_bytes_or_tos,
+    _unlink_safe_asset_file,
+)
 from .cutcli_templates import (
     AutoCaptionJobError,
     _extract_audio_wav,
@@ -36,6 +47,7 @@ from .installation_slots import ensure_installation_slot, optional_installation_
 from .mobile_identity import online_user_for_mobile_user
 from .openclaw_memory_cloud import (
     _MAX_UPLOAD_BYTES,
+    _SUPPORTED_SUFFIXES,
     _decode_text_payload,
     _doc_id_for,
     _doc_summary,
@@ -45,6 +57,13 @@ from .openclaw_memory_cloud import (
 )
 
 router = APIRouter()
+
+_PERSONAL_SOURCE_IO_WORKERS = max(1, int(os.environ.get("PERSONAL_SOURCE_IO_WORKERS") or "3"))
+_personal_source_executor = ThreadPoolExecutor(
+    max_workers=_PERSONAL_SOURCE_IO_WORKERS,
+    thread_name_prefix="personal-source",
+)
+_personal_source_gate = asyncio.Semaphore(_PERSONAL_SOURCE_IO_WORKERS)
 
 DOC_TYPE_LABELS: dict[str, str] = {
     "brand_product_intro": "产品介绍",
@@ -61,6 +80,9 @@ MAX_VIDEO_BYTES = 80 * 1024 * 1024
 MAX_AUDIO_BYTES = 80 * 1024 * 1024
 MAX_VISUAL_BLOCKS = 8
 URL_RE = re.compile(r"https?://[^\s,，]+", re.I)
+_H5_CLIENT_COMMAND_PREFIX = "__LOBSTER_H5_CLIENT_COMMAND__"
+_ONLINE_MEMORY_PARSE_CAPABILITY = "memory_document_parse_v1"
+_ONLINE_MEMORY_GENERATE_CAPABILITY = "memory_document_generate_v1"
 
 
 class RawMemorySaveBody(BaseModel):
@@ -76,6 +98,21 @@ class GeneratedMemorySaveBody(BaseModel):
     notes: str = ""
     documents: dict[str, str] = Field(default_factory=dict)
     source_images: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class OnlineMemoryParseCompleteBody(BaseModel):
+    message_id: str = Field(min_length=8, max_length=64)
+    source_asset_id: str = Field(min_length=4, max_length=64)
+    filename: str = Field(default="document.txt", max_length=255)
+    title: str = Field(default="", max_length=160)
+    notes: str = Field(default="", max_length=1000)
+    content_text: str = Field(min_length=1, max_length=600_000)
+    sha256: str = Field(default="", max_length=64)
+
+
+class OnlineMemoryGenerateCompleteBody(BaseModel):
+    message_id: str = Field(min_length=8, max_length=64)
+    sources: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
 
 
 def _internal_api_base() -> str:
@@ -104,6 +141,237 @@ def _installation_id(request: Request) -> str:
     if not iid:
         raise HTTPException(status_code=400, detail="请先选择在线设备。")
     return iid
+
+
+def _client_command_payload(content: str) -> dict[str, Any]:
+    raw = str(content or "").strip()
+    if not raw.startswith(_H5_CLIENT_COMMAND_PREFIX):
+        return {}
+    try:
+        payload = json.loads(raw[len(_H5_CLIENT_COMMAND_PREFIX) :].strip())
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+async def _queue_online_memory_parse(
+    *,
+    db: Session,
+    owner_user_id: int,
+    installation_id: str,
+    file: UploadFile,
+    title: str,
+    notes: str,
+    mode: str,
+    target_doc_id: str,
+) -> dict[str, Any]:
+    device, has_online_device = _online_capability_device(
+        db,
+        owner_user_id,
+        _ONLINE_MEMORY_PARSE_CAPABILITY,
+    )
+    if device is None:
+        if has_online_device:
+            raise HTTPException(status_code=409, detail="当前 Online 版本不支持本机资料解析，请升级最新 OTA 后重试")
+        raise HTTPException(status_code=409, detail="资料解析需要先启动并登录 Online")
+    db.commit()
+    filename, suffix, data = await _read_upload(file)
+    content_type = getattr(file, "content_type", "") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    asset_id, object_key, file_size, source_url = await _run_asset_upload_io(
+        _save_bytes_or_tos,
+        data,
+        suffix or ".bin",
+        content_type,
+    )
+    if not source_url:
+        _unlink_safe_asset_file(ASSETS_DIR / object_key)
+        raise HTTPException(status_code=503, detail="资料原文件未成功写入 TOS，无法下发 Online 解析")
+    now = datetime.utcnow()
+    source_asset = Asset(
+        asset_id=asset_id,
+        user_id=owner_user_id,
+        filename=object_key,
+        media_type="document",
+        file_size=file_size,
+        source_url=source_url,
+        meta={
+            "asset_origin": "intermediate",
+            "content_visibility": "intermediate",
+            "online_memory_parse_source": True,
+            "source_upload_filename": filename,
+        },
+    )
+    command = {
+        "action": "parse_uploaded_memory_document",
+        "source_asset_id": asset_id,
+        "source_url": source_url,
+        "source_filename": filename,
+        "file_size": file_size,
+        "title": title,
+        "notes": notes,
+        "mode": (mode or "new").strip().lower(),
+        "target_doc_id": _sanitize_doc_id(target_doc_id),
+    }
+    message = H5ChatMessage(
+        id=uuid.uuid4().hex,
+        user_id=owner_user_id,
+        installation_id=str(device.installation_id),
+        mode="client_command",
+        content=_H5_CLIENT_COMMAND_PREFIX + json.dumps(command, ensure_ascii=False, separators=(",", ":")),
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(source_asset)
+    db.add(message)
+    db.add(
+        H5ChatEvent(
+            message_id=message.id,
+            user_id=owner_user_id,
+            event_type="queued",
+            payload={"mode": "client_command", "action": command["action"], "source_asset_id": asset_id},
+            created_at=now,
+        )
+    )
+    db.commit()
+    from .h5_chat import _clear_pending_empty_for_target
+
+    _clear_pending_empty_for_target(owner_user_id, str(device.installation_id))
+    return {
+        "ok": True,
+        "processing": "online",
+        "message_id": message.id,
+        "installation_id": str(device.installation_id),
+        "source_asset_id": asset_id,
+        "file_results": [{"filename": filename, "status": "queued", "error": ""}],
+        "documents": [],
+    }
+
+
+async def _queue_online_memory_generation(
+    *,
+    db: Session,
+    owner_user_id: int,
+    installation_id: str,
+    files: list[tuple[UploadFile, str]],
+    direct_text: str,
+    doc_types: list[str],
+    reference_doc_ids: str,
+) -> dict[str, Any]:
+    device, has_online_device = _online_capability_device(
+        db,
+        owner_user_id,
+        _ONLINE_MEMORY_GENERATE_CAPABILITY,
+    )
+    if device is None:
+        if has_online_device:
+            raise HTTPException(status_code=409, detail="当前 Online 版本不支持批量资料理解，请升级最新 OTA 后重试")
+        raise HTTPException(status_code=409, detail="资料理解需要先启动并登录 Online")
+    db.commit()
+    sources: list[dict[str, Any]] = []
+    source_assets: list[Asset] = []
+    try:
+        for upload, role in files[:12]:
+            filename, suffix, data = await _read_upload(upload)
+            if suffix not in _SUPPORTED_SUFFIXES:
+                raise HTTPException(status_code=400, detail=f"Online 暂不支持解析 {filename}")
+            content_type = getattr(upload, "content_type", "") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            asset_id, object_key, file_size, source_url = await _run_asset_upload_io(
+                _save_bytes_or_tos,
+                data,
+                suffix,
+                content_type,
+            )
+            if not source_url:
+                _unlink_safe_asset_file(ASSETS_DIR / object_key)
+                raise HTTPException(status_code=503, detail=f"{filename} 未成功写入 TOS，无法下发 Online 解析")
+            sources.append(
+                {
+                    "source_asset_id": asset_id,
+                    "source_url": source_url,
+                    "source_filename": filename,
+                    "file_size": file_size,
+                    "role": role,
+                }
+            )
+            source_assets.append(
+                Asset(
+                    asset_id=asset_id,
+                    user_id=owner_user_id,
+                    filename=object_key,
+                    media_type="document",
+                    file_size=file_size,
+                    source_url=source_url,
+                    meta={
+                        "asset_origin": "intermediate",
+                        "content_visibility": "intermediate",
+                        "online_memory_parse_source": True,
+                        "source_upload_filename": filename,
+                    },
+                )
+            )
+    except BaseException:
+        for asset in source_assets:
+            try:
+                await _run_asset_upload_io(_delete_tos_object, str(asset.filename or ""))
+            except Exception:
+                pass
+        raise
+
+    now = datetime.utcnow()
+    command = {
+        "action": "generate_memory_documents_from_upload",
+        "sources": sources,
+        "direct_text": _limit_local(direct_text),
+        "doc_types": doc_types,
+        "reference_doc_ids": [_sanitize_doc_id(x) for x in reference_doc_ids.split(",") if _sanitize_doc_id(x)][:8],
+    }
+    message = H5ChatMessage(
+        id=uuid.uuid4().hex,
+        user_id=owner_user_id,
+        installation_id=str(device.installation_id),
+        mode="client_command",
+        content=_H5_CLIENT_COMMAND_PREFIX + json.dumps(command, ensure_ascii=False, separators=(",", ":")),
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    try:
+        db.add_all(source_assets)
+        db.add(message)
+        db.add(
+            H5ChatEvent(
+                message_id=message.id,
+                user_id=owner_user_id,
+                event_type="queued",
+                payload={"mode": "client_command", "action": command["action"], "source_count": len(sources)},
+                created_at=now,
+            )
+        )
+        db.commit()
+    except BaseException:
+        db.rollback()
+        for asset in source_assets:
+            try:
+                await _run_asset_upload_io(_delete_tos_object, str(asset.filename or ""))
+            except Exception:
+                pass
+        raise
+    from .h5_chat import _clear_pending_empty_for_target
+
+    _clear_pending_empty_for_target(owner_user_id, str(device.installation_id))
+    return {
+        "ok": True,
+        "processing": "online",
+        "message_id": message.id,
+        "installation_id": str(device.installation_id),
+        "file_results": [
+            {"filename": item["source_filename"], "status": "queued", "error": ""}
+            for item in sources
+        ],
+        "documents": {},
+        "doc_types": doc_types,
+    }
 
 
 def _doc_query(db: Session, user_id: int, installation_id: str):
@@ -279,12 +547,18 @@ def _doc_type_list(raw: str, doc_type: str, has_custom_reference: bool) -> list[
 async def _read_upload(file: UploadFile) -> tuple[str, str, bytes]:
     filename = os.path.basename(file.filename or "upload")
     suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    data = await file.read()
     limit = MAX_VIDEO_BYTES if suffix in VIDEO_SUFFIXES else (MAX_AUDIO_BYTES if suffix in AUDIO_SUFFIXES else _MAX_UPLOAD_BYTES)
+    data = await file.read(limit + 1)
     if len(data) > limit:
         limit_mb = max(1, limit // (1024 * 1024))
         raise HTTPException(status_code=413, detail=f"{filename} 超过 {limit_mb}MB。")
     return filename, suffix, data
+
+
+async def _run_personal_source_io(func, *args, **kwargs):
+    async with _personal_source_gate:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_personal_source_executor, partial(func, *args, **kwargs))
 
 
 def _media_text(filename: str, suffix: str, data: bytes) -> str:
@@ -562,8 +836,7 @@ def _safe_object_segment(value: str) -> str:
 
 def _transcribe_audio_attachment(
     *,
-    db: Session,
-    user: User,
+    token: str,
     installation_id: str,
     filename: str,
     suffix: str,
@@ -581,7 +854,6 @@ def _transcribe_audio_attachment(
                 f"{_safe_object_segment(installation_id)}/{uuid.uuid4().hex}.wav"
             )
             audio_url = _upload_job_file_to_tos(wav, object_key=object_key, content_type="audio/wav")
-            token, _token_source = _load_sutui_token_for_stt(db, user.id)
             created = _stt_create_task(token, audio_url, job_dir=tmp_dir)
             stt_data = _stt_poll_task(token, created["task_id"], job_dir=tmp_dir, timeout_seconds=900)
         except AutoCaptionJobError as exc:
@@ -633,12 +905,18 @@ async def _collect_sources(
             elif _looks_like_video_url(url):
                 try:
                     data = await _download_media_url(url, max_bytes=MAX_VIDEO_BYTES)
-                    frames = _extract_video_frames(data, Path(url).name or "video-url.mp4", max_frames=3)
+                    frames = await _run_personal_source_io(
+                        _extract_video_frames,
+                        data,
+                        Path(url).name or "video-url.mp4",
+                        max_frames=3,
+                    )
                     if frames:
                         parts.append(f"【视频链接】{url}\n已抽取 {len(frames)} 张关键帧用于理解。")
                         for frame_name, frame_data in frames:
                             _append_visual_block(visual_blocks, frame_name, frame_data)
-                            _add_reference_image(
+                            await _run_personal_source_io(
+                                _add_reference_image,
                                 source_images,
                                 installation_id=installation_id,
                                 filename=f"{Path(url).name or 'video-url'}-{frame_name}",
@@ -654,9 +932,11 @@ async def _collect_sources(
                 try:
                     data = await _download_media_url(url, max_bytes=MAX_AUDIO_BYTES)
                     suffix = Path(url.split("?", 1)[0]).suffix.lower()
-                    text, audio_url = _transcribe_audio_attachment(
-                        db=db,
-                        user=stt_user,
+                    token, _token_source = _load_sutui_token_for_stt(db, stt_user.id)
+                    db.commit()
+                    text, audio_url = await _run_personal_source_io(
+                        _transcribe_audio_attachment,
+                        token=token,
                         installation_id=installation_id,
                         filename=Path(url).name or "audio-url",
                         suffix=suffix,
@@ -681,7 +961,8 @@ async def _collect_sources(
             if suffix in IMAGE_SUFFIXES:
                 if not _append_visual_block(visual_blocks, filename, data):
                     raise HTTPException(status_code=400, detail="图片数量超过 8 张或单张超过 12MB。")
-                _add_reference_image(
+                await _run_personal_source_io(
+                    _add_reference_image,
                     source_images,
                     installation_id=installation_id,
                     filename=filename,
@@ -691,12 +972,17 @@ async def _collect_sources(
                 )
                 parts.append(f"【图片】{filename}")
             elif suffix in VIDEO_SUFFIXES:
-                frames = _extract_video_frames(data, filename, max_frames=3) if len(data) <= MAX_VIDEO_BYTES else []
+                frames = (
+                    await _run_personal_source_io(_extract_video_frames, data, filename, max_frames=3)
+                    if len(data) <= MAX_VIDEO_BYTES
+                    else []
+                )
                 if frames:
                     parts.append(f"【视频】{filename}\n已抽取 {len(frames)} 张关键帧用于理解。")
                     for frame_name, frame_data in frames:
                         _append_visual_block(visual_blocks, f"{filename}-{frame_name}", frame_data)
-                        _add_reference_image(
+                        await _run_personal_source_io(
+                            _add_reference_image,
                             source_images,
                             installation_id=installation_id,
                             filename=f"{filename}-{frame_name}",
@@ -707,9 +993,11 @@ async def _collect_sources(
                 else:
                     parts.append(_media_text(filename, suffix, data) + "\n关键帧抽取失败。")
             elif suffix in AUDIO_SUFFIXES:
-                text, audio_url = _transcribe_audio_attachment(
-                    db=db,
-                    user=stt_user,
+                token, _token_source = _load_sutui_token_for_stt(db, stt_user.id)
+                db.commit()
+                text, audio_url = await _run_personal_source_io(
+                    _transcribe_audio_attachment,
+                    token=token,
                     installation_id=installation_id,
                     filename=filename,
                     suffix=suffix,
@@ -722,7 +1010,7 @@ async def _collect_sources(
                 })
                 parts.append(f"【音频：{filename}】\n{text}")
             else:
-                text = _file_to_text(filename, suffix, data)
+                text = await _run_personal_source_io(_file_to_text, filename, suffix, data)
                 parts.append(f"【文件：{filename}】\n{text}")
             results.append({"filename": filename, "status": "processed", "error": ""})
         except Exception as exc:
@@ -798,7 +1086,7 @@ async def _read_reference(custom_reference_file: Optional[UploadFile]) -> str:
     filename, suffix, data = await _read_upload(custom_reference_file)
     if suffix in IMAGE_SUFFIXES or suffix in VIDEO_SUFFIXES:
         raise HTTPException(status_code=400, detail="自定义参考文档请上传可解析的文档文件。")
-    return _limit_local(_decode_text_payload(data, filename))
+    return _limit_local(await asyncio.to_thread(_decode_text_payload, data, filename))
 
 
 def _generation_prompt(source_text: str, doc_types: list[str], reference_text: str) -> str:
@@ -895,6 +1183,7 @@ def _create_document(
     notes: str,
     content_text: str,
     meta: dict[str, Any],
+    doc_id: str = "",
 ) -> OpenClawMemoryDocument:
     now = datetime.utcnow()
     content = _limit_text(content_text or "")
@@ -902,7 +1191,7 @@ def _create_document(
         raise HTTPException(status_code=400, detail="没有可保存的记忆内容。")
     sha = hashlib.sha256(content.encode("utf-8", "ignore")).hexdigest()
     row = OpenClawMemoryDocument(
-        doc_id=_doc_id_for(target_user.id, installation_id, filename, sha, now.isoformat(), scope="h5_personal_settings"),
+        doc_id=doc_id or _doc_id_for(target_user.id, installation_id, filename, sha, now.isoformat(), scope="h5_personal_settings"),
         target_user_id=target_user.id,
         installation_id=installation_id,
         origin="user",
@@ -1086,6 +1375,32 @@ async def save_uploaded_memory_document(
     installation_id = _installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
+    document_uploads = [item for item in files if item and item.filename]
+    supported_document_uploads = [
+        item for item in document_uploads
+        if Path(os.path.basename(item.filename or "")).suffix.lower() in _SUPPORTED_SUFFIXES
+    ]
+    if supported_document_uploads and (
+        len(document_uploads) != 1 or len(supported_document_uploads) != 1 or raw_text.strip() or urls.strip()
+    ):
+        raise HTTPException(status_code=400, detail="文档资料请逐份上传；图片、音视频和链接请分开保存")
+    if len(supported_document_uploads) == 1:
+        source_filename = os.path.basename(document_uploads[0].filename or "upload")
+        source_suffix = Path(source_filename).suffix.lower()
+        if source_suffix in _SUPPORTED_SUFFIXES:
+            return await _queue_online_memory_parse(
+                db=db,
+                owner_user_id=target_user.id,
+                installation_id=installation_id,
+                file=document_uploads[0],
+                title=title or source_filename,
+                notes=notes or "IP人设定位上传资料",
+                mode=mode,
+                target_doc_id=target_doc_id,
+            )
+    # Parsing office documents can take seconds; do not keep a checked-out DB
+    # connection while the CPU-bound parser runs in its worker thread.
+    db.commit()
     file_results: list[dict[str, str]] = []
     audio_sources: list[dict[str, Any]] = []
     source_text, _visual_blocks, source_images = await _collect_sources(
@@ -1132,6 +1447,214 @@ async def save_uploaded_memory_document(
     }
 
 
+@router.post("/api/personal-settings/memory-documents/complete-online-upload")
+async def complete_online_memory_document(
+    body: OnlineMemoryParseCompleteBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    installation_id = _installation_id(request)
+    target_user = _owner_user(db, current_user)
+    message = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.id == body.message_id, H5ChatMessage.user_id == target_user.id)
+        .first()
+    )
+    command = _client_command_payload(message.content if message else "")
+    if (
+        message is None
+        or message.installation_id != installation_id
+        or command.get("action") != "parse_uploaded_memory_document"
+        or str(command.get("source_asset_id") or "") != body.source_asset_id
+    ):
+        raise HTTPException(status_code=404, detail="资料解析任务不存在")
+    source_asset = (
+        db.query(Asset)
+        .filter(Asset.asset_id == body.source_asset_id, Asset.user_id == target_user.id)
+        .first()
+    )
+    if source_asset is not None:
+        source_meta = source_asset.meta if isinstance(source_asset.meta, dict) else {}
+        if not source_meta.get("online_memory_parse_source"):
+            raise HTTPException(status_code=409, detail="资料解析原文件类型不匹配")
+
+    clean_filename = os.path.basename(str(command.get("source_filename") or body.filename or "document.txt"))
+    clean_title = _short_title(str(command.get("title") or body.title), clean_filename)
+    clean_notes = str(command.get("notes") or body.notes or "IP人设定位上传资料")[:1000]
+    mode = str(command.get("mode") or "new").strip().lower()
+    if mode == "overwrite":
+        row = _memory_row(db, target_user.id, installation_id, str(command.get("target_doc_id") or ""))
+        row = _overwrite_document(
+            db,
+            row,
+            content_text=body.content_text,
+            notes=clean_notes,
+            meta={"save_mode": "overwrite", "uploaded": True, "online_parse_job_id": message.id},
+        )
+    else:
+        deterministic_doc_id = "h5mem_" + hashlib.sha256(message.id.encode("utf-8")).hexdigest()[:48]
+        row = db.query(OpenClawMemoryDocument).filter(OpenClawMemoryDocument.doc_id == deterministic_doc_id).first()
+        if row is None:
+            row = _create_document(
+                db,
+                target_user=target_user,
+                uploader_user=current_user,
+                installation_id=installation_id,
+                title=clean_title,
+                filename=f"{clean_title}.txt",
+                notes=clean_notes,
+                content_text=body.content_text,
+                meta={
+                    "save_mode": "new",
+                    "uploaded": True,
+                    "online_parse_job_id": message.id,
+                    "source_filename": clean_filename,
+                    "source_sha256": body.sha256,
+                },
+                doc_id=deterministic_doc_id,
+            )
+
+    return {"ok": True, "document": _doc_summary(row, include_content=True)}
+
+
+@router.post("/api/personal-settings/memory-documents/complete-online-generation-upload")
+async def complete_online_memory_generation(
+    body: OnlineMemoryGenerateCompleteBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    installation_id = _installation_id(request)
+    target_user = _owner_user(db, current_user)
+    message = (
+        db.query(H5ChatMessage)
+        .filter(H5ChatMessage.id == body.message_id, H5ChatMessage.user_id == target_user.id)
+        .first()
+    )
+    command = _client_command_payload(message.content if message else "")
+    if (
+        message is None
+        or message.installation_id != installation_id
+        or command.get("action") != "generate_memory_documents_from_upload"
+    ):
+        raise HTTPException(status_code=404, detail="资料理解任务不存在")
+
+    ready_event = (
+        db.query(H5ChatEvent)
+        .filter(H5ChatEvent.message_id == message.id, H5ChatEvent.event_type == "memory_generation_ready")
+        .order_by(H5ChatEvent.id.desc())
+        .first()
+    )
+    if ready_event and isinstance(ready_event.payload, dict) and ready_event.payload.get("documents"):
+        return {"ok": True, **ready_event.payload}
+
+    command_sources = command.get("sources") if isinstance(command.get("sources"), list) else []
+    source_by_id = {
+        str(item.get("source_asset_id") or ""): item
+        for item in command_sources
+        if isinstance(item, dict) and str(item.get("source_asset_id") or "")
+    }
+    received_ids = {
+        str(item.get("source_asset_id") or "")
+        for item in body.sources
+        if isinstance(item, dict) and str(item.get("source_asset_id") or "")
+    }
+    if not source_by_id or received_ids != set(source_by_id):
+        raise HTTPException(status_code=409, detail="资料理解回写文件与原任务不匹配")
+
+    source_parts: list[str] = []
+    reference_parts: list[str] = []
+    file_results: list[dict[str, str]] = []
+    total_chars = 0
+    for item in body.sources:
+        asset_id = str(item.get("source_asset_id") or "")
+        command_source = source_by_id[asset_id]
+        filename = os.path.basename(str(command_source.get("source_filename") or item.get("filename") or "document.txt"))
+        content = str(item.get("content_text") or "").strip()
+        if not content:
+            raise HTTPException(status_code=400, detail=f"{filename} 没有解析到有效文字")
+        total_chars += len(content)
+        if total_chars > 900_000:
+            raise HTTPException(status_code=413, detail="资料解析文本总量过大，请拆分后生成")
+        source_asset = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == target_user.id).first()
+        if source_asset is not None:
+            source_meta = source_asset.meta if isinstance(source_asset.meta, dict) else {}
+            if not source_meta.get("online_memory_parse_source"):
+                raise HTTPException(status_code=409, detail=f"{filename} 的资料来源类型不匹配")
+        section = f"【文件：{filename}】\n{content}"
+        if str(command_source.get("role") or "source") == "reference":
+            reference_parts.append(section)
+        else:
+            source_parts.append(section)
+        file_results.append({"filename": filename, "status": "processed", "error": ""})
+
+    for doc_id in command.get("reference_doc_ids") or []:
+        try:
+            row, _source = _accessible_memory_row(db, target_user, installation_id, str(doc_id))
+        except HTTPException:
+            continue
+        if str(row.content_text or "").strip():
+            reference_parts.append(f"【参考记忆：{row.title or row.filename}】\n{row.content_text}")
+
+    doc_types = [key for key in command.get("doc_types") or [] if key in DOC_TYPE_LABELS][:4]
+    if not doc_types:
+        raise HTTPException(status_code=400, detail="没有可生成的记忆类型")
+    source_text = _limit_local("\n\n".join([str(command.get("direct_text") or "").strip(), *source_parts]))
+    reference_text = _limit_local("\n\n".join(reference_parts))
+    prompt = _generation_prompt(source_text, doc_types, reference_text)
+    db.commit()
+    answer = await _call_llm(
+        request,
+        installation_id,
+        [
+            {"role": "system", "content": "你是企业资料整理助手，输出严格遵循用户要求的 marker 分段。"},
+            {"role": "user", "content": prompt},
+        ],
+        timeout_seconds=300.0,
+    )
+    documents = _parse_generated(answer, doc_types)
+    if not documents:
+        raise HTTPException(status_code=502, detail="AI 未返回可审核的记忆内容，请重试")
+    payload = {
+        "documents": documents,
+        "doc_types": doc_types,
+        "source_images": [],
+        "file_results": file_results,
+    }
+    db.add(
+        H5ChatEvent(
+            message_id=message.id,
+            user_id=target_user.id,
+            event_type="memory_generation_ready",
+            payload=payload,
+            created_at=datetime.utcnow(),
+        )
+    )
+    db.commit()
+    return {"ok": True, **payload}
+
+
+@router.delete("/api/personal-settings/memory-documents/online-upload-source/{asset_id}")
+async def delete_online_memory_upload_source(
+    asset_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    target_user = _owner_user(db, current_user)
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == target_user.id).first()
+    if row is None:
+        return {"ok": True, "already_deleted": True}
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    if not meta.get("online_memory_parse_source"):
+        raise HTTPException(status_code=409, detail="该素材不是 Online 资料解析中间文件")
+    object_key = str(row.filename or "")
+    db.delete(row)
+    db.commit()
+    deleted = await _run_asset_upload_io(_delete_tos_object, object_key) if object_key.startswith("assets/") else False
+    return {"ok": True, "deleted_from_tos": bool(deleted)}
+
+
 @router.post("/api/personal-settings/memory-documents/generate")
 async def generate_memory_documents(
     request: Request,
@@ -1152,12 +1675,34 @@ async def generate_memory_documents(
     installation_id = _installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
-    reference_text = await _read_reference(custom_reference_file)
-    selected_doc_types = _doc_type_list(doc_types, doc_type, bool(reference_text))
-
+    source_uploads = [item for item in files if item and item.filename]
+    reference_upload = custom_reference_file if custom_reference_file and custom_reference_file.filename else None
+    upload_roles = [(item, "source") for item in source_uploads]
+    if reference_upload:
+        upload_roles.append((reference_upload, "reference"))
+    supported_uploads = [
+        item for item, _role in upload_roles
+        if Path(os.path.basename(item.filename or "")).suffix.lower() in _SUPPORTED_SUFFIXES
+    ]
+    if supported_uploads and len(supported_uploads) != len(upload_roles):
+        raise HTTPException(status_code=400, detail="文档和图片、音视频请分开理解，避免不同处理链路互相阻塞")
+    selected_doc_types = _doc_type_list(doc_types, doc_type, bool(reference_upload))
     recorder_text = _recorder_records_source_text(db, current_user.id, recorder_record_ids)
     raw_parts = [direct_intro.strip(), direct_faq.strip(), direct_scripts.strip(), recorder_text]
     raw_text = "\n\n".join(part for part in raw_parts if part)
+    if supported_uploads:
+        return await _queue_online_memory_generation(
+            db=db,
+            owner_user_id=target_user.id,
+            installation_id=installation_id,
+            files=upload_roles,
+            direct_text=raw_text,
+            doc_types=selected_doc_types,
+            reference_doc_ids=reference_doc_ids,
+        )
+
+    reference_text = await _read_reference(custom_reference_file)
+    db.commit()
     file_results: list[dict[str, str]] = []
     source_text, visual_blocks, source_images = await _collect_sources(
         request,

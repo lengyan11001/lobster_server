@@ -17,7 +17,8 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote
 
 import httpx
@@ -29,7 +30,14 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, ShanjianDigitalHumanProfile, User, UserHiflyAvatarAsset, UserHiflyVideoAsset, UserHiflyVoiceAsset
-from .assets import _save_bytes_or_tos, _resolve_asset_public_base, build_asset_file_url
+from .assets import (
+    _resolve_asset_public_base,
+    _run_asset_upload_io,
+    _save_bytes_or_tos,
+    _save_upload_file_or_tos,
+    _validate_upload_size,
+    build_asset_file_url,
+)
 from .auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -40,6 +48,7 @@ _IMAGE_MAX_BYTES = 10 * 1024 * 1024
 _VIDEO_MAX_BYTES = 500 * 1024 * 1024
 _AUDIO_MAX_BYTES = 20 * 1024 * 1024
 _AUDIO_DRIVE_MAX_BYTES = 100 * 1024 * 1024
+_HIFLY_IN_MEMORY_UPLOAD_BYTES = 32 * 1024 * 1024
 _MAX_AVATAR_PAGE_SIZE = 100
 _MAX_VOICE_PAGE_SIZE = 300
 
@@ -856,7 +865,7 @@ async def _preview_tts_audio(
             "extra_info": result.get("extra_info"),
         })
 
-    audio_bytes = _concat_tts_audio_segments(audio_segments)
+    audio_bytes = await asyncio.to_thread(_concat_tts_audio_segments, audio_segments)
     return {
         "audio_bytes": audio_bytes,
         "duration_seconds": max(1, duration_seconds),
@@ -1150,6 +1159,37 @@ async def _put_bytes_to_url(upload_url: str, data: bytes, content_type: str) -> 
         )
 
 
+async def _put_upload_to_url(
+    upload_url: str,
+    upload: UploadFile,
+    content_type: str,
+    size: int,
+) -> None:
+    await upload.seek(0)
+
+    async def chunks():
+        while True:
+            chunk = await upload.read(1024 * 1024)
+            if not chunk:
+                break
+            yield chunk
+
+    headers = {
+        "Content-Type": content_type or "application/octet-stream",
+        "Content-Length": str(size),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=300.0, trust_env=False) as client:
+            response = await client.put(upload_url, headers=headers, content=chunks())
+    finally:
+        await upload.seek(0)
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"HiFly upload failed HTTP {response.status_code}: {(response.text or '')[:240]}",
+        )
+
+
 def _normalized_extension(upload: UploadFile, allowed_exts: Dict[str, str], fallback: str) -> str:
     filename_ext = Path(upload.filename or "").suffix.lower().lstrip(".")
     if filename_ext in allowed_exts:
@@ -1170,15 +1210,15 @@ async def _upload_file_to_hifly(
     max_bytes: int,
     fallback_ext: str,
 ) -> Dict[str, Any]:
-    raw = await upload.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="上传文件为空")
-    if len(raw) > max_bytes:
-        raise HTTPException(status_code=400, detail=f"上传文件不能超过 {max_bytes // (1024 * 1024)}MB")
-
     ext = _normalized_extension(upload, allowed_exts, fallback_ext)
     if ext not in allowed_exts:
         raise HTTPException(status_code=400, detail=f"仅支持 {', '.join(sorted(allowed_exts))} 格式")
+    try:
+        size = await asyncio.to_thread(_validate_upload_size, upload.file, max_bytes)
+    except HTTPException as exc:
+        if exc.status_code == 413:
+            raise HTTPException(status_code=400, detail=f"上传文件不能超过 {max_bytes // (1024 * 1024)}MB") from exc
+        raise HTTPException(status_code=400, detail="上传文件为空") from exc
 
     upload_meta = await _post("/api/v2/hifly/tool/create_upload_url", token, {"file_extension": ext})
     upload_url = str(upload_meta.get("upload_url") or "").strip()
@@ -1192,14 +1232,21 @@ async def _upload_file_to_hifly(
         or upload.content_type
         or "application/octet-stream"
     )
-    await _put_bytes_to_url(upload_url, raw, content_type)
+    raw = b""
+    if size <= _HIFLY_IN_MEMORY_UPLOAD_BYTES:
+        raw = await upload.read(size + 1)
+        await upload.seek(0)
+        await _put_bytes_to_url(upload_url, raw, content_type)
+    else:
+        await _put_upload_to_url(upload_url, upload, content_type, size)
     return {
         "file_id": file_id,
         "content_type": content_type,
         "filename": upload.filename or f"upload.{ext}",
-        "size": len(raw),
+        "size": size,
         "extension": ext,
         "raw_bytes": raw,
+        "upload_file_obj": upload.file,
     }
 
 
@@ -1215,13 +1262,23 @@ def _upload_meta_for_store(uploaded: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _persist_input_asset(db: Session, user_id: int, uploaded: Dict[str, Any], media_type: str) -> Optional[Asset]:
-    raw = uploaded.get("raw_bytes")
-    if not raw:
+async def _store_input_asset(uploaded: Dict[str, Any]) -> Optional[Tuple[str, str, int, Optional[str]]]:
+    raw = uploaded.get("raw_bytes") or b""
+    file_obj = uploaded.get("upload_file_obj")
+    if not raw and file_obj is None:
         return None
     ext = "." + str(uploaded.get("extension") or "bin").lstrip(".")
     content_type = str(uploaded.get("content_type") or "").strip()
-    asset_id, filename_or_key, file_size, source_url = _save_bytes_or_tos(raw, ext, content_type)
+    if raw:
+        return await _run_asset_upload_io(_save_bytes_or_tos, raw, ext, content_type)
+    return await _run_asset_upload_io(_save_upload_file_or_tos, file_obj, ext, content_type)
+
+
+def _persist_input_asset(db: Session, user_id: int, uploaded: Dict[str, Any], media_type: str) -> Optional[Asset]:
+    stored = uploaded.get("_asset_storage")
+    if not stored:
+        return None
+    asset_id, filename_or_key, file_size, source_url = stored
     asset = Asset(
         asset_id=asset_id,
         user_id=user_id,
@@ -2081,6 +2138,8 @@ async def create_my_avatar_by_image_upload(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    user_id = int(current_user.id)
+    _release_db_before_hifly_upstream(db, phase="create_avatar_image_upload")
     uploaded = await _upload_file_to_hifly(
         token,
         file,
@@ -2099,9 +2158,10 @@ async def create_my_avatar_by_image_upload(
     if not task_id:
         raise HTTPException(status_code=502, detail="HiFly 未返回 task_id")
 
-    source_asset = _persist_input_asset(db, current_user.id, uploaded, "image")
+    uploaded["_asset_storage"] = await _store_input_asset(uploaded)
+    source_asset = _persist_input_asset(db, user_id, uploaded, "image")
     row = UserHiflyAvatarAsset(
-        user_id=current_user.id,
+        user_id=user_id,
         title=payload["title"],
         source_type="image",
         status="processing",
@@ -2131,6 +2191,8 @@ async def create_my_avatar_by_video_upload(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    user_id = int(current_user.id)
+    _release_db_before_hifly_upstream(db, phase="create_avatar_video_upload")
     uploaded = await _upload_file_to_hifly(
         token,
         file,
@@ -2148,9 +2210,10 @@ async def create_my_avatar_by_video_upload(
     if not task_id:
         raise HTTPException(status_code=502, detail="HiFly 未返回 task_id")
 
-    source_asset = _persist_input_asset(db, current_user.id, uploaded, "video")
+    uploaded["_asset_storage"] = await _store_input_asset(uploaded)
+    source_asset = _persist_input_asset(db, user_id, uploaded, "video")
     row = UserHiflyAvatarAsset(
-        user_id=current_user.id,
+        user_id=user_id,
         title=payload["title"],
         source_type="video",
         status="processing",
@@ -2180,6 +2243,8 @@ async def create_my_voice_upload(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    user_id = int(current_user.id)
+    _release_db_before_hifly_upstream(db, phase="create_voice_upload")
     uploaded = await _upload_file_to_hifly(
         token,
         file,
@@ -2187,10 +2252,12 @@ async def create_my_voice_upload(
         max_bytes=_AUDIO_MAX_BYTES,
         fallback_ext="mp3",
     )
-    source_asset = _persist_input_asset(db, current_user.id, uploaded, "audio")
+    uploaded["_asset_storage"] = await _store_input_asset(uploaded)
+    source_asset = _persist_input_asset(db, user_id, uploaded, "audio")
     if source_asset:
         uploaded["source_asset_id"] = source_asset.asset_id
         uploaded["source_url"] = source_asset.source_url or ""
+    _release_db_before_hifly_upstream(db, phase="create_voice_clone")
     title_value = _safe_title(title, "未命名声音")
     language_value = (languages or "zh").strip() or "zh"
     provider = _voice_tts_provider()
@@ -2220,7 +2287,7 @@ async def create_my_voice_upload(
                 )
                 demo_asset = await _persist_voice_demo_asset(
                     db,
-                    current_user.id,
+                    user_id,
                     raw=preview.get("audio_bytes") or b"",
                     title=f"{title_value} 克隆试听",
                     voice_id=voice_id,
@@ -2252,7 +2319,7 @@ async def create_my_voice_upload(
                 try:
                     demo_asset = await _persist_voice_demo_asset(
                         db,
-                        current_user.id,
+                        user_id,
                         source_url=demo_url,
                         title=f"{title_value} 克隆试听",
                         voice_id=voice_id,
@@ -2276,7 +2343,7 @@ async def create_my_voice_upload(
         detail = str(exc.detail or "声音克隆失败")
         _persist_failed_voice_clone(
             db,
-            user_id=current_user.id,
+            user_id=user_id,
             title=title_value,
             provider=provider,
             uploaded=uploaded,
@@ -2290,7 +2357,7 @@ async def create_my_voice_upload(
         detail = f"声音克隆失败：{exc}"
         _persist_failed_voice_clone(
             db,
-            user_id=current_user.id,
+            user_id=user_id,
             title=title_value,
             provider=provider,
             uploaded=uploaded,
@@ -2302,7 +2369,7 @@ async def create_my_voice_upload(
         raise HTTPException(status_code=502, detail=detail) from exc
 
     row = UserHiflyVoiceAsset(
-        user_id=current_user.id,
+        user_id=user_id,
         title=title_value,
         status="success",
         hifly_task_id=task_id,
@@ -2345,6 +2412,8 @@ async def poll_my_avatar_task(
     if not row:
         raise HTTPException(status_code=404, detail="未找到该数字人任务")
 
+    db.expire_on_commit = False
+    _release_db_before_hifly_upstream(db, phase="poll_avatar_task", task_id=str(row.hifly_task_id or ""))
     payload = await _get("/api/v2/hifly/avatar/task", body.token, {"task_id": row.hifly_task_id})
     status_num = int(_pick_field(payload, "status") or 0)
     row.status = _local_status(status_num)
@@ -2387,6 +2456,7 @@ async def preview_my_voice_audio(
     if not target_url:
         raise HTTPException(status_code=404, detail="当前声音暂无可用试听音频")
 
+    db.commit()
     try:
         async with httpx.AsyncClient(timeout=60.0, trust_env=False, follow_redirects=True) as client:
             resp = await client.get(target_url, headers={"User-Agent": "Mozilla/5.0"})
@@ -2435,6 +2505,8 @@ async def poll_my_voice_task(
             "raw": row.meta or {},
         }
 
+    db.expire_on_commit = False
+    _release_db_before_hifly_upstream(db, phase="poll_voice_task", task_id=str(row.hifly_task_id or ""))
     payload = await _get("/api/v2/hifly/voice/task", body.token, {"task_id": row.hifly_task_id})
     status_num = int(_pick_field(payload, "status") or 0)
     row.status = _local_status(status_num)
@@ -2492,6 +2564,8 @@ async def edit_my_voice_params(
         meta["voice_params"]["emotion"] = ""
         meta["voice_params"]["instructions"] = instructions
     meta["voice_edit_at"] = datetime.utcnow().isoformat() + "Z"
+    db.expire_on_commit = False
+    _release_db_before_hifly_upstream(db, phase="edit_voice_params", task_id=str(row.hifly_task_id or ""))
     result: Dict[str, Any] = {}
     synced = False
     sync_error = ""
@@ -2687,16 +2761,6 @@ def list_my_avatars(
         .limit(size)
         .all()
     )
-    changed = False
-    for row in rows:
-        if row.status in {"waiting", "processing"} and str(row.hifly_task_id or "").strip():
-            if _refresh_avatar_asset_from_hifly(row):
-                db.add(row)
-                changed = True
-    if changed:
-        db.commit()
-        for row in rows:
-            db.refresh(row)
     return {
         "ok": True,
         "items": [_normalize_avatar_asset(row, request) for row in rows],
@@ -3140,27 +3204,47 @@ async def _persist_video_result(
         return
     if row.asset_video_url:
         return  # 已经转存过
+    row_values = {
+        "user_id": int(row.user_id),
+        "hifly_task_id": row.hifly_task_id,
+        "title": row.title,
+        "st_show": int(row.st_show or 0),
+        "duration": int(row.duration or 0),
+        "meta": dict(row.meta or {}),
+    }
+    db.commit()
     try:
         data, content_type = await _download_bytes(source_url)
-        data, content_type, subtitle_burned = _burn_subtitles_if_needed(row, data, content_type)
+        burn_row = SimpleNamespace(**row_values)
+        data, content_type, subtitle_burned = await asyncio.to_thread(
+            _burn_subtitles_if_needed,
+            burn_row,
+            data,
+            content_type,
+        )
         ext = ".mp4"
         if "webm" in content_type:
             ext = ".webm"
         elif "quicktime" in content_type or "mov" in content_type:
             ext = ".mov"
-        asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, content_type)
+        asset_id, filename_or_key, file_size, public_url = await asyncio.to_thread(
+            _save_bytes_or_tos,
+            data,
+            ext,
+            content_type,
+        )
         asset = Asset(
             asset_id=asset_id,
-            user_id=row.user_id,
+            user_id=row_values["user_id"],
             filename=filename_or_key,
             media_type="video",
             file_size=file_size,
             source_url=public_url,
             tags="hifly,video_tts",
             meta={
-                "hifly_task_id": row.hifly_task_id,
-                "title": row.title,
-                "st_show": int(row.st_show or 0),
+                "hifly_task_id": row_values["hifly_task_id"],
+                "title": row_values["title"],
+                "st_show": row_values["st_show"],
                 "subtitle_burned": bool(subtitle_burned),
             },
         )
@@ -3296,6 +3380,7 @@ async def create_my_video_by_tts(
             )
             tts_provider = _MINIMAX_PROVIDER
         generated_upload = await _upload_generated_audio_to_hifly(body.token, tts_result["audio_bytes"])
+        generated_upload["_asset_storage"] = await _store_input_asset(generated_upload)
         source_asset = _persist_input_asset(db, current_user.id, generated_upload, "audio")
         if source_asset:
             generated_upload["source_asset_id"] = source_asset.asset_id
@@ -3441,6 +3526,8 @@ async def create_my_video_by_audio_upload(
     if not avatar_value:
         raise HTTPException(status_code=400, detail="请先选择数字人")
 
+    user_id = int(current_user.id)
+    _release_db_before_hifly_upstream(db, phase="create_video_audio_upload")
     uploaded = await _upload_file_to_hifly(
         token,
         file,
@@ -3468,13 +3555,14 @@ async def create_my_video_by_audio_upload(
         raise
     request_id = str(_pick_nested(created, "request_id") or "").strip()
 
-    source_asset = _persist_input_asset(db, current_user.id, uploaded, "audio")
+    uploaded["_asset_storage"] = await _store_input_asset(uploaded)
+    source_asset = _persist_input_asset(db, user_id, uploaded, "audio")
     if source_asset:
         uploaded["source_asset_id"] = source_asset.asset_id
         uploaded["source_url"] = source_asset.source_url
 
     row = UserHiflyVideoAsset(
-        user_id=current_user.id,
+        user_id=user_id,
         title=title_value,
         status="processing",
         hifly_task_id=task_id,
@@ -3522,6 +3610,7 @@ async def poll_my_video_task(
     if not row:
         raise HTTPException(status_code=404, detail="未找到该口播视频任务")
 
+    db.expire_on_commit = False
     local_task_id = row.hifly_task_id
     _release_db_before_hifly_upstream(db, phase="poll_video_task", task_id=local_task_id)
     payload = await _get("/api/v2/hifly/video/task", body.token, {"task_id": row.hifly_task_id})
@@ -3698,23 +3787,6 @@ def list_my_voices(
         .limit(size)
         .all()
     )
-    changed = False
-    for row in rows:
-        missing_preview = not str(row.demo_url or "").strip()
-        missing_voice_id = not str(row.hifly_voice_id or "").strip()
-        provider = _voice_provider(row)
-        should_refresh_hifly = provider == "hifly" and (
-            row.status in {"waiting", "processing"}
-            or (row.status == "success" and (missing_preview or missing_voice_id))
-        )
-        if should_refresh_hifly:
-            if _refresh_voice_asset_from_hifly(row):
-                db.add(row)
-                changed = True
-    if changed:
-        db.commit()
-        for row in rows:
-            db.refresh(row)
     return {
         "ok": True,
         "items": [_normalize_voice_asset(row, request) for row in rows],
@@ -3746,22 +3818,6 @@ def list_h5_digital_library(
             .limit(size)
             .all()
         )
-        changed = False
-        for row in rows:
-            missing_preview = not str(row.demo_url or "").strip()
-            missing_voice_id = not str(row.hifly_voice_id or "").strip()
-            provider = _voice_provider(row)
-            should_refresh_hifly = provider == "hifly" and (
-                row.status in {"waiting", "processing"}
-                or (row.status == "success" and (missing_preview or missing_voice_id))
-            )
-            if should_refresh_hifly and _refresh_voice_asset_from_hifly(row):
-                db.add(row)
-                changed = True
-        if changed:
-            db.commit()
-            for row in rows:
-                db.refresh(row)
         return {
             "ok": True,
             "kind": "voice",
@@ -3801,18 +3857,6 @@ def list_h5_digital_library(
     merged.sort(key=lambda item: (item[0], str(getattr(item[2], "id", ""))), reverse=True)
     total = int(hifly_total) + int(shanjian_total)
     selected = merged[page_offset : page_offset + size]
-
-    changed = False
-    for _, source, row in selected:
-        if source == "hifly" and row.status in {"waiting", "processing"} and str(row.hifly_task_id or "").strip():
-            if _refresh_avatar_asset_from_hifly(row):
-                db.add(row)
-                changed = True
-    if changed:
-        db.commit()
-        for _, source, row in selected:
-            if source == "hifly":
-                db.refresh(row)
 
     items = [
         _normalize_avatar_asset(row, request) if source == "hifly" else _normalize_shanjian_profile_as_avatar(row, request)

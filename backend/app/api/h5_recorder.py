@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
 from ..models import OpenClawMemoryDocument, RecorderAudioRecord, User
+from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot
 from .auth import get_current_user
 from .cutcli_templates import (
     _extract_audio_wav,
@@ -267,20 +268,26 @@ def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
         if not row:
             raise RuntimeError("录音记录不存在")
         row.process_stage = "transcribing"
-        db.commit()
         source = Path(row.audio_path)
+        user_id = int(row.user_id)
+        stored_record_id = int(row.id)
+        db.commit()
         job_dir = source.parent / "stt"
         job_dir.mkdir(parents=True, exist_ok=True)
         wav = job_dir / "audio.wav"
         _extract_audio_wav(ffmpeg=_find_ffmpeg_bin(), source=str(source), out_path=wav)
         audio_url = _upload_job_file_to_tos(
             wav,
-            object_key=_recorder_tos_object_key(row.user_id, row.id),
+            object_key=_recorder_tos_object_key(user_id, stored_record_id),
             content_type="audio/wav",
         )
-        token, _ = _load_sutui_token_for_stt(db, row.user_id)
+        token, _ = _load_sutui_token_for_stt(db, user_id)
+        db.commit()
         created = _stt_create_task(token, audio_url, job_dir=job_dir, enable_speaker_info=True)
-        row.stt_task_id = created["task_id"]
+        db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == stored_record_id).update(
+            {"stt_task_id": created["task_id"]},
+            synchronize_session=False,
+        )
         db.commit()
         polled = _stt_poll_task(token, created["task_id"], job_dir=job_dir, timeout_seconds=1800)
         output = _extract_stt_output(polled)
@@ -297,44 +304,45 @@ def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
 
 async def _process(record_id: int, request: Request, installation_id: str) -> None:
     try:
-        text, segments, task_id = await asyncio.to_thread(_run_stt, record_id)
-        db = SessionLocal()
-        try:
-            row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).first()
-            if row:
-                row.process_stage = "summarizing"
-                db.commit()
-        finally:
-            db.close()
-        dialogue = "\n".join(f"{x['speaker']}：{x['text']}" for x in segments) or text
-        answer = await _call_llm(request, installation_id, [
-            {
-                "role": "system",
-                "content": (
-                    "你是会议录音整理助手。只依据转写内容输出严格 JSON："
-                    "summary 为一段明确结论，key_points 为去重后的关键事实、决定或待办数组。"
-                    "不要重复改写同一句话，不要编造人物身份、背景、决定或待办。"
-                    "如果录音只是测试、操作说明或内容很短，要在 summary 中直接说明录音实际包含什么，"
-                    "以及未包含业务结论或待办；key_points 只保留确实存在的信息。"
-                ),
-            },
-            {"role": "user", "content": f"请总结以下录音转写：\n\n{dialogue[:120000]}"},
-        ], timeout_seconds=300)
-        parsed = _json_object(answer)
-        db = SessionLocal()
-        try:
-            row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).first()
-            if row:
-                row.transcript_text = text
-                row.transcript_segments = segments
-                row.summary_text = str(parsed.get("summary") or "").strip()
-                row.key_points = parsed.get("key_points") if isinstance(parsed.get("key_points"), list) else []
-                row.stt_task_id = task_id
-                row.status = "completed"
-                row.process_stage = "completed"
-                db.commit()
-        finally:
-            db.close()
+        async with background_heavy_slot("recorder_transcription"):
+            text, segments, task_id = await asyncio.to_thread(_run_stt, record_id)
+            db = SessionLocal()
+            try:
+                row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).first()
+                if row:
+                    row.process_stage = "summarizing"
+                    db.commit()
+            finally:
+                db.close()
+            dialogue = "\n".join(f"{x['speaker']}：{x['text']}" for x in segments) or text
+            answer = await _call_llm(request, installation_id, [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是会议录音整理助手。只依据转写内容输出严格 JSON："
+                        "summary 为一段明确结论，key_points 为去重后的关键事实、决定或待办数组。"
+                        "不要重复改写同一句话，不要编造人物身份、背景、决定或待办。"
+                        "如果录音只是测试、操作说明或内容很短，要在 summary 中直接说明录音实际包含什么，"
+                        "以及未包含业务结论或待办；key_points 只保留确实存在的信息。"
+                    ),
+                },
+                {"role": "user", "content": f"请总结以下录音转写：\n\n{dialogue[:120000]}"},
+            ], timeout_seconds=300)
+            parsed = _json_object(answer)
+            db = SessionLocal()
+            try:
+                row = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).first()
+                if row:
+                    row.transcript_text = text
+                    row.transcript_segments = segments
+                    row.summary_text = str(parsed.get("summary") or "").strip()
+                    row.key_points = parsed.get("key_points") if isinstance(parsed.get("key_points"), list) else []
+                    row.stt_task_id = task_id
+                    row.status = "completed"
+                    row.process_stage = "completed"
+                    db.commit()
+            finally:
+                db.close()
     except Exception as exc:
         db = SessionLocal()
         try:
@@ -342,7 +350,11 @@ async def _process(record_id: int, request: Request, installation_id: str) -> No
             if row:
                 row.status = "failed"
                 row.process_stage = "failed"
-                row.error_message = str(exc)[:2000]
+                row.error_message = (
+                    "当前转写任务较多，排队已满，请稍后点击重新处理"
+                    if isinstance(exc, WorkloadQueueFull)
+                    else str(exc)[:2000]
+                )
                 db.commit()
         finally:
             db.close()
@@ -373,27 +385,34 @@ async def upload_recording(
         ).first()
         if existing:
             return {"ok": True, "duplicate": True, "record": _serialize(existing, detail=True)}
-    target_dir = DATA_ROOT / str(current_user.id) / uuid.uuid4().hex
-    target_dir.mkdir(parents=True, exist_ok=True)
+    user_id = int(current_user.id)
+    db.commit()
+    target_dir = DATA_ROOT / str(user_id) / uuid.uuid4().hex
+    await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
     target = target_dir / name
     size = 0
-    with target.open("wb") as out:
+    out = await asyncio.to_thread(target.open, "wb")
+    try:
         while True:
             chunk = await file.read(1024 * 1024)
             if not chunk:
                 break
             size += len(chunk)
             if size > MAX_AUDIO_BYTES:
-                out.close()
-                shutil.rmtree(target_dir, ignore_errors=True)
                 raise HTTPException(status_code=413, detail="录音文件不能超过 200MB")
-            out.write(chunk)
+            await asyncio.to_thread(out.write, chunk)
+    except BaseException:
+        await asyncio.to_thread(out.close)
+        await asyncio.to_thread(shutil.rmtree, target_dir, ignore_errors=True)
+        raise
+    else:
+        await asyncio.to_thread(out.close)
     if size <= 0:
-        shutil.rmtree(target_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, target_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="音频文件为空")
     row = _new_audio_record(
         db,
-        user_id=current_user.id,
+        user_id=user_id,
         name=name,
         source=target,
         size=size,
@@ -497,19 +516,22 @@ async def transcribe_memory_audio_file(
     source_url = str(source.get("source_url") or "").strip()
     if not source_url.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=410, detail="原始音频已不可用，请重新上传")
+    filename = Path(str(source.get("filename") or row.filename or "memory-audio.wav")).name[:255]
+    source_name = row.title or "记忆文件"
+    # The source download can be slow; do not retain the lookup transaction.
+    db.commit()
     try:
         audio_data = await _download_media_url(source_url, max_bytes=MAX_AUDIO_BYTES)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"原始音频下载失败：{str(exc)[:300]}") from exc
     if not audio_data:
         raise HTTPException(status_code=410, detail="原始音频为空，请重新上传")
-    filename = Path(str(source.get("filename") or row.filename or "memory-audio.wav")).name[:255]
     if Path(filename).suffix.lower() not in UPLOAD_AUDIO_SUFFIXES:
         filename = f"{Path(filename).stem or 'memory-audio'}.wav"
     target_dir = DATA_ROOT / str(current_user.id) / uuid.uuid4().hex
-    target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / filename
-    target.write_bytes(audio_data)
+    await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
+    await asyncio.to_thread(target.write_bytes, audio_data)
     record = _new_audio_record(
         db,
         user_id=current_user.id,
@@ -517,7 +539,7 @@ async def transcribe_memory_audio_file(
         source=target,
         size=len(audio_data),
         source_type="memory",
-        source_name=row.title or "记忆文件",
+        source_name=source_name,
         source_doc_id=source_key,
     )
     background.add_task(_process, record.id, request, installation_id)

@@ -4,6 +4,7 @@ import asyncio
 import io
 import re
 import sys
+import threading
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -138,15 +139,17 @@ def test_multi_file_collection_keeps_successful_files() -> None:
     ]
 
 
-def test_audio_collection_retains_reusable_audio_source(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_document_collection_parses_outside_event_loop_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
-    upload = UploadFile(file=io.BytesIO(b"audio"), filename="访谈.mp3")
-    retained: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        h5_personal_settings,
-        "_transcribe_audio_attachment",
-        lambda **_kwargs: ("客户希望下周交付", "https://example.test/retained.wav"),
-    )
+    upload = UploadFile(file=io.BytesIO(b"presentation"), filename="intro.pptx")
+    event_loop_thread_id = threading.get_ident()
+    parser_thread_ids: list[int] = []
+
+    def fake_file_to_text(_filename: str, _suffix: str, _data: bytes) -> str:
+        parser_thread_ids.append(threading.get_ident())
+        return "PPT 正文"
+
+    monkeypatch.setattr(h5_personal_settings, "_file_to_text", fake_file_to_text)
 
     source_text, _visual_blocks, _source_images = asyncio.run(
         _collect_sources(
@@ -157,6 +160,39 @@ def test_audio_collection_retains_reusable_audio_source(monkeypatch: pytest.Monk
             "",
             db=None,  # type: ignore[arg-type]
             stt_user=None,  # type: ignore[arg-type]
+        )
+    )
+
+    assert "PPT 正文" in source_text
+    assert parser_thread_ids
+    assert parser_thread_ids[0] != event_loop_thread_id
+
+
+def test_audio_collection_retains_reusable_audio_source(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+    test_user,
+) -> None:
+    request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
+    upload = UploadFile(file=io.BytesIO(b"audio"), filename="访谈.mp3")
+    retained: list[dict[str, object]] = []
+    monkeypatch.setattr(h5_personal_settings, "_load_sutui_token_for_stt", lambda *_args: ("token", "test"))
+
+    def fake_transcribe(**_kwargs):
+        assert not db_session.in_transaction()
+        return "客户希望下周交付", "https://example.test/retained.wav"
+
+    monkeypatch.setattr(h5_personal_settings, "_transcribe_audio_attachment", fake_transcribe)
+
+    source_text, _visual_blocks, _source_images = asyncio.run(
+        _collect_sources(
+            request,
+            "test-installation",
+            [upload],
+            "",
+            "",
+            db=db_session,
+            stt_user=test_user,
             audio_sources=retained,
         )
     )
@@ -173,6 +209,7 @@ def test_runtime_and_h5_formats_match_actual_support() -> None:
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     preflight = (ROOT / "scripts" / "deploy_preflight.py").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+    javascript = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
 
     assert "pypdf" in requirements
     assert "xlrd" in requirements
@@ -186,3 +223,8 @@ def test_runtime_and_h5_formats_match_actual_support() -> None:
         assert ".docx" in accepted
         assert ".doc" not in accepted
         assert ".ppt" not in accepted
+    assert "PERSONAL_DOCUMENT_MAX_BYTES = 30 * 1024 * 1024" in javascript
+    assert "personalUploadSizeError" in javascript
+    assert "PDF、PPT、Word、Excel 等资料单个不超过 30MB，由 Online 本机解析" in html
+    assert "memory_document_parse_v1" in javascript
+    assert "monitorOnlineMemoryParse" in javascript

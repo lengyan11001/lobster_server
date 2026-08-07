@@ -384,7 +384,7 @@ def _restart_openclaw_gateway() -> bool:
 
 @router.post("/api/openclaw/restart", summary="重启 OpenClaw Gateway")
 async def restart_openclaw(current_user: User = Depends(get_current_user)):
-    ok = _restart_openclaw_gateway()
+    ok = await asyncio.to_thread(_restart_openclaw_gateway)
     if ok:
         return {"ok": True, "message": "OpenClaw Gateway 已重启"}
     return {"ok": False, "message": "重启失败，请手动执行 stop.bat + start.bat"}

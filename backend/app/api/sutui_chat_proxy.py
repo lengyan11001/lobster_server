@@ -1549,6 +1549,7 @@ async def sutui_chat_completions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    db.expire_on_commit = False
     try:
         body: Dict[str, Any] = await request.json()
     except Exception:

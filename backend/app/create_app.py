@@ -82,6 +82,7 @@ except Exception as e:
 from .core.config import settings
 from .db import Base, engine, SessionLocal, reset_db_request_context, set_db_request_context
 from . import models  # noqa: F401
+from .services.workload_guard import install_workload_guard
 
 logger = logging.getLogger(__name__)
 _STARTUP_DB_LOCK_KEY = 510051001
@@ -1101,6 +1102,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    install_workload_guard(app)
 
     @app.middleware("http")
     async def db_pool_request_context(request: Request, call_next):

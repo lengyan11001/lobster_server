@@ -33,6 +33,7 @@ from ..services.credits_amount import quantize_credits, quantize_credits_signed
 from ..services.device_presence import is_device_online
 from ..services.user_feature_flags import FEATURE_FLAG_PACKAGES
 from ..services.juhe_wechat import extract_friend_add_target, guid_request, mask_secret, safe_request_snapshot
+from ..services.workload_guard import WorkloadQueueFull, work_gate_from_env
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -40,6 +41,12 @@ logger = logging.getLogger(__name__)
 ADMIN_TOKEN_PREFIX = "lobster-admin-"
 AGENT_TOKEN_PREFIX = "lobster-agent-"
 _JWT_ALGORITHM = "HS256"
+_JUHE_FRIEND_BATCH_GATE = work_gate_from_env(
+    "SERVER_JUHE_FRIEND_BATCH",
+    concurrency=4,
+    queue_limit=20,
+    wait_timeout_seconds=86400,
+)
 
 
 @dataclass
@@ -2403,6 +2410,8 @@ async def admin_juhe_check_status(
     if ctx.role != "admin" and (getattr(row, "owner_role", None) != "agent" or getattr(row, "owner_user_id", None) != ctx.user_id):
         raise HTTPException(status_code=403, detail="无权检测该实例")
     payload = {"guid": row.guid}
+    db.expire_on_commit = False
+    db.commit()
     try:
         data, http_status, latency_ms = await guid_request(path="/client/get_client_status", data=payload, config=row)
         success = http_status == 200 and int(data.get("errcode") or 0) == 0
@@ -2509,11 +2518,12 @@ def _juhe_recount_batch(db: Session, batch: JuheWechatFriendAddBatch) -> None:
     batch.skipped_count = counts.get("skipped", 0)
 
 
-async def _juhe_process_friend_batch_async(batch_id: int) -> None:
+async def _juhe_process_friend_batch_inner(batch_id: int) -> None:
     from ..db import SessionLocal
 
     while True:
         db = SessionLocal()
+        db.expire_on_commit = False
         try:
             batch = db.query(JuheWechatFriendAddBatch).filter(JuheWechatFriendAddBatch.id == batch_id).first()
             if not batch or batch.status in {"finished", "deleted"}:
@@ -2587,6 +2597,7 @@ async def _juhe_process_friend_batch_async(batch_id: int) -> None:
                     "scene": int(target.get("scene") or 3),
                     "ticket": target.get("ticket") or "",
                 }
+                db.commit()
                 add_data, add_http, add_latency = await guid_request(
                     path="/contact/add_friend",
                     data=add_payload,
@@ -2638,9 +2649,20 @@ async def _juhe_process_friend_batch_async(batch_id: int) -> None:
         await asyncio.sleep(delay)
 
 
-def _juhe_process_friend_batch(batch_id: int) -> None:
+async def _juhe_process_friend_batch(batch_id: int) -> None:
     try:
-        asyncio.run(_juhe_process_friend_batch_async(batch_id))
+        async with _JUHE_FRIEND_BATCH_GATE.slot():
+            await _juhe_process_friend_batch_inner(batch_id)
+    except WorkloadQueueFull:
+        from ..db import SessionLocal
+
+        with SessionLocal() as db:
+            batch = db.query(JuheWechatFriendAddBatch).filter(JuheWechatFriendAddBatch.id == batch_id).first()
+            if batch and batch.status not in {"finished", "finished_with_errors", "canceled"}:
+                batch.status = "failed"
+                batch.error_message = "当前后台批次较多，排队已满，请稍后重试"
+                batch.finished_at = datetime.utcnow()
+                db.commit()
     except Exception:
         logger.exception("[juhe friend batch] background task crashed batch_id=%s", batch_id)
 

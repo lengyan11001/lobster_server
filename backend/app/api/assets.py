@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 import uuid
@@ -28,7 +27,17 @@ from .auth import get_current_user
 from .mobile_identity import online_user_for_mobile_user
 from ..core.config import settings
 from ..db import get_db
-from ..models import Asset, GenerationRecord, IPContentDraftRecord, ScheduledTaskRun, User
+from ..models import (
+    Asset,
+    GenerationRecord,
+    H5ChatDevicePresence,
+    H5ChatEvent,
+    H5ChatMessage,
+    IPContentDraftRecord,
+    ScheduledTaskRun,
+    User,
+)
+from ..services.device_presence import is_device_online
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -44,20 +53,19 @@ _CUSTOM_CONFIGS_FILE = _BASE_DIR / "custom_configs.json"
 _ASSET_FILE_EXPIRY_SEC = 86400  # 24 hours
 _VIDEO_SEGMENT_SECONDS = 3
 _VIDEO_SEGMENT_MAX_COUNT = 120
+_H5_CLIENT_COMMAND_PREFIX = "__LOBSTER_H5_CLIENT_COMMAND__"
 _ASSET_UPLOAD_IO_WORKERS = max(1, int(os.environ.get("ASSET_UPLOAD_IO_WORKERS") or "8"))
-_ASSET_VIDEO_WORKERS = max(1, int(os.environ.get("ASSET_VIDEO_WORKERS") or "1"))
+_ASSET_UPLOAD_MAX_BYTES = max(
+    16 * 1024 * 1024,
+    int(os.environ.get("ASSET_UPLOAD_MAX_BYTES") or str(1024 * 1024 * 1024)),
+)
+_ASSET_UPLOAD_IN_MEMORY_BYTES = 32 * 1024 * 1024
 _asset_upload_executor = ThreadPoolExecutor(
     max_workers=_ASSET_UPLOAD_IO_WORKERS,
     thread_name_prefix="asset-upload",
 )
-_asset_video_executor = ThreadPoolExecutor(
-    max_workers=_ASSET_VIDEO_WORKERS,
-    thread_name_prefix="asset-video",
-)
 _asset_upload_gate = asyncio.Semaphore(_ASSET_UPLOAD_IO_WORKERS)
-_asset_video_gate = asyncio.Semaphore(_ASSET_VIDEO_WORKERS)
 _asset_upload_request_gate = asyncio.Semaphore(max(_ASSET_UPLOAD_IO_WORKERS * 2, 8))
-_asset_video_request_gate = asyncio.Semaphore(max(_ASSET_VIDEO_WORKERS * 2, 2))
 
 # 临时文件跟踪：task_id -> [temp_file_paths]，用于任务完成后清理
 _temp_files_by_task: dict[str, list[Path]] = {}
@@ -136,6 +144,122 @@ def _upload_to_tos(data: bytes, object_key: str, content_type: str) -> Optional[
     except Exception as e:
         logger.exception("[TOS] 上传失败: %s", e)
         return None
+
+
+def _upload_file_to_tos(file_obj, object_key: str, content_type: str) -> Optional[str]:
+    """Upload a seekable file without materializing the whole payload in memory."""
+    cfg = _get_tos_config()
+    if not cfg:
+        return None
+    try:
+        import tos
+
+        ak = str(cfg.get("access_key", "")).strip()
+        sk = str(cfg.get("secret_key", "")).strip()
+        endpoint = str(cfg.get("endpoint", "")).strip()
+        region = str(cfg.get("region", "")).strip()
+        bucket = str(cfg.get("bucket_name", "")).strip()
+        public_domain = str(cfg.get("public_domain", "")).strip().rstrip("/")
+        if not all([ak, sk, endpoint, region, bucket, public_domain]):
+            return None
+        client = tos.TosClientV2(ak, sk, endpoint, region)
+        object_content_type, content_disposition = _tos_object_headers(content_type, object_key)
+        file_obj.seek(0)
+        try:
+            client.put_object(
+                bucket,
+                object_key,
+                content=file_obj,
+                content_type=object_content_type,
+                content_disposition=content_disposition,
+            )
+        except TypeError:
+            file_obj.seek(0)
+            client.put_object(bucket, object_key, content=file_obj, content_type=object_content_type)
+        return f"{public_domain}/{object_key}"
+    except Exception as exc:
+        logger.exception("[TOS] 流式上传失败 object_key=%s error=%s", object_key, exc)
+        return None
+
+
+def _seekable_file_size(file_obj) -> int:
+    file_obj.seek(0, os.SEEK_END)
+    size = int(file_obj.tell())
+    file_obj.seek(0)
+    return size
+
+
+def _validate_upload_size(file_obj, max_bytes: int = _ASSET_UPLOAD_MAX_BYTES) -> int:
+    size = _seekable_file_size(file_obj)
+    if size <= 0:
+        raise HTTPException(status_code=400, detail="文件为空")
+    if size > max_bytes:
+        limit_mb = max(1, int(max_bytes / 1024 / 1024))
+        raise HTTPException(status_code=413, detail=f"单个素材不能超过 {limit_mb}MB")
+    return size
+
+
+def _copy_upload_file(file_obj, target: Path) -> None:
+    file_obj.seek(0)
+    with target.open("wb") as output:
+        shutil.copyfileobj(file_obj, output, length=1024 * 1024)
+
+
+def _save_upload_file_or_tos(
+    file_obj,
+    ext: str,
+    content_type: str = "",
+) -> Tuple[str, str, int, Optional[str]]:
+    size = _validate_upload_size(file_obj)
+    if size <= _ASSET_UPLOAD_IN_MEMORY_BYTES:
+        file_obj.seek(0)
+        data = file_obj.read(size + 1)
+        file_obj.seek(0)
+        return _save_bytes_or_tos(data, ext, content_type)
+    aid = _gen_asset_id()
+    object_key = f"assets/{aid}{ext}"
+    tos_url = _upload_file_to_tos(file_obj, object_key, content_type or "application/octet-stream")
+    if tos_url:
+        return aid, object_key, size, tos_url
+    filename = f"{aid}{ext}"
+    _copy_upload_file(file_obj, ASSETS_DIR / filename)
+    return aid, filename, size, None
+
+
+def _store_temp_upload_file(
+    file_obj,
+    object_key: str,
+    content_type: str,
+    fallback_path: Path,
+) -> Tuple[int, Optional[str]]:
+    size = _validate_upload_size(file_obj)
+    tos_url = _upload_file_to_tos(file_obj, object_key, content_type)
+    if not tos_url:
+        _copy_upload_file(file_obj, fallback_path)
+    return size, tos_url
+
+
+def _delete_tos_object(object_key: str) -> bool:
+    key = str(object_key or "").strip().lstrip("/")
+    if not key.startswith("assets/"):
+        return False
+    cfg = _get_tos_config()
+    if not cfg:
+        return False
+    try:
+        import tos
+
+        client = tos.TosClientV2(
+            str(cfg.get("access_key", "")).strip(),
+            str(cfg.get("secret_key", "")).strip(),
+            str(cfg.get("endpoint", "")).strip(),
+            str(cfg.get("region", "")).strip(),
+        )
+        client.delete_object(str(cfg.get("bucket_name", "")).strip(), key)
+        return True
+    except Exception as exc:
+        logger.warning("[TOS] 删除中间素材失败 object_key=%s error=%s", key, exc)
+        return False
 
 
 def _asset_file_token(asset_id: str, expiry_ts: int) -> str:
@@ -285,65 +409,6 @@ def _find_asset_ffmpeg() -> str:
     raise HTTPException(status_code=500, detail="服务器缺少 ffmpeg，无法把视频切成 2～3 秒片段")
 
 
-def _run_ffmpeg_segment(ffmpeg: str, source: Path, out_pattern: Path) -> None:
-    cmd = [
-        ffmpeg,
-        "-y",
-        "-i",
-        str(source),
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a?",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-force_key_frames",
-        f"expr:gte(t,n_forced*{_VIDEO_SEGMENT_SECONDS})",
-        "-f",
-        "segment",
-        "-segment_time",
-        str(_VIDEO_SEGMENT_SECONDS),
-        "-reset_timestamps",
-        "1",
-        str(out_pattern),
-    ]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(status_code=504, detail="视频切片处理超时，请缩短视频或压缩后重试") from exc
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "ffmpeg segment failed").strip()[-800:]
-        raise HTTPException(status_code=500, detail=f"视频切片失败：{detail}")
-
-
-def _split_video_bytes(data: bytes, ext: str) -> list[tuple[str, bytes]]:
-    ffmpeg = _find_asset_ffmpeg()
-    clean_ext = ext if ext.startswith(".") else f".{ext or 'mp4'}"
-    with tempfile.TemporaryDirectory(prefix="asset_video_split_") as tmp:
-        tmpdir = Path(tmp)
-        source = tmpdir / f"source{clean_ext}"
-        source.write_bytes(data)
-        out_pattern = tmpdir / "segment_%03d.mp4"
-        _run_ffmpeg_segment(ffmpeg, source, out_pattern)
-        segments = sorted(tmpdir.glob("segment_*.mp4"))[:_VIDEO_SEGMENT_MAX_COUNT]
-        out: list[tuple[str, bytes]] = []
-        for idx, path in enumerate(segments, start=1):
-            raw = path.read_bytes()
-            if raw:
-                out.append((f"segment_{idx:03d}.mp4", raw))
-        if not out:
-            raise HTTPException(status_code=500, detail="视频切片失败：没有生成可用片段")
-        return out
-
-
 def _save_bytes(data: bytes, ext: str) -> tuple[str, str, int]:
     """Save raw bytes to local disk, return (asset_id, filename, size)."""
     aid = _gen_asset_id()
@@ -375,30 +440,127 @@ async def _run_asset_upload_io(func, *args):
         return await loop.run_in_executor(_asset_upload_executor, partial(func, *args))
 
 
-async def _run_asset_video_io(func, *args):
-    """Serialize CPU-heavy FFmpeg work separately from ordinary uploads."""
-    async with _asset_video_gate:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(_asset_video_executor, partial(func, *args))
-
-
 def _release_asset_db_before_io(db: Session) -> None:
     """Return the request connection before waiting on file, FFmpeg, or TOS I/O."""
     if db.in_transaction():
         db.commit()
 
 
+def _online_capability_device(
+    db: Session,
+    user_id: int,
+    capability: str,
+) -> tuple[Optional[H5ChatDevicePresence], bool]:
+    """Return a live Online installation with the requested capability."""
+    now = datetime.utcnow()
+    rows = (
+        db.query(H5ChatDevicePresence)
+        .filter(H5ChatDevicePresence.user_id == user_id)
+        .order_by(H5ChatDevicePresence.last_seen_at.desc())
+        .limit(20)
+        .all()
+    )
+    online_rows = [row for row in rows if is_device_online(row.last_seen_at, now=now)]
+    for row in online_rows:
+        payload = row.account_payload if isinstance(row.account_payload, dict) else {}
+        capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), list) else []
+        if capability in capabilities:
+            return row, True
+    return None, bool(online_rows)
+
+
+def _online_video_split_device(db: Session, user_id: int) -> tuple[Optional[H5ChatDevicePresence], bool]:
+    return _online_capability_device(db, user_id, "asset_video_split_v1")
+
+
+def _queue_online_video_split(
+    db: Session,
+    *,
+    owner_user_id: int,
+    installation_id: str,
+    source_asset: Asset,
+    source_filename: str,
+) -> H5ChatMessage:
+    now = datetime.utcnow()
+    command = {
+        "action": "split_uploaded_video_asset",
+        "source_asset_id": source_asset.asset_id,
+        "source_url": source_asset.source_url or "",
+        "source_filename": source_filename,
+        "segment_seconds": _VIDEO_SEGMENT_SECONDS,
+        "max_segments": _VIDEO_SEGMENT_MAX_COUNT,
+    }
+    message = H5ChatMessage(
+        id=uuid.uuid4().hex,
+        user_id=owner_user_id,
+        installation_id=installation_id,
+        mode="client_command",
+        content=_H5_CLIENT_COMMAND_PREFIX + json.dumps(command, ensure_ascii=False, separators=(",", ":")),
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(message)
+    db.add(
+        H5ChatEvent(
+            message_id=message.id,
+            user_id=owner_user_id,
+            event_type="queued",
+            payload={
+                "mode": "client_command",
+                "action": command["action"],
+                "source_asset_id": source_asset.asset_id,
+            },
+            created_at=now,
+        )
+    )
+    return message
+
+
+def _existing_online_split_segment(
+    db: Session,
+    *,
+    owner_user_id: int,
+    split_job_id: str,
+    segment_index: int,
+) -> Optional[Asset]:
+    if not split_job_id or segment_index <= 0:
+        return None
+    candidates = (
+        db.query(Asset)
+        .filter(Asset.user_id == owner_user_id, Asset.media_type == "video")
+        .order_by(Asset.created_at.desc(), Asset.id.desc())
+        .limit(500)
+        .all()
+    )
+    for row in candidates:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if (
+            str(meta.get("split_job_id") or "") == split_job_id
+            and int(meta.get("segment_index") or 0) == segment_index
+        ):
+            return row
+    return None
+
+
+def _uploaded_asset_payload(row: Asset, *, deduplicated: bool = False) -> dict:
+    return {
+        "asset_id": row.asset_id,
+        "filename": row.filename,
+        "media_type": row.media_type,
+        "file_size": row.file_size,
+        "source_url": row.source_url,
+        "url": row.source_url,
+        "asset_origin": "user_upload",
+        "deduplicated": deduplicated,
+    }
+
+
 def _limit_asset_upload_requests(func):
-    """Bound retained upload bodies while keeping ordinary uploads responsive."""
+    """Bound retained upload bodies while TOS work runs outside the event loop."""
     @wraps(func)
     async def wrapped(*args, **kwargs):
-        upload = kwargs.get("file")
-        filename = str(getattr(upload, "filename", "") or "").lower()
-        is_split_video = bool(kwargs.get("split_video")) and Path(filename).suffix in {
-            ".mp4", ".webm", ".mov", ".avi", ".mkv", ".flv", ".wmv",
-        }
-        gate = _asset_video_request_gate if is_split_video else _asset_upload_request_gate
-        async with gate:
+        async with _asset_upload_request_gate:
             return await func(*args, **kwargs)
 
     return wrapped
@@ -841,64 +1003,80 @@ async def save_asset_from_url(
     # dedupe query transaction before doing either network operation.
     db.commit()
 
-    try:
-        async with httpx.AsyncClient(
-            timeout=120.0,
-            follow_redirects=True,
-            trust_env=False,
-        ) as c:
-            resp = await c.get(body.url, headers=_SAVE_URL_DOWNLOADER_HEADERS)
-            resp.raise_for_status()
-            data = resp.content
-    except httpx.HTTPStatusError as e:
-        snip = (e.response.text or "")[:300]
-        raise HTTPException(
-            status_code=400,
-            detail=f"下载失败: HTTP {e.response.status_code} {snip!r}",
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"下载失败: {type(e).__name__}: {e!s}",
-        )
-
-    url_path = body.url.split("?")[0].split("#")[0]
-    url_ext = Path(url_path).suffix.lower() if "." in url_path.split("/")[-1] else ""
-    ct = resp.headers.get("content-type", "")
-    ext = url_ext or ".png"
-    if not url_ext:
-        if "jpeg" in ct or "jpg" in ct:
-            ext = ".jpg"
-        elif "webp" in ct:
-            ext = ".webp"
-        elif "gif" in ct:
-            ext = ".gif"
-        elif "mp4" in ct or "video/mp4" in ct:
-            ext = ".mp4"
-        elif "webm" in ct:
-            ext = ".webm"
-        elif "mov" in ct or "quicktime" in ct:
-            ext = ".mov"
-
-    if body.media_type == "video" and ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-        ext = ".mp4"
-    elif body.media_type == "image" and ext in (".mp4", ".webm", ".mov", ".avi"):
-        ext = ".png"
-
-    ct = resp.headers.get("content-type", "") or ""
-    ct_use = ct if ct else "application/octet-stream"
-
     if _get_tos_config() is None:
         raise HTTPException(
             status_code=503,
             detail="save-url 入库需配置 TOS_CONFIG（custom_configs.json，含 access_key/secret_key/endpoint/region/bucket_name/public_domain），未配置无法保存统一 CDN 地址。",
         )
-    aid, fname_or_key, fsize, tos_public_url = await asyncio.to_thread(
-        _save_bytes_or_tos,
-        data,
-        ext,
-        ct_use,
-    )
+
+    temp_file = await asyncio.to_thread(tempfile.TemporaryFile)
+    response_content_type = ""
+    try:
+        try:
+            async with httpx.AsyncClient(
+                timeout=120.0,
+                follow_redirects=True,
+                trust_env=False,
+            ) as client:
+                async with client.stream("GET", body.url, headers=_SAVE_URL_DOWNLOADER_HEADERS) as resp:
+                    resp.raise_for_status()
+                    response_content_type = resp.headers.get("content-type", "") or ""
+                    total = 0
+                    async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > _ASSET_UPLOAD_MAX_BYTES:
+                            limit_mb = int(_ASSET_UPLOAD_MAX_BYTES / 1024 / 1024)
+                            raise HTTPException(status_code=413, detail=f"远程素材不能超过 {limit_mb}MB")
+                        await asyncio.to_thread(temp_file.write, chunk)
+                    if total <= 0:
+                        raise HTTPException(status_code=400, detail="下载失败: 远程素材为空")
+        except HTTPException:
+            raise
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"下载失败: HTTP {exc.response.status_code}",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"下载失败: {type(exc).__name__}: {exc!s}",
+            ) from exc
+
+        url_path = body.url.split("?")[0].split("#")[0]
+        url_ext = Path(url_path).suffix.lower() if "." in url_path.split("/")[-1] else ""
+        ct = response_content_type
+        ext = url_ext or ".png"
+        if not url_ext:
+            if "jpeg" in ct or "jpg" in ct:
+                ext = ".jpg"
+            elif "webp" in ct:
+                ext = ".webp"
+            elif "gif" in ct:
+                ext = ".gif"
+            elif "mp4" in ct or "video/mp4" in ct:
+                ext = ".mp4"
+            elif "webm" in ct:
+                ext = ".webm"
+            elif "mov" in ct or "quicktime" in ct:
+                ext = ".mov"
+
+        if body.media_type == "video" and ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+            ext = ".mp4"
+        elif body.media_type == "image" and ext in (".mp4", ".webm", ".mov", ".avi"):
+            ext = ".png"
+
+        ct_use = ct if ct else "application/octet-stream"
+        aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
+            _save_upload_file_or_tos,
+            temp_file,
+            ext,
+            ct_use,
+        )
+    finally:
+        await asyncio.to_thread(temp_file.close)
     if not tos_public_url:
         _unlink_safe_asset_file(ASSETS_DIR / fname_or_key)
         raise HTTPException(
@@ -937,16 +1115,15 @@ async def save_asset_from_url(
 async def upload_asset(
     file: UploadFile = File(...),
     split_video: bool = Form(False),
+    source_upload_filename: str = Form(""),
+    video_segment: bool = Form(False),
+    segment_index: int = Form(0),
+    split_job_id: str = Form(""),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
     owner_user_id = int(owner_user.id)
-    _release_asset_db_before_io(db)
-    data = await file.read()
-    if not data:
-        raise HTTPException(400, detail="文件为空")
-
     name = file.filename or "upload"
     ext = Path(name).suffix or ".bin"
     mtype = "file"
@@ -959,83 +1136,89 @@ async def upload_asset(
     elif ext.lower() in (".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".csv", ".txt", ".md"):
         mtype = "document"
 
+    split_device = None
+    if split_video and mtype == "video":
+        split_device, has_online_device = _online_video_split_device(db, owner_user_id)
+        if split_device is None:
+            if has_online_device:
+                raise HTTPException(status_code=409, detail="当前 Online 版本不支持本机视频切片，请升级最新 OTA 后重试")
+            raise HTTPException(status_code=409, detail="视频切片需要先启动并登录 Online，服务器不再代替本机执行切片")
+    clean_split_job_id = str(split_job_id or "")[:64] if isinstance(split_job_id, str) else ""
+    clean_segment_index = max(0, int(segment_index or 0)) if isinstance(segment_index, int) else 0
+    if video_segment is True and clean_split_job_id and clean_segment_index:
+        existing_segment = _existing_online_split_segment(
+            db,
+            owner_user_id=owner_user_id,
+            split_job_id=clean_split_job_id,
+            segment_index=clean_segment_index,
+        )
+        if existing_segment is not None:
+            return _uploaded_asset_payload(existing_segment, deduplicated=True)
+    _release_asset_db_before_io(db)
     content_type = getattr(file, "content_type", "") or ""
     started_at = time.monotonic()
+    aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
+        _save_upload_file_or_tos,
+        file.file,
+        ext,
+        content_type,
+    )
     logger.info(
         "[asset-upload] processing start user_id=%s filename=%s size=%s media_type=%s split_video=%s",
         owner_user_id,
         name,
-        len(data),
+        fsize,
         mtype,
         bool(split_video and mtype == "video"),
     )
     if split_video and mtype == "video":
-        segment_rows = []
-        segment_assets = []
-        segments = await _run_asset_video_io(_split_video_bytes, data, ext)
-        for idx, (segment_name, segment_bytes) in enumerate(segments, start=1):
-            aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
-                _save_bytes_or_tos,
-                segment_bytes,
-                ".mp4",
-                "video/mp4",
-            )
-            if not tos_public_url:
-                local_path = ASSETS_DIR / fname_or_key
-                try:
-                    if local_path.exists():
-                        local_path.unlink()
-                except Exception as e:
-                    logger.warning("[视频切片入库-失败] 删除本地文件异常 asset_id=%s err=%s", aid, e)
-                raise HTTPException(status_code=503, detail="服务器未成功写入 TOS 公网链接，视频片段无法入库")
-            asset = Asset(
-                asset_id=aid,
-                user_id=owner_user_id,
-                filename=fname_or_key,
-                media_type="video",
-                file_size=fsize,
-                source_url=tos_public_url,
-                meta={
-                    "asset_origin": "user_upload",
-                    "source_upload_filename": name,
-                    "video_segment": True,
-                    "segment_index": idx,
-                    "segment_seconds": _VIDEO_SEGMENT_SECONDS,
-                    "segment_name": segment_name,
-                },
-            )
-            segment_assets.append(asset)
-            segment_rows.append(
-                {
-                    "asset_id": aid,
-                    "filename": fname_or_key,
-                    "media_type": "video",
-                    "file_size": fsize,
-                    "source_url": tos_public_url,
-                    "url": tos_public_url,
-                    "asset_origin": "user_upload",
-                    "video_segment": True,
-                    "segment_index": idx,
-                }
-            )
-        db.add_all(segment_assets)
+        if not tos_public_url:
+            _unlink_safe_asset_file(ASSETS_DIR / fname_or_key)
+            raise HTTPException(status_code=503, detail="原视频未成功写入 TOS，无法下发本机切片")
+        source_asset = Asset(
+            asset_id=aid,
+            user_id=owner_user_id,
+            filename=fname_or_key,
+            media_type="video",
+            file_size=fsize,
+            source_url=tos_public_url,
+            meta={
+                "asset_origin": "intermediate",
+                "content_visibility": "intermediate",
+                "online_split_source": True,
+                "source_upload_filename": name,
+            },
+        )
+        db.add(source_asset)
+        message = _queue_online_video_split(
+            db,
+            owner_user_id=owner_user_id,
+            installation_id=str(split_device.installation_id),
+            source_asset=source_asset,
+            source_filename=name,
+        )
         db.commit()
-        logger.info("[素材库视频切片] user_id=%s filename=%s segments=%d", owner_user.id, name, len(segment_rows))
-        first = segment_rows[0] if segment_rows else {}
+        from .h5_chat import _clear_pending_empty_for_target
+
+        _clear_pending_empty_for_target(owner_user_id, str(split_device.installation_id))
+        logger.info(
+            "[素材库视频切片-下发Online] user_id=%s filename=%s source_asset_id=%s message_id=%s installation_id=%s",
+            owner_user_id,
+            name,
+            aid,
+            message.id,
+            split_device.installation_id,
+        )
         return {
-            **first,
             "ok": True,
             "split_video": True,
-            "total": len(segment_rows),
-            "assets": segment_rows,
+            "processing": "online",
+            "message_id": message.id,
+            "installation_id": str(split_device.installation_id),
+            "total": 0,
+            "assets": [],
         }
 
-    aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
-        _save_bytes_or_tos,
-        data,
-        ext,
-        content_type,
-    )
     if not tos_public_url:
         local_path = ASSETS_DIR / fname_or_key
         try:
@@ -1054,6 +1237,17 @@ async def upload_asset(
                 "请在服务器 custom_configs.json 配置 TOS_CONFIG，或改用 lobster_online 本机上传（本机 TOS → 失败则 upload-temp）。"
             ),
         )
+    asset_meta = {"asset_origin": "user_upload"}
+    if video_segment is True:
+        asset_meta.update(
+            {
+                "source_upload_filename": str(source_upload_filename or "")[:255],
+                "video_segment": True,
+                "segment_index": max(1, clean_segment_index or 1),
+                "segment_seconds": _VIDEO_SEGMENT_SECONDS,
+                "split_job_id": clean_split_job_id,
+            }
+        )
     asset = Asset(
         asset_id=aid,
         user_id=owner_user_id,
@@ -1061,20 +1255,12 @@ async def upload_asset(
         media_type=mtype,
         file_size=fsize,
         source_url=tos_public_url,
-        meta={"asset_origin": "user_upload"},
+        meta=asset_meta,
     )
     db.add(asset)
     db.commit()
     logger.info("[上传流程-步骤5] 服务器直连上传完成（TOS）asset_id=%s source_url=%s", aid, tos_public_url[:80])
-    return {
-        "asset_id": aid,
-        "filename": fname_or_key,
-        "media_type": mtype,
-        "file_size": fsize,
-        "source_url": tos_public_url,
-        "url": tos_public_url,
-        "asset_origin": "user_upload",
-    }
+    return _uploaded_asset_payload(asset)
 
 
 # ── Temporary file upload (for clients without TOS) ───────────────
@@ -1095,13 +1281,6 @@ async def upload_temp_file(
     """【服务器端-步骤3.1】接收客户端上传的临时文件，返回可访问的URL。这些文件将在视频生成任务完成后自动删除。"""
     logger.info("[服务器端-步骤3.1] 收到临时文件上传请求 filename=%s user_id=%s", file.filename, current_user.id if current_user else "N/A")
     
-    data = await file.read()
-    if not data:
-        logger.error("[服务器端-步骤3.1] 文件为空")
-        raise HTTPException(400, detail="文件为空")
-    
-    logger.info("[服务器端-步骤3.1] 文件读取成功 size=%d", len(data))
-    
     # 【服务器端-步骤3.2】生成临时文件ID
     name = file.filename or "upload"
     ext = Path(name).suffix or ".bin"
@@ -1109,13 +1288,22 @@ async def upload_temp_file(
 
     object_id = uuid.uuid4().hex[:16]
     object_key = f"assets/{object_id}{ext}"
-    tos_url = _upload_to_tos(data, object_key, content_type)
+    temp_id = f"temp_{uuid.uuid4().hex[:16]}"
+    temp_filename = f"{temp_id}{ext}"
+    temp_path = TEMP_ASSETS_DIR / temp_filename
+    file_size, tos_url = await _run_asset_upload_io(
+        _store_temp_upload_file,
+        file.file,
+        object_key,
+        content_type,
+        temp_path,
+    )
     if tos_url:
         logger.info(
             "[server-upload-temp] stored in TOS user_id=%s object_key=%s size=%d",
             current_user.id if current_user else "N/A",
             object_key,
-            len(data),
+            file_size,
         )
         return TempUploadResponse(
             temp_id=object_id,
@@ -1128,18 +1316,12 @@ async def upload_temp_file(
         "[server-upload-temp] TOS unavailable, falling back to short-lived temp URL user_id=%s filename=%s size=%d",
         current_user.id if current_user else "N/A",
         name,
-        len(data),
+        file_size,
     )
 
-    temp_id = f"temp_{uuid.uuid4().hex[:16]}"
-    temp_filename = f"{temp_id}{ext}"
-    temp_path = TEMP_ASSETS_DIR / temp_filename
-    temp_path.write_bytes(data)
     logger.info("[服务器端-步骤3.2] 生成临时文件ID temp_id=%s filename=%s", temp_id, temp_filename)
-    
-    # 【服务器端-步骤3.3】保存临时文件
-    temp_path.write_bytes(data)
-    logger.info("[服务器端-步骤3.3] 临时文件已保存 temp_id=%s path=%s size=%d", temp_id, temp_path, len(data))
+
+    logger.info("[服务器端-步骤3.3] 临时文件已保存 temp_id=%s path=%s size=%d", temp_id, temp_path, file_size)
     
     # 【服务器端-步骤3.4】生成可访问的URL
     from ..core.config import get_settings
@@ -1538,3 +1720,43 @@ def delete_asset(
     db.delete(a)
     db.commit()
     return {"ok": True}
+
+
+@router.delete("/api/assets/{asset_id}/online-split-source", summary="清理 Online 切片原视频")
+async def delete_online_split_source(
+    asset_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user.id).first()
+    if not row:
+        return {"ok": True, "already_deleted": True}
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    if not meta.get("online_split_source"):
+        raise HTTPException(status_code=409, detail="该素材不是 Online 切片中间原片")
+    object_key = str(row.filename or "")
+    db.delete(row)
+    db.commit()
+    deleted_from_tos = await _run_asset_upload_io(_delete_tos_object, object_key)
+    return {"ok": True, "deleted_from_tos": bool(deleted_from_tos)}
+
+
+@router.delete("/api/assets/{asset_id}/online-split-segment", summary="清理 Online 未完成切片")
+async def delete_online_split_segment(
+    asset_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner_user = online_user_for_mobile_user(db, current_user)
+    row = db.query(Asset).filter(Asset.asset_id == asset_id, Asset.user_id == owner_user.id).first()
+    if not row:
+        return {"ok": True, "already_deleted": True}
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    if not meta.get("video_segment") or not meta.get("split_job_id"):
+        raise HTTPException(status_code=409, detail="该素材不是 Online 切片任务产物")
+    object_key = str(row.filename or "")
+    db.delete(row)
+    db.commit()
+    deleted_from_tos = await _run_asset_upload_io(_delete_tos_object, object_key)
+    return {"ok": True, "deleted_from_tos": bool(deleted_from_tos)}

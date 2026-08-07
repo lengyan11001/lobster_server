@@ -21,12 +21,17 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
 from ..models import Asset, CreativeGenerationJob, CutcliTemplate, User
+from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot, spawn_tracked_task
 from .assets import ASSETS_DIR, _upload_to_tos
 from .auth import brand_mark_for_jwt_claim, get_current_user
 from ..core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+_CUTCLI_UPLOAD_MAX_BYTES = max(
+    16 * 1024 * 1024,
+    int(os.environ.get("CUTCLI_UPLOAD_MAX_BYTES") or str(1024 * 1024 * 1024)),
+)
 
 _ROOT_DIR = Path(__file__).resolve().parents[3]
 _JOBS_DIR = _ROOT_DIR / "data" / "cutcli_templates"
@@ -1299,12 +1304,29 @@ async def _resolve_source_video(
     job_dir: Path,
 ) -> Tuple[str, Optional[str], str]:
     if file is not None and file.filename:
-        data = await file.read()
-        if not data:
-            raise HTTPException(status_code=400, detail="uploaded video file is empty")
         ext = _safe_ext(file.filename)
         src_path = job_dir / f"source{ext}"
-        src_path.write_bytes(data)
+        output = await asyncio.to_thread(src_path.open, "wb")
+        total = 0
+        try:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _CUTCLI_UPLOAD_MAX_BYTES:
+                    limit_mb = int(_CUTCLI_UPLOAD_MAX_BYTES / 1024 / 1024)
+                    raise HTTPException(status_code=413, detail=f"uploaded video cannot exceed {limit_mb}MB")
+                await asyncio.to_thread(output.write, chunk)
+        except BaseException:
+            await asyncio.to_thread(output.close)
+            await asyncio.to_thread(src_path.unlink, missing_ok=True)
+            raise
+        else:
+            await asyncio.to_thread(output.close)
+        if total <= 0:
+            await asyncio.to_thread(src_path.unlink, missing_ok=True)
+            raise HTTPException(status_code=400, detail="uploaded video file is empty")
         return str(src_path), None, file.filename
 
     aid = (asset_id or "").strip()
@@ -3514,6 +3536,10 @@ def _run_auto_caption_job_sync(
     ffmpeg: Optional[str] = None
     try:
         template = _get_cutcli_template_def(db, template_id) or dict(_TEMPLATES[_AUTO_CAPTION_TEMPLATE_ID])
+        token, token_source = _load_sutui_token_for_stt(db, user_id)
+        db.commit()
+        db.close()
+        db = None
         caption_style = _apply_position_overrides(
             _apply_orientation_style(
                 _caption_style_for_template(template),
@@ -3557,7 +3583,6 @@ def _run_auto_caption_job_sync(
                 },
             )
 
-        token, token_source = _load_sutui_token_for_stt(db, user_id)
         token_masked = _mask_token(token)
         _update_cutcli_job(
             job_id,
@@ -3677,22 +3702,23 @@ def _run_auto_caption_job_sync(
             warnings.extend(fallback_warnings)
             render_strategy = "ffmpeg_ass_fallback"
 
-        asset_id = _save_auto_caption_asset(
-            db=db,
-            user_id=user_id,
-            job_id=job_id,
-            template=template,
-            source_name=source_name,
-            source_asset_id=source_asset_id,
-            final_url=final_url,
-            file_size=file_size,
-            draft_id=draft_id,
-            cloud_job_id=cloud_job_id,
-            quality=quality,
-            warnings=warnings,
-            token_source=token_source,
-            token_masked=token_masked,
-        )
+        with SessionLocal() as asset_db:
+            asset_id = _save_auto_caption_asset(
+                db=asset_db,
+                user_id=user_id,
+                job_id=job_id,
+                template=template,
+                source_name=source_name,
+                source_asset_id=source_asset_id,
+                final_url=final_url,
+                file_size=file_size,
+                draft_id=draft_id,
+                cloud_job_id=cloud_job_id,
+                quality=quality,
+                warnings=warnings,
+                token_source=token_source,
+                token_masked=token_masked,
+            )
         _update_cutcli_job(
             job_id,
             status="completed",
@@ -3745,8 +3771,25 @@ def _run_auto_caption_job_sync(
             },
         )
     finally:
-        db.close()
+        if db is not None:
+            db.close()
         _cleanup_auto_caption_workspace_and_record(job_id)
+
+
+async def _run_auto_caption_job(**job_kwargs: Any) -> None:
+    job_id = str(job_kwargs.get("job_id") or "")
+    try:
+        async with background_heavy_slot("cutcli_auto_caption"):
+            await asyncio.to_thread(_run_auto_caption_job_sync, **job_kwargs)
+    except WorkloadQueueFull:
+        await asyncio.to_thread(
+            _update_cutcli_job,
+            job_id,
+            status="failed",
+            stage="failed",
+            error="当前后台任务较多，排队已满，请稍后重试",
+            result_updates={"error_code": "background_queue_full"},
+        )
 
 
 def _build_cutcli_draft(
@@ -4862,7 +4905,8 @@ def cutcli_stt_transcribe(
     job_dir = _JOBS_DIR / "stt" / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     try:
-        token, token_source = _load_sutui_token_for_stt(db, current_user.id)
+        token, token_source = _load_sutui_token_for_stt(db, int(current_user.id))
+        db.commit()
         created = _stt_create_task(token, audio_url, job_dir=job_dir)
         task_id = created["task_id"]
         stt_data = _stt_poll_task(token, task_id, job_dir=job_dir)
@@ -5074,6 +5118,8 @@ async def render_cutcli_template(
     tpl = _get_cutcli_template_def(db, (template_id or "").strip())
     if not tpl:
         raise HTTPException(status_code=404, detail="template not found")
+    db.expire_on_commit = False
+    db.commit()
     clean_position_overrides = _parse_position_overrides(position_overrides)
     clean_audio_url = _clean_public_http_url(audio_url)
     if (audio_url or "").strip() and not clean_audio_url:
@@ -5091,7 +5137,8 @@ async def render_cutcli_template(
         db=db,
         job_dir=job_dir,
     )
-    source_info = _probe_video(ffprobe, source)
+    db.commit()
+    source_info = await asyncio.to_thread(_probe_video, ffprobe, source)
 
     if tpl.get("kind") == "auto_caption":
         caption_style = _apply_position_overrides(
@@ -5122,9 +5169,8 @@ async def render_cutcli_template(
             audio_url=clean_audio_url,
             position_overrides=clean_position_overrides,
         )
-        asyncio.create_task(
-            asyncio.to_thread(
-                _run_auto_caption_job_sync,
+        spawn_tracked_task(
+            _run_auto_caption_job(
                 job_id=job_id,
                 user_id=current_user.id,
                 template_id=tpl["id"],
@@ -5134,7 +5180,8 @@ async def render_cutcli_template(
                 source_info=source_info,
                 audio_url=clean_audio_url,
                 position_overrides=clean_position_overrides,
-            )
+            ),
+            name=f"cutcli-caption-{job_id}",
         )
         payload = _job_row_to_public(row)
         payload["preserve_source_video"] = bool(tpl.get("preserve_source_video", True))
@@ -5143,9 +5190,10 @@ async def render_cutcli_template(
     cutcli = _find_cutcli_bin()
     duration = max(4, min(int(duration_seconds or tpl.get("default_duration") or 8), 20))
     overlay = job_dir / "overlay.png"
-    _make_overlay_png(overlay, title=title, subtitle=subtitle, duration=duration)
+    await asyncio.to_thread(_make_overlay_png, overlay, title=title, subtitle=subtitle, duration=duration)
 
-    draft_id, draft_info, warnings = _build_cutcli_draft(
+    draft_id, draft_info, warnings = await asyncio.to_thread(
+        _build_cutcli_draft,
         cutcli=cutcli,
         job_dir=job_dir,
         source=source,
@@ -5157,7 +5205,14 @@ async def render_cutcli_template(
     )
 
     legacy_token, legacy_token_source = _load_sutui_token_for_stt(db, current_user.id)
-    cloud_result = _render_cutcli_cloud(cutcli, draft_id, job_dir=job_dir, api_key=legacy_token)
+    db.commit()
+    cloud_result = await asyncio.to_thread(
+        _render_cutcli_cloud,
+        cutcli,
+        draft_id,
+        job_dir=job_dir,
+        api_key=legacy_token,
+    )
     preview_url = _extract_first_video_url(cloud_result)
     if not preview_url:
         raise HTTPException(status_code=500, detail="CutCLI cloud render did not return a usable video URL")

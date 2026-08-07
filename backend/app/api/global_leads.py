@@ -447,6 +447,8 @@ async def _run_web_search_sources(db: Session, row: GlobalLeadJob) -> int:
         seen: set[str] = set()
         filtered = 0
         for query in queries:
+            if db.in_transaction():
+                db.commit()
             results, error = await _fetch_web_search_results(source_id, query, per_query_limit)
             if error:
                 errors.append(error)
@@ -964,6 +966,7 @@ async def create_global_lead_job(
     row.updated_at = _now()
     db.commit()
     db.refresh(row)
+    db.commit()
     imported_web = await _run_web_search_sources(db, row)
     if imported_web and not children:
         row.status = "completed"

@@ -653,6 +653,7 @@ async def create_fuiou_recharge_order(
     db.add(order)
     db.commit()
     db.refresh(order)
+    db.commit()
     base_url = _get_public_base_url()
     notify_url = f"{base_url.rstrip('/')}/api/recharge/fuiou-notify"
     try:
@@ -749,10 +750,13 @@ async def fuiou_query_recharge_order(
         raise HTTPException(status_code=404, detail="订单不存在或无权查询")
     if order.status == "paid":
         return {"status": "paid", "credits": order.credits, "order_id": order.id}
+    order_type = _fuiou_order_type_from_order(order)
+    db.expire_on_commit = False
+    db.commit()
     try:
         result = await fuiou_order_query(
             mchnt_order_no=out_trade_no[:30],
-            order_type=_fuiou_order_type_from_order(order),
+            order_type=order_type,
         )
     except Exception as e:
         logger.warning("[fuiou] query order failed: %s", e)

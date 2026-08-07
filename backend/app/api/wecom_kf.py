@@ -120,6 +120,8 @@ def _find_config_by_callback(db: Session, callback_path: str) -> WecomConfig:
         raise HTTPException(status_code=404, detail="未找到该 callback_path 的应用配置")
     if not cfg.corp_id or not cfg.secret:
         raise HTTPException(status_code=400, detail="该应用未配置 corp_id 或 secret")
+    db.expunge(cfg)
+    db.commit()
     return cfg
 
 

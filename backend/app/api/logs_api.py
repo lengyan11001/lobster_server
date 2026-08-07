@@ -83,7 +83,7 @@ async def upload_diagnostics_bundle(
     current_user: User = Depends(get_current_user),
 ):
     cleanup_diagnostics_uploads(_BASE)
-    data = await file.read()
+    data = await file.read(_MAX_DIAGNOSTIC_BYTES + 1)
     if not data:
         raise HTTPException(status_code=400, detail="diagnostic file is empty")
     if len(data) > _MAX_DIAGNOSTIC_BYTES:
@@ -94,7 +94,7 @@ async def upload_diagnostics_bundle(
     user_dir = (_DIAGNOSTICS_DIR / f"user_{current_user.id}" / diagnostic_id).resolve()
     user_dir.mkdir(parents=True, exist_ok=True)
     bundle_path = user_dir / safe_name
-    bundle_path.write_bytes(data)
+    await asyncio.to_thread(bundle_path.write_bytes, data)
 
     parsed_client_info = None
     if client_info:
@@ -112,7 +112,8 @@ async def upload_diagnostics_bundle(
         "uploaded_at": _utc_iso(),
         "client_info": parsed_client_info,
     }
-    (user_dir / "metadata.json").write_text(
+    await asyncio.to_thread(
+        (user_dir / "metadata.json").write_text,
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )

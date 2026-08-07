@@ -5,6 +5,7 @@ proxy. Online clients only call the few product-level actions below.
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import hashlib
 import json
@@ -12,6 +13,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Literal, Optional
 
 import httpx
@@ -43,6 +45,8 @@ from .openclaw_memory_cloud import _AGENT_MEMORY_INSTALLATION_ID
 from .auth import get_current_user
 
 router = APIRouter()
+_JUHE_KNOWLEDGE_MAX_BYTES = 2 * 1024 * 1024
+_JUHE_MEDIA_MAX_BYTES = 100 * 1024 * 1024
 
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 _JUHE_MEDIA_TEMP_DIR = _BASE_DIR / "temp_assets" / "juhe_wechat"
@@ -50,6 +54,16 @@ _JUHE_MEDIA_TEMP_DIR.mkdir(parents=True, exist_ok=True)
 _JUHE_MEDIA_TEMP_SECRET = "juhe-wechat-media-temp-v1"
 _JUHE_MEDIA_TEMP_TTL_SECONDS = 3600
 _MEMORY_DOC_ID_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+
+
+def _juhe_config_snapshot(row: JuheWechatConfig) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=int(row.id),
+        user_id=int(row.user_id),
+        guid=str(row.guid or ""),
+        app_key=str(row.app_key or ""),
+        app_secret=str(row.app_secret or ""),
+    )
 
 
 def _normalize_guid(raw: str) -> str:
@@ -643,18 +657,22 @@ async def _call_upstream(
     timeout_seconds: float = 45.0,
     raise_on_fail: bool = True,
 ) -> Dict[str, Any]:
+    user_id = int(current_user.id)
+    config = _juhe_config_snapshot(row)
+    if db.in_transaction():
+        db.commit()
     try:
         data, http_status, latency_ms = await guid_request(
             path=upstream_path,
             data=payload,
-            config=row,
+            config=config,
             timeout_seconds=timeout_seconds,
         )
         success = _upstream_ok(data, http_status)
         _log_call(
             db,
-            user_id=current_user.id,
-            config_id=row.id,
+            user_id=user_id,
+            config_id=config.id,
             action=action,
             upstream_path=upstream_path,
             request_payload=payload,
@@ -673,8 +691,8 @@ async def _call_upstream(
     except httpx.HTTPError as exc:
         _log_call(
             db,
-            user_id=current_user.id,
-            config_id=row.id,
+            user_id=user_id,
+            config_id=config.id,
             action=action,
             upstream_path=upstream_path,
             request_payload=payload,
@@ -868,17 +886,20 @@ async def _upload_wechat_media_from_url(
         cdn_info.get("upstream") or {},
         {"cdn_info", "client_version", "device_type", "username"},
     )
+    user_id = int(current_user.id)
+    config = _juhe_config_snapshot(row)
     payload = {
-        "guid": row.guid,
+        "guid": config.guid,
         "base_request": {
             "cdn_info": cdn_obj.get("cdn_info", "") if isinstance(cdn_obj, dict) else "",
             "client_version": cdn_obj.get("client_version", 0) if isinstance(cdn_obj, dict) else 0,
             "device_type": cdn_obj.get("device_type", "") if isinstance(cdn_obj, dict) else "",
-            "username": cdn_obj.get("username", row.guid) if isinstance(cdn_obj, dict) else row.guid,
+            "username": cdn_obj.get("username", config.guid) if isinstance(cdn_obj, dict) else config.guid,
         },
         "file_type": int(file_type or 2),
         "url": url.strip(),
     }
+    db.commit()
     try:
         data, http_status, latency_ms = await cdn_request(
             path="/cloud/upload",
@@ -888,8 +909,8 @@ async def _upload_wechat_media_from_url(
         success = _upstream_ok(data, http_status)
         _log_call(
             db,
-            user_id=current_user.id,
-            config_id=row.id,
+            user_id=user_id,
+            config_id=config.id,
             action="cloud_upload",
             upstream_path="/cloud/upload",
             request_payload=payload,
@@ -908,8 +929,8 @@ async def _upload_wechat_media_from_url(
     except httpx.HTTPError as exc:
         _log_call(
             db,
-            user_id=current_user.id,
-            config_id=row.id,
+            user_id=user_id,
+            config_id=config.id,
             action="cloud_upload",
             upstream_path="/cloud/upload",
             request_payload=payload,
@@ -991,12 +1012,16 @@ async def check_status(
     db: Session = Depends(get_db),
 ):
     row = _get_config_or_404(db, current_user.id, config_id)
-    payload = {"guid": row.guid}
+    user_id = int(current_user.id)
+    config = _juhe_config_snapshot(row)
+    payload = {"guid": config.guid}
+    db.expire_on_commit = False
+    db.commit()
     try:
         data, http_status, latency_ms = await guid_request(
             path="/client/get_client_status",
             data=payload,
-            config=row,
+            config=config,
         )
         success = http_status == 200 and int(data.get("errcode") or 0) == 0
         status_value = None
@@ -1009,8 +1034,8 @@ async def check_status(
         row.last_status_at = datetime.utcnow()
         _log_call(
             db,
-            user_id=current_user.id,
-            config_id=row.id,
+            user_id=user_id,
+            config_id=config.id,
             action="status",
             upstream_path="/client/get_client_status",
             request_payload=payload,
@@ -1033,8 +1058,8 @@ async def check_status(
     except httpx.HTTPError as exc:
         _log_call(
             db,
-            user_id=current_user.id,
-            config_id=row.id,
+            user_id=user_id,
+            config_id=config.id,
             action="status",
             upstream_path="/client/get_client_status",
             request_payload=payload,
@@ -1183,11 +1208,15 @@ async def upload_ai_reply_knowledge(
     db: Session = Depends(get_db),
 ):
     row = _get_config_or_404(db, current_user.id, int(config_id))
-    data = await file.read()
+    data = await file.read(_JUHE_KNOWLEDGE_MAX_BYTES + 1)
     if not data:
         raise HTTPException(status_code=400, detail="文件为空")
+    if len(data) > _JUHE_KNOWLEDGE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="知识文件不能超过 2MB")
     filename = file.filename or "knowledge.txt"
     text = _decode_text_payload(data, filename)
+    if len(text) > 20000:
+        raise HTTPException(status_code=413, detail="知识内容不能超过 20000 字，请拆分后上传")
     header = f"\n\n## {filename}\n"
     if mode == "replace":
         row.auto_reply_knowledge = text
@@ -1295,6 +1324,7 @@ async def ai_reply_incoming(
     db.add(inbound)
     db.commit()
     db.refresh(inbound)
+    db.commit()
     return await _process_juhe_ai_incoming(
         db=db,
         current_user=current_user,
@@ -1323,6 +1353,7 @@ async def ai_reply_retry_message(
         msg.status = "received"
         db.commit()
         db.refresh(msg)
+        db.commit()
         return await _process_juhe_ai_incoming(db=db, current_user=current_user, row=row, inbound=msg, dry_run=False)
     if msg.direction == "out":
         msg.retry_count += 1
@@ -1572,16 +1603,20 @@ async def upload_media_file(
     db: Session = Depends(get_db),
 ):
     row = _get_config_or_404(db, current_user.id, config_id)
-    data = await file.read()
+    db.expire_on_commit = False
+    db.commit()
+    data = await file.read(_JUHE_MEDIA_MAX_BYTES + 1)
     if not data:
         raise HTTPException(status_code=400, detail="文件为空")
+    if len(data) > _JUHE_MEDIA_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="微信媒体文件不能超过 100MB")
     _cleanup_old_media_temp()
     name = file.filename or "upload"
     ext = Path(name).suffix or ".bin"
     content_type = getattr(file, "content_type", "") or "application/octet-stream"
     temp_id = f"juhe_{uuid.uuid4().hex[:16]}"
     temp_path = _JUHE_MEDIA_TEMP_DIR / f"{temp_id}{ext}"
-    temp_path.write_bytes(data)
+    await asyncio.to_thread(temp_path.write_bytes, data)
     expiry = int(time.time()) + _JUHE_MEDIA_TEMP_TTL_SECONDS
     source_url = (
         f"{_local_backend_base_url()}/api/juhe-wechat/media/temp/{temp_id}"
@@ -1622,23 +1657,26 @@ async def send_text(
     db: Session = Depends(get_db),
 ):
     row = _get_config_or_404(db, current_user.id, body.config_id)
+    user_id = int(current_user.id)
+    config = _juhe_config_snapshot(row)
     payload = {
-        "guid": row.guid,
+        "guid": config.guid,
         "to_username": body.to_username.strip(),
         "content": body.content.strip(),
     }
+    db.commit()
     try:
         data, http_status, latency_ms = await guid_request(
             path="/msg/send_text",
             data=payload,
-            config=row,
+            config=config,
             timeout_seconds=45,
         )
         success = http_status == 200 and int(data.get("errcode") or 0) == 0
         _log_call(
             db,
-            user_id=current_user.id,
-            config_id=row.id,
+            user_id=user_id,
+            config_id=config.id,
             action="send_text",
             upstream_path="/msg/send_text",
             request_payload=payload,
@@ -1657,8 +1695,8 @@ async def send_text(
     except httpx.HTTPError as exc:
         _log_call(
             db,
-            user_id=current_user.id,
-            config_id=row.id,
+            user_id=user_id,
+            config_id=config.id,
             action="send_text",
             upstream_path="/msg/send_text",
             request_payload=payload,
@@ -1680,22 +1718,25 @@ async def _send_ai_text_message(
     to_username: str,
     content: str,
 ) -> Dict[str, Any]:
+    user_id = int(current_user.id)
+    config = _juhe_config_snapshot(row)
     payload = {
-        "guid": row.guid,
+        "guid": config.guid,
         "to_username": to_username.strip(),
         "content": content.strip(),
     }
+    db.commit()
     data, http_status, latency_ms = await guid_request(
         path="/msg/send_text",
         data=payload,
-        config=row,
+        config=config,
         timeout_seconds=45,
     )
     success = _upstream_ok(data, http_status)
     _log_call(
         db,
-        user_id=current_user.id,
-        config_id=row.id,
+        user_id=user_id,
+        config_id=config.id,
         action="ai_reply_send_text",
         upstream_path="/msg/send_text",
         request_payload=payload,

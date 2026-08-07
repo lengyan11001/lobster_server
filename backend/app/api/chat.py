@@ -329,6 +329,7 @@ async def _exec_tool_with_balance(
 
         if user and user_balance_decimal(user) <= 0:
             return "积分不足：当前余额为 0，无法使用速推能力。请先充值。"
+        db.commit()
     res = await _exec_tool(name, args, token, sutui_token, progress_cb)
     # 积分扣减统一由 MCP → POST /capabilities/record-call 完成（含速推返回动态 credits_used）
     return res
@@ -2254,6 +2255,8 @@ async def chat_endpoint(
     db: Session = Depends(get_db),
 ):
     _pending_tool_logs.set([])
+    db.expire_on_commit = False
+    db.commit()
     logger.info(
         "[素材] 对话开始(POST /chat) session_id=%s message_len=%d attachment_count=%d",
         getattr(payload, "session_id", None) or "",
@@ -2307,6 +2310,7 @@ async def chat_endpoint(
     messages.append({"role": "user", "content": _build_user_content_with_attachments(payload, request, db=db, user_id=current_user.id)})
 
     attachment_urls = _get_attachment_public_urls(payload, request, db=db, user_id=current_user.id)
+    db.commit()
 
     t0 = time.perf_counter()
 
@@ -2436,6 +2440,8 @@ async def _chat_stream_events(
     request: Optional[Request] = None,
 ):
     """Async generator: yield SSE events (progress + done). Runs chat with progress_cb pushing to queue."""
+    db.expire_on_commit = False
+    db.commit()
     queue: asyncio.Queue = asyncio.Queue()
     reply_holder: List[str] = []
     error_holder: List[str] = []
@@ -2499,6 +2505,7 @@ async def _chat_stream_events(
             stream_attachment_urls = _get_attachment_public_urls(
                 payload, _request_for_assets, db=db, user_id=current_user.id
             )
+            db.commit()
         except HTTPException as e:
             det = e.detail
             error_holder.append(det if isinstance(det, str) else str(det))
@@ -2603,7 +2610,9 @@ async def _chat_stream_events(
             if ev.get("type") == "done":
                 break
     finally:
-        await task
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @router.post("/chat/stream", summary="智能对话（流式返回思考/工具进度）")

@@ -18,7 +18,7 @@ from ..db import get_db
 from ..models import Asset, User, UserWanRoleTask
 from ..services.credit_ledger import append_credit_ledger
 from ..services.credits_amount import credits_json_float, quantize_credits, user_balance_decimal
-from .assets import _save_bytes_or_tos
+from .assets import _run_asset_upload_io, _save_upload_file_or_tos, _validate_upload_size
 from .auth import get_current_user
 
 router = APIRouter()
@@ -28,6 +28,8 @@ _WAN_ENDPOINT = "/api/v1/services/aigc/image2video/video-synthesis"
 _TASK_STATUS_SUCCESS = {"succeeded", "success", "completed"}
 _TASK_STATUS_FAILED = {"failed", "error", "canceled", "cancelled"}
 _WAN_ROLE_MAX_VIDEO_SECONDS = 30
+_WAN_ROLE_MAX_IMAGE_BYTES = 20 * 1024 * 1024
+_WAN_ROLE_MAX_VIDEO_BYTES = 500 * 1024 * 1024
 _WAN_ROLE_STD_YUAN_PER_SECOND = Decimal("0.6")
 _WAN_ROLE_CREDITS_PER_YUAN = Decimal("100")
 _WAN_ROLE_PRICE_MULTIPLIER = Decimal("1.5")
@@ -211,9 +213,8 @@ def _guess_ext(content_type: str, fallback: str = ".mp4") -> str:
     return fallback
 
 
-def _probe_video_duration_seconds(data: bytes, ext: str = ".mp4") -> float:
-    if not data:
-        return 0
+def _probe_upload_video_duration(file_obj, ext: str = ".mp4") -> float:
+    _validate_upload_size(file_obj, _WAN_ROLE_MAX_VIDEO_BYTES)
     ffprobe = shutil.which("ffprobe")
     if not ffprobe:
         return 0
@@ -221,7 +222,9 @@ def _probe_video_duration_seconds(data: bytes, ext: str = ".mp4") -> float:
     tmp_path = ""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as fh:
-            fh.write(data)
+            file_obj.seek(0)
+            shutil.copyfileobj(file_obj, fh, length=1024 * 1024)
+            file_obj.seek(0)
             tmp_path = fh.name
         proc = subprocess.run(
             [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", tmp_path],
@@ -306,28 +309,45 @@ def _extract_result_video_url(data: Dict[str, Any]) -> str:
 async def _persist_result_video(row: UserWanRoleTask, source_url: str, db: Session) -> None:
     if not source_url or row.asset_video_url:
         return
+    asset_values = {
+        "user_id": int(row.user_id),
+        "title": row.title,
+        "model": row.model,
+        "task_id": int(row.id),
+        "dashscope_task_id": row.dashscope_task_id,
+        "task_type": row.task_type,
+        "mode": row.mode,
+        "image_url": row.image_url,
+        "video_url": row.video_url,
+    }
+    db.commit()
     data, content_type = await _download_bytes(source_url)
     ext = _guess_ext(content_type, ".mp4")
-    asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, content_type)
+    asset_id, filename_or_key, file_size, public_url = await asyncio.to_thread(
+        _save_bytes_or_tos,
+        data,
+        ext,
+        content_type,
+    )
     if not public_url:
         raise HTTPException(status_code=503, detail="结果视频转存失败：服务端 TOS 未返回公网链接")
     asset = Asset(
         asset_id=asset_id,
-        user_id=row.user_id,
+        user_id=asset_values["user_id"],
         filename=filename_or_key,
         media_type="video",
         file_size=file_size,
         source_url=public_url,
-        prompt=row.title,
-        model=row.model,
+        prompt=asset_values["title"],
+        model=asset_values["model"],
         tags="aliyun,wan,role_transfer",
         meta={
-            "wan_role_task_id": row.id,
-            "dashscope_task_id": row.dashscope_task_id,
-            "task_type": row.task_type,
-            "mode": row.mode,
-            "image_url": row.image_url,
-            "video_url": row.video_url,
+            "wan_role_task_id": asset_values["task_id"],
+            "dashscope_task_id": asset_values["dashscope_task_id"],
+            "task_type": asset_values["task_type"],
+            "mode": asset_values["mode"],
+            "image_url": asset_values["image_url"],
+            "video_url": asset_values["video_url"],
         },
     )
     db.add(asset)
@@ -349,7 +369,10 @@ async def _query_dashscope_task(task_id: str) -> Dict[str, Any]:
 async def _refresh_task(row: UserWanRoleTask, db: Session) -> UserWanRoleTask:
     if row.status != "processing":
         return row
-    data = await _query_dashscope_task(row.dashscope_task_id)
+    db.expire_on_commit = False
+    dashscope_task_id = str(row.dashscope_task_id or "")
+    db.commit()
+    data = await _query_dashscope_task(dashscope_task_id)
     output = data.get("output") if isinstance(data.get("output"), dict) else {}
     raw_status = str(output.get("task_status") or data.get("task_status") or data.get("status") or "").strip().lower()
     meta = dict(row.meta or {})
@@ -369,6 +392,7 @@ async def _refresh_task(row: UserWanRoleTask, db: Session) -> UserWanRoleTask:
             _refund_wan_role_if_needed(row, db)
             return row
         row.source_video_url = video_url
+        db.commit()
         await _persist_result_video(row, video_url, db)
         row.status = "success"
         row.error_message = None
@@ -382,9 +406,6 @@ async def upload_role_transfer_asset(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="文件为空")
     name = file.filename or "upload"
     ext = Path(name).suffix.lower() or ".bin"
     media_type_value = (media_type or "").strip().lower()
@@ -393,10 +414,19 @@ async def upload_role_transfer_asset(
     if ext == ".bin":
         ext = ".mp4" if media_type_value == "video" else ".jpg"
     content_type = getattr(file, "content_type", "") or ("video/mp4" if media_type_value == "video" else "image/jpeg")
-    duration = _probe_video_duration_seconds(data, ext) if media_type_value == "video" else 0
+    if media_type_value == "video":
+        duration = await asyncio.to_thread(_probe_upload_video_duration, file.file, ext)
+    else:
+        await asyncio.to_thread(_validate_upload_size, file.file, _WAN_ROLE_MAX_IMAGE_BYTES)
+        duration = 0
     if duration and duration > _WAN_ROLE_MAX_VIDEO_SECONDS + 0.2:
         raise HTTPException(status_code=400, detail=f"视频最长支持 {_WAN_ROLE_MAX_VIDEO_SECONDS} 秒，请裁剪后再上传")
-    asset_id, filename_or_key, file_size, public_url = _save_bytes_or_tos(data, ext, content_type)
+    asset_id, filename_or_key, file_size, public_url = await _run_asset_upload_io(
+        _save_upload_file_or_tos,
+        file.file,
+        ext,
+        content_type,
+    )
     if not public_url:
         raise HTTPException(status_code=503, detail="上传失败：服务端 TOS 未返回公网链接")
     asset = Asset(
@@ -435,6 +465,8 @@ async def create_role_transfer_task(
     billing = _wan_role_estimate_billing(body.video_duration, mode)
     pre_deducted = _pre_deduct_wan_role_credits(current_user, billing, db)
     billing["credits_pre_deducted"] = credits_json_float(pre_deducted)
+    db.expire_on_commit = False
+    db.commit()
     payload = {
         "model": model,
         "input": {

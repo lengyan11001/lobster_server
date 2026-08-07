@@ -393,6 +393,7 @@ async def meta_social_publish(
     db.add(task)
     db.commit()
     db.refresh(task)
+    db.commit()
 
     try:
         post_id = ""
@@ -503,6 +504,8 @@ async def meta_social_sync(
     accounts = query.all()
     if not accounts:
         raise HTTPException(status_code=404, detail="未找到 Meta 社交账号")
+    db.expire_on_commit = False
+    db.commit()
 
     results: List[Dict[str, Any]] = []
 
@@ -545,6 +548,7 @@ async def meta_social_sync(
                 sync_error=sync_error,
             )
             db.add(snap)
+            db.commit()
             results.append({
                 "account_id": acct.id, "platform": "instagram",
                 "items_count": len(items), "error": sync_error,
@@ -584,12 +588,12 @@ async def meta_social_sync(
             sync_error=fb_sync_error,
         )
         db.add(snap_fb)
+        db.commit()
         results.append({
             "account_id": acct.id, "platform": "facebook",
             "items_count": len(fb_items), "error": fb_sync_error,
         })
 
-    db.commit()
     return {"ok": True, "synced": results}
 
 

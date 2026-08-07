@@ -1,5 +1,7 @@
 """Publishing accounts and task management. 抖音发布支持两种扣费：按次扣积分（10/次）或解锁后免费。"""
+import asyncio
 import logging
+import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +37,36 @@ SUPPORTED_PLATFORMS = {
     "kuaishou": {"name": "快手", "login_url": "https://cp.kuaishou.com"},
     "wechat_channels": {"name": "视频号", "login_url": "https://channels.weixin.qq.com/platform"},
 }
+_MAX_PUBLISH_DOWNLOAD_BYTES = max(
+    16 * 1024 * 1024,
+    int(os.environ.get("PUBLISH_ASSET_MAX_BYTES") or str(1024 * 1024 * 1024)),
+)
+
+
+async def _download_publish_asset(url: str, suffix: str) -> str:
+    fd, path = await asyncio.to_thread(tempfile.mkstemp, suffix=suffix)
+    output = await asyncio.to_thread(os.fdopen, fd, "wb")
+    try:
+        total = 0
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True, trust_env=False) as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > _MAX_PUBLISH_DOWNLOAD_BYTES:
+                        limit_mb = int(_MAX_PUBLISH_DOWNLOAD_BYTES / 1024 / 1024)
+                        raise HTTPException(status_code=413, detail=f"发布素材不能超过 {limit_mb}MB")
+                    await asyncio.to_thread(output.write, chunk)
+        if total <= 0:
+            raise HTTPException(status_code=400, detail="发布素材为空")
+        await asyncio.to_thread(output.close)
+        return path
+    except BaseException:
+        await asyncio.to_thread(output.close)
+        await asyncio.to_thread(Path(path).unlink, missing_ok=True)
+        raise
 
 def _ensure_tiny_mp4(path: Path) -> Path:
     # A tiny MP4 (base64) for dry-run uploads.
@@ -172,13 +204,17 @@ async def start_login(
 
     platform_info = SUPPORTED_PLATFORMS.get(acct.platform, {})
     login_url = platform_info.get("login_url", "")
+    profile_dir = acct.browser_profile or str(BROWSER_DATA_DIR / f"{acct.platform}_{acct.nickname}")
+    platform = acct.platform
+    db.expire_on_commit = False
+    db.commit()
 
     try:
         from publisher.browser_pool import open_login_browser
         _ = await open_login_browser(
-            profile_dir=acct.browser_profile or str(BROWSER_DATA_DIR / f"{acct.platform}_{acct.nickname}"),
+            profile_dir=profile_dir,
             login_url=login_url,
-            platform=acct.platform,
+            platform=platform,
         )
         # Don't block/poll here; don't pop interruptive messages.
         acct.status = "pending"
@@ -205,13 +241,16 @@ async def open_browser(
     platform_info = SUPPORTED_PLATFORMS.get(acct.platform, {})
     login_url = platform_info.get("login_url", "")
     profile_dir = acct.browser_profile or str(BROWSER_DATA_DIR / f"{acct.platform}_{acct.nickname}")
+    platform = acct.platform
+    db.expire_on_commit = False
+    db.commit()
 
     try:
         from publisher.browser_pool import open_and_check_browser
         result = await open_and_check_browser(
             profile_dir=profile_dir,
             login_url=login_url,
-            platform=acct.platform,
+            platform=platform,
         )
         logged_in = result.get("logged_in", False)
         if logged_in and acct.status != "active":
@@ -236,12 +275,16 @@ async def check_login_status(
     ).first()
     if not acct:
         raise HTTPException(404, detail="账号不存在")
+    profile_dir = acct.browser_profile or str(BROWSER_DATA_DIR / f"{acct.platform}_{acct.nickname}")
+    platform = acct.platform
+    db.expire_on_commit = False
+    db.commit()
 
     try:
         from publisher.browser_pool import check_browser_login
         logged_in = await check_browser_login(
-            profile_dir=acct.browser_profile or str(BROWSER_DATA_DIR / f"{acct.platform}_{acct.nickname}"),
-            platform=acct.platform,
+            profile_dir=profile_dir,
+            platform=platform,
         )
         if logged_in and acct.status != "active":
             acct.status = "active"
@@ -306,7 +349,8 @@ async def douyin_dryrun(
 
     # Generate a tiny local MP4 for upload dry-run
     from .assets import ASSETS_DIR
-    mp4_path = _ensure_tiny_mp4(Path(ASSETS_DIR) / "dryrun_tiny.mp4")
+    db.commit()
+    mp4_path = await asyncio.to_thread(_ensure_tiny_mp4, Path(ASSETS_DIR) / "dryrun_tiny.mp4")
 
     try:
         from publisher.browser_pool import dryrun_douyin_upload_in_context
@@ -380,6 +424,7 @@ async def create_publish_task(
     db.add(task)
     db.commit()
     db.refresh(task)
+    db.commit()
 
     try:
         from publisher.browser_pool import run_publish_task
@@ -392,17 +437,8 @@ async def create_publish_task(
                 return str(local), None
             url = getattr(a, "source_url", None) or ""
             if url.startswith("http://") or url.startswith("https://"):
-                async with httpx.AsyncClient(timeout=120.0) as c:
-                    r = await c.get(url)
-                r.raise_for_status()
                 suf = Path(a.filename or "").suffix or ".mp4"
-                fd, path = tempfile.mkstemp(suffix=suf)
-                try:
-                    import os
-                    os.write(fd, r.content)
-                finally:
-                    import os
-                    os.close(fd)
+                path = await _download_publish_asset(url, suf)
                 return path, path
             raise HTTPException(400, detail="素材文件不可用（无本地文件且无公网 URL）")
 
@@ -420,6 +456,7 @@ async def create_publish_task(
                 Asset.user_id == current_user.id,
             ).first()
             if cover:
+                db.commit()
                 cover_path, temp_cover = await _resolve_asset_path(cover)
         logger.info("[PUBLISH-API] calling run_publish_task: platform=%s profile=%s title=%s text_only=%s",
                      acct.platform, acct.browser_profile, body.title, text_only)

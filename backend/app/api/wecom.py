@@ -462,18 +462,10 @@ async def wecom_submit_reply(
         row.reply_text = (body.reply_text or "")[:500]
         db.commit()
         raise HTTPException(status_code=400, detail="该应用未配置 corp_id 或 secret，无法发送应用消息")
-    # 获取 access_token
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        token_url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken"
-        r = await client.get(token_url, params={"corpid": cfg.corp_id, "corpsecret": cfg.secret})
-        r.raise_for_status()
-        data = r.json()
-    if data.get("errcode") != 0:
-        row.status = "failed"
-        db.commit()
-        raise HTTPException(status_code=502, detail=f"企微 gettoken 失败: {data.get('errmsg', '')}")
-    access_token = data.get("access_token", "")
-    # 发送应用消息：touser=接收者 userid（发消息的人），agentid=应用 ID（数字）
+    message_id = int(row.id)
+    corp_id = str(cfg.corp_id or "").strip()
+    corp_secret = str(cfg.secret or "").strip()
+    from_user = str(row.from_user or "")
     agentid = getattr(row, "agent_id", None) or getattr(cfg, "agent_id", None)
     if agentid is None:
         try:
@@ -488,9 +480,28 @@ async def wecom_submit_reply(
             status_code=400,
             detail="缺少应用 AgentId（应用 ID）。请在企微后台应用详情中查看并配置 agent_id，或确保回调消息体内含 AgentID",
         )
+    db.commit()
+
+    def save_result(status_value: str, reply_text: str) -> None:
+        target = db.query(WecomPendingMessage).filter(WecomPendingMessage.id == message_id).first()
+        if target is not None:
+            target.status = status_value
+            target.reply_text = reply_text[:2000]
+            db.commit()
+
+    # 获取 access_token
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        token_url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken"
+        r = await client.get(token_url, params={"corpid": corp_id, "corpsecret": corp_secret})
+        r.raise_for_status()
+        data = r.json()
+    if data.get("errcode") != 0:
+        save_result("failed", body.reply_text or "")
+        raise HTTPException(status_code=502, detail=f"企微 gettoken 失败: {data.get('errmsg', '')}")
+    access_token = data.get("access_token", "")
     send_url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={access_token}"
     payload = {
-        "touser": row.from_user,
+        "touser": from_user,
         "msgtype": "text",
         "agentid": int(agentid) if not isinstance(agentid, int) else agentid,
         "text": {"content": (body.reply_text or "").strip() or "收到。"},
@@ -500,13 +511,9 @@ async def wecom_submit_reply(
         r.raise_for_status()
         data = r.json()
     if data.get("errcode") != 0:
-        row.status = "failed"
-        row.reply_text = (body.reply_text or "")[:500]
-        db.commit()
+        save_result("failed", body.reply_text or "")
         raise HTTPException(status_code=502, detail=f"企微发送消息失败: {data.get('errmsg', '')}")
-    row.status = "replied"
-    row.reply_text = (body.reply_text or "").strip()[:2000]
-    db.commit()
+    save_result("replied", (body.reply_text or "").strip())
     return {"ok": True}
 
 
@@ -535,6 +542,8 @@ def _require_config_with_secret(db: Session, config_id: int, user_id: Optional[i
         raise HTTPException(status_code=404, detail="配置不存在")
     if not (cfg.corp_id or "").strip() or not (cfg.secret or "").strip():
         raise HTTPException(status_code=400, detail="该应用未配置 corp_id 或 secret")
+    db.expunge(cfg)
+    db.commit()
     return cfg
 
 
@@ -544,6 +553,8 @@ def _find_config_by_callback(db: Session, callback_path: str) -> WecomConfig:
         raise HTTPException(status_code=404, detail="配置不存在")
     if not (cfg.corp_id or "").strip() or not (cfg.secret or "").strip():
         raise HTTPException(status_code=400, detail="该应用未配置 corp_id 或 secret")
+    db.expunge(cfg)
+    db.commit()
     return cfg
 
 
@@ -646,7 +657,7 @@ async def wecom_media_upload(
     cfg = _require_config_with_secret(db, config_id, current_user.id)
     if media_type not in ("image", "video", "voice", "file"):
         raise HTTPException(status_code=400, detail="media_type 须为 image/video/voice/file")
-    file_bytes = await file.read()
+    file_bytes = await file.read(MAX_MEDIA_SIZE + 1)
     if len(file_bytes) > MAX_MEDIA_SIZE:
         raise HTTPException(status_code=400, detail=f"文件过大，最大 {MAX_MEDIA_SIZE // 1024 // 1024}MB")
     token = await _get_access_token(cfg.corp_id, cfg.secret)
@@ -835,7 +846,7 @@ async def proxy_media_upload(
     cfg = _find_config_by_callback(db, callback_path)
     if media_type not in ("image", "video", "voice", "file"):
         raise HTTPException(status_code=400, detail="media_type 须为 image/video/voice/file")
-    file_bytes = await file.read()
+    file_bytes = await file.read(MAX_MEDIA_SIZE + 1)
     if len(file_bytes) > MAX_MEDIA_SIZE:
         raise HTTPException(status_code=400, detail=f"文件过大，最大 {MAX_MEDIA_SIZE // 1024 // 1024}MB")
     token = await _get_access_token(cfg.corp_id, cfg.secret)

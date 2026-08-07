@@ -76,6 +76,8 @@ _TIMEOUT_XAI_VIDEO_SUBMIT = 60.0
 _TIMEOUT_VIDEO_POLL = 30.0
 _MAX_PROXY_VIDEO_TASK_TRACK = 5000
 _MAX_GROK_REFERENCE_BYTES = 30 * 1024 * 1024
+_MAX_PROXY_FILE_BYTES = 512 * 1024 * 1024
+_MAX_IMAGE_EDIT_TOTAL_BYTES = 120 * 1024 * 1024
 _proxy_video_task_meta: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 _openmind_tos_url_cache: "OrderedDict[str, str]" = OrderedDict()
 _MAX_OPENMIND_TOS_URL_CACHE = 1000
@@ -85,6 +87,13 @@ _VIDEO_IMAGE_RETRY_TTL_SECONDS = 2 * 60 * 60
 _video_image_retry_contexts: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 _video_image_retry_roots: "OrderedDict[str, str]" = OrderedDict()
 _video_image_retry_lock = asyncio.Lock()
+
+
+def _seekable_upload_size(file_obj) -> int:
+    file_obj.seek(0, os.SEEK_END)
+    size = int(file_obj.tell())
+    file_obj.seek(0)
+    return size
 
 
 def _video_image_retry_context_key(root_task_id: str) -> str:
@@ -1889,6 +1898,7 @@ async def _download_reference_url_to_temp_file(url: str) -> Tuple[Path, str, str
     total = 0
     media_type = "image/jpeg"
     suffix = ".jpg"
+    temp_file = None
     try:
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True, trust_env=False) as client:
             async with client.stream("GET", src, headers={"User-Agent": "Mozilla/5.0 Chrome/126 Safari/537.36"}) as resp:
@@ -1897,22 +1907,34 @@ async def _download_reference_url_to_temp_file(url: str) -> Tuple[Path, str, str
                 if not media_type.lower().startswith("image/"):
                     raise RuntimeError(f"reference url is not an image: {media_type}")
                 suffix = _guess_image_ext(media_type, src)
-                with tempfile.NamedTemporaryFile(prefix="grok-reference-", suffix=suffix, delete=False) as tmp:
-                    tmp_path = tmp.name
-                    async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
-                        if not chunk:
-                            continue
-                        total += len(chunk)
-                        if total > _MAX_GROK_REFERENCE_BYTES:
-                            raise RuntimeError("reference image exceeds max size")
-                        tmp.write(chunk)
+                temp_file = await asyncio.to_thread(
+                    tempfile.NamedTemporaryFile,
+                    prefix="grok-reference-",
+                    suffix=suffix,
+                    delete=False,
+                )
+                tmp_path = temp_file.name
+                async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > _MAX_GROK_REFERENCE_BYTES:
+                        raise RuntimeError("reference image exceeds max size")
+                    await asyncio.to_thread(temp_file.write, chunk)
+                await asyncio.to_thread(temp_file.close)
+                temp_file = None
         if total <= 0:
             raise RuntimeError("reference image download is empty")
         return Path(tmp_path), f"reference{suffix}", media_type
     except Exception:
+        if temp_file is not None:
+            try:
+                await asyncio.to_thread(temp_file.close)
+            except Exception:
+                pass
         if tmp_path:
             try:
-                Path(tmp_path).unlink(missing_ok=True)
+                await asyncio.to_thread(Path(tmp_path).unlink, missing_ok=True)
             except Exception:
                 pass
         raise
@@ -2246,18 +2268,22 @@ async def proxy_files_upload(
     _check_request_authorized_for_billing(request)
     form = await request.form()
     data: Dict[str, str] = {}
-    files: List[Tuple[str, Tuple[str, bytes, str]]] = []
+    files: List[Tuple[str, Tuple[Any, ...]]] = []
+    total_file_bytes = 0
     for key, value in form.multi_items():
         if hasattr(value, "filename"):
-            raw = await value.read()
-            if not raw:
+            size = await asyncio.to_thread(_seekable_upload_size, value.file)
+            if size <= 0:
                 continue
+            total_file_bytes += size
+            if total_file_bytes > _MAX_PROXY_FILE_BYTES:
+                raise HTTPException(status_code=413, detail="上传文件总量不能超过 512MB")
             files.append(
                 (
                     key,
                     (
                         value.filename or "file",
-                        raw,
+                        value.file,
                         (getattr(value, "content_type", None) or "application/octet-stream"),
                     ),
                 )
@@ -2708,18 +2734,24 @@ async def proxy_images_edits(
     entry = _require_model_entry(model)
 
     data: Dict[str, str] = {}
-    files: List[Tuple[str, Tuple[str, bytes, str]]] = []
+    files: List[Tuple[str, Tuple[Any, ...]]] = []
+    total_file_bytes = 0
     for key, value in form.multi_items():
         if hasattr(value, "filename"):
-            raw = await value.read()
-            if not raw:
+            size = await asyncio.to_thread(_seekable_upload_size, value.file)
+            if size <= 0:
                 continue
+            if size > _MAX_GROK_REFERENCE_BYTES:
+                raise HTTPException(status_code=413, detail="单张参考图不能超过 30MB")
+            total_file_bytes += size
+            if total_file_bytes > _MAX_IMAGE_EDIT_TOTAL_BYTES:
+                raise HTTPException(status_code=413, detail="参考图总量不能超过 120MB")
             files.append(
                 (
                     key,
                     (
                         value.filename or "image.png",
-                        raw,
+                        value.file,
                         (getattr(value, "content_type", None) or "application/octet-stream"),
                     ),
                 )

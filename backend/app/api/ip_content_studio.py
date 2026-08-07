@@ -2413,6 +2413,9 @@ async def _execute_query(
     )
     db.add(log)
     db.flush()
+    # Persist the pending audit row, then release the connection while TikHub
+    # performs network I/O and retries.
+    db.commit()
 
     try:
         http_status, payload, headers, latency_ms = await _call_tikhub(query_type, clean_params, clean_body)
@@ -2488,6 +2491,9 @@ async def _execute_query(
     db.refresh(log)
     for item in saved_items:
         db.refresh(item)
+    # refresh() starts a new read transaction; close it before callers retry,
+    # sleep, or invoke another upstream endpoint.
+    db.commit()
 
     result = {
         "ok": bool(success),
@@ -4577,6 +4583,7 @@ async def generate_drafts(
         "stream": False,
         "temperature": 0.76,
     }
+    _finish_db_transaction_before_external_io(db)
     data = await _post_llm_with_retry(payload=payload, headers=headers, attempts=3)
     try:
         text = str(data["choices"][0]["message"]["content"] or "")
@@ -4839,6 +4846,7 @@ async def generate_industry_hot_oral(
     keywords = keyword_query.order_by(IPContentKeyword.created_at.desc(), IPContentKeyword.id.desc()).limit(8).all()
     if not keywords and not keyword_text_briefs:
         raise HTTPException(status_code=400, detail="请先在配置里添加至少一个行业关键词。")
+    _finish_db_transaction_before_external_io(db)
     sync_results = []
     if body.sync_before:
         for row in keywords:
@@ -4876,6 +4884,7 @@ async def generate_professional_ip_oral(
     if body.competitor_ids:
         account_query = account_query.filter(ContentCompetitorAccount.id.in_([int(x) for x in body.competitor_ids if str(x).isdigit()]))
     accounts = account_query.order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc()).limit(8).all()
+    _finish_db_transaction_before_external_io(db)
     sync_results = []
     if body.sync_before:
         for row in accounts:
@@ -4917,6 +4926,7 @@ async def generate_moments_candidates(
     if body.competitor_ids:
         account_query = account_query.filter(ContentCompetitorAccount.id.in_([int(x) for x in body.competitor_ids if str(x).isdigit()]))
     accounts = account_query.order_by(ContentCompetitorAccount.created_at.desc(), ContentCompetitorAccount.id.desc()).limit(8).all()
+    _finish_db_transaction_before_external_io(db)
     sync_results = []
     if body.sync_before:
         for row in keywords:

@@ -5,6 +5,7 @@ this server for one user installation, and the client pulls them during sync.
 """
 from __future__ import annotations
 
+import asyncio
 import html
 import hashlib
 import io
@@ -597,11 +598,12 @@ async def admin_openclaw_memory_upload(
     _ensure_target_allowed(ctx, db, target_user_id)
     iid = parse_installation_id_strict(installation_id)
     _ensure_installation_for_user(db, target_user_id, iid)
+    db.commit()
     data = await file.read(_MAX_UPLOAD_BYTES + 1)
     if len(data) > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="文件超过 30MB，请拆分后上传")
     filename = (file.filename or "document.txt").strip() or "document.txt"
-    text = _decode_text_payload(data, filename)
+    text = await asyncio.to_thread(_decode_text_payload, data, filename)
     sha256 = hashlib.sha256(data).hexdigest()
     now = datetime.utcnow()
     doc_id = _doc_id_for(target_user_id, iid, filename, sha256, now.isoformat())
@@ -668,11 +670,12 @@ async def admin_openclaw_agent_memory_upload(
 ):
     _require_memory_operator(ctx, db)
     agent = _ensure_agent_memory_allowed(ctx, db, agent_user_id)
+    db.commit()
     data = await file.read(_MAX_UPLOAD_BYTES + 1)
     if len(data) > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="文件超过 30MB，请拆分后上传")
     filename = (file.filename or "document.txt").strip() or "document.txt"
-    text = _decode_text_payload(data, filename)
+    text = await asyncio.to_thread(_decode_text_payload, data, filename)
     sha256 = hashlib.sha256(data).hexdigest()
     now = datetime.utcnow()
     doc_id = _doc_id_for(agent.id, _AGENT_MEMORY_INSTALLATION_ID, filename, sha256, now.isoformat(), "agent_memory")

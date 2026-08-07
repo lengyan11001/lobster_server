@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal, get_db
 from ..models import CreativeGenerationJob, TikHubSourceItem, User
+from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot, spawn_tracked_task
 from .auth import get_current_user
 from .ip_content_studio import (
     _clean_long_text,
@@ -1373,7 +1374,7 @@ def _schedule_autorun_if_needed(row: CreativeGenerationJob, db: Session) -> bool
     _mark_autorun_resume_requested(row)
     db.commit()
     logger.info("[social_leads] scheduled idle job resume job_id=%s status=%s", row.job_id, row.status)
-    asyncio.create_task(_auto_run_job(row.job_id))
+    spawn_tracked_task(_auto_run_job(row.job_id), name=f"social-leads-{row.job_id}")
     return True
 
 
@@ -1488,6 +1489,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
     row.stage = "running"
     db.commit()
     db.refresh(row)
+    db.commit()
     outputs: list[dict[str, Any]] = []
     try:
         if step_key == "trending" and platform == "x":
@@ -1932,7 +1934,7 @@ def _step_title(row: CreativeGenerationJob, key: str) -> str:
     return key
 
 
-async def _auto_run_job(job_id: str) -> None:
+async def _auto_run_job_inner(job_id: str) -> None:
     await asyncio.sleep(0.2)
     with SessionLocal() as db:
         row = db.query(CreativeGenerationJob).filter(CreativeGenerationJob.job_id == job_id).first()
@@ -1962,6 +1964,21 @@ async def _auto_run_job(job_id: str) -> None:
                     step.get("key"),
                 )
                 return
+
+
+async def _auto_run_job(job_id: str) -> None:
+    try:
+        async with background_heavy_slot("social_leads"):
+            await _auto_run_job_inner(job_id)
+    except WorkloadQueueFull:
+        with SessionLocal() as db:
+            row = db.query(CreativeGenerationJob).filter(CreativeGenerationJob.job_id == job_id).first()
+            if row and row.status not in _TERMINAL_STATUS:
+                row.status = "failed"
+                row.stage = "failed"
+                row.error = "当前后台任务较多，排队已满，请稍后重试"
+                row.completed_at = _utcnow()
+                db.commit()
 
 
 @router.post("/api/social-leads/jobs", summary="启动 Reddit/X/TikTok 只读线索采集任务")
@@ -2036,7 +2053,7 @@ async def start_social_leads_job(
     db.commit()
     db.refresh(row)
     if body.auto_run:
-        asyncio.create_task(_auto_run_job(row.job_id))
+        spawn_tracked_task(_auto_run_job(row.job_id), name=f"social-leads-{row.job_id}")
     return {"ok": True, "job": _job_payload(row, db=db, include_sources=True)}
 
 
@@ -2171,7 +2188,7 @@ async def resume_social_leads_job(
         row.status = "running"
         row.error = None
         db.commit()
-    asyncio.create_task(_auto_run_job(row.job_id))
+    spawn_tracked_task(_auto_run_job(row.job_id), name=f"social-leads-{row.job_id}")
     return {"ok": True, "job": _job_payload(row, db=db, include_sources=True)}
 
 
@@ -2180,7 +2197,7 @@ def _schedule_social_leads_autorun(job_id: str) -> bool:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return False
-    loop.create_task(_auto_run_job(job_id))
+    spawn_tracked_task(_auto_run_job(job_id), name=f"social-leads-{job_id}")
     return True
 
 

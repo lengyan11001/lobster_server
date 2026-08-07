@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db, SessionLocal
 from ..models import CreativeGenerationJob, TikHubSourceItem, User
+from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot, spawn_tracked_task
 from .auth import create_access_token, get_current_user
 from .ip_content_studio import (
     _clean_long_text,
@@ -693,6 +694,7 @@ async def _execute_step(db: Session, row: CreativeGenerationJob, current_user: U
     row.status = "running"
     db.commit()
     db.refresh(row)
+    db.commit()
 
     try:
         if step_key == "seed_profiles":
@@ -1163,7 +1165,7 @@ async def _generate_summary_report(row: CreativeGenerationJob, current_user: Use
     return _jsonable(report)
 
 
-async def _auto_run_job(job_id: str, bearer_token: str = "") -> None:
+async def _auto_run_job_inner(job_id: str, bearer_token: str = "") -> None:
     await asyncio.sleep(0.2)
     with SessionLocal() as db:
         row = (
@@ -1189,6 +1191,25 @@ async def _auto_run_job(job_id: str, bearer_token: str = "") -> None:
                 await _execute_step(db, row, user, str(step.get("key") or ""))
             except Exception:
                 return
+
+
+async def _auto_run_job(job_id: str, bearer_token: str = "") -> None:
+    try:
+        async with background_heavy_slot("linkedin_mining"):
+            await _auto_run_job_inner(job_id, bearer_token)
+    except WorkloadQueueFull:
+        with SessionLocal() as db:
+            row = (
+                db.query(CreativeGenerationJob)
+                .filter(CreativeGenerationJob.job_id == job_id, CreativeGenerationJob.feature_type == _FEATURE_TYPE)
+                .first()
+            )
+            if row and row.status not in _TERMINAL_STATUS:
+                row.status = "failed"
+                row.stage = "failed"
+                row.error = "当前后台任务较多，排队已满，请稍后重试"
+                row.completed_at = _utcnow()
+                db.commit()
 
 
 @router.post("/api/linkedin-mining/jobs", summary="启动LinkedIn线索挖掘任务")
@@ -1245,7 +1266,7 @@ async def start_linkedin_mining_job(
     db.refresh(row)
     if body.auto_run:
         token = request.headers.get("Authorization") or request.headers.get("authorization") or ""
-        asyncio.create_task(_auto_run_job(job_id, token))
+        spawn_tracked_task(_auto_run_job(job_id, token), name=f"linkedin-mining-{job_id}")
     return {"ok": True, "job": _job_payload(row)}
 
 
@@ -1345,7 +1366,7 @@ async def resume_linkedin_mining_job(
         row.status = "running"
         row.error = None
         db.commit()
-    asyncio.create_task(_auto_run_job(row.job_id))
+    spawn_tracked_task(_auto_run_job(row.job_id), name=f"linkedin-mining-{row.job_id}")
     return {"ok": True, "job": _job_payload(row)}
 
 
@@ -1354,7 +1375,7 @@ def _schedule_linkedin_mining_autorun(job_id: str) -> bool:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return False
-    loop.create_task(_auto_run_job(job_id))
+    spawn_tracked_task(_auto_run_job(job_id), name=f"linkedin-mining-{job_id}")
     return True
 
 

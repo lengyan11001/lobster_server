@@ -15,6 +15,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from ..db import SessionLocal, get_db
 from ..models import CreativeGenerationJob, User
+from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot, spawn_tracked_task
 from .auth import get_current_user
 from .cutcli_templates import (
     _extract_audio_wav,
@@ -622,7 +623,15 @@ def _resolve_video_url(item: dict[str, Any]) -> str:
     return video_url
 
 
-def _process_one_video(db: Session, row: CreativeGenerationJob, user: User, item: dict[str, Any], index: int, total: int, job_dir: Path) -> dict[str, Any]:
+def _process_one_video(
+    *,
+    job_id: str,
+    item: dict[str, Any],
+    index: int,
+    token: str,
+    token_source: str,
+    job_dir: Path,
+) -> dict[str, Any]:
     video_url = _resolve_video_url(item)
     if not video_url:
         raise RuntimeError("视频没有可下载链接")
@@ -635,10 +644,9 @@ def _process_one_video(db: Session, row: CreativeGenerationJob, user: User, item
     _extract_audio_wav(ffmpeg=ffmpeg, source=str(video_path), out_path=audio_path)
     audio_url = _upload_job_file_to_tos(
         audio_path,
-        object_key=f"assets/wechat_channels_transcript/{row.job_id}/{index + 1:03d}.wav",
+        object_key=f"assets/wechat_channels_transcript/{job_id}/{index + 1:03d}.wav",
         content_type="audio/wav",
     )
-    token, token_source = _load_sutui_token_for_stt(db, user.id)
     created = _stt_create_task(token, audio_url, job_dir=item_dir)
     stt_data = _stt_poll_task(token, created["task_id"], job_dir=item_dir)
     text = _transcript_text(stt_data)
@@ -656,9 +664,10 @@ def _process_one_video(db: Session, row: CreativeGenerationJob, user: User, item
     return result
 
 
-async def _run_transcript_job(job_id: str) -> None:
+async def _run_transcript_job_inner(job_id: str) -> None:
     await asyncio.sleep(0.1)
     with SessionLocal() as db:
+        db.expire_on_commit = False
         row = (
             db.query(CreativeGenerationJob)
             .filter(CreativeGenerationJob.job_id == job_id, CreativeGenerationJob.feature_type == _FEATURE_TYPE)
@@ -687,6 +696,8 @@ async def _run_transcript_job(job_id: str) -> None:
         row.status = "running"
         _save_job(row, items=items, stage="starting", progress=2)
         db.commit()
+        token, token_source = _load_sutui_token_for_stt(db, int(user.id))
+        db.commit()
         for index, item in enumerate(items):
             if row.status in _TERMINAL_STATUS:
                 return
@@ -698,7 +709,15 @@ async def _run_transcript_job(job_id: str) -> None:
                 item["status"] = "running"
                 _save_job(row, items=items, stage=f"processing_{index + 1}_{len(items)}", progress=int(index / max(len(items), 1) * 90) + 5)
                 db.commit()
-                result = await asyncio.to_thread(_process_one_video, db, row, user, item, index, len(items), job_dir)
+                result = await asyncio.to_thread(
+                    _process_one_video,
+                    job_id=row.job_id,
+                    item=item,
+                    index=index,
+                    token=token,
+                    token_source=token_source,
+                    job_dir=job_dir,
+                )
                 items[index] = result
             except Exception as exc:
                 items[index] = {**item, "status": "failed", "error": str(getattr(exc, "message", "") or exc)[:2000]}
@@ -715,6 +734,23 @@ async def _run_transcript_job(job_id: str) -> None:
         _save_job(row, items=items, stage=row.status, progress=100, error="全部转写失败" if row.status == "failed" else "")
         db.commit()
         shutil.rmtree(job_dir, ignore_errors=True)
+
+
+async def _run_transcript_job(job_id: str) -> None:
+    try:
+        async with background_heavy_slot("wechat_channels_transcription"):
+            await _run_transcript_job_inner(job_id)
+    except WorkloadQueueFull:
+        with SessionLocal() as db:
+            row = (
+                db.query(CreativeGenerationJob)
+                .filter(CreativeGenerationJob.job_id == job_id, CreativeGenerationJob.feature_type == _FEATURE_TYPE)
+                .first()
+            )
+            if row and row.status not in _TERMINAL_STATUS:
+                row.status = "failed"
+                _save_job(row, stage="failed", progress=100, error="当前转写任务较多，排队已满，请稍后重试")
+                db.commit()
 
 
 @router.get("/api/wechat-channels-transcript/users/search", summary="搜索视频号账号")
@@ -846,7 +882,7 @@ async def create_transcript_job(
     db.add(row)
     db.commit()
     db.refresh(row)
-    asyncio.create_task(_run_transcript_job(job_id))
+    spawn_tracked_task(_run_transcript_job(job_id), name=f"wechat-transcript-{job_id}")
     return {"ok": True, "job": _job_payload(row)}
 
 
@@ -857,6 +893,7 @@ async def run_wechat_channels_transcript_payload_to_completion(
     payload: dict[str, Any],
     run_id: str = "",
 ) -> dict[str, Any]:
+    db.expire_on_commit = False
     body = dict(payload or {})
     if run_id:
         candidates = (
@@ -880,15 +917,19 @@ async def run_wechat_channels_transcript_payload_to_completion(
         )
         if existing is not None:
             if existing.status not in _TERMINAL_STATUS:
-                await _run_transcript_job(existing.job_id)
+                existing_job_id = str(existing.job_id)
+                existing_id = int(existing.id)
+                db.commit()
+                await _run_transcript_job(existing_job_id)
                 db.expire_all()
                 existing = (
                     db.query(CreativeGenerationJob)
-                    .filter(CreativeGenerationJob.id == existing.id)
+                    .filter(CreativeGenerationJob.id == existing_id)
                     .first()
                     or existing
                 )
             return _job_payload(existing)
+    db.commit()
     query = _clean_long_text(body.get("query") or body.get("username") or "", 2000)
     if not query:
         raise HTTPException(status_code=400, detail="视频号文案提取任务需要 query 或 username")
@@ -949,6 +990,7 @@ async def run_wechat_channels_transcript_payload_to_completion(
     db.add(row)
     db.commit()
     db.refresh(row)
+    db.commit()
     await _run_transcript_job(job_id)
     db.expire_all()
     refreshed = (
@@ -1024,5 +1066,5 @@ async def resume_job(
     row.stage = "queued"
     row.progress = min(int(row.progress or 0), 95)
     db.commit()
-    asyncio.create_task(_run_transcript_job(row.job_id))
+    spawn_tracked_task(_run_transcript_job(row.job_id), name=f"wechat-transcript-{row.job_id}")
     return {"ok": True, "job": _job_payload(row)}

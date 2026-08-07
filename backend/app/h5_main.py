@@ -36,6 +36,7 @@ from .api.wechat_channels_transcript import router as wechat_channels_transcript
 from .core.config import settings
 from .db import Base, SessionLocal, engine, reset_db_request_context, set_db_request_context
 from .services.brand_context import ensure_user_brand_schema, seed_brand_configs
+from .services.workload_guard import install_workload_guard
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,7 @@ def create_h5_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    install_workload_guard(app)
 
     @app.middleware("http")
     async def db_pool_request_context(request: Request, call_next):

@@ -84,6 +84,7 @@ async def _run_one(db: Session, sch: SocialPublishSchedule, now: datetime) -> No
     db.add(task)
     db.commit()
     db.refresh(task)
+    db.commit()
 
     try:
         post_id = ""
@@ -154,6 +155,7 @@ async def _run_one(db: Session, sch: SocialPublishSchedule, now: datetime) -> No
 
 async def _tick_once() -> None:
     db = SessionLocal()
+    db.expire_on_commit = False
     try:
         now = datetime.utcnow()
         rows = (

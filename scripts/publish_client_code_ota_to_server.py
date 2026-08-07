@@ -64,6 +64,7 @@ def manifest_paths_for_zip(zip_path: Path) -> list[str]:
         names = set(zf.namelist())
     runtime_dirs = [
         "scripts/ppt_runtime_wheels",
+        "scripts/memory_document_runtime_wheels",
         "scripts/douyin_runtime_wheels",
         "scripts/wechat_runtime_wheels",
     ]
@@ -94,7 +95,14 @@ def is_encrypted_ota_zip(zip_path: Path) -> bool:
 def canonical_bundle_object_name(bundle_name: str) -> str:
     name = (bundle_name or "").strip().lower()
     variants: list[str] = []
-    for token in ("with_nodejs", "with_ppt_runtime", "with_douyin_runtime", "with_wechat_runtime", "encrypted"):
+    for token in (
+        "with_nodejs",
+        "with_ppt_runtime",
+        "with_memory_document_runtime",
+        "with_douyin_runtime",
+        "with_wechat_runtime",
+        "encrypted",
+    ):
         if token in name:
             variants.append(token)
     suffix = "_" + "_".join(variants) if variants else ""
