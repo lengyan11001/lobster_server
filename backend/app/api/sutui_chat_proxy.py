@@ -1957,7 +1957,7 @@ async def sutui_chat_completions(
                                     error_message=txt[:8000],
                                     extra={
                                         "trace_id": trace_id,
-                                        "user_id": current_user.id,
+                                        "user_id": billing_user_id,
                                         "stream": True,
                                         "user_lobster_credits": user_bal_str,
                                         "route": att["provider"],
@@ -1969,11 +1969,10 @@ async def sutui_chat_completions(
                                     outbound_request_json=out_req_for_audit,
                                 )
                                 log_model_usage_event(
-                                    db,
                                     category="dialog",
                                     event_kind="request",
                                     success=False,
-                                    user_id=current_user.id,
+                                    user_id=billing_user_id,
                                     requested_model=requested_model_id,
                                     model=mid_try,
                                     provider=att["provider"],
@@ -2020,7 +2019,7 @@ async def sutui_chat_completions(
                                 error_message="",
                                 extra={
                                     "trace_id": trace_id,
-                                    "user_id": current_user.id,
+                                    "user_id": billing_user_id,
                                     "stream": True,
                                     "user_lobster_credits": user_bal_str,
                                     "route": att["provider"],
@@ -2031,11 +2030,10 @@ async def sutui_chat_completions(
                                 outbound_request_json=out_req_for_audit,
                             )
                             log_model_usage_event(
-                                db,
                                 category="dialog",
                                 event_kind="request",
                                 success=True,
-                                user_id=current_user.id,
+                                user_id=billing_user_id,
                                 requested_model=requested_model_id,
                                 model=mid_try,
                                 provider=att["provider"] or ("direct" if att_is_direct else "xskill"),

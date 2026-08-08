@@ -1,5 +1,7 @@
 import asyncio
 import json
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -45,6 +47,29 @@ def test_recorder_segments_map_speakers_in_first_seen_order():
     assert [row["text"] for row in rows] == ["先确认需求", "好的", "明天交付"]
 
 
+def test_recorder_segments_reads_gateway_nested_speaker_and_keeps_ids():
+    rows = _segments({
+        "utterances": [
+            {"additions": {"speaker": "1"}, "text": "甲"},
+            {"additions": {"speaker": "2"}, "text": "乙"},
+            {"additions": {"speaker": "1"}, "text": "丙"},
+        ]
+    })
+
+    assert [row["speaker"] for row in rows] == ["A", "B", "A"]
+    assert [row["speaker_id"] for row in rows] == ["1", "2", "1"]
+
+
+def test_recorder_chunk_merge_keeps_speaker_labels_across_chunk_boundaries():
+    _text, rows = _merge_stt_parts([
+        (0.0, {"utterances": [{"additions": {"speaker": "2"}, "text": "乙"}, {"additions": {"speaker": "1"}, "text": "甲"}]}),
+        (600.0, {"utterances": [{"additions": {"speaker": "1"}, "text": "甲二"}, {"additions": {"speaker": "2"}, "text": "乙二"}]}),
+    ])
+
+    assert [row["speaker"] for row in rows] == ["A", "B", "B", "A"]
+    assert [row["speaker_id"] for row in rows] == ["2", "1", "1", "2"]
+
+
 def test_recorder_segments_do_not_invent_unknown_speaker():
     rows = _segments({"utterances": [{"text": "只有一段文本"}]})
     assert rows[0]["speaker"] == "未知"
@@ -73,6 +98,10 @@ def test_long_audio_is_split_into_bounded_stt_chunks():
         (600.0, 600.0),
         (1200.0, 100.0),
     ]
+
+
+def test_recorder_stt_default_chunk_size_is_two_minutes():
+    assert h5_recorder.DEFAULT_STT_CHUNK_SECONDS == 120
 
 
 def test_stt_chunk_merge_restores_original_timeline_order():
@@ -166,7 +195,7 @@ def test_run_stt_merges_all_chunks_and_persists_batch_progress(
         start = float(kwargs["start_seconds"])
         duration = float(kwargs["duration_seconds"])
         observed.append((start, duration))
-        part_number = len(observed)
+        part_number = int(start // 600) + 1
         return [(
             start,
             {
@@ -184,7 +213,7 @@ def test_run_stt_merges_all_chunks_and_persists_batch_progress(
 
     text, segments, task_reference = _run_stt(record_id)
 
-    assert observed == [(0.0, 600.0), (600.0, 600.0), (1200.0, 100.0)]
+    assert sorted(observed) == [(0.0, 600.0), (600.0, 600.0), (1200.0, 100.0)]
     assert text == "chunk-1\nchunk-2\nchunk-3"
     assert [item["start_ms"] for item in segments] == [0, 600000, 1200000]
     assert task_reference.startswith("batch:3:")
@@ -192,6 +221,81 @@ def test_run_stt_merges_all_chunks_and_persists_batch_progress(
         saved = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == record_id).one()
         assert saved.process_stage == "transcribing:3/3"
         assert saved.stt_task_id == task_reference
+
+
+def test_run_stt_limits_parallel_chunks_and_merges_by_timeline(
+    monkeypatch,
+    tmp_path,
+    db_session_factory,
+    test_user,
+):
+    source = tmp_path / "parallel-audio.mp3"
+    source.write_bytes(b"source")
+    with db_session_factory() as db:
+        row = RecorderAudioRecord(
+            user_id=test_user.id,
+            file_name=source.name,
+            display_name=source.name,
+            device_name="local",
+            source_type="local",
+            file_size=source.stat().st_size,
+            audio_path=str(source),
+            status="processing",
+            process_stage="uploaded",
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        record_id = row.id
+
+    lock = threading.Lock()
+    three_workers_started = threading.Event()
+    active = 0
+    max_active = 0
+    completion_order: list[int] = []
+
+    def fake_transcribe(**kwargs):
+        nonlocal active, max_active
+        start = float(kwargs["start_seconds"])
+        part_index = int(start // 120)
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+            if active == 3:
+                three_workers_started.set()
+        assert three_workers_started.wait(timeout=2)
+        time.sleep({0: 0.06, 1: 0.04, 2: 0.01}.get(part_index, 0.005))
+        with lock:
+            active -= 1
+            completion_order.append(part_index)
+        return [(
+            start,
+            {
+                "text": f"chunk-{part_index + 1}",
+                "utterances": [{
+                    "speaker_id": "speaker-1",
+                    "text": f"line-{part_index + 1}",
+                    "start_time": 0,
+                    "end_time": 100,
+                }],
+            },
+        )], [f"task-{part_index + 1}"]
+
+    monkeypatch.setattr(h5_recorder, "SessionLocal", db_session_factory)
+    monkeypatch.setattr(h5_recorder, "STT_CHUNK_SECONDS", 120)
+    monkeypatch.setattr(h5_recorder, "STT_MAX_PARALLEL_CHUNKS", 3)
+    monkeypatch.setattr(h5_recorder, "_STT_GLOBAL_CHUNK_GATE", threading.BoundedSemaphore(8))
+    monkeypatch.setattr(h5_recorder, "_find_ffmpeg_bin", lambda: "ffmpeg")
+    monkeypatch.setattr(h5_recorder, "_audio_duration_seconds", lambda _source: 480)
+    monkeypatch.setattr(h5_recorder, "_load_sutui_token_for_stt", lambda _db, _user_id: ("token", "test"))
+    monkeypatch.setattr(h5_recorder, "_transcribe_stt_range", fake_transcribe)
+
+    text, segments, _task_reference = _run_stt(record_id)
+
+    assert max_active == 3
+    assert completion_order[0] != 0
+    assert text == "chunk-1\nchunk-2\nchunk-3\nchunk-4"
+    assert [item["start_ms"] for item in segments] == [0, 120000, 240000, 360000]
 
 
 def test_h5_recorder_routes_are_available_on_standalone_h5_app():
@@ -329,6 +433,26 @@ def test_speaker_rename_updates_all_matching_segments_only(db_session, test_user
     assert [item["speaker"] for item in result["record"]["segments"]] == ["何总", "B", "何总"]
 
 
+def test_speaker_rename_prefers_stable_speaker_id_over_duplicate_display_names(db_session, test_user):
+    row = _recorder_record(test_user.id)
+    row.transcript_segments = [
+        {"speaker": "张老师", "speaker_id": "1", "text": "甲"},
+        {"speaker": "张老师", "speaker_id": "2", "text": "乙"},
+    ]
+    db_session.add(row)
+    db_session.commit()
+
+    result = rename_recording_speaker(
+        row.id,
+        RecorderSpeakerRenameBody(speaker="张老师", speaker_id="1", display_name="甲方"),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    assert result["updated_segments"] == 1
+    assert [item["speaker"] for item in result["record"]["segments"]] == ["甲方", "张老师"]
+
+
 def test_speaker_rename_rejects_cross_user_record(db_session, test_user, other_user):
     row = _recorder_record(other_user.id)
     db_session.add(row)
@@ -456,6 +580,8 @@ def test_recorder_detail_uses_a_separate_view_with_result_tabs():
     assert 'data-recorder-copy="summary"' in html
     assert 'data-recorder-export="transcript"' in html
     assert "renameRecorderSpeaker" in script
+    assert "data-recorder-speaker-id" in script
+    assert "speaker_id" in script
 
 
 def test_h5_api_hides_gateway_html_and_retries_transient_gets():

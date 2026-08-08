@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import logging
 import math
 import mimetypes
 import os
 import re
 import shutil
+import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +48,7 @@ from .h5_personal_settings import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 200 * 1024 * 1024
 DATA_ROOT = Path(__file__).resolve().parents[3] / "data" / "recorder_audio"
 UPLOAD_AUDIO_SUFFIXES = AUDIO_SUFFIXES | {".opus", ".webm"}
@@ -57,9 +62,10 @@ def _bounded_env_int(name: str, default: int, *, minimum: int, maximum: int) -> 
     return max(minimum, min(value, maximum))
 
 
+DEFAULT_STT_CHUNK_SECONDS = 2 * 60
 STT_CHUNK_SECONDS = _bounded_env_int(
     "RECORDER_STT_CHUNK_SECONDS",
-    10 * 60,
+    DEFAULT_STT_CHUNK_SECONDS,
     minimum=2 * 60,
     maximum=30 * 60,
 )
@@ -75,6 +81,19 @@ STT_MAX_AUDIO_SECONDS = _bounded_env_int(
     minimum=30 * 60,
     maximum=24 * 60 * 60,
 )
+STT_MAX_PARALLEL_CHUNKS = _bounded_env_int(
+    "RECORDER_STT_MAX_PARALLEL_CHUNKS",
+    3,
+    minimum=1,
+    maximum=6,
+)
+STT_GLOBAL_MAX_CONCURRENT_CHUNKS = _bounded_env_int(
+    "RECORDER_STT_GLOBAL_MAX_CONCURRENT_CHUNKS",
+    6,
+    minimum=1,
+    maximum=24,
+)
+_STT_GLOBAL_CHUNK_GATE = threading.BoundedSemaphore(STT_GLOBAL_MAX_CONCURRENT_CHUNKS)
 SOURCE_LABELS = {
     "device": "录音设备",
     "local": "本地音频",
@@ -96,6 +115,7 @@ class RecorderRenameBody(BaseModel):
 
 class RecorderSpeakerRenameBody(BaseModel):
     speaker: str = Field(min_length=1, max_length=64)
+    speaker_id: str | None = Field(default=None, max_length=128)
     display_name: str = Field(min_length=1, max_length=64)
 
 
@@ -221,18 +241,33 @@ def _new_audio_record(
 
 
 def _speaker_value(item: dict[str, Any]) -> str:
-    for key in ("speaker_id", "speaker", "speaker_label", "spk", "spk_id", "channel_id"):
-        value = item.get(key)
-        if value not in (None, ""):
-            return str(value)
+    keys = ("speaker_id", "speaker", "speaker_label", "spk", "spk_id", "channel_id")
+
+    def pick(source: Any) -> str:
+        if not isinstance(source, dict):
+            return ""
+        for key in keys:
+            value = source.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return ""
+
+    direct = pick(item)
+    if direct:
+        return direct
+    # The speech gateway puts diarization on utterances[].additions.speaker.
+    for container_key in ("additions", "addition", "metadata", "meta", "speaker_info", "speakerInfo"):
+        nested = pick(item.get(container_key))
+        if nested:
+            return nested
     return ""
 
 
-def _segments(output: dict[str, Any]) -> list[dict[str, Any]]:
+def _segments(output: dict[str, Any], speaker_labels: dict[str, str] | None = None) -> list[dict[str, Any]]:
     rows = output.get("utterances") or output.get("sentences") or output.get("segments") or []
     if not isinstance(rows, list):
         rows = []
-    speaker_labels: dict[str, str] = {}
+    labels = speaker_labels if speaker_labels is not None else {}
     result: list[dict[str, Any]] = []
     for item in rows:
         if not isinstance(item, dict):
@@ -241,10 +276,10 @@ def _segments(output: dict[str, Any]) -> list[dict[str, Any]]:
         if not text:
             continue
         raw_speaker = _speaker_value(item)
-        if raw_speaker and raw_speaker not in speaker_labels:
-            speaker_labels[raw_speaker] = chr(ord("A") + min(len(speaker_labels), 25))
+        if raw_speaker and raw_speaker not in labels:
+            labels[raw_speaker] = chr(ord("A") + min(len(labels), 25))
         result.append({
-            "speaker": speaker_labels.get(raw_speaker, "未知"),
+            "speaker": labels.get(raw_speaker, "未知"),
             "speaker_id": raw_speaker,
             "text": text,
             "start_ms": int(float(item.get("start_time") or item.get("start_ms") or 0)),
@@ -426,8 +461,9 @@ def _stt_text(output: dict[str, Any]) -> str:
 def _merge_stt_parts(parts: list[tuple[float, dict[str, Any]]]) -> tuple[str, list[dict[str, Any]]]:
     texts: list[str] = []
     merged_segments: list[dict[str, Any]] = []
+    speaker_labels: dict[str, str] = {}
     for start_seconds, output in sorted(parts, key=lambda item: item[0]):
-        chunk_segments = _segments(output)
+        chunk_segments = _segments(output, speaker_labels)
         offset_ms = round(max(0.0, float(start_seconds)) * 1000)
         for segment in chunk_segments:
             item = dict(segment)
@@ -526,6 +562,25 @@ def _transcribe_stt_range(
     return [(start_seconds, output)], [task_id] if task_id else []
 
 
+def _transcribe_stt_plan_range(**kwargs: Any) -> tuple[
+    list[tuple[float, dict[str, Any]]],
+    list[str],
+    int,
+    int,
+]:
+    queued_at = time.monotonic()
+    with _STT_GLOBAL_CHUNK_GATE:
+        started_at = time.monotonic()
+        parts, task_ids = _transcribe_stt_range(**kwargs)
+    finished_at = time.monotonic()
+    return (
+        parts,
+        task_ids,
+        max(0, round((started_at - queued_at) * 1000)),
+        max(0, round((finished_at - started_at) * 1000)),
+    )
+
+
 def mark_interrupted_recordings_failed() -> int:
     """Make records interrupted by an H5 restart explicitly retryable."""
     db = SessionLocal()
@@ -568,45 +623,97 @@ def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
         duration_seconds = _audio_duration_seconds(source)
         plan = _stt_chunk_plan(duration_seconds)
         token, _ = _load_sutui_token_for_stt(db, user_id)
+        total_chunks = len(plan)
+        worker_count = min(STT_MAX_PARALLEL_CHUNKS, total_chunks)
+        db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == stored_record_id).update(
+            {"process_stage": f"transcribing:0/{total_chunks}"},
+            synchronize_session=False,
+        )
         db.commit()
-        parts: list[tuple[float, dict[str, Any]]] = []
-        task_ids: list[str] = []
-        for index, (start_seconds, chunk_duration) in enumerate(plan, start=1):
-            db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == stored_record_id).update(
-                {"process_stage": f"transcribing:{index}/{len(plan)}"},
-                synchronize_session=False,
-            )
-            db.commit()
-            chunk_parts, chunk_task_ids = _transcribe_stt_range(
-                token=token,
-                ffmpeg=ffmpeg,
-                source=source,
-                job_dir=job_dir,
-                user_id=user_id,
-                record_id=stored_record_id,
-                start_seconds=start_seconds,
-                duration_seconds=chunk_duration,
-            )
-            parts.extend(chunk_parts)
-            task_ids.extend(chunk_task_ids)
-            task_reference = _stt_task_reference(task_ids)
-            if task_reference:
+        transcription_started_at = time.monotonic()
+        results_by_index: dict[int, tuple[list[tuple[float, dict[str, Any]]], list[str]]] = {}
+        completed_task_ids: list[str] = []
+        executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="recorder-stt")
+        futures = {}
+        try:
+            futures = {
+                executor.submit(
+                    _transcribe_stt_plan_range,
+                    token=token,
+                    ffmpeg=ffmpeg,
+                    source=source,
+                    job_dir=job_dir,
+                    user_id=user_id,
+                    record_id=stored_record_id,
+                    start_seconds=start_seconds,
+                    duration_seconds=chunk_duration,
+                ): (index, start_seconds, chunk_duration)
+                for index, (start_seconds, chunk_duration) in enumerate(plan)
+            }
+            for completed_count, future in enumerate(as_completed(futures), start=1):
+                index, start_seconds, chunk_duration = futures[future]
+                chunk_parts, chunk_task_ids, global_wait_ms, elapsed_ms = future.result()
+                results_by_index[index] = (chunk_parts, chunk_task_ids)
+                completed_task_ids.extend(chunk_task_ids)
+                task_reference = _stt_task_reference(completed_task_ids)
+                values: dict[str, Any] = {
+                    "process_stage": f"transcribing:{completed_count}/{total_chunks}",
+                }
+                if task_reference:
+                    values["stt_task_id"] = task_reference
                 db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == stored_record_id).update(
-                    {"stt_task_id": task_reference},
+                    values,
                     synchronize_session=False,
                 )
                 db.commit()
+                logger.info(
+                    "recorder STT chunk completed record_id=%s chunk=%s/%s start=%.3f duration=%.3f "
+                    "tasks=%s parts=%s global_wait_ms=%s elapsed_ms=%s",
+                    stored_record_id,
+                    completed_count,
+                    total_chunks,
+                    start_seconds,
+                    chunk_duration,
+                    len(chunk_task_ids),
+                    len(chunk_parts),
+                    global_wait_ms,
+                    elapsed_ms,
+                )
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+
+        parts: list[tuple[float, dict[str, Any]]] = []
+        task_ids: list[str] = []
+        for index in range(total_chunks):
+            chunk_parts, chunk_task_ids = results_by_index[index]
+            parts.extend(chunk_parts)
+            task_ids.extend(chunk_task_ids)
+        transcription_elapsed_seconds = round(time.monotonic() - transcription_started_at, 3)
 
         text, segments = _merge_stt_parts(parts)
         if not text.strip():
             raise RuntimeError("录音未识别到有效语音，请确认录音内容清晰后重试")
         task_reference = _stt_task_reference(task_ids)
+        final_values: dict[str, Any] = {"process_stage": f"transcribing:{total_chunks}/{total_chunks}"}
+        if task_reference:
+            final_values["stt_task_id"] = task_reference
+        db.query(RecorderAudioRecord).filter(RecorderAudioRecord.id == stored_record_id).update(
+            final_values,
+            synchronize_session=False,
+        )
+        db.commit()
         (job_dir / "stt_manifest.json").write_text(
             json.dumps(
                 {
                     "duration_seconds": duration_seconds,
                     "chunk_seconds": STT_CHUNK_SECONDS,
                     "planned_chunks": len(plan),
+                    "parallel_chunks": worker_count,
+                    "elapsed_seconds": transcription_elapsed_seconds,
                     "completed_parts": len(parts),
                     "task_ids": list(dict.fromkeys(task_ids)),
                 },
@@ -614,6 +721,17 @@ def _run_stt(record_id: int) -> tuple[str, list[dict[str, Any]], str]:
                 indent=2,
             ),
             encoding="utf-8",
+        )
+        logger.info(
+            "recorder STT completed record_id=%s duration_seconds=%.3f planned_chunks=%s "
+            "completed_parts=%s task_count=%s parallel_chunks=%s elapsed_seconds=%.3f",
+            stored_record_id,
+            duration_seconds,
+            total_chunks,
+            len(parts),
+            len(list(dict.fromkeys(task_ids))),
+            worker_count,
+            transcription_elapsed_seconds,
         )
         return text, segments, task_reference
     finally:
@@ -915,11 +1033,17 @@ def rename_recording_speaker(
     if not row:
         raise HTTPException(status_code=404, detail="录音不存在")
     source_name = body.speaker.strip()
+    source_id = (body.speaker_id or "").strip()
     display_name = body.display_name.strip()
     segments = [dict(item) for item in (row.transcript_segments or []) if isinstance(item, dict)]
     matched = 0
     for item in segments:
-        if str(item.get("speaker") or "").strip() == source_name:
+        item_id = str(item.get("speaker_id") or "").strip()
+        if source_id:
+            matches = item_id == source_id
+        else:
+            matches = item_id == "" and str(item.get("speaker") or "").strip() == source_name
+        if matches:
             item["speaker"] = display_name
             matched += 1
     if not matched:

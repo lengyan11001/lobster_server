@@ -1134,6 +1134,7 @@ body.messages-view-active .global-chat-fab {
 }
 
 .content-document-cover {
+  position: relative;
   flex: 0 0 84px;
   height: 112px;
   display: block;
@@ -1153,6 +1154,19 @@ body.messages-view-active .global-chat-fab {
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.content-document-image-count {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(15, 23, 42, .72);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1;
 }
 
 .content-document-cover-empty {
@@ -1287,6 +1301,33 @@ body.messages-view-active .global-chat-fab {
   line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.content-document-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.content-document-image-strip {
+  width: 100%;
+  display: flex;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.content-document-image-strip img {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: block;
+  border-radius: 7px;
+  object-fit: cover;
+  background: #f1f5f9;
 }
 
 .content-document-tags {

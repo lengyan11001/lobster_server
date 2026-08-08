@@ -208,6 +208,7 @@
       personalSettingsTab: "keywords",
       personalKeywords: [],
       personalCompetitors: [],
+      personalCompetitorCandidates: [],
       personalMemoryDocs: [],
       personalTemplates: [],
       personalEditingTemplateId: "",
@@ -6789,7 +6790,10 @@
         });
       };
       add(item.cover_url);
+      add(item.image_url);
+      walk(item.images, true);
       walk(item.image_urls, true);
+      walk(item.image_update, true);
       walk(item.meta, false);
       const content = String(item.content || item.body || "");
       const markdownPattern = /!\[[^\]]*\]\(\s*(https?:\/\/[^\s)]+)/gi;
@@ -6798,6 +6802,85 @@
       while ((match = markdownPattern.exec(content))) add(match[1]);
       while ((match = htmlPattern.exec(content))) add(match[2]);
       return urls.slice(0, 30);
+    }
+
+    function contentRecordImageAssetIds(asset) {
+      const item = asset && typeof asset === "object" ? asset : {};
+      const ids = [];
+      const add = (value) => {
+        const id = String(value || "").trim();
+        if (id && !ids.includes(id)) ids.push(id);
+      };
+      add(item.image_asset_id);
+      const walk = (value, imageContext = false) => {
+        if (Array.isArray(value)) {
+          value.forEach((entry) => walk(entry, imageContext));
+          return;
+        }
+        if (!value || typeof value !== "object") return;
+        Object.entries(value).forEach(([key, entry]) => {
+          const normalized = String(key || "").toLowerCase();
+          const nextImageContext = imageContext || /image|cover|thumbnail|poster|preview/.test(normalized);
+          if (nextImageContext && ["asset_id", "image_asset_id"].includes(normalized)) add(entry);
+          else walk(entry, nextImageContext);
+        });
+      };
+      walk(item.image_asset_ids, true);
+      walk(item.images, true);
+      walk(item.image_update, true);
+      walk(item.meta, false);
+      return ids.slice(0, 30);
+    }
+
+    function contentRecordImageRefs(asset) {
+      const item = asset && typeof asset === "object" ? asset : {};
+      const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
+      const imageUpdate = meta.image_update && typeof meta.image_update === "object" ? meta.image_update : {};
+      const directImageUpdate = item.image_update && typeof item.image_update === "object" ? item.image_update : {};
+      const refs = [];
+      const add = (value) => {
+        if (typeof value === "string") value = { image_url: value };
+        if (!value || typeof value !== "object") return;
+        const rawUrl = String(value.image_url || value.url || value.source_url || value.public_url || value.preview_url || "").trim();
+        const url = rawUrl && /^https?:\/\//i.test(rawUrl) ? contentActionMediaUrl(rawUrl) : "";
+        const assetId = String(value.image_asset_id || value.asset_id || "").trim();
+        if (!url && !assetId) return;
+        const existing = refs.find((ref) => (
+          (url && ref.image_url === url) || (assetId && ref.image_asset_id === assetId)
+        ));
+        if (existing) {
+          if (url && !existing.image_url) existing.image_url = url;
+          if (assetId && !existing.image_asset_id) existing.image_asset_id = assetId;
+          return;
+        }
+        refs.push({ image_url: url, image_asset_id: assetId });
+      };
+      const addList = (value) => {
+        if (Array.isArray(value)) value.forEach(add);
+        else if (value) add(value);
+      };
+      addList(item.images);
+      addList(item.image_results);
+      addList(directImageUpdate.images);
+      addList(directImageUpdate.image_results);
+      add(directImageUpdate);
+      addList(meta.images);
+      addList(meta.image_results);
+      addList(imageUpdate.images);
+      addList(imageUpdate.image_results);
+      const imageUrls = contentRecordImageUrls(item).map(contentActionMediaUrl).filter(Boolean);
+      const imageAssetIds = contentRecordImageAssetIds(item);
+      if (refs.length) {
+        imageUrls.forEach((url) => add({ image_url: url }));
+        imageAssetIds.forEach((assetId) => add({ image_asset_id: assetId }));
+      } else {
+        const count = Math.max(imageUrls.length, imageAssetIds.length);
+        for (let index = 0; index < count; index += 1) {
+          add({ image_url: imageUrls[index] || "", image_asset_id: imageAssetIds[index] || "" });
+        }
+      }
+      add({ image_url: item.image_url || item.cover_url || "", image_asset_id: item.image_asset_id || "" });
+      return refs.slice(0, 30);
     }
 
     function contentRecordImageHtml(url, className = "") {
@@ -6901,13 +6984,33 @@
       return parts.join("\n\n").slice(0, limit);
     }
 
+    function contentRecordDisplayLabel(asset) {
+      const item = asset && typeof asset === "object" ? asset : {};
+      const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
+      const task = String(item.task || meta.task || "").trim().toLowerCase();
+      return {
+        moments_candidate: "朋友圈文案",
+        industry_hot_oral: "行业口播文案",
+        professional_ip_oral: "IP口播文案",
+        article: "深度长文",
+      }[task] || {
+        article: "深度长文",
+        wechat_article: "公众号文章",
+        ppt: "演示文稿",
+      }[String(item.kind || item._designer_content_kind || "").trim().toLowerCase()] || "内容记录";
+    }
+
     function contentActionItemFromAsset(asset) {
       const item = asset && typeof asset === "object" ? asset : {};
       const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
       const recordKind = String(item.kind || item._designer_content_kind || "").trim().toLowerCase();
       const sourceKind = String(item.source || meta.source || "").trim().toLowerCase();
+      const sourceTask = String(item.task || meta.task || "").trim().toLowerCase();
       const rawUrl = String(item.file_url || item.source_url || item.cover_url || "").trim();
-      const rawImageUrl = String(contentRecordImageUrls(item)[0] || "").trim();
+      const imageRefs = contentRecordImageRefs(item);
+      const imageUrls = imageRefs.map((ref) => ref.image_url || "");
+      const imageAssetIds = imageRefs.map((ref) => ref.image_asset_id || "");
+      const rawImageUrl = String(imageUrls.find(Boolean) || "").trim();
       const url = contentActionMediaUrl(rawUrl);
       let mediaType = designerMediaType({ ...item, source_url: url });
       if (["article", "wechat_article"].includes(recordKind)) mediaType = url && item.file_url ? "document" : "text";
@@ -6966,6 +7069,9 @@
         imageUrl: rawImageUrl
           ? (/^https?:\/\//i.test(rawImageUrl) ? rawImageUrl : (rawImageUrl.startsWith("/") ? apiUrl(rawImageUrl) : rawImageUrl))
           : (mediaType === "image" ? url : ""),
+        imageUrls,
+        imageAssetIds,
+        imageRefs,
         assetId: String(item.asset_id || "").trim(),
         filename: String(item.filename || "").trim(),
         mediaType,
@@ -6976,6 +7082,11 @@
         contentRecordCompact: !!item._compact,
         recordSource: String(item.source || "").trim(),
         recordSourceId: String(item.source_id || "").trim(),
+        sourceTask,
+        momentsCandidate: sourceKind === "ip_daily" && sourceTask === "moments_candidate",
+        imageStatus: String(item.image_status || meta.image_status || "").trim(),
+        imageProgress: String(item.image_progress || meta.image_progress || "").trim(),
+        imageError: String(item.image_error || meta.image_error || "").trim(),
         meta,
       };
     }
@@ -7005,6 +7116,7 @@
         add("regenerate", "重新生成");
       }
       if (textBased) {
+        add("copy", "复制文案");
         add("generate_image", "生成图片");
         add("generate_video", "生成视频");
         add("generate_talking_video", "数字人口播");
@@ -7014,7 +7126,17 @@
         add("generate_avatar", "生成数字人");
       }
       if (mediaType === "video") add("generate_avatar", "生成数字人");
-      if (hasMaterial && ["image", "video", "document", "file"].includes(mediaType)) add("publish", "发布");
+      const hasMomentImages = (source.imageUrls || []).length || (source.imageAssetIds || []).length;
+      if (source.momentsCandidate && hasMomentImages) {
+        add("publish_moments", "发布到朋友圈");
+      }
+      if (!source.momentsCandidate && hasMaterial && ["image", "video", "document", "file"].includes(mediaType)) {
+        if (source.sourceKind === "ip_moments") {
+          if (source.momentPublishRunId || (source.recordSource && source.recordSourceId)) add("publish", "发布到朋友圈");
+        } else {
+          add("publish", "发布");
+        }
+      }
       if (source.contentRecord || source.assetId) add("delete", "删除");
       return actions;
     }
@@ -7293,6 +7415,11 @@
         || (textBased ? contentActionTextValue(text, title) : "");
       const script = contentActionTextValue(item.script, text);
       const tags = contentActionTextValue(item.tags);
+      if (action === "copy") {
+        const ok = await copyText(text);
+        toast(ok ? "文案已复制" : "复制失败");
+        return;
+      }
       if (action === "regenerate") {
         if (mediaType === "image") {
           const reference = contentActionReference(item);
@@ -7413,9 +7540,39 @@
         await openContentMediaAsAvatar(item);
         return;
       }
+      if (action === "publish_moments") {
+        await openMomentRecordPublishModal({
+          dataset: {
+            publishRun: String(item.momentPublishRunId || "").trim(),
+            contentRecordSource: String(item.recordSource || "").trim(),
+            contentRecordSourceId: String(item.recordSourceId || "").trim(),
+            momentTitle: title,
+            momentBody: text,
+            momentImageUrls: JSON.stringify(item.imageUrls || []),
+            momentImageAssetIds: JSON.stringify(item.imageAssetIds || []),
+          },
+        });
+        return;
+      }
       if (action === "publish") {
         const material = String(item.url || item.assetId || "").trim();
         if (!material) throw new Error("当前记录没有可发布的素材");
+        if (item.momentPublishRunId) {
+          await openMomentRecordPublishModal({
+            dataset: {
+              publishRun: String(item.momentPublishRunId || "").trim(),
+              contentRecordSource: String(item.recordSource || "").trim(),
+              contentRecordSourceId: String(item.recordSourceId || "").trim(),
+              momentTitle: title,
+              momentBody: text,
+              momentAssetId: String(item.assetId || "").trim(),
+              momentUrl: String(item.imageUrl || item.url || "").trim(),
+              momentImageUrls: JSON.stringify(item.imageUrls || []),
+              momentImageAssetIds: JSON.stringify(item.imageAssetIds || []),
+            },
+          });
+          return;
+        }
         const mediaType = ["image", "video", "document"].includes(item.mediaType) ? item.mediaType : "document";
         openContentActionAbility("publish_center", "workPublishMaterial", () => {
           setFieldValue("workPublishMaterial", material);
@@ -7452,24 +7609,43 @@
     function contentDocumentCardHtml(asset, index, kind) {
       const id = String((asset && asset.asset_id) || "");
       const title = assetTitle(asset);
-      const failed = /fail|error/i.test(String((asset && asset.status) || ""));
-      const kindLabels = { article: "深度长文", wechat_article: "公众号文章", ppt: "演示文稿" };
+      const meta = asset && asset.meta && typeof asset.meta === "object" ? asset.meta : {};
+      const task = String((asset && asset.task) || meta.task || "").trim().toLowerCase();
+      const isMoments = String((asset && asset.source) || "").trim().toLowerCase() === "ip_daily" && task === "moments_candidate";
+      const imageUrls = contentRecordImageUrls(asset);
+      const imageStatus = String((asset && asset.image_status) || meta.image_status || "").trim();
+      const imageProgress = String((asset && asset.image_progress) || meta.image_progress || "").trim();
+      const imageError = String((asset && asset.image_error) || meta.image_error || "").trim();
+      const failed = /fail|error|失败/i.test(`${String((asset && asset.status) || "")} ${imageStatus} ${imageError}`);
+      const displayLabel = contentRecordDisplayLabel(asset);
       const coverUrl = contentRecordImageUrls(asset)[0] || "";
       const emptyLabels = { article: "文章", wechat_article: "公众号", ppt: "PPT" };
       const emptyCover = `<span class="content-document-cover-empty ${escapeHtml(kind)}"><b>${escapeHtml(emptyLabels[kind] || "文档")}</b></span>`;
       let cover = emptyCover;
       if (coverUrl) {
         const coverSource = libraryMediaSource(coverUrl, filenameFromUrl(coverUrl, "content-cover"));
-        cover = `<img data-content-document-cover class="content-document-cover-image" src="${escapeHtml(coverSource.src)}"${libraryMediaFallbackAttr(coverSource)} alt="" loading="lazy" decoding="async">${emptyCover.replace('class="', 'class="hidden ')}`;
+        cover = `<img data-content-document-cover class="content-document-cover-image" src="${escapeHtml(coverSource.src)}"${libraryMediaFallbackAttr(coverSource)} alt="" loading="lazy" decoding="async">${imageUrls.length > 1 ? `<i class="content-document-image-count">${escapeHtml(String(imageUrls.length))} 张</i>` : ""}${emptyCover.replace('class="', 'class="hidden ')}`;
       }
+      const summary = String((asset && (asset.content || asset.body || asset.summary)) || "").trim();
+      const stateText = failed
+        ? (imageError ? "出图失败" : "生成失败")
+        : (isMoments ? (imageUrls.length ? `已生成 ${imageUrls.length} 张图` : (imageStatus || imageProgress || "待生成图片")) : "已完成");
+      const strip = imageUrls.length
+        ? `<span class="content-document-image-strip">${imageUrls.slice(0, 3).map((url, imageIndex) => {
+            const source = libraryMediaSource(url, filenameFromUrl(url, `moment-${imageIndex + 1}`));
+            return `<img data-content-record-card-image src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)} alt="" loading="lazy" decoding="async">`;
+          }).join("")}</span>`
+        : "";
       return `<article class="content-document-card ${escapeHtml(kind)} content-action-card">
         <button class="content-document-preview" type="button" data-asset-preview-id="${escapeHtml(id)}">
           <span class="content-document-cover">${cover}</span>
           <span class="content-document-main">
-            <span class="content-document-state"><em class="${failed ? "failed" : ""}">${failed ? "生成失败" : "已完成"}</em><time>${escapeHtml(fmtTime(asset && asset.created_at))}</time></span>
+            <span class="content-document-state"><em class="${failed ? "failed" : ""}">${escapeHtml(stateText)}</em><time>${escapeHtml(fmtTime(asset && asset.created_at))}</time></span>
             <strong>${escapeHtml(title || "内容记录")}</strong>
-            <span class="content-document-tags"><i>${escapeHtml(kindLabels[kind] || "文档")}</i><i>AI排版</i></span>
-            <small>查看内容</small>
+            ${summary ? `<span class="content-document-snippet">${escapeHtml(summary)}</span>` : ""}
+            ${strip}
+            <span class="content-document-tags"><i>${escapeHtml(displayLabel)}</i>${imageUrls.length ? `<i>${escapeHtml(String(imageUrls.length))} 张图片</i>` : ""}</span>
+            <small>${escapeHtml(isMoments ? "查看文案和图片" : "查看内容")}</small>
           </span>
         </button>
         ${contentActionMenuHtml(contentActionItemFromAsset(asset), "content-document-action")}
@@ -7553,6 +7729,7 @@
     function contentRecordDetailHtml(asset, tab = state.contentRecordDetailTab || "content") {
       const row = asset || {};
       const kind = String(row.kind || row._designer_content_kind || row.media_type || "article").toLowerCase();
+      const displayLabel = contentRecordDisplayLabel(row);
       const imageUrls = contentRecordImageUrls(row);
       const coverUrl = imageUrls[0] || "";
       const fileUrl = String(row.file_url || row.source_url || row.url || "").trim();
@@ -7573,7 +7750,7 @@
       const meta = row.meta && typeof row.meta === "object" ? row.meta : {};
       const metadata = `<div class="asset-preview-meta">
         <div><span>来源</span><strong>${escapeHtml(sourceLabels[row.source] || "内容创作")}</strong></div>
-        <div><span>类型</span><strong>${escapeHtml(kindLabels[kind] || kind || "文件")}</strong></div>
+        <div><span>类型</span><strong>${escapeHtml(displayLabel || kindLabels[kind] || kind || "文件")}</strong></div>
         <div><span>状态</span><strong>${escapeHtml(statusLabels[String(row.status || "").toLowerCase()] || row.status || "已完成")}</strong></div>
         <div><span>时间</span><strong>${escapeHtml(fmtTime(row.created_at))}</strong></div>
         ${meta.slide_count ? `<div><span>页数</span><strong>${escapeHtml(String(meta.slide_count))} 页</strong></div>` : ""}
@@ -7682,7 +7859,7 @@
           ${cover}
           <div class="asset-preview-meta">
             <div><span>来源</span><strong>${escapeHtml(sourceLabels[asset.source] || "内容创作")}</strong></div>
-            <div><span>类型</span><strong>${escapeHtml(kindLabels[kind] || "文章")}</strong></div>
+            <div><span>类型</span><strong>${escapeHtml(contentRecordDisplayLabel(asset) || kindLabels[kind] || "文章")}</strong></div>
             <div><span>状态</span><strong>${escapeHtml(statusLabels[String(asset.status || "").toLowerCase()] || asset.status || "已完成")}</strong></div>
             <div><span>时间</span><strong>${escapeHtml(fmtTime(asset.created_at))}</strong></div>
             ${slideCount ? `<div><span>页数</span><strong>${escapeHtml(String(slideCount))} 页</strong></div>` : ""}
@@ -9391,11 +9568,65 @@
 
     function recordImages(rec) {
       if (!rec || typeof rec !== "object") return [];
-      if (Array.isArray(rec.images) && rec.images.length) return rec.images;
+      const rows = [];
+      const seen = new Set();
+      const add = (value, fallbackIndex = 0) => {
+        if (typeof value === "string") value = { image_url: value };
+        if (!value || typeof value !== "object") return;
+        const url = String(value.image_url || value.url || value.source_url || value.public_url || value.preview_url || "").trim();
+        const assetId = String(value.image_asset_id || value.asset_id || "").trim();
+        if (!url && !assetId) return;
+        const existing = rows.find((item) => (
+          (url && item.image_url === url) || (assetId && item.image_asset_id === assetId)
+        ));
+        if (existing) {
+          if (url && !existing.image_url) existing.image_url = url;
+          if (assetId && !existing.image_asset_id) existing.image_asset_id = assetId;
+          return;
+        }
+        const key = url || `asset:${assetId}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        rows.push({
+          ...value,
+          image_url: url,
+          image_asset_id: assetId,
+          index: Number(value.index || fallbackIndex || rows.length + 1),
+        });
+      };
+      const addList = (value) => {
+        if (Array.isArray(value)) {
+          value.forEach((item, index) => add(item, index + 1));
+        } else if (value) {
+          add(value, rows.length + 1);
+        }
+      };
+      const addParallel = (urls, assetIds) => {
+        const urlList = Array.isArray(urls) ? urls : [];
+        const assetIdList = Array.isArray(assetIds) ? assetIds : [];
+        for (let index = 0; index < Math.max(urlList.length, assetIdList.length); index += 1) {
+          add({ image_url: urlList[index] || "", image_asset_id: assetIdList[index] || "" }, index + 1);
+        }
+      };
       const meta = rec.meta && typeof rec.meta === "object" ? rec.meta : {};
-      if (Array.isArray(meta.images) && meta.images.length) return meta.images;
-      if (rec.image_url) return [{ image_url: rec.image_url, image_asset_id: rec.image_asset_id || "", image_prompt: rec.image_prompt || "", index: 1 }];
-      return [];
+      const imageUpdate = meta.image_update && typeof meta.image_update === "object" ? meta.image_update : {};
+      const directImageUpdate = rec.image_update && typeof rec.image_update === "object" ? rec.image_update : {};
+      addList(rec.images);
+      addParallel(rec.image_urls, rec.image_asset_ids);
+      addList(rec.image_results);
+      addList(directImageUpdate.images);
+      addParallel(directImageUpdate.image_urls, directImageUpdate.image_asset_ids);
+      addList(directImageUpdate.image_results);
+      add(directImageUpdate, rows.length + 1);
+      addList(meta.images);
+      addParallel(meta.image_urls, meta.image_asset_ids);
+      addList(meta.image_results);
+      addList(imageUpdate.images);
+      addParallel(imageUpdate.image_urls, imageUpdate.image_asset_ids);
+      addList(imageUpdate.image_results);
+      add(imageUpdate, rows.length + 1);
+      add(rec, rows.length + 1);
+      return rows.slice(0, 30);
     }
 
     function looksLikeReferenceImageUrl(value) {
@@ -9471,6 +9702,10 @@
       const firstImage = images[0] || {};
       const firstImageUrl = String(firstImage.image_url || firstImage.url || "").trim();
       const firstImageAssetId = String(firstImage.image_asset_id || firstImage.asset_id || "").trim();
+      const imageUrls = images.map((image) => String(image && (image.image_url || image.url || image.source_url) || "").trim());
+      const imageAssetIds = images.map((image) => String(image && (image.image_asset_id || image.asset_id) || "").trim());
+      const contentRecordSource = String(rec.source || rec.content_record_source || "").trim() || (recordId ? "ip_daily" : "");
+      const contentRecordSourceId = String(rec.source_id || rec.content_record_source_id || "").trim() || recordId;
       const actionItem = {
         title,
         text: body,
@@ -9479,6 +9714,14 @@
         assetId: firstImageAssetId,
         mediaType: firstImageUrl || firstImageAssetId ? "image" : "text",
         recordKind: "article",
+        sourceKind: contentRecordSource || "ip_moments",
+        sourceTask: "moments_candidate",
+        momentsCandidate: true,
+        recordSource: contentRecordSource,
+        recordSourceId: contentRecordSourceId,
+        imageUrls,
+        imageAssetIds,
+        momentPublishRunId: String(runId || "").trim(),
       };
       const disabled = recordId ? "" : " disabled";
       const memoryDocIds = Array.isArray(rec.memory_doc_ids) ? rec.memory_doc_ids.map((id) => String(id || "").trim()).filter(Boolean).join(",") : "";
@@ -9497,7 +9740,6 @@
           </div>
           <div class="task-detail-moments-copy">${escapeHtml(body || "暂无正文")}</div>
           <div class="content-inline-actions content-action-host">${contentActionMenuHtml(actionItem)}</div>
-          ${runId ? `<div class="moment-record-actions"><button type="button" data-publish-moment-record="1" data-publish-run="${escapeHtml(runId)}" data-moment-title="${escapeHtml(title)}" data-moment-body="${escapeHtml(body)}" data-moment-asset-id="${escapeHtml(firstImageAssetId)}" data-moment-url="${escapeHtml(firstImageUrl)}">发布到朋友圈</button></div>` : ""}
           <div class="task-detail-prompts">
             ${prompts.length ? prompts.map((p, pIdx) => `<label><input type="checkbox" data-moment-prompt="${escapeHtml(recordId)}" value="${escapeHtml(pIdx)}" checked>配图 ${escapeHtml(pIdx + 1)}：${escapeHtml(p)}</label>`).join("") : "<span>暂无配图提示词，将根据正文生成。</span>"}
           </div>
@@ -10746,17 +10988,20 @@
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
-    async function renameRecorderSpeaker(speaker) {
+    async function renameRecorderSpeaker(speaker, speakerId = "") {
       const row = state.recorderDetailRecord;
       if (!row || !row.id) return;
       const currentName = String(speaker || "").trim();
-      const displayName = prompt("输入说话人姓名，本条记录中所有同名说话人会一起修改", recorderSpeakerLabel(currentName));
+      const stableSpeakerId = String(speakerId || "").trim();
+      const displayName = prompt("输入说话人姓名，本条记录中该说话人的所有片段会一起修改", recorderSpeakerLabel(currentName));
       if (displayName === null) return;
       const nextName = displayName.trim();
       if (!nextName || nextName === currentName || nextName === recorderSpeakerLabel(currentName)) return;
+      const body = { speaker: currentName, display_name: nextName };
+      if (stableSpeakerId) body.speaker_id = stableSpeakerId;
       await api(`/api/h5/recorder/files/${encodeURIComponent(row.id)}/speakers`, {
         method: "PATCH",
-        body: { speaker: currentName, display_name: nextName },
+        body,
       });
       await showRecorderDetail(row.id, false);
       toast("说话人名称已批量更新");
@@ -11178,7 +11423,7 @@
         ? keyPoints.map((item, index) => `<div class="recorder-key-point"><span>${index + 1}</span><p>${escapeHtml(String(item))}</p></div>`).join("")
         : `<div class="recorder-empty-result">${shortRecording ? "内容较短，结论已涵盖全部信息，不再重复罗列。" : "录音中未提取到明确的重点事项。"}</div>`;
       $("recorderDialogue").innerHTML = (row.segments || []).length
-        ? row.segments.map((item) => `<div class="recorder-line"><button type="button" class="recorder-speaker" data-recorder-speaker="${escapeHtml(item.speaker || "未知")}" title="修改该说话人的名称">${escapeHtml(recorderSpeakerLabel(item.speaker))}</button><p>${escapeHtml(item.text || "")}</p></div>`).join("")
+        ? row.segments.map((item) => `<div class="recorder-line"><button type="button" class="recorder-speaker" data-recorder-speaker="${escapeHtml(item.speaker || "未知")}" data-recorder-speaker-id="${escapeHtml(item.speaker_id || "")}" title="修改该说话人的名称">${escapeHtml(recorderSpeakerLabel(item.speaker))}</button><p>${escapeHtml(item.text || "")}</p></div>`).join("")
         : `<div class="recorder-line">${escapeHtml(row.transcript_text || (row.status === "processing" ? "正在生成对话转写…" : "暂无转写"))}</div>`;
       if (navigate) {
         setRecorderDetailTab("summary");
@@ -13427,6 +13672,18 @@
       return Object.keys(map || {}).filter((id) => map[id]).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0);
     }
 
+    function personalExistingIntIds(values, rows) {
+      const available = new Set((rows || []).map((row) => Number(row && row.id)).filter((id) => Number.isFinite(id) && id > 0));
+      return personalUniqueIds(values || []).map((id) => Number(id)).filter((id) => available.has(id));
+    }
+
+    function prunePersonalSelectedIntMap(map, rows) {
+      const available = new Set((rows || []).map((row) => String((row && row.id) || "")).filter(Boolean));
+      Object.keys(map || {}).forEach((id) => {
+        if (!available.has(String(id))) delete map[id];
+      });
+    }
+
     function personalCleanStringIds(map) {
       return Object.keys(map || {}).filter((id) => map[id]).map((id) => String(id || "").trim()).filter(Boolean);
     }
@@ -13677,6 +13934,8 @@
       if (parts.memories) jobs.push(loadPersonalMemoryDocs().then((rows) => { state.personalMemoryDocs = Array.isArray(rows) ? rows : []; }).catch(() => {}));
       if (parts.templates) jobs.push(loadPersonalTemplateRows().then((rows) => { state.personalTemplates = Array.isArray(rows) ? rows : []; }).catch(() => {}));
       await Promise.all(jobs);
+      if (parts.keywords) prunePersonalSelectedIntMap(state.personalSelectedKeywords, state.personalKeywords);
+      if (parts.competitors) prunePersonalSelectedIntMap(state.personalSelectedCompetitors, state.personalCompetitors);
       state.personalSettingsLoaded = true;
       renderPersonalSettings();
     }
@@ -14307,6 +14566,7 @@
       renderPersonalSavedTemplates();
       renderPersonalRows("personalKeywordList", state.personalKeywords, "keyword", (row) => row.keyword || `#${row.id}`, null, "data-delete-personal-keyword", "删除");
       renderPersonalRows("personalCompetitorList", state.personalCompetitors, "competitor", (row) => row.display_name || row.account_key || `#${row.id}`, (row) => row.platform || "", "data-delete-personal-competitor", "删除", "data-sync-personal-competitor");
+      renderPersonalCompetitorCandidates();
       renderPersonalMemorySourceSelectors();
       const uploadDocs = $("personalUploadDocList");
       if (uploadDocs) {
@@ -14385,8 +14645,8 @@
       const digitalHumanTemplate = clonePersonalDigitalHumanTemplate(state.personalSelectedDigitalHumanTemplate);
       const payload = {
         name,
-        keyword_ids: personalCleanIntIds(state.personalSelectedKeywords),
-        competitor_ids: personalCleanIntIds(state.personalSelectedCompetitors),
+        keyword_ids: personalExistingIntIds(personalCleanIntIds(state.personalSelectedKeywords), state.personalKeywords),
+        competitor_ids: personalExistingIntIds(personalCleanIntIds(state.personalSelectedCompetitors), state.personalCompetitors),
         memory_doc_ids: memoryIds,
         memory_docs: selectedDocs,
         requirements,
@@ -14465,15 +14725,103 @@
       await refreshPersonalDataPreserveSelection({ keywords: true });
     }
 
+    function renderPersonalCompetitorCandidates() {
+      const host = $("personalCompetitorSearchResults");
+      if (!host) return;
+      const rows = Array.isArray(state.personalCompetitorCandidates) ? state.personalCompetitorCandidates : [];
+      if (!rows.length) {
+        host.innerHTML = "";
+        return;
+      }
+      const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
+      host.innerHTML = rows.map((item, index) => {
+        const title = item.display_name || item.nickname || item.unique_id || item.username || item.sec_user_id || "同行账号";
+        const account = platform === "wechat_channels"
+          ? (item.username || item.finder_username || "")
+          : (item.unique_id || item.sec_user_id || "");
+        const avatar = item.avatar_url
+          ? `<img src="${escapeHtml(item.avatar_url)}" alt="">`
+          : `<span>${escapeHtml(String(title).slice(0, 1))}</span>`;
+        return `<article class="personal-competitor-candidate">
+          <div class="personal-competitor-avatar">${avatar}</div>
+          <div class="personal-competitor-candidate-copy">
+            <strong>${escapeHtml(title)}</strong>
+            ${account ? `<small>${escapeHtml(account)}</small>` : ""}
+            ${item.signature ? `<small>${escapeHtml(item.signature)}</small>` : ""}
+          </div>
+          <button type="button" data-add-personal-competitor-candidate="${index}">添加</button>
+        </article>`;
+      }).join("");
+      host.querySelectorAll("[data-add-personal-competitor-candidate]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const index = Number(button.dataset.addPersonalCompetitorCandidate);
+          addPersonalCompetitorCandidate(rows[index], button).catch((err) => personalSetStatus(err.message || "添加同行失败", true));
+        });
+      });
+    }
+
+    function updatePersonalCompetitorSearchFields() {
+      const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
+      const input = $("personalCompetitorKey");
+      if (input) input.placeholder = platform === "wechat_channels" ? "输入视频号昵称或 username" : "输入昵称或抖音号";
+      state.personalCompetitorCandidates = [];
+      renderPersonalCompetitorCandidates();
+    }
+
     async function addPersonalCompetitor() {
       const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
       const input = $("personalCompetitorKey");
-      const accountKey = (input && input.value || "").trim();
-      if (!accountKey) throw new Error("请填写账号标识");
-      const data = await api("/api/ip-content/competitors", { method: "POST", json: { platform, account_key: accountKey, display_name: accountKey, meta: { source: "h5_personal_settings" } } });
-      if (input) input.value = "";
-      await refreshPersonalDataPreserveSelection({ competitors: true });
-      if (data.item && data.item.id) await syncPersonalCompetitor(data.item.id);
+      const keyword = (input && input.value || "").trim();
+      if (!keyword) throw new Error(platform === "wechat_channels" ? "请填写视频号昵称或 username" : "请填写同行昵称或抖音号");
+      const button = $("personalAddCompetitorBtn");
+      personalSetBusy(button, true, "搜索中...");
+      try {
+        const endpoint = platform === "wechat_channels"
+          ? `/api/ip-content/wechat-channels/users/search?q=${encodeURIComponent(keyword)}`
+          : `/api/ip-content/douyin/users/search?q=${encodeURIComponent(keyword)}`;
+        const data = await api(endpoint);
+        state.personalCompetitorCandidates = Array.isArray(data.items) ? data.items : [];
+        renderPersonalCompetitorCandidates();
+        personalSetStatus(state.personalCompetitorCandidates.length ? "请选择要添加的同行账号。" : "没有搜到匹配账号，请更换关键词后重试。", !state.personalCompetitorCandidates.length);
+      } finally {
+        personalSetBusy(button, false);
+      }
+    }
+
+    async function addPersonalCompetitorCandidate(candidate, button = null) {
+      const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
+      const accountKey = platform === "wechat_channels"
+        ? String(candidate && (candidate.username || candidate.finder_username || candidate.id) || "").trim()
+        : String(candidate && (candidate.sec_user_id || candidate.sec_uid || candidate.id) || "").trim();
+      if (!accountKey) throw new Error(platform === "wechat_channels" ? "候选账号缺少 username" : "候选账号缺少 sec_user_id");
+      personalSetBusy(button, true, "添加中...");
+      try {
+        const data = await api("/api/ip-content/competitors", {
+          method: "POST",
+          json: {
+            platform,
+            account_key: accountKey,
+            display_name: String(candidate.display_name || candidate.nickname || candidate.unique_id || accountKey).trim(),
+            homepage_url: String(candidate.homepage_url || "").trim(),
+            meta: {
+              source: platform === "wechat_channels" ? "h5_personal_settings_wechat_channels_search" : "h5_personal_settings_douyin_search",
+              username: candidate.username || candidate.finder_username || "",
+              unique_id: candidate.unique_id || "",
+              nickname: candidate.nickname || candidate.display_name || "",
+              signature: candidate.signature || "",
+              avatar_url: candidate.avatar_url || "",
+              verify_info: candidate.verify_info || "",
+            },
+          },
+        });
+        if ($("personalCompetitorKey")) $("personalCompetitorKey").value = "";
+        state.personalCompetitorCandidates = [];
+        await refreshPersonalDataPreserveSelection({ competitors: true });
+        personalSetStatus("同行账号已添加，正在同步公开作品。");
+        if (data.item && data.item.id) await syncPersonalCompetitor(data.item.id);
+      } finally {
+        personalSetBusy(button, false);
+      }
     }
 
     async function syncPersonalCompetitor(competitorId, btn = null) {
@@ -14850,8 +15198,8 @@
 
     async function savePersonalDefaultSilently() {
       const existing = state.personalDefault || {};
-      const keywordIds = personalUniqueIds([...(Array.isArray(existing.keyword_ids) ? existing.keyword_ids : []), ...personalCleanIntIds(state.personalSelectedKeywords)]).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0);
-      const competitorIds = personalUniqueIds([...(Array.isArray(existing.competitor_ids) ? existing.competitor_ids : []), ...personalCleanIntIds(state.personalSelectedCompetitors)]).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0);
+      const keywordIds = personalExistingIntIds([...(Array.isArray(existing.keyword_ids) ? existing.keyword_ids : []), ...personalCleanIntIds(state.personalSelectedKeywords)], state.personalKeywords);
+      const competitorIds = personalExistingIntIds([...(Array.isArray(existing.competitor_ids) ? existing.competitor_ids : []), ...personalCleanIntIds(state.personalSelectedCompetitors)], state.personalCompetitors);
       const memoryIds = personalUniqueIds([...(Array.isArray(existing.memory_doc_ids) ? existing.memory_doc_ids : []), ...personalCleanStringIds(state.personalSelectedMemories)]);
       const selectedDocs = state.personalMemoryDocs
         .filter((doc) => memoryIds.includes(personalDocId(doc)))
@@ -18429,34 +18777,83 @@
     async function openMomentRecordPublishModal(btn) {
       if (!btn) return;
       const runId = btn.dataset.publishRun || "";
+      const recordSource = String(btn.dataset.contentRecordSource || "").trim();
+      const recordSourceId = String(btn.dataset.contentRecordSourceId || "").trim();
       if (!runId) {
-        toast("缺少执行记录 ID");
-        return;
+        if (!recordSource || !recordSourceId) {
+          toast("缺少内容记录 ID");
+          return;
+        }
       }
       const assetId = String(btn.dataset.momentAssetId || "").trim();
       const url = String(btn.dataset.momentUrl || "").trim();
       const title = String(btn.dataset.momentTitle || "").trim();
       const body = String(btn.dataset.momentBody || "").trim();
-      if (!assetId && !url && !body && !title) {
+      const parseList = (raw) => {
+        if (Array.isArray(raw)) return raw.map((value) => String(value || "").trim());
+        const text = String(raw || "").trim();
+        if (!text) return [];
+        try {
+          const parsed = JSON.parse(text);
+          return Array.isArray(parsed) ? parsed.map((value) => String(value || "").trim()) : [text];
+        } catch {
+          return [text];
+        }
+      };
+      const rawImageUrls = parseList(btn.dataset.momentImageUrls);
+      const rawImageAssetIds = parseList(btn.dataset.momentImageAssetIds);
+      const imageRefs = [];
+      const addImageRef = (rawUrl, rawAssetId) => {
+        const imageUrl = String(rawUrl || "").trim();
+        const imageAssetId = String(rawAssetId || "").trim();
+        if (!imageUrl && !imageAssetId) return;
+        const existing = imageRefs.find((ref) => (
+          (imageUrl && ref.image_url === imageUrl) || (imageAssetId && ref.image_asset_id === imageAssetId)
+        ));
+        if (existing) {
+          if (imageUrl && !existing.image_url) existing.image_url = imageUrl;
+          if (imageAssetId && !existing.image_asset_id) existing.image_asset_id = imageAssetId;
+          return;
+        }
+        imageRefs.push({ image_url: imageUrl, image_asset_id: imageAssetId });
+      };
+      for (let index = 0; index < Math.max(rawImageUrls.length, rawImageAssetIds.length); index += 1) {
+        addImageRef(rawImageUrls[index], rawImageAssetIds[index]);
+      }
+      addImageRef(url, assetId);
+      const imageUrls = imageRefs.map((ref) => ref.image_url || "");
+      const imageAssetIds = imageRefs.map((ref) => ref.image_asset_id || "");
+      const primaryImageUrl = imageUrls.find(Boolean) || url;
+      const primaryImageAssetId = imageAssetIds.find(Boolean) || assetId;
+      if (recordSource && recordSourceId && !imageRefs.length) {
+        toast("请先生成图片，再发布朋友圈");
+        return;
+      }
+      if (!imageRefs.length && !body && !title) {
         toast("当前图文没有可发布内容");
         return;
       }
       state.publishRunDraft = {
         run_id: runId,
+        content_record_source: recordSource,
+        content_record_source_id: recordSourceId,
         platform: "wechat_moments",
         platform_name: "微信朋友圈",
         account_id: "pc-wechat-default",
         account_nickname: "本机微信",
         installation_id: currentInstallationId(),
-        asset_id: assetId,
-        url,
-        source_url: url,
+        asset_id: primaryImageAssetId,
+        url: primaryImageUrl,
+        source_url: primaryImageUrl,
+        image_urls: imageUrls,
+        image_asset_ids: imageAssetIds,
+        images: imageRefs,
         title,
         description: body,
         media_type: assetId || url ? "image_text" : "image_text",
         ai_publish_copy: false,
       };
-      setPublishRunValue("publishRunMaterial", assetId || url || "");
+      setPublishRunValue("publishRunMaterial", primaryImageAssetId || primaryImageUrl || "");
       setPublishRunValue("publishRunTitleInput", title || "");
       setPublishRunValue("publishRunDescription", body || "");
       setPublishRunValue("publishRunMediaType", "image_text");
@@ -18509,7 +18906,7 @@
         media_type: $("publishRunMediaType") ? $("publishRunMediaType").value : (draft.media_type || "video"),
         platform: platform || account.platform || "",
         platform_name: account.platform_name || platformDisplayName(platform || account.platform),
-        account_id: publishAccountLocalId(account),
+        account_id: String(publishAccountLocalId(account) || ""),
         account_nickname: account.nickname || "",
         installation_id: account.installation_id || currentInstallationId(),
         title,
@@ -18518,6 +18915,46 @@
         ai_publish_copy: !!($("publishRunAiCopy") && $("publishRunAiCopy").checked),
         status: "ready",
       };
+      if (isWechatMoments) {
+        const imageRefs = [];
+        const addImageRef = (rawUrl, rawAssetId) => {
+          const imageUrl = String(rawUrl || "").trim();
+          const imageAssetId = String(rawAssetId || "").trim();
+          if (!imageUrl && !imageAssetId) return;
+          const existing = imageRefs.find((ref) => (
+            (imageUrl && ref.image_url === imageUrl) || (imageAssetId && ref.image_asset_id === imageAssetId)
+          ));
+          if (existing) {
+            if (imageUrl && !existing.image_url) existing.image_url = imageUrl;
+            if (imageAssetId && !existing.image_asset_id) existing.image_asset_id = imageAssetId;
+            return;
+          }
+          imageRefs.push({ image_url: imageUrl, image_asset_id: imageAssetId });
+        };
+        const structuredRefs = Array.isArray(draft.images) ? draft.images : [];
+        structuredRefs.forEach((ref) => addImageRef(
+          ref && (ref.image_url || ref.source_url || ref.url),
+          ref && (ref.image_asset_id || ref.asset_id),
+        ));
+        if (!structuredRefs.length) {
+          const draftUrls = Array.isArray(draft.image_urls) ? draft.image_urls : [];
+          const draftAssetIds = Array.isArray(draft.image_asset_ids) ? draft.image_asset_ids : [];
+          for (let index = 0; index < Math.max(draftUrls.length, draftAssetIds.length); index += 1) {
+            addImageRef(draftUrls[index], draftAssetIds[index]);
+          }
+        }
+        addImageRef(/^https?:\/\//i.test(sourceUrl) ? sourceUrl : "", assetId);
+        body.images = imageRefs.slice(0, 9);
+        body.image_urls = body.images.map((ref) => ref.image_url || "");
+        body.image_asset_ids = body.images.map((ref) => ref.image_asset_id || "");
+        body.attachments = body.images.map((ref) => ({
+          asset_id: ref.image_asset_id || "",
+          source_url: ref.image_url || "",
+          url: ref.image_url || "",
+          media_type: "image",
+          kind: "image",
+        }));
+      }
       state.publishRunSubmitting = true;
       const btn = $("publishRunSubmit");
       if (btn) {
@@ -18525,7 +18962,29 @@
         btn.textContent = "提交中...";
       }
       try {
-        const ok = await requestRunPublish(runId, btn, body);
+        let ok = false;
+        if (runId) {
+          ok = await requestRunPublish(runId, btn, body);
+        } else if (draft.content_record_source && draft.content_record_source_id) {
+          try {
+            await api("/api/content-records/publish-request", {
+              method: "POST",
+              json: {
+                source: draft.content_record_source,
+                source_id: draft.content_record_source_id,
+                ...body,
+                publish_draft: body,
+              },
+            });
+            toast("已提交发布，Online 会用已绑定账号发布");
+            await loadRuns({ reset: true });
+            ok = true;
+          } catch (err) {
+            toast(err.message || "提交发布失败");
+          }
+        } else {
+          toast("缺少内容记录 ID");
+        }
         if (ok) closePublishRunModal();
       } finally {
         state.publishRunSubmitting = false;
@@ -19581,7 +20040,10 @@
       const copyButton = event.target.closest("[data-recorder-copy]");
       const exportButton = event.target.closest("[data-recorder-export]");
       if (speakerButton) {
-        renameRecorderSpeaker(speakerButton.dataset.recorderSpeaker || "").catch((err) => toast(err.message || "说话人改名失败"));
+        renameRecorderSpeaker(
+          speakerButton.dataset.recorderSpeaker || "",
+          speakerButton.dataset.recorderSpeakerId || "",
+        ).catch((err) => toast(err.message || "说话人改名失败"));
         return;
       }
       if (copyButton) {
@@ -20389,8 +20851,12 @@
     document.addEventListener("error", (evt) => {
       const image = evt.target;
       if (!(image instanceof HTMLImageElement)) return;
-      if (image.matches("[data-content-document-cover], [data-asset-picker-library-image]")) {
+      if (image.matches("[data-content-document-cover], [data-content-record-card-image], [data-asset-picker-library-image]")) {
         image.classList.add("hidden");
+        if (image.matches("[data-content-record-card-image]")) {
+          image.remove();
+          return;
+        }
         const fallback = image.nextElementSibling;
         if (fallback) fallback.classList.remove("hidden");
       }
@@ -20564,7 +21030,13 @@
       renderAssetPickerModal();
     });
     $("personalAddKeywordBtn")?.addEventListener("click", () => addPersonalKeyword().catch((err) => toast(err.message || "添加失败")));
-    $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => toast(err.message || "添加失败")));
+    $("personalAddCompetitorBtn")?.addEventListener("click", () => addPersonalCompetitor().catch((err) => personalSetStatus(err.message || "搜索失败", true)));
+    $("personalCompetitorPlatform")?.addEventListener("change", updatePersonalCompetitorSearchFields);
+    $("personalCompetitorKey")?.addEventListener("keydown", (evt) => {
+      if (evt.key !== "Enter") return;
+      evt.preventDefault();
+      addPersonalCompetitor().catch((err) => personalSetStatus(err.message || "搜索失败", true));
+    });
     $("personalOpenUploadBtn")?.addEventListener("click", openPersonalUploadModal);
     $("personalUploadBackdrop")?.addEventListener("click", closePersonalUploadModal);
     $("personalUploadClose")?.addEventListener("click", closePersonalUploadModal);

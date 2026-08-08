@@ -57,6 +57,9 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert 'setFieldValue("abilityPptTopic", contentActionRegenerateBrief(title, text))' in script
     assert 'field.checked = !sourceTask || field.getAttribute("data-ability-ip-daily-task") === sourceTask' in script
     assert 'setFieldValue("abilityIpRequirement", contentActionRegenerateBrief(title, text))' in script
+    assert 'add("publish_moments", "发布到朋友圈")' in script
+    assert 'await openMomentRecordPublishModal({' in script
+    assert 'await api("/api/content-records/publish-request"' in script
 
 
 def test_content_action_fields_keep_prompt_copy_and_script_separate():
@@ -116,6 +119,8 @@ def test_document_cards_only_use_real_images_and_render_article_images():
     styles = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
 
     assert "function contentRecordImageUrls(asset)" in script
+    assert "add(item.image_url);" in script
+    assert "add(item.image_asset_id);" in script
     assert "function contentRecordArticleBodyHtml(content, imageUrls = [])" in script
     assert 'contentRecordImageUrls(asset)[0] || ""' in script
     assert 'class="content-document-cover-empty' in script
@@ -123,9 +128,14 @@ def test_document_cards_only_use_real_images_and_render_article_images():
     assert ".content-record-inline-image img" in styles
     assert "top: 50%;" in styles
     assert "data-content-document-cover" in script
-    assert 'image.matches("[data-content-document-cover], [data-asset-picker-library-image]")' in script
+    assert 'image.matches("[data-content-document-cover], [data-content-record-card-image], [data-asset-picker-library-image]")' in script
     assert 'compact: "true"' in script
     assert '/api/content-records/detail?' in script
+    assert 'class="content-document-image-strip"' in script
+    assert "function contentRecordDisplayLabel(asset)" in script
+    assert 'industry_hot_oral: "行业口播文案"' in script
+    assert 'professional_ip_oral: "IP口播文案"' in script
+    assert ".content-document-snippet" in styles
 
 
 def test_library_page_sizes_and_failed_clone_delete_controls():
@@ -179,3 +189,21 @@ def test_publish_workbench_uses_account_select_instead_of_nickname_input():
     assert "function fillWorkPublishAccountSelect()" in script
     assert 'publishAccountSelectId(row) === accountSelectId' in script
     assert 'placeholder="填写 Online 发布中心中的账号昵称"' not in script
+
+
+def test_moment_publish_requires_generated_image_and_reuses_its_material():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert 'sourceKind: contentRecordSource || "ip_moments"' in script
+    assert 'momentsCandidate: true' in script
+    assert 'recordSource: contentRecordSource' in script
+    assert 'const imageUrls = images.map' in script
+    assert 'addList(imageUpdate.image_results)' in script
+    assert 'function contentRecordImageRefs(asset)' in script
+    assert 'body.images = imageRefs.slice(0, 9)' in script
+    assert 'if (source.sourceKind === "ip_moments")' in script
+    assert 'if (source.momentPublishRunId || (source.recordSource && source.recordSourceId)) add("publish", "发布到朋友圈")' in script
+    assert 'data-publish-moment-record="1"' not in script
+    assert "await openMomentRecordPublishModal({" in script
+    assert 'momentAssetId: String(item.assetId || "").trim()' in script
+    assert 'momentUrl: String(item.imageUrl || item.url || "").trim()' in script

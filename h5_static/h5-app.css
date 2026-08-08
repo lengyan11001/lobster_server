@@ -3057,6 +3057,35 @@
     .personal-empty { color: var(--muted); font-size: 13px; padding: 11px; border: 1px dashed rgba(26,48,88,.18); border-radius: 14px; background: rgba(255,255,255,.64); }
     .inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
     .inline-form.three { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+    .personal-competitor-results { display: grid; gap: 8px; }
+    .personal-competitor-candidate {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid rgba(26,48,88,.1);
+      border-radius: 14px;
+      background: #fff;
+    }
+    .personal-competitor-avatar {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border-radius: 10px;
+      color: var(--blue);
+      background: rgba(36,92,255,.08);
+      font-size: 16px;
+    }
+    .personal-competitor-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .personal-competitor-candidate-copy { min-width: 0; display: grid; gap: 2px; }
+    .personal-competitor-candidate-copy strong,
+    .personal-competitor-candidate-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .personal-competitor-candidate-copy strong { color: #1d2940; font-size: 13px; }
+    .personal-competitor-candidate-copy small { color: var(--muted); font-size: 11px; }
+    .personal-competitor-candidate > button { padding: 7px 10px; border-radius: 9px; font-size: 12px; }
     .personal-upload-zone {
       display: grid;
       gap: 8px;

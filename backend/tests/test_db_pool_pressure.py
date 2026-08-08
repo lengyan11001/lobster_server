@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import io
 import threading
@@ -177,6 +178,39 @@ def test_streaming_chat_cancels_worker_when_client_disconnects():
     assert "if not task.done():" in stream
     assert "task.cancel()" in stream
     assert "await asyncio.gather(task, return_exceptions=True)" in stream
+
+
+def test_sutui_stream_generator_never_captures_request_db_session():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "app" / "api" / "sutui_chat_proxy.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    endpoint = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "sutui_chat_completions"
+    )
+    stream_generator = next(
+        node
+        for node in endpoint.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "gen"
+    )
+    captured_names = {node.id for node in ast.walk(stream_generator) if isinstance(node, ast.Name)}
+    usage_calls = [
+        node
+        for node in ast.walk(stream_generator)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "log_model_usage_event"
+    ]
+
+    assert "db" not in captured_names
+    assert "current_user" not in captured_names
+    assert "billing_user_id" in captured_names
+    assert len(usage_calls) == 2
+    assert all(not call.args for call in usage_calls)
 
 
 def test_save_url_releases_db_and_offloads_tos_upload(db_session, test_user, monkeypatch):

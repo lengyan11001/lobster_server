@@ -46,7 +46,8 @@ from ..services.credits_amount import quantize_credits, credits_json_float, user
 from ..services.model_usage_monitor import log_model_usage_event
 from ..services.runtime_cache import cache_get, cache_set, cache_set_if_absent
 from ..services.user_feature_flags import OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID, user_has_feature
-from .assets import _save_bytes_or_tos
+from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot, spawn_tracked_task
+from .assets import _run_asset_upload_io, _save_bytes_or_tos
 from .auth import ALGORITHM, get_current_user, validate_token_brand
 from .mobile_identity import online_user_for_mobile_user
 
@@ -396,6 +397,85 @@ async def _save_generated_images_best_effort_by_user_id(
         )
     finally:
         db.close()
+
+
+async def _persist_generated_images_in_background(
+    user_id: int,
+    *,
+    response_payload: Dict[str, Any],
+    prompt: str,
+    model: str,
+    limit: int,
+    exclude_urls: Optional[List[str]] = None,
+) -> None:
+    """Persist generated images after the upstream response has been returned."""
+    try:
+        async with background_heavy_slot("image_asset_persistence"):
+            saved_assets = await _save_generated_images_best_effort_by_user_id(
+                user_id,
+                response_payload=response_payload,
+                prompt=prompt,
+                model=model,
+                limit=limit,
+                exclude_urls=exclude_urls,
+            )
+            logger.info(
+                "[image_generate] background asset persistence finished user_id=%s model=%s saved_assets=%s",
+                user_id,
+                model,
+                len(saved_assets),
+            )
+    except WorkloadQueueFull:
+        logger.warning(
+            "[image_generate] background asset persistence skipped because queue is full user_id=%s model=%s",
+            user_id,
+            model,
+        )
+    except Exception:
+        logger.exception(
+            "[image_generate] background asset persistence failed user_id=%s model=%s",
+            user_id,
+            model,
+        )
+
+
+def _queue_generated_image_asset_persistence(
+    user_id: int,
+    *,
+    response_payload: Dict[str, Any],
+    prompt: str,
+    model: str,
+    limit: int,
+    exclude_urls: Optional[List[str]] = None,
+) -> bool:
+    """Queue asset persistence without making the image response wait for TOS."""
+    result_urls = _extract_image_result_urls(response_payload)
+    if not result_urls:
+        return False
+    # Keep only the result URLs so a large upstream response is not retained by a task.
+    compact_payload = {"data": [{"url": url} for url in result_urls]}
+    task_coro = _persist_generated_images_in_background(
+        user_id,
+        response_payload=compact_payload,
+        prompt=prompt,
+        model=model,
+        limit=limit,
+        exclude_urls=exclude_urls,
+    )
+    try:
+        spawn_tracked_task(
+            task_coro,
+            name=f"image-asset-persist-{user_id}",
+        )
+    except Exception:
+        task_coro.close()
+        logger.exception(
+            "[image_generate] failed to queue background asset persistence user_id=%s model=%s",
+            user_id,
+            model,
+        )
+        return False
+    return True
 
 
 def _model_token_group(model_id: str) -> str:
@@ -1000,7 +1080,12 @@ async def _persist_generated_image_asset(
     job_id: str = "",
 ) -> Dict[str, Any]:
     data, media_type, ext = await _download_image_bytes(url)
-    aid, fname_or_key, fsize, tos_public_url = _save_bytes_or_tos(data, ext, media_type)
+    aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
+        _save_bytes_or_tos,
+        data,
+        ext,
+        media_type,
+    )
     if not tos_public_url:
         local_path = Path(__file__).resolve().parent.parent.parent.parent / "assets" / fname_or_key
         try:
@@ -2505,22 +2590,19 @@ async def proxy_images_generations(
                         _comfly_headers(attempt_model),
                         _TIMEOUT_IMAGE,
                     )
-                saved_assets = await _save_generated_images_best_effort_by_user_id(
+                asset_persistence_queued = _queue_generated_image_asset_persistence(
                     billing_user_id,
                     response_payload=resp,
                     prompt=str(body.get("prompt") or ""),
                     model=attempt_model,
                     limit=int(body.get("n") or body.get("num_images") or 1),
                     exclude_urls=reference_urls,
-                )
-                if isinstance(resp, dict):
-                    if saved_assets:
-                        resp = dict(resp)
-                        resp["saved_assets"] = saved_assets
-                    if attempt_model != model:
-                        fallback = resp.setdefault("_lobster_fallback", {})
-                        if isinstance(fallback, dict):
-                            fallback.update({"requested_model": model, "used_model": attempt_model, "attempt": index})
+                ) if isinstance(resp, dict) else False
+                if isinstance(resp, dict) and attempt_model != model:
+                    resp = dict(resp)
+                    fallback = resp.setdefault("_lobster_fallback", {})
+                    if isinstance(fallback, dict):
+                        fallback.update({"requested_model": model, "used_model": attempt_model, "attempt": index})
                 _audit(
                     "image_ok",
                     user_id=billing_user_id,
@@ -2530,7 +2612,7 @@ async def proxy_images_generations(
                     attempt=index,
                     retry=retry_index,
                     pre=credits_json_float(pre),
-                    saved_assets=len(saved_assets),
+                    asset_persistence_queued=asset_persistence_queued,
                     refs=len(reference_urls),
                 )
                 log_model_usage_event(
@@ -2545,7 +2627,7 @@ async def proxy_images_generations(
                     channel=(entry.get("token_group") or "comfly"),
                     route="openai_official" if token_group == "openai_official" else "comfly",
                     endpoint=endpoint_path,
-                    meta={"attempt": index, "retry": retry_index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
+                    meta={"attempt": index, "retry": retry_index, "asset_persistence_queued": asset_persistence_queued, "refs": len(reference_urls)},
                 )
                 log_model_usage_event(
                     None,
@@ -2559,7 +2641,7 @@ async def proxy_images_generations(
                     channel=(entry.get("token_group") or "comfly"),
                     route="openai_official" if token_group == "openai_official" else "comfly",
                     endpoint=endpoint_path,
-                    meta={"attempt": index, "retry": retry_index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
+                    meta={"attempt": index, "retry": retry_index, "asset_persistence_queued": asset_persistence_queued, "refs": len(reference_urls)},
                 )
                 channel_succeeded = True
                 return JSONResponse(resp)
@@ -2599,18 +2681,16 @@ async def proxy_images_generations(
         if _openmind_image_fallback_enabled() and (not last_error or _is_retryable_image_error(RuntimeError(last_error))):
             try:
                 resp = await _openmind_image_request(upstream_body)
-                saved_assets = await _save_generated_images_best_effort_by_user_id(
+                asset_persistence_queued = _queue_generated_image_asset_persistence(
                     billing_user_id,
                     response_payload=resp,
                     prompt=str(body.get("prompt") or ""),
                     model=attempt_model,
                     limit=int(body.get("n") or body.get("num_images") or 1),
                     exclude_urls=reference_urls,
-                )
+                ) if isinstance(resp, dict) else False
                 if isinstance(resp, dict):
-                    if saved_assets:
-                        resp = dict(resp)
-                        resp["saved_assets"] = saved_assets
+                    resp = dict(resp)
                     fallback = resp.setdefault("_lobster_fallback", {})
                     if isinstance(fallback, dict):
                         fallback.update({"requested_model": model, "used_model": attempt_model, "provider": "openmind", "attempt": index})
@@ -2622,7 +2702,7 @@ async def proxy_images_generations(
                     model=attempt_model,
                     pre=credits_json_float(pre),
                     comfly_error=last_error[:300],
-                    saved_assets=len(saved_assets),
+                    asset_persistence_queued=asset_persistence_queued,
                 )
                 log_model_usage_event(
                     None,
@@ -2636,7 +2716,7 @@ async def proxy_images_generations(
                     channel="openmind",
                     route="openmind",
                     endpoint="/openmind/images",
-                    meta={"attempt": index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
+                    meta={"attempt": index, "asset_persistence_queued": asset_persistence_queued, "refs": len(reference_urls)},
                 )
                 log_model_usage_event(
                     None,
@@ -2650,7 +2730,7 @@ async def proxy_images_generations(
                     channel="openmind",
                     route="openmind",
                     endpoint="/openmind/images",
-                    meta={"attempt": index, "saved_assets": len(saved_assets), "refs": len(reference_urls)},
+                    meta={"attempt": index, "asset_persistence_queued": asset_persistence_queued, "refs": len(reference_urls)},
                 )
                 channel_succeeded = True
                 return JSONResponse(resp)

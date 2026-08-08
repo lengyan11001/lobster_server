@@ -2714,26 +2714,50 @@ def _validate_template_refs(db: Session, user_id: int, keyword_ids: list[int], c
     clean_keyword_ids = _clean_int_ids(keyword_ids, 50)
     clean_competitor_ids = _clean_int_ids(competitor_ids, 50)
     if clean_keyword_ids:
-        found = {
-            int(x)
-            for (x,) in db.query(IPContentKeyword.id)
-            .filter(IPContentKeyword.user_id == user_id, IPContentKeyword.id.in_(clean_keyword_ids))
+        owners = {
+            int(row_id): int(owner_id)
+            for row_id, owner_id in db.query(IPContentKeyword.id, IPContentKeyword.user_id)
+            .filter(IPContentKeyword.id.in_(clean_keyword_ids))
             .all()
         }
-        missing = [x for x in clean_keyword_ids if x not in found]
-        if missing:
-            raise HTTPException(status_code=400, detail=f"关键词不存在或不属于当前用户：{missing[:5]}")
+        foreign = [item_id for item_id in clean_keyword_ids if item_id in owners and owners[item_id] != user_id]
+        if foreign:
+            raise HTTPException(status_code=400, detail=f"关键词不属于当前用户：{foreign[:5]}")
+        # A deleted reference can remain in an already-open Online/H5 template.
+        # Drop it on save while still rejecting IDs owned by another account.
+        clean_keyword_ids = [item_id for item_id in clean_keyword_ids if owners.get(item_id) == user_id]
     if clean_competitor_ids:
-        found = {
-            int(x)
-            for (x,) in db.query(ContentCompetitorAccount.id)
-            .filter(ContentCompetitorAccount.user_id == user_id, ContentCompetitorAccount.id.in_(clean_competitor_ids))
+        owners = {
+            int(row_id): int(owner_id)
+            for row_id, owner_id in db.query(ContentCompetitorAccount.id, ContentCompetitorAccount.user_id)
+            .filter(ContentCompetitorAccount.id.in_(clean_competitor_ids))
             .all()
         }
-        missing = [x for x in clean_competitor_ids if x not in found]
-        if missing:
-            raise HTTPException(status_code=400, detail=f"同行账号不存在或不属于当前用户：{missing[:5]}")
+        foreign = [item_id for item_id in clean_competitor_ids if item_id in owners and owners[item_id] != user_id]
+        if foreign:
+            raise HTTPException(status_code=400, detail=f"同行账号不属于当前用户：{foreign[:5]}")
+        clean_competitor_ids = [item_id for item_id in clean_competitor_ids if owners.get(item_id) == user_id]
     return clean_keyword_ids, clean_competitor_ids
+
+
+def _remove_template_reference(db: Session, user_id: int, field: str, reference_id: int) -> int:
+    if field not in {"keyword_ids", "competitor_ids"}:
+        raise ValueError(f"unsupported template reference field: {field}")
+    changed = 0
+    rows = (
+        db.query(IPContentScheduleTemplate)
+        .filter(IPContentScheduleTemplate.user_id == user_id)
+        .all()
+    )
+    for template in rows:
+        current = _clean_int_ids(getattr(template, field) or [], 50)
+        updated = [item_id for item_id in current if item_id != int(reference_id)]
+        if updated == current:
+            continue
+        setattr(template, field, updated)
+        template.updated_at = _utcnow()
+        changed += 1
+    return changed
 
 
 def _requirements_text(requirements: dict[str, Any], *keys: str) -> str:
@@ -4465,6 +4489,8 @@ def add_competitor(
     account_key = _clean_text(body.account_key, 191)
     if not account_key:
         raise HTTPException(status_code=400, detail="请填写同行账号标识")
+    if platform == "wechat_channels" and not _is_wechat_channels_finder_username(account_key):
+        raise HTTPException(status_code=400, detail="请先搜索视频号并选择具体账号，不能直接把昵称作为账号标识")
     row = ContentCompetitorAccount(
         user_id=current_user.id,
         platform=platform,
@@ -4493,9 +4519,10 @@ def delete_competitor(
     row = db.query(ContentCompetitorAccount).filter(ContentCompetitorAccount.user_id == current_user.id, ContentCompetitorAccount.id == account_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="同行账号不存在")
+    updated_templates = _remove_template_reference(db, current_user.id, "competitor_ids", account_id)
     db.delete(row)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "updated_templates": updated_templates}
 
 
 @router.post("/api/ip-content/competitors/{account_id}/sync", summary="同步同行账号最新作品")
@@ -4693,9 +4720,10 @@ def delete_keyword(
     row = db.query(IPContentKeyword).filter(IPContentKeyword.user_id == current_user.id, IPContentKeyword.id == keyword_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="关键词不存在")
+    updated_templates = _remove_template_reference(db, current_user.id, "keyword_ids", keyword_id)
     db.delete(row)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "updated_templates": updated_templates}
 
 
 @router.post("/api/ip-content/keywords/{keyword_id}/sync", summary="Sync Douyin hot search list by keyword")

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+from fastapi import HTTPException
+
 
 def test_collects_tikhub_billboard_search_list():
     from backend.app.api import ip_content_studio as studio
@@ -659,6 +662,94 @@ def test_sync_wechat_channels_competitor_uses_v2_user_videos_without_legacy_fall
     assert row.last_seen_item_key == "video-1"
     assert [call["query_type"] for call in calls] == ["wechat_channels_user_videos_v2"]
     assert calls[0]["body"] == {"username": "v2_test_user@finder", "last_buffer": "next-page", "raw": True}
+
+
+def test_template_refs_drop_deleted_ids_but_reject_other_users(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import ContentCompetitorAccount, User
+
+    owned = ContentCompetitorAccount(
+        user_id=test_user.id,
+        platform="wechat_channels",
+        display_name="本人同行",
+        account_key="v2_owned@finder",
+    )
+    other_user = User(email="template-ref-other@example.test", hashed_password="test")
+    db_session.add_all([owned, other_user])
+    db_session.flush()
+    foreign = ContentCompetitorAccount(
+        user_id=other_user.id,
+        platform="wechat_channels",
+        display_name="他人同行",
+        account_key="v2_foreign@finder",
+    )
+    db_session.add(foreign)
+    db_session.commit()
+
+    _keywords, competitors = studio._validate_template_refs(
+        db_session,
+        test_user.id,
+        [],
+        [owned.id, 987654321],
+    )
+    assert competitors == [owned.id]
+
+    with pytest.raises(HTTPException) as exc_info:
+        studio._validate_template_refs(db_session, test_user.id, [], [foreign.id])
+    assert exc_info.value.status_code == 400
+    assert "不属于当前用户" in str(exc_info.value.detail)
+
+
+def test_delete_competitor_removes_reference_from_all_user_templates(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import ContentCompetitorAccount, IPContentScheduleTemplate
+
+    competitor = ContentCompetitorAccount(
+        user_id=test_user.id,
+        platform="wechat_channels",
+        display_name="待删除同行",
+        account_key="v2_delete@finder",
+    )
+    db_session.add(competitor)
+    db_session.flush()
+    first = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="模板一",
+        competitor_ids=[competitor.id, 999],
+    )
+    second = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="模板二",
+        competitor_ids=[competitor.id],
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+
+    result = studio.delete_competitor(competitor.id, current_user=test_user, db=db_session)
+
+    db_session.refresh(first)
+    db_session.refresh(second)
+    assert result["updated_templates"] == 2
+    assert first.competitor_ids == [999]
+    assert second.competitor_ids == []
+
+
+def test_add_wechat_channels_competitor_rejects_display_name_as_account_key(db_session, test_user):
+    from backend.app.api import ip_content_studio as studio
+
+    with pytest.raises(HTTPException) as exc_info:
+        studio.add_competitor(
+            studio.CompetitorCreateBody(
+                platform="wechat_channels",
+                account_key="环球人物",
+                display_name="环球人物",
+            ),
+            current_user=test_user,
+            db=db_session,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "先搜索视频号" in str(exc_info.value.detail)
 
 
 def test_draft_record_payload_includes_image_list():
