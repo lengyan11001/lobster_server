@@ -122,10 +122,11 @@ def test_miniprogram_network_calls_are_confined_to_brand_aware_wrapper():
     assert "brand=${encodeURIComponent(config.BRAND_MARK)}" in wrapper
 
 
-def test_admin_requests_use_url_brand_and_shared_headers():
+def test_admin_requests_use_server_rendered_brand_and_shared_headers():
     root = Path(__file__).resolve().parents[1] / "app" / "static"
     html = (root / "admin.html").read_text(encoding="utf-8")
 
-    assert "new URLSearchParams(location.search).get('brand')" in html
+    assert "document.documentElement.dataset.brand" in html
+    assert "new URLSearchParams(location.search)" not in html
     assert "headers['X-Lobster-Brand'] = BRAND_MARK" in html
     assert "body: JSON.stringify({phone, captcha_id: loginCaptchaId, captcha_answer: captchaAnswer, brand_mark: BRAND_MARK})" in html

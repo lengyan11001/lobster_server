@@ -23,8 +23,11 @@ class Settings(BaseSettings):
     # MySQL/PostgreSQL 连接池（SQLite 忽略）
     db_pool_size: int = 5
     db_max_overflow: int = 10
-    db_pool_timeout: int = 60
+    db_pool_timeout: int = 10
     db_pool_recycle: int = 280
+    db_statement_timeout_ms: int = 60000
+    db_lock_timeout_ms: int = 10000
+    db_idle_transaction_timeout_ms: int = 30000
     redis_url: Optional[str] = None
     host: str = "0.0.0.0"
     port: int = 8000

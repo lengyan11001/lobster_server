@@ -6,6 +6,7 @@ import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
@@ -37,6 +38,7 @@ from ..services.sutui_pricing import (
     extract_upstream_reported_credits,
     fetch_model_pricing,
 )
+from ..services.workload_guard import WorkloadQueueFull, work_gate_from_env
 from .auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -78,6 +80,12 @@ def _get_xskill_client(timeout: float = 120.0) -> httpx.AsyncClient:
 # Direct API pool — for models with self-hosted API keys (bypass xskill)
 # ---------------------------------------------------------------------------
 _direct_pool_clients: Dict[str, httpx.AsyncClient] = {}
+_SUTUI_CHAT_UPSTREAM_GATE = work_gate_from_env(
+    "SUTUI_CHAT_UPSTREAM",
+    concurrency=16,
+    queue_limit=32,
+    wait_timeout_seconds=30,
+)
 
 
 def _get_direct_client(provider: str, timeout: float = 30.0) -> httpx.AsyncClient:
@@ -95,6 +103,34 @@ def _get_direct_client(provider: str, timeout: float = 30.0) -> httpx.AsyncClien
         )
         _direct_pool_clients[provider] = c
     return c
+
+
+async def _post_chat_upstream(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    body: Dict[str, Any],
+    headers: Dict[str, str],
+) -> httpx.Response:
+    async with _SUTUI_CHAT_UPSTREAM_GATE.slot() as lease:
+        if lease.waited_ms:
+            logger.info("sutui chat upstream admitted waited_ms=%s", lease.waited_ms)
+        return await client.post(url, json=body, headers=headers)
+
+
+@asynccontextmanager
+async def _stream_chat_upstream(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    body: Dict[str, Any],
+    headers: Dict[str, str],
+):
+    async with _SUTUI_CHAT_UPSTREAM_GATE.slot() as lease:
+        if lease.waited_ms:
+            logger.info("sutui chat stream admitted waited_ms=%s", lease.waited_ms)
+        async with client.stream("POST", url, json=body, headers=headers) as response:
+            yield response
 
 
 def _get_direct_route(model: str) -> Optional[Dict[str, str]]:
@@ -1694,7 +1730,7 @@ async def sutui_chat_completions(
                 client = _get_xskill_client(timeout=att["timeout"])
 
             try:
-                r = await client.post(att_url, json=body, headers=att_headers)
+                r = await _post_chat_upstream(client, att_url, body=body, headers=att_headers)
             except httpx.ConnectError as e:
                 last_connect_error = e
                 logger.warning(
@@ -1743,8 +1779,10 @@ async def sutui_chat_completions(
                         body["tool_choice"] = "required"
                         body["_tool_forced"] = True
                         try:
-                            r2 = await client.post(att_url, json=body, headers=att_headers)
+                            r2 = await _post_chat_upstream(client, att_url, body=body, headers=att_headers)
                             d2 = r2.json()
+                        except WorkloadQueueFull:
+                            raise
                         except Exception as e2:
                             logger.warning("[sutui-chat] tool_choice=required retry failed: %s", e2)
                             d2 = None
@@ -1934,7 +1972,12 @@ async def sutui_chat_completions(
                         stream_client = _get_direct_client(att["provider"], timeout=att["timeout"])
                     else:
                         stream_client = _get_xskill_client(timeout=att["timeout"])
-                    async with stream_client.stream("POST", att_url, json=body, headers=att_headers) as resp:
+                    async with _stream_chat_upstream(
+                        stream_client,
+                        att_url,
+                        body=body,
+                        headers=att_headers,
+                    ) as resp:
                             if resp.status_code >= 400:
                                 txt = (await resp.aread()).decode("utf-8", errors="replace")
                                 logger.info(
@@ -2078,6 +2121,19 @@ async def sutui_chat_completions(
                                     ):
                                         last_usage = u
                             break
+                except WorkloadQueueFull:
+                    logger.warning(
+                        "sutui chat upstream overloaded trace_id=%s active=%s waiting=%s",
+                        trace_id,
+                        _SUTUI_CHAT_UPSTREAM_GATE.active,
+                        _SUTUI_CHAT_UPSTREAM_GATE.waiting,
+                    )
+                    err = json.dumps(
+                        {"error": {"message": "当前对话请求较多，请稍后重试", "status": 503}},
+                        ensure_ascii=False,
+                    )
+                    yield f"data: {err}\n\n".encode("utf-8")
+                    return
                 except httpx.ConnectError as e:
                     if cand_idx < len(attempts) - 1:
                         logger.warning(

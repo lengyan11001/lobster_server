@@ -35,12 +35,31 @@ if "sqlite" in _db_url.lower():
         connect_args={"check_same_thread": False},
     )
 else:
+    # Fail fast under overload and let PostgreSQL terminate leaked idle
+    # transactions. Request handlers should never retain a transaction while
+    # waiting on an upstream API, but these limits keep one regression from
+    # exhausting the whole service.
+    _pool_timeout_seconds = max(3, min(15, int(settings.db_pool_timeout)))
+    _connect_args = {}
+    if _db_url.lower().startswith(("postgresql://", "postgresql+")):
+        _statement_timeout_ms = max(1000, min(300000, int(settings.db_statement_timeout_ms)))
+        _lock_timeout_ms = max(1000, min(60000, int(settings.db_lock_timeout_ms)))
+        _idle_transaction_timeout_ms = max(
+            5000,
+            min(120000, int(settings.db_idle_transaction_timeout_ms)),
+        )
+        _connect_args["options"] = (
+            f"-c statement_timeout={_statement_timeout_ms} "
+            f"-c lock_timeout={_lock_timeout_ms} "
+            f"-c idle_in_transaction_session_timeout={_idle_transaction_timeout_ms}"
+        )
     engine = create_engine(
         _db_url,
+        connect_args=_connect_args,
         pool_pre_ping=True,
         pool_size=max(1, int(settings.db_pool_size)),
         max_overflow=max(0, int(settings.db_max_overflow)),
-        pool_timeout=max(30, int(settings.db_pool_timeout)),
+        pool_timeout=_pool_timeout_seconds,
         pool_recycle=max(60, int(settings.db_pool_recycle)),
         echo_pool="debug" if _pool_debug_enabled else None,
     )
@@ -102,6 +121,28 @@ def _track_pool_checkin(dbapi_connection, connection_record):
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
 Base = declarative_base()
+
+
+def db_pool_snapshot() -> dict:
+    """Return non-blocking per-process pool pressure metrics."""
+    pool = engine.pool
+    result = {"dialect": engine.dialect.name}
+    for key, method_name in (
+        ("size", "size"),
+        ("checked_in", "checkedin"),
+        ("checked_out", "checkedout"),
+        ("overflow", "overflow"),
+    ):
+        method = getattr(pool, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            result[key] = int(method())
+        except Exception:
+            continue
+    if engine.dialect.name != "sqlite":
+        result["checkout_timeout_seconds"] = _pool_timeout_seconds
+    return result
 
 
 def get_db():

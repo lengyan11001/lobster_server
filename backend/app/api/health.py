@@ -1,7 +1,9 @@
 import logging
 import socket
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+
+from ..db import db_pool_snapshot
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -36,12 +38,29 @@ async def _mcp_status() -> dict:
 
 
 @router.get("/api/health", summary="健康检查（含 MCP 能力服务状态）")
-async def health():
+async def health(request: Request):
     mcp = await _mcp_status()
+    request_gate = getattr(request.app.state, "request_work_gate", None)
+    heavy_gate = getattr(request.app.state, "heavy_work_gate", None)
     return {
         "status": "ok",
         "lan_ip": _get_lan_ip(),
         "mcp": mcp,
+        "load": {
+            "database": db_pool_snapshot(),
+            "requests": {
+                "active": int(getattr(request_gate, "active", 0)),
+                "waiting": int(getattr(request_gate, "waiting", 0)),
+                "concurrency": int(getattr(request_gate, "concurrency", 0)),
+                "queue_limit": int(getattr(request_gate, "queue_limit", 0)),
+            },
+            "heavy": {
+                "active": int(getattr(heavy_gate, "active", 0)),
+                "waiting": int(getattr(heavy_gate, "waiting", 0)),
+                "concurrency": int(getattr(heavy_gate, "concurrency", 0)),
+                "queue_limit": int(getattr(heavy_gate, "queue_limit", 0)),
+            },
+        },
     }
 
 

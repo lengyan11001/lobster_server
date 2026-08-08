@@ -32,6 +32,7 @@ def test_video_submit_uses_request_token_without_route_db(monkeypatch, db_sessio
 
     observed: dict[str, object] = {}
 
+    monkeypatch.setattr(comfly_proxy, "SessionLocal", db_session_factory)
     monkeypatch.setattr(comfly_proxy, "_check_request_authorized_for_billing", lambda request: None)
     monkeypatch.setattr(comfly_proxy, "_require_model_entry", lambda model: {"token_group": "comfly"})
     monkeypatch.setattr(comfly_proxy, "_body_for_upstream_model", lambda body, model, entry: dict(body))

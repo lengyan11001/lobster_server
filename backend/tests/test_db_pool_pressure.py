@@ -180,6 +180,132 @@ def test_streaming_chat_cancels_worker_when_client_disconnects():
     assert "await asyncio.gather(task, return_exceptions=True)" in stream
 
 
+def test_legacy_chat_stream_does_not_capture_request_session_or_user_model():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "app" / "api" / "chat.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    stream = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_chat_stream_events"
+    )
+    endpoint = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "chat_stream_endpoint"
+    )
+    stream_args = {arg.arg for arg in stream.args.args}
+    endpoint_source = ast.get_source_segment(source, endpoint) or ""
+    stream_source = ast.get_source_segment(source, stream) or ""
+
+    assert "db" not in stream_args
+    assert "current_user" not in stream_args
+    assert {"user_id", "preferred_model"}.issubset(stream_args)
+    assert "db = SessionLocal()" in stream_source
+    assert "db.close()" in stream_source
+    assert "db.commit()" in endpoint_source
+    assert "_chat_stream_events(payload, raw_token, user_id, preferred_model, request)" in endpoint_source
+
+
+def test_streaming_responses_are_not_given_request_session_objects():
+    from pathlib import Path
+
+    api_root = Path(__file__).resolve().parents[1] / "app" / "api"
+    violations: list[str] = []
+    for path in api_root.glob("*.py"):
+        source = path.read_text(encoding="utf-8").lstrip("\ufeff")
+        tree = ast.parse(source)
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+                continue
+            if call.func.id != "StreamingResponse" or not call.args:
+                continue
+            captured = {
+                node.id
+                for node in ast.walk(call.args[0])
+                if isinstance(node, ast.Name) and node.id in {"db", "current_user"}
+            }
+            if captured:
+                violations.append(f"{path.name}:{call.lineno}:{','.join(sorted(captured))}")
+
+    assert violations == []
+
+
+def test_h5_sse_serializes_events_after_closing_poll_session():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "app" / "api" / "h5_chat.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source.lstrip("\ufeff"))
+    endpoint = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "stream_h5_message_events"
+    )
+    stream_generator = next(
+        node
+        for node in endpoint.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "gen"
+    )
+    session_tries = [
+        node
+        for node in ast.walk(stream_generator)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "db"
+            and call.func.attr == "close"
+            for final_node in node.finalbody
+            for call in ast.walk(final_node)
+        )
+    ]
+
+    assert session_tries
+    assert all(not any(isinstance(item, (ast.Yield, ast.YieldFrom)) for item in ast.walk(node)) for node in session_tries)
+
+
+def test_standalone_h5_app_exposes_its_own_pool_health_metrics():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "app" / "h5_main.py").read_text(encoding="utf-8")
+
+    assert "from .api.health import router as health_router" in source
+    assert 'app.include_router(health_router, prefix="")' in source
+
+
+def test_channel_reply_releases_identity_transaction_before_network(db_session, test_user, monkeypatch):
+    from backend.app.api import chat
+
+    test_user.wecom_userid = "channel-user-1"
+    db_session.commit()
+    monkeypatch.setattr(chat, "SessionLocal", lambda: db_session)
+
+    async def fake_fetch_tools(_token):
+        assert not db_session.in_transaction()
+        return []
+
+    async def fake_openclaw(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(chat, "_fetch_mcp_tools", fake_fetch_tools)
+    monkeypatch.setattr(chat, "_resolve_config", lambda _model: None)
+    monkeypatch.setattr(chat, "_try_openclaw", fake_openclaw)
+
+    result = asyncio.run(
+        chat.get_reply_for_channel(
+            "hello",
+            channel="wecom",
+            from_user="channel-user-1",
+        )
+    )
+
+    assert result
+
+
 def test_sutui_stream_generator_never_captures_request_db_session():
     from pathlib import Path
 

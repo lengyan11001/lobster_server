@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
+from fastapi import FastAPI
 
-from backend.app.services.workload_guard import BoundedWorkGate, WorkloadQueueFull, heavy_workload_kind
+from backend.app.services.workload_guard import (
+    BoundedWorkGate,
+    WorkloadQueueFull,
+    heavy_workload_kind,
+    install_workload_guard,
+    request_workload_kind,
+)
 
 
 def test_bounded_work_gate_counts_active_and_waiting_without_overlap() -> None:
@@ -149,3 +157,54 @@ def test_heavy_workload_routes_are_classified(method: str, path: str) -> None:
 )
 def test_interactive_routes_bypass_heavy_workload_queue(method: str, path: str) -> None:
     assert heavy_workload_kind(method, path) == ""
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "expected"),
+    [
+        ("POST", "/auth/login", "dynamic"),
+        ("GET", "/api/h5-chat/messages", "dynamic"),
+        ("POST", "/chat/stream", "dynamic"),
+        ("GET", "/api/health", ""),
+        ("GET", "/h5-static/h5-app.js", ""),
+        ("OPTIONS", "/api/assets/upload", ""),
+    ],
+)
+def test_dynamic_request_admission_classification(method: str, path: str, expected: str) -> None:
+    assert request_workload_kind(method, path) == expected
+
+
+def test_request_admission_fails_fast_without_blocking_health(monkeypatch) -> None:
+    async def scenario() -> None:
+        monkeypatch.setenv("SERVER_REQUEST_MAX_CONCURRENCY", "1")
+        monkeypatch.setenv("SERVER_REQUEST_MAX_QUEUE", "0")
+        app = FastAPI()
+        install_workload_guard(app)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        @app.get("/api/hold")
+        async def hold_request():
+            entered.set()
+            await release.wait()
+            return {"ok": True}
+
+        @app.get("/api/health")
+        async def health_request():
+            return {"status": "ok"}
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            holder = asyncio.create_task(client.get("/api/hold"))
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            overloaded = await client.get("/api/hold")
+            health = await client.get("/api/health")
+            assert overloaded.status_code == 503
+            assert overloaded.headers["retry-after"] == "3"
+            assert health.status_code == 200
+            release.set()
+            completed = await asyncio.wait_for(holder, timeout=1)
+            assert completed.status_code == 200
+            assert completed.headers["x-request-queue-ms"] == "0"
+
+    asyncio.run(scenario())

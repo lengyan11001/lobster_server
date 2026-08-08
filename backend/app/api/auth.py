@@ -656,7 +656,7 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
     _remote = getattr(request.client, "host", None) if request.client else None
     _xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or None
     logger.info(
-        "[auth/register-phone] user_id=%s mobile_tail=%s slots_enabled=%s installation_id_ok=%s credits=%s parent=%s remote=%s",
+        "[auth/register-phone] user_id=%s mobile_tail=%s slots_enabled=%s installation_id_ok=%s credits=%s parent=%s remote=%s forwarded_for=%s",
         user.id,
         mobile[-4:],
         installation_slots_enabled(),

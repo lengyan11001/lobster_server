@@ -15,6 +15,7 @@ from .api.branding import router as branding_router
 from .api.content_records import router as content_records_router
 from .api.douyin_dashboard_h5 import router as douyin_dashboard_h5_router
 from .api.global_leads import router as global_leads_router
+from .api.health import router as health_router
 from .api.h5_chat import router as h5_chat_router
 from .api.mastra_chat import router as mastra_chat_router
 from .api.h5_home import router as h5_home_router
@@ -142,6 +143,7 @@ def create_h5_app() -> FastAPI:
         logger.exception("[H5] unhandled error path=%s", request.url.path)
         return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
+    app.include_router(health_router, prefix="")
     app.include_router(auth_router, prefix="/auth")
     app.include_router(branding_router, prefix="")
     app.include_router(assets_router, prefix="")

@@ -11,6 +11,7 @@ import logging
 import os
 import signal
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Awaitable, Callable, List
 
@@ -54,6 +55,28 @@ from backend.app.services.sutui_llm_probe import (
 from backend.app.services.sutui_reconcile import is_sutui_reconcile_enabled, sutui_reconcile_loop_forever
 
 logger = logging.getLogger("backend.background_worker")
+
+
+async def _supervise_loop(
+    name: str,
+    factory: Callable[[], Awaitable[None]],
+    *,
+    initial_backoff_seconds: float = 1.0,
+    max_backoff_seconds: float = 60.0,
+) -> None:
+    """Restart a failed periodic loop instead of leaving a healthy-looking dead worker."""
+    backoff = max(0.01, float(initial_backoff_seconds))
+    max_backoff = max(backoff, float(max_backoff_seconds))
+    while True:
+        try:
+            await factory()
+            logger.error("[background] loop exited unexpectedly name=%s", name)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[background] loop crashed name=%s restart_in=%.1fs", name, backoff)
+        await asyncio.sleep(backoff)
+        backoff = min(max_backoff, backoff * 2.0)
 
 
 def _enabled_from_env(name: str, default: bool = True) -> bool:
@@ -114,7 +137,7 @@ async def main_async() -> int:
 
     tasks: List[asyncio.Task] = []
     for name, factory in _task_factories():
-        task = asyncio.create_task(factory(), name=name)
+        task = asyncio.create_task(_supervise_loop(name, factory), name=name)
         tasks.append(task)
         logger.info("[background] 已启动任务: %s", name)
 
@@ -126,10 +149,8 @@ async def main_async() -> int:
     for task in tasks:
         task.cancel()
     for task in tasks:
-        try:
+        with suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
     return 0
 
 

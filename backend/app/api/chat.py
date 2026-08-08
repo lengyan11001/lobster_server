@@ -1999,6 +1999,9 @@ async def get_reply_for_channel(
             sutui_token = (getattr(user, "sutui_token", None) or "").strip() or None
             uid = user.id
 
+        # Authentication is complete. Release the read transaction before
+        # MCP discovery and the potentially long LLM/tool loop.
+        db.commit()
         mcp_tools = await _fetch_mcp_tools(raw_token)
 
         model = ""
@@ -2435,11 +2438,12 @@ async def chat_endpoint(
 async def _chat_stream_events(
     payload: ChatRequest,
     raw_token: str,
-    current_user: User,
-    db: Session,
+    user_id: int,
+    preferred_model: str,
     request: Optional[Request] = None,
 ):
     """Async generator: yield SSE events (progress + done). Runs chat with progress_cb pushing to queue."""
+    db = SessionLocal()
     db.expire_on_commit = False
     db.commit()
     queue: asyncio.Queue = asyncio.Queue()
@@ -2463,7 +2467,7 @@ async def _chat_stream_events(
             sutui_token = None
         else:
             sutui_token = None
-            model = payload.model or getattr(current_user, "preferred_model", None) or ""
+            model = payload.model or preferred_model or ""
             if not model or model == "openclaw":
                 model = _pick_default_model()
         mcp_tools = await _fetch_mcp_tools(raw_token)
@@ -2498,12 +2502,12 @@ async def _chat_stream_events(
                 {
                     "role": "user",
                     "content": _build_user_content_with_attachments(
-                        payload, _request_for_assets, db=db, user_id=current_user.id
+                        payload, _request_for_assets, db=db, user_id=user_id
                     ),
                 }
             )
             stream_attachment_urls = _get_attachment_public_urls(
-                payload, _request_for_assets, db=db, user_id=current_user.id
+                payload, _request_for_assets, db=db, user_id=user_id
             )
             db.commit()
         except HTTPException as e:
@@ -2527,9 +2531,9 @@ async def _chat_stream_events(
             oc_reply = await _try_openclaw(messages, model, raw_token)
             if oc_reply:
                 reply_holder.append(oc_reply)
-                _flush_tool_logs(db, current_user.id, payload.session_id, model)
+                _flush_tool_logs(db, user_id, payload.session_id, model)
                 _log_turn(
-                    db, current_user.id, payload.message, _reply_for_user(oc_reply),
+                    db, user_id, payload.message, _reply_for_user(oc_reply),
                     payload.session_id, payload.context_id,
                     {"model": model, "mode": "openclaw"},
                 )
@@ -2551,7 +2555,7 @@ async def _chat_stream_events(
                             sutui_token=sutui_token,
                             progress_cb=progress_cb,
                             attachment_urls=stream_attachment_urls,
-                            db=db, user_id=current_user.id,
+                            db=db, user_id=user_id,
                         )
                     else:
                         reply = await _chat_openai(
@@ -2559,12 +2563,12 @@ async def _chat_stream_events(
                             sutui_token=sutui_token,
                             progress_cb=progress_cb,
                             attachment_urls=stream_attachment_urls,
-                            db=db, user_id=current_user.id,
+                            db=db, user_id=user_id,
                         )
                     reply_holder.append(reply)
-                    _flush_tool_logs(db, current_user.id, payload.session_id, model)
+                    _flush_tool_logs(db, user_id, payload.session_id, model)
                     _log_turn(
-                        db, current_user.id, payload.message, _reply_for_user(reply),
+                        db, user_id, payload.message, _reply_for_user(reply),
                         payload.session_id, payload.context_id,
                         {"model": model, "mode": "direct", "tools": len(mcp_tools)},
                     )
@@ -2573,9 +2577,9 @@ async def _chat_stream_events(
                     oc_reply = await _try_openclaw(messages, model, raw_token)
                     if oc_reply:
                         reply_holder.append(oc_reply)
-                        _flush_tool_logs(db, current_user.id, payload.session_id, model)
+                        _flush_tool_logs(db, user_id, payload.session_id, model)
                         _log_turn(
-                            db, current_user.id, payload.message, _reply_for_user(oc_reply),
+                            db, user_id, payload.message, _reply_for_user(oc_reply),
                             payload.session_id, payload.context_id,
                             {"model": model, "mode": "openclaw"},
                         )
@@ -2613,6 +2617,7 @@ async def _chat_stream_events(
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        db.close()
 
 
 @router.post("/chat/stream", summary="智能对话（流式返回思考/工具进度）")
@@ -2624,8 +2629,11 @@ async def chat_stream_endpoint(
     db: Session = Depends(get_db),
 ):
     """Stream SSE events: tool_start, tool_end, then done with reply. Frontend can show progress in chat."""
+    user_id = int(current_user.id)
+    preferred_model = str(getattr(current_user, "preferred_model", None) or "")
+    db.commit()
     return StreamingResponse(
-        _chat_stream_events(payload, raw_token, current_user, db, request),
+        _chat_stream_events(payload, raw_token, user_id, preferred_model, request),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

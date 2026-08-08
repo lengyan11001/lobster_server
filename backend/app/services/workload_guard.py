@@ -10,6 +10,7 @@ from typing import AsyncIterator, Coroutine, TypeVar
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 
 logger = logging.getLogger(__name__)
@@ -193,6 +194,29 @@ _HEAVY_EXACT_PATHS = {
     "/api/wecom/proxy/media/upload",
 }
 
+_REQUEST_GUARD_PREFIXES = (
+    "/admin/api/",
+    "/api/",
+    "/auth/",
+    "/capabilities/",
+    "/chat",
+)
+_REQUEST_GUARD_BYPASS_PATHS = {
+    "/api/health",
+    "/api/lan-ip",
+}
+
+
+def request_workload_kind(method: str, path: str) -> str:
+    """Classify dynamic requests that may need a database connection."""
+    method = str(method or "").upper()
+    path = str(path or "").rstrip("/") or "/"
+    if method in {"OPTIONS", "HEAD"} or path in _REQUEST_GUARD_BYPASS_PATHS:
+        return ""
+    if any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in _REQUEST_GUARD_PREFIXES):
+        return "dynamic"
+    return ""
+
 
 def heavy_workload_kind(method: str, path: str) -> str:
     method = str(method or "").upper()
@@ -244,35 +268,75 @@ def heavy_workload_kind(method: str, path: str) -> str:
 
 
 def install_workload_guard(app: FastAPI) -> BoundedWorkGate:
+    request_gate = BoundedWorkGate(
+        concurrency=_env_int("SERVER_REQUEST_MAX_CONCURRENCY", 12, minimum=1, maximum=128),
+        queue_limit=_env_int("SERVER_REQUEST_MAX_QUEUE", 48, minimum=0, maximum=1000),
+        wait_timeout_seconds=_env_int("SERVER_REQUEST_QUEUE_TIMEOUT_SECONDS", 10, minimum=1, maximum=120),
+    )
     gate = BoundedWorkGate(
         concurrency=_env_int("SERVER_HEAVY_MAX_CONCURRENCY", 6, minimum=1, maximum=32),
         queue_limit=_env_int("SERVER_HEAVY_MAX_QUEUE", 24, minimum=0, maximum=500),
         wait_timeout_seconds=_env_int("SERVER_HEAVY_QUEUE_TIMEOUT_SECONDS", 120, minimum=5, maximum=900),
     )
+    app.state.request_work_gate = request_gate
     app.state.heavy_work_gate = gate
+
+    @app.exception_handler(SQLAlchemyTimeoutError)
+    async def database_pool_timeout(request: Request, exc: SQLAlchemyTimeoutError):
+        logger.error(
+            "database pool timeout method=%s path=%s request_active=%s request_waiting=%s error=%s",
+            request.method,
+            request.url.path,
+            request_gate.active,
+            request_gate.waiting,
+            exc,
+        )
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "3"},
+            content={"detail": "Service is busy. Please retry shortly."},
+        )
 
     @app.middleware("http")
     async def bounded_heavy_workload(request: Request, call_next):
-        kind = heavy_workload_kind(request.method, request.url.path)
-        if not kind:
+        request_kind = request_workload_kind(request.method, request.url.path)
+        heavy_kind = heavy_workload_kind(request.method, request.url.path)
+        if not request_kind and not heavy_kind:
             return await call_next(request)
-        try:
-            async with gate.slot() as lease:
+
+        async def run_request():
+            if not request_kind:
+                return await call_next(request)
+            async with request_gate.slot() as request_lease:
                 response = await call_next(request)
-                response.headers["X-Workload-Queue-Ms"] = str(lease.waited_ms)
+                response.headers["X-Request-Queue-Ms"] = str(request_lease.waited_ms)
                 return response
-        except WorkloadQueueFull:
+
+        try:
+            if not heavy_kind:
+                return await run_request()
+            # Heavy work waits outside the general gate, so a media backlog
+            # cannot consume every interactive request slot.
+            async with gate.slot() as heavy_lease:
+                response = await run_request()
+                response.headers["X-Workload-Queue-Ms"] = str(heavy_lease.waited_ms)
+                return response
+        except WorkloadQueueFull as exc:
             logger.warning(
-                "heavy workload overloaded method=%s path=%s active=%s waiting=%s",
+                "workload overloaded method=%s path=%s request_active=%s request_waiting=%s "
+                "heavy_active=%s heavy_waiting=%s error=%s",
                 request.method,
                 request.url.path,
+                request_gate.active,
+                request_gate.waiting,
                 gate.active,
                 gate.waiting,
+                exc,
             )
             return JSONResponse(
                 status_code=503,
-                headers={"Retry-After": "15"},
-                content={"detail": "当前处理任务较多，已达到排队上限，请稍后重试"},
+                headers={"Retry-After": "15" if heavy_kind else "3"},
+                content={"detail": "当前访问量较大，系统正在排队处理，请稍后重试"},
             )
 
     return gate

@@ -12,7 +12,7 @@ import httpx
 from sqlalchemy import distinct, func, or_
 from sqlalchemy.orm import Session
 
-from ..db import SessionLocal
+from ..db import SessionLocal, db_pool_snapshot
 from ..models import (
     Asset,
     CapabilityCallLog,
@@ -282,6 +282,7 @@ async def collect_runtime_monitor_snapshot() -> Dict[str, Any]:
         "loadavg": list(loadavg) if loadavg else None,
         "memory": _memory_info(),
         "disk": _disk_info((os.environ.get("RUNTIME_MONITOR_DISK_PATH") or "/").strip() or "/"),
+        "database_pool": db_pool_snapshot(),
     }
 
     checked_at = datetime.now(timezone.utc).isoformat()

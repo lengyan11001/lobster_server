@@ -157,10 +157,10 @@ def test_stored_template_rules_are_normalized_without_trusting_bad_duration():
     assert template_meta["watermark_show"] is True
 
 
-def test_editing_template_duration_is_a_hard_output_limit():
+def test_editing_template_duration_is_not_a_hard_output_limit():
     assert _requested_video_duration_limit(
         {"template": {"style_id": "style-1", "video_duration": 30}}
-    ) == 30.0
+    ) is None
 
 
 def test_explicit_hard_output_limit_overrides_template_duration():
@@ -182,13 +182,16 @@ def test_long_video_is_not_limited_by_template_duration():
 
 
 @pytest.mark.asyncio
-async def test_overlong_edited_video_is_replaced_with_trimmed_tos_asset(db_session, test_user, monkeypatch):
+async def test_explicitly_limited_video_is_replaced_with_trimmed_tos_asset(db_session, test_user, monkeypatch):
     row = ShanjianDigitalHumanVideoTask(
         user_id=test_user.id,
         title="朋友圈数字人口播",
         status="succeed",
         task_id="base-task-1",
-        submit_payload={"template": {"style_id": "style-1", "video_duration": 30}},
+        submit_payload={
+            "output_constraints": {"hard_max_duration": 30},
+            "template": {"style_id": "style-1", "video_duration": 30},
+        },
     )
     db_session.add(row)
     db_session.flush()
@@ -226,7 +229,7 @@ async def test_overlong_edited_video_is_replaced_with_trimmed_tos_asset(db_sessi
 
 
 @pytest.mark.asyncio
-async def test_video_within_template_duration_is_not_reencoded(db_session, test_user, monkeypatch):
+async def test_template_only_video_is_unbounded_and_not_reencoded(db_session, test_user, monkeypatch):
     row = ShanjianDigitalHumanVideoTask(
         user_id=test_user.id,
         title="短数字人口播",
@@ -251,7 +254,7 @@ async def test_video_within_template_duration_is_not_reencoded(db_session, test_
 
     assert final_url == "https://upstream.test/short.mp4"
     assert final_duration == 24.6
-    assert postprocess["duration_status"] == "within_limit"
+    assert postprocess["duration_status"] == "unbounded"
     assert postprocess["final_asset_id"]
     final_asset = db_session.query(Asset).filter(Asset.asset_id == postprocess["final_asset_id"]).one()
     assert final_asset.model == "shanjian-digital-human-final"

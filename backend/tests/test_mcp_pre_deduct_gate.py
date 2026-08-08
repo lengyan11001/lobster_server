@@ -435,7 +435,7 @@ async def test_sutui_generate_stops_when_pre_deduct_has_no_charge(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_gpt_image_2_defaults_high_quality_and_uses_server_price(monkeypatch):
+async def test_gpt_image_2_defaults_to_economy_quality_and_uses_server_price(monkeypatch):
     from mcp import http_server
 
     monkeypatch.setattr(
@@ -509,8 +509,8 @@ async def test_gpt_image_2_defaults_high_quality_and_uses_server_price(monkeypat
     )
 
     assert is_error is False
-    assert upstream_payloads[0]["quality"] == "high"
-    assert upstream_payloads[0]["resolution"] == "4K"
+    assert upstream_payloads[0]["quality"] == "low"
+    assert upstream_payloads[0]["resolution"] == "1K"
     assert upstream_payloads[0]["output_format"] == "png"
     assert upstream_payloads[0]["image_size"] == "1:1"
     assert upstream_payloads[0]["num_images"] == 1

@@ -1301,6 +1301,8 @@ async def stream_h5_message_events(
         while True:
             if await request.is_disconnected():
                 break
+            event_lines: List[str] = []
+            stream_finished = False
             db = SessionLocal()
             try:
                 msg = _message_for_user(db, message_id, user_id)
@@ -1313,16 +1315,23 @@ async def stream_h5_message_events(
                 )
                 for ev in events:
                     last_id = max(last_id, int(ev.id))
-                    yield _event_stream_line(ev)
+                    event_lines.append(_event_stream_line(ev))
                 if events:
                     idle = 0
                 if msg.status in _FINAL_STATUSES and not events:
-                    break
+                    stream_finished = True
             except HTTPException:
-                yield "event: error\ndata: {\"detail\":\"消息不存在\"}\n\n"
-                break
+                event_lines.append("event: error\ndata: {\"detail\":\"消息不存在\"}\n\n")
+                stream_finished = True
             finally:
                 db.close()
+
+            # Never keep a database transaction checked out while a slow
+            # client applies backpressure to the SSE response.
+            for event_line in event_lines:
+                yield event_line
+            if stream_finished:
+                break
 
             idle += 1
             if idle % 10 == 0:
