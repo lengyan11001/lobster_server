@@ -10226,6 +10226,7 @@
       const sections = [];
       const actionSections = [];
       const detailSections = [];
+      let hasMediaResult = false;
       function renderTaskDetailSection(title, rows) {
         const normalizedRows = Array.isArray(rows)
           ? rows.filter((row) => Array.isArray(row) && String(row[1] == null ? "" : row[1]).trim() !== "")
@@ -10656,16 +10657,27 @@
         const publishActions = renderRunPublishActions(run);
         if (publishActions) actionSections.push(`<div class="task-detail-action-block"><span>发布动作</span>${publishActions}</div>`);
         const media = renderRunMedia(collectRunMediaEntries(run), run);
-        if (media) sections.push(`<div class="task-detail-section"><h4>媒体结果</h4>${media}</div>`);
+        if (media) {
+          hasMediaResult = true;
+          sections.push(`<div class="task-detail-section"><h4>媒体结果</h4>${media}</div>`);
+        }
         const summaryRows = readablePayloadRows(payload);
         if (summaryRows.length) sections.push(renderTaskDetailSection("结果摘要", summaryRows));
         const detailHtml = renderGenericResultDetails(payload);
         if (detailHtml) detailSections.push(detailHtml);
       }
       actionSections.unshift(runDetailActionsHtml(run));
-      return [resultSummaryHtml]
-        .concat(runDetailActionSectionHtml(actionSections))
-        .concat(sections)
+      const actionHtml = runDetailActionSectionHtml(actionSections);
+      const primarySections = [];
+      if (actionHtml) primarySections.push(actionHtml);
+      if (hasMediaResult) {
+        primarySections.push(...sections);
+        primarySections.push(resultSummaryHtml);
+      } else {
+        primarySections.push(resultSummaryHtml);
+        primarySections.push(...sections);
+      }
+      return primarySections
         .concat(detailSections)
         .concat(technicalHtml)
         .join("");
@@ -19970,19 +19982,32 @@
       const defaults = publishDefaultsFromRun(row);
       const out = [];
       const seen = new Map();
-      const addEntry = (entry) => {
+      const normalizedMediaKey = (url) => {
+        const raw = String(url || "").trim();
+        if (!raw) return "";
+        try {
+          const parsed = new URL(raw);
+          return `url:${parsed.origin}${parsed.pathname}`;
+        } catch {
+          return `url:${raw.split(/[?#]/)[0] || raw}`;
+        }
+      };
+      const isVideoEntry = (entry) => mediaTypeFromUrl(entry && (entry.url || entry.source_url) || "", entry && (entry.media_type || entry.type) || "") === "video";
+      const addEntry = (entry, options = {}) => {
         if (!entry || typeof entry !== "object") return;
         const url = String(entry.url || entry.source_url || entry.public_url || entry.image_url || entry.video_url || entry.final_url || entry.output_url || entry.media_url || "").trim();
         const assetId = String(entry.asset_id || entry.id || entry.final_asset_id || entry.video_asset_id || entry.image_asset_id || "").trim();
         if (!url && !assetId) return;
+        const assetKey = assetId ? `asset:${assetId}` : "";
+        const urlKey = normalizedMediaKey(url);
         const explicitTitle = contentActionTextValue(entry.title, entry.filename);
         const explicitDescription = contentActionTextValue(entry.description, entry.caption, entry.copy);
         const explicitCreativePrompt = contentActionCreativePromptValue(entry.image_prompt, entry.video_prompt, entry.original_prompt, entry.prompt);
         const explicitScript = contentActionTextValue(entry.script, entry.voiceover_script);
         const explicitTags = contentActionTextValue(entry.tags);
-        const existingIndex = (assetId && seen.has(assetId))
-          ? seen.get(assetId)
-          : ((url && seen.has(url)) ? seen.get(url) : -1);
+        const existingIndex = (assetKey && seen.has(assetKey))
+          ? seen.get(assetKey)
+          : ((urlKey && seen.has(urlKey)) ? seen.get(urlKey) : -1);
         const next = {
           ...defaults,
           url,
@@ -19994,22 +20019,24 @@
           creativePrompt: explicitCreativePrompt || defaults.creativePrompt,
           script: explicitScript || defaults.script,
           tags: explicitTags || defaults.tags,
+          primary_result: !!options.primary,
         };
         if (existingIndex < 0) {
           const nextIndex = out.length;
-          if (assetId) seen.set(assetId, nextIndex);
-          if (url) seen.set(url, nextIndex);
+          if (assetKey) seen.set(assetKey, nextIndex);
+          if (urlKey) seen.set(urlKey, nextIndex);
           out.push(next);
           return;
         }
-        if (assetId) seen.set(assetId, existingIndex);
-        if (url) seen.set(url, existingIndex);
+        if (assetKey) seen.set(assetKey, existingIndex);
+        if (urlKey) seen.set(urlKey, existingIndex);
         const existing = out[existingIndex];
         if (!existing) return;
         existing.url = existing.url || next.url;
         existing.source_url = existing.source_url || next.source_url;
         existing.asset_id = existing.asset_id || next.asset_id;
         existing.media_type = existing.media_type || next.media_type;
+        if (options.primary) existing.primary_result = true;
         if (explicitTitle) existing.title = explicitTitle;
         if (explicitDescription) existing.description = explicitDescription;
         if (explicitCreativePrompt) existing.creativePrompt = explicitCreativePrompt;
@@ -20017,6 +20044,11 @@
         if (explicitTags) existing.tags = explicitTags;
       };
       const addUrl = (url) => addEntry({ url });
+      const primaryVideoEntries = () => out.filter((entry) => entry && entry.primary_result && isVideoEntry(entry));
+      const addPrimaryCandidates = (entries) => {
+        entries.forEach((entry) => addEntry(entry, { primary: true }));
+        return primaryVideoEntries();
+      };
       const draft = publishDraftFromPayload({ ...payload, run_id: row && row.id });
       const local = payload.local_result && typeof payload.local_result === "object" ? payload.local_result : {};
       const localItem = local.item && typeof local.item === "object" ? local.item : {};
@@ -20025,15 +20057,18 @@
       const mcpResult = payload.mcp_result && typeof payload.mcp_result === "object" ? payload.mcp_result : {};
       const mcpJob = mcpResult.result && typeof mcpResult.result === "object" ? mcpResult.result : mcpResult;
       const mcpPipeline = mcpJob.result && typeof mcpJob.result === "object" ? mcpJob.result : {};
-      [
+      let primaryVideos = addPrimaryCandidates([
         local.final_video,
-        local.video_url ? { url: local.video_url, asset_id: local.video_asset_id, media_type: "video", title: local.title || defaults.title } : null,
         localItem.final_video,
-        localItem.video_url ? { url: localItem.video_url, asset_id: localItem.video_asset_id, media_type: "video", title: localItem.title || defaults.title } : null,
         videoResult.final_video,
         videoResultInner.final_video,
         mcpPipeline.final_video,
-      ].forEach(addEntry);
+      ]);
+      if (!primaryVideos.length) primaryVideos = addPrimaryCandidates([
+        local.video_url ? { url: local.video_url, asset_id: local.video_asset_id, media_type: "video", title: local.title || defaults.title } : null,
+        localItem.video_url ? { url: localItem.video_url, asset_id: localItem.video_asset_id, media_type: "video", title: localItem.title || defaults.title } : null,
+      ]);
+      if (primaryVideos.length) return primaryVideos.slice(0, 1);
       const ids = Array.isArray(refs.asset_ids) ? refs.asset_ids : [];
       const urls = Array.isArray(refs.urls) ? refs.urls : [];
       urls.forEach((url, idx) => addEntry({ url, asset_id: ids[idx] || "", media_type: mediaTypeFromUrl(url) }));
@@ -20444,11 +20479,12 @@
         }
         box.innerHTML = allRows.map((row) => {
           const result = runDisplayResult(row);
+          const media = renderRunMedia(collectRunMediaEntries(row), row);
           return `<div class="run-card">
             <div class="run-top"><span>${escapeHtml(fmtTime(row.created_at))}</span><span>${escapeHtml(statusText(row.status))}</span></div>
             <div class="run-title">${escapeHtml(row.title || "定时任务")}</div>
+            ${media}
             <div class="run-result">${escapeHtml(result || "等待结果")}</div>
-            ${renderRunMedia(collectRunMediaEntries(row), row)}
             ${renderRunPublishActions(row)}
             <div class="run-publish-actions"><button type="button" data-open-run-detail="${escapeHtml(row.id || "")}">查看详情</button></div>
           </div>`;

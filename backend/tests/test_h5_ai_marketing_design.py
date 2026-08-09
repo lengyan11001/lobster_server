@@ -276,7 +276,8 @@ def test_h5_run_detail_prioritizes_results_and_collapses_details():
 
     assert "function runDetailActionSectionHtml" in script
     assert "actionSections.unshift(runDetailActionsHtml(run));" in task_detail_block
-    assert ".concat(runDetailActionSectionHtml(actionSections))" in task_detail_block
+    assert "const actionHtml = runDetailActionSectionHtml(actionSections);" in task_detail_block
+    assert "if (actionHtml) primarySections.push(actionHtml);" in task_detail_block
     assert "查看执行配置与参数" in technical_block
     assert "runDetailActionsHtml(run)" not in technical_block
     assert "<details class=\"task-detail-section task-detail-result-details task-detail-secondary\">" in task_detail_block
