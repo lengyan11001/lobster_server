@@ -146,7 +146,8 @@ def test_sutui_grok_15_keeps_managed_fallback():
     )
 
 
-def test_goal_video_pipeline_migrates_previous_apiz_default_to_sutui_grok_15():
+@pytest.mark.parametrize("pipeline_capability", ["goal.video.pipeline", "create.video.pipeline"])
+def test_video_pipelines_migrate_previous_apiz_default_to_sutui_grok_15(pipeline_capability):
     out = _normalize_video_generate_payload(
         {
             "model": "apiz/veo3.1/image-to-video",
@@ -157,7 +158,7 @@ def test_goal_video_pipeline_migrates_previous_apiz_default_to_sutui_grok_15():
             "aspect_ratio": "9:16",
         },
         migrate_legacy_default=True,
-        pipeline_capability="goal.video.pipeline",
+        pipeline_capability=pipeline_capability,
     )
 
     assert out["model"] == SUTUI_GROK_15_IMAGE_MODEL
@@ -270,12 +271,12 @@ def test_video_fallback_policy_depends_on_input_mode():
         {"prompt": "image video", "image_url": "https://example.com/a.png"}
     )
 
-    assert text_candidates[0] == {"channel": "comfly", "model": "veo3.1-fast"}
-    assert image_candidates[0] == {"channel": "openmind", "model": "grok-video-3"}
-    assert [item["channel"] for item in image_candidates] == ["openmind", "comfly", "yunwu"]
+    assert text_candidates == [{"channel": "xai", "model": "grok-imagine-video-1.5"}]
+    assert image_candidates[0] == {"channel": "xai", "model": "grok-imagine-video-1.5"}
+    assert [item["channel"] for item in image_candidates] == ["xai"]
 
 
-def test_comfly_veo_fallback_drops_apiz_only_parameters():
+def test_comfly_veo_payload_drops_apiz_only_parameters():
     out = _video_fallback_payload(
         {
             "model": "apiz/veo3.1/text-to-video",
@@ -292,6 +293,41 @@ def test_comfly_veo_fallback_drops_apiz_only_parameters():
     assert out["enhance_prompt"] is True
     assert "duration" not in out
     assert "resolution" not in out
+
+
+def test_xai_fallback_uses_official_model_and_safe_default_duration():
+    out = _video_fallback_payload(
+        {
+            "model": "apiz/veo3.1/image-to-video",
+            "prompt": "test",
+            "duration": 4,
+            "aspect_ratio": "9:16",
+            "image_url": "https://example.com/a.png",
+        },
+        "grok-video-3",
+        channel="xai",
+    )
+
+    assert out["model"] == "grok-imagine-video-1.5"
+    assert out["duration"] == 10
+    assert out["image_url"] == "https://example.com/a.png"
+    assert out["image"] == "https://example.com/a.png"
+    assert out["images"] == ["https://example.com/a.png"]
+
+
+def test_xai_fallback_keeps_selected_grok_duration():
+    out = _video_fallback_payload(
+        {
+            "model": SUTUI_GROK_15_IMAGE_MODEL,
+            "prompt": "test",
+            "duration": 15,
+            "image_url": "https://example.com/a.png",
+        },
+        "grok-imagine-video-1.5",
+        channel="xai",
+    )
+
+    assert out["duration"] == 15
 
 
 def test_video_fallback_does_not_bypass_non_retryable_failures():
@@ -344,7 +380,7 @@ async def test_fallback_stops_after_non_retryable_candidate_error(monkeypatch):
     state["provider_task_id"] = ""
     result = await mcp_server._start_next_video_fallback(state, "jwt", None)
 
-    assert attempts == ["comfly"]
+    assert attempts == ["xai"]
     assert result["status"] == "failed"
 
 

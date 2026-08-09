@@ -100,21 +100,31 @@ def test_xai_video_body_maps_duration_and_first_image():
     }
 
 
-def test_openmind_video_is_first_provider_for_grok_family():
+def test_xai_video_is_first_provider_for_grok_family():
     policy = _video_provider_policy("xai/grok-imagine-video/image-to-video")
 
     assert policy["ok"] is True
     assert policy["model_family"] == "grok"
     assert policy["providers"][0] == {
-        "channel": "openmind",
-        "model": "grok-video-3",
-        "base_url": "/api/comfly-proxy",
-    }
-    assert policy["providers"][1] == {
         "channel": "xai",
         "model": "grok-imagine-video-1.5",
         "base_url": "/api/comfly-proxy",
     }
+    assert len(policy["providers"]) == 1
+
+
+def test_veo_family_falls_back_to_xai_direct_only():
+    policy = _video_provider_policy("apiz/veo3.1/text-to-video")
+
+    assert policy["ok"] is True
+    assert policy["model_family"] == "veo31"
+    assert policy["providers"] == [
+        {
+            "channel": "xai",
+            "model": "grok-imagine-video-1.5",
+            "base_url": "/api/comfly-proxy",
+        }
+    ]
 
 
 def test_xai_video_model_has_billable_pricing_entry():

@@ -52,6 +52,7 @@ _GROK_IMAGINE_VIDEO_MODELS = frozenset(
     {
         "xai/grok-imagine-video/text-to-video",
         "xai/grok-imagine-video/image-to-video",
+        "xai/grok-imagine-video-1.5/image-to-video",
     }
 )
 _PIPELINE_TOTAL_PREDEDUCT_CAPABILITIES = frozenset(
@@ -62,13 +63,13 @@ _PIPELINE_TOTAL_PREDEDUCT_CAPABILITIES = frozenset(
 )
 _PIPELINE_DEFAULT_IMAGE_MODEL = "openai/gpt-image-2"
 _PIPELINE_DEFAULT_GOAL_VIDEO_MODEL = "xai/grok-imagine-video-1.5/image-to-video"
-_PIPELINE_DEFAULT_CREATE_VIDEO_MODEL = "apiz/veo3.1/image-to-video"
+_PIPELINE_DEFAULT_CREATE_VIDEO_MODEL = "xai/grok-imagine-video-1.5/image-to-video"
 
 
-def _goal_video_model_for_pipeline(params: dict[str, Any]) -> str:
-    model = str(params.get("video_model") or _PIPELINE_DEFAULT_GOAL_VIDEO_MODEL).strip()
+def _grok_video_model_for_pipeline(params: dict[str, Any], default_model: str) -> str:
+    model = str(params.get("video_model") or default_model).strip()
     if not model or model.lower().startswith("apiz/veo3.1/"):
-        return _PIPELINE_DEFAULT_GOAL_VIDEO_MODEL
+        return default_model
     return model
 
 
@@ -195,11 +196,11 @@ def _estimate_pipeline_total_user_price(
     if capability_id == "goal.video.pipeline":
         scene_count = 1
         image_model = str(params.get("image_model") or _PIPELINE_DEFAULT_IMAGE_MODEL).strip()
-        video_model = _goal_video_model_for_pipeline(params)
+        video_model = _grok_video_model_for_pipeline(params, _PIPELINE_DEFAULT_GOAL_VIDEO_MODEL)
     else:
         scene_count = _pipeline_positive_int(params, "scene_count", 1, min_value=1, max_value=6)
         image_model = str(params.get("image_model") or _PIPELINE_DEFAULT_IMAGE_MODEL).strip()
-        video_model = str(params.get("video_model") or _PIPELINE_DEFAULT_CREATE_VIDEO_MODEL).strip()
+        video_model = _grok_video_model_for_pipeline(params, _PIPELINE_DEFAULT_CREATE_VIDEO_MODEL)
         if not uses_existing_image:
             if params.get("reference_asset_ids") or params.get("reference_image_urls"):
                 uses_existing_image = True
@@ -260,6 +261,8 @@ def _estimate_pipeline_total_user_price(
         meta["image_billing_rule"] = image_meta.get("billing_rule")
     if video_meta:
         meta["video_billing_rule"] = video_meta.get("billing_rule")
+        if "requested_duration" in video_meta:
+            meta["requested_duration"] = video_meta.get("requested_duration")
     return total, meta
 
 

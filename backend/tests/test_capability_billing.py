@@ -400,3 +400,17 @@ def test_grok_imagine_video_pre_deduct_uses_fixed_user_price(db_session, db_sess
         assert row.meta["pre_estimated"] == 1000.0
         assert row.meta["billing_rule"] == "grok_imagine_video_flat_1000"
         assert row.meta["requested_duration"] == 99
+
+
+def test_create_video_pipeline_defaults_to_sutui_grok_fixed_price():
+    from backend.app.api.capabilities import _estimate_pipeline_total_user_price
+
+    total, meta = _estimate_pipeline_total_user_price(
+        "create.video.pipeline",
+        {"duration": 10, "source_mode": "reference_image", "reference_image_urls": ["https://example.com/a.png"]},
+    )
+
+    assert float(total) == 1000.0
+    assert meta["video_model"] == "xai/grok-imagine-video-1.5/image-to-video"
+    assert meta["video_billing_rule"] == "grok_imagine_video_flat_1000"
+    assert meta["requested_duration"] == 10

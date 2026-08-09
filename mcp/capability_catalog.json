@@ -505,7 +505,7 @@
     }
   },
   "create.video.pipeline": {
-    "description": "创意成片：规划分镜，调用 image.generate(openai/gpt-image-2) 生成首帧，再调用 APIZ Veo 3.1 图生视频；主通道故障时由服务器自动切换备用通道。",
+    "description": "创意成片：规划分镜，调用 image.generate(openai/gpt-image-2) 生成首帧，再优先调用速推 Grok 图生视频；主通道故障时由服务器自动切换官方 xAI 直连。",
     "upstream": "local",
     "upstream_tool": "invoke",
     "enabled": true,
@@ -545,9 +545,10 @@
         },
         "duration": {
           "type": "integer",
-          "default": 8,
-          "minimum": 3,
-          "maximum": 60
+          "enum": [6, 10, 15],
+          "default": 10,
+          "minimum": 6,
+          "maximum": 15
         },
         "scene_count": {
           "type": "integer",
@@ -574,7 +575,7 @@
         },
         "video_model": {
           "type": "string",
-          "default": "apiz/veo3.1/image-to-video"
+          "default": "xai/grok-imagine-video-1.5/image-to-video"
         },
         "reference_asset_ids": {
           "type": "array",

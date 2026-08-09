@@ -918,17 +918,8 @@ def _video_fallback_allowed(error: Any) -> bool:
 
 
 def _video_fallback_candidates(payload: Dict[str, Any]) -> List[Dict[str, str]]:
-    has_image = bool(_collect_video_image_refs(payload))
-    if has_image:
-        return [
-            {"channel": "openmind", "model": "grok-video-3"},
-            {"channel": "comfly", "model": "grok-video-3"},
-            {"channel": "yunwu", "model": "grok-video-3"},
-        ]
     return [
-        {"channel": "comfly", "model": "veo3.1-fast"},
-        {"channel": "openmind", "model": "grok-video-3"},
-        {"channel": "yunwu", "model": "grok-video-3"},
+        {"channel": "xai", "model": "grok-imagine-video-1.5"},
     ]
 
 
@@ -986,6 +977,8 @@ def _video_fallback_proxy_headers(
 
 def _video_fallback_submit_url(channel: str) -> str:
     base = _capabilities_api_base().rstrip("/")
+    if channel == "xai":
+        return f"{base}/api/comfly-proxy/xai/v1/videos/generations"
     if channel == "openmind":
         return f"{base}/api/comfly-proxy/openmind/v1/videos"
     if channel == "yunwu":
@@ -995,6 +988,8 @@ def _video_fallback_submit_url(channel: str) -> str:
 
 def _video_fallback_poll_url(channel: str, task_id: str) -> Tuple[str, Optional[Dict[str, str]]]:
     base = _capabilities_api_base().rstrip("/")
+    if channel == "xai":
+        return f"{base}/api/comfly-proxy/xai/v1/videos/{task_id}", None
     if channel == "openmind":
         return f"{base}/api/comfly-proxy/openmind/v1/videos/{task_id}", None
     if channel == "yunwu":
@@ -1002,9 +997,20 @@ def _video_fallback_poll_url(channel: str, task_id: str) -> Tuple[str, Optional[
     return f"{base}/api/comfly-proxy/v2/videos/generations/{task_id}", None
 
 
-def _video_fallback_payload(source: Dict[str, Any], model: str) -> Dict[str, Any]:
+def _video_fallback_payload(source: Dict[str, Any], model: str, *, channel: str = "") -> Dict[str, Any]:
     payload = dict(source or {})
     payload["model"] = model
+    if str(channel or "").strip().lower() == "xai":
+        payload["model"] = "grok-imagine-video-1.5"
+        try:
+            xai_duration = int(float(payload.get("duration") or payload.get("seconds") or 0))
+        except (TypeError, ValueError):
+            xai_duration = 0
+        if xai_duration < 6 or xai_duration > 15:
+            payload["duration"] = _GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS
+        elif "duration" not in payload:
+            payload["duration"] = xai_duration
+        payload.pop("seconds", None)
     refs = _collect_video_image_refs(source)
     if model.startswith("veo3.1"):
         # Comfly's existing Veo v2 route accepts prompt/aspect/enhance_prompt;
@@ -1052,7 +1058,11 @@ async def _submit_video_fallback_candidate(
     headers = _video_fallback_proxy_headers(token, request)
     if headers is None:
         return {"error": {"message": "视频备用通道未配置内部计费凭据"}, "status": "failed"}
-    body = _video_fallback_payload(state.get("payload") or {}, candidate.get("model") or "")
+    body = _video_fallback_payload(
+        state.get("payload") or {},
+        candidate.get("model") or "",
+        channel=candidate.get("channel") or "",
+    )
     try:
         async with httpx.AsyncClient(timeout=90.0, trust_env=False) as client:
             response = await client.post(
@@ -3364,7 +3374,7 @@ def _normalize_video_generate_payload(
     # managed pipeline requests. Treat that value as a stale default only when
     # the caller identifies the request as one of our video pipelines.
     if (
-        str(pipeline_capability or "").strip().lower() == "goal.video.pipeline"
+        str(pipeline_capability or "").strip().lower() in {"goal.video.pipeline", "create.video.pipeline"}
         and model.lower().startswith("apiz/veo3.1/")
     ):
         model = SUTUI_GROK_15_IMAGE_MODEL

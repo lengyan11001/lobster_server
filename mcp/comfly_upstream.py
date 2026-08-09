@@ -745,7 +745,7 @@ async def call_comfly_video_generate(
         body["aspect_ratio"] = aspect_ratio
     elif api_format == "grok":
         url = f"{base}/v2/videos/generations"
-        grok_duration = 10 if duration == 10 else 6
+        grok_duration = 10 if duration >= 10 else 6
         body = {
             "model": comfly_model,
             "prompt": prompt,

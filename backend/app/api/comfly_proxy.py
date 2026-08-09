@@ -2348,7 +2348,7 @@ def _body_for_upstream_model(body: Dict[str, Any], model: str, entry: Dict[str, 
             duration = int(forwarded.get("duration") or forwarded.get("seconds") or 6)
         except (TypeError, ValueError):
             duration = 6
-        grok_body["duration"] = 10 if duration == 10 else 6
+        grok_body["duration"] = 10 if duration >= 10 else 6
         return grok_body
     return forwarded
 
@@ -3026,10 +3026,7 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             "ok": True,
             "model_family": "grok",
             "providers": [
-                {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
                 {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
-                {"channel": "comfly", "model": "grok-video-3", "base_url": proxy_base},
-                {"channel": "yunwu", "model": "grok-video-3", "base_url": proxy_base},
             ],
         }
 
@@ -3038,9 +3035,7 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             "ok": True,
             "model_family": "veo31",
             "providers": [
-                {"channel": "comfly", "model": "veo3.1-fast", "base_url": proxy_base},
-                {"channel": "yunwu", "model": "veo3.1", "base_url": proxy_base},
-                {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
+                {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
             ],
         }
 
