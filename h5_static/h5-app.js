@@ -3024,6 +3024,7 @@
       if (id === "goal.video.pipeline") {
         return taskFieldHtml("任务名称", workInputHtml("workflowParamVideoTitle", "text", "创意视频"))
           + taskFieldHtml("生成模式", taskSelectHtml("workflowParamVideoMode", optionHtml("single_asset", "单个素材生成视频") + optionHtml("memory_image", "根据记忆先生成图片") + optionHtml("asset_group", "素材分组轮换生成")))
+          + taskFieldHtml("视频时长", goalVideoDurationSelectHtml("workflowParamVideoDuration"))
           + `<div class="field full" id="workflowParamVideoAssetField"><label>素材图片</label>${assetPickerControlHtml("workflowParamVideoAsset", { mediaType: "image", output: "url", uploadText: "上传图片", selectText: "选择已上传图片" })}</div>`
           + `<div class="field full hidden" id="workflowParamVideoMemoryField"><label>记忆文件</label>${videoMemorySelectControl("workflowParamVideoMemoryDocs")}</div>`
           + `<div class="field hidden" id="workflowParamVideoCandidateGroupField"><label>素材分组</label>${taskSelectHtml("workflowParamVideoCandidateGroup", optionHtml("", "不选择"))}</div>`
@@ -3265,6 +3266,7 @@
           memoryId: "workflowParamVideoMemoryDocs",
           groupId: "workflowParamVideoCandidateGroup",
           promptId: "workflowParamVideoPrompt",
+          durationId: "workflowParamVideoDuration",
         });
         return {
           title: workflowParamValue("workflowParamVideoTitle") || node.label || "创意视频",
@@ -4515,6 +4517,7 @@
         setFieldValue("workflowParamVideoTitle", plan.title || nodeInfo.label || "创意视频");
         setFieldValue("workflowParamVideoPrompt", inner.prompt || inner.task_text || node.note || "");
         setFieldValue("workflowParamVideoMode", goalVideoModeFromPayload(inner));
+        setFieldValue("workflowParamVideoDuration", inner.duration || inner.duration_seconds || 10);
         setFieldValue("workflowParamVideoAsset", firstGoalVideoReference(inner));
         setFieldValue("workflowParamVideoCandidateGroup", inner.candidate_group || "");
         bindWorkflowGoalVideoModeControls();
@@ -5992,6 +5995,7 @@
       if (id === "goal.video.pipeline") {
         return taskFieldHtml("任务名称", workInputHtml("abilityVideoTitle", "text", "创意视频"))
           + taskFieldHtml("生成模式", taskSelectHtml("abilityVideoMode", optionHtml("single_asset", "单个素材生成视频") + optionHtml("memory_image", "根据记忆先生成图片") + optionHtml("asset_group", "素材分组轮换生成")))
+          + taskFieldHtml("视频时长", goalVideoDurationSelectHtml("abilityVideoDuration"))
           + `<div class="field full" id="abilityVideoAssetField"><label>素材图片</label>${assetPickerControlHtml("abilityVideoAsset", { mediaType: "image", output: "url", uploadText: "上传图片", selectText: "选择已上传图片" })}</div>`
           + `<div class="field full hidden" id="abilityVideoMemoryField"><label>记忆文件</label>${videoMemorySelectControl("abilityVideoMemoryDocs")}</div>`
           + `<div class="field hidden" id="abilityVideoCandidateGroupField"><label>素材分组</label>${taskSelectHtml("abilityVideoCandidateGroup", optionHtml("", "不选择"))}</div>`
@@ -10781,6 +10785,7 @@
       setFieldValue("abilityVideoTitle", run && run.title || "创意视频");
       setFieldValue("abilityVideoPrompt", inner.prompt || inner.task_text || "");
       setFieldValue("abilityVideoMode", goalVideoModeFromPayload(inner));
+      setFieldValue("abilityVideoDuration", inner.duration || inner.duration_seconds || 10);
       setFieldValue("abilityVideoAsset", firstGoalVideoReference(inner));
       setFieldValue("abilityVideoCandidateGroup", inner.candidate_group || "");
       bindGoalVideoModeControls("ability");
@@ -13551,6 +13556,16 @@
       return `<select id="${escapeHtml(id)}">${options}</select>`;
     }
 
+    function goalVideoDurationSelectHtml(id) {
+      return taskSelectHtml(id, [6, 10, 15].map((n) => optionHtml(String(n), `${n} 秒`)).join(""));
+    }
+
+    function goalVideoDurationFromField(id) {
+      if (!id || !$(id)) return 0;
+      const seconds = parseInt(String($(id).value || "10"), 10);
+      return [6, 10, 15].includes(seconds) ? seconds : 10;
+    }
+
     function taskTextareaHtml(id, placeholder) {
       return `<textarea id="${escapeHtml(id)}" rows="3" placeholder="${escapeHtml(placeholder || "")}"></textarea>`;
     }
@@ -13623,6 +13638,11 @@
       const mode = ($(ids.modeId) ? $(ids.modeId).value : "single_asset") || "single_asset";
       const prompt = ids.promptId && $(ids.promptId) ? $(ids.promptId).value.trim() : "";
       const payload = { video_mode: mode, prompt };
+      const duration = goalVideoDurationFromField(ids.durationId);
+      if (duration) {
+        payload.duration = duration;
+        payload.duration_seconds = duration;
+      }
       if (mode === "single_asset") {
         const ref = ids.assetId && $(ids.assetId) ? $(ids.assetId).value.trim() : "";
         if (!ref) throw new Error("请选择或上传素材图片");
@@ -16924,6 +16944,7 @@
           memoryId: "abilityVideoMemoryDocs",
           groupId: "abilityVideoCandidateGroup",
           promptId: "abilityVideoPrompt",
+          durationId: "abilityVideoDuration",
         });
         return {
           title: abilityValue("abilityVideoTitle") || node.label || "创意视频",
@@ -17400,6 +17421,7 @@
         return;
       }
       host.innerHTML = taskFieldHtml("生成模式", taskSelectHtml("taskVideoMode", optionHtml("single_asset", "单个素材生成视频") + optionHtml("memory_image", "根据记忆先生成图片") + optionHtml("asset_group", "素材分组轮换生成")))
+        + taskFieldHtml("视频时长", goalVideoDurationSelectHtml("taskVideoDuration"))
         + `<div class="field full" id="taskVideoAssetField"><label>素材图片</label>${assetPickerControlHtml("taskVideoAsset", { mediaType: "image", output: "url", uploadText: "上传图片", selectText: "选择已上传图片" })}</div>`
         + `<div class="field full hidden" id="taskVideoMemoryField"><label>记忆文件</label>${videoMemorySelectControl("taskVideoMemoryDocs")}</div>`
         + `<div class="field hidden" id="taskCandidateGroupField"><label>素材分组</label>${taskSelectHtml("taskCandidateGroup", optionHtml("", "加载中..."))}</div>`
@@ -17606,6 +17628,7 @@
           memoryId: "taskVideoMemoryDocs",
           groupId: "taskCandidateGroup",
           promptId: "taskCreativePrompt",
+          durationId: "taskVideoDuration",
         });
       }
       if (state.taskAbility === "goal.image.pipeline") {

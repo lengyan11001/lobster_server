@@ -66,6 +66,25 @@ def test_ai_marketing_design_uses_online_image_studio_workflow():
     assert 'payload: { capability_id: "goal.image.pipeline", payload: { prompt } }' not in script
 
 
+def test_h5_goal_video_exposes_duration_and_submits_it():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+
+    assert 'function goalVideoDurationSelectHtml(id)' in script
+    assert 'optionHtml(String(n), `${n} 秒`)' in script
+    assert 'goalVideoDurationSelectHtml("workflowParamVideoDuration")' in script
+    assert 'goalVideoDurationSelectHtml("abilityVideoDuration")' in script
+    assert 'goalVideoDurationSelectHtml("taskVideoDuration")' in script
+    assert 'durationId: "workflowParamVideoDuration"' in script
+    assert 'durationId: "abilityVideoDuration"' in script
+    assert 'durationId: "taskVideoDuration"' in script
+    assert "payload.duration = duration;" in script
+    assert "payload.duration_seconds = duration;" in script
+    assert 'setFieldValue("abilityVideoDuration", inner.duration || inner.duration_seconds || 10)' in script
+    assert 'setFieldValue("workflowParamVideoDuration", inner.duration || inner.duration_seconds || 10)' in script
+    assert "20260809-goal-video-duration-v1" in html
+
+
 def test_bottom_create_button_opens_compact_creation_sheet():
     html = (H5 / "index.html").read_text(encoding="utf-8")
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
