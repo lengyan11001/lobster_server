@@ -5390,6 +5390,92 @@ body * {
   overflow-wrap: anywhere;
 }
 
+.task-advanced-settings {
+  display: block;
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 2px 0 0;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.ability-workbench-fields > .task-advanced-settings,
+.work-dispatch-fields > .task-advanced-settings,
+.workflow-param-dynamic > .task-advanced-settings,
+.task-param-fields > .task-advanced-settings {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.task-advanced-settings > summary {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 14px;
+  gap: 10px;
+  color: #334155;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.task-advanced-settings > summary::-webkit-details-marker {
+  display: none;
+}
+
+.task-advanced-settings > summary::after {
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid #64748b;
+  border-bottom: 2px solid #64748b;
+  content: "";
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform .18s ease;
+}
+
+.task-advanced-settings[open] > summary::after {
+  transform: rotate(225deg) translate(-2px, -2px);
+}
+
+.task-advanced-settings > summary span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.task-advanced-settings > summary small {
+  min-width: 0;
+  overflow: hidden;
+  color: #8491a5;
+  font-size: 11px;
+  font-weight: 400;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 14px;
+  gap: 14px 10px;
+  border-top: 1px solid #e7ebf0;
+  background: #fff;
+}
+
+.task-advanced-grid > .field {
+  min-width: 0;
+  margin: 0;
+}
+
+.task-advanced-grid > .field.full {
+  grid-column: 1 / -1;
+}
+
 .ip-template-select-row {
   grid-template-columns: minmax(0, 1fr) auto;
   width: 100%;
@@ -6179,6 +6265,23 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
 }
 
 @media (max-width: 560px) {
+  .task-advanced-settings > summary {
+    grid-template-columns: minmax(0, 1fr) 10px;
+  }
+
+  .task-advanced-settings > summary small {
+    display: none;
+  }
+
+  .task-advanced-grid {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .task-advanced-grid > .field.full {
+    grid-column: auto;
+  }
+
   .upload-dialog {
     place-items: end center;
     padding: 0;

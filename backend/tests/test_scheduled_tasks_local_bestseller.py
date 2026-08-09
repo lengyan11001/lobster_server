@@ -68,3 +68,46 @@ def test_existing_scheduled_task_refreshes_server_photo_when_run_is_created(db_s
 
     assert run.payload["params"]["profile"]["photo_url"] == "https://assets.example.test/assets/server-photo-1.png"
     assert "photo_asset_id" not in run.payload["params"]["profile"]
+
+
+def test_one_off_local_bestseller_can_override_selected_persona_fields(db_session, test_user):
+    _add_persona_and_photo(db_session, test_user.id)
+
+    payload = scheduled_tasks._enrich_local_bestseller_workflow_payload(
+        db_session,
+        payload={
+            "action": "local_bestseller_daily_video",
+            "params": {
+                "profile_override": True,
+                "profile": {
+                    "name": "本次出镜人",
+                    "photo_url": "https://manual.example.test/person.png",
+                },
+            },
+        },
+        target_user_id=test_user.id,
+        now=datetime(2026, 7, 28, 6, 0),
+    )
+
+    assert payload["params"]["profile"]["name"] == "本次出镜人"
+    assert payload["params"]["profile"]["photo_url"] == "https://manual.example.test/person.png"
+    assert payload["h5_context"]["persona_source"] == "h5_profile_override"
+
+
+def test_employee_local_bestseller_still_prefers_current_persona(db_session, test_user):
+    _add_persona_and_photo(db_session, test_user.id)
+
+    payload = scheduled_tasks._enrich_local_bestseller_workflow_payload(
+        db_session,
+        payload={
+            "action": "local_bestseller_daily_video",
+            "params": {
+                "profile": {"photo_url": "https://stale.example.test/person.png"},
+            },
+        },
+        target_user_id=test_user.id,
+        now=datetime(2026, 7, 28, 6, 0),
+    )
+
+    assert payload["params"]["profile"]["photo_url"] == "https://assets.example.test/assets/server-photo-1.png"
+    assert payload["h5_context"]["persona_source"] == "ip_persona_default"

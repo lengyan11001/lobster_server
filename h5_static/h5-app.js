@@ -2900,27 +2900,70 @@
     function imageStudioFieldsHtml(prefix, titleValue = "创作图片") {
       return taskFieldHtml("任务标题", workInputHtml(`${prefix}Title`, "text", titleValue))
         + taskFieldHtml("图片需求", taskTextareaHtml(`${prefix}Prompt`, "描述画面主体、场景、构图、光线和文字要求"), true)
-        + taskFieldHtml("参考图片（可选）", assetPickerControlHtml(`${prefix}Reference`, { mediaType: "image", output: "url", uploadText: "上传图片", selectText: "选择参考图" }), true)
-        + taskFieldHtml("参考图用途", taskSelectHtml(`${prefix}ReferencePurpose`, optionHtml("auto", "普通参考") + optionHtml("person", "替换人物") + optionHtml("product", "替换产品") + optionHtml("style", "参考风格") + optionHtml("background", "参考背景") + optionHtml("local_edit", "局部修改")))
+        + taskFieldHtml("参考图片（可多选）", assetPickerControlHtml(`${prefix}Reference`, { mediaType: "image", output: "url", uploadText: "上传图片", selectText: "选择参考图", multiple: true }), true)
         + taskFieldHtml("比例", taskSelectHtml(`${prefix}AspectRatio`, optionHtml("9:16", "9:16 竖版") + optionHtml("1:1", "1:1 方图") + optionHtml("3:2", "3:2 横图") + optionHtml("16:9", "16:9 横版") + optionHtml("2:3", "2:3 竖图")))
-        + taskFieldHtml("模型", taskSelectHtml(`${prefix}Model`, optionHtml("gpt-image-2", "影梦lite")))
-        + taskFieldHtml("质量", taskSelectHtml(`${prefix}Quality`, optionHtml("high", "高") + optionHtml("medium", "中") + optionHtml("low", "低") + optionHtml("auto", "自动")))
-        + taskFieldHtml("背景", taskSelectHtml(`${prefix}Background`, optionHtml("auto", "自动") + optionHtml("opaque", "实底") + optionHtml("transparent", "透明")));
+        + taskAdvancedFieldsHtml(
+          taskFieldHtml("参考图用途", taskSelectHtml(`${prefix}ReferencePurpose`, optionHtml("auto", "普通参考") + optionHtml("person", "替换人物") + optionHtml("product", "替换产品") + optionHtml("style", "参考风格") + optionHtml("background", "参考背景") + optionHtml("local_edit", "局部修改")))
+          + taskFieldHtml("模型", taskSelectHtml(`${prefix}Model`, optionHtml("gpt-image-2", "影梦lite")))
+          + taskFieldHtml("质量", taskSelectHtml(`${prefix}Quality`, optionHtml("high", "高") + optionHtml("medium", "中") + optionHtml("low", "低") + optionHtml("auto", "自动")))
+          + taskFieldHtml("背景", taskSelectHtml(`${prefix}Background`, optionHtml("auto", "自动") + optionHtml("opaque", "实底") + optionHtml("transparent", "透明")))
+        );
     }
 
     function collectImageStudioParams(prefix) {
       const prompt = taskInputTextOrThrow(workflowParamValue(`${prefix}Prompt`), "请填写图片需求", "图片需求里不能使用执行详情或失败结果，请填写真实图片需求。");
-      const referenceUrl = workflowParamValue(`${prefix}Reference`);
+      const referenceValues = assetPickerSelectedValues(`${prefix}Reference`).slice(0, 8);
+      const referenceUrls = referenceValues.filter((value) => /^https?:\/\//i.test(String(value || "").trim()));
+      const referenceAssetIds = referenceValues.filter((value) => !/^https?:\/\//i.test(String(value || "").trim()));
+      const referencePurpose = workflowParamValue(`${prefix}ReferencePurpose`) || "auto";
       return {
         prompt,
         model: workflowParamValue(`${prefix}Model`) || "gpt-image-2",
         aspect_ratio: workflowParamValue(`${prefix}AspectRatio`) || "9:16",
         quality: workflowParamValue(`${prefix}Quality`) || "high",
         background: workflowParamValue(`${prefix}Background`) || "auto",
-        reference_image_urls: referenceUrl ? [referenceUrl] : [],
-        reference_purposes: referenceUrl ? [workflowParamValue(`${prefix}ReferencePurpose`) || "auto"] : [],
+        reference_image_urls: referenceUrls,
+        reference_asset_ids: referenceAssetIds,
+        reference_purposes: referenceValues.map(() => referencePurpose),
         auto_save: true,
         poll_timeout_seconds: 1200,
+      };
+    }
+
+    function articleFieldsHtml(prefix, titleValue = "公众号文章") {
+      return taskFieldHtml("任务名称", workInputHtml(`${prefix}Title`, "text", titleValue))
+        + taskFieldHtml("公众号主题", taskTextareaHtml(`${prefix}Idea`, "填写文章主题、核心观点和希望解决的问题"), true)
+        + taskFieldHtml("目标读者", workInputHtml(`${prefix}Audience`, "text", "", 'placeholder="例如：中小企业老板、门店经营者"'))
+        + taskAdvancedFieldsHtml(
+          taskFieldHtml("写作风格", taskSelectHtml(`${prefix}Style`, optionHtml("专业、有观点、适合公众号阅读", "专业观点") + optionHtml("简洁大气、商业分析、少废话", "简洁商业") + optionHtml("故事感强、情绪自然、有真实案例", "故事叙事") + optionHtml("通俗易懂、步骤清晰、可直接照做", "实用教程")))
+          + taskFieldHtml("排版主题", taskSelectHtml(`${prefix}Theme`, optionHtml("professional-clean", "专业清爽") + optionHtml("minimal-gold", "极简金色") + optionHtml("warm-editorial", "暖色杂志")))
+          + taskFieldHtml("配图比例", taskSelectHtml(`${prefix}ImageRatio`, optionHtml("3:2", "3:2 横图") + optionHtml("16:9", "16:9 宽横图") + optionHtml("1:1", "1:1 方图") + optionHtml("2:3", "2:3 竖图") + optionHtml("9:16", "9:16 竖图")))
+          + taskFieldHtml("配图数量", workInputHtml(`${prefix}ImageCount`, "number", "3", 'min="1" max="5"'))
+          + taskFieldHtml("手动配图（可多选）", assetPickerControlHtml(`${prefix}SelectedImages`, { mediaType: "image", output: "url", uploadText: "上传图片", selectText: "从素材库选择", multiple: true }), true)
+          + taskFieldHtml("图片处理", workCheckboxGroupHtml([
+            { id: `${prefix}IncludeImages`, label: "自动生成配图", checked: true },
+            { id: `${prefix}UploadArticleImages`, label: "将正文图片上传到公众号", checked: true },
+          ]), true)
+        );
+    }
+
+    function articlePayloadFromFields(prefix) {
+      const idea = workflowParamValue(`${prefix}Idea`);
+      if (!idea) throw new Error("请填写公众号主题");
+      const selectedValues = assetPickerSelectedValues(`${prefix}SelectedImages`).slice(0, 12);
+      return {
+        idea,
+        topic: idea,
+        audience: workflowParamValue(`${prefix}Audience`),
+        style: workflowParamValue(`${prefix}Style`) || "专业、有观点、适合公众号阅读",
+        theme: workflowParamValue(`${prefix}Theme`) || "professional-clean",
+        include_images: workflowParamChecked(`${prefix}IncludeImages`),
+        image_model: "gpt-image-2",
+        image_aspect_ratio: workflowParamValue(`${prefix}ImageRatio`) || "3:2",
+        image_count: workflowParamNumber(`${prefix}ImageCount`, 3, 1, 5),
+        selected_image_urls: selectedValues.filter((value) => /^https?:\/\//i.test(String(value || "").trim())),
+        selected_asset_ids: selectedValues.filter((value) => !/^https?:\/\//i.test(String(value || "").trim())),
+        upload_article_images: workflowParamChecked(`${prefix}UploadArticleImages`),
       };
     }
 
@@ -2976,8 +3019,7 @@
       if (id === "ip_content_daily") {
         return taskFieldHtml("模板", ipTemplateSelectControl("workflowParamIpTemplate"), true)
           + taskFieldHtml("生成内容", workflowIpDailyTaskOptionsHtml(), true)
-          + taskFieldHtml("执行前同步", `<label class="task-checkbox ip-daily-sync-option"><input id="workflowParamIpSyncBefore" type="checkbox" checked><span>每次执行前同步新数据</span></label>`, true)
-          + taskFieldHtml("补充要求", taskTextareaHtml("workflowParamIpRequirement", "可选"), true);
+          + ipDailyAdvancedFieldsHtml("workflowParamIp");
       }
       if (id === "goal.image.pipeline") {
         return imageStudioFieldsHtml("workflowParamImage");
@@ -2992,9 +3034,7 @@
           + taskFieldHtml("补充提示词", taskTextareaHtml("workflowParamVideoPrompt", "可选"), true);
       }
       if (id === "hifly.video.create_by_tts") {
-        return taskFieldHtml("数字人", taskSelectHtml("workflowParamAvatar", optionHtml("", "加载中...")))
-          + taskFieldHtml("声音", taskSelectHtml("workflowParamVoice", optionHtml("", "加载中...")))
-          + taskFieldHtml("任务名称", workInputHtml("workflowParamHiflyTitle", "text", "数字人口播"));
+        return workflowDigitalHumanFieldsHtml();
       }
       if (id === "comfly.daihuo.pipeline") {
         return taskFieldHtml("参考图片", assetPickerControlHtml("workflowParamComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }), true)
@@ -3012,11 +3052,7 @@
           + taskFieldHtml("画幅", taskSelectHtml("workflowParamCreateVideoAspect", optionHtml("16:9", "16:9 横屏") + optionHtml("9:16", "9:16 竖屏") + optionHtml("1:1", "1:1 方图")));
       }
       if (id === "wewrite.article.pipeline") {
-        return taskFieldHtml("任务名称", workInputHtml("workflowParamArticleTitle", "text", "公众号文章"))
-          + taskFieldHtml("公众号主题", taskTextareaHtml("workflowParamArticleIdea", "文章主题、受众、核心观点"), true)
-          + taskFieldHtml("文章风格", workInputHtml("workflowParamArticleStyle", "text", "", 'placeholder="例如：专业、有案例、适合老板阅读"'))
-          + taskFieldHtml("配图数量", workInputHtml("workflowParamArticleImageCount", "number", "3", 'min="0" max="6"'))
-          + taskFieldHtml("自动配图", workCheckboxHtml("workflowParamArticleIncludeImages", "生成 16:9 横屏配图并插入", true), true);
+        return articleFieldsHtml("workflowParamArticle");
       }
       if (id === "ppt.create") {
         return taskFieldHtml("任务名称", workInputHtml("workflowParamPptTitle", "text", "PPT生成"))
@@ -3049,7 +3085,7 @@
           + taskFieldHtml("搜索方式", taskSelectHtml("workflowParamDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
       }
       if (key === "local_bestseller") {
-        return taskFieldHtml("内容天数", workInputHtml("workflowParamLocalDays", "number", "30", 'min="1" max="30"'));
+        return localBestsellerFieldsHtml("workflowParamLocal", false);
       }
       if (key === "viral_video_remix") {
         return taskFieldHtml("参考视频", assetPickerControlHtml("workflowParamViralVideoUrl", { mediaType: "video", output: "url", accept: "video/*", uploadText: "上传视频" }), true)
@@ -3121,6 +3157,8 @@
       if ($("workflowParamAvatar") || $("workflowParamVoice")) {
         renderWorkHiflyOptions();
         loadHiflyLibraries();
+        bindWorkflowHiflyControls();
+        loadPersonalDigitalHumanTemplates(false).then(renderWorkflowHiflyTemplateOptions).catch(() => {});
       }
       if ($("workflowParamSeedanceModel")) bindSeedanceControls("workflowParamSeedance");
     }
@@ -3208,7 +3246,6 @@
         if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
         const tasks = selectedWorkflowIpDailyTasks();
         if (!tasks.length) throw new Error("请选择至少一种生成内容");
-        const extra = workflowParamValue("workflowParamIpRequirement");
         return {
           title: node.label || "IP日更文案",
           task_kind: "ip_content_daily",
@@ -3217,10 +3254,10 @@
             template_id: templateId,
             tasks,
             sync_before: workflowParamChecked("workflowParamIpSyncBefore"),
-            requirements: ipDailyRequirementsWithLanguage(extra, templateId),
-            industry_count: 5,
-            ip_count: 5,
-            moments_count: 20,
+            requirements: ipDailyRequirementsFromFields("workflowParamIp", templateId),
+            industry_count: workflowParamNumber("workflowParamIpIndustryCount", 5, 1, 5),
+            ip_count: workflowParamNumber("workflowParamIpIpCount", 5, 1, 5),
+            moments_count: workflowParamNumber("workflowParamIpMomentsCount", 20, 1, 20),
           },
         };
       }
@@ -3251,14 +3288,57 @@
       }
       if (capabilityId === "hifly.video.create_by_tts") {
         const avatar = workflowParamValue("workflowParamAvatar");
+        const driveMode = workflowParamValue("workflowParamHiflyDriveMode") || "tts";
         const voice = workflowParamValue("workflowParamVoice");
+        const script = workflowParamValue("workflowParamHiflyScript");
+        const audioValue = assetPickerSelectedValues("workflowParamHiflyAudio")[0] || "";
+        const longVideo = workflowParamValue("workflowParamHiflyDurationMode") === "long";
+        const useTemplate = workflowParamValue("workflowParamHiflyTemplateMode") === "template";
+        const videoDuration = longVideo ? workflowParamNumber("workflowParamHiflyTargetDuration", 60, 31, 300) : 30;
         if (!avatar) throw new Error("请选择数字人");
-        if (!voice) throw new Error("请选择声音");
+        if (driveMode === "tts" && !voice) throw new Error("请选择声音");
+        if (driveMode === "tts" && !script) throw new Error("请填写口播文案");
+        if (driveMode === "audio" && !audioValue) throw new Error("请选择驱动音频");
+        const styleId = workflowParamValue("workflowParamHiflyTemplate");
+        if (useTemplate && !styleId) throw new Error("请选择剪辑模板");
+        const templatePayload = useTemplate ? digitalHumanTemplatePayload(styleId) : {};
+        const selectedMaterials = useTemplate ? selectedHiflyMaterials("workflowParamHiflyMaterials") : [];
         return buildCapabilityTaskPlan({
           capabilityId: "hifly.video.create_by_tts",
           title: workflowParamValue("workflowParamHiflyTitle") || node.label || "数字人口播",
           content: "H5 工作流：数字人口播",
-          payload: { avatar, voice },
+          payload: {
+            avatar,
+            virtualman_id: avatar,
+            drive_mode: driveMode,
+            ...(driveMode === "tts"
+              ? { voice, speaker_id: voice, script, text: script, prompt: script }
+              : (/^https?:\/\//i.test(audioValue) ? { audio_url: audioValue } : { audio_asset_id: audioValue })),
+            rate: workflowParamValue("workflowParamHiflyRate") || "1",
+            speed_ratio: Number(workflowParamValue("workflowParamHiflyRate") || 1),
+            volume: workflowParamValue("workflowParamHiflyVolume") || "1",
+            pitch: workflowParamValue("workflowParamHiflyPitch") || "0",
+            emotion: workflowParamValue("workflowParamHiflyEmotion") || "happy",
+            instructions: workflowParamValue("workflowParamHiflyInstructions"),
+            language: "zh-CN",
+            long_video: longVideo,
+            video_duration: videoDuration,
+            duration_seconds: videoDuration,
+            use_template: useTemplate,
+            ...templatePayload,
+            ...(useTemplate ? {
+              ...(selectedMaterials.length ? { materials: selectedMaterials } : {}),
+              header_switch: workflowParamChecked("workflowParamHiflyHeaderSwitch"),
+              material_switch: workflowParamChecked("workflowParamHiflyMaterialSwitch"),
+              subtitle_switch: workflowParamChecked("workflowParamHiflySubtitleSwitch"),
+              keyword_switch: workflowParamChecked("workflowParamHiflyKeywordSwitch"),
+              material_sound_switch: workflowParamChecked("workflowParamHiflyMaterialSoundSwitch"),
+              watermark_show: workflowParamChecked("workflowParamHiflyWatermarkShow"),
+              material_match_way: workflowParamValue("workflowParamHiflyMaterialMatchWay") || "fuzzyMatch",
+              resource_preprocess_method: workflowParamValue("workflowParamHiflyResourcePreprocess") || "roughCut",
+              material_composition: workflowParamValue("workflowParamHiflyMaterialComposition") || "random",
+            } : {}),
+          },
           keyName: "task_kind",
         });
       }
@@ -3307,19 +3387,11 @@
         });
       }
       if (capabilityId === "wewrite.article.pipeline") {
-        const idea = workflowParamValue("workflowParamArticleIdea");
-        if (!idea) throw new Error("请填写公众号主题");
         return buildCapabilityTaskPlan({
           capabilityId: "wewrite.article.pipeline",
           title: workflowParamValue("workflowParamArticleTitle") || node.label || "公众号文章",
           content: "H5 工作流：公众号文章",
-          payload: {
-            idea,
-            style: workflowParamValue("workflowParamArticleStyle"),
-            include_images: workflowParamChecked("workflowParamArticleIncludeImages"),
-            image_count: workflowParamNumber("workflowParamArticleImageCount", 3, 0, 6),
-            image_aspect_ratio: "16:9",
-          },
+          payload: articlePayloadFromFields("workflowParamArticle"),
           keyName: "task_kind",
         });
       }
@@ -3394,14 +3466,13 @@
         };
       }
       if (key === "local_bestseller") {
-        const days = workflowParamNumber("workflowParamLocalDays", 30, 1, 30);
         return {
           title: "同城爆款视频",
           task_kind: "client_workflow",
           content: "H5 工作流：同城爆款",
           payload: {
             action: "local_bestseller_daily_video",
-            params: { days, day_mode: "workflow_elapsed" },
+            params: { ...localBestsellerParamsFromFields("workflowParamLocal", false), day_mode: "workflow_elapsed" },
           },
         };
       }
@@ -4425,10 +4496,11 @@
       }
       if (payload.action === "image_studio_generate" || nodeInfo.workQuickKey === "image_composer_studio") {
         const referenceUrls = Array.isArray(params.reference_image_urls) ? params.reference_image_urls : [];
+        const referenceAssetIds = Array.isArray(params.reference_asset_ids) ? params.reference_asset_ids : [];
         const referencePurposes = Array.isArray(params.reference_purposes) ? params.reference_purposes : [];
         setFieldValue("workflowParamImageTitle", plan.title || nodeInfo.label || "创作图片");
         setFieldValue("workflowParamImagePrompt", safeTaskInputText(params.prompt, inner.prompt, inner.task_text, node.note));
-        setFieldValue("workflowParamImageReference", referenceUrls[0] || "");
+        setAssetPickerPayloadValue("workflowParamImageReference", { reference_asset_ids: referenceAssetIds, reference_image_urls: referenceUrls });
         setFieldValue("workflowParamImageReferencePurpose", referencePurposes[0] || "auto");
         setFieldValue("workflowParamImageAspectRatio", params.aspect_ratio || inner.aspect_ratio || "9:16");
         setFieldValue("workflowParamImageModel", params.model || "gpt-image-2");
@@ -4438,7 +4510,7 @@
         return;
       }
       if (payload.action === "local_bestseller_daily_video" || payload.action === "local_bestseller_plan" || payload.action === "local_bestseller_scene_batch" || nodeInfo.workQuickKey === "local_bestseller") {
-        setFieldValue("workflowParamLocalDays", params.days || 30);
+        setLocalBestsellerFieldsFromParams("workflowParamLocal", params, false);
         return;
       }
       if (payload.action === "viral_video_remix_start" || nodeInfo.workQuickKey === "viral_video_remix") {
@@ -4465,7 +4537,14 @@
         });
         setFieldValue("workflowParamIpSyncBefore", payload.sync_before !== false);
         const req = payload.requirements && typeof payload.requirements === "object" ? payload.requirements : {};
-        setFieldValue("workflowParamIpRequirement", req.common || req.moments || req.oral || req.image || node.note || "");
+        setFieldValue("workflowParamIpIndustryCount", payload.industry_count || 5);
+        setFieldValue("workflowParamIpIpCount", payload.ip_count || 5);
+        setFieldValue("workflowParamIpMomentsCount", payload.moments_count || 20);
+        setFieldValue("workflowParamIpRequirement", req.common || node.note || "");
+        setFieldValue("workflowParamIpIndustryRequirement", req.industry_oral || req.oral || "");
+        setFieldValue("workflowParamIpProfessionalRequirement", req.ip_oral || "");
+        setFieldValue("workflowParamIpMomentsRequirement", req.moments || "");
+        setFieldValue("workflowParamIpImageRequirement", req.image || "");
         return;
       }
       if (capabilityId === "goal.image.pipeline") {
@@ -4484,10 +4563,35 @@
         loadVideoMemoryDocsForSelect().then(() => setMultiSelectValues("workflowParamVideoMemoryDocs", inner.memory_doc_ids || [])).catch(() => {});
         return;
       }
-      if (capabilityId === "hifly.video.create_by_tts") {
-        setFieldValue("workflowParamAvatar", inner.avatar || "");
-        setFieldValue("workflowParamVoice", inner.voice || "");
+      if (capabilityId === "hifly.video.create_by_tts" || payload.action === "shanjian_digital_human_video" || nodeInfo.workQuickKey === "hifly.video.create_by_tts") {
+        const hifly = payload.action === "shanjian_digital_human_video" ? params : inner;
+        setFieldValue("workflowParamAvatar", hifly.virtualman_id || hifly.avatar || "");
+        setFieldValue("workflowParamHiflyDriveMode", hifly.drive_mode || (hifly.audio_url || hifly.audio_asset_id ? "audio" : "tts"));
+        setFieldValue("workflowParamVoice", hifly.voice || hifly.speaker_id || "");
         setFieldValue("workflowParamHiflyTitle", plan.title || nodeInfo.label || "数字人口播");
+        setFieldValue("workflowParamHiflyScript", hifly.script || hifly.text || hifly.prompt || "");
+        setFieldValue("workflowParamHiflyAudio", hifly.audio_url || hifly.audio_asset_id || "");
+        setFieldValue("workflowParamHiflyDurationMode", hifly.long_video === true ? "long" : "short");
+        setFieldValue("workflowParamHiflyTargetDuration", hifly.video_duration || hifly.duration_seconds || (hifly.long_video === true ? 60 : 30));
+        setFieldValue("workflowParamHiflyTemplateMode", hifly.use_template === true ? "template" : "none");
+        setFieldValue("workflowParamHiflyTemplate", hifly.style_id || "");
+        setFieldValue("workflowParamHiflyRate", hifly.rate || hifly.speed_ratio || 1);
+        setFieldValue("workflowParamHiflyVolume", hifly.volume || 1);
+        setFieldValue("workflowParamHiflyPitch", hifly.pitch == null ? 0 : hifly.pitch);
+        setFieldValue("workflowParamHiflyEmotion", hifly.emotion || "happy");
+        setFieldValue("workflowParamHiflyInstructions", hifly.instructions || "");
+        setFieldValue("workflowParamHiflyHeaderSwitch", hifly.header_switch !== false);
+        setFieldValue("workflowParamHiflyMaterialSwitch", hifly.material_switch !== false);
+        setFieldValue("workflowParamHiflySubtitleSwitch", hifly.subtitle_switch !== false);
+        setFieldValue("workflowParamHiflyKeywordSwitch", hifly.keyword_switch !== false);
+        setFieldValue("workflowParamHiflyMaterialSoundSwitch", hifly.material_sound_switch === true);
+        setFieldValue("workflowParamHiflyWatermarkShow", hifly.watermark_show === true);
+        setFieldValue("workflowParamHiflyMaterialMatchWay", hifly.material_match_way || "fuzzyMatch");
+        setFieldValue("workflowParamHiflyResourcePreprocess", hifly.resource_preprocess_method || "roughCut");
+        setFieldValue("workflowParamHiflyMaterialComposition", hifly.material_composition || "random");
+        setHiflyMaterialPickerRows("workflowParamHiflyMaterials", hifly.materials);
+        renderWorkflowHiflyTemplateOptions();
+        syncWorkflowHiflyFields();
         return;
       }
       if (capabilityId === "comfly.daihuo.pipeline") {
@@ -4510,10 +4614,7 @@
       }
       if (capabilityId === "wewrite.article.pipeline") {
         setFieldValue("workflowParamArticleTitle", plan.title || nodeInfo.label || "公众号文章");
-        setFieldValue("workflowParamArticleIdea", inner.idea || node.note || "");
-        setFieldValue("workflowParamArticleStyle", inner.style || "");
-        setFieldValue("workflowParamArticleImageCount", inner.image_count || 3);
-        setFieldValue("workflowParamArticleIncludeImages", inner.include_images !== false);
+        setArticleFieldsFromPayload("workflowParamArticle", inner, node.note || "");
         return;
       }
       if (capabilityId === "ppt.create") {
@@ -5957,8 +6058,7 @@
       if (id === "ip_content_daily") {
         return taskFieldHtml("模板", ipTemplateSelectControl("abilityIpTemplate"), true)
           + taskFieldHtml("生成内容", abilityIpDailyTaskOptionsHtml(), true)
-          + taskFieldHtml("执行前同步", `<label class="task-checkbox ip-daily-sync-option"><input id="abilityIpSyncBefore" type="checkbox" checked><span>每次执行前同步新数据</span></label>`, true)
-          + taskFieldHtml("补充要求", taskTextareaHtml("abilityIpRequirement", "可选"), true);
+          + ipDailyAdvancedFieldsHtml("abilityIp");
       }
       if (id === "goal.video.pipeline") {
         return taskFieldHtml("任务名称", workInputHtml("abilityVideoTitle", "text", "创意视频"))
@@ -5970,11 +6070,7 @@
           + taskFieldHtml("补充提示词", taskTextareaHtml("abilityVideoPrompt", "可选"), true);
       }
       if (id === "wewrite.article.pipeline") {
-        return taskFieldHtml("任务名称", workInputHtml("abilityArticleTitle", "text", "公众号文章"))
-          + taskFieldHtml("公众号主题", taskTextareaHtml("abilityArticleIdea", "填写文章主题、受众、核心观点"), true)
-          + taskFieldHtml("文章风格", workInputHtml("abilityArticleStyle", "text", "", 'placeholder="例如：专业、有案例、适合老板阅读"'))
-          + taskFieldHtml("配图数量", workInputHtml("abilityArticleImageCount", "number", "3", 'min="0" max="6"'))
-          + taskFieldHtml("自动配图", workCheckboxHtml("abilityArticleIncludeImages", "生成 16:9 横屏配图并插入", true), true);
+        return articleFieldsHtml("abilityArticle");
       }
       if (id === "ppt.create") {
         return taskFieldHtml("任务名称", workInputHtml("abilityPptTitle", "text", "PPT生成"))
@@ -9620,6 +9716,35 @@
         : { language: lang, target_language: ipTemplateLanguageLabel(lang), common: instruction };
     }
 
+    function ipDailyAdvancedFieldsHtml(prefix) {
+      return taskAdvancedFieldsHtml(
+        taskFieldHtml("执行前同步", workCheckboxHtml(`${prefix}SyncBefore`, "每次执行前同步关键词和同行新数据", true), true)
+        + taskFieldHtml("行业口播条数", workInputHtml(`${prefix}IndustryCount`, "number", "5", 'min="1" max="5"'))
+        + taskFieldHtml("专业 IP 口播条数", workInputHtml(`${prefix}IpCount`, "number", "5", 'min="1" max="5"'))
+        + taskFieldHtml("朋友圈文案条数", workInputHtml(`${prefix}MomentsCount`, "number", "20", 'min="1" max="20"'))
+        + taskFieldHtml("通用补充要求", taskTextareaHtml(`${prefix}Requirement`, "适用于本次所有内容，可选"), true)
+        + taskFieldHtml("行业口播要求", taskTextareaHtml(`${prefix}IndustryRequirement`, "例如：优先本地热点，观点更有冲突感"), true)
+        + taskFieldHtml("专业 IP 口播要求", taskTextareaHtml(`${prefix}ProfessionalRequirement`, "例如：结合个人经历和业务案例"), true)
+        + taskFieldHtml("朋友圈文案要求", taskTextareaHtml(`${prefix}MomentsRequirement`, "例如：短句、多换行、不要硬性导流"), true)
+        + taskFieldHtml("朋友圈配图要求", taskTextareaHtml(`${prefix}ImageRequirement`, "例如：人物真实、同城生活感、避免画面文字"), true)
+      );
+    }
+
+    function ipDailyRequirementsFromFields(prefix, templateId) {
+      const requirements = ipDailyRequirementsWithLanguage(workflowParamValue(`${prefix}Requirement`), templateId);
+      const mappings = [
+        ["IndustryRequirement", "industry_oral"],
+        ["ProfessionalRequirement", "ip_oral"],
+        ["MomentsRequirement", "moments"],
+        ["ImageRequirement", "image"],
+      ];
+      mappings.forEach(([suffix, key]) => {
+        const value = workflowParamValue(`${prefix}${suffix}`);
+        if (value) requirements[key] = value;
+      });
+      return requirements;
+    }
+
     function mergeRuns(rows) {
       if (!Array.isArray(rows) || !rows.length) return;
       const byId = new Map((state.runs || []).map((row) => [String(row.id || ""), row]));
@@ -10814,6 +10939,62 @@
       setFieldValue(id, assetPickerAllowsMultiple(box) ? JSON.stringify(values) : (values[0] || ""));
     }
 
+    function setArticleFieldsFromPayload(prefix, payload, fallbackIdea = "") {
+      const source = payload && typeof payload === "object" ? payload : {};
+      setFieldValue(`${prefix}Idea`, source.idea || source.topic || fallbackIdea || "");
+      setFieldValue(`${prefix}Audience`, source.audience || "");
+      setFieldValue(`${prefix}Style`, source.style || "专业、有观点、适合公众号阅读");
+      setFieldValue(`${prefix}Theme`, source.theme || "professional-clean");
+      setFieldValue(`${prefix}ImageRatio`, source.image_aspect_ratio || "3:2");
+      setFieldValue(`${prefix}ImageCount`, source.image_count || 3);
+      setFieldValue(`${prefix}IncludeImages`, source.include_images !== false);
+      setFieldValue(`${prefix}UploadArticleImages`, source.upload_article_images !== false);
+      setAssetPickerPayloadValue(`${prefix}SelectedImages`, {
+        reference_asset_ids: Array.isArray(source.selected_asset_ids) ? source.selected_asset_ids : [],
+        reference_image_urls: Array.isArray(source.selected_image_urls) ? source.selected_image_urls : [],
+      });
+    }
+
+    function setHiflyMaterialPickerRows(id, materials) {
+      const rows = (Array.isArray(materials) ? materials : []).map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const assetId = String(item.asset_id || item.assetId || "").trim();
+        const sourceUrl = String(item.fileUrl || item.file_url || item.url || item.source_url || "").trim();
+        const mediaType = String(item.type || item.media_type || mediaTypeFromUrl(sourceUrl) || "").toLowerCase();
+        if (!assetId && !sourceUrl) return null;
+        return {
+          asset_id: assetId,
+          source_url: sourceUrl,
+          media_type: ["image", "video"].includes(mediaType) ? mediaType : "video",
+          filename: String(item.name || item.filename || assetId || "混剪素材"),
+        };
+      }).filter(Boolean);
+      setAssetPickerSelectionRows(id, rows, false);
+    }
+
+    function setLocalBestsellerFieldsFromParams(prefix, params, includeDay = true) {
+      const source = params && typeof params === "object" ? params : {};
+      const profile = source.profile && typeof source.profile === "object" ? source.profile : {};
+      setFieldValue(`${prefix}Photo`, profile.photo_url || profile.photo_asset_id || "");
+      setFieldValue(`${prefix}Video`, profile.uploaded_video_url || "");
+      setFieldValue(`${prefix}Days`, source.days || 30);
+      if (includeDay) setFieldValue(`${prefix}Day`, source.day || 1);
+      setFieldValue(`${prefix}Name`, profile.name || "");
+      setFieldValue(`${prefix}Nickname`, profile.nickname || "");
+      setFieldValue(`${prefix}Gender`, profile.gender || "");
+      setFieldValue(`${prefix}Identity`, profile.identity || "");
+      setFieldValue(`${prefix}Industry`, profile.industry || "");
+      setFieldValue(`${prefix}City`, profile.city || "");
+      setFieldValue(`${prefix}Province`, profile.province || "");
+      setFieldValue(`${prefix}Hometown`, profile.hometown || "");
+      setFieldValue(`${prefix}Age`, profile.age_label || profile.age || "");
+      setFieldValue(`${prefix}TargetAge`, profile.target_age || profile.target_audience || "");
+      setFieldValue(`${prefix}Style`, profile.style || "");
+      setFieldValue(`${prefix}ImageModel`, source.model || "gpt-image-2");
+      setFieldValue(`${prefix}ImageQuality`, source.quality || "high");
+      setFieldValue(`${prefix}VideoModel`, source.video_model || "grok-imagine-video-1.5-preview");
+    }
+
     function setTextareaList(id, values) {
       setFieldValue(id, Array.isArray(values) ? values.join("\n") : values || "");
     }
@@ -10842,8 +11023,9 @@
       setFieldValue("workImageTitle", run && run.title || "创作图片");
       setFieldValue("workImagePrompt", safeTaskInputText(params.prompt, inner.prompt, inner.task_text));
       const imageReferenceUrls = Array.isArray(params.reference_image_urls) ? params.reference_image_urls : [];
+      const imageReferenceAssetIds = Array.isArray(params.reference_asset_ids) ? params.reference_asset_ids : [];
       const imageReferencePurposes = Array.isArray(params.reference_purposes) ? params.reference_purposes : [];
-      setFieldValue("workImageReference", imageReferenceUrls[0] || "");
+      setAssetPickerPayloadValue("workImageReference", { reference_asset_ids: imageReferenceAssetIds, reference_image_urls: imageReferenceUrls });
       setFieldValue("workImageReferencePurpose", imageReferencePurposes[0] || "auto");
       setFieldValue("workImageAspectRatio", params.aspect_ratio || "9:16");
       setFieldValue("workImageModel", params.model || "gpt-image-2");
@@ -10865,9 +11047,11 @@
       setFieldValue("workComflyAutoSave", inner.auto_save !== false);
       const hiflyParams = Object.keys(params).length ? params : inner;
       setFieldValue("workAvatar", hiflyParams.virtualman_id || hiflyParams.avatar || "");
-      setFieldValue("workVoice", hiflyParams.voice || "");
+      setFieldValue("workHiflyDriveMode", hiflyParams.drive_mode || (hiflyParams.audio_url || hiflyParams.audio_asset_id ? "audio" : "tts"));
+      setFieldValue("workVoice", hiflyParams.voice || hiflyParams.speaker_id || "");
       setFieldValue("workHiflyTitle", run && run.title || "数字人口播");
       setFieldValue("workHiflyScript", hiflyParams.script || hiflyParams.prompt || "");
+      setFieldValue("workHiflyAudio", hiflyParams.audio_url || hiflyParams.audio_asset_id || "");
       const hiflyLongVideo = hiflyParams.long_video === true;
       setWorkHiflySegment("workHiflyDurationMode", hiflyLongVideo ? "long" : "short");
       setFieldValue("workHiflyTargetDuration", hiflyParams.video_duration || hiflyParams.duration_seconds || (hiflyLongVideo ? 60 : 30));
@@ -10882,6 +11066,22 @@
         renderWorkHiflyTemplateSummary();
         loadPersonalDigitalHumanTemplates(false).then(renderWorkHiflyTemplateSummary).catch(() => {});
       }
+      setFieldValue("workHiflyRate", hiflyParams.rate || hiflyParams.speed_ratio || 1);
+      setFieldValue("workHiflyVolume", hiflyParams.volume || 1);
+      setFieldValue("workHiflyPitch", hiflyParams.pitch == null ? 0 : hiflyParams.pitch);
+      setFieldValue("workHiflyEmotion", hiflyParams.emotion || "happy");
+      setFieldValue("workHiflyInstructions", hiflyParams.instructions || "");
+      setFieldValue("workHiflyHeaderSwitch", hiflyParams.header_switch !== false);
+      setFieldValue("workHiflyMaterialSwitch", hiflyParams.material_switch !== false);
+      setFieldValue("workHiflySubtitleSwitch", hiflyParams.subtitle_switch !== false);
+      setFieldValue("workHiflyKeywordSwitch", hiflyParams.keyword_switch !== false);
+      setFieldValue("workHiflyMaterialSoundSwitch", hiflyParams.material_sound_switch === true);
+      setFieldValue("workHiflyWatermarkShow", hiflyParams.watermark_show === true);
+      setFieldValue("workHiflyMaterialMatchWay", hiflyParams.material_match_way || "fuzzyMatch");
+      setFieldValue("workHiflyResourcePreprocess", hiflyParams.resource_preprocess_method || "roughCut");
+      setFieldValue("workHiflyMaterialComposition", hiflyParams.material_composition || "random");
+      setHiflyMaterialPickerRows("workHiflyMaterials", hiflyParams.materials);
+      syncWorkHiflyDriveMode();
       setFieldValue("abilityIpTemplate", payload.template_id || "");
       document.querySelectorAll("[data-ability-ip-daily-task]").forEach((el) => {
         const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
@@ -10889,12 +11089,16 @@
       });
       setFieldValue("abilityIpSyncBefore", payload.sync_before !== false);
       const req = payload.requirements && typeof payload.requirements === "object" ? payload.requirements : {};
-      setFieldValue("abilityIpRequirement", req.common || req.moments || req.oral || req.image || "");
+      setFieldValue("abilityIpIndustryCount", payload.industry_count || 5);
+      setFieldValue("abilityIpIpCount", payload.ip_count || 5);
+      setFieldValue("abilityIpMomentsCount", payload.moments_count || 20);
+      setFieldValue("abilityIpRequirement", req.common || "");
+      setFieldValue("abilityIpIndustryRequirement", req.industry_oral || req.oral || "");
+      setFieldValue("abilityIpProfessionalRequirement", req.ip_oral || "");
+      setFieldValue("abilityIpMomentsRequirement", req.moments || "");
+      setFieldValue("abilityIpImageRequirement", req.image || "");
       setFieldValue("abilityArticleTitle", run && run.title || "公众号文章");
-      setFieldValue("abilityArticleIdea", inner.idea || "");
-      setFieldValue("abilityArticleStyle", inner.style || "");
-      setFieldValue("abilityArticleImageCount", inner.image_count || "");
-      setFieldValue("abilityArticleIncludeImages", inner.include_images !== false);
+      setArticleFieldsFromPayload("abilityArticle", inner);
       setFieldValue("abilityPptTitle", run && run.title || "PPT生成");
       setFieldValue("abilityPptTopic", inner.topic || "");
       setFieldValue("abilityPptSlideCount", inner.slide_count || "");
@@ -10925,8 +11129,7 @@
       setFieldValue("workDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
       setFieldValue("workDouyinMaxResults", params.max_results || "");
       setFieldValue("workDouyinMode", params.mode || "script");
-      setFieldValue("workLocalDays", params.days || "");
-      setFieldValue("workLocalDay", params.day || "");
+      setLocalBestsellerFieldsFromParams("workLocal", params, true);
       setFieldValue("workViralVideoUrl", params.original_video_url || "");
       setFieldValue("workViralCharacterUrl", params.character_image_url || "");
       setFieldValue("workViralProductUrl", params.product_image_url || "");
@@ -13653,15 +13856,20 @@
     function renderHiflyOptions() {
       const avatarSel = $("taskAvatar");
       const voiceSel = $("taskVoice");
+      const shanjianRows = state.avatarRows.filter((row) => row.provider === "shanjian" && (!row.status || row.status === "success"));
       if (avatarSel) {
-        avatarSel.innerHTML = state.avatarRows.length
-          ? state.avatarRows.map((row) => `<option value="${escapeHtml(row.avatar)}">${escapeHtml(row.title)}</option>`).join("")
-          : `<option value="">暂无可用数字人</option>`;
+        const selected = String(avatarSel.value || "").trim();
+        avatarSel.innerHTML = shanjianRows.length
+          ? shanjianRows.map((row) => `<option value="${escapeHtml(row.avatar)}">${escapeHtml(row.title)}（2.0）</option>`).join("")
+          : `<option value="">暂无可用数字人 2.0</option>`;
+        if (selected && shanjianRows.some((row) => String(row.avatar || "") === selected)) avatarSel.value = selected;
       }
       if (voiceSel) {
+        const selected = String(voiceSel.value || "").trim();
         voiceSel.innerHTML = state.voiceRows.length
           ? state.voiceRows.map((row) => `<option value="${escapeHtml(row.voice)}">${escapeHtml(row.title)}</option>`).join("")
           : `<option value="">暂无可用声音</option>`;
+        if (selected && state.voiceRows.some((row) => String(row.voice || "") === selected)) voiceSel.value = selected;
       }
       renderWorkHiflyOptions();
     }
@@ -13672,6 +13880,13 @@
 
     function taskFieldHtml(label, control, full = false) {
       return `<div class="field ${full ? "full" : ""}"><label>${escapeHtml(label)}</label>${control}</div>`;
+    }
+
+    function taskAdvancedFieldsHtml(content, label = "高级设置", hint = "已按 Online 默认值填充") {
+      return `<details class="task-advanced-settings field full">
+        <summary><span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small></summary>
+        <div class="task-advanced-grid">${content || ""}</div>
+      </details>`;
     }
 
     function ipTemplateSelectControl(id) {
@@ -13797,17 +14012,19 @@
     function seedanceFieldsHtml(prefix, requiredAsset = false) {
       return taskFieldHtml("输入方式", taskSelectHtml(`${prefix}InputMode`, seedanceInputModeOptionsHtml("image_auto")))
         + taskFieldHtml("参考图片", assetPickerControlHtml(`${prefix}Asset`, { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }), requiredAsset)
-        + taskFieldHtml("参考图用途", taskSelectHtml(`${prefix}ReferencePurpose`, seedanceReferencePurposeOptionsHtml("storyboard")))
         + taskFieldHtml("视频需求", taskTextareaHtml(`${prefix}Text`, "例如：做一条 20 秒的轻奢护肤品短视频，先建立包装高级感，再切到使用场景，最后用品牌记忆点收尾。"), true)
-        + taskFieldHtml("生成模型", taskSelectHtml(`${prefix}Model`, seedanceModelOptionsHtml("grok-imagine-video-1.5-preview")))
         + taskFieldHtml("视频时长", taskSelectHtml(`${prefix}Duration`, seedanceDurationOptionsHtml("grok-imagine-video-1.5-preview", 10)))
         + taskFieldHtml("画面比例", taskSelectHtml(`${prefix}Aspect`, optionHtml("9:16", "9:16 竖屏带货") + optionHtml("16:9", "16:9 横屏展示") + optionHtml("1:1", "1:1 方形信息流") + optionHtml("4:5", "4:5 内容种草")))
-        + taskFieldHtml("视觉基调", taskSelectHtml(`${prefix}VisualTone`, seedanceVisualToneOptionsHtml("clean_bright")))
-        + taskFieldHtml("镜头节奏", taskSelectHtml(`${prefix}Rhythm`, seedanceRhythmOptionsHtml("smooth")))
-        + taskFieldHtml("结果处理", workCheckboxGroupHtml([
-          { id: `${prefix}NeedMerge`, label: "多分镜最终合成一个视频", checked: true },
-          { id: `${prefix}NeedAudio`, label: "需要保留音频或配乐规划", checked: true },
-        ]), true);
+        + taskAdvancedFieldsHtml(
+          taskFieldHtml("生成模型", taskSelectHtml(`${prefix}Model`, seedanceModelOptionsHtml("grok-imagine-video-1.5-preview")))
+          + taskFieldHtml("参考图用途", taskSelectHtml(`${prefix}ReferencePurpose`, seedanceReferencePurposeOptionsHtml("storyboard")))
+          + taskFieldHtml("视觉基调", taskSelectHtml(`${prefix}VisualTone`, seedanceVisualToneOptionsHtml("clean_bright")))
+          + taskFieldHtml("镜头节奏", taskSelectHtml(`${prefix}Rhythm`, seedanceRhythmOptionsHtml("smooth")))
+          + taskFieldHtml("结果处理", workCheckboxGroupHtml([
+            { id: `${prefix}NeedMerge`, label: "多分镜最终合成一个视频", checked: true },
+            { id: `${prefix}NeedAudio`, label: "需要保留音频或配乐规划", checked: true },
+          ]), true)
+        );
     }
 
     function syncSeedanceDurationOptions(prefix) {
@@ -15099,6 +15316,7 @@
         state.personalDigitalHumanTemplatesLoading = false;
         renderPersonalDigitalHumanTemplatePicker();
         renderWorkHiflyTemplateSummary();
+        renderWorkflowHiflyTemplateOptions();
       }
     }
 
@@ -16852,15 +17070,79 @@
       const voiceSelects = [$("workVoice"), $("workflowParamVoice")].filter(Boolean);
       const shanjianRows = state.avatarRows.filter((row) => row.provider === "shanjian" && (!row.status || row.status === "success"));
       avatarSelects.forEach((avatarSel) => {
+        const selected = String(avatarSel.value || "").trim();
         avatarSel.innerHTML = shanjianRows.length
           ? shanjianRows.map((row) => `<option value="${escapeHtml(row.avatar)}">${escapeHtml(row.title)}（2.0）</option>`).join("")
           : `<option value="">暂无可用数字人 2.0</option>`;
+        if (selected && shanjianRows.some((row) => String(row.avatar || "") === selected)) avatarSel.value = selected;
       });
       voiceSelects.forEach((voiceSel) => {
+        const selected = String(voiceSel.value || "").trim();
         voiceSel.innerHTML = state.voiceRows.length
           ? state.voiceRows.map((row) => `<option value="${escapeHtml(row.voice)}">${escapeHtml(row.title)}</option>`).join("")
           : `<option value="">暂无可用声音</option>`;
+        if (selected && state.voiceRows.some((row) => String(row.voice || "") === selected)) voiceSel.value = selected;
       });
+    }
+
+    function renderWorkflowHiflyTemplateOptions() {
+      const rows = Array.isArray(state.personalDigitalHumanTemplates) ? state.personalDigitalHumanTemplates : [];
+      [$("workflowParamHiflyTemplate"), $("taskHiflyTemplate")].filter(Boolean).forEach((select) => {
+        const selected = String(select.value || select.dataset.preferredValue || "").trim();
+        select.innerHTML = rows.length
+          ? optionHtml("", "请选择模板") + rows.map((item) => optionHtml(item.style_id, item.name || item.style_id)).join("")
+          : optionHtml("", state.personalDigitalHumanTemplatesLoading ? "模板加载中..." : "暂无可用模板");
+        if (selected && rows.some((item) => String(item.style_id || "") === selected)) {
+          select.value = selected;
+          delete select.dataset.preferredValue;
+        } else if (selected) {
+          select.dataset.preferredValue = selected;
+          select.insertAdjacentHTML("beforeend", optionHtml(selected, "已保存模板"));
+          select.value = selected;
+        }
+      });
+    }
+
+    function syncWorkflowHiflyFields() {
+      const audioMode = workflowParamValue("workflowParamHiflyDriveMode") === "audio";
+      $("workflowParamHiflyAudioField")?.classList.toggle("hidden", !audioMode);
+      $("workflowParamHiflyScript")?.closest(".field")?.classList.toggle("hidden", audioMode);
+      $("workflowParamVoice")?.closest(".field")?.classList.toggle("hidden", audioMode);
+      const longVideo = workflowParamValue("workflowParamHiflyDurationMode") === "long";
+      $("workflowParamHiflyTargetDurationField")?.classList.toggle("hidden", !longVideo);
+      const useTemplate = workflowParamValue("workflowParamHiflyTemplateMode") === "template";
+      $("workflowParamHiflyTemplateField")?.classList.toggle("hidden", !useTemplate);
+    }
+
+    function bindWorkflowHiflyControls() {
+      ["workflowParamHiflyDriveMode", "workflowParamHiflyDurationMode", "workflowParamHiflyTemplateMode"].forEach((id) => {
+        const field = $(id);
+        if (!field || field.dataset.hiflyBound === "1") return;
+        field.dataset.hiflyBound = "1";
+        field.addEventListener("change", syncWorkflowHiflyFields);
+      });
+      renderWorkflowHiflyTemplateOptions();
+      syncWorkflowHiflyFields();
+    }
+
+    function syncTaskHiflyFields() {
+      const audioMode = workflowParamValue("taskHiflyDriveMode") === "audio";
+      $("taskHiflyAudioField")?.classList.toggle("hidden", !audioMode);
+      $("taskHiflyScript")?.closest(".field")?.classList.toggle("hidden", audioMode);
+      $("taskVoice")?.closest(".field")?.classList.toggle("hidden", audioMode);
+      $("taskHiflyTargetDurationField")?.classList.toggle("hidden", workflowParamValue("taskHiflyDurationMode") !== "long");
+      $("taskHiflyTemplateField")?.classList.toggle("hidden", workflowParamValue("taskHiflyTemplateMode") !== "template");
+    }
+
+    function bindTaskHiflyControls() {
+      ["taskHiflyDriveMode", "taskHiflyDurationMode", "taskHiflyTemplateMode"].forEach((id) => {
+        const field = $(id);
+        if (!field || field.dataset.hiflyBound === "1") return;
+        field.dataset.hiflyBound = "1";
+        field.addEventListener("change", syncTaskHiflyFields);
+      });
+      renderWorkflowHiflyTemplateOptions();
+      syncTaskHiflyFields();
     }
 
     function setWorkHiflySegment(name, value) {
@@ -16924,7 +17206,19 @@
       loadPersonalDigitalHumanTemplates(false).then(renderWorkHiflyTemplateSummary).catch(() => {});
     }
 
+    function syncWorkHiflyDriveMode() {
+      const audioMode = workValue("workHiflyDriveMode") === "audio";
+      $("workHiflyAudioField")?.classList.toggle("hidden", !audioMode);
+      $("workHiflyScript")?.closest(".field")?.classList.toggle("hidden", audioMode);
+      $("workVoice")?.closest(".field")?.classList.toggle("hidden", audioMode);
+    }
+
     function bindWorkHiflyControls() {
+      const driveMode = $("workHiflyDriveMode");
+      if (driveMode && driveMode.dataset.bound !== "1") {
+        driveMode.dataset.bound = "1";
+        driveMode.addEventListener("change", syncWorkHiflyDriveMode);
+      }
       document.querySelectorAll('input[name="workHiflyDurationMode"]').forEach((input) => {
         if (input.dataset.bound === "1") return;
         input.dataset.bound = "1";
@@ -16948,8 +17242,25 @@
           openPersonalDigitalHumanPreview(state.workSelectedDigitalHumanTemplate);
         });
       }
+      syncWorkHiflyDriveMode();
       syncWorkHiflyDurationField();
       syncWorkHiflyTemplateField();
+    }
+
+    function selectedWorkHiflyMaterials() {
+      return assetPickerSelectionRows("workHiflyMaterials").map((item) => {
+        const mediaType = String(item && item.media_type || "").toLowerCase();
+        if (!['image', 'video'].includes(mediaType)) return null;
+        const assetId = String(item && item.asset_id || "").trim();
+        const fileUrl = String(item && (item.open_url || item.source_url || item.preview_url || item.url) || "").trim();
+        if (!assetId && !fileUrl) return null;
+        return {
+          ...(assetId ? { asset_id: assetId } : {}),
+          type: mediaType,
+          ...(fileUrl ? { fileUrl } : {}),
+          name: String(item && (item.filename || item.name) || assetId || "混剪素材").trim(),
+        };
+      }).filter(Boolean).slice(0, 20);
     }
 
     function selectedWorkHiflyTemplatePayload() {
@@ -16977,6 +17288,166 @@
       };
     }
 
+    function digitalHumanTemplatePayload(styleId) {
+      const normalizedStyleId = String(styleId || "").trim();
+      if (!normalizedStyleId) return {};
+      const item = (state.personalDigitalHumanTemplates || []).find((row) => String(row.style_id || "") === normalizedStyleId);
+      if (!item) return { template_scene: "realMan", style_id: normalizedStyleId };
+      const packRules = item.pack_rules && typeof item.pack_rules === "object" ? item.pack_rules : {};
+      const processRules = item.process_rules && typeof item.process_rules === "object" ? item.process_rules : {};
+      return {
+        template_scene: item.scene || "realMan",
+        style_id: normalizedStyleId,
+        materials: Array.isArray(item.materials) ? item.materials : [],
+        material_sound_switch: !!item.material_sound_switch,
+        introduce_name: item.introduce_name || "",
+        introduce_description: item.introduce_description || "",
+        header_switch: packRules.headerSwitch !== false,
+        material_switch: packRules.materialSwitch !== false,
+        subtitle_switch: packRules.subtitleSwitch !== false,
+        keyword_switch: packRules.keywordSwitch !== false,
+        watermark_show: !!processRules.watermarkShow,
+        material_match_way: processRules.materialMatchWay || "fuzzyMatch",
+        resource_preprocess_method: processRules.resourcePreprocessMethod || "roughCut",
+        material_composition: processRules.materialComposition || "random",
+      };
+    }
+
+    function selectedHiflyMaterials(id) {
+      return assetPickerSelectionRows(id).map((item) => {
+        const mediaType = String(item && item.media_type || "").toLowerCase();
+        if (!["image", "video"].includes(mediaType)) return null;
+        const assetId = String(item && item.asset_id || "").trim();
+        const fileUrl = String(item && (item.open_url || item.source_url || item.preview_url || item.url) || "").trim();
+        if (!assetId && !fileUrl) return null;
+        return {
+          ...(assetId ? { asset_id: assetId } : {}),
+          type: mediaType,
+          ...(fileUrl ? { fileUrl } : {}),
+          name: String(item && (item.filename || item.name) || assetId || "混剪素材").trim(),
+        };
+      }).filter(Boolean).slice(0, 20);
+    }
+
+    function workflowDigitalHumanFieldsHtml() {
+      return taskFieldHtml("数字人", taskSelectHtml("workflowParamAvatar", optionHtml("", "加载中...")))
+        + taskFieldHtml("驱动方式", taskSelectHtml("workflowParamHiflyDriveMode", optionHtml("tts", "文案驱动") + optionHtml("audio", "音频驱动")))
+        + taskFieldHtml("声音", taskSelectHtml("workflowParamVoice", optionHtml("", "加载中...")))
+        + taskFieldHtml("任务名称", workInputHtml("workflowParamHiflyTitle", "text", "数字人口播"))
+        + taskFieldHtml("视频时长", taskSelectHtml("workflowParamHiflyDurationMode", optionHtml("short", "30 秒以内") + optionHtml("long", "长视频")))
+        + `<div class="field hidden" id="workflowParamHiflyTargetDurationField"><label>预计视频时长</label><div class="work-duration-input"><input id="workflowParamHiflyTargetDuration" type="number" value="60" min="31" max="300" step="1" inputmode="numeric"><span>秒</span></div></div>`
+        + taskFieldHtml("剪辑方式", taskSelectHtml("workflowParamHiflyTemplateMode", optionHtml("none", "不套模板") + optionHtml("template", "套用模板")))
+        + `<div class="field hidden" id="workflowParamHiflyTemplateField"><label>剪辑模板</label>${taskSelectHtml("workflowParamHiflyTemplate", optionHtml("", "模板加载中..."))}</div>`
+        + taskFieldHtml("口播文案", taskTextareaHtml("workflowParamHiflyScript", "填写要让数字人口播的完整文案"), true)
+        + `<div class="field full hidden" id="workflowParamHiflyAudioField"><label>驱动音频</label>${assetPickerControlHtml("workflowParamHiflyAudio", { mediaType: "audio", output: "url", accept: "audio/*,.mp3,.m4a,.wav", uploadText: "上传音频", selectText: "选择音频" })}</div>`
+        + taskAdvancedFieldsHtml(
+          taskFieldHtml("语速", workInputHtml("workflowParamHiflyRate", "number", "1", 'min="0.5" max="2" step="0.1"'))
+          + taskFieldHtml("音量", workInputHtml("workflowParamHiflyVolume", "number", "1", 'min="0.1" max="2" step="0.1"'))
+          + taskFieldHtml("语调", workInputHtml("workflowParamHiflyPitch", "number", "0", 'min="-12" max="12" step="1"'))
+          + taskFieldHtml("情绪", taskSelectHtml("workflowParamHiflyEmotion", optionHtml("happy", "自然积极") + optionHtml("neutral", "中性") + optionHtml("sad", "沉稳低落") + optionHtml("angry", "有力强调")))
+          + taskFieldHtml("音色指令", taskTextareaHtml("workflowParamHiflyInstructions", "例如：自然、有亲和力，重点句稍作停顿"), true)
+          + taskFieldHtml("模板混剪素材", assetPickerControlHtml("workflowParamHiflyMaterials", { mediaType: "", output: "asset_id", accept: "image/*,video/*", uploadText: "上传素材", selectText: "从素材库选择", multiple: true }), true)
+          + taskFieldHtml("模板处理", workCheckboxGroupHtml([
+            { id: "workflowParamHiflyHeaderSwitch", label: "片头开场", checked: true },
+            { id: "workflowParamHiflyMaterialSwitch", label: "智能配图", checked: true },
+            { id: "workflowParamHiflySubtitleSwitch", label: "自动字幕", checked: true },
+            { id: "workflowParamHiflyKeywordSwitch", label: "关键词高亮", checked: true },
+            { id: "workflowParamHiflyMaterialSoundSwitch", label: "保留素材原声", checked: false },
+            { id: "workflowParamHiflyWatermarkShow", label: "显示水印", checked: false },
+          ]), true)
+          + taskFieldHtml("素材匹配", taskSelectHtml("workflowParamHiflyMaterialMatchWay", optionHtml("fuzzyMatch", "模糊匹配") + optionHtml("preciseMatch", "精准匹配")))
+          + taskFieldHtml("素材预处理", taskSelectHtml("workflowParamHiflyResourcePreprocess", optionHtml("roughCut", "粗剪") + optionHtml("sliceMerge", "切片拼接")))
+          + taskFieldHtml("素材顺序", taskSelectHtml("workflowParamHiflyMaterialComposition", optionHtml("random", "随机") + optionHtml("sequential", "顺序")))
+        );
+    }
+
+    function taskDigitalHumanFieldsHtml() {
+      return taskFieldHtml("数字人", taskSelectHtml("taskAvatar", optionHtml("", "加载中...")))
+        + taskFieldHtml("驱动方式", taskSelectHtml("taskHiflyDriveMode", optionHtml("tts", "文案驱动") + optionHtml("audio", "音频驱动")))
+        + taskFieldHtml("声音", taskSelectHtml("taskVoice", optionHtml("", "加载中...")))
+        + taskFieldHtml("视频时长", taskSelectHtml("taskHiflyDurationMode", optionHtml("short", "30 秒以内") + optionHtml("long", "长视频")))
+        + `<div class="field hidden" id="taskHiflyTargetDurationField"><label>预计视频时长</label><div class="work-duration-input"><input id="taskHiflyTargetDuration" type="number" value="60" min="31" max="300" step="1" inputmode="numeric"><span>秒</span></div></div>`
+        + taskFieldHtml("剪辑方式", taskSelectHtml("taskHiflyTemplateMode", optionHtml("none", "不套模板") + optionHtml("template", "套用模板")))
+        + `<div class="field hidden" id="taskHiflyTemplateField"><label>剪辑模板</label>${taskSelectHtml("taskHiflyTemplate", optionHtml("", "模板加载中..."))}</div>`
+        + taskFieldHtml("口播文案（可选）", taskTextareaHtml("taskHiflyScript", "留空时根据当前 IP 日更内容自动生成"), true)
+        + `<div class="field full hidden" id="taskHiflyAudioField"><label>驱动音频</label>${assetPickerControlHtml("taskHiflyAudio", { mediaType: "audio", output: "url", accept: "audio/*,.mp3,.m4a,.wav", uploadText: "上传音频", selectText: "选择音频" })}</div>`
+        + taskAdvancedFieldsHtml(
+          taskFieldHtml("语速", workInputHtml("taskHiflyRate", "number", "1", 'min="0.5" max="2" step="0.1"'))
+          + taskFieldHtml("音量", workInputHtml("taskHiflyVolume", "number", "1", 'min="0.1" max="2" step="0.1"'))
+          + taskFieldHtml("语调", workInputHtml("taskHiflyPitch", "number", "0", 'min="-12" max="12" step="1"'))
+          + taskFieldHtml("情绪", taskSelectHtml("taskHiflyEmotion", optionHtml("happy", "自然积极") + optionHtml("neutral", "中性") + optionHtml("sad", "沉稳低落") + optionHtml("angry", "有力强调")))
+          + taskFieldHtml("音色指令", taskTextareaHtml("taskHiflyInstructions", "例如：自然、有亲和力，重点句稍作停顿"), true)
+          + taskFieldHtml("模板混剪素材", assetPickerControlHtml("taskHiflyMaterials", { mediaType: "", output: "asset_id", accept: "image/*,video/*", uploadText: "上传素材", selectText: "从素材库选择", multiple: true }), true)
+          + taskFieldHtml("模板处理", workCheckboxGroupHtml([
+            { id: "taskHiflyHeaderSwitch", label: "片头开场", checked: true },
+            { id: "taskHiflyMaterialSwitch", label: "智能配图", checked: true },
+            { id: "taskHiflySubtitleSwitch", label: "自动字幕", checked: true },
+            { id: "taskHiflyKeywordSwitch", label: "关键词高亮", checked: true },
+            { id: "taskHiflyMaterialSoundSwitch", label: "保留素材原声", checked: false },
+            { id: "taskHiflyWatermarkShow", label: "显示水印", checked: false },
+          ]), true)
+          + taskFieldHtml("素材匹配", taskSelectHtml("taskHiflyMaterialMatchWay", optionHtml("fuzzyMatch", "模糊匹配") + optionHtml("preciseMatch", "精准匹配")))
+          + taskFieldHtml("素材预处理", taskSelectHtml("taskHiflyResourcePreprocess", optionHtml("roughCut", "粗剪") + optionHtml("sliceMerge", "切片拼接")))
+          + taskFieldHtml("素材顺序", taskSelectHtml("taskHiflyMaterialComposition", optionHtml("random", "随机") + optionHtml("sequential", "顺序")))
+        );
+    }
+
+    function localBestsellerFieldsHtml(prefix, includeDay = true) {
+      return taskFieldHtml("人物照片", assetPickerControlHtml(`${prefix}Photo`, { mediaType: "image", output: "url", uploadText: "上传人物照片", selectText: "从素材库选择" }), true)
+        + taskFieldHtml("参考视频", assetPickerControlHtml(`${prefix}Video`, { mediaType: "video", output: "url", accept: "video/*", uploadText: "上传参考视频", selectText: "从素材库选择" }), true)
+        + taskFieldHtml("规划天数", workInputHtml(`${prefix}Days`, "number", "30", 'min="1" max="30"'))
+        + (includeDay ? taskFieldHtml("生成第几天", workInputHtml(`${prefix}Day`, "number", "1", 'min="1" max="30"')) : "")
+        + taskFieldHtml("姓名", workInputHtml(`${prefix}Name`, "text", "", 'placeholder="留空使用 IP 人设"'))
+        + taskFieldHtml("短视频昵称", workInputHtml(`${prefix}Nickname`, "text", "", 'placeholder="留空使用 IP 人设"'))
+        + taskFieldHtml("性别", taskSelectHtml(`${prefix}Gender`, optionHtml("", "使用 IP 人设") + optionHtml("female", "女") + optionHtml("male", "男")))
+        + taskFieldHtml("身份人设", workInputHtml(`${prefix}Identity`, "text", "", 'placeholder="例如：女老板"'))
+        + taskFieldHtml("行业", workInputHtml(`${prefix}Industry`, "text", "", 'placeholder="例如：大健康"'))
+        + taskFieldHtml("当前城市", workInputHtml(`${prefix}City`, "text", "", 'placeholder="例如：深圳"'))
+        + taskFieldHtml("省份", workInputHtml(`${prefix}Province`, "text", "", 'placeholder="例如：广东"'))
+        + taskFieldHtml("家乡", workInputHtml(`${prefix}Hometown`, "text", "", 'placeholder="例如：广东潮汕"'))
+        + taskFieldHtml("年龄标签", workInputHtml(`${prefix}Age`, "text", "", 'placeholder="例如：80后"'))
+        + taskFieldHtml("目标人群", workInputHtml(`${prefix}TargetAge`, "text", "", 'placeholder="例如：60/70/80后"'))
+        + taskAdvancedFieldsHtml(
+          taskFieldHtml("画面风格", taskSelectHtml(`${prefix}Style`, optionHtml("", "使用 IP 人设") + optionHtml("真实同城生活感", "真实同城生活感") + optionHtml("轻奢商业质感", "轻奢商业质感") + optionHtml("烟火气纪实感", "烟火气纪实感")))
+          + taskFieldHtml("图片模型", taskSelectHtml(`${prefix}ImageModel`, optionHtml("gpt-image-2", "影梦lite")))
+          + taskFieldHtml("图片质量", taskSelectHtml(`${prefix}ImageQuality`, optionHtml("high", "高") + optionHtml("medium", "中") + optionHtml("low", "低")))
+          + taskFieldHtml("视频模型", taskSelectHtml(`${prefix}VideoModel`, optionHtml("grok-imagine-video-1.5-preview", "影梦1.5 Plus")))
+        );
+    }
+
+    function localBestsellerParamsFromFields(prefix, includeDay = true) {
+      const days = workflowParamNumber(`${prefix}Days`, 30, 1, 30);
+      const photoValue = assetPickerSelectedValues(`${prefix}Photo`)[0] || "";
+      const videoValue = assetPickerSelectedValues(`${prefix}Video`)[0] || "";
+      const profile = {
+        name: workflowParamValue(`${prefix}Name`),
+        nickname: workflowParamValue(`${prefix}Nickname`),
+        gender: workflowParamValue(`${prefix}Gender`),
+        identity: workflowParamValue(`${prefix}Identity`),
+        industry: workflowParamValue(`${prefix}Industry`),
+        city: workflowParamValue(`${prefix}City`),
+        province: workflowParamValue(`${prefix}Province`),
+        hometown: workflowParamValue(`${prefix}Hometown`),
+        age_label: workflowParamValue(`${prefix}Age`),
+        target_age: workflowParamValue(`${prefix}TargetAge`),
+        style: workflowParamValue(`${prefix}Style`),
+        ...(photoValue ? (/^https?:\/\//i.test(photoValue) ? { photo_url: photoValue } : { photo_asset_id: photoValue }) : {}),
+        ...(videoValue ? { uploaded_video_url: videoValue } : {}),
+      };
+      Object.keys(profile).forEach((key) => {
+        if (!String(profile[key] || "").trim()) delete profile[key];
+      });
+      return {
+        days,
+        ...(includeDay ? { day: workflowParamNumber(`${prefix}Day`, 1, 1, days), day_mode: "manual" } : {}),
+        profile,
+        profile_override: Object.keys(profile).length > 0,
+        model: workflowParamValue(`${prefix}ImageModel`) || "gpt-image-2",
+        quality: workflowParamValue(`${prefix}ImageQuality`) || "high",
+        video_model: workflowParamValue(`${prefix}VideoModel`) || "grok-imagine-video-1.5-preview",
+      };
+    }
+
     function workDispatchFieldsHtml(item) {
       const key = String(item && item.key || "");
       if (key === "image_composer_studio") {
@@ -16993,13 +17464,34 @@
       }
       if (key === "hifly.video.create_by_tts") {
         return taskFieldHtml("数字人", taskSelectHtml("workAvatar", optionHtml("", "加载中...")))
+          + taskFieldHtml("驱动方式", taskSelectHtml("workHiflyDriveMode", optionHtml("tts", "文案驱动") + optionHtml("audio", "音频驱动")))
           + taskFieldHtml("声音", taskSelectHtml("workVoice", optionHtml("", "加载中...")))
           + taskFieldHtml("任务标题", workInputHtml("workHiflyTitle", "text", "数字人口播"))
           + taskFieldHtml("视频时长", `<input id="workHiflyLongVideo" type="hidden" value="false">${workSegmentedHtml("workHiflyDurationMode", [{ value: "short", label: "30秒以内" }, { value: "long", label: "长视频" }], "short")}`)
           + `<div class="field full hidden work-hifly-duration-field" id="workHiflyTargetDurationField"><label for="workHiflyTargetDuration">预计视频时长</label><div class="work-duration-input"><input id="workHiflyTargetDuration" type="number" value="60" min="31" max="300" step="1" inputmode="numeric"><span>秒</span></div><small>当前支持最长 5 分钟，实际成片会随口播节奏略有浮动</small></div>`
           + taskFieldHtml("剪辑方式", `<input id="workHiflyUseTemplate" type="hidden" value="false">${workSegmentedHtml("workHiflyTemplateMode", [{ value: "none", label: "不套模板" }, { value: "template", label: "套用模板" }], "none")}`)
           + `<div class="field full hidden work-hifly-template-field" id="workHiflyTemplateField"><div class="work-hifly-template-head"><label>剪辑模板</label><button class="ghost" type="button" id="workHiflyTemplateChooseBtn">选择模板</button></div><input id="workHiflyTemplate" type="hidden" value=""><div id="workHiflyTemplateSummary"></div></div>`
-          + taskFieldHtml("口播文案", taskTextareaHtml("workHiflyScript", "填写要让数字人口播的完整文案"), true);
+          + taskFieldHtml("口播文案", taskTextareaHtml("workHiflyScript", "填写要让数字人口播的完整文案"), true)
+          + `<div class="field full hidden" id="workHiflyAudioField"><label>驱动音频</label>${assetPickerControlHtml("workHiflyAudio", { mediaType: "audio", output: "url", accept: "audio/*,.mp3,.m4a,.wav", uploadText: "上传音频", selectText: "选择音频" })}</div>`
+          + taskAdvancedFieldsHtml(
+            taskFieldHtml("语速", workInputHtml("workHiflyRate", "number", "1", 'min="0.5" max="2" step="0.1"'))
+            + taskFieldHtml("音量", workInputHtml("workHiflyVolume", "number", "1", 'min="0.1" max="2" step="0.1"'))
+            + taskFieldHtml("语调", workInputHtml("workHiflyPitch", "number", "0", 'min="-12" max="12" step="1"'))
+            + taskFieldHtml("情绪", taskSelectHtml("workHiflyEmotion", optionHtml("happy", "自然积极") + optionHtml("neutral", "中性") + optionHtml("sad", "沉稳低落") + optionHtml("angry", "有力强调")))
+            + taskFieldHtml("音色指令", taskTextareaHtml("workHiflyInstructions", "例如：自然、有亲和力，重点句稍作停顿"), true)
+            + taskFieldHtml("模板混剪素材", assetPickerControlHtml("workHiflyMaterials", { mediaType: "", output: "asset_id", accept: "image/*,video/*", uploadText: "上传素材", selectText: "从素材库选择", multiple: true }), true)
+            + taskFieldHtml("模板处理", workCheckboxGroupHtml([
+              { id: "workHiflyHeaderSwitch", label: "片头开场", checked: true },
+              { id: "workHiflyMaterialSwitch", label: "智能配图", checked: true },
+              { id: "workHiflySubtitleSwitch", label: "自动字幕", checked: true },
+              { id: "workHiflyKeywordSwitch", label: "关键词高亮", checked: true },
+              { id: "workHiflyMaterialSoundSwitch", label: "保留素材原声", checked: false },
+              { id: "workHiflyWatermarkShow", label: "显示水印", checked: false },
+            ]), true)
+            + taskFieldHtml("素材匹配", taskSelectHtml("workHiflyMaterialMatchWay", optionHtml("fuzzyMatch", "模糊匹配") + optionHtml("preciseMatch", "精准匹配")))
+            + taskFieldHtml("素材预处理", taskSelectHtml("workHiflyResourcePreprocess", optionHtml("roughCut", "粗剪") + optionHtml("sliceMerge", "切片拼接")))
+            + taskFieldHtml("素材顺序", taskSelectHtml("workHiflyMaterialComposition", optionHtml("random", "随机") + optionHtml("sequential", "顺序")))
+          );
       }
       if (key === "douyin_leads") {
         return taskFieldHtml("采集关键词", taskTextareaHtml("workDouyinKeyword", "例如：深圳装修、口腔种植、母婴门店"), true)
@@ -17008,8 +17500,7 @@
           + taskFieldHtml("搜索方式", taskSelectHtml("workDouyinMode", optionHtml("script", "浏览器脚本") + optionHtml("api", "接口模式")));
       }
       if (key === "local_bestseller") {
-        return taskFieldHtml("内容天数", workInputHtml("workLocalDays", "number", "30", 'min="1" max="30"'))
-          + taskFieldHtml("生成第几天", workInputHtml("workLocalDay", "number", "1", 'min="1" max="30"'));
+        return localBestsellerFieldsHtml("workLocal", true);
       }
       if (key === "viral_video_remix") {
         return taskFieldHtml("参考视频", assetPickerControlHtml("workViralVideoUrl", { mediaType: "video", output: "url", accept: "video/*", uploadText: "上传视频" }), true)
@@ -17132,15 +17623,20 @@
       }
       if (key === "hifly.video.create_by_tts") {
         const avatar = workValue("workAvatar");
+        const driveMode = workValue("workHiflyDriveMode") || "tts";
         const voice = workValue("workVoice");
         const script = workValue("workHiflyScript");
+        const audioValue = assetPickerSelectedValues("workHiflyAudio")[0] || "";
         const longVideo = workValue("workHiflyLongVideo") === "true";
         const useTemplate = workValue("workHiflyUseTemplate") === "true";
         const videoDuration = longVideo ? workNumber(workValue("workHiflyTargetDuration"), 60, 31, 300) : 30;
         if (!avatar) throw new Error("请选择数字人");
-        if (!voice) throw new Error("请选择声音");
-        if (!script) throw new Error("请填写口播文案");
+        if (driveMode === "tts" && !voice) throw new Error("请选择声音");
+        if (driveMode === "tts" && !script) throw new Error("请填写口播文案");
+        if (driveMode === "audio" && !audioValue) throw new Error("请选择驱动音频");
         if (useTemplate && !workValue("workHiflyTemplate")) throw new Error("请选择剪辑模板");
+        const templatePayload = useTemplate ? selectedWorkHiflyTemplatePayload() : {};
+        const selectedMaterials = useTemplate ? selectedWorkHiflyMaterials() : [];
         return buildCapabilityTaskPlan({
           capabilityId: "hifly.video.create_by_tts",
           title: workValue("workHiflyTitle") || "数字人口播",
@@ -17148,14 +17644,32 @@
           payload: {
             avatar,
             virtualman_id: avatar,
-            voice,
-            script,
-            prompt: script,
+            drive_mode: driveMode,
+            ...(driveMode === "tts" ? { voice, speaker_id: voice, script, text: script, prompt: script } : (/^https?:\/\//i.test(audioValue) ? { audio_url: audioValue } : { audio_asset_id: audioValue })),
+            rate: workValue("workHiflyRate") || "1",
+            speed_ratio: Number(workValue("workHiflyRate") || 1),
+            volume: workValue("workHiflyVolume") || "1",
+            pitch: workValue("workHiflyPitch") || "0",
+            emotion: workValue("workHiflyEmotion") || "happy",
+            instructions: workValue("workHiflyInstructions"),
+            language: "zh-CN",
             long_video: longVideo,
             video_duration: videoDuration,
             duration_seconds: videoDuration,
             use_template: useTemplate,
-            ...(useTemplate ? selectedWorkHiflyTemplatePayload() : {}),
+            ...templatePayload,
+            ...(useTemplate ? {
+              ...(selectedMaterials.length ? { materials: selectedMaterials } : {}),
+              header_switch: !!($("workHiflyHeaderSwitch") && $("workHiflyHeaderSwitch").checked),
+              material_switch: !!($("workHiflyMaterialSwitch") && $("workHiflyMaterialSwitch").checked),
+              subtitle_switch: !!($("workHiflySubtitleSwitch") && $("workHiflySubtitleSwitch").checked),
+              keyword_switch: !!($("workHiflyKeywordSwitch") && $("workHiflyKeywordSwitch").checked),
+              material_sound_switch: !!($("workHiflyMaterialSoundSwitch") && $("workHiflyMaterialSoundSwitch").checked),
+              watermark_show: !!($("workHiflyWatermarkShow") && $("workHiflyWatermarkShow").checked),
+              material_match_way: workValue("workHiflyMaterialMatchWay") || "fuzzyMatch",
+              resource_preprocess_method: workValue("workHiflyResourcePreprocess") || "roughCut",
+              material_composition: workValue("workHiflyMaterialComposition") || "random",
+            } : {}),
           },
         });
       }
@@ -17179,14 +17693,13 @@
         };
       }
       if (key === "local_bestseller") {
-        const days = workNumber(workValue("workLocalDays"), 30, 1, 30);
         return {
           title: "同城爆款视频",
           taskKind: "client_workflow",
           content: "H5 安排工作：同城爆款",
           payload: {
             action: "local_bestseller_daily_video",
-            params: { days, day: workNumber(workValue("workLocalDay"), 1, 1, days), day_mode: "manual" },
+            params: localBestsellerParamsFromFields("workLocal", true),
           },
         };
       }
@@ -17269,8 +17782,6 @@
         if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
         const tasks = selectedAbilityIpDailyTasks();
         if (!tasks.length) throw new Error("请选择至少一种生成内容");
-        const extra = abilityValue("abilityIpRequirement");
-        const requirements = ipDailyRequirementsWithLanguage(extra, templateId);
         return {
           title: node.label || "IP日更文案",
           taskKind: "ip_content_daily",
@@ -17279,10 +17790,10 @@
             template_id: templateId,
             tasks,
             sync_before: !!($("abilityIpSyncBefore") && $("abilityIpSyncBefore").checked),
-            requirements,
-            industry_count: 5,
-            ip_count: 5,
-            moments_count: 20,
+            requirements: ipDailyRequirementsFromFields("abilityIp", templateId),
+            industry_count: abilityNumber("abilityIpIndustryCount", 5, 1, 5),
+            ip_count: abilityNumber("abilityIpIpCount", 5, 1, 5),
+            moments_count: abilityNumber("abilityIpMomentsCount", 20, 1, 20),
           },
         };
       }
@@ -17303,19 +17814,11 @@
         });
       }
       if (capabilityId === "wewrite.article.pipeline") {
-        const idea = abilityValue("abilityArticleIdea");
-        if (!idea) throw new Error("请填写公众号主题");
         return buildCapabilityTaskPlan({
           capabilityId: "wewrite.article.pipeline",
           title: abilityValue("abilityArticleTitle") || node.label || "公众号文章",
           content: "H5 能力工作台：公众号文章",
-          payload: {
-            idea,
-            style: abilityValue("abilityArticleStyle"),
-            include_images: !!($("abilityArticleIncludeImages") && $("abilityArticleIncludeImages").checked),
-            image_count: abilityNumber("abilityArticleImageCount", 3, 0, 6),
-            image_aspect_ratio: "16:9",
-          },
+          payload: articlePayloadFromFields("abilityArticle"),
         });
       }
       if (capabilityId === "ppt.create") {
@@ -17683,17 +18186,16 @@
       if (state.taskAbility === "ip_content_daily") {
         host.innerHTML = taskFieldHtml("关键词和同行模板", ipTemplateSelectControl("taskIpTemplate"), true)
           + taskFieldHtml("生成内容", ipDailyTaskOptionsHtml(), true)
-          + taskFieldHtml("执行前同步", `<label class="task-checkbox ip-daily-sync-option"><input id="taskIpSyncBefore" type="checkbox" checked><span>每次执行前同步新数据</span></label>`, true)
-          + taskFieldHtml("补充要求（可选）", taskTextareaHtml("taskIpRequirement", "例如：口播更有案例感；朋友圈短句分行、多段落留白、适当 Emoji、强痛点和结果导向；图片干净真实"), true);
+          + ipDailyAdvancedFieldsHtml("taskIp");
         loadIpTemplates(true);
         return;
       }
       if (state.taskAbility === "hifly.video.create_by_tts") {
-        host.innerHTML = taskFieldHtml("数字人", taskSelectHtml("taskAvatar", optionHtml("", "加载中...")))
-          + taskFieldHtml("声音", taskSelectHtml("taskVoice", optionHtml("", "加载中...")))
-          + `<div class="field"><label>&nbsp;</label><button class="ghost" type="button" id="autoPickDigitalBtn">自动选择</button></div>`;
+        host.innerHTML = taskDigitalHumanFieldsHtml();
+        initAssetPickerControls(host);
         renderHiflyOptions();
-        if ($("autoPickDigitalBtn")) $("autoPickDigitalBtn").addEventListener("click", autoPickDigital);
+        bindTaskHiflyControls();
+        loadPersonalDigitalHumanTemplates(false).then(renderWorkflowHiflyTemplateOptions).catch(() => {});
         if (state.taskPanelOpen) loadHiflyLibraries();
         return;
       }
@@ -17707,10 +18209,8 @@
         return;
       }
       if (state.taskAbility === "wewrite.article.pipeline") {
-        host.innerHTML = taskFieldHtml("公众号主题", taskTextareaHtml("taskArticleIdea", "例如：必火AI龙虾盒子如何帮老板搭建一人公司"), true)
-          + taskFieldHtml("文章风格", `<input id="taskArticleStyle" placeholder="例如：专业、有案例、适合老板阅读" />`)
-          + taskFieldHtml("配图数量", `<input id="taskArticleImageCount" type="number" min="0" max="6" value="3" />`)
-          + taskFieldHtml("自动配图", `<label class="task-checkbox"><input id="taskArticleIncludeImages" type="checkbox" checked>生成 16:9 横屏配图并插入</label>`, true);
+        host.innerHTML = articleFieldsHtml("taskArticle");
+        initAssetPickerControls(host);
         return;
       }
       if (state.taskAbility === "ppt.create") {
@@ -17931,24 +18431,64 @@
         if (!templateId || Number.isNaN(templateId)) throw new Error("请选择 IP日更服务器模板");
         const tasks = selectedIpDailyTasks();
         if (!tasks.length) throw new Error("请选择至少一种生成内容");
-        const extra = (($("taskIpRequirement") && $("taskIpRequirement").value) || "").trim();
-        const requirements = ipDailyRequirementsWithLanguage(extra, templateId);
         return {
           template_id: templateId,
           tasks,
           sync_before: !!($("taskIpSyncBefore") && $("taskIpSyncBefore").checked),
-          requirements,
-          industry_count: 5,
-          ip_count: 5,
-          moments_count: 20,
+          requirements: ipDailyRequirementsFromFields("taskIp", templateId),
+          industry_count: workflowParamNumber("taskIpIndustryCount", 5, 1, 5),
+          ip_count: workflowParamNumber("taskIpIpCount", 5, 1, 5),
+          moments_count: workflowParamNumber("taskIpMomentsCount", 20, 1, 20),
         };
       }
       if (state.taskAbility === "hifly.video.create_by_tts") {
         const avatar = $("taskAvatar") ? $("taskAvatar").value : "";
+        const driveMode = workflowParamValue("taskHiflyDriveMode") || "tts";
         const voice = $("taskVoice") ? $("taskVoice").value : "";
+        const script = workflowParamValue("taskHiflyScript");
+        const audioValue = assetPickerSelectedValues("taskHiflyAudio")[0] || "";
+        const longVideo = workflowParamValue("taskHiflyDurationMode") === "long";
+        const useTemplate = workflowParamValue("taskHiflyTemplateMode") === "template";
+        const videoDuration = longVideo ? workflowParamNumber("taskHiflyTargetDuration", 60, 31, 300) : 30;
         if (!avatar) throw new Error("请选择数字人");
-        if (!voice) throw new Error("请选择声音");
-        return { avatar, voice };
+        if (driveMode === "tts" && !voice) throw new Error("请选择声音");
+        if (driveMode === "audio" && !audioValue) throw new Error("请选择驱动音频");
+        const styleId = workflowParamValue("taskHiflyTemplate");
+        if (useTemplate && !styleId) throw new Error("请选择剪辑模板");
+        const templatePayload = useTemplate ? digitalHumanTemplatePayload(styleId) : {};
+        const selectedMaterials = useTemplate ? selectedHiflyMaterials("taskHiflyMaterials") : [];
+        return {
+          avatar,
+          virtualman_id: avatar,
+          drive_mode: driveMode,
+          ...(driveMode === "tts"
+            ? { voice, speaker_id: voice, ...(script ? { script, text: script, prompt: script } : {}) }
+            : (/^https?:\/\//i.test(audioValue) ? { audio_url: audioValue } : { audio_asset_id: audioValue })),
+          rate: workflowParamValue("taskHiflyRate") || "1",
+          speed_ratio: Number(workflowParamValue("taskHiflyRate") || 1),
+          volume: workflowParamValue("taskHiflyVolume") || "1",
+          pitch: workflowParamValue("taskHiflyPitch") || "0",
+          emotion: workflowParamValue("taskHiflyEmotion") || "happy",
+          instructions: workflowParamValue("taskHiflyInstructions"),
+          language: "zh-CN",
+          long_video: longVideo,
+          video_duration: videoDuration,
+          duration_seconds: videoDuration,
+          use_template: useTemplate,
+          ...templatePayload,
+          ...(useTemplate ? {
+            ...(selectedMaterials.length ? { materials: selectedMaterials } : {}),
+            header_switch: workflowParamChecked("taskHiflyHeaderSwitch"),
+            material_switch: workflowParamChecked("taskHiflyMaterialSwitch"),
+            subtitle_switch: workflowParamChecked("taskHiflySubtitleSwitch"),
+            keyword_switch: workflowParamChecked("taskHiflyKeywordSwitch"),
+            material_sound_switch: workflowParamChecked("taskHiflyMaterialSoundSwitch"),
+            watermark_show: workflowParamChecked("taskHiflyWatermarkShow"),
+            material_match_way: workflowParamValue("taskHiflyMaterialMatchWay") || "fuzzyMatch",
+            resource_preprocess_method: workflowParamValue("taskHiflyResourcePreprocess") || "roughCut",
+            material_composition: workflowParamValue("taskHiflyMaterialComposition") || "random",
+          } : {}),
+        };
       }
       if (state.taskAbility === "goal.video.pipeline") {
         return collectGoalVideoPayloadFromFields({
@@ -17986,16 +18526,7 @@
         return payload;
       }
       if (state.taskAbility === "wewrite.article.pipeline") {
-        const idea = (($("taskArticleIdea") && $("taskArticleIdea").value) || "").trim();
-        if (!idea) throw new Error("请填写公众号主题");
-        const imageCount = parseInt(($("taskArticleImageCount") && $("taskArticleImageCount").value) || "3", 10);
-        return {
-          idea,
-          style: (($("taskArticleStyle") && $("taskArticleStyle").value) || "").trim(),
-          include_images: !!($("taskArticleIncludeImages") && $("taskArticleIncludeImages").checked),
-          image_count: Number.isNaN(imageCount) ? 3 : Math.max(0, Math.min(6, imageCount)),
-          image_aspect_ratio: "16:9",
-        };
+        return articlePayloadFromFields("taskArticle");
       }
       if (state.taskAbility === "ppt.create") {
         const topic = (($("taskPptTopic") && $("taskPptTopic").value) || "").trim();

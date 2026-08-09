@@ -745,9 +745,18 @@ def _enrich_local_bestseller_workflow_payload(
     params = dict(params)
     persona_profile = _local_bestseller_profile_from_persona(_personal_default_requirements(db, target_user_id))
     existing_profile = params.get("profile") if isinstance(params.get("profile"), dict) else {}
-    merged_profile = {key: _clean_profile_text(value, 1000) for key, value in existing_profile.items() if _clean_profile_text(value, 1000)}
-    # IP persona wins for employee workflows; old templates often carried placeholder profile values.
-    merged_profile.update(persona_profile)
+    explicit_profile = {key: _clean_profile_text(value, 1000) for key, value in existing_profile.items() if _clean_profile_text(value, 1000)}
+    profile_override = params.get("profile_override") is True
+    if profile_override:
+        # One-off H5 tasks may intentionally override selected persona fields while inheriting the rest.
+        merged_profile = dict(persona_profile)
+        merged_profile.update(explicit_profile)
+        if _clean_profile_text(explicit_profile.get("photo_url"), 2000).lower().startswith(("http://", "https://")):
+            merged_profile.pop("photo_asset_id", None)
+    else:
+        # Employee workflows always follow the current IP persona; old templates may carry stale placeholders.
+        merged_profile = dict(explicit_profile)
+        merged_profile.update(persona_profile)
     photo_asset_id = _clean_profile_text(merged_profile.get("photo_asset_id"), 64)
     if photo_asset_id:
         server_photo_url = _server_asset_public_url(db, user_id=target_user_id, asset_id=photo_asset_id)
@@ -771,7 +780,7 @@ def _enrich_local_bestseller_workflow_payload(
     h5_context = dict(h5_context)
     h5_context.setdefault("workflow_started_at", _iso(now))
     h5_context.setdefault("workflow_day_start", _iso(now))
-    h5_context["persona_source"] = "ip_persona_default"
+    h5_context["persona_source"] = "h5_profile_override" if profile_override else "ip_persona_default"
     out["h5_context"] = h5_context
     return out
 
