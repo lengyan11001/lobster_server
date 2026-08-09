@@ -94,6 +94,33 @@ def test_one_off_local_bestseller_can_override_selected_persona_fields(db_sessio
     assert payload["h5_context"]["persona_source"] == "h5_profile_override"
 
 
+def test_custom_local_bestseller_does_not_inherit_persona_fields(db_session, test_user):
+    _add_persona_and_photo(db_session, test_user.id)
+
+    payload = scheduled_tasks._enrich_local_bestseller_workflow_payload(
+        db_session,
+        payload={
+            "action": "local_bestseller_daily_video",
+            "params": {
+                "profile_source": "custom",
+                "profile": {
+                    "name": "本次出镜人",
+                    "style": "真实同城生活感",
+                },
+            },
+        },
+        target_user_id=test_user.id,
+        now=datetime(2026, 7, 28, 6, 0),
+    )
+
+    assert payload["params"]["profile"] == {
+        "name": "本次出镜人",
+        "style": "真实同城生活感",
+    }
+    assert "profile_photo_source_asset_id" not in payload["params"]
+    assert payload["h5_context"]["persona_source"] == "h5_custom_profile"
+
+
 def test_employee_local_bestseller_still_prefers_current_persona(db_session, test_user):
     _add_persona_and_photo(db_session, test_user.id)
 

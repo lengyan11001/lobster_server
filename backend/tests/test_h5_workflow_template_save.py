@@ -173,6 +173,41 @@ def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     assert "20260730-workflow-menu-v2" in html
 
 
+def test_workflow_template_drawer_keeps_four_system_slots_and_restores_personal_sales():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+    system_templates = script.split("function systemWorkflowTemplates()", 1)[1].split("function closeWorkflowOverlays", 1)[0]
+    drawer = script.split("function renderWorkflowTemplates()", 1)[1].split("function userWorkflowTemplateRows", 1)[0]
+    restore = script.split("function restoreSystemWorkflowTemplate", 1)[1].split("function resetWorkflowDraft", 1)[0]
+
+    for template_id in ("system_sales", "system_customer_service", "system_overseas", "system_hr"):
+        assert f'id: "{template_id}"' in script
+    assert ".filter((tpl) => workflowTemplateNodeCount(tpl) > 0)" not in system_templates
+    assert "const rows = systemWorkflowTemplates();" in drawer
+    assert "workflowTemplateRows()" not in drawer
+    assert 'data-workflow-restore-system="${escapeHtml(tpl.id)}"' in drawer
+    assert 'state.workflowEditingTemplateId = personalMirror ? String(personalMirror.id || "") : "";' in restore
+    assert 'system_template_key: id' in restore
+    assert 'source: "system_mirror"' in restore
+    assert "state.workflowNodesDraft = cloneWorkflowNodes(tpl.nodes);" in restore
+    assert "系统推荐模板" in html
+
+
+def test_home_employee_cards_open_the_editor_without_the_detail_dialog():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    strip_handler = script.split('$("customEmployeeStrip")?.addEventListener("click"', 1)[1].split('$("customEmployeeBackdrop")', 1)[0]
+    floor_handler = script.split('$("employeeFloor").addEventListener("click"', 1)[1].split('document.querySelectorAll("[data-device-filter]")', 1)[0]
+    editor = script.split("function openWorkflowTemplateEditor", 1)[1].split("async function loadWorkflowTemplates", 1)[0]
+
+    assert "openWorkflowTemplateEditor" in strip_handler
+    assert "openCustomEmployeeDetail" not in strip_handler
+    assert "openWorkflowTemplateEditor" in floor_handler
+    assert "openCustomEmployeeDetail" not in floor_handler
+    assert "prepareSalesWorkflowDraft();" in editor
+    assert "applyWorkflowTemplate(tpl);" in editor
+    assert 'switchTab("workflow");' in editor
+
+
 def test_active_workflow_status_is_scoped_to_its_current_device_tasks():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     start = script.index("function workflowRecordMatchesDisplayed(row)")

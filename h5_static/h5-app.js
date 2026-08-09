@@ -240,6 +240,7 @@
       personalDigitalHumanTemplateDraft: null,
       workSelectedDigitalHumanTemplate: null,
       personalDefault: null,
+      localBestsellerPersonaPromise: null,
       personalUploadFiles: [],
       personalCustomReferenceFile: null,
       personalGeneratedDocuments: {},
@@ -304,12 +305,18 @@
       composerVoiceDurationTimer: null,
       chatSubmitPending: false,
       chatComposerScrollTimer: null,
+      chatQueue: { processing: [], pending: [] },
+      chatQueueExpanded: false,
+      chatQueueLoading: false,
+      chatQueuePollTimer: null,
       mastraReady: false,
       currentDepartmentId: "",
       currentAbilityKey: "",
       abilityTrail: [],
       chatContext: null,
       speechEnabled: true,
+      speechVoiceUri: "",
+      speechVoices: [],
       speechUnlocked: false,
       speechLastText: "",
       speechLastAt: 0,
@@ -1861,9 +1868,93 @@
       image.src = nextUrl;
     }
 
+    function applySpeechPreference(enabled) {
+      state.speechEnabled = enabled !== false;
+      const button = $("speechPreferenceSwitch");
+      if (button) {
+        button.classList.toggle("is-on", state.speechEnabled);
+        button.setAttribute("aria-checked", state.speechEnabled ? "true" : "false");
+      }
+      if (!state.speechEnabled && "speechSynthesis" in window) {
+        try { window.speechSynthesis.cancel(); } catch {}
+      }
+    }
+
+    function speechVoiceKey(voice) {
+      return String(voice && (voice.voiceURI || voice.name) || "").trim();
+    }
+
+    function selectedSpeechVoice() {
+      const wanted = String(state.speechVoiceUri || "").trim();
+      if (!wanted) return null;
+      return (state.speechVoices || []).find((voice) => speechVoiceKey(voice) === wanted || voice.name === wanted) || null;
+    }
+
+    function refreshSpeechVoices() {
+      if (!("speechSynthesis" in window)) return;
+      const all = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+      const chinese = all.filter((voice) => /^zh(?:-|_|$)/i.test(String(voice.lang || "")));
+      state.speechVoices = chinese.length ? chinese : all;
+      const select = $("speechVoiceSelect");
+      if (!select) return;
+      const options = [`<option value="">系统默认</option>`].concat(state.speechVoices.map((voice) => {
+        const key = speechVoiceKey(voice);
+        const label = `${voice.name || "系统音色"}${voice.lang ? ` · ${voice.lang}` : ""}`;
+        return `<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`;
+      }));
+      select.innerHTML = options.join("");
+      const available = state.speechVoices.some((voice) => speechVoiceKey(voice) === state.speechVoiceUri);
+      select.value = available ? state.speechVoiceUri : "";
+      const hint = $("speechVoiceHint");
+      if (hint) {
+        if (state.speechVoiceUri && !available) hint.textContent = "当前设备无此音色，已使用系统默认";
+        else hint.textContent = selectedSpeechVoice()?.name || "使用系统中文音色";
+      }
+    }
+
+    function applySpeechVoicePreference(voiceUri) {
+      state.speechVoiceUri = String(voiceUri || "").trim();
+      refreshSpeechVoices();
+    }
+
     async function loadHomeHero() {
       const data = await api("/api/h5/home/preferences");
       applyHomeHero(data && data.hero_url);
+      applySpeechPreference(!data || data.speech_enabled !== false);
+      applySpeechVoicePreference(data && data.speech_voice_uri);
+    }
+
+    async function updateSpeechPreference(enabled) {
+      const button = $("speechPreferenceSwitch");
+      if (button) button.disabled = true;
+      try {
+        const data = await api("/api/h5/home/preferences", {
+          method: "PUT",
+          json: { speech_enabled: !!enabled, speech_voice_uri: state.speechVoiceUri || "" },
+        });
+        applySpeechPreference(data.speech_enabled !== false);
+        applySpeechVoicePreference(data.speech_voice_uri || "");
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function updateSpeechVoicePreference(voiceUri) {
+      const select = $("speechVoiceSelect");
+      const preview = $("speechVoicePreviewBtn");
+      if (select) select.disabled = true;
+      if (preview) preview.disabled = true;
+      try {
+        const data = await api("/api/h5/home/preferences", {
+          method: "PUT",
+          json: { speech_enabled: state.speechEnabled, speech_voice_uri: String(voiceUri || "") },
+        });
+        applySpeechPreference(data.speech_enabled !== false);
+        applySpeechVoicePreference(data.speech_voice_uri || "");
+      } finally {
+        if (select) select.disabled = false;
+        if (preview) preview.disabled = false;
+      }
     }
 
     async function uploadHomeHero(file) {
@@ -1962,9 +2053,9 @@
       state.speechUnlocked = true;
     }
 
-    function speakTaskAnnouncement(text) {
+    function speakTaskAnnouncement(text, options = {}) {
       const content = String(text || "").trim();
-      if (!content || !state.speechEnabled) return;
+      if (!content || (!state.speechEnabled && options.force !== true)) return;
       if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return;
       if (!state.speechUnlocked) return;
       const now = Date.now();
@@ -1975,6 +2066,11 @@
       try {
         const utterance = new SpeechSynthesisUtterance(content);
         utterance.lang = "zh-CN";
+        const voice = selectedSpeechVoice();
+        if (voice) {
+          utterance.voice = voice;
+          utterance.lang = voice.lang || "zh-CN";
+        }
         utterance.rate = 1;
         utterance.pitch = 1;
         utterance.volume = 1;
@@ -3144,6 +3240,7 @@
       const modal = $("workflowParamModal");
       if (!modal) return;
       initAssetPickerControls(modal);
+      if ($("workflowParamLocalStyle")) bindLocalBestsellerPersonaControls("workflowParamLocal");
       bindWorkflowGoalVideoModeControls();
       if ($("workflowParamVideoCandidateGroup")) {
         fillCandidateGroupSelect();
@@ -4403,7 +4500,7 @@
           comingSoon: !!item.comingSoon,
           granted_user_ids: [],
         };
-      }).filter((tpl) => workflowTemplateNodeCount(tpl) > 0);
+      });
     }
 
     function closeWorkflowOverlays() {
@@ -4439,6 +4536,28 @@
       if ($("workflowTemplateName")) $("workflowTemplateName").value = "销售24小时员工";
       if ($("workflowNodeTime")) $("workflowNodeTime").value = "09:00";
       if ($("workflowNodeNote")) $("workflowNodeNote").value = "";
+    }
+
+    function restoreSystemWorkflowTemplate(templateId) {
+      const id = String(templateId || "").trim();
+      const tpl = systemWorkflowTemplates().find((item) => String(item && item.id || "") === id);
+      if (!tpl) throw new Error("系统模板不存在");
+      if (!workflowTemplateCanActivate(tpl)) throw new Error("该系统员工暂未开放");
+      const personalMirror = personalSystemWorkflowTemplate(id);
+      state.workflowEditingTemplateId = personalMirror ? String(personalMirror.id || "") : "";
+      state.workflowEditingTemplateMeta = {
+        ...((personalMirror && personalMirror.meta && typeof personalMirror.meta === "object") ? personalMirror.meta : {}),
+        system_template_key: id,
+        source: "system_mirror",
+      };
+      state.workflowViewingTemplateId = personalMirror ? String(personalMirror.id || "") : "";
+      state.workflowViewingTemplateKey = id;
+      state.workflowNodesDraft = cloneWorkflowNodes(tpl.nodes);
+      state.workflowParamNodeId = "";
+      if ($("workflowTemplateName")) {
+        $("workflowTemplateName").value = String((personalMirror && personalMirror.name) || (id === "system_sales" ? "销售24小时员工" : tpl.name) || "系统员工模板");
+      }
+      renderWorkflow();
     }
 
     function resetWorkflowDraft() {
@@ -4907,41 +5026,21 @@
     function renderWorkflowTemplates() {
       const list = $("workflowTemplateList");
       if (!list) return;
-      if (state.workflowTemplatesLoading) {
-        list.innerHTML = `<div class="hint">加载中...</div>`;
-        return;
-      }
-      const rows = sortWorkflowTemplatesForDisplay(workflowTemplateRows());
-      if (!rows.length) {
-        list.innerHTML = `<div class="hint">暂无模板</div>`;
-        return;
-      }
+      const rows = systemWorkflowTemplates();
       list.innerHTML = rows.map((tpl) => {
-        const own = tpl.source === "own";
-        const system = tpl.source === "system";
         const comingSoon = workflowTemplateIsComingSoon(tpl);
-        const canActivate = workflowTemplateCanActivate(tpl);
         const active = workflowTemplateIsActive(tpl);
         const nodeCount = workflowTemplateNodeCount(tpl);
-        const baseSourceText = comingSoon ? "敬请期待" : (system ? "系统提供 · 全员可见" : (tpl.source === "granted" ? `来自 ${tpl.owner_name || "代理商"}` : `${nodeCount} 个节点`));
-        const sourceText = active ? `启用中 · ${baseSourceText}` : baseSourceText;
-        const copyBtn = canActivate ? `<button class="ghost" type="button" data-workflow-copy="${escapeHtml(tpl.id)}">复制</button>` : "";
-        const activateBtn = !canActivate
-          ? `<button class="ghost" type="button" disabled aria-disabled="true">敬请期待</button>`
-          : active
-          ? `<button class="ghost danger-text" type="button" data-workflow-stop-template="${escapeHtml(tpl.id)}">停用</button>`
-          : `<button type="button" data-workflow-activate-template="${escapeHtml(tpl.id)}">启用</button>`;
-        const deleteBtn = own ? `<button class="ghost" type="button" data-workflow-delete="${tpl.id}">删除</button>` : "";
+        const sourceText = comingSoon ? "系统推荐 · 敬请期待" : `系统推荐 · 固定模板 · ${nodeCount} 个节点`;
         return `<div class="workflow-template-item${active ? " active" : ""}${comingSoon ? " coming-soon" : ""}">
           <div>
             <strong>${escapeHtml(tpl.name || "工作流模板")}${active ? `<b class="workflow-active-badge">启用中</b>` : ""}</strong>
-            <span>${escapeHtml(sourceText)}${system ? ` · ${escapeHtml(nodeCount + " 个节点")}` : ""}</span>
+            <span>${escapeHtml(sourceText)}</span>
           </div>
           <div class="workflow-template-actions">
-            ${own ? `<button type="button" data-workflow-load="${escapeHtml(tpl.id)}">编辑</button>` : ""}
-            ${copyBtn}
-            ${activateBtn}
-            ${deleteBtn}
+            ${comingSoon
+              ? `<button class="ghost" type="button" disabled aria-disabled="true">敬请期待</button>`
+              : `<button type="button" data-workflow-restore-system="${escapeHtml(tpl.id)}">恢复系统模板</button>`}
           </div>
         </div>`;
       }).join("");
@@ -5301,6 +5400,26 @@
       state.workflowNodesDraft = cloneWorkflowNodes(tpl.nodes);
       if ($("workflowTemplateName")) $("workflowTemplateName").value = tpl.name || "";
       renderWorkflow();
+    }
+
+    function openWorkflowTemplateEditor(id) {
+      const tpl = workflowTemplateById(id);
+      if (!tpl) throw new Error("员工模板不存在");
+      if (tpl.source === "system" && String(tpl.id || "") === "system_sales") {
+        prepareSalesWorkflowDraft();
+      } else {
+        applyWorkflowTemplate(tpl);
+        if (!workflowTemplateCanEdit(tpl)) {
+          state.workflowEditingTemplateId = "";
+          state.workflowEditingTemplateMeta = {
+            copied_from: String(tpl.id || ""),
+            copied_source: String(tpl.source || ""),
+          };
+          state.workflowViewingTemplateId = "";
+        }
+      }
+      closeCustomEmployeeDialog();
+      switchTab("workflow");
     }
 
     async function loadWorkflowTemplates(force = false) {
@@ -10975,7 +11094,14 @@
     function setLocalBestsellerFieldsFromParams(prefix, params, includeDay = true) {
       const source = params && typeof params === "object" ? params : {};
       const profile = source.profile && typeof source.profile === "object" ? source.profile : {};
-      setFieldValue(`${prefix}Photo`, profile.photo_url || profile.photo_asset_id || "");
+      const profileSource = String(source.profile_source || "").trim().toLowerCase();
+      const style = profileSource === "persona" ? "" : (profile.style || "");
+      // Apply the source first because changing away from the persona intentionally clears profile fields.
+      setFieldValue(`${prefix}Style`, style);
+      setAssetPickerPayloadValue(`${prefix}Photo`, {
+        asset_id: profile.photo_asset_id || "",
+        image_url: profile.photo_url || "",
+      });
       setFieldValue(`${prefix}Video`, profile.uploaded_video_url || "");
       setFieldValue(`${prefix}Days`, source.days || 30);
       if (includeDay) setFieldValue(`${prefix}Day`, source.day || 1);
@@ -10989,7 +11115,6 @@
       setFieldValue(`${prefix}Hometown`, profile.hometown || "");
       setFieldValue(`${prefix}Age`, profile.age_label || profile.age || "");
       setFieldValue(`${prefix}TargetAge`, profile.target_age || profile.target_audience || "");
-      setFieldValue(`${prefix}Style`, profile.style || "");
       setFieldValue(`${prefix}ImageModel`, source.model || "gpt-image-2");
       setFieldValue(`${prefix}ImageQuality`, source.quality || "high");
       setFieldValue(`${prefix}VideoModel`, source.video_model || "grok-imagine-video-1.5-preview");
@@ -17392,24 +17517,152 @@
         );
     }
 
+    const LOCAL_BESTSELLER_PERSONA_FIELD_SUFFIXES = [
+      "Photo", "Name", "Nickname", "Gender", "Identity", "Industry",
+      "City", "Province", "Hometown", "Age", "TargetAge",
+    ];
+
+    function localBestsellerFirstValue(...values) {
+      for (const value of values) {
+        const text = String(value == null ? "" : value).trim();
+        if (text) return text;
+      }
+      return "";
+    }
+
+    function localBestsellerPersonaProfile() {
+      const item = state.personalDefault && typeof state.personalDefault === "object" ? state.personalDefault : {};
+      const req = item.requirements && typeof item.requirements === "object" ? item.requirements : {};
+      const basic = req.basic_profile && typeof req.basic_profile === "object"
+        ? req.basic_profile
+        : (req.profile && typeof req.profile === "object" ? req.profile : {});
+      const business = req.business_description && typeof req.business_description === "object"
+        ? req.business_description
+        : (req.business && typeof req.business === "object" ? req.business : {});
+      const name = localBestsellerFirstValue(req.profile_name, req.name, basic.name);
+      return {
+        name,
+        nickname: localBestsellerFirstValue(req.nickname, req.short_video_nickname, basic.nickname, name),
+        gender: localBestsellerFirstValue(req.gender, req.sex, basic.gender, basic.sex),
+        identity: localBestsellerFirstValue(req.identity, req.role, basic.role),
+        industry: localBestsellerFirstValue(req.industry, req.product, business.product, req.share_topic, basic.share_topic, req.role, basic.role),
+        city: localBestsellerFirstValue(req.current_city, req.city, basic.current_city, basic.city),
+        province: localBestsellerFirstValue(req.current_province, req.province, basic.current_province, basic.province),
+        hometown: localBestsellerFirstValue(req.hometown, basic.hometown),
+        age_label: localBestsellerFirstValue(req.birth_era, basic.birth_era),
+        target_age: localBestsellerFirstValue(req.target_customer, business.target_customer),
+        style: localBestsellerFirstValue(req.video_style, basic.video_style, req.style, basic.style),
+        photo_asset_id: localBestsellerFirstValue(req.profile_photo_asset_id, req.photo_asset_id, req.portrait_asset_id, req.image_asset_id, basic.profile_photo_asset_id, basic.photo_asset_id, basic.portrait_asset_id, basic.image_asset_id),
+        photo_url: localBestsellerFirstValue(req.profile_photo_url, req.photo_url, req.portrait_url, req.image_url, basic.profile_photo_url, basic.photo_url, basic.portrait_url, basic.image_url),
+      };
+    }
+
+    async function ensureLocalBestsellerPersonaLoaded() {
+      if (state.personalDefault !== null) return state.personalDefault || {};
+      if (state.localBestsellerPersonaPromise) return state.localBestsellerPersonaPromise;
+      state.localBestsellerPersonaPromise = api("/api/ip-content/personal-default", { cache: "no-store" })
+        .then((data) => {
+          state.personalDefault = data && data.item ? data.item : {};
+          return state.personalDefault;
+        })
+        .finally(() => { state.localBestsellerPersonaPromise = null; });
+      return state.localBestsellerPersonaPromise;
+    }
+
+    function setLocalBestsellerPersonaLocked(prefix, locked) {
+      LOCAL_BESTSELLER_PERSONA_FIELD_SUFFIXES.forEach((suffix) => {
+        const control = $(`${prefix}${suffix}`);
+        const field = control && control.closest ? control.closest(".field") : null;
+        if (!field) return;
+        field.classList.toggle("local-persona-locked", !!locked);
+        field.querySelectorAll("input, select, textarea, button").forEach((item) => { item.disabled = !!locked; });
+      });
+    }
+
+    function clearLocalBestsellerPersonaFields(prefix) {
+      setAssetPickerPayloadValue(`${prefix}Photo`, {});
+      ["Name", "Nickname", "Gender", "Identity", "Industry", "City", "Province", "Hometown", "Age", "TargetAge"]
+        .forEach((suffix) => setFieldValue(`${prefix}${suffix}`, ""));
+    }
+
+    function applyLocalBestsellerPersonaFields(prefix) {
+      const profile = localBestsellerPersonaProfile();
+      setAssetPickerPayloadValue(`${prefix}Photo`, {
+        asset_id: profile.photo_asset_id,
+        image_url: profile.photo_url,
+      });
+      const mappings = [
+        ["Name", "name", "姓名"], ["Nickname", "nickname", "昵称"], ["Gender", "gender", "性别"],
+        ["Identity", "identity", "身份"], ["Industry", "industry", "行业/产品"], ["City", "city", "城市"],
+        ["Province", "province", "省份"], ["Hometown", "hometown", "家乡"], ["Age", "age_label", "年龄"],
+        ["TargetAge", "target_age", "目标客户"],
+      ];
+      mappings.forEach(([suffix, key]) => setFieldValue(`${prefix}${suffix}`, profile[key] || ""));
+      const filled = mappings.filter(([, key]) => profile[key]).length + (profile.photo_asset_id || profile.photo_url ? 1 : 0);
+      const missing = mappings.filter(([, key]) => !profile[key]).map(([, , label]) => label);
+      const status = $(`${prefix}PersonaStatus`);
+      if (status) {
+        const style = profile.style ? ` · 风格：${profile.style}` : "";
+        status.textContent = filled
+          ? `已从个人 IP 人设填充 ${filled} 项${style}${missing.length ? ` · 未填写：${missing.join("、")}` : ""}`
+          : "个人 IP 人设暂无可用资料，请先完善人设或选择其他画面风格";
+      }
+      setLocalBestsellerPersonaLocked(prefix, true);
+    }
+
+    function bindLocalBestsellerPersonaControls(prefix) {
+      const style = $(`${prefix}Style`);
+      if (!style || style.dataset.localPersonaBound === "1") return;
+      style.dataset.localPersonaBound = "1";
+      style.dataset.localPersonaActive = style.value ? "0" : "1";
+
+      const usePersona = async () => {
+        if (style.value) return;
+        style.dataset.localPersonaActive = "1";
+        setLocalBestsellerPersonaLocked(prefix, true);
+        const status = $(`${prefix}PersonaStatus`);
+        if (status) status.textContent = "正在读取个人 IP 人设...";
+        try {
+          await ensureLocalBestsellerPersonaLoaded();
+          if (!style.value) applyLocalBestsellerPersonaFields(prefix);
+        } catch (err) {
+          setLocalBestsellerPersonaLocked(prefix, false);
+          if (status) status.textContent = err.message || "个人 IP 人设读取失败，可选择其他画面风格后填写";
+        }
+      };
+
+      style.addEventListener("change", () => {
+        if (!style.value) {
+          usePersona();
+          return;
+        }
+        if (style.dataset.localPersonaActive !== "0") clearLocalBestsellerPersonaFields(prefix);
+        style.dataset.localPersonaActive = "0";
+        setLocalBestsellerPersonaLocked(prefix, false);
+        const status = $(`${prefix}PersonaStatus`);
+        if (status) status.textContent = "已清除 IP 人设内容，请填写本次使用的人物信息";
+      });
+      usePersona();
+    }
+
     function localBestsellerFieldsHtml(prefix, includeDay = true) {
-      return taskFieldHtml("人物照片", assetPickerControlHtml(`${prefix}Photo`, { mediaType: "image", output: "url", uploadText: "上传人物照片", selectText: "从素材库选择" }), true)
+      return taskFieldHtml("画面风格", taskSelectHtml(`${prefix}Style`, optionHtml("", "使用个人 IP 人设") + optionHtml("真实同城生活感", "真实同城生活感") + optionHtml("轻奢商业质感", "轻奢商业质感") + optionHtml("烟火气纪实感", "烟火气纪实感")) + `<small class="local-persona-status" id="${prefix}PersonaStatus">正在读取个人 IP 人设...</small>`, true)
+        + taskFieldHtml("人物照片", assetPickerControlHtml(`${prefix}Photo`, { mediaType: "image", output: "url", uploadText: "上传人物照片", selectText: "从素材库选择" }), true)
         + taskFieldHtml("参考视频", assetPickerControlHtml(`${prefix}Video`, { mediaType: "video", output: "url", accept: "video/*", uploadText: "上传参考视频", selectText: "从素材库选择" }), true)
         + taskFieldHtml("规划天数", workInputHtml(`${prefix}Days`, "number", "30", 'min="1" max="30"'))
         + (includeDay ? taskFieldHtml("生成第几天", workInputHtml(`${prefix}Day`, "number", "1", 'min="1" max="30"')) : "")
-        + taskFieldHtml("姓名", workInputHtml(`${prefix}Name`, "text", "", 'placeholder="留空使用 IP 人设"'))
-        + taskFieldHtml("短视频昵称", workInputHtml(`${prefix}Nickname`, "text", "", 'placeholder="留空使用 IP 人设"'))
-        + taskFieldHtml("性别", taskSelectHtml(`${prefix}Gender`, optionHtml("", "使用 IP 人设") + optionHtml("female", "女") + optionHtml("male", "男")))
+        + taskFieldHtml("姓名", workInputHtml(`${prefix}Name`, "text", "", 'placeholder="请输入出镜人姓名"'))
+        + taskFieldHtml("短视频昵称", workInputHtml(`${prefix}Nickname`, "text", "", 'placeholder="请输入账号昵称"'))
+        + taskFieldHtml("性别", taskSelectHtml(`${prefix}Gender`, optionHtml("", "请选择") + optionHtml("female", "女") + optionHtml("male", "男")))
         + taskFieldHtml("身份人设", workInputHtml(`${prefix}Identity`, "text", "", 'placeholder="例如：女老板"'))
-        + taskFieldHtml("行业", workInputHtml(`${prefix}Industry`, "text", "", 'placeholder="例如：大健康"'))
+        + taskFieldHtml("行业/产品", workInputHtml(`${prefix}Industry`, "text", "", 'placeholder="例如：大健康、门店短视频获客服务"'))
         + taskFieldHtml("当前城市", workInputHtml(`${prefix}City`, "text", "", 'placeholder="例如：深圳"'))
         + taskFieldHtml("省份", workInputHtml(`${prefix}Province`, "text", "", 'placeholder="例如：广东"'))
         + taskFieldHtml("家乡", workInputHtml(`${prefix}Hometown`, "text", "", 'placeholder="例如：广东潮汕"'))
         + taskFieldHtml("年龄标签", workInputHtml(`${prefix}Age`, "text", "", 'placeholder="例如：80后"'))
-        + taskFieldHtml("目标人群", workInputHtml(`${prefix}TargetAge`, "text", "", 'placeholder="例如：60/70/80后"'))
+        + taskFieldHtml("目标客户", workInputHtml(`${prefix}TargetAge`, "text", "", 'placeholder="例如：25-45 岁的本地门店老板"'))
         + taskAdvancedFieldsHtml(
-          taskFieldHtml("画面风格", taskSelectHtml(`${prefix}Style`, optionHtml("", "使用 IP 人设") + optionHtml("真实同城生活感", "真实同城生活感") + optionHtml("轻奢商业质感", "轻奢商业质感") + optionHtml("烟火气纪实感", "烟火气纪实感")))
-          + taskFieldHtml("图片模型", taskSelectHtml(`${prefix}ImageModel`, optionHtml("gpt-image-2", "影梦lite")))
+          taskFieldHtml("图片模型", taskSelectHtml(`${prefix}ImageModel`, optionHtml("gpt-image-2", "影梦lite")))
           + taskFieldHtml("图片质量", taskSelectHtml(`${prefix}ImageQuality`, optionHtml("high", "高") + optionHtml("medium", "中") + optionHtml("low", "低")))
           + taskFieldHtml("视频模型", taskSelectHtml(`${prefix}VideoModel`, optionHtml("grok-imagine-video-1.5-preview", "影梦1.5 Plus")))
         );
@@ -17417,6 +17670,7 @@
 
     function localBestsellerParamsFromFields(prefix, includeDay = true) {
       const days = workflowParamNumber(`${prefix}Days`, 30, 1, 30);
+      const usePersona = !workflowParamValue(`${prefix}Style`);
       const photoValue = assetPickerSelectedValues(`${prefix}Photo`)[0] || "";
       const videoValue = assetPickerSelectedValues(`${prefix}Video`)[0] || "";
       const profile = {
@@ -17441,7 +17695,8 @@
         days,
         ...(includeDay ? { day: workflowParamNumber(`${prefix}Day`, 1, 1, days), day_mode: "manual" } : {}),
         profile,
-        profile_override: Object.keys(profile).length > 0,
+        profile_source: usePersona ? "persona" : "custom",
+        profile_override: !usePersona && Object.keys(profile).length > 0,
         model: workflowParamValue(`${prefix}ImageModel`) || "gpt-image-2",
         quality: workflowParamValue(`${prefix}ImageQuality`) || "high",
         video_model: workflowParamValue(`${prefix}VideoModel`) || "grok-imagine-video-1.5-preview",
@@ -17551,6 +17806,7 @@
       $("workDispatchFields").innerHTML = workDispatchFieldsHtml(item);
       modal.classList.remove("hidden");
       initAssetPickerControls(modal);
+      if (item.key === "local_bestseller") bindLocalBestsellerPersonaControls("workLocal");
       if (item.key === "comfly.seedance.tvc.pipeline") bindSeedanceControls("workSeedance");
       if (item.key === "hifly.video.create_by_tts") {
         renderWorkHiflyOptions();
@@ -19537,6 +19793,16 @@
       return `${(raw || "").trim()}${chatContextMarker()}`;
     }
 
+    function visibleChatMessageContent(content) {
+      return String(content || "").split(/\n【H5来源上下文】\n/)[0].trim();
+    }
+
+    function preserveChatContextMarker(content, original) {
+      const source = String(original || "");
+      const marker = source.indexOf("\n【H5来源上下文】\n");
+      return `${String(content || "").trim()}${marker >= 0 ? source.slice(marker) : ""}`;
+    }
+
     function normalizeMarkdownLinks(text) {
       return String(text || "")
         .replace(/`(https?:\/\/[^`\s]+)`/g, "$1")
@@ -20320,7 +20586,145 @@
       if (ev.type === "tool_end") return p.name ? `能力完成：${p.name}` : "能力完成";
       if (ev.type === "progress") return p.text || p.message || "处理中";
       if (ev.type === "approval_required") return "等待确认后执行";
+      if (ev.type === "cancelled") return p.text || "已停止";
       return "";
+    }
+
+    function activeQueueMessage() {
+      return Array.isArray(state.chatQueue.processing) ? state.chatQueue.processing[0] || null : null;
+    }
+
+    function chatQueueRowHtml(row, processing = false) {
+      const visibleContent = visibleChatMessageContent(row.content || "");
+      const content = String(visibleContent || (row.attachments || []).length && `已添加 ${(row.attachments || []).length} 个素材` || "未命名指令").trim();
+      const meta = processing
+        ? "执行中"
+        : `${row.queue_mode === "steer" ? "引导任务" : "排队任务"} · 第 ${Number(row.queue_position || 1)} 位`;
+      const index = processing ? "●" : String(row.queue_position || 1);
+      const actions = processing
+        ? `<button class="chat-queue-action danger" type="button" data-chat-cancel="${escapeHtml(row.id || "")}" aria-label="停止任务" title="停止任务"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1"></rect></svg></button>`
+        : `<button class="chat-queue-action" type="button" data-chat-queue-edit="${escapeHtml(row.id || "")}" aria-label="编辑" title="编辑"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg></button>
+          <button class="chat-queue-action danger" type="button" data-chat-queue-delete="${escapeHtml(row.id || "")}" aria-label="删除" title="删除"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"></path></svg></button>`;
+      const edit = processing ? "" : `<div class="chat-queue-edit hidden">
+          <textarea data-chat-queue-edit-input maxlength="8000">${escapeHtml(visibleContent)}</textarea>
+          <button type="button" data-chat-queue-save="${escapeHtml(row.id || "")}">保存</button>
+          <button class="ghost" type="button" data-chat-queue-edit-cancel>取消</button>
+        </div>`;
+      return `<div class="chat-queue-row${processing ? " is-processing" : ""}" data-chat-queue-row="${escapeHtml(row.id || "")}">
+        <span class="chat-queue-index">${escapeHtml(index)}</span>
+        <div class="chat-queue-copy"><strong>${escapeHtml(content)}</strong><small>${escapeHtml(meta)}</small></div>
+        <div class="chat-queue-actions">${actions}</div>
+        ${edit}
+      </div>`;
+    }
+
+    function renderChatQueue() {
+      const bar = $("chatQueueBar");
+      const list = $("chatQueueList");
+      const summary = $("chatQueueSummary");
+      if (!bar || !list || !summary) return;
+      const processing = Array.isArray(state.chatQueue.processing) ? state.chatQueue.processing : [];
+      const pending = Array.isArray(state.chatQueue.pending) ? state.chatQueue.pending : [];
+      const total = processing.length + pending.length;
+      bar.classList.toggle("hidden", !total);
+      $("chatQueueSummaryText").textContent = [
+        processing.length ? `${processing.length} 个执行中` : "",
+        pending.length ? `${pending.length} 个排队` : "",
+      ].filter(Boolean).join(" · ") || "暂无任务";
+      summary.setAttribute("aria-expanded", state.chatQueueExpanded ? "true" : "false");
+      list.classList.toggle("hidden", !state.chatQueueExpanded);
+      list.innerHTML = processing.map((row) => chatQueueRowHtml(row, true))
+        .concat(pending.map((row) => chatQueueRowHtml(row, false)))
+        .join("");
+      const steer = $("composerSteerBtn");
+      const steerTarget = processing.find((row) => row.can_steer);
+      if (steer) {
+        steer.classList.toggle("hidden", !steerTarget);
+        steer.dataset.targetMessageId = steerTarget ? steerTarget.id : "";
+      }
+      const send = $("sendBtn");
+      if (send) send.title = processing.length ? "加入排队" : "发送";
+    }
+
+    function scheduleChatQueuePoll() {
+      if (state.chatQueuePollTimer) clearTimeout(state.chatQueuePollTimer);
+      state.chatQueuePollTimer = null;
+      const total = (state.chatQueue.processing || []).length + (state.chatQueue.pending || []).length;
+      if (!total || !state.token || !state.activeChatSessionId) return;
+      state.chatQueuePollTimer = setTimeout(() => {
+        state.chatQueuePollTimer = null;
+        if (activeViewKey() !== "messages" || document.visibilityState === "hidden") return;
+        loadChatQueue().catch(() => {});
+      }, 3000);
+    }
+
+    async function loadChatQueue() {
+      if (!state.token || !state.activeChatSessionId || state.chatQueueLoading) return;
+      const sessionId = state.activeChatSessionId;
+      state.chatQueueLoading = true;
+      try {
+        const data = await api(`/api/mastra-chat/queue?session_id=${encodeURIComponent(sessionId)}`);
+        if (sessionId !== state.activeChatSessionId) return;
+        state.chatQueue = {
+          processing: Array.isArray(data.processing) ? data.processing : [],
+          pending: Array.isArray(data.pending) ? data.pending : [],
+        };
+        renderChatQueue();
+      } finally {
+        state.chatQueueLoading = false;
+        scheduleChatQueuePoll();
+      }
+    }
+
+    async function cancelChatQueueMessage(messageId, button) {
+      if (!messageId) return;
+      if (button) button.disabled = true;
+      try {
+        const data = await api(`/api/mastra-chat/messages/${encodeURIComponent(messageId)}/cancel`, {
+          method: "POST",
+          blocking: false,
+        });
+        closeAllMessageStreams();
+        if (data.side_effects_may_continue) toast("已停止 AI 调度，已开始的外部任务可能仍会继续");
+        else toast("已停止");
+        await Promise.all([loadHistory({ includeEvents: true }), loadChatQueue()]);
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function deleteChatQueueMessage(messageId, button) {
+      if (!messageId) return;
+      if (button) button.disabled = true;
+      try {
+        await api(`/api/mastra-chat/messages/${encodeURIComponent(messageId)}`, { method: "DELETE", blocking: false });
+        closeAllMessageStreams();
+        await Promise.all([loadHistory({ includeEvents: true }), loadChatQueue()]);
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function saveChatQueueMessage(messageId, row, button) {
+      const input = row && row.querySelector("[data-chat-queue-edit-input]");
+      const content = String(input && input.value || "").trim();
+      if (!content) {
+        toast("请输入指令内容");
+        return;
+      }
+      if (button) button.disabled = true;
+      try {
+        const queued = (state.chatQueue.pending || []).find((item) => String(item.id || "") === String(messageId));
+        await api(`/api/mastra-chat/messages/${encodeURIComponent(messageId)}`, {
+          method: "PATCH",
+          blocking: false,
+          json: { content: preserveChatContextMarker(content, queued && queued.content) },
+        });
+        closeAllMessageStreams();
+        await Promise.all([loadHistory({ includeEvents: true }), loadChatQueue()]);
+      } finally {
+        if (button) button.disabled = false;
+      }
     }
 
     function closeStream(messageId) {
@@ -20359,7 +20763,13 @@
             msg.error = (ev.payload && (ev.payload.error || ev.payload.detail || ev.payload.message)) || msg.error;
             msg.finished_at = ev.created_at || new Date().toISOString();
           }
-          rememberMessageStatus(msg, { announce: true });
+          if (ev.type === "cancelled") {
+            msg.status = "cancelled";
+            msg.reply_text = (ev.payload && ev.payload.text) || "已停止当前任务";
+            msg.finished_at = ev.created_at || new Date().toISOString();
+          }
+          const steeredCancellation = ev.type === "cancelled" && ev.payload && ev.payload.steered;
+          rememberMessageStatus(msg, { announce: !steeredCancellation });
           renderOfficeEmployees();
           renderWorkList();
         }
@@ -20403,6 +20813,17 @@
           ensureConversationComposerReady();
         }
       }
+      if (ev.type === "cancelled") {
+        bubble.classList.remove("err");
+        setBubbleText(bubble, (ev.payload && ev.payload.text) || "已停止当前任务");
+        if (!historical) {
+          closeStream(messageId);
+          ensureConversationComposerReady({ scroll: false });
+        }
+      }
+      if (!historical && ["claimed", "final", "error", "cancelled"].includes(ev.type)) {
+        loadChatQueue().catch(() => {});
+      }
     }
 
     function startPolling(messageId, bubble, lastEventId = 0) {
@@ -20432,6 +20853,10 @@
               bubble.classList.add("err");
               setBubbleText(bubble, data.message.error || "处理失败");
             }
+            if (data.message.status === "cancelled") {
+              bubble.classList.remove("err");
+              setBubbleText(bubble, data.message.reply_text || "已停止当前任务");
+            }
             closeStream(messageId);
             ensureConversationComposerReady();
           }
@@ -20453,7 +20878,7 @@
       let last = Math.max(0, Number(lastEventId || 0));
       const es = new EventSource(apiUrl(`/api/h5-chat/messages/${messageId}/events?token=${encodeURIComponent(state.token)}&last_event_id=${last}`));
       state.streams.set(messageId, es);
-      ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error", "approval_required", "publish_pending", "publish_claimed", "publish_result"].forEach((type) => {
+      ["queued", "claimed", "thinking", "progress", "tool_start", "tool_end", "delta", "final", "error", "cancelled", "approval_required", "publish_pending", "publish_claimed", "publish_result"].forEach((type) => {
         es.addEventListener(type, (evt) => {
           try {
             const ev = JSON.parse(evt.data || "{}");
@@ -20483,11 +20908,12 @@
       const events = Array.isArray(item.events) ? item.events : [];
       const isFinal = ["completed", "failed", "cancelled"].includes(msg.status);
       const hasDelta = events.some((ev) => ev && ev.type === "delta");
-      const userBubble = addBubble("user", msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? `已添加 ${msg.attachments.length} 个素材` : ""));
+      const userBubble = addBubble("user", visibleChatMessageContent(msg.content) || (Array.isArray(msg.attachments) && msg.attachments.length ? `已添加 ${msg.attachments.length} 个素材` : ""));
       renderBubbleAttachments(userBubble, msg.attachments || []);
       let initialText = msg.mode === "mastra" ? "正在继续处理..." : "已恢复，等待本地设备处理...";
       if (msg.status === "completed") initialText = msg.reply_text || "处理完成。";
       if (msg.status === "failed") initialText = msg.error || "处理失败";
+      if (msg.status === "cancelled") initialText = msg.reply_text || "已停止当前任务";
       if (!isFinal && hasDelta) initialText = "";
       const bot = addBubble("bot", initialText);
       bot._placeholder = !isFinal && !hasDelta;
@@ -20709,16 +21135,17 @@
       const rows = Array.isArray(state.chatSessions) ? state.chatSessions : [];
       host.innerHTML = rows.length ? rows.map((row) => {
         const active = String(row.id || "") === String(state.activeChatSessionId || "");
-        const permission = row.permission_mode === "full" ? "完全授权" : "需要确认";
+        const permission = row.system_managed ? "系统归档" : (row.permission_mode === "full" ? "完全授权" : "需要确认");
+        const actions = row.system_managed ? "" : `<div class="chat-session-actions">
+            <button type="button" data-chat-session-rename="${escapeHtml(row.id || "")}" aria-label="重命名" title="重命名">✎</button>
+            <button type="button" data-chat-session-delete="${escapeHtml(row.id || "")}" aria-label="删除" title="删除">×</button>
+          </div>`;
         return `<div class="chat-session-row${active ? " active" : ""}" data-chat-session-row="${escapeHtml(row.id || "")}">
           <button class="chat-session-select" type="button" data-chat-session-select="${escapeHtml(row.id || "")}">
             <strong>${escapeHtml(row.title || "新会话")}</strong>
             <span>${escapeHtml(permission)} · ${escapeHtml(String(row.message_count || 0))} 条消息</span>
           </button>
-          <div class="chat-session-actions">
-            <button type="button" data-chat-session-rename="${escapeHtml(row.id || "")}" aria-label="重命名" title="重命名">✎</button>
-            <button type="button" data-chat-session-delete="${escapeHtml(row.id || "")}" aria-label="删除" title="删除">×</button>
-          </div>
+          ${actions}
         </div>`;
       }).join("") : `<div class="hint">暂无会话</div>`;
     }
@@ -20735,7 +21162,8 @@
       if (requestId !== state.chatSessionsRequestSeq) return state.chatSessions;
       state.chatSessions = Array.isArray(data.sessions) ? data.sessions : [];
       if (!state.chatSessions.some((row) => row.id === state.activeChatSessionId)) {
-        state.activeChatSessionId = state.chatSessions[0] ? state.chatSessions[0].id : "";
+        const preferred = state.chatSessions.find((row) => !row.system_managed) || state.chatSessions[0];
+        state.activeChatSessionId = preferred ? preferred.id : "";
       }
       if (state.activeChatSessionId) localStorage.setItem(brandStorageKey("lobster_h5_chat_session_id"), state.activeChatSessionId);
       syncChatSessionUi();
@@ -20767,6 +21195,9 @@
       state.activeChatSessionId = id;
       localStorage.setItem(brandStorageKey("lobster_h5_chat_session_id"), id);
       state.historyItems = [];
+      state.chatQueue = { processing: [], pending: [] };
+      state.chatQueueExpanded = false;
+      renderChatQueue();
       state.pendingApprovals = [];
       state.activeApprovalId = "";
       $("chatApprovalModal")?.classList.add("hidden");
@@ -20917,6 +21348,7 @@
         });
         state.messageStatusReady = true;
         renderOfficeEmployees();
+        loadChatQueue().catch(() => {});
         clearRenderedMessages();
         if (!items.length) {
           scrollMessagesToBottom();
@@ -21836,7 +22268,11 @@
     $("customEmployeeStrip")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-custom-employee-detail]");
       if (!btn) return;
-      openCustomEmployeeDetail(btn.dataset.customEmployeeDetail || "");
+      try {
+        openWorkflowTemplateEditor(btn.dataset.customEmployeeDetail || "");
+      } catch (err) {
+        toast(err.message || "员工模板打开失败");
+      }
     });
     $("customEmployeeBackdrop")?.addEventListener("click", closeCustomEmployeeDialog);
     $("customEmployeeCloseBtn")?.addEventListener("click", closeCustomEmployeeDialog);
@@ -22054,11 +22490,22 @@
     });
     $("workflowTemplateCloseBtn")?.addEventListener("click", () => $("workflowTemplateDrawer")?.classList.add("hidden"));
     $("workflowTemplateList")?.addEventListener("click", (evt) => {
+      const restoreBtn = evt.target.closest("[data-workflow-restore-system]");
       const loadBtn = evt.target.closest("[data-workflow-load]");
       const activateBtn = evt.target.closest("[data-workflow-activate-template]");
       const stopBtn = evt.target.closest("[data-workflow-stop-template]");
       const deleteBtn = evt.target.closest("[data-workflow-delete]");
       const copyBtn = evt.target.closest("[data-workflow-copy]");
+      if (restoreBtn) {
+        try {
+          restoreSystemWorkflowTemplate(restoreBtn.dataset.workflowRestoreSystem || "");
+          $("workflowTemplateDrawer")?.classList.add("hidden");
+          toast("已恢复系统模板，保存后更新你的员工配置");
+        } catch (err) {
+          toast(err.message || "系统模板恢复失败");
+        }
+        return;
+      }
       if (loadBtn) {
         const tpl = workflowTemplateById(loadBtn.dataset.workflowLoad || "");
         if (!workflowTemplateCanEdit(tpl)) {
@@ -22285,6 +22732,33 @@
     $("refreshProfileBtn").addEventListener("click", () => {
       Promise.all([refreshDeviceStatus(), refreshCurrentUser()]).catch((err) => toast(err.message || "刷新失败"));
     });
+    $("speechPreferenceSwitch")?.addEventListener("click", () => {
+      const previous = state.speechEnabled;
+      applySpeechPreference(!previous);
+      updateSpeechPreference(!previous).catch((err) => {
+        applySpeechPreference(previous);
+        toast(err.message || "语音播报设置保存失败");
+      });
+    });
+    $("speechVoiceSelect")?.addEventListener("change", () => {
+      const previous = state.speechVoiceUri;
+      const next = String($("speechVoiceSelect").value || "");
+      applySpeechVoicePreference(next);
+      updateSpeechVoicePreference(next).catch((err) => {
+        applySpeechVoicePreference(previous);
+        toast(err.message || "音色设置保存失败");
+      });
+    });
+    $("speechVoicePreviewBtn")?.addEventListener("click", () => {
+      unlockSpeechPlayback();
+      state.speechLastText = "";
+      state.speechLastAt = 0;
+      speakTaskAnnouncement("任务完成，我会及时提醒你。", { force: true });
+    });
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.addEventListener?.("voiceschanged", refreshSpeechVoices);
+      refreshSpeechVoices();
+    }
     $("profileDeviceSelect")?.addEventListener("change", (evt) => setSelectedInstallationId(evt.target.value || ""));
     $("mountedAccountRefreshBtn")?.addEventListener("click", () => {
       refreshMountedAccounts().catch((err) => toast(err.message || "刷新失败"));
@@ -22627,7 +23101,11 @@
       if (customEmployeeBtn) {
         evt.preventDefault();
         evt.stopPropagation();
-        openCustomEmployeeDetail(customEmployeeBtn.dataset.customEmployeeDetail || "");
+        try {
+          openWorkflowTemplateEditor(customEmployeeBtn.dataset.customEmployeeDetail || "");
+        } catch (err) {
+          toast(err.message || "员工模板打开失败");
+        }
         return;
       }
       const homeTargetBtn = evt.target.closest("[data-home-target]");
@@ -23363,12 +23841,21 @@
         input.value = "";
         autosizeMessageInput();
       }
+      const queueMode = options.queueMode === "steer" ? "steer" : "normal";
+      const targetMessageId = queueMode === "steer" ? String(options.targetMessageId || "").trim() : "";
+      if (queueMode === "steer" && !targetMessageId) {
+        if (fromComposer) input.value = content;
+        toast("当前没有可引导的执行任务");
+        return false;
+      }
       state.chatSubmitPending = true;
       $("sendBtn").disabled = true;
       const messageContent = buildMessageContent(content);
       const userBubble = addBubble("user", content || `已添加 ${attachments.length} 个素材`);
       renderBubbleAttachments(userBubble, attachments);
-      const bot = addBubble("bot", "正在理解需求...");
+      const bot = addBubble("bot", queueMode === "steer"
+        ? "正在按补充要求调整当前任务..."
+        : (activeQueueMessage() ? "已加入队列，等待前面的任务完成..." : "正在理解需求..."));
       bot._placeholder = true;
       try {
         const data = await api("/api/mastra-chat/messages", {
@@ -23379,6 +23866,8 @@
             installation_id: currentInstallationId(),
             session_id: state.activeChatSessionId,
             attachments,
+            queue_mode: queueMode,
+            target_message_id: targetMessageId,
           },
         });
         const msg = data.message || {};
@@ -23390,12 +23879,17 @@
         }
         if (msg.id) startSse(msg.id, bot);
         clearUploads();
+        await loadChatQueue();
         loadChatSessions().catch(() => {});
         await Promise.all([refreshDeviceStatus(), refreshMastraStatus()]);
         return true;
       } catch (err) {
         bot.classList.add("err");
         setBubbleText(bot, err.message || "发送失败");
+        if (fromComposer && !String(input.value || "").trim()) {
+          input.value = content;
+          autosizeMessageInput();
+        }
         return false;
       } finally {
         state.chatSubmitPending = false;
@@ -23408,6 +23902,51 @@
     $("sendForm").addEventListener("submit", async (evt) => {
       evt.preventDefault();
       await submitChatMessage();
+    });
+
+    $("chatQueueSummary")?.addEventListener("click", () => {
+      state.chatQueueExpanded = !state.chatQueueExpanded;
+      renderChatQueue();
+    });
+
+    $("chatQueueList")?.addEventListener("click", async (evt) => {
+      const cancel = evt.target.closest("[data-chat-cancel]");
+      if (cancel) {
+        await cancelChatQueueMessage(cancel.dataset.chatCancel || "", cancel);
+        return;
+      }
+      const remove = evt.target.closest("[data-chat-queue-delete]");
+      if (remove) {
+        await deleteChatQueueMessage(remove.dataset.chatQueueDelete || "", remove);
+        return;
+      }
+      const edit = evt.target.closest("[data-chat-queue-edit]");
+      if (edit) {
+        const row = edit.closest("[data-chat-queue-row]");
+        row?.querySelector(".chat-queue-copy")?.classList.add("hidden");
+        row?.querySelector(".chat-queue-actions")?.classList.add("hidden");
+        row?.querySelector(".chat-queue-edit")?.classList.remove("hidden");
+        row?.querySelector("[data-chat-queue-edit-input]")?.focus();
+        return;
+      }
+      const editCancel = evt.target.closest("[data-chat-queue-edit-cancel]");
+      if (editCancel) {
+        const row = editCancel.closest("[data-chat-queue-row]");
+        row?.querySelector(".chat-queue-copy")?.classList.remove("hidden");
+        row?.querySelector(".chat-queue-actions")?.classList.remove("hidden");
+        row?.querySelector(".chat-queue-edit")?.classList.add("hidden");
+        return;
+      }
+      const save = evt.target.closest("[data-chat-queue-save]");
+      if (save) {
+        const row = save.closest("[data-chat-queue-row]");
+        await saveChatQueueMessage(save.dataset.chatQueueSave || "", row, save);
+      }
+    });
+
+    $("composerSteerBtn")?.addEventListener("click", async () => {
+      const targetMessageId = String($("composerSteerBtn").dataset.targetMessageId || "");
+      await submitChatMessage(null, { queueMode: "steer", targetMessageId });
     });
 
     (async function init() {

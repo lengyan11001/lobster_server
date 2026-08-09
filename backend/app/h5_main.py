@@ -57,6 +57,16 @@ def _ensure_h5_chat_mastra_columns() -> None:
                     connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN attachments JSON"))
                 if "session_id" not in columns:
                     connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN session_id VARCHAR(64)"))
+                if "queue_mode" not in columns:
+                    connection.execute(
+                        text("ALTER TABLE h5_chat_messages ADD COLUMN queue_mode VARCHAR(16) NOT NULL DEFAULT 'normal'")
+                    )
+                if "queue_priority" not in columns:
+                    connection.execute(
+                        text("ALTER TABLE h5_chat_messages ADD COLUMN queue_priority INTEGER NOT NULL DEFAULT 0")
+                    )
+                if "target_message_id" not in columns:
+                    connection.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN target_message_id VARCHAR(64)"))
                 connection.execute(
                     text(
                         "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_parent_message_id "
@@ -67,6 +77,18 @@ def _ensure_h5_chat_mastra_columns() -> None:
                     text(
                         "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_session_id "
                         "ON h5_chat_messages (session_id)"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_target_message_id "
+                        "ON h5_chat_messages (target_message_id)"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_h5_chat_mode_status_priority_created "
+                        "ON h5_chat_messages (mode, status, queue_priority, created_at)"
                     )
                 )
             if inspector.has_table("h5_chat_sessions"):
@@ -99,6 +121,32 @@ def _ensure_recorder_audio_columns() -> None:
         logger.warning("H5 recorder column migration skipped: %s", exc)
 
 
+def _ensure_h5_home_preference_columns() -> None:
+    """Keep standalone H5 startup compatible with existing preference rows."""
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(engine)
+        if not inspector.has_table("h5_home_preferences"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("h5_home_preferences")}
+        with engine.begin() as connection:
+            if "speech_enabled" not in columns:
+                default = "1" if engine.dialect.name == "sqlite" else "TRUE"
+                connection.execute(
+                    text(
+                        "ALTER TABLE h5_home_preferences ADD COLUMN "
+                        f"speech_enabled BOOLEAN NOT NULL DEFAULT {default}"
+                    )
+                )
+            if "speech_voice_uri" not in columns:
+                connection.execute(
+                    text("ALTER TABLE h5_home_preferences ADD COLUMN speech_voice_uri VARCHAR(255)")
+                )
+    except Exception as exc:
+        logger.warning("H5 home preference column migration skipped: %s", exc)
+
+
 def create_h5_app() -> FastAPI:
     """Dedicated H5 app: auth, remote chat, scheduled tasks, and lightweight HiFly resources."""
     logger.info("[H5] create_h5_app start")
@@ -106,6 +154,7 @@ def create_h5_app() -> FastAPI:
     ensure_asset_library_indexes(engine)
     _ensure_h5_chat_mastra_columns()
     _ensure_recorder_audio_columns()
+    _ensure_h5_home_preference_columns()
     ensure_user_brand_schema(engine)
     seed_brand_configs(SessionLocal)
     interrupted_recordings = mark_interrupted_recordings_failed()

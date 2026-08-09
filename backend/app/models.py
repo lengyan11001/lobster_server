@@ -999,6 +999,9 @@ class H5ChatMessage(Base):
     parent_message_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     claimed_by_installation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     mode: Mapped[str] = mapped_column(String(32), default="direct", nullable=False)
+    queue_mode: Mapped[str] = mapped_column(String(16), default="normal", nullable=False)
+    queue_priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    target_message_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     attachments: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
@@ -1096,6 +1099,8 @@ class H5HomePreference(Base):
 
     user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     hero_asset_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    speech_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    speech_voice_uri: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

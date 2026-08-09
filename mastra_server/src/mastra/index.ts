@@ -883,7 +883,7 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
               const args = payload.args && typeof payload.args === 'object' ? payload.args as Record<string, unknown> : undefined
               const displayName = toolDisplayName(rawName, args)
               if (callId) activeToolNames.set(callId, displayName)
-              write({ type: 'tool_start', name: displayName })
+              write({ type: 'tool_start', name: displayName, tool_id: rawName })
               continue
             }
             if (item.type === 'tool-result') {

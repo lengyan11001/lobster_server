@@ -88,6 +88,208 @@ body.messages-view-active {
   z-index: 3;
 }
 
+#messagesView .chat-queue {
+  margin: 0 2px 8px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .08);
+}
+
+#messagesView .chat-queue.hidden,
+#messagesView .chat-queue-list.hidden {
+  display: none;
+}
+
+#messagesView .chat-queue-summary {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 0;
+  color: #334155;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+
+#messagesView .chat-queue-summary strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#messagesView .chat-queue-summary svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: #94a3b8;
+  stroke-width: 2;
+  transition: transform .18s ease;
+}
+
+#messagesView .chat-queue-summary[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+#messagesView .chat-queue-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, .1);
+  animation: chatQueuePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes chatQueuePulse {
+  50% { opacity: .5; transform: scale(.82); }
+}
+
+#messagesView .chat-queue-list {
+  max-height: min(238px, 30vh);
+  padding: 4px 8px 8px;
+  overflow-y: auto;
+  border-top: 1px solid #f1f5f9;
+}
+
+#messagesView .chat-queue-row {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 2px;
+}
+
+#messagesView .chat-queue-row + .chat-queue-row {
+  border-top: 1px solid #f1f5f9;
+}
+
+#messagesView .chat-queue-index {
+  color: #94a3b8;
+  font-size: 10px;
+  text-align: center;
+}
+
+#messagesView .chat-queue-row.is-processing .chat-queue-index {
+  color: #2563eb;
+}
+
+#messagesView .chat-queue-copy {
+  min-width: 0;
+}
+
+#messagesView .chat-queue-copy strong,
+#messagesView .chat-queue-copy small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#messagesView .chat-queue-copy strong {
+  color: #334155;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+#messagesView .chat-queue-copy small {
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 9px;
+}
+
+#messagesView .chat-queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+#messagesView .chat-queue-action {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: #64748b;
+  background: transparent;
+  box-shadow: none;
+}
+
+#messagesView .chat-queue-action:hover {
+  background: #f1f5f9;
+}
+
+#messagesView .chat-queue-action.danger {
+  color: #dc2626;
+}
+
+#messagesView .chat-queue-action svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#messagesView .chat-queue-edit {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+#messagesView .chat-queue-edit textarea {
+  min-height: 58px;
+  max-height: 120px;
+  padding: 8px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  color: #1e293b;
+  background: #fff;
+  font-size: 12px;
+}
+
+#messagesView .chat-queue-edit button {
+  align-self: end;
+  min-height: 32px;
+  padding: 0 9px;
+  border-radius: 7px;
+  box-shadow: none;
+  font-size: 11px;
+}
+
+#messagesView .composer-steer-btn {
+  height: 30px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid #dbe4f0;
+  border-radius: 7px;
+  color: #2563eb;
+  background: #eff6ff;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+#messagesView .composer-steer-btn.hidden {
+  display: none;
+}
+
 .topbar {
   position: sticky;
   top: 0;
@@ -5133,6 +5335,83 @@ body * {
   font-weight: 500;
 }
 
+#profileView .setting-row .profile-preference-switch {
+  position: relative;
+  width: 42px;
+  min-width: 42px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: #cbd5e1;
+  transition: background-color .18s ease;
+}
+
+#profileView .profile-preference-switch span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, .2);
+  transition: transform .18s ease;
+}
+
+#profileView .profile-preference-switch.is-on {
+  background: #2563eb;
+}
+
+#profileView .profile-preference-switch.is-on span {
+  transform: translateX(18px);
+}
+
+#profileView .profile-preference-switch:disabled {
+  opacity: .55;
+}
+
+#profileView .speech-voice-controls {
+  max-width: 154px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+#profileView .speech-voice-controls select {
+  min-width: 0;
+  width: 116px;
+  height: 32px;
+  padding: 0 24px 0 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  color: #475569;
+  background: #fff;
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
+#profileView .setting-row .speech-voice-controls button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+}
+
+#profileView .speech-voice-controls button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
 #profileView .profile-account-actions > .danger {
   min-height: 44px;
   margin: 4px 6px 0;
@@ -5474,6 +5753,24 @@ body * {
 
 .task-advanced-grid > .field.full {
   grid-column: 1 / -1;
+}
+
+.local-persona-status {
+  display: block;
+  margin-top: 7px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.field.local-persona-locked {
+  opacity: .72;
+}
+
+.field.local-persona-locked :is(input, select, textarea, button) {
+  cursor: not-allowed;
 }
 
 .ip-template-select-row {

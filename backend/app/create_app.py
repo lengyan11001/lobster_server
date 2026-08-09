@@ -255,6 +255,16 @@ def _migrate_h5_chat_mastra_columns():
                 conn.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN attachments JSON"))
             if "session_id" not in cols:
                 conn.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN session_id VARCHAR(64)"))
+            if "queue_mode" not in cols:
+                conn.execute(
+                    text("ALTER TABLE h5_chat_messages ADD COLUMN queue_mode VARCHAR(16) NOT NULL DEFAULT 'normal'")
+                )
+            if "queue_priority" not in cols:
+                conn.execute(
+                    text("ALTER TABLE h5_chat_messages ADD COLUMN queue_priority INTEGER NOT NULL DEFAULT 0")
+                )
+            if "target_message_id" not in cols:
+                conn.execute(text("ALTER TABLE h5_chat_messages ADD COLUMN target_message_id VARCHAR(64)"))
             conn.execute(
                 text(
                     "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_parent_message_id "
@@ -265,6 +275,18 @@ def _migrate_h5_chat_mastra_columns():
                 text(
                     "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_session_id "
                     "ON h5_chat_messages (session_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_h5_chat_messages_target_message_id "
+                    "ON h5_chat_messages (target_message_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_h5_chat_mode_status_priority_created "
+                    "ON h5_chat_messages (mode, status, queue_priority, created_at)"
                 )
             )
         if insp.has_table("h5_chat_sessions"):
@@ -278,6 +300,32 @@ def _migrate_h5_chat_mastra_columns():
                     conn.execute(text("ALTER TABLE h5_chat_sessions ADD COLUMN summary_updated_at TIMESTAMP"))
     except Exception as e:
         logger.warning("Migration h5_chat_messages Mastra columns skipped: %s", e)
+
+
+def _migrate_h5_home_preference_columns():
+    """Add persistent H5 user preferences introduced after the homepage table."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("h5_home_preferences"):
+            return
+        columns = {column["name"] for column in insp.get_columns("h5_home_preferences")}
+        with engine.begin() as connection:
+            if "speech_enabled" not in columns:
+                default = "1" if engine.dialect.name == "sqlite" else "TRUE"
+                connection.execute(
+                    text(
+                        "ALTER TABLE h5_home_preferences ADD COLUMN "
+                        f"speech_enabled BOOLEAN NOT NULL DEFAULT {default}"
+                    )
+                )
+            if "speech_voice_uri" not in columns:
+                connection.execute(
+                    text("ALTER TABLE h5_home_preferences ADD COLUMN speech_voice_uri VARCHAR(255)")
+                )
+    except Exception as e:
+        logger.warning("Migration h5_home_preferences.speech_enabled skipped: %s", e)
 
 
 def _seed_capability_catalog():
@@ -1087,6 +1135,7 @@ def create_app() -> FastAPI:
         _migrate_ip_content_schedule_template_memory_doc_ids()
         _migrate_h5_device_presence_account_payload()
         _migrate_h5_chat_mastra_columns()
+        _migrate_h5_home_preference_columns()
         _ensure_default_user()
         _seed_capability_catalog()
         _upsert_missing_capabilities_from_catalog()

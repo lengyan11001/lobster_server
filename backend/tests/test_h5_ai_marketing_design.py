@@ -183,9 +183,9 @@ def test_ai_marketing_advanced_settings_keep_defaults_and_persona_visible():
     assert image_fields.index('taskFieldHtml("模型"') > image_fields.index("taskAdvancedFieldsHtml(")
 
     local_fields = script.split("function localBestsellerFieldsHtml", 1)[1].split("function localBestsellerParamsFromFields", 1)[0]
-    for visible_label in ("人物照片", "参考视频", "姓名", "短视频昵称", "身份人设", "行业", "当前城市", "目标人群"):
+    for visible_label in ("画面风格", "人物照片", "参考视频", "姓名", "短视频昵称", "身份人设", "行业/产品", "当前城市", "目标客户"):
         assert local_fields.index(f'taskFieldHtml("{visible_label}"') < local_fields.index("taskAdvancedFieldsHtml(")
-    for advanced_label in ("画面风格", "图片模型", "图片质量", "视频模型"):
+    for advanced_label in ("图片模型", "图片质量", "视频模型"):
         assert local_fields.index(f'taskFieldHtml("{advanced_label}"') > local_fields.index("taskAdvancedFieldsHtml(")
 
     article_fields = script.split("function articleFieldsHtml", 1)[1].split("function articlePayloadFromFields", 1)[0]
@@ -213,12 +213,30 @@ def test_ai_marketing_advanced_settings_keep_defaults_and_persona_visible():
     assert 'workInputHtml(`${prefix}IndustryCount`, "number", "5"' in script
     assert 'workInputHtml(`${prefix}IpCount`, "number", "5"' in script
     assert 'workInputHtml(`${prefix}MomentsCount`, "number", "20"' in script
-
     assert 'workflowParamNumber(`${prefix}ImageCount`, 3, 1, 5)' in script
     assert 'workflowParamNumber("workflowParamIpIndustryCount", 5, 1, 5)' in script
     assert 'abilityNumber("abilityIpIndustryCount", 5, 1, 5)' in script
     assert 'workflowParamValue("workflowParamHiflyRate") || "1"' in script
     assert 'workflowParamValue(`${prefix}ImageModel`) || "gpt-image-2"' in script
+
+
+def test_local_bestseller_defaults_to_persona_and_clears_it_for_other_styles():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
+    fields = script.split("function localBestsellerFieldsHtml", 1)[1].split("function localBestsellerParamsFromFields", 1)[0]
+    controls = script.split("function bindLocalBestsellerPersonaControls", 1)[1].split("function localBestsellerFieldsHtml", 1)[0]
+
+    assert 'optionHtml("", "使用个人 IP 人设")' in fields
+    assert 'api("/api/ip-content/personal-default", { cache: "no-store" })' in script
+    assert 'bindLocalBestsellerPersonaControls("workLocal")' in script
+    assert 'bindLocalBestsellerPersonaControls("workflowParamLocal")' in script
+    assert 'if (style.dataset.localPersonaActive !== "0") clearLocalBestsellerPersonaFields(prefix);' in controls
+    assert 'style.dataset.localPersonaActive = "0";' in controls
+    assert 'profile_source: usePersona ? "persona" : "custom"' in script
+    assert 'const style = profileSource === "persona" ? "" : (profile.style || "");' in script
+    assert script.index('setFieldValue(`${prefix}Style`, style);') < script.index('setAssetPickerPayloadValue(`${prefix}Photo`')
+    assert ".local-persona-status" in css
+    assert ".field.local-persona-locked" in css
 
 
 def test_h5_goal_video_exposes_duration_and_submits_it():

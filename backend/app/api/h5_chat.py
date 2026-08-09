@@ -38,6 +38,7 @@ from ..models import (
 )
 from ..services.brand_context import explicit_request_brand_mark, public_brand_config, request_brand_mark
 from ..services.device_presence import is_device_online
+from ..services.h5_chat_sessions import attach_system_task_message
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token, validate_token_brand
 from .installation_slots import (
@@ -549,6 +550,9 @@ def _serialize_message(
     data = {
         "id": row.id,
         "mode": row.mode,
+        "queue_mode": row.queue_mode or "normal",
+        "queue_priority": int(row.queue_priority or 0),
+        "target_message_id": row.target_message_id or "",
         "session_id": row.session_id,
         "parent_message_id": row.parent_message_id,
         "content": row.content,
@@ -1659,6 +1663,7 @@ def h5_set_wechat_auto_reply(
         created_at=now,
         updated_at=now,
     )
+    attach_system_task_message(db, message, now=now)
     db.add(message)
     _add_event(db, message, "queued", {"mode": "client_command", "action": command["action"]})
     _clear_pending_empty_for_target(owner_user.id, installation_id)

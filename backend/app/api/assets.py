@@ -38,6 +38,7 @@ from ..models import (
     User,
 )
 from ..services.device_presence import is_device_online
+from ..services.h5_chat_sessions import attach_system_task_message
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -500,6 +501,7 @@ def _queue_online_video_split(
         created_at=now,
         updated_at=now,
     )
+    attach_system_task_message(db, message, now=now)
     db.add(message)
     db.add(
         H5ChatEvent(

@@ -34,6 +34,8 @@ class MastraChatJob:
     session_id: str
     content: str
     attachments: List[Dict[str, Any]]
+    queue_mode: str
+    target_message_id: str
     permission_mode: str
     approval_granted: bool
     approval_id: str
@@ -251,7 +253,11 @@ def _claim_jobs_sync(
         query = (
             db.query(H5ChatMessage)
             .filter(H5ChatMessage.mode == "mastra", H5ChatMessage.status == "pending")
-            .order_by(H5ChatMessage.created_at.asc())
+            .order_by(
+                H5ChatMessage.queue_priority.desc(),
+                H5ChatMessage.created_at.asc(),
+                H5ChatMessage.id.asc(),
+            )
             .with_for_update(skip_locked=True)
             .limit(max(100, limit * 25))
         )
@@ -292,6 +298,36 @@ def _claim_jobs_sync(
                 approval.status = "executing"
                 approval.updated_at = now
 
+            content = (row.content or "").strip()
+            attachments = list(row.attachments or [])
+            if row.queue_mode == "steer" and row.target_message_id:
+                target = (
+                    db.query(H5ChatMessage)
+                    .filter(
+                        H5ChatMessage.id == row.target_message_id,
+                        H5ChatMessage.user_id == row.user_id,
+                        H5ChatMessage.session_id == row.session_id,
+                    )
+                    .first()
+                )
+                if target:
+                    original = (target.content or "").strip()
+                    content = (
+                        "请根据用户刚补充的要求重新处理当前任务。\n\n"
+                        f"原任务：\n{original}\n\n"
+                        f"补充要求：\n{content}"
+                    )
+                    combined = list(target.attachments or []) + attachments
+                    attachment_keys = set()
+                    attachments = []
+                    for item in combined:
+                        key = str(item.get("asset_id") or item.get("url") or item.get("name") or "")
+                        if key and key in attachment_keys:
+                            continue
+                        if key:
+                            attachment_keys.add(key)
+                        attachments.append(item)
+
             row.status = "processing"
             row.claimed_by_installation_id = _WORKER_ID
             row.claimed_at = now
@@ -304,8 +340,10 @@ def _claim_jobs_sync(
                     brand=user_brand_mark(user),
                     installation_id=(row.installation_id or "").strip(),
                     session_id=(row.session_id or "default").strip(),
-                    content=(row.content or "").strip(),
-                    attachments=list(row.attachments or []),
+                    content=content,
+                    attachments=attachments,
+                    queue_mode=(row.queue_mode or "normal").strip(),
+                    target_message_id=(row.target_message_id or "").strip(),
                     permission_mode=permission_mode,
                     approval_granted=bool(approval),
                     approval_id=approval.id if approval else "",
@@ -559,7 +597,7 @@ async def _refresh_conversation_summary(job: MastraChatJob) -> str:
         return job.conversation_summary
 
 
-async def _run_job(job: MastraChatJob) -> None:
+async def _run_job_request(job: MastraChatJob) -> None:
     conversation_summary = await _refresh_conversation_summary(job)
     body = {
         "message": job.content,
@@ -641,6 +679,51 @@ async def _run_job(job: MastraChatJob) -> None:
     except Exception as exc:
         await flush_delta()
         await asyncio.to_thread(_fallback_or_fail_sync, job.message_id, str(exc))
+
+
+def _message_cancelled_sync(message_id: str) -> bool:
+    db = SessionLocal()
+    try:
+        row = db.query(H5ChatMessage.status).filter(H5ChatMessage.id == message_id).first()
+        return row is None or str(row[0] or "").lower() == "cancelled"
+    finally:
+        db.close()
+
+
+async def _wait_for_message_cancellation(message_id: str) -> None:
+    while True:
+        await asyncio.sleep(0.5)
+        try:
+            if await asyncio.to_thread(_message_cancelled_sync, message_id):
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("[mastra_chat] cancellation check failed message=%s error=%s", message_id, str(exc)[:300])
+
+
+async def _run_job(job: MastraChatJob) -> None:
+    if await asyncio.to_thread(_message_cancelled_sync, job.message_id):
+        return
+    request_task = asyncio.create_task(_run_job_request(job), name=f"mastra-request-{job.message_id[:8]}")
+    cancel_task = asyncio.create_task(
+        _wait_for_message_cancellation(job.message_id),
+        name=f"mastra-cancel-watch-{job.message_id[:8]}",
+    )
+    try:
+        done, _ = await asyncio.wait(
+            {request_task, cancel_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if request_task in done:
+            await request_task
+            return
+        request_task.cancel()
+        await asyncio.gather(request_task, return_exceptions=True)
+        logger.info("[mastra_chat] cancelled active request message=%s", job.message_id)
+    finally:
+        cancel_task.cancel()
+        await asyncio.gather(cancel_task, return_exceptions=True)
 
 
 async def mastra_chat_background_loop() -> None:

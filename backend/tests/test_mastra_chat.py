@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta
 
@@ -71,6 +72,67 @@ def test_create_mastra_message_uses_server_orchestrator_mode(db_session_factory,
         event = session.query(H5ChatEvent).filter(H5ChatEvent.message_id == row.id).one()
         assert row.parent_message_id is None
         assert event.event_type == "queued"
+
+
+def test_system_task_session_is_listed_but_cannot_be_renamed_or_deleted(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.models import H5ChatMessage
+    from backend.app.services.h5_chat_sessions import system_task_session_id
+
+    now = datetime.utcnow()
+    db_session.add(
+        H5ChatMessage(
+            id="legacy-system-task",
+            user_id=test_user.id,
+            mode="scheduled_task",
+            content="历史工作流任务",
+            status="completed",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.commit()
+    client = _client(db_session_factory, test_user.id)
+
+    sessions = client.get("/api/mastra-chat/sessions")
+    expected_id = system_task_session_id(test_user.id)
+    system_session = next(row for row in sessions.json()["sessions"] if row["id"] == expected_id)
+
+    assert system_session["title"] == "系统任务"
+    assert system_session["system_managed"] is True
+    assert client.patch(
+        f"/api/mastra-chat/sessions/{expected_id}", json={"title": "改名"}
+    ).status_code == 409
+    assert client.delete(f"/api/mastra-chat/sessions/{expected_id}").status_code == 409
+
+
+def test_default_mastra_message_does_not_enter_system_task_session(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.models import H5ChatMessage
+    from backend.app.services.h5_chat_sessions import system_task_session_id
+
+    now = datetime.utcnow()
+    db_session.add(
+        H5ChatMessage(
+            id="scheduled-before-chat",
+            user_id=test_user.id,
+            mode="scheduled_task",
+            content="系统任务",
+            status="completed",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.commit()
+
+    response = _client(db_session_factory, test_user.id).post(
+        "/api/mastra-chat/messages", json={"content": "新的普通对话"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"]["session_id"] != system_task_session_id(test_user.id)
 
 
 def test_mastra_capability_discovery_does_not_require_online_installation(
@@ -873,3 +935,257 @@ def test_runner_does_not_claim_a_second_job_past_per_user_limit(
     jobs = mastra_chat_runner._claim_jobs_sync(2, {test_user.id: 1}, 1)
 
     assert [job.message_id for job in jobs] == [available.id]
+
+
+def test_pending_queue_messages_can_be_edited_deleted_and_are_user_scoped(
+    db_session, db_session_factory, test_user, other_user
+):
+    from backend.app.models import H5ChatMessage
+
+    chat_session = _session(db_session, test_user.id)
+    row = H5ChatMessage(
+        id="queue-editable",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="原始要求",
+        status="pending",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(row)
+    db_session.commit()
+    owner_client = _client(db_session_factory, test_user.id)
+    other_client = _client(db_session_factory, other_user.id)
+
+    assert other_client.patch(f"/api/mastra-chat/messages/{row.id}", json={"content": "越权"}).status_code == 404
+    edited = owner_client.patch(f"/api/mastra-chat/messages/{row.id}", json={"content": "修改后的要求"})
+    queue = owner_client.get(f"/api/mastra-chat/queue?session_id={chat_session.id}")
+
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["message"]["content"] == "修改后的要求"
+    assert queue.json()["pending"][0]["queue_position"] == 1
+    assert owner_client.delete(f"/api/mastra-chat/messages/{row.id}").status_code == 200
+    with db_session_factory() as session:
+        assert session.query(H5ChatMessage).filter(H5ChatMessage.id == row.id).first() is None
+
+
+def test_cancel_processing_message_cancels_pending_online_children(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.models import H5ChatMessage
+
+    chat_session = _session(db_session, test_user.id)
+    now = datetime.utcnow()
+    parent = H5ChatMessage(
+        id="cancel-processing-parent",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="生成视频",
+        status="processing",
+        created_at=now,
+        updated_at=now,
+    )
+    child = H5ChatMessage(
+        id="cancel-pending-child",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        parent_message_id=parent.id,
+        mode="direct",
+        content="Online 生成视频",
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([parent, child])
+    db_session.commit()
+
+    response = _client(db_session_factory, test_user.id).post(
+        f"/api/mastra-chat/messages/{parent.id}/cancel"
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["message"]["status"] == "cancelled"
+    with db_session_factory() as session:
+        assert session.query(H5ChatMessage).filter(H5ChatMessage.id == child.id).one().status == "cancelled"
+
+
+def test_steer_cancels_current_thinking_and_is_claimed_before_normal_queue(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    chat_session = _session(db_session, test_user.id)
+    now = datetime.utcnow()
+    current = H5ChatMessage(
+        id="steer-current",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="做一个产品视频",
+        attachments=[{"asset_id": "original-image", "name": "original.jpg"}],
+        status="processing",
+        created_at=now,
+        updated_at=now,
+    )
+    normal = H5ChatMessage(
+        id="steer-normal-queue",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="后续普通任务",
+        status="pending",
+        created_at=now + timedelta(seconds=1),
+        updated_at=now,
+    )
+    db_session.add_all([current, normal])
+    db_session.commit()
+
+    response = _client(db_session_factory, test_user.id).post(
+        "/api/mastra-chat/messages",
+        json={
+            "session_id": chat_session.id,
+            "content": "改成美女讲解，时长 15 秒",
+            "queue_mode": "steer",
+            "target_message_id": current.id,
+            "attachments": [],
+        },
+    )
+    assert response.status_code == 200, response.text
+    replacement_id = response.json()["message"]["id"]
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    jobs = mastra_chat_runner._claim_jobs_sync(1)
+
+    assert jobs[0].message_id == replacement_id
+    assert "原任务：\n做一个产品视频" in jobs[0].content
+    assert "补充要求：\n改成美女讲解，时长 15 秒" in jobs[0].content
+    assert jobs[0].attachments[0]["asset_id"] == "original-image"
+    with db_session_factory() as session:
+        assert session.query(H5ChatMessage).filter(H5ChatMessage.id == current.id).one().status == "cancelled"
+        assert session.query(H5ChatMessage).filter(H5ChatMessage.id == normal.id).one().status == "pending"
+
+
+def test_steer_is_rejected_after_side_effect_starts(db_session, db_session_factory, test_user):
+    from backend.app.api.h5_chat import _add_event
+    from backend.app.models import H5ChatMessage
+
+    chat_session = _session(db_session, test_user.id)
+    current = H5ChatMessage(
+        id="steer-tool-started",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="发布视频",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(current)
+    db_session.flush()
+    _add_event(
+        db_session,
+        current,
+        "tool_start",
+        {"name": "修改个人人设", "tool_id": "update_personal_profile"},
+    )
+    db_session.commit()
+
+    response = _client(db_session_factory, test_user.id).post(
+        "/api/mastra-chat/messages",
+        json={
+            "session_id": chat_session.id,
+            "content": "换个平台发布",
+            "queue_mode": "steer",
+            "target_message_id": current.id,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "加入队列" in response.json()["detail"]
+
+
+def test_steer_remains_available_after_read_only_tool_call(db_session, db_session_factory, test_user):
+    from backend.app.api.h5_chat import _add_event
+    from backend.app.models import H5ChatMessage
+
+    chat_session = _session(db_session, test_user.id)
+    current = H5ChatMessage(
+        id="steer-read-only-tool",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="根据记忆分析产品",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(current)
+    db_session.flush()
+    _add_event(
+        db_session,
+        current,
+        "tool_start",
+        {"name": "读取个人记忆", "tool_id": "read_personal_memory"},
+    )
+    db_session.commit()
+
+    response = _client(db_session_factory, test_user.id).post(
+        "/api/mastra-chat/messages",
+        json={
+            "session_id": chat_session.id,
+            "content": "重点分析高客单客户",
+            "queue_mode": "steer",
+            "target_message_id": current.id,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["message"]["queue_mode"] == "steer"
+
+
+def test_runner_cancellation_watcher_stops_active_request(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    row = H5ChatMessage(
+        id="runner-cancel-watch",
+        user_id=test_user.id,
+        mode="mastra",
+        content="长时间思考",
+        status="pending",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(row)
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+    job = mastra_chat_runner._claim_jobs_sync(1)[0]
+    started = asyncio.Event()
+    request_cancelled = asyncio.Event()
+
+    async def fake_request(_job):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            request_cancelled.set()
+            raise
+
+    monkeypatch.setattr(mastra_chat_runner, "_run_job_request", fake_request)
+
+    async def scenario():
+        task = asyncio.create_task(mastra_chat_runner._run_job(job))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        with db_session_factory() as session:
+            saved = session.query(H5ChatMessage).filter(H5ChatMessage.id == row.id).one()
+            saved.status = "cancelled"
+            session.commit()
+        await asyncio.wait_for(task, timeout=2)
+        assert request_cancelled.is_set()
+
+    asyncio.run(scenario())

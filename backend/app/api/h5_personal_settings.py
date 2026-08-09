@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db import get_db
 from ..models import Asset, H5AgentMemoryGrant, H5ChatEvent, H5ChatMessage, OpenClawMemoryDocument, RecorderAudioRecord, User
+from ..services.h5_chat_sessions import attach_system_task_message
 from .auth import get_current_user
 from .assets import (
     ASSETS_DIR,
@@ -222,6 +223,7 @@ async def _queue_online_memory_parse(
         created_at=now,
         updated_at=now,
     )
+    attach_system_task_message(db, message, now=now)
     db.add(source_asset)
     db.add(message)
     db.add(
@@ -336,6 +338,7 @@ async def _queue_online_memory_generation(
         created_at=now,
         updated_at=now,
     )
+    attach_system_task_message(db, message, now=now)
     try:
         db.add_all(source_assets)
         db.add(message)

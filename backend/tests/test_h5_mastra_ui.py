@@ -130,6 +130,23 @@ def test_h5_chat_supports_isolated_sessions_attachments_and_permissions():
     assert "approval_id: contextValue(context, 'approvalId')" in mastra
 
 
+def test_h5_chat_supports_cancel_steer_and_editable_queue():
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    styles = (ROOT / "h5_static" / "h5-designer-v2.css").read_text(encoding="utf-8")
+
+    for element_id in ("chatQueueBar", "chatQueueSummary", "chatQueueList", "composerSteerBtn"):
+        assert f'id="{element_id}"' in html
+    assert "/api/mastra-chat/queue?session_id=" in script
+    assert "/cancel`" in script
+    assert 'queueMode === "steer"' in script
+    assert 'method: "PATCH"' in script
+    assert 'method: "DELETE"' in script
+    assert "preserveChatContextMarker" in script
+    assert ".chat-queue-row" in styles
+    assert ".composer-steer-btn" in styles
+
+
 def test_h5_chat_has_a_global_floating_entry_on_authenticated_views():
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")

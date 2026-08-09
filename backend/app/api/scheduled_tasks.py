@@ -56,6 +56,7 @@ from .installation_slots import ensure_installation_slot, installation_slot_id_f
 from .mobile_identity import online_user_for_mobile_user
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from ..services.device_presence import is_device_online
+from ..services.h5_chat_sessions import ensure_system_task_session
 
 router = APIRouter()
 
@@ -747,7 +748,11 @@ def _enrich_local_bestseller_workflow_payload(
     existing_profile = params.get("profile") if isinstance(params.get("profile"), dict) else {}
     explicit_profile = {key: _clean_profile_text(value, 1000) for key, value in existing_profile.items() if _clean_profile_text(value, 1000)}
     profile_override = params.get("profile_override") is True
-    if profile_override:
+    profile_source = _clean_profile_text(params.get("profile_source"), 32).lower()
+    if profile_source == "custom":
+        # A non-persona visual style starts from a clean profile; only this run's fields apply.
+        merged_profile = dict(explicit_profile)
+    elif profile_override:
         # One-off H5 tasks may intentionally override selected persona fields while inheriting the rest.
         merged_profile = dict(persona_profile)
         merged_profile.update(explicit_profile)
@@ -780,7 +785,7 @@ def _enrich_local_bestseller_workflow_payload(
     h5_context = dict(h5_context)
     h5_context.setdefault("workflow_started_at", _iso(now))
     h5_context.setdefault("workflow_day_start", _iso(now))
-    h5_context["persona_source"] = "h5_profile_override" if profile_override else "ip_persona_default"
+    h5_context["persona_source"] = "h5_custom_profile" if profile_source == "custom" else ("h5_profile_override" if profile_override else "ip_persona_default")
     out["h5_context"] = h5_context
     return out
 
@@ -1990,8 +1995,7 @@ def _client_processing_run_is_stale(row: ScheduledTaskRun, now: datetime) -> boo
 
 def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Optional[str], now: datetime) -> ScheduledTaskRun:
     run_id = uuid.uuid4().hex
-    server_side = _is_server_side_task(task)
-    message_id = None if server_side else f"task_{run_id}"[:64]
+    message_id = f"task_{run_id}"[:64]
     run_payload = task.payload or {}
     if task.task_kind == "linkedin_mining":
         run_payload = _enrich_linkedin_mining_keywords(
@@ -2036,25 +2040,50 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
     )
     db.add(run)
     _clear_pending_empty_for_target("run", task.user_id, installation_id)
-    if message_id:
-        msg_content = task.content or task.title
-        h5 = H5ChatMessage(
-            id=message_id,
-            user_id=task.user_id,
-            installation_id=installation_id,
-            mode="scheduled_task",
-            content=f"[定时任务] {msg_content}",
-            status="pending",
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(h5)
-        _add_h5_event(db, message_id, task.user_id, "queued", {"task_id": task.id, "run_id": run_id, "title": task.title})
+    system_session = ensure_system_task_session(db, task.user_id, now=now, backfill=False)
+    system_session.last_message_at = now
+    system_session.updated_at = now
+    msg_content = task.content or task.title
+    h5 = H5ChatMessage(
+        id=message_id,
+        user_id=task.user_id,
+        session_id=system_session.id,
+        installation_id=installation_id,
+        mode="scheduled_task",
+        content=f"[定时任务] {msg_content}",
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(h5)
+    _add_h5_event(db, message_id, task.user_id, "queued", {"task_id": task.id, "run_id": run_id, "title": task.title})
     task.run_count = int(task.run_count or 0) + 1
     task.last_run_at = now
     task.last_run_id = run_id
     task.updated_at = now
     return run
+
+
+def _sync_h5_message_from_run(db: Session, run: ScheduledTaskRun, now: Optional[datetime] = None) -> None:
+    if not run.h5_message_id:
+        return
+    message = db.query(H5ChatMessage).filter(H5ChatMessage.id == run.h5_message_id).first()
+    if message is None:
+        return
+    now = now or datetime.utcnow()
+    previous_status = str(message.status or "").strip().lower()
+    current_status = str(run.status or "pending").strip().lower()
+    message.status = current_status
+    message.updated_at = now
+    if current_status in _FINAL_STATUSES:
+        message.reply_text = run.result_text or None
+        message.error = run.error or None
+        message.finished_at = run.finished_at or now
+        if previous_status not in _FINAL_STATUSES:
+            if current_status == "completed":
+                _add_h5_event(db, message.id, run.user_id, "final", {"reply_text": run.result_text or "任务已完成"})
+            else:
+                _add_h5_event(db, message.id, run.user_id, "error", {"error": run.error or "任务未完成"})
 
 
 def _run_async_blocking(coro: Any) -> Any:
@@ -2086,6 +2115,8 @@ def _set_server_side_run_progress(
             patch.update(extra)
         run.progress = _merge_run_progress(run, patch)
         run.updated_at = now
+        _sync_h5_message_from_run(db, run, now)
+        _add_h5_event(db, run.h5_message_id, run.user_id, "progress", {"stage": stage, "text": text, **(extra or {})})
         db.commit()
     except Exception:
         db.rollback()
@@ -2135,6 +2166,7 @@ def _execute_server_side_run(
         run.error = "用户不存在"
         run.finished_at = now
         run.updated_at = now
+        _sync_h5_message_from_run(db, run, now)
         db.commit()
         return
     previous_progress = dict(run.progress or {}) if isinstance(run.progress, dict) else {}
@@ -2157,6 +2189,7 @@ def _execute_server_side_run(
     else:
         run.progress = {"started_at": now.isoformat(), "server_side": True}
     run.updated_at = now
+    _sync_h5_message_from_run(db, run, now)
     db.flush()
     db.commit()
     timeout_seconds = _server_side_timeout_seconds(run.task_kind)
@@ -2290,6 +2323,7 @@ def _execute_server_side_run(
         if task:
             task.last_error = run.error if run.status == "failed" else None
             task.updated_at = finished
+        _sync_h5_message_from_run(db, run, finished)
         db.commit()
     except (asyncio.TimeoutError, TimeoutError):
         failed = datetime.utcnow()
@@ -2316,6 +2350,7 @@ def _execute_server_side_run(
         if task:
             task.last_error = run.error
             task.updated_at = failed
+        _sync_h5_message_from_run(db, run, failed)
         db.commit()
     except HTTPException as exc:
         failed = datetime.utcnow()
@@ -2340,6 +2375,7 @@ def _execute_server_side_run(
         if task:
             task.last_error = run.error
             task.updated_at = failed
+        _sync_h5_message_from_run(db, run, failed)
         db.commit()
     except Exception as exc:
         failed = datetime.utcnow()
@@ -2364,6 +2400,7 @@ def _execute_server_side_run(
         if task:
             task.last_error = run.error
             task.updated_at = failed
+        _sync_h5_message_from_run(db, run, failed)
         db.commit()
 
 
@@ -2439,6 +2476,7 @@ def _fail_stale_server_side_runs(db: Session, now: Optional[datetime] = None) ->
             if task:
                 task.last_error = message
                 task.updated_at = now
+            _sync_h5_message_from_run(db, row, now)
             count += 1
     if count:
         db.commit()

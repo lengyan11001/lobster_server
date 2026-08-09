@@ -19,6 +19,7 @@ from ..models import (
     Asset,
     H5ChatApproval,
     H5ChatDevicePresence,
+    H5ChatEvent,
     H5ChatMessage,
     H5ChatSession,
     IPContentScheduleTemplate,
@@ -27,6 +28,12 @@ from ..models import (
 from .auth import get_current_user
 from .capabilities import _read_capability_catalog_json
 from ..services.device_presence import DEVICE_ONLINE_TTL_SECONDS
+from ..services.h5_chat_sessions import (
+    backfill_system_task_session,
+    is_system_task_session_id,
+    SYSTEM_TASK_MESSAGE_MODES,
+    system_task_session_id,
+)
 from .h5_chat import _add_event, _serialize_message
 from .installation_slots import optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
@@ -49,6 +56,12 @@ class MastraMessageCreate(BaseModel):
     installation_id: Optional[str] = Field(default=None, max_length=128)
     session_id: str = Field(default="", max_length=64)
     attachments: List[MastraAttachment] = Field(default_factory=list, max_length=8)
+    queue_mode: str = Field(default="normal", max_length=16)
+    target_message_id: str = Field(default="", max_length=64)
+
+
+class MastraMessageUpdate(BaseModel):
+    content: str = Field(default="", max_length=8000)
 
 
 class MastraSessionCreate(BaseModel):
@@ -308,6 +321,7 @@ def _serialize_session(row: H5ChatSession, message_count: int = 0) -> dict:
         "created_at": row.created_at.isoformat() if row.created_at else "",
         "updated_at": row.updated_at.isoformat() if row.updated_at else "",
         "last_message_at": row.last_message_at.isoformat() if row.last_message_at else "",
+        "system_managed": is_system_task_session_id(row.id, row.user_id),
     }
 
 
@@ -326,6 +340,7 @@ def _serialize_approval(row: H5ChatApproval) -> dict:
 
 
 def _ensure_chat_session(db: Session, user_id: int, session_id: str = "") -> H5ChatSession:
+    backfill_system_task_session(db, user_id)
     wanted = (session_id or "").strip()
     query = db.query(H5ChatSession).filter(
         H5ChatSession.user_id == user_id,
@@ -335,7 +350,11 @@ def _ensure_chat_session(db: Session, user_id: int, session_id: str = "") -> H5C
     if wanted and not row:
         raise HTTPException(status_code=404, detail="会话不存在")
     if not row:
-        row = query.order_by(H5ChatSession.last_message_at.desc(), H5ChatSession.updated_at.desc()).first()
+        row = (
+            query.filter(H5ChatSession.id != system_task_session_id(user_id))
+            .order_by(H5ChatSession.last_message_at.desc(), H5ChatSession.updated_at.desc())
+            .first()
+        )
     if not row:
         now = datetime.utcnow()
         row = H5ChatSession(
@@ -352,6 +371,7 @@ def _ensure_chat_session(db: Session, user_id: int, session_id: str = "") -> H5C
         H5ChatMessage.user_id == user_id,
         H5ChatMessage.session_id.is_(None),
         H5ChatMessage.parent_message_id.is_(None),
+        ~H5ChatMessage.mode.in_(SYSTEM_TASK_MESSAGE_MODES),
     ).update({H5ChatMessage.session_id: row.id}, synchronize_session=False)
     return row
 
@@ -410,6 +430,8 @@ def update_mastra_session(
 ):
     owner = online_user_for_mobile_user(db, current_user)
     row = _ensure_chat_session(db, owner.id, session_id)
+    if body.title is not None and is_system_task_session_id(row.id, owner.id):
+        raise HTTPException(status_code=409, detail="系统任务会话名称固定，不能重命名")
     if body.title is not None:
         row.title = (body.title or "").strip()[:160] or "新会话"
     if body.permission_mode is not None:
@@ -428,6 +450,8 @@ def delete_mastra_session(
 ):
     owner = online_user_for_mobile_user(db, current_user)
     row = _ensure_chat_session(db, owner.id, session_id)
+    if is_system_task_session_id(row.id, owner.id):
+        raise HTTPException(status_code=409, detail="系统任务会话用于归集任务记录，不能删除")
     active = (
         db.query(H5ChatMessage.id)
         .filter(
@@ -517,6 +541,122 @@ def list_mastra_capabilities(
     return {"ok": True, "capabilities": filtered, "source": "server"}
 
 
+def _root_mastra_message(db: Session, user_id: int, message_id: str) -> H5ChatMessage:
+    row = (
+        db.query(H5ChatMessage)
+        .filter(
+            H5ChatMessage.id == message_id,
+            H5ChatMessage.user_id == user_id,
+            H5ChatMessage.mode == "mastra",
+            H5ChatMessage.parent_message_id.is_(None),
+        )
+        .with_for_update()
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="调度消息不存在")
+    return row
+
+
+def _message_has_started_side_effects(db: Session, row: H5ChatMessage) -> bool:
+    child_exists = (
+        db.query(H5ChatMessage.id)
+        .filter(H5ChatMessage.user_id == row.user_id, H5ChatMessage.parent_message_id == row.id)
+        .first()
+        is not None
+    )
+    if child_exists:
+        return True
+    approval_started = (
+        db.query(H5ChatApproval.id)
+        .filter(
+            H5ChatApproval.message_id == row.id,
+            H5ChatApproval.status.in_(("approved", "executing", "completed")),
+        )
+        .first()
+        is not None
+    )
+    if approval_started:
+        return True
+    explicit_side_effect = (
+        db.query(H5ChatEvent.id)
+        .filter(H5ChatEvent.message_id == row.id, H5ChatEvent.event_type == "side_effect")
+        .first()
+        is not None
+    )
+    if explicit_side_effect:
+        return True
+    read_only_tools = {
+        "list_system_capabilities",
+        "list_personal_memory_documents",
+        "read_personal_memory_document",
+        "read_personal_memory",
+        "read_personal_profile",
+        "get_online_task_status",
+        "request_task_approval",
+    }
+    tool_events = (
+        db.query(H5ChatEvent.payload)
+        .filter(H5ChatEvent.message_id == row.id, H5ChatEvent.event_type == "tool_start")
+        .all()
+    )
+    for event in tool_events:
+        payload = event[0] if event and isinstance(event[0], dict) else {}
+        tool_id = str(payload.get("tool_id") or "").strip()
+        if tool_id and tool_id not in read_only_tools:
+            return True
+    return False
+
+
+def _cancel_root_message(
+    db: Session,
+    row: H5ChatMessage,
+    *,
+    reason: str,
+    event_payload: Optional[dict] = None,
+) -> bool:
+    if row.status in ("completed", "failed", "cancelled"):
+        return False
+    now = datetime.utcnow()
+    row.status = "cancelled"
+    row.reply_text = reason
+    row.error = None
+    row.finished_at = now
+    row.updated_at = now
+    row.claimed_by_installation_id = None
+    db.query(H5ChatApproval).filter(
+        H5ChatApproval.message_id == row.id,
+        H5ChatApproval.status.in_(("pending", "approved", "executing")),
+    ).update(
+        {
+            H5ChatApproval.status: "rejected",
+            H5ChatApproval.decided_at: now,
+            H5ChatApproval.finished_at: now,
+            H5ChatApproval.updated_at: now,
+        },
+        synchronize_session=False,
+    )
+    pending_children = (
+        db.query(H5ChatMessage)
+        .filter(
+            H5ChatMessage.user_id == row.user_id,
+            H5ChatMessage.parent_message_id == row.id,
+            H5ChatMessage.status == "pending",
+        )
+        .all()
+    )
+    for child in pending_children:
+        child.status = "cancelled"
+        child.reply_text = "父任务已取消"
+        child.finished_at = now
+        child.updated_at = now
+        _add_event(db, child, "cancelled", {"text": "父任务已取消"})
+    payload = {"text": reason, "cancelled_by_user": True}
+    payload.update(event_payload or {})
+    _add_event(db, row, "cancelled", payload)
+    return True
+
+
 @router.post("/api/mastra-chat/messages", summary="创建 AI 调度会话消息")
 def create_mastra_message(
     body: MastraMessageCreate,
@@ -530,6 +670,36 @@ def create_mastra_message(
     attachments = _normalize_attachments(db, owner.id, body.attachments)
     if not content and not attachments:
         raise HTTPException(status_code=400, detail="消息和素材不能同时为空")
+    queue_mode = (body.queue_mode or "normal").strip().lower()
+    if queue_mode not in ("normal", "steer"):
+        raise HTTPException(status_code=400, detail="queue_mode 必须是 normal 或 steer")
+    target = None
+    if queue_mode == "steer":
+        target_id = (body.target_message_id or "").strip()
+        if not target_id:
+            raise HTTPException(status_code=400, detail="引导当前任务时缺少目标消息")
+        target = (
+            db.query(H5ChatMessage)
+            .filter(
+                H5ChatMessage.id == target_id,
+                H5ChatMessage.user_id == owner.id,
+                H5ChatMessage.session_id == session.id,
+                H5ChatMessage.mode == "mastra",
+                H5ChatMessage.parent_message_id.is_(None),
+            )
+            .with_for_update()
+            .first()
+        )
+        if target is None or target.status != "processing":
+            raise HTTPException(status_code=409, detail="当前任务已结束，请将消息加入队列")
+        if _message_has_started_side_effects(db, target):
+            raise HTTPException(status_code=409, detail="当前任务已开始调用能力，请将补充要求加入队列")
+        _cancel_root_message(
+            db,
+            target,
+            reason="已收到补充要求，正在调整当前任务",
+            event_payload={"steered": True},
+        )
     active_count = (
         db.query(func.count(H5ChatMessage.id))
         .filter(
@@ -551,6 +721,9 @@ def create_mastra_message(
         installation_id=_selected_installation(request, body.installation_id),
         parent_message_id=None,
         mode="mastra",
+        queue_mode=queue_mode,
+        queue_priority=100 if queue_mode == "steer" else 0,
+        target_message_id=target.id if target is not None else None,
         content=content,
         attachments=attachments or None,
         status="pending",
@@ -562,10 +735,135 @@ def create_mastra_message(
         session.title = (content or (attachments[0]["name"] if attachments else "新会话"))[:36]
     session.last_message_at = now
     session.updated_at = now
-    _add_event(db, row, "queued", {"text": "已进入 AI 调度队列"})
+    if target is not None:
+        _add_event(db, row, "queued", {"text": "补充要求已优先处理", "target_message_id": target.id})
+        target_event = (
+            db.query(H5ChatEvent)
+            .filter(H5ChatEvent.message_id == target.id, H5ChatEvent.event_type == "cancelled")
+            .order_by(H5ChatEvent.id.desc())
+            .first()
+        )
+        if target_event:
+            target_payload = dict(target_event.payload or {})
+            target_payload["steered_to_message_id"] = row.id
+            target_event.payload = target_payload
+    else:
+        _add_event(db, row, "queued", {"text": "已进入 AI 调度队列"})
     db.commit()
     db.refresh(row)
     return {"ok": True, "message": _serialize_message(row), "events": []}
+
+
+@router.get("/api/mastra-chat/queue", summary="查询当前用户的 AI 调度队列")
+def get_mastra_queue(
+    session_id: str = "",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    wanted_session = (session_id or "").strip()
+    query = db.query(H5ChatMessage).filter(
+        H5ChatMessage.user_id == owner.id,
+        H5ChatMessage.mode == "mastra",
+        H5ChatMessage.parent_message_id.is_(None),
+        H5ChatMessage.status.in_(("pending", "processing")),
+    )
+    rows = query.order_by(
+        H5ChatMessage.queue_priority.desc(),
+        H5ChatMessage.created_at.asc(),
+        H5ChatMessage.id.asc(),
+    ).all()
+    pending_positions = {
+        row.id: index
+        for index, row in enumerate((item for item in rows if item.status == "pending"), start=1)
+    }
+    processing = []
+    pending = []
+    for row in rows:
+        if wanted_session and row.session_id != wanted_session:
+            continue
+        payload = _serialize_message(row)
+        if row.status == "processing":
+            payload["can_steer"] = not _message_has_started_side_effects(db, row)
+            processing.append(payload)
+        else:
+            payload["queue_position"] = pending_positions.get(row.id, 0)
+            pending.append(payload)
+    return {
+        "ok": True,
+        "processing": processing,
+        "pending": pending,
+        "active_count": len(processing) + len(pending),
+    }
+
+
+@router.patch("/api/mastra-chat/messages/{message_id}", summary="编辑待执行的 AI 调度消息")
+def update_mastra_message(
+    message_id: str,
+    body: MastraMessageUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    row = _root_mastra_message(db, owner.id, message_id)
+    if row.status != "pending":
+        raise HTTPException(status_code=409, detail="只有排队中的消息可以编辑")
+    content = (body.content or "").strip()
+    if not content and not (row.attachments or []):
+        raise HTTPException(status_code=400, detail="消息和素材不能同时为空")
+    row.content = content
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "message": _serialize_message(row)}
+
+
+@router.delete("/api/mastra-chat/messages/{message_id}", summary="删除待执行的 AI 调度消息")
+def delete_mastra_message(
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    row = _root_mastra_message(db, owner.id, message_id)
+    if row.status != "pending":
+        raise HTTPException(status_code=409, detail="只有排队中的消息可以删除")
+    db.query(H5ChatEvent).filter(H5ChatEvent.message_id == row.id).delete(synchronize_session=False)
+    db.query(H5ChatApproval).filter(H5ChatApproval.message_id == row.id).delete(synchronize_session=False)
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "deleted_id": message_id}
+
+
+@router.post("/api/mastra-chat/messages/{message_id}/cancel", summary="停止 AI 调度消息")
+def cancel_mastra_message(
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    row = _root_mastra_message(db, owner.id, message_id)
+    side_effects_may_continue = _message_has_started_side_effects(db, row)
+    running_children = (
+        db.query(H5ChatMessage.id)
+        .filter(
+            H5ChatMessage.user_id == owner.id,
+            H5ChatMessage.parent_message_id == row.id,
+            H5ChatMessage.status.in_(("processing", "completed")),
+        )
+        .first()
+        is not None
+    )
+    changed = _cancel_root_message(db, row, reason="已停止当前任务")
+    if changed:
+        db.commit()
+        db.refresh(row)
+    return {
+        "ok": True,
+        "deduplicated": not changed,
+        "side_effects_may_continue": running_children or side_effects_may_continue,
+        "message": _serialize_message(row),
+    }
 
 
 @router.get("/api/mastra-chat/personal-profile", summary="读取 AI 调度可用的个人 IP 人设")
@@ -584,7 +882,7 @@ def update_mastra_personal_profile(
     db: Session = Depends(get_db),
 ):
     owner = online_user_for_mobile_user(db, current_user)
-    _authorized_parent_and_approval(
+    parent, _ = _authorized_parent_and_approval(
         db,
         owner_id=owner.id,
         parent_message_id=body.parent_message_id,
@@ -632,6 +930,7 @@ def update_mastra_personal_profile(
     row.meta = {**(row.meta or {}), "source": "mastra_personal_profile", "is_personal_default": True}
     row.status = "active"
     row.updated_at = datetime.utcnow()
+    _add_event(db, parent, "side_effect", {"kind": "personal_profile_updated", "fields": sorted(cleaned)})
     db.commit()
     return {"ok": True, "profile": _personal_profile_payload(db, owner.id), "updated_fields": sorted(cleaned)}
 
@@ -647,7 +946,7 @@ def save_mastra_memory_text(
     from .installation_slots import ensure_installation_slot
 
     owner = online_user_for_mobile_user(db, current_user)
-    _authorized_parent_and_approval(
+    parent, _ = _authorized_parent_and_approval(
         db,
         owner_id=owner.id,
         parent_message_id=body.parent_message_id,
@@ -669,6 +968,8 @@ def save_mastra_memory_text(
         content_text=body.content,
         meta={"source": "mastra_chat", "parent_message_id": body.parent_message_id},
     )
+    _add_event(db, parent, "side_effect", {"kind": "memory_created", "document_id": row.doc_id})
+    db.commit()
     return {"ok": True, "document": _doc_summary(row, include_content=False)}
 
 
@@ -690,7 +991,7 @@ async def import_mastra_memory_asset(
     from .installation_slots import ensure_installation_slot
 
     owner = online_user_for_mobile_user(db, current_user)
-    _authorized_parent_and_approval(
+    parent, _ = _authorized_parent_and_approval(
         db,
         owner_id=owner.id,
         parent_message_id=body.parent_message_id,
@@ -744,6 +1045,8 @@ async def import_mastra_memory_asset(
             "parent_message_id": body.parent_message_id,
         },
     )
+    _add_event(db, parent, "side_effect", {"kind": "memory_imported", "document_id": row.doc_id})
+    db.commit()
     return {"ok": True, "document": _doc_summary(row, include_content=False)}
 
 

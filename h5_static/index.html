@@ -9,7 +9,7 @@
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
   <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1-20260805-wechat-contact-picker-v1-20260806-recorder-detail-v2-20260806-audio-transcription-v2-20260807-detail-pages-v2-20260808-competitor-search-v1" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3-20260807-upload-width-v1-20260807-detail-pages-v1-20260807-content-publish-v1-20260808-ios-bottom-nav-v1-20260808-action-loading-v1-20260808-chat-fab-drag-v1-20260808-workflow-action-fields-v1-20260809-marketing-advanced-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3-20260807-upload-width-v1-20260807-detail-pages-v1-20260807-content-publish-v1-20260808-ios-bottom-nav-v1-20260808-action-loading-v1-20260808-chat-fab-drag-v1-20260808-workflow-action-fields-v1-20260809-marketing-advanced-v1-20260810-local-persona-v1-20260810-speech-pref-v1" />
 </head>
 <body>
   <main class="shell">
@@ -246,7 +246,7 @@
 
           <div class="workflow-template-drawer hidden" id="workflowTemplateDrawer">
             <div class="workflow-template-drawer-head">
-              <strong>模板列表</strong>
+              <strong>系统推荐模板</strong>
               <button class="ghost" type="button" id="workflowTemplateCloseBtn">关闭</button>
             </div>
             <div class="workflow-template-list" id="workflowTemplateList"></div>
@@ -643,6 +643,14 @@
               <input id="composerAssetPicker" type="hidden">
               <div id="composerAssetPickerPreview"></div>
             </div>
+            <div class="chat-queue hidden" id="chatQueueBar">
+              <button class="chat-queue-summary" id="chatQueueSummary" type="button" aria-expanded="false">
+                <span class="chat-queue-pulse" aria-hidden="true"></span>
+                <strong id="chatQueueSummaryText">正在处理</strong>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"></path></svg>
+              </button>
+              <div class="chat-queue-list hidden" id="chatQueueList"></div>
+            </div>
             <div class="composer-surface">
               <div class="upload-preview" id="uploadPreview"></div>
               <textarea id="messageInput" rows="1" placeholder="随心输入" autocomplete="off"></textarea>
@@ -679,6 +687,7 @@
                       <path d="M17 11a5 5 0 0 1-10 0M12 16v5M9 21h6"></path>
                     </svg>
                   </button>
+                  <button class="composer-steer-btn hidden" id="composerSteerBtn" type="button" title="立即补充当前任务">引导</button>
                   <button class="composer-send-btn" id="sendBtn" type="submit" aria-label="发送" title="发送">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"></path></svg>
                   </button>
@@ -777,6 +786,31 @@
                 <div class="hint">消息和任务都走当前账号</div>
               </div>
               <button class="ghost" type="button" id="refreshProfileBtn">刷新</button>
+            </div>
+            <div class="setting-row">
+              <span class="profile-setting-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Z"></path><path d="M15 9.5a4 4 0 0 1 0 5M18 7a7 7 0 0 1 0 10"></path></svg>
+              </span>
+              <div>
+                <strong>任务语音播报</strong>
+                <div class="hint">任务完成、失败或取消时播报状态</div>
+              </div>
+              <button class="profile-preference-switch is-on" type="button" id="speechPreferenceSwitch" role="switch" aria-checked="true" aria-label="任务语音播报" title="任务语音播报"><span></span></button>
+            </div>
+            <div class="setting-row" id="speechVoiceRow">
+              <span class="profile-setting-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="17" cy="16" r="3"></circle></svg>
+              </span>
+              <div>
+                <strong>播报音色</strong>
+                <div class="hint" id="speechVoiceHint">使用系统中文音色</div>
+              </div>
+              <div class="speech-voice-controls">
+                <select id="speechVoiceSelect" aria-label="播报音色"><option value="">系统默认</option></select>
+                <button type="button" id="speechVoicePreviewBtn" aria-label="试听音色" title="试听音色">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7Z"></path></svg>
+                </button>
+              </div>
             </div>
             <div class="setting-row">
               <span class="profile-setting-icon" aria-hidden="true">
@@ -2136,6 +2170,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1-20260807-detail-pages-v2-20260807-content-publish-v1-20260808-competitor-search-v1-20260808-action-loading-v1-20260808-workflow-native-children-v1-20260808-chat-fab-drag-v1-20260809-goal-video-duration-v1-20260809-marketing-advanced-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1-20260807-detail-pages-v2-20260807-content-publish-v1-20260808-competitor-search-v1-20260808-action-loading-v1-20260808-workflow-native-children-v1-20260808-chat-fab-drag-v1-20260809-goal-video-duration-v1-20260809-marketing-advanced-v1-20260810-workflow-system-slots-v1-20260810-local-persona-v1-20260810-speech-pref-v1-20260810-system-task-chat-v1"></script>
 </body>
 </html>
