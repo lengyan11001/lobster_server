@@ -2813,6 +2813,37 @@
     .task-detail-section { border: 1px solid rgba(223,230,242,.92); border-radius: 14px; background: rgba(248,251,255,.9); padding: 12px; }
     .task-detail-section h4 { margin: 0 0 8px; font-size: 15px; }
     .task-detail-section pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; color: #263858; max-height: 180px; overflow: auto; }
+    .task-detail-action-primary {
+      border-color: rgba(36,92,255,.14);
+      background: rgba(255,255,255,.94);
+      box-shadow: 0 10px 22px rgba(23,35,61,.06);
+    }
+    .task-detail-action-grid {
+      display: grid;
+      gap: 8px;
+    }
+    .task-detail-action-block {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+      padding: 8px 9px;
+      border: 1px solid rgba(223,230,242,.86);
+      border-radius: 12px;
+      background: #fff;
+    }
+    .task-detail-action-block > span {
+      min-width: 64px;
+      color: #66758f;
+      font-size: 12px;
+    }
+    .task-detail-action-block .content-inline-actions,
+    .task-detail-action-block .run-publish-actions {
+      flex: 1;
+      justify-content: flex-end;
+      margin-top: 0;
+    }
     .task-detail-result-primary {
       border-color: rgba(54,103,255,.2);
       background: linear-gradient(135deg, rgba(240,246,255,.96), rgba(255,253,247,.98));
@@ -2825,16 +2856,24 @@
       color: #17233d;
     }
     .task-detail-result-details .task-detail-record pre { max-height: 260px; }
-    .task-detail-technical {
-      background: rgba(248,251,255,.55);
+    .task-detail-secondary {
       border-style: dashed;
+      background: rgba(248,251,255,.58);
     }
+    .task-detail-secondary summary,
     .task-detail-technical summary {
       cursor: pointer;
       color: #66758f;
       font-size: 13px;
       font-weight: 800;
       list-style-position: inside;
+    }
+    .task-detail-secondary-body {
+      margin-top: 10px;
+    }
+    .task-detail-technical {
+      background: rgba(248,251,255,.55);
+      border-style: dashed;
     }
     .task-detail-technical-body { margin-top: 10px; }
     .task-detail-record { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
@@ -3305,7 +3344,7 @@
         justify-self: stretch;
       }
     }
-    .run-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .run-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 0; }
     .run-detail-actions button { padding: 8px 12px; border-radius: 999px; font-size: 12px; }
     .moment-item, .copy-item { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
     .moment-item:first-child, .copy-item:first-child { border-top: 0; padding-top: 0; margin-top: 0; }

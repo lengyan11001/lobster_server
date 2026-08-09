@@ -2893,8 +2893,7 @@
     }
 
     function collectImageStudioParams(prefix) {
-      const prompt = workflowParamValue(`${prefix}Prompt`);
-      if (!prompt) throw new Error("请填写图片需求");
+      const prompt = taskInputTextOrThrow(workflowParamValue(`${prefix}Prompt`), "请填写图片需求", "图片需求里不能使用执行详情或失败结果，请填写真实图片需求。");
       const referenceUrl = workflowParamValue(`${prefix}Reference`);
       return {
         prompt,
@@ -3249,6 +3248,8 @@
       }
       if (capabilityId === "comfly.daihuo.pipeline") {
         const asset = assetPickerImagePayload("workflowParamComflyAsset", "参考图片");
+        const rawTaskText = workflowParamValue("workflowParamComflyText");
+        if (looksLikeRunDetailText(rawTaskText)) throw new Error("视频要求里不能使用执行详情或失败结果，请填写真实视频要求。");
         return buildCapabilityTaskPlan({
           capabilityId: "comfly.daihuo.pipeline",
           title: node.label || "爆款TVC",
@@ -3256,7 +3257,7 @@
           payload: {
             action: "start_pipeline",
             ...asset,
-            task_text: workflowParamValue("workflowParamComflyText"),
+            task_text: cleanTaskInputText(rawTaskText),
             storyboard_count: workflowParamNumber("workflowParamComflyStoryboardCount", 5, 1, 8),
             auto_save: workflowParamChecked("workflowParamComflyAutoSave"),
           },
@@ -3274,8 +3275,7 @@
         });
       }
       if (capabilityId === "create.video.pipeline") {
-        const prompt = workflowParamValue("workflowParamCreateVideoPrompt");
-        if (!prompt) throw new Error("请填写视频主题");
+        const prompt = taskInputTextOrThrow(workflowParamValue("workflowParamCreateVideoPrompt"), "请填写视频主题", "视频主题里不能使用执行详情或失败结果，请填写真实视频主题。");
         return buildCapabilityTaskPlan({
           capabilityId: "create.video.pipeline",
           title: node.label || "速推视频制作",
@@ -3326,6 +3326,8 @@
       }
       if (capabilityId === "comfly.ecommerce.detail_pipeline") {
         const asset = assetOrImagePayload(workflowParamValue("workflowParamEcommerceAsset"), "商品主图");
+        const taskText = cleanTaskInputText(workflowParamValue("workflowParamEcommerceText"));
+        if (looksLikeRunDetailText(workflowParamValue("workflowParamEcommerceText"))) throw new Error("商品要求里不能使用执行详情或失败结果，请填写真实商品要求。");
         return buildCapabilityTaskPlan({
           capabilityId: "comfly.ecommerce.detail_pipeline",
           title: workflowParamValue("workflowParamEcommerceTitle") || node.label || "电商详情页",
@@ -3333,15 +3335,14 @@
           payload: {
             action: "start_pipeline",
             ...asset,
-            task_text: workflowParamValue("workflowParamEcommerceText"),
+            task_text: taskText,
             page_count: workflowParamNumber("workflowParamEcommercePageCount", 12, 1, 20),
             auto_save: workflowParamChecked("workflowParamEcommerceAutoSave"),
           },
           keyName: "task_kind",
         });
       }
-      const prompt = workflowParamValue("workflowParamGenericPrompt");
-      if (!prompt) throw new Error("请填写任务要求");
+      const prompt = taskInputTextOrThrow(workflowParamValue("workflowParamGenericPrompt"), "请填写任务要求");
       return buildCapabilityTaskPlan({
         capabilityId,
         title: workflowParamValue("workflowParamGenericTitle") || node.label || capabilityName(capabilityId) || "能力任务",
@@ -4410,7 +4411,7 @@
         const referenceUrls = Array.isArray(params.reference_image_urls) ? params.reference_image_urls : [];
         const referencePurposes = Array.isArray(params.reference_purposes) ? params.reference_purposes : [];
         setFieldValue("workflowParamImageTitle", plan.title || nodeInfo.label || "创作图片");
-        setFieldValue("workflowParamImagePrompt", params.prompt || inner.prompt || inner.task_text || node.note || "");
+        setFieldValue("workflowParamImagePrompt", safeTaskInputText(params.prompt, inner.prompt, inner.task_text, node.note));
         setFieldValue("workflowParamImageReference", referenceUrls[0] || "");
         setFieldValue("workflowParamImageReferencePurpose", referencePurposes[0] || "auto");
         setFieldValue("workflowParamImageAspectRatio", params.aspect_ratio || inner.aspect_ratio || "9:16");
@@ -4453,12 +4454,12 @@
       }
       if (capabilityId === "goal.image.pipeline") {
         setFieldValue("workflowParamImageTitle", plan.title || nodeInfo.label || "创作图片");
-        setFieldValue("workflowParamImagePrompt", inner.prompt || inner.task_text || node.note || "");
+        setFieldValue("workflowParamImagePrompt", safeTaskInputText(inner.prompt, inner.task_text, node.note));
         return;
       }
       if (capabilityId === "goal.video.pipeline") {
         setFieldValue("workflowParamVideoTitle", plan.title || nodeInfo.label || "创意视频");
-        setFieldValue("workflowParamVideoPrompt", inner.prompt || inner.task_text || node.note || "");
+        setFieldValue("workflowParamVideoPrompt", safeTaskInputText(inner.prompt, inner.task_text, node.note));
         setFieldValue("workflowParamVideoMode", goalVideoModeFromPayload(inner));
         setFieldValue("workflowParamVideoDuration", inner.duration || inner.duration_seconds || 10);
         setFieldValue("workflowParamVideoAsset", firstGoalVideoReference(inner));
@@ -4475,7 +4476,7 @@
       }
       if (capabilityId === "comfly.daihuo.pipeline") {
         setAssetPickerPayloadValue("workflowParamComflyAsset", inner);
-        setFieldValue("workflowParamComflyText", inner.task_text || inner.prompt || node.note || "");
+        setFieldValue("workflowParamComflyText", safeTaskInputText(inner.task_text, inner.prompt, node.note));
         setFieldValue("workflowParamComflyStoryboardCount", inner.storyboard_count || 5);
         setFieldValue("workflowParamComflyAutoSave", inner.auto_save !== false);
         return;
@@ -4485,7 +4486,7 @@
         return;
       }
       if (capabilityId === "create.video.pipeline") {
-        setFieldValue("workflowParamCreateVideoPrompt", inner.prompt || inner.task_text || node.note || "");
+        setFieldValue("workflowParamCreateVideoPrompt", safeTaskInputText(inner.prompt, inner.task_text, node.note));
         setFieldValue("workflowParamCreateVideoDuration", inner.duration || 8);
         setFieldValue("workflowParamCreateVideoSceneCount", inner.scene_count || 1);
         setFieldValue("workflowParamCreateVideoAspect", inner.aspect_ratio || "16:9");
@@ -4510,13 +4511,13 @@
       if (capabilityId === "comfly.ecommerce.detail_pipeline") {
         setFieldValue("workflowParamEcommerceTitle", plan.title || nodeInfo.label || "电商详情页");
         setFieldValue("workflowParamEcommerceAsset", inner.asset_id || inner.image_url || "");
-        setFieldValue("workflowParamEcommerceText", inner.task_text || inner.prompt || node.note || "");
+        setFieldValue("workflowParamEcommerceText", safeTaskInputText(inner.task_text, inner.prompt, node.note));
         setFieldValue("workflowParamEcommercePageCount", inner.page_count || 12);
         setFieldValue("workflowParamEcommerceAutoSave", inner.auto_save !== false);
         return;
       }
       setFieldValue("workflowParamGenericTitle", plan.title || nodeInfo.label || "能力任务");
-      setFieldValue("workflowParamGenericPrompt", inner.prompt || inner.task_text || node.note || "");
+      setFieldValue("workflowParamGenericPrompt", safeTaskInputText(inner.prompt, inner.task_text, node.note));
     }
 
     function openWorkflowParamModal(nodeId) {
@@ -10076,6 +10077,38 @@
       return payload.payload && typeof payload.payload === "object" ? payload.payload : payload;
     }
 
+    function looksLikeRunDetailText(value) {
+      const text = String(value == null ? "" : value).trim();
+      if (!text) return false;
+      const normalized = text.replace(/\s+/g, "");
+      if (normalized.includes("执行详情") && (normalized.includes("执行结果") || normalized.includes("执行配置与参数"))) return true;
+      if (normalized.includes("失败·") && normalized.includes("执行结果")) return true;
+      if (/analyze failed after \d+ attempt/i.test(text)) return true;
+      if (/validation error for [A-Za-z0-9_]+Payload/i.test(text) && normalized.includes("执行详情")) return true;
+      return false;
+    }
+
+    function cleanTaskInputText(value) {
+      const text = String(value == null ? "" : value).trim();
+      return looksLikeRunDetailText(text) ? "" : text;
+    }
+
+    function safeTaskInputText(...values) {
+      for (const value of values) {
+        const text = cleanTaskInputText(value);
+        if (text) return text;
+      }
+      return "";
+    }
+
+    function taskInputTextOrThrow(value, emptyMessage, dirtyMessage) {
+      const raw = String(value == null ? "" : value).trim();
+      if (looksLikeRunDetailText(raw)) throw new Error(dirtyMessage || "不能使用执行详情或失败结果，请填写真实任务要求。");
+      const text = cleanTaskInputText(raw);
+      if (!text) throw new Error(emptyMessage || "请填写任务要求");
+      return text;
+    }
+
     function runParameterRows(run) {
       const payload = runTaskInputPayload(run);
       const inner = runInnerPayload(run);
@@ -10091,12 +10124,29 @@
       if (payload.capability_id) add("能力", capabilityName(payload.capability_id));
       const sourceTask = (state.tasks || []).find((task) => String(task.id) === String(run && run.task_id)) || null;
       add("执行方式", taskScheduleLabel(sourceTask || { schedule_type: "once", schedule_config: payload.schedule_config || {}, next_run_at: "" }));
+      const capabilityId = cleanKey(taskCapabilityId(run) || payload.capability_id || (h5ContextFromPayload(payload) || {}).capability_id || "");
+      if (capabilityId === "comfly.seedance.tvc.pipeline") {
+        add("素材/图片", firstGoalVideoReference(inner) || inner.asset_id || inner.image_url || params.asset_id || params.image_url);
+        add("视频要求", safeTaskInputText(inner.task_text, inner.prompt, params.prompt));
+        add("生成模式", goalVideoModeFromPayload(inner));
+        add("视频时长", inner.total_duration_seconds || inner.duration || inner.duration_seconds);
+        add("分镜数量", inner.segment_count);
+        add("单段时长", inner.segment_duration_seconds);
+        add("画面比例", inner.aspect_ratio);
+        add("视频模型", inner.video_model);
+        add("视频通道", inner.video_channel);
+        add("视觉风格", inner.visual_tone);
+        add("节奏", inner.rhythm);
+        add("合并成片", inner.merge_clips);
+        add("生成配音", inner.generate_audio);
+        return rows;
+      }
       add("模板ID", payload.template_id);
       add("生成内容", Array.isArray(payload.tasks) ? payload.tasks.map(ipTaskLabel) : "");
       add("执行前同步", payload.sync_before);
       const req = payload.requirements && typeof payload.requirements === "object" ? payload.requirements : {};
       add("补充要求", req.common || req.moments || req.oral || req.image);
-      add("关键词/方向", payload.keywords || params.keyword || params.query || inner.prompt || inner.task_text);
+      add("关键词/方向", payload.keywords || params.keyword || params.query || safeTaskInputText(inner.prompt, inner.task_text));
       add("账号", payload.accounts || params.accounts);
       add("社区/来源", payload.communities || payload.source_keywords || params.source_keywords);
       add("采集上限", payload.max_items || params.max_results);
@@ -10108,7 +10158,7 @@
       add("拉取页数", payload.max_pages);
       add("最多数量", payload.limit || payload.max_people);
       add("素材/图片", firstGoalVideoReference(inner) || inner.asset_id || inner.image_url || params.asset_id || params.image_url || params.original_video_url);
-      add("视频要求", inner.task_text || inner.prompt || params.prompt);
+      add("视频要求", safeTaskInputText(inner.task_text, inner.prompt, params.prompt));
       add("生成模式", goalVideoModeFromPayload(inner));
       add("首帧来源", inner.source_mode);
       add("记忆文件", inner.memory_doc_ids);
@@ -10120,7 +10170,7 @@
       add("文章风格", inner.style);
       add("PPT主题", inner.topic);
       add("页数", inner.slide_count || inner.page_count);
-      add("商品要求", inner.task_text);
+      add("商品要求", safeTaskInputText(inner.task_text));
       add("发布账号", params.account_nickname || params.account || params.account_id);
       add("标题", params.title || inner.title);
       add("正文/描述", params.description || inner.description);
@@ -10135,6 +10185,15 @@
       if (!run || !run.id) return "";
       return `<div class="run-detail-actions">
         <button type="button" data-refill-run="${escapeHtml(run.id)}">重新执行</button>
+      </div>`;
+    }
+
+    function runDetailActionSectionHtml(items) {
+      const html = (Array.isArray(items) ? items : []).filter(Boolean).join("");
+      if (!html) return "";
+      return `<div class="task-detail-section task-detail-action-primary">
+        <h4>可操作项</h4>
+        <div class="task-detail-action-grid">${html}</div>
       </div>`;
     }
 
@@ -10165,6 +10224,8 @@
     function taskDetailHtml(run) {
       const payload = run && run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
       const sections = [];
+      const actionSections = [];
+      const detailSections = [];
       function renderTaskDetailSection(title, rows) {
         const normalizedRows = Array.isArray(rows)
           ? rows.filter((row) => Array.isArray(row) && String(row[1] == null ? "" : row[1]).trim() !== "")
@@ -10179,10 +10240,9 @@
       }
       const inputRows = runParameterRows(run);
       const technicalHtml = `<details class="task-detail-section task-detail-technical">
-        <summary>执行配置与参数</summary>
+        <summary>查看执行配置与参数</summary>
         <div class="task-detail-technical-body">
           ${inputRows.length ? inputRows.map(([label, value]) => `<div class="task-detail-record"><strong>${escapeHtml(label)}</strong><pre>${escapeHtml(String(value))}</pre></div>`).join("") : "<div class=\"hint\">暂无可展示参数。</div>"}
-          ${runDetailActionsHtml(run)}
         </div>
       </details>`;
       function douyinLeadActionLabel(action) {
@@ -10447,7 +10507,7 @@
             : "";
           return `<div class="task-detail-record linkedin-candidate-card"><strong>${escapeHtml(`${idx + 1}. ${name}`)}</strong>${lines.map((line) => `<pre>${escapeHtml(line)}</pre>`).join("")}${link}</div>`;
         }).join("");
-        return `${overview}<div class="task-detail-section linkedin-result-section"><h4>候选人明细</h4>${cards}</div>`;
+        return `${overview}<details class="task-detail-section linkedin-result-section task-detail-secondary"><summary>查看候选人明细 · ${compactNumber(candidates.length)}人</summary><div class="task-detail-secondary-body">${cards}</div></details>`;
       }
 
       function readablePayloadRows(data) {
@@ -10503,10 +10563,12 @@
         if (!data || typeof data !== "object") return "";
         const detailKeys = ["replies", "messages", "sessions", "conversations", "records", "items", "results", "outputs", "users", "tasks", "details"];
         const blocks = [];
+        let total = 0;
         detailKeys.forEach((key) => {
           const value = data[key];
           const rows = Array.isArray(value) ? value : [];
           if (!rows.length) return;
+          total += rows.length;
           const visibleRows = rows.slice(0, 10);
           const labelMap = {
             replies: "回复明细",
@@ -10530,7 +10592,10 @@
           }).join("")}</div>`);
         });
         if (!blocks.length) return "";
-        return `<div class="task-detail-section task-detail-result-details"><h4>结果明细</h4>${blocks.join("")}</div>`;
+        return `<details class="task-detail-section task-detail-result-details task-detail-secondary">
+          <summary>查看结果明细${total ? ` · ${compactNumber(total)}条` : ""}</summary>
+          <div class="task-detail-secondary-body">${blocks.join("")}</div>
+        </details>`;
       }
       if (payload.ip_content_daily) {
         const groups = Array.isArray(payload.groups) ? payload.groups : [];
@@ -10573,15 +10638,11 @@
         const summaryHtml = renderDouyinLeadSummary(payload);
         if (summaryHtml) sections.push(summaryHtml);
         const previewHtml = renderDouyinLeadPreview(payload);
-        if (previewHtml) sections.push(previewHtml);
+        if (previewHtml) detailSections.push(`<details class="task-detail-section task-detail-secondary"><summary>查看抖音获客明细</summary><div class="task-detail-secondary-body">${previewHtml}</div></details>`);
       } else if (run.task_kind === "linkedin_mining") {
         const linkedinHtml = renderLinkedinMiningResult(payload);
         if (linkedinHtml) sections.push(linkedinHtml);
       } else if (!payload.ip_content_daily) {
-        const summaryRows = readablePayloadRows(payload);
-        if (summaryRows.length) sections.push(renderTaskDetailSection("结果摘要", summaryRows));
-        const detailHtml = renderGenericResultDetails(payload);
-        if (detailHtml) sections.push(detailHtml);
         const generatedText = runGeneratedTextForAction(run);
         if (generatedText) {
           const textActions = contentActionMenuHtml({
@@ -10590,14 +10651,24 @@
             mediaType: "text",
             recordKind: "article",
           });
-          if (textActions) sections.push(`<div class="task-detail-section content-action-host"><h4>内容操作</h4><div class="content-inline-actions">${textActions}</div></div>`);
+          if (textActions) actionSections.push(`<div class="task-detail-action-block content-action-host"><span>内容操作</span><div class="content-inline-actions">${textActions}</div></div>`);
         }
+        const publishActions = renderRunPublishActions(run);
+        if (publishActions) actionSections.push(`<div class="task-detail-action-block"><span>发布动作</span>${publishActions}</div>`);
         const media = renderRunMedia(collectRunMediaEntries(run), run);
         if (media) sections.push(`<div class="task-detail-section"><h4>媒体结果</h4>${media}</div>`);
-        const publishActions = renderRunPublishActions(run);
-        if (publishActions) sections.push(`<div class="task-detail-section"><h4>发布动作</h4>${publishActions}</div>`);
+        const summaryRows = readablePayloadRows(payload);
+        if (summaryRows.length) sections.push(renderTaskDetailSection("结果摘要", summaryRows));
+        const detailHtml = renderGenericResultDetails(payload);
+        if (detailHtml) detailSections.push(detailHtml);
       }
-      return [resultSummaryHtml].concat(sections).concat(technicalHtml).join("");
+      actionSections.unshift(runDetailActionsHtml(run));
+      return [resultSummaryHtml]
+        .concat(runDetailActionSectionHtml(actionSections))
+        .concat(sections)
+        .concat(detailSections)
+        .concat(technicalHtml)
+        .join("");
     }
 
     async function openRunDetail(runId, backTab = "") {
@@ -10733,9 +10804,9 @@
       const inner = runInnerPayload(run);
       const params = payload.params && typeof payload.params === "object" ? payload.params : {};
       setFieldValue("abilityGenericTitle", run && run.title || "");
-      setFieldValue("abilityGenericPrompt", inner.prompt || inner.task_text || "");
+      setFieldValue("abilityGenericPrompt", safeTaskInputText(inner.prompt, inner.task_text));
       setFieldValue("workImageTitle", run && run.title || "创作图片");
-      setFieldValue("workImagePrompt", params.prompt || inner.prompt || inner.task_text || "");
+      setFieldValue("workImagePrompt", safeTaskInputText(params.prompt, inner.prompt, inner.task_text));
       const imageReferenceUrls = Array.isArray(params.reference_image_urls) ? params.reference_image_urls : [];
       const imageReferencePurposes = Array.isArray(params.reference_purposes) ? params.reference_purposes : [];
       setFieldValue("workImageReference", imageReferenceUrls[0] || "");
@@ -10746,7 +10817,7 @@
       setFieldValue("workImageBackground", params.background || "auto");
       renderAssetPickerControl("workImageReference");
       setFieldValue("abilityVideoTitle", run && run.title || "创意视频");
-      setFieldValue("abilityVideoPrompt", inner.prompt || inner.task_text || "");
+      setFieldValue("abilityVideoPrompt", safeTaskInputText(inner.prompt, inner.task_text));
       setFieldValue("abilityVideoMode", goalVideoModeFromPayload(inner));
       setFieldValue("abilityVideoDuration", inner.duration || inner.duration_seconds || 10);
       setFieldValue("abilityVideoAsset", firstGoalVideoReference(inner));
@@ -10755,7 +10826,7 @@
       loadVideoMemoryDocsForSelect().then(() => setMultiSelectValues("abilityVideoMemoryDocs", inner.memory_doc_ids || [])).catch(() => {});
       setSeedanceFieldsFromPayload("workSeedance", inner);
       setAssetPickerPayloadValue("workComflyAsset", inner);
-      setFieldValue("workComflyText", inner.task_text || inner.prompt || "");
+      setFieldValue("workComflyText", safeTaskInputText(inner.task_text, inner.prompt));
       setFieldValue("workComflyStoryboardCount", inner.storyboard_count || "");
       setFieldValue("workComflyAutoSave", inner.auto_save !== false);
       const hiflyParams = Object.keys(params).length ? params : inner;
@@ -10797,7 +10868,7 @@
       setFieldValue("abilityPptMode", inner.mode || "ai");
       setFieldValue("abilityEcommerceTitle", run && run.title || "电商详情页");
       setFieldValue("abilityEcommerceAsset", inner.asset_id || inner.image_url || "");
-      setFieldValue("abilityEcommerceText", inner.task_text || inner.prompt || "");
+      setFieldValue("abilityEcommerceText", safeTaskInputText(inner.task_text, inner.prompt));
       setFieldValue("abilityEcommercePageCount", inner.page_count || "");
       setFieldValue("abilityEcommerceAutoSave", inner.auto_save !== false);
       setFieldValue("abilityLeadTitle", payload.title || run && run.title || "");
@@ -13732,7 +13803,11 @@
 
     function seedancePayloadFromFields(prefix, options = {}) {
       const inputMode = String((($(`${prefix}InputMode`) && $(`${prefix}InputMode`).value) || "image_auto")).trim() || "image_auto";
-      const prompt = String((($(`${prefix}Text`) && $(`${prefix}Text`).value) || "")).trim();
+      const rawPrompt = String((($(`${prefix}Text`) && $(`${prefix}Text`).value) || "")).trim();
+      if (looksLikeRunDetailText(rawPrompt)) {
+        throw new Error("视频要求里不能使用执行详情或失败结果，请填写真实的视频需求。");
+      }
+      const prompt = cleanTaskInputText(rawPrompt);
       const model = String((($(`${prefix}Model`) && $(`${prefix}Model`).value) || "grok-imagine-video-1.5-preview")).trim();
       const segmentSeconds = seedanceSegmentSecondsForModel(model);
       const requestedDuration = parseInt(String((($(`${prefix}Duration`) && $(`${prefix}Duration`).value) || segmentSeconds)), 10);
@@ -13794,7 +13869,7 @@
       const model = seedanceUiModelFromPayload(inner);
       setFieldValue(`${prefix}InputMode`, inputMode);
       setFieldValue(`${prefix}ReferencePurpose`, (Array.isArray(inner.reference_purposes) && inner.reference_purposes[0]) || "storyboard");
-      setFieldValue(`${prefix}Text`, inner.task_text || inner.prompt || fallbackPrompt || "");
+      setFieldValue(`${prefix}Text`, safeTaskInputText(inner.task_text, inner.prompt, fallbackPrompt));
       setFieldValue(`${prefix}Model`, model);
       syncSeedanceDurationOptions(prefix);
       setFieldValue(`${prefix}Duration`, seedanceNormalizedDurationForModel(model, inner.total_duration_seconds || inner.duration || seedanceSegmentSecondsForModel(model)));
@@ -13875,7 +13950,9 @@
 
     function collectGoalVideoPayloadFromFields(ids) {
       const mode = ($(ids.modeId) ? $(ids.modeId).value : "single_asset") || "single_asset";
-      const prompt = ids.promptId && $(ids.promptId) ? $(ids.promptId).value.trim() : "";
+      const rawPrompt = ids.promptId && $(ids.promptId) ? $(ids.promptId).value.trim() : "";
+      if (looksLikeRunDetailText(rawPrompt)) throw new Error("视频提示词里不能使用执行详情或失败结果，请填写真实视频需求。");
+      const prompt = cleanTaskInputText(rawPrompt);
       const payload = { video_mode: mode, prompt };
       const duration = goalVideoDurationFromField(ids.durationId);
       if (duration) {
@@ -17004,6 +17081,8 @@
       }
       if (key === "comfly.daihuo.pipeline") {
         const asset = assetPickerImagePayload("workComflyAsset", "参考图片");
+        const taskText = cleanTaskInputText(workValue("workComflyText"));
+        if (looksLikeRunDetailText(workValue("workComflyText"))) throw new Error("视频要求里不能使用执行详情或失败结果，请填写真实视频要求。");
         return buildCapabilityTaskPlan({
           capabilityId: "comfly.daihuo.pipeline",
           title: "爆款TVC",
@@ -17011,7 +17090,7 @@
           payload: {
             action: "start_pipeline",
             ...asset,
-            task_text: workValue("workComflyText"),
+            task_text: taskText,
             storyboard_count: workNumber(workValue("workComflyStoryboardCount"), 5, 1, 8),
             auto_save: !!($("workComflyAutoSave") && $("workComflyAutoSave").checked),
           },
@@ -17093,7 +17172,7 @@
               original_video_url: originalVideoUrl,
               character_image_url: characterImageUrl,
               product_image_url: productImageUrl,
-              prompt: workValue("workViralPrompt"),
+              prompt: cleanTaskInputText(workValue("workViralPrompt")),
               duration: workNumber(workValue("workViralDuration"), 10, 5, 10),
               ratio: workValue("workViralRatio") || "9:16",
               generate_audio: !!($("workViralGenerateAudio") && $("workViralGenerateAudio").checked),
@@ -17223,6 +17302,8 @@
       }
       if (capabilityId === "comfly.ecommerce.detail_pipeline") {
         const asset = assetOrImagePayload(abilityValue("abilityEcommerceAsset"), "商品主图");
+        const taskText = cleanTaskInputText(abilityValue("abilityEcommerceText"));
+        if (looksLikeRunDetailText(abilityValue("abilityEcommerceText"))) throw new Error("商品要求里不能使用执行详情或失败结果，请填写真实商品要求。");
         return buildCapabilityTaskPlan({
           capabilityId: "comfly.ecommerce.detail_pipeline",
           title: abilityValue("abilityEcommerceTitle") || node.label || "电商详情页",
@@ -17230,14 +17311,13 @@
           payload: {
             action: "start_pipeline",
             ...asset,
-            task_text: abilityValue("abilityEcommerceText"),
+            task_text: taskText,
             page_count: abilityNumber("abilityEcommercePageCount", 12, 1, 20),
             auto_save: !!($("abilityEcommerceAutoSave") && $("abilityEcommerceAutoSave").checked),
           },
         });
       }
-      const prompt = abilityValue("abilityGenericPrompt");
-      if (!prompt) throw new Error("请填写任务要求");
+      const prompt = taskInputTextOrThrow(abilityValue("abilityGenericPrompt"), "请填写任务要求");
       return buildCapabilityTaskPlan({
         capabilityId,
         title: abilityValue("abilityGenericTitle") || node.label || capabilityName(capabilityId) || "能力任务",
@@ -17896,8 +17976,7 @@
         };
       }
       if (state.taskAbility === "create.video.pipeline") {
-        const prompt = (($("taskCreateVideoPrompt") && $("taskCreateVideoPrompt").value) || "").trim();
-        if (!prompt) throw new Error("请填写视频主题");
+        const prompt = taskInputTextOrThrow(($("taskCreateVideoPrompt") && $("taskCreateVideoPrompt").value) || "", "请填写视频主题", "视频主题里不能使用执行详情或失败结果，请填写真实视频主题。");
         const duration = parseInt(($("taskCreateVideoDuration") && $("taskCreateVideoDuration").value) || "8", 10);
         const sceneCount = parseInt(($("taskCreateVideoSceneCount") && $("taskCreateVideoSceneCount").value) || "1", 10);
         return {
@@ -17911,10 +17990,12 @@
       if (state.taskAbility === "comfly.daihuo.pipeline") {
         const asset = assetPickerImagePayload("taskComflyAsset", "参考图片");
         const storyboardCount = parseInt(($("taskComflyStoryboardCount") && $("taskComflyStoryboardCount").value) || "5", 10);
+        const rawTaskText = (($("taskComflyText") && $("taskComflyText").value) || "").trim();
+        if (looksLikeRunDetailText(rawTaskText)) throw new Error("视频要求里不能使用执行详情或失败结果，请填写真实视频要求。");
         return {
           action: "start_pipeline",
           ...asset,
-          task_text: (($("taskComflyText") && $("taskComflyText").value) || "").trim(),
+          task_text: cleanTaskInputText(rawTaskText),
           storyboard_count: Number.isNaN(storyboardCount) ? 5 : Math.max(1, Math.min(8, storyboardCount)),
           auto_save: !!($("taskComflyAutoSave") && $("taskComflyAutoSave").checked),
         };
@@ -17925,10 +18006,12 @@
       if (state.taskAbility === "comfly.ecommerce.detail_pipeline") {
         const asset = assetOrImagePayload($("taskEcommerceAsset") && $("taskEcommerceAsset").value, "商品主图");
         const pageCount = parseInt(($("taskEcommercePageCount") && $("taskEcommercePageCount").value) || "12", 10);
+        const rawTaskText = (($("taskEcommerceText") && $("taskEcommerceText").value) || "").trim();
+        if (looksLikeRunDetailText(rawTaskText)) throw new Error("商品要求里不能使用执行详情或失败结果，请填写真实商品要求。");
         return {
           action: "start_pipeline",
           ...asset,
-          task_text: (($("taskEcommerceText") && $("taskEcommerceText").value) || "").trim(),
+          task_text: cleanTaskInputText(rawTaskText),
           page_count: Number.isNaN(pageCount) ? 12 : Math.max(1, Math.min(20, pageCount)),
           auto_save: !!($("taskEcommerceAutoSave") && $("taskEcommerceAutoSave").checked),
         };

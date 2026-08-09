@@ -1068,6 +1068,34 @@ def _normalize_goal_video_task_payload(payload: Dict[str, Any]) -> None:
     cap_payload["candidate_group"] = candidate_group
 
 
+def _looks_like_h5_run_detail_text(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    compact = re.sub(r"\s+", "", text)
+    if "执行详情" in compact and ("执行结果" in compact or "执行配置与参数" in compact):
+        return True
+    if "失败·" in compact and "执行结果" in compact:
+        return True
+    if re.search(r"analyze failed after \d+ attempt", text, re.IGNORECASE):
+        return True
+    if re.search(r"validation error for [A-Za-z0-9_]+Payload", text, re.IGNORECASE) and "执行详情" in compact:
+        return True
+    return False
+
+
+def _validate_capability_task_payload(payload: Dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        return
+    capability_id = str(payload.get("capability_id") or "").strip()
+    if capability_id != "comfly.seedance.tvc.pipeline":
+        return
+    cap_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    for key in ("task_text", "prompt", "video_prompt"):
+        if _looks_like_h5_run_detail_text(cap_payload.get(key)):
+            raise HTTPException(status_code=400, detail="视频需求里不能使用执行详情或失败结果，请填写真实的视频需求")
+
+
 def _scheduled_capability_id(payload: Any) -> str:
     if not isinstance(payload, dict):
         return ""
@@ -2671,6 +2699,7 @@ def _create_task_row(
             raise HTTPException(status_code=400, detail="视频号文案提取定时任务需要账号、链接或关键词")
     if task_kind == "capability":
         payload = dict(payload)
+        _validate_capability_task_payload(payload)
         _normalize_goal_video_task_payload(payload)
     interval_seconds = None
     now = datetime.utcnow()

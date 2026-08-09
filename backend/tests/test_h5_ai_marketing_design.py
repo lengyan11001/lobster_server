@@ -252,6 +252,38 @@ def test_h5_storyboard_checkbox_options_are_compact_and_scoped():
     assert "-webkit-appearance: checkbox;" in css
 
 
+def test_h5_storyboard_run_detail_text_is_not_reused_as_prompt():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    run_rows_block = script.split("function runParameterRows", 1)[1].split("function runDetailActionsHtml", 1)[0]
+    seedance_payload_block = script.split("function seedancePayloadFromFields", 1)[1].split("function seedanceUiModelFromPayload", 1)[0]
+    seedance_refill_block = script.split("function setSeedanceFieldsFromPayload", 1)[1].split("function taskTextareaHtml", 1)[0]
+
+    assert "function looksLikeRunDetailText" in script
+    assert "function safeTaskInputText" in script
+    assert 'capabilityId === "comfly.seedance.tvc.pipeline"' in run_rows_block
+    assert 'add("视频要求", safeTaskInputText(inner.task_text, inner.prompt, params.prompt));' in run_rows_block
+    assert 'add("商品要求", inner.task_text);' not in run_rows_block
+    assert "looksLikeRunDetailText(rawPrompt)" in seedance_payload_block
+    assert "视频要求里不能使用执行详情或失败结果" in seedance_payload_block
+    assert "safeTaskInputText(inner.task_text, inner.prompt, fallbackPrompt)" in seedance_refill_block
+
+
+def test_h5_run_detail_prioritizes_results_and_collapses_details():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    css = (H5 / "h5-app.css").read_text(encoding="utf-8")
+    task_detail_block = script.split("function taskDetailHtml", 1)[1].split("async function openRunDetail", 1)[0]
+    technical_block = task_detail_block.split("const technicalHtml", 1)[1].split("function douyinLeadActionLabel", 1)[0]
+
+    assert "function runDetailActionSectionHtml" in script
+    assert "actionSections.unshift(runDetailActionsHtml(run));" in task_detail_block
+    assert ".concat(runDetailActionSectionHtml(actionSections))" in task_detail_block
+    assert "查看执行配置与参数" in technical_block
+    assert "runDetailActionsHtml(run)" not in technical_block
+    assert "<details class=\"task-detail-section task-detail-result-details task-detail-secondary\">" in task_detail_block
+    assert ".task-detail-action-primary" in css
+    assert ".task-detail-secondary summary" in css
+
+
 def test_h5_scheduled_capabilities_default_to_online_commands():
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
 
