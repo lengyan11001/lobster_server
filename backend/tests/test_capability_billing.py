@@ -402,6 +402,46 @@ def test_grok_imagine_video_pre_deduct_uses_fixed_user_price(db_session, db_sess
         assert row.meta["requested_duration"] == 99
 
 
+def test_refund_is_idempotent_with_billing_key(db_session, db_session_factory, monkeypatch):
+    from backend.app.models import CreditLedger, User
+
+    user = User(
+        email="refund-idempotent@test.local",
+        hashed_password="x",
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        brand_mark="bihuo",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    client = _client(db_session_factory, user.id, monkeypatch, multiplier="2")
+    headers = {
+        "X-Installation-Id": "test-install-1",
+        "X-Lobster-Mcp-Billing": "test-billing-key",
+        "X-Billing-Idempotency-Key": "refund:test:goal-video:1",
+    }
+    body = {"capability_id": "goal.video.pipeline", "credits": 12.5}
+
+    first = client.post("/capabilities/refund", headers=headers, json=body)
+    second = client.post("/capabilities/refund", headers=headers, json=body)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["refunded"] == 12.5
+    assert second.json()["refunded"] == 12.5
+
+    with db_session_factory() as s:
+        u = s.query(User).filter(User.id == user.id).first()
+        assert u.credits == Decimal("112.5000")
+        rows = s.query(CreditLedger).filter(CreditLedger.user_id == user.id, CreditLedger.entry_type == "refund").all()
+        assert len(rows) == 1
+        assert rows[0].delta == Decimal("12.5000")
+
+
 def test_create_video_pipeline_defaults_to_sutui_grok_fixed_price():
     from backend.app.api.capabilities import _estimate_pipeline_total_user_price
 

@@ -58,9 +58,13 @@ DEFAULT_CLIENT_CODE_OTA_PATHS = [
 
 
 def manifest_paths_for_zip(zip_path: Path) -> list[str]:
-    paths = list(DEFAULT_CLIENT_CODE_OTA_PATHS)
     with zipfile.ZipFile(zip_path) as zf:
         names = set(zf.namelist())
+    paths = []
+    for path in DEFAULT_CLIENT_CODE_OTA_PATHS:
+        normalized = path.replace("\\", "/").rstrip("/")
+        if normalized in names or any(name.startswith(normalized + "/") for name in names):
+            paths.append(path)
     runtime_dirs = [
         "scripts/ppt_runtime_wheels",
         "scripts/memory_document_runtime_wheels",

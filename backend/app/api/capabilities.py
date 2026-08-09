@@ -442,8 +442,8 @@ def _billing_idempotency_key(request: Request) -> str:
     )
 
 
-def _pre_deduct_idempotent_cached(
-    db: Session, user_id: int, idem_key: str
+def _billing_idempotent_cached(
+    db: Session, user_id: int, idem_key: str, *, endpoint: str
 ) -> Optional[dict]:
     if not idem_key:
         return None
@@ -452,7 +452,7 @@ def _pre_deduct_idempotent_cached(
         .filter(
             BillingIdempotency.user_id == user_id,
             BillingIdempotency.key == idem_key,
-            BillingIdempotency.endpoint == "pre_deduct",
+            BillingIdempotency.endpoint == endpoint,
         )
         .first()
     )
@@ -466,7 +466,7 @@ def _pre_deduct_idempotent_cached(
         return None
 
 
-def _pre_deduct_idempotent_store(db: Session, user_id: int, idem_key: str, payload: dict) -> None:
+def _billing_idempotent_store(db: Session, user_id: int, idem_key: str, payload: dict, *, endpoint: str) -> None:
     if not idem_key:
         return
     try:
@@ -474,7 +474,7 @@ def _pre_deduct_idempotent_store(db: Session, user_id: int, idem_key: str, paylo
             BillingIdempotency(
                 user_id=user_id,
                 key=idem_key,
-                endpoint="pre_deduct",
+                endpoint=endpoint,
                 response_json=json.dumps(payload, ensure_ascii=False),
             )
         )
@@ -483,6 +483,24 @@ def _pre_deduct_idempotent_store(db: Session, user_id: int, idem_key: str, paylo
         db.rollback()
     except Exception:
         db.rollback()
+
+
+def _pre_deduct_idempotent_cached(
+    db: Session, user_id: int, idem_key: str
+) -> Optional[dict]:
+    return _billing_idempotent_cached(db, user_id, idem_key, endpoint="pre_deduct")
+
+
+def _pre_deduct_idempotent_store(db: Session, user_id: int, idem_key: str, payload: dict) -> None:
+    _billing_idempotent_store(db, user_id, idem_key, payload, endpoint="pre_deduct")
+
+
+def _refund_idempotent_cached(db: Session, user_id: int, idem_key: str) -> Optional[dict]:
+    return _billing_idempotent_cached(db, user_id, idem_key, endpoint="refund")
+
+
+def _refund_idempotent_store(db: Session, user_id: int, idem_key: str, payload: dict) -> None:
+    _billing_idempotent_store(db, user_id, idem_key, payload, endpoint="refund")
 
 
 @router.post("/capabilities/pre-deduct", summary="调用能力前预扣积分（不足返回 402）")
@@ -904,6 +922,7 @@ def refund_credits(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    idem_key = _billing_idempotency_key(request)
     if not _should_deduct_credits() or body.credits <= 0:
         return {"ok": True}
     if not _billing_request_may_mutate_balance(request):
@@ -914,6 +933,10 @@ def refund_credits(
                 "请配置 LOBSTER_MCP_BILLING_INTERNAL_KEY 并转发 X-Lobster-Mcp-Billing。"
             ),
         )
+    if idem_key:
+        cached = _refund_idempotent_cached(db, current_user.id, idem_key)
+        if cached is not None:
+            return cached
     db.refresh(current_user)
     refund_amt = quantize_credits(body.credits)
     current_user.credits = user_balance_decimal(current_user) + refund_amt
@@ -939,7 +962,9 @@ def refund_credits(
         },
     )
     db.commit()
-    return {"ok": True, "refunded": float(refund_amt)}
+    out = {"ok": True, "refunded": float(refund_amt)}
+    _refund_idempotent_store(db, current_user.id, idem_key, out)
+    return out
 
 
 @router.post("/capabilities/record-call", summary="记录能力调用（独立认证时按 unit_credits 扣积分，或使用 pre-deduct 已扣数量）")

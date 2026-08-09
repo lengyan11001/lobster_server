@@ -18,7 +18,15 @@ def _load_publish_module():
 def test_manifest_paths_only_include_files_present_in_ota(tmp_path):
     module = _load_publish_module()
     zip_path = tmp_path / "client-ota.zip"
-    expected_paths = [path for path in module.DEFAULT_CLIENT_CODE_OTA_PATHS if path != "CLIENT_CODE_VERSION.json"]
+    omitted_paths = {
+        "nodejs/node_modules/@tencent-weixin/openclaw-weixin",
+        "backend/douyin_origin/douyin_protocol/node_modules",
+    }
+    expected_paths = [
+        path
+        for path in module.DEFAULT_CLIENT_CODE_OTA_PATHS
+        if path != "CLIENT_CODE_VERSION.json" and path not in omitted_paths
+    ]
 
     with zipfile.ZipFile(zip_path, "w") as archive:
         for path in expected_paths:
@@ -32,6 +40,8 @@ def test_manifest_paths_only_include_files_present_in_ota(tmp_path):
 
     assert ".env" not in paths
     assert "必火智能AI.exe" not in paths
+    for path in omitted_paths:
+        assert path not in paths
     with zipfile.ZipFile(zip_path) as archive:
         names = {name.rstrip("/") for name in archive.namelist()}
     for path in paths:
