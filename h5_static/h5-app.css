@@ -2704,6 +2704,36 @@
     .run-result { margin-top: 6px; color: #40506c; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
     .run-media { width: min(100%, 680px); display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-top: 12px; }
     .run-media-item { width: 100%; min-width: 0; display: grid; gap: 9px; }
+    .run-media-toolbar {
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+    .run-media-toolbar > a,
+    .run-media-toolbar > button,
+    .run-media-toolbar .task-action-menu summary {
+      width: 100%;
+      min-width: 0;
+      min-height: 36px;
+      padding: 7px 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(36,92,255,.12);
+      border-radius: 9px;
+      color: var(--blue);
+      background: rgba(36,92,255,.08);
+      box-shadow: none;
+      text-align: center;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .run-media-toolbar .task-action-menu { width: 100%; min-width: 0; }
+    .run-media-toolbar .task-action-menu:only-child { grid-column: 1 / -1; }
+    .run-media-toolbar .task-action-list { right: 0; left: auto; min-width: 152px; }
     .run-media-actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; font-size: 13px; }
     .run-media-actions a,
     .run-media-actions button {
@@ -2820,6 +2850,7 @@
     }
     .task-detail-action-grid {
       display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 8px;
     }
     .task-detail-action-block {
@@ -2839,6 +2870,7 @@
       font-size: 12px;
     }
     .task-detail-action-block .content-inline-actions,
+    .task-detail-action-block .run-detail-actions,
     .task-detail-action-block .run-publish-actions {
       flex: 1;
       justify-content: flex-end;
@@ -3345,7 +3377,7 @@
       }
     }
     .run-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 0; }
-    .run-detail-actions button { padding: 8px 12px; border-radius: 999px; font-size: 12px; }
+    .run-detail-actions button { padding: 8px 12px; border-radius: 999px; color: #fff; background: linear-gradient(135deg, var(--blue), var(--cyan)); box-shadow: none; font-size: 12px; }
     .moment-item, .copy-item { border-top: 1px solid rgba(223,230,242,.9); padding-top: 10px; margin-top: 10px; }
     .moment-item:first-child, .copy-item:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
     .moment-summary, .copy-summary {
@@ -6445,6 +6477,10 @@
       .run-media { width: 100%; gap: 14px; }
       .run-media video,
       .run-media img { max-height: 58vh; }
+      .run-media-toolbar { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+      .run-media-toolbar > a,
+      .run-media-toolbar > button,
+      .run-media-toolbar .task-action-menu summary { padding-left: 6px; padding-right: 6px; font-size: 12px; }
       .run-media-actions { gap: 7px; }
       .media-preview {
         width: 100%;

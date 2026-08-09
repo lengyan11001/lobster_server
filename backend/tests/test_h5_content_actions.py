@@ -99,7 +99,8 @@ def test_work_record_results_reuse_content_actions():
 
     assert "function runMediaContentActionMenu(entry, row, index)" in script
     assert 'contentActionMenuHtml(actionItem)' in script
-    assert '<h4>内容操作</h4>' in script
+    assert '<h4>可操作项</h4>' in script
+    assert '<span>内容操作</span>' in script
     assert 'class="run-media-item content-action-host"' in script
     assert "creativePrompt: contentActionTextValue(" in script
     assert "entry.image_prompt," in script

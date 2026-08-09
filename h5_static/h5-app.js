@@ -10200,8 +10200,11 @@
 
     function runDetailActionsHtml(run) {
       if (!run || !run.id) return "";
-      return `<div class="run-detail-actions">
-        <button type="button" data-refill-run="${escapeHtml(run.id)}">重新执行</button>
+      return `<div class="task-detail-action-block">
+        <span>任务操作</span>
+        <div class="run-detail-actions">
+          <button type="button" data-refill-run="${escapeHtml(run.id)}">重新执行</button>
+        </div>
       </div>`;
     }
 
@@ -19221,6 +19224,21 @@
       return `<div class="run-media-actions"><button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}">打开</button><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer" data-media-download-url="${downloadUrl}" data-media-download-name="${safeName}"${iosAttr}>${escapeHtml(label)}</a></div>`;
     }
 
+    function runMediaToolbarHtml(url, downloadLabel, fallbackName, actionMenu = "") {
+      const filename = filenameFromUrl(url, fallbackName);
+      const openUrl = escapeHtml(mediaProxyUrl(url, "inline", filename));
+      const safeName = escapeHtml(filename);
+      const primaryActions = IS_WECHAT
+        ? `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}">打开</button><button type="button" data-copy-media="${escapeHtml(url)}">复制链接</button>`
+        : (() => {
+          const downloadUrl = escapeHtml(mediaProxyUrl(url, "attachment", filename));
+          const label = IS_IOS ? "下载到文件" : downloadLabel;
+          const iosAttr = IS_IOS ? ` data-ios-download="1"` : "";
+          return `<button type="button" data-media-preview-url="${openUrl}" data-media-preview-name="${safeName}">打开</button><a href="${downloadUrl}" download="${safeName}" target="_blank" rel="noopener noreferrer" data-media-download-url="${downloadUrl}" data-media-download-name="${safeName}"${iosAttr}>${escapeHtml(label)}</a>`;
+        })();
+      return `<div class="run-media-toolbar">${primaryActions}${actionMenu || ""}</div>`;
+    }
+
     function renderMediaPreviews(bubble, urls) {
       if (!bubble || !urls || !urls.length) return;
       let box = bubble._mediaEl;
@@ -20076,6 +20094,8 @@
       const mcpResult = payload.mcp_result && typeof payload.mcp_result === "object" ? payload.mcp_result : {};
       const mcpJob = mcpResult.result && typeof mcpResult.result === "object" ? mcpResult.result : mcpResult;
       const mcpPipeline = mcpJob.result && typeof mcpJob.result === "object" ? mcpJob.result : {};
+      const localRefs = local.result_refs && typeof local.result_refs === "object" ? local.result_refs : {};
+      const result = payload.result && typeof payload.result === "object" ? payload.result : {};
       let primaryVideos = addPrimaryCandidates([
         local.final_video,
         localItem.final_video,
@@ -20110,6 +20130,22 @@
           addUrl(url);
         });
       };
+      walk(local.images);
+      walk(local.image_urls);
+      walk(local.output_images);
+      walk(local.generated_images);
+      walk(local.media_urls);
+      walk(local.saved_assets);
+      walk(localRefs.urls);
+      walk(localRefs.saved_assets);
+      walk(result.images);
+      walk(result.image_urls);
+      walk(result.output_images);
+      walk(result.generated_images);
+      walk(payload.images);
+      walk(payload.image_urls);
+      walk(payload.output_images);
+      walk(payload.generated_images);
       walk(payload.saved_assets);
       walk(refs.saved_assets);
       walk(mcpJob.saved_assets);
@@ -20408,26 +20444,26 @@
         const url = String(entry.url || entry.source_url || "").trim();
         const actionMenu = runMediaContentActionMenu(entry, row, index);
         if (!url && entry.asset_id) {
-          return `<div class="run-media-item content-action-host"><div class="hint">素材已入库</div><div class="run-media-actions">${actionMenu}</div></div>`;
+          return `<div class="run-media-item content-action-host"><div class="hint">素材已入库</div><div class="run-media-toolbar">${actionMenu}</div></div>`;
         }
         if (!url) return "";
         const low = url.toLowerCase();
         const mediaType = String(entry.media_type || "").trim().toLowerCase();
         if (mediaType.includes("video") || /\.(mp4|webm|mov|m4v)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item content-action-host"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${mediaActionHtml(url, "下载视频", "lobster-video.mp4")}<div class="run-media-actions">${actionMenu}</div></div>`;
+          return `<div class="run-media-item content-action-host"><video controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4")))}"></video>${runMediaToolbarHtml(url, "下载视频", "lobster-video.mp4", actionMenu)}</div>`;
         }
         if (mediaType.includes("image") || /\.(png|jpe?g|webp|gif|bmp|avif)(\?|#|$)/.test(low)) {
           const previewUrl = escapeHtml(mediaProxyUrl(url, "inline", "lobster-image.png"));
           const rawPreviewName = filenameFromUrl(url, "lobster-image.png");
           const previewName = escapeHtml(rawPreviewName);
-          return `<div class="run-media-item content-action-host"><button class="media-preview-trigger" type="button" data-media-preview-url="${previewUrl}" data-media-preview-name="${previewName}"><img src="${previewUrl}" alt="预览"></button>${mediaActionHtml(url, "下载图片", "lobster-image.png")}<div class="run-media-actions">${actionMenu}</div></div>`;
+          return `<div class="run-media-item content-action-host"><button class="media-preview-trigger" type="button" data-media-preview-url="${previewUrl}" data-media-preview-name="${previewName}"><img src="${previewUrl}" alt="预览"></button>${runMediaToolbarHtml(url, "下载图片", "lobster-image.png", actionMenu)}</div>`;
         }
         if (mediaType.includes("audio") || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|#|$)/.test(low)) {
-          return `<div class="run-media-item content-action-host"><audio controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-audio.mp3")))}"></audio>${mediaActionHtml(url, "下载音频", "lobster-audio.mp3")}<div class="run-media-actions">${actionMenu}</div></div>`;
+          return `<div class="run-media-item content-action-host"><audio controls src="${escapeHtml(mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-audio.mp3")))}"></audio>${runMediaToolbarHtml(url, "下载音频", "lobster-audio.mp3", actionMenu)}</div>`;
         }
         const rawPreviewName = filenameFromUrl(url, "lobster-media");
         const previewName = escapeHtml(rawPreviewName);
-        return `<div class="run-media-item content-action-host"><button type="button" data-media-preview-url="${escapeHtml(mediaProxyUrl(url, "inline", rawPreviewName))}" data-media-preview-name="${previewName}">打开预览</button>${mediaActionHtml(url, "下载文件", "lobster-media")}<div class="run-media-actions">${actionMenu}</div></div>`;
+        return `<div class="run-media-item content-action-host"><button type="button" data-media-preview-url="${escapeHtml(mediaProxyUrl(url, "inline", rawPreviewName))}" data-media-preview-name="${previewName}">打开预览</button>${runMediaToolbarHtml(url, "下载文件", "lobster-media", actionMenu)}</div>`;
       }).join("")}</div>`;
     }
 
