@@ -30,20 +30,24 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert 'await api(`/api/assets/${encodeURIComponent(source.assetId)}`, { method: "DELETE" })' in script
     assert 'await api(`/api/content-records?${params.toString()}`, { method: "DELETE" })' in script
     assert 'openContentActionAbility("image_composer_studio", "workImagePrompt"' in script
-    assert 'openContentActionAbility("goal.video.pipeline", "abilityVideoPrompt"' in script
+    assert 'openContentActionAbility("comfly.seedance.tvc.pipeline", "taskSeedanceText"' in script
+    assert 'openContentActionAbility("goal.video.pipeline"' not in script
+    assert 'submitVoiceCapabilityTask("goal.video.pipeline"' not in script
+    assert 'setTaskAbility("goal.video.pipeline")' not in script
+    assert 'taskAbility: "goal.video.pipeline"' not in script
     assert 'openContentActionAbility("hifly.video.create_by_tts", "workHiflyScript"' in script
     assert 'openContentActionAbility("publish_center", "workPublishMaterial"' in script
     assert 'state.assetAvatarPrefillFile = file' in script
-    assert 'if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v1"' in script
+    assert 'if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v2"' in script
     assert 'if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = mediaType' in script
-    assert 'selectAssetPickerRow("abilityVideoAsset", {' in script
+    assert '请继续上传授权视频' in script
+    assert 'selectAssetPickerRow("taskSeedanceAsset", {' in script
     assert 'asset_origin: "generated"' in script
     assert "ensureContentImageInAssetPicker" not in script
-    assert 'renderAssetPickerControl("abilityVideoAsset")' in script
     assert 'setFieldValue("workImagePrompt", creativePrompt)' in script
     assert 'setFieldValue("workImageReferencePurpose", "local_edit")' in script
     assert 'selectAssetPickerRow("workImageReference", {' in script
-    assert 'setFieldValue("abilityVideoPrompt", creativePrompt)' in script
+    assert 'setFieldValue("taskSeedanceText", creativePrompt)' in script
     assert 'setFieldValue("workHiflyScript", script)' in script
     assert 'setFieldValue("workPublishDescription", text)' in script
     assert 'setFieldValue("workPublishTags", tags)' in script
@@ -84,7 +88,7 @@ def test_content_action_fields_keep_prompt_copy_and_script_separate():
     assert "meta," in script
     assert "function resolveContentActionCreativePrompt(item)" in script
     assert "function fillContentActionPromptLater(item, fieldId" in script
-    assert 'fillContentActionPromptLater(item, "abilityVideoPrompt", reference)' in script
+    assert 'fillContentActionPromptLater(item, "taskSeedanceText", reference, "taskSeedanceAsset")' in script
     assert "function hydrateAssetSelectionContext(id, row)" in script
     assert 'setAssetDerivedField("workPublishDescription", item.description)' in script
     assert 'return apiUrl(raw.startsWith("/") ? raw : `/${raw}`)' in script

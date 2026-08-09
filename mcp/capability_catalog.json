@@ -29,13 +29,13 @@
     "arg_schema": {
       "type": "object",
       "properties": {
-        "model": { "type": "string", "description": "可选；默认按参考图数量使用 APIZ Veo 3.1：无图 text-to-video、1 图 image-to-video、2-3 图 reference-to-video" },
+        "model": { "type": "string", "description": "可选；用户明确指定模型时原样传递。未指定时由服务器统一选择默认 Grok 模型和兜底策略，不按时长自动切换更贵模型。" },
         "prompt": { "type": "string", "description": "描述/动作提示词" },
         "image_url": { "type": "string", "description": "图生视频时必传，公开可访问的图片 URL；本地图可用 sutui.transfer_url 先转存" },
-        "image_urls": { "type": "array", "items": { "type": "string" }, "maxItems": 3, "description": "多参考图，APIZ Veo 3.1 reference-to-video 支持 1-3 张" },
+        "image_urls": { "type": "array", "items": { "type": "string" }, "maxItems": 3, "description": "多参考图；具体数量和模型支持范围由服务器和上游能力决定。" },
         "aspect_ratio": { "type": "string", "enum": ["16:9", "9:16"], "description": "可选，默认 16:9" },
         "resolution": { "type": "string", "enum": ["720p", "1080p"], "description": "可选，默认 720p" },
-        "duration": { "type": "integer", "enum": [4, 6, 8], "description": "APIZ Veo 3.1 支持 4/6/8 秒；多参考图固定 8 秒" }
+        "duration": { "type": "integer", "description": "可选视频时长（秒）；未指定时由服务器按当前模型策略默认 10 秒处理。" }
       },
       "required": ["prompt"]
     }

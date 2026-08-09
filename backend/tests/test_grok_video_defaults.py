@@ -15,19 +15,18 @@ from mcp.video_model_resolve import resolve_default_video_model_id, resolve_vide
 SUTUI_GROK_15_IMAGE_MODEL = "xai/grok-imagine-video-1.5/image-to-video"
 
 
-def test_default_video_model_uses_apiz_veo_text_to_video():
+def test_default_video_model_uses_grok_text_to_video():
     out = _normalize_video_generate_payload({"prompt": "一条产品宣传短视频"})
 
     assert out == {
-        "model": "apiz/veo3.1/text-to-video",
+        "model": "xai/grok-imagine-video/text-to-video",
         "prompt": "一条产品宣传短视频",
-        "duration": 4,
-        "aspect_ratio": "16:9",
-        "resolution": "720p",
+        "duration": 10,
+        "aspect_ratio": "9:16",
     }
 
 
-def test_default_video_model_switches_to_apiz_veo_image_to_video_when_image_present():
+def test_default_video_model_switches_to_grok_15_image_to_video_when_image_present():
     out = _normalize_video_generate_payload(
         {
             "prompt": "基于这张图生成口播视频",
@@ -36,7 +35,7 @@ def test_default_video_model_switches_to_apiz_veo_image_to_video_when_image_pres
         }
     )
 
-    assert out["model"] == "apiz/veo3.1/image-to-video"
+    assert out["model"] == SUTUI_GROK_15_IMAGE_MODEL
     assert out["image_url"] == "https://example.com/a.png"
     assert out["duration"] == 8
 
@@ -147,13 +146,14 @@ def test_sutui_grok_15_keeps_managed_fallback():
 
 
 @pytest.mark.parametrize("pipeline_capability", ["goal.video.pipeline", "create.video.pipeline"])
-def test_video_pipelines_migrate_previous_apiz_default_to_sutui_grok_15(pipeline_capability):
+@pytest.mark.parametrize("duration", [8, 10, 15])
+def test_video_pipelines_migrate_previous_apiz_default_to_sutui_grok_15(pipeline_capability, duration):
     out = _normalize_video_generate_payload(
         {
             "model": "apiz/veo3.1/image-to-video",
             "prompt": "test",
             "image_url": "https://example.com/a.png",
-            "duration": 8,
+            "duration": duration,
             "resolution": "720p",
             "aspect_ratio": "9:16",
         },
@@ -162,7 +162,7 @@ def test_video_pipelines_migrate_previous_apiz_default_to_sutui_grok_15(pipeline
     )
 
     assert out["model"] == SUTUI_GROK_15_IMAGE_MODEL
-    assert out["duration"] == 8
+    assert out["duration"] == duration
 
 
 def test_grok_aliases_resolve_to_xai_grok_models():
@@ -174,14 +174,14 @@ def test_grok_aliases_resolve_to_xai_grok_models():
     )
 
 
-def test_stale_configured_default_migrates_to_apiz_without_changing_explicit_grok():
+def test_stale_configured_default_stays_on_grok_without_changing_explicit_grok():
     assert (
         resolve_default_video_model_id("xai/grok-imagine-video/text-to-video", False)
-        == "apiz/veo3.1/text-to-video"
+        == "xai/grok-imagine-video/text-to-video"
     )
     assert (
         resolve_default_video_model_id("xai/grok-imagine-video/text-to-video", True)
-        == "apiz/veo3.1/image-to-video"
+        == SUTUI_GROK_15_IMAGE_MODEL
     )
     assert resolve_video_model_id("grok-video-3", False) == "xai/grok-imagine-video/text-to-video"
 
@@ -192,17 +192,17 @@ def test_stale_configured_default_migrates_to_apiz_without_changing_explicit_gro
         (
             "xai/grok-imagine-video/text-to-video",
             [],
-            "apiz/veo3.1/text-to-video",
+            "xai/grok-imagine-video/text-to-video",
         ),
         (
             "xai/grok-imagine-video/image-to-video",
             ["https://example.com/a.png"],
-            "apiz/veo3.1/image-to-video",
+            SUTUI_GROK_15_IMAGE_MODEL,
         ),
         (
             "grok-video-3",
             ["https://example.com/a.png", "https://example.com/b.png"],
-            "apiz/veo3.1/reference-to-video",
+            SUTUI_GROK_15_IMAGE_MODEL,
         ),
     ],
 )

@@ -10,16 +10,30 @@
     })();
     const brandStorageKey = (key) => `${key}:${H5_BRAND_MARK}`;
     const H5_TOKEN_KEY = brandStorageKey("lobster_h5_token");
+    const H5_USER_CACHE_KEY = brandStorageKey("lobster_h5_user");
+    const H5_BRANDING_CACHE_KEY = brandStorageKey("lobster_h5_branding");
     if (H5_BRAND_MARK === "bihuo" && !localStorage.getItem(H5_TOKEN_KEY)) {
       const legacyToken = localStorage.getItem("lobster_h5_token") || "";
       if (legacyToken) localStorage.setItem(H5_TOKEN_KEY, legacyToken);
+    }
+    function readCachedH5User() {
+      if (!localStorage.getItem(H5_TOKEN_KEY)) return null;
+      try {
+        const raw = localStorage.getItem(H5_USER_CACHE_KEY) || "";
+        if (!raw) return null;
+        const value = JSON.parse(raw);
+        return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+      } catch {
+        localStorage.removeItem(H5_USER_CACHE_KEY);
+        return null;
+      }
     }
     const state = {
       token: localStorage.getItem(H5_TOKEN_KEY) || "",
       blockingActionCount: 0,
       blockingActionTimer: null,
       mode: "mastra",
-      user: null,
+      user: readCachedH5User(),
       homeHeroUrl: "",
       streams: new Map(),
       pollers: new Map(),
@@ -99,7 +113,7 @@
       workflowSelectedDate: "",
       officePage: 1,
       officePageSize: 4,
-      taskAbility: "goal.video.pipeline",
+      taskAbility: "comfly.seedance.tvc.pipeline",
       taskPanelOpen: false,
       hiflyLoaded: false,
       hiflyLoading: false,
@@ -310,91 +324,92 @@
         label: "创意成片",
         description: "根据记忆或自定义提示词生成文案，可从备选素材组随机取图，或先 AI 生成首帧再生成视频。",
         packageId: "goal_video_pipeline_skill",
-        department: "市场部",
+        department: "AI营销创作",
       },
       "goal.image.pipeline": {
         label: "文案+创意图片",
         description: "根据记忆或自定义提示词生成文案和创意图片，生成图片后结束。",
         packageId: "goal_video_pipeline_skill",
-        department: "市场部",
+        department: "AI营销创作",
       },
       "hifly.video.create_by_tts": {
         label: "数字人口播",
         description: "选择本机已有数字人模板和声音，生成数字人口播视频。",
         packageId: "hifly_digital_human_skill",
-        department: "市场部",
+        department: "AI营销创作",
       },
       "ip_content_daily": {
         label: "IP日更文案",
         description: "服务器定时同步关键词和同行数据，生成行业口播、专业IP口播和朋友圈文案。",
         packageId: "ip_content_daily_skill",
-        department: "市场部",
+        department: "AI营销创作",
         serverTask: true,
       },
       "comfly.daihuo.pipeline": {
         label: "爆款TVC",
         description: "用素材或公网图生成多分镜成片，适合商品宣传和广告视频。",
         packageId: "comfly_veo_skill",
-        department: "市场部",
+        department: "AI营销创作",
       },
       "comfly.seedance.tvc.pipeline": {
         label: "创意分镜头视频",
         description: "按 10 秒一段生成连续分镜和视频，并合成为完整成片。",
         packageId: "comfly_seedance_tvc_skill",
-        department: "市场部",
+        department: "AI营销创作",
       },
       "create.video.pipeline": {
         label: "速推视频制作",
         description: "根据创意要求规划分镜，生成首帧并制作视频。",
         packageId: "create_video_pipeline_skill",
-        department: "市场部",
+        department: "AI营销创作",
       },
       "wewrite.article.pipeline": {
         label: "微信公众号",
         description: "输入主题，生成公众号文章、配图并推送到草稿箱。",
         packageId: "wewrite_official_account_skill",
-        department: "市场部",
+        department: "AI营销创作",
       },
       "ppt.create": {
         label: "PPT",
         description: "输入主题或大纲，生成可下载的 PPT 演示文稿。",
         packageId: "create_ppt_skill",
-        department: "运营部",
+        department: "AI营销创作",
       },
       "comfly.ecommerce.detail_pipeline": {
         label: "电商详情页",
         description: "用商品主图生成电商详情页长图并自动入库。",
         packageId: "comfly_ecommerce_detail_skill",
-        department: "运营部",
+        department: "AI营销创作",
       },
       "douyin_leads": {
         label: "抖音获客",
         description: "采集客户、评论互动、私信触达和同行监控。",
         featureKey: "douyin_leads_access",
-        department: "销售部",
+        department: "AI获客",
         routeTab: "douyinLeadsSchedule",
       },
     };
-    const TASK_DEPARTMENTS = ["市场部", "销售部", "客服部", "运营部"];
+    const TASK_DEPARTMENTS = ["AI营销创作", "AI获客", "私域销管"];
     const SCHEDULED_TASK_CAPABILITY_IDS = [
+      "comfly.seedance.tvc.pipeline",
       "goal.image.pipeline",
       "ip_content_daily",
-      "goal.video.pipeline",
       "hifly.video.create_by_tts",
     ];
     const WORK_QUICK_ITEMS = [
       {
         key: "creative_general",
         label: "帮我创作",
-        department: "市场部",
+        department: "AI营销创作",
         mark: "创",
         prompt: "帮我写一版电商详情页文案、短视频脚本和发布标题。",
         always: true,
+        hidden: true,
       },
       {
         key: "image_composer_studio",
         label: "创作图片",
-        department: "市场部",
+        department: "AI营销创作",
         mark: "图",
         dispatchKind: "client_workflow",
         workflowAction: "image_studio_generate",
@@ -406,23 +421,24 @@
         capabilityId: "comfly.daihuo.pipeline",
         packageId: "comfly_veo_skill",
         label: "爆款TVC",
-        department: "市场部",
+        department: "AI营销创作",
         mark: "▶",
         prompt: "用爆款tvc帮我生成一个视频。",
+        hidden: true,
       },
       {
         key: "comfly.seedance.tvc.pipeline",
         capabilityId: "comfly.seedance.tvc.pipeline",
         packageId: "comfly_seedance_tvc_skill",
         label: "创意分镜头视频",
-        department: "市场部",
+        department: "AI营销创作",
         mark: "▶",
         dispatchKind: "capability",
       },
       {
         key: "local_bestseller",
         label: "同城爆款",
-        department: "市场部",
+        department: "AI营销创作",
         mark: "城",
         dispatchKind: "client_workflow",
         workflowAction: "local_bestseller_daily_video",
@@ -431,18 +447,19 @@
       {
         key: "viral_video_remix",
         label: "爆款复刻",
-        department: "市场部",
+        department: "AI营销创作",
         mark: "R",
         dispatchKind: "client_workflow",
         workflowAction: "viral_video_remix_start",
         always: true,
+        hidden: true,
       },
       {
         key: "hifly.video.create_by_tts",
         capabilityId: "hifly.video.create_by_tts",
         packageId: "hifly_digital_human_skill",
         label: "数字人",
-        department: "市场部",
+        department: "AI营销创作",
         mark: "H",
         dispatchKind: "capability",
       },
@@ -450,7 +467,7 @@
         key: "douyin_leads",
         featureKey: "douyin_leads_access",
         label: "抖音获客",
-        department: "销售部",
+        department: "AI获客",
         mark: "获",
         dispatchKind: "douyin_leads",
         highlight: true,
@@ -459,44 +476,48 @@
         key: "wecom_reply",
         packageId: "wecom_reply",
         label: "企业微信客服",
-        department: "客服部",
+        department: "私域销管",
         mark: "微",
         dispatchKind: "client_workflow",
         workflowAction: "wecom_poll_reply",
+        hidden: true,
       },
       {
         key: "publish_center",
         label: "发布中心入库",
-        department: "运营部",
+        department: "AI营销创作",
         mark: "发",
         dispatchKind: "client_workflow",
         workflowAction: "publish_content",
         always: true,
+        hidden: true,
       },
       {
         key: "ai_shop_diagnosis",
         label: "AI店铺诊断（敬请期待）",
-        department: "运营部",
+        department: "AI营销创作",
         mark: "店",
         disabled: true,
         always: true,
+        hidden: true,
       },
       {
         key: "ai_product_selection",
         label: "AI选品（敬请期待）",
-        department: "运营部",
+        department: "AI营销创作",
         mark: "品",
         disabled: true,
         always: true,
+        hidden: true,
       },
     ];
     const DEPARTMENT_SKILL_TREE = [
       {
         id: "marketing",
-        name: "市场部",
-        alias: "流量部 / 内容部",
-        mark: "市",
-        description: "负责内容创作、视频生产、IP日更、公众号和发布矩阵。",
+        name: "AI营销创作",
+        alias: "内容创作",
+        mark: "营",
+        description: "负责数字人、图片、视频、IP日更和公众号创作。",
         children: [
           {
             key: "hifly.video.create_by_tts",
@@ -514,12 +535,13 @@
             description: "视频创作能力集合，进入后选择具体视频工作流。",
             children: [
               {
-                key: "goal.video.pipeline",
-                label: "创意视频",
-                mark: "创",
-                description: "从创意、素材或首帧生成完整视频。",
-                capabilityId: "goal.video.pipeline",
-                packageId: "goal_video_pipeline_skill",
+                key: "comfly.seedance.tvc.pipeline",
+                label: "创意分镜头视频",
+                mark: "分",
+                description: "按连续分镜规划视频，并生成完整成片。",
+                capabilityId: "comfly.seedance.tvc.pipeline",
+                packageId: "comfly_seedance_tvc_skill",
+                workQuickKey: "comfly.seedance.tvc.pipeline",
               },
               {
                 key: "local_bestseller",
@@ -537,15 +559,6 @@
                 capabilityId: "comfly.daihuo.pipeline",
                 packageId: "comfly_veo_skill",
                 workQuickKey: "comfly.daihuo.pipeline",
-              },
-              {
-                key: "comfly.seedance.tvc.pipeline",
-                label: "创意分镜头视频",
-                mark: "分",
-                description: "按连续分镜规划视频，并生成完整成片。",
-                capabilityId: "comfly.seedance.tvc.pipeline",
-                packageId: "comfly_seedance_tvc_skill",
-                workQuickKey: "comfly.seedance.tvc.pipeline",
               },
               {
                 key: "viral_video_remix",
@@ -602,11 +615,11 @@
         ],
       },
       {
-        id: "sales",
-        name: "销售部",
-        alias: "获客 / 转化",
-        mark: "销",
-        description: "负责线索采集、客户触达、销售材料和账号发布。",
+        id: "ai_leads",
+        name: "AI获客",
+        alias: "抖音获客",
+        mark: "获",
+        description: "负责抖音线索采集、评论互动、私信触达和同行监控。",
         children: [
           {
             key: "douyin_leads",
@@ -617,17 +630,18 @@
             routeTab: "douyinLeadsSchedule",
             workQuickKey: "douyin_leads",
           },
-          {
-            key: "wecom_reply",
-            label: "企微自动回复",
-            mark: "企",
-            description: "根据企业微信会话自动理解并辅助回复。",
-            packageId: "wecom_reply",
-            workQuickKey: "wecom_reply",
-          },
+        ],
+      },
+      {
+        id: "private_domain",
+        name: "私域销管",
+        alias: "个微",
+        mark: "微",
+        description: "负责个人微信私聊、加好友、拉群和朋友圈互动。",
+        children: [
           {
             key: "personal_wechat_group",
-            label: "个人微信",
+            label: "个微",
             mark: "微",
             description: "围绕个人微信私聊、加好友和朋友圈互动做客户跟进。",
             children: [
@@ -657,124 +671,11 @@
               },
             ],
           },
-          {
-            key: "sales_publish_center",
-            label: "发布中心（矩阵系统）",
-            mark: "发",
-            description: "把销售内容同步到账号矩阵。",
-            routeTab: "home",
-            workQuickKey: "publish_center",
-            always: true,
-          },
-          {
-            key: "ppt.create",
-            label: "PPT生成",
-            mark: "PPT",
-            description: "生成销售提案、招商介绍和汇报 PPT。",
-            capabilityId: "ppt.create",
-            packageId: "create_ppt_skill",
-          },
-        ],
-      },
-      {
-        id: "operations",
-        name: "运营部",
-        alias: "运营 / 商品 / 工具",
-        mark: "运",
-        description: "负责运营工具、详情页、视频号、3D模型和内容执行。",
-        children: [
-          {
-            key: "ops_wecom_reply",
-            label: "企微自动回复",
-            mark: "企",
-            description: "运营侧企业微信咨询自动回复。",
-            packageId: "wecom_reply",
-            workQuickKey: "wecom_reply",
-          },
-          {
-            key: "ops_personal_wechat",
-            label: "个微（私聊+朋友圈评论区）",
-            mark: "微",
-            description: "运营侧个人微信跟进和评论区处理。",
-            comingSoon: true,
-          },
-          {
-            key: "ops_digital_human",
-            label: "数字人视频",
-            mark: "数",
-            description: "生成数字人口播视频。",
-            capabilityId: "hifly.video.create_by_tts",
-            packageId: "hifly_digital_human_skill",
-            workQuickKey: "hifly.video.create_by_tts",
-          },
-          {
-            key: "ops_publish_center",
-            label: "发布中心（矩阵系统）",
-            mark: "发",
-            description: "运营内容发布和矩阵管理。",
-            routeTab: "home",
-            workQuickKey: "publish_center",
-            always: true,
-          },
-          {
-            key: "wechat_channels_transcript",
-            label: "视频号文案提取",
-            mark: "号",
-            description: "提取视频号内容文案，便于复盘和改写。",
-            packageId: "wechat_channels_transcript_skill",
-          },
-          {
-            key: "comfly.ecommerce.detail_pipeline",
-            label: "电商详情页",
-            mark: "详",
-            description: "根据商品图片和资料生成电商详情页。",
-            capabilityId: "comfly.ecommerce.detail_pipeline",
-            packageId: "comfly_ecommerce_detail_skill",
-          },
-          {
-            key: "ai_3d_model",
-            label: "高质量3D模型",
-            mark: "3D",
-            description: "根据图片或文本生成高质量 3D 模型。",
-            packageId: "ai_3d_model_skill",
-          },
-          {
-            key: "ops_ppt.create",
-            label: "PPT生成",
-            mark: "PPT",
-            description: "生成运营方案、活动复盘和项目汇报 PPT。",
-            capabilityId: "ppt.create",
-            packageId: "create_ppt_skill",
-          },
-        ],
-      },
-      {
-        id: "customer_service",
-        name: "客服部",
-        alias: "服务 / 回复",
-        mark: "客",
-        description: "负责企微、个微和常用客服知识库。",
-        children: [
-          {
-            key: "cs_wecom_reply",
-            label: "企微自动回复",
-            mark: "企",
-            description: "企业微信咨询自动回复。",
-            packageId: "wecom_reply",
-            workQuickKey: "wecom_reply",
-          },
-          {
-            key: "cs_personal_wechat",
-            label: "个微（私聊+朋友圈评论区）",
-            mark: "微",
-            description: "个人微信私聊和朋友圈评论区回复。",
-            comingSoon: true,
-          },
         ],
       },
       {
         id: "overseas",
-        name: "海外部",
+        name: "AI海外平台",
         alias: "海外线索",
         mark: "海",
         description: "负责海外平台线索采集和客户资料沉淀。",
@@ -1012,8 +913,8 @@
       return {
         ...node,
         ability_key: nativeKey,
-        department_id: "sales",
-        department_name: lookup && lookup.department ? lookup.department.name || "销售部" : "销售部",
+        department_id: lookup && lookup.department ? lookup.department.id || "private_domain" : "private_domain",
+        department_name: lookup && lookup.department ? lookup.department.name || "私域销管" : "私域销管",
         plan: nativeWechatWorkflowPlan(nativeKey, note),
         children: workflowChildActions(node).map(normalizeSalesWorkflowNode).filter(Boolean),
       };
@@ -1050,6 +951,16 @@
       "image_composer_studio",
       "marketing_copy_group",
     ];
+    const AI_MARKETING_VISIBLE_NODE_KEYS = new Set([
+      "hifly.video.create_by_tts",
+      "marketing_video_group",
+      "comfly.seedance.tvc.pipeline",
+      "local_bestseller",
+      "image_composer_studio",
+      "marketing_copy_group",
+      "ip_content_daily",
+      "wewrite.article.pipeline",
+    ]);
     const AI_MARKETING_COVERS = {
       "goal.video.pipeline": "/h5-static/marketing-cover-creative-video.png",
       local_bestseller: "/h5-static/marketing-cover-local-bestseller.png",
@@ -1898,21 +1809,51 @@
       };
     }
 
+    function readCachedH5Branding() {
+      try {
+        const raw = localStorage.getItem(H5_BRANDING_CACHE_KEY) || "";
+        if (!raw) return null;
+        const value = JSON.parse(raw);
+        return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+      } catch {
+        localStorage.removeItem(H5_BRANDING_CACHE_KEY);
+        return null;
+      }
+    }
+
+    function writeCachedH5Branding(branding) {
+      if (!branding || typeof branding !== "object") return;
+      try {
+        localStorage.setItem(H5_BRANDING_CACHE_KEY, JSON.stringify(branding));
+      } catch {}
+    }
+
+    function currentH5BrandingConfig() {
+      return readCachedH5Branding() || H5_BRAND_FALLBACKS[H5_BRAND_MARK] || (H5_BRAND_MARK === "bihuo" ? H5_BRAND_FALLBACKS.bihuo : {});
+    }
+
+    function currentH5BrandTitle() {
+      const cfg = currentH5BrandingConfig();
+      return String((cfg && (cfg.document_title || cfg.display_name)) || "").trim();
+    }
+
     function applyH5Branding(branding = {}) {
-      const cfg = { ...(H5_BRAND_FALLBACKS[H5_BRAND_MARK] || H5_BRAND_FALLBACKS.bihuo), ...branding };
+      const fallback = currentH5BrandingConfig();
+      const cfg = { ...fallback, ...branding };
+      if (!Object.keys(cfg).length) return;
       const title = String(cfg.document_title || cfg.display_name || H5_BRAND_MARK);
       document.title = title;
       document.documentElement.dataset.brand = H5_BRAND_MARK;
       document.documentElement.style.setProperty("--blue", String(cfg.primary_color || "#245cff"));
       document.documentElement.style.setProperty("--designer-blue", String(cfg.primary_color || "#2b59ff"));
       const logo = $("h5BrandLogo");
-      if (logo) logo.src = cfg.icon_32 || cfg.icon_128 || H5_BRAND_FALLBACKS.bihuo.icon_32;
+      if (logo && (cfg.icon_32 || cfg.icon_128)) logo.src = cfg.icon_32 || cfg.icon_128;
       const appleIcon = $("h5AppleIcon");
-      if (appleIcon) appleIcon.href = cfg.icon_256 || cfg.icon_128 || H5_BRAND_FALLBACKS.bihuo.icon_256;
+      if (appleIcon && (cfg.icon_256 || cfg.icon_128)) appleIcon.href = cfg.icon_256 || cfg.icon_128;
       const appleTitle = $("h5AppleTitle");
       if (appleTitle) appleTitle.content = title;
       const pageTitle = $("pageTitle");
-      if (pageTitle && (!state.token || pageTitle.textContent === "必火AI员工" || pageTitle.textContent === "大咖AI员工")) {
+      if (pageTitle && (!state.token || !String(pageTitle.textContent || "").trim() || pageTitle.textContent === "必火AI员工" || pageTitle.textContent === "大咖AI员工")) {
         pageTitle.textContent = title;
       }
     }
@@ -1922,7 +1863,9 @@
       try {
         const response = await fetch(apiUrl("/api/branding"), { headers: authHeaders() });
         if (!response.ok) return;
-        applyH5Branding(await response.json());
+        const branding = await response.json();
+        writeCachedH5Branding(branding);
+        applyH5Branding(branding);
       } catch {}
     }
 
@@ -2280,7 +2223,7 @@
 
     function departmentScope(department) {
       if (!department) return { type: "all", label: "全部记录" };
-      return { type: "department", departmentId: department.id, label: department.name || "当前部门" };
+      return { type: "department", departmentId: department.id, label: department.name || "当前类目" };
     }
 
     function abilityScope(lookup, trailIndex = -1) {
@@ -2319,7 +2262,7 @@
       if (active === "department") department = departmentById(state.currentDepartmentId);
       if (active === "ability") {
         lookup = activeAbilityLookup();
-        department = lookup && lookup.department;
+        department = displayDepartmentForAbility(lookup);
       }
       if (!department && scope && scope.departmentId) department = departmentById(scope.departmentId);
       if (department) options.push(departmentScope(department));
@@ -2771,11 +2714,27 @@
     function departmentById(id) {
       const wanted = String(id || "").trim();
       if (wanted === AI_MARKETING_CREATION_ID) return AI_MARKETING_CREATION_DEPARTMENT;
-      return DEPARTMENT_SKILL_TREE.find((dept) => dept.id === wanted) || DEPARTMENT_SKILL_TREE[0];
+      const normalized = {
+        sales: "ai_leads",
+        customer_service: "private_domain",
+        operations: "marketing",
+      }[wanted] || wanted;
+      return DEPARTMENT_SKILL_TREE.find((dept) => dept.id === normalized) || DEPARTMENT_SKILL_TREE[0];
     }
 
     function isMarketingCreationDepartment(department) {
-      return String((department && department.id) || "").trim() === AI_MARKETING_CREATION_ID;
+      const id = String((department && department.id) || "").trim();
+      return id === AI_MARKETING_CREATION_ID || id === "marketing";
+    }
+
+    function isMarketingCreationMode() {
+      const id = String(state.currentDepartmentId || "").trim();
+      return id === AI_MARKETING_CREATION_ID || id === "marketing";
+    }
+
+    function displayDepartmentForAbility(lookup) {
+      if (isMarketingCreationMode()) return AI_MARKETING_CREATION_DEPARTMENT;
+      return lookup && lookup.department;
     }
 
     function eachAbilityNode(nodes, department, trail, visit) {
@@ -2834,9 +2793,14 @@
 
     function departmentLeafNodes(department) {
       if (isMarketingCreationDepartment(department)) {
-        return DEPARTMENT_SKILL_TREE.flatMap((dept) => departmentLeafNodes(dept));
+        return abilityLeafNodes(marketingCreationEntryNodes());
       }
       return abilityLeafNodes((department && department.children) || []);
+    }
+
+    function departmentEntryNodes(department) {
+      if (isMarketingCreationDepartment(department)) return marketingCreationEntryNodes();
+      return ((department && department.children) || []).filter((node) => node && !isPublishCenterNode(node));
     }
 
     function officeDepartments() {
@@ -2875,7 +2839,7 @@
             department,
             trail: [node],
             optionLabel: node.label || node.key,
-            optionGroup: department.name || "部门节点",
+            optionGroup: department.name || "能力类目",
           });
         });
       });
@@ -3306,7 +3270,7 @@
         };
       }
       if (capabilityId === "comfly.seedance.tvc.pipeline") {
-        const asset = assetPickerImagePayload("workflowParamSeedanceAsset", "参考图片");
+        const asset = assetPickerOptionalImagePayload("workflowParamSeedanceAsset", "参考图片");
         return {
           title: node.label || "创意分镜头视频",
           task_kind: "capability",
@@ -3867,8 +3831,8 @@
         type: overrides.action_type || "client_workflow",
         ability_key: key,
         ability_label: row.label || row.note || "",
-        department_id: parentNode && parentNode.department_id || "sales",
-        department_name: parentNode && parentNode.department_name || "销售部",
+        department_id: parentNode && parentNode.department_id || "private_domain",
+        department_name: parentNode && parentNode.department_name || "私域销管",
         note: row.note || row.label || "",
         sales_preset: true,
         is_action_node: true,
@@ -4007,8 +3971,8 @@
           time_range: row.endTime ? `${row.time}-${row.endTime}` : row.time,
           ability_key: row.comingSoon ? row.key : (lookup.node.key || ""),
           ability_label: row.label || row.note || (lookup && lookup.node && (lookup.node.label || lookup.node.key)) || "",
-          department_id: row.comingSoon ? "sales" : lookup.department.id,
-          department_name: row.comingSoon ? "销售部" : (lookup.department.name || ""),
+          department_id: row.comingSoon ? "ai_leads" : lookup.department.id,
+          department_name: row.comingSoon ? "AI获客" : (lookup.department.name || ""),
           note: row.note || row.label || "",
           sales_preset: true,
           comingSoon: !!row.comingSoon,
@@ -5684,10 +5648,21 @@
       return AI_MARKETING_COVERS[key] || "";
     }
 
+    function marketingCreationVisibleNode(node) {
+      if (!node) return null;
+      const key = String(node.key || "").trim();
+      if (!AI_MARKETING_VISIBLE_NODE_KEYS.has(key)) return null;
+      if (!Array.isArray(node.children) || !node.children.length) return node;
+      return {
+        ...node,
+        children: node.children.map(marketingCreationVisibleNode).filter(Boolean),
+      };
+    }
+
     function marketingCreationEntryNodes() {
       return AI_MARKETING_ENTRY_KEYS.map((key) => {
         const lookup = abilityLookup(key);
-        return lookup && lookup.node;
+        return marketingCreationVisibleNode(lookup && lookup.node);
       }).filter(Boolean);
     }
 
@@ -5785,7 +5760,7 @@
 
     function contextFromAbility(lookup) {
       const node = lookup && lookup.node;
-      const department = lookup && lookup.department;
+      const department = displayDepartmentForAbility(lookup);
       const labels = [department && department.name, ...(lookup && lookup.trail ? lookup.trail.map((item) => item.label) : [])].filter(Boolean);
       return {
         source: "h5_ability",
@@ -5877,13 +5852,13 @@
       $("departmentBreadcrumb").innerHTML = "";
       if (entryOnly) clearDepartmentDayBoard();
       else renderDepartmentDayBoard();
-      const leaves = departmentLeafNodes(department);
+      const entries = departmentEntryNodes(department);
       const skillGrid = $("departmentSkillGrid");
       if (skillGrid) {
         skillGrid.classList.toggle("marketing-creation-grid", entryOnly);
         skillGrid.innerHTML = entryOnly
           ? (renderMarketingCreationEntries() || `<div class="quick-empty">暂无可用的营销创作能力。</div>`)
-          : (leaves.map(abilityCardHtml).join("") || `<div class="quick-empty">这个部门暂时没有配置能力。</div>`);
+          : (entries.map(abilityCardHtml).join("") || `<div class="quick-empty">这个类目暂时没有配置能力。</div>`);
       }
     }
 
@@ -6111,19 +6086,24 @@
         return;
       }
       const { node, department, trail } = lookup;
-      const marketingMode = String(state.currentDepartmentId || "") === AI_MARKETING_CREATION_ID;
+      const marketingMode = isMarketingCreationMode();
+      const displayDepartment = marketingMode ? AI_MARKETING_CREATION_DEPARTMENT : department;
       const abilityShell = document.querySelector("#abilityView .ability-shell");
+      const childNodes = marketingMode
+        ? (node.children || []).map(marketingCreationVisibleNode).filter(Boolean)
+        : (node.children || []);
+      const visibleChildCount = childNodes.filter((child) => !isPublishCenterNode(child)).length;
       if (abilityShell) {
-        abilityShell.classList.toggle("marketing-category-mode", marketingMode && abilityChildCount(node) > 0);
-        abilityShell.classList.toggle("marketing-tool-mode", marketingMode && abilityChildCount(node) === 0);
+        abilityShell.classList.toggle("marketing-category-mode", marketingMode && visibleChildCount > 0);
+        abilityShell.classList.toggle("marketing-tool-mode", marketingMode && visibleChildCount === 0);
       }
-      const labels = [department.name, ...trail.map((item) => item.label || item.key)];
-      $("abilityKicker").textContent = department.name || "ABILITY";
+      const labels = [displayDepartment.name, ...trail.map((item) => item.label || item.key)];
+      $("abilityKicker").textContent = displayDepartment.name || "ABILITY";
       $("abilityTitle").textContent = node.label || "能力";
       if ($("pageTitle")) $("pageTitle").textContent = node.label || "能力";
       if ($("pageSubtitle")) $("pageSubtitle").textContent = "";
       $("abilityBreadcrumb").innerHTML = `<span>首页</span>${labels.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}`;
-      $("abilityChildren").innerHTML = (node.children || []).filter((child) => !isPublishCenterNode(child)).map(abilityCardHtml).join("");
+      $("abilityChildren").innerHTML = childNodes.filter((child) => !isPublishCenterNode(child)).map(abilityCardHtml).join("");
       const routeBtn = $("abilityRouteBtn");
       const dispatchBtn = $("abilityDispatchBtn");
       if (routeBtn) {
@@ -6140,11 +6120,11 @@
       return [
         "",
         "【H5来源上下文】",
-        `部门：${ctx.department || ""}`,
+        `类目：${ctx.department || ""}`,
         `能力路径：${ctx.path || ""}`,
         ctx.ability_key ? `能力标记：${ctx.ability_key}` : "",
         ctx.description ? `相关描述：${ctx.description}` : "",
-        "处理要求：请优先只参考这个部门下的技能和相关描述理解用户意图。",
+        "处理要求：请优先只参考这个类目下的技能和相关描述理解用户意图。",
       ].filter(Boolean).join("\n");
     }
 
@@ -6177,7 +6157,16 @@
 
     function departmentNodeKeys(department) {
       const keys = new Set();
-      const departments = isMarketingCreationDepartment(department) ? DEPARTMENT_SKILL_TREE : [department];
+      if (isMarketingCreationDepartment(department)) {
+        eachAbilityNode(marketingCreationEntryNodes(), department, [], (node) => {
+          [node.key, node.capabilityId, node.packageId, node.workQuickKey].forEach((value) => {
+            const text = String(value || "").trim();
+            if (text) keys.add(text);
+          });
+        });
+        return keys;
+      }
+      const departments = [department];
       departments.forEach((dept) => eachAbilityNode((dept && dept.children) || [], dept, [], (node) => {
         [node.key, node.capabilityId, node.packageId, node.workQuickKey].forEach((value) => {
           const text = String(value || "").trim();
@@ -6383,7 +6372,7 @@
       const summary = $("departmentDaySummary");
       if (summary) {
         summary.innerHTML = `<span>${escapeHtml(selectedKey === today ? "今天" : selectedKey)}</span>
-          <strong>${escapeHtml(department.name || "部门")} · ${stats.total} 个执行 · ${tasks.length} 个安排</strong>
+          <strong>${escapeHtml(department.name || "类目")} · ${stats.total} 个执行 · ${tasks.length} 个安排</strong>
           <em>完成 ${stats.completed} · 执行中 ${stats.running} · 失败 ${stats.failed}</em>`;
       }
       const runBox = $("departmentDayRuns");
@@ -6812,7 +6801,7 @@
         secretaryMetricCard("今日素材", compactNumber(totals.todayAssets), "orange"),
       ].join("");
       focus.innerHTML = [
-        `<div class="secretary-focus-card primary"><span>最活跃部门</span><strong>${escapeHtml(topDept ? topDept.department.name : "-")}</strong><em>${escapeHtml(topDept ? `${compactNumber(topDept.todayDelivered)} 个今日交付` : "")}</em></div>`,
+        `<div class="secretary-focus-card primary"><span>最活跃类目</span><strong>${escapeHtml(topDept ? topDept.department.name : "-")}</strong><em>${escapeHtml(topDept ? `${compactNumber(topDept.todayDelivered)} 个今日交付` : "")}</em></div>`,
         `<div class="secretary-focus-card ${riskDept && riskDept.risk ? "danger" : ""}"><span>需要盯</span><strong>${escapeHtml(riskDept && riskDept.risk ? riskDept.department.name : "暂无风险")}</strong><em>${escapeHtml(riskDept && riskDept.risk ? `${riskDept.risk} 个风险点` : "全部正常")}</em></div>`,
         `<div class="secretary-focus-card"><span>7日趋势</span><strong class="${escapeHtml(secretaryTrendClass(totalTrend))}">${escapeHtml(secretaryTrendArrow(totalTrend))}</strong><em>${escapeHtml(momentumDept ? `${momentumDept.department.name} ${secretaryTrendArrow(momentumDept.trend)}` : "")}</em></div>`,
       ].join("");
@@ -7589,7 +7578,7 @@
       return request;
     }
 
-    function fillContentActionPromptLater(item, fieldId, expectedReference = "") {
+    function fillContentActionPromptLater(item, fieldId, expectedReference = "", referenceFieldId = "abilityVideoAsset") {
       const initialField = $(fieldId);
       if (!initialField) return;
       state.contentActionPromptRequestSequence = Number(state.contentActionPromptRequestSequence || 0) + 1;
@@ -7598,9 +7587,9 @@
       resolveContentActionCreativePrompt(item).then((prompt) => {
         const field = $(fieldId);
         if (!prompt || !field || field.dataset.contentPromptRequest !== requestId || String(field.value || "").trim()) return;
-        if (expectedReference) {
-          const currentReference = String(($("abilityVideoAsset") && $("abilityVideoAsset").value) || "").trim();
-          if (currentReference && currentReference !== expectedReference) return;
+        if (expectedReference && referenceFieldId) {
+          const currentReference = String(($(referenceFieldId) && $(referenceFieldId).value) || "").trim();
+          if (currentReference && currentReference !== expectedReference && !currentReference.includes(expectedReference)) return;
         }
         setFieldValue(fieldId, prompt);
       });
@@ -7621,6 +7610,30 @@
     function openContentActionAbility(abilityKey, requiredId, callback) {
       openAbilityView(abilityKey, AI_MARKETING_CREATION_ID);
       applyContentActionFields(requiredId, callback);
+    }
+
+    function openContentActionSeedanceVideo(item, title, creativePrompt, options = {}) {
+      const reference = String(options.reference || contentActionReference(item)).trim();
+      openContentActionAbility("comfly.seedance.tvc.pipeline", "taskSeedanceText", () => {
+        setFieldValue("taskSeedanceText", creativePrompt);
+        setFieldValue("taskSeedanceDuration", String(options.duration || "20"));
+        setFieldValue("taskSeedanceAspect", String(options.aspect || "9:16"));
+        if (reference) {
+          const isUrl = /^https?:\/\//i.test(reference);
+          selectAssetPickerRow("taskSeedanceAsset", {
+            asset_id: isUrl ? String(item.assetId || "").trim() : reference,
+            filename: String(item.filename || title || "内容图片").trim(),
+            media_type: "image",
+            source_url: isUrl ? reference : "",
+            preview_url: isUrl ? reference : "",
+            creative_prompt: creativePrompt,
+            asset_origin: "generated",
+          });
+        } else {
+          setAssetPickerSelectionRows("taskSeedanceAsset", [], false);
+        }
+        if (!creativePrompt) fillContentActionPromptLater(item, "taskSeedanceText", reference, "taskSeedanceAsset");
+      });
     }
 
     async function contentActionFile(item) {
@@ -7711,14 +7724,14 @@
       switchTab("assetLibrary");
       openAssetLibraryAddModal();
       if ($("assetAvatarName")) $("assetAvatarName").value = String(item.title || `${mediaLabel}数字人`).trim();
-      if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v1";
+      if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v2";
       if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = mediaType;
       syncAssetAvatarForm();
-      if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `正在带入当前${mediaLabel}...`;
+      if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `正在带入当前${mediaLabel}，请补充授权视频后提交数字人 2.0...`;
       try {
         const file = await contentActionFile(item);
         state.assetAvatarPrefillFile = file;
-        if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `已带入：${file.name}`;
+        if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `已带入：${file.name}，请继续上传授权视频`;
       } catch (err) {
         state.assetAvatarPrefillFile = null;
         if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = `${mediaLabel}带入失败，可重新选择训练${mediaLabel}`;
@@ -7770,14 +7783,7 @@
           return;
         }
         if (mediaType === "video") {
-          openContentActionAbility("goal.video.pipeline", "abilityVideoPrompt", () => {
-            setFieldValue("abilityVideoTitle", `${title} - 重新生成`);
-            setFieldValue("abilityVideoMode", "memory_image");
-            setFieldValue("abilityVideoAsset", "");
-            setFieldValue("abilityVideoPrompt", creativePrompt);
-            bindGoalVideoModeControls("ability");
-            if (!creativePrompt) fillContentActionPromptLater(item, "abilityVideoPrompt");
-          });
+          openContentActionSeedanceVideo(item, `${title} - 重新生成`, creativePrompt, { reference: "" });
           return;
         }
         const recordKind = String(item.recordKind || "").toLowerCase();
@@ -7833,26 +7839,7 @@
       }
       if (action === "generate_video") {
         const reference = contentActionReference(item);
-        openContentActionAbility("goal.video.pipeline", "abilityVideoPrompt", () => {
-          setFieldValue("abilityVideoTitle", `${title} - 视频`);
-          setFieldValue("abilityVideoMode", reference ? "single_asset" : "memory_image");
-          setFieldValue("abilityVideoAsset", reference);
-          setFieldValue("abilityVideoPrompt", creativePrompt);
-          bindGoalVideoModeControls("ability");
-          if (reference && item.imageUrl) {
-            selectAssetPickerRow("abilityVideoAsset", {
-              asset_id: String(item.assetId || "").trim(),
-              filename: String(item.filename || title || "内容图片").trim(),
-              media_type: "image",
-              source_url: reference,
-              preview_url: reference,
-              asset_origin: "generated",
-            });
-          } else {
-            renderAssetPickerControl("abilityVideoAsset");
-          }
-          if (!creativePrompt) fillContentActionPromptLater(item, "abilityVideoPrompt", reference);
-        });
+        openContentActionSeedanceVideo(item, `${title} - 视频`, creativePrompt, { reference });
         return;
       }
       if (action === "generate_talking_video") {
@@ -8639,7 +8626,7 @@
     }
 
     function currentH5BrandShortName() {
-      const brandName = String((H5_BRAND_FALLBACKS[H5_BRAND_MARK] || H5_BRAND_FALLBACKS.bihuo).display_name || H5_BRAND_MARK).trim();
+      const brandName = String(currentH5BrandTitle() || H5_BRAND_MARK).trim();
       return brandName.replace(/\s*(?:AI员工|AI智能体|AI助手)\s*$/i, "").trim() || brandName || H5_BRAND_MARK;
     }
 
@@ -9509,7 +9496,7 @@
       if (!content) return false;
       if (item.type === "department") {
         const dept = departmentById(item.departmentId);
-        return !!dept && (content.includes(`部门：${dept.name}`) || content.includes(`department_id:${dept.id}`));
+        return !!dept && (content.includes(`类目：${dept.name}`) || content.includes(`department_id:${dept.id}`));
       }
       if (item.type === "ability") {
         const lookup = abilityLookup(item.abilityKey);
@@ -11891,7 +11878,7 @@
       document.querySelectorAll("[data-tab-target]").forEach((btn) => btn.classList.toggle("active", btn.dataset.tabTarget === key));
       syncDesignerBottomNav(key);
       const titleMap = {
-        office: ["必火AI员工", "我的AI员工办公室"],
+        office: [currentH5BrandTitle() || "", "我的AI员工办公室"],
         secretary: ["老板驾驶舱", "今日交付、趋势和风险"],
         home: ["安排工作", "远程任务、消息和执行记录"],
         workflow: ["我的AI员工", "24小时任务编排"],
@@ -12098,6 +12085,8 @@
       if (!draftText) return null;
       const intent = String((payload && payload.intent) || "").trim();
       const slots = payload && payload.slots && typeof payload.slots === "object" ? payload.slots : {};
+      const voiceVideoDuration = Number(slots.duration_seconds || slots.duration || 20);
+      const voiceVideoAspect = String(slots.aspect_ratio || "9:16").trim() || "9:16";
       const baseMissing = Array.isArray(payload && payload.missing_slots)
         ? payload.missing_slots.map((item) => String(item || "").trim()).filter(Boolean)
         : [];
@@ -12120,9 +12109,11 @@
           description: "确认后会直接走创意分镜生成链路。",
           content: draftText,
           payload: {
-            source_mode: "ai_image",
-            candidate_group: "",
-            prompt: draftText,
+            action: "start_pipeline",
+            task_text: draftText,
+            total_duration_seconds: Number.isNaN(voiceVideoDuration) ? 20 : voiceVideoDuration,
+            aspect_ratio: voiceVideoAspect,
+            auto_save: true,
           },
           missing: baseMissing,
         };
@@ -12135,9 +12126,11 @@
           description: "确认后会直接按当前语音内容下发视频生成任务。",
           content: draftText,
           payload: {
-            source_mode: "ai_image",
-            candidate_group: "",
-            prompt: draftText,
+            action: "start_pipeline",
+            task_text: draftText,
+            total_duration_seconds: Number.isNaN(voiceVideoDuration) ? 20 : voiceVideoDuration,
+            aspect_ratio: voiceVideoAspect,
+            auto_save: true,
           },
           missing: baseMissing,
         };
@@ -12952,35 +12945,105 @@
       syncAgentManageEntry();
     }
 
+    function writeCachedH5User(user) {
+      if (!user || typeof user !== "object") return;
+      try {
+        localStorage.setItem(H5_USER_CACHE_KEY, JSON.stringify(user));
+      } catch {}
+    }
+
+    function clearStoredAuth() {
+      localStorage.removeItem(H5_TOKEN_KEY);
+      if (H5_BRAND_MARK === "bihuo") localStorage.removeItem("lobster_h5_token");
+      localStorage.removeItem(H5_USER_CACHE_KEY);
+      state.token = "";
+      state.user = null;
+      renderCurrentUser();
+    }
+
+    function isAuthFailure(err) {
+      return [401, 403].includes(Number(err && err.status));
+    }
+
+    function showAuthenticatedShell(options = {}) {
+      $("loginPanel")?.classList.add("hidden");
+      $("appPanel")?.classList.remove("hidden");
+      if (options.switchToOffice !== false) {
+        switchTab("office");
+      } else {
+        $("topActions")?.classList.toggle("hidden", activeViewKey() !== "office" || !state.token);
+      }
+    }
+
+    async function showLoginShell() {
+      $("loginPanel")?.classList.remove("hidden");
+      $("appPanel")?.classList.add("hidden");
+      $("topActions")?.classList.add("hidden");
+      await refreshCaptcha();
+    }
+
     async function refreshCurrentUser() {
       state.user = await api("/auth/me");
+      writeCachedH5User(state.user);
       renderCurrentUser();
       return state.user;
     }
 
-    async function loadMe() {
-      if (!state.token) return false;
+    async function loadAuthenticatedBootstrapData() {
+      const jobs = [
+        loadChatSessions(),
+        loadHistory({ includeEvents: false }),
+        loadPendingApprovals(),
+        refreshDeviceStatus(),
+        refreshOfficeSummary(),
+        loadTaskSkills(),
+        loadHomeHero().catch(() => applyHomeHero("")),
+      ];
+      const results = await Promise.allSettled(jobs);
+      const failed = results.filter((item) => item.status === "rejected");
+      if (failed.length) {
+        console.warn("[h5] bootstrap data preload failed", failed.map((item) => item.reason));
+      }
+    }
+
+    async function validateAuthAndBootstrap(options = {}) {
       try {
         await refreshCurrentUser();
-        $("loginPanel").classList.add("hidden");
-        $("appPanel").classList.remove("hidden");
-        switchTab("office");
-        await loadChatSessions();
-        await Promise.all([
-          loadHistory({ includeEvents: false }),
-          loadPendingApprovals(),
-          refreshDeviceStatus(),
-          refreshOfficeSummary(),
-          loadTaskSkills(),
-          loadHomeHero().catch(() => applyHomeHero("")),
-        ]);
+        showAuthenticatedShell({ switchToOffice: options.switchToOffice !== false });
+        loadAuthenticatedBootstrapData().catch((err) => {
+          console.warn("[h5] bootstrap data preload failed", err);
+        });
         return true;
       } catch (err) {
-        localStorage.removeItem(H5_TOKEN_KEY);
-        if (H5_BRAND_MARK === "bihuo") localStorage.removeItem("lobster_h5_token");
-        state.token = "";
-        return false;
+        if (isAuthFailure(err)) {
+          clearStoredAuth();
+          if (options.showLoginOnFailure) await showLoginShell();
+          return false;
+        }
+        console.warn("[h5] auth refresh failed", err);
+        return Boolean(options.keepCachedShell);
       }
+    }
+
+    async function refreshCachedAuthInBackground() {
+      return validateAuthAndBootstrap({
+        keepCachedShell: true,
+        showLoginOnFailure: true,
+        switchToOffice: false,
+      });
+    }
+
+    async function loadMe() {
+      if (!state.token) return false;
+      if (state.user) {
+        renderCurrentUser();
+        showAuthenticatedShell();
+        refreshCachedAuthInBackground().catch((err) => {
+          console.warn("[h5] cached auth refresh failed", err);
+        });
+        return true;
+      }
+      return validateAuthAndBootstrap({ showLoginOnFailure: false });
     }
 
     function renderProfileDeviceSelect() {
@@ -15895,7 +15958,7 @@
       if (!host) return;
       const visible = visibleTaskAbilities();
       if (!visible.includes(state.taskAbility)) {
-        state.taskAbility = visible[0] || "goal.video.pipeline";
+        state.taskAbility = visible[0] || "comfly.seedance.tvc.pipeline";
       }
       if (!visible.length) {
         host.innerHTML = `<div class="task-skill-empty">当前账号暂无可定时下发技能，请先到技能商店开通权限。</div>`;
@@ -15916,6 +15979,7 @@
 
     function workQuickItemVisible(item) {
       if (!item) return false;
+      if (item.hidden) return false;
       if (item.always) return true;
       if (item.featureKey) return !!(state.user && state.user.features && state.user.features[item.featureKey]);
       if (!state.taskSkillsLoaded) return false;
@@ -15961,7 +16025,7 @@
       }
       const visible = WORK_QUICK_ITEMS.filter(workQuickItemVisible);
       const html = TASK_DEPARTMENTS.map((department) => {
-        const rows = visible.filter((item) => (item.department || "运营部") === department);
+        const rows = visible.filter((item) => (item.department || "AI营销创作") === department);
         if (!rows.length) return "";
         return `<section class="quick-section" aria-label="${escapeHtml(department)}">
           <div class="quick-section-head"><strong>${escapeHtml(department)}</strong></div>
@@ -16160,9 +16224,7 @@
       return selected;
     }
 
-    function assetPickerImagePayload(id, fieldLabel) {
-      const values = assetPickerSelectedValues(id);
-      if (!values.length) throw new Error(`请选择${fieldLabel}`);
+    function assetPickerPayloadFromValues(values, fieldLabel) {
       const primary = assetOrImagePayload(values[0], fieldLabel);
       const referenceAssetIds = [];
       const referenceImageUrls = [];
@@ -16175,6 +16237,18 @@
         ...(referenceAssetIds.length ? { reference_asset_ids: referenceAssetIds } : {}),
         ...(referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
       };
+    }
+
+    function assetPickerOptionalImagePayload(id, fieldLabel) {
+      const values = assetPickerSelectedValues(id);
+      if (!values.length) return {};
+      return assetPickerPayloadFromValues(values, fieldLabel);
+    }
+
+    function assetPickerImagePayload(id, fieldLabel) {
+      const values = assetPickerSelectedValues(id);
+      if (!values.length) throw new Error(`请选择${fieldLabel}`);
+      return assetPickerPayloadFromValues(values, fieldLabel);
     }
 
     function renderAssetPickerControl(id) {
@@ -16742,7 +16816,7 @@
       }
       if (key === "comfly.seedance.tvc.pipeline") {
         const taskText = workValue("workSeedanceText");
-        const asset = assetPickerImagePayload("workSeedanceAsset", "参考图片");
+        const asset = assetPickerOptionalImagePayload("workSeedanceAsset", "参考图片");
         return {
           title: "创意分镜头视频",
           taskKind: "capability",
@@ -17456,7 +17530,7 @@
     }
 
     function setTaskAbility(ability) {
-      const next = ability || "goal.video.pipeline";
+      const next = ability || "comfly.seedance.tvc.pipeline";
       if (!isScheduledTaskAbility(next)) {
         toast("这个技能不支持定时下发，请在下方岗位工作入口发起");
         renderTaskAbilityBoard();
@@ -17705,7 +17779,7 @@
         };
       }
       if (state.taskAbility === "comfly.seedance.tvc.pipeline") {
-        const asset = assetPickerImagePayload("taskSeedanceAsset", "参考图片");
+        const asset = assetPickerOptionalImagePayload("taskSeedanceAsset", "参考图片");
         const totalDuration = parseInt(($("taskSeedanceDuration") && $("taskSeedanceDuration").value) || "20", 10);
         return {
           action: "start_pipeline",
@@ -18191,12 +18265,12 @@
         return;
       }
       if (plan.kind === "creative_storyboard_video") {
-        await submitVoiceCapabilityTask("goal.video.pipeline", plan.payload, "语音创意分镜任务");
+        await submitVoiceCapabilityTask("comfly.seedance.tvc.pipeline", plan.payload, "语音创意分镜任务");
         showTaskSuccessDialog("创意分镜任务已下发，可在工作历史查看进度。");
         return;
       }
       if (plan.kind === "video_generate") {
-        await submitVoiceCapabilityTask("goal.video.pipeline", plan.payload, "语音视频任务");
+        await submitVoiceCapabilityTask("comfly.seedance.tvc.pipeline", plan.payload, "语音视频任务");
         showTaskSuccessDialog("视频任务已下发，可在工作历史查看进度。");
         return;
       }
@@ -21847,9 +21921,7 @@
       runTaskNow(btn.dataset.runTaskNow || "", btn);
     });
     $("logoutBtn").addEventListener("click", () => {
-      localStorage.removeItem(H5_TOKEN_KEY);
-      if (H5_BRAND_MARK === "bihuo") localStorage.removeItem("lobster_h5_token");
-      state.token = "";
+      clearStoredAuth();
       location.reload();
     });
     $("captchaImg").addEventListener("click", refreshCaptcha);
@@ -22414,6 +22486,8 @@
         if (!resp.ok) throw new Error(data.detail || "进入失败");
         state.token = data.access_token;
         localStorage.setItem(H5_TOKEN_KEY, state.token);
+        state.user = null;
+        localStorage.removeItem(H5_USER_CACHE_KEY);
         await loadMe();
       } catch (err) {
         toast(err.message || "进入失败");
@@ -22440,6 +22514,8 @@
         if (!resp.ok) throw new Error(normalizeAuthErrorDetail(data.detail) || "登录失败");
         state.token = data.access_token;
         localStorage.setItem(H5_TOKEN_KEY, state.token);
+        state.user = null;
+        localStorage.removeItem(H5_USER_CACHE_KEY);
         await loadMe();
       } catch (err) {
         toast(err.message || "登录失败");
@@ -22514,15 +22590,12 @@
     });
 
     (async function init() {
-      await loadH5Branding();
+      loadH5Branding().catch(() => {});
       setAuthTab("sms");
-      setTaskAbility("goal.video.pipeline");
+      setTaskAbility("comfly.seedance.tvc.pipeline");
       const ok = await loadMe();
       if (!ok) {
-        $("loginPanel").classList.remove("hidden");
-        $("appPanel").classList.add("hidden");
-        $("topActions").classList.add("hidden");
-        await refreshCaptcha();
+        await showLoginShell();
       }
       setInterval(() => {
         if (!state.token || document.visibilityState === "hidden") return;

@@ -22,6 +22,94 @@ def test_ai_marketing_home_and_group_navigation_are_present():
     assert 'openAbilityView(parent.key, AI_MARKETING_CREATION_ID)' in script
 
 
+def test_ai_marketing_ability_pages_use_virtual_department_labels():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert "function displayDepartmentForAbility(lookup)" in script
+    assert "if (isMarketingCreationMode()) return AI_MARKETING_CREATION_DEPARTMENT;" in script
+    assert "return abilityLeafNodes(marketingCreationEntryNodes());" in script
+    assert "const displayDepartment = marketingMode ? AI_MARKETING_CREATION_DEPARTMENT : department;" in script
+    assert "const labels = [displayDepartment.name, ...trail.map((item) => item.label || item.key)];" in script
+    assert '$("abilityKicker").textContent = displayDepartment.name || "ABILITY";' in script
+    assert "eachAbilityNode(marketingCreationEntryNodes(), department, []" in script
+
+
+def test_ai_marketing_visible_nodes_are_aligned_with_online_entries():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    visible_block = script.split("const AI_MARKETING_VISIBLE_NODE_KEYS = new Set([", 1)[1].split("]);", 1)[0]
+
+    for key in (
+        "hifly.video.create_by_tts",
+        "marketing_video_group",
+        "comfly.seedance.tvc.pipeline",
+        "local_bestseller",
+        "image_composer_studio",
+        "marketing_copy_group",
+        "ip_content_daily",
+        "wewrite.article.pipeline",
+    ):
+        assert f'"{key}"' in visible_block
+
+    for hidden_key in (
+        "goal.video.pipeline",
+        "comfly.daihuo.pipeline",
+        "viral_video_remix",
+        "create.video.pipeline",
+        "ppt.create",
+        "comfly.ecommerce.detail_pipeline",
+    ):
+        assert f'"{hidden_key}"' not in visible_block
+
+    assert "function marketingCreationVisibleNode(node)" in script
+    assert "(node.children || []).map(marketingCreationVisibleNode).filter(Boolean)" in script
+    assert "const visibleChildCount = childNodes.filter((child) => !isPublishCenterNode(child)).length;" in script
+    assert 'abilityShell.classList.toggle("marketing-category-mode", marketingMode && visibleChildCount > 0);' in script
+
+
+def test_h5_home_ai_marketing_entries_do_not_expose_removed_items():
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    home_block = html.split('class="office-section marketing-creation-section"', 1)[1].split("</section>", 1)[0]
+    quick_block = script.split("const WORK_QUICK_ITEMS = [", 1)[1].split("const DEPARTMENT_SKILL_TREE", 1)[0]
+
+    for key in (
+        "hifly.video.create_by_tts",
+        "marketing_video_group",
+        "image_composer_studio",
+        "marketing_copy_group",
+    ):
+        assert f'data-marketing-ability="{key}"' in home_block
+
+    for hidden_label in ("创意视频", "爆款TVC", "爆款复刻", "多段视频混剪", "PPT制作", "电商详情页"):
+        assert hidden_label not in home_block
+
+    for hidden_key in ("creative_general", "comfly.daihuo.pipeline", "viral_video_remix", "publish_center", "ai_shop_diagnosis", "ai_product_selection"):
+        item_block = quick_block.split(f'key: "{hidden_key}"', 1)[1].split("},", 1)[0]
+        assert "hidden: true" in item_block
+
+
+def test_h5_visible_work_structure_uses_new_ai_categories():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    tree_block = script.split("const DEPARTMENT_SKILL_TREE = [", 1)[1].split("const IP_DAILY_TASK_OPTIONS", 1)[0]
+    quick_block = script.split("const TASK_DEPARTMENTS = ", 1)[1].split("const SCHEDULED_TASK_CAPABILITY_IDS", 1)[0]
+
+    for label in ("AI营销创作", "AI获客", "私域销管", "AI海外平台"):
+        assert label in tree_block
+
+    for legacy in ('name: "市场部"', 'name: "销售部"', 'name: "运营部"', 'name: "客服部"'):
+        assert legacy not in tree_block
+
+    assert '"AI获客"' in quick_block
+    assert '"私域销管"' in quick_block
+    assert '"销售部"' not in quick_block
+    assert "function departmentEntryNodes(department)" in script
+    assert "entries.map(abilityCardHtml)" in script
+    assert "这个类目暂时没有配置能力" in script
+    assert "能力类目排行" in html
+    assert "部门排行" not in html
+
+
 def test_ai_marketing_digital_human_exposes_duration_and_template_controls():
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
     css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")

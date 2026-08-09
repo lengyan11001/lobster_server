@@ -52,8 +52,8 @@ _DEFAULT_IMAGE_GENERATE_MODEL_HINT = (
     getattr(settings, "lobster_default_image_generate_model", None) or "openai/gpt-image-2"
 ).strip() or "openai/gpt-image-2"
 _DEFAULT_VIDEO_GENERATE_MODEL_HINT = (
-    getattr(settings, "lobster_default_video_generate_model", None) or "apiz/veo3.1/text-to-video"
-).strip() or "apiz/veo3.1/text-to-video"
+    getattr(settings, "lobster_default_video_generate_model", None) or "xai/grok-imagine-video/text-to-video"
+).strip() or "xai/grok-imagine-video/text-to-video"
 
 # ---------------------------------------------------------------------------
 # Global connection pool — reuses TCP+TLS connections across requests

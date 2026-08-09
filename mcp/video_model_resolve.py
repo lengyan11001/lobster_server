@@ -17,6 +17,7 @@ APIZ_VEO31_TEXT_MODEL = "apiz/veo3.1/text-to-video"
 APIZ_VEO31_IMAGE_MODEL = "apiz/veo3.1/image-to-video"
 APIZ_VEO31_REFERENCE_MODEL = "apiz/veo3.1/reference-to-video"
 APIZ_BIHUO_25_VIDEO_MODEL = "st-ai/super-seed2-lite"
+SUTUI_GROK_TEXT_MODEL = "xai/grok-imagine-video/text-to-video"
 SUTUI_GROK_15_IMAGE_MODEL = "xai/grok-imagine-video-1.5/image-to-video"
 _LEGACY_FAL_VEO31_RE = re.compile(r"^fal-ai/veo3\.1(?:/.*)?$", re.I)
 _LEGACY_DEFAULT_VIDEO_MODELS = frozenset(
@@ -44,10 +45,21 @@ def _route_apiz_veo31_family(model: str, image_count: int) -> str:
 
 
 def resolve_default_video_model_id(raw: str, has_image: bool = False) -> str:
-    """Migrate retired configured defaults without changing explicit Grok requests."""
+    """Resolve server-controlled defaults.
+
+    Explicit Veo requests still go through resolve_video_model_id(); defaults
+    should stay on the cheaper Grok path so pipelines are not constrained by
+    APIZ/Veo 4/6/8 second buckets.
+    """
     value = (raw or "").strip()
-    if not value or value.lower() in _LEGACY_DEFAULT_VIDEO_MODELS:
-        return APIZ_VEO31_IMAGE_MODEL if has_image else APIZ_VEO31_TEXT_MODEL
+    low = value.lower()
+    if (
+        not value
+        or low in _LEGACY_DEFAULT_VIDEO_MODELS
+        or low.startswith("apiz/veo3.1/")
+        or low.startswith("fal-ai/veo3.1")
+    ):
+        return SUTUI_GROK_15_IMAGE_MODEL if has_image else SUTUI_GROK_TEXT_MODEL
     return resolve_video_model_id(value, has_image, image_count=1 if has_image else 0)
 
 

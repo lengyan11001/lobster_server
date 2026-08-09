@@ -2612,7 +2612,7 @@ def _normalize_sutui_grok_15_image_payload(
     if not image_url:
         raise ValueError(f"{model} requires image_url")
 
-    duration = _parse_video_duration_seconds(_payload_get_duration_raw(payload), default=6)
+    duration = _parse_video_duration_seconds(_payload_get_duration_raw(payload), default=_GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS)
     if duration < 6 or duration > 15:
         raise ValueError(f"{model} duration must be between 6 and 15 seconds")
 
@@ -3363,23 +3363,23 @@ def _normalize_video_generate_payload(
     """
     if not payload or not isinstance(payload, dict):
         return payload
-    model = (payload.get("model") or payload.get("model_id") or "").strip()
-    if not model:
-        model = _DEFAULT_VIDEO_MODEL
     prompt = (payload.get("prompt") or "").strip()
     image_refs = _collect_video_image_refs(payload)
     has_image = bool(image_refs)
+    model = (payload.get("model") or payload.get("model_id") or "").strip()
 
     # Older online builds injected the retired Grok default before forwarding
     # managed pipeline requests. Treat that value as a stale default only when
     # the caller identifies the request as one of our video pipelines.
+    if not model:
+        model = resolve_default_video_model_id(_DEFAULT_VIDEO_MODEL, has_image)
+    elif migrate_legacy_default:
+        model = resolve_default_video_model_id(model, has_image)
     if (
         str(pipeline_capability or "").strip().lower() in {"goal.video.pipeline", "create.video.pipeline"}
         and model.lower().startswith("apiz/veo3.1/")
     ):
-        model = SUTUI_GROK_15_IMAGE_MODEL
-    elif migrate_legacy_default:
-        model = resolve_default_video_model_id(model, has_image)
+        model = resolve_default_video_model_id("", has_image)
     model = resolve_video_model_id(model, has_image, image_count=len(image_refs))
     model_lower = model.lower()
     first_url = image_refs[0] if image_refs else ""
@@ -3611,9 +3611,12 @@ def _normalize_video_generate_payload(
         out = {"model": model, "prompt": prompt}
         if first_url:
             out["image_url"] = first_url
-        _has_ar = _payload_get_aspect_ratio(payload) is not None
+        _raw_ar = _payload_get_aspect_ratio(payload)
+        _has_ar = _raw_ar is not None
         if not first_url or _has_ar:
-            out["aspect_ratio"] = aspect_ratio if ratio_ok else "9:16"
+            out["aspect_ratio"] = (_coerce_video_aspect_ratio_for_upstream(_raw_ar) if _has_ar else "9:16")
+            if out["aspect_ratio"] not in _VIDEO_ASPECT_RATIOS:
+                out["aspect_ratio"] = "9:16"
         out["duration"] = _parse_video_duration_seconds(
             _payload_get_duration_raw(payload),
             default=_GROK_IMAGINE_VIDEO_DEFAULT_DURATION_SECONDS,

@@ -1207,8 +1207,8 @@ def comfly_pricing():
             getattr(settings, "lobster_default_image_generate_model", None) or "openai/gpt-image-2"
         ).strip() or "openai/gpt-image-2",
         "video_generate_model": (
-            getattr(settings, "lobster_default_video_generate_model", None) or "apiz/veo3.1/text-to-video"
-        ).strip() or "apiz/veo3.1/text-to-video",
+            getattr(settings, "lobster_default_video_generate_model", None) or "xai/grok-imagine-video/text-to-video"
+        ).strip() or "xai/grok-imagine-video/text-to-video",
     }
     p = _Path(__file__).resolve().parent.parent.parent.parent / "comfly_pricing.json"
     if not p.exists():
