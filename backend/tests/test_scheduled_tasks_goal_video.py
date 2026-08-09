@@ -1,6 +1,9 @@
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
+from backend.app.api import scheduled_tasks
 from backend.app.api.scheduled_tasks import _normalize_goal_video_task_payload
 
 
@@ -50,3 +53,12 @@ def test_goal_video_asset_group_still_requires_candidate_group():
 
     assert exc.value.status_code == 400
     assert "备选素材组" in str(exc.value.detail)
+
+
+def test_planning_capabilities_are_delegated_to_online_by_default():
+    assert scheduled_tasks._is_server_side_task(SimpleNamespace(task_kind="capability")) is False
+    assert scheduled_tasks._is_server_side_task(SimpleNamespace(task_kind="client_workflow")) is False
+    assert "comfly.seedance.tvc.pipeline" not in scheduled_tasks._SERVER_SIDE_TASK_KINDS
+    assert "goal.video.pipeline" not in scheduled_tasks._SERVER_SIDE_TASK_KINDS
+    assert "create.video.pipeline" not in scheduled_tasks._SERVER_SIDE_TASK_KINDS
+    assert "ip_content_daily" in scheduled_tasks._SERVER_SIDE_TASK_KINDS

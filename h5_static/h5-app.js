@@ -396,16 +396,16 @@
       "ip_content_daily",
       "hifly.video.create_by_tts",
     ];
+    // H5 should dispatch new planning/generation work to Online by default;
+    // only explicitly listed task kinds are allowed to run on the server.
+    const SERVER_SIDE_SCHEDULED_TASK_KINDS = new Set([
+      "ip_content_daily",
+      "lead_collection_templates",
+      "social_leads",
+      "linkedin_mining",
+      "wechat_channels_transcript",
+    ]);
     const WORK_QUICK_ITEMS = [
-      {
-        key: "creative_general",
-        label: "帮我创作",
-        department: "AI营销创作",
-        mark: "创",
-        prompt: "帮我写一版电商详情页文案、短视频脚本和发布标题。",
-        always: true,
-        hidden: true,
-      },
       {
         key: "image_composer_studio",
         label: "创作图片",
@@ -489,24 +489,6 @@
         mark: "发",
         dispatchKind: "client_workflow",
         workflowAction: "publish_content",
-        always: true,
-        hidden: true,
-      },
-      {
-        key: "ai_shop_diagnosis",
-        label: "AI店铺诊断（敬请期待）",
-        department: "AI营销创作",
-        mark: "店",
-        disabled: true,
-        always: true,
-        hidden: true,
-      },
-      {
-        key: "ai_product_selection",
-        label: "AI选品（敬请期待）",
-        department: "AI营销创作",
-        mark: "品",
-        disabled: true,
         always: true,
         hidden: true,
       },
@@ -3006,10 +2988,7 @@
           + taskFieldHtml("自动入库", workCheckboxHtml("workflowParamComflyAutoSave", "完成后保存到素材库", true));
       }
       if (id === "comfly.seedance.tvc.pipeline") {
-        return taskFieldHtml("参考图片", assetPickerControlHtml("workflowParamSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }), true)
-          + taskFieldHtml("视频要求", taskTextareaHtml("workflowParamSeedanceText", "连续分镜和视频要求"), true)
-          + taskFieldHtml("总时长", taskSelectHtml("workflowParamSeedanceDuration", [10,20,30,40,50,60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
-          + taskFieldHtml("画幅", taskSelectHtml("workflowParamSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏")));
+        return seedanceFieldsHtml("workflowParamSeedance", true);
       }
       if (id === "create.video.pipeline") {
         return taskFieldHtml("视频主题", taskTextareaHtml("workflowParamCreateVideoPrompt", "视频主题和要求"), true)
@@ -3128,6 +3107,7 @@
         renderWorkHiflyOptions();
         loadHiflyLibraries();
       }
+      if ($("workflowParamSeedanceModel")) bindSeedanceControls("workflowParamSeedance");
     }
 
     function workflowLookupForNode(node) {
@@ -3192,6 +3172,20 @@
       };
     }
 
+    function buildCapabilityTaskPlan(options = {}) {
+      const capabilityId = String(options.capabilityId || "").trim();
+      if (!capabilityId) throw new Error("Missing capability id");
+      const taskKind = scheduledTaskKindForAbility(capabilityId);
+      const plan = {
+        title: options.title || capabilityName(capabilityId) || capabilityId,
+        content: options.content || `H5 dispatch capability ${capabilityId}`,
+        payload: scheduledTaskPayloadForAbility(capabilityId, options.payload || {}),
+      };
+      if (options.keyName === "task_kind") plan.task_kind = taskKind;
+      else plan.taskKind = taskKind;
+      return plan;
+    }
+
     function collectWorkflowCapabilityPlan(node) {
       const capabilityId = String((node && (node.capabilityId || node.key)) || "").trim();
       if (capabilityId === "ip_content_daily") {
@@ -3232,145 +3226,129 @@
           promptId: "workflowParamVideoPrompt",
           durationId: "workflowParamVideoDuration",
         });
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "goal.video.pipeline",
           title: workflowParamValue("workflowParamVideoTitle") || node.label || "创意视频",
-          task_kind: "capability",
           content: "H5 工作流：创意视频",
-          payload: { capability_id: "goal.video.pipeline", payload },
-        };
+          payload,
+          keyName: "task_kind",
+        });
       }
       if (capabilityId === "hifly.video.create_by_tts") {
         const avatar = workflowParamValue("workflowParamAvatar");
         const voice = workflowParamValue("workflowParamVoice");
         if (!avatar) throw new Error("请选择数字人");
         if (!voice) throw new Error("请选择声音");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "hifly.video.create_by_tts",
           title: workflowParamValue("workflowParamHiflyTitle") || node.label || "数字人口播",
-          task_kind: "capability",
           content: "H5 工作流：数字人口播",
-          payload: { capability_id: "hifly.video.create_by_tts", payload: { avatar, voice } },
-        };
+          payload: { avatar, voice },
+          keyName: "task_kind",
+        });
       }
       if (capabilityId === "comfly.daihuo.pipeline") {
         const asset = assetPickerImagePayload("workflowParamComflyAsset", "参考图片");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "comfly.daihuo.pipeline",
           title: node.label || "爆款TVC",
-          task_kind: "capability",
           content: "H5 工作流：爆款TVC",
           payload: {
-            capability_id: "comfly.daihuo.pipeline",
-            payload: {
-              action: "start_pipeline",
-              ...asset,
-              task_text: workflowParamValue("workflowParamComflyText"),
-              storyboard_count: workflowParamNumber("workflowParamComflyStoryboardCount", 5, 1, 8),
-              auto_save: workflowParamChecked("workflowParamComflyAutoSave"),
-            },
+            action: "start_pipeline",
+            ...asset,
+            task_text: workflowParamValue("workflowParamComflyText"),
+            storyboard_count: workflowParamNumber("workflowParamComflyStoryboardCount", 5, 1, 8),
+            auto_save: workflowParamChecked("workflowParamComflyAutoSave"),
           },
-        };
+          keyName: "task_kind",
+        });
       }
       if (capabilityId === "comfly.seedance.tvc.pipeline") {
-        const asset = assetPickerOptionalImagePayload("workflowParamSeedanceAsset", "参考图片");
-        return {
+        const payload = seedancePayloadFromFields("workflowParamSeedance", { requireAsset: false });
+        return buildCapabilityTaskPlan({
+          capabilityId: "comfly.seedance.tvc.pipeline",
           title: node.label || "创意分镜头视频",
-          task_kind: "capability",
           content: "H5 工作流：创意分镜头视频",
-          payload: {
-            capability_id: "comfly.seedance.tvc.pipeline",
-            payload: {
-              action: "start_pipeline",
-              ...asset,
-              task_text: workflowParamValue("workflowParamSeedanceText"),
-              total_duration_seconds: workflowParamNumber("workflowParamSeedanceDuration", 20, 5, 120),
-              aspect_ratio: workflowParamValue("workflowParamSeedanceAspect") || "9:16",
-              auto_save: true,
-            },
-          },
-        };
+          payload,
+          keyName: "task_kind",
+        });
       }
       if (capabilityId === "create.video.pipeline") {
         const prompt = workflowParamValue("workflowParamCreateVideoPrompt");
         if (!prompt) throw new Error("请填写视频主题");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "create.video.pipeline",
           title: node.label || "速推视频制作",
-          task_kind: "capability",
           content: "H5 工作流：速推视频制作",
           payload: {
-            capability_id: "create.video.pipeline",
-            payload: {
-              action: "start_pipeline",
-              prompt,
-              duration: workflowParamNumber("workflowParamCreateVideoDuration", 8, 3, 60),
-              scene_count: workflowParamNumber("workflowParamCreateVideoSceneCount", 1, 1, 6),
-              aspect_ratio: workflowParamValue("workflowParamCreateVideoAspect") || "16:9",
-            },
+            action: "start_pipeline",
+            prompt,
+            duration: workflowParamNumber("workflowParamCreateVideoDuration", 8, 3, 60),
+            scene_count: workflowParamNumber("workflowParamCreateVideoSceneCount", 1, 1, 6),
+            aspect_ratio: workflowParamValue("workflowParamCreateVideoAspect") || "16:9",
           },
-        };
+          keyName: "task_kind",
+        });
       }
       if (capabilityId === "wewrite.article.pipeline") {
         const idea = workflowParamValue("workflowParamArticleIdea");
         if (!idea) throw new Error("请填写公众号主题");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "wewrite.article.pipeline",
           title: workflowParamValue("workflowParamArticleTitle") || node.label || "公众号文章",
-          task_kind: "capability",
           content: "H5 工作流：公众号文章",
           payload: {
-            capability_id: "wewrite.article.pipeline",
-            payload: {
-              idea,
-              style: workflowParamValue("workflowParamArticleStyle"),
-              include_images: workflowParamChecked("workflowParamArticleIncludeImages"),
-              image_count: workflowParamNumber("workflowParamArticleImageCount", 3, 0, 6),
-              image_aspect_ratio: "16:9",
-            },
+            idea,
+            style: workflowParamValue("workflowParamArticleStyle"),
+            include_images: workflowParamChecked("workflowParamArticleIncludeImages"),
+            image_count: workflowParamNumber("workflowParamArticleImageCount", 3, 0, 6),
+            image_aspect_ratio: "16:9",
           },
-        };
+          keyName: "task_kind",
+        });
       }
       if (capabilityId === "ppt.create") {
         const topic = workflowParamValue("workflowParamPptTopic");
         if (!topic) throw new Error("请填写 PPT 主题");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "ppt.create",
           title: workflowParamValue("workflowParamPptTitle") || node.label || "PPT生成",
-          task_kind: "capability",
           content: "H5 工作流：PPT生成",
           payload: {
-            capability_id: "ppt.create",
-            payload: {
-              mode: workflowParamValue("workflowParamPptMode") || "ai",
-              topic,
-              slide_count: workflowParamNumber("workflowParamPptSlideCount", 10, 1, 80),
-              instructions: workflowParamValue("workflowParamPptInstructions"),
-              language: "zh-CN",
-            },
+            mode: workflowParamValue("workflowParamPptMode") || "ai",
+            topic,
+            slide_count: workflowParamNumber("workflowParamPptSlideCount", 10, 1, 80),
+            instructions: workflowParamValue("workflowParamPptInstructions"),
+            language: "zh-CN",
           },
-        };
+          keyName: "task_kind",
+        });
       }
       if (capabilityId === "comfly.ecommerce.detail_pipeline") {
         const asset = assetOrImagePayload(workflowParamValue("workflowParamEcommerceAsset"), "商品主图");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "comfly.ecommerce.detail_pipeline",
           title: workflowParamValue("workflowParamEcommerceTitle") || node.label || "电商详情页",
-          task_kind: "capability",
           content: "H5 工作流：电商详情页",
           payload: {
-            capability_id: "comfly.ecommerce.detail_pipeline",
-            payload: {
-              action: "start_pipeline",
-              ...asset,
-              task_text: workflowParamValue("workflowParamEcommerceText"),
-              page_count: workflowParamNumber("workflowParamEcommercePageCount", 12, 1, 20),
-              auto_save: workflowParamChecked("workflowParamEcommerceAutoSave"),
-            },
+            action: "start_pipeline",
+            ...asset,
+            task_text: workflowParamValue("workflowParamEcommerceText"),
+            page_count: workflowParamNumber("workflowParamEcommercePageCount", 12, 1, 20),
+            auto_save: workflowParamChecked("workflowParamEcommerceAutoSave"),
           },
-        };
+          keyName: "task_kind",
+        });
       }
       const prompt = workflowParamValue("workflowParamGenericPrompt");
       if (!prompt) throw new Error("请填写任务要求");
-      return {
+      return buildCapabilityTaskPlan({
+        capabilityId,
         title: workflowParamValue("workflowParamGenericTitle") || node.label || capabilityName(capabilityId) || "能力任务",
-        task_kind: "capability",
         content: `H5 工作流：${node.label || capabilityId}`,
-        payload: { capability_id: capabilityId, payload: { prompt, task_text: prompt } },
-      };
+        payload: { prompt, task_text: prompt },
+        keyName: "task_kind",
+      });
     }
 
     function collectWorkflowQuickPlan(quick) {
@@ -3563,12 +3541,13 @@
         if (capabilityId === "wewrite.article.pipeline") payload = { idea: prompt, style: "", include_images: true, image_count: 3, image_aspect_ratio: "16:9" };
         if (capabilityId === "ppt.create") payload = { mode: "ai", topic: prompt, slide_count: 10, instructions: "", language: "zh-CN" };
         if (capabilityId === "comfly.ecommerce.detail_pipeline") payload = { action: "start_pipeline", task_text: prompt, page_count: 12, auto_save: true };
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId,
           title: node.label || capabilityName(capabilityId),
-          task_kind: "capability",
           content: `H5 工作流：${node.label || capabilityId}`,
-          payload: { capability_id: capabilityId, payload },
-        };
+          payload,
+          keyName: "task_kind",
+        });
       }
       throw new Error("这个节点暂不支持加入工作流");
     }
@@ -4502,10 +4481,7 @@
         return;
       }
       if (capabilityId === "comfly.seedance.tvc.pipeline") {
-        setAssetPickerPayloadValue("workflowParamSeedanceAsset", inner);
-        setFieldValue("workflowParamSeedanceText", inner.task_text || inner.prompt || node.note || "");
-        setFieldValue("workflowParamSeedanceDuration", inner.total_duration_seconds || 20);
-        setFieldValue("workflowParamSeedanceAspect", inner.aspect_ratio || "9:16");
+        setSeedanceFieldsFromPayload("workflowParamSeedance", inner, node.note || "");
         return;
       }
       if (capabilityId === "create.video.pipeline") {
@@ -9642,17 +9618,17 @@
       state.runs = (state.runs || []).filter((row) => String(row.id || "") !== id);
     }
 
-    function addOptimisticRun(body, title, isIpDaily) {
+    function addOptimisticRun(body, title, serverSide) {
       const now = new Date().toISOString();
       const run = {
         id: `client_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
         task_id: "",
         title: title || capabilityName(state.taskAbility),
-        task_kind: isIpDaily ? "ip_content_daily" : "capability",
+        task_kind: body && body.task_kind ? body.task_kind : "capability",
         payload: body && body.payload ? body.payload : {},
         status: "processing",
-        progress: { server_side: !!isIpDaily, text: isIpDaily ? "服务器任务已提交" : "任务已提交，等待员工领取" },
-        server_side: !!isIpDaily,
+        progress: { server_side: !!serverSide, text: serverSide ? "服务器任务已提交" : "任务已提交，等待员工领取" },
+        server_side: !!serverSide,
         created_at: now,
         updated_at: now,
       };
@@ -10777,10 +10753,7 @@
       setFieldValue("abilityVideoCandidateGroup", inner.candidate_group || "");
       bindGoalVideoModeControls("ability");
       loadVideoMemoryDocsForSelect().then(() => setMultiSelectValues("abilityVideoMemoryDocs", inner.memory_doc_ids || [])).catch(() => {});
-      setAssetPickerPayloadValue("workSeedanceAsset", inner);
-      setFieldValue("workSeedanceText", inner.task_text || inner.prompt || "");
-      setFieldValue("workSeedanceDuration", inner.total_duration_seconds || "");
-      setFieldValue("workSeedanceAspect", inner.aspect_ratio || "");
+      setSeedanceFieldsFromPayload("workSeedance", inner);
       setAssetPickerPayloadValue("workComflyAsset", inner);
       setFieldValue("workComflyText", inner.task_text || inner.prompt || "");
       setFieldValue("workComflyStoryboardCount", inner.storyboard_count || "");
@@ -11021,10 +10994,11 @@
       if (!taskId) return;
       const oldText = btn ? btn.textContent : "";
       const task = (state.tasks || []).find((row) => String(row.id || "") === String(taskId)) || null;
+      const taskKind = String(task && task.task_kind || "").trim();
       const optimisticRunId = addOptimisticRun(
-        { payload: task && task.payload ? task.payload : {} },
+        { task_kind: taskKind, payload: task && task.payload ? task.payload : {} },
         task ? task.title : "",
-        task && task.task_kind === "ip_content_daily"
+        isServerSideScheduledKind(taskKind)
       );
       if (btn) {
         btn.disabled = true;
@@ -13627,6 +13601,205 @@
       if (!id || !$(id)) return 0;
       const seconds = parseInt(String($(id).value || "10"), 10);
       return [6, 10, 15].includes(seconds) ? seconds : 10;
+    }
+
+    function seedanceIsYunwuVeoModel(model) {
+      const value = String(model || "").toLowerCase().replace(/\s+/g, "");
+      return ["yunwu-veo3.1-plus", "veo3.1-plus", "veo3.1", "yingmeng-plus", "影梦plus", "影梦1.0plus"].includes(value);
+    }
+
+    function seedanceIsOpenMindGrokModel(model) {
+      const value = String(model || "").toLowerCase().replace(/\s+/g, "");
+      return ["grok-imagine-video-1.5-preview", "yingmeng1.5plus", "影梦1.5plus"].includes(value);
+    }
+
+    function seedanceVideoRequestForModel(model) {
+      if (seedanceIsOpenMindGrokModel(model)) return { model: "grok-imagine-video-1.5-preview", channel: "openmind" };
+      if (seedanceIsYunwuVeoModel(model)) return { model: "veo3.1", channel: "yunwu" };
+      return { model: String(model || "doubao-seedance-2-0-260128").trim(), channel: "" };
+    }
+
+    function seedanceSegmentSecondsForModel(model) {
+      return seedanceIsYunwuVeoModel(model) ? 8 : 10;
+    }
+
+    function seedanceNormalizedDurationForModel(model, duration) {
+      const segmentSeconds = seedanceSegmentSecondsForModel(model);
+      const seconds = parseInt(String(duration || ""), 10);
+      const segmentCount = Math.max(1, Math.min(6, Math.round((Number.isNaN(seconds) ? segmentSeconds : seconds) / segmentSeconds)));
+      return segmentCount * segmentSeconds;
+    }
+
+    function seedanceDurationOptionsHtml(model, selected = "") {
+      const segmentSeconds = seedanceSegmentSecondsForModel(model);
+      const wanted = seedanceNormalizedDurationForModel(model, selected || segmentSeconds);
+      return [1, 2, 3, 4, 5, 6].map((index) => {
+        const seconds = index * segmentSeconds;
+        return `<option value="${seconds}" ${seconds === wanted ? "selected" : ""}>${seconds} 秒</option>`;
+      }).join("");
+    }
+
+    function seedanceModelOptionsHtml(selected = "grok-imagine-video-1.5-preview") {
+      const value = String(selected || "grok-imagine-video-1.5-preview").trim();
+      return [
+        ["yunwu-veo3.1-plus", "影梦 1.0 Plus"],
+        ["grok-imagine-video-1.5-preview", "影梦 1.5 Plus"],
+        ["doubao-seedance-2-0-260128", "影梦 2.0 Pro"],
+      ].map(([model, label]) => `<option value="${escapeHtml(model)}" ${model === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
+    }
+
+    function seedanceVisualToneOptionsHtml(selected = "clean_bright") {
+      const value = String(selected || "clean_bright").trim();
+      return [
+        ["clean_bright", "明亮干净"],
+        ["lifestyle_warm", "生活感暖调"],
+        ["luxury_refined", "精致高级"],
+        ["cinematic_contrast", "叙事电影感"],
+      ].map(([key, label]) => `<option value="${escapeHtml(key)}" ${key === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
+    }
+
+    function seedanceRhythmOptionsHtml(selected = "smooth") {
+      const value = String(selected || "smooth").trim();
+      return [
+        ["smooth", "平滑推进"],
+        ["dynamic", "更有动势"],
+        ["product_focus", "偏产品展示"],
+        ["storytelling", "偏情绪叙事"],
+      ].map(([key, label]) => `<option value="${escapeHtml(key)}" ${key === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
+    }
+
+    function seedanceInputModeOptionsHtml(selected = "image_auto") {
+      const value = String(selected || "image_auto").trim();
+      return [
+        ["image_auto", "上传图片，AI 自动分析分镜"],
+        ["image_prompt", "图片 + 提示词共同控制"],
+        ["prompt_only", "只写提示词，不上传素材"],
+      ].map(([key, label]) => `<option value="${escapeHtml(key)}" ${key === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
+    }
+
+    function seedanceReferencePurposeOptionsHtml(selected = "storyboard") {
+      const value = String(selected || "storyboard").trim();
+      return [
+        ["storyboard", "分镜参考"],
+        ["person", "指定人物"],
+        ["product", "指定产品"],
+        ["style", "参考风格"],
+        ["scene", "参考场景"],
+        ["auto", "普通参考"],
+      ].map(([key, label]) => `<option value="${escapeHtml(key)}" ${key === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
+    }
+
+    function seedanceFieldsHtml(prefix, requiredAsset = false) {
+      return taskFieldHtml("输入方式", taskSelectHtml(`${prefix}InputMode`, seedanceInputModeOptionsHtml("image_auto")))
+        + taskFieldHtml("参考图片", assetPickerControlHtml(`${prefix}Asset`, { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }), requiredAsset)
+        + taskFieldHtml("参考图用途", taskSelectHtml(`${prefix}ReferencePurpose`, seedanceReferencePurposeOptionsHtml("storyboard")))
+        + taskFieldHtml("视频需求", taskTextareaHtml(`${prefix}Text`, "例如：做一条 20 秒的轻奢护肤品短视频，先建立包装高级感，再切到使用场景，最后用品牌记忆点收尾。"), true)
+        + taskFieldHtml("生成模型", taskSelectHtml(`${prefix}Model`, seedanceModelOptionsHtml("grok-imagine-video-1.5-preview")))
+        + taskFieldHtml("视频时长", taskSelectHtml(`${prefix}Duration`, seedanceDurationOptionsHtml("grok-imagine-video-1.5-preview", 10)))
+        + taskFieldHtml("画面比例", taskSelectHtml(`${prefix}Aspect`, optionHtml("9:16", "9:16 竖屏带货") + optionHtml("16:9", "16:9 横屏展示") + optionHtml("1:1", "1:1 方形信息流") + optionHtml("4:5", "4:5 内容种草")))
+        + taskFieldHtml("视觉基调", taskSelectHtml(`${prefix}VisualTone`, seedanceVisualToneOptionsHtml("clean_bright")))
+        + taskFieldHtml("镜头节奏", taskSelectHtml(`${prefix}Rhythm`, seedanceRhythmOptionsHtml("smooth")))
+        + taskFieldHtml("结果处理", workCheckboxHtml(`${prefix}NeedMerge`, "多分镜最终合成一个视频", true) + workCheckboxHtml(`${prefix}NeedAudio`, "需要保留音频或配乐规划", true), true);
+    }
+
+    function syncSeedanceDurationOptions(prefix) {
+      const modelEl = $(`${prefix}Model`);
+      const durationEl = $(`${prefix}Duration`);
+      if (!modelEl || !durationEl) return;
+      const oldValue = parseInt(String(durationEl.value || ""), 10);
+      const nextModel = modelEl.value || "grok-imagine-video-1.5-preview";
+      const nextDuration = seedanceNormalizedDurationForModel(nextModel, oldValue);
+      durationEl.innerHTML = seedanceDurationOptionsHtml(nextModel, nextDuration);
+      durationEl.value = String(nextDuration);
+    }
+
+    function bindSeedanceControls(prefix) {
+      const modelEl = $(`${prefix}Model`);
+      if (!modelEl || modelEl.dataset.seedanceDurationBound === "1") return;
+      modelEl.dataset.seedanceDurationBound = "1";
+      modelEl.addEventListener("change", () => syncSeedanceDurationOptions(prefix));
+      syncSeedanceDurationOptions(prefix);
+    }
+
+    function seedanceReferenceCount(payload) {
+      return (payload.asset_id || payload.image_url ? 1 : 0)
+        + (Array.isArray(payload.reference_asset_ids) ? payload.reference_asset_ids.length : 0)
+        + (Array.isArray(payload.reference_image_urls) ? payload.reference_image_urls.length : 0);
+    }
+
+    function seedancePayloadFromFields(prefix, options = {}) {
+      const inputMode = String((($(`${prefix}InputMode`) && $(`${prefix}InputMode`).value) || "image_auto")).trim() || "image_auto";
+      const prompt = String((($(`${prefix}Text`) && $(`${prefix}Text`).value) || "")).trim();
+      const model = String((($(`${prefix}Model`) && $(`${prefix}Model`).value) || "grok-imagine-video-1.5-preview")).trim();
+      const segmentSeconds = seedanceSegmentSecondsForModel(model);
+      const requestedDuration = parseInt(String((($(`${prefix}Duration`) && $(`${prefix}Duration`).value) || segmentSeconds)), 10);
+      const normalizedDuration = seedanceNormalizedDurationForModel(model, requestedDuration);
+      const segmentCount = Math.max(1, Math.min(6, Math.round(normalizedDuration / segmentSeconds)));
+      const videoRequest = seedanceVideoRequestForModel(model);
+      const asset = inputMode === "prompt_only" ? {} : assetPickerOptionalImagePayload(`${prefix}Asset`, "参考图片");
+      const hasReference = seedanceReferenceCount(asset) > 0;
+      if (!hasReference && !prompt) throw new Error("请先上传参考图，或输入创意提示词后再开始生成。");
+      const useDirectVideo = inputMode === "image_prompt" && hasReference;
+      const referencePurpose = String((($(`${prefix}ReferencePurpose`) && $(`${prefix}ReferencePurpose`).value) || "storyboard")).trim() || "storyboard";
+      const payload = {
+        action: "start_pipeline",
+        ...asset,
+        total_duration_seconds: normalizedDuration,
+        segment_count: segmentCount,
+        segment_duration_seconds: segmentSeconds,
+        workflow_mode: useDirectVideo ? "direct_video" : "storyboard",
+        merge_clips: !!($(`${prefix}NeedMerge`) && $(`${prefix}NeedMerge`).checked),
+        auto_save: true,
+        analysis_model: "",
+        image_model: "",
+        image_model_fallback: "gpt-image-2-yunwu",
+        video_model: videoRequest.model,
+        video_channel: videoRequest.channel,
+        video_fallbacks: seedanceIsYunwuVeoModel(model) ? [{ channel: "comfly", model: "veo3.1-fast" }] : [],
+        aspect_ratio: (($(`${prefix}Aspect`) && $(`${prefix}Aspect`).value) || "9:16"),
+        visual_tone: (($(`${prefix}VisualTone`) && $(`${prefix}VisualTone`).value) || "clean_bright"),
+        rhythm: (($(`${prefix}Rhythm`) && $(`${prefix}Rhythm`).value) || "smooth"),
+        generate_audio: !!($(`${prefix}NeedAudio`) && $(`${prefix}NeedAudio`).checked),
+        watermark: false,
+        task_text: prompt,
+      };
+      const refCount = seedanceReferenceCount(payload);
+      if (refCount) {
+        payload.reference_purposes = Array.from({ length: refCount }, () => referencePurpose);
+      }
+      if (inputMode === "prompt_only") {
+        payload.reference_purposes = [];
+      }
+      if (options.requireAsset && !hasReference) throw new Error("请选择参考图片");
+      return payload;
+    }
+
+    function seedanceUiModelFromPayload(payload = {}) {
+      const channel = String(payload.video_channel || "").trim().toLowerCase();
+      const model = String(payload.video_model || "").trim();
+      if (channel === "yunwu" || seedanceIsYunwuVeoModel(model)) return "yunwu-veo3.1-plus";
+      if (channel === "openmind" || seedanceIsOpenMindGrokModel(model)) return "grok-imagine-video-1.5-preview";
+      return model || "grok-imagine-video-1.5-preview";
+    }
+
+    function setSeedanceFieldsFromPayload(prefix, payload = {}, fallbackPrompt = "") {
+      const inner = payload && typeof payload === "object" ? payload : {};
+      setAssetPickerPayloadValue(`${prefix}Asset`, inner);
+      const hasReference = seedanceReferenceCount(inner) > 0;
+      const workflowMode = String(inner.workflow_mode || "").trim().toLowerCase().replace(/-/g, "_");
+      const inputMode = workflowMode === "direct_video" ? "image_prompt" : (hasReference ? "image_auto" : "prompt_only");
+      const model = seedanceUiModelFromPayload(inner);
+      setFieldValue(`${prefix}InputMode`, inputMode);
+      setFieldValue(`${prefix}ReferencePurpose`, (Array.isArray(inner.reference_purposes) && inner.reference_purposes[0]) || "storyboard");
+      setFieldValue(`${prefix}Text`, inner.task_text || inner.prompt || fallbackPrompt || "");
+      setFieldValue(`${prefix}Model`, model);
+      syncSeedanceDurationOptions(prefix);
+      setFieldValue(`${prefix}Duration`, seedanceNormalizedDurationForModel(model, inner.total_duration_seconds || inner.duration || seedanceSegmentSecondsForModel(model)));
+      setFieldValue(`${prefix}Aspect`, inner.aspect_ratio || "9:16");
+      setFieldValue(`${prefix}VisualTone`, inner.visual_tone || "clean_bright");
+      setFieldValue(`${prefix}Rhythm`, inner.rhythm || "smooth");
+      setFieldValue(`${prefix}NeedMerge`, inner.merge_clips !== false);
+      setFieldValue(`${prefix}NeedAudio`, inner.generate_audio !== false);
     }
 
     function taskTextareaHtml(id, placeholder) {
@@ -16691,10 +16864,7 @@
         return imageStudioFieldsHtml("workImage");
       }
       if (key === "comfly.seedance.tvc.pipeline") {
-        return taskFieldHtml("参考图片", assetPickerControlHtml("workSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }), true)
-          + taskFieldHtml("视频需求", taskTextareaHtml("workSeedanceText", "例如：围绕护肤品做 3 个高级感分镜，突出补水和通透肤感"), true)
-          + taskFieldHtml("视频时长", taskSelectHtml("workSeedanceDuration", [10, 20, 30, 40, 50, 60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
-          + taskFieldHtml("画幅", taskSelectHtml("workSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏") + optionHtml("1:1", "1:1 方图")));
+        return seedanceFieldsHtml("workSeedance", true);
       }
       if (key === "comfly.daihuo.pipeline") {
         return taskFieldHtml("参考图片", assetPickerControlHtml("workComflyAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }), true)
@@ -16771,6 +16941,7 @@
       $("workDispatchFields").innerHTML = workDispatchFieldsHtml(item);
       modal.classList.remove("hidden");
       initAssetPickerControls(modal);
+      if (item.key === "comfly.seedance.tvc.pipeline") bindSeedanceControls("workSeedance");
       if (item.key === "hifly.video.create_by_tts") {
         renderWorkHiflyOptions();
         loadHiflyLibraries();
@@ -16815,42 +16986,28 @@
         };
       }
       if (key === "comfly.seedance.tvc.pipeline") {
-        const taskText = workValue("workSeedanceText");
-        const asset = assetPickerOptionalImagePayload("workSeedanceAsset", "参考图片");
-        return {
+        const payload = seedancePayloadFromFields("workSeedance", { requireAsset: false });
+        return buildCapabilityTaskPlan({
+          capabilityId: "comfly.seedance.tvc.pipeline",
           title: "创意分镜头视频",
-          taskKind: "capability",
           content: "H5 安排工作：创意分镜头视频",
-          payload: {
-            capability_id: "comfly.seedance.tvc.pipeline",
-            payload: {
-              action: "start_pipeline",
-              ...asset,
-              task_text: taskText,
-              total_duration_seconds: workNumber(workValue("workSeedanceDuration"), 20, 5, 120),
-              aspect_ratio: workValue("workSeedanceAspect") || "9:16",
-              auto_save: true,
-            },
-          },
-        };
+          payload,
+        });
       }
       if (key === "comfly.daihuo.pipeline") {
         const asset = assetPickerImagePayload("workComflyAsset", "参考图片");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "comfly.daihuo.pipeline",
           title: "爆款TVC",
-          taskKind: "capability",
           content: "H5 能力工作台：爆款TVC",
           payload: {
-            capability_id: "comfly.daihuo.pipeline",
-            payload: {
-              action: "start_pipeline",
-              ...asset,
-              task_text: workValue("workComflyText"),
-              storyboard_count: workNumber(workValue("workComflyStoryboardCount"), 5, 1, 8),
-              auto_save: !!($("workComflyAutoSave") && $("workComflyAutoSave").checked),
-            },
+            action: "start_pipeline",
+            ...asset,
+            task_text: workValue("workComflyText"),
+            storyboard_count: workNumber(workValue("workComflyStoryboardCount"), 5, 1, 8),
+            auto_save: !!($("workComflyAutoSave") && $("workComflyAutoSave").checked),
           },
-        };
+        });
       }
       if (key === "hifly.video.create_by_tts") {
         const avatar = workValue("workAvatar");
@@ -16863,26 +17020,23 @@
         if (!voice) throw new Error("请选择声音");
         if (!script) throw new Error("请填写口播文案");
         if (useTemplate && !workValue("workHiflyTemplate")) throw new Error("请选择剪辑模板");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "hifly.video.create_by_tts",
           title: workValue("workHiflyTitle") || "数字人口播",
-          taskKind: "capability",
           content: "H5 安排工作：数字人口播",
           payload: {
-            capability_id: "hifly.video.create_by_tts",
-            payload: {
-              avatar,
-              virtualman_id: avatar,
-              voice,
-              script,
-              prompt: script,
-              long_video: longVideo,
-              video_duration: videoDuration,
-              duration_seconds: videoDuration,
-              use_template: useTemplate,
-              ...(useTemplate ? selectedWorkHiflyTemplatePayload() : {}),
-            },
+            avatar,
+            virtualman_id: avatar,
+            voice,
+            script,
+            prompt: script,
+            long_video: longVideo,
+            video_duration: videoDuration,
+            duration_seconds: videoDuration,
+            use_template: useTemplate,
+            ...(useTemplate ? selectedWorkHiflyTemplatePayload() : {}),
           },
-        };
+        });
       }
       if (key === "douyin_leads") {
         const keyword = workValue("workDouyinKeyword");
@@ -17020,80 +17174,68 @@
           promptId: "abilityVideoPrompt",
           durationId: "abilityVideoDuration",
         });
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "goal.video.pipeline",
           title: abilityValue("abilityVideoTitle") || node.label || "创意视频",
-          taskKind: "capability",
           content: "H5 能力工作台：创意视频",
-          payload: {
-            capability_id: "goal.video.pipeline",
-            payload,
-          },
-        };
+          payload,
+        });
       }
       if (capabilityId === "wewrite.article.pipeline") {
         const idea = abilityValue("abilityArticleIdea");
         if (!idea) throw new Error("请填写公众号主题");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "wewrite.article.pipeline",
           title: abilityValue("abilityArticleTitle") || node.label || "公众号文章",
-          taskKind: "capability",
           content: "H5 能力工作台：公众号文章",
           payload: {
-            capability_id: "wewrite.article.pipeline",
-            payload: {
-              idea,
-              style: abilityValue("abilityArticleStyle"),
-              include_images: !!($("abilityArticleIncludeImages") && $("abilityArticleIncludeImages").checked),
-              image_count: abilityNumber("abilityArticleImageCount", 3, 0, 6),
-              image_aspect_ratio: "16:9",
-            },
+            idea,
+            style: abilityValue("abilityArticleStyle"),
+            include_images: !!($("abilityArticleIncludeImages") && $("abilityArticleIncludeImages").checked),
+            image_count: abilityNumber("abilityArticleImageCount", 3, 0, 6),
+            image_aspect_ratio: "16:9",
           },
-        };
+        });
       }
       if (capabilityId === "ppt.create") {
         const topic = abilityValue("abilityPptTopic");
         if (!topic) throw new Error("请填写 PPT 主题");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "ppt.create",
           title: abilityValue("abilityPptTitle") || node.label || "PPT生成",
-          taskKind: "capability",
           content: "H5 能力工作台：PPT生成",
           payload: {
-            capability_id: "ppt.create",
-            payload: {
-              mode: abilityValue("abilityPptMode") || "ai",
-              topic,
-              slide_count: abilityNumber("abilityPptSlideCount", 10, 1, 80),
-              instructions: abilityValue("abilityPptInstructions"),
-              language: "zh-CN",
-            },
+            mode: abilityValue("abilityPptMode") || "ai",
+            topic,
+            slide_count: abilityNumber("abilityPptSlideCount", 10, 1, 80),
+            instructions: abilityValue("abilityPptInstructions"),
+            language: "zh-CN",
           },
-        };
+        });
       }
       if (capabilityId === "comfly.ecommerce.detail_pipeline") {
         const asset = assetOrImagePayload(abilityValue("abilityEcommerceAsset"), "商品主图");
-        return {
+        return buildCapabilityTaskPlan({
+          capabilityId: "comfly.ecommerce.detail_pipeline",
           title: abilityValue("abilityEcommerceTitle") || node.label || "电商详情页",
-          taskKind: "capability",
           content: "H5 能力工作台：电商详情页",
           payload: {
-            capability_id: "comfly.ecommerce.detail_pipeline",
-            payload: {
-              action: "start_pipeline",
-              ...asset,
-              task_text: abilityValue("abilityEcommerceText"),
-              page_count: abilityNumber("abilityEcommercePageCount", 12, 1, 20),
-              auto_save: !!($("abilityEcommerceAutoSave") && $("abilityEcommerceAutoSave").checked),
-            },
+            action: "start_pipeline",
+            ...asset,
+            task_text: abilityValue("abilityEcommerceText"),
+            page_count: abilityNumber("abilityEcommercePageCount", 12, 1, 20),
+            auto_save: !!($("abilityEcommerceAutoSave") && $("abilityEcommerceAutoSave").checked),
           },
-        };
+        });
       }
       const prompt = abilityValue("abilityGenericPrompt");
       if (!prompt) throw new Error("请填写任务要求");
-      return {
+      return buildCapabilityTaskPlan({
+        capabilityId,
         title: abilityValue("abilityGenericTitle") || node.label || capabilityName(capabilityId) || "能力任务",
-        taskKind: "capability",
         content: `H5 能力工作台：${node.label || capabilityId}`,
-        payload: { capability_id: capabilityId, payload: { prompt, task_text: prompt } },
-      };
+        payload: { prompt, task_text: prompt },
+      });
     }
 
     function collectSocialLeadsPayload(platform) {
@@ -17290,7 +17432,21 @@
     }
 
     function isServerSideScheduledKind(kind) {
-      return ["ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript"].includes(String(kind || ""));
+      return SERVER_SIDE_SCHEDULED_TASK_KINDS.has(String(kind || "").trim());
+    }
+
+    function scheduledTaskKindForAbility(abilityKey) {
+      const key = String(abilityKey || "").trim();
+      const meta = TASK_CAPABILITIES[key] || {};
+      if (meta.serverTask) return String(meta.taskKind || key).trim();
+      return "capability";
+    }
+
+    function scheduledTaskPayloadForAbility(abilityKey, capPayload) {
+      const key = String(abilityKey || "").trim();
+      const kind = scheduledTaskKindForAbility(key);
+      if (isServerSideScheduledKind(kind)) return capPayload || {};
+      return { capability_id: key, payload: capPayload || {} };
     }
 
     function targetInstallationIdFromPlan(plan, fallback = "") {
@@ -17310,13 +17466,14 @@
     }
 
     async function submitScheduledClientTask(plan, scheduleOptions = {}) {
-      const installationId = targetInstallationIdFromPlan(plan, currentInstallationId());
+      const taskKind = String((plan && (plan.taskKind || plan.task_kind)) || "client_workflow").trim() || "client_workflow";
       const scheduleType = scheduleOptions.schedule_type || "once";
-      const serverSide = isServerSideScheduledKind(plan.taskKind) || plan.serverSide;
+      const serverSide = isServerSideScheduledKind(taskKind) || !!(plan && plan.serverSide);
+      const installationId = serverSide ? "" : targetInstallationIdFromPlan(plan, currentInstallationId());
       if (!serverSide && !installationId) throw new Error("暂未检测到在线设备，请先让本机 online 客户端保持登录");
       const body = {
         title: plan.title || "安排工作",
-        task_kind: plan.taskKind || "client_workflow",
+        task_kind: taskKind,
         content: plan.content || "H5 安排工作",
         payload: attachH5ContextToPayload(plan.payload || {}, plan.h5Context),
         schedule_type: scheduleType,
@@ -17341,28 +17498,6 @@
 
     async function submitOnceClientTask(plan) {
       return submitScheduledClientTask(plan, { schedule_type: "once" });
-      const installationId = currentInstallationId();
-      const serverSide = plan.taskKind === "ip_content_daily" || plan.serverSide;
-      if (!serverSide && !installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
-      const body = {
-        title: plan.title || "安排工作",
-        task_kind: plan.taskKind || "client_workflow",
-        content: plan.content || "H5 安排工作",
-        payload: plan.payload || {},
-        schedule_type: "once",
-        interval_seconds: 60,
-        start_at: "",
-        daily_times: [],
-        timezone_offset_minutes: timezoneOffsetMinutes(),
-        installation_ids: serverSide ? [] : [installationId],
-      };
-      const data = await api("/api/scheduled-tasks/tasks", {
-        method: "POST",
-        json: body,
-        headers: installationId ? { "X-Installation-Id": installationId } : {},
-      });
-      await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
-      return data;
     }
 
     async function submitWorkDispatch() {
@@ -17479,11 +17614,9 @@
         return;
       }
       if (state.taskAbility === "comfly.seedance.tvc.pipeline") {
-        host.innerHTML = taskFieldHtml("参考图片", assetPickerControlHtml("taskSeedanceAsset", { mediaType: "image", output: "url", uploadText: "上传图片", multiple: true }))
-          + taskFieldHtml("视频要求", taskTextareaHtml("taskSeedanceText", "例如：明亮真实的品牌广告，镜头连续，适合投放"), true)
-          + taskFieldHtml("总时长", taskSelectHtml("taskSeedanceDuration", [10,20,30,40,50,60].map((n) => optionHtml(String(n), `${n} 秒`)).join("")))
-          + taskFieldHtml("画幅", taskSelectHtml("taskSeedanceAspect", optionHtml("9:16", "9:16 竖屏") + optionHtml("16:9", "16:9 横屏")));
+        host.innerHTML = seedanceFieldsHtml("taskSeedance");
         initAssetPickerControls(host);
+        bindSeedanceControls("taskSeedance");
         return;
       }
       if (state.taskAbility === "comfly.ecommerce.detail_pipeline") {
@@ -17779,16 +17912,7 @@
         };
       }
       if (state.taskAbility === "comfly.seedance.tvc.pipeline") {
-        const asset = assetPickerOptionalImagePayload("taskSeedanceAsset", "参考图片");
-        const totalDuration = parseInt(($("taskSeedanceDuration") && $("taskSeedanceDuration").value) || "20", 10);
-        return {
-          action: "start_pipeline",
-          ...asset,
-          task_text: (($("taskSeedanceText") && $("taskSeedanceText").value) || "").trim(),
-          total_duration_seconds: Number.isNaN(totalDuration) ? 20 : totalDuration,
-          aspect_ratio: (($("taskSeedanceAspect") && $("taskSeedanceAspect").value) || "9:16"),
-          auto_save: true,
-        };
+        return seedancePayloadFromFields("taskSeedance", { requireAsset: false });
       }
       if (state.taskAbility === "comfly.ecommerce.detail_pipeline") {
         const asset = assetOrImagePayload($("taskEcommerceAsset") && $("taskEcommerceAsset").value, "商品主图");
@@ -18226,27 +18350,12 @@
     }
 
     async function submitVoiceCapabilityTask(capabilityId, payload, title) {
-      const installationId = currentInstallationId();
-      if (!installationId) throw new Error("暂未检测到在线设备，请先让本机 online 端保持登录");
-      const body = {
+      return submitOnceClientTask(buildCapabilityTaskPlan({
+        capabilityId,
         title: title || capabilityName(capabilityId),
-        task_kind: "capability",
         content: `语音下发能力 ${capabilityId}`,
-        payload: { capability_id: capabilityId, payload: payload || {} },
-        schedule_type: "once",
-        interval_seconds: 60,
-        start_at: "",
-        daily_times: [],
-        timezone_offset_minutes: timezoneOffsetMinutes(),
-        installation_ids: [installationId],
-      };
-      const data = await api("/api/scheduled-tasks/tasks", {
-        method: "POST",
-        json: body,
-        headers: { "X-Installation-Id": installationId },
-      });
-      await Promise.all([loadTasks({ reset: true }), loadRuns({ reset: true })]);
-      return data;
+        payload: payload || {},
+      }));
     }
 
     async function executeVoicePlan() {
@@ -18324,36 +18433,35 @@
         renderTaskAbilityBoard();
         return;
       }
-      if (state.taskAbility !== "ip_content_daily" && !selectedInstallationId) {
+      const taskKind = scheduledTaskKindForAbility(state.taskAbility);
+      const serverSide = isServerSideScheduledKind(taskKind);
+      if (!serverSide && !selectedInstallationId) {
         toast("未检测到本地 online 设备");
         return;
       }
       const capPayload = collectCapabilityPayload();
-      const installationId = targetInstallationIdFromPlan(
-        { payload: state.taskAbility === "ip_content_daily" ? capPayload : { payload: capPayload } },
-        selectedInstallationId,
-      );
+      const taskPayload = scheduledTaskPayloadForAbility(state.taskAbility, capPayload);
+      const installationId = serverSide ? "" : targetInstallationIdFromPlan({ payload: taskPayload }, selectedInstallationId);
       const scheduleType = $("taskScheduleType").value || "once";
       const dailyTimes = collectDailyTimes();
       if (scheduleType === "daily_times" && !dailyTimes.length) throw new Error("请填写每天执行时间，例如 09:00、12:00、18:00");
       const interval = parseInt($("taskIntervalMinutes").value || "60", 10);
       const title = ($("taskTitle").value || "").trim() || capabilityName(state.taskAbility);
-      const isIpDaily = state.taskAbility === "ip_content_daily";
       const body = {
         title,
-        task_kind: isIpDaily ? "ip_content_daily" : "capability",
-        content: isIpDaily ? "定时生成 IP日更文案" : `定时调用能力 ${state.taskAbility}`,
-        payload: isIpDaily ? capPayload : { capability_id: state.taskAbility, payload: capPayload },
+        task_kind: taskKind,
+        content: serverSide ? `定时执行 ${capabilityName(state.taskAbility)}` : `定时下发到 Online：${capabilityName(state.taskAbility)}`,
+        payload: taskPayload,
         schedule_type: scheduleType,
         interval_seconds: Math.max(60, (Number.isNaN(interval) ? 60 : interval) * 60),
         start_at: $("taskStartAt") ? $("taskStartAt").value : "",
         daily_times: scheduleType === "daily_times" ? dailyTimes : [],
         timezone_offset_minutes: timezoneOffsetMinutes(),
-        installation_ids: isIpDaily ? [] : [installationId],
+        installation_ids: serverSide ? [] : [installationId],
       };
       const startAt = $("taskStartAt") ? $("taskStartAt").value : "";
       const shouldOptimisticRun = scheduleType !== "daily_times" && !startAt;
-      const optimisticRunId = shouldOptimisticRun ? addOptimisticRun(body, title, isIpDaily) : "";
+      const optimisticRunId = shouldOptimisticRun ? addOptimisticRun(body, title, serverSide) : "";
       btn.disabled = true;
       try {
         const data = await api("/api/scheduled-tasks/tasks", {

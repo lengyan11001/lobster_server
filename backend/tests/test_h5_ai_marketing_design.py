@@ -83,9 +83,22 @@ def test_h5_home_ai_marketing_entries_do_not_expose_removed_items():
     for hidden_label in ("创意视频", "爆款TVC", "爆款复刻", "多段视频混剪", "PPT制作", "电商详情页"):
         assert hidden_label not in home_block
 
-    for hidden_key in ("creative_general", "comfly.daihuo.pipeline", "viral_video_remix", "publish_center", "ai_shop_diagnosis", "ai_product_selection"):
+    for removed_key in ("creative_general", "ai_shop_diagnosis", "ai_product_selection"):
+        assert f'key: "{removed_key}"' not in quick_block
+
+    for hidden_key in ("comfly.daihuo.pipeline", "viral_video_remix", "publish_center"):
         item_block = quick_block.split(f'key: "{hidden_key}"', 1)[1].split("},", 1)[0]
         assert "hidden: true" in item_block
+
+
+def test_public_homepage_uses_new_ai_structure_labels():
+    homepage = (ROOT / "backend" / "app" / "api" / "homepage.py").read_text(encoding="utf-8")
+
+    for legacy in ("市场部", "销售部", "客服部", "运营部"):
+        assert legacy not in homepage
+
+    for label in ("AI营销创作", "AI获客", "私域销管", "AI执行台"):
+        assert label in homepage
 
 
 def test_h5_visible_work_structure_uses_new_ai_categories():
@@ -171,6 +184,88 @@ def test_h5_goal_video_exposes_duration_and_submits_it():
     assert 'setFieldValue("abilityVideoDuration", inner.duration || inner.duration_seconds || 10)' in script
     assert 'setFieldValue("workflowParamVideoDuration", inner.duration || inner.duration_seconds || 10)' in script
     assert "20260809-goal-video-duration-v1" in html
+
+
+def test_h5_storyboard_video_uses_online_workbench_payload_contract():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    payload_builder = script.split("function seedancePayloadFromFields", 1)[1].split("function seedanceUiModelFromPayload", 1)[0]
+
+    for prefix in ("workflowParamSeedance", "workSeedance", "taskSeedance"):
+        assert f'seedanceFieldsHtml("{prefix}"' in script
+        assert f'seedancePayloadFromFields("{prefix}", {{ requireAsset: false }})' in script
+        assert f'bindSeedanceControls("{prefix}")' in script
+
+    for field in (
+        "InputMode",
+        "ReferencePurpose",
+        "Model",
+        "Duration",
+        "Aspect",
+        "VisualTone",
+        "Rhythm",
+        "NeedMerge",
+        "NeedAudio",
+    ):
+        assert f"${{prefix}}{field}" in script
+
+    for required_payload_key in (
+        "total_duration_seconds",
+        "segment_count",
+        "segment_duration_seconds",
+        "workflow_mode",
+        "merge_clips",
+        "auto_save",
+        "image_model_fallback",
+        "video_model",
+        "video_channel",
+        "video_fallbacks",
+        "aspect_ratio",
+        "visual_tone",
+        "rhythm",
+        "reference_purposes",
+        "generate_audio",
+        "watermark",
+        "task_text",
+    ):
+        assert required_payload_key in payload_builder
+
+    assert 'return { model: "grok-imagine-video-1.5-preview", channel: "openmind" };' in script
+    assert 'return { model: "veo3.1", channel: "yunwu" };' in script
+    assert 'seedanceIsYunwuVeoModel(model) ? 8 : 10' in script
+    assert 'image_model_fallback: "gpt-image-2-yunwu"' in payload_builder
+    assert 'video_fallbacks: seedanceIsYunwuVeoModel(model) ? [{ channel: "comfly", model: "veo3.1-fast" }] : []' in payload_builder
+    assert 'workflow_mode: useDirectVideo ? "direct_video" : "storyboard"' in payload_builder
+    assert 'seedanceNormalizedDurationForModel(model, requestedDuration)' in payload_builder
+
+
+def test_h5_scheduled_capabilities_default_to_online_commands():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+
+    assert "const SERVER_SIDE_SCHEDULED_TASK_KINDS = new Set([" in script
+    assert "function scheduledTaskKindForAbility(abilityKey)" in script
+    assert "if (meta.serverTask) return String(meta.taskKind || key).trim();" in script
+    assert 'return "capability";' in script
+    assert "function scheduledTaskPayloadForAbility(abilityKey, capPayload)" in script
+    assert "return { capability_id: key, payload: capPayload || {} };" in script
+    assert "function buildCapabilityTaskPlan(options = {})" in script
+    assert "payload: scheduledTaskPayloadForAbility(capabilityId, options.payload || {})" in script
+    assert 'const taskKind = String((plan && (plan.taskKind || plan.task_kind)) || "client_workflow").trim() || "client_workflow";' in script
+    assert "const serverSide = isServerSideScheduledKind(taskKind) || !!(plan && plan.serverSide);" in script
+    assert 'task_kind: taskKind' in script
+    assert "const taskPayload = scheduledTaskPayloadForAbility(state.taskAbility, capPayload)" in script
+    assert 'payload: taskPayload' in script
+    assert 'installation_ids: serverSide ? [] : [installationId]' in script
+    assert "return submitScheduledClientTask(plan, { schedule_type: \"once\" });\n    }\n\n    async function submitWorkDispatch" in script
+    assert "return submitOnceClientTask(buildCapabilityTaskPlan({" in script
+    assert "payload: payload || {}," in script
+    assert "payload: { capability_id" not in script
+    assert 'taskKind: "capability"' not in script
+    assert 'task_kind: "capability"' not in script
+    assert 'state.taskAbility !== "ip_content_daily" && !selectedInstallationId' not in script
+    assert 'state.taskAbility === "ip_content_daily" ? capPayload' not in script
+    assert 'task_kind: isIpDaily ? "ip_content_daily" : "capability"' not in script
+    assert 'plan.taskKind === "ip_content_daily"' not in script
+    assert 'task.task_kind === "ip_content_daily"' not in script
 
 
 def test_bottom_create_button_opens_compact_creation_sheet():

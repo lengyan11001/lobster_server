@@ -222,9 +222,9 @@ _HOME_HTML = f"""<!doctype html>
         <div class="product-stage" aria-label="AI员工工作台">
           <div class="dashboard">
             <div class="dash-top"><strong>今日 AI 员工运行状态</strong><span class="status">在线协同中</span></div>
-            <div class="work-row"><div class="avatar"><img src="/h5-static/h5-employee-male-working.png" alt="" /></div><div><b>市场部 · IP日更文案</b><small>行业热点、同行作品、记忆资料联合生成</small></div><span class="tag">生成中</span></div>
-            <div class="work-row"><div class="avatar"><img src="/h5-static/h5-employee-female-working.png" alt="" /></div><div><b>客服部 · 企业微信客服</b><small>接收客户消息，多轮 AI 回复</small></div><span class="tag">监听中</span></div>
-            <div class="work-row"><div class="avatar"><img src="/h5-static/h5-boss-avatar.png" alt="" /></div><div><b>运营部 · 定时任务</b><small>按模板下发内容生产和发布动作</small></div><span class="tag">待执行</span></div>
+            <div class="work-row"><div class="avatar"><img src="/h5-static/h5-employee-male-working.png" alt="" /></div><div><b>AI营销创作 · IP日更文案</b><small>行业热点、同行作品、记忆资料联合生成</small></div><span class="tag">生成中</span></div>
+            <div class="work-row"><div class="avatar"><img src="/h5-static/h5-employee-female-working.png" alt="" /></div><div><b>私域销管 · 个微接管</b><small>读取客户消息，结合记忆生成回复建议</small></div><span class="tag">巡检中</span></div>
+            <div class="work-row"><div class="avatar"><img src="/h5-static/h5-boss-avatar.png" alt="" /></div><div><b>AI执行台 · 定时任务</b><small>按模板下发内容生产和发布动作</small></div><span class="tag">待执行</span></div>
           </div>
         </div>
       </div>
@@ -237,10 +237,10 @@ _HOME_HTML = f"""<!doctype html>
           <p>围绕企业每天都要做的内容、获客、客服、发布和素材管理，把能力组织成岗位，而不是让用户在一堆模型里选择。</p>
         </div>
         <div class="cards">
-          <div class="card"><div class="icon">M</div><h3>市场部</h3><p>IP日更文案、文案+创意图片、公众号文章、视频号口播提取，支撑持续内容生产。</p></div>
-          <div class="card"><div class="icon">S</div><h3>销售部</h3><p>抖音获客、线索挖掘、同行数据分析，把平台数据转成跟进名单和沟通素材。</p></div>
-          <div class="card"><div class="icon">C</div><h3>客服部</h3><p>企业微信客服和微信助手可接入知识资料，收到消息后进行多轮 AI 回复。</p></div>
-          <div class="card"><div class="icon">O</div><h3>运营部</h3><p>定时任务、素材库、生成记录和发布中心，把一次性生成变成可追踪的流程。</p></div>
+          <div class="card"><div class="icon">营</div><h3>AI营销创作</h3><p>IP日更文案、创作图片、公众号文章和分镜视频，支撑持续内容生产。</p></div>
+          <div class="card"><div class="icon">获</div><h3>AI获客</h3><p>抖音获客、线索采集、同行监控，把平台数据转成可跟进名单。</p></div>
+          <div class="card"><div class="icon">微</div><h3>私域销管</h3><p>个微接管、自动加好友和朋友圈互动，结合记忆完成客户跟进。</p></div>
+          <div class="card"><div class="icon">执</div><h3>AI执行台</h3><p>定时任务、素材库、生成记录和发布中心，把一次性生成变成可追踪流程。</p></div>
           <div class="card"><div class="icon">V</div><h3>视频生产</h3><p>爆款TVC、创意分镜头视频、模板视频、速推视频制作，覆盖从图文到成片。</p></div>
           <div class="card"><div class="icon">D</div><h3>数字资产</h3><p>素材入库、生成记录、视频号文案转写、高质量 3D 模型，沉淀可复用资产。</p></div>
         </div>
