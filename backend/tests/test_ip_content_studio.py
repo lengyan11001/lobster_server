@@ -302,6 +302,51 @@ def test_ip_content_wechat_channels_user_search_accepts_direct_username(monkeypa
     assert result["query"]["source"] == "direct_username"
 
 
+def test_ip_content_wechat_channels_user_search_resolves_channel_id(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+
+    async def fake_query(*, query_type, body, **kwargs):
+        calls.append({"query_type": query_type, "body": body})
+        return {
+            "ok": True,
+            "raw_response": {
+                "code": 200,
+                "data": {
+                    "channel_id": "sphtOuVyK8PeSGt",
+                    "username": "v2_sgt_peper@finder",
+                    "nickname": "Sgt.peper",
+                },
+            },
+            "query": {"query_type": query_type},
+            "balance_after": 9,
+        }
+
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+
+    result = asyncio.run(
+        studio.search_wechat_channels_users(
+            q="sphtOuVyK8PeSGt",
+            current_user=SimpleNamespace(credits=10),
+            db=SimpleNamespace(),
+        )
+    )
+
+    assert result["items"][0]["username"] == "v2_sgt_peper@finder"
+    assert result["items"][0]["display_name"] == "Sgt.peper"
+    assert result["items"][0]["channel_id"] == "sphtOuVyK8PeSGt"
+    assert result["query"]["source"] == "channel_id"
+    assert calls == [
+        {
+            "query_type": "wechat_channels_channel_id_to_username_v2",
+            "body": {"channel_id": "sphtOuVyK8PeSGt", "raw": False},
+        }
+    ]
+
+
 def test_ip_content_wechat_channels_user_search_prefers_wechat_search_v2(monkeypatch):
     from types import SimpleNamespace
 
@@ -349,6 +394,53 @@ def test_ip_content_wechat_channels_user_search_prefers_wechat_search_v2(monkeyp
     assert [call["query_type"] for call in calls] == ["wechat_search_v2"]
     assert calls[0]["body"]["business_type"] == "account"
     assert calls[0]["body"]["raw"] is True
+
+
+def test_ip_content_wechat_channels_user_search_normalizes_name_and_filters_irrelevant_results(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.app.api import ip_content_studio as studio
+
+    calls = []
+
+    async def fake_query(*, query_type, body, **kwargs):
+        calls.append({"query_type": query_type, "body": body})
+        return {
+            "ok": True,
+            "raw_response": {
+                "code": 200,
+                "data": {
+                    "items": [
+                        {
+                            "accTypeName": "视频号",
+                            "jumpInfo": {"userName": "v2_unrelated@finder"},
+                            "title": "晓群医聊圈-IP孵化",
+                        },
+                        {
+                            "accTypeName": "视频号",
+                            "jumpInfo": {"userName": "v2_jiang@finder"},
+                            "title": "江胖子-高客单IP精准获客",
+                        },
+                    ]
+                },
+            },
+            "query": {"query_type": query_type},
+            "balance_after": 9,
+        }
+
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+
+    result = asyncio.run(
+        studio.search_wechat_channels_users(
+            q="江胖子-高客单IP精准获客",
+            current_user=SimpleNamespace(credits=10),
+            db=SimpleNamespace(),
+        )
+    )
+
+    assert [item["username"] for item in result["items"]] == ["v2_jiang@finder"]
+    assert calls[0]["query_type"] == "wechat_search_v2"
+    assert calls[0]["body"]["keyword"] == "江胖子 高客单IP精准获客"
 
 
 def test_ip_content_wechat_channels_user_search_returns_empty_without_legacy_fallback(monkeypatch):

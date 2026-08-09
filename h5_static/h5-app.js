@@ -15658,7 +15658,7 @@
       host.innerHTML = rows.map((item, index) => {
         const title = item.display_name || item.nickname || item.unique_id || item.username || item.sec_user_id || "同行账号";
         const account = platform === "wechat_channels"
-          ? (item.username || item.finder_username || "")
+          ? (item.channel_id || item.username || item.finder_username || "")
           : (item.unique_id || item.sec_user_id || "");
         const avatar = item.avatar_url
           ? `<img src="${escapeHtml(item.avatar_url)}" alt="">`
@@ -15684,7 +15684,7 @@
     function updatePersonalCompetitorSearchFields() {
       const platform = ($("personalCompetitorPlatform") && $("personalCompetitorPlatform").value) || "douyin";
       const input = $("personalCompetitorKey");
-      if (input) input.placeholder = platform === "wechat_channels" ? "输入视频号昵称或 username" : "输入昵称或抖音号";
+      if (input) input.placeholder = platform === "wechat_channels" ? "输入昵称、sph开头ID或 username；ID区分0/O和大小写" : "输入昵称或抖音号";
       state.personalCompetitorCandidates = [];
       renderPersonalCompetitorCandidates();
     }

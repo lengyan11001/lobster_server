@@ -767,6 +767,76 @@ def _is_wechat_channels_finder_username(value: str) -> bool:
     return bool(text) and (text.startswith("v2_") or "@finder" in text)
 
 
+def _is_wechat_channels_channel_id(value: str) -> bool:
+    text = (value or "").strip()
+    return bool(re.fullmatch(r"sph[0-9A-Za-z_-]{6,80}", text, re.I))
+
+
+def _wechat_channels_search_chunks(value: str) -> list[str]:
+    text = _strip_search_markup(value, 2000)
+    chunks = [
+        part.strip()
+        for part in re.split(r"[\s\-‐‑‒–—―_·•|/\\:：]+", text)
+        if part.strip()
+    ]
+    return chunks or ([text] if text else [])
+
+
+def _normalize_wechat_channels_search_text(value: Any) -> str:
+    text = _strip_search_markup(value, 2000).casefold()
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", text)
+
+
+def _wechat_channels_search_variants(value: str) -> list[str]:
+    keyword = _strip_search_markup(value, 2000)
+    chunks = _wechat_channels_search_chunks(keyword)
+    candidates = [" ".join(chunks)]
+    if len(chunks) > 1:
+        candidates.append(chunks[0])
+    elif keyword:
+        candidates.append(keyword)
+    out: list[str] = []
+    for candidate in candidates:
+        clean = candidate.strip()
+        if clean and clean not in out:
+            out.append(clean)
+    return out
+
+
+def _wechat_channels_user_relevance(item: dict[str, Any], keyword: str) -> int:
+    name = _normalize_wechat_channels_search_text(item.get("display_name") or item.get("nickname"))
+    query = _normalize_wechat_channels_search_text(keyword)
+    if not name or not query:
+        return 0
+    if name == query:
+        return 1000
+    if query in name:
+        return 900
+    if len(name) >= 3 and name in query:
+        return 800
+    chunks = [
+        _normalize_wechat_channels_search_text(part)
+        for part in _wechat_channels_search_chunks(keyword)
+    ]
+    chunks = [part for part in chunks if len(part) >= 2]
+    matched = [part for part in chunks if part in name]
+    if chunks and len(matched) == len(chunks):
+        return 700 + sum(len(part) for part in matched)
+    if matched:
+        return 100 + sum(len(part) for part in matched)
+    return 0
+
+
+def _rank_wechat_channels_users(items: list[dict[str, Any]], keyword: str) -> list[dict[str, Any]]:
+    ranked = [
+        (score, index, item)
+        for index, item in enumerate(items)
+        if (score := _wechat_channels_user_relevance(item, keyword)) > 0
+    ]
+    ranked.sort(key=lambda row: (-row[0], row[1]))
+    return [item for _, _, item in ranked]
+
+
 def _wechat_channels_account_from_username(username: str) -> dict[str, Any]:
     clean_username = _clean_text(username, 191)
     return {
@@ -2121,6 +2191,10 @@ def _normalize_wechat_channels_user(raw: Any, idx: int) -> Optional[dict[str, An
         user = item.get("user_info") if isinstance(item.get("user_info"), dict) else {}
     if not user:
         user = item.get("user") if isinstance(item.get("user"), dict) else {}
+    if not user:
+        nested_data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        if _first(nested_data, ["username", "finder_username", "finderUserName", "user_name"]):
+            user = nested_data
     if not user:
         nested = _lookup(item, "data.finder_info")
         user = nested if isinstance(nested, dict) else item
@@ -4444,18 +4518,60 @@ async def search_wechat_channels_users(
             "balance_after": credits_json_float(user_balance_decimal(current_user)),
         }
 
-    result = await _execute_query_with_retry(
-        db=db,
-        current_user=current_user,
-        query_type="wechat_search_v2",
-        params={},
-        body={"keyword": keyword, "business_type": "account", "sort": 0, "publish_time": 0, "offset": 0, "raw": True},
-        save_items=False,
-        meta={"source": "competitor_user_search", "keyword": keyword, "provider": "wechat_search_v2"},
-        attempts=3,
-        include_raw_response=True,
-    )
-    users, raw_count = _normalize_wechat_channels_users_from_payload(result.get("raw_response") or {})
+    if _is_wechat_channels_channel_id(keyword):
+        result = await _execute_query_with_retry(
+            db=db,
+            current_user=current_user,
+            query_type="wechat_channels_channel_id_to_username_v2",
+            params={},
+            body={"channel_id": keyword, "raw": False},
+            save_items=False,
+            meta={"source": "competitor_channel_id_search", "channel_id": keyword},
+            attempts=2,
+            include_raw_response=True,
+        )
+        users, raw_count = _normalize_wechat_channels_users_from_payload(result.get("raw_response") or {})
+        if users:
+            users[0]["channel_id"] = keyword
+            users[0]["source"] = "channel_id"
+            query = dict(result.get("query") or {})
+            query["source"] = "channel_id"
+            return {
+                "ok": True,
+                "items": users[:1],
+                "raw_item_count": raw_count,
+                "query": query,
+                "balance_after": result.get("balance_after"),
+            }
+        query = result.get("query") if isinstance(result.get("query"), dict) else {}
+        detail = query.get("error_message") or "没有解析到对应的视频号账号"
+        raise HTTPException(status_code=502, detail=f"视频号 ID 解析失败：{detail}")
+
+    result: dict[str, Any] = {}
+    users: list[dict[str, Any]] = []
+    raw_count = 0
+    for provider_keyword in _wechat_channels_search_variants(keyword):
+        result = await _execute_query_with_retry(
+            db=db,
+            current_user=current_user,
+            query_type="wechat_search_v2",
+            params={},
+            body={"keyword": provider_keyword, "business_type": "account", "sort": 0, "publish_time": 0, "offset": 0, "raw": True},
+            save_items=False,
+            meta={
+                "source": "competitor_user_search",
+                "keyword": keyword,
+                "provider_keyword": provider_keyword,
+                "provider": "wechat_search_v2",
+            },
+            attempts=3,
+            include_raw_response=True,
+        )
+        normalized, current_raw_count = _normalize_wechat_channels_users_from_payload(result.get("raw_response") or {})
+        raw_count = max(raw_count, current_raw_count)
+        users = _rank_wechat_channels_users(normalized, keyword)
+        if users or not result.get("ok"):
+            break
     if users:
         return {
             "ok": True,
