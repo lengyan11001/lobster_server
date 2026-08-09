@@ -2073,6 +2073,7 @@
         social_leads: "社媒线索采集",
         linkedin_mining: "LinkedIn线索采集",
         wechat_channels_transcript: "视频号文案提取",
+        shanjian_digital_human_video: "数字人口播",
       }[capabilityId];
       if (specialName) return specialName;
       return {
@@ -2089,6 +2090,26 @@
         "comfly.ecommerce.detail_pipeline": "电商详情页",
         "client_workflow": "客户端工作流",
       }[capabilityId] || capabilityId || "定时任务";
+    }
+
+    function abilityKeyFromClientAction(action) {
+      const raw = cleanKey(action);
+      return {
+        shanjian_digital_human_video: "hifly.video.create_by_tts",
+        image_studio_generate: "image_composer_studio",
+        viral_video_remix_start: "viral_video_remix",
+        wecom_poll_reply: "wecom_reply",
+        native_wechat_poll: "native_wechat_poll",
+        native_wechat_add_friend: "native_wechat_add_friend",
+        native_wechat_moments_engage: "native_wechat_moments_engage",
+        publish_content: "publish_center",
+      }[raw] || (raw.startsWith("local_bestseller_") ? "local_bestseller" : "");
+    }
+
+    function clientActionName(action) {
+      const mappedKey = abilityKeyFromClientAction(action);
+      if (mappedKey) return capabilityName(mappedKey);
+      return capabilityName(action);
     }
 
     function taskCapabilityId(row) {
@@ -2183,6 +2204,7 @@
       addKey(keys, payload.platform);
       addKey(keys, params.action);
       addKey(keys, inner.action);
+      addKey(keys, abilityKeyFromClientAction(payload.action || params.action || inner.action));
       addKey(keys, ctx.department_id);
       addKey(keys, ctx.ability_key);
       addKey(keys, ctx.capability_id);
@@ -2192,13 +2214,7 @@
       if (row && row.task_kind === "wechat_channels_transcript") addKey(keys, "wechat_channels_transcript");
       if (row && row.task_kind === "client_workflow") {
         const action = cleanKey(payload.action || params.action);
-        if (action.startsWith("local_bestseller_")) addKey(keys, "local_bestseller");
-        if (action === "viral_video_remix_start") addKey(keys, "viral_video_remix");
-        if (action === "wecom_poll_reply") addKey(keys, "wecom_reply");
-        if (action === "native_wechat_poll") addKey(keys, "native_wechat_poll");
-        if (action === "native_wechat_add_friend") addKey(keys, "native_wechat_add_friend");
-        if (action === "native_wechat_moments_engage") addKey(keys, "native_wechat_moments_engage");
-        if (action === "publish_content") addKey(keys, "publish_center");
+        addKey(keys, abilityKeyFromClientAction(action));
       }
       return keys;
     }
@@ -6164,6 +6180,7 @@
           payload.capability_id,
           payload.workflow_action,
           payload.action,
+          abilityKeyFromClientAction(payload.action),
         ].map((value) => String(value || "").trim()).filter(Boolean);
         return candidates.some((value) => keys.has(value) || value.includes(department.name || ""));
       }) || null;
@@ -10119,7 +10136,7 @@
         if (text) rows.push([label, text]);
       };
       add("任务名称", run && run.title);
-      if (payload.action) add("执行动作", payload.action);
+      if (payload.action) add("执行动作", clientActionName(payload.action));
       if (payload.platform) add("平台", socialPlatformLabel(payload.platform));
       if (payload.capability_id) add("能力", capabilityName(payload.capability_id));
       const sourceTask = (state.tasks || []).find((task) => String(task.id) === String(run && run.task_id)) || null;
@@ -10748,6 +10765,8 @@
       }
       if (kind === "client_workflow") {
         const action = cleanKey(payload.action || (payload.params || {}).action);
+        const mapped = abilityKeyFromClientAction(action);
+        if (mapped) return findAbilityKeyBy((node) => node.workQuickKey === mapped || node.key === mapped || node.capabilityId === mapped) || mapped;
         if (action === "image_studio_generate") return "image_composer_studio";
         if (action.startsWith("local_bestseller_")) return findAbilityKeyBy((node) => node.workQuickKey === "local_bestseller") || "local_bestseller";
         if (action === "viral_video_remix_start") return findAbilityKeyBy((node) => node.workQuickKey === "viral_video_remix") || "viral_video_remix";

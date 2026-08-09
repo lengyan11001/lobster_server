@@ -285,6 +285,18 @@ def test_h5_run_detail_prioritizes_results_and_collapses_details():
     assert ".task-detail-secondary summary" in css
 
 
+def test_h5_run_refill_maps_online_digital_human_action_to_workbench():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    ability_key_block = script.split("function abilityKeyFromClientAction", 1)[1].split("function clientActionName", 1)[0]
+    run_rows_block = script.split("function runParameterRows", 1)[1].split("function runDetailActionsHtml", 1)[0]
+    refill_block = script.split("function abilityKeyFromRun", 1)[1].split("function setFieldValue", 1)[0]
+
+    assert 'shanjian_digital_human_video: "hifly.video.create_by_tts"' in ability_key_block
+    assert 'if (payload.action) add("执行动作", clientActionName(payload.action));' in run_rows_block
+    assert "const mapped = abilityKeyFromClientAction(action);" in refill_block
+    assert "if (mapped) return findAbilityKeyBy" in refill_block
+
+
 def test_h5_scheduled_capabilities_default_to_online_commands():
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
 
