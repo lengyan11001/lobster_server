@@ -5343,6 +5343,53 @@ body * {
   min-height: 112px;
 }
 
+#abilityView .marketing-tool-mode .ability-workbench-fields .task-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-fields .task-checkbox {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 42px !important;
+  padding: 8px 10px;
+  gap: 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  color: #334155 !important;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, .035);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-fields .task-checkbox input[type="checkbox"] {
+  flex: 0 0 18px;
+  width: 18px !important;
+  min-width: 18px !important;
+  max-width: 18px !important;
+  height: 18px !important;
+  min-height: 18px !important;
+  max-height: 18px !important;
+  margin: 0;
+  padding: 0;
+  border-radius: 4px;
+  background: initial;
+  box-shadow: none;
+  accent-color: #286df0;
+  appearance: auto;
+  -webkit-appearance: checkbox;
+}
+
+#abilityView .marketing-tool-mode .ability-workbench-fields .task-checkbox span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .ip-template-select-row {
   grid-template-columns: minmax(0, 1fr) auto;
   width: 100%;

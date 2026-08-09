@@ -238,6 +238,20 @@ def test_h5_storyboard_video_uses_online_workbench_payload_contract():
     assert 'seedanceNormalizedDurationForModel(model, requestedDuration)' in payload_builder
 
 
+def test_h5_storyboard_checkbox_options_are_compact_and_scoped():
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
+    fields_block = script.split("function seedanceFieldsHtml", 1)[1].split("function syncSeedanceDurationOptions", 1)[0]
+
+    assert "function workCheckboxGroupHtml" in script
+    assert 'taskFieldHtml("结果处理", workCheckboxGroupHtml([' in fields_block
+    assert "workCheckboxHtml(`${prefix}NeedMerge`" not in fields_block
+    assert "#abilityView .marketing-tool-mode .ability-workbench-fields .task-checkbox-grid" in css
+    assert '#abilityView .marketing-tool-mode .ability-workbench-fields .task-checkbox input[type="checkbox"]' in css
+    assert "max-width: 18px !important;" in css
+    assert "-webkit-appearance: checkbox;" in css
+
+
 def test_h5_scheduled_capabilities_default_to_online_commands():
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
 

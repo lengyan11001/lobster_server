@@ -13699,7 +13699,10 @@
         + taskFieldHtml("画面比例", taskSelectHtml(`${prefix}Aspect`, optionHtml("9:16", "9:16 竖屏带货") + optionHtml("16:9", "16:9 横屏展示") + optionHtml("1:1", "1:1 方形信息流") + optionHtml("4:5", "4:5 内容种草")))
         + taskFieldHtml("视觉基调", taskSelectHtml(`${prefix}VisualTone`, seedanceVisualToneOptionsHtml("clean_bright")))
         + taskFieldHtml("镜头节奏", taskSelectHtml(`${prefix}Rhythm`, seedanceRhythmOptionsHtml("smooth")))
-        + taskFieldHtml("结果处理", workCheckboxHtml(`${prefix}NeedMerge`, "多分镜最终合成一个视频", true) + workCheckboxHtml(`${prefix}NeedAudio`, "需要保留音频或配乐规划", true), true);
+        + taskFieldHtml("结果处理", workCheckboxGroupHtml([
+          { id: `${prefix}NeedMerge`, label: "多分镜最终合成一个视频", checked: true },
+          { id: `${prefix}NeedAudio`, label: "需要保留音频或配乐规划", checked: true },
+        ]), true);
     }
 
     function syncSeedanceDurationOptions(prefix) {
@@ -16219,6 +16222,11 @@
 
     function workCheckboxHtml(id, label, checked = false) {
       return `<label class="task-checkbox" style="min-height:42px;color:#46516a;"><input id="${escapeHtml(id)}" type="checkbox" ${checked ? "checked" : ""}><span>${escapeHtml(label)}</span></label>`;
+    }
+
+    function workCheckboxGroupHtml(items = []) {
+      const html = (items || []).map((item) => workCheckboxHtml(item.id, item.label, item.checked)).join("");
+      return `<div class="task-checkbox-grid">${html}</div>`;
     }
 
     function workSegmentedHtml(name, options, selectedValue) {
