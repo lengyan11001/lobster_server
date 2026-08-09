@@ -29,6 +29,7 @@ from mcp.video_model_resolve import (
     APIZ_VEO31_IMAGE_MODEL,
     APIZ_VEO31_REFERENCE_MODEL,
     APIZ_VEO31_TEXT_MODEL,
+    SUTUI_GROK_15_IMAGE_MODEL,
     resolve_default_video_model_id,
     resolve_video_model_id,
 )
@@ -858,6 +859,15 @@ def _is_apiz_veo31_payload(payload: Any) -> bool:
     return model.startswith("apiz/veo3.1/")
 
 
+def _is_managed_video_fallback_payload(payload: Any) -> bool:
+    if _is_apiz_veo31_payload(payload):
+        return True
+    if not isinstance(payload, dict):
+        return False
+    model = str(payload.get("model") or payload.get("model_id") or "").strip().lower()
+    return model == SUTUI_GROK_15_IMAGE_MODEL
+
+
 def _video_fallback_error_text(response: Any) -> str:
     if not isinstance(response, dict):
         return str(response or "")[:1000]
@@ -946,15 +956,20 @@ def _new_video_fallback_state(public_task_id: str, payload: Dict[str, Any]) -> D
     }
 
 
-def _register_apiz_video_task(task_id: str, payload: Dict[str, Any]) -> None:
+def _register_video_fallback_task(task_id: str, payload: Dict[str, Any]) -> None:
     public_task_id = str(task_id or "").strip()
-    if not public_task_id or not _is_apiz_veo31_payload(payload):
+    if not public_task_id or not _is_managed_video_fallback_payload(payload):
         return
     if public_task_id not in _video_fallback_tasks:
         _remember_video_fallback_state(
             public_task_id,
             _new_video_fallback_state(public_task_id, payload),
         )
+
+
+def _register_apiz_video_task(task_id: str, payload: Dict[str, Any]) -> None:
+    """Compatibility wrapper for tests and callers using the previous name."""
+    _register_video_fallback_task(task_id, payload)
 
 
 def _video_fallback_proxy_headers(
@@ -1135,7 +1150,7 @@ async def _start_video_fallback_after_submit_failure(
     token: Optional[str],
     request: Optional[Request],
 ) -> Optional[Dict[str, Any]]:
-    if not _is_apiz_veo31_payload(payload) or not _video_fallback_allowed(primary_error):
+    if not _is_managed_video_fallback_payload(payload) or not _video_fallback_allowed(primary_error):
         return None
     public_task_id = f"video-fallback-{uuid.uuid4().hex}"
     state = _new_video_fallback_state("", payload)
@@ -2572,6 +2587,57 @@ def _coerce_grok_video_resolution(raw: Any) -> Optional[str]:
     return "720p"
 
 
+_SUTUI_GROK_15_ASPECT_RATIOS = frozenset(
+    {"auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"}
+)
+
+
+def _normalize_sutui_grok_15_image_payload(
+    payload: Dict[str, Any],
+    *,
+    model: str,
+    prompt: str,
+    image_url: str,
+) -> Dict[str, Any]:
+    if not image_url:
+        raise ValueError(f"{model} requires image_url")
+
+    duration = _parse_video_duration_seconds(_payload_get_duration_raw(payload), default=6)
+    if duration < 6 or duration > 15:
+        raise ValueError(f"{model} duration must be between 6 and 15 seconds")
+
+    resolution = str(payload.get("resolution") or "720p").strip().lower().replace(" ", "")
+    if resolution in {"auto", "automatic", "default", "original"}:
+        resolution = "720p"
+    if resolution not in {"480p", "720p"}:
+        raise ValueError(f"{model} resolution must be 480p or 720p")
+
+    raw_ratio = _payload_get_aspect_ratio(payload)
+    ratio = str(raw_ratio or "auto").strip().lower().replace(" ", "").replace("：", ":")
+    ratio = {
+        "adaptive": "auto",
+        "automatic": "auto",
+        "default": "auto",
+        "original": "auto",
+        "portrait": "9:16",
+        "vertical": "9:16",
+        "landscape": "16:9",
+        "horizontal": "16:9",
+        "square": "1:1",
+    }.get(ratio, ratio)
+    if ratio not in _SUTUI_GROK_15_ASPECT_RATIOS:
+        raise ValueError(f"{model} does not support aspect_ratio={raw_ratio}")
+
+    return {
+        "model": model,
+        "prompt": prompt,
+        "image_url": image_url,
+        "duration": duration,
+        "resolution": resolution,
+        "aspect_ratio": ratio,
+    }
+
+
 _APIZ_VEO31_DURATION_SECONDS = (4, 6, 8)
 
 
@@ -3280,6 +3346,7 @@ def _normalize_video_generate_payload(
     payload: Dict[str, Any],
     *,
     migrate_legacy_default: bool = False,
+    pipeline_capability: str = "",
 ) -> Dict[str, Any]:
     """
     按视频模型把「统一 payload」转成该模型 API 需要的参数，与 lobster 对齐：支持 backend 注入的 filePaths/media_files。
@@ -3296,7 +3363,12 @@ def _normalize_video_generate_payload(
     # Older online builds injected the retired Grok default before forwarding
     # managed pipeline requests. Treat that value as a stale default only when
     # the caller identifies the request as one of our video pipelines.
-    if migrate_legacy_default:
+    if (
+        str(pipeline_capability or "").strip().lower() == "goal.video.pipeline"
+        and model.lower().startswith("apiz/veo3.1/")
+    ):
+        model = SUTUI_GROK_15_IMAGE_MODEL
+    elif migrate_legacy_default:
         model = resolve_default_video_model_id(model, has_image)
     model = resolve_video_model_id(model, has_image, image_count=len(image_refs))
     model_lower = model.lower()
@@ -3328,6 +3400,14 @@ def _normalize_video_generate_payload(
     # 该契约与旧 super-seed2 不兼容，必须在旧分支之前处理。
     if model == APIZ_BIHUO_25_VIDEO_MODEL:
         return _normalize_bihuo_25_video_payload(payload, prompt)
+
+    if model == SUTUI_GROK_15_IMAGE_MODEL:
+        return _normalize_sutui_grok_15_image_payload(
+            payload,
+            model=model,
+            prompt=prompt,
+            image_url=first_url,
+        )
 
     # st-ai/super-seed2：ratio, filePaths, functionMode（保留 backend 注入的多图 filePaths）
     if "super-seed2" in model or "st-ai/super-seed2" == model:
@@ -4083,6 +4163,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         payload,
                         migrate_legacy_default=pipeline_capability_hint
                         in {"goal.video.pipeline", "create.video.pipeline"},
+                        pipeline_capability=pipeline_capability_hint,
                     )
                 except ValueError as e:
                     return [{"type": "text", "text": f"video.generate 参数错误: {e}"}], True
@@ -4730,7 +4811,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                         lobster_capability_id=capability_id,
                         brand_mark=user_brand_mark,
                     )
-            if capability_id == "video.generate" and isinstance(upstream_resp, dict) and _is_apiz_veo31_payload(payload):
+            if capability_id == "video.generate" and isinstance(upstream_resp, dict) and _is_managed_video_fallback_payload(payload):
                 _apiz_submit_error = ""
                 if upstream_resp.get("error") or _sutui_get_result_is_terminal_failure(upstream_resp):
                     _apiz_submit_error = _video_fallback_error_text(upstream_resp)
@@ -4746,7 +4827,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 else:
                     _apiz_task_id = _extract_task_id_from_sutui_response(upstream_resp)
                     if _apiz_task_id:
-                        _register_apiz_video_task(_apiz_task_id, payload)
+                        _register_video_fallback_task(_apiz_task_id, payload)
             elif (
                 capability_id == "task.get_result"
                 and not _video_fallback_poll_handled

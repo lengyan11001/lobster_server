@@ -1937,6 +1937,20 @@ def _serial_client_run_is_blocked(
     return q.first() is not None
 
 
+_LONG_RUNNING_CLIENT_ACTIONS = {"native_wechat_poll"}
+
+
+def _client_processing_run_is_stale(row: ScheduledTaskRun, now: datetime) -> bool:
+    claimed_at = row.claimed_at
+    if claimed_at is None:
+        return False
+    last_activity = max(value for value in (claimed_at, row.updated_at) if value is not None)
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    action = str(payload.get("action") or "").strip().lower()
+    timeout_minutes = 45 if action in _LONG_RUNNING_CLIENT_ACTIONS else 10
+    return last_activity < now - timedelta(minutes=timeout_minutes)
+
+
 def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Optional[str], now: datetime) -> ScheduledTaskRun:
     run_id = uuid.uuid4().hex
     server_side = _is_server_side_task(task)
@@ -3040,11 +3054,15 @@ def pending_scheduled_task_runs(
             ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
             ScheduledTaskRun.claimed_at.isnot(None),
             ScheduledTaskRun.claimed_at < stale_cutoff,
+            ScheduledTaskRun.updated_at < stale_cutoff,
         )
-        .limit(20)
+        .order_by(ScheduledTaskRun.claimed_at.asc())
+        .limit(100)
         .all()
     )
     for row in stale_rows:
+        if not _client_processing_run_is_stale(row, now):
+            continue
         row.status = "pending"
         row.claimed_by_installation_id = None
         row.claimed_at = None

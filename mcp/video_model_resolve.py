@@ -17,6 +17,7 @@ APIZ_VEO31_TEXT_MODEL = "apiz/veo3.1/text-to-video"
 APIZ_VEO31_IMAGE_MODEL = "apiz/veo3.1/image-to-video"
 APIZ_VEO31_REFERENCE_MODEL = "apiz/veo3.1/reference-to-video"
 APIZ_BIHUO_25_VIDEO_MODEL = "st-ai/super-seed2-lite"
+SUTUI_GROK_15_IMAGE_MODEL = "xai/grok-imagine-video-1.5/image-to-video"
 _LEGACY_FAL_VEO31_RE = re.compile(r"^fal-ai/veo3\.1(?:/.*)?$", re.I)
 _LEGACY_DEFAULT_VIDEO_MODELS = frozenset(
     {

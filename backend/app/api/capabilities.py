@@ -61,8 +61,15 @@ _PIPELINE_TOTAL_PREDEDUCT_CAPABILITIES = frozenset(
     }
 )
 _PIPELINE_DEFAULT_IMAGE_MODEL = "openai/gpt-image-2"
-_PIPELINE_DEFAULT_GOAL_VIDEO_MODEL = "apiz/veo3.1/image-to-video"
+_PIPELINE_DEFAULT_GOAL_VIDEO_MODEL = "xai/grok-imagine-video-1.5/image-to-video"
 _PIPELINE_DEFAULT_CREATE_VIDEO_MODEL = "apiz/veo3.1/image-to-video"
+
+
+def _goal_video_model_for_pipeline(params: dict[str, Any]) -> str:
+    model = str(params.get("video_model") or _PIPELINE_DEFAULT_GOAL_VIDEO_MODEL).strip()
+    if not model or model.lower().startswith("apiz/veo3.1/"):
+        return _PIPELINE_DEFAULT_GOAL_VIDEO_MODEL
+    return model
 
 
 def _get_user_price_multiplier() -> float:
@@ -188,7 +195,7 @@ def _estimate_pipeline_total_user_price(
     if capability_id == "goal.video.pipeline":
         scene_count = 1
         image_model = str(params.get("image_model") or _PIPELINE_DEFAULT_IMAGE_MODEL).strip()
-        video_model = str(params.get("video_model") or _PIPELINE_DEFAULT_GOAL_VIDEO_MODEL).strip()
+        video_model = _goal_video_model_for_pipeline(params)
     else:
         scene_count = _pipeline_positive_int(params, "scene_count", 1, min_value=1, max_value=6)
         image_model = str(params.get("image_model") or _PIPELINE_DEFAULT_IMAGE_MODEL).strip()

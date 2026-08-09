@@ -143,7 +143,13 @@ def test_h5_chat_has_a_global_floating_entry_on_authenticated_views():
     assert 'id="abilityChatBtn"' not in html
     assert '.global-chat-fab {' in styles
     assert 'body.messages-view-active .global-chat-fab' in styles
-    assert '$("globalChatFab")?.addEventListener("click"' in script
+    assert 'function setupGlobalChatFabDrag(button)' in script
+    assert 'brandStorageKey("lobster_h5_global_chat_fab_position")' in script
+    assert 'button.addEventListener("pointermove"' in script
+    assert 'setupGlobalChatFabDrag(globalChatFab);' in script
+    assert 'globalChatFab?.addEventListener("click"' in script
+    assert 'touch-action: none;' in styles
+    assert '.global-chat-fab.is-dragging' in styles
     assert 'sourceView === "department"' in script
     assert 'sourceView === "ability"' in script
     assert "openContextChat(context);" in script

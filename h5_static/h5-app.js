@@ -16,6 +16,8 @@
     }
     const state = {
       token: localStorage.getItem(H5_TOKEN_KEY) || "",
+      blockingActionCount: 0,
+      blockingActionTimer: null,
       mode: "mastra",
       user: null,
       homeHeroUrl: "",
@@ -1130,6 +1132,149 @@
       setTimeout(() => el.classList.remove("show"), 2600);
     }
 
+    function blockingActionTitle(path = "", method = "POST") {
+      const route = String(path || "").toLowerCase();
+      const verb = String(method || "POST").toUpperCase();
+      if (verb === "DELETE" || /(?:^|\/)delete(?:\/|$)/.test(route)) return "正在删除";
+      if (/(?:^|\/)(?:stop|disable|deactivate)(?:\/|$)/.test(route)) return "正在停用";
+      if (/(?:^|\/)(?:activate|activate-inline|enable)(?:\/|$)/.test(route)) return "正在启用";
+      if (/publish|朋友圈/.test(route)) return "正在发布";
+      if (/upload/.test(route)) return "正在上传";
+      if (/run-now|scheduled-tasks|\/jobs(?:\/|$)|generate|retry/.test(route)) return "正在提交任务";
+      if (/grant|default|settings|profile|template|keyword|competitor|session/.test(route)) return "正在保存";
+      return "正在提交";
+    }
+
+    function updateBlockingAction(title, detail) {
+      const titleEl = $("globalActionLoadingTitle");
+      const detailEl = $("globalActionLoadingDetail");
+      if (titleEl) titleEl.textContent = String(title || "正在提交");
+      if (detailEl) detailEl.textContent = String(detail || "请稍候，完成后会自动返回结果");
+    }
+
+    function beginBlockingAction(title = "正在提交") {
+      state.blockingActionCount = Math.max(0, Number(state.blockingActionCount || 0)) + 1;
+      let released = false;
+      if (state.blockingActionCount === 1) {
+        const modal = $("globalActionLoading");
+        updateBlockingAction(title, "请稍候，完成后会自动返回结果");
+        modal?.classList.remove("hidden");
+        modal?.setAttribute("aria-hidden", "false");
+        document.body.classList.add("h5-action-blocked");
+        document.body.setAttribute("aria-busy", "true");
+        try { document.activeElement?.blur(); } catch (_) {}
+        const panel = $("globalActionLoadingPanel");
+        requestAnimationFrame(() => {
+          try { panel?.focus({ preventScroll: true }); } catch (_) { panel?.focus(); }
+        });
+        clearTimeout(state.blockingActionTimer);
+        state.blockingActionTimer = setTimeout(() => {
+          if (state.blockingActionCount > 0) {
+            updateBlockingAction(title, "处理时间较长，请继续等待，不要重复提交");
+          }
+        }, 8000);
+      }
+      return () => {
+        if (released) return;
+        released = true;
+        state.blockingActionCount = Math.max(0, Number(state.blockingActionCount || 0) - 1);
+        if (state.blockingActionCount > 0) return;
+        clearTimeout(state.blockingActionTimer);
+        state.blockingActionTimer = null;
+        const modal = $("globalActionLoading");
+        modal?.classList.add("hidden");
+        modal?.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("h5-action-blocked");
+        document.body.removeAttribute("aria-busy");
+      };
+    }
+
+    async function runBlockingAction(title, action) {
+      const release = beginBlockingAction(title);
+      try {
+        return await action();
+      } finally {
+        release();
+      }
+    }
+
+    async function blockingFetch(input, init = {}, title = "正在提交") {
+      return runBlockingAction(title, () => fetch(input, init));
+    }
+
+    async function uploadFormDataWithProgress(path, formData, options = {}) {
+      const title = String(options.title || "正在上传");
+      const headers = options.headers || authHeaders();
+      const timeoutMs = Math.max(60000, Number(options.timeoutMs || 30 * 60 * 1000));
+      const stallTimeoutMs = Math.max(30000, Number(options.stallTimeoutMs || 90 * 1000));
+      const onProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+      return runBlockingAction(title, () => new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        let settled = false;
+        let stallTimer = null;
+        let abortMessage = "";
+        const finish = (callback, value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(stallTimer);
+          callback(value);
+        };
+        const fail = (message) => finish(reject, new Error(message || "上传失败，请重试"));
+        const armStallTimer = () => {
+          clearTimeout(stallTimer);
+          stallTimer = setTimeout(() => {
+            abortMessage = "上传长时间没有进度，请检查网络后重试";
+            xhr.abort();
+          }, stallTimeoutMs);
+        };
+        const reportProgress = (loaded, total, uploaded = false) => {
+          const percent = total > 0 ? Math.max(0, Math.min(100, Math.round(loaded * 100 / total))) : 0;
+          const detail = uploaded
+            ? "文件已上传，正在创建转写记录"
+            : (total > 0 ? `已上传 ${percent}%` : "正在上传文件");
+          updateBlockingAction(title, detail);
+          if (onProgress) onProgress({ loaded, total, percent, uploaded });
+        };
+        xhr.open(String(options.method || "POST"), apiUrl(path), true);
+        Object.entries(headers).forEach(([key, value]) => {
+          if (value !== undefined && value !== null && String(value) !== "") xhr.setRequestHeader(key, String(value));
+        });
+        xhr.timeout = timeoutMs;
+        xhr.upload.onloadstart = armStallTimer;
+        xhr.upload.onprogress = (event) => {
+          armStallTimer();
+          reportProgress(Number(event.loaded || 0), event.lengthComputable ? Number(event.total || 0) : 0, false);
+        };
+        xhr.upload.onload = (event) => {
+          armStallTimer();
+          reportProgress(Number(event.loaded || 0), event.lengthComputable ? Number(event.total || 0) : 0, true);
+        };
+        xhr.onload = () => {
+          let data = {};
+          try { data = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch { data = { detail: xhr.responseText || "" }; }
+          if (xhr.status < 200 || xhr.status >= 300 || data.ok === false) {
+            fail(readableApiError(xhr.status, xhr.responseText, data));
+            return;
+          }
+          finish(resolve, data);
+        };
+        xhr.onerror = () => fail("上传连接异常，请检查网络后重试");
+        xhr.ontimeout = () => fail("上传超时，请检查网络后重试");
+        xhr.onabort = () => fail(abortMessage || "上传已取消");
+        armStallTimer();
+        xhr.send(formData);
+      }));
+    }
+
+    ["click", "submit"].forEach((eventName) => {
+      document.addEventListener(eventName, (event) => {
+        if (!state.blockingActionCount) return;
+        if (event.target?.closest?.("#globalActionLoading")) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+    });
+
     function closeTaskSuccessDialog() {
       const modal = $("taskSuccessDialog");
       if (modal) modal.classList.add("hidden");
@@ -1668,34 +1813,45 @@
       }
       delete requestOptions.json;
       const method = String(requestOptions.method || "GET").toUpperCase();
+      const shouldBlock = method !== "GET" && requestOptions.blocking !== false;
+      const blockTitle = typeof requestOptions.blocking === "string"
+        ? requestOptions.blocking
+        : (requestOptions.blockingTitle || blockingActionTitle(path, method));
+      delete requestOptions.blocking;
+      delete requestOptions.blockingTitle;
       const transientStatuses = new Set([502, 503, 504]);
       const maxAttempts = method === "GET" ? 3 : 1;
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        let resp;
-        try {
-          resp = await fetch(apiUrl(path), { ...requestOptions, headers });
-        } catch (err) {
-          if (attempt < maxAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, attempt * 700));
-            continue;
+      const release = shouldBlock ? beginBlockingAction(blockTitle) : null;
+      try {
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          let resp;
+          try {
+            resp = await fetch(apiUrl(path), { ...requestOptions, headers });
+          } catch (err) {
+            if (attempt < maxAttempts) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 700));
+              continue;
+            }
+            throw new Error("网络连接异常，请检查网络后重试");
           }
-          throw new Error("网络连接异常，请检查网络后重试");
-        }
-        const text = await resp.text();
-        let data = {};
-        try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
-        if (!resp.ok) {
-          if (attempt < maxAttempts && transientStatuses.has(resp.status)) {
-            await new Promise((resolve) => setTimeout(resolve, attempt * 700));
-            continue;
+          const text = await resp.text();
+          let data = {};
+          try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
+          if (!resp.ok) {
+            if (attempt < maxAttempts && transientStatuses.has(resp.status)) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 700));
+              continue;
+            }
+            const error = new Error(readableApiError(resp.status, text, data));
+            error.status = resp.status;
+            throw error;
           }
-          const error = new Error(readableApiError(resp.status, text, data));
-          error.status = resp.status;
-          throw error;
+          return data;
         }
-        return data;
+        throw new Error("请求未完成，请稍后重试");
+      } finally {
+        if (release) release();
       }
-      throw new Error("请求未完成，请稍后重试");
     }
 
     async function apiBlob(path) {
@@ -1797,11 +1953,11 @@
       try {
         const form = new FormData();
         form.append("file", file, filename || "home-hero-image");
-        const response = await fetch(apiUrl("/api/assets/upload"), {
+        const response = await blockingFetch(apiUrl("/api/assets/upload"), {
           method: "POST",
           headers: authHeaders(),
           body: form,
-        });
+        }, "正在上传首页图片");
         const uploaded = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(uploaded.detail || uploaded.message || `上传失败：HTTP ${response.status}`);
         if (!uploaded.asset_id || uploaded.media_type !== "image") throw new Error("上传结果不是可用图片");
@@ -3511,8 +3667,9 @@
       if ($("workflowActionTitle")) $("workflowActionTitle").textContent = action ? "编辑动作" : "添加动作";
       if ($("workflowActionParent")) $("workflowActionParent").textContent = parentNode.ability_label || parentNode.note || "上级节点";
       if ($("workflowActionTime")) $("workflowActionTime").value = action && action.time || parentNode.time || "09:30";
-      if ($("workflowActionType")) $("workflowActionType").value = action && (action.action_type || action.type) || "publish";
+      renderWorkflowActionTypeOptions(parentNode, action ? workflowActionKind(action) : "");
       if ($("workflowActionPlatform")) $("workflowActionPlatform").value = action && action.platform || "douyin";
+      syncWorkflowActionModalFields();
       modal.classList.remove("hidden");
       const first = $("workflowActionTime") || modal.querySelector("input, select");
       if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 80);
@@ -3535,24 +3692,26 @@
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择动作时间");
       const actionType = (($("workflowActionType") && $("workflowActionType").value) || "publish").trim();
       const platform = (($("workflowActionPlatform") && $("workflowActionPlatform").value) || "douyin").trim();
-      if (actionType !== "publish") throw new Error("暂时只支持发布动作");
-      if (!["douyin", "toutiao", "wechat_channels", "wechat_moments"].includes(platform)) throw new Error("暂时只支持抖音、头条、视频号和朋友圈");
+      const allowedTypes = workflowActionTypeOptions(parentNode).map((item) => item.value);
+      if (!allowedTypes.includes(actionType)) throw new Error("这个上级节点不支持所选动作");
+      if (actionType === "publish" && !["douyin", "toutiao", "wechat_channels", "wechat_moments"].includes(platform)) {
+        throw new Error("暂时只支持抖音、头条、视频号和朋友圈");
+      }
       const currentChildren = workflowChildActions(parentNode).slice();
       const duplicate = currentChildren.find((item) => {
         if (editId && String(item && item.id || "") === editId) return false;
-        const itemPlan = item && item.plan && typeof item.plan === "object" ? item.plan : {};
-        const itemPayload = itemPlan.payload && typeof itemPlan.payload === "object" ? itemPlan.payload : {};
-        const itemParams = itemPayload.params && typeof itemPayload.params === "object" ? itemPayload.params : {};
-        return String((item && item.platform) || itemParams.platform || "").trim() === platform;
+        const itemType = workflowActionKind(item);
+        if (actionType !== "publish") return itemType === actionType;
+        return itemType === "publish" && String(item && item.platform || "").trim() === platform;
       });
-      if (duplicate) throw new Error("这个平台已经有发布动作了");
+      if (duplicate) throw new Error(actionType === "publish" ? "这个平台已经有发布动作了" : "这个子动作已经添加过了");
       const existing = editId ? currentChildren.find((item) => String(item && item.id || "") === editId) : null;
       const nextAction = workflowActionPayload(parentNode, { time, action_type: actionType, platform }, existing);
       const children = currentChildren
         .filter((item) => String(item && item.id || "") !== String(nextAction.id || ""))
         .concat(nextAction)
         .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
-      state.workflowNodesDraft[parentIndex] = { ...parentNode, children };
+      state.workflowNodesDraft[parentIndex] = syncWorkflowParentActionRules({ ...parentNode, children });
       closeWorkflowActionModal();
       renderWorkflow();
       toast("动作已保存");
@@ -3563,7 +3722,7 @@
       if (parentIndex < 0) return;
       const parentNode = state.workflowNodesDraft[parentIndex];
       const children = workflowChildActions(parentNode).filter((item) => String(item && item.id || "") !== String(actionId || ""));
-      state.workflowNodesDraft[parentIndex] = { ...parentNode, children };
+      state.workflowNodesDraft[parentIndex] = syncWorkflowParentActionRules({ ...parentNode, children });
       renderWorkflow();
     }
 
@@ -3931,6 +4090,69 @@
       return [];
     }
 
+    function workflowActionKind(action) {
+      const explicit = String(action && (action.action_type || action.type) || "").trim().toLowerCase();
+      if (explicit && explicit !== "client_workflow") return explicit;
+      const plan = action && action.plan && typeof action.plan === "object" ? action.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const clientAction = String(payload.action || action && action.ability_key || "").trim().toLowerCase();
+      if (clientAction === "native_wechat_poll" && params.followup_action === "group_invite") return "native_wechat_group_invite";
+      if (["native_wechat_add_friend", "native_wechat_moments_engage"].includes(clientAction)) return clientAction;
+      if (clientAction === "publish_content" || action && action.platform) return "publish";
+      return explicit || "publish";
+    }
+
+    function workflowNodeIsNativeWechatTakeover(parentNode) {
+      if (!parentNode || typeof parentNode !== "object") return false;
+      const plan = parentNode.plan && typeof parentNode.plan === "object" ? parentNode.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const action = String(payload.action || parentNode.ability_key || "").trim().toLowerCase();
+      const text = [parentNode.ability_label, parentNode.note, plan.title]
+        .map((value) => String(value || ""))
+        .join(" ");
+      const isGroupInviteNode = String(params.followup_action || "").trim().toLowerCase() === "group_invite"
+        || text.includes("自动拉群");
+      const isTakeover = action === "native_wechat_poll"
+        || text.includes("微信私信接管")
+        || text.includes("个微私信接管")
+        || text.includes("个人微信接管");
+      return isTakeover && !isGroupInviteNode;
+    }
+
+    function workflowActionTypeOptions(parentNode, currentType = "") {
+      const all = [
+        { value: "publish", label: "发布内容" },
+        { value: "native_wechat_add_friend", label: "自动加好友" },
+        { value: "native_wechat_group_invite", label: "自动拉群" },
+        { value: "native_wechat_moments_engage", label: "朋友圈点赞评论" },
+      ];
+      const values = [];
+      if (isSalesDouyinPrivateNode(parentNode)) values.push("native_wechat_add_friend");
+      if (workflowNodeIsNativeWechatTakeover(parentNode)) {
+        values.push("native_wechat_group_invite", "native_wechat_moments_engage");
+      }
+      values.push("publish");
+      if (currentType && !values.includes(currentType)) values.push(currentType);
+      return values.map((value) => all.find((item) => item.value === value)).filter(Boolean);
+    }
+
+    function renderWorkflowActionTypeOptions(parentNode, selectedType = "") {
+      const select = $("workflowActionType");
+      if (!select) return;
+      const options = workflowActionTypeOptions(parentNode, selectedType);
+      select.innerHTML = options.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("");
+      select.value = options.some((item) => item.value === selectedType) ? selectedType : (options[0] && options[0].value || "publish");
+    }
+
+    function syncWorkflowActionModalFields() {
+      const publish = String($("workflowActionType") && $("workflowActionType").value || "publish") === "publish";
+      const field = $("workflowActionPlatformField");
+      if (field) field.hidden = !publish;
+      if ($("workflowActionPlatform")) $("workflowActionPlatform").disabled = !publish;
+    }
+
     function workflowActionPlatformLabel(platform) {
       const key = String(platform || "").trim().toLowerCase();
       if (key === "douyin") return "抖音";
@@ -3941,8 +4163,11 @@
     }
 
     function workflowActionLabel(action) {
-      const type = String(action && (action.action_type || action.type) || "publish").trim().toLowerCase();
+      const type = workflowActionKind(action);
       if (type === "publish") return `发布${workflowActionPlatformLabel(action && action.platform)}`;
+      if (type === "native_wechat_add_friend") return "微信自动加好友";
+      if (type === "native_wechat_group_invite") return "微信自动拉群";
+      if (type === "native_wechat_moments_engage") return "朋友圈点赞评论";
       return action && action.ability_label || "动作";
     }
 
@@ -3968,28 +4193,114 @@
       };
     }
 
+    function workflowNativeActionPlan(parentNode, type, existing = null) {
+      const existingPlan = existing && existing.plan && typeof existing.plan === "object" ? existing.plan : {};
+      const existingPayload = existingPlan.payload && typeof existingPlan.payload === "object" ? existingPlan.payload : {};
+      const existingParams = existingPayload.params && typeof existingPayload.params === "object" ? existingPayload.params : {};
+      const source = {
+        ...existingParams,
+        source_workflow_node_id: String(parentNode && parentNode.id || ""),
+        source_workflow_node_label: String(parentNode && (parentNode.ability_label || parentNode.note) || ""),
+      };
+      if (type === "native_wechat_add_friend") {
+        return nativeWechatWorkflowPlan("native_wechat_add_friend", "识别抖音私信中的手机号并自动加好友", {
+          ...source,
+          source_mode: "douyin_private_message_phone",
+          trigger: "clear_mobile",
+          skip_without_clear_mobile: true,
+          targets: Array.isArray(source.targets) ? source.targets : [],
+        });
+      }
+      if (type === "native_wechat_group_invite") {
+        return nativeWechatWorkflowPlan("native_wechat_poll", "微信私信接管命中意向后自动拉群", {
+          ...source,
+          followup_action: "group_invite",
+          group_invite_enabled: true,
+          group_invite_rule_status: source.group_invite_rule_status || "pending_rules",
+          trigger: source.trigger || "qualified_intent",
+          group_invite_targets_source: source.group_invite_targets_source || "qualified_intent",
+          group_invite_members: Array.isArray(source.group_invite_members) ? source.group_invite_members : [],
+          group_invite_manager_contacts: Array.isArray(source.group_invite_manager_contacts) ? source.group_invite_manager_contacts : [],
+        });
+      }
+      if (type === "native_wechat_moments_engage") {
+        return nativeWechatWorkflowPlan("native_wechat_moments_engage", "微信朋友圈点赞评论", {
+          ...source,
+          targets: Array.isArray(source.targets) ? source.targets : [],
+          moment_action: source.moment_action || "like_comment",
+          max_scrolls: Number(source.max_scrolls || 6),
+        });
+      }
+      throw new Error("不支持的子动作");
+    }
+
     function workflowActionPayload(parentNode, formData = {}, existing = null) {
       const platform = String(formData.platform || (existing && existing.platform) || "douyin").trim().toLowerCase();
       const type = String(formData.action_type || (existing && (existing.action_type || existing.type)) || "publish").trim().toLowerCase();
       const time = String(formData.time || (existing && existing.time) || "").trim();
       const id = String(existing && existing.id || `wf_action_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`);
+      const nativeKeys = {
+        native_wechat_add_friend: "native_wechat_add_friend",
+        native_wechat_group_invite: "native_wechat_poll",
+        native_wechat_moments_engage: "native_wechat_moments_engage",
+      };
+      const label = workflowActionLabel({ action_type: type, platform });
       const action = {
         ...(existing || {}),
         id,
         time,
         action_type: type,
         type,
-        platform,
+        platform: type === "publish" ? platform : "",
         parent_node_id: String(parentNode && parentNode.id || ""),
-        ability_key: "publish_content",
-        ability_label: workflowActionLabel({ action_type: type, platform }),
+        ability_key: type === "publish" ? "publish_content" : nativeKeys[type],
+        ability_label: label,
         department_id: parentNode && parentNode.department_id || "",
         department_name: parentNode && parentNode.department_name || "",
-        note: "",
+        note: existing && existing.note || label,
         is_action_node: true,
+        param_configured: true,
       };
       if (type === "publish") action.plan = workflowPublishActionPlan(parentNode, action);
+      else action.plan = workflowNativeActionPlan(parentNode, type, existing);
       return action;
+    }
+
+    function syncWorkflowParentActionRules(parentNode) {
+      const next = { ...(parentNode || {}) };
+      const children = workflowChildActions(next).slice();
+      const plan = next.plan && typeof next.plan === "object" ? { ...next.plan } : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
+      const params = payload.params && typeof payload.params === "object" ? { ...payload.params } : {};
+      const groups = children.filter((item) => workflowActionKind(item) === "native_wechat_group_invite");
+      const friends = children.filter((item) => workflowActionKind(item) === "native_wechat_add_friend");
+      if (groups.length || Object.prototype.hasOwnProperty.call(params, "group_invite_rules")) {
+        params.group_invite_enabled = groups.length > 0;
+        params.group_invite_rule_status = groups.length ? "pending_rules" : params.group_invite_rule_status;
+        params.group_invite_targets_source = "qualified_intent";
+        params.group_invite_rules = groups.map((item) => ({
+          child_node_id: item.id,
+          time: item.time,
+          trigger: "qualified_intent",
+          members: [],
+          manager_contacts: [],
+        }));
+      }
+      if (friends.length || Object.prototype.hasOwnProperty.call(params, "wechat_add_friend_rules")) {
+        params.wechat_add_friend_enabled = friends.length > 0;
+        params.wechat_add_friend_targets_source = "douyin_private_message_phone";
+        params.wechat_add_friend_rules = friends.map((item) => ({
+          child_node_id: item.id,
+          time: item.time,
+          trigger: "clear_mobile",
+          skip_without_clear_mobile: true,
+        }));
+      }
+      payload.params = params;
+      plan.payload = payload;
+      next.plan = plan;
+      next.children = children;
+      return next;
     }
 
     function workflowActionNodeCount(nodes) {
@@ -4470,7 +4781,12 @@
         const expanded = !!nodeId && expandedNodes.has(nodeId);
         const nodeStatus = workflowStatusInfo(node, workflowTaskForNodeDateOrCurrent(node, tasks, selectedKey), workflowLatestRunForNode(node, runs), selectedKey);
         const childHtml = children.map((action) => {
-          const canEditAction = String(action && (action.action_type || action.type) || "publish").toLowerCase() === "publish";
+          const canEditAction = [
+            "publish",
+            "native_wechat_add_friend",
+            "native_wechat_group_invite",
+            "native_wechat_moments_engage",
+          ].includes(workflowActionKind(action));
           const actionStatus = workflowStatusInfo(action, workflowTaskForNodeDateOrCurrent(action, tasks, selectedKey), workflowLatestRunForNode(action, runs), selectedKey);
           return `
             <div class="workflow-node-card workflow-action-card workflow-time-node">
@@ -4984,7 +5300,7 @@
       const meta = state.workflowEditingTemplateMeta && typeof state.workflowEditingTemplateMeta === "object"
         ? { ...state.workflowEditingTemplateMeta }
         : {};
-      const systemTemplateKey = String(meta.system_template_key || state.workflowViewingTemplateKey || "").trim();
+      const systemTemplateKey = String(meta.system_template_key || "").trim();
       if (systemTemplateKey) {
         meta.system_template_key = systemTemplateKey;
         meta.source = meta.source || "system_mirror";
@@ -6113,6 +6429,13 @@
 
     function workflowRecordMatchesDisplayed(row) {
       if (!row) return false;
+      if (workflowDisplayedContextIsActive()) {
+        const activeIds = workflowActiveTaskIds();
+        if (activeIds.size) {
+          const rowTaskId = String((row.task_id !== undefined && row.task_id !== null) ? row.task_id : row.id || "");
+          return !!rowTaskId && activeIds.has(rowTaskId);
+        }
+      }
       const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
       const ctx = h5ContextFromPayload(payload);
       if (!String(row.created_by_role || "") && !(ctx.workflow_template_id || ctx.workflow_template_key || ctx.workflow_node_id)) return false;
@@ -8046,6 +8369,7 @@
           await Promise.allSettled(pendingProfiles.map((row) => api("/api/shanjian-digital-human/profile/task", {
             method: "POST",
             json: { profile_id: Number(row.source_record_id) },
+            blocking: false,
           })));
           data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}`);
         }
@@ -8242,7 +8566,7 @@
           const fd = new FormData();
           fd.append("file", files[i], files[i].name || "upload");
           fd.append("split_video", "true");
-          const resp = await fetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd });
+          const resp = await blockingFetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd }, "正在上传素材");
           const data = await resp.json().catch(() => ({}));
           if (!resp.ok) throw new Error(data.detail || data.message || `上传失败：HTTP ${resp.status}`);
           if (data.processing === "online" && data.message_id) {
@@ -8350,7 +8674,7 @@
     async function uploadDigitalCloneAsset(file) {
       const fd = new FormData();
       fd.append("file", file, file.name || "digital-human-material");
-      const resp = await fetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd });
+      const resp = await blockingFetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd }, "正在上传形象素材");
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || data.message || `素材上传失败：HTTP ${resp.status}`);
       if (!data.asset_id) throw new Error("素材已上传，但没有返回素材 ID");
@@ -8393,7 +8717,7 @@
           fd.append("file", file, file.name || "avatar");
           if (sourceType !== "video") fd.append("model", (($("assetAvatarModel") && $("assetAvatarModel").value) || "2"));
           const endpoint = sourceType === "video" ? "/api/hifly/my/avatar/create-by-video-upload" : "/api/hifly/my/avatar/create-by-image-upload";
-          const resp = await fetch(apiUrl(endpoint), { method: "POST", headers: authHeaders(), body: fd });
+          const resp = await blockingFetch(apiUrl(endpoint), { method: "POST", headers: authHeaders(), body: fd }, "正在提交形象分身");
           const data = await resp.json().catch(() => ({}));
           if (!resp.ok) throw new Error(data.detail || data.message || `提交失败：HTTP ${resp.status}`);
         } else {
@@ -8404,6 +8728,7 @@
           if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "3/3 正在创建数字人 2.0 训练任务";
           await api("/api/shanjian-digital-human/profile/train", {
             method: "POST",
+            blocking: "正在提交形象分身",
             json: {
               title,
               mode: sourceType === "video" ? "fast_video" : "image",
@@ -8656,7 +8981,7 @@
       }
       if ($("assetVoiceStatus")) $("assetVoiceStatus").textContent = "正在提交克隆任务";
       try {
-        const resp = await fetch(apiUrl("/api/hifly/my/voice/create-upload"), { method: "POST", headers: authHeaders(), body: fd });
+        const resp = await blockingFetch(apiUrl("/api/hifly/my/voice/create-upload"), { method: "POST", headers: authHeaders(), body: fd }, "正在提交声音分身");
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || data.ok === false) {
           state.assetLibraryVoicePage = 1;
@@ -10714,7 +11039,11 @@
         btn.textContent = "下发中...";
       }
       try {
-        const data = await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(taskId)}/run-now`, { method: "POST", json: {} });
+        const data = await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(taskId)}/run-now`, {
+          method: "POST",
+          blocking: "正在下发任务",
+          json: {},
+        });
         removeRun(optimisticRunId);
         mergeRuns(data.runs || []);
         renderOfficeEmployees();
@@ -11119,7 +11448,7 @@
       if (rejected.length) toast(`以下文件不能转写：${rejected.join("、")}`);
     }
 
-    async function uploadRecorderAudioFile(file, sourceType = "local", sourceName = "") {
+    async function uploadRecorderAudioFile(file, sourceType = "local", sourceName = "", onProgress = null) {
       if (!file || !isRecorderAudioFile(file)) throw new Error("请选择音频文件");
       if (Number(file.size || 0) > 200 * 1024 * 1024) throw new Error("单个音频文件不能超过 200MB");
       const iid = currentInstallationId();
@@ -11128,13 +11457,11 @@
       form.append("source_type", sourceType);
       form.append("source_name", sourceName || ({ local: "本地音频", personal: "个人 IP 资料" }[sourceType] || "音频文件"));
       form.append("installation_id", iid || "");
-      const response = await fetch(apiUrl("/api/h5/recorder/files"), {
-        method: "POST",
+      const data = await uploadFormDataWithProgress("/api/h5/recorder/files", form, {
         headers: authHeaders(iid ? { "X-Installation-Id": iid } : {}),
-        body: form,
+        title: "正在上传音频",
+        onProgress,
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.ok === false) throw new Error(data.detail || data.message || "音频上传失败");
       return data.record || {};
     }
 
@@ -11144,10 +11471,13 @@
       personalSetBusy(button, true, "上传中...");
       try {
         const key = recorderAudioFileKey(file);
-        const record = await uploadRecorderAudioFile(file, "local", "本地音频");
+        const record = await uploadRecorderAudioFile(file, "local", "本地音频", ({ percent, uploaded }) => {
+          personalSetBusy(button, true, uploaded ? "正在创建记录..." : `上传 ${percent}%`);
+        });
         state.recorderLocalFiles = (state.recorderLocalFiles || []).filter((item) => recorderAudioFileKey(item) !== key);
         state.recorderPage = 1;
         renderRecorderLocalFiles();
+        personalSetBusy(button, true, "正在刷新记录...");
         await loadRecorderRecords();
         toast(`“${file.name || "音频"}”已开始转写`);
         if (record.id) showRecorderDetail(record.id).catch(() => {});
@@ -13022,6 +13352,7 @@
       try {
         const data = await api("/api/h5-chat/mounted-accounts/wechat-auto-reply", {
           method: "POST",
+          blocking: enabled ? "正在开启自动回复" : "正在关闭自动回复",
           json: {
             enabled: !!enabled,
             installation_id: installationId || state.selectedInstallationId || "",
@@ -13048,6 +13379,7 @@
         const primaryContactName = primaryContact ? String(primaryInput?.dataset.contactName || primaryContact).trim() : "";
         const data = await api("/api/h5-chat/mounted-accounts/wechat-auto-reply", {
           method: "POST",
+          blocking: "正在保存微信接管设置",
           json: {
             enabled: !!row.auto_reply_enabled,
             installation_id: row.installation_id || state.selectedInstallationId || "",
@@ -14374,6 +14706,7 @@
           const data = await api("/api/shanjian-smart-clip/templates", {
             method: "POST",
             json: { page_size: 60, sid, scene: "realMan", sort_by: "desc" },
+            blocking: false,
           });
           (Array.isArray(data.results) ? data.results : []).forEach((raw) => {
             const item = normalizePersonalDigitalHumanTemplate(raw);
@@ -14965,7 +15298,9 @@
       personalSetBusy(button, true, "上传中...");
       try {
         const key = personalUploadFileKey(file);
-        await uploadRecorderAudioFile(file, "personal", "个人 IP 资料");
+        await uploadRecorderAudioFile(file, "personal", "个人 IP 资料", ({ percent, uploaded }) => {
+          personalSetBusy(button, true, uploaded ? "正在创建记录..." : `上传 ${percent}%`);
+        });
         state.personalUploadFiles = selectedPersonalUploadFiles().filter((item) => personalUploadFileKey(item) !== key);
         state.recorderPage = 1;
         renderPersonalSelectedFiles();
@@ -15206,6 +15541,7 @@
         .map(personalMemoryDocPayload);
       const data = await api("/api/ip-content/personal-default", {
         method: "PUT",
+        blocking: false,
         json: {
           name: existing.name || "个人默认模板",
           keyword_ids: keywordIds,
@@ -15281,7 +15617,7 @@
       personalSetBusy(btn, true, "理解中...");
       personalSetStatus("正在理解资料...");
       try {
-        const resp = await fetch(apiUrl("/api/personal-settings/memory-documents/generate"), { method: "POST", headers: authHeaders({ "X-Installation-Id": iid }), body: fd });
+        const resp = await blockingFetch(apiUrl("/api/personal-settings/memory-documents/generate"), { method: "POST", headers: authHeaders({ "X-Installation-Id": iid }), body: fd }, "正在生成记忆文件");
         let data = await resp.json().catch(() => ({}));
         if (!resp.ok || data.ok === false) throw new Error(data.detail || data.message || "AI 理解失败");
         if (data.processing === "online" && data.message_id) {
@@ -15355,7 +15691,7 @@
       const iid = currentInstallationId();
       personalSetBusy(btn, true, "保存中...");
       try {
-        const resp = await fetch(apiUrl("/api/personal-settings/memory-documents/save-upload"), { method: "POST", headers: authHeaders({ "X-Installation-Id": iid }), body: formData });
+        const resp = await blockingFetch(apiUrl("/api/personal-settings/memory-documents/save-upload"), { method: "POST", headers: authHeaders({ "X-Installation-Id": iid }), body: formData }, "正在保存记忆文件");
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || data.ok === false) throw new Error(data.detail || data.message || "保存失败");
         const docs = Array.isArray(data.documents) ? data.documents : (data.document ? [data.document] : []);
@@ -15931,7 +16267,7 @@
       if (preview) preview.innerHTML = "<span>上传中...</span>";
       const fd = new FormData();
       fd.append("file", file, file.name || "upload");
-      const resp = await fetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd });
+      const resp = await blockingFetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd }, "正在上传素材");
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || data.message || `上传失败：HTTP ${resp.status}`);
       const item = addUserUploadAssetToCache({ ...data, asset_origin: "user_upload" });
@@ -17082,9 +17418,9 @@
       try {
         const [myAvatar, publicAvatar, myVoice, publicVoice] = await Promise.all([
           api("/api/h5/assets/digital-library?kind=avatar&page=1&size=100").catch(() => ({ items: [] })),
-          api("/api/hifly/avatar/library", { method: "POST", json: { page: 1, size: 100, include_mine: true } }).catch(() => ({ public: [] })),
+          api("/api/hifly/avatar/library", { method: "POST", json: { page: 1, size: 100, include_mine: true }, blocking: false }).catch(() => ({ public: [] })),
           api("/api/h5/assets/digital-library?kind=voice&page=1&size=100").catch(() => ({ items: [] })),
-          api("/api/hifly/voice/library", { method: "POST", json: {} }).catch(() => ({ public: [] })),
+          api("/api/hifly/voice/library", { method: "POST", json: {}, blocking: false }).catch(() => ({ public: [] })),
         ]);
         state.avatarRows = normalizeAvatarRows(myAvatar.items || [], publicAvatar.public || []);
         state.voiceRows = normalizeVoiceRows(myVoice.items || [], publicVoice.public || []);
@@ -18036,6 +18372,7 @@
       try {
         const data = await api(`/api/scheduled-tasks/tasks/${encodeURIComponent(taskId)}`, {
           method: "PATCH",
+          blocking: nextStatus === "active" ? "正在启用任务" : "正在停用任务",
           json: { status: nextStatus },
         });
         if (data.task) {
@@ -18285,7 +18622,7 @@
       const fd = new FormData();
       fd.append("file", file);
       try {
-        const resp = await fetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd });
+        const resp = await blockingFetch(apiUrl("/api/assets/upload"), { method: "POST", headers: authHeaders(), body: fd }, "正在上传素材");
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.detail || "上传失败");
         item.assetId = String(data.asset_id || "");
@@ -20256,7 +20593,142 @@
       }
       openAbilityView(btn.dataset.abilityKey || "");
     });
-    $("globalChatFab")?.addEventListener("click", () => {
+
+    function setupGlobalChatFabDrag(button) {
+      if (!button || button.dataset.dragReady === "1") return;
+      button.dataset.dragReady = "1";
+      const storageKey = brandStorageKey("lobster_h5_global_chat_fab_position");
+      const shell = button.closest(".shell") || document.querySelector(".shell");
+      let pointerId = null;
+      let startX = 0;
+      let startY = 0;
+      let startLeft = 0;
+      let startTop = 0;
+      let dragging = false;
+      let suppressClick = false;
+      let resizeFrame = 0;
+
+      const bounds = () => {
+        const viewport = window.visualViewport;
+        const viewportLeft = Number(viewport && viewport.offsetLeft || 0);
+        const viewportTop = Number(viewport && viewport.offsetTop || 0);
+        const viewportWidth = Number(viewport && viewport.width || window.innerWidth || document.documentElement.clientWidth || 0);
+        const viewportHeight = Number(viewport && viewport.height || window.innerHeight || document.documentElement.clientHeight || 0);
+        const shellRect = shell ? shell.getBoundingClientRect() : { left: viewportLeft, right: viewportLeft + viewportWidth };
+        const width = button.offsetWidth || 54;
+        const height = button.offsetHeight || 54;
+        const minLeft = Math.max(viewportLeft + 10, shellRect.left + 10);
+        const maxLeft = Math.max(minLeft, Math.min(viewportLeft + viewportWidth - width - 10, shellRect.right - width - 10));
+        const minTop = viewportTop + 10;
+        const maxTop = Math.max(minTop, viewportTop + viewportHeight - height - 10);
+        return { minLeft, maxLeft, minTop, maxTop };
+      };
+
+      const place = (left, top) => {
+        const area = bounds();
+        const nextLeft = Math.min(area.maxLeft, Math.max(area.minLeft, Number(left) || area.minLeft));
+        const nextTop = Math.min(area.maxTop, Math.max(area.minTop, Number(top) || area.minTop));
+        button.style.right = "auto";
+        button.style.bottom = "auto";
+        button.style.left = `${Math.round(nextLeft)}px`;
+        button.style.top = `${Math.round(nextTop)}px`;
+        return { left: nextLeft, top: nextTop, area };
+      };
+
+      const readStoredPosition = () => {
+        try {
+          const value = JSON.parse(localStorage.getItem(storageKey) || "null");
+          if (!value || !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.y))) return null;
+          return {
+            x: Math.min(1, Math.max(0, Number(value.x))),
+            y: Math.min(1, Math.max(0, Number(value.y))),
+          };
+        } catch {
+          return null;
+        }
+      };
+
+      const restore = () => {
+        const saved = readStoredPosition();
+        if (!saved) return;
+        const area = bounds();
+        place(
+          area.minLeft + (area.maxLeft - area.minLeft) * saved.x,
+          area.minTop + (area.maxTop - area.minTop) * saved.y,
+        );
+      };
+
+      const persist = () => {
+        const rect = button.getBoundingClientRect();
+        const area = bounds();
+        const xRange = Math.max(1, area.maxLeft - area.minLeft);
+        const yRange = Math.max(1, area.maxTop - area.minTop);
+        try {
+          localStorage.setItem(storageKey, JSON.stringify({
+            x: Math.min(1, Math.max(0, (rect.left - area.minLeft) / xRange)),
+            y: Math.min(1, Math.max(0, (rect.top - area.minTop) / yRange)),
+          }));
+        } catch {}
+      };
+
+      button.addEventListener("pointerdown", (evt) => {
+        if (!evt.isPrimary || (evt.pointerType === "mouse" && evt.button !== 0)) return;
+        const rect = button.getBoundingClientRect();
+        pointerId = evt.pointerId;
+        startX = evt.clientX;
+        startY = evt.clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+        dragging = false;
+        try { button.setPointerCapture(evt.pointerId); } catch {}
+      });
+
+      button.addEventListener("pointermove", (evt) => {
+        if (pointerId === null || evt.pointerId !== pointerId) return;
+        const deltaX = evt.clientX - startX;
+        const deltaY = evt.clientY - startY;
+        if (!dragging && Math.hypot(deltaX, deltaY) < 6) return;
+        if (evt.cancelable) evt.preventDefault();
+        if (!dragging) {
+          dragging = true;
+          button.classList.add("is-dragging");
+        }
+        place(startLeft + deltaX, startTop + deltaY);
+      });
+
+      const finishDrag = (evt) => {
+        if (pointerId === null || evt.pointerId !== pointerId) return;
+        try { button.releasePointerCapture(pointerId); } catch {}
+        pointerId = null;
+        button.classList.remove("is-dragging");
+        if (!dragging) return;
+        persist();
+        dragging = false;
+        suppressClick = true;
+        window.setTimeout(() => { suppressClick = false; }, 500);
+      };
+      button.addEventListener("pointerup", finishDrag);
+      button.addEventListener("pointercancel", finishDrag);
+      button.addEventListener("click", (evt) => {
+        if (!suppressClick) return;
+        suppressClick = false;
+        evt.preventDefault();
+        evt.stopImmediatePropagation();
+      }, true);
+
+      const scheduleRestore = () => {
+        window.cancelAnimationFrame(resizeFrame);
+        resizeFrame = window.requestAnimationFrame(restore);
+      };
+      window.addEventListener("resize", scheduleRestore, { passive: true });
+      window.visualViewport?.addEventListener("resize", scheduleRestore, { passive: true });
+      window.visualViewport?.addEventListener("scroll", scheduleRestore, { passive: true });
+      restore();
+    }
+
+    const globalChatFab = $("globalChatFab");
+    setupGlobalChatFabDrag(globalChatFab);
+    globalChatFab?.addEventListener("click", () => {
       const sourceView = activeViewKey();
       if (sourceView === "messages") {
         scrollMessagesToBottom();
@@ -20535,6 +21007,7 @@
     $("workflowActionBackdrop")?.addEventListener("click", closeWorkflowActionModal);
     $("workflowActionClose")?.addEventListener("click", closeWorkflowActionModal);
     $("workflowActionCancel")?.addEventListener("click", closeWorkflowActionModal);
+    $("workflowActionType")?.addEventListener("change", syncWorkflowActionModalFields);
     $("workflowActionForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
       try {
@@ -21370,7 +21843,7 @@
       }
       $("sendSmsBtn").disabled = true;
       try {
-        const resp = await fetch(apiUrl("/auth/sms/send"), {
+        const resp = await blockingFetch(apiUrl("/auth/sms/send"), {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
@@ -21379,7 +21852,7 @@
             captcha_answer: captchaAnswer,
             brand_mark: H5_BRAND_MARK,
           }),
-        });
+        }, "正在发送验证码");
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.detail || "发送失败");
         toast("验证码已发送");
@@ -21909,11 +22382,11 @@
         const code = $("smsCode").value.trim();
         if (!phone) throw new Error("请输入有效手机号");
         if (!code) throw new Error("请输入短信验证码");
-        const resp = await fetch(apiUrl("/auth/register-phone"), {
+        const resp = await blockingFetch(apiUrl("/auth/register-phone"), {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ phone, code, brand_mark: H5_BRAND_MARK }),
-        });
+        }, "正在登录");
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.detail || "进入失败");
         state.token = data.access_token;
@@ -21935,11 +22408,11 @@
         const password = $("loginPassword").value;
         if (!account) throw new Error("请输入账号或手机号");
         if (!password) throw new Error("请输入密码");
-        const resp = await fetch(apiUrl("/auth/login-phone-password"), {
+        const resp = await blockingFetch(apiUrl("/auth/login-phone-password"), {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ account, password, brand_mark: H5_BRAND_MARK }),
-        });
+        }, "正在登录");
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(normalizeAuthErrorDetail(data.detail) || "登录失败");
         state.token = data.access_token;
@@ -21980,6 +22453,7 @@
       try {
         const data = await api("/api/mastra-chat/messages", {
           method: "POST",
+          blocking: false,
           json: {
             content: messageContent,
             installation_id: currentInstallationId(),

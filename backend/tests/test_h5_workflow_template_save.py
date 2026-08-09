@@ -83,6 +83,35 @@ def test_plain_save_creates_blank_editor_template(db_session, test_user):
     assert db_session.query(H5WorkflowTemplate).count() == 1
 
 
+def test_custom_template_cannot_take_an_existing_system_sales_identity(db_session, test_user):
+    sales = create_workflow_template(_sales_body("完整销售"), current_user=test_user, db=db_session)
+    custom = create_workflow_template(
+        WorkflowTemplateIn(name="新员工", nodes=_sales_body("单节点").nodes),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    updated = update_workflow_template(
+        custom["template"]["id"],
+        WorkflowTemplateIn(
+            name="新员工已更新",
+            nodes=_sales_body("更新后的单节点").nodes,
+            meta={"system_template_key": "system_sales", "source": "system_mirror"},
+        ),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    db_session.expire_all()
+    sales_row = db_session.get(H5WorkflowTemplate, sales["template"]["id"])
+    custom_row = db_session.get(H5WorkflowTemplate, custom["template"]["id"])
+    assert sales_row.meta["system_template_key"] == "system_sales"
+    assert sales_row.nodes[0]["ability_label"] == "完整销售"
+    assert updated["template"]["name"] == "新员工已更新"
+    assert custom_row.nodes[0]["ability_label"] == "更新后的单节点"
+    assert not (custom_row.meta or {}).get("system_template_key")
+
+
 def test_saved_workflow_drops_placeholder_nodes(db_session, test_user):
     normal_node = _sales_body("正常任务").nodes[0]
     placeholder_node = {
@@ -139,8 +168,20 @@ def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     assert "return !workflowSystemTemplateKey(tpl) && !mergedIds.has(id);" in script
     assert "return personalSystemWorkflowTemplate(sid)" in script
     assert "if (state.workflowTemplateSaving) return;" in script
+    assert 'meta.system_template_key || state.workflowViewingTemplateKey' not in script
     assert 'key === "system_sales" ? "/h5-static/designer-employee-sales.jpg" : ""' in script
     assert "20260730-workflow-menu-v2" in html
+
+
+def test_active_workflow_status_is_scoped_to_its_current_device_tasks():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    start = script.index("function workflowRecordMatchesDisplayed(row)")
+    end = script.index("function workflowRecordMatchesCurrent(row)", start)
+    matcher = script[start:end]
+
+    assert "workflowDisplayedContextIsActive()" in matcher
+    assert "const activeIds = workflowActiveTaskIds();" in matcher
+    assert "return !!rowTaskId && activeIds.has(rowTaskId);" in matcher
 
 
 def test_workflow_action_menu_stays_above_children_and_closes_before_modal():
@@ -166,6 +207,29 @@ def test_workflow_action_menu_stays_above_children_and_closes_before_modal():
     assert ".workflow-child-list .workflow-node-card:has(.task-action-menu[open])" in designer_styles
     assert ".workflow-node-card:has(.task-action-menu[open]) .task-action-list" in designer_styles
     assert "20260803-workflow-child-menu-v3" in html
+
+
+def test_native_wechat_takeover_can_add_and_edit_group_and_moments_children():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+    styles = (ROOT / "h5_static" / "h5-designer-v2.css").read_text(encoding="utf-8")
+
+    detector_start = script.index("function workflowNodeIsNativeWechatTakeover(parentNode)")
+    detector_end = script.index("function workflowActionTypeOptions", detector_start)
+    detector = script[detector_start:detector_end]
+    options_start = detector_end
+    options_end = script.index("function renderWorkflowActionTypeOptions", options_start)
+    options = script[options_start:options_end]
+
+    assert 'action === "native_wechat_poll"' in detector
+    assert 'text.includes("微信私信接管")' in detector
+    assert 'params.followup_action' in detector
+    assert 'values.push("native_wechat_group_invite", "native_wechat_moments_engage")' in options
+    assert '"native_wechat_group_invite",' in script
+    assert '"native_wechat_moments_engage",' in script
+    assert "#workflowActionPlatformField[hidden]" in styles
+    assert "20260808-workflow-action-fields-v1" in html
+    assert "20260808-workflow-native-children-v1" in html
 
 
 def test_workflow_title_and_controls_use_an_operation_menu_in_normal_flow():

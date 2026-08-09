@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from backend.app.api import scheduled_tasks
 from backend.app.api import wechat_channels_transcript
@@ -52,6 +52,29 @@ def test_ip_content_default_timeout_allows_full_multi_batch_run(monkeypatch):
     monkeypatch.delenv("LOBSTER_SERVER_SIDE_SCHEDULE_TIMEOUT_SEC", raising=False)
 
     assert scheduled_tasks._server_side_timeout_seconds("ip_content_daily") == 1800.0
+
+
+def test_client_processing_recovery_uses_recent_progress_activity():
+    now = datetime.utcnow()
+    row = _run(run_id="active-client", user_id=1, task_kind="client_workflow")
+    row.claimed_at = now - timedelta(minutes=20)
+    row.updated_at = now - timedelta(minutes=2)
+
+    assert scheduled_tasks._client_processing_run_is_stale(row, now) is False
+
+
+def test_native_wechat_takeover_is_not_requeued_during_its_thirty_minute_session():
+    now = datetime.utcnow()
+    row = _run(run_id="wechat-takeover", user_id=1, task_kind="client_workflow")
+    row.payload = {"action": "native_wechat_poll"}
+    row.claimed_at = now - timedelta(minutes=30)
+    row.updated_at = row.claimed_at
+
+    assert scheduled_tasks._client_processing_run_is_stale(row, now) is False
+
+    row.claimed_at = now - timedelta(minutes=46)
+    row.updated_at = row.claimed_at
+    assert scheduled_tasks._client_processing_run_is_stale(row, now) is True
 
 
 def test_wechat_transcript_reuses_terminal_job_for_same_scheduled_run(db_session, test_user):

@@ -9,7 +9,7 @@
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
   <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1-20260805-wechat-contact-picker-v1-20260806-recorder-detail-v2-20260806-audio-transcription-v2-20260807-detail-pages-v2-20260808-competitor-search-v1" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3-20260807-upload-width-v1-20260807-detail-pages-v1-20260807-content-publish-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3-20260807-upload-width-v1-20260807-detail-pages-v1-20260807-content-publish-v1-20260808-ios-bottom-nav-v1-20260808-action-loading-v1-20260808-chat-fab-drag-v1-20260808-workflow-action-fields-v1" />
 </head>
 <body>
   <main class="shell">
@@ -1516,10 +1516,13 @@
           <div class="field">
             <label for="workflowActionType">动作</label>
             <select id="workflowActionType">
-              <option value="publish">发布</option>
+              <option value="publish">发布内容</option>
+              <option value="native_wechat_add_friend">自动加好友</option>
+              <option value="native_wechat_group_invite">自动拉群</option>
+              <option value="native_wechat_moments_engage">朋友圈点赞评论</option>
             </select>
           </div>
-          <div class="field">
+          <div class="field" id="workflowActionPlatformField">
             <label for="workflowActionPlatform">平台</label>
             <select id="workflowActionPlatform">
               <option value="douyin">抖音</option>
@@ -2120,8 +2123,19 @@
     </div>
   </div>
 
+  <div class="global-action-loading hidden" id="globalActionLoading" role="dialog" aria-modal="true" aria-labelledby="globalActionLoadingTitle" aria-describedby="globalActionLoadingDetail" aria-hidden="true">
+    <div class="global-action-loading-backdrop" aria-hidden="true"></div>
+    <div class="global-action-loading-panel" id="globalActionLoadingPanel" tabindex="-1">
+      <span class="global-action-loading-spinner" aria-hidden="true"></span>
+      <div>
+        <strong id="globalActionLoadingTitle">正在提交</strong>
+        <p id="globalActionLoadingDetail">请稍候，完成后会自动返回结果</p>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1-20260807-detail-pages-v2-20260807-content-publish-v1-20260808-competitor-search-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1-20260807-detail-pages-v2-20260807-content-publish-v1-20260808-competitor-search-v1-20260808-action-loading-v1-20260808-workflow-native-children-v1-20260808-chat-fab-drag-v1"></script>
 </body>
 </html>

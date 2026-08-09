@@ -11,16 +11,16 @@ import tempfile
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import partial, wraps
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
-from pydantic import BaseModel
-from sqlalchemy import func, text
+from pydantic import BaseModel, Field
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from .auth import get_current_user
@@ -586,6 +586,20 @@ class RegisterAssetUrlReq(BaseModel):
     asset_origin: Optional[str] = None
     creative_candidate_group: Optional[str] = None
     creative_candidate_groups: Optional[list[str]] = None
+    prompt: Optional[str] = None
+    model: Optional[str] = None
+    tags: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    creative_prompt: Optional[str] = None
+    content_visibility: Optional[str] = None
+    generation_task_id: Optional[str] = None
+    generation_record_id: Optional[int] = None
+    source_created_at: Optional[str] = None
+
+
+class RegisterAssetBatchReq(BaseModel):
+    assets: list[RegisterAssetUrlReq] = Field(default_factory=list)
 
 
 class CreativeCandidateGroupReq(BaseModel):
@@ -687,13 +701,21 @@ def _apply_creative_candidate_group_meta(meta: dict, group_name: str) -> bool:
 def _registered_asset_payload(row: Asset) -> dict:
     group = _creative_candidate_group(row.meta)
     context = _stored_asset_content_context(row)
+    source_url = (row.source_url or "").strip()
+    source_asset_id = ""
+    if isinstance(row.meta, dict):
+        source_asset_id = str(row.meta.get("source_asset_id") or row.meta.get("client_asset_id") or "").strip()
     return {
         "asset_id": row.asset_id,
+        "source_asset_id": source_asset_id,
         "filename": row.filename,
         "media_type": row.media_type,
         "file_size": row.file_size or 0,
-        "source_url": row.source_url or "",
-        "url": row.source_url or "",
+        "source_url": source_url,
+        "preview_url": source_url,
+        "cover_url": source_url if row.media_type == "image" else "",
+        "open_url": source_url,
+        "url": source_url,
         "asset_origin": _asset_origin(row.meta),
         "title": context.get("title", ""),
         "description": context.get("description", ""),
@@ -703,6 +725,213 @@ def _registered_asset_payload(row: Asset) -> dict:
         "creative_candidate_group": group,
         "creative_candidate_groups": _creative_candidate_groups(row.meta),
     }
+
+
+def _registered_asset_time(value: Optional[str]) -> datetime:
+    raw = str(value or "").strip()
+    if not raw:
+        return datetime.utcnow()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    except (TypeError, ValueError):
+        return datetime.utcnow()
+
+
+def _registered_content_context(body: RegisterAssetUrlReq) -> dict[str, str]:
+    values = {
+        "title": _context_text(body.title, 500),
+        "description": _context_text(body.description),
+        "creative_prompt": _first_context_text(body.creative_prompt, body.prompt),
+        "tags": _publish_tags(body.tags),
+        "source": "online_asset_sync",
+    }
+    return {key: value for key, value in values.items() if value}
+
+
+def _apply_registered_asset(
+    row: Asset,
+    body: RegisterAssetUrlReq,
+    *,
+    asset_origin: str,
+    group_name: str,
+    registered_from: str,
+) -> bool:
+    changed = False
+    source_url = str(body.url or "").strip()
+    media_type = str(body.media_type or "image").strip().lower()
+    if media_type not in ("image", "video", "audio", "document"):
+        media_type = "image"
+    filename = _safe_remote_filename(body.filename, source_url, row.asset_id)
+    scalar_updates = {
+        "source_url": source_url,
+        "media_type": media_type,
+        "filename": filename,
+    }
+    if body.file_size is not None:
+        scalar_updates["file_size"] = max(int(body.file_size or 0), 0)
+    if body.prompt is not None:
+        scalar_updates["prompt"] = _context_text(body.prompt, 12000) or None
+    if body.model is not None:
+        scalar_updates["model"] = _context_text(body.model, 128) or None
+    if body.tags is not None:
+        scalar_updates["tags"] = _context_text(body.tags, 2048) or None
+    for field_name, value in scalar_updates.items():
+        if getattr(row, field_name) != value:
+            setattr(row, field_name, value)
+            changed = True
+
+    meta = dict(row.meta or {})
+    meta_updates: dict[str, Any] = {
+        "asset_origin": asset_origin,
+        "save_url_dedupe": _save_url_dedupe_key(source_url),
+        "registered_from": registered_from,
+    }
+    source_asset_id = str(body.source_asset_id or "").strip()[:80]
+    if source_asset_id:
+        meta_updates["source_asset_id"] = source_asset_id
+        meta_updates["client_asset_id"] = source_asset_id
+    visibility = str(body.content_visibility or "").strip().lower()[:32]
+    if visibility:
+        meta_updates["content_visibility"] = visibility
+    generation_task_id = str(body.generation_task_id or "").strip()[:128]
+    if generation_task_id:
+        meta_updates["generation_task_id"] = generation_task_id
+    if body.generation_record_id is not None:
+        meta_updates["generation_record_id"] = int(body.generation_record_id)
+    for key, value in meta_updates.items():
+        if meta.get(key) != value:
+            meta[key] = value
+            changed = True
+    if _apply_creative_candidate_group_meta(meta, group_name):
+        changed = True
+    incoming_context = _registered_content_context(body)
+    if incoming_context:
+        current_context = meta.get("content_context") if isinstance(meta.get("content_context"), dict) else {}
+        merged_context = dict(current_context)
+        for key, value in incoming_context.items():
+            if value:
+                merged_context[key] = value
+        if merged_context != current_context:
+            meta["content_context"] = merged_context
+            changed = True
+    if changed:
+        row.meta = meta
+    return changed
+
+
+def upsert_registered_assets(
+    db: Session,
+    user_id: int,
+    bodies: list[RegisterAssetUrlReq],
+    *,
+    registered_from: str = "online",
+) -> tuple[list[Asset], int, int]:
+    """Upsert a batch of public Online assets without downloading media."""
+    normalized = [body for body in bodies if str(body.url or "").strip().startswith(("http://", "https://"))]
+    if not normalized:
+        return [], 0, 0
+
+    urls = list(dict.fromkeys(str(body.url or "").strip() for body in normalized))
+    source_ids = list(dict.fromkeys(
+        str(body.source_asset_id or "").strip()[:80]
+        for body in normalized
+        if str(body.source_asset_id or "").strip()
+    ))
+    conditions = [Asset.source_url.in_(urls)]
+    if source_ids:
+        conditions.extend([
+            Asset.meta["source_asset_id"].as_string().in_(source_ids),
+            Asset.meta["client_asset_id"].as_string().in_(source_ids),
+        ])
+    existing_rows = db.query(Asset).filter(Asset.user_id == int(user_id), or_(*conditions)).all()
+    recent_rows = (
+        db.query(Asset)
+        .filter(Asset.user_id == int(user_id))
+        .order_by(Asset.id.desc())
+        .limit(max(800, len(normalized) * 4))
+        .all()
+    )
+    all_existing = {row.id: row for row in [*existing_rows, *recent_rows] if row.id is not None}.values()
+    by_url: dict[tuple[str, str], Asset] = {}
+    by_source_id: dict[str, Asset] = {}
+    by_dedupe: dict[tuple[str, str], Asset] = {}
+    for row in all_existing:
+        row_origin = _asset_origin(row.meta)
+        url = str(row.source_url or "").strip()
+        if url:
+            by_url.setdefault((row_origin, url), row)
+            by_dedupe.setdefault((row_origin, _save_url_dedupe_key(url)), row)
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        dedupe = str(meta.get("save_url_dedupe") or "").strip()
+        if dedupe:
+            by_dedupe.setdefault((row_origin, dedupe), row)
+        for key in ("source_asset_id", "client_asset_id"):
+            source_id = str(meta.get(key) or "").strip()
+            if source_id:
+                by_source_id.setdefault(source_id, row)
+
+    rows: list[Asset] = []
+    created = 0
+    updated = 0
+    for body in normalized:
+        source_url = str(body.url or "").strip()
+        source_id = str(body.source_asset_id or "").strip()[:80]
+        dedupe_key = _save_url_dedupe_key(source_url)
+        asset_origin = _register_asset_origin(body)
+        row = by_source_id.get(source_id) if source_id else None
+        if row is None:
+            candidate = by_url.get((asset_origin, source_url)) or by_dedupe.get((asset_origin, dedupe_key))
+            candidate_meta = candidate.meta if candidate is not None and isinstance(candidate.meta, dict) else {}
+            candidate_source_ids = {
+                str(candidate_meta.get(key) or "").strip()
+                for key in ("source_asset_id", "client_asset_id")
+                if str(candidate_meta.get(key) or "").strip()
+            }
+            # A legacy server row without an Online id can be enriched in place.
+            # Distinct Online ids remain distinct content records even if an
+            # upstream provider reused the same public URL.
+            if not source_id or not candidate_source_ids or source_id in candidate_source_ids:
+                row = candidate
+        group_name = _incoming_creative_candidate_group(body)
+        if row is None:
+            aid = _gen_asset_id()
+            row = Asset(
+                asset_id=aid,
+                user_id=int(user_id),
+                filename=_safe_remote_filename(body.filename, source_url, aid),
+                media_type="image",
+                file_size=0,
+                source_url=source_url,
+                meta={},
+                created_at=_registered_asset_time(body.source_created_at),
+            )
+            db.add(row)
+            created += 1
+        elif _apply_registered_asset(
+            row,
+            body,
+            asset_origin=asset_origin,
+            group_name=group_name,
+            registered_from=registered_from,
+        ):
+            updated += 1
+        if row.id is None or row in db.new:
+            _apply_registered_asset(
+                row,
+                body,
+                asset_origin=asset_origin,
+                group_name=group_name,
+                registered_from=registered_from,
+            )
+        by_url[(asset_origin, source_url)] = row
+        by_dedupe[(asset_origin, dedupe_key)] = row
+        if source_id:
+            by_source_id[source_id] = row
+        rows.append(row)
+    return rows, created, updated
 
 
 def _context_text(value, limit: int = 12000) -> str:
@@ -921,60 +1150,51 @@ async def register_asset_url(
         raise HTTPException(status_code=400, detail="不能登记本机或内网素材地址")
     media_type = (body.media_type or "image").strip().lower()
     if media_type not in ("image", "video", "audio", "document"):
-        media_type = "image"
-    dk = _save_url_dedupe_key(url)
-    asset_origin = _register_asset_origin(body)
-    group_name = _incoming_creative_candidate_group(body)
-    existing = _find_existing_asset_by_save_url_dedupe(db, owner_user.id, dk)
-    if existing:
-        meta = dict(existing.meta or {})
-        changed = False
-        if meta.get("asset_origin") != asset_origin:
-            meta["asset_origin"] = asset_origin
-            changed = True
-        source_asset_id = (body.source_asset_id or "").strip()
-        if source_asset_id and meta.get("source_asset_id") != source_asset_id:
-            meta["source_asset_id"] = source_asset_id[:80]
-            changed = True
-        if _apply_creative_candidate_group_meta(meta, group_name):
-            changed = True
-        if changed:
-            existing.meta = meta
-        context = _resolve_asset_content_context(db, existing)
-        if _persist_asset_content_context(existing, context):
-            changed = True
-        if changed:
-            db.add(existing)
-            db.commit()
-            db.refresh(existing)
-        return _registered_asset_payload(existing)
-
-    aid = _gen_asset_id()
-    filename = _safe_remote_filename(body.filename, url, aid)
-    asset = Asset(
-        asset_id=aid,
-        user_id=owner_user.id,
-        filename=filename,
-        media_type=media_type,
-        file_size=max(int(body.file_size or 0), 0),
-        source_url=url,
-        meta={
-            "asset_origin": asset_origin,
-            "save_url_dedupe": dk,
-            "registered_from": "online",
-            "source_asset_id": (body.source_asset_id or "").strip()[:80],
-        },
-    )
-    if group_name:
-        meta = dict(asset.meta or {})
-        _apply_creative_candidate_group_meta(meta, group_name)
-        asset.meta = meta
-    db.add(asset)
+        body.media_type = "image"
+    rows, _, _ = upsert_registered_assets(db, owner_user.id, [body], registered_from="online")
+    if not rows:
+        raise HTTPException(status_code=400, detail="Asset URL must be a public http(s) URL")
+    asset = rows[0]
     db.flush()
     _persist_asset_content_context(asset, _resolve_asset_content_context(db, asset))
     db.commit()
     db.refresh(asset)
     return _registered_asset_payload(asset)
+
+
+@router.post("/api/assets/register-batch", summary="Batch sync Online assets into the shared content library")
+def register_asset_batch(
+    body: RegisterAssetBatchReq,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if len(body.assets) > 200:
+        raise HTTPException(status_code=400, detail="A batch can contain at most 200 assets")
+    if not body.assets:
+        return {"ok": True, "created": 0, "updated": 0, "items": []}
+    for item in body.assets:
+        url = str(item.url or "").strip()
+        lowered = url.lower()
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Asset URL must be a public http(s) URL")
+        if any(value in lowered for value in ("localhost", "127.0.0.1", "0.0.0.0")):
+            raise HTTPException(status_code=400, detail="Local asset URLs cannot be synchronized")
+    owner_user = online_user_for_mobile_user(db, current_user)
+    rows, created, updated = upsert_registered_assets(
+        db,
+        owner_user.id,
+        body.assets,
+        registered_from="online_batch",
+    )
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return {
+        "ok": True,
+        "created": created,
+        "updated": updated,
+        "items": [_registered_asset_payload(row) for row in rows],
+    }
 
 
 @router.post("/api/assets/save-url", summary="从 URL 保存素材")
@@ -1533,12 +1753,16 @@ def list_assets(
     )
     def payload(row: Asset) -> dict:
         context = _stored_asset_content_context(row)
+        source_url = (row.source_url or "").strip()
         return {
             "asset_id": row.asset_id,
             "filename": row.filename,
             "media_type": row.media_type,
             "file_size": row.file_size,
-            "source_url": row.source_url,
+            "source_url": source_url,
+            "preview_url": source_url,
+            "cover_url": source_url if row.media_type == "image" else "",
+            "open_url": source_url,
             "title": context.get("title", ""),
             "description": context.get("description", ""),
             "prompt": row.prompt or context.get("creative_prompt", ""),
@@ -1689,6 +1913,9 @@ def get_asset(
         "media_type": a.media_type,
         "file_size": a.file_size,
         "source_url": a.source_url,
+        "preview_url": a.source_url or "",
+        "cover_url": (a.source_url or "") if a.media_type == "image" else "",
+        "open_url": a.source_url or "",
         "title": context.get("title", ""),
         "description": context.get("description", ""),
         "prompt": a.prompt or context.get("creative_prompt", ""),

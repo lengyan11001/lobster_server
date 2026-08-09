@@ -42,6 +42,9 @@ _UPSTREAM_HEADER_ALLOWLIST = frozenset(
         "x-lobster-allowed-capabilities",
         "x-lobster-video-model-lock",
         "x-lobster-video-model-lock-source",
+        "x-lobster-pipeline-precharged",
+        "x-lobster-pipeline-id",
+        "x-lobster-pipeline-capability",
     }
 )
 

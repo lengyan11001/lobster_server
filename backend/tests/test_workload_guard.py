@@ -153,6 +153,7 @@ def test_heavy_workload_routes_are_classified(method: str, path: str) -> None:
         ("GET", "/api/h5-chat/messages"),
         ("POST", "/api/auth/login"),
         ("POST", "/api/h5-chat/devices/heartbeat"),
+        ("POST", "/api/h5/recorder/files"),
     ],
 )
 def test_interactive_routes_bypass_heavy_workload_queue(method: str, path: str) -> None:

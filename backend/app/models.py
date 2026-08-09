@@ -267,6 +267,16 @@ class GenerationRecord(Base):
     last_reported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class DataMigrationMarker(Base):
+    """Records completed idempotent data backfills."""
+
+    __tablename__ = "data_migration_markers"
+
+    name: Mapped[str] = mapped_column(String(128), primary_key=True)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    applied_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class TikHubQueryLog(Base):
     """Server-side TikHub proxy audit log: request, response snapshot, and billing."""
 

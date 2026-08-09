@@ -692,6 +692,16 @@ body.messages-view-active {
   box-shadow: none;
   font-size: 10px;
   font-weight: 700;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.designer-bottom-nav button:not(:disabled):active {
+  transform: none;
+  opacity: .72;
 }
 
 .designer-bottom-nav button.active {
@@ -757,6 +767,10 @@ body.messages-view-active {
   color: #fff;
   background: linear-gradient(145deg, #2563eb, #0ea5e9);
   box-shadow: 0 16px 34px rgba(37, 99, 235, .28), 0 6px 16px rgba(14, 165, 233, .2);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -790,8 +804,18 @@ body.messages-view-active {
   background: #22c55e;
 }
 
-.global-chat-fab:active {
+.global-chat-fab:not(.is-dragging):active {
   transform: scale(.96);
+}
+
+.global-chat-fab.is-dragging {
+  cursor: grabbing;
+  transform: none;
+  transition: none;
+}
+
+#workflowActionPlatformField[hidden] {
+  display: none;
 }
 
 body.messages-view-active .global-chat-fab {
@@ -6134,6 +6158,87 @@ html[data-brand="hikong"] #officeView .home-marketing-card.digital-human .home-m
     flex: 1 1 0;
     min-width: 0;
   }
+}
+
+.global-action-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: 100vw;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.global-action-loading-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(24, 31, 43, 0.28);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+.global-action-loading-panel {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  width: min(320px, calc(100vw - 32px));
+  max-width: 100%;
+  min-height: 82px;
+  padding: 17px 18px;
+  color: #172033;
+  border: 1px solid rgba(214, 220, 230, 0.96);
+  border-radius: 8px;
+  outline: none;
+  background: #fff;
+  box-shadow: 0 18px 54px rgba(15, 23, 42, 0.2);
+}
+
+.global-action-loading-spinner {
+  box-sizing: border-box;
+  width: 34px;
+  height: 34px;
+  border: 3px solid #dce5f2;
+  border-top-color: #246bfd;
+  border-radius: 50%;
+  animation: global-action-loading-spin 0.8s linear infinite;
+}
+
+.global-action-loading-panel strong {
+  display: block;
+  margin: 0 0 5px;
+  color: #172033;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.global-action-loading-panel p {
+  margin: 0;
+  color: #748094;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+body.h5-action-blocked {
+  overflow: hidden;
+}
+
+@keyframes global-action-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .global-action-loading-spinner { animation-duration: 1.6s; }
 }
 
 /* All business popovers use the same light surface, including memory generation. */

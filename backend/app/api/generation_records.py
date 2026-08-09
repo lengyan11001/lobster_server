@@ -6,6 +6,7 @@ links here so admins can audit what users generated without storing media.
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime
 from typing import Any, Optional
 
@@ -15,11 +16,15 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .admin import AdminContext, _agent_visible_user_ids, _assert_can_manage_user, _verify_admin_token
+from .assets import RegisterAssetUrlReq, _registered_asset_payload, upsert_registered_assets
 from .auth import get_current_user
 from ..db import get_db
-from ..models import GenerationRecord, User
+from ..models import DataMigrationMarker, GenerationRecord, User
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_GENERATION_ASSET_BACKFILL = "generation_records_to_assets_v1"
 
 
 class GenerationRecordReportBody(BaseModel):
@@ -124,6 +129,86 @@ def _apply_report_to_row(row: GenerationRecord, body: GenerationRecordReportBody
     row.last_reported_at = datetime.utcnow()
 
 
+def _asset_registration_from_generation(row: GenerationRecord) -> RegisterAssetUrlReq:
+    return RegisterAssetUrlReq(
+        url=row.public_url or "",
+        media_type=row.media_type or "image",
+        filename=row.filename or "",
+        file_size=int(row.file_size or 0),
+        source_asset_id=row.client_asset_id or "",
+        asset_origin="generated",
+        prompt=row.prompt or "",
+        creative_prompt=row.prompt or "",
+        model=row.model or "",
+        tags=row.tags or "",
+        generation_task_id=row.generation_task_id or "",
+        generation_record_id=row.id,
+        source_created_at=row.created_at.isoformat() if row.created_at else None,
+    )
+
+
+def backfill_generation_records_to_assets(bind, *, batch_size: int = 500) -> dict[str, int | bool]:
+    """Materialize historical Online generation reports once for H5 listing."""
+    from sqlalchemy.orm import sessionmaker
+
+    session_factory = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=bind)
+    db = session_factory()
+    created = 0
+    updated = 0
+    scanned = 0
+    try:
+        marker = db.query(DataMigrationMarker).filter(DataMigrationMarker.name == _GENERATION_ASSET_BACKFILL).first()
+        if marker is not None:
+            return {"applied": False, "scanned": 0, "created": 0, "updated": 0}
+        cursor = 0
+        size = max(50, min(int(batch_size or 500), 1000))
+        while True:
+            records = (
+                db.query(GenerationRecord)
+                .filter(GenerationRecord.id > cursor)
+                .order_by(GenerationRecord.id.asc())
+                .limit(size)
+                .all()
+            )
+            if not records:
+                break
+            cursor = int(records[-1].id)
+            scanned += len(records)
+            grouped: dict[int, list[RegisterAssetUrlReq]] = {}
+            for row in records:
+                if not str(row.public_url or "").strip().startswith(("http://", "https://")):
+                    continue
+                grouped.setdefault(int(row.user_id), []).append(_asset_registration_from_generation(row))
+            for user_id, bodies in grouped.items():
+                _, batch_created, batch_updated = upsert_registered_assets(
+                    db,
+                    user_id,
+                    bodies,
+                    registered_from="generation_record_backfill",
+                )
+                created += batch_created
+                updated += batch_updated
+            db.commit()
+        db.add(DataMigrationMarker(
+            name=_GENERATION_ASSET_BACKFILL,
+            meta={"scanned": scanned, "created": created, "updated": updated},
+            applied_at=datetime.utcnow(),
+        ))
+        db.commit()
+        logger.info(
+            "generation asset backfill completed scanned=%s created=%s updated=%s",
+            scanned,
+            created,
+            updated,
+        )
+        return {"applied": True, "scanned": scanned, "created": created, "updated": updated}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 @router.post("/api/generation-records/report", summary="上报生成素材记录")
 def report_generation_record(
     body: GenerationRecordReportBody,
@@ -174,9 +259,24 @@ def report_generation_record(
     row.public_url = public_url
     row.client_asset_id = client_asset_id
     row.dedupe_key = dedupe_key
+    db.flush()
+    assets, _, _ = upsert_registered_assets(
+        db,
+        current_user.id,
+        [_asset_registration_from_generation(row)],
+        registered_from="online_generation_report",
+    )
     db.commit()
     db.refresh(row)
-    return {"ok": True, "created": created, "record": _record_payload(row, current_user)}
+    asset = assets[0] if assets else None
+    if asset is not None:
+        db.refresh(asset)
+    return {
+        "ok": True,
+        "created": created,
+        "record": _record_payload(row, current_user),
+        "asset": _registered_asset_payload(asset) if asset is not None else None,
+    }
 
 
 @router.get("/admin/api/generation-records", summary="管理员/代理商查询生成记录")

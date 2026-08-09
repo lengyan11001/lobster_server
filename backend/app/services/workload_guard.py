@@ -226,9 +226,11 @@ def heavy_workload_kind(method: str, path: str) -> str:
         return "heavy"
     if method not in {"POST", "PUT", "PATCH"}:
         return ""
+    if path == "/api/h5/recorder/files":
+        # Upload only persists the body and queues transcription. The actual
+        # STT/summary work is protected by background_heavy_slot.
+        return ""
     if path in _HEAVY_EXACT_PATHS:
-        return "heavy"
-    if path == "/api/h5/recorder/files" and method == "POST":
         return "heavy"
     if path.startswith("/api/comfly-proxy/"):
         if method in {"POST", "PUT", "PATCH"} and (

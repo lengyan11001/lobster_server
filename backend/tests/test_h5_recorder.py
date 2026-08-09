@@ -353,6 +353,74 @@ def test_recorder_page_treats_device_as_one_of_three_audio_sources():
     assert 'recorderSubtab: "local"' in script
 
 
+def test_local_audio_upload_reports_progress_and_can_escape_a_stall():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    assert "async function uploadFormDataWithProgress" in script
+    assert "xhr.upload.onprogress" in script
+    assert "上传长时间没有进度，请检查网络后重试" in script
+    assert 'uploadFormDataWithProgress("/api/h5/recorder/files"' in script
+    assert 'blockingFetch(apiUrl("/api/h5/recorder/files")' not in script
+    assert 'uploaded ? "正在创建记录..." : `上传 ${percent}%`' in script
+
+
+def test_local_audio_upload_persists_before_background_transcription(
+    monkeypatch,
+    tmp_path,
+    db_session,
+    test_user,
+):
+    process_calls: list[int] = []
+
+    async def fake_process(record_id, _request, _installation_id):
+        process_calls.append(record_id)
+
+    class FakeUpload:
+        filename = "meeting.mp3"
+        content_type = "audio/mpeg"
+
+        def __init__(self):
+            self.payload = b"local-audio"
+            self.offset = 0
+
+        async def read(self, size):
+            chunk = self.payload[self.offset:self.offset + size]
+            self.offset += len(chunk)
+            return chunk
+
+    monkeypatch.setattr(h5_recorder, "DATA_ROOT", tmp_path / "recorder-audio")
+    monkeypatch.setattr(h5_recorder, "_process", fake_process)
+    background = BackgroundTasks()
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/api/h5/recorder/files",
+        "headers": [],
+    })
+
+    result = asyncio.run(h5_recorder.upload_recording(
+        request=request,
+        background=background,
+        file=FakeUpload(),
+        device_name="",
+        source_type="local",
+        source_name="本地音频",
+        installation_id="",
+        current_user=test_user,
+        db=db_session,
+    ))
+
+    row = db_session.query(RecorderAudioRecord).filter_by(id=result["record"]["id"]).one()
+    assert result["ok"] is True
+    assert row.status == "processing"
+    assert row.process_stage == "uploaded"
+    assert Path(row.audio_path).read_bytes() == b"local-audio"
+    assert process_calls == []
+    assert len(background.tasks) == 1
+    assert background.tasks[0].func is fake_process
+    assert background.tasks[0].args[0] == row.id
+
+
 def test_personal_ip_audio_files_have_per_file_transcription_and_faq_action():
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")

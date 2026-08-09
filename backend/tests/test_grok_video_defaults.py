@@ -12,6 +12,9 @@ from mcp.http_server import (
 from mcp.video_model_resolve import resolve_default_video_model_id, resolve_video_model_id
 
 
+SUTUI_GROK_15_IMAGE_MODEL = "xai/grok-imagine-video-1.5/image-to-video"
+
+
 def test_default_video_model_uses_apiz_veo_text_to_video():
     out = _normalize_video_generate_payload({"prompt": "一条产品宣传短视频"})
 
@@ -92,6 +95,73 @@ def test_grok_text_to_video_keeps_explicit_duration():
     )
 
     assert out["duration"] == 30
+
+
+def test_sutui_grok_15_image_payload_matches_upstream_schema():
+    out = _normalize_video_generate_payload(
+        {
+            "model": SUTUI_GROK_15_IMAGE_MODEL,
+            "prompt": "slow camera push in",
+            "image_urls": ["https://example.com/frame.png", "https://example.com/unused.png"],
+            "duration": "12s",
+            "resolution": "480P",
+            "aspect_ratio": "2:3",
+            "functionMode": "reference",
+            "generate_audio": True,
+        }
+    )
+
+    assert out == {
+        "model": SUTUI_GROK_15_IMAGE_MODEL,
+        "prompt": "slow camera push in",
+        "image_url": "https://example.com/frame.png",
+        "duration": 12,
+        "resolution": "480p",
+        "aspect_ratio": "2:3",
+    }
+
+
+@pytest.mark.parametrize(
+    "payload, message",
+    [
+        ({"prompt": "missing image"}, "requires image_url"),
+        ({"prompt": "too short", "image_url": "https://example.com/a.png", "duration": 5}, "between 6 and 15"),
+        ({"prompt": "too long", "image_url": "https://example.com/a.png", "duration": 16}, "between 6 and 15"),
+        ({"prompt": "bad resolution", "image_url": "https://example.com/a.png", "resolution": "1080p"}, "480p or 720p"),
+        ({"prompt": "bad ratio", "image_url": "https://example.com/a.png", "aspect_ratio": "21:9"}, "does not support"),
+    ],
+)
+def test_sutui_grok_15_rejects_unsupported_parameters(payload, message):
+    with pytest.raises(ValueError, match=message):
+        _normalize_video_generate_payload({"model": SUTUI_GROK_15_IMAGE_MODEL, **payload})
+
+
+def test_sutui_grok_15_keeps_managed_fallback():
+    assert mcp_server._is_managed_video_fallback_payload(
+        {
+            "model": SUTUI_GROK_15_IMAGE_MODEL,
+            "prompt": "test",
+            "image_url": "https://example.com/a.png",
+        }
+    )
+
+
+def test_goal_video_pipeline_migrates_previous_apiz_default_to_sutui_grok_15():
+    out = _normalize_video_generate_payload(
+        {
+            "model": "apiz/veo3.1/image-to-video",
+            "prompt": "test",
+            "image_url": "https://example.com/a.png",
+            "duration": 8,
+            "resolution": "720p",
+            "aspect_ratio": "9:16",
+        },
+        migrate_legacy_default=True,
+        pipeline_capability="goal.video.pipeline",
+    )
+
+    assert out["model"] == SUTUI_GROK_15_IMAGE_MODEL
+    assert out["duration"] == 8
 
 
 def test_grok_aliases_resolve_to_xai_grok_models():
@@ -352,6 +422,8 @@ def test_xai_grok_models_keep_sutui_route():
     assert should_route_to_comfly("video.generate", "xai/grok-imagine-video/image-to-video") is False
     assert lookup_comfly_model("xai/grok-imagine-video/text-to-video") is None
     assert lookup_comfly_model("xai/grok-imagine-video/image-to-video") is None
+    assert should_route_to_comfly("video.generate", SUTUI_GROK_15_IMAGE_MODEL) is False
+    assert lookup_comfly_model(SUTUI_GROK_15_IMAGE_MODEL) is None
 
 
 def test_grok_resolution_is_limited_to_upstream_enum():

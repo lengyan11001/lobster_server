@@ -1424,6 +1424,25 @@ def _own_template(db: Session, template_id: int, owner_user_id: int) -> H5Workfl
     return row
 
 
+def _system_workflow_template(
+    db: Session,
+    owner_user_id: int,
+    system_template_key: str,
+    *,
+    exclude_template_id: Optional[int] = None,
+) -> Optional[H5WorkflowTemplate]:
+    query = db.query(H5WorkflowTemplate).filter(
+        H5WorkflowTemplate.owner_user_id == owner_user_id,
+        H5WorkflowTemplate.status == "active",
+    )
+    if exclude_template_id is not None:
+        query = query.filter(H5WorkflowTemplate.id != exclude_template_id)
+    for item in query.order_by(H5WorkflowTemplate.id.asc()).all():
+        if _clean_text((item.meta or {}).get("system_template_key"), 128) == system_template_key:
+            return item
+    return None
+
+
 def _accessible_template(db: Session, template_id: int, owner_user_id: int) -> H5WorkflowTemplate:
     row = db.query(H5WorkflowTemplate).filter(H5WorkflowTemplate.id == template_id, H5WorkflowTemplate.status == "active").first()
     if not row:
@@ -1658,23 +1677,7 @@ def create_workflow_template(
     if system_template_key and system_template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
         raise HTTPException(status_code=400, detail="该系统员工模板暂未开放")
     if system_template_key:
-        own_rows = (
-            db.query(H5WorkflowTemplate)
-            .filter(
-                H5WorkflowTemplate.owner_user_id == owner.id,
-                H5WorkflowTemplate.status == "active",
-            )
-            .order_by(H5WorkflowTemplate.updated_at.desc(), H5WorkflowTemplate.id.desc())
-            .all()
-        )
-        existing = next(
-            (
-                item
-                for item in own_rows
-                if _clean_text((item.meta or {}).get("system_template_key"), 128) == system_template_key
-            ),
-            None,
-        )
+        existing = _system_workflow_template(db, owner.id, system_template_key)
         if existing:
             existing.name = name
             existing.nodes = _clean_nodes(body.nodes)
@@ -1710,13 +1713,25 @@ def update_workflow_template(
     name = (body.name or "").strip()[:160]
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
-    row.name = name
-    row.nodes = _clean_nodes(body.nodes)
+    meta: Optional[dict[str, Any]] = None
     if body.meta:
         meta = dict(body.meta)
         system_template_key = _clean_text(meta.get("system_template_key"), 128)
         if system_template_key and system_template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
             raise HTTPException(status_code=400, detail="该系统员工模板暂未开放")
+        duplicate_system_template = system_template_key and _system_workflow_template(
+            db,
+            owner.id,
+            system_template_key,
+            exclude_template_id=row.id,
+        )
+        if duplicate_system_template:
+            meta.pop("system_template_key", None)
+            if meta.get("source") == "system_mirror":
+                meta.pop("source", None)
+    row.name = name
+    row.nodes = _clean_nodes(body.nodes)
+    if meta is not None:
         row.meta = meta
     row.updated_at = datetime.utcnow()
     db.commit()
