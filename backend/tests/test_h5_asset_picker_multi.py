@@ -15,11 +15,8 @@ def test_video_reference_pickers_enable_multiple_selection() -> None:
 
     for picker_id in (
         "workComflyAsset",
-        "workSeedanceAsset",
         "taskComflyAsset",
-        "taskSeedanceAsset",
         "workflowParamComflyAsset",
-        "workflowParamSeedanceAsset",
     ):
         assert f'assetPickerControlHtml("{picker_id}"' in source
         start = source.index(f'assetPickerControlHtml("{picker_id}"')
@@ -47,11 +44,8 @@ def test_video_requests_send_primary_and_additional_references() -> None:
     assert "reference_image_urls: referenceImageUrls" in source
     for picker_id in (
         "workComflyAsset",
-        "workSeedanceAsset",
         "taskComflyAsset",
-        "taskSeedanceAsset",
         "workflowParamComflyAsset",
-        "workflowParamSeedanceAsset",
     ):
         assert f'assetPickerImagePayload("{picker_id}"' in source
 

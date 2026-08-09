@@ -9,7 +9,7 @@
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
   <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1-20260805-wechat-contact-picker-v1-20260806-recorder-detail-v2-20260806-audio-transcription-v2-20260807-detail-pages-v2-20260808-competitor-search-v1" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3-20260807-upload-width-v1-20260807-detail-pages-v1-20260807-content-publish-v1-20260808-ios-bottom-nav-v1-20260808-action-loading-v1-20260808-chat-fab-drag-v1-20260808-workflow-action-fields-v1-20260809-marketing-advanced-v1-20260810-local-persona-v1-20260810-speech-pref-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3-20260807-upload-width-v1-20260807-detail-pages-v1-20260807-content-publish-v1-20260808-ios-bottom-nav-v1-20260808-action-loading-v1-20260808-chat-fab-drag-v1-20260808-workflow-action-fields-v1-20260809-marketing-advanced-v1-20260810-local-persona-v1-20260810-speech-pref-v1-20260810-camera-voice-v1" />
 </head>
 <body>
   <main class="shell">
@@ -134,7 +134,10 @@
           <section class="office-section office-employee-section">
             <div class="office-section-head">
               <h2>我的AI员工 <span id="officeEmployeeTotal">0</span></h2>
-              <button type="button" id="customEmployeeCreateBtn">+定制员工</button>
+              <div class="office-section-actions">
+                <button type="button" class="office-ai-secretary-btn" data-home-target="recorder">AI秘书</button>
+                <button type="button" id="customEmployeeCreateBtn">+定制员工</button>
+              </div>
             </div>
             <div class="office-floor office-employee-grid" id="employeeFloor">
               <div class="office-empty"><div class="office-empty-copy">正在检查员工状态...</div></div>
@@ -857,16 +860,6 @@
               </span>
               <b>进入</b>
             </button>
-            <button class="profile-entry recorder-profile-entry" type="button" data-tab-target="recorder">
-              <span class="profile-entry-icon tone-green" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"></path></svg>
-              </span>
-              <span>
-                <strong>音频转写</strong>
-                <small>上传音频、选择记忆文件或同步录音设备</small>
-              </span>
-              <b>进入</b>
-            </button>
             <button class="profile-entry agent-profile-entry" type="button" data-tab-target="agentManage" id="profileAgentManageEntry">
               <span class="profile-entry-icon tone-slate" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6"></path><path d="M7 3h7l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"></path><path d="M14 3v5h5"></path></svg>
@@ -903,19 +896,29 @@
 
       <section class="view" id="recorderView">
         <div class="recorder-page">
-          <header class="panel recorder-heading">
-            <div>
-              <h2>音频转写</h2>
-              <div class="hint">选择音频来源，转写结果统一保存在记录中。</div>
+          <header class="panel recorder-heading recorder-secretary-heading">
+            <div class="recorder-secretary-identity">
+              <span class="recorder-secretary-mark" aria-hidden="true">秘</span>
+              <div>
+                <span class="recorder-secretary-eyebrow">AI秘书</span>
+                <h2>录音整理工作台</h2>
+                <div class="hint">整理谈话、提炼重点，让每段录音都变成可跟进的信息。</div>
+              </div>
             </div>
+            <button type="button" id="recorderNewBriefBtn">新建整理</button>
           </header>
-          <div class="recorder-subtabs" id="recorderSubtabs" role="tablist">
-            <button type="button" class="active" data-recorder-tab="local" role="tab">本地音频</button>
-            <button type="button" data-recorder-tab="memory" role="tab">记忆文件</button>
-            <button type="button" data-recorder-tab="device" role="tab">录音设备</button>
-            <button type="button" data-recorder-tab="records" role="tab">转写记录</button>
+          <div class="recorder-secretary-overview" aria-label="秘书记录概览">
+            <div><span>全部记录</span><strong id="recorderOverviewTotal">0</strong></div>
+            <div><span>本页已整理</span><strong id="recorderOverviewCompleted">0</strong></div>
+            <div><span>本页处理中</span><strong id="recorderOverviewPending">0</strong></div>
           </div>
-          <div class="panel recorder-section" data-recorder-panel="local">
+          <div class="recorder-subtabs" id="recorderSubtabs" role="tablist">
+            <button type="button" class="active" data-recorder-tab="records" role="tab">秘书记录</button>
+            <button type="button" data-recorder-tab="local" role="tab">上传音频</button>
+            <button type="button" data-recorder-tab="memory" role="tab">记忆音频</button>
+            <button type="button" data-recorder-tab="device" role="tab">录音设备</button>
+          </div>
+          <div class="panel recorder-section hidden" data-recorder-panel="local">
             <div class="section-title"><h3>本地音频</h3><span class="hint">单个文件不超过 200MB</span></div>
             <label class="recorder-upload-zone" for="recorderLocalFileInput">
               <span class="recorder-upload-icon" aria-hidden="true">+</span>
@@ -947,8 +950,8 @@
             <div class="recorder-sync-status" id="recorderSyncStatus" aria-live="polite"></div>
             <div id="recorderDeviceFiles" class="recorder-list"><div class="empty">正在加载已同步录音…</div></div>
           </div>
-          <div class="panel recorder-section hidden" data-recorder-panel="records">
-            <div class="section-title"><h3>转写与总结</h3><span class="hint">按录音日期倒序，可翻页和改名</span></div>
+          <div class="panel recorder-section" data-recorder-panel="records">
+            <div class="section-title"><h3>秘书记录</h3><span class="hint">最新录音优先，可查看摘要、待办和完整原文</span></div>
             <div id="recorderServerFiles" class="recorder-list"><div class="empty">还没有上传的录音。</div></div>
             <div id="recorderPager" class="recorder-pager"></div>
           </div>
@@ -959,7 +962,7 @@
         <div class="recorder-detail-page">
           <header class="recorder-detail-heading">
             <div>
-              <span class="recorder-detail-eyebrow">音频转写</span>
+              <span class="recorder-detail-eyebrow">AI秘书 · 整理结果</span>
               <h2 id="recorderDetailTitle">录音内容</h2>
               <div class="recorder-detail-meta" id="recorderDetailMeta"></div>
             </div>
@@ -977,13 +980,13 @@
             <audio id="recorderAudio" controls preload="metadata"></audio>
           </div>
           <div class="recorder-detail-tabs" id="recorderDetailTabs" role="tablist">
-            <button type="button" class="active" data-recorder-detail-tab="summary" role="tab">AI 摘要</button>
+            <button type="button" class="active" data-recorder-detail-tab="summary" role="tab">秘书摘要</button>
             <button type="button" data-recorder-detail-tab="transcript" role="tab">完整转写</button>
           </div>
           <section class="recorder-result-panel" data-recorder-detail-panel="summary">
             <div class="recorder-result-section">
               <div class="recorder-result-head">
-                <h3>内容结论</h3>
+                <h3>内容摘要</h3>
                 <div class="recorder-result-actions">
                   <button type="button" class="ghost" data-recorder-copy="summary">复制</button>
                   <button type="button" class="ghost" data-recorder-export="summary">导出</button>
@@ -993,7 +996,7 @@
               <div class="recorder-summary" id="recorderSummary"></div>
             </div>
             <div class="recorder-result-section">
-              <h3>重点事项</h3>
+              <h3>秘书待办</h3>
               <div class="recorder-key-points" id="recorderKeyPoints"></div>
             </div>
           </section>
@@ -1588,7 +1591,13 @@
         <div class="work-dispatch-fields">
           <div class="field full">
             <label for="assetLibraryUploadInput">文件</label>
-            <input id="assetLibraryUploadInput" type="file" multiple accept="image/*,video/*">
+            <div class="capture-input-row">
+              <input id="assetLibraryUploadInput" type="file" multiple accept="image/*,video/*">
+              <button class="capture-launch-btn" type="button" data-camera-target="assetLibraryUploadInput" data-camera-mode="media" title="拍摄素材">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5 13 3H8L6.5 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-5.5Z"></path><circle cx="10.5" cy="12.5" r="4"></circle><path d="M18 9v4m-2-2h4"></path></svg>
+                <span>拍摄</span>
+              </button>
+            </div>
           </div>
           <div class="field full">
             <div class="asset-upload-status" id="assetLibraryUploadStatus"></div>
@@ -1641,17 +1650,34 @@
           </div>
           <div class="field full">
             <label for="assetAvatarFile" id="assetAvatarFileLabel">训练素材</label>
-            <input id="assetAvatarFile" type="file" accept="image/*,video/*">
+            <div class="capture-input-row">
+              <input id="assetAvatarFile" type="file" accept="image/*,video/*">
+              <button class="capture-launch-btn" type="button" data-camera-target="assetAvatarFile" data-camera-mode="avatar" title="拍摄训练素材">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5 13 3H8L6.5 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-5.5Z"></path><circle cx="10.5" cy="12.5" r="4"></circle><path d="M18 9v4m-2-2h4"></path></svg>
+                <span>拍摄</span>
+              </button>
+            </div>
             <small class="asset-field-hint" id="assetAvatarFileHint">上传清晰正面图片，建议人物占画面主体。</small>
+          </div>
+          <div class="field full hidden" data-avatar-source-section="video">
+            <label for="assetAvatarTrainingText">训练朗读文案</label>
+            <textarea id="assetAvatarTrainingText" data-voice-input maxlength="1000" rows="4" placeholder="拍摄训练视频时显示在画面底部，方便照着朗读"></textarea>
+            <small class="asset-field-hint">拍训练视频时会作为提词器显示，可在拍摄前修改。</small>
           </div>
           <div class="field full" data-avatar-version-section="v2">
             <label for="assetAvatarAuthFile">授权视频</label>
-            <input id="assetAvatarAuthFile" type="file" accept="video/mp4,video/quicktime,.mp4,.mov">
-            <small class="asset-field-hint">请本人正面出镜朗读下方授权说明，MP4/MOV，不超过 100MB。</small>
+            <div class="capture-input-row">
+              <input id="assetAvatarAuthFile" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm">
+              <button class="capture-launch-btn" type="button" data-camera-target="assetAvatarAuthFile" data-camera-mode="video" title="拍摄授权视频">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 10 20 7.5v9L15 14M4 6h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"></path></svg>
+                <span>拍摄</span>
+              </button>
+            </div>
+            <small class="asset-field-hint">请本人正面出镜朗读下方授权说明，不超过 100MB。</small>
           </div>
           <div class="field full" data-avatar-version-section="v2">
             <label for="assetAvatarAuthText">授权说明</label>
-            <textarea id="assetAvatarAuthText" maxlength="500" rows="3" placeholder="请输入授权视频中本人朗读的内容"></textarea>
+            <textarea id="assetAvatarAuthText" data-voice-input maxlength="500" rows="3" placeholder="请输入授权视频中本人朗读的内容"></textarea>
           </div>
           <div class="field full" data-avatar-version-section="v2">
             <label class="asset-consent-row" for="assetAvatarAgree">
@@ -1669,6 +1695,44 @@
         </div>
       </form>
     </div>
+  </div>
+
+  <div class="employee-modal camera-capture-modal hidden" id="cameraCaptureModal" role="dialog" aria-modal="true" aria-labelledby="cameraCaptureTitle" aria-hidden="true">
+    <button class="employee-modal-backdrop" type="button" id="cameraCaptureBackdrop" aria-label="关闭拍摄"></button>
+    <section class="camera-capture-sheet">
+      <header class="camera-capture-head">
+        <div>
+          <strong id="cameraCaptureTitle">拍摄素材</strong>
+          <span id="cameraCaptureSubtitle">默认使用前置摄像头</span>
+        </div>
+        <button class="camera-icon-btn" type="button" id="cameraCaptureClose" aria-label="关闭拍摄" title="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </header>
+      <div class="camera-capture-toolbar">
+        <div class="camera-mode-switch" id="cameraModeSwitch" role="group" aria-label="拍摄模式">
+          <button type="button" data-camera-select-mode="photo">拍照</button>
+          <button type="button" data-camera-select-mode="video">录像</button>
+        </div>
+        <button class="camera-switch-btn" type="button" id="cameraFacingSwitch" title="切换前后摄像头">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-5l-2-2H8L6 7H4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2Z"></path><path d="M8 13a4 4 0 0 1 6.8-2.8L17 12m-1 3a4 4 0 0 1-6.8 2.8L7 16m10-4V9m0 3h-3M7 16v3m0-3h3"></path></svg>
+          <span>切换</span>
+        </button>
+      </div>
+      <div class="camera-stage" id="cameraStage">
+        <video id="cameraLiveVideo" autoplay playsinline muted></video>
+        <img class="hidden" id="cameraPhotoPreview" alt="拍摄预览">
+        <video class="hidden" id="cameraVideoPreview" controls playsinline></video>
+        <div class="camera-teleprompter hidden" id="cameraTeleprompter"><p id="cameraTeleprompterText"></p></div>
+        <div class="camera-recording-badge hidden" id="cameraRecordingBadge"><i></i><span id="cameraRecordingTime">00:00</span></div>
+      </div>
+      <p class="camera-capture-status" id="cameraCaptureStatus">正在打开摄像头...</p>
+      <footer class="camera-capture-actions">
+        <button class="ghost hidden" type="button" id="cameraCaptureRetake">重拍</button>
+        <button class="camera-shutter" type="button" id="cameraCaptureShutter" aria-label="拍摄" title="拍摄"><span></span></button>
+        <button class="hidden" type="button" id="cameraCaptureDone">使用素材</button>
+      </footer>
+    </section>
   </div>
 
   <div class="employee-modal upload-dialog hidden" id="assetVoiceModal" role="dialog" aria-modal="true" aria-labelledby="assetVoiceTitle">
@@ -2170,6 +2234,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1-20260807-detail-pages-v2-20260807-content-publish-v1-20260808-competitor-search-v1-20260808-action-loading-v1-20260808-workflow-native-children-v1-20260808-chat-fab-drag-v1-20260809-goal-video-duration-v1-20260809-marketing-advanced-v1-20260810-workflow-system-slots-v1-20260810-local-persona-v1-20260810-speech-pref-v1-20260810-system-task-chat-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1-20260807-detail-pages-v2-20260807-content-publish-v1-20260808-competitor-search-v1-20260808-action-loading-v1-20260808-workflow-native-children-v1-20260808-chat-fab-drag-v1-20260809-goal-video-duration-v1-20260809-marketing-advanced-v1-20260810-workflow-system-slots-v1-20260810-local-persona-v1-20260810-speech-pref-v1-20260810-system-task-chat-v1-20260810-camera-voice-v1"></script>
 </body>
 </html>

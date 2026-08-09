@@ -99,7 +99,7 @@
       recorderPage: 1,
       recorderPageSize: 20,
       recorderTotal: 0,
-      recorderSubtab: "local",
+      recorderSubtab: "records",
       recorderDetailId: null,
       recorderDetailRecord: null,
       recorderDetailTab: "summary",
@@ -173,6 +173,23 @@
       contentActionPromptCache: new Map(),
       contentActionPromptRequestSequence: 0,
       assetAvatarPrefillFile: null,
+      cameraCapturedFiles: {},
+      cameraTargetId: "",
+      cameraMode: "photo",
+      cameraAllowsModeSwitch: false,
+      cameraFacingMode: "user",
+      cameraStream: null,
+      cameraRecorder: null,
+      cameraChunks: [],
+      cameraCapturedFile: null,
+      cameraPreviousFiles: [],
+      cameraPreviewUrl: "",
+      cameraRecording: false,
+      cameraRecordStartedAt: 0,
+      cameraRecordTimer: null,
+      cameraOpening: false,
+      cameraSessionNonce: 0,
+      cameraDiscardRecording: false,
       workflowTemplates: [],
       workflowTemplatesLoaded: false,
       workflowTemplatesLoading: false,
@@ -296,6 +313,13 @@
       lastMicrophoneDiagnostics: "",
       officeVoiceHoldActive: false,
       voiceCaptureTarget: "voice",
+      voiceFieldTarget: null,
+      voiceFieldSelectionStart: 0,
+      voiceFieldSelectionEnd: 0,
+      voiceFieldPointerId: null,
+      voiceFieldStartY: 0,
+      voiceFieldStartedAt: 0,
+      voiceFieldCancelled: false,
       voiceSessionNonce: 0,
       composerVoicePointerId: null,
       composerVoiceStartY: 0,
@@ -8739,9 +8763,425 @@
       }
     }
 
+    function cameraFileKey(file) {
+      return [String(file?.name || ""), Number(file?.size || 0), Number(file?.lastModified || 0)].join(":");
+    }
+
+    function uniqueCameraFiles(files) {
+      const seen = new Set();
+      return (Array.isArray(files) ? files : []).filter((file) => {
+        if (!file) return false;
+        const key = cameraFileKey(file);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    function selectedFilesForInput(inputId, multiple = false) {
+      const input = $(inputId);
+      const nativeFiles = input?.files ? Array.from(input.files).filter(Boolean) : [];
+      const capturedFiles = Array.isArray(state.cameraCapturedFiles[inputId]) ? state.cameraCapturedFiles[inputId] : [];
+      const files = uniqueCameraFiles([...nativeFiles, ...capturedFiles]);
+      return multiple ? files : files.slice(-1);
+    }
+
+    function assignFilesToInput(inputId, files) {
+      const input = $(inputId);
+      if (!input || typeof DataTransfer === "undefined") return false;
+      try {
+        const transfer = new DataTransfer();
+        uniqueCameraFiles(files).forEach((file) => transfer.items.add(file));
+        input.files = transfer.files;
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    function updateCapturedInputStatus(inputId, files) {
+      const rows = uniqueCameraFiles(files);
+      if (inputId === "assetLibraryUploadInput") {
+        if ($("assetLibraryUploadStatus")) {
+          $("assetLibraryUploadStatus").textContent = rows.length ? `已选择 ${rows.length} 个素材，可继续拍摄或上传入库` : "";
+        }
+        return;
+      }
+      if (inputId === "assetAvatarFile" || inputId === "assetAvatarAuthFile") {
+        const label = inputId === "assetAvatarAuthFile" ? "授权视频" : "训练素材";
+        if ($("assetAvatarStatus")) {
+          $("assetAvatarStatus").textContent = rows.length ? `已选择${label}：${rows[rows.length - 1].name}` : "";
+        }
+      }
+    }
+
+    function setCapturedFilesForInput(inputId, files) {
+      const rows = uniqueCameraFiles(files);
+      state.cameraCapturedFiles[inputId] = rows;
+      assignFilesToInput(inputId, rows);
+      updateCapturedInputStatus(inputId, rows);
+    }
+
+    function clearCapturedFilesForInput(inputId, clearNative = false) {
+      delete state.cameraCapturedFiles[inputId];
+      const input = $(inputId);
+      if (clearNative && input) input.value = "";
+    }
+
+    function syncNativeInputFiles(inputId, multiple = false) {
+      clearCapturedFilesForInput(inputId);
+      updateCapturedInputStatus(inputId, selectedFilesForInput(inputId, multiple));
+    }
+
+    function cameraPermissionMessage(error) {
+      const name = String(error?.name || "");
+      if (["NotAllowedError", "PermissionDeniedError", "SecurityError"].includes(name)) {
+        return "没有摄像头或麦克风权限，请在浏览器和系统设置中允许后重试";
+      }
+      if (["NotFoundError", "DevicesNotFoundError", "OverconstrainedError"].includes(name)) {
+        return "没有检测到可用摄像头";
+      }
+      if (["NotReadableError", "TrackStartError", "AbortError"].includes(name)) {
+        return "摄像头正被其他应用占用，请关闭占用后重试";
+      }
+      return String(error?.message || "摄像头打开失败");
+    }
+
+    function cameraTimestamp() {
+      return new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+    }
+
+    function cameraElapsedText(startedAt = state.cameraRecordStartedAt) {
+      const seconds = Math.max(0, Math.floor((Date.now() - Number(startedAt || Date.now())) / 1000));
+      return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+    }
+
+    function cameraRecordingMimeType() {
+      if (typeof MediaRecorder === "undefined") return "";
+      const candidates = [
+        "video/mp4;codecs=h264,aac",
+        "video/mp4",
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm",
+      ];
+      return candidates.find((type) => !MediaRecorder.isTypeSupported || MediaRecorder.isTypeSupported(type)) || "";
+    }
+
+    function stopCameraTracks() {
+      const stream = state.cameraStream;
+      state.cameraStream = null;
+      if (stream) {
+        try { stream.getTracks().forEach((track) => track.stop()); } catch {}
+      }
+      const live = $("cameraLiveVideo");
+      if (live) {
+        try { live.pause(); } catch {}
+        live.srcObject = null;
+      }
+    }
+
+    function clearCameraRecordTimer() {
+      if (state.cameraRecordTimer) clearInterval(state.cameraRecordTimer);
+      state.cameraRecordTimer = null;
+    }
+
+    function revokeCameraPreview() {
+      if (state.cameraPreviewUrl) URL.revokeObjectURL(state.cameraPreviewUrl);
+      state.cameraPreviewUrl = "";
+      const photo = $("cameraPhotoPreview");
+      const video = $("cameraVideoPreview");
+      if (photo) {
+        photo.removeAttribute("src");
+        photo.classList.add("hidden");
+      }
+      if (video) {
+        try { video.pause(); } catch {}
+        video.removeAttribute("src");
+        video.load?.();
+        video.classList.add("hidden");
+      }
+    }
+
+    function cameraTeleprompterText() {
+      if (state.cameraMode !== "video") return "";
+      if (state.cameraTargetId === "assetAvatarAuthFile") {
+        return String($("assetAvatarAuthText")?.value || defaultAssetAvatarAuthText()).trim();
+      }
+      if (state.cameraTargetId === "assetAvatarFile") {
+        return String($("assetAvatarTrainingText")?.value || defaultAssetAvatarTrainingText()).trim();
+      }
+      return "";
+    }
+
+    function syncCameraCaptureUi() {
+      const modal = $("cameraCaptureModal");
+      const modeSwitch = $("cameraModeSwitch");
+      const live = $("cameraLiveVideo");
+      const teleprompter = $("cameraTeleprompter");
+      const teleprompterText = $("cameraTeleprompterText");
+      const shutter = $("cameraCaptureShutter");
+      const done = $("cameraCaptureDone");
+      const retake = $("cameraCaptureRetake");
+      const hasPreview = !!state.cameraCapturedFile;
+      if (modal) modal.setAttribute("aria-hidden", modal.classList.contains("hidden") ? "true" : "false");
+      modeSwitch?.classList.toggle("hidden", !state.cameraAllowsModeSwitch);
+      modeSwitch?.querySelectorAll("[data-camera-select-mode]").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.cameraSelectMode === state.cameraMode);
+      });
+      live?.classList.toggle("hidden", hasPreview);
+      live?.classList.toggle("is-front-camera", state.cameraFacingMode === "user");
+      const prompt = cameraTeleprompterText();
+      if (teleprompterText) teleprompterText.textContent = prompt;
+      teleprompter?.classList.toggle("hidden", !prompt || hasPreview);
+      shutter?.classList.toggle("hidden", hasPreview);
+      shutter?.classList.toggle("recording", state.cameraRecording);
+      shutter?.setAttribute("aria-label", state.cameraRecording ? "停止录像" : (state.cameraMode === "video" ? "开始录像" : "拍照"));
+      shutter && (shutter.title = state.cameraRecording ? "停止录像" : (state.cameraMode === "video" ? "开始录像" : "拍照"));
+      done?.classList.toggle("hidden", !hasPreview);
+      retake?.classList.toggle("hidden", !hasPreview);
+      if ($("cameraFacingSwitch")) $("cameraFacingSwitch").disabled = hasPreview || state.cameraRecording || state.cameraOpening;
+      modeSwitch?.querySelectorAll("[data-camera-select-mode]").forEach((btn) => {
+        btn.disabled = state.cameraRecording || state.cameraOpening;
+      });
+      $("cameraRecordingBadge")?.classList.toggle("hidden", !state.cameraRecording);
+      if ($("cameraCaptureTitle")) $("cameraCaptureTitle").textContent = state.cameraMode === "video" ? "拍摄视频" : "拍摄照片";
+      if ($("cameraCaptureSubtitle")) {
+        $("cameraCaptureSubtitle").textContent = `${state.cameraFacingMode === "user" ? "前置" : "后置"}摄像头${prompt ? " · 已开启提词器" : ""}`;
+      }
+    }
+
+    async function openCameraStream() {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("当前浏览器不支持摄像头拍摄");
+      const nonce = ++state.cameraSessionNonce;
+      state.cameraOpening = true;
+      stopCameraTracks();
+      if ($("cameraCaptureStatus")) $("cameraCaptureStatus").textContent = "正在打开摄像头...";
+      try {
+        if (state.cameraMode === "video") prepareAndroidMicrophoneCapture();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: state.cameraFacingMode },
+            width: { ideal: 1080 },
+            height: { ideal: 1920 },
+          },
+          audio: state.cameraMode === "video" ? { echoCancellation: true, noiseSuppression: true } : false,
+        });
+        if (nonce !== state.cameraSessionNonce || $("cameraCaptureModal")?.classList.contains("hidden")) {
+          stream.getTracks().forEach((track) => track.stop());
+          return false;
+        }
+        state.cameraStream = stream;
+        const live = $("cameraLiveVideo");
+        if (live) {
+          live.srcObject = stream;
+          await live.play().catch(() => {});
+        }
+        if ($("cameraCaptureStatus")) {
+          $("cameraCaptureStatus").textContent = state.cameraMode === "video" ? "按下圆形按钮开始录像" : "调整画面后按下圆形按钮拍照";
+        }
+        syncCameraCaptureUi();
+        return true;
+      } catch (error) {
+        if (nonce === state.cameraSessionNonce) {
+          stopCameraTracks();
+          if ($("cameraCaptureStatus")) $("cameraCaptureStatus").textContent = cameraPermissionMessage(error);
+        }
+        throw new Error(cameraPermissionMessage(error));
+      } finally {
+        if (nonce === state.cameraSessionNonce) state.cameraOpening = false;
+      }
+    }
+
+    function applyCameraCapturedFile(file) {
+      if (!file || !state.cameraTargetId) return;
+      state.cameraCapturedFile = file;
+      const nextFiles = state.cameraTargetId === "assetLibraryUploadInput"
+        ? [...state.cameraPreviousFiles, file]
+        : [file];
+      setCapturedFilesForInput(state.cameraTargetId, nextFiles);
+      revokeCameraPreview();
+      state.cameraPreviewUrl = URL.createObjectURL(file);
+      if (state.cameraMode === "video") {
+        const preview = $("cameraVideoPreview");
+        if (preview) {
+          preview.src = state.cameraPreviewUrl;
+          preview.classList.remove("hidden");
+        }
+      } else {
+        const preview = $("cameraPhotoPreview");
+        if (preview) {
+          preview.src = state.cameraPreviewUrl;
+          preview.classList.remove("hidden");
+        }
+      }
+      if ($("cameraCaptureStatus")) $("cameraCaptureStatus").textContent = `${file.name} 已自动选中，可使用或重拍`;
+      syncCameraCaptureUi();
+    }
+
+    async function captureCameraPhoto() {
+      const live = $("cameraLiveVideo");
+      if (!live || !state.cameraStream || !live.videoWidth || !live.videoHeight) {
+        throw new Error("摄像头画面尚未准备好，请稍后重试");
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = live.videoWidth;
+      canvas.height = live.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("当前浏览器无法生成照片");
+      context.drawImage(live, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+      if (!blob || !blob.size) throw new Error("照片生成失败，请重试");
+      stopCameraTracks();
+      applyCameraCapturedFile(new File([blob], `camera-${cameraTimestamp()}.jpg`, { type: "image/jpeg" }));
+    }
+
+    function finishCameraRecording(save = true) {
+      const recorder = state.cameraRecorder;
+      if (!recorder) return;
+      state.cameraDiscardRecording = !save;
+      state.cameraRecording = false;
+      clearCameraRecordTimer();
+      syncCameraCaptureUi();
+      if (recorder.state !== "inactive") {
+        try { recorder.stop(); } catch {}
+      }
+      stopCameraTracks();
+    }
+
+    function startCameraRecording() {
+      if (!state.cameraStream) throw new Error("摄像头尚未准备好");
+      if (typeof MediaRecorder === "undefined") throw new Error("当前浏览器不支持视频录制，请使用系统相机拍摄后上传");
+      const mimeType = cameraRecordingMimeType();
+      let recorder;
+      try {
+        recorder = mimeType ? new MediaRecorder(state.cameraStream, { mimeType }) : new MediaRecorder(state.cameraStream);
+      } catch {
+        recorder = new MediaRecorder(state.cameraStream);
+      }
+      state.cameraRecorder = recorder;
+      state.cameraChunks = [];
+      state.cameraDiscardRecording = false;
+      state.cameraRecordStartedAt = Date.now();
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) state.cameraChunks.push(event.data);
+      };
+      recorder.onerror = () => {
+        if ($("cameraCaptureStatus")) $("cameraCaptureStatus").textContent = "录像失败，请重试或上传本地视频";
+      };
+      recorder.onstop = () => {
+        const chunks = state.cameraChunks.slice();
+        const discard = state.cameraDiscardRecording;
+        const durationMs = Date.now() - Number(state.cameraRecordStartedAt || Date.now());
+        const finalType = String(recorder.mimeType || mimeType || chunks[0]?.type || "video/webm").split(";")[0];
+        state.cameraRecorder = null;
+        state.cameraChunks = [];
+        state.cameraRecordStartedAt = 0;
+        state.cameraDiscardRecording = false;
+        if (discard) return;
+        const blob = new Blob(chunks, { type: finalType });
+        if (durationMs < 1000 || !blob.size) {
+          if ($("cameraCaptureStatus")) $("cameraCaptureStatus").textContent = "录像太短，请至少录制 1 秒";
+          openCameraStream().catch((err) => toast(err.message || "摄像头打开失败"));
+          return;
+        }
+        const extension = finalType.includes("mp4") ? "mp4" : "webm";
+        applyCameraCapturedFile(new File([blob], `camera-${cameraTimestamp()}.${extension}`, { type: finalType }));
+      };
+      recorder.start(1000);
+      state.cameraRecording = true;
+      state.cameraRecordTimer = setInterval(() => {
+        const elapsed = cameraElapsedText();
+        if ($("cameraRecordingTime")) $("cameraRecordingTime").textContent = elapsed;
+        if ($("cameraCaptureStatus")) $("cameraCaptureStatus").textContent = `录像中 ${elapsed}，再次按下停止`;
+        if (Date.now() - state.cameraRecordStartedAt >= 5 * 60 * 1000) finishCameraRecording(true);
+      }, 250);
+      syncCameraCaptureUi();
+    }
+
+    async function handleCameraShutter() {
+      if (state.cameraOpening) return;
+      if (state.cameraMode === "photo") {
+        await captureCameraPhoto();
+        return;
+      }
+      if (state.cameraRecording) finishCameraRecording(true);
+      else startCameraRecording();
+    }
+
+    async function retakeCameraCapture() {
+      if (state.cameraRecording) finishCameraRecording(false);
+      setCapturedFilesForInput(state.cameraTargetId, state.cameraPreviousFiles);
+      state.cameraCapturedFile = null;
+      revokeCameraPreview();
+      syncCameraCaptureUi();
+      await openCameraStream();
+    }
+
+    function closeCameraCaptureModal() {
+      state.cameraSessionNonce += 1;
+      if (state.cameraRecording || state.cameraRecorder) finishCameraRecording(false);
+      clearCameraRecordTimer();
+      stopCameraTracks();
+      revokeCameraPreview();
+      state.cameraCapturedFile = null;
+      state.cameraTargetId = "";
+      state.cameraPreviousFiles = [];
+      state.cameraOpening = false;
+      $("cameraCaptureModal")?.classList.add("hidden");
+      $("cameraCaptureModal")?.setAttribute("aria-hidden", "true");
+    }
+
+    async function setCameraMode(mode) {
+      const nextMode = mode === "video" ? "video" : "photo";
+      if (!state.cameraAllowsModeSwitch || nextMode === state.cameraMode || state.cameraRecording) return;
+      setCapturedFilesForInput(state.cameraTargetId, state.cameraPreviousFiles);
+      state.cameraMode = nextMode;
+      state.cameraCapturedFile = null;
+      revokeCameraPreview();
+      syncCameraCaptureUi();
+      await openCameraStream();
+    }
+
+    async function switchCameraFacingMode() {
+      if (state.cameraRecording || state.cameraCapturedFile || state.cameraOpening) return;
+      state.cameraFacingMode = state.cameraFacingMode === "user" ? "environment" : "user";
+      syncCameraCaptureUi();
+      await openCameraStream();
+    }
+
+    async function openCameraCapture(button) {
+      const targetId = String(button?.dataset.cameraTarget || "").trim();
+      if (!targetId || !$(targetId)) return;
+      if (!window.isSecureContext && location.hostname !== "localhost") {
+        throw new Error("摄像头仅能在 HTTPS 安全页面中使用");
+      }
+      if (state.voiceCaptureTarget === "composer" && (state.voiceRecording || state.composerVoicePendingSend)) cancelComposerVoiceCapture();
+      else if (state.voiceCaptureTarget === "field" && state.voiceFieldTarget) resetFieldVoiceCapture("cancelled");
+      else if (state.voiceRecording) {
+        state.voiceRecording = false;
+        cleanupVoiceRuntime();
+      }
+      if (state.assetVoiceIsRecording || state.assetVoiceRecordPending) stopAssetVoiceRecording(false);
+      const configuredMode = String(button.dataset.cameraMode || "photo");
+      state.cameraTargetId = targetId;
+      state.cameraAllowsModeSwitch = configuredMode === "media";
+      state.cameraMode = configuredMode === "video"
+        ? "video"
+        : (configuredMode === "avatar" && String($("assetAvatarSourceType")?.value || "image") === "video" ? "video" : "photo");
+      state.cameraFacingMode = "user";
+      state.cameraCapturedFile = null;
+      state.cameraPreviousFiles = selectedFilesForInput(targetId, targetId === "assetLibraryUploadInput");
+      revokeCameraPreview();
+      $("cameraCaptureModal")?.classList.remove("hidden");
+      $("cameraCaptureModal")?.setAttribute("aria-hidden", "false");
+      syncCameraCaptureUi();
+      await openCameraStream();
+    }
+
     async function uploadAssetLibraryFiles(btn) {
       const input = $("assetLibraryUploadInput");
-      const files = input && input.files ? Array.from(input.files).filter(Boolean) : [];
+      const files = selectedFilesForInput("assetLibraryUploadInput", true);
       if (!files.length) return;
       const status = $("assetLibraryUploadStatus");
       const oldText = btn ? btn.textContent : "";
@@ -8779,6 +9219,7 @@
           if (status) status.textContent = `${i + 1}/${files.length}`;
         }
         if (input) input.value = "";
+        clearCapturedFilesForInput("assetLibraryUploadInput");
         state.assetLibraryPage.user_upload = 1;
         state.assetLibraryPageCache = {};
         await loadAssetLibrary("user_upload", { force: true });
@@ -8813,9 +9254,12 @@
       const section = state.assetLibrarySection || "uploads";
       if (section === "avatars") {
         state.assetAvatarPrefillFile = null;
+        clearCapturedFilesForInput("assetAvatarFile", true);
+        clearCapturedFilesForInput("assetAvatarAuthFile", true);
         if ($("assetAvatarForm")) $("assetAvatarForm").reset();
         if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v2";
         if ($("assetAvatarModel")) $("assetAvatarModel").value = "2";
+        if ($("assetAvatarTrainingText")) $("assetAvatarTrainingText").value = defaultAssetAvatarTrainingText();
         if ($("assetAvatarAuthText")) $("assetAvatarAuthText").value = defaultAssetAvatarAuthText();
         syncAssetAvatarForm();
         $("assetAvatarModal")?.classList.remove("hidden");
@@ -8831,6 +9275,7 @@
         return;
       }
       if ($("assetUploadForm")) $("assetUploadForm").reset();
+      clearCapturedFilesForInput("assetLibraryUploadInput");
       $("assetUploadModal")?.classList.remove("hidden");
     }
 
@@ -8844,16 +9289,21 @@
       return `案例：我是xxx（真实姓名），我授权【${brandName}】使用视频中的肖像、声音，为我生成定制数字人及声音，并在本人【${brandName}】账号中创作使用。`;
     }
 
+    function defaultAssetAvatarTrainingText() {
+      return "大家好，我正在录制数字人训练素材。接下来我会保持自然的表情和语速，清晰完整地朗读这段内容。希望这个数字人能够真实呈现我的形象和声音，帮助我更高效地进行内容创作。感谢大家的关注与支持。";
+    }
+
     function syncAssetAvatarForm() {
       const version = (($("assetAvatarVersion") && $("assetAvatarVersion").value) || "v2").trim();
       const type = (($("assetAvatarSourceType") && $("assetAvatarSourceType").value) || "image").trim();
-      if ($("assetAvatarFile")) $("assetAvatarFile").accept = type === "video" ? "video/*,.mp4,.mov" : "image/*,.jpg,.jpeg,.png";
+      if ($("assetAvatarFile")) $("assetAvatarFile").accept = type === "video" ? "video/*,.mp4,.mov,.webm" : "image/*,.jpg,.jpeg,.png";
       document.querySelectorAll('[data-avatar-version-section="v2"]').forEach((node) => node.classList.toggle("hidden", version !== "v2"));
       document.querySelectorAll('[data-avatar-version-section="v1"]').forEach((node) => node.classList.toggle("hidden", version !== "v1" || type === "video"));
+      document.querySelectorAll('[data-avatar-source-section="video"]').forEach((node) => node.classList.toggle("hidden", type !== "video"));
       if ($("assetAvatarFileLabel")) $("assetAvatarFileLabel").textContent = type === "video" ? "训练视频" : "训练图片";
       if ($("assetAvatarFileHint")) {
         $("assetAvatarFileHint").textContent = type === "video"
-          ? (version === "v2" ? "上传清晰正面人物视频，MP4/MOV，不超过 100MB。" : "上传清晰正面人物视频，MP4/MOV。")
+          ? (version === "v2" ? "上传或拍摄清晰正面人物视频，不超过 100MB。" : "上传或拍摄清晰正面人物视频。")
           : "上传清晰正面图片，建议人物占画面主体。";
       }
     }
@@ -8863,9 +9313,9 @@
       const filename = String(file.name || "").toLowerCase();
       const isVideo = /\.(mp4|mov)$/.test(filename) || /^video\//.test(String(file.type || ""));
       const isImage = /\.(png|jpe?g)$/.test(filename) || /^image\//.test(String(file.type || ""));
-      if (kind === "auth" && !isVideo) return "授权视频仅支持 MP4 或 MOV";
+      if (kind === "auth" && !isVideo) return "授权视频格式不受支持";
       if (kind === "image" && !isImage) return "训练图片仅支持 JPG、JPEG 或 PNG";
-      if (kind === "video" && !isVideo) return "训练视频仅支持 MP4 或 MOV";
+      if (kind === "video" && !isVideo) return "训练视频格式不受支持";
       const maxBytes = kind === "image" ? 10 * 1024 * 1024 : (version === "v1" && kind === "video" ? 500 : 100) * 1024 * 1024;
       if (Number(file.size || 0) > maxBytes) return `${kind === "auth" ? "授权视频" : "训练素材"}不能超过 ${Math.round(maxBytes / 1024 / 1024)}MB`;
       return "";
@@ -8883,7 +9333,7 @@
 
     async function submitAssetAvatarForm(evt) {
       evt.preventDefault();
-      const selectedFile = $("assetAvatarFile") && $("assetAvatarFile").files ? $("assetAvatarFile").files[0] : null;
+      const selectedFile = selectedFilesForInput("assetAvatarFile")[0] || null;
       const file = selectedFile || state.assetAvatarPrefillFile;
       if (!file) return toast("请选择素材文件");
       const title = (($("assetAvatarName") && $("assetAvatarName").value) || file.name || "未命名形象").trim();
@@ -8891,7 +9341,7 @@
       const sourceType = (($("assetAvatarSourceType") && $("assetAvatarSourceType").value) || "image").trim();
       const sourceError = avatarCloneFileError(file, sourceType, version);
       if (sourceError) return toast(sourceError);
-      const authFile = $("assetAvatarAuthFile") && $("assetAvatarAuthFile").files ? $("assetAvatarAuthFile").files[0] : null;
+      const authFile = selectedFilesForInput("assetAvatarAuthFile")[0] || null;
       const authText = (($("assetAvatarAuthText") && $("assetAvatarAuthText").value) || "").trim();
       if (version === "v2") {
         const authError = avatarCloneFileError(authFile, "auth", version);
@@ -11648,11 +12098,11 @@
     }
 
     function recorderStatusLabel(status) {
-      return ({ processing: "正在转写和总结", completed: "已完成", failed: "处理失败" })[status] || status || "等待处理";
+      return ({ processing: "秘书正在整理", completed: "已整理", failed: "整理失败" })[status] || status || "等待整理";
     }
 
     function setRecorderSubtab(tab) {
-      const value = ["local", "memory", "device", "records"].includes(tab) ? tab : "local";
+      const value = ["records", "local", "memory", "device"].includes(tab) ? tab : "records";
       state.recorderSubtab = value;
       document.querySelectorAll("[data-recorder-tab]").forEach((button) => button.classList.toggle("active", button.dataset.recorderTab === value));
       document.querySelectorAll("[data-recorder-panel]").forEach((panel) => {
@@ -12028,6 +12478,9 @@
       const host = $("recorderServerFiles");
       if (!host) return;
       const rows = state.recorderRecords || [];
+      if ($("recorderOverviewTotal")) $("recorderOverviewTotal").textContent = String(state.recorderTotal || 0);
+      if ($("recorderOverviewCompleted")) $("recorderOverviewCompleted").textContent = String(rows.filter((row) => row.status === "completed").length);
+      if ($("recorderOverviewPending")) $("recorderOverviewPending").textContent = String(rows.filter((row) => row.status === "processing").length);
       host.innerHTML = rows.length ? rows.map((row) => `
         <div class="recorder-item">
           <div class="recorder-item-main">
@@ -12054,7 +12507,11 @@
       const data = await api(`/api/h5/recorder/files?page=${state.recorderPage}&page_size=${state.recorderPageSize}`);
       state.recorderPage = Number(data.page || 1);
       state.recorderTotal = Number(data.total || 0);
-      state.recorderRecords = Array.isArray(data.items) ? data.items : [];
+      state.recorderRecords = (Array.isArray(data.items) ? data.items : []).slice().sort((left, right) => {
+        const leftTime = Date.parse(left.recorded_at || left.created_at || left.updated_at || "") || 0;
+        const rightTime = Date.parse(right.recorded_at || right.created_at || right.updated_at || "") || 0;
+        return rightTime - leftTime || Number(right.id || 0) - Number(left.id || 0);
+      });
       if (state.recorderPage === 1) state.recorderSyncedFiles = state.recorderRecords.filter((row) => (row.source_type || "device") === "device");
       renderRecorderRecords();
       renderRecorderDeviceFiles();
@@ -12108,8 +12565,8 @@
       }
       renderRecorderDeviceFiles();
       renderRecorderLocalFiles();
-      setRecorderSubtab(state.recorderSubtab || "local");
-      loadRecorderRecords().catch((err) => toast(String(err.message || "录音记录加载失败") === "Not Found" ? "录音服务暂不可用，请稍后刷新" : (err.message || "录音记录加载失败")));
+      setRecorderSubtab(state.recorderSubtab || "records");
+      loadRecorderRecords().catch((err) => toast(String(err.message || "秘书记录加载失败") === "Not Found" ? "AI秘书暂不可用，请稍后刷新" : (err.message || "秘书记录加载失败")));
       loadRecorderKnownNames().catch(() => {});
     }
 
@@ -12299,8 +12756,8 @@
         messages: ["AI 调度助手", "用文字或语音安排工作"],
         voice: ["龙虾AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
-        recorder: ["音频转写", "本地音频、记忆文件和录音设备"],
-        recorderDetail: ["转写结果", "摘要、重点事项和完整转写"],
+        recorder: ["AI秘书", "整理录音、提炼重点、跟进待办"],
+        recorderDetail: ["秘书记录", "摘要、待办和完整转写"],
         personalMemoryDetail: ["记忆文件", "查看完整内容"],
         mountedAccounts: ["平台账号", ""],
         personalSettings: ["IP人设定位", "模板、关键词、同行账号和记忆文件"],
@@ -12353,7 +12810,10 @@
         renderProfileDeviceSelect();
         refreshMountedAccounts().catch(() => {});
       }
-      if (key === "recorder") loadRecorderPage();
+      if (key === "recorder") {
+        state.recorderSubtab = "records";
+        loadRecorderPage();
+      }
       if (key === "personalSettings" && !state.personalSettingsBackTab) state.personalSettingsBackTab = "profile";
       if (key === "agentManage") {
         renderAgentManage();
@@ -12856,6 +13316,7 @@
 
     function syncActiveVoiceDisplay(target = state.voiceCaptureTarget) {
       if (target === "composer") renderComposerVoiceFeedback();
+      else if (target === "field") syncFieldVoiceDisplay();
       else syncVoiceDraftDisplay();
     }
 
@@ -12869,6 +13330,179 @@
         return;
       }
       await submitChatMessage(transcript, { source: "voice" });
+    }
+
+    function fieldVoiceShell(field = state.voiceFieldTarget) {
+      return field?.closest?.(".voice-fill-shell") || null;
+    }
+
+    function syncFieldVoiceDisplay() {
+      document.querySelectorAll(".voice-fill-shell").forEach((shell) => {
+        const active = shell === fieldVoiceShell() && state.voiceCaptureTarget === "field"
+          && (state.voiceRecording || state.voiceStatus === "requesting" || state.voiceStatus === "recognizing");
+        const button = shell.querySelector("[data-voice-fill-button]");
+        const feedback = shell.querySelector(".voice-fill-feedback");
+        const cancelling = active && state.voiceFieldCancelled;
+        shell.classList.toggle("is-voice-active", active);
+        shell.classList.toggle("is-voice-cancelling", cancelling);
+        button?.classList.toggle("is-recording", active && state.voiceRecording && !cancelling);
+        button?.classList.toggle("is-cancelling", cancelling);
+        button?.setAttribute("aria-pressed", active ? "true" : "false");
+        if (!feedback) return;
+        feedback.classList.toggle("hidden", !active);
+        feedback.textContent = cancelling
+          ? "松开取消"
+          : (state.voiceStatus === "requesting"
+            ? "正在请求麦克风..."
+            : (state.voiceStatus === "recognizing"
+              ? (String(state.voicePartial || "").trim() || "正在识别并填入...")
+              : "松开识别 · 上滑取消"));
+      });
+    }
+
+    function releaseFieldVoicePointer() {
+      const pointerId = state.voiceFieldPointerId;
+      const button = fieldVoiceShell()?.querySelector("[data-voice-fill-button]");
+      state.voiceFieldPointerId = null;
+      if (pointerId === null) return;
+      try { button?.releasePointerCapture?.(pointerId); } catch {}
+    }
+
+    function resetFieldVoiceCapture(status = "idle") {
+      releaseFieldVoicePointer();
+      state.voiceRecording = false;
+      state.voiceStatus = status;
+      state.voiceFieldCancelled = status === "cancelled";
+      state.voiceSessionNonce += 1;
+      if (state.voiceTimer) clearTimeout(state.voiceTimer);
+      state.voiceTimer = null;
+      cleanupVoiceRuntime();
+      document.querySelectorAll(".voice-fill-shell").forEach((shell) => {
+        shell.classList.remove("is-voice-active", "is-voice-cancelling");
+        const button = shell.querySelector("[data-voice-fill-button]");
+        button?.classList.remove("is-recording", "is-cancelling");
+        button?.setAttribute("aria-pressed", "false");
+        shell.querySelector(".voice-fill-feedback")?.classList.add("hidden");
+      });
+      state.voiceFieldTarget = null;
+      state.voiceFieldSelectionStart = 0;
+      state.voiceFieldSelectionEnd = 0;
+      state.voiceFieldStartedAt = 0;
+      state.voiceDraft = "";
+      state.voicePartial = "";
+    }
+
+    function fillVoiceTranscriptIntoField(field, transcript) {
+      if (!field?.isConnected) return false;
+      const text = String(transcript || "").trim();
+      if (!text) return false;
+      const value = String(field.value || "");
+      const start = Math.max(0, Math.min(value.length, Number(state.voiceFieldSelectionStart || 0)));
+      const end = Math.max(start, Math.min(value.length, Number(state.voiceFieldSelectionEnd || start)));
+      let nextValue;
+      let caret;
+      if (start === end && start === value.length && value.trim()) {
+        const prefix = value.endsWith("\n") ? value : `${value}\n`;
+        nextValue = `${prefix}${text}`;
+        caret = nextValue.length;
+      } else {
+        nextValue = `${value.slice(0, start)}${text}${value.slice(end)}`;
+        caret = start + text.length;
+      }
+      const maxLength = Number(field.maxLength || -1);
+      if (maxLength > 0) nextValue = nextValue.slice(0, maxLength);
+      field.value = nextValue;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+      try {
+        field.focus({ preventScroll: true });
+        field.setSelectionRange(Math.min(caret, nextValue.length), Math.min(caret, nextValue.length));
+      } catch {}
+      return true;
+    }
+
+    function finishFieldVoiceRecognition(text) {
+      const field = state.voiceFieldTarget;
+      const transcript = String(text || "").trim();
+      const cancelled = state.voiceFieldCancelled;
+      if (!cancelled && transcript) fillVoiceTranscriptIntoField(field, transcript);
+      resetFieldVoiceCapture(cancelled ? "cancelled" : "resolved");
+      if (!cancelled && !transcript) toast("没有识别到语音，请按住后再说一次");
+    }
+
+    async function startFieldVoiceCapture(evt, field, button) {
+      if (!evt || !field || (evt.pointerType === "mouse" && evt.button !== 0)) return;
+      if (evt.cancelable) evt.preventDefault();
+      evt.stopPropagation();
+      if (state.voiceRecording || state.composerVoicePendingSend || state.voiceFieldPointerId !== null) return;
+      state.voiceFieldTarget = field;
+      state.voiceFieldSelectionStart = Number.isFinite(field.selectionStart) ? field.selectionStart : String(field.value || "").length;
+      state.voiceFieldSelectionEnd = Number.isFinite(field.selectionEnd) ? field.selectionEnd : state.voiceFieldSelectionStart;
+      state.voiceFieldPointerId = evt.pointerId;
+      state.voiceFieldStartY = Number(evt.clientY || 0);
+      state.voiceFieldStartedAt = Date.now();
+      state.voiceFieldCancelled = false;
+      state.voiceStatus = "requesting";
+      try { button?.setPointerCapture?.(evt.pointerId); } catch {}
+      syncFieldVoiceDisplay();
+      const opened = await startVoiceCapture(evt, "field");
+      if (!opened && state.voiceFieldTarget === field) resetFieldVoiceCapture("error");
+    }
+
+    function moveFieldVoiceCapture(evt) {
+      if (state.voiceFieldPointerId === null || evt.pointerId !== state.voiceFieldPointerId) return;
+      if (evt.cancelable) evt.preventDefault();
+      state.voiceFieldCancelled = state.voiceFieldStartY - Number(evt.clientY || 0) >= 58;
+      syncFieldVoiceDisplay();
+    }
+
+    function finishFieldVoiceCapture(evt, forceCancel = false) {
+      if (state.voiceFieldPointerId === null || (evt && evt.pointerId !== state.voiceFieldPointerId)) return;
+      if (evt?.cancelable) evt.preventDefault();
+      const elapsedMs = Math.max(0, Date.now() - Number(state.voiceFieldStartedAt || Date.now()));
+      releaseFieldVoicePointer();
+      if (forceCancel || state.voiceFieldCancelled) {
+        resetFieldVoiceCapture("cancelled");
+        return;
+      }
+      if (elapsedMs < 350) {
+        resetFieldVoiceCapture("cancelled");
+        toast("请按住说话，松开后识别填入");
+        return;
+      }
+      stopVoiceCapture(evt);
+      syncFieldVoiceDisplay();
+    }
+
+    function voiceFillFieldEligible(field) {
+      if (!field || field.disabled || field.readOnly || field.classList.contains("hidden")) return false;
+      if (field.matches("#messageInput, #personalMemoryReviewText, [data-chat-queue-edit-input], [data-personal-generated-text], [data-voice-disabled]")) return false;
+      return field.matches("textarea, input[data-voice-input]");
+    }
+
+    function decorateVoiceFillFields(root = document) {
+      const fields = [];
+      if (root.matches?.("textarea, input[data-voice-input]")) fields.push(root);
+      root.querySelectorAll?.("textarea, input[data-voice-input]").forEach((field) => fields.push(field));
+      fields.forEach((field) => {
+        if (!voiceFillFieldEligible(field) || field.closest(".voice-fill-shell")) return;
+        const shell = document.createElement("div");
+        shell.className = "voice-fill-shell";
+        field.parentNode?.insertBefore(shell, field);
+        shell.appendChild(field);
+        const button = document.createElement("button");
+        button.className = "voice-fill-btn";
+        button.type = "button";
+        button.dataset.voiceFillButton = "1";
+        button.title = "按住说话，松开后填入";
+        button.setAttribute("aria-label", "按住录音填入当前输入框");
+        button.setAttribute("aria-pressed", "false");
+        button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3M8 22h8"></path></svg>';
+        const feedback = document.createElement("span");
+        feedback.className = "voice-fill-feedback hidden";
+        feedback.textContent = "松开识别 · 上滑取消";
+        shell.append(button, feedback);
+      });
     }
 
     function microphonePermissionMessage(error) {
@@ -12914,7 +13548,7 @@
       }
       state.voiceMediaStream = stream;
 
-      const ws = new WebSocket(voiceWsUrl(target !== "composer"));
+      const ws = new WebSocket(voiceWsUrl(target === "voice"));
       ws.binaryType = "arraybuffer";
       await new Promise((resolve, reject) => {
         let settled = false;
@@ -12963,6 +13597,11 @@
               finishComposerVoiceRecognition(state.voiceDraft).catch((err) => toast(err.message || "发送失败"));
               return;
             }
+            if (target === "field") {
+              state.voiceStatus = "resolved";
+              finishFieldVoiceRecognition(state.voiceDraft);
+              return;
+            }
             state.voiceStatus = "understanding";
             state.voiceExpanded = false;
             resetVoiceIntent();
@@ -12970,7 +13609,7 @@
             return;
           }
           if (type === "intent") {
-            if (target === "composer") return;
+            if (target !== "voice") return;
             state.voiceStatus = "resolved";
             state.voiceIntent = payload;
             state.voiceActions = Array.isArray(payload.actions) ? payload.actions : [];
@@ -12983,6 +13622,8 @@
             const message = String(payload.message || "语音识别失败");
             if (target === "composer") {
               resetComposerVoiceCapture({ status: "error", clearTranscript: true });
+            } else if (target === "field") {
+              resetFieldVoiceCapture("error");
             } else {
               state.voiceRecording = false;
               state.voiceStatus = "error";
@@ -13001,6 +13642,9 @@
         if (target === "composer" && (state.voiceRecording || state.composerVoicePendingSend)) {
           resetComposerVoiceCapture({ status: "error", clearTranscript: true });
           toast("语音识别连接已中断，请重试");
+        } else if (target === "field" && state.voiceFieldTarget) {
+          resetFieldVoiceCapture("error");
+          toast("语音识别连接已中断，请重试");
         } else if (target !== "composer" && state.voiceRecording) {
           state.voiceRecording = false;
           state.voiceStatus = "error";
@@ -13012,6 +13656,9 @@
         if (sessionNonce !== state.voiceSessionNonce) return;
         if (target === "composer") {
           resetComposerVoiceCapture({ status: "error", clearTranscript: true });
+          toast("语音识别连接异常，请重试");
+        } else if (target === "field") {
+          resetFieldVoiceCapture("error");
           toast("语音识别连接异常，请重试");
         }
       };
@@ -13066,6 +13713,8 @@
         if (sessionNonce !== state.voiceSessionNonce) return false;
         if (target === "composer") {
           resetComposerVoiceCapture({ status: "error", clearTranscript: true });
+        } else if (target === "field") {
+          resetFieldVoiceCapture("error");
         } else {
           state.voiceRecording = false;
           state.voiceStatus = "error";
@@ -13091,6 +13740,12 @@
         if (state.voiceCaptureTarget === "composer" && state.composerVoicePendingSend) {
           const hasPartial = !!String(state.voiceDraft || state.voicePartial || "").trim();
           resetComposerVoiceCapture({ status: "idle", clearTranscript: true });
+          toast(hasPartial ? "语音识别超时，请重试" : "没有识别到语音，请按住后再说一次");
+          return;
+        }
+        if (state.voiceCaptureTarget === "field" && state.voiceFieldTarget) {
+          const hasPartial = !!String(state.voiceDraft || state.voicePartial || "").trim();
+          resetFieldVoiceCapture("error");
           toast(hasPartial ? "语音识别超时，请重试" : "没有识别到语音，请按住后再说一次");
           return;
         }
@@ -14257,7 +14912,7 @@
     }
 
     function taskTextareaHtml(id, placeholder) {
-      return `<textarea id="${escapeHtml(id)}" rows="3" placeholder="${escapeHtml(placeholder || "")}"></textarea>`;
+      return `<textarea id="${escapeHtml(id)}" data-voice-input rows="3" placeholder="${escapeHtml(placeholder || "")}"></textarea>`;
     }
 
     function videoMemorySelectControl(id) {
@@ -21687,6 +22342,7 @@
       const button = event.target.closest("[data-recorder-tab]");
       if (button) setRecorderSubtab(button.dataset.recorderTab);
     });
+    $("recorderNewBriefBtn")?.addEventListener("click", () => setRecorderSubtab("local"));
     $("recorderLocalFileInput")?.addEventListener("change", (event) => {
       const input = event.currentTarget;
       addRecorderLocalFiles(Array.from(input && input.files || []));
@@ -22205,6 +22861,7 @@
     $("assetUploadBackdrop")?.addEventListener("click", closeAssetUploadModal);
     $("assetUploadClose")?.addEventListener("click", closeAssetUploadModal);
     $("assetUploadCancel")?.addEventListener("click", closeAssetUploadModal);
+    $("assetLibraryUploadInput")?.addEventListener("change", () => syncNativeInputFiles("assetLibraryUploadInput", true));
     $("assetUploadForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
       uploadAssetLibraryFiles($("assetLibraryUploadBtn")).catch((err) => toast(err.message || "上传失败"));
@@ -22213,8 +22870,30 @@
     $("assetAvatarClose")?.addEventListener("click", closeAssetAvatarModal);
     $("assetAvatarCancel")?.addEventListener("click", closeAssetAvatarModal);
     $("assetAvatarVersion")?.addEventListener("change", syncAssetAvatarForm);
-    $("assetAvatarSourceType")?.addEventListener("change", syncAssetAvatarForm);
+    $("assetAvatarSourceType")?.addEventListener("change", () => {
+      clearCapturedFilesForInput("assetAvatarFile", true);
+      if ($("assetAvatarStatus")) $("assetAvatarStatus").textContent = "";
+      syncAssetAvatarForm();
+    });
+    $("assetAvatarFile")?.addEventListener("change", () => syncNativeInputFiles("assetAvatarFile"));
+    $("assetAvatarAuthFile")?.addEventListener("change", () => syncNativeInputFiles("assetAvatarAuthFile"));
     $("assetAvatarForm")?.addEventListener("submit", (evt) => submitAssetAvatarForm(evt).catch((err) => toast(err.message || "提交失败")));
+    document.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-camera-target]");
+      if (!button) return;
+      openCameraCapture(button).catch((err) => toast(err.message || "摄像头打开失败"));
+    });
+    $("cameraCaptureBackdrop")?.addEventListener("click", closeCameraCaptureModal);
+    $("cameraCaptureClose")?.addEventListener("click", closeCameraCaptureModal);
+    $("cameraCaptureDone")?.addEventListener("click", closeCameraCaptureModal);
+    $("cameraCaptureRetake")?.addEventListener("click", () => retakeCameraCapture().catch((err) => toast(err.message || "重新拍摄失败")));
+    $("cameraCaptureShutter")?.addEventListener("click", () => handleCameraShutter().catch((err) => toast(err.message || "拍摄失败")));
+    $("cameraFacingSwitch")?.addEventListener("click", () => switchCameraFacingMode().catch((err) => toast(err.message || "摄像头切换失败")));
+    $("cameraModeSwitch")?.addEventListener("click", (evt) => {
+      const button = evt.target.closest("[data-camera-select-mode]");
+      if (!button) return;
+      setCameraMode(button.dataset.cameraSelectMode).catch((err) => toast(err.message || "拍摄模式切换失败"));
+    });
     $("assetVoiceBackdrop")?.addEventListener("click", closeAssetVoiceModal);
     $("assetVoiceClose")?.addEventListener("click", closeAssetVoiceModal);
     $("assetVoiceCancel")?.addEventListener("click", closeAssetVoiceModal);
@@ -23635,31 +24314,54 @@
       cancelComposerVoiceCapture();
       toast("已取消语音输入");
     });
+    decorateVoiceFillFields(document);
+    const voiceFillObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) decorateVoiceFillFields(node);
+      }));
+    });
+    voiceFillObserver.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener("pointerdown", (evt) => {
+      const button = evt.target.closest("[data-voice-fill-button]");
+      if (!button) return;
+      const field = button.closest(".voice-fill-shell")?.querySelector("textarea, input[data-voice-input]");
+      startFieldVoiceCapture(evt, field, button).catch((err) => {
+        resetFieldVoiceCapture("error");
+        toast(err.message || "无法启动语音识别");
+      });
+    });
     document.addEventListener("pointermove", (evt) => {
       if (state.voiceCaptureTarget === "composer") moveComposerVoiceCapture(evt);
+      else if (state.voiceCaptureTarget === "field") moveFieldVoiceCapture(evt);
     }, { passive: false });
     document.addEventListener("pointerup", (evt) => {
       if (state.voiceCaptureTarget === "composer") finishComposerVoiceCapture(evt, false);
+      else if (state.voiceCaptureTarget === "field") finishFieldVoiceCapture(evt, false);
     });
     document.addEventListener("pointercancel", (evt) => {
       if (state.voiceCaptureTarget === "composer") finishComposerVoiceCapture(evt, true);
+      else if (state.voiceCaptureTarget === "field") finishFieldVoiceCapture(evt, true);
     });
     window.addEventListener("pagehide", () => {
       if (state.voiceCaptureTarget === "composer") cancelComposerVoiceCapture();
+      else if (state.voiceCaptureTarget === "field" && state.voiceFieldTarget) resetFieldVoiceCapture("cancelled");
       else if (state.voiceRecording) {
         state.voiceRecording = false;
         cleanupVoiceRuntime();
       }
       if (state.assetVoiceIsRecording || state.assetVoiceRecordPending) stopAssetVoiceRecording(false);
+      if (!$("cameraCaptureModal")?.classList.contains("hidden")) closeCameraCaptureModal();
     });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) return;
       if (state.voiceCaptureTarget === "composer") cancelComposerVoiceCapture();
+      else if (state.voiceCaptureTarget === "field" && state.voiceFieldTarget) resetFieldVoiceCapture("cancelled");
       else if (state.voiceRecording) {
         state.voiceRecording = false;
         cleanupVoiceRuntime();
       }
       if (state.assetVoiceIsRecording || state.assetVoiceRecordPending) stopAssetVoiceRecording(false);
+      if (!$("cameraCaptureModal")?.classList.contains("hidden")) closeCameraCaptureModal();
     });
     $("voiceMicBtn")?.addEventListener("mousedown", startVoiceCapture);
     $("voiceMicBtn")?.addEventListener("touchstart", startVoiceCapture, { passive: false });
@@ -23682,13 +24384,13 @@
       });
     }, { passive: false });
     window.addEventListener("mouseup", (evt) => {
-      if (state.voiceCaptureTarget !== "composer") stopVoiceCapture(evt);
+      if (state.voiceCaptureTarget === "voice") stopVoiceCapture(evt);
     });
     window.addEventListener("touchend", (evt) => {
-      if (state.voiceCaptureTarget !== "composer") stopVoiceCapture(evt);
+      if (state.voiceCaptureTarget === "voice") stopVoiceCapture(evt);
     });
     window.addEventListener("touchcancel", (evt) => {
-      if (state.voiceCaptureTarget !== "composer") stopVoiceCapture(evt);
+      if (state.voiceCaptureTarget === "voice") stopVoiceCapture(evt);
     });
     window.addEventListener("mouseup", stopOfficeVoiceCapture);
     window.addEventListener("touchend", stopOfficeVoiceCapture);

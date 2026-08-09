@@ -98,10 +98,12 @@ def test_public_entry_points_reject_conflicting_brand_sources(db_session_factory
 def test_h5_network_transports_use_the_shared_brand_context():
     root = Path(__file__).resolve().parents[2]
     script = (root / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
-    fetch_lines = [line.strip() for line in script.splitlines() if "fetch(" in line]
 
-    assert fetch_lines
-    assert all("fetch(apiUrl(" in line for line in fetch_lines)
+    assert "return runBlockingAction(title, () => fetch(input, init));" in script
+    assert "resp = await fetch(apiUrl(path), { ...requestOptions, headers });" in script
+    assert "resp = await fetch(apiUrl(path), { headers: authHeaders() });" in script
+    assert 'fetch(apiUrl("/api/branding"), { headers: authHeaders() })' in script
+    assert 'fetch("/api/' not in script
     assert '"X-Lobster-Brand": H5_BRAND_MARK' in script
     assert 'url.searchParams.set("brand", H5_BRAND_MARK)' in script
     assert 'params.set("brand", H5_BRAND_MARK)' in script

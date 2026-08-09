@@ -350,7 +350,27 @@ def test_recorder_page_treats_device_as_one_of_three_audio_sources():
     assert 'data-recorder-tab="device"' in html
     assert 'id="recorderLocalFileInput"' in html
     assert 'id="recorderMemoryFiles"' in html
-    assert 'recorderSubtab: "local"' in script
+    assert 'recorderSubtab: "records"' in script
+
+
+def test_recorder_is_presented_as_ai_secretary_with_records_first():
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+
+    employee_header = html[html.index('<section class="office-section office-employee-section">'):html.index('id="employeeFloor"')]
+    assert employee_header.index('data-home-target="recorder">AI秘书') < employee_header.index('id="customEmployeeCreateBtn"')
+    assert 'class="profile-entry recorder-profile-entry"' not in html
+    assert html.index('class="active" data-recorder-tab="records"') < html.index('data-recorder-tab="local"')
+    assert 'data-recorder-panel="records"' in html
+    assert 'recorder: ["AI秘书", "整理录音、提炼重点、跟进待办"]' in script
+    assert '.sort((left, right) =>' in script
+
+
+def test_recorder_api_orders_newest_recording_first():
+    source = (ROOT / "backend" / "app" / "api" / "h5_recorder.py").read_text(encoding="utf-8")
+    assert "RecorderAudioRecord.recorded_at.desc().nullslast()" in source
+    assert "RecorderAudioRecord.created_at.desc()" in source
+    assert "RecorderAudioRecord.id.desc()" in source
 
 
 def test_local_audio_upload_reports_progress_and_can_escape_a_stall():
