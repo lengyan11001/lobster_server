@@ -90,12 +90,14 @@ def test_ios_webclip_boot_and_resume_have_recovery_controls() -> None:
     script = H5_APP.read_text(encoding="utf-8")
     style = H5_STYLE.read_text(encoding="utf-8")
 
+    assert 'background: #e5e7eb;' in html
+    assert 'revealCachedShell' not in html
     assert 'id="h5RecoveryPanel"' in html
     assert 'id="h5RecoveryReload"' in html
+    assert 'class="panel login" id="loginPanel"' in html
     assert 'var bootReloadKey = "lobster_h5_cold_boot_reloaded";' in html
     assert 'window.sessionStorage.getItem(bootReloadKey) === "1"' in html
     assert 'window.sessionStorage.setItem(bootReloadKey, "1")' in html
-    assert 'document.getElementById("appPanel")?.classList.remove("hidden")' in html
     assert 'window.__h5RecoveryGuard = { arm: arm, ready: hide, show: show };' in html
     assert 'async function recoverH5AfterResume(reason = "resume")' in script
     assert 'recoverH5AfterResume("visibility")' in script

@@ -1,10 +1,13 @@
 <!doctype html>
-<html lang="zh-CN" data-brand="__H5_BRAND_MARK__" style="--blue: __H5_PRIMARY_COLOR__; --designer-blue: __H5_PRIMARY_COLOR__;">
+<html lang="zh-CN" data-brand="__H5_BRAND_MARK__" style="--blue: __H5_PRIMARY_COLOR__; --designer-blue: __H5_PRIMARY_COLOR__; background: #e5e7eb;">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="only light" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <style>
+    html, body { margin: 0; background: #e5e7eb; }
+  </style>
   <meta id="h5AppleTitle" name="apple-mobile-web-app-title" content="__H5_BRAND_TITLE__" />
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
@@ -67,18 +70,7 @@
           show("页面加载时间较长，请刷新后重试。");
         }, 7000);
       }
-      function revealCachedShell() {
-        try {
-          var brand = String(document.documentElement.getAttribute("data-brand") || "bihuo").toLowerCase();
-          if (!/^[a-z][a-z0-9_-]{0,62}$/.test(brand)) brand = "bihuo";
-          var token = window.localStorage.getItem("lobster_h5_token:" + brand) || (brand === "bihuo" ? window.localStorage.getItem("lobster_h5_token") : "");
-          if (!token) return;
-          document.getElementById("loginPanel")?.classList.add("hidden");
-          document.getElementById("appPanel")?.classList.remove("hidden");
-        } catch (_) {}
-      }
       window.__h5RecoveryGuard = { arm: arm, ready: hide, show: show };
-      window.setTimeout(revealCachedShell, 0);
       armColdBoot();
       window.addEventListener("pageshow", function (event) {
         if (event.persisted) arm(3500, "iOS 返回页面后没有正常恢复，请刷新后继续。");
