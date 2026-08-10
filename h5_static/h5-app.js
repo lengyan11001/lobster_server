@@ -9301,6 +9301,7 @@
       if (!navigator.mediaDevices?.getUserMedia) throw new Error("当前浏览器不支持摄像头拍摄");
       const nonce = ++state.cameraSessionNonce;
       state.cameraOpening = true;
+      syncCameraCaptureUi();
       stopCameraTracks();
       if ($("cameraCaptureStatus")) $("cameraCaptureStatus").textContent = "正在打开摄像头...";
       try {
@@ -9337,7 +9338,10 @@
         const live = $("cameraLiveVideo");
         if (live) {
           live.srcObject = stream;
-          await live.play().catch(() => {});
+          // Some Android WebViews leave play() pending even though frames are
+          // already available. Do not let that keep the controls disabled.
+          const playPromise = live.play();
+          if (playPromise?.catch) playPromise.catch(() => {});
         }
         if ($("cameraCaptureStatus")) {
           $("cameraCaptureStatus").textContent = state.cameraMode === "video" ? "按下圆形按钮开始录像" : "调整画面后按下圆形按钮拍照";
@@ -9352,7 +9356,10 @@
         }
         throw new Error(cameraPermissionMessage(error));
       } finally {
-        if (nonce === state.cameraSessionNonce) state.cameraOpening = false;
+        if (nonce === state.cameraSessionNonce) {
+          state.cameraOpening = false;
+          syncCameraCaptureUi();
+        }
       }
     }
 

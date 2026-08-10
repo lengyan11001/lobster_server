@@ -44,6 +44,20 @@ def test_camera_capture_defaults_to_front_camera_and_preserves_captured_files() 
     assert 'const authFile = selectedFilesForInput("assetAvatarAuthFile")[0] || null;' in script
 
 
+def test_camera_controls_are_reenabled_after_stream_opening_finishes() -> None:
+    script = H5_APP.read_text(encoding="utf-8")
+
+    assert "state.cameraOpening = true;\n      syncCameraCaptureUi();" in script
+    assert "const playPromise = live.play();" in script
+    assert "await live.play()" not in script
+    assert (
+        "if (nonce === state.cameraSessionNonce) {\n"
+        "          state.cameraOpening = false;\n"
+        "          syncCameraCaptureUi();\n"
+        "        }"
+    ) in script
+
+
 def test_camera_video_uses_supported_mime_and_avatar_teleprompter() -> None:
     script = H5_APP.read_text(encoding="utf-8")
 
