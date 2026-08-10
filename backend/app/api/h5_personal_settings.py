@@ -65,6 +65,9 @@ _personal_source_executor = ThreadPoolExecutor(
     thread_name_prefix="personal-source",
 )
 _personal_source_gate = asyncio.Semaphore(_PERSONAL_SOURCE_IO_WORKERS)
+_MEMORY_LLM_CONCURRENCY = max(1, min(8, int(os.environ.get("MEMORY_LLM_CONCURRENCY") or "4")))
+_MEMORY_PROMPT_MAX_CHARS = max(20_000, min(200_000, int(os.environ.get("MEMORY_PROMPT_MAX_CHARS") or "100000")))
+_memory_llm_gate = asyncio.Semaphore(_MEMORY_LLM_CONCURRENCY)
 
 DOC_TYPE_LABELS: dict[str, str] = {
     "brand_product_intro": "产品介绍",
@@ -500,12 +503,13 @@ async def _call_llm(
     }
     timeout = httpx.Timeout(timeout_seconds, connect=15.0, read=timeout_seconds, write=30.0, pool=10.0)
     try:
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            resp = await client.post(
-                f"{_internal_api_base()}/api/sutui-chat/completions",
-                json=payload,
-                headers=_authorization_headers(request, installation_id),
-            )
+        async with _memory_llm_gate:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+                resp = await client.post(
+                    f"{_internal_api_base()}/api/sutui-chat/completions",
+                    json=payload,
+                    headers=_authorization_headers(request, installation_id),
+                )
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         raise HTTPException(status_code=502, detail=f"AI 理解失败：{exc}") from exc
     data: Any
@@ -1035,6 +1039,24 @@ def _limit_local(text: str, max_chars: int = 120_000) -> str:
     return text[:max_chars]
 
 
+def _balanced_memory_sections(sections: list[str], *, max_chars: int = 120_000) -> str:
+    values = [str(item or "").strip() for item in sections if str(item or "").strip()]
+    if not values:
+        return ""
+    separator = "\n\n"
+    available = max(1, int(max_chars) - len(separator) * max(0, len(values) - 1))
+    output: list[str] = []
+    for index, value in enumerate(values):
+        remaining = len(values) - index
+        quota = max(1, available // remaining)
+        if len(value) > quota:
+            notice = "\n[该部分内容过长，已截断]"
+            value = value[: max(1, quota - len(notice))].rstrip() + notice
+        output.append(value)
+        available -= len(value)
+    return separator.join(output)[:max_chars]
+
+
 def _parse_recorder_record_ids(value: str, *, limit: int = 20) -> list[int]:
     record_ids: list[int] = []
     for item in str(value or "").split(","):
@@ -1093,6 +1115,13 @@ async def _read_reference(custom_reference_file: Optional[UploadFile]) -> str:
 
 
 def _generation_prompt(source_text: str, doc_types: list[str], reference_text: str) -> str:
+    if reference_text:
+        reference_budget = min(_MEMORY_PROMPT_MAX_CHARS // 3, 40_000)
+        source_budget = _MEMORY_PROMPT_MAX_CHARS - reference_budget
+        source_text = _limit_local(source_text, source_budget)
+        reference_text = _limit_local(reference_text, reference_budget)
+    else:
+        source_text = _limit_local(source_text, _MEMORY_PROMPT_MAX_CHARS)
     labels = [DOC_TYPE_LABELS.get(key, key) for key in doc_types]
     markers = "\n".join(f"<<<{key}>>>" for key in doc_types)
     type_rules = {
@@ -1603,8 +1632,11 @@ async def complete_online_memory_generation(
     doc_types = [key for key in command.get("doc_types") or [] if key in DOC_TYPE_LABELS][:4]
     if not doc_types:
         raise HTTPException(status_code=400, detail="没有可生成的记忆类型")
-    source_text = _limit_local("\n\n".join([str(command.get("direct_text") or "").strip(), *source_parts]))
-    reference_text = _limit_local("\n\n".join(reference_parts))
+    source_text = _balanced_memory_sections(
+        [str(command.get("direct_text") or "").strip(), *source_parts],
+        max_chars=120_000,
+    )
+    reference_text = _balanced_memory_sections(reference_parts, max_chars=120_000)
     prompt = _generation_prompt(source_text, doc_types, reference_text)
     db.commit()
     answer = await _call_llm(
@@ -1704,8 +1736,8 @@ async def generate_memory_documents(
             reference_doc_ids=reference_doc_ids,
         )
 
-    reference_text = await _read_reference(custom_reference_file)
     db.commit()
+    reference_text = await _read_reference(custom_reference_file)
     file_results: list[dict[str, str]] = []
     source_text, visual_blocks, source_images = await _collect_sources(
         request,
@@ -1750,6 +1782,9 @@ async def generate_memory_documents(
                 + "\n\n".join(f"【参考记忆：{row.title}】\n{row.content_text}" for row in rows),
             )
 
+    # Keep slow model generation outside the request transaction so one large
+    # memory document cannot occupy a database pool slot for several minutes.
+    db.commit()
     prompt = _generation_prompt(source_text, selected_doc_types, reference_text)
     content: Any = [{"type": "text", "text": prompt}]
     content.extend(visual_blocks)

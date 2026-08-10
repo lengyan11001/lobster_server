@@ -716,6 +716,72 @@ def test_memory_generation_upload_queues_all_sources_for_online(db_session, test
     assert command["doc_types"] == ["brand_product_intro"]
 
 
+def test_direct_memory_generation_releases_db_before_slow_io_and_llm(db_session, test_user, monkeypatch):
+    from backend.app.api import h5_personal_settings
+    from backend.app.models import OpenClawMemoryDocument
+
+    installation_id = "memory-direct-release"
+    reference = OpenClawMemoryDocument(
+        doc_id="memory-reference-release",
+        target_user_id=test_user.id,
+        installation_id=installation_id,
+        origin="h5",
+        uploader_user_id=test_user.id,
+        uploader_role="user",
+        title="参考资料",
+        filename="reference.md",
+        content_text="参考结构",
+        status="active",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(reference)
+    db_session.commit()
+
+    async def fake_read_reference(_upload):
+        assert not db_session.in_transaction()
+        return ""
+
+    async def fake_collect_sources(*_args, **_kwargs):
+        assert not db_session.in_transaction()
+        return "企业原始资料", [], []
+
+    async def fake_describe(*_args, **_kwargs):
+        assert not db_session.in_transaction()
+        return "企业原始资料"
+
+    async def fake_llm(_request, received_installation_id, _messages, **_kwargs):
+        assert received_installation_id == installation_id
+        assert not db_session.in_transaction()
+        return "<<<brand_product_intro>>>\n整理后的企业资料"
+
+    monkeypatch.setattr(h5_personal_settings, "_read_reference", fake_read_reference)
+    monkeypatch.setattr(h5_personal_settings, "_collect_sources", fake_collect_sources)
+    monkeypatch.setattr(h5_personal_settings, "_describe_visual_sources", fake_describe)
+    monkeypatch.setattr(h5_personal_settings, "_call_llm", fake_llm)
+
+    result = asyncio.run(
+        h5_personal_settings.generate_memory_documents(
+            request=_request_with_installation(installation_id),
+            files=[],
+            urls="",
+            direct_intro="企业原始资料",
+            direct_faq="",
+            direct_scripts="",
+            doc_type="brand_product_intro",
+            doc_types='["brand_product_intro"]',
+            custom_reference_file=None,
+            reference_doc_ids=reference.doc_id,
+            source_doc_ids="",
+            recorder_record_ids="",
+            current_user=test_user,
+            db=db_session,
+        )
+    )
+
+    assert result["documents"] == {"brand_product_intro": "整理后的企业资料"}
+
+
 def test_memory_generation_upload_cleans_tos_when_dispatch_persistence_fails(
     db_session,
     test_user,

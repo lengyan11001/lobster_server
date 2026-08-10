@@ -63,6 +63,7 @@ router = APIRouter()
 _TASK_KINDS = {"openclaw_message", "chat_message", "capability", "ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript", "douyin_leads", "client_workflow"}
 _SERVER_SIDE_TASK_KINDS = {"ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript"}
 _SCHEDULE_TYPES = {"once", "interval", "daily_times"}
+_RECURRING_SCHEDULE_TYPES = {"interval", "daily_times"}
 _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _MAX_TARGET_DEVICES = 20
 _VIDEO_EXTS = (".mp4", ".webm", ".mov", ".m4v", ".avi")
@@ -1993,9 +1994,7 @@ def _client_processing_run_is_stale(row: ScheduledTaskRun, now: datetime) -> boo
     return last_activity < now - timedelta(minutes=timeout_minutes)
 
 
-def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Optional[str], now: datetime) -> ScheduledTaskRun:
-    run_id = uuid.uuid4().hex
-    message_id = f"task_{run_id}"[:64]
+def _run_payload_for_task(db: Session, task: ScheduledTask, now: datetime) -> Dict[str, Any]:
     run_payload = task.payload or {}
     if task.task_kind == "linkedin_mining":
         run_payload = _enrich_linkedin_mining_keywords(
@@ -2021,6 +2020,92 @@ def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Op
             task=task,
             payload=run_payload,
         )
+    return run_payload
+
+
+def _pending_run_for_recurring_target(
+    db: Session,
+    task: ScheduledTask,
+    installation_id: Optional[str],
+) -> Optional[ScheduledTaskRun]:
+    if task.schedule_type not in _RECURRING_SCHEDULE_TYPES or _is_server_side_task(task):
+        return None
+    query = db.query(ScheduledTaskRun).filter(
+        ScheduledTaskRun.task_id == task.id,
+        ScheduledTaskRun.user_id == task.user_id,
+        ScheduledTaskRun.status == "pending",
+    )
+    if installation_id:
+        query = query.filter(ScheduledTaskRun.installation_id == installation_id)
+    else:
+        query = query.filter(ScheduledTaskRun.installation_id.is_(None))
+    return query.order_by(ScheduledTaskRun.created_at.desc(), ScheduledTaskRun.id.desc()).first()
+
+
+def _refresh_pending_recurring_run(
+    db: Session,
+    *,
+    run: ScheduledTaskRun,
+    task: ScheduledTask,
+    installation_id: Optional[str],
+    run_payload: Dict[str, Any],
+    now: datetime,
+) -> ScheduledTaskRun:
+    progress = run.progress if isinstance(run.progress, dict) else {}
+    run.installation_id = installation_id
+    run.title = task.title
+    run.task_kind = task.task_kind
+    run.content = task.content
+    run.payload = run_payload
+    run.progress = {
+        **progress,
+        "queued_at": now.isoformat(),
+        "latest_scheduled_at": now.isoformat(),
+        "coalesced_count": int(progress.get("coalesced_count") or 0) + 1,
+    }
+    run.created_at = now
+    run.updated_at = now
+    run.error = None
+    run.finished_at = None
+    _clear_pending_empty_for_target("run", task.user_id, installation_id)
+
+    system_session = ensure_system_task_session(db, task.user_id, now=now, backfill=False)
+    system_session.last_message_at = now
+    system_session.updated_at = now
+    if run.h5_message_id:
+        message = db.query(H5ChatMessage).filter(H5ChatMessage.id == run.h5_message_id).first()
+        if message is not None:
+            message.session_id = system_session.id
+            message.installation_id = installation_id
+            message.content = f"[定时任务] {task.content or task.title}"
+            message.status = "pending"
+            message.reply_text = None
+            message.error = None
+            message.finished_at = None
+            message.created_at = now
+            message.updated_at = now
+    task.run_count = int(task.run_count or 0) + 1
+    task.last_run_at = now
+    task.last_run_id = run.id
+    task.updated_at = now
+    return run
+
+
+def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Optional[str], now: datetime) -> ScheduledTaskRun:
+    run_payload = _run_payload_for_task(db, task, now)
+    existing = _pending_run_for_recurring_target(db, task, installation_id)
+    if existing is not None:
+        return _refresh_pending_recurring_run(
+            db,
+            run=existing,
+            task=task,
+            installation_id=installation_id,
+            run_payload=run_payload,
+            now=now,
+        )
+
+    run_id = uuid.uuid4().hex
+    message_id = f"task_{run_id}"[:64]
     run = ScheduledTaskRun(
         id=run_id,
         task_id=task.id,
@@ -2084,6 +2169,119 @@ def _sync_h5_message_from_run(db: Session, run: ScheduledTaskRun, now: Optional[
                 _add_h5_event(db, message.id, run.user_id, "final", {"reply_text": run.result_text or "任务已完成"})
             else:
                 _add_h5_event(db, message.id, run.user_id, "error", {"error": run.error or "任务未完成"})
+
+
+def _recurring_pending_max_age_seconds(task: ScheduledTask) -> int:
+    configured = str(os.environ.get("LOBSTER_CLIENT_RECURRING_PENDING_MAX_AGE_SECONDS") or "").strip()
+    if configured:
+        try:
+            return max(300, min(86400, int(float(configured))))
+        except (TypeError, ValueError):
+            pass
+    if task.schedule_type == "interval":
+        interval = max(60, int(task.interval_seconds or 3600))
+        return max(900, min(21600, interval * 3))
+    return 21600
+
+
+def _skip_pending_recurring_run(
+    db: Session,
+    run: ScheduledTaskRun,
+    *,
+    now: datetime,
+    reason: str,
+    message: str,
+    superseded_by_run_id: str = "",
+) -> None:
+    run.status = "cancelled"
+    run.error = message
+    run.progress = _merge_run_progress(
+        run,
+        {
+            "stage": "skipped",
+            "text": message,
+            "skip_reason": reason,
+            "skipped_at": now.isoformat(),
+            "superseded_by_run_id": superseded_by_run_id,
+        },
+    )
+    run.finished_at = now
+    run.updated_at = now
+    _sync_h5_message_from_run(db, run, now)
+    _add_h5_event(
+        db,
+        run.h5_message_id,
+        run.user_id,
+        "cancelled",
+        {"reason": reason, "superseded_by_run_id": superseded_by_run_id},
+    )
+
+
+def _coalesce_recurring_pending_runs(
+    db: Session,
+    *,
+    user_id: int,
+    installation_id: str,
+    now: datetime,
+) -> int:
+    query = (
+        db.query(ScheduledTaskRun, ScheduledTask)
+        .join(ScheduledTask, ScheduledTask.id == ScheduledTaskRun.task_id)
+        .filter(
+            ScheduledTaskRun.user_id == user_id,
+            ScheduledTaskRun.status == "pending",
+            ScheduledTask.status == "active",
+            ScheduledTask.schedule_type.in_(list(_RECURRING_SCHEDULE_TYPES)),
+            ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
+        )
+    )
+    if installation_id:
+        query = query.filter(
+            or_(
+                ScheduledTaskRun.installation_id.is_(None),
+                ScheduledTaskRun.installation_id == installation_id,
+            )
+        )
+    else:
+        query = query.filter(ScheduledTaskRun.installation_id.is_(None))
+    pairs = (
+        query.order_by(
+            ScheduledTaskRun.task_id.asc(),
+            ScheduledTaskRun.installation_id.asc(),
+            ScheduledTaskRun.created_at.desc(),
+            ScheduledTaskRun.id.desc(),
+        )
+        .limit(1000)
+        .all()
+    )
+    newest_by_target: Dict[tuple[int, str], ScheduledTaskRun] = {}
+    skipped = 0
+    for run, task in pairs:
+        key = (int(task.id), str(run.installation_id or ""))
+        newest = newest_by_target.get(key)
+        if newest is not None:
+            _skip_pending_recurring_run(
+                db,
+                run,
+                now=now,
+                reason="superseded_recurring_run",
+                message="设备离线期间的旧计划已由最新一轮替代，未重复执行。",
+                superseded_by_run_id=newest.id,
+            )
+            skipped += 1
+            continue
+        newest_by_target[key] = run
+        cutoff = now - timedelta(seconds=_recurring_pending_max_age_seconds(task))
+        if run.created_at < cutoff:
+            _skip_pending_recurring_run(
+                db,
+                run,
+                now=now,
+                reason="expired_recurring_run",
+                message="设备离线期间未执行，该计划已过有效时间并自动跳过。",
+            )
+            skipped += 1
+    return skipped
 
 
 def _run_async_blocking(coro: Any) -> Any:
@@ -3121,6 +3319,14 @@ def pending_scheduled_task_runs(
     _enqueue_due_tasks(db, current_user_id)
 
     now = datetime.utcnow()
+    skipped_pending = _coalesce_recurring_pending_runs(
+        db,
+        user_id=current_user_id,
+        installation_id=xi,
+        now=now,
+    )
+    if skipped_pending:
+        db.flush()
     stale_cutoff = now - timedelta(minutes=10)
     stale_rows = (
         db.query(ScheduledTaskRun)
@@ -3152,12 +3358,14 @@ def pending_scheduled_task_runs(
         .filter(ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)))
         .filter(or_(ScheduledTaskRun.installation_id.is_(None), ScheduledTaskRun.installation_id == xi))
         .order_by(ScheduledTaskRun.created_at.asc(), ScheduledTaskRun.id.asc())
-        .limit(limit)
+        .limit(min(200, max(20, limit * 20)))
         .all()
     )
     rows: List[ScheduledTaskRun] = []
     claimed_serial_keys: set[str] = set()
     for candidate in candidates:
+        if len(rows) >= limit:
+            break
         serial_key = _serial_client_run_key(candidate, xi)
         if _serial_client_run_is_blocked(
             db,

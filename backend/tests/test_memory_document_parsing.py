@@ -168,6 +168,22 @@ def test_document_collection_parses_outside_event_loop_thread(monkeypatch: pytes
     assert parser_thread_ids[0] != event_loop_thread_id
 
 
+def test_memory_generation_balances_multiple_large_documents() -> None:
+    sections = [
+        "【文件：first.pdf】\n" + "甲" * 500,
+        "【文件：second.pptx】\n" + "乙" * 500,
+        "【文件：third.docx】\n" + "丙" * 500,
+    ]
+
+    result = h5_personal_settings._balanced_memory_sections(sections, max_chars=300)
+
+    assert len(result) <= 300
+    assert "first.pdf" in result
+    assert "second.pptx" in result
+    assert "third.docx" in result
+    assert result.count("已截断") == 3
+
+
 def test_audio_collection_retains_reusable_audio_source(
     monkeypatch: pytest.MonkeyPatch,
     db_session,
