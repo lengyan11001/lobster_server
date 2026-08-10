@@ -12,6 +12,8 @@ import { Memory } from '@mastra/memory'
 import { PostgresStore } from '@mastra/pg'
 import { z } from 'zod'
 
+import { inspectMediaResult, type MediaAsset } from './media-task.js'
+
 type DispatchRecord = {
   message_id: string
   status: string
@@ -46,6 +48,282 @@ const maxConcurrency = Math.max(1, Math.min(12, Number(process.env.LOBSTER_MASTR
 const maxQueueDepth = Math.max(maxConcurrency, Math.min(200, Number(process.env.LOBSTER_MASTRA_MAX_QUEUE_DEPTH || 32)))
 const contextTokenLimit = Math.max(16000, Math.min(120000, Number(process.env.LOBSTER_MASTRA_CONTEXT_TOKEN_LIMIT || 48000)))
 const memoryLastMessages = Math.max(6, Math.min(20, Number(process.env.LOBSTER_MASTRA_LAST_MESSAGES || 10)))
+
+type MediaTaskSnapshot = {
+  capability_id: string
+  task_id: string
+  canonical_input: Record<string, unknown>
+  status: string
+  terminal: boolean
+  success: boolean | null
+  saved_assets: MediaAsset[]
+  error: string
+  poll_count: number
+  started_at: string
+  updated_at: string
+}
+
+type MediaTaskState = MediaTaskSnapshot & {
+  lastResult?: unknown
+}
+
+type DynamicToolExecute = (input: Record<string, unknown>, context?: unknown) => Promise<unknown>
+type MediaProgressWriter = (task: MediaTaskSnapshot, text: string) => void
+
+function mediaPollSeconds(): number {
+  const parsed = Number(process.env.LOBSTER_MASTRA_MEDIA_POLL_SECONDS || 15)
+  return Math.max(1, Math.min(60, Number.isFinite(parsed) ? parsed : 15))
+}
+
+function mediaMaxWaitSeconds(): number {
+  const parsed = Number(process.env.LOBSTER_MASTRA_MEDIA_MAX_WAIT_SECONDS || 3600)
+  return Math.max(60, Math.min(7200, Number.isFinite(parsed) ? parsed : 3600))
+}
+
+function clonedRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  try {
+    return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
+  } catch {
+    return { ...(value as Record<string, unknown>) }
+  }
+}
+
+function mediaTaskSnapshot(task: MediaTaskState): MediaTaskSnapshot {
+  return {
+    capability_id: task.capability_id,
+    task_id: task.task_id,
+    canonical_input: clonedRecord(task.canonical_input),
+    status: task.status,
+    terminal: task.terminal,
+    success: task.success,
+    saved_assets: [...task.saved_assets],
+    error: task.error,
+    poll_count: task.poll_count,
+    started_at: task.started_at,
+    updated_at: task.updated_at,
+  }
+}
+
+function mediaTaskLabel(capabilityId: string): string {
+  return capabilityId === 'video.generate' ? '视频' : '图片'
+}
+
+function hydratedMediaTasks(body: Record<string, unknown>): Map<string, MediaTaskState> {
+  const tasks = new Map<string, MediaTaskState>()
+  const rows = Array.isArray(body.existing_media_tasks) ? body.existing_media_tasks : []
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Record<string, unknown>
+    const capabilityId = String(row.capability_id || '').trim().toLowerCase()
+    const taskId = String(row.task_id || '').trim()
+    if (!['image.generate', 'video.generate'].includes(capabilityId) || !taskId) continue
+    const success = typeof row.success === 'boolean' ? row.success : null
+    const assets = Array.isArray(row.saved_assets)
+      ? row.saved_assets.filter(item => item && typeof item === 'object') as MediaAsset[]
+      : []
+    tasks.set(capabilityId, {
+      capability_id: capabilityId,
+      task_id: taskId,
+      canonical_input: clonedRecord(row.canonical_input),
+      status: String(row.status || 'processing').trim().toLowerCase(),
+      terminal: Boolean(row.terminal),
+      success,
+      saved_assets: assets,
+      error: String(row.error || '').trim(),
+      poll_count: Math.max(0, Number(row.poll_count || 0)),
+      started_at: String(row.started_at || new Date().toISOString()),
+      updated_at: String(row.updated_at || new Date().toISOString()),
+    })
+  }
+  return tasks
+}
+
+function abortSignalFor(context: unknown): AbortSignal | undefined {
+  if (!context || typeof context !== 'object') return undefined
+  const signal = (context as Record<string, unknown>).abortSignal
+  return signal instanceof AbortSignal ? signal : undefined
+}
+
+async function waitForPoll(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw new Error('任务已取消')
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, milliseconds)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new Error('任务已取消'))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal) {
+      setTimeout(() => signal.removeEventListener('abort', onAbort), milliseconds + 10)
+    }
+  })
+}
+
+function modelResultForTask(task: MediaTaskState, deduplicated = false): Record<string, unknown> {
+  return {
+    ok: task.success === true,
+    task_id: task.task_id,
+    capability_id: task.capability_id,
+    status: task.status,
+    saved_assets: task.saved_assets,
+    error: task.error,
+    deduplicated,
+    user_hint: task.success === true
+      ? `${mediaTaskLabel(task.capability_id)}已生成，请直接使用返回素材，不要再次创建生成任务。`
+      : `${mediaTaskLabel(task.capability_id)}任务已结束，不要再次创建生成任务。`,
+  }
+}
+
+function guardMediaCapabilityTools(
+  tools: Record<string, ReturnType<typeof createTool>>,
+  body: Record<string, unknown>,
+  onProgress?: MediaProgressWriter,
+) {
+  const tasks = hydratedMediaTasks(body)
+  let invokeCapability: DynamicToolExecute | null = null
+
+  const emit = (task: MediaTaskState, text: string) => {
+    task.updated_at = new Date().toISOString()
+    onProgress?.(mediaTaskSnapshot(task), text)
+  }
+
+  const applyResult = (task: MediaTaskState, result: unknown) => {
+    const info = inspectMediaResult(result)
+    task.lastResult = result
+    task.task_id = info.taskId || task.task_id
+    task.status = info.status || task.status || 'processing'
+    task.terminal = info.terminal
+    task.success = info.success
+    task.saved_assets = info.assets
+    task.error = info.error
+  }
+
+  const pollExisting = async (task: MediaTaskState, context?: unknown): Promise<unknown> => {
+    if (!invokeCapability) throw new Error('媒体任务查询能力不可用')
+    if (task.terminal) return task.lastResult ?? modelResultForTask(task, true)
+    const signal = abortSignalFor(context)
+    const startedMs = Date.parse(task.started_at) || Date.now()
+    const deadline = Math.max(Date.now() + 60_000, startedMs + mediaMaxWaitSeconds() * 1000)
+    let queryErrors = 0
+    while (!task.terminal && Date.now() < deadline) {
+      await waitForPoll(mediaPollSeconds() * 1000, signal)
+      task.poll_count += 1
+      try {
+        const result = await invokeCapability(
+          {
+            capability_id: 'task.get_result',
+            payload: { task_id: task.task_id, capability_id: task.capability_id },
+          },
+          context,
+        )
+        queryErrors = 0
+        applyResult(task, result)
+        const waited = Math.max(1, Math.round((Date.now() - startedMs) / 1000))
+        emit(
+          task,
+          task.terminal
+            ? `${mediaTaskLabel(task.capability_id)}任务已返回最终结果`
+            : `${mediaTaskLabel(task.capability_id)}仍在生成，已等待 ${waited} 秒`,
+        )
+      } catch (error) {
+        if (signal?.aborted) throw error
+        queryErrors += 1
+        task.error = error instanceof Error ? error.message : String(error)
+        emit(task, `${mediaTaskLabel(task.capability_id)}结果查询暂时失败，正在重试（${queryErrors}）`)
+      }
+    }
+    if (!task.terminal) {
+      task.status = 'timeout'
+      task.terminal = true
+      task.success = false
+      task.error = task.error || `${mediaTaskLabel(task.capability_id)}任务等待超时`
+      emit(task, task.error)
+    }
+    return task.lastResult ?? modelResultForTask(task)
+  }
+
+  for (const tool of Object.values(tools)) {
+    const holder = tool as unknown as {
+      id?: string
+      description?: string
+      execute?: DynamicToolExecute
+    }
+    const key = String(holder.id || '').toLowerCase()
+    if (!key.endsWith('_invoke_capability') || typeof holder.execute !== 'function') continue
+    const original = holder.execute.bind(tool)
+    invokeCapability = original
+    holder.description = `${holder.description || ''}\n` +
+      '媒体生成是长任务：image.generate 或 video.generate 返回 task_id 后，本工具会自动查询到最终状态。' +
+      '同一轮同一种生成能力只会创建一次，禁止因为 processing、排队或暂时无结果而再次调用 generate。'
+    holder.execute = async (input, context) => {
+      const capabilityId = String(input.capability_id || '').trim().toLowerCase()
+      if (!['image.generate', 'video.generate'].includes(capabilityId)) {
+        return original(input, context)
+      }
+      const existing = tasks.get(capabilityId)
+      if (existing) {
+        if (!existing.terminal) await pollExisting(existing, context)
+        return existing.lastResult ?? modelResultForTask(existing, true)
+      }
+
+      const now = new Date().toISOString()
+      const task: MediaTaskState = {
+        capability_id: capabilityId,
+        task_id: '',
+        canonical_input: clonedRecord(input),
+        status: 'submitting',
+        terminal: false,
+        success: null,
+        saved_assets: [],
+        error: '',
+        poll_count: 0,
+        started_at: now,
+        updated_at: now,
+      }
+      tasks.set(capabilityId, task)
+      try {
+        const result = await original(input, context)
+        applyResult(task, result)
+        if (!task.task_id && !task.terminal) {
+          task.status = 'failed'
+          task.terminal = true
+          task.success = false
+          task.error = '上游未返回任务 ID，无法继续查询生成结果'
+        }
+        emit(
+          task,
+          task.terminal
+            ? `${mediaTaskLabel(capabilityId)}任务已返回最终结果`
+            : `${mediaTaskLabel(capabilityId)}任务已创建，正在等待生成`,
+        )
+        if (!task.terminal) await pollExisting(task, context)
+        return task.lastResult ?? modelResultForTask(task)
+      } catch (error) {
+        if (abortSignalFor(context)?.aborted) throw error
+        task.status = 'failed'
+        task.terminal = true
+        task.success = false
+        task.error = error instanceof Error ? error.message : String(error)
+        emit(task, `${mediaTaskLabel(capabilityId)}任务失败：${task.error}`)
+        return modelResultForTask(task)
+      }
+    }
+  }
+
+  return {
+    tools,
+    snapshots: () => Array.from(tasks.values()).map(mediaTaskSnapshot),
+    savedAssets: () => Array.from(tasks.values()).flatMap(task => task.saved_assets),
+    hasTasks: () => tasks.size > 0,
+    hasPending: () => Array.from(tasks.values()).some(task => !task.terminal && Boolean(task.task_id)),
+    resumeExisting: async (context?: unknown) => {
+      for (const task of tasks.values()) {
+        if (!task.terminal && task.task_id) await pollExisting(task, context)
+      }
+    },
+  }
+}
 
 function databaseUrl(): string {
   const raw = process.env.DATABASE_URL || ''
@@ -666,6 +944,17 @@ function runtimeContextFor(body: Record<string, unknown>) {
     context.push({ role: 'system', content: '以上近期问答结束。现在继续处理本轮用户请求。' })
   }
   context.push({ role: 'system', content: `执行权限：${permissionNoticeFor(body)}` })
+  const existingMediaTasks = Array.isArray(body.existing_media_tasks) ? body.existing_media_tasks : []
+  if (existingMediaTasks.length) {
+    const taskLines = existingMediaTasks.map(raw => {
+      const row = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+      return `${String(row.capability_id || '媒体任务')} task_id=${String(row.task_id || '')} status=${String(row.status || 'processing')}`
+    }).join('\n')
+    context.push({
+      role: 'system',
+      content: `本轮已经创建过以下媒体任务，绝对不能再次创建 generate 任务；系统会续查原 task_id：\n${taskLines}`,
+    })
+  }
   return context
 }
 
@@ -791,7 +1080,23 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
       const allowExecution = executionAllowed(body || {})
       if (allowExecution) mcp = mcpClientFor(body || {}, token, parentMessageId)
       const context = runtimeContextFor(body || {})
-      const mcpTools = mcp ? await mcp.listTools() : {}
+      const rawMcpTools = mcp ? await mcp.listTools() : {}
+      const mediaExecution = guardMediaCapabilityTools(rawMcpTools, body || {})
+      const mcpTools = mediaExecution.tools
+      if (mediaExecution.hasTasks()) {
+        await mediaExecution.resumeExisting({ requestContext, abortSignal: c.req.raw.signal })
+        const mediaTasks = mediaExecution.snapshots()
+        const failed = mediaTasks.find(task => task.success !== true)
+        return c.json({
+          ok: !failed,
+          reply: failed ? (failed.error || '媒体任务失败') : '媒体任务已完成。',
+          dispatches,
+          usage: null,
+          steps: toolSteps,
+          media_tasks: mediaTasks,
+          saved_assets: mediaExecution.savedAssets(),
+        })
+      }
       const result = await orchestrator.generate(chatInputFor(body || {}, message), {
         memory: { thread: threadId, resource: resourceId, options: { lastMessages: false } },
         requestContext,
@@ -813,6 +1118,8 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
         dispatches,
         usage: result.usage || null,
         steps: toolSteps,
+        media_tasks: mediaExecution.snapshots(),
+        saved_assets: mediaExecution.savedAssets(),
       })
     } catch (error) {
       const messageText = error instanceof Error ? error.message : String(error)
@@ -846,7 +1153,7 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
         let mcp: MCPClient | null = null
         let acquired = false
         const dispatches: DispatchRecord[] = []
-        const activeToolNames = new Map<string, string>()
+        const activeToolNames = new Map<string, { name: string; toolId: string }>()
         try {
           write({ type: 'thinking', text: '正在理解你的需求并检查可用能力...' })
           await acquireSlot()
@@ -854,7 +1161,32 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
           const allowExecution = executionAllowed(body)
           if (allowExecution) mcp = mcpClientFor(body, validated.token, validated.parentMessageId)
           const requestContext = requestContextFor(body, dispatches)
-          const mcpTools = mcp ? await mcp.listTools() : {}
+          const rawMcpTools = mcp ? await mcp.listTools() : {}
+          const mediaExecution = guardMediaCapabilityTools(rawMcpTools, body, (task, text) => {
+            write({
+              type: 'progress',
+              text,
+              task_id: task.task_id,
+              capability_id: task.capability_id,
+              media_task: task,
+            })
+          })
+          const mcpTools = mediaExecution.tools
+          if (mediaExecution.hasTasks()) {
+            write({ type: 'thinking', text: '正在继续查询已创建的媒体任务...' })
+            await mediaExecution.resumeExisting({ requestContext, abortSignal: c.req.raw.signal })
+            const mediaTasks = mediaExecution.snapshots()
+            const failed = mediaTasks.find(task => task.success !== true)
+            write({
+              type: 'final',
+              reply: failed ? (failed.error || '媒体任务失败') : '媒体任务已完成。',
+              dispatches,
+              usage: null,
+              media_tasks: mediaTasks,
+              saved_assets: mediaExecution.savedAssets(),
+            })
+            return
+          }
           const output = await orchestrator.stream(chatInputFor(body, validated.message), {
             memory: {
               thread: validated.threadId,
@@ -882,15 +1214,27 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
               const rawName = String(payload.toolName || '')
               const args = payload.args && typeof payload.args === 'object' ? payload.args as Record<string, unknown> : undefined
               const displayName = toolDisplayName(rawName, args)
-              if (callId) activeToolNames.set(callId, displayName)
-              write({ type: 'tool_start', name: displayName, tool_id: rawName })
+              if (callId) activeToolNames.set(callId, { name: displayName, toolId: rawName })
+              write({
+                type: 'tool_start',
+                name: displayName,
+                tool_id: rawName,
+                ...(args?.capability_id ? { capability_id: String(args.capability_id) } : {}),
+              })
               continue
             }
             if (item.type === 'tool-result') {
               const callId = String(payload.toolCallId || '')
               const rawName = String(payload.toolName || '')
-              const displayName = activeToolNames.get(callId) || toolDisplayName(rawName)
-              write({ type: 'tool_end', name: displayName })
+              const active = activeToolNames.get(callId)
+              const displayName = active?.name || toolDisplayName(rawName)
+              write({
+                type: 'tool_end',
+                name: displayName,
+                tool_id: active?.toolId || rawName,
+                media_tasks: mediaExecution.snapshots(),
+                saved_assets: mediaExecution.savedAssets(),
+              })
               continue
             }
             if (item.type === 'error') {
@@ -901,7 +1245,14 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
           }
           const reply = await output.text
           const usage = await output.usage
-          write({ type: 'final', reply: reply || '', dispatches, usage: usage || null })
+          write({
+            type: 'final',
+            reply: reply || '',
+            dispatches,
+            usage: usage || null,
+            media_tasks: mediaExecution.snapshots(),
+            saved_assets: mediaExecution.savedAssets(),
+          })
         } catch (error) {
           const messageText = error instanceof Error ? error.message : String(error)
           write({ type: 'error', error: messageText, dispatches })

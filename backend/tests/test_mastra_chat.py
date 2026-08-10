@@ -1189,3 +1189,324 @@ def test_runner_cancellation_watcher_stops_active_request(
         assert request_cancelled.is_set()
 
     asyncio.run(scenario())
+
+
+def test_media_task_success_completes_with_saved_asset(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatApproval, H5ChatEvent, H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    chat_session = _session(db_session, test_user.id, permission_mode="confirm")
+    now = datetime.utcnow()
+    parent = H5ChatMessage(
+        id="mastra-media-success",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="生成一张 16:9 图片",
+        status="processing",
+        created_at=now,
+        updated_at=now,
+    )
+    approval = H5ChatApproval(
+        id="mastra-media-success-approval",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        message_id=parent.id,
+        task="生成一张 16:9 图片",
+        execution_target="server",
+        status="executing",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([parent, approval])
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    media_task = {
+        "capability_id": "image.generate",
+        "task_id": "image-task-1",
+        "canonical_input": {
+            "capability_id": "image.generate",
+            "payload": {"image_size": "16:9", "resolution": "4K"},
+        },
+        "status": "completed",
+        "terminal": True,
+        "success": True,
+        "saved_assets": [
+            {"asset_id": "asset-1", "url": "https://cdn.test/result.jpg", "media_type": "image"}
+        ],
+    }
+    mastra_chat_runner._complete_sync(parent.id, "处理完成。", [], None, [media_task], [])
+
+    with db_session_factory() as session:
+        saved = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
+        saved_approval = session.query(H5ChatApproval).filter(H5ChatApproval.id == approval.id).one()
+        final_event = (
+            session.query(H5ChatEvent)
+            .filter(H5ChatEvent.message_id == parent.id, H5ChatEvent.event_type == "final")
+            .one()
+        )
+        assert saved.status == "completed"
+        assert saved.reply_text == "图片已生成。"
+        assert saved.error is None
+        assert saved_approval.status == "completed"
+        assert final_event.payload["saved_assets"][0]["url"] == "https://cdn.test/result.jpg"
+        assert final_event.payload["media_tasks"][0]["task_id"] == "image-task-1"
+
+
+def test_media_task_failure_fails_message_and_approval(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatApproval, H5ChatEvent, H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    chat_session = _session(db_session, test_user.id, permission_mode="confirm")
+    now = datetime.utcnow()
+    parent = H5ChatMessage(
+        id="mastra-media-failure",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="生成图片",
+        status="processing",
+        created_at=now,
+        updated_at=now,
+    )
+    approval = H5ChatApproval(
+        id="mastra-media-failure-approval",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        message_id=parent.id,
+        task="生成图片",
+        execution_target="server",
+        status="executing",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([parent, approval])
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    mastra_chat_runner._complete_sync(
+        parent.id,
+        "处理完成。",
+        [],
+        None,
+        [
+            {
+                "capability_id": "image.generate",
+                "task_id": "image-task-failed",
+                "status": "failed",
+                "terminal": True,
+                "success": False,
+                "error": "上游余额不足",
+            }
+        ],
+        [],
+    )
+
+    with db_session_factory() as session:
+        saved = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
+        saved_approval = session.query(H5ChatApproval).filter(H5ChatApproval.id == approval.id).one()
+        error_event = (
+            session.query(H5ChatEvent)
+            .filter(H5ChatEvent.message_id == parent.id, H5ChatEvent.event_type == "error")
+            .one()
+        )
+        assert saved.status == "failed"
+        assert saved.error == "上游余额不足"
+        assert saved_approval.status == "failed"
+        assert error_event.payload["error"] == "上游余额不足"
+
+
+def test_media_task_cannot_complete_without_output_url(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    parent = H5ChatMessage(
+        id="mastra-media-no-output",
+        user_id=test_user.id,
+        mode="mastra",
+        content="生成图片",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(parent)
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    mastra_chat_runner._complete_sync(
+        parent.id,
+        "处理完成。",
+        [],
+        None,
+        [
+            {
+                "capability_id": "image.generate",
+                "task_id": "image-without-output",
+                "status": "completed",
+                "terminal": True,
+                "success": True,
+                "saved_assets": [],
+            }
+        ],
+        [],
+    )
+
+    with db_session_factory() as session:
+        saved = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
+        assert saved.status == "failed"
+        assert saved.error == "图片任务已结束，但没有返回可用的成品地址"
+
+
+def test_media_task_progress_is_persisted_for_restart_resume(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatApproval, H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    chat_session = _session(db_session, test_user.id, permission_mode="confirm")
+    old = datetime.utcnow() - timedelta(hours=1)
+    parent = H5ChatMessage(
+        id="mastra-media-resume",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="生成图片",
+        status="processing",
+        claimed_by_installation_id="mastra-server",
+        claimed_at=old,
+        created_at=old,
+        updated_at=old,
+    )
+    approval = H5ChatApproval(
+        id="mastra-media-resume-approval",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        message_id=parent.id,
+        task="生成图片",
+        execution_target="server",
+        status="executing",
+        created_at=old,
+        updated_at=old,
+        decided_at=old,
+    )
+    db_session.add_all([parent, approval])
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    task = {
+        "capability_id": "image.generate",
+        "task_id": "resume-task-1",
+        "canonical_input": {
+            "capability_id": "image.generate",
+            "payload": {"image_size": "16:9", "resolution": "4K"},
+        },
+        "status": "processing",
+        "terminal": False,
+        "success": None,
+        "saved_assets": [],
+        "poll_count": 2,
+    }
+    mastra_chat_runner._append_event_sync(
+        parent.id,
+        "progress",
+        {"text": "图片仍在生成", "media_task": task},
+    )
+    with db_session_factory() as session:
+        saved_parent = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
+        saved_parent.updated_at = old
+        session.commit()
+
+    monkeypatch.setattr(mastra_chat_runner, "_stale_after_seconds", lambda: 300)
+    assert mastra_chat_runner._recover_stale_sync() == 1
+    jobs = mastra_chat_runner._claim_jobs_sync(1)
+
+    assert jobs[0].approval_granted is True
+    assert jobs[0].existing_media_tasks[0]["task_id"] == "resume-task-1"
+    assert jobs[0].existing_media_tasks[0]["canonical_input"]["payload"]["image_size"] == "16:9"
+
+
+def test_media_task_transport_failure_requeues_same_task_id(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatApproval, H5ChatEvent, H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    chat_session = _session(db_session, test_user.id, permission_mode="confirm")
+    now = datetime.utcnow()
+    parent = H5ChatMessage(
+        id="mastra-media-transport-retry",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        mode="mastra",
+        content="生成图片",
+        status="processing",
+        claimed_by_installation_id="mastra-server",
+        claimed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    approval = H5ChatApproval(
+        id="mastra-media-transport-approval",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        message_id=parent.id,
+        task="生成图片",
+        execution_target="server",
+        status="executing",
+        created_at=now,
+        updated_at=now,
+        decided_at=now,
+    )
+    db_session.add_all([parent, approval])
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+
+    result = mastra_chat_runner._requeue_media_sync(
+        parent.id,
+        [
+            {
+                "capability_id": "image.generate",
+                "task_id": "same-task-after-restart",
+                "status": "processing",
+                "terminal": False,
+                "success": None,
+            }
+        ],
+        "Mastra connection reset",
+    )
+
+    assert result == "requeued_media"
+    with db_session_factory() as session:
+        saved = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
+        saved_approval = session.query(H5ChatApproval).filter(H5ChatApproval.id == approval.id).one()
+        queued = (
+            session.query(H5ChatEvent)
+            .filter(H5ChatEvent.message_id == parent.id, H5ChatEvent.event_type == "queued")
+            .one()
+        )
+        assert saved.mode == "mastra"
+        assert saved.status == "pending"
+        assert saved.claimed_by_installation_id is None
+        assert saved_approval.status == "approved"
+        assert queued.payload["media_tasks"][0]["task_id"] == "same-task-after-restart"
+
+
+def test_mastra_media_generation_is_guarded_and_polled_to_terminal():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2] / "mastra_server" / "src" / "mastra" / "index.ts"
+    ).read_text(encoding="utf-8")
+
+    assert "const existing = tasks.get(capabilityId)" in source
+    assert "capability_id: 'task.get_result'" in source
+    assert "if (!task.terminal) await pollExisting(task, context)" in source
+    assert "mediaExecution.resumeExisting" in source
+    assert "media_tasks: mediaExecution.snapshots()" in source

@@ -15,7 +15,7 @@ import httpx
 from ..api.auth import access_token_claims, create_access_token
 from ..api.h5_chat import _add_event, _finish_mastra_parent_from_children
 from ..db import SessionLocal
-from ..models import H5ChatApproval, H5ChatMessage, H5ChatSession, User
+from ..models import H5ChatApproval, H5ChatEvent, H5ChatMessage, H5ChatSession, User
 from .brand_context import user_brand_mark
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ class MastraChatJob:
     permission_mode: str
     approval_granted: bool
     approval_id: str
+    existing_media_tasks: List[Dict[str, Any]]
     authorization: str
     recent_history: List[Dict[str, str]]
     conversation_summary: str
@@ -241,6 +242,65 @@ def _recover_stale_sync() -> int:
         db.close()
 
 
+def _normalized_media_task(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    capability_id = str(value.get("capability_id") or "").strip().lower()
+    task_id = str(value.get("task_id") or "").strip()
+    if capability_id not in {"image.generate", "video.generate"} or not task_id:
+        return None
+    return {
+        "capability_id": capability_id,
+        "task_id": task_id,
+        "canonical_input": value.get("canonical_input") if isinstance(value.get("canonical_input"), dict) else {},
+        "status": str(value.get("status") or "processing").strip().lower(),
+        "terminal": bool(value.get("terminal")),
+        "success": value.get("success") if isinstance(value.get("success"), bool) else None,
+        "saved_assets": [item for item in (value.get("saved_assets") or []) if isinstance(item, dict)][:12],
+        "error": str(value.get("error") or "").strip()[:2000],
+        "poll_count": max(0, int(value.get("poll_count") or 0)),
+        "started_at": str(value.get("started_at") or "").strip(),
+        "updated_at": str(value.get("updated_at") or "").strip(),
+    }
+
+
+def _merge_media_task(target: Dict[str, Dict[str, Any]], value: Any) -> None:
+    task = _normalized_media_task(value)
+    if task:
+        target[task["capability_id"]] = task
+
+
+def _existing_media_tasks(db, message_id: str) -> List[Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    approval = (
+        db.query(H5ChatApproval)
+        .filter(H5ChatApproval.message_id == message_id)
+        .order_by(H5ChatApproval.created_at.desc())
+        .first()
+    )
+    approval_payload = approval.payload if approval and isinstance(approval.payload, dict) else {}
+    for item in approval_payload.get("media_tasks") or []:
+        _merge_media_task(merged, item)
+    events = list(
+        reversed(
+            db.query(H5ChatEvent)
+            .filter(
+                H5ChatEvent.message_id == message_id,
+                H5ChatEvent.event_type.in_(("progress", "tool_end", "queued", "final", "error")),
+            )
+            .order_by(H5ChatEvent.id.desc())
+            .limit(500)
+            .all()
+        )
+    )
+    for event in events:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        _merge_media_task(merged, payload.get("media_task"))
+        for item in payload.get("media_tasks") or []:
+            _merge_media_task(merged, item)
+    return list(merged.values())
+
+
 def _claim_jobs_sync(
     limit: int,
     running_user_counts: Optional[Dict[int, int]] = None,
@@ -347,6 +407,7 @@ def _claim_jobs_sync(
                     permission_mode=permission_mode,
                     approval_granted=bool(approval),
                     approval_id=approval.id if approval else "",
+                    existing_media_tasks=_existing_media_tasks(db, row.id),
                     authorization=create_access_token(access_token_claims(user)),
                     recent_history=_recent_mastra_history(db, row),
                     conversation_summary=conversation_summary,
@@ -371,7 +432,28 @@ def _append_event_sync(message_id: str, event_type: str, payload: Optional[Dict[
         if row is None or row.status in _FINAL_STATUSES:
             return
         row.updated_at = datetime.utcnow()
-        _add_event(db, row, event_type, payload or {})
+        event_payload = payload or {}
+        _add_event(db, row, event_type, event_payload)
+        media_task = _normalized_media_task(event_payload.get("media_task"))
+        if media_task:
+            approval = (
+                db.query(H5ChatApproval)
+                .filter(
+                    H5ChatApproval.message_id == row.id,
+                    H5ChatApproval.status.in_(("approved", "executing")),
+                )
+                .order_by(H5ChatApproval.created_at.desc())
+                .first()
+            )
+            if approval:
+                approval_payload = dict(approval.payload or {})
+                merged: Dict[str, Dict[str, Any]] = {}
+                for item in approval_payload.get("media_tasks") or []:
+                    _merge_media_task(merged, item)
+                _merge_media_task(merged, media_task)
+                approval_payload["media_tasks"] = list(merged.values())
+                approval.payload = approval_payload
+                approval.updated_at = datetime.utcnow()
         db.commit()
     except Exception:
         db.rollback()
@@ -380,11 +462,63 @@ def _append_event_sync(message_id: str, event_type: str, payload: Optional[Dict[
         db.close()
 
 
+def _media_failure_text(media_tasks: List[Dict[str, Any]]) -> str:
+    for raw in media_tasks:
+        task = _normalized_media_task(raw)
+        if not task:
+            continue
+        label = "视频" if task["capability_id"] == "video.generate" else "图片"
+        if task.get("success") is True:
+            has_url = any(
+                str(item.get("url") or item.get("source_url") or item.get("public_url") or "").strip()
+                for item in task.get("saved_assets") or []
+                if isinstance(item, dict)
+            )
+            if not has_url:
+                return f"{label}任务已结束，但没有返回可用的成品地址"
+            continue
+        return str(task.get("error") or "").strip() or f"{label}生成失败（状态：{task.get('status') or 'unknown'}）"
+    return ""
+
+
+def _media_saved_assets(
+    media_tasks: List[Dict[str, Any]],
+    supplied: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    candidates: List[Any] = list(supplied or [])
+    for raw in media_tasks:
+        if isinstance(raw, dict):
+            candidates.extend(raw.get("saved_assets") or [])
+    for value in candidates:
+        if not isinstance(value, dict):
+            continue
+        url = str(value.get("url") or value.get("source_url") or value.get("public_url") or "").strip()
+        asset_id = str(value.get("asset_id") or "").strip()
+        if not url and not asset_id:
+            continue
+        key = f"asset:{asset_id}" if asset_id else f"url:{url}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "asset_id": asset_id,
+                "url": url,
+                "media_type": str(value.get("media_type") or value.get("type") or "").strip().lower() or "image",
+            }
+        )
+    return out[:12]
+
+
 def _complete_sync(
     message_id: str,
     reply: str,
     dispatches: List[Dict[str, Any]],
     usage: Optional[Dict[str, Any]],
+    media_tasks: Optional[List[Dict[str, Any]]] = None,
+    saved_assets: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     db = SessionLocal()
     try:
@@ -393,9 +527,42 @@ def _complete_sync(
             return
         if row.status in _FINAL_STATUSES:
             return
+        normalized_media_tasks = [
+            task for task in (_normalized_media_task(item) for item in (media_tasks or [])) if task
+        ]
+        media_error = _media_failure_text(normalized_media_tasks)
+        if media_error:
+            now = datetime.utcnow()
+            row.status = "failed"
+            row.reply_text = None
+            row.error = media_error
+            row.finished_at = now
+            row.updated_at = now
+            _add_event(
+                db,
+                row,
+                "error",
+                {"error": media_error, "media_tasks": normalized_media_tasks},
+            )
+            approvals = db.query(H5ChatApproval).filter(
+                H5ChatApproval.message_id == row.id,
+                H5ChatApproval.status == "executing",
+            ).all()
+            for approval in approvals:
+                approval.status = "failed"
+                approval.finished_at = now
+                approval.updated_at = now
+            db.commit()
+            return
         clean_reply = (reply or "").strip() or (
             "任务已下发，正在等待 Online 执行。" if dispatches else "处理完成。"
         )
+        final_assets = _media_saved_assets(normalized_media_tasks, saved_assets)
+        if normalized_media_tasks and clean_reply in {"处理完成。", "媒体任务已完成。"}:
+            kinds = {task["capability_id"] for task in normalized_media_tasks}
+            clean_reply = "视频已生成。" if kinds == {"video.generate"} else "图片已生成。"
+            if len(kinds) > 1:
+                clean_reply = "图片和视频已生成。"
         row.reply_text = clean_reply
         row.error = None
         row.updated_at = datetime.utcnow()
@@ -471,7 +638,13 @@ def _complete_sync(
                 db,
                 row,
                 "final",
-                {"reply_text": clean_reply, "dispatches": dispatches, "usage": usage or {}},
+                {
+                    "reply_text": clean_reply,
+                    "dispatches": dispatches,
+                    "usage": usage or {},
+                    "media_tasks": normalized_media_tasks,
+                    "saved_assets": final_assets,
+                },
             )
             approvals = db.query(H5ChatApproval).filter(
                 H5ChatApproval.message_id == row.id,
@@ -524,6 +697,56 @@ def _fallback_or_fail_sync(message_id: str, error: str) -> str:
         db.commit()
         logger.warning("[mastra_chat] message=%s result=%s error=%s", message_id, result, error[:500])
         return result
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _requeue_media_sync(message_id: str, media_tasks: List[Dict[str, Any]], error: str) -> str:
+    db = SessionLocal()
+    try:
+        row = db.query(H5ChatMessage).filter(H5ChatMessage.id == message_id).first()
+        if row is None or row.status in _FINAL_STATUSES:
+            return "ignored"
+        normalized = [
+            task for task in (_normalized_media_task(item) for item in media_tasks) if task
+        ]
+        if not normalized:
+            return "missing_media_task"
+        now = datetime.utcnow()
+        row.mode = "mastra"
+        row.status = "pending"
+        row.claimed_by_installation_id = None
+        row.claimed_at = None
+        row.error = None
+        row.updated_at = now
+        approvals = db.query(H5ChatApproval).filter(
+            H5ChatApproval.message_id == row.id,
+            H5ChatApproval.status == "executing",
+        ).all()
+        for approval in approvals:
+            approval.status = "approved"
+            approval.updated_at = now
+        _add_event(
+            db,
+            row,
+            "queued",
+            {
+                "text": "连接恢复后继续查询已创建的媒体任务",
+                "media_tasks": normalized,
+                "retry_reason": str(error or "").strip()[:500],
+            },
+        )
+        db.commit()
+        logger.warning(
+            "[mastra_chat] requeued existing media task message=%s tasks=%s error=%s",
+            message_id,
+            [task["task_id"] for task in normalized],
+            str(error or "")[:500],
+        )
+        return "requeued_media"
     except Exception:
         db.rollback()
         raise
@@ -615,11 +838,26 @@ async def _run_job_request(job: MastraChatJob) -> None:
         "permission_mode": job.permission_mode,
         "approval_granted": job.approval_granted,
         "approval_id": job.approval_id,
+        "existing_media_tasks": job.existing_media_tasks,
     }
     timeout = httpx.Timeout(connect=8.0, read=900.0, write=30.0, pool=8.0)
     delta_buffer = ""
     last_delta_flush = asyncio.get_running_loop().time()
     final_received = False
+    observed_media_tasks: Dict[str, Dict[str, Any]] = {
+        task["capability_id"]: task
+        for task in (_normalized_media_task(item) for item in job.existing_media_tasks)
+        if task
+    }
+
+    def remember_media_tasks(event: Dict[str, Any]) -> None:
+        task = _normalized_media_task(event.get("media_task"))
+        if task:
+            observed_media_tasks[task["capability_id"]] = task
+        for item in event.get("media_tasks") or []:
+            task = _normalized_media_task(item)
+            if task:
+                observed_media_tasks[task["capability_id"]] = task
 
     async def flush_delta() -> None:
         nonlocal delta_buffer, last_delta_flush
@@ -647,6 +885,7 @@ async def _run_job_request(job: MastraChatJob) -> None:
                         continue
                     event = json.loads(line)
                     event_type = str(event.get("type") or "").strip().lower()
+                    remember_media_tasks(event)
                     if event_type == "delta":
                         delta_buffer += str(event.get("text") or "")
                         elapsed = asyncio.get_running_loop().time() - last_delta_flush
@@ -667,6 +906,8 @@ async def _run_job_request(job: MastraChatJob) -> None:
                             str(event.get("reply") or ""),
                             list(event.get("dispatches") or []),
                             event.get("usage") if isinstance(event.get("usage"), dict) else None,
+                            list(event.get("media_tasks") or []),
+                            list(event.get("saved_assets") or []),
                         )
                         continue
                     if event_type == "error":
@@ -678,7 +919,16 @@ async def _run_job_request(job: MastraChatJob) -> None:
         raise
     except Exception as exc:
         await flush_delta()
-        await asyncio.to_thread(_fallback_or_fail_sync, job.message_id, str(exc))
+        if observed_media_tasks:
+            await asyncio.to_thread(
+                _requeue_media_sync,
+                job.message_id,
+                list(observed_media_tasks.values()),
+                str(exc),
+            )
+            await asyncio.sleep(3)
+        else:
+            await asyncio.to_thread(_fallback_or_fail_sync, job.message_id, str(exc))
 
 
 def _message_cancelled_sync(message_id: str) -> bool:
