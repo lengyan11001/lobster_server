@@ -1180,6 +1180,47 @@ def test_h5_closing_asset_preview_releases_media_resources():
     assert "body.replaceChildren();" in close_preview
 
 
+def test_h5_digital_library_loads_incrementally_without_blocking_on_training_status():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[2] / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    avatar_loader = script.split("async function loadAssetLibraryAvatars(options = {})", 1)[1].split(
+        "async function loadAssetLibraryVoices", 1
+    )[0]
+    pending_refresh = script.split("async function refreshPendingAssetLibraryAvatars", 1)[1].split(
+        "async function loadAssetLibraryAvatars", 1
+    )[0]
+
+    assert "assetLibraryDigitalPageSize: 8" in script
+    assert "append = !!options.append" in avatar_loader
+    assert "mergeDigitalLibraryRows" in avatar_loader
+    assert "refreshPendingAssetLibraryAvatars(loadedRows, page, requestId).catch" in avatar_loader
+    assert "await Promise.allSettled" not in avatar_loader
+    assert ").slice(0, 2);" in pending_refresh
+    assert "setupAssetLibraryInfiniteScroll();" in script
+    assert 'id="assetLibraryLoadState"' in (Path(__file__).resolve().parents[2] / "h5_static" / "index.html").read_text(encoding="utf-8")
+
+
+def test_h5_asset_library_releases_video_resources_and_times_out_stale_requests():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[2] / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    release_media = script.split("function releaseAssetLibraryMedia()", 1)[1].split(
+        "function cancelAssetLibraryDigitalRequest", 1
+    )[0]
+    api_source = script.split("async function api(path, options = {})", 1)[1].split(
+        "async function apiBlob", 1
+    )[0]
+
+    assert 'preload="none"' in script
+    assert 'media.removeAttribute("src");' in release_media
+    assert "media.load();" in release_media
+    assert "AbortController" in api_source
+    assert "timeoutMs" in api_source
+    assert "maxAttempts" in api_source
+    assert "cancelAssetLibraryDigitalRequest();\n        releaseAssetLibraryMedia();" in script
+
+
 def test_h5_run_list_requests_compactness_explicitly():
     from pathlib import Path
 

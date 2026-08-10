@@ -153,6 +153,10 @@
       assetLibraryLoading: false,
       assetLibraryPageCache: {},
       assetLibraryRequest: 0,
+      assetLibraryDigitalPageSize: 8,
+      assetLibraryDigitalRequest: 0,
+      assetLibraryDigitalAbortController: null,
+      assetLibraryDigitalObserver: null,
       assetLibraryAvatarPage: 1,
       assetLibraryVoicePage: 1,
       assetLibraryAvatarRows: [],
@@ -1816,6 +1820,11 @@
 
     async function api(path, options = {}) {
       const requestOptions = { ...options };
+      const requestedAttempts = Number(requestOptions.maxAttempts || 0);
+      const timeoutMs = Math.max(0, Number(requestOptions.timeoutMs || 0));
+      const externalSignal = requestOptions.signal || null;
+      delete requestOptions.maxAttempts;
+      delete requestOptions.timeoutMs;
       const headers = { ...(requestOptions.headers || {}), ...authHeaders() };
       if (requestOptions.json) {
         headers["Content-Type"] = "application/json";
@@ -1830,19 +1839,42 @@
       delete requestOptions.blocking;
       delete requestOptions.blockingTitle;
       const transientStatuses = new Set([502, 503, 504]);
-      const maxAttempts = method === "GET" ? 3 : 1;
+      const maxAttempts = requestedAttempts > 0 ? Math.max(1, Math.min(3, requestedAttempts)) : (method === "GET" ? 3 : 1);
       const release = shouldBlock ? beginBlockingAction(blockTitle) : null;
       try {
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           let resp;
+          let timeoutId = 0;
+          let timeoutController = null;
+          let externalAbortHandler = null;
           try {
-            resp = await fetch(apiUrl(path), { ...requestOptions, headers });
+            const fetchOptions = { ...requestOptions, headers };
+            if (timeoutMs > 0 && typeof AbortController !== "undefined") {
+              timeoutController = new AbortController();
+              if (externalSignal) {
+                if (externalSignal.aborted) timeoutController.abort();
+                else {
+                  externalAbortHandler = () => timeoutController.abort();
+                  externalSignal.addEventListener("abort", externalAbortHandler, { once: true });
+                }
+              }
+              fetchOptions.signal = timeoutController.signal;
+              timeoutId = window.setTimeout(() => timeoutController.abort(), timeoutMs);
+            }
+            resp = await fetch(apiUrl(path), fetchOptions);
           } catch (err) {
+            if (err && err.name === "AbortError") {
+              if (externalSignal && externalSignal.aborted) throw err;
+              if (attempt >= maxAttempts) throw new Error("请求超时，请稍后重试");
+            }
             if (attempt < maxAttempts) {
               await new Promise((resolve) => setTimeout(resolve, attempt * 700));
               continue;
             }
             throw new Error("网络连接异常，请检查网络后重试");
+          } finally {
+            if (timeoutId) window.clearTimeout(timeoutId);
+            if (externalSignal && externalAbortHandler) externalSignal.removeEventListener("abort", externalAbortHandler);
           }
           const text = await resp.text();
           let data = {};
@@ -7499,7 +7531,7 @@
       if (!url) return `<img class="asset-library-thumb" src="${designerFallbackMedia(asset, index)}" alt="" loading="lazy">`;
       const source = libraryMediaSource(url, filenameFromUrl(url, asset && asset.filename || "asset"));
       if (type === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(url)) {
-        return `<video class="asset-library-thumb" src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)} muted playsinline preload="metadata"></video>`;
+        return `<video class="asset-library-thumb" src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)} muted playsinline preload="none"></video>`;
       }
       if (type === "image" || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(url)) {
         return `<img class="asset-library-thumb" src="${escapeHtml(source.src)}"${libraryMediaFallbackAttr(source)} alt="" loading="lazy" decoding="async">`;
@@ -8474,6 +8506,43 @@
       return rows.find((row) => String(row && row.asset_id || "") === id) || null;
     }
 
+    function releaseAssetLibraryMedia() {
+      const list = $("assetLibraryList");
+      if (!list) return;
+      list.querySelectorAll("video, audio").forEach((media) => {
+        try { media.pause(); } catch (_) {}
+        try {
+          media.removeAttribute("src");
+          media.querySelectorAll("source").forEach((source) => source.removeAttribute("src"));
+          media.load();
+        } catch (_) {}
+      });
+    }
+
+    function cancelAssetLibraryDigitalRequest() {
+      state.assetLibraryDigitalRequest = Number(state.assetLibraryDigitalRequest || 0) + 1;
+      if (state.assetLibraryDigitalAbortController) {
+        try { state.assetLibraryDigitalAbortController.abort(); } catch (_) {}
+      }
+      state.assetLibraryDigitalAbortController = null;
+      state.assetLibraryDigitalLoading = false;
+    }
+
+    function mergeDigitalLibraryRows(currentRows, nextRows) {
+      const merged = [];
+      const indexes = new Map();
+      [...(currentRows || []), ...(nextRows || [])].forEach((row) => {
+        const key = `${String(row && row.source || "")}:${String(row && (row.source_record_id || row.id) || "")}`;
+        if (indexes.has(key)) {
+          merged[indexes.get(key)] = row;
+          return;
+        }
+        indexes.set(key, merged.length);
+        merged.push(row);
+      });
+      return merged;
+    }
+
     function findHiflyAsset(kind, id) {
       const rows = kind === "voice" ? state.assetLibraryVoiceRows : state.assetLibraryAvatarRows;
       return (rows || []).find((row) => String(row && row.id || "") === String(id || "")) || null;
@@ -8702,7 +8771,10 @@
       if (!list) return;
       renderAssetLibraryTabs();
       const section = state.assetLibrarySection || "uploads";
-      const pageSize = Number(state.assetLibraryPageSize || 10);
+      const digitalSection = section === "avatars" || section === "voices";
+      const pageSize = digitalSection
+        ? Number(state.assetLibraryDigitalPageSize || 8)
+        : Number(state.assetLibraryPageSize || 10);
       let page = 1;
       let total = 0;
       let rows = [];
@@ -8729,7 +8801,8 @@
       list.classList.toggle("designer-avatar-grid", section === "avatars");
       list.classList.toggle("designer-voice-list", section === "voices");
       list.classList.toggle("designer-media-grid", section !== "avatars" && section !== "voices");
-      if (loading) {
+      releaseAssetLibraryMedia();
+      if (loading && !rows.length) {
         list.innerHTML = `<div class="asset-library-empty">加载中...</div>`;
       } else if (!rows.length) {
         list.innerHTML = `<div class="asset-library-empty">暂无素材</div>`;
@@ -8740,9 +8813,20 @@
       } else {
         list.innerHTML = rows.map(assetCardHtml).join("");
       }
-      if ($("assetLibraryPageText")) $("assetLibraryPageText").textContent = `${page} / ${pageCount}`;
-      if ($("assetLibraryPrevBtn")) $("assetLibraryPrevBtn").disabled = page <= 1 || loading;
-      if ($("assetLibraryNextBtn")) $("assetLibraryNextBtn").disabled = page >= pageCount || loading;
+      const hasMore = rows.length < total;
+      if ($("assetLibraryPageText")) {
+        $("assetLibraryPageText").textContent = digitalSection
+          ? `已加载 ${rows.length} / ${total}`
+          : `${page} / ${pageCount}`;
+      }
+      if ($("assetLibraryPrevBtn")) {
+        $("assetLibraryPrevBtn").classList.toggle("hidden", digitalSection);
+        $("assetLibraryPrevBtn").disabled = page <= 1 || loading;
+      }
+      if ($("assetLibraryNextBtn")) {
+        $("assetLibraryNextBtn").textContent = digitalSection ? (loading ? "加载中..." : (hasMore ? "加载更多" : "已全部加载")) : "下一页";
+        $("assetLibraryNextBtn").disabled = digitalSection ? (!hasMore || loading) : (page >= pageCount || loading);
+      }
     }
 
     async function loadAssetLibrary(origin = state.assetLibraryOrigin, options = {}) {
@@ -8782,54 +8866,111 @@
       }
     }
 
-    async function loadAssetLibraryAvatars() {
+    async function refreshPendingAssetLibraryAvatars(rows, page, requestId) {
+      const pendingProfiles = (rows || []).filter((row) => (
+        String(row && row.source || "") === "shanjian"
+        && String(row && row.status || "") === "processing"
+        && Number(row && row.source_record_id || 0) > 0
+      )).slice(0, 2);
+      if (!pendingProfiles.length) return;
+      await Promise.allSettled(pendingProfiles.map((row) => api("/api/shanjian-digital-human/profile/task", {
+        method: "POST",
+        json: { profile_id: Number(row.source_record_id) },
+        blocking: false,
+        timeoutMs: 15000,
+      })));
+      if (requestId !== state.assetLibraryDigitalRequest) return;
+      try {
+        const pageSize = Number(state.assetLibraryDigitalPageSize || 8);
+        const data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}`, {
+          maxAttempts: 1,
+          timeoutMs: 15000,
+        });
+        if (requestId !== state.assetLibraryDigitalRequest) return;
+        state.assetLibraryAvatarRows = mergeDigitalLibraryRows(
+          state.assetLibraryAvatarRows,
+          Array.isArray(data.items) ? data.items : [],
+        );
+        state.assetLibraryAvatarTotal = Number(data.total || 0);
+        if ((state.assetLibrarySection || "uploads") === "avatars") renderAssetLibrary();
+      } catch (_) {}
+    }
+
+    async function loadAssetLibraryAvatars(options = {}) {
       if (!state.token) return;
-      const pageSize = Number(state.assetLibraryPageSize || 10);
-      const page = Math.max(1, Number(state.assetLibraryAvatarPage || 1));
+      if (state.assetLibraryDigitalLoading) return;
+      const append = !!options.append;
+      const pageSize = Number(state.assetLibraryDigitalPageSize || 8);
+      const page = append ? Math.max(1, Number(state.assetLibraryAvatarPage || 1) + 1) : 1;
+      cancelAssetLibraryDigitalRequest();
+      const requestId = Number(state.assetLibraryDigitalRequest || 0) + 1;
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      state.assetLibraryDigitalRequest = requestId;
+      state.assetLibraryDigitalAbortController = controller;
       state.assetLibraryDigitalLoading = true;
       renderAssetLibrary();
+      let loadedRows = [];
       try {
-        let data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}`);
-        const pendingProfiles = (Array.isArray(data.items) ? data.items : []).filter((row) => (
-          String(row && row.source || "") === "shanjian"
-          && String(row && row.status || "") === "processing"
-          && Number(row && row.source_record_id || 0) > 0
-        ));
-        if (pendingProfiles.length) {
-          await Promise.allSettled(pendingProfiles.map((row) => api("/api/shanjian-digital-human/profile/task", {
-            method: "POST",
-            json: { profile_id: Number(row.source_record_id) },
-            blocking: false,
-          })));
-          data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}`);
-        }
-        state.assetLibraryAvatarRows = Array.isArray(data.items) ? data.items : [];
+        const data = await api(`/api/h5/assets/digital-library?kind=avatar&page=${page}&size=${pageSize}`, {
+          signal: controller ? controller.signal : undefined,
+          maxAttempts: 1,
+          timeoutMs: 15000,
+        });
+        if (requestId !== state.assetLibraryDigitalRequest) return;
+        loadedRows = Array.isArray(data.items) ? data.items : [];
+        state.assetLibraryAvatarRows = append
+          ? mergeDigitalLibraryRows(state.assetLibraryAvatarRows, loadedRows)
+          : loadedRows;
         state.assetLibraryAvatarTotal = Number(data.total || 0);
+        state.assetLibraryAvatarPage = page;
         state.hiflyLoaded = false;
       } catch (err) {
-        state.assetLibraryAvatarRows = [];
+        if (requestId !== state.assetLibraryDigitalRequest) return;
+        if (!append) state.assetLibraryAvatarRows = [];
         toast(err.message || "形象分身加载失败");
       } finally {
+        if (requestId !== state.assetLibraryDigitalRequest) return;
+        if (state.assetLibraryDigitalAbortController === controller) state.assetLibraryDigitalAbortController = null;
         state.assetLibraryDigitalLoading = false;
         renderAssetLibrary();
       }
+      if (loadedRows.length) refreshPendingAssetLibraryAvatars(loadedRows, page, requestId).catch(() => {});
     }
 
-    async function loadAssetLibraryVoices() {
+    async function loadAssetLibraryVoices(options = {}) {
       if (!state.token) return;
-      const pageSize = Number(state.assetLibraryPageSize || 10);
-      const page = Math.max(1, Number(state.assetLibraryVoicePage || 1));
+      if (state.assetLibraryDigitalLoading) return;
+      const append = !!options.append;
+      const pageSize = Number(state.assetLibraryDigitalPageSize || 8);
+      const page = append ? Math.max(1, Number(state.assetLibraryVoicePage || 1) + 1) : 1;
+      cancelAssetLibraryDigitalRequest();
+      const requestId = Number(state.assetLibraryDigitalRequest || 0) + 1;
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      state.assetLibraryDigitalRequest = requestId;
+      state.assetLibraryDigitalAbortController = controller;
       state.assetLibraryDigitalLoading = true;
       renderAssetLibrary();
       try {
-        const data = await api(`/api/h5/assets/digital-library?kind=voice&page=${page}&size=${pageSize}`);
-        state.assetLibraryVoiceRows = Array.isArray(data.items) ? data.items : [];
+        const data = await api(`/api/h5/assets/digital-library?kind=voice&page=${page}&size=${pageSize}`, {
+          signal: controller ? controller.signal : undefined,
+          maxAttempts: 1,
+          timeoutMs: 15000,
+        });
+        if (requestId !== state.assetLibraryDigitalRequest) return;
+        const loadedRows = Array.isArray(data.items) ? data.items : [];
+        state.assetLibraryVoiceRows = append
+          ? mergeDigitalLibraryRows(state.assetLibraryVoiceRows, loadedRows)
+          : loadedRows;
         state.assetLibraryVoiceTotal = Number(data.total || 0);
+        state.assetLibraryVoicePage = page;
         state.hiflyLoaded = false;
       } catch (err) {
-        state.assetLibraryVoiceRows = [];
+        if (requestId !== state.assetLibraryDigitalRequest) return;
+        if (!append) state.assetLibraryVoiceRows = [];
         toast(err.message || "声音分身加载失败");
       } finally {
+        if (requestId !== state.assetLibraryDigitalRequest) return;
+        if (state.assetLibraryDigitalAbortController === controller) state.assetLibraryDigitalAbortController = null;
         state.assetLibraryDigitalLoading = false;
         renderAssetLibrary();
       }
@@ -8840,6 +8981,36 @@
       if ((state.assetLibrarySection || "uploads") === "voices") return loadAssetLibraryVoices();
       state.assetLibraryOrigin = "user_upload";
       return loadAssetLibrary("user_upload");
+    }
+
+    async function loadMoreAssetLibraryDigital() {
+      if (activeViewKey() !== "assetLibrary" || state.assetLibraryDigitalLoading) return;
+      const section = state.assetLibrarySection || "uploads";
+      if (section === "avatars") {
+        if ((state.assetLibraryAvatarRows || []).length >= Number(state.assetLibraryAvatarTotal || 0)) return;
+        await loadAssetLibraryAvatars({ append: true });
+      } else if (section === "voices") {
+        if ((state.assetLibraryVoiceRows || []).length >= Number(state.assetLibraryVoiceTotal || 0)) return;
+        await loadAssetLibraryVoices({ append: true });
+      }
+    }
+
+    function setupAssetLibraryInfiniteScroll() {
+      const sentinel = $("assetLibraryLoadState");
+      if (!sentinel) return;
+      if ("IntersectionObserver" in window) {
+        if (state.assetLibraryDigitalObserver) state.assetLibraryDigitalObserver.disconnect();
+        state.assetLibraryDigitalObserver = new IntersectionObserver((entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) loadMoreAssetLibraryDigital().catch(() => {});
+        }, { root: null, rootMargin: "0px 0px 260px 0px", threshold: 0.01 });
+        state.assetLibraryDigitalObserver.observe(sentinel);
+        return;
+      }
+      window.addEventListener("scroll", () => {
+        if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 260) {
+          loadMoreAssetLibraryDigital().catch(() => {});
+        }
+      }, { passive: true });
     }
 
     function renderContentRecordTabs() {
@@ -13165,6 +13336,10 @@
     function switchTab(tab) {
       const key = tab || "office";
       const previousViewId = (document.querySelector(".view.active") || {}).id || "";
+      if (previousViewId === "assetLibraryView" && key !== "assetLibrary") {
+        cancelAssetLibraryDigitalRequest();
+        releaseAssetLibraryMedia();
+      }
       if (key !== "messages" && (state.voiceCaptureTarget === "composer") && (state.voiceRecording || state.composerVoicePendingSend || state.composerVoicePointerId !== null)) {
         cancelComposerVoiceCapture();
       }
@@ -23192,6 +23367,7 @@
     $("scrollTopBtn")?.addEventListener("click", () => window.scrollTo({ top: 0, left: 0, behavior: "smooth" }));
     window.addEventListener("scroll", () => syncScrollTopButton(), { passive: true });
     setupWorkListInfiniteScroll();
+    setupAssetLibraryInfiniteScroll();
     $("workListLoadState")?.addEventListener("click", () => {
       if (!state.workListLoading && (state.workListHasMore || state.workListLoadFailed)) loadMoreWorkList();
     });
@@ -23289,7 +23465,11 @@
     $("assetLibraryTabs")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-asset-section]");
       if (!btn) return;
-      state.assetLibrarySection = btn.dataset.assetSection || "uploads";
+      const nextSection = btn.dataset.assetSection || "uploads";
+      if (nextSection === (state.assetLibrarySection || "uploads")) return;
+      cancelAssetLibraryDigitalRequest();
+      releaseAssetLibraryMedia();
+      state.assetLibrarySection = nextSection;
       renderAssetLibrary();
       refreshAssetLibrary();
     });
@@ -23344,16 +23524,17 @@
     $("assetVoiceForm")?.addEventListener("submit", (evt) => submitAssetVoiceForm(evt).catch((err) => toast(err.message || "提交失败")));
     $("assetLibraryPrevBtn")?.addEventListener("click", () => {
       const section = state.assetLibrarySection || "uploads";
-      if (section === "avatars") state.assetLibraryAvatarPage = Math.max(1, Number(state.assetLibraryAvatarPage || 1) - 1);
-      else if (section === "voices") state.assetLibraryVoicePage = Math.max(1, Number(state.assetLibraryVoicePage || 1) - 1);
-      else state.assetLibraryPage.user_upload = Math.max(1, Number(state.assetLibraryPage.user_upload || 1) - 1);
+      if (section === "avatars" || section === "voices") return;
+      state.assetLibraryPage.user_upload = Math.max(1, Number(state.assetLibraryPage.user_upload || 1) - 1);
       refreshAssetLibrary();
     });
     $("assetLibraryNextBtn")?.addEventListener("click", () => {
       const section = state.assetLibrarySection || "uploads";
-      if (section === "avatars") state.assetLibraryAvatarPage = Math.max(1, Number(state.assetLibraryAvatarPage || 1) + 1);
-      else if (section === "voices") state.assetLibraryVoicePage = Math.max(1, Number(state.assetLibraryVoicePage || 1) + 1);
-      else state.assetLibraryPage.user_upload = Math.max(1, Number(state.assetLibraryPage.user_upload || 1) + 1);
+      if (section === "avatars" || section === "voices") {
+        loadMoreAssetLibraryDigital().catch((err) => toast(err.message || "加载失败"));
+        return;
+      }
+      state.assetLibraryPage.user_upload = Math.max(1, Number(state.assetLibraryPage.user_upload || 1) + 1);
       refreshAssetLibrary();
     });
     $("contentRecordTabs")?.addEventListener("click", (evt) => {
