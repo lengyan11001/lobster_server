@@ -906,6 +906,10 @@ def _native_wechat_plan(action_key: str, note: Any, params: Optional[dict[str, A
         base_params.setdefault("trigger", "qualified_intent")
     if action_key == "native_wechat_poll":
         title = "个微自动拉群" if group_invite else "个微私信接管"
+        if not group_invite:
+            base_params["takeover_session_minutes"] = 30
+            base_params["message_poll_interval_seconds"] = 15
+            base_params["accept_friend_requests_once"] = True
         return {
             "title": title,
             "task_kind": "client_workflow",

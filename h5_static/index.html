@@ -879,10 +879,13 @@
               </span>
               <div>
                 <strong>播报音色</strong>
-                <div class="hint" id="speechVoiceHint">使用系统中文音色</div>
+                <div class="hint" id="speechVoiceHint">自动匹配设备中文女声</div>
               </div>
               <div class="speech-voice-controls">
-                <select id="speechVoiceSelect" aria-label="播报音色"><option value="">系统默认</option></select>
+                <select id="speechVoiceSelect" aria-label="播报音色">
+                  <option value="preset:gentle_female_1">温柔女声一</option>
+                  <option value="preset:gentle_female_2">温柔女声二</option>
+                </select>
                 <button type="button" id="speechVoicePreviewBtn" aria-label="试听音色" title="试听音色">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7Z"></path></svg>
                 </button>

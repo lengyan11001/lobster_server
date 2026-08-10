@@ -5,11 +5,20 @@ from pathlib import Path
 
 from backend.app.api import h5_chat
 from backend.app.api.h5_chat import H5WechatAutoReplyIn
-from backend.app.api.h5_workflows import _clean_action_nodes, _ensure_sales_douyin_add_friend_children
+from backend.app.api.h5_workflows import _clean_action_nodes, _ensure_sales_douyin_add_friend_children, _native_wechat_plan
 from backend.app.models import H5ChatMessage, H5MountedAccountDefault
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_native_wechat_takeover_plan_scans_friends_once_and_messages_every_15_seconds():
+    plan = _native_wechat_plan("native_wechat_poll", "微信私信接管")
+    params = plan["payload"]["params"]
+
+    assert params["takeover_session_minutes"] == 30
+    assert params["message_poll_interval_seconds"] == 15
+    assert params["accept_friend_requests_once"] is True
 
 
 def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_session, test_user, monkeypatch):

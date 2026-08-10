@@ -1990,14 +1990,97 @@
       }
     }
 
+    const SPEECH_VOICE_PRESETS = [
+      {
+        key: "preset:gentle_female_1",
+        label: "温柔女声一",
+        hint: "清甜柔和，适合日常播报",
+        keywords: ["xiaoxiao", "晓晓", "小小", "xiaoyi", "晓怡", "小艺", "tingting", "婷婷", "female", "woman", "女声", "温柔", "柔和"],
+      },
+      {
+        key: "preset:gentle_female_2",
+        label: "温柔女声二",
+        hint: "更轻一点，适合长时间收听",
+        keywords: ["xiaoyi", "小艺", "xiaoxiao", "晓晓", "tingting", "婷婷", "female", "woman", "女声", "轻柔", "柔和", "甜"],
+      },
+    ];
+    const SPEECH_VOICE_DEFAULT_KEY = SPEECH_VOICE_PRESETS[0].key;
+    let speechVoicePreviewPromise = null;
+
     function speechVoiceKey(voice) {
       return String(voice && (voice.voiceURI || voice.name) || "").trim();
     }
 
+    function normalizeSpeechVoicePresetKey(value) {
+      const raw = String(value || "").trim();
+      return SPEECH_VOICE_PRESETS.some((preset) => preset.key === raw) ? raw : SPEECH_VOICE_DEFAULT_KEY;
+    }
+
+    function speechVoiceComparableText(voice) {
+      return [
+        voice && voice.name,
+        voice && voice.voiceURI,
+        voice && voice.lang,
+      ].map((value) => String(value || "").toLowerCase()).join(" ");
+    }
+
+    function scoreSpeechVoicePreset(voice, preset, index) {
+      const text = speechVoiceComparableText(voice);
+      const lang = String(voice && voice.lang || "").toLowerCase();
+      let score = 0;
+      if (/^zh(?:-|_|$)/i.test(String(voice && voice.lang || ""))) score += 100;
+      if (lang.includes("hans")) score += 8;
+      if (lang.includes("hant")) score += 8;
+      if (lang.includes("cn")) score += 6;
+      if (voice && voice.localService) score += 6;
+      if ((preset.keywords || []).some((keyword) => keyword && text.includes(String(keyword).toLowerCase()))) score += 60;
+      if (/female|woman|girl|女|声/.test(text)) score += 20;
+      if (/male|man|boy|男/.test(text)) score -= 15;
+      score -= index * 0.001;
+      return score;
+    }
+
+    function buildSpeechVoicePresetMap() {
+      const voices = Array.isArray(state.speechVoices) ? state.speechVoices.slice() : [];
+      const map = new Map();
+      if (!voices.length) return map;
+      const used = new Set();
+      SPEECH_VOICE_PRESETS.forEach((preset) => {
+        let bestVoice = null;
+        let bestScore = -Infinity;
+        voices.forEach((voice, index) => {
+          const voiceKey = speechVoiceKey(voice);
+          if (used.has(voiceKey)) return;
+          const score = scoreSpeechVoicePreset(voice, preset, index);
+          if (score > bestScore) {
+            bestScore = score;
+            bestVoice = voice;
+          }
+        });
+        if (!bestVoice) {
+          voices.forEach((voice, index) => {
+            const score = scoreSpeechVoicePreset(voice, preset, index);
+            if (score > bestScore) {
+              bestScore = score;
+              bestVoice = voice;
+            }
+          });
+        }
+        if (bestVoice) used.add(speechVoiceKey(bestVoice));
+        map.set(preset.key, bestVoice || null);
+      });
+      return map;
+    }
+
+    function selectedSpeechVoicePreset() {
+      const key = normalizeSpeechVoicePresetKey(state.speechVoiceUri);
+      return SPEECH_VOICE_PRESETS.find((preset) => preset.key === key) || SPEECH_VOICE_PRESETS[0];
+    }
+
     function selectedSpeechVoice() {
-      const wanted = String(state.speechVoiceUri || "").trim();
-      if (!wanted) return null;
-      return (state.speechVoices || []).find((voice) => speechVoiceKey(voice) === wanted || voice.name === wanted) || null;
+      const map = buildSpeechVoicePresetMap();
+      const preset = selectedSpeechVoicePreset();
+      return map.get(preset.key) || null;
     }
 
     function refreshSpeechVoices() {
@@ -2007,24 +2090,76 @@
       state.speechVoices = chinese.length ? chinese : all;
       const select = $("speechVoiceSelect");
       if (!select) return;
-      const options = [`<option value="">系统默认</option>`].concat(state.speechVoices.map((voice) => {
-        const key = speechVoiceKey(voice);
-        const label = `${voice.name || "系统音色"}${voice.lang ? ` · ${voice.lang}` : ""}`;
-        return `<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`;
-      }));
-      select.innerHTML = options.join("");
-      const available = state.speechVoices.some((voice) => speechVoiceKey(voice) === state.speechVoiceUri);
-      select.value = available ? state.speechVoiceUri : "";
+      const presetMap = buildSpeechVoicePresetMap();
+      const normalized = normalizeSpeechVoicePresetKey(state.speechVoiceUri);
+      state.speechVoiceUri = normalized;
+      select.innerHTML = SPEECH_VOICE_PRESETS.map((preset) => `<option value="${escapeHtml(preset.key)}">${escapeHtml(preset.label)}</option>`).join("");
+      select.value = normalized;
       const hint = $("speechVoiceHint");
       if (hint) {
-        if (state.speechVoiceUri && !available) hint.textContent = "当前设备无此音色，已使用系统默认";
-        else hint.textContent = selectedSpeechVoice()?.name || "使用系统中文音色";
+        const preset = selectedSpeechVoicePreset();
+        const voice = presetMap.get(preset.key);
+        hint.textContent = voice
+          ? `${preset.label} · 当前匹配 ${voice.name || "系统音色"}`
+          : `${preset.label} · 自动匹配本机中文女声`;
       }
     }
 
     function applySpeechVoicePreference(voiceUri) {
-      state.speechVoiceUri = String(voiceUri || "").trim();
+      state.speechVoiceUri = normalizeSpeechVoicePresetKey(voiceUri);
       refreshSpeechVoices();
+    }
+
+    async function ensureSpeechVoicesReady() {
+      if (!("speechSynthesis" in window) || typeof window.speechSynthesis.getVoices !== "function") return [];
+      const existing = window.speechSynthesis.getVoices() || [];
+      if (existing.length) return existing;
+      if (speechVoicePreviewPromise) return speechVoicePreviewPromise;
+      speechVoicePreviewPromise = new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          try { window.speechSynthesis.removeEventListener?.("voiceschanged", finish); } catch {}
+          refreshSpeechVoices();
+          resolve(window.speechSynthesis.getVoices() || []);
+        };
+        try { window.speechSynthesis.addEventListener?.("voiceschanged", finish); } catch {}
+        setTimeout(finish, 900);
+      }).finally(() => {
+        speechVoicePreviewPromise = null;
+      });
+      return speechVoicePreviewPromise;
+    }
+
+    function speakSpeechText(text, options = {}) {
+      const content = String(text || "").trim();
+      const force = options.force === true;
+      if (!content || (!state.speechEnabled && !force)) return false;
+      if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return false;
+      if (!state.speechUnlocked && !force) return false;
+      const now = Date.now();
+      if (!force && state.speechLastText === content && now - Number(state.speechLastAt || 0) < 4000) return false;
+      state.speechLastText = content;
+      state.speechLastAt = now;
+      try { window.speechSynthesis.cancel(); } catch {}
+      try {
+        const utterance = new SpeechSynthesisUtterance(content);
+        utterance.lang = "zh-CN";
+        const voice = selectedSpeechVoice();
+        if (voice) {
+          utterance.voice = voice;
+          utterance.lang = voice.lang || "zh-CN";
+        }
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.volume = 1;
+        window.speechSynthesis.speak(utterance);
+        return true;
+      } catch (err) {
+        console.warn("task announcement speech failed", err);
+        return false;
+      }
     }
 
     async function loadHomeHero() {
@@ -2164,30 +2299,15 @@
     }
 
     function speakTaskAnnouncement(text, options = {}) {
-      const content = String(text || "").trim();
-      if (!content || (!state.speechEnabled && options.force !== true)) return;
-      if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return;
-      if (!state.speechUnlocked) return;
-      const now = Date.now();
-      if (state.speechLastText === content && now - Number(state.speechLastAt || 0) < 4000) return;
-      state.speechLastText = content;
-      state.speechLastAt = now;
-      try { window.speechSynthesis.cancel(); } catch {}
-      try {
-        const utterance = new SpeechSynthesisUtterance(content);
-        utterance.lang = "zh-CN";
-        const voice = selectedSpeechVoice();
-        if (voice) {
-          utterance.voice = voice;
-          utterance.lang = voice.lang || "zh-CN";
-        }
-        utterance.rate = 1;
-        utterance.pitch = 1;
-        utterance.volume = 1;
-        window.speechSynthesis.speak(utterance);
-      } catch (err) {
-        console.warn("task announcement speech failed", err);
-      }
+      return speakSpeechText(text, options);
+    }
+
+    async function previewSpeechVoice() {
+      unlockSpeechPlayback();
+      state.speechLastText = "";
+      state.speechLastAt = 0;
+      await ensureSpeechVoicesReady();
+      speakSpeechText("你好，我会用这个声音提醒你任务进度。", { force: true });
     }
 
     function taskAnnouncementTitle(row, fallback) {
@@ -12319,6 +12439,11 @@
       btn.classList.toggle("hidden", hidden);
     }
 
+    function refreshMyAreaDeviceStatus(key = activeViewKey()) {
+      if (!["profile", "personalSettings", "recorder", "mountedAccounts"].includes(String(key || ""))) return;
+      refreshDeviceStatus().catch(() => {});
+    }
+
     function openHomeTarget(target, backTab = "office") {
       const key = String(target || "").trim();
       if (!key) return;
@@ -13089,6 +13214,7 @@
         loadWorkflowTemplates().catch(() => {});
         refreshOfficeSummary().catch(() => {});
       }
+      refreshMyAreaDeviceStatus(key);
       if (key === "workflow") {
         renderWorkflow();
         Promise.all([
@@ -14867,6 +14993,10 @@
       if (state.deviceStatusPromise) return state.deviceStatusPromise;
       const request = (async () => {
         try {
+          const view = activeViewKey();
+          if (view === "profile" || view === "mountedAccounts") {
+            $("profileDeviceText").textContent = "正在检查设备在线状态...";
+          }
           const data = await api("/api/h5-chat/devices/status");
           state.devices = Array.isArray(data.devices) ? data.devices : [];
           ensureSelectedInstallationId();
@@ -14876,10 +15006,10 @@
           const text = data.online ? `本地在线：${online}/${total || online} 台` : "未检测到本地 online";
           $("profileDeviceText").textContent = text;
           renderChatAvailabilityStatus();
-          const view = activeViewKey();
-          if (view === "profile" || view === "mountedAccounts") renderProfileDeviceSelect();
-          if (view === "workflow") renderWorkflowDeviceSelect();
-          if (view === "office") renderOfficeEmployees();
+          const currentView = activeViewKey();
+          if (currentView === "profile" || currentView === "mountedAccounts") renderProfileDeviceSelect();
+          if (currentView === "workflow") renderWorkflowDeviceSelect();
+          if (currentView === "office") renderOfficeEmployees();
         } catch (err) {
           const view = activeViewKey();
           if (view === "profile" || view === "mountedAccounts") renderProfileDeviceSelect();
@@ -23177,10 +23307,12 @@
     $("assetAvatarFile")?.addEventListener("change", () => syncNativeInputFiles("assetAvatarFile"));
     $("assetAvatarAuthFile")?.addEventListener("change", () => syncNativeInputFiles("assetAvatarAuthFile"));
     $("assetAvatarForm")?.addEventListener("submit", (evt) => submitAssetAvatarForm(evt).catch((err) => toast(err.message || "提交失败")));
-    document.addEventListener("click", (evt) => {
-      const button = evt.target.closest("[data-camera-target]");
-      if (!button) return;
-      openCameraCapture(button).catch((err) => toast(err.message || "摄像头打开失败"));
+    document.querySelectorAll("[data-camera-target]").forEach((button) => {
+      if (button.dataset.cameraBound === "1") return;
+      button.dataset.cameraBound = "1";
+      button.addEventListener("click", () => {
+        openCameraCapture(button).catch((err) => toast(err.message || "摄像头打开失败"));
+      });
     });
     $("cameraCaptureBackdrop")?.addEventListener("click", closeCameraCaptureModal);
     $("cameraCaptureClose")?.addEventListener("click", closeCameraCaptureModal);
@@ -23716,8 +23848,10 @@
     });
     $("speechPreferenceSwitch")?.addEventListener("click", () => {
       const previous = state.speechEnabled;
-      applySpeechPreference(!previous);
-      updateSpeechPreference(!previous).catch((err) => {
+      const next = !previous;
+      applySpeechPreference(next);
+      if (next) unlockSpeechPlayback();
+      updateSpeechPreference(next).catch((err) => {
         applySpeechPreference(previous);
         toast(err.message || "语音播报设置保存失败");
       });
@@ -23726,16 +23860,14 @@
       const previous = state.speechVoiceUri;
       const next = String($("speechVoiceSelect").value || "");
       applySpeechVoicePreference(next);
+      unlockSpeechPlayback();
       updateSpeechVoicePreference(next).catch((err) => {
         applySpeechVoicePreference(previous);
         toast(err.message || "音色设置保存失败");
       });
     });
     $("speechVoicePreviewBtn")?.addEventListener("click", () => {
-      unlockSpeechPlayback();
-      state.speechLastText = "";
-      state.speechLastAt = 0;
-      speakTaskAnnouncement("任务完成，我会及时提醒你。", { force: true });
+      previewSpeechVoice().catch((err) => toast(err.message || "试听失败"));
     });
     if ("speechSynthesis" in window) {
       window.speechSynthesis.addEventListener?.("voiceschanged", refreshSpeechVoices);

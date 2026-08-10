@@ -105,19 +105,19 @@ def test_speech_preference_can_be_disabled_and_persists(db_session_factory, test
     assert loaded.json()["speech_enabled"] is False
 
 
-def test_speech_voice_persists_and_legacy_toggle_does_not_clear_it(db_session_factory, test_user):
+def test_speech_voice_preset_persists_and_legacy_toggle_does_not_clear_it(db_session_factory, test_user):
     client = _client(db_session_factory, test_user.id)
 
     selected = client.put(
         "/api/h5/home/preferences",
-        json={"speech_enabled": True, "speech_voice_uri": "Microsoft Xiaoxiao Online"},
+        json={"speech_enabled": True, "speech_voice_uri": "preset:gentle_female_1"},
     )
     toggled = client.put("/api/h5/home/preferences", json={"speech_enabled": False})
 
     assert selected.status_code == 200
-    assert selected.json()["speech_voice_uri"] == "Microsoft Xiaoxiao Online"
+    assert selected.json()["speech_voice_uri"] == "preset:gentle_female_1"
     assert toggled.json()["speech_enabled"] is False
-    assert toggled.json()["speech_voice_uri"] == "Microsoft Xiaoxiao Online"
+    assert toggled.json()["speech_voice_uri"] == "preset:gentle_female_1"
 
 
 def test_h5_profile_exposes_persistent_speech_switch():
@@ -130,6 +130,9 @@ def test_h5_profile_exposes_persistent_speech_switch():
     assert 'id="speechPreferenceSwitch"' in html
     assert 'id="speechVoiceSelect"' in html
     assert 'id="speechVoicePreviewBtn"' in html
+    assert 'preset:gentle_female_1' in html
+    assert 'preset:gentle_female_2' in html
+    assert '温柔女声一' in html
     assert 'role="switch"' in html
     assert 'api("/api/h5/home/preferences", {' in script
     assert 'speech_voice_uri: state.speechVoiceUri' in script
