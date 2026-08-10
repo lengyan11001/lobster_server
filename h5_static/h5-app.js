@@ -190,6 +190,10 @@
       cameraOpening: false,
       cameraSessionNonce: 0,
       cameraDiscardRecording: false,
+      h5HiddenAt: 0,
+      h5ResumeRecovering: false,
+      h5ResumeCount: 0,
+      h5LastResumeAt: 0,
       workflowTemplates: [],
       workflowTemplatesLoaded: false,
       workflowTemplatesLoading: false,
@@ -345,6 +349,87 @@
       speechLastText: "",
       speechLastAt: 0,
     };
+    const H5_LIFECYCLE_KEY = brandStorageKey("lobster_h5_lifecycle");
+
+    function lifecycleDetail(value) {
+      if (value == null) return "";
+      if (typeof value === "string") return value.slice(0, 600);
+      try { return JSON.stringify(value).slice(0, 600); } catch { return String(value).slice(0, 600); }
+    }
+
+    function readH5Lifecycle() {
+      try {
+        const rows = JSON.parse(localStorage.getItem(H5_LIFECYCLE_KEY) || "[]");
+        return Array.isArray(rows) ? rows.filter((row) => row && typeof row === "object").slice(-24) : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function recordH5Lifecycle(event, detail = "") {
+      try {
+        const rows = readH5Lifecycle();
+        rows.push({
+          at: new Date().toISOString(),
+          event: String(event || "unknown").slice(0, 80),
+          detail: lifecycleDetail(detail),
+          visibility: String(document.visibilityState || ""),
+          view: typeof activeViewKey === "function" ? String(activeViewKey() || "") : "",
+          camera: !!state.cameraStream,
+          recording: !!state.cameraRecording,
+        });
+        localStorage.setItem(H5_LIFECYCLE_KEY, JSON.stringify(rows.slice(-24)));
+      } catch {}
+    }
+
+    async function flushH5Lifecycle(event = "lifecycle") {
+      if (!state.token) return false;
+      const rows = readH5Lifecycle();
+      if (!rows.length) return true;
+      const snapshot = JSON.stringify(rows);
+      try {
+        const response = await fetch(apiUrl("/api/h5-chat/client/diagnostics"), {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            event: String(event || "lifecycle").slice(0, 80),
+            timeline_json: snapshot,
+            user_agent: navigator.userAgent || "",
+            path: `${location.pathname || "/"}${location.hash || ""}`,
+            brand: H5_BRAND_MARK,
+          }),
+        });
+        if (!response.ok) return false;
+        if (localStorage.getItem(H5_LIFECYCLE_KEY) === snapshot) localStorage.removeItem(H5_LIFECYCLE_KEY);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    function markH5PageReady(event = "page_ready") {
+      let recoveredColdBoot = false;
+      try {
+        recoveredColdBoot = sessionStorage.getItem("lobster_h5_cold_boot_reloaded") === "1";
+      } catch {}
+      window.__h5RecoveryGuard?.ready?.();
+      recordH5Lifecycle(event, { recovered_cold_boot: recoveredColdBoot });
+      flushH5Lifecycle(event).catch(() => {});
+    }
+
+    window.addEventListener("error", (event) => {
+      recordH5Lifecycle("window_error", {
+        message: event?.error?.message || event?.message || "script error",
+        source: String(event?.filename || "").split("?")[0].slice(-180),
+        line: Number(event?.lineno || 0),
+        column: Number(event?.colno || 0),
+      });
+    });
+    window.addEventListener("unhandledrejection", (event) => {
+      recordH5Lifecycle("unhandled_rejection", event?.reason?.message || event?.reason || "promise rejected");
+    });
+    recordH5Lifecycle("script_started", { ios: /iPad|iPhone|iPod/i.test(navigator.userAgent || "") });
+
     const SHOW_INTERNAL_STEPS = true;
     const PERSONAL_DOCUMENT_MAX_BYTES = 30 * 1024 * 1024;
     const PERSONAL_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
@@ -8914,6 +8999,22 @@
       return "";
     }
 
+    async function applyMinimumCameraZoom(stream) {
+      const track = stream?.getVideoTracks?.()[0];
+      if (!track?.getCapabilities || !track?.applyConstraints) return;
+      try {
+        const capabilities = track.getCapabilities();
+        const zoom = capabilities?.zoom;
+        const minimumZoom = Number(zoom?.min);
+        const currentZoom = Number(track.getSettings?.().zoom);
+        if (!Number.isFinite(minimumZoom)) return;
+        if (Number.isFinite(currentZoom) && currentZoom <= minimumZoom) return;
+        await track.applyConstraints({ advanced: [{ zoom: minimumZoom }] });
+      } catch {
+        // iOS and some Android WebViews expose the camera but not zoom controls.
+      }
+    }
+
     function syncCameraCaptureUi() {
       const modal = $("cameraCaptureModal");
       const modeSwitch = $("cameraModeSwitch");
@@ -8964,6 +9065,7 @@
             facingMode: { ideal: state.cameraFacingMode },
             width: { ideal: 1080 },
             height: { ideal: 1920 },
+            aspectRatio: { ideal: 9 / 16 },
           },
           audio: state.cameraMode === "video" ? { echoCancellation: true, noiseSuppression: true } : false,
         });
@@ -8972,6 +9074,7 @@
           return false;
         }
         state.cameraStream = stream;
+        await applyMinimumCameraZoom(stream);
         const live = $("cameraLiveVideo");
         if (live) {
           live.srcObject = stream;
@@ -9130,6 +9233,50 @@
       state.cameraOpening = false;
       $("cameraCaptureModal")?.classList.add("hidden");
       $("cameraCaptureModal")?.setAttribute("aria-hidden", "true");
+    }
+
+    async function recoverH5AfterResume(reason = "resume") {
+      if (document.hidden || state.h5ResumeRecovering) return;
+      const now = Date.now();
+      if (now - Number(state.h5LastResumeAt || 0) < 800) return;
+      state.h5LastResumeAt = now;
+      state.h5ResumeRecovering = true;
+      state.h5ResumeCount = Number(state.h5ResumeCount || 0) + 1;
+      const awayMs = state.h5HiddenAt ? Math.max(0, Date.now() - state.h5HiddenAt) : 0;
+      window.__h5RecoveryGuard?.arm?.(4000, "iOS 返回页面后没有正常恢复，请刷新后继续。");
+      recordH5Lifecycle("resume_begin", { reason, away_ms: awayMs, count: state.h5ResumeCount });
+      try {
+        if (!$("cameraCaptureModal")?.classList.contains("hidden") || state.cameraStream || state.cameraRecorder) {
+          closeCameraCaptureModal();
+        }
+        if (state.token) {
+          renderCurrentUser();
+          showAuthenticatedShell({ switchToOffice: false });
+          if (!document.querySelector("#appPanel .view.active")) switchTab("office");
+          refreshCachedAuthInBackground().catch((err) => {
+            recordH5Lifecycle("resume_auth_refresh_failed", err?.message || err);
+          });
+        } else {
+          $("loginPanel")?.classList.remove("hidden");
+          $("appPanel")?.classList.add("hidden");
+          $("topActions")?.classList.add("hidden");
+        }
+        document.body.classList.toggle("messages-view-active", activeViewKey() === "messages");
+        const shell = document.querySelector(".shell");
+        if (shell) {
+          shell.style.transform = "translateZ(0)";
+          void shell.offsetHeight;
+        }
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (shell) shell.style.transform = "";
+        state.h5HiddenAt = 0;
+        markH5PageReady("resume_ready");
+      } catch (error) {
+        recordH5Lifecycle("resume_timeout", error?.message || error);
+        window.__h5RecoveryGuard?.show?.("页面恢复失败，请刷新后继续，登录状态不会丢失。");
+      } finally {
+        state.h5ResumeRecovering = false;
+      }
     }
 
     async function setCameraMode(mode) {
@@ -24342,7 +24489,9 @@
       if (state.voiceCaptureTarget === "composer") finishComposerVoiceCapture(evt, true);
       else if (state.voiceCaptureTarget === "field") finishFieldVoiceCapture(evt, true);
     });
-    window.addEventListener("pagehide", () => {
+    window.addEventListener("pagehide", (event) => {
+      state.h5HiddenAt = Date.now();
+      recordH5Lifecycle("pagehide", { persisted: !!event.persisted });
       if (state.voiceCaptureTarget === "composer") cancelComposerVoiceCapture();
       else if (state.voiceCaptureTarget === "field" && state.voiceFieldTarget) resetFieldVoiceCapture("cancelled");
       else if (state.voiceRecording) {
@@ -24353,7 +24502,18 @@
       if (!$("cameraCaptureModal")?.classList.contains("hidden")) closeCameraCaptureModal();
     });
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) return;
+      if (!document.hidden) {
+        recordH5Lifecycle("visibility_visible", {
+          away_ms: state.h5HiddenAt ? Math.max(0, Date.now() - state.h5HiddenAt) : 0,
+        });
+        recoverH5AfterResume("visibility").catch((error) => {
+          recordH5Lifecycle("resume_timeout", error?.message || error);
+          window.__h5RecoveryGuard?.show?.("页面恢复失败，请刷新后继续，登录状态不会丢失。");
+        });
+        return;
+      }
+      state.h5HiddenAt = Date.now();
+      recordH5Lifecycle("visibility_hidden");
       if (state.voiceCaptureTarget === "composer") cancelComposerVoiceCapture();
       else if (state.voiceCaptureTarget === "field" && state.voiceFieldTarget) resetFieldVoiceCapture("cancelled");
       else if (state.voiceRecording) {
@@ -24362,6 +24522,14 @@
       }
       if (state.assetVoiceIsRecording || state.assetVoiceRecordPending) stopAssetVoiceRecording(false);
       if (!$("cameraCaptureModal")?.classList.contains("hidden")) closeCameraCaptureModal();
+    });
+    window.addEventListener("pageshow", (event) => {
+      recordH5Lifecycle("pageshow", { persisted: !!event.persisted });
+      if (!event.persisted) return;
+      recoverH5AfterResume("pageshow_cache").catch((error) => {
+        recordH5Lifecycle("resume_timeout", error?.message || error);
+        window.__h5RecoveryGuard?.show?.("页面恢复失败，请刷新后继续，登录状态不会丢失。");
+      });
     });
     $("voiceMicBtn")?.addEventListener("mousedown", startVoiceCapture);
     $("voiceMicBtn")?.addEventListener("touchstart", startVoiceCapture, { passive: false });
@@ -24659,6 +24827,7 @@
       if (!ok) {
         await showLoginShell();
       }
+      markH5PageReady("boot_ready");
       setInterval(() => {
         if (!state.token || document.visibilityState === "hidden") return;
         if (["assetLibrary", "mountedAccounts"].includes(activeViewKey())) return;

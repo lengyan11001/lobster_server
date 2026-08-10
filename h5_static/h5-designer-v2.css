@@ -23,6 +23,66 @@ body::before {
   display: none;
 }
 
+.h5-recovery-panel {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(248, 250, 252, .96);
+}
+
+.h5-recovery-panel.hidden {
+  display: none;
+}
+
+.h5-recovery-content {
+  width: min(320px, calc(100vw - 48px));
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px 20px 20px;
+  color: #172033;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, .14);
+  text-align: center;
+}
+
+.h5-recovery-content strong {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.h5-recovery-content p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.h5-recovery-content button {
+  min-width: 120px;
+  min-height: 42px;
+  margin-top: 2px;
+  border-radius: 8px;
+}
+
+.h5-recovery-spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid #dbeafe;
+  border-top-color: var(--designer-blue);
+  border-radius: 50%;
+  animation: h5-recovery-spin .8s linear infinite;
+}
+
+@keyframes h5-recovery-spin {
+  to { transform: rotate(360deg); }
+}
+
 .shell {
   width: 100%;
   max-width: 430px;
@@ -6991,7 +7051,8 @@ body.h5-action-blocked {
   height: 100%;
   min-height: 320px;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
   background: #111827;
 }
 

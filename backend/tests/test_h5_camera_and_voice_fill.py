@@ -25,6 +25,9 @@ def test_camera_capture_defaults_to_front_camera_and_preserves_captured_files() 
 
     assert 'cameraFacingMode: "user"' in script
     assert 'facingMode: { ideal: state.cameraFacingMode }' in script
+    assert 'aspectRatio: { ideal: 9 / 16 }' in script
+    assert 'await applyMinimumCameraZoom(stream);' in script
+    assert 'await track.applyConstraints({ advanced: [{ zoom: minimumZoom }] });' in script
     assert 'state.cameraFacingMode = state.cameraFacingMode === "user" ? "environment" : "user";' in script
     assert 'function selectedFilesForInput(inputId, multiple = false)' in script
     assert 'state.cameraCapturedFiles[inputId] = rows;' in script
@@ -66,6 +69,27 @@ def test_camera_and_voice_controls_have_mobile_safe_layout() -> None:
     assert "grid-template-columns: minmax(0, 1fr) auto;" in style
     assert ".camera-capture-sheet" in style
     assert "min-height: 100dvh;" in style
+    assert "object-fit: contain;" in style
     assert ".camera-teleprompter" in style
     assert ".voice-fill-shell" in style
     assert "touch-action: none;" in style
+
+
+def test_ios_webclip_boot_and_resume_have_recovery_controls() -> None:
+    html = H5_HTML.read_text(encoding="utf-8")
+    script = H5_APP.read_text(encoding="utf-8")
+    style = H5_STYLE.read_text(encoding="utf-8")
+
+    assert 'id="h5RecoveryPanel"' in html
+    assert 'id="h5RecoveryReload"' in html
+    assert 'var bootReloadKey = "lobster_h5_cold_boot_reloaded";' in html
+    assert 'window.sessionStorage.getItem(bootReloadKey) === "1"' in html
+    assert 'window.sessionStorage.setItem(bootReloadKey, "1")' in html
+    assert 'document.getElementById("appPanel")?.classList.remove("hidden")' in html
+    assert 'window.__h5RecoveryGuard = { arm: arm, ready: hide, show: show };' in html
+    assert 'async function recoverH5AfterResume(reason = "resume")' in script
+    assert 'recoverH5AfterResume("visibility")' in script
+    assert 'recoverH5AfterResume("pageshow_cache")' in script
+    assert 'markH5PageReady("boot_ready");' in script
+    assert 'recovered_cold_boot: recoveredColdBoot' in script
+    assert ".h5-recovery-panel" in style

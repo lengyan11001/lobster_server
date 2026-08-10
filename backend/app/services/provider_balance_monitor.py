@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_INTERVAL_SEC = 3600.0
 _DEFAULT_LOW_THRESHOLD = 50.0
 _DEFAULT_TIMEOUT_SEC = 30.0
+_DEFAULT_EXCLUDED_PROVIDERS = {"yunwu"}
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -41,6 +42,19 @@ def _webhook_url() -> str:
         or os.environ.get("LOBSTER_PROVIDER_BALANCE_FEISHU_WEBHOOK")
         or ""
     ).strip()
+
+
+def _excluded_providers() -> set[str]:
+    raw = os.environ.get("PROVIDER_BALANCE_MONITOR_EXCLUDED_PROVIDERS")
+    if raw is None:
+        return set(_DEFAULT_EXCLUDED_PROVIDERS)
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+
+def _provider_is_excluded(item: Dict[str, Any], excluded: set[str]) -> bool:
+    provider = str(item.get("provider") or "").strip().lower()
+    provider_group = str(item.get("provider_group") or "").strip().lower()
+    return provider in excluded or provider_group in excluded
 
 
 def is_provider_balance_monitor_enabled() -> bool:
@@ -100,11 +114,13 @@ def _summary_lines(providers: Iterable[Dict[str, Any]], threshold: float) -> Lis
 
 
 def build_feishu_card(data: Dict[str, Any], *, threshold: float) -> Dict[str, Any]:
-    providers = data.get("providers") if isinstance(data.get("providers"), list) else []
+    raw_providers = data.get("providers") if isinstance(data.get("providers"), list) else []
+    excluded = _excluded_providers()
+    providers = [item for item in raw_providers if isinstance(item, dict) and not _provider_is_excluded(item, excluded)]
     low_count = sum(1 for item in providers if isinstance(item, dict) and _is_low_balance(item, threshold))
     error_count = sum(1 for item in providers if isinstance(item, dict) and not bool(item.get("ok")))
     title = "上游余额监控"
-    header_color = "red" if low_count or error_count or not bool(data.get("ok")) else "green"
+    header_color = "red" if low_count or error_count else "green"
     checked_at = str(data.get("checked_at") or datetime.now(timezone.utc).isoformat())
     lines = _summary_lines([p for p in providers if isinstance(p, dict)], threshold)
     if not lines:
@@ -151,7 +167,7 @@ async def provider_balance_monitor_tick() -> Dict[str, Any]:
     if not webhook:
         raise RuntimeError("PROVIDER_BALANCE_FEISHU_WEBHOOK is not configured")
     threshold = _env_float("PROVIDER_BALANCE_LOW_THRESHOLD", _DEFAULT_LOW_THRESHOLD)
-    data = await collect_provider_balances()
+    data = await collect_provider_balances(excluded_providers=_excluded_providers())
     feishu_resp = await post_provider_balance_to_feishu(data, webhook=webhook, threshold=threshold)
     logger.info(
         "[provider-balance-monitor] sent provider_count=%s ok=%s threshold=%s",

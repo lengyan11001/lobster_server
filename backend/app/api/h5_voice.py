@@ -40,6 +40,14 @@ class MicrophoneStartupDiagnostic(BaseModel):
     brand: str = Field(default="", max_length=64)
 
 
+class H5LifecycleDiagnostic(BaseModel):
+    event: str = Field(default="", max_length=80)
+    timeline_json: str = Field(default="", max_length=12000)
+    user_agent: str = Field(default="", max_length=600)
+    path: str = Field(default="", max_length=500)
+    brand: str = Field(default="", max_length=64)
+
+
 def _log_value(value: str, limit: int) -> str:
     return str(value or "").replace("\r", " ").replace("\n", " ")[:limit]
 
@@ -56,6 +64,25 @@ async def h5_voice_diagnostics(
         _log_value(body.error_name, 80),
         _log_value(body.error_message, 500),
         _log_value(body.diagnostics, 1000),
+        _log_value(body.user_agent, 600),
+    )
+    return {"ok": True}
+
+
+@router.post("/api/h5-chat/client/diagnostics")
+async def h5_client_diagnostics(
+    body: H5LifecycleDiagnostic,
+    current_user: User = Depends(get_current_user),
+):
+    event = _log_value(body.event, 80)
+    log = logger.warning if event in {"window_error", "unhandled_rejection", "resume_timeout"} else logger.info
+    log(
+        "[h5_lifecycle] user_id=%s brand=%s event=%s path=%s timeline=%s ua=%s",
+        current_user.id,
+        _log_value(body.brand, 64),
+        event,
+        _log_value(body.path, 500),
+        _log_value(body.timeline_json, 12000),
         _log_value(body.user_agent, 600),
     )
     return {"ok": True}

@@ -9,9 +9,90 @@
   <link id="h5AppleIcon" rel="apple-touch-icon" href="__H5_BRAND_ICON_256__" />
   <title>__H5_BRAND_TITLE__</title>
   <link rel="stylesheet" href="/h5-static/h5-app.css?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-digital-clone-v2-20260731-content-picker-v1-20260801-chat-fab-v1-20260805-recorder-controls-v1-20260805-wechat-contact-picker-v1-20260806-recorder-detail-v2-20260806-audio-transcription-v2-20260807-detail-pages-v2-20260808-competitor-search-v1" />
-  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3-20260807-upload-width-v1-20260807-detail-pages-v1-20260807-content-publish-v1-20260808-ios-bottom-nav-v1-20260808-action-loading-v1-20260808-chat-fab-drag-v1-20260808-workflow-action-fields-v1-20260809-marketing-advanced-v1-20260810-local-persona-v1-20260810-speech-pref-v1-20260810-camera-voice-v1" />
+  <link rel="stylesheet" href="/h5-static/h5-designer-v2.css?v=20260729-linkedin-result-v1-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-fab-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-20260806-hikong-douyin-home-v1-20260807-upload-dialog-v3-20260807-upload-width-v1-20260807-detail-pages-v1-20260807-content-publish-v1-20260808-ios-bottom-nav-v1-20260808-action-loading-v1-20260808-chat-fab-drag-v1-20260808-workflow-action-fields-v1-20260809-marketing-advanced-v1-20260810-local-persona-v1-20260810-speech-pref-v1-20260810-camera-voice-v2-ios-recovery" />
 </head>
 <body>
+  <div class="h5-recovery-panel hidden" id="h5RecoveryPanel" role="alert" aria-live="assertive">
+    <div class="h5-recovery-content">
+      <span class="h5-recovery-spinner" aria-hidden="true"></span>
+      <strong id="h5RecoveryTitle">正在恢复页面</strong>
+      <p id="h5RecoveryDetail">如果页面没有自动恢复，请刷新后继续。</p>
+      <button type="button" id="h5RecoveryReload">刷新页面</button>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var timer = 0;
+      var bootReloadKey = "lobster_h5_cold_boot_reloaded";
+      var panel = document.getElementById("h5RecoveryPanel");
+      var title = document.getElementById("h5RecoveryTitle");
+      var detail = document.getElementById("h5RecoveryDetail");
+      var ua = window.navigator.userAgent || "";
+      var isIos = /iPad|iPhone|iPod/i.test(ua) || (window.navigator.platform === "MacIntel" && window.navigator.maxTouchPoints > 1);
+      var isStandalone = window.navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+      function reloadPage() {
+        try {
+          var url = new URL(window.location.href);
+          url.searchParams.set("_h5_reload", String(Date.now()));
+          window.location.replace(url.toString());
+        } catch (_) {
+          window.location.reload();
+        }
+      }
+      function hide() {
+        if (timer) window.clearTimeout(timer);
+        timer = 0;
+        try { window.sessionStorage.removeItem(bootReloadKey); } catch (_) {}
+        if (panel) panel.classList.add("hidden");
+      }
+      function show(message) {
+        if (title) title.textContent = "页面恢复未完成";
+        if (detail) detail.textContent = message || "请刷新页面后继续，登录状态不会丢失。";
+        if (panel) panel.classList.remove("hidden");
+      }
+      function arm(delay, message) {
+        if (timer) window.clearTimeout(timer);
+        timer = window.setTimeout(function () { show(message); }, Math.max(1200, Number(delay) || 0));
+      }
+      function armColdBoot() {
+        if (timer) window.clearTimeout(timer);
+        timer = window.setTimeout(function () {
+          var alreadyReloaded = false;
+          try { alreadyReloaded = window.sessionStorage.getItem(bootReloadKey) === "1"; } catch (_) {}
+          if (isIos && isStandalone && !alreadyReloaded) {
+            try { window.sessionStorage.setItem(bootReloadKey, "1"); } catch (_) {}
+            reloadPage();
+            return;
+          }
+          show("页面加载时间较长，请刷新后重试。");
+        }, 7000);
+      }
+      function revealCachedShell() {
+        try {
+          var brand = String(document.documentElement.getAttribute("data-brand") || "bihuo").toLowerCase();
+          if (!/^[a-z][a-z0-9_-]{0,62}$/.test(brand)) brand = "bihuo";
+          var token = window.localStorage.getItem("lobster_h5_token:" + brand) || (brand === "bihuo" ? window.localStorage.getItem("lobster_h5_token") : "");
+          if (!token) return;
+          document.getElementById("loginPanel")?.classList.add("hidden");
+          document.getElementById("appPanel")?.classList.remove("hidden");
+        } catch (_) {}
+      }
+      window.__h5RecoveryGuard = { arm: arm, ready: hide, show: show };
+      window.setTimeout(revealCachedShell, 0);
+      armColdBoot();
+      window.addEventListener("pageshow", function (event) {
+        if (event.persisted) arm(3500, "iOS 返回页面后没有正常恢复，请刷新后继续。");
+      });
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden && document.readyState === "complete") {
+          arm(4500, "页面从后台返回后没有正常恢复，请刷新后继续。");
+        }
+      });
+      document.getElementById("h5RecoveryReload").addEventListener("click", function () {
+        reloadPage();
+      });
+    })();
+  </script>
   <main class="shell">
     <header class="topbar" id="topbar">
       <button class="back-btn top-back hidden" type="button" id="topBackBtn" aria-label="返回首页">‹</button>
@@ -2234,6 +2315,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1-20260807-detail-pages-v2-20260807-content-publish-v1-20260808-competitor-search-v1-20260808-action-loading-v1-20260808-workflow-native-children-v1-20260808-chat-fab-drag-v1-20260809-goal-video-duration-v1-20260809-marketing-advanced-v1-20260810-workflow-system-slots-v1-20260810-local-persona-v1-20260810-speech-pref-v1-20260810-system-task-chat-v1-20260810-camera-voice-v1"></script>
+  <script src="/h5-static/h5-app.js?v=20260730-workflow-menu-v2-20260727-media-viewer-v2-20260730-workflow-aligned-v3-20260730-create-sheet-v1-20260730-ip-daily-form-v1-20260730-tvc-result-v1-20260730-digital-clone-v2-20260730-dh-workbench-v2-20260731-content-actions-v9-20260731-content-picker-v1-20260801-chat-history-v1-20260803-workflow-dialog-keyboard-v2-20260803-workflow-child-menu-v3-20260803-personal-survey-v1-20260803-library-v4-speed-v5-20260805-recorder-controls-v1-20260805-publish-account-select-v1-20260805-sales-douyin-online-config-v1-20260805-wechat-contact-picker-v1-20260806-recorder-manual-sync-v1-20260806-recorder-retry-v1-20260806-recorder-detail-v2-20260806-view-polling-v1-20260806-audio-transcription-v2-20260807-upload-pool-v1-20260807-online-split-v1-20260807-online-memory-v1-20260807-detail-pages-v2-20260807-content-publish-v1-20260808-competitor-search-v1-20260808-action-loading-v1-20260808-workflow-native-children-v1-20260808-chat-fab-drag-v1-20260809-goal-video-duration-v1-20260809-marketing-advanced-v1-20260810-workflow-system-slots-v1-20260810-local-persona-v1-20260810-speech-pref-v1-20260810-system-task-chat-v1-20260810-camera-voice-v2-ios-recovery"></script>
 </body>
 </html>

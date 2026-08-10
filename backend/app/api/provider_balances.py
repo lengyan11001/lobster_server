@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import base64
 import hashlib
 import hmac
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,8 +50,17 @@ def _bool_env(name: str, default: bool = False) -> bool:
 
 
 async def _get_json(url: str, headers: Dict[str, str]) -> tuple[int, Dict[str, Any] | None, str]:
+    return await _get_json_with_params(url, headers, params=None)
+
+
+async def _get_json_with_params(
+    url: str,
+    headers: Dict[str, str],
+    *,
+    params: Optional[Dict[str, str]],
+) -> tuple[int, Dict[str, Any] | None, str]:
     async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True, trust_env=False) as client:
-        resp = await client.get(url, headers=headers)
+        resp = await client.get(url, headers=headers, params=params)
     text = resp.text or ""
     try:
         payload = resp.json() if resp.content else {}
@@ -325,6 +336,126 @@ def _pick_account_token(*names: str) -> tuple[str, str]:
     return "", ""
 
 
+def _configured_sutui_tokens() -> list[tuple[str, str, str]]:
+    """Return unique server-side APIZ/Sutui tokens as (pool, token, ref)."""
+    preferred = [
+        "SUTUI_SERVER_TOKENS_BIHUO",
+        "SUTUI_SERVER_TOKEN_BIHUO",
+        "SUTUI_SERVER_TOKENS_YINGSHI",
+        "SUTUI_SERVER_TOKEN_YINGSHI",
+        "SUTUI_SERVER_TOKENS_USER",
+        "SUTUI_SERVER_TOKEN_USER",
+        "SUTUI_SERVER_TOKENS",
+        "SUTUI_SERVER_TOKEN",
+    ]
+    dynamic = sorted(
+        name
+        for name in os.environ
+        if re.fullmatch(r"SUTUI_SERVER_TOKENS?_[A-Z][A-Z0-9_]*", name) and name not in preferred
+    )
+    seen: set[str] = set()
+    result: list[tuple[str, str, str]] = []
+    for name in preferred + dynamic:
+        raw = (os.environ.get(name) or "").strip()
+        if not raw:
+            continue
+        suffix = re.sub(r"^SUTUI_SERVER_TOKENS?_?", "", name).strip("_").lower()
+        pool = suffix or "legacy"
+        for token in (part.strip() for part in raw.split(",")):
+            if not token:
+                continue
+            token_ref = hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+            if token_ref in seen:
+                continue
+            seen.add(token_ref)
+            result.append((pool, token, token_ref))
+    return result
+
+
+async def query_sutui_balances(checked_at: str) -> list[Dict[str, Any]]:
+    tokens = _configured_sutui_tokens()
+    try:
+        from ..core.config import settings
+
+        configured_base = str(getattr(settings, "sutui_api_base", "") or "")
+    except Exception:
+        configured_base = ""
+    base = _clean_base(
+        os.environ.get("APIZ_BASE_URL") or os.environ.get("SUTUI_API_BASE") or configured_base,
+        "https://api.apiz.ai",
+    )
+    url = base + "/api/v3/balance"
+    if not tokens:
+        return [
+            _provider_error(
+                provider="sutui_apiz",
+                name="APIZ / Sutui",
+                configured=False,
+                message="Missing SUTUI_SERVER_TOKEN(S)_*",
+                checked_at=checked_at,
+                extra={"url": url, "provider_group": "sutui_apiz"},
+            )
+        ]
+
+    async def query_one(pool: str, token: str, token_ref: str, index: int) -> Dict[str, Any]:
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        try:
+            status_code, payload, text = await _get_json(url, headers)
+            if status_code >= 400:
+                status_code, payload, text = await _get_json_with_params(
+                    url,
+                    {"Accept": "application/json"},
+                    params={"api_key": token},
+                )
+        except Exception as exc:
+            return _provider_error(
+                provider=f"sutui_apiz_{pool}_{index}",
+                name=f"APIZ / Sutui ({pool} #{index})",
+                configured=True,
+                message=f"Request failed: {type(exc).__name__}: {exc}",
+                checked_at=checked_at,
+                extra={
+                    "url": url,
+                    "provider_group": "sutui_apiz",
+                    "pool": pool,
+                    "token_ref": token_ref,
+                    "token_mask": _mask_token(token),
+                },
+            )
+        data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else {}
+        code = payload.get("code") if isinstance(payload, dict) else None
+        balance, balance_key, raw_balance = _find_numeric_field(data, ("balance", "points", "remaining"))
+        ok = status_code == 200 and code == 200 and balance is not None
+        item: Dict[str, Any] = {
+            "provider": f"sutui_apiz_{pool}_{index}",
+            "provider_group": "sutui_apiz",
+            "name": f"APIZ / Sutui ({pool} #{index})",
+            "ok": ok,
+            "configured": True,
+            "url": url,
+            "pool": pool,
+            "token_ref": token_ref,
+            "token_mask": _mask_token(token),
+            "status_code": status_code,
+            "code": code,
+            "checked_at": checked_at,
+            "balance_unit": "upstream_credit",
+        }
+        if balance is not None:
+            item["balance"] = balance
+            item["balance_field"] = balance_key
+            item["raw_balance"] = raw_balance
+        if not ok:
+            item["error"] = str((payload or {}).get("detail") or (payload or {}).get("msg") or text or f"HTTP {status_code}")[:500]
+        return item
+
+    return list(
+        await asyncio.gather(
+            *(query_one(pool, token, token_ref, index) for index, (pool, token, token_ref) in enumerate(tokens, 1))
+        )
+    )
+
+
 async def query_comfly_credit(checked_at: str) -> Dict[str, Any]:
     base = _clean_base(
         os.environ.get("COMFLY_ACCOUNT_API_BASE") or os.environ.get("COMFLY_API_BASE") or "",
@@ -548,6 +679,117 @@ async def query_openmind_credit(checked_at: str) -> Dict[str, Any]:
     )
 
 
+async def query_deepseek_credit(checked_at: str) -> Dict[str, Any]:
+    token, token_env = _pick_account_token("DEEPSEEK_API_KEY")
+    base = _clean_base(os.environ.get("DEEPSEEK_API_BASE") or "", "https://api.deepseek.com")
+    url = base + "/user/balance"
+    if not token:
+        return _provider_error(
+            provider="deepseek",
+            name="DeepSeek",
+            configured=False,
+            message="Missing DEEPSEEK_API_KEY",
+            checked_at=checked_at,
+            extra={"url": url},
+        )
+    try:
+        status_code, payload, text = await _get_json(url, {"Authorization": f"Bearer {token}"})
+    except Exception as exc:
+        return _provider_error(
+            provider="deepseek",
+            name="DeepSeek",
+            configured=True,
+            message=f"Request failed: {type(exc).__name__}: {exc}",
+            checked_at=checked_at,
+            extra={"url": url, "token_env": token_env, "token_mask": _mask_token(token)},
+        )
+    balance_infos = payload.get("balance_infos") if isinstance(payload, dict) and isinstance(payload.get("balance_infos"), list) else []
+    preferred = next((row for row in balance_infos if isinstance(row, dict) and str(row.get("currency") or "").upper() == "CNY"), None)
+    selected = preferred or next((row for row in balance_infos if isinstance(row, dict)), {})
+    balance = _to_float(selected.get("total_balance")) if isinstance(selected, dict) else None
+    ok = status_code == 200 and balance is not None
+    item: Dict[str, Any] = {
+        "provider": "deepseek",
+        "name": "DeepSeek",
+        "ok": ok,
+        "configured": True,
+        "url": url,
+        "token_env": token_env,
+        "token_mask": _mask_token(token),
+        "status_code": status_code,
+        "account_available": bool((payload or {}).get("is_available")) if isinstance(payload, dict) else False,
+        "checked_at": checked_at,
+    }
+    if balance is not None:
+        item["balance"] = balance
+        item["balance_unit"] = str(selected.get("currency") or "credit")
+    item["balance_breakdown"] = [
+        {
+            "currency": row.get("currency"),
+            "total_balance": row.get("total_balance"),
+            "granted_balance": row.get("granted_balance"),
+            "topped_up_balance": row.get("topped_up_balance"),
+        }
+        for row in balance_infos
+        if isinstance(row, dict)
+    ]
+    if not ok:
+        error_obj = (payload or {}).get("error") if isinstance(payload, dict) else None
+        item["error"] = str(error_obj or text or f"HTTP {status_code}")[:500]
+    return item
+
+
+async def query_tikhub_credit(checked_at: str) -> Dict[str, Any]:
+    token, token_env = _pick_account_token("TIKHUB_API_KEY")
+    base = _clean_base(os.environ.get("TIKHUB_API_BASE") or "", "https://api.tikhub.io")
+    url = base + "/api/v1/tikhub/user/get_user_info"
+    if not token:
+        return _provider_error(
+            provider="tikhub",
+            name="TikHub",
+            configured=False,
+            message="Missing TIKHUB_API_KEY",
+            checked_at=checked_at,
+            extra={"url": url},
+        )
+    try:
+        status_code, payload, text = await _get_json(url, {"Authorization": f"Bearer {token}"})
+    except Exception as exc:
+        return _provider_error(
+            provider="tikhub",
+            name="TikHub",
+            configured=True,
+            message=f"Request failed: {type(exc).__name__}: {exc}",
+            checked_at=checked_at,
+            extra={"url": url, "token_env": token_env, "token_mask": _mask_token(token)},
+        )
+    user_data = payload.get("user_data") if isinstance(payload, dict) and isinstance(payload.get("user_data"), dict) else {}
+    code = payload.get("code") if isinstance(payload, dict) else None
+    balance = _to_float(user_data.get("balance"))
+    ok = status_code == 200 and code == 200 and balance is not None
+    item: Dict[str, Any] = {
+        "provider": "tikhub",
+        "name": "TikHub",
+        "ok": ok,
+        "configured": True,
+        "url": url,
+        "token_env": token_env,
+        "token_mask": _mask_token(token),
+        "status_code": status_code,
+        "code": code,
+        "checked_at": checked_at,
+        "balance_unit": "tikhub_credit",
+        "free_credit": _to_float(user_data.get("free_credit")),
+        "account_disabled": bool(user_data.get("account_disabled")),
+        "account_active": bool(user_data.get("is_active")),
+    }
+    if balance is not None:
+        item["balance"] = balance
+    if not ok:
+        item["error"] = str((payload or {}).get("message") or (payload or {}).get("detail") or text or f"HTTP {status_code}")[:500]
+    return item
+
+
 async def query_tos_account_balance(checked_at: str) -> Dict[str, Any]:
     cfg = _tos_config()
     ak = (os.environ.get("VOLCENGINE_BILLING_ACCESS_KEY") or os.environ.get("VOLCENGINE_ACCESS_KEY") or str(cfg.get("access_key") or "")).strip()
@@ -710,34 +952,99 @@ async def query_aliyun_account_balance(checked_at: str) -> Dict[str, Any]:
     return item
 
 
+async def query_ihuyi_sms_balance(checked_at: str) -> Dict[str, Any]:
+    account = (os.environ.get("IHUYI_SMS_ACCOUNT") or "").strip()
+    password = (os.environ.get("IHUYI_SMS_PASSWORD") or "").strip()
+    url = _clean_base(os.environ.get("IHUYI_SMS_API_BASE") or "", "https://106.ihuyi.com") + "/webservice/sms.php"
+    if not account or not password:
+        return _provider_error(
+            provider="sms_ihuyi",
+            name="IHuYi SMS",
+            configured=False,
+            message="Missing IHUYI_SMS_ACCOUNT/IHUYI_SMS_PASSWORD",
+            checked_at=checked_at,
+            extra={"url": url},
+        )
+    try:
+        status_code, payload, text = await _get_json_with_params(
+            url,
+            {},
+            params={"method": "GetNum", "format": "json", "account": account, "password": password},
+        )
+    except Exception as exc:
+        return _provider_error(
+            provider="sms_ihuyi",
+            name="IHuYi SMS",
+            configured=True,
+            message=f"Request failed: {type(exc).__name__}: {exc}",
+            checked_at=checked_at,
+            extra={"url": url, "token_env": "IHUYI_SMS_ACCOUNT", "token_mask": _mask_token(account)},
+        )
+    code = payload.get("code") if isinstance(payload, dict) else None
+    balance = _to_float((payload or {}).get("num")) if isinstance(payload, dict) else None
+    ok = status_code == 200 and code == 2 and balance is not None
+    item: Dict[str, Any] = {
+        "provider": "sms_ihuyi",
+        "name": "IHuYi SMS",
+        "ok": ok,
+        "configured": True,
+        "url": url,
+        "token_env": "IHUYI_SMS_ACCOUNT",
+        "token_mask": _mask_token(account),
+        "status_code": status_code,
+        "code": code,
+        "checked_at": checked_at,
+        "balance_unit": "sms_count",
+    }
+    if balance is not None:
+        item["balance"] = balance
+    if not ok:
+        item["error"] = str((payload or {}).get("msg") or text or f"HTTP {status_code}")[:500]
+    return item
+
+
 async def query_sms_balances(checked_at: str) -> list[Dict[str, Any]]:
     results: list[Dict[str, Any]] = []
     use_aliyun = bool((os.environ.get("ALIYUN_SMS_ACCESS_KEY_ID") or "").strip() and (os.environ.get("ALIYUN_SMS_ACCESS_KEY_SECRET") or "").strip())
     if use_aliyun:
         results.append(await query_aliyun_account_balance(checked_at))
+    elif bool((os.environ.get("IHUYI_SMS_ACCOUNT") or "").strip() and (os.environ.get("IHUYI_SMS_PASSWORD") or "").strip()):
+        results.append(await query_ihuyi_sms_balance(checked_at))
     if not results:
         results.append(
             _provider_error(
                 provider="sms",
                 name="SMS Channel",
                 configured=False,
-                message="Missing SMS channel config: ALIYUN_SMS_*",
+                message="Missing SMS channel config: ALIYUN_SMS_* or IHUYI_SMS_*",
                 checked_at=checked_at,
             )
         )
     return results
 
 
-async def collect_provider_balances() -> Dict[str, Any]:
+async def collect_provider_balances(*, excluded_providers: Optional[set[str]] = None) -> Dict[str, Any]:
     checked_at = _now_iso()
-    results = [
-        await query_hifly_credit(checked_at),
-        await query_comfly_credit(checked_at),
-        await query_yunwu_credit(checked_at),
-        await query_openmind_credit(checked_at),
-        await query_tos_account_balance(checked_at),
+    excluded = {str(value or "").strip().lower() for value in (excluded_providers or set()) if str(value or "").strip()}
+    queries = [
+        ("hifly", query_hifly_credit),
+        ("comfly", query_comfly_credit),
+        ("openmind", query_openmind_credit),
+        ("deepseek", query_deepseek_credit),
+        ("tikhub", query_tikhub_credit),
+        ("sutui_apiz", query_sutui_balances),
+        ("tos", query_tos_account_balance),
+        ("sms", query_sms_balances),
     ]
-    results.extend(await query_sms_balances(checked_at))
+    if "yunwu" not in excluded:
+        queries.append(("yunwu", query_yunwu_credit))
+    gathered = await asyncio.gather(*(query(checked_at) for provider, query in queries if provider not in excluded))
+    results: list[Dict[str, Any]] = []
+    for value in gathered:
+        if isinstance(value, list):
+            results.extend(item for item in value if isinstance(item, dict))
+        elif isinstance(value, dict):
+            results.append(value)
     return {
         "ok": all(bool(item.get("ok")) for item in results),
         "checked_at": checked_at,
