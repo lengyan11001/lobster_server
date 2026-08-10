@@ -180,6 +180,7 @@
       cameraFacingMode: "user",
       cameraStream: null,
       cameraRecorder: null,
+      cameraRecorderCleanup: null,
       cameraChunks: [],
       cameraCapturedFile: null,
       cameraPreviousFiles: [],
@@ -8921,7 +8922,9 @@
     function cameraPermissionMessage(error) {
       const name = String(error?.name || "");
       if (["NotAllowedError", "PermissionDeniedError", "SecurityError"].includes(name)) {
-        return "没有摄像头或麦克风权限，请在浏览器和系统设置中允许后重试";
+        return state.cameraMode === "video"
+          ? "请在系统设置中开启摄像头和麦克风权限"
+          : "请在系统设置中开启摄像头权限";
       }
       if (["NotFoundError", "DevicesNotFoundError", "OverconstrainedError"].includes(name)) {
         return "没有检测到可用摄像头";
@@ -8930,6 +8933,33 @@
         return "摄像头正被其他应用占用，请关闭占用后重试";
       }
       return String(error?.message || "摄像头打开失败");
+    }
+
+    function hideCameraPermissionActions() {
+      $("cameraPermissionActions")?.classList.add("hidden");
+    }
+
+    function showCameraPermissionActions(error) {
+      const name = String(error?.name || "");
+      const denied = ["NotAllowedError", "PermissionDeniedError", "SecurityError"].includes(name);
+      $("cameraPermissionActions")?.classList.toggle("hidden", !(IS_ANDROID && denied));
+    }
+
+    function openAndroidAppSettings() {
+      if (IS_ANDROID_APP && typeof window.LobsterAndroid?.openAppSettings === "function") {
+        try {
+          window.LobsterAndroid.openAppSettings();
+          return true;
+        } catch {}
+      }
+      if (IS_ANDROID) {
+        try {
+          window.location.href = "intent://settings#Intent;action=android.settings.MANAGE_APPLICATIONS_SETTINGS;end";
+          return true;
+        } catch {}
+      }
+      toast("请打开系统设置，进入应用权限后开启摄像头和麦克风");
+      return false;
     }
 
     function cameraTimestamp() {
@@ -9015,6 +9045,100 @@
       }
     }
 
+    function cameraCanvasSize(live, longSide = 1280) {
+      const stage = $("cameraStage");
+      const rect = stage?.getBoundingClientRect?.();
+      const stageWidth = Math.max(1, Math.round(Number(rect?.width || live?.clientWidth || live?.videoWidth || 9)));
+      const stageHeight = Math.max(1, Math.round(Number(rect?.height || live?.clientHeight || live?.videoHeight || 16)));
+      const stageAspect = stageWidth / stageHeight;
+      const clampedLongSide = Math.max(720, Math.min(1920, Math.round(longSide)));
+      let width;
+      let height;
+      if (stageAspect >= 1) {
+        width = clampedLongSide;
+        height = Math.round(clampedLongSide / stageAspect);
+      } else {
+        height = clampedLongSide;
+        width = Math.round(clampedLongSide * stageAspect);
+      }
+      return {
+        width: Math.max(2, width + (width % 2)),
+        height: Math.max(2, height + (height % 2)),
+      };
+    }
+
+    function drawCameraFrameToCanvas(canvas, live) {
+      const context = canvas?.getContext?.("2d");
+      if (!context || !live?.videoWidth || !live?.videoHeight) return false;
+      const sourceWidth = Number(live.videoWidth);
+      const sourceHeight = Number(live.videoHeight);
+      if (!sourceWidth || !sourceHeight) return false;
+      const targetWidth = Number(canvas.width) || sourceWidth;
+      const targetHeight = Number(canvas.height) || sourceHeight;
+      const sourceAspect = sourceWidth / sourceHeight;
+      const targetAspect = targetWidth / targetHeight;
+      let sx = 0;
+      let sy = 0;
+      let sw = sourceWidth;
+      let sh = sourceHeight;
+      if (sourceAspect > targetAspect) {
+        sw = Math.max(1, Math.round(sourceHeight * targetAspect));
+        sx = Math.max(0, Math.round((sourceWidth - sw) / 2));
+      } else if (sourceAspect < targetAspect) {
+        sh = Math.max(1, Math.round(sourceWidth / targetAspect));
+        sy = Math.max(0, Math.round((sourceHeight - sh) / 2));
+      }
+      try {
+        context.save();
+        context.clearRect(0, 0, targetWidth, targetHeight);
+        if (state.cameraFacingMode === "user") {
+          context.translate(targetWidth, 0);
+          context.scale(-1, 1);
+        }
+        context.drawImage(live, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
+        context.restore();
+        return true;
+      } catch {
+        try { context.restore(); } catch {}
+        return false;
+      }
+    }
+
+    function createCameraRecordingRuntime(live) {
+      if (!live || typeof document.createElement !== "function") return null;
+      const canvas = document.createElement("canvas");
+      const size = cameraCanvasSize(live, 1280);
+      canvas.width = size.width;
+      canvas.height = size.height;
+      const canvasStream = typeof canvas.captureStream === "function" ? canvas.captureStream(24) : null;
+      if (!canvasStream) return null;
+      let stopped = false;
+      let rafId = 0;
+      const renderFrame = () => {
+        if (stopped) return;
+        drawCameraFrameToCanvas(canvas, live);
+        rafId = window.requestAnimationFrame(renderFrame);
+      };
+      drawCameraFrameToCanvas(canvas, live);
+      renderFrame();
+      const sourceStream = state.cameraStream;
+      if (sourceStream?.getAudioTracks) {
+        try {
+          sourceStream.getAudioTracks().forEach((track) => canvasStream.addTrack(track));
+        } catch {}
+      }
+      return {
+        stream: canvasStream,
+        cleanup() {
+          stopped = true;
+          if (rafId) {
+            try { window.cancelAnimationFrame(rafId); } catch {}
+          }
+          try { canvasStream.getTracks().forEach((track) => track.stop()); } catch {}
+        },
+      };
+    }
+
     function syncCameraCaptureUi() {
       const modal = $("cameraCaptureModal");
       const modeSwitch = $("cameraModeSwitch");
@@ -9037,6 +9161,7 @@
       teleprompter?.classList.toggle("hidden", !prompt || hasPreview);
       shutter?.classList.toggle("hidden", hasPreview);
       shutter?.classList.toggle("recording", state.cameraRecording);
+      if (shutter) shutter.disabled = state.cameraOpening;
       shutter?.setAttribute("aria-label", state.cameraRecording ? "停止录像" : (state.cameraMode === "video" ? "开始录像" : "拍照"));
       shutter && (shutter.title = state.cameraRecording ? "停止录像" : (state.cameraMode === "video" ? "开始录像" : "拍照"));
       done?.classList.toggle("hidden", !hasPreview);
@@ -9059,16 +9184,30 @@
       stopCameraTracks();
       if ($("cameraCaptureStatus")) $("cameraCaptureStatus").textContent = "正在打开摄像头...";
       try {
+        hideCameraPermissionActions();
         if (state.cameraMode === "video") prepareAndroidMicrophoneCapture();
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: state.cameraFacingMode },
-            width: { ideal: 1080 },
-            height: { ideal: 1920 },
-            aspectRatio: { ideal: 9 / 16 },
-          },
-          audio: state.cameraMode === "video" ? { echoCancellation: true, noiseSuppression: true } : false,
-        });
+        const audio = state.cameraMode === "video" ? { echoCancellation: true, noiseSuppression: true } : false;
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: state.cameraFacingMode },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+            audio,
+          });
+        } catch (error) {
+          if (!["OverconstrainedError", "ConstraintNotSatisfiedError"].includes(String(error?.name || ""))) throw error;
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: state.cameraFacingMode },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+            audio,
+          });
+        }
         if (nonce !== state.cameraSessionNonce || $("cameraCaptureModal")?.classList.contains("hidden")) {
           stream.getTracks().forEach((track) => track.stop());
           return false;
@@ -9089,6 +9228,7 @@
         if (nonce === state.cameraSessionNonce) {
           stopCameraTracks();
           if ($("cameraCaptureStatus")) $("cameraCaptureStatus").textContent = cameraPermissionMessage(error);
+          showCameraPermissionActions(error);
         }
         throw new Error(cameraPermissionMessage(error));
       } finally {
@@ -9128,11 +9268,10 @@
         throw new Error("摄像头画面尚未准备好，请稍后重试");
       }
       const canvas = document.createElement("canvas");
-      canvas.width = live.videoWidth;
-      canvas.height = live.videoHeight;
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("当前浏览器无法生成照片");
-      context.drawImage(live, 0, 0, canvas.width, canvas.height);
+      const size = cameraCanvasSize(live, 1600);
+      canvas.width = size.width;
+      canvas.height = size.height;
+      if (!drawCameraFrameToCanvas(canvas, live)) throw new Error("当前浏览器无法生成照片");
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
       if (!blob || !blob.size) throw new Error("照片生成失败，请重试");
       stopCameraTracks();
@@ -9156,13 +9295,17 @@
       if (!state.cameraStream) throw new Error("摄像头尚未准备好");
       if (typeof MediaRecorder === "undefined") throw new Error("当前浏览器不支持视频录制，请使用系统相机拍摄后上传");
       const mimeType = cameraRecordingMimeType();
+      const runtime = createCameraRecordingRuntime($("cameraLiveVideo"));
+      const recordingStream = runtime?.stream || state.cameraStream;
       let recorder;
       try {
-        recorder = mimeType ? new MediaRecorder(state.cameraStream, { mimeType }) : new MediaRecorder(state.cameraStream);
+        recorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream);
       } catch {
+        if (runtime) runtime.cleanup();
         recorder = new MediaRecorder(state.cameraStream);
       }
       state.cameraRecorder = recorder;
+      state.cameraRecorderCleanup = runtime?.cleanup || null;
       state.cameraChunks = [];
       state.cameraDiscardRecording = false;
       state.cameraRecordStartedAt = Date.now();
@@ -9177,10 +9320,15 @@
         const discard = state.cameraDiscardRecording;
         const durationMs = Date.now() - Number(state.cameraRecordStartedAt || Date.now());
         const finalType = String(recorder.mimeType || mimeType || chunks[0]?.type || "video/webm").split(";")[0];
+        const cleanup = state.cameraRecorderCleanup;
         state.cameraRecorder = null;
+        state.cameraRecorderCleanup = null;
         state.cameraChunks = [];
         state.cameraRecordStartedAt = 0;
         state.cameraDiscardRecording = false;
+        if (cleanup) {
+          try { cleanup(); } catch {}
+        }
         if (discard) return;
         const blob = new Blob(chunks, { type: finalType });
         if (durationMs < 1000 || !blob.size) {
@@ -9231,6 +9379,10 @@
       state.cameraTargetId = "";
       state.cameraPreviousFiles = [];
       state.cameraOpening = false;
+      if (state.cameraRecorderCleanup) {
+        try { state.cameraRecorderCleanup(); } catch {}
+        state.cameraRecorderCleanup = null;
+      }
       $("cameraCaptureModal")?.classList.add("hidden");
       $("cameraCaptureModal")?.setAttribute("aria-hidden", "true");
     }
@@ -23032,6 +23184,10 @@
     });
     $("cameraCaptureBackdrop")?.addEventListener("click", closeCameraCaptureModal);
     $("cameraCaptureClose")?.addEventListener("click", closeCameraCaptureModal);
+    $("cameraPermissionSettingsBtn")?.addEventListener("click", openAndroidAppSettings);
+    $("cameraPermissionRetryBtn")?.addEventListener("click", () => {
+      openCameraStream().catch((err) => toast(err.message || "摄像头打开失败"));
+    });
     $("cameraCaptureDone")?.addEventListener("click", closeCameraCaptureModal);
     $("cameraCaptureRetake")?.addEventListener("click", () => retakeCameraCapture().catch((err) => toast(err.message || "重新拍摄失败")));
     $("cameraCaptureShutter")?.addEventListener("click", () => handleCameraShutter().catch((err) => toast(err.message || "拍摄失败")));

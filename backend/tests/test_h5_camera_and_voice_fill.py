@@ -16,6 +16,8 @@ def test_asset_library_and_avatar_fields_expose_camera_capture() -> None:
     assert 'id="assetAvatarTrainingText" data-voice-input' in html
     assert 'id="cameraCaptureModal"' in html
     assert 'id="cameraFacingSwitch"' in html
+    assert 'id="cameraPermissionSettingsBtn"' in html
+    assert 'id="cameraPermissionRetryBtn"' in html
     assert 'data-camera-select-mode="photo"' in html
     assert 'data-camera-select-mode="video"' in html
 
@@ -25,7 +27,13 @@ def test_camera_capture_defaults_to_front_camera_and_preserves_captured_files() 
 
     assert 'cameraFacingMode: "user"' in script
     assert 'facingMode: { ideal: state.cameraFacingMode }' in script
-    assert 'aspectRatio: { ideal: 9 / 16 }' in script
+    assert 'width: { ideal: 1280 }' in script
+    assert 'height: { ideal: 720 }' in script
+    assert 'function cameraCanvasSize(live, longSide = 1280)' in script
+    assert 'function drawCameraFrameToCanvas(canvas, live)' in script
+    assert 'function createCameraRecordingRuntime(live)' in script
+    assert 'window.LobsterAndroid.openAppSettings()' in script
+    assert 'android.settings.MANAGE_APPLICATIONS_SETTINGS' in script
     assert 'await applyMinimumCameraZoom(stream);' in script
     assert 'await track.applyConstraints({ advanced: [{ zoom: minimumZoom }] });' in script
     assert 'state.cameraFacingMode = state.cameraFacingMode === "user" ? "environment" : "user";' in script
@@ -41,7 +49,9 @@ def test_camera_video_uses_supported_mime_and_avatar_teleprompter() -> None:
 
     assert '"video/mp4;codecs=h264,aac"' in script
     assert '"video/webm;codecs=vp8,opus"' in script
-    assert 'new MediaRecorder(state.cameraStream' in script
+    assert 'const runtime = createCameraRecordingRuntime($("cameraLiveVideo"));' in script
+    assert 'const recordingStream = runtime?.stream || state.cameraStream;' in script
+    assert 'new MediaRecorder(recordingStream' in script
     assert 'state.cameraTargetId === "assetAvatarAuthFile"' in script
     assert '$("assetAvatarTrainingText")?.value || defaultAssetAvatarTrainingText()' in script
     assert '$("assetAvatarAuthText")?.value || defaultAssetAvatarAuthText()' in script
@@ -69,7 +79,7 @@ def test_camera_and_voice_controls_have_mobile_safe_layout() -> None:
     assert "grid-template-columns: minmax(0, 1fr) auto;" in style
     assert ".camera-capture-sheet" in style
     assert "min-height: 100dvh;" in style
-    assert "object-fit: contain;" in style
+    assert "object-fit: cover;" in style
     assert ".camera-teleprompter" in style
     assert ".voice-fill-shell" in style
     assert "touch-action: none;" in style
