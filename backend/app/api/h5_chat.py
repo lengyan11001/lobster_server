@@ -33,14 +33,22 @@ from ..models import (
     H5ChatMessage,
     H5MountedAccountDefault,
     PublishAccount,
+    ScheduledTaskRun,
     User,
     UserInstallation,
 )
 from ..services.brand_context import explicit_request_brand_mark, public_brand_config, request_brand_mark
 from ..services.device_presence import is_device_online
 from ..services.h5_chat_sessions import attach_system_task_message
+from ..services.installation_slot_ownership import assert_installation_slot_owner
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
-from .auth import ALGORITHM, get_current_user, get_current_user_id_from_token, validate_token_brand
+from .auth import (
+    ALGORITHM,
+    get_current_user,
+    get_current_user_id_from_token,
+    request_auth_session_id,
+    validate_token_brand,
+)
 from .installation_slots import (
     INSTALLATION_ID_HEADER,
     ensure_installation_slot,
@@ -628,6 +636,8 @@ def _finish_mastra_parent_from_children(db: Session, child: H5ChatMessage) -> No
     )
     if not parent or parent.mode != "mastra":
         return
+    if parent.status in _FINAL_STATUSES and parent.finished_at is not None:
+        return
     children = (
         db.query(H5ChatMessage)
         .filter(H5ChatMessage.parent_message_id == parent.id, H5ChatMessage.user_id == parent.user_id)
@@ -646,10 +656,84 @@ def _finish_mastra_parent_from_children(db: Session, child: H5ChatMessage) -> No
         return
 
     details: List[str] = []
+    saved_assets: List[Dict[str, str]] = []
+    seen_assets: set[str] = set()
+
+    def add_asset(value: Any, media_hint: str = "") -> None:
+        if isinstance(value, str):
+            url = value.strip()
+            asset_id = ""
+            media_type = media_hint
+        elif isinstance(value, dict):
+            url = str(value.get("url") or value.get("public_url") or value.get("source_url") or "").strip()
+            asset_id = str(value.get("asset_id") or "").strip()
+            media_type = str(value.get("media_type") or value.get("type") or media_hint).strip().lower()
+        else:
+            return
+        if not url and not asset_id:
+            return
+        key = f"asset:{asset_id}" if asset_id else f"url:{url}"
+        if key in seen_assets:
+            return
+        if not media_type:
+            lower = url.lower().split("?", 1)[0]
+            media_type = "video" if lower.endswith((".mp4", ".mov", ".webm", ".m4v")) else "image"
+        seen_assets.add(key)
+        saved_assets.append({"asset_id": asset_id, "url": url, "media_type": media_type})
+
+    def collect_assets(value: Any, key_hint: str = "") -> None:
+        if len(saved_assets) >= 12:
+            return
+        hint = "video" if "video" in key_hint.lower() else "image" if "image" in key_hint.lower() else ""
+        if isinstance(value, str):
+            if value.strip().lower().startswith(("http://", "https://")):
+                add_asset(value, hint)
+            return
+        if isinstance(value, list):
+            for item in value:
+                collect_assets(item, key_hint)
+            return
+        if not isinstance(value, dict):
+            return
+        add_asset(value, hint)
+        for key, nested in value.items():
+            normalized = str(key or "").strip().lower()
+            if normalized in {
+                "images",
+                "image_urls",
+                "videos",
+                "video_urls",
+                "video_url",
+                "assets",
+                "saved_assets",
+                "outputs",
+                "output",
+                "result",
+                "item",
+                "final_video",
+                "captioned_video",
+                "bgm_video",
+            } or normalized.endswith(("_image_url", "_video_url")):
+                collect_assets(nested, normalized)
+
     for index, row in enumerate(children, start=1):
+        run = (
+            db.query(ScheduledTaskRun)
+            .filter(ScheduledTaskRun.h5_message_id == row.id)
+            .order_by(ScheduledTaskRun.created_at.desc())
+            .first()
+        )
+        before = len(saved_assets)
+        if run and isinstance(run.result_payload, dict):
+            local_result = run.result_payload.get("local_result")
+            collect_assets(local_result if isinstance(local_result, (dict, list)) else run.result_payload)
+        new_urls = [item["url"] for item in saved_assets[before:] if item.get("url")]
         if row.status == "completed":
             result = (row.reply_text or "执行完成").strip()
-            details.append(f"{index}. Online 执行完成：{result}")
+            output = f"{index}. Online 执行完成：{result}"
+            if new_urls:
+                output += "\n   成品：" + "、".join(new_urls[:3])
+            details.append(output)
         elif row.status == "cancelled":
             details.append(f"{index}. Online 任务已取消。")
         else:
@@ -670,6 +754,7 @@ def _finish_mastra_parent_from_children(db: Session, child: H5ChatMessage) -> No
             "reply_text": final_reply,
             "online_message_ids": [row.id for row in children],
             "online_statuses": [row.status for row in children],
+            "saved_assets": saved_assets,
         },
     )
     now = datetime.utcnow()
@@ -1359,6 +1444,14 @@ def h5_device_heartbeat(
     xi = _header_installation_id(request)
     if not xi:
         raise HTTPException(status_code=400, detail="缺少 X-Installation-Id")
+    assert_installation_slot_owner(
+        db,
+        user_id=current_user_id,
+        installation_id=xi,
+        claim_if_unowned=True,
+        brand_mark=request_brand_mark(request),
+        auth_session_id=request_auth_session_id(request),
+    )
     heartbeat_key = _heartbeat_cache_key(current_user_id, xi)
     account_snapshot = _normalize_publish_account_snapshot(body.publish_accounts)
     wechat_contact_snapshot = _normalize_wechat_contact_snapshot(body.wechat_contacts)
@@ -1743,6 +1836,14 @@ def h5_pending_messages(
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
+    assert_installation_slot_owner(
+        db,
+        user_id=current_user_id,
+        installation_id=xi,
+        claim_if_unowned=True,
+        brand_mark=request_brand_mark(request),
+        auth_session_id=request_auth_session_id(request),
+    )
     pending_key = _pending_cache_key(current_user_id, xi)
     if _pending_empty_recent(pending_key):
         return {"ok": True, "items": [], "throttled": True}
@@ -1841,7 +1942,21 @@ def h5_pending_messages(
     }
 
 
-def _assert_worker_can_update(message: H5ChatMessage, xi: str) -> None:
+def _assert_worker_can_update(
+    db: Session,
+    message: H5ChatMessage,
+    xi: str,
+    auth_session_id: str,
+) -> None:
+    assert_installation_slot_owner(
+        db,
+        user_id=message.user_id,
+        installation_id=xi,
+        claim_if_unowned=True,
+        auth_session_id=auth_session_id,
+    )
+    if message.status in _FINAL_STATUSES:
+        raise HTTPException(status_code=409, detail="消息已结束")
     claimed = (message.claimed_by_installation_id or "").strip()
     if claimed and xi and claimed != xi:
         raise HTTPException(status_code=409, detail="消息已由其他设备处理")
@@ -1856,7 +1971,12 @@ def h5_submit_event(
     db: Session = Depends(get_db),
 ):
     row = _message_for_user(db, message_id, current_user.id)
-    _assert_worker_can_update(row, _header_installation_id(request))
+    _assert_worker_can_update(
+        db,
+        row,
+        _header_installation_id(request),
+        request_auth_session_id(request),
+    )
     now = datetime.utcnow()
     row.updated_at = now
     if row.status == "processing":
@@ -1876,7 +1996,12 @@ def h5_complete_message(
     db: Session = Depends(get_db),
 ):
     row = _message_for_user(db, message_id, current_user.id)
-    _assert_worker_can_update(row, _header_installation_id(request))
+    _assert_worker_can_update(
+        db,
+        row,
+        _header_installation_id(request),
+        request_auth_session_id(request),
+    )
     now = datetime.utcnow()
     error = (body.error or "").strip()
     reply = (body.reply_text or "").strip()

@@ -431,13 +431,46 @@ const listSystemCapabilities = createTool({
     const terms = needle.split(/[\s,，、]+/).filter(Boolean)
     const rows = Object.entries(catalog).map(([capabilityId, definition]) => {
       const description = String(definition.description || definition.name || '')
-      const schema = definition.arg_schema || definition.inputSchema || definition.input_schema
-      const properties = schema && typeof schema === 'object'
-        ? Object.keys(((schema as Record<string, unknown>).properties || {}) as Record<string, unknown>).slice(0, 12)
+      const keywords = Array.isArray(definition.keywords)
+        ? definition.keywords.map(value => String(value || '').trim()).filter(Boolean).slice(0, 20)
         : []
-      const haystack = `${capabilityId} ${description}`.toLowerCase()
+      const action = String(definition.action || '')
+      const executionTarget = String(definition.execution_target || 'server')
+      const schema = definition.arg_schema || definition.inputSchema || definition.input_schema
+      const propertyDefinitions = schema && typeof schema === 'object'
+        ? (((schema as Record<string, unknown>).properties || {}) as Record<string, unknown>)
+        : {}
+      const properties = Object.keys(propertyDefinitions).slice(0, 12)
+      const required = schema && typeof schema === 'object' && Array.isArray((schema as Record<string, unknown>).required)
+        ? ((schema as Record<string, unknown>).required as unknown[]).map(value => String(value)).slice(0, 12)
+        : []
+      const parameterSchema = Object.fromEntries(properties.map(name => {
+        const raw = propertyDefinitions[name]
+        const rule = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+        return [name, {
+          type: String(rule.type || 'unknown'),
+          required: required.includes(name),
+          ...(Object.prototype.hasOwnProperty.call(rule, 'default') ? { default: rule.default } : {}),
+          ...(Array.isArray(rule.enum) ? { enum: rule.enum.slice(0, 20) } : {}),
+          ...(rule.minimum !== undefined ? { minimum: rule.minimum } : {}),
+          ...(rule.maximum !== undefined ? { maximum: rule.maximum } : {}),
+          ...(rule.maxItems !== undefined ? { max_items: rule.maxItems } : {}),
+          ...(rule.description ? { description: String(rule.description).slice(0, 200) } : {}),
+        }]
+      }))
+      const haystack = `${capabilityId} ${description} ${action} ${keywords.join(' ')}`.toLowerCase()
       const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0)
-      return { capability_id: capabilityId, description: description.slice(0, 400), parameters: properties, score }
+      return {
+        capability_id: capabilityId,
+        description: description.slice(0, 400),
+        execution_target: executionTarget,
+        action,
+        keywords,
+        parameters: properties,
+        required_parameters: required,
+        parameter_schema: parameterSchema,
+        score,
+      }
     })
     const matched = (terms.length ? rows.filter(row => row.score > 0) : rows)
       .sort((a, b) => b.score - a.score || a.capability_id.localeCompare(b.capability_id))
@@ -773,6 +806,73 @@ const dispatchOnlineTask = createTool({
   },
 })
 
+const dispatchOnlineCapability = createTool({
+  id: 'dispatch_online_capability',
+  description: '按 Online 已实现的结构化能力 ID 和参数下发任务。list_system_capabilities 返回 execution_target=online 时必须优先使用本工具。',
+  inputSchema: z.object({
+    capability_id: z.string().min(3).max(128).describe('list_system_capabilities 返回的 online.* 能力 ID'),
+    params: z.record(z.string(), z.unknown()).default({}).describe('严格保留用户参数；缺省项由对应 Online 工作台使用默认值'),
+    reason: z.string().min(1).max(1000).describe('为什么需要在 Online 执行'),
+  }),
+  execute: async ({ capability_id, params, reason }, executionContext) => {
+    const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
+    const task = `${capability_id}: ${JSON.stringify(params)}`
+    if (contextValue(context, 'permissionMode') !== 'full' && !contextValue(context, 'approvalGranted')) {
+      const approval = await backendJson(
+        '/api/mastra-chat/approval-request',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            task,
+            reason,
+            execution_target: 'online',
+            parent_message_id: contextValue(context, 'parentMessageId'),
+          }),
+        },
+        context,
+      )
+      return {
+        dispatched: false,
+        approval_required: true,
+        approval: approval?.approval || null,
+        user_hint: '结构化任务尚未下发，正在等待用户确认。',
+      }
+    }
+    const result = await backendJson(
+      '/api/mastra-chat/online-capability-dispatch',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          capability_id,
+          params,
+          reason,
+          parent_message_id: contextValue(context, 'parentMessageId'),
+          installation_id: contextValue(context, 'installationId'),
+          approval_id: contextValue(context, 'approvalId'),
+        }),
+      },
+      context,
+    )
+    const record: DispatchRecord = {
+      message_id: String(result?.message?.id || ''),
+      status: String(result?.message?.status || result?.run?.status || 'pending'),
+      online: Boolean(result?.online),
+      installation_id: String(result?.message?.installation_id || ''),
+    }
+    contextValue(context, 'dispatches').push(record)
+    return {
+      dispatched: true,
+      capability_id,
+      action: String(result?.action || ''),
+      run_id: String(result?.run?.id || ''),
+      ...record,
+      user_hint: record.online
+        ? '结构化任务已下发，Online 正在处理。'
+        : '结构化任务已入队，但当前 Online 不在线，请提示用户启动 Online 客户端。',
+    }
+  },
+})
+
 const requestTaskApproval = createTool({
   id: 'request_task_approval',
   description: '仅当目标执行能力本身没有授权保护时，提交清晰的执行方案给用户确认。save、update、teach、dispatch 等内置写入工具会自行申请一次授权，不要在它们之前重复调用本工具。',
@@ -887,7 +987,7 @@ const orchestrator = new Agent({
 
 执行规则：
 1. 服务器可完成的 LLM、图片、视频、语音、资料查询和云端 API 能力，直接使用现有 MCP 工具执行。
-2. 涉及微信、朋友圈、抖音、视频号、阿里询盘浏览器、桌面软件、个人账号登录态、本机文件或其他 GUI 自动化时，必须调用 dispatch_online_task，不要假装服务器已经操作电脑。
+2. 涉及微信、朋友圈、抖音、视频号、阿里询盘浏览器、桌面软件、个人账号登录态、本机文件或其他 GUI 自动化时，先用 list_system_capabilities 查找结构化 Online 能力；命中 execution_target=online 时必须按照 parameter_schema 的类型、必填项、默认值和范围调用 dispatch_online_capability，并逐项保留用户明确给出的参数。只有目录确实没有对应能力时才使用 dispatch_online_task，不要假装服务器已经操作电脑。
 3. 下发后根据工具返回的 online 状态明确告诉用户：在线则正在处理；离线则需要启动 Online。不要编造完成结果。
 4. 需要产品、个人、人设、FAQ 或历史话术时，先调用 read_personal_memory。不得编造记忆中不存在的参数、数据或业务事实。
 5. 需要了解系统能做什么时调用 list_system_capabilities。获得执行授权后，面对大量工具先使用 search_tools 检索，并只加载最相关的工具，不要遍历或臆测工具。
@@ -912,6 +1012,7 @@ const orchestrator = new Agent({
     readWechatIntelligence,
     teachWechatTakeover,
     requestTaskApproval,
+    dispatchOnlineCapability,
     dispatchOnlineTask,
     getOnlineTaskStatus,
   },
@@ -970,6 +1071,7 @@ function toolDisplayName(toolName: string, args?: Record<string, unknown>): stri
   if (key.includes('personal_profile')) return key.includes('update') ? '更新 IP 人设' : '读取 IP 人设'
   if (key.includes('personal_memory')) return key.includes('save') || key.includes('import') ? '保存个人记忆' : '读取个人记忆'
   if (key.includes('search_tools')) return '匹配执行能力'
+  if (key.includes('dispatchonlinecapability') || key.includes('dispatch_online_capability')) return '结构化下发到 Online'
   if (key.includes('dispatchonlinetask') || key.includes('dispatch_online_task')) return '下发到 Online'
   if (key.includes('getonlinetaskstatus') || key.includes('get_online_task_status')) return '查询 Online 任务'
   if (key.includes('invoke_capability')) {

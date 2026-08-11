@@ -182,6 +182,36 @@ def test_single_expired_recurring_run_is_skipped(db_session, test_user):
     assert stale.progress["skip_reason"] == "expired_recurring_run"
 
 
+def test_daily_scheduled_run_expires_after_thirty_minutes(db_session, test_user, monkeypatch):
+    now = datetime.utcnow()
+    monkeypatch.delenv("LOBSTER_CLIENT_DAILY_PENDING_MAX_AGE_SECONDS", raising=False)
+    recurring = _task(test_user.id, schedule_type="daily_times")
+    db_session.add(recurring)
+    db_session.commit()
+    stale = _run(
+        run_id="expired-daily-time",
+        user_id=test_user.id,
+        task_id=recurring.id,
+        task_kind="client_workflow",
+        status="pending",
+        created_at=now - timedelta(minutes=31),
+    )
+    db_session.add(stale)
+    db_session.commit()
+
+    skipped = scheduled_tasks._coalesce_recurring_pending_runs(
+        db_session,
+        user_id=test_user.id,
+        installation_id="test-installation",
+        now=now,
+    )
+    db_session.commit()
+
+    assert skipped == 1
+    assert stale.status == "cancelled"
+    assert stale.progress["skip_reason"] == "expired_recurring_run"
+
+
 def test_background_cleanup_coalesces_offline_recurring_runs(db_session, test_user):
     now = datetime.utcnow()
     recurring = _task(test_user.id)

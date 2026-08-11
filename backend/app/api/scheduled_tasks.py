@@ -38,7 +38,7 @@ from ..models import (
 )
 from .publish import SUPPORTED_PLATFORMS
 from .admin import AdminContext, _agent_sub_user_ids, _verify_admin_token
-from .auth import get_current_user, get_current_user_id_from_token
+from .auth import get_current_user, get_current_user_id_from_token, request_auth_session_id
 from .ip_content_studio import _draft_record_payload, run_ip_content_daily_scheduled
 from .lead_collection_templates import run_lead_collection_templates_scheduled
 from .linkedin_mining import (
@@ -57,6 +57,7 @@ from .mobile_identity import online_user_for_mobile_user
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from ..services.device_presence import is_device_online
 from ..services.h5_chat_sessions import ensure_system_task_session
+from ..services.installation_slot_ownership import assert_installation_slot_owner
 
 router = APIRouter()
 
@@ -2169,9 +2170,19 @@ def _sync_h5_message_from_run(db: Session, run: ScheduledTaskRun, now: Optional[
                 _add_h5_event(db, message.id, run.user_id, "final", {"reply_text": run.result_text or "任务已完成"})
             else:
                 _add_h5_event(db, message.id, run.user_id, "error", {"error": run.error or "任务未完成"})
+        if message.parent_message_id:
+            from .h5_chat import _finish_mastra_parent_from_children
+
+            _finish_mastra_parent_from_children(db, message)
 
 
 def _recurring_pending_max_age_seconds(task: ScheduledTask) -> int:
+    if task.schedule_type == "daily_times":
+        configured = str(os.environ.get("LOBSTER_CLIENT_DAILY_PENDING_MAX_AGE_SECONDS") or "").strip()
+        try:
+            return max(300, min(7200, int(float(configured or 1800))))
+        except (TypeError, ValueError):
+            return 1800
     configured = str(os.environ.get("LOBSTER_CLIENT_RECURRING_PENDING_MAX_AGE_SECONDS") or "").strip()
     if configured:
         try:
@@ -3392,6 +3403,13 @@ def pending_scheduled_task_runs(
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
+    assert_installation_slot_owner(
+        db,
+        user_id=current_user_id,
+        installation_id=xi,
+        claim_if_unowned=True,
+        auth_session_id=request_auth_session_id(request),
+    )
     pending_key = _pending_cache_key("run", current_user_id, xi)
     if _pending_empty_recent(pending_key, _RUN_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}
@@ -3585,6 +3603,13 @@ def pending_scheduled_publish_requests(
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
+    assert_installation_slot_owner(
+        db,
+        user_id=current_user_id,
+        installation_id=xi,
+        claim_if_unowned=True,
+        auth_session_id=request_auth_session_id(request),
+    )
     pending_key = _pending_cache_key("publish", current_user_id, xi)
     if _pending_empty_recent(pending_key, _PUBLISH_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}
@@ -3629,7 +3654,19 @@ def _run_for_user(db: Session, run_id: str, user_id: int) -> ScheduledTaskRun:
     return row
 
 
-def _assert_worker_can_update(row: ScheduledTaskRun, xi: str) -> None:
+def _assert_worker_can_update(
+    db: Session,
+    row: ScheduledTaskRun,
+    xi: str,
+    auth_session_id: str,
+) -> None:
+    assert_installation_slot_owner(
+        db,
+        user_id=row.user_id,
+        installation_id=xi,
+        claim_if_unowned=True,
+        auth_session_id=auth_session_id,
+    )
     claimed = (row.claimed_by_installation_id or "").strip()
     if claimed and xi and claimed != xi:
         raise HTTPException(status_code=409, detail="任务已由其他设备处理")
@@ -3646,7 +3683,12 @@ def submit_scheduled_task_event(
     db: Session = Depends(get_db),
 ):
     row = _run_for_user(db, run_id, current_user.id)
-    _assert_worker_can_update(row, _header_installation_id(request))
+    _assert_worker_can_update(
+        db,
+        row,
+        _header_installation_id(request),
+        request_auth_session_id(request),
+    )
     now = datetime.utcnow()
     row.progress = body.payload or {}
     row.updated_at = now
@@ -3664,7 +3706,12 @@ def complete_scheduled_task_run(
     db: Session = Depends(get_db),
 ):
     row = _run_for_user(db, run_id, current_user.id)
-    _assert_worker_can_update(row, _header_installation_id(request))
+    _assert_worker_can_update(
+        db,
+        row,
+        _header_installation_id(request),
+        request_auth_session_id(request),
+    )
     now = datetime.utcnow()
     error = _normalize_scheduled_completion_error(body)
     result_text = (body.result_text or "").strip()
@@ -3691,6 +3738,10 @@ def complete_scheduled_task_run(
         _add_h5_event(db, row.h5_message_id, row.user_id, "error", {"error": error, **(body.result_payload or {})})
     else:
         _add_h5_event(db, row.h5_message_id, row.user_id, "final", {"reply_text": result_text, **(body.result_payload or {})})
+    if row.h5_message_id and msg and msg.parent_message_id:
+        from .h5_chat import _finish_mastra_parent_from_children
+
+        _finish_mastra_parent_from_children(db, msg)
     db.commit()
     return {"ok": True, "status": row.status}
 
@@ -3711,6 +3762,13 @@ def complete_scheduled_task_publish(
         raise HTTPException(status_code=400, detail="该记录没有可发布草稿")
     claimed = str(draft.get("claimed_by_installation_id") or "").strip()
     xi = _header_installation_id(request)
+    assert_installation_slot_owner(
+        db,
+        user_id=row.user_id,
+        installation_id=xi,
+        claim_if_unowned=True,
+        auth_session_id=request_auth_session_id(request),
+    )
     if claimed and xi and claimed != xi:
         raise HTTPException(status_code=409, detail="发布任务已由其他设备处理")
     now = datetime.utcnow()

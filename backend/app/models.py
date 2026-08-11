@@ -943,6 +943,25 @@ class UserInstallation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class InstallationSlotOwner(Base):
+    """The account currently allowed to dispatch work from one physical installation."""
+
+    __tablename__ = "installation_slot_owners"
+
+    installation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    brand_mark: Mapped[str] = mapped_column(String(64), default="bihuo", nullable=False)
+    auth_session_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    lease_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
 class MobileDeviceBinding(Base):
     """手机端/小程序设备与已有 online 手机号账号的绑定关系。"""
 

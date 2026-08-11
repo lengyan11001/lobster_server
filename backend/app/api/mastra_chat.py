@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import io
+import json
 import hashlib
 import uuid
 from datetime import datetime, timedelta
@@ -9,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -23,6 +24,7 @@ from ..models import (
     H5ChatMessage,
     H5ChatSession,
     IPContentScheduleTemplate,
+    ScheduledTaskRun,
     User,
 )
 from .auth import get_current_user
@@ -33,6 +35,12 @@ from ..services.h5_chat_sessions import (
     is_system_task_session_id,
     SYSTEM_TASK_MESSAGE_MODES,
     system_task_session_id,
+)
+from ..services.mastra_online_capabilities import (
+    OnlineCapabilityParamsError,
+    mastra_online_capabilities,
+    mastra_online_capability,
+    normalize_mastra_online_params,
 )
 from .h5_chat import _add_event, _serialize_message
 from .installation_slots import optional_installation_id_from_request
@@ -88,6 +96,15 @@ class ApprovalDecisionCreate(BaseModel):
 
 class OnlineDispatchCreate(BaseModel):
     task: str = Field(..., min_length=1, max_length=12000)
+    reason: str = Field(default="", max_length=1000)
+    parent_message_id: str = Field(..., min_length=8, max_length=64)
+    installation_id: Optional[str] = Field(default=None, max_length=128)
+    approval_id: str = Field(default="", max_length=64)
+
+
+class OnlineCapabilityDispatchCreate(BaseModel):
+    capability_id: str = Field(..., min_length=3, max_length=128)
+    params: Dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(default="", max_length=1000)
     parent_message_id: str = Field(..., min_length=8, max_length=64)
     installation_id: Optional[str] = Field(default=None, max_length=128)
@@ -550,7 +567,14 @@ def list_mastra_capabilities(
         ):
             continue
         filtered[capability_id] = definition
-    return {"ok": True, "capabilities": filtered, "source": "server"}
+    # Online workflows are authenticated and authorized when dispatched. They
+    # must still be discoverable while the device is offline so the model can
+    # plan accurately instead of claiming that an existing client ability is
+    # unavailable.
+    for capability_id, definition in mastra_online_capabilities().items():
+        if isinstance(definition, dict) and definition.get("enabled", True):
+            filtered[capability_id] = definition
+    return {"ok": True, "capabilities": filtered, "source": "server_and_online"}
 
 
 def _root_mastra_message(db: Session, user_id: int, message_id: str) -> H5ChatMessage:
@@ -1264,18 +1288,19 @@ def decide_task_approval(
     return {"ok": True, "approval": _serialize_approval(approval), "message": _serialize_message(parent)}
 
 
-@router.post("/api/mastra-chat/online-dispatch", summary="AI 调度下发 Online 子任务")
-def dispatch_online_task(
-    body: OnlineDispatchCreate,
+def _authorized_online_dispatch(
+    *,
+    db: Session,
+    owner: User,
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    owner = online_user_for_mobile_user(db, current_user)
+    parent_message_id: str,
+    installation_id: Optional[str],
+    approval_id: str,
+) -> tuple[H5ChatMessage, Optional[str]]:
     parent = (
         db.query(H5ChatMessage)
         .filter(
-            H5ChatMessage.id == body.parent_message_id,
+            H5ChatMessage.id == parent_message_id,
             H5ChatMessage.user_id == owner.id,
             H5ChatMessage.mode == "mastra",
         )
@@ -1283,8 +1308,7 @@ def dispatch_online_task(
     )
     if not parent:
         raise HTTPException(status_code=404, detail="调度会话不存在")
-    task = (body.task or "").strip()
-    installation_id = _selected_installation(request, body.installation_id) or parent.installation_id
+    selected_installation = _selected_installation(request, installation_id) or parent.installation_id
 
     session = (
         db.query(H5ChatSession)
@@ -1310,9 +1334,29 @@ def dispatch_online_task(
             .order_by(H5ChatApproval.decided_at.desc(), H5ChatApproval.created_at.desc())
             .first()
         )
-        supplied_approval_id = (body.approval_id or "").strip()
+        supplied_approval_id = (approval_id or "").strip()
         if not executing_approval or supplied_approval_id != executing_approval.id:
             raise HTTPException(status_code=409, detail="该任务尚未获得当前会话的执行授权")
+    return parent, selected_installation
+
+
+@router.post("/api/mastra-chat/online-dispatch", summary="AI 调度下发 Online 子任务")
+def dispatch_online_task(
+    body: OnlineDispatchCreate,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    parent, installation_id = _authorized_online_dispatch(
+        db=db,
+        owner=owner,
+        request=request,
+        parent_message_id=body.parent_message_id,
+        installation_id=body.installation_id,
+        approval_id=body.approval_id,
+    )
+    task = (body.task or "").strip()
 
     existing = (
         db.query(H5ChatMessage)
@@ -1352,6 +1396,16 @@ def dispatch_online_task(
         "queued",
         {"reason": (body.reason or "").strip(), "source": "mastra", "parent_message_id": parent.id},
     )
+    _add_event(
+        db,
+        parent,
+        "side_effect",
+        {
+            "kind": "online_freeform_dispatched",
+            "online_message_id": child.id,
+            "task_fingerprint": hashlib.sha256(task.encode("utf-8")).hexdigest()[:12],
+        },
+    )
     parent.status = "processing"
     parent.updated_at = now
     online = _online_available(db, owner.id, installation_id)
@@ -1368,6 +1422,162 @@ def dispatch_online_task(
     db.commit()
     db.refresh(child)
     return {"ok": True, "online": online, "message": _serialize_message(child)}
+
+
+def _online_scheduled_run_payload(db: Session, message_id: str) -> Optional[Dict[str, Any]]:
+    row = (
+        db.query(ScheduledTaskRun)
+        .filter(ScheduledTaskRun.h5_message_id == message_id)
+        .order_by(ScheduledTaskRun.created_at.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "task_id": row.task_id,
+        "title": row.title,
+        "task_kind": row.task_kind,
+        "status": row.status,
+        "progress": row.progress or {},
+        "result_text": row.result_text or "",
+        "result_payload": row.result_payload or {},
+        "error": row.error or "",
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+    }
+
+
+@router.post("/api/mastra-chat/online-capability-dispatch", summary="AI 调度结构化下发 Online 能力")
+def dispatch_online_capability(
+    body: OnlineCapabilityDispatchCreate,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    definition = mastra_online_capability(body.capability_id)
+    if not definition:
+        raise HTTPException(status_code=400, detail="不支持的 Online 能力")
+    parent, installation_id = _authorized_online_dispatch(
+        db=db,
+        owner=owner,
+        request=request,
+        parent_message_id=body.parent_message_id,
+        installation_id=body.installation_id,
+        approval_id=body.approval_id,
+    )
+    try:
+        params = normalize_mastra_online_params(body.capability_id, dict(body.params or {}))
+    except OnlineCapabilityParamsError as exc:
+        raise HTTPException(status_code=400, detail=f"Online 能力参数无效：{exc}") from exc
+    canonical_params = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if len(canonical_params) > 100_000:
+        raise HTTPException(status_code=400, detail="Online 能力参数过大")
+    capability_id = str(body.capability_id or "").strip().lower()
+    action = str(definition.get("action") or "").strip()
+    if not action:
+        raise HTTPException(status_code=500, detail="Online 能力缺少执行动作")
+    fingerprint = hashlib.sha256(f"{capability_id}\n{canonical_params}".encode("utf-8")).hexdigest()[:12]
+    child_content = f"[AI调度能力] {definition.get('name') or capability_id} #{fingerprint}"
+    existing = (
+        db.query(H5ChatMessage)
+        .filter(
+            H5ChatMessage.user_id == owner.id,
+            H5ChatMessage.parent_message_id == parent.id,
+            H5ChatMessage.content == child_content,
+        )
+        .order_by(H5ChatMessage.created_at.asc())
+        .first()
+    )
+    if existing:
+        return {
+            "ok": True,
+            "deduplicated": True,
+            "online": _online_available(db, owner.id, existing.installation_id),
+            "message": _serialize_message(existing),
+            "run": _online_scheduled_run_payload(db, existing.id),
+        }
+
+    # Reuse the same client_workflow queue as H5. Online therefore receives the
+    # exact action and parameters that its own workbench already understands.
+    from .scheduled_tasks import ScheduledTaskCreate, _create_task_row
+
+    task = _create_task_row(
+        db,
+        ScheduledTaskCreate(
+            title=str(definition.get("name") or capability_id)[:160],
+            task_kind="client_workflow",
+            content=child_content,
+            payload={
+                "action": action,
+                "params": params,
+                "h5_context": {
+                    "source": "mastra",
+                    "parent_message_id": parent.id,
+                    "capability_id": capability_id,
+                },
+            },
+            schedule_type="once",
+            installation_ids=[installation_id] if installation_id else [],
+        ),
+        target_user_id=owner.id,
+        created_by_user_id=current_user.id,
+        created_by_role="mastra",
+    )
+    run = (
+        db.query(ScheduledTaskRun)
+        .filter(ScheduledTaskRun.id == task.last_run_id, ScheduledTaskRun.user_id == owner.id)
+        .first()
+    )
+    if run is None or not run.h5_message_id:
+        raise HTTPException(status_code=500, detail="Online 能力任务未成功入队")
+    child = db.query(H5ChatMessage).filter(H5ChatMessage.id == run.h5_message_id).first()
+    if child is None:
+        raise HTTPException(status_code=500, detail="Online 能力消息未成功创建")
+    child.parent_message_id = parent.id
+    child.session_id = parent.session_id
+    child.content = child_content
+    child.updated_at = datetime.utcnow()
+    _add_event(
+        db,
+        parent,
+        "side_effect",
+        {
+            "kind": "online_capability_dispatched",
+            "online_message_id": child.id,
+            "run_id": run.id,
+            "capability_id": capability_id,
+            "action": action,
+            "param_keys": sorted(params)[:50],
+            "param_fingerprint": fingerprint,
+        },
+    )
+    parent.status = "processing"
+    parent.updated_at = datetime.utcnow()
+    online = _online_available(db, owner.id, installation_id)
+    _add_event(
+        db,
+        parent,
+        "progress",
+        {
+            "text": "任务已按结构化参数下发到 Online" if online else "任务已入队，请启动 Online 客户端",
+            "online": online,
+            "online_message_id": child.id,
+            "capability_id": capability_id,
+            "action": action,
+        },
+    )
+    db.commit()
+    db.refresh(child)
+    return {
+        "ok": True,
+        "online": online,
+        "capability_id": capability_id,
+        "action": action,
+        "message": _serialize_message(child),
+        "run": _online_scheduled_run_payload(db, child.id),
+    }
 
 
 @router.get("/api/mastra-chat/online-tasks/{message_id}", summary="查询 Online 子任务")
@@ -1388,4 +1598,173 @@ def get_online_task(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Online 任务不存在")
-    return {"ok": True, "task": _serialize_message(row), "online": _online_available(db, owner.id, row.installation_id)}
+    return {
+        "ok": True,
+        "task": _serialize_message(row),
+        "run": _online_scheduled_run_payload(db, row.id),
+        "online": _online_available(db, owner.id, row.installation_id),
+    }
+
+
+def _status_counts(rows: List[Any]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for row in rows:
+        status = str(getattr(row, "status", "") or "unknown").strip().lower() or "unknown"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+@router.get("/api/mastra-chat/diagnostics", summary="查询 AI 调度质量与 Online 执行闭环")
+def get_mastra_diagnostics(
+    days: int = Query(7, ge=1, le=30),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    now = datetime.utcnow()
+    cutoff = now - timedelta(days=days)
+    roots = (
+        db.query(H5ChatMessage)
+        .filter(
+            H5ChatMessage.user_id == owner.id,
+            H5ChatMessage.mode == "mastra",
+            H5ChatMessage.parent_message_id.is_(None),
+            H5ChatMessage.created_at >= cutoff,
+        )
+        .order_by(H5ChatMessage.created_at.desc())
+        .limit(5000)
+        .all()
+    )
+    root_ids = [row.id for row in roots]
+    children = []
+    if root_ids:
+        children = (
+            db.query(H5ChatMessage)
+            .filter(
+                H5ChatMessage.user_id == owner.id,
+                H5ChatMessage.parent_message_id.in_(root_ids),
+            )
+            .order_by(H5ChatMessage.created_at.desc())
+            .limit(5000)
+            .all()
+        )
+    child_ids = [row.id for row in children]
+    runs = []
+    if child_ids:
+        runs = (
+            db.query(ScheduledTaskRun)
+            .filter(
+                ScheduledTaskRun.user_id == owner.id,
+                ScheduledTaskRun.h5_message_id.in_(child_ids),
+            )
+            .order_by(ScheduledTaskRun.created_at.desc())
+            .all()
+        )
+    run_by_message = {row.h5_message_id: row for row in runs if row.h5_message_id}
+
+    capabilities: Dict[str, Dict[str, Any]] = {}
+    freeform: List[H5ChatMessage] = []
+    structured_total = 0
+    structured_latencies: List[float] = []
+    for child in children:
+        run = run_by_message.get(child.id)
+        context = {}
+        if run and isinstance(run.payload, dict) and isinstance(run.payload.get("h5_context"), dict):
+            context = run.payload["h5_context"]
+        capability_id = str(context.get("capability_id") or "").strip().lower()
+        if str(context.get("source") or "").strip().lower() == "mastra" and capability_id:
+            structured_total += 1
+            status = str((run.status if run else child.status) or "unknown").strip().lower()
+            bucket = capabilities.setdefault(
+                capability_id,
+                {"capability_id": capability_id, "total": 0, "statuses": {}, "latency_seconds": []},
+            )
+            bucket["total"] += 1
+            bucket["statuses"][status] = bucket["statuses"].get(status, 0) + 1
+            started = (run.started_at or run.claimed_at or run.created_at) if run else child.created_at
+            finished = (run.finished_at if run else child.finished_at)
+            if started and finished:
+                latency = max(0.0, (finished - started).total_seconds())
+                bucket["latency_seconds"].append(latency)
+                structured_latencies.append(latency)
+        elif child.mode == "direct":
+            freeform.append(child)
+
+    capability_rows: List[Dict[str, Any]] = []
+    for bucket in capabilities.values():
+        latencies = bucket.pop("latency_seconds")
+        bucket["average_latency_seconds"] = round(sum(latencies) / len(latencies), 2) if latencies else None
+        bucket["failure_rate"] = round(bucket["statuses"].get("failed", 0) / bucket["total"], 4)
+        capability_rows.append(bucket)
+    capability_rows.sort(key=lambda row: (-row["total"], row["capability_id"]))
+
+    approvals = []
+    if root_ids:
+        approvals = (
+            db.query(H5ChatApproval)
+            .filter(H5ChatApproval.user_id == owner.id, H5ChatApproval.message_id.in_(root_ids))
+            .all()
+        )
+    stale_pending = [
+        row
+        for row in children
+        if row.status in ("pending", "processing") and (now - row.updated_at).total_seconds() >= 300
+    ]
+    failed_runs = [row for row in runs if row.status == "failed"]
+    conversation_latencies = [
+        max(0.0, (row.finished_at - row.created_at).total_seconds())
+        for row in roots
+        if row.finished_at and row.created_at
+    ]
+    dispatch_total = structured_total + len(freeform)
+    suggestions: List[str] = []
+    if freeform:
+        suggestions.append(f"有 {len(freeform)} 次请求未命中结构化能力，应优先补充能力目录或关键词。")
+    if failed_runs:
+        suggestions.append(f"有 {len(failed_runs)} 个 Online 能力执行失败，应按能力和错误类型逐项处理。")
+    if stale_pending:
+        suggestions.append(f"有 {len(stale_pending)} 个子任务超过 5 分钟未结束，需要检查设备在线与客户端消费。")
+    if not suggestions:
+        suggestions.append("当前窗口内未发现结构化命中、失败或排队方面的明显异常。")
+
+    return {
+        "ok": True,
+        "window": {"days": days, "start": cutoff.isoformat(), "end": now.isoformat()},
+        "conversations": {
+            "total": len(roots),
+            "statuses": _status_counts(roots),
+            "average_completion_seconds": round(sum(conversation_latencies) / len(conversation_latencies), 2)
+            if conversation_latencies
+            else None,
+        },
+        "dispatch": {
+            "total": dispatch_total,
+            "structured": structured_total,
+            "freeform": len(freeform),
+            "structured_rate": round(structured_total / dispatch_total, 4) if dispatch_total else None,
+            "average_structured_execution_seconds": round(sum(structured_latencies) / len(structured_latencies), 2)
+            if structured_latencies
+            else None,
+            "stale_over_5_minutes": len(stale_pending),
+        },
+        "approvals": {"total": len(approvals), "statuses": _status_counts(approvals)},
+        "capabilities": capability_rows,
+        "recent_failures": [
+            {
+                "run_id": row.id,
+                "capability_id": str(((row.payload or {}).get("h5_context") or {}).get("capability_id") or ""),
+                "error": str(row.error or "未知错误")[:500],
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in failed_runs[:20]
+        ],
+        "unmatched_requests": [
+            {
+                "message_id": row.id,
+                "task_preview": str(row.content or "")[:160],
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in freeform[:20]
+        ],
+        "suggestions": suggestions,
+    }

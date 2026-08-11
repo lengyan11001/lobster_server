@@ -156,6 +156,7 @@ def test_mastra_capability_discovery_does_not_require_online_installation(
         return capability_id == "cloud.allowed"
 
     monkeypatch.setattr(mastra_chat, "user_can_use_capability", _can_use)
+    monkeypatch.setattr(mastra_chat, "mastra_online_capabilities", lambda: {})
     response = _client(db_session_factory, test_user.id).get("/api/mastra-chat/capabilities")
 
     assert response.status_code == 200, response.text
@@ -239,6 +240,199 @@ def test_dispatch_online_task_is_linked_and_deduplicated(db_session, db_session_
         assert children[0].mode == "direct"
 
 
+def test_dispatch_online_capability_uses_typed_client_workflow_and_deduplicates(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.api import scheduled_tasks
+    from backend.app.models import H5ChatDevicePresence, H5ChatEvent, H5ChatMessage, ScheduledTaskRun
+
+    chat_session = _session(db_session, test_user.id, permission_mode="full")
+    parent = H5ChatMessage(
+        id="typed-online-parent",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        installation_id="desktop-a",
+        mode="mastra",
+        content="生成一张 16:9 商务图片",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    presence = H5ChatDevicePresence(
+        user_id=test_user.id,
+        installation_id="desktop-a",
+        display_name="测试电脑",
+        last_seen_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([parent, presence])
+    db_session.commit()
+
+    client = _client(db_session_factory, test_user.id)
+    body = {
+        "capability_id": "online.image_studio",
+        "params": {
+            "prompt": "四位商务人士在会议室洽谈",
+            "aspect_ratio": "16:9",
+            "quality": "high",
+        },
+        "reason": "使用 Online 图片创作工作台",
+        "parent_message_id": parent.id,
+        "installation_id": "desktop-a",
+    }
+    first = client.post("/api/mastra-chat/online-capability-dispatch", json=body)
+    second = client.post("/api/mastra-chat/online-capability-dispatch", json=body)
+
+    assert first.status_code == 200, first.text
+    assert first.json()["online"] is True
+    assert first.json()["action"] == "image_studio_generate"
+    assert second.status_code == 200, second.text
+    assert second.json()["deduplicated"] is True
+    assert second.json()["message"]["id"] == first.json()["message"]["id"]
+    child_id = first.json()["message"]["id"]
+    with db_session_factory() as session:
+        child = session.query(H5ChatMessage).filter(H5ChatMessage.id == child_id).one()
+        run = session.query(ScheduledTaskRun).filter(ScheduledTaskRun.h5_message_id == child.id).one()
+        assert child.mode == "scheduled_task"
+        assert child.parent_message_id == parent.id
+        assert run.task_kind == "client_workflow"
+        assert run.payload["action"] == "image_studio_generate"
+        assert run.payload["params"] == {
+            **body["params"],
+            "model": "gpt-image-2",
+            "background": "auto",
+        }
+        saved_parent = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
+        saved_parent.reply_text = "图片任务已下发。"
+        run.status = "completed"
+        run.result_text = "图片生成完成"
+        run.result_payload = {"local_result": {"image_urls": ["https://example.test/result.png"]}}
+        run.finished_at = datetime.utcnow()
+        scheduled_tasks._sync_h5_message_from_run(session, run, run.finished_at)
+        session.commit()
+        assert saved_parent.status == "completed"
+        assert "https://example.test/result.png" in saved_parent.reply_text
+        dispatch_event = session.query(H5ChatEvent).filter(
+            H5ChatEvent.message_id == parent.id,
+            H5ChatEvent.event_type == "side_effect",
+        ).one()
+        assert dispatch_event.payload["capability_id"] == "online.image_studio"
+        assert dispatch_event.payload["param_keys"] == sorted(run.payload["params"])
+        assert "params" not in dispatch_event.payload
+
+    status = client.get(f"/api/mastra-chat/online-tasks/{child_id}")
+    assert status.status_code == 200, status.text
+    assert status.json()["run"]["result_payload"]["local_result"]["image_urls"] == [
+        "https://example.test/result.png"
+    ]
+
+
+def test_dispatch_online_capability_rejects_invalid_params_before_queueing(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.models import H5ChatMessage
+
+    chat_session = _session(db_session, test_user.id, permission_mode="full")
+    parent = H5ChatMessage(
+        id="typed-online-invalid-parent",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        installation_id="desktop-a",
+        mode="mastra",
+        content="生成图片",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(parent)
+    db_session.commit()
+    client = _client(db_session_factory, test_user.id)
+
+    missing = client.post(
+        "/api/mastra-chat/online-capability-dispatch",
+        json={
+            "capability_id": "online.image_studio",
+            "params": {},
+            "parent_message_id": parent.id,
+        },
+    )
+    wrong_type = client.post(
+        "/api/mastra-chat/online-capability-dispatch",
+        json={
+            "capability_id": "online.local_bestseller_plan",
+            "params": {"days": "30"},
+            "parent_message_id": parent.id,
+        },
+    )
+
+    assert missing.status_code == 400
+    assert "params.prompt" in missing.json()["detail"]
+    assert wrong_type.status_code == 400
+    assert "必须是整数" in wrong_type.json()["detail"]
+    with db_session_factory() as session:
+        assert session.query(H5ChatMessage).filter(H5ChatMessage.parent_message_id == parent.id).count() == 0
+
+
+def test_mastra_diagnostics_reports_structured_and_unmatched_dispatches(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.models import H5ChatMessage, ScheduledTaskRun
+
+    chat_session = _session(db_session, test_user.id, permission_mode="full")
+    parent = H5ChatMessage(
+        id="mastra-diagnostics-parent",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        installation_id="desktop-a",
+        mode="mastra",
+        content="生成图片并打开微信",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(parent)
+    db_session.commit()
+    client = _client(db_session_factory, test_user.id)
+    structured = client.post(
+        "/api/mastra-chat/online-capability-dispatch",
+        json={
+            "capability_id": "online.image_studio",
+            "params": {"prompt": "商务会议室"},
+            "parent_message_id": parent.id,
+            "installation_id": "desktop-a",
+        },
+    )
+    freeform = client.post(
+        "/api/mastra-chat/online-dispatch",
+        json={
+            "task": "打开一个尚未结构化的桌面工具",
+            "parent_message_id": parent.id,
+            "installation_id": "desktop-a",
+        },
+    )
+    assert structured.status_code == 200, structured.text
+    assert freeform.status_code == 200, freeform.text
+    with db_session_factory() as session:
+        run = session.query(ScheduledTaskRun).filter(
+            ScheduledTaskRun.h5_message_id == structured.json()["message"]["id"]
+        ).one()
+        run.status = "failed"
+        run.error = "客户端能力执行失败"
+        run.finished_at = datetime.utcnow()
+        session.commit()
+
+    response = client.get("/api/mastra-chat/diagnostics?days=1")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["dispatch"]["structured"] == 1
+    assert payload["dispatch"]["freeform"] == 1
+    assert payload["dispatch"]["structured_rate"] == 0.5
+    assert payload["capabilities"][0]["capability_id"] == "online.image_studio"
+    assert payload["capabilities"][0]["statuses"] == {"failed": 1}
+    assert payload["unmatched_requests"][0]["task_preview"] == "打开一个尚未结构化的桌面工具"
+
+
 def test_runner_falls_back_to_online_without_holding_failed_parent(
     db_session, db_session_factory, test_user, monkeypatch
 ):
@@ -312,6 +506,79 @@ def test_parent_waits_for_orchestrator_reply_before_merging_online_result(
     db_session.commit()
     assert parent.status == "completed"
     assert "发布成功" in parent.reply_text
+
+
+def test_parent_merges_online_saved_assets_for_direct_preview(db_session, test_user):
+    from backend.app.api.h5_chat import _finish_mastra_parent_from_children
+    from backend.app.models import H5ChatEvent, H5ChatMessage, ScheduledTaskRun
+
+    now = datetime.utcnow()
+    parent = H5ChatMessage(
+        id="asset-parent-message",
+        user_id=test_user.id,
+        mode="mastra",
+        content="生成商务图片",
+        status="processing",
+        reply_text="已安排图片创作。",
+        created_at=now,
+        updated_at=now,
+    )
+    child = H5ChatMessage(
+        id="asset-child-message",
+        user_id=test_user.id,
+        parent_message_id=parent.id,
+        mode="scheduled_task",
+        content="图片创作",
+        status="completed",
+        reply_text="AI设计图已生成，共 1 张。",
+        created_at=now,
+        updated_at=now,
+        finished_at=now,
+    )
+    run = ScheduledTaskRun(
+        id="asset-child-run",
+        user_id=test_user.id,
+        title="图片创作",
+        task_kind="client_workflow",
+        content="",
+        payload={"action": "image_studio_generate"},
+        status="completed",
+        h5_message_id=child.id,
+        result_payload={
+            "local_result": {
+                "images": [
+                    {
+                        "asset_id": "generated-image",
+                        "url": "https://cdn.test/generated-image.png",
+                        "media_type": "image",
+                    }
+                ]
+            }
+        },
+        created_at=now,
+        updated_at=now,
+        finished_at=now,
+    )
+    db_session.add_all([parent, child, run])
+    db_session.commit()
+
+    _finish_mastra_parent_from_children(db_session, child)
+    db_session.commit()
+
+    assert parent.status == "completed"
+    assert "https://cdn.test/generated-image.png" in parent.reply_text
+    event = (
+        db_session.query(H5ChatEvent)
+        .filter(H5ChatEvent.message_id == parent.id, H5ChatEvent.event_type == "final")
+        .one()
+    )
+    assert event.payload["saved_assets"] == [
+        {
+            "asset_id": "generated-image",
+            "url": "https://cdn.test/generated-image.png",
+            "media_type": "image",
+        }
+    ]
 
 
 def test_sessions_keep_history_and_permissions_isolated(db_session_factory, test_user):
@@ -1525,3 +1792,5 @@ def test_mastra_media_generation_is_guarded_and_polled_to_terminal():
     assert "throw new MediaPollResumeError(message)" in source
     assert "if (error instanceof MediaPollResumeError) throw error" in source
     assert source.count("if (mediaExecution.hasPending())") >= 2
+    assert "parameter_schema: parameterSchema" in source
+    assert "按照 parameter_schema 的类型、必填项、默认值和范围" in source

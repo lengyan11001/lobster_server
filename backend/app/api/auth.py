@@ -43,6 +43,7 @@ from ..services.brand_context import (
 from ..services.sms_ihuyi import send_verify_code_sms as _ihuyi_send
 from ..services.sms_aliyun import send_verify_code_sms as _aliyun_send
 from ..services.user_feature_flags import user_feature_flags
+from ..services.installation_slot_ownership import claim_installation_slot
 from .installation_slots import (
     INSTALLATION_ID_HEADER,
     apply_installation_signup_bonus_for_new_user,
@@ -400,7 +401,26 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
+    to_encode.setdefault("jti", secrets.token_hex(16))
     return jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
+
+
+def auth_session_id_from_token(token: str) -> str:
+    raw = str(token or "").strip()
+    if not raw:
+        return ""
+    try:
+        payload = jwt.decode(raw, settings.secret_key, algorithms=[ALGORITHM])
+        session_id = str(payload.get("jti") or "").strip()
+        if session_id:
+            return session_id[:128]
+    except (JWTError, ValueError, TypeError):
+        pass
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def request_auth_session_id(request: Request) -> str:
+    return str(getattr(request.state, "auth_session_id", "") or "").strip()[:128]
 
 
 async def get_current_user(
@@ -418,6 +438,9 @@ async def get_current_user(
         user_id: int = int(payload.get("sub"))
         if user_id is None:
             raise credentials_exception
+        request.state.auth_session_id = str(payload.get("jti") or "").strip()[:128] or hashlib.sha256(
+            token.encode("utf-8")
+        ).hexdigest()
     except (JWTError, ValueError, TypeError):
         raise credentials_exception
     user = db.query(User).filter(User.id == user_id).first()
@@ -447,6 +470,9 @@ async def get_current_user_id_from_token(
         if user is None:
             raise credentials_exception
         validate_token_brand(payload, user=user, explicit_brand=explicit_request_brand_mark(request))
+        request.state.auth_session_id = str(payload.get("jti") or "").strip()[:128] or hashlib.sha256(
+            token.encode("utf-8")
+        ).hexdigest()
         db.commit()
         return user_id
     except (JWTError, ValueError, TypeError):
@@ -500,9 +526,18 @@ async def login(request: Request, db: Session = Depends(get_db)):
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="账号或密码错误")
     access_token = create_access_token(data=access_token_claims(user))
-    iid = scoped_installation_id(optional_installation_id_from_request(request), brand_mark)
+    raw_iid = optional_installation_id_from_request(request)
+    iid = scoped_installation_id(raw_iid, brand_mark)
     if iid:
         ensure_installation_slot(db, user.id, iid)
+    if raw_iid:
+        claim_installation_slot(
+            db,
+            user_id=user.id,
+            installation_id=raw_iid,
+            brand_mark=brand_mark,
+            auth_session_id=auth_session_id_from_token(access_token),
+        )
     return Token(access_token=access_token)
 
 
@@ -520,9 +555,18 @@ def login_phone_password(body: PhonePasswordLoginBody, request: Request, db: Ses
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="账号或密码错误")
     access_token = create_access_token(data=access_token_claims(user))
-    iid = scoped_installation_id(optional_installation_id_from_request(request), brand_mark)
+    raw_iid = optional_installation_id_from_request(request)
+    iid = scoped_installation_id(raw_iid, brand_mark)
     if iid:
         ensure_installation_slot(db, user.id, iid)
+    if raw_iid:
+        claim_installation_slot(
+            db,
+            user_id=user.id,
+            installation_id=raw_iid,
+            brand_mark=brand_mark,
+            auth_session_id=auth_session_id_from_token(access_token),
+        )
     return Token(access_token=access_token)
 
 
@@ -617,16 +661,26 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
     existing = user_for_account(db, _phone_account_email(mobile), brand_mark)
     if existing:
         password_initialized = initialize_phone_default_password(existing, mobile)
-        reg_iid = scoped_installation_id(optional_installation_id_from_request(request), brand_mark)
+        access_token = create_access_token(data=access_token_claims(existing))
+        raw_reg_iid = optional_installation_id_from_request(request)
+        reg_iid = scoped_installation_id(raw_reg_iid, brand_mark)
         if reg_iid:
             ensure_installation_slot(db, existing.id, reg_iid)
+        if raw_reg_iid:
+            claim_installation_slot(
+                db,
+                user_id=existing.id,
+                installation_id=raw_reg_iid,
+                brand_mark=brand_mark,
+                auth_session_id=auth_session_id_from_token(access_token),
+            )
         if password_initialized:
             db.add(existing)
             db.commit()
-        access_token = create_access_token(data=access_token_claims(existing))
         logger.info("[auth/register-phone] login existing user_id=%s mobile_tail=%s", existing.id, mobile[-4:])
         return Token(access_token=access_token)
-    reg_iid = scoped_installation_id(optional_installation_id_from_request(request), brand_mark)
+    raw_reg_iid = optional_installation_id_from_request(request)
+    reg_iid = scoped_installation_id(raw_reg_iid, brand_mark)
     parent_uid = None
     raw_parent = (body.parent_account or "").strip()
     if raw_parent:
@@ -677,6 +731,14 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
     access_token = create_access_token(data=access_token_claims(user))
     if reg_iid:
         ensure_installation_slot(db, user.id, reg_iid)
+    if raw_reg_iid:
+        claim_installation_slot(
+            db,
+            user_id=user.id,
+            installation_id=raw_reg_iid,
+            brand_mark=brand_mark,
+            auth_session_id=auth_session_id_from_token(access_token),
+        )
     return Token(access_token=access_token)
 
 
@@ -701,6 +763,28 @@ def get_me(
         wecom_userid=getattr(current_user, "wecom_userid", None),
         is_agent=bool(getattr(current_user, "is_agent", False)),
         features=user_feature_flags(db, current_user.id),
+    )
+
+
+@router.post("/claim-installation-slot", summary="登录完成后接管当前安装槽位")
+def claim_current_installation_slot(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    raw_iid = optional_installation_id_from_request(request)
+    if not raw_iid:
+        raise HTTPException(status_code=400, detail="缺少或无效的 X-Installation-Id")
+    brand_mark = user_brand_mark(current_user)
+    iid = scoped_installation_id(raw_iid, brand_mark)
+    if iid:
+        ensure_installation_slot(db, current_user.id, iid)
+    return claim_installation_slot(
+        db,
+        user_id=current_user.id,
+        installation_id=raw_iid,
+        brand_mark=brand_mark,
+        auth_session_id=request_auth_session_id(request),
     )
 
 
@@ -875,6 +959,18 @@ def sutui_login_with_token(body: LoginWithTokenBody, request: Request, db: Sessi
     user.sutui_token = api_key
     db.commit()
     access_token = create_access_token(data=access_token_claims(user))
+    raw_iid = optional_installation_id_from_request(request)
+    if raw_iid:
+        iid = scoped_installation_id(raw_iid, brand_mark)
+        if iid:
+            ensure_installation_slot(db, user.id, iid)
+        claim_installation_slot(
+            db,
+            user_id=user.id,
+            installation_id=raw_iid,
+            brand_mark=brand_mark,
+            auth_session_id=auth_session_id_from_token(access_token),
+        )
     return Token(access_token=access_token, token_type="bearer")
 
 
