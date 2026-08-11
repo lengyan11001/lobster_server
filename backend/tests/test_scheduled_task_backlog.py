@@ -182,6 +182,80 @@ def test_single_expired_recurring_run_is_skipped(db_session, test_user):
     assert stale.progress["skip_reason"] == "expired_recurring_run"
 
 
+def test_background_cleanup_coalesces_offline_recurring_runs(db_session, test_user):
+    now = datetime.utcnow()
+    recurring = _task(test_user.id)
+    db_session.add(recurring)
+    db_session.commit()
+    old = _run(
+        run_id="offline-recurring-old",
+        user_id=test_user.id,
+        task_id=recurring.id,
+        task_kind="openclaw_message",
+        status="pending",
+        created_at=now - timedelta(hours=2),
+    )
+    latest = _run(
+        run_id="offline-recurring-latest",
+        user_id=test_user.id,
+        task_id=recurring.id,
+        task_kind="openclaw_message",
+        status="pending",
+        created_at=now - timedelta(minutes=2),
+    )
+    db_session.add_all([old, latest])
+    db_session.commit()
+
+    skipped = scheduled_tasks._cleanup_recurring_pending_backlog(db_session, now)
+    db_session.commit()
+
+    assert skipped == 1
+    assert old.status == "cancelled"
+    assert latest.status == "pending"
+
+
+def test_background_cleanup_fails_abandoned_client_run_and_mirror(db_session, test_user, monkeypatch):
+    now = datetime.utcnow()
+    monkeypatch.setenv("LOBSTER_CLIENT_RUN_HARD_TIMEOUT_SECONDS", "3600")
+    stale = _run(
+        run_id="abandoned-client-run",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="processing",
+        created_at=now - timedelta(hours=2),
+    )
+    stale.h5_message_id = "abandoned-client-message"
+    message = H5ChatMessage(
+        id=stale.h5_message_id,
+        user_id=test_user.id,
+        mode="scheduled_task",
+        content="旧任务",
+        status="processing",
+        created_at=stale.created_at,
+        updated_at=stale.updated_at,
+    )
+    fresh = _run(
+        run_id="active-client-run",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="processing",
+        created_at=now - timedelta(minutes=10),
+    )
+    db_session.add_all([stale, fresh, message])
+    db_session.commit()
+
+    failed = scheduled_tasks._fail_abandoned_client_runs(db_session, now)
+    db_session.commit()
+
+    assert failed == 1
+    assert stale.status == "failed"
+    assert stale.progress["stage"] == "client_progress_timeout"
+    assert message.status == "failed"
+    assert fresh.status == "processing"
+
+
 def test_pending_claim_scans_past_blocked_serial_runs(db_session, test_user, monkeypatch):
     now = datetime.utcnow()
     processing = _run(

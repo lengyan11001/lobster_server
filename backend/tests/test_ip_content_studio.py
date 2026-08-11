@@ -756,6 +756,57 @@ def test_sync_wechat_channels_competitor_uses_v2_user_videos_without_legacy_fall
     assert calls[0]["body"] == {"username": "v2_test_user@finder", "last_buffer": "next-page", "raw": True}
 
 
+def test_sync_competitor_deleted_mid_request_returns_conflict(monkeypatch):
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    import pytest
+    from fastapi import HTTPException
+    from sqlalchemy.orm.exc import StaleDataError
+
+    from backend.app.api import ip_content_studio as studio
+
+    async def fake_query(**_kwargs):
+        return {"ok": True, "items": [], "raw_item_count": 0, "query": {}}
+
+    class DummyDb:
+        rolled_back = False
+
+        def commit(self):
+            raise StaleDataError("row was deleted")
+
+        def refresh(self, _row):
+            raise AssertionError("refresh should not run")
+
+        def rollback(self):
+            self.rolled_back = True
+
+    row = SimpleNamespace(
+        id=10,
+        platform="wechat_channels",
+        account_key="deleted@finder",
+        display_name="已删除同行",
+        last_seen_item_key="",
+        last_fetch_at=None,
+        updated_at=datetime(2026, 1, 1),
+    )
+    db = DummyDb()
+    monkeypatch.setattr(studio, "_execute_query_with_retry", fake_query)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            studio._sync_competitor_row(
+                db=db,
+                current_user=SimpleNamespace(id=1, credits=10),
+                row=row,
+            )
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "同步期间被删除" in str(exc_info.value.detail)
+    assert db.rolled_back is True
+
+
 def test_template_refs_drop_deleted_ids_but_reject_other_users(db_session, test_user):
     from backend.app.api import ip_content_studio as studio
     from backend.app.models import ContentCompetitorAccount, User

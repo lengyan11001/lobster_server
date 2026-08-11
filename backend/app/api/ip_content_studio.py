@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, load_only
+from sqlalchemy.orm.exc import StaleDataError
 
 from .admin import AdminContext, _agent_visible_user_ids, _assert_can_manage_user, _verify_admin_token
 from .auth import access_token_claims, create_access_token, get_current_user
@@ -2897,8 +2898,12 @@ async def _sync_keyword_row(
         }
     row.last_fetch_at = _utcnow()
     row.updated_at = _utcnow()
-    db.commit()
-    db.refresh(row)
+    try:
+        db.commit()
+        db.refresh(row)
+    except StaleDataError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="该关键词已在同步期间被删除，请刷新列表。") from exc
     result["keyword"] = _keyword_payload(row)
     return result
 
@@ -2945,8 +2950,12 @@ async def _sync_competitor_row(
     if isinstance(first_item, dict) and first_item.get("item_key"):
         row.last_seen_item_key = _clean_text(first_item.get("item_key"), 191)
     row.updated_at = _utcnow()
-    db.commit()
-    db.refresh(row)
+    try:
+        db.commit()
+        db.refresh(row)
+    except StaleDataError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="该同行已在同步期间被删除，请刷新列表。") from exc
     result["competitor"] = _competitor_payload(row)
     return result
 

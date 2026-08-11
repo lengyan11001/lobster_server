@@ -2251,6 +2251,7 @@ def _coalesce_recurring_pending_runs(
             ScheduledTaskRun.created_at.desc(),
             ScheduledTaskRun.id.desc(),
         )
+        .with_for_update(of=ScheduledTaskRun, skip_locked=True)
         .limit(1000)
         .all()
     )
@@ -2282,6 +2283,86 @@ def _coalesce_recurring_pending_runs(
             )
             skipped += 1
     return skipped
+
+
+def _cleanup_recurring_pending_backlog(db: Session, now: Optional[datetime] = None) -> int:
+    """Apply the normal per-device coalescing rules even while clients are offline."""
+    now = now or datetime.utcnow()
+    pairs = (
+        db.query(ScheduledTaskRun.user_id, ScheduledTaskRun.installation_id)
+        .join(ScheduledTask, ScheduledTask.id == ScheduledTaskRun.task_id)
+        .filter(
+            ScheduledTaskRun.status == "pending",
+            ScheduledTask.status == "active",
+            ScheduledTask.schedule_type.in_(list(_RECURRING_SCHEDULE_TYPES)),
+            ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
+        )
+        .distinct()
+        .limit(1000)
+        .all()
+    )
+    skipped = 0
+    for user_id, installation_id in pairs:
+        skipped += _coalesce_recurring_pending_runs(
+            db,
+            user_id=int(user_id),
+            installation_id=str(installation_id or ""),
+            now=now,
+        )
+    return skipped
+
+
+def _fail_abandoned_client_runs(db: Session, now: Optional[datetime] = None) -> int:
+    """Finish client runs that stopped reporting progress instead of requeueing forever."""
+    now = now or datetime.utcnow()
+    try:
+        timeout_seconds = max(
+            3600,
+            min(24 * 60 * 60, int(os.environ.get("LOBSTER_CLIENT_RUN_HARD_TIMEOUT_SECONDS") or "7200")),
+        )
+    except (TypeError, ValueError):
+        timeout_seconds = 7200
+    cutoff = now - timedelta(seconds=timeout_seconds)
+    rows = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.status == "processing",
+            ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
+            ScheduledTaskRun.updated_at < cutoff,
+        )
+        .order_by(ScheduledTaskRun.updated_at.asc())
+        .with_for_update(skip_locked=True)
+        .limit(200)
+        .all()
+    )
+    for row in rows:
+        message = "客户端长时间未上报执行进度，本轮已自动结束；请确认设备在线后重新执行。"
+        row.status = "failed"
+        row.error = message
+        row.progress = _merge_run_progress(
+            row,
+            {
+                "failed_at": now.isoformat(),
+                "stage": "client_progress_timeout",
+                "text": message,
+                "timeout_seconds": timeout_seconds,
+            },
+        )
+        row.finished_at = now
+        row.updated_at = now
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
+        if task:
+            task.last_error = message
+            task.updated_at = now
+        _sync_h5_message_from_run(db, row, now)
+        _add_h5_event(
+            db,
+            row.h5_message_id,
+            row.user_id,
+            "error",
+            {"error": message, "reason": "client_progress_timeout"},
+        )
+    return len(rows)
 
 
 def _run_async_blocking(coro: Any) -> Any:
