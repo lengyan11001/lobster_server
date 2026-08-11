@@ -77,6 +77,38 @@ def test_native_wechat_takeover_is_not_requeued_during_its_thirty_minute_session
     assert scheduled_tasks._client_processing_run_is_stale(row, now) is True
 
 
+def test_scheduled_task_heartbeat_preserves_initial_claim_time(db_session, test_user):
+    from starlette.requests import Request
+
+    claimed_at = datetime.utcnow() - timedelta(minutes=5)
+    row = _run(run_id="heartbeat-run", user_id=test_user.id, task_kind="client_workflow")
+    row.claimed_by_installation_id = "device-a"
+    row.claimed_at = claimed_at
+    row.updated_at = claimed_at
+    db_session.add(row)
+    db_session.commit()
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/scheduled-tasks/runs/heartbeat-run/event",
+            "headers": [(b"x-installation-id", b"device-a")],
+        }
+    )
+    scheduled_tasks.submit_scheduled_task_event(
+        "heartbeat-run",
+        scheduled_tasks.ScheduledTaskEventIn(type="heartbeat", payload={"heartbeat": True}),
+        request,
+        test_user,
+        db_session,
+    )
+
+    db_session.refresh(row)
+    assert row.claimed_at == claimed_at
+    assert row.updated_at > claimed_at
+
+
 def test_wechat_transcript_reuses_terminal_job_for_same_scheduled_run(db_session, test_user):
     row = CreativeGenerationJob(
         job_id="wct_resume_test",

@@ -3568,8 +3568,6 @@ def submit_scheduled_task_event(
     _assert_worker_can_update(row, _header_installation_id(request))
     now = datetime.utcnow()
     row.progress = body.payload or {}
-    if body.type == "heartbeat" and row.status == "processing":
-        row.claimed_at = now
     row.updated_at = now
     _add_h5_event(db, row.h5_message_id, row.user_id, body.type, body.payload)
     db.commit()
