@@ -66,6 +66,7 @@ from .api.social_leads import router as social_leads_router
 from .api.lead_collection_templates import router as lead_collection_templates_router
 from .api.global_leads import router as global_leads_router
 from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
+from .api.wechat_intelligence import router as wechat_intelligence_router
 from .api.mobile_client import router as mobile_client_router
 from .api.alibaba_customer_research import router as alibaba_customer_research_router
 try:
@@ -1238,6 +1239,7 @@ def create_app() -> FastAPI:
     app.include_router(lead_collection_templates_router, prefix="")
     app.include_router(global_leads_router, prefix="")
     app.include_router(wechat_channels_transcript_router, prefix="")
+    app.include_router(wechat_intelligence_router, prefix="")
     app.include_router(mobile_client_router, prefix="")
     app.include_router(alibaba_customer_research_router, prefix="")
     if wecom_kf_router is not None:

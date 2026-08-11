@@ -114,6 +114,17 @@ class MastraPersonalProfileUpdate(MastraAuthorizedWrite):
     fields: Dict[str, Any] = Field(default_factory=dict)
 
 
+class MastraWechatRuleCreate(MastraAuthorizedWrite):
+    title: str = Field(default="微信接管规则", max_length=200)
+    content: str = Field(..., min_length=1, max_length=4000)
+    category: str = Field(default="general", max_length=32)
+    account_id: str = Field(default="", max_length=160)
+    contact_key: str = Field(default="", max_length=240)
+    scope: str = Field(default="account", max_length=24)
+    priority: int = Field(default=50, ge=0, le=100)
+    risk_level: str = Field(default="medium", max_length=16)
+
+
 def _mastra_base_url() -> str:
     return (os.environ.get("LOBSTER_MASTRA_URL") or "http://127.0.0.1:4111").strip().rstrip("/")
 
@@ -592,6 +603,7 @@ def _message_has_started_side_effects(db: Session, row: H5ChatMessage) -> bool:
         "read_personal_memory_document",
         "read_personal_memory",
         "read_personal_profile",
+        "read_wechat_intelligence",
         "get_online_task_status",
         "request_task_approval",
     }
@@ -933,6 +945,50 @@ def update_mastra_personal_profile(
     _add_event(db, parent, "side_effect", {"kind": "personal_profile_updated", "fields": sorted(cleaned)})
     db.commit()
     return {"ok": True, "profile": _personal_profile_payload(db, owner.id), "updated_fields": sorted(cleaned)}
+
+
+@router.post("/api/mastra-chat/wechat-intelligence/teach", summary="由 AI 调度教授个微接管长期规则")
+def teach_mastra_wechat_rule(
+    body: MastraWechatRuleCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from .wechat_intelligence import _serialize_rule, create_strategy_rule
+
+    owner = online_user_for_mobile_user(db, current_user)
+    parent, _ = _authorized_parent_and_approval(
+        db,
+        owner_id=owner.id,
+        parent_message_id=body.parent_message_id,
+        approval_id=body.approval_id,
+    )
+    rule = create_strategy_rule(
+        db,
+        user_id=owner.id,
+        account_id=(body.account_id or "").strip(),
+        contact_key=(body.contact_key or "").strip(),
+        scope=(body.scope or "account").strip().lower(),
+        title=body.title,
+        content=body.content,
+        category=body.category,
+        priority=body.priority,
+        risk_level=body.risk_level,
+        source_type="mastra_user_teaching",
+        source_ref=body.parent_message_id,
+    )
+    _add_event(
+        db,
+        parent,
+        "side_effect",
+        {
+            "kind": "wechat_strategy_rule_created",
+            "rule_id": rule.id,
+            "category": rule.category,
+            "scope": rule.scope,
+        },
+    )
+    db.commit()
+    return {"ok": True, "rule": _serialize_rule(rule), "message": "个微接管规则已生效"}
 
 
 @router.post("/api/mastra-chat/memory/save-text", summary="由 AI 调度保存个人记忆文本")

@@ -1092,6 +1092,127 @@ class H5MountedAccountDefault(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class WechatContactMemory(Base):
+    """Shared customer profile learned from native WeChat conversations."""
+
+    __tablename__ = "wechat_contact_memories"
+    __table_args__ = (
+        UniqueConstraint("user_id", "account_id", "contact_key", name="uq_wechat_contact_memory_owner"),
+        Index("ix_wechat_contact_memory_user_activity", "user_id", "last_activity_at"),
+        Index("ix_wechat_contact_memory_user_intent", "user_id", "intent_level", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    account_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    contact_key: Mapped[str] = mapped_column(String(240), nullable=False, index=True)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(240), nullable=True, index=True)
+    profile: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    rolling_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    stage: Mapped[str] = mapped_column(String(48), default="unknown", nullable=False, index=True)
+    intent_level: Mapped[str] = mapped_column(String(16), default="none", nullable=False, index=True)
+    intent_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    topic: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    next_followup: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    inbound_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    outbound_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_inbound_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_outbound_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_activity_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class WechatLearningCandidate(Base):
+    """A proposed account-wide behavior that must be reviewed before reuse."""
+
+    __tablename__ = "wechat_learning_candidates"
+    __table_args__ = (
+        Index("ix_wechat_learning_candidate_user_status", "user_id", "status", "created_at"),
+        Index("ix_wechat_learning_candidate_user_scope", "user_id", "account_id", "contact_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(32), default="customer_chat", nullable=False, index=True)
+    source_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    account_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
+    contact_key: Mapped[Optional[str]] = mapped_column(String(240), nullable=True, index=True)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    scope: Mapped[str] = mapped_column(String(24), default="account", nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(32), default="general", nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(16), default="medium", nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False, index=True)
+    decision_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rule_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class WechatStrategyRule(Base):
+    """User-approved durable guidance for native WeChat replies."""
+
+    __tablename__ = "wechat_strategy_rules"
+    __table_args__ = (
+        Index("ix_wechat_strategy_rule_user_status", "user_id", "status", "priority"),
+        Index("ix_wechat_strategy_rule_user_scope", "user_id", "account_id", "contact_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    account_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
+    contact_key: Mapped[Optional[str]] = mapped_column(String(240), nullable=True, index=True)
+    scope: Mapped[str] = mapped_column(String(24), default="account", nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(32), default="general", nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(16), default="medium", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(32), default="manual", nullable=False)
+    source_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class WechatInteractionOutcome(Base):
+    """Bounded audit trail used to evaluate and improve native WeChat takeover."""
+
+    __tablename__ = "wechat_interaction_outcomes"
+    __table_args__ = (
+        UniqueConstraint("user_id", "dedup_key", name="uq_wechat_interaction_outcome_dedup"),
+        Index("ix_wechat_interaction_outcome_user_time", "user_id", "happened_at"),
+        Index("ix_wechat_interaction_outcome_contact_time", "user_id", "account_id", "contact_key", "happened_at"),
+        Index("ix_wechat_interaction_outcome_user_type", "user_id", "event_type", "happened_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    dedup_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    account_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    contact_key: Mapped[str] = mapped_column(String(240), nullable=False, index=True)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="completed", nullable=False, index=True)
+    category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    intent_level: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    inbound_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    inbound_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reply_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    happened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class H5HomePreference(Base):
     """Per-user H5 homepage presentation preferences."""
 

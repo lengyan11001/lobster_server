@@ -1099,6 +1099,7 @@
           <div class="section-title">
             <h2>平台账号</h2>
             <div class="section-actions">
+              <button class="ghost" type="button" id="mountedWechatIntelligenceBtn">接管中枢</button>
               <button class="ghost" type="button" id="mountedAccountRefreshBtn">刷新</button>
             </div>
           </div>
@@ -1147,6 +1148,43 @@
                 <textarea id="mountedWechatGroupInviteWelcomeMessage" rows="3" placeholder="建群成功后自动发送，之后由主联系人继续接待"></textarea>
               </label>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="wechatIntelligenceView">
+        <div class="panel list-page wechat-intelligence-page">
+          <div class="wechat-intelligence-hero">
+            <div>
+              <span class="wechat-intelligence-kicker">PERSONAL WECHAT COPILOT</span>
+              <h2>微信接管中枢</h2>
+              <p>查看客户意向、回复结果和待审核建议。普通自动回复不等待这里的授权。</p>
+            </div>
+            <div class="wechat-intelligence-hero-actions">
+              <label class="wechat-learning-mode">学习方式
+                <select id="wechatIntelligenceLearningMode">
+                  <option value="confirm">建议先审核</option>
+                  <option value="full">低风险建议自动学习</option>
+                </select>
+              </label>
+              <button type="button" id="wechatIntelligenceTeachBtn">教它新规则</button>
+            </div>
+          </div>
+          <div class="wechat-intelligence-tabs" id="wechatIntelligenceTabs">
+            <button type="button" class="active" data-wechat-intelligence-tab="overview">概览</button>
+            <button type="button" data-wechat-intelligence-tab="contacts">客户画像</button>
+            <button type="button" data-wechat-intelligence-tab="candidates">待审核建议</button>
+            <button type="button" data-wechat-intelligence-tab="rules">长期规则</button>
+            <button type="button" data-wechat-intelligence-tab="outcomes">执行记录</button>
+          </div>
+          <div class="wechat-intelligence-toolbar" id="wechatIntelligenceToolbar"></div>
+          <div class="wechat-intelligence-content" id="wechatIntelligenceContent">
+            <div class="wechat-intelligence-empty">正在读取接管数据...</div>
+          </div>
+          <div class="wechat-intelligence-pager hidden" id="wechatIntelligencePager">
+            <button type="button" class="ghost" data-wechat-intelligence-page="prev">上一页</button>
+            <span id="wechatIntelligencePageText">第 1 页</span>
+            <button type="button" class="ghost" data-wechat-intelligence-page="next">下一页</button>
           </div>
         </div>
       </section>

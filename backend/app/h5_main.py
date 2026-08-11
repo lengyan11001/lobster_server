@@ -34,6 +34,7 @@ from .api.shanjian_digital_human import router as shanjian_digital_human_router
 from .api.shanjian_smart_clip import router as shanjian_smart_clip_router
 from .api.skills import router as skills_router
 from .api.wechat_channels_transcript import router as wechat_channels_transcript_router
+from .api.wechat_intelligence import router as wechat_intelligence_router
 from .core.config import settings
 from .db import Base, SessionLocal, engine, reset_db_request_context, set_db_request_context
 from .services.brand_context import ensure_user_brand_schema, seed_brand_configs
@@ -216,6 +217,7 @@ def create_h5_app() -> FastAPI:
     app.include_router(social_leads_router, prefix="")
     app.include_router(lead_collection_templates_router, prefix="")
     app.include_router(wechat_channels_transcript_router, prefix="")
+    app.include_router(wechat_intelligence_router, prefix="")
     app.include_router(skills_router, prefix="")
 
     miniprogram_static_dir = Path(__file__).resolve().parent.parent.parent / "client_static" / "miniprogram"

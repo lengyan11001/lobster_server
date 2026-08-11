@@ -2507,6 +2507,8 @@
     .mounted-auto-reply-btn:disabled {
       opacity: .58;
     }
+    .mounted-account-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+    .mounted-intelligence-btn { min-height: 28px; padding: 0 10px; color: #185f50; border-color: rgba(24,95,80,.2); background: #edf9f5; font-size: 12px; white-space: nowrap; }
     .mounted-account-empty {
       min-height: 44px;
       display: grid;
@@ -2580,6 +2582,87 @@
     @media (max-width: 520px) {
       .mounted-wechat-takeover-grid { grid-template-columns: 1fr; }
       .mounted-wechat-takeover-grid label.full { grid-column: auto; }
+      .mounted-account-item { grid-template-columns: 34px minmax(0, 1fr) auto; }
+      .mounted-account-status { display: none; }
+      .mounted-account-actions { max-width: 142px; }
+    }
+    .wechat-intelligence-page { display: grid; gap: 14px; min-width: 0; }
+    .wechat-intelligence-hero {
+      position: relative;
+      overflow: hidden;
+      min-height: 150px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 22px;
+      color: #ecfff9;
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at 84% 12%, rgba(101,255,196,.32), transparent 34%),
+        linear-gradient(135deg, #0f2f2a 0%, #165f50 58%, #247b67 100%);
+      box-shadow: 0 18px 46px rgba(15,47,42,.2);
+    }
+    .wechat-intelligence-hero::after { content: ""; position: absolute; right: 10%; top: -70px; width: 180px; height: 180px; border: 1px solid rgba(255,255,255,.16); border-radius: 48% 52% 42% 58%; transform: rotate(24deg); }
+    .wechat-intelligence-hero > * { position: relative; z-index: 1; }
+    .wechat-intelligence-kicker { display: block; margin-bottom: 7px; color: #8ff4cd; font-size: 10px; font-weight: 900; letter-spacing: .18em; }
+    .wechat-intelligence-hero h2 { margin: 0 0 7px; color: #fff; font-size: 24px; letter-spacing: -.02em; }
+    .wechat-intelligence-hero p { max-width: 520px; margin: 0; color: rgba(236,255,249,.78); font-size: 12px; line-height: 1.6; }
+    .wechat-learning-mode { min-width: 190px; display: grid; gap: 6px; color: rgba(236,255,249,.72); font-size: 11px; }
+    .wechat-learning-mode select { width: 100%; min-height: 40px; color: #173b33; border: 0; background: rgba(255,255,255,.94); }
+    .wechat-intelligence-hero-actions { min-width: 190px; display: grid; gap: 8px; }
+    .wechat-intelligence-hero-actions > button { min-height: 38px; color: #173b33; background: #8ff4cd; box-shadow: none; }
+    .wechat-intelligence-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 5px; border-radius: 16px; background: #edf3f1; scrollbar-width: none; }
+    .wechat-intelligence-tabs::-webkit-scrollbar { display: none; }
+    .wechat-intelligence-tabs button { flex: 0 0 auto; min-height: 36px; padding: 0 14px; color: #63766f; background: transparent; box-shadow: none; font-size: 12px; }
+    .wechat-intelligence-tabs button.active { color: #fff; background: #185f50; box-shadow: 0 7px 18px rgba(24,95,80,.18); }
+    .wechat-intelligence-toolbar { min-height: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .wechat-intelligence-toolbar:empty { display: none; }
+    .wechat-intelligence-toolbar input, .wechat-intelligence-toolbar select { min-height: 38px; }
+    .wechat-intelligence-search { width: min(360px, 100%); }
+    .wechat-intelligence-content { min-height: 220px; min-width: 0; }
+    .wechat-intelligence-empty { min-height: 220px; display: grid; place-items: center; color: #73837d; border: 1px dashed #cfdcd7; border-radius: 18px; background: #f8fbfa; font-size: 12px; }
+    .wechat-intelligence-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .wechat-intelligence-stat { min-width: 0; padding: 16px; border: 1px solid #dfe9e5; border-radius: 18px; background: linear-gradient(145deg, #fff, #f4f9f7); }
+    .wechat-intelligence-stat small { display: block; color: #76857f; font-size: 11px; }
+    .wechat-intelligence-stat strong { display: block; margin-top: 7px; color: #18372f; font-size: 25px; letter-spacing: -.04em; }
+    .wechat-intelligence-section-title { margin: 18px 2px 9px; display: flex; align-items: center; justify-content: space-between; color: #233b35; font-size: 13px; }
+    .wechat-intelligence-list { display: grid; gap: 8px; }
+    .wechat-intelligence-row { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 13px 14px; color: #263b35; border: 1px solid #dfe9e5; border-radius: 15px; background: #fff; }
+    button.wechat-intelligence-row { width: 100%; text-align: left; box-shadow: none; }
+    .wechat-intelligence-row-main { min-width: 0; display: grid; gap: 5px; }
+    .wechat-intelligence-row-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+    .wechat-intelligence-row-main p { margin: 0; overflow: hidden; color: #697a74; font-size: 12px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .wechat-intelligence-row-main small { color: #91a099; font-size: 10px; }
+    .wechat-intelligence-badge { align-self: start; padding: 4px 8px; color: #185f50; border-radius: 999px; background: #e8f6f1; font-size: 10px; white-space: nowrap; }
+    .wechat-intelligence-badge.high, .wechat-intelligence-badge.failed { color: #b2372f; background: #fff0ed; }
+    .wechat-intelligence-badge.medium { color: #9a6814; background: #fff6dd; }
+    .wechat-candidate-card { display: grid; gap: 10px; padding: 14px; border: 1px solid #dfe9e5; border-radius: 16px; background: #fff; }
+    .wechat-candidate-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #7a8a84; font-size: 11px; }
+    .wechat-candidate-card input, .wechat-candidate-card textarea { width: 100%; min-width: 0; }
+    .wechat-candidate-card input { min-height: 38px; font-weight: 700; }
+    .wechat-candidate-card textarea { min-height: 78px; resize: vertical; line-height: 1.55; }
+    .wechat-candidate-evidence { padding: 9px 10px; color: #6e7e78; border-radius: 10px; background: #f5f8f7; font-size: 11px; line-height: 1.55; }
+    .wechat-candidate-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .wechat-candidate-actions button { min-height: 34px; padding: 0 14px; }
+    .wechat-rule-actions { display: flex; align-items: center; gap: 6px; }
+    .wechat-rule-actions button { min-height: 30px; padding: 0 10px; font-size: 11px; }
+    .wechat-contact-detail { display: grid; gap: 12px; }
+    .wechat-contact-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px; color: #ecfff9; border-radius: 18px; background: #185f50; }
+    .wechat-contact-detail-head h3 { margin: 0 0 4px; color: #fff; font-size: 18px; }
+    .wechat-contact-detail-head p { margin: 0; color: rgba(236,255,249,.72); font-size: 11px; }
+    .wechat-contact-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .wechat-contact-detail-block { padding: 13px; border: 1px solid #dfe9e5; border-radius: 15px; background: #fff; }
+    .wechat-contact-detail-block.full { grid-column: 1 / -1; }
+    .wechat-contact-detail-block small { color: #81918b; font-size: 10px; }
+    .wechat-contact-detail-block p { margin: 7px 0 0; color: #263b35; font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
+    .wechat-intelligence-pager { display: flex; align-items: center; justify-content: center; gap: 12px; color: #778781; font-size: 11px; }
+    @media (max-width: 720px) {
+      .wechat-intelligence-hero { align-items: stretch; flex-direction: column; padding: 18px; }
+      .wechat-learning-mode, .wechat-intelligence-hero-actions { min-width: 0; }
+      .wechat-intelligence-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .wechat-contact-detail-grid { grid-template-columns: 1fr; }
+      .wechat-contact-detail-block.full { grid-column: auto; }
     }
     .setting-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .profile-entry {

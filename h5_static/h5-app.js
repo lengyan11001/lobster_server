@@ -131,6 +131,15 @@
       mountedAccountTab: "wechat",
       mountedWechatMemoryLoading: false,
       mountedWechatContactSearch: "",
+      wechatIntelligenceTab: "overview",
+      wechatIntelligenceDashboard: null,
+      wechatIntelligenceItems: [],
+      wechatIntelligenceTotal: 0,
+      wechatIntelligencePage: 1,
+      wechatIntelligencePageSize: 12,
+      wechatIntelligenceQuery: "",
+      wechatIntelligenceLoading: false,
+      wechatIntelligenceContactDetail: null,
       publishRunDraft: null,
       publishRunSubmitting: false,
       userUploadAssetCache: {},
@@ -13366,6 +13375,7 @@
         recorderDetail: ["秘书记录", "摘要、待办和完整转写"],
         personalMemoryDetail: ["记忆文件", "查看完整内容"],
         mountedAccounts: ["平台账号", ""],
+        wechatIntelligence: ["微信接管中枢", "客户画像、学习建议和执行结果"],
         personalSettings: ["IP人设定位", "模板、关键词、同行账号和记忆文件"],
         taskList: ["定时任务", "默认展示 10 条，更多用翻页加载"],
         taskDetail: ["定时任务详情", "任务配置和最近执行入口"],
@@ -13416,6 +13426,10 @@
       if (key === "mountedAccounts") {
         renderProfileDeviceSelect();
         refreshMountedAccounts().catch(() => {});
+      }
+      if (key === "wechatIntelligence") {
+        renderWechatIntelligence();
+        if (!state.wechatIntelligenceDashboard) loadWechatIntelligence().catch(() => {});
       }
       if (key === "recorder") {
         state.recorderSubtab = "records";
@@ -15014,6 +15028,9 @@
         const autoReplyAction = row.scope === "wechat"
           ? `<button class="ghost mounted-auto-reply-btn${row.auto_reply_enabled ? " active" : ""}" type="button" data-mounted-wechat-auto-reply="${row.auto_reply_enabled ? "0" : "1"}" data-mounted-installation-id="${escapeHtml(row.installation_id || "")}">${row.auto_reply_enabled ? "自动回复开" : "自动回复关"}</button>`
           : "";
+        const intelligenceAction = row.scope === "wechat"
+          ? '<button class="ghost mounted-intelligence-btn" type="button" data-open-wechat-intelligence>接管中枢</button>'
+          : "";
         return `<div class="mounted-account-item${row.online ? " online" : ""}${row.is_default ? " default" : ""}">
           <span class="mounted-account-icon">${escapeHtml(firstChar(mountedScopeLabel(row.scope)))}</span>
           <div class="mounted-account-main">
@@ -15021,8 +15038,7 @@
             <em>${escapeHtml(mountedScopeLabel(row.scope))}${meta ? ` · ${escapeHtml(meta)}` : ""}</em>
           </div>
           <span class="mounted-account-status">${escapeHtml(mountedAccountStatusText(row))}</span>
-          ${autoReplyAction}
-          ${action}
+          <div class="mounted-account-actions">${intelligenceAction}${autoReplyAction}${action}</div>
         </div>`;
       }).join("");
       renderMountedWechatTakeoverConfig();
@@ -15139,6 +15155,243 @@
       } finally {
         if (btn) btn.disabled = false;
       }
+    }
+
+    const WECHAT_INTELLIGENCE_EVENT_LABELS = {
+      reply_sent: "已回复",
+      reply_skipped: "未回复",
+      group_queued: "已安排拉群",
+      group_created: "已拉群",
+      failed: "执行失败",
+    };
+
+    const WECHAT_INTELLIGENCE_STAGE_LABELS = {
+      unknown: "待识别",
+      new: "新联系人",
+      warming: "沟通中",
+      qualified: "已确认需求",
+      proposal: "方案阶段",
+      won: "已成交",
+      lost: "暂不跟进",
+      service: "服务中",
+    };
+
+    function wechatIntelligenceIntentLabel(value) {
+      return ({ high: "高意向", medium: "中意向", low: "低意向", none: "未识别" })[String(value || "none")] || "未识别";
+    }
+
+    function openWechatIntelligence() {
+      state.wechatIntelligenceTab = "overview";
+      state.wechatIntelligencePage = 1;
+      state.wechatIntelligenceContactDetail = null;
+      switchTab("wechatIntelligence");
+      loadWechatIntelligence(true).catch((err) => toast(err.message || "接管数据加载失败"));
+    }
+
+    function setWechatIntelligenceTab(tab) {
+      const next = ["overview", "contacts", "candidates", "rules", "outcomes"].includes(tab) ? tab : "overview";
+      state.wechatIntelligenceTab = next;
+      state.wechatIntelligencePage = 1;
+      state.wechatIntelligenceItems = [];
+      state.wechatIntelligenceContactDetail = null;
+      renderWechatIntelligence();
+      loadWechatIntelligence(true).catch((err) => toast(err.message || "接管数据加载失败"));
+    }
+
+    function renderWechatIntelligenceToolbar() {
+      const toolbar = $("wechatIntelligenceToolbar");
+      if (!toolbar) return;
+      if (state.wechatIntelligenceTab === "contacts" && !state.wechatIntelligenceContactDetail) {
+        toolbar.innerHTML = `<input class="wechat-intelligence-search" id="wechatIntelligenceSearch" type="search" value="${escapeHtml(state.wechatIntelligenceQuery)}" placeholder="搜索联系人、微信号或摘要">
+          <button class="ghost" type="button" data-wechat-intelligence-search>搜索</button>`;
+        return;
+      }
+      if (state.wechatIntelligenceTab === "candidates") {
+        toolbar.innerHTML = '<span class="hint">只展示待审核建议，审核后会进入长期规则</span><button class="ghost" type="button" data-wechat-intelligence-refresh>刷新</button>';
+        return;
+      }
+      if (state.wechatIntelligenceTab === "rules") {
+        toolbar.innerHTML = '<span class="hint">这里只展示已生效规则，可随时停用</span><button class="ghost" type="button" data-wechat-intelligence-refresh>刷新</button>';
+        return;
+      }
+      if (state.wechatIntelligenceTab === "outcomes") {
+        toolbar.innerHTML = '<span class="hint">最近回复、拉群和失败结果</span><button class="ghost" type="button" data-wechat-intelligence-refresh>刷新</button>';
+        return;
+      }
+      toolbar.innerHTML = '<span class="hint">数据来自 Online 每轮接管完成后的回写</span><button class="ghost" type="button" data-wechat-intelligence-refresh>刷新</button>';
+    }
+
+    function renderWechatIntelligenceOverview() {
+      const data = state.wechatIntelligenceDashboard || {};
+      const counts = data.counts || {};
+      const cards = [
+        ["客户画像", counts.contacts || 0],
+        ["近 7 天活跃", counts.active_contacts_7d || 0],
+        ["今日已回复", counts.replied || 0],
+        ["待审核建议", counts.pending_suggestions || 0],
+      ];
+      const recent = Array.isArray(data.recent) ? data.recent : [];
+      return `<div class="wechat-intelligence-stats">${cards.map(([label, value]) => `<div class="wechat-intelligence-stat"><small>${escapeHtml(label)}</small><strong>${Number(value || 0)}</strong></div>`).join("")}</div>
+        <div class="wechat-intelligence-section-title"><strong>最近活动</strong><span class="hint">今日失败 ${Number(counts.failed || 0)} · 拉群 ${Number(counts.group_invites || 0)}</span></div>
+        <div class="wechat-intelligence-list">${recent.length ? recent.map((row) => renderWechatIntelligenceOutcome(row)).join("") : '<div class="wechat-intelligence-empty">还没有接管回写记录，Online 下一轮完成后会显示在这里</div>'}</div>`;
+    }
+
+    function renderWechatIntelligenceOutcome(row) {
+      const event = String(row.event_type || "");
+      const failed = String(row.status || "") === "failed" || event === "failed";
+      const summary = row.reply_text || row.error_message || row.inbound_text || "本轮没有可展示的文字结果";
+      return `<div class="wechat-intelligence-row">
+        <div class="wechat-intelligence-row-main"><strong>${escapeHtml(row.contact_name || row.contact_key || "微信联系人")}</strong><p>${escapeHtml(summary)}</p><small>${escapeHtml(fmtTime(row.happened_at))} · ${escapeHtml(wechatIntelligenceIntentLabel(row.intent_level))}</small></div>
+        <span class="wechat-intelligence-badge${failed ? " failed" : ""}">${escapeHtml(WECHAT_INTELLIGENCE_EVENT_LABELS[event] || event || "记录")}</span>
+      </div>`;
+    }
+
+    function renderWechatIntelligenceContacts() {
+      if (state.wechatIntelligenceContactDetail) return renderWechatIntelligenceContactDetail();
+      const rows = state.wechatIntelligenceItems || [];
+      if (!rows.length) return '<div class="wechat-intelligence-empty">暂无客户画像。Online 完成一轮接管后会自动建立。</div>';
+      return `<div class="wechat-intelligence-list">${rows.map((row) => `<button type="button" class="wechat-intelligence-row" data-wechat-contact-detail="${Number(row.id || 0)}">
+        <span class="wechat-intelligence-row-main"><strong>${escapeHtml(row.contact_name || row.contact_key || "微信联系人")}</strong><p>${escapeHtml(row.rolling_summary || row.topic || "尚未形成聊天摘要")}</p><small>${escapeHtml(fmtTime(row.last_activity_at || row.updated_at))} · ${Number(row.message_count || 0)} 次有效记录</small></span>
+        <span class="wechat-intelligence-badge ${escapeHtml(row.intent_level || "none")}">${escapeHtml(wechatIntelligenceIntentLabel(row.intent_level))}</span>
+      </button>`).join("")}</div>`;
+    }
+
+    function renderWechatIntelligenceContactDetail() {
+      const detail = state.wechatIntelligenceContactDetail || {};
+      const row = detail.contact || {};
+      const profile = row.profile && typeof row.profile === "object" ? row.profile : {};
+      const profileText = Object.entries(profile).map(([key, value]) => `${key}：${Array.isArray(value) ? value.join("、") : value}`).join("\n");
+      const outcomes = Array.isArray(detail.outcomes) ? detail.outcomes.slice(0, 10) : [];
+      return `<div class="wechat-contact-detail">
+        <div class="wechat-contact-detail-head"><div><h3>${escapeHtml(row.contact_name || row.contact_key || "客户画像")}</h3><p>${escapeHtml(wechatIntelligenceIntentLabel(row.intent_level))} · ${escapeHtml(WECHAT_INTELLIGENCE_STAGE_LABELS[row.stage] || row.stage || "待识别")}</p></div><button class="ghost" type="button" data-wechat-contact-detail-back>返回列表</button></div>
+        <div class="wechat-contact-detail-grid">
+          <div class="wechat-contact-detail-block full"><small>对话摘要</small><p>${escapeHtml(row.rolling_summary || "暂无摘要")}</p></div>
+          <div class="wechat-contact-detail-block"><small>客户资料</small><p>${escapeHtml(profileText || "暂无已确认资料")}</p></div>
+          <div class="wechat-contact-detail-block"><small>下一步建议</small><p>${escapeHtml(row.next_followup || "暂无跟进建议")}</p></div>
+        </div>
+        <div class="wechat-intelligence-section-title"><strong>最近互动</strong><span class="hint">最多显示 10 条</span></div>
+        <div class="wechat-intelligence-list">${outcomes.length ? outcomes.map(renderWechatIntelligenceOutcome).join("") : '<div class="wechat-intelligence-empty">暂无互动记录</div>'}</div>
+      </div>`;
+    }
+
+    function renderWechatIntelligenceCandidates() {
+      const rows = state.wechatIntelligenceItems || [];
+      if (!rows.length) return '<div class="wechat-intelligence-empty">当前没有待审核建议</div>';
+      return `<div class="wechat-intelligence-list">${rows.map((row) => `<div class="wechat-candidate-card" data-wechat-candidate-card="${escapeHtml(row.id || "")}">
+        <div class="wechat-candidate-meta"><span>${escapeHtml(row.contact_name || "聊天学习")} · 可信度 ${Number(row.confidence || 0)}%</span><span class="wechat-intelligence-badge ${escapeHtml(row.risk_level || "medium")}">${escapeHtml(row.risk_level === "high" ? "高风险" : row.risk_level === "low" ? "低风险" : "需确认")}</span></div>
+        <input data-wechat-candidate-title value="${escapeHtml(row.title || "聊天中发现的新规则")}" aria-label="规则标题">
+        <textarea data-wechat-candidate-content aria-label="规则内容">${escapeHtml(row.content || "")}</textarea>
+        ${row.evidence ? `<div class="wechat-candidate-evidence">依据：${escapeHtml(row.evidence)}</div>` : ""}
+        <div class="wechat-candidate-actions"><button type="button" class="ghost" data-wechat-candidate-decision="reject">忽略</button><button type="button" data-wechat-candidate-decision="approve">审核通过</button></div>
+      </div>`).join("")}</div>`;
+    }
+
+    function renderWechatIntelligenceRules() {
+      const rows = state.wechatIntelligenceItems || [];
+      if (!rows.length) return '<div class="wechat-intelligence-empty">暂无长期规则。可在 AI 调度助手中直接教它。</div>';
+      return `<div class="wechat-intelligence-list">${rows.map((row) => `<div class="wechat-intelligence-row">
+        <div class="wechat-intelligence-row-main"><strong>${escapeHtml(row.title || "微信接管规则")}</strong><p>${escapeHtml(row.content || "")}</p><small>${escapeHtml(row.category || "general")} · 优先级 ${Number(row.priority || 0)} · ${escapeHtml(row.source_type || "manual")}</small></div>
+        <div class="wechat-rule-actions"><span class="wechat-intelligence-badge ${escapeHtml(row.risk_level || "medium")}">${escapeHtml(row.risk_level === "high" ? "高风险" : "已生效")}</span><button class="ghost" type="button" data-wechat-rule-disable="${escapeHtml(row.id || "")}">停用</button></div>
+      </div>`).join("")}</div>`;
+    }
+
+    function renderWechatIntelligence() {
+      document.querySelectorAll("[data-wechat-intelligence-tab]").forEach((btn) => btn.classList.toggle("active", btn.dataset.wechatIntelligenceTab === state.wechatIntelligenceTab));
+      const mode = String(state.wechatIntelligenceDashboard?.settings?.learning_mode || "confirm");
+      if ($("wechatIntelligenceLearningMode") && document.activeElement !== $("wechatIntelligenceLearningMode")) $("wechatIntelligenceLearningMode").value = mode;
+      renderWechatIntelligenceToolbar();
+      const content = $("wechatIntelligenceContent");
+      if (!content) return;
+      if (state.wechatIntelligenceLoading) {
+        content.innerHTML = '<div class="wechat-intelligence-empty">正在读取接管数据...</div>';
+      } else if (state.wechatIntelligenceTab === "overview") {
+        content.innerHTML = renderWechatIntelligenceOverview();
+      } else if (state.wechatIntelligenceTab === "contacts") {
+        content.innerHTML = renderWechatIntelligenceContacts();
+      } else if (state.wechatIntelligenceTab === "candidates") {
+        content.innerHTML = renderWechatIntelligenceCandidates();
+      } else if (state.wechatIntelligenceTab === "rules") {
+        content.innerHTML = renderWechatIntelligenceRules();
+      } else {
+        const rows = state.wechatIntelligenceItems || [];
+        content.innerHTML = rows.length ? `<div class="wechat-intelligence-list">${rows.map(renderWechatIntelligenceOutcome).join("")}</div>` : '<div class="wechat-intelligence-empty">暂无执行记录</div>';
+      }
+      const pager = $("wechatIntelligencePager");
+      const showPager = state.wechatIntelligenceTab !== "overview" && !state.wechatIntelligenceContactDetail && state.wechatIntelligenceTotal > state.wechatIntelligencePageSize;
+      pager?.classList.toggle("hidden", !showPager);
+      if (showPager) {
+        const totalPages = Math.max(1, Math.ceil(state.wechatIntelligenceTotal / state.wechatIntelligencePageSize));
+        if ($("wechatIntelligencePageText")) $("wechatIntelligencePageText").textContent = `第 ${state.wechatIntelligencePage} / ${totalPages} 页`;
+        const prev = pager.querySelector('[data-wechat-intelligence-page="prev"]');
+        const next = pager.querySelector('[data-wechat-intelligence-page="next"]');
+        if (prev) prev.disabled = state.wechatIntelligencePage <= 1;
+        if (next) next.disabled = state.wechatIntelligencePage >= totalPages;
+      }
+    }
+
+    async function loadWechatIntelligence(force = false) {
+      if (!state.token || state.wechatIntelligenceLoading) return;
+      state.wechatIntelligenceLoading = true;
+      renderWechatIntelligence();
+      try {
+        if (state.wechatIntelligenceTab === "overview") {
+          state.wechatIntelligenceDashboard = await api("/api/wechat-intelligence/dashboard", { blocking: false });
+          return;
+        }
+        const limit = state.wechatIntelligencePageSize;
+        const offset = (state.wechatIntelligencePage - 1) * limit;
+        let path = "";
+        if (state.wechatIntelligenceTab === "contacts") path = `/api/wechat-intelligence/contacts?limit=${limit}&offset=${offset}&q=${encodeURIComponent(state.wechatIntelligenceQuery || "")}`;
+        if (state.wechatIntelligenceTab === "candidates") path = `/api/wechat-intelligence/candidates?status=pending&limit=${limit}&offset=${offset}`;
+        if (state.wechatIntelligenceTab === "rules") path = `/api/wechat-intelligence/rules?status=active&limit=${limit}&offset=${offset}`;
+        if (state.wechatIntelligenceTab === "outcomes") path = `/api/wechat-intelligence/outcomes?limit=${limit}&offset=${offset}`;
+        const data = await api(path, { blocking: false });
+        state.wechatIntelligenceItems = Array.isArray(data.items) ? data.items : [];
+        state.wechatIntelligenceTotal = Number(data.total || 0);
+      } finally {
+        state.wechatIntelligenceLoading = false;
+        renderWechatIntelligence();
+      }
+    }
+
+    async function openWechatIntelligenceContact(contactId) {
+      state.wechatIntelligenceLoading = true;
+      renderWechatIntelligence();
+      try {
+        state.wechatIntelligenceContactDetail = await api(`/api/wechat-intelligence/contacts/${Number(contactId)}`, { blocking: false });
+      } finally {
+        state.wechatIntelligenceLoading = false;
+        renderWechatIntelligence();
+      }
+    }
+
+    async function decideWechatIntelligenceCandidate(card, decision) {
+      const id = String(card?.dataset.wechatCandidateCard || "");
+      if (!id) return;
+      const title = String(card.querySelector("[data-wechat-candidate-title]")?.value || "").trim();
+      const content = String(card.querySelector("[data-wechat-candidate-content]")?.value || "").trim();
+      if (decision === "approve" && !content) throw new Error("规则内容不能为空");
+      await api(`/api/wechat-intelligence/candidates/${encodeURIComponent(id)}/decision`, {
+        method: "POST",
+        blocking: decision === "approve" ? "正在启用学习规则" : "正在忽略建议",
+        json: { decision, title, content, priority: 50 },
+      });
+      toast(decision === "approve" ? "建议已审核并生效" : "建议已忽略");
+      await loadWechatIntelligence(true);
+    }
+
+    async function updateWechatIntelligenceLearningMode(mode) {
+      const data = await api("/api/wechat-intelligence/settings", {
+        method: "PATCH",
+        blocking: "正在保存学习方式",
+        json: { learning_mode: mode },
+      });
+      state.wechatIntelligenceDashboard = {
+        ...(state.wechatIntelligenceDashboard || {}),
+        settings: data.settings || { learning_mode: mode },
+      };
+      renderWechatIntelligence();
+      toast(mode === "full" ? "低风险高可信建议可自动学习" : "新建议会先等待审核");
     }
 
     function renderChatAvailabilityStatus() {
@@ -23149,6 +23402,10 @@
         switchTab("profile");
         return;
       }
+      if (activeId === "wechatIntelligenceView") {
+        switchTab("mountedAccounts");
+        return;
+      }
       if (activeId === "recorderView") {
         switchTab("profile");
         return;
@@ -24065,6 +24322,7 @@
     $("mountedAccountRefreshBtn")?.addEventListener("click", () => {
       refreshMountedAccounts().catch((err) => toast(err.message || "刷新失败"));
     });
+    $("mountedWechatIntelligenceBtn")?.addEventListener("click", openWechatIntelligence);
     $("mountedAccountTabs")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-mounted-account-tab]");
       if (!btn) return;
@@ -24072,6 +24330,10 @@
       renderMountedAccounts();
     });
     $("mountedAccountList")?.addEventListener("click", (evt) => {
+      if (evt.target.closest("[data-open-wechat-intelligence]")) {
+        openWechatIntelligence();
+        return;
+      }
       const autoBtn = evt.target.closest("[data-mounted-wechat-auto-reply]");
       if (autoBtn) {
         const enabled = autoBtn.dataset.mountedWechatAutoReply === "1";
@@ -24098,6 +24360,78 @@
     $("mountedWechatContactBackdrop")?.addEventListener("click", closeMountedWechatContactPicker);
     $("mountedWechatContactClose")?.addEventListener("click", closeMountedWechatContactPicker);
     $("mountedWechatContactCancel")?.addEventListener("click", closeMountedWechatContactPicker);
+    $("wechatIntelligenceTabs")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-wechat-intelligence-tab]");
+      if (btn) setWechatIntelligenceTab(btn.dataset.wechatIntelligenceTab || "overview");
+    });
+    $("wechatIntelligenceToolbar")?.addEventListener("click", (evt) => {
+      if (evt.target.closest("[data-wechat-intelligence-refresh]")) {
+        loadWechatIntelligence(true).catch((err) => toast(err.message || "刷新失败"));
+        return;
+      }
+      if (evt.target.closest("[data-wechat-intelligence-search]")) {
+        state.wechatIntelligenceQuery = String($("wechatIntelligenceSearch")?.value || "").trim();
+        state.wechatIntelligencePage = 1;
+        loadWechatIntelligence(true).catch((err) => toast(err.message || "搜索失败"));
+      }
+    });
+    $("wechatIntelligenceToolbar")?.addEventListener("keydown", (evt) => {
+      if (evt.key !== "Enter" || evt.target.id !== "wechatIntelligenceSearch") return;
+      evt.preventDefault();
+      state.wechatIntelligenceQuery = String(evt.target.value || "").trim();
+      state.wechatIntelligencePage = 1;
+      loadWechatIntelligence(true).catch((err) => toast(err.message || "搜索失败"));
+    });
+    $("wechatIntelligenceContent")?.addEventListener("click", (evt) => {
+      const detailBtn = evt.target.closest("[data-wechat-contact-detail]");
+      if (detailBtn) {
+        openWechatIntelligenceContact(detailBtn.dataset.wechatContactDetail || "").catch((err) => toast(err.message || "客户画像加载失败"));
+        return;
+      }
+      if (evt.target.closest("[data-wechat-contact-detail-back]")) {
+        state.wechatIntelligenceContactDetail = null;
+        renderWechatIntelligence();
+        return;
+      }
+      const decisionBtn = evt.target.closest("[data-wechat-candidate-decision]");
+      if (decisionBtn) {
+        const card = decisionBtn.closest("[data-wechat-candidate-card]");
+        decisionBtn.disabled = true;
+        decideWechatIntelligenceCandidate(card, decisionBtn.dataset.wechatCandidateDecision || "reject")
+          .catch((err) => toast(err.message || "审核失败"))
+          .finally(() => { decisionBtn.disabled = false; });
+        return;
+      }
+      const ruleBtn = evt.target.closest("[data-wechat-rule-disable]");
+      if (ruleBtn) {
+        ruleBtn.disabled = true;
+        api(`/api/wechat-intelligence/rules/${encodeURIComponent(ruleBtn.dataset.wechatRuleDisable || "")}`, {
+          method: "PATCH",
+          blocking: "正在停用规则",
+          json: { status: "disabled" },
+        }).then(() => {
+          toast("规则已停用");
+          return loadWechatIntelligence(true);
+        }).catch((err) => toast(err.message || "停用失败")).finally(() => { ruleBtn.disabled = false; });
+      }
+    });
+    $("wechatIntelligencePager")?.addEventListener("click", (evt) => {
+      const btn = evt.target.closest("[data-wechat-intelligence-page]");
+      if (!btn || btn.disabled) return;
+      const totalPages = Math.max(1, Math.ceil(state.wechatIntelligenceTotal / state.wechatIntelligencePageSize));
+      state.wechatIntelligencePage = btn.dataset.wechatIntelligencePage === "prev"
+        ? Math.max(1, state.wechatIntelligencePage - 1)
+        : Math.min(totalPages, state.wechatIntelligencePage + 1);
+      loadWechatIntelligence(true).catch((err) => toast(err.message || "翻页失败"));
+    });
+    $("wechatIntelligenceLearningMode")?.addEventListener("change", (evt) => {
+      updateWechatIntelligenceLearningMode(evt.target.value || "confirm").catch((err) => toast(err.message || "学习方式保存失败"));
+    });
+    $("wechatIntelligenceTeachBtn")?.addEventListener("click", () => {
+      state.lastViewBeforeMessages = "wechatIntelligence";
+      switchTab("messages");
+      setMessageTemplate("请教个人微信接管：以后遇到【什么情况】时，应该【怎么回复或处理】，不要【哪些说法或动作】。请先读取现有规则，再保存为长期规则。");
+    });
     $("personalSettingsTabs")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-personal-tab]");
       if (btn) setPersonalSettingsTab(btn.dataset.personalTab || "template");

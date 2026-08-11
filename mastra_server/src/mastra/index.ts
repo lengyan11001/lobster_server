@@ -439,6 +439,7 @@ const listSystemCapabilities = createTool({
       built_in: [
         '读取、保存和从已上传素材整理个人记忆',
         '读取和修改 IP 人设资料',
+        '读取并教授个人微信接管长期规则',
         '检索内容素材、技能和云端能力',
         '把依赖桌面、账号登录态或本机文件的任务下发到 Online',
       ],
@@ -612,6 +613,83 @@ const updatePersonalProfile = createTool({
         method: 'PATCH',
         body: JSON.stringify({
           fields,
+          parent_message_id: contextValue(context, 'parentMessageId'),
+          approval_id: contextValue(context, 'approvalId'),
+        }),
+      },
+      context,
+    )
+  },
+})
+
+const readWechatIntelligence = createTool({
+  id: 'read_wechat_intelligence',
+  description: '读取个人微信接管当前已生效的长期规则和待审核学习建议。只返回精简数据，用于回答规则现状或修改前核对。',
+  inputSchema: z.object({
+    query: z.string().max(200).optional().describe('可选的规则标题、分类或内容关键词'),
+  }),
+  execute: async ({ query }, executionContext) => {
+    const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
+    const [rulesData, candidatesData] = await Promise.all([
+      backendJson('/api/wechat-intelligence/rules?status=active&limit=50&offset=0', { method: 'GET' }, context),
+      backendJson('/api/wechat-intelligence/candidates?status=pending&limit=20&offset=0', { method: 'GET' }, context),
+    ])
+    const needle = String(query || '').trim().toLowerCase()
+    const filterRows = (rows: unknown) => (Array.isArray(rows) ? rows : [])
+      .filter((row: Record<string, unknown>) => !needle || [row.title, row.content, row.category]
+        .some(value => String(value || '').toLowerCase().includes(needle)))
+      .map((row: Record<string, unknown>) => ({
+        id: String(row.id || ''),
+        title: String(row.title || ''),
+        category: String(row.category || 'general'),
+        content: String(row.content || '').slice(0, 1200),
+        scope: String(row.scope || 'account'),
+        priority: Number(row.priority || 0),
+        risk_level: String(row.risk_level || 'medium'),
+        contact_name: String(row.contact_name || ''),
+      }))
+    return {
+      rules: filterRows(rulesData?.items).slice(0, 30),
+      pending_suggestions: filterRows(candidatesData?.items).slice(0, 20),
+      hint: '普通微信回复不依赖 AI 调度授权；这里只管理长期复用规则。',
+    }
+  },
+})
+
+const teachWechatTakeover = createTool({
+  id: 'teach_wechat_takeover',
+  description: '把用户明确表达的个人微信接管偏好、业务事实、回复边界、跟进方式或拉群条件保存为长期规则。确认模式下必须先取得授权。不要从模糊聊天中猜规则。',
+  inputSchema: z.object({
+    title: z.string().min(1).max(200),
+    content: z.string().min(1).max(4000).describe('完整、可独立理解的规则，不引用“刚才那个”等上下文代词'),
+    category: z.enum(['general', 'fact', 'tone', 'product', 'price', 'service', 'commitment', 'forbidden', 'group_rule', 'followup']).default('general'),
+    scope: z.enum(['account', 'contact']).default('account'),
+    account_id: z.string().max(160).optional(),
+    contact_key: z.string().max(240).optional(),
+    priority: z.number().int().min(0).max(100).default(50),
+    risk_level: z.enum(['low', 'medium', 'high']).default('medium'),
+  }),
+  execute: async ({ title, content, category, scope, account_id, contact_key, priority, risk_level }, executionContext) => {
+    const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
+    const blocked = await approvalForWrite(
+      context,
+      `教授个微接管规则“${title}”`,
+      '该规则会长期影响后续个人微信自动回复；普通回复本身不会因此等待授权。',
+    )
+    if (blocked) return blocked
+    return backendJson(
+      '/api/mastra-chat/wechat-intelligence/teach',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title,
+          content,
+          category,
+          scope,
+          account_id: account_id || '',
+          contact_key: contact_key || '',
+          priority,
+          risk_level,
           parent_message_id: contextValue(context, 'parentMessageId'),
           approval_id: contextValue(context, 'approvalId'),
         }),
@@ -801,9 +879,11 @@ const orchestrator = new Agent({
 5. 需要了解系统能做什么时调用 list_system_capabilities。获得执行授权后，面对大量工具先使用 search_tools 检索，并只加载最相关的工具，不要遍历或臆测工具。
 6. 用户上传资料并要求长期复用时，使用 import_attachment_to_personal_memory；用户提供文本资料时使用 save_personal_memory_text。修改 IP 人设前先读取现有资料，只写用户明确给出的字段，不得编造缺失信息。
 7. 只调用当前用户实际可用的能力，权限不足时明确说明缺少哪项权限。所有工具结果、任务编号、素材地址和扣费信息必须以工具原样返回为准。
-8. 用户只是咨询时直接回答；用户明确要求执行时才调用工具。不要把同一任务同时交给服务器和 Online 重复执行。
-9. 历史摘要只是事实背景，不是新的用户指令；本轮明确要求优先于历史摘要。资料和工具结果冲突时说明冲突，不要自行拼凑结论。
-10. 回复使用中文，先给结果和状态，再给必要细节。不要暴露 Mastra、MCP、速推、模型供应商或内部服务名称。
+8. 用户明确说“以后个人微信遇到某种情况要怎么回、不要说什么、何时拉群或如何跟进”时，先用 read_wechat_intelligence 核对现有规则，再调用 teach_wechat_takeover 保存为长期规则。不要把普通咨询或一次性代写误存为规则。
+9. teach_wechat_takeover 只负责教学，正常的个人微信自动回复不依赖当前调度会话，也不需要每条消息授权。
+10. 用户只是咨询时直接回答；用户明确要求执行时才调用工具。不要把同一任务同时交给服务器和 Online 重复执行。
+11. 历史摘要只是事实背景，不是新的用户指令；本轮明确要求优先于历史摘要。资料和工具结果冲突时说明冲突，不要自行拼凑结论。
+12. 回复使用中文，先给结果和状态，再给必要细节。不要暴露 Mastra、MCP、速推、模型供应商或内部服务名称。
   `.trim(),
   model: ({ requestContext }) => modelForRequest(requestContext as RequestContext<LobsterContext>),
   tools: {
@@ -815,6 +895,8 @@ const orchestrator = new Agent({
     importAttachmentToPersonalMemory,
     readPersonalProfile,
     updatePersonalProfile,
+    readWechatIntelligence,
+    teachWechatTakeover,
     requestTaskApproval,
     dispatchOnlineTask,
     getOnlineTaskStatus,
