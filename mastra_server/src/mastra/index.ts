@@ -10,9 +10,13 @@ import { createTool } from '@mastra/core/tools'
 import { MCPClient } from '@mastra/mcp'
 import { Memory } from '@mastra/memory'
 import { PostgresStore } from '@mastra/pg'
+import { disableTypes as disableImageSizeTypes } from 'image-size'
 import { z } from 'zod'
 
 import { inspectMediaResult, type MediaAsset } from './media-task.js'
+
+// No patched image-size release exists yet; disable the vulnerable decoders at process startup.
+disableImageSizeTypes(['heif', 'icns', 'jxl', 'jxl-stream'])
 
 type DispatchRecord = {
   message_id: string
@@ -1158,6 +1162,49 @@ function runtimeContextFor(body: Record<string, unknown>) {
   return context
 }
 
+const blockedImageExtensions = new Set([
+  '.avif', '.avifs', '.heic', '.heics', '.heif', '.heifs', '.hif', '.icns', '.jxl',
+])
+
+const blockedImageContentTypes = new Set([
+  'image/avif',
+  'image/avif-sequence',
+  'image/heic',
+  'image/heic-sequence',
+  'image/heif',
+  'image/heif-sequence',
+  'image/icns',
+  'image/jxl',
+  'image/x-icns',
+])
+
+const blockedImageMessage = 'AI 调度暂不支持 ICNS、JPEG XL、HEIF/HEIC 或 AVIF 图片，请转换为 JPG、PNG、WebP 或 GIF 后重试'
+
+function attachmentSuffix(value: string): string {
+  const raw = value.trim().toLowerCase().split(/[?#]/, 1)[0] || ''
+  const slash = Math.max(raw.lastIndexOf('/'), raw.lastIndexOf('\\'))
+  const dot = raw.lastIndexOf('.')
+  return dot > slash ? raw.slice(dot) : ''
+}
+
+function blockedAttachmentError(body: Record<string, unknown> | null): string {
+  if (!Array.isArray(body?.attachments)) return ''
+  for (const value of body.attachments) {
+    const row = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+    const name = String(row.name || '')
+    const url = String(row.url || '')
+    const contentType = String(row.content_type || '').split(';', 1)[0].trim().toLowerCase()
+    if (
+      blockedImageExtensions.has(attachmentSuffix(name)) ||
+      blockedImageExtensions.has(attachmentSuffix(url)) ||
+      blockedImageContentTypes.has(contentType)
+    ) {
+      return blockedImageMessage
+    }
+  }
+  return ''
+}
+
 function attachmentsFor(body: Record<string, unknown>): ChatAttachment[] {
   if (!Array.isArray(body.attachments)) return []
   const attachments: ChatAttachment[] = []
@@ -1259,6 +1306,10 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
       return c.json({ ok: false, error: 'forbidden' }, 403)
     }
     const body = await c.req.json().catch(() => null) as Record<string, unknown> | null
+    const attachmentError = blockedAttachmentError(body)
+    if (attachmentError) {
+      return c.json({ ok: false, error: attachmentError }, 415)
+    }
     const validated = validateChatBody(body)
     const message = validated.message
     const token = validated.token
@@ -1346,6 +1397,10 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
       return c.json({ ok: false, error: 'forbidden' }, 403)
     }
     const body = await c.req.json().catch(() => null) as Record<string, unknown> | null
+    const attachmentError = blockedAttachmentError(body)
+    if (attachmentError) {
+      return c.json({ ok: false, error: attachmentError }, 415)
+    }
     const validated = validateChatBody(body)
     if (!validated.ok || !body) {
       return c.json({ ok: false, error: 'missing required chat context' }, 400)

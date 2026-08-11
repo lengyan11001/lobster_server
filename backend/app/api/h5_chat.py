@@ -41,6 +41,10 @@ from ..services.brand_context import explicit_request_brand_mark, public_brand_c
 from ..services.device_presence import is_device_online
 from ..services.h5_chat_sessions import attach_system_task_message
 from ..services.installation_slot_ownership import assert_installation_slot_owner
+from ..services.mastra_attachment_security import (
+    UnsafeMastraImageError,
+    assert_safe_mastra_image,
+)
 from ..services.runtime_cache import cache_delete, cache_flag_recent, cache_mark_flag
 from .auth import (
     ALGORITHM,
@@ -1202,6 +1206,10 @@ async def upload_h5_chat_image(
     owner_user_id = int(owner_user.id)
     db.commit()
     content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
+    try:
+        assert_safe_mastra_image(filename=file.filename or "", content_type=content_type)
+    except UnsafeMastraImageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if content_type not in _IMAGE_EXT_BY_TYPE:
         raise HTTPException(status_code=400, detail="仅支持上传图片")
     raw = await file.read(_MAX_H5_UPLOAD_BYTES + 1)
@@ -1209,6 +1217,14 @@ async def upload_h5_chat_image(
         raise HTTPException(status_code=400, detail="图片为空")
     if len(raw) > _MAX_H5_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="图片不能超过 15MB")
+    try:
+        assert_safe_mastra_image(
+            filename=file.filename or "",
+            content_type=content_type,
+            header=raw[:256],
+        )
+    except UnsafeMastraImageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     _H5_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"u{owner_user_id}_{uuid.uuid4().hex}{_IMAGE_EXT_BY_TYPE[content_type]}"
     path = _H5_UPLOAD_DIR / filename

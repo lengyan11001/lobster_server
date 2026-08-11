@@ -17,6 +17,10 @@ from ..api.h5_chat import _add_event, _finish_mastra_parent_from_children
 from ..db import SessionLocal
 from ..models import H5ChatApproval, H5ChatEvent, H5ChatMessage, H5ChatSession, User
 from .brand_context import user_brand_mark
+from .mastra_attachment_security import (
+    UnsafeMastraImageError,
+    assert_safe_remote_mastra_images,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -708,6 +712,35 @@ def _fallback_or_fail_sync(message_id: str, error: str) -> str:
         db.close()
 
 
+def _fail_unsafe_attachment_sync(message_id: str, error: str) -> None:
+    db = SessionLocal()
+    try:
+        row = db.query(H5ChatMessage).filter(H5ChatMessage.id == message_id).first()
+        if row is None or row.status in _FINAL_STATUSES:
+            return
+        now = datetime.utcnow()
+        row.status = "failed"
+        row.reply_text = None
+        row.error = error[:1000]
+        row.finished_at = now
+        row.updated_at = now
+        _add_event(db, row, "error", {"error": row.error})
+        approvals = db.query(H5ChatApproval).filter(
+            H5ChatApproval.message_id == row.id,
+            H5ChatApproval.status == "executing",
+        ).all()
+        for approval in approvals:
+            approval.status = "failed"
+            approval.finished_at = now
+            approval.updated_at = now
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _requeue_media_sync(message_id: str, media_tasks: List[Dict[str, Any]], error: str) -> str:
     db = SessionLocal()
     try:
@@ -825,6 +858,16 @@ async def _refresh_conversation_summary(job: MastraChatJob) -> str:
 
 
 async def _run_job_request(job: MastraChatJob) -> None:
+    try:
+        await assert_safe_remote_mastra_images(job.attachments)
+    except UnsafeMastraImageError as exc:
+        logger.warning(
+            "[mastra_chat] blocked unsafe attachment message=%s error=%s",
+            job.message_id,
+            str(exc)[:500],
+        )
+        await asyncio.to_thread(_fail_unsafe_attachment_sync, job.message_id, str(exc))
+        return
     conversation_summary = await _refresh_conversation_summary(job)
     body = {
         "message": job.content,

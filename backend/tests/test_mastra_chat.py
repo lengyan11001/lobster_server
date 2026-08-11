@@ -675,6 +675,60 @@ def test_attachment_only_message_validates_owner_and_serializes(
     assert "不属于当前账号" in rejected.json()["detail"]
 
 
+def test_mastra_message_rejects_blocked_image_formats(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.models import Asset
+
+    blocked = Asset(
+        asset_id="blocked-chat-image",
+        user_id=test_user.id,
+        filename="iphone-photo.heic",
+        media_type="image",
+        file_size=128,
+        source_url="https://cdn.example.test/innocent-name.jpg",
+    )
+    db_session.add(blocked)
+    db_session.commit()
+
+    client = _client(db_session_factory, test_user.id)
+    by_asset = client.post(
+        "/api/mastra-chat/messages",
+        json={"content": "分析图片", "attachments": [{"asset_id": blocked.asset_id}]},
+    )
+    by_mime = client.post(
+        "/api/mastra-chat/messages",
+        json={
+            "content": "分析图片",
+            "attachments": [
+                {
+                    "url": "https://cdn.example.test/innocent-name.jpg",
+                    "name": "innocent-name.jpg",
+                    "media_type": "image",
+                    "content_type": "image/jxl",
+                }
+            ],
+        },
+    )
+
+    assert by_asset.status_code == 400
+    assert "JPEG XL" in by_asset.json()["detail"]
+    assert by_mime.status_code == 400
+    assert "HEIF/HEIC" in by_mime.json()["detail"]
+
+
+def test_h5_chat_upload_rejects_blocked_magic_hidden_as_jpeg(
+    db_session_factory, test_user
+):
+    response = _client(db_session_factory, test_user.id).post(
+        "/api/h5-chat/uploads",
+        files={"file": ("portrait.jpg", b"icns" + b"\x00" * 64, "image/jpeg")},
+    )
+
+    assert response.status_code == 400
+    assert "ICNS" in response.json()["detail"]
+
+
 def test_confirm_mode_blocks_dispatch_until_approved_run_is_claimed(
     db_session, db_session_factory, test_user, monkeypatch
 ):

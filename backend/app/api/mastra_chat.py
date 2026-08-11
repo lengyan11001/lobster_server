@@ -42,6 +42,10 @@ from ..services.mastra_online_capabilities import (
     mastra_online_capability,
     normalize_mastra_online_params,
 )
+from ..services.mastra_attachment_security import (
+    UnsafeMastraImageError,
+    assert_safe_mastra_image,
+)
 from .h5_chat import _add_event, _serialize_message
 from .installation_slots import optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
@@ -197,6 +201,7 @@ def _normalize_attachments(db: Session, user_id: int, values: List[MastraAttachm
         url = (value.url or "").strip()
         name = (value.name or "").strip()
         media_type = _attachment_media_type(value.media_type)
+        content_type = (value.content_type or "").strip()
         size = int(value.size or 0)
         if asset_id:
             asset = (
@@ -210,8 +215,16 @@ def _normalize_attachments(db: Session, user_id: int, values: List[MastraAttachm
             name = name or (asset.filename or "").strip()
             media_type = _attachment_media_type(asset.media_type or media_type)
             size = int(asset.file_size or size or 0)
+            asset_meta = asset.meta if isinstance(asset.meta, dict) else {}
+            content_type = content_type or str(
+                asset_meta.get("content_type") or asset_meta.get("mime_type") or ""
+            ).strip()
         if not url:
             raise HTTPException(status_code=400, detail="素材缺少可读取地址")
+        try:
+            assert_safe_mastra_image(filename=name, url=url, content_type=content_type)
+        except UnsafeMastraImageError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise HTTPException(status_code=400, detail="素材地址必须是公网 HTTP(S) 地址")
@@ -237,7 +250,7 @@ def _normalize_attachments(db: Session, user_id: int, values: List[MastraAttachm
                 "url": url,
                 "name": (name or f"{media_type}-attachment")[:255],
                 "media_type": media_type,
-                "content_type": (value.content_type or "")[:128],
+                "content_type": content_type[:128],
                 "size": size,
             }
         )
