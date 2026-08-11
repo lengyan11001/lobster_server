@@ -79,6 +79,7 @@ class ApprovalRequestCreate(BaseModel):
     task: str = Field(..., min_length=1, max_length=12000)
     reason: str = Field(default="", max_length=2000)
     execution_target: str = Field(default="auto", max_length=32)
+    approval_id: str = Field(default="", max_length=64)
 
 
 class ApprovalDecisionCreate(BaseModel):
@@ -1127,6 +1128,21 @@ def request_task_approval(
     session = _ensure_chat_session(db, owner.id, parent.session_id or "")
     if _permission_mode(session.permission_mode) == "full":
         return {"ok": True, "approved": True, "permission_mode": "full"}
+    supplied_approval_id = (body.approval_id or "").strip()
+    if supplied_approval_id:
+        granted = (
+            db.query(H5ChatApproval)
+            .filter(
+                H5ChatApproval.id == supplied_approval_id,
+                H5ChatApproval.user_id == owner.id,
+                H5ChatApproval.session_id == session.id,
+                H5ChatApproval.message_id == parent.id,
+                H5ChatApproval.status == "executing",
+            )
+            .first()
+        )
+        if granted:
+            return {"ok": True, "approved": True, "approval": _serialize_approval(granted)}
     existing = (
         db.query(H5ChatApproval)
         .filter(

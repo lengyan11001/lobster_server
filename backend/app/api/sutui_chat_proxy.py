@@ -773,7 +773,12 @@ def _remap_model_id_for_sutui(mid: str) -> str:
     return (b.get("model") or "").strip()
 
 
-def _sutui_chat_model_candidates(initial_model: str, *, has_tools: bool = False) -> List[str]:
+def _sutui_chat_model_candidates(
+    initial_model: str,
+    *,
+    has_tools: bool = False,
+    required_fallbacks: Optional[List[str]] = None,
+) -> List[str]:
     """
     对话编排：优先用入站（已 remap）的 model，再按 fallback chain 尝试其它通道，去重。
     熔断的模型会被跳过（但保留至少一个候选）。
@@ -785,7 +790,8 @@ def _sutui_chat_model_candidates(initial_model: str, *, has_tools: bool = False)
     if init and init not in seen:
         seen.add(init)
         out.append(init)
-    for fb in _parse_sutui_chat_fallback_chain_env():
+    fallback_chain = [*_parse_sutui_chat_fallback_chain_env(), *(required_fallbacks or [])]
+    for fb in fallback_chain:
         m = _remap_model_id_for_sutui(fb)
         if m and m not in seen:
             seen.add(m)
@@ -1596,6 +1602,7 @@ async def sutui_chat_completions(
         or uuid.uuid4().hex
     )
     openclaw_internal_llm = _is_openclaw_internal_llm_request(request)
+    mastra_chat_profile = (request.headers.get("X-Lobster-Chat-Profile") or "").strip().lower() == "mastra"
     chat_turn_precharged = _is_chat_turn_precharged_request(request)
     chat_turn_id = _chat_turn_id_from_request(request)
     logger.info(
@@ -1617,10 +1624,11 @@ async def sutui_chat_completions(
         original_model = (body.get("model") or "").strip()
         body["model"] = llm_model_override
         logger.info(
-            "[sutui-chat] user-level LLM model override user_id=%s original_model=%s forced_model=%s no_fallback=true",
+            "[sutui-chat] user-level LLM model override user_id=%s original_model=%s forced_model=%s no_fallback=%s",
             current_user.id,
             original_model or "-",
             llm_model_override,
+            not mastra_chat_profile,
         )
     _optimize_request_body(body, preserve_local_tools=openclaw_skill_request)
     _enforce_single_search_models_tool_call(body, trace_id)
@@ -1646,7 +1654,12 @@ async def sutui_chat_completions(
     model_id = (body.get("model") or "").strip()
     requested_model_id = model_id
     _req_has_tools = bool(body.get("tools")) and body.get("tool_choice") != "none"
-    model_candidates = [model_id] if llm_model_override else _sutui_chat_model_candidates(model_id, has_tools=_req_has_tools)
+    force_exact_model = bool(llm_model_override and not mastra_chat_profile)
+    model_candidates = [model_id] if force_exact_model else _sutui_chat_model_candidates(
+        model_id,
+        has_tools=_req_has_tools,
+        required_fallbacks=["deepseek-chat"] if mastra_chat_profile else None,
+    )
     _tok = (token or "").strip()
     _tok_ref = sutui_token_ref_from_secret(_tok) or "-"
     _tok_tail = _tok[-6:] if len(_tok) > 6 else "***"
@@ -1663,7 +1676,7 @@ async def sutui_chat_completions(
         stream,
         trace_id,
         model_candidates,
-        bool(llm_model_override),
+        force_exact_model,
     )
     logger.info(
         "[chat_trace] trace_id=%s path=sutui_chat_completions forward brand=%s model_after_remap=%s sutui_pool=%s model_candidates=%s forced_override=%s",
@@ -1672,7 +1685,7 @@ async def sutui_chat_completions(
         model_id or "-",
         sutui_pool or "-",
         model_candidates,
-        bool(llm_model_override),
+        force_exact_model,
     )
 
     _require_balance_before_upstream_chat(
@@ -1693,7 +1706,7 @@ async def sutui_chat_completions(
     attempts = _sutui_chat_attempts_for_models(
         model_candidates,
         token,
-        forced_model_override=bool(llm_model_override),
+        forced_model_override=force_exact_model,
     )
     logger.info(
         "[chat_trace] trace_id=%s attempts=%s",

@@ -127,7 +127,10 @@ def test_h5_chat_supports_isolated_sessions_attachments_and_permissions():
     assert "attachments," in script
     assert "openai/gpt-5.6-sol" in mastra
     assert "return provider.chat(modelId)" in mastra
+    assert "'X-Lobster-Chat-Profile': 'mastra'" in mastra
     assert "approval_id: contextValue(context, 'approvalId')" in mastra
+    assert "不得再次征询授权或要求用户发送确认文字" in mastra
+    assert "不要先调用 request_task_approval 造成重复确认" in mastra
 
 
 def test_h5_chat_supports_cancel_steer_and_editable_queue():

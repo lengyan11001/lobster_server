@@ -39,6 +39,8 @@ class MastraChatJob:
     permission_mode: str
     approval_granted: bool
     approval_id: str
+    approval_task: str
+    approval_reason: str
     existing_media_tasks: List[Dict[str, Any]]
     authorization: str
     recent_history: List[Dict[str, str]]
@@ -407,6 +409,8 @@ def _claim_jobs_sync(
                     permission_mode=permission_mode,
                     approval_granted=bool(approval),
                     approval_id=approval.id if approval else "",
+                    approval_task=(approval.task or "").strip() if approval else "",
+                    approval_reason=(approval.reason or "").strip() if approval else "",
                     existing_media_tasks=_existing_media_tasks(db, row.id),
                     authorization=create_access_token(access_token_claims(user)),
                     recent_history=_recent_mastra_history(db, row),
@@ -838,6 +842,8 @@ async def _run_job_request(job: MastraChatJob) -> None:
         "permission_mode": job.permission_mode,
         "approval_granted": job.approval_granted,
         "approval_id": job.approval_id,
+        "approval_task": job.approval_task,
+        "approval_reason": job.approval_reason,
         "existing_media_tasks": job.existing_media_tasks,
     }
     timeout = httpx.Timeout(connect=8.0, read=900.0, write=30.0, pool=8.0)

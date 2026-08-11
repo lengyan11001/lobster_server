@@ -453,9 +453,21 @@ def test_confirm_mode_blocks_dispatch_until_approved_run_is_claimed(
     jobs = mastra_chat_runner._claim_jobs_sync(1)
     assert jobs and jobs[0].approval_granted is True
     assert jobs[0].approval_id == approval_id
+    assert jobs[0].approval_task == "发布当前视频到朋友圈"
+    assert jobs[0].approval_reason == "需要本机微信"
     with db_session_factory() as session:
         approval = session.query(H5ChatApproval).filter(H5ChatApproval.id == approval_id).one()
         assert approval.status == "executing"
+
+    repeated_confirmation = client.post(
+        "/api/mastra-chat/approval-request",
+        json={**dispatch_body, "execution_target": "online", "approval_id": approval_id},
+    )
+    assert repeated_confirmation.status_code == 200, repeated_confirmation.text
+    assert repeated_confirmation.json()["approved"] is True
+    assert repeated_confirmation.json()["approval"]["id"] == approval_id
+    with db_session_factory() as session:
+        assert session.query(H5ChatApproval).filter(H5ChatApproval.message_id == parent.id).count() == 1
 
     dispatched = client.post(
         "/api/mastra-chat/online-dispatch",

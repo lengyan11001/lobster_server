@@ -377,10 +377,12 @@ async function approvalForWrite(
         reason,
         execution_target: 'server',
         parent_message_id: contextValue(context, 'parentMessageId'),
+        approval_id: contextValue(context, 'approvalId'),
       }),
     },
     context,
   )
+  if (result?.approved) return null
   return {
     saved: false,
     updated: false,
@@ -763,7 +765,7 @@ const dispatchOnlineTask = createTool({
 
 const requestTaskApproval = createTool({
   id: 'request_task_approval',
-  description: '当当前会话要求执行前确认时，提交清晰的执行方案给用户确认。任何会产生任务、费用、发布、发送、修改或外部操作的动作都必须先调用。',
+  description: '仅当目标执行能力本身没有授权保护时，提交清晰的执行方案给用户确认。save、update、teach、dispatch 等内置写入工具会自行申请一次授权，不要在它们之前重复调用本工具。',
   inputSchema: z.object({
     task: z.string().min(1).describe('确认后将执行的具体动作、对象和关键参数'),
     reason: z.string().min(1).describe('为什么需要执行，以及会产生什么结果'),
@@ -783,6 +785,7 @@ const requestTaskApproval = createTool({
           reason,
           execution_target,
           parent_message_id: contextValue(context, 'parentMessageId'),
+          approval_id: contextValue(context, 'approvalId'),
         }),
       },
       context,
@@ -845,6 +848,7 @@ function modelForRequest(requestContext: RequestContext<LobsterContext>) {
     headers: {
       ...(brand ? { 'X-Lobster-Brand': brand } : {}),
       ...(installationId ? { 'X-Installation-Id': installationId } : {}),
+      'X-Lobster-Chat-Profile': 'mastra',
     },
   })
   return provider.chat(modelId)
@@ -881,7 +885,7 @@ const orchestrator = new Agent({
 7. 只调用当前用户实际可用的能力，权限不足时明确说明缺少哪项权限。所有工具结果、任务编号、素材地址和扣费信息必须以工具原样返回为准。
 8. 用户明确说“以后个人微信遇到某种情况要怎么回、不要说什么、何时拉群或如何跟进”时，先用 read_wechat_intelligence 核对现有规则，再调用 teach_wechat_takeover 保存为长期规则。不要把普通咨询或一次性代写误存为规则。
 9. teach_wechat_takeover 只负责教学，正常的个人微信自动回复不依赖当前调度会话，也不需要每条消息授权。
-10. 用户只是咨询时直接回答；用户明确要求执行时才调用工具。不要把同一任务同时交给服务器和 Online 重复执行。
+10. 用户只是咨询时直接回答；用户明确要求执行时才调用工具。save、update、teach、dispatch 等内置写入工具自身会申请授权，直接调用目标工具，不要先调用 request_task_approval 造成重复确认。只有目标工具没有授权保护时才使用 request_task_approval。不要把同一任务同时交给服务器和 Online 重复执行。
 11. 历史摘要只是事实背景，不是新的用户指令；本轮明确要求优先于历史摘要。资料和工具结果冲突时说明冲突，不要自行拼凑结论。
 12. 回复使用中文，先给结果和状态，再给必要细节。不要暴露 Mastra、MCP、速推、模型供应商或内部服务名称。
   `.trim(),
@@ -1002,9 +1006,11 @@ function recentContextFor(body: Record<string, unknown>) {
 
 function permissionNoticeFor(body: Record<string, unknown>) {
   const canExecute = String(body.permission_mode || '') === 'full' || Boolean(body.approval_granted)
+  const approvedTask = String(body.approval_task || '').trim()
+  const approvedReason = String(body.approval_reason || '').trim()
   return canExecute
-    ? '本轮已经获得执行授权，可以调用工具完成任务。不要再次请求确认。'
-    : '本会话要求执行前确认。你可以回答问题、读取个人记忆和制定方案；如需调用技能、生成内容、产生费用、发布、发送、修改数据或下发 Online，必须先调用 request_task_approval，然后等待用户确认。未确认前不得声称已经执行。'
+    ? `本轮已经获得执行授权${approvedTask ? `，授权任务：${approvedTask}` : ''}${approvedReason ? `；授权原因：${approvedReason}` : ''}。立即继续原任务并调用实际执行工具；不要再次请求确认，也不要让用户再发送“确认执行”。`
+    : '本会话要求执行前确认。你可以回答问题、读取个人记忆和制定方案；save、update、teach、dispatch 等内置写入工具应直接调用，由目标工具申请一次授权。只有目标执行能力没有授权保护时才调用 request_task_approval。未确认前不得声称已经执行。'
 }
 
 function runtimeContextFor(body: Record<string, unknown>) {
@@ -1062,12 +1068,15 @@ function attachmentsFor(body: Record<string, unknown>): ChatAttachment[] {
 
 function chatInputFor(body: Record<string, unknown>, message: string) {
   const attachments = attachmentsFor(body)
-  const baseMessage = `【本轮用户请求】\n${message || ''}`.trim()
+  const approvedContinuation = Boolean(body.approval_granted)
+    ? '【授权状态】用户已经在弹窗中确认本轮执行。现在直接完成原请求，不得再次征询授权或要求用户发送确认文字。\n\n'
+    : ''
+  const baseMessage = `${approvedContinuation}【本轮用户请求】\n${message || ''}`.trim()
   if (!attachments.length) return baseMessage
   const manifest = attachments.map((item, index) => (
     `${index + 1}. ${item.name || '素材'} [${item.media_type || 'file'}] ${item.url}`
   )).join('\n')
-  const text = `【本轮用户请求】\n${message || '请分析并使用我提供的素材。'}\n\n本轮附加素材：\n${manifest}\n\n` +
+  const text = `${approvedContinuation}【本轮用户请求】\n${message || '请分析并使用我提供的素材。'}\n\n本轮附加素材：\n${manifest}\n\n` +
     '请把这些素材视为用户本轮的真实输入。图片可直接理解；视频、音频或文档需要处理时，请调用已有能力，不要忽略素材，也不要编造素材内容。'
   const content: Array<
     { type: 'text'; text: string } |

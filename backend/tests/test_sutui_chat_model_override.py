@@ -48,3 +48,16 @@ def test_default_chain_uses_provider_qualified_gpt_5_6_as_final_fallback(monkeyp
         "openai/gpt-5.6-sol",
         "xskill",
     )
+
+
+def test_mastra_requires_deepseek_even_when_global_chain_omits_it(monkeypatch):
+    monkeypatch.setenv("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON", '["openai/gpt-5.6-sol"]')
+    monkeypatch.delenv("SUTUI_CHAT_MODEL_MAP_JSON", raising=False)
+
+    candidates = _sutui_chat_model_candidates(
+        "openai/gpt-5.6-sol",
+        has_tools=True,
+        required_fallbacks=["deepseek-chat"],
+    )
+
+    assert candidates == ["openai/gpt-5.6-sol", "deepseek-chat"]
