@@ -70,6 +70,13 @@ type MediaTaskState = MediaTaskSnapshot & {
 type DynamicToolExecute = (input: Record<string, unknown>, context?: unknown) => Promise<unknown>
 type MediaProgressWriter = (task: MediaTaskSnapshot, text: string) => void
 
+class MediaPollResumeError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'MediaPollResumeError'
+  }
+}
+
 function mediaPollSeconds(): number {
   const parsed = Number(process.env.LOBSTER_MASTRA_MEDIA_POLL_SECONDS || 15)
   return Math.max(1, Math.min(60, Number.isFinite(parsed) ? parsed : 15))
@@ -234,11 +241,13 @@ function guardMediaCapabilityTools(
       }
     }
     if (!task.terminal) {
-      task.status = 'timeout'
-      task.terminal = true
-      task.success = false
-      task.error = task.error || `${mediaTaskLabel(task.capability_id)}任务等待超时`
-      emit(task, task.error)
+      task.status = 'processing'
+      task.terminal = false
+      task.success = null
+      task.error = ''
+      const message = `${mediaTaskLabel(task.capability_id)}仍在生成，稍后自动继续查询原任务`
+      emit(task, message)
+      throw new MediaPollResumeError(message)
     }
     return task.lastResult ?? modelResultForTask(task)
   }
@@ -301,6 +310,7 @@ function guardMediaCapabilityTools(
         return task.lastResult ?? modelResultForTask(task)
       } catch (error) {
         if (abortSignalFor(context)?.aborted) throw error
+        if (error instanceof MediaPollResumeError) throw error
         task.status = 'failed'
         task.terminal = true
         task.success = false
@@ -1125,6 +1135,7 @@ function mcpClientFor(body: Record<string, unknown>, token: string, parentMessag
           headers: {
             Authorization: `Bearer ${token}`,
             'X-User-Authorization': `Bearer ${token}`,
+            'X-Lobster-OpenClaw-Intent': 'mastra-chat',
             ...(brand ? { 'X-Lobster-Brand': brand } : {}),
             ...(installationId ? { 'X-Installation-Id': installationId } : {}),
           },
@@ -1203,6 +1214,9 @@ const internalChatRoute = registerApiRoute('/internal/chat', {
           })
         },
       })
+      if (mediaExecution.hasPending()) {
+        throw new MediaPollResumeError('媒体任务仍在生成，稍后继续查询原任务')
+      }
       return c.json({
         ok: true,
         reply: result.text || '',
@@ -1333,6 +1347,9 @@ const internalChatStreamRoute = registerApiRoute('/internal/chat/stream', {
               const errorText = rawError instanceof Error ? rawError.message : String(rawError || 'AI 调度失败')
               throw new Error(errorText)
             }
+          }
+          if (mediaExecution.hasPending()) {
+            throw new MediaPollResumeError('媒体任务仍在生成，稍后继续查询原任务')
           }
           const reply = await output.text
           const usage = await output.usage

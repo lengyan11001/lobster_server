@@ -1522,3 +1522,6 @@ def test_mastra_media_generation_is_guarded_and_polled_to_terminal():
     assert "if (!task.terminal) await pollExisting(task, context)" in source
     assert "mediaExecution.resumeExisting" in source
     assert "media_tasks: mediaExecution.snapshots()" in source
+    assert "throw new MediaPollResumeError(message)" in source
+    assert "if (error instanceof MediaPollResumeError) throw error" in source
+    assert source.count("if (mediaExecution.hasPending())") >= 2

@@ -84,6 +84,19 @@ def test_h5_chat_restores_composer_after_each_task_result():
     assert script.count("ensureConversationComposerReady();") >= 3
 
 
+def test_h5_chat_directly_previews_generated_video_without_full_preload():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    mastra = (ROOT / "mastra_server" / "src" / "mastra" / "index.ts").read_text(encoding="utf-8")
+    mcp = (ROOT / "mcp" / "http_server.py").read_text(encoding="utf-8")
+
+    assert 'el = document.createElement("video")' in script
+    assert "el.controls = true" in script
+    assert "el.playsInline = true" in script
+    assert 'el.preload = "metadata"' in script
+    assert "'X-Lobster-OpenClaw-Intent': 'mastra-chat'" in mastra
+    assert "MCP_AUTOSAVE_ASSETS_ENABLED or bool(_openclaw_scope_intent(request))" in mcp
+
+
 def test_h5_chat_history_does_not_replay_old_approvals_or_speech():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
 

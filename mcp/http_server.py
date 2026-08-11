@@ -761,6 +761,7 @@ async def _post_task_failure_refund_with_retries(
         body["sutui_pool"] = sutui_pool.strip()
         body["sutui_token_ref"] = sutui_token_ref.strip()
     headers = _backend_headers(token, request)
+    headers["X-Billing-Idempotency-Key"] = (f"task-failure:{poll_task_id}")[:128]
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
@@ -850,6 +851,8 @@ def _sutui_get_result_is_terminal_success(resp: Any) -> bool:
 
 _MAX_VIDEO_FALLBACK_TASK_TRACK = 5000
 _video_fallback_tasks: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+_VIDEO_FALLBACK_JOB_FEATURE = "mastra_video_fallback"
+_VIDEO_FALLBACK_STATE_VERSION = 1
 
 
 def _is_apiz_veo31_payload(payload: Any) -> bool:
@@ -931,6 +934,162 @@ def _remember_video_fallback_state(public_task_id: str, state: Dict[str, Any]) -
     _video_fallback_tasks.move_to_end(task_id)
     while len(_video_fallback_tasks) > _MAX_VIDEO_FALLBACK_TASK_TRACK:
         _video_fallback_tasks.popitem(last=False)
+
+
+def _video_fallback_job_body(state: Dict[str, Any]) -> Dict[str, Any]:
+    public_task_id = str(state.get("public_task_id") or "").strip()
+    final_response = state.get("final_response") if isinstance(state.get("final_response"), dict) else None
+    if final_response and _sutui_get_result_is_terminal_success(final_response):
+        status = "completed"
+        stage = "completed"
+        progress = 100
+        error = ""
+    elif final_response:
+        status = "failed"
+        stage = "failed"
+        progress = 100
+        error = _video_fallback_error_text(final_response)
+    else:
+        status = "running"
+        stage = "polling" if state.get("provider_task_id") else "submitting"
+        progress = 5 if stage == "polling" else 0
+        error = ""
+    return {
+        "job_id": public_task_id,
+        "feature_type": _VIDEO_FALLBACK_JOB_FEATURE,
+        "provider": str(state.get("channel") or "apiz").strip() or "apiz",
+        "provider_task_id": str(state.get("provider_task_id") or "").strip() or None,
+        "status": status,
+        "stage": stage,
+        "progress": progress,
+        "title": "AI 对话视频生成",
+        "prompt": str((state.get("payload") or {}).get("prompt") or "")[:4000],
+        "request_payload": _sanitize_for_json(state.get("payload") or {}),
+        "result_payload": _sanitize_for_json(final_response or {}),
+        "saved_assets": _sanitize_for_json(state.get("saved_assets") or []),
+        "error": error[:4000],
+        "meta": {
+            "fallback_state_version": _VIDEO_FALLBACK_STATE_VERSION,
+            "public_task_id": public_task_id,
+            "candidates": _sanitize_for_json(state.get("candidates") or []),
+            "next_index": int(state.get("next_index") or 0),
+            "errors": [str(item)[:500] for item in (state.get("errors") or [])[-12:]],
+            "refund_credits": float(quantize_credits(state.get("refund_credits") or 0)),
+            "billing_status": str(state.get("billing_status") or "").strip(),
+            "billing_idempotency_key": str(state.get("billing_idempotency_key") or "").strip()[:128],
+        },
+    }
+
+
+def _video_fallback_state_from_job(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(job, dict) or str(job.get("feature_type") or "").strip() != _VIDEO_FALLBACK_JOB_FEATURE:
+        return None
+    public_task_id = str(job.get("job_id") or "").strip()
+    if not public_task_id:
+        return None
+    meta = job.get("meta") if isinstance(job.get("meta"), dict) else {}
+    payload = job.get("request_payload") if isinstance(job.get("request_payload"), dict) else {}
+    state = _new_video_fallback_state(public_task_id, payload)
+    state["channel"] = str(job.get("provider") or "apiz").strip() or "apiz"
+    state["provider_task_id"] = str(job.get("provider_task_id") or public_task_id).strip()
+    if isinstance(meta.get("candidates"), list):
+        state["candidates"] = meta["candidates"]
+    state["next_index"] = max(0, int(meta.get("next_index") or 0))
+    state["errors"] = [str(item)[:500] for item in (meta.get("errors") or []) if str(item).strip()]
+    state["refund_credits"] = float(meta.get("refund_credits") or 0)
+    state["billing_status"] = str(meta.get("billing_status") or "").strip()
+    state["billing_idempotency_key"] = str(meta.get("billing_idempotency_key") or "").strip()
+    state["saved_assets"] = job.get("saved_assets") if isinstance(job.get("saved_assets"), list) else []
+    result_payload = job.get("result_payload") if isinstance(job.get("result_payload"), dict) else {}
+    status = str(job.get("status") or "").strip().lower()
+    if status in {"completed", "failed", "stale", "canceled"}:
+        final_response = dict(result_payload)
+        final_response.setdefault("task_id", public_task_id)
+        if status == "completed":
+            final_response.setdefault("status", "completed")
+            if state["saved_assets"]:
+                final_response["saved_assets"] = state["saved_assets"]
+        else:
+            final_response.setdefault("status", "failed")
+            final_response.setdefault("error", {"message": str(job.get("error") or "视频生成失败")})
+        state["final_response"] = final_response
+    return state
+
+
+async def _persist_video_fallback_state(
+    state: Dict[str, Any],
+    token: Optional[str],
+    request: Optional[Request],
+) -> bool:
+    if not token or request is None or not str(state.get("public_task_id") or "").strip():
+        return False
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
+                response = await client.post(
+                    f"{_capabilities_api_base()}/api/creative-jobs",
+                    json=_video_fallback_job_body(state),
+                    headers=_backend_headers(token, request),
+                )
+            if response.status_code < 400:
+                return True
+            logger.warning(
+                "[video-fallback] persist failed task_id=%s http=%s attempt=%s/2 body=%s",
+                state.get("public_task_id"),
+                response.status_code,
+                attempt + 1,
+                (response.text or "")[:300],
+            )
+        except Exception as exc:
+            logger.warning(
+                "[video-fallback] persist exception task_id=%s attempt=%s/2 error=%s",
+                state.get("public_task_id"),
+                attempt + 1,
+                exc,
+            )
+        if attempt == 0:
+            await asyncio.sleep(0.2)
+    return False
+
+
+async def _load_video_fallback_state(
+    public_task_id: str,
+    token: Optional[str],
+    request: Optional[Request],
+) -> Optional[Dict[str, Any]]:
+    task_id = str(public_task_id or "").strip()
+    if not task_id or not token or request is None:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
+            response = await client.get(
+                f"{_capabilities_api_base()}/api/creative-jobs/{task_id}",
+                headers=_backend_headers(token, request),
+            )
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            logger.warning("[video-fallback] restore failed task_id=%s http=%s", task_id, response.status_code)
+            return None
+        body = response.json() if response.content else {}
+        state = _video_fallback_state_from_job(body.get("job") if isinstance(body, dict) else {})
+        if not state:
+            return None
+        _remember_video_fallback_state(task_id, state)
+        refund_credits = quantize_credits(state.get("refund_credits") or 0)
+        if refund_credits > 0 and state.get("billing_status") not in {"refunded", "settled"}:
+            _remember_task_billed_credits(task_id, refund_credits)
+        logger.info(
+            "[video-fallback] restored task_id=%s channel=%s provider_task_id=%s status=%s",
+            task_id,
+            state.get("channel"),
+            state.get("provider_task_id"),
+            "terminal" if state.get("final_response") else "running",
+        )
+        return state
+    except Exception as exc:
+        logger.warning("[video-fallback] restore exception task_id=%s error=%s", task_id, exc)
+        return None
 
 
 def _new_video_fallback_state(public_task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1139,6 +1298,7 @@ async def _start_next_video_fallback(
             state.setdefault("errors", []).append("备用通道未返回任务ID")
             continue
         _remember_video_fallback_state(public_task_id, state)
+        await _persist_video_fallback_state(state, token, request)
         return public_result
 
     messages = [str(item) for item in (state.get("errors") or []) if str(item).strip()]
@@ -1151,6 +1311,7 @@ async def _start_next_video_fallback(
     }
     state["final_response"] = failed
     _remember_video_fallback_state(public_task_id, state)
+    await _persist_video_fallback_state(state, token, request)
     return failed
 
 
@@ -1177,7 +1338,10 @@ async def _poll_registered_video_fallback(
     token: Optional[str],
     request: Optional[Request],
 ) -> Optional[Dict[str, Any]]:
-    state = _video_fallback_tasks.get(str(public_task_id or "").strip())
+    task_id = str(public_task_id or "").strip()
+    state = _video_fallback_tasks.get(task_id)
+    if not isinstance(state, dict):
+        state = await _load_video_fallback_state(task_id, token, request)
     if not isinstance(state, dict):
         return None
     final = state.get("final_response")
@@ -1191,8 +1355,10 @@ async def _poll_registered_video_fallback(
         return None
     state["transitioning"] = True
     try:
+        poll_request_error = False
         headers = _video_fallback_proxy_headers(token, request)
         if headers is None:
+            poll_request_error = True
             raw: Dict[str, Any] = {"error": {"message": "视频备用通道未配置内部计费凭据"}, "status": "failed"}
         else:
             url, params = _video_fallback_poll_url(channel, provider_task_id)
@@ -1200,6 +1366,7 @@ async def _poll_registered_video_fallback(
                 async with httpx.AsyncClient(timeout=45.0, trust_env=False) as client:
                     response = await client.get(url, params=params, headers=headers)
                 if response.status_code >= 400:
+                    poll_request_error = True
                     raw = {
                         "error": {"message": f"备用通道轮询 HTTP {response.status_code}: {(response.text or '')[:600]}"},
                         "status": "failed",
@@ -1208,7 +1375,26 @@ async def _poll_registered_video_fallback(
                     parsed = response.json() if response.content else {}
                     raw = parsed if isinstance(parsed, dict) else {"error": {"message": "备用通道轮询格式异常"}, "status": "failed"}
             except (httpx.HTTPError, ValueError) as exc:
+                poll_request_error = True
                 raw = {"error": {"message": f"备用通道轮询失败: {exc}"}, "status": "failed"}
+        if poll_request_error:
+            error = _video_fallback_error_text(raw)
+            state["poll_error_count"] = int(state.get("poll_error_count") or 0) + 1
+            state.setdefault("errors", []).append(error[:500])
+            logger.warning(
+                "[video-fallback] poll unavailable, keep original task public_task_id=%s provider_task_id=%s count=%s error=%s",
+                public_task_id,
+                provider_task_id,
+                state["poll_error_count"],
+                error[:300],
+            )
+            return {
+                "task_id": public_task_id,
+                "status": "pending",
+                "fallback_used": True,
+                "poll_warning": "结果查询暂时不可用，系统会继续查询原任务",
+            }
+        state["poll_error_count"] = 0
         public_result = _public_video_fallback_response(
             raw,
             public_task_id=public_task_id,
@@ -1219,12 +1405,14 @@ async def _poll_registered_video_fallback(
         if _sutui_get_result_is_terminal_success(public_result):
             state["final_response"] = public_result
             _remember_video_fallback_state(public_task_id, state)
+            await _persist_video_fallback_state(state, token, request)
             return public_result
         error = _video_fallback_error_text(public_result)
         state.setdefault("errors", []).append(error[:500])
         if not _video_fallback_allowed(error):
             state["final_response"] = public_result
             _remember_video_fallback_state(public_task_id, state)
+            await _persist_video_fallback_state(state, token, request)
             return public_result
         state["channel"] = ""
         state["provider_task_id"] = ""
@@ -1239,7 +1427,10 @@ async def _maybe_fallback_after_apiz_poll(
     token: Optional[str],
     request: Optional[Request],
 ) -> Dict[str, Any]:
-    state = _video_fallback_tasks.get(str(public_task_id or "").strip())
+    task_id = str(public_task_id or "").strip()
+    state = _video_fallback_tasks.get(task_id)
+    if not isinstance(state, dict):
+        state = await _load_video_fallback_state(task_id, token, request)
     if not isinstance(state, dict) or str(state.get("channel") or "") != "apiz":
         return response
     if _is_task_still_in_progress(response):
@@ -1249,6 +1440,7 @@ async def _maybe_fallback_after_apiz_poll(
         final["task_id"] = public_task_id
         state["final_response"] = final
         _remember_video_fallback_state(public_task_id, state)
+        await _persist_video_fallback_state(state, token, request)
         return final
     if not (response.get("error") or _sutui_get_result_is_terminal_failure(response)):
         return response
@@ -1256,6 +1448,7 @@ async def _maybe_fallback_after_apiz_poll(
     if not _video_fallback_allowed(error):
         state["final_response"] = dict(response)
         _remember_video_fallback_state(public_task_id, state)
+        await _persist_video_fallback_state(state, token, request)
         return response
     if state.get("transitioning"):
         return {"task_id": public_task_id, "status": "pending", "fallback_used": True}
@@ -3792,6 +3985,12 @@ def _consume_task_autosave_once(task_id: str) -> bool:
     return True
 
 
+def _release_task_autosave_once(task_id: str) -> None:
+    tid = (task_id or "").strip()
+    if tid:
+        _TASK_AUTOSAVE_ONCE.pop(tid, None)
+
+
 _TASK_RESULT_BILL_ONCE: Dict[str, float] = {}
 _TASK_RESULT_BILL_TTL_SEC = 86400 * 7
 _TASK_RESULT_BILL_MAX_KEYS = 50000
@@ -4907,6 +5106,10 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     _refund_reason = "HTTP层错误" if _is_http_level_error else "终态失败"
                     if ok_refund:
                         _pop_task_billed_credits(poll_task_id)
+                        fallback_state = _video_fallback_tasks.get(poll_task_id)
+                        if isinstance(fallback_state, dict):
+                            fallback_state["billing_status"] = "refunded"
+                            await _persist_video_fallback_state(fallback_state, token, request)
                         logger.info(
                             "[MCP] 任务%s退款 task_id=%s credits=%s（与速推创建任务扣费对应）",
                             _refund_reason,
@@ -4928,6 +5131,10 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 and _sutui_get_result_is_terminal_success(upstream_resp)
             ):
                 dropped = _pop_task_billed_credits(poll_task_id)
+                fallback_state = _video_fallback_tasks.get(poll_task_id)
+                if isinstance(fallback_state, dict):
+                    fallback_state["billing_status"] = "settled"
+                    await _persist_video_fallback_state(fallback_state, token, request)
                 if dropped > 0:
                     logger.info("[MCP] 任务成功，清除创建扣费缓存 task_id=%s billed_was=%s", poll_task_id, dropped)
                 # 任务完成，清理临时文件
@@ -5074,6 +5281,12 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                 if created_tid:
                     refund_on_fail = pre_deduct_amount if pre_deduct_amount > 0 else bill_credits
                     _remember_task_billed_credits(created_tid, refund_on_fail)
+                    fallback_state = _video_fallback_tasks.get(created_tid)
+                    if isinstance(fallback_state, dict):
+                        fallback_state["refund_credits"] = float(quantize_credits(refund_on_fail))
+                        fallback_state["billing_status"] = "pre_deducted"
+                        fallback_state["billing_idempotency_key"] = billing_idem
+                        await _persist_video_fallback_state(fallback_state, token, request)
                     logger.info(
                         "[MCP] 已记录创建任务扣费 task_id=%s credits=%s pre_deduct=%s settle=%s（失败时凭 task_id 退款）",
                         created_tid,
@@ -5096,7 +5309,7 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
             # 自动入库：一次生成任务只入库一轮；该轮可含多个资源（多 URL）。异步 generate 不入库；get_result 仅终态且同一 task_id 只入库一次（轮询会多次终态成功）。
             # 云端 API 场景可设 MCP_AUTOSAVE_ASSETS=0，避免与「素材仅本机」冲突，由本机 lobster_online 保存。
             saved: List[Dict[str, str]] = []
-            if not upstream_error and MCP_AUTOSAVE_ASSETS_ENABLED:
+            if not upstream_error and (MCP_AUTOSAVE_ASSETS_ENABLED or bool(_openclaw_scope_intent(request))):
                 should_autosave = False
                 if upstream_tool == "get_result":
                     if _sutui_get_result_is_terminal_success(upstream_resp):
@@ -5124,6 +5337,15 @@ async def _call_tool(name: str, args: Dict[str, Any], token: Optional[str], requ
                     saved = await _auto_save_generated_assets(upstream_resp, capability_id, payload, token, request=request)
                     if saved:
                         data["saved_assets"] = saved
+                        fallback_state = _video_fallback_tasks.get(poll_task_id)
+                        if isinstance(fallback_state, dict):
+                            fallback_state["saved_assets"] = saved
+                            final_response = fallback_state.get("final_response")
+                            if isinstance(final_response, dict):
+                                final_response["saved_assets"] = saved
+                            await _persist_video_fallback_state(fallback_state, token, request)
+                    elif upstream_tool == "get_result":
+                        _release_task_autosave_once(tid_for_save)
             if _openclaw_scope_intent(request):
                 _attach_openclaw_evidence_contract(data, capability_id, payload, upstream_resp, saved)
 

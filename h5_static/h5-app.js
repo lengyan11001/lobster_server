@@ -21577,6 +21577,7 @@
           el.src = mediaProxyUrl(url, "inline", filenameFromUrl(url, "lobster-video.mp4"));
           el.controls = true;
           el.playsInline = true;
+          el.preload = "metadata";
           downloadLabel = "下载视频";
           fallbackName = "lobster-video.mp4";
         } else if (/\.(mp3|wav|m4a|aac|ogg)(\?|#|$)/.test(low)) {

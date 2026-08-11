@@ -361,6 +361,69 @@ async def test_submit_fallback_exposes_one_public_task_id(monkeypatch):
     assert state["provider_task_id"] == "provider-private-task"
 
 
+def test_video_fallback_job_roundtrip_keeps_restart_and_billing_state():
+    public_task_id = "video-fallback-restart-safe"
+    state = mcp_server._new_video_fallback_state(
+        public_task_id,
+        {"model": "apiz/veo3.1/text-to-video", "prompt": "海边漫步"},
+    )
+    state.update(
+        {
+            "channel": "xai",
+            "provider_task_id": "provider-task-after-restart",
+            "refund_credits": 480,
+            "billing_status": "pre_deducted",
+            "billing_idempotency_key": "billing-create-1",
+            "next_index": 1,
+        }
+    )
+
+    job = mcp_server._video_fallback_job_body(state)
+    restored = mcp_server._video_fallback_state_from_job(job)
+
+    assert restored is not None
+    assert restored["public_task_id"] == public_task_id
+    assert restored["channel"] == "xai"
+    assert restored["provider_task_id"] == "provider-task-after-restart"
+    assert restored["refund_credits"] == 480
+    assert restored["billing_status"] == "pre_deducted"
+    assert restored["billing_idempotency_key"] == "billing-create-1"
+    assert restored["next_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_task_failure_refund_uses_task_idempotency_key(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 200
+        text = ""
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json, headers):
+            captured.update({"url": url, "json": json, "headers": headers})
+            return Response()
+
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda *args, **kwargs: Client())
+    ok = await mcp_server._post_task_failure_refund_with_retries(
+        token="jwt",
+        capability_id="video.generate",
+        poll_task_id="video-fallback-idempotent",
+        refund_amt=mcp_server.Decimal("480"),
+        request=None,
+    )
+
+    assert ok is True
+    assert captured["headers"]["X-Billing-Idempotency-Key"] == "task-failure:video-fallback-idempotent"
+    assert captured["json"]["credits"] == 480.0
+
+
 @pytest.mark.asyncio
 async def test_fallback_stops_after_non_retryable_candidate_error(monkeypatch):
     attempts = []
@@ -424,9 +487,12 @@ async def test_fallback_poll_does_not_switch_after_non_retryable_failure(monkeyp
     mcp_server._remember_video_fallback_state(public_task_id, state)
 
     class Response:
-        status_code = 401
-        text = "unauthorized"
-        content = b"unauthorized"
+        status_code = 200
+        text = ""
+        content = b"{}"
+
+        def json(self):
+            return {"status": "failed", "error": {"message": "content safety violation"}}
 
     class Client:
         async def __aenter__(self):
@@ -448,7 +514,48 @@ async def test_fallback_poll_does_not_switch_after_non_retryable_failure(monkeyp
     result = await mcp_server._poll_registered_video_fallback(public_task_id, "jwt", None)
 
     assert result["status"] == "failed"
-    assert "401" in str(result["error"])
+    assert "content safety" in str(result["error"])
+
+
+@pytest.mark.asyncio
+async def test_fallback_poll_transport_error_keeps_original_task(monkeypatch):
+    public_task_id = "public-task-network-retry"
+    state = mcp_server._new_video_fallback_state(
+        public_task_id,
+        {"model": "apiz/veo3.1/text-to-video", "prompt": "test"},
+    )
+    state["channel"] = "xai"
+    state["provider_task_id"] = "provider-task-still-running"
+    mcp_server._video_fallback_tasks.clear()
+    mcp_server._remember_video_fallback_state(public_task_id, state)
+
+    class Response:
+        status_code = 503
+        text = "temporarily unavailable"
+        content = b"temporarily unavailable"
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda *args, **kwargs: Client())
+    monkeypatch.setattr(mcp_server, "_video_fallback_proxy_headers", lambda token, request: {})
+
+    async def should_not_start(*args, **kwargs):
+        raise AssertionError("poll transport failure must keep querying the same provider task")
+
+    monkeypatch.setattr(mcp_server, "_start_next_video_fallback", should_not_start)
+    result = await mcp_server._poll_registered_video_fallback(public_task_id, "jwt", None)
+
+    assert result["status"] == "pending"
+    assert state["provider_task_id"] == "provider-task-still-running"
+    assert state["poll_error_count"] == 1
 
 
 def test_xai_grok_models_keep_sutui_route():
