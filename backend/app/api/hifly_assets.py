@@ -1250,6 +1250,33 @@ async def _upload_file_to_hifly(
     }
 
 
+async def _prepare_voice_clone_upload(upload: UploadFile) -> Dict[str, Any]:
+    """Read and validate a voice sample without routing it through HiFly."""
+    ext = _normalized_extension(upload, _AUDIO_EXTS, "mp3")
+    if ext not in _AUDIO_EXTS:
+        raise HTTPException(status_code=400, detail=f"仅支持 {', '.join(sorted(_AUDIO_EXTS))} 格式")
+    try:
+        size = await asyncio.to_thread(_validate_upload_size, upload.file, _AUDIO_MAX_BYTES)
+    except HTTPException as exc:
+        if exc.status_code == 413:
+            raise HTTPException(status_code=400, detail=f"上传文件不能超过 {_AUDIO_MAX_BYTES // (1024 * 1024)}MB") from exc
+        raise HTTPException(status_code=400, detail="上传文件为空") from exc
+
+    raw = await upload.read(size + 1)
+    await upload.seek(0)
+    if not raw:
+        raise HTTPException(status_code=400, detail="上传文件为空")
+    return {
+        "file_id": f"voice_source_{uuid.uuid4().hex}",
+        "content_type": _AUDIO_EXTS.get(ext) or upload.content_type or "application/octet-stream",
+        "filename": upload.filename or f"voice.{ext}",
+        "size": size,
+        "extension": ext,
+        "raw_bytes": raw,
+        "upload_file_obj": upload.file,
+    }
+
+
 def _upload_meta_for_store(uploaded: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "file_id": uploaded.get("file_id"),
@@ -2245,13 +2272,7 @@ async def create_my_voice_upload(
 ):
     user_id = int(current_user.id)
     _release_db_before_hifly_upstream(db, phase="create_voice_upload")
-    uploaded = await _upload_file_to_hifly(
-        token,
-        file,
-        allowed_exts=_AUDIO_EXTS,
-        max_bytes=_AUDIO_MAX_BYTES,
-        fallback_ext="mp3",
-    )
+    uploaded = await _prepare_voice_clone_upload(file)
     uploaded["_asset_storage"] = await _store_input_asset(uploaded)
     source_asset = _persist_input_asset(db, user_id, uploaded, "audio")
     if source_asset:
