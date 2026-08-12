@@ -89,6 +89,7 @@ _MAX_GROK_REFERENCE_BYTES = 30 * 1024 * 1024
 _MAX_PROXY_FILE_BYTES = 512 * 1024 * 1024
 _MAX_IMAGE_EDIT_TOTAL_BYTES = 120 * 1024 * 1024
 _MAX_CHAT_IMAGE_PREPARE_BYTES = 20 * 1024 * 1024
+_MAX_GENERATED_IMAGE_PERSIST_BYTES = 40 * 1024 * 1024
 _proxy_video_task_meta: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 _openmind_tos_url_cache: "OrderedDict[str, str]" = OrderedDict()
 _MAX_OPENMIND_TOS_URL_CACHE = 1000
@@ -241,6 +242,58 @@ def _is_image_download_interrupted_payload(payload: Any) -> bool:
         "failed to download the provided image" in text
         and "connection dropped while downloading the image" in text
     )
+
+
+def _image_generation_channel_cache_key(provider: str, model: str) -> str:
+    normalized_provider = str(provider or "comfly").strip().lower()
+    if normalized_provider == "openmindapi":
+        normalized_provider = "openmind"
+    normalized_model = str(model or "unknown").strip().lower()
+    if normalized_model == "gpt-image-2-openmindapi":
+        normalized_model = "gpt-image-2"
+    safe_provider = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in normalized_provider)[:64]
+    safe_model = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in normalized_model)[:96]
+    return f"comfly:image-provider-disabled:{safe_provider}:{safe_model}"
+
+
+def _image_generation_provider_label(entry: Dict[str, Any], model: str) -> str:
+    token_group = str((entry or {}).get("token_group") or "").strip().lower()
+    if token_group:
+        return token_group
+    return "comfly"
+
+
+def _image_generation_channel_available(provider: str, model: str) -> bool:
+    return cache_get(_image_generation_channel_cache_key(provider, model)) is None
+
+
+def _image_generation_channel_disable_ttl_seconds(provider: str, error: str) -> int:
+    provider = str(provider or "").strip().lower()
+    msg = str(error or "").lower()
+    if any(token in msg for token in ("insufficient_quota", "no credits remaining", "quota exceeded", "余额不足", "欠费")):
+        return _env_int("COMFLY_IMAGE_PROVIDER_QUOTA_DISABLE_SECONDS", 1800, min_value=60, max_value=7200)
+    if "no available compatible accounts" in msg or "无可用账号" in msg or "no available account" in msg:
+        return _env_int("COMFLY_IMAGE_PROVIDER_ACCOUNT_DISABLE_SECONDS", 600, min_value=60, max_value=3600)
+    if "invalid api key" in msg or "invalid_api_key" in msg or "unauthorized" in msg or "forbidden" in msg:
+        return _env_int("COMFLY_IMAGE_PROVIDER_AUTH_DISABLE_SECONDS", 1800, min_value=60, max_value=7200)
+    if "http 429" in msg and provider in {"openai_official", "gaisc", "openmindapi", "openmind", "yunwu"}:
+        return _env_int("COMFLY_IMAGE_PROVIDER_RATE_LIMIT_DISABLE_SECONDS", 120, min_value=30, max_value=900)
+    return 0
+
+
+def _mark_image_generation_channel_failure(provider: str, model: str, error: str) -> bool:
+    ttl = _image_generation_channel_disable_ttl_seconds(provider, error)
+    if ttl <= 0:
+        return False
+    cache_set(_image_generation_channel_cache_key(provider, model), str(error or "")[:500], ttl_seconds=ttl)
+    logger.warning(
+        "[image_generate] provider temporarily disabled provider=%s model=%s ttl=%ss error=%s",
+        provider,
+        model,
+        ttl,
+        str(error or "")[:300],
+    )
+    return True
 
 
 def _should_deduct_credits() -> bool:
@@ -1216,6 +1269,10 @@ async def _persist_generated_image_asset(
     job_id: str = "",
 ) -> Dict[str, Any]:
     data, media_type, ext = await _download_image_bytes(url)
+    if len(data) > _MAX_GENERATED_IMAGE_PERSIST_BYTES:
+        raise RuntimeError(
+            f"generated image exceeds {int(_MAX_GENERATED_IMAGE_PERSIST_BYTES / (1024 * 1024))}MB"
+        )
     aid, fname_or_key, fsize, tos_public_url = await _run_asset_upload_io(
         _save_bytes_or_tos,
         data,
@@ -1481,6 +1538,15 @@ def _replace_openmind_video_url(payload: Dict[str, Any], source_url: str, public
     payload["source_video_url"] = source_url
 
 
+def _mark_openmind_video_tos_transfer_queued(payload: Dict[str, Any], source_url: str) -> None:
+    video = payload.get("video")
+    if isinstance(video, dict):
+        video.setdefault("source_url", source_url)
+    payload.setdefault("source_video_url", source_url)
+    payload["tos_transfer_status"] = "queued"
+    payload.pop("tos_transfer_error", None)
+
+
 def _video_transfer_base_url() -> str:
     return (
         os.environ.get("VIDEO_TRANSFER_API_BASE")
@@ -1548,6 +1614,42 @@ async def _transfer_video_to_tos_via_proxy(source_url: str, *, task_id: str) -> 
     return tos_url, size
 
 
+async def _transfer_openmind_video_to_tos_in_background(source_url: str, *, task_id: str, cache_key: str) -> None:
+    try:
+        async with background_heavy_slot("openmind_video_tos_transfer"):
+            tos_public_url, transferred_size = await _transfer_video_to_tos_via_proxy(
+                source_url,
+                task_id=task_id,
+            )
+            _openmind_tos_url_cache[cache_key] = tos_public_url
+            while len(_openmind_tos_url_cache) > _MAX_OPENMIND_TOS_URL_CACHE:
+                _openmind_tos_url_cache.popitem(last=False)
+            cache_set(f"comfly:openmind-video-tos:{cache_key}", tos_public_url, ttl_seconds=24 * 60 * 60)
+            try:
+                source_host = httpx.URL(source_url).host or "unknown"
+            except Exception:
+                source_host = "unknown"
+            logger.info(
+                "OpenMind video mirrored to TOS via proxy task_id=%s source_host=%s size=%s url=%s",
+                task_id,
+                source_host,
+                transferred_size,
+                tos_public_url[:100],
+            )
+    except WorkloadQueueFull:
+        logger.warning(
+            "OpenMind video TOS transfer skipped because background queue is full task_id=%s",
+            task_id,
+        )
+    except Exception as exc:
+        cache_set(f"comfly:openmind-video-tos-error:{cache_key}", str(exc)[:300], ttl_seconds=10 * 60)
+        logger.warning(
+            "OpenMind video TOS transfer failed task_id=%s error=%s",
+            task_id,
+            str(exc)[:300],
+        )
+
+
 async def _mirror_openmind_video_to_tos(payload: Dict[str, Any], task_id: str) -> Dict[str, Any]:
     source_url = _extract_openmind_video_url(payload)
     if not source_url:
@@ -1563,39 +1665,32 @@ async def _mirror_openmind_video_to_tos(payload: Dict[str, Any], task_id: str) -
         return payload
 
     cache_key = f"{task_id}:{source_url}"
-    cached_url = _openmind_tos_url_cache.get(cache_key)
+    cached_url = _openmind_tos_url_cache.get(cache_key) or cache_get(f"comfly:openmind-video-tos:{cache_key}")
     if cached_url:
+        _openmind_tos_url_cache[cache_key] = cached_url
         _replace_openmind_video_url(payload, source_url, cached_url)
+        payload["tos_transfer_status"] = "completed"
+        payload.pop("tos_transfer_error", None)
         return payload
 
-    try:
-        tos_public_url, transferred_size = await _transfer_video_to_tos_via_proxy(
+    error = cache_get(f"comfly:openmind-video-tos-error:{cache_key}")
+    _mark_openmind_video_tos_transfer_queued(payload, source_url)
+    if error:
+        payload["tos_transfer_error"] = error
+    claim_key = f"comfly:openmind-video-tos-claim:{cache_key}"
+    if cache_set_if_absent(claim_key, "1", ttl_seconds=15 * 60):
+        task_coro = _transfer_openmind_video_to_tos_in_background(
             source_url,
             task_id=task_id,
+            cache_key=cache_key,
         )
-        _openmind_tos_url_cache[cache_key] = tos_public_url
-        while len(_openmind_tos_url_cache) > _MAX_OPENMIND_TOS_URL_CACHE:
-            _openmind_tos_url_cache.popitem(last=False)
-        _replace_openmind_video_url(payload, source_url, tos_public_url)
-        payload.pop("tos_transfer_error", None)
         try:
-            source_host = httpx.URL(source_url).host or "unknown"
+            spawn_tracked_task(task_coro, name=f"openmind-video-tos-transfer-{task_id}")
         except Exception:
-            source_host = "unknown"
-        logger.info(
-            "OpenMind video mirrored to TOS via proxy task_id=%s source_host=%s size=%s url=%s",
-            task_id,
-            source_host,
-            transferred_size,
-            tos_public_url[:100],
-        )
-    except Exception as exc:
-        payload["tos_transfer_error"] = str(exc)[:300]
-        logger.warning(
-            "OpenMind video TOS transfer failed task_id=%s error=%s",
-            task_id,
-            str(exc)[:300],
-        )
+            task_coro.close()
+            cache_delete(claim_key)
+            payload["tos_transfer_error"] = "failed to queue TOS transfer"
+            logger.exception("OpenMind video TOS transfer queue failed task_id=%s", task_id)
     return payload
 
 
@@ -2654,6 +2749,21 @@ async def proxy_images_generations(
             continue
 
         upstream_body = _body_for_upstream_model(body, attempt_model, entry)
+        provider_label = _image_generation_provider_label(entry, attempt_model)
+        if not _image_generation_channel_available(provider_label, attempt_model):
+            last_error = f"{provider_label} temporarily disabled after recent upstream failures"
+            errors.append(f"{attempt_model}: {last_error}")
+            _audit(
+                "image_channel_circuit_skipped",
+                user_id=billing_user_id,
+                request_user_id=request_user_id,
+                requested_model=model,
+                model=attempt_model,
+                provider=provider_label,
+                attempt=index,
+                error=last_error[:300],
+            )
+            continue
         if reference_urls:
             upstream_body.setdefault("image", reference_urls[0])
             upstream_body.setdefault("image_url", reference_urls[0])
@@ -2802,6 +2912,7 @@ async def proxy_images_generations(
                 return JSONResponse(resp)
             except Exception as e:
                 last_error = str(e)
+                _mark_image_generation_channel_failure(provider_label, attempt_model, last_error)
                 errors.append(f"{attempt_model}: {last_error[:300]}")
                 _audit(
                     "image_channel_attempt_failed",
@@ -2833,7 +2944,12 @@ async def proxy_images_generations(
                     break
                 await asyncio.sleep(0.8 * retry_index)
 
-        if _openmind_image_fallback_enabled() and (not last_error or _is_retryable_image_error(RuntimeError(last_error))):
+        openmind_fallback_provider = "openmind"
+        if (
+            _openmind_image_fallback_enabled()
+            and _image_generation_channel_available(openmind_fallback_provider, attempt_model)
+            and (not last_error or _is_retryable_image_error(RuntimeError(last_error)))
+        ):
             try:
                 resp = await _openmind_image_request(upstream_body)
                 asset_persistence_queued = _queue_generated_image_asset_persistence(
@@ -2890,6 +3006,7 @@ async def proxy_images_generations(
                 channel_succeeded = True
                 return JSONResponse(resp)
             except Exception as fallback_error:
+                _mark_image_generation_channel_failure(openmind_fallback_provider, attempt_model, str(fallback_error))
                 _audit(
                     "image_openmind_fallback_failed",
                     user_id=billing_user_id,
@@ -2916,6 +3033,17 @@ async def proxy_images_generations(
                 )
                 last_error = f"{last_error}; OpenMind fallback failed: {fallback_error}"
                 errors.append(f"{attempt_model}/openmind: {str(fallback_error)[:300]}")
+        elif _openmind_image_fallback_enabled() and not _image_generation_channel_available(openmind_fallback_provider, attempt_model):
+            fallback_skip_error = "openmind temporarily disabled after recent upstream failures"
+            errors.append(f"{attempt_model}/openmind: {fallback_skip_error}")
+            _audit(
+                "image_openmind_fallback_circuit_skipped",
+                user_id=billing_user_id,
+                request_user_id=request_user_id,
+                requested_model=model,
+                model=attempt_model,
+                error=fallback_skip_error,
+            )
 
         if not channel_succeeded:
             _do_full_refund_by_user_id(

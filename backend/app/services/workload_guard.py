@@ -221,9 +221,6 @@ def request_workload_kind(method: str, path: str) -> str:
 def heavy_workload_kind(method: str, path: str) -> str:
     method = str(method or "").upper()
     path = str(path or "").rstrip("/") or "/"
-    if method == "GET" and path.startswith("/api/comfly-proxy/openmind/v1/videos/") and not path.endswith("/content"):
-        # Polling may include a synchronous TOS mirror for a completed video.
-        return "heavy"
     if method not in {"POST", "PUT", "PATCH"}:
         return ""
     if path == "/api/h5/recorder/files":

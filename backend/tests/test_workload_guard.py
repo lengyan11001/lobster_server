@@ -127,7 +127,6 @@ def test_bounded_work_gate_caps_total_admitted_work_during_concurrent_entry() ->
         ("POST", "/api/comfly-proxy/v1/images/edits"),
         ("POST", "/api/comfly-proxy/v2/videos/generations"),
         ("POST", "/api/comfly-proxy/openmind/v1/videos"),
-        ("GET", "/api/comfly-proxy/openmind/v1/videos/task-123"),
         ("POST", "/api/personal-settings/memory-documents/generate"),
         ("POST", "/api/personal-settings/memory-documents/complete-online-generation-upload"),
         ("POST", "/api/cutcli/templates/demo/render"),
@@ -154,6 +153,7 @@ def test_heavy_workload_routes_are_classified(method: str, path: str) -> None:
         ("POST", "/api/auth/login"),
         ("POST", "/api/h5-chat/devices/heartbeat"),
         ("POST", "/api/h5/recorder/files"),
+        ("GET", "/api/comfly-proxy/openmind/v1/videos/task-123"),
     ],
 )
 def test_interactive_routes_bypass_heavy_workload_queue(method: str, path: str) -> None:

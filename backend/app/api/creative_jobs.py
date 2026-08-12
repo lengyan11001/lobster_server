@@ -16,6 +16,58 @@ router = APIRouter()
 
 _ALLOWED_STATUS = {"queued", "running", "completed", "failed", "stale", "canceled"}
 _TERMINAL_STATUS = {"completed", "failed", "stale", "canceled"}
+_OMIT_PAYLOAD_KEYS = {
+    "b64_json",
+    "base64",
+    "base64_json",
+    "data_url",
+    "dataUrl",
+    "raw_response",
+    "rawResponse",
+    "raw_payload",
+    "rawPayload",
+    "upstream_raw",
+    "upstreamRaw",
+}
+
+
+def _compact_job_payload(value: Any, *, string_limit: int = 12000, max_items: int = 80, _depth: int = 0) -> Any:
+    if _depth > 8:
+        return {"omitted": True, "reason": "max_depth"}
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("data:"):
+            return {"omitted": True, "kind": "data_url", "length": len(value)}
+        if len(value) > string_limit:
+            return value[:string_limit] + f"...[truncated {len(value) - string_limit} chars]"
+        return value
+    if isinstance(value, list):
+        result = [_compact_job_payload(item, string_limit=string_limit, max_items=max_items, _depth=_depth + 1) for item in value[:max_items]]
+        if len(value) > max_items:
+            result.append({"omitted": True, "reason": "too_many_items", "count": len(value) - max_items})
+        return result
+    if not isinstance(value, dict):
+        text = str(value)
+        if len(text) > string_limit:
+            return text[:string_limit] + f"...[truncated {len(text) - string_limit} chars]"
+        return value
+
+    compacted: dict[str, Any] = {}
+    for key, item in value.items():
+        key_text = str(key)
+        if key_text in _OMIT_PAYLOAD_KEYS:
+            if key_text.lower() in {"b64_json", "base64", "base64_json"}:
+                kind = "base64"
+            elif "data" in key_text.lower():
+                kind = "data_url"
+            else:
+                kind = "raw_payload"
+            compacted[key_text] = {"omitted": True, "kind": kind, "length": len(str(item or ""))}
+            continue
+        compacted[key_text] = _compact_job_payload(item, string_limit=string_limit, max_items=max_items, _depth=_depth + 1)
+    return compacted
 
 
 class CreativeJobUpsertBody(BaseModel):
@@ -158,18 +210,18 @@ def _apply_payload(row: CreativeGenerationJob, payload: CreativeJobPatchBody | C
     if getattr(payload, "prompt", None) is not None:
         row.prompt = payload.prompt or None
     if getattr(payload, "request_payload", None) is not None:
-        row.request_payload = payload.request_payload or {}
+        row.request_payload = _compact_job_payload(payload.request_payload or {})
     if getattr(payload, "result_payload", None) is not None:
-        row.result_payload = payload.result_payload or {}
+        row.result_payload = _compact_job_payload(payload.result_payload or {})
     if getattr(payload, "saved_assets", None) is not None:
-        row.saved_assets = payload.saved_assets or []
+        row.saved_assets = _compact_job_payload(payload.saved_assets or [])
     if getattr(payload, "asset_ids", None) is not None or getattr(payload, "saved_assets", None) is not None:
         row.asset_ids = _normalize_asset_ids(payload.asset_ids, payload.saved_assets)
     if getattr(payload, "error", None) is not None:
         row.error = (payload.error or "")[:4000] or None
     if getattr(payload, "meta", None) is not None:
         base = dict(row.meta or {})
-        base.update(payload.meta or {})
+        base.update(_compact_job_payload(payload.meta or {}))
         row.meta = base
     if row.status in _TERMINAL_STATUS and row.completed_at is None:
         row.completed_at = datetime.utcnow()

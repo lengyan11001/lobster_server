@@ -49,6 +49,38 @@ def test_generated_image_asset_uses_bounded_upload_io(monkeypatch) -> None:
     assert db.flush_count == 1
 
 
+def test_generated_image_asset_rejects_oversized_download(monkeypatch) -> None:
+    db = _FakeDb()
+    max_bytes = module._MAX_GENERATED_IMAGE_PERSIST_BYTES
+
+    async def fake_download(_url):
+        return b"x" * (max_bytes + 1), "image/png", ".png"
+
+    async def fail_upload(*_args, **_kwargs):
+        raise AssertionError("oversized generated image must not be uploaded")
+
+    monkeypatch.setattr(module, "_download_image_bytes", fake_download)
+    monkeypatch.setattr(module, "_run_asset_upload_io", fail_upload)
+
+    try:
+        asyncio.run(
+            module._persist_generated_image_asset(
+                db,
+                user_id=7,
+                url="data:image/png;base64,oversized",
+                prompt="test prompt",
+                model="gpt-image-2-openmindapi",
+            )
+        )
+    except RuntimeError as exc:
+        assert "generated image exceeds" in str(exc)
+    else:
+        raise AssertionError("oversized generated image should fail before upload")
+
+    assert db.added == []
+    assert db.flush_count == 0
+
+
 def test_generated_image_persistence_is_queued_without_waiting(monkeypatch) -> None:
     queued = []
     persisted = []

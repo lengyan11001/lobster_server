@@ -272,9 +272,15 @@ def test_openmind_video_uses_proxy_transfer_and_replaces_output_url(monkeypatch)
     source_url = "https://vidgen.x.ai/example.mp4"
     tos_url = "https://assets.example.com/openmind-task-1.mp4"
     transfer = AsyncMock(return_value=(tos_url, 12345))
+    queued = []
     local_save = AsyncMock(side_effect=AssertionError("main server must not download or save the video"))
     monkeypatch.setattr(comfly_proxy, "_transfer_video_to_tos_via_proxy", transfer)
     monkeypatch.setattr(comfly_proxy, "_save_bytes_or_tos", local_save)
+    monkeypatch.setattr(
+        comfly_proxy,
+        "spawn_tracked_task",
+        lambda coro, *, name: queued.append((coro, name)),
+    )
     comfly_proxy._openmind_tos_url_cache.clear()
 
     result = asyncio.run(
@@ -288,13 +294,18 @@ def test_openmind_video_uses_proxy_transfer_and_replaces_output_url(monkeypatch)
         )
     )
 
-    assert result["video_url"] == tos_url
-    assert result["tos_url"] == tos_url
+    assert result["video_url"] == source_url
     assert result["source_video_url"] == source_url
-    assert result["video"]["url"] == tos_url
+    assert result["tos_transfer_status"] == "queued"
+    assert result["video"]["url"] == source_url
     assert result["video"]["source_url"] == source_url
     assert "tos_transfer_error" not in result
+    transfer.assert_not_awaited()
+    assert len(queued) == 1
+    assert queued[0][1] == "openmind-video-tos-transfer-task-1"
+    asyncio.run(queued[0][0])
     transfer.assert_awaited_once_with(source_url, task_id="task-1")
+    assert comfly_proxy._openmind_tos_url_cache[f"task-1:{source_url}"] == tos_url
     local_save.assert_not_called()
 
 
@@ -303,7 +314,13 @@ def test_openmind_video_proxy_transfer_failure_is_reported(monkeypatch):
 
     source_url = "https://vidgen.x.ai/example-failed.mp4"
     transfer = AsyncMock(side_effect=RuntimeError("proxy download timed out"))
+    queued = []
     monkeypatch.setattr(comfly_proxy, "_transfer_video_to_tos_via_proxy", transfer)
+    monkeypatch.setattr(
+        comfly_proxy,
+        "spawn_tracked_task",
+        lambda coro, *, name: queued.append((coro, name)),
+    )
     comfly_proxy._openmind_tos_url_cache.clear()
 
     result = asyncio.run(
@@ -314,5 +331,37 @@ def test_openmind_video_proxy_transfer_failure_is_reported(monkeypatch):
     )
 
     assert result["video_url"] == source_url
-    assert result["tos_transfer_error"] == "proxy download timed out"
+    assert result["tos_transfer_status"] == "queued"
+    assert "tos_transfer_error" not in result
+    assert len(queued) == 1
+    asyncio.run(queued[0][0])
     transfer.assert_awaited_once_with(source_url, task_id="task-failed")
+
+
+def test_openmind_video_poll_uses_cached_tos_url_without_queue(monkeypatch):
+    from backend.app.api import comfly_proxy
+
+    source_url = "https://vidgen.x.ai/example-cached.mp4"
+    tos_url = "https://assets.example.com/openmind-cached.mp4"
+    queued = []
+    comfly_proxy._openmind_tos_url_cache.clear()
+    comfly_proxy._openmind_tos_url_cache[f"task-cached:{source_url}"] = tos_url
+    monkeypatch.setattr(
+        comfly_proxy,
+        "spawn_tracked_task",
+        lambda coro, *, name: queued.append((coro, name)),
+    )
+
+    result = asyncio.run(
+        _mirror_openmind_video_to_tos(
+            {"status": "completed", "video_url": source_url, "video": {"url": source_url}},
+            "task-cached",
+        )
+    )
+
+    assert result["video_url"] == tos_url
+    assert result["tos_url"] == tos_url
+    assert result["source_video_url"] == source_url
+    assert result["video"]["url"] == tos_url
+    assert result["video"]["source_url"] == source_url
+    assert queued == []
