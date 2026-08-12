@@ -17,13 +17,13 @@
       display: grid;
       gap: 12px;
       min-height: calc(100vh - 132px);
-      padding: 8px 0 18px;
-      border-radius: 30px;
+      padding: 10px 0 18px;
+      border-radius: 26px;
       background:
-        radial-gradient(circle at 82% 6%, rgba(24, 232, 255, 0.2), transparent 27%),
-        radial-gradient(circle at 10% 12%, rgba(42, 92, 255, 0.24), transparent 32%),
-        linear-gradient(145deg, #08111f 0%, #0c1a34 50%, #08111f 100%);
-      color: #eaf6ff;
+        radial-gradient(circle at 86% 0%, rgba(77, 143, 255, 0.18), transparent 30%),
+        radial-gradient(circle at 4% 10%, rgba(17, 194, 210, 0.14), transparent 32%),
+        linear-gradient(180deg, #f4f8ff 0%, #eef6ff 52%, #f9fbff 100%);
+      color: #13223c;
       overflow: hidden;
       position: relative;
     }
@@ -34,10 +34,10 @@
       inset: 0;
       pointer-events: none;
       background:
-        linear-gradient(rgba(125, 225, 255, 0.07) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(125, 225, 255, 0.06) 1px, transparent 1px);
-      background-size: 34px 34px;
-      mask-image: linear-gradient(to bottom, rgba(0,0,0,0.9), transparent 78%);
+        linear-gradient(rgba(46, 104, 255, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(46, 104, 255, 0.035) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,0.9), transparent 82%);
     }
 
     .live-executor-hero,
@@ -46,10 +46,10 @@
       position: relative;
       z-index: 1;
       margin: 0 12px;
-      border: 1px solid rgba(112, 215, 255, 0.18);
-      background: rgba(8, 18, 34, 0.72);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 20px 50px rgba(0, 8, 28, 0.22);
-      backdrop-filter: blur(14px);
+      border: 1px solid rgba(46, 104, 255, 0.11);
+      background: rgba(255, 255, 255, 0.86) !important;
+      box-shadow: 0 16px 36px rgba(32, 72, 132, 0.1) !important;
+      backdrop-filter: blur(10px);
       overflow: hidden;
     }
 
@@ -71,10 +71,10 @@
       width: fit-content;
       margin-bottom: 5px;
       padding: 4px 9px;
-      border: 1px solid rgba(95, 213, 255, 0.3);
+      border: 1px solid rgba(59, 128, 255, 0.16);
       border-radius: 999px;
-      background: rgba(35, 106, 255, 0.18);
-      color: #8de8ff;
+      background: rgba(35, 106, 255, 0.08);
+      color: #2f67e8;
       font-size: 10px;
       font-weight: 900;
       letter-spacing: 0.16em;
@@ -83,13 +83,13 @@
     .live-executor-hero h2 {
       margin: 0;
       font-size: clamp(22px, 5vw, 34px);
-      color: #f7fbff;
+      color: #112449;
       letter-spacing: -0.04em;
     }
 
     .live-executor-hero p {
       margin: 5px 0 0;
-      color: rgba(222, 241, 255, 0.72);
+      color: #64748b;
       line-height: 1.55;
       max-width: 680px;
     }
@@ -108,22 +108,22 @@
       gap: 8px;
       padding: 10px;
       border-radius: 20px;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(135, 221, 255, 0.16);
+      background: rgba(247, 250, 255, 0.94);
+      border: 1px solid rgba(46, 104, 255, 0.1);
     }
 
     .live-executor-device-row label {
       font-weight: 900;
-      color: rgba(236, 248, 255, 0.92);
+      color: #203250;
       white-space: nowrap;
     }
 
     .live-executor-device-row select,
     .live-executor-command textarea {
       width: 100%;
-      border: 1px solid rgba(126, 218, 255, 0.18);
+      border: 1px solid rgba(46, 104, 255, 0.12);
       border-radius: 16px;
-      background: rgba(255, 255, 255, 0.94);
+      background: rgba(255, 255, 255, 0.98);
       color: #111b32;
       outline: none;
     }
@@ -137,7 +137,7 @@
 
     .live-executor-device-row span {
       grid-column: 1 / -1;
-      color: rgba(218, 240, 255, 0.68);
+      color: #7b879d;
       font-size: 12px;
       line-height: 1.35;
     }
@@ -148,7 +148,7 @@
       justify-content: space-between;
       gap: 10px;
       padding: 4px 2px 0;
-      color: rgba(233, 248, 255, 0.86);
+      color: #1d2f51;
     }
 
     .live-executor-command-strip strong {
@@ -160,7 +160,7 @@
     .live-executor-command-strip span {
       display: block;
       margin-top: 2px;
-      color: rgba(220, 241, 255, 0.62);
+      color: #6b7b95;
       font-size: 12px;
     }
 
@@ -173,10 +173,10 @@
     .live-executor-image-card,
     .live-executor-command {
       border-radius: 22px;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(125, 218, 255, 0.16);
+      background: rgba(247, 250, 255, 0.94);
+      border: 1px solid rgba(46, 104, 255, 0.1);
       padding: 12px;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.09);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
     }
 
     .live-executor-image-preview {
@@ -186,9 +186,9 @@
       border-radius: 18px;
       overflow: hidden;
       background:
-        linear-gradient(135deg, rgba(58, 134, 255, 0.18), rgba(20, 216, 255, 0.12)),
-        repeating-linear-gradient(45deg, rgba(144,224,255,0.08), rgba(144,224,255,0.08) 8px, transparent 8px, transparent 16px);
-      color: rgba(234, 248, 255, 0.72);
+        linear-gradient(135deg, rgba(58, 134, 255, 0.12), rgba(20, 216, 255, 0.08)),
+        repeating-linear-gradient(45deg, rgba(46,104,255,0.045), rgba(46,104,255,0.045) 8px, transparent 8px, transparent 16px);
+      color: #64748b;
       font-weight: 900;
     }
 
@@ -219,7 +219,7 @@
     .live-executor-command small {
       display: block;
       margin-top: 8px;
-      color: rgba(221, 240, 255, 0.62);
+      color: #6b7b95;
       font-size: 12px;
       line-height: 1.45;
     }
@@ -228,7 +228,7 @@
       display: block;
       margin-bottom: 7px;
       font-weight: 900;
-      color: rgba(239, 250, 255, 0.94);
+      color: #203250;
     }
 
     .live-executor-command textarea {
@@ -256,7 +256,7 @@
       background:
         linear-gradient(145deg, rgba(46, 104, 255, 0.94), rgba(14, 30, 72, 0.95)),
         radial-gradient(circle at 86% 10%, rgba(128, 235, 255, 0.5), transparent 34%);
-      box-shadow: 0 16px 34px rgba(0, 12, 42, 0.28);
+      box-shadow: 0 14px 30px rgba(40, 92, 180, 0.18);
       transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
       position: relative;
       overflow: hidden;
@@ -291,7 +291,7 @@
     .live-executor-actions button i {
       display: inline-flex;
       margin-bottom: 7px;
-      color: rgba(230, 249, 255, 0.64);
+      color: rgba(235, 249, 255, 0.72);
       font-size: 11px;
       font-style: normal;
       font-weight: 900;
@@ -328,15 +328,15 @@
 
     .live-executor-board .section-title {
       margin-bottom: 10px;
-      color: rgba(239, 250, 255, 0.92);
+      color: #1d2f51;
     }
 
     .live-executor-board .section-title h3 {
-      color: #f7fbff;
+      color: #112449;
     }
 
     .live-executor-board .hint {
-      color: rgba(222, 241, 255, 0.6);
+      color: #6b7b95;
     }
 
     .live-executor-task-grid {
@@ -346,11 +346,11 @@
     }
 
     .live-executor-task-card {
-      border: 1px solid rgba(125, 218, 255, 0.14);
+      border: 1px solid rgba(46, 104, 255, 0.1);
       border-radius: 18px;
       padding: 12px;
-      background: rgba(255, 255, 255, 0.08);
-      box-shadow: 0 14px 28px rgba(0, 8, 28, 0.18);
+      background: rgba(247, 250, 255, 0.96);
+      box-shadow: 0 10px 24px rgba(36, 72, 132, 0.08);
       cursor: default;
       min-height: 128px;
     }
@@ -368,7 +368,7 @@
 
     .live-executor-task-top strong {
       display: block;
-      color: #f7fbff;
+      color: #17284a;
       font-size: 14px;
     }
 
@@ -378,26 +378,26 @@
       min-height: 22px;
       padding: 0 8px;
       border-radius: 999px;
-      background: rgba(92, 196, 255, 0.14);
-      color: #93e8ff;
+      background: rgba(46, 104, 255, 0.08);
+      color: #2f67e8;
       font-size: 11px;
       font-weight: 800;
       white-space: nowrap;
     }
 
     .live-executor-task-card.failed .live-executor-task-top span {
-      background: rgba(255, 95, 120, 0.16);
-      color: #ff9dae;
+      background: rgba(222, 61, 82, 0.09);
+      color: #c72a3f;
     }
 
     .live-executor-task-card.completed .live-executor-task-top span {
-      background: rgba(57, 229, 172, 0.16);
-      color: #8af6d2;
+      background: rgba(16, 168, 120, 0.1);
+      color: #087c58;
     }
 
     .live-executor-task-card p {
       margin: 8px 0 0;
-      color: rgba(222, 241, 255, 0.7);
+      color: #5d6d86;
       font-size: 12px;
       line-height: 1.45;
       white-space: pre-wrap;
@@ -412,7 +412,7 @@
       flex-wrap: wrap;
       gap: 6px;
       margin-top: 9px;
-      color: rgba(220, 241, 255, 0.52);
+      color: #7a879b;
       font-size: 11px;
     }
 
@@ -560,14 +560,26 @@
     @media (max-width: 760px) {
       .live-executor-page {
         min-height: calc(100vh - 96px);
-        border-radius: 24px;
+        border-radius: 18px;
+        gap: 10px;
+        padding-top: 8px;
+      }
+      .live-executor-hero,
+      .live-executor-console,
+      .live-executor-board {
+        margin: 0 8px;
+        border-radius: 20px;
       }
       .live-executor-hero {
         grid-template-columns: 1fr;
-        padding: 12px;
+        padding: 10px;
+      }
+      .live-executor-hero p {
+        font-size: 13px;
       }
       .live-executor-device-row {
         grid-template-columns: 1fr auto;
+        padding: 8px;
       }
       .live-executor-device-row label,
       .live-executor-device-row span {
@@ -581,8 +593,9 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
       .live-executor-actions button {
-        min-height: 86px;
-        padding: 12px;
+        min-height: 82px;
+        padding: 10px;
+        border-radius: 18px;
       }
       .live-executor-actions button span {
         font-size: 17px;
