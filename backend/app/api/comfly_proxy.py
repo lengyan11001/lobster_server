@@ -229,7 +229,12 @@ def _is_image_download_interrupted_payload(payload: Any) -> bool:
         text = json.dumps(payload, ensure_ascii=False, default=str).lower()
     except Exception:
         text = str(payload or "").lower()
-    return "image_download_interrupted" in text or (
+    return (
+        "image_download_interrupted" in text
+        or "timed out while downloading image" in text
+        or "timed out while downloading the image" in text
+        or "while downloading image from ip:port" in text
+    ) or (
         "failed to download the provided image" in text
         and "connection dropped while downloading the image" in text
     )
@@ -717,7 +722,7 @@ async def _comfly_request(
     method: str, url: str, body: Optional[Dict[str, Any]], headers: Dict[str, str], timeout: float,
 ) -> Dict[str, Any]:
     """统一封装 httpx 调用 Comfly。失败抛 RuntimeError，含状态码与文本片段。"""
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         if method.upper() == "GET":
             r = await client.get(url, headers=headers)
         else:
@@ -734,7 +739,7 @@ async def _yunwu_request(
     method: str, url: str, body: Optional[Dict[str, Any]], headers: Dict[str, str], timeout: float,
 ) -> Dict[str, Any]:
     """Yunwu HTTP wrapper. Keep the provider name out of Comfly error text."""
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         if method.upper() == "GET":
             r = await client.get(url, headers=headers)
         else:
@@ -754,7 +759,7 @@ async def _comfly_multipart_request(
     headers: Dict[str, str],
     timeout: float,
 ) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         r = await client.post(url, headers=headers, data=data, files=files)
     if r.status_code >= 400:
         raise RuntimeError(f"Comfly HTTP {r.status_code}: {(r.text or '')[:500]}")
@@ -771,7 +776,7 @@ async def _yunwu_multipart_request(
     headers: Dict[str, str],
     timeout: float,
 ) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         r = await client.post(url, headers=headers, data=data, files=files)
     if r.status_code >= 400:
         raise RuntimeError(f"Yunwu HTTP {r.status_code}: {(r.text or '')[:500]}")
@@ -789,7 +794,7 @@ async def _openai_official_multipart_request(
     timeout: float,
 ) -> Dict[str, Any]:
     multipart_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         r = await client.post(url, headers=multipart_headers, data=data, files=files)
     if r.status_code >= 400:
         raise RuntimeError(f"OpenAI official HTTP {r.status_code}: {(r.text or '')[:500]}")
@@ -2881,25 +2886,53 @@ async def proxy_images_edits(
         estimated=estimated,
     )
 
-    try:
-        resp = await _comfly_multipart_request(
-            _comfly_url("/v1/images/edits", model),
-            data,
-            files,
-            _comfly_auth_headers(model),
-            _TIMEOUT_IMAGE,
-        )
-    except Exception as e:
+    attempts = _env_int("COMFLY_IMAGE_EDIT_RETRY_ATTEMPTS", 3, min_value=1, max_value=4)
+    last_error = ""
+    resp: Dict[str, Any] | None = None
+    for retry_index in range(1, attempts + 1):
+        try:
+            _audit(
+                "image_edit_attempt",
+                user_id=billing_user_id,
+                request_user_id=request_user_id,
+                model=model,
+                retry=retry_index,
+                retries=attempts,
+            )
+            resp = await _comfly_multipart_request(
+                _comfly_url("/v1/images/edits", model),
+                data,
+                files,
+                _comfly_auth_headers(model),
+                _TIMEOUT_IMAGE,
+            )
+            break
+        except Exception as e:
+            last_error = str(e)
+            _audit(
+                "image_edit_attempt_failed",
+                user_id=billing_user_id,
+                request_user_id=request_user_id,
+                model=model,
+                retry=retry_index,
+                retries=attempts,
+                error=last_error[:300],
+            )
+            if retry_index >= attempts or not _is_retryable_image_error(e):
+                break
+            await asyncio.sleep(0.8 * retry_index)
+
+    if resp is None:
         _do_full_refund_by_user_id(billing_user_id, pre=pre,
-                        capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit", error=str(e))
+                        capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit", error=last_error)
         _audit(
             "image_edit_failed",
             user_id=billing_user_id,
             request_user_id=request_user_id,
             model=model,
-            error=str(e)[:300],
+            error=last_error[:300],
         )
-        raise HTTPException(502, f"Comfly image edits 调用失败：{e}")
+        raise HTTPException(502, f"Comfly image edits 调用失败：{last_error}")
 
     _audit("image_edit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model, pre=credits_json_float(pre))
     return JSONResponse(resp)

@@ -2,6 +2,7 @@ from backend.app.api.comfly_proxy import (
     _body_for_upstream_model,
     _image_generation_model_attempts,
     _image_generation_model_attempts_for_user,
+    _is_image_download_interrupted_payload,
 )
 from mcp.comfly_upstream import lookup_comfly_model
 
@@ -57,3 +58,15 @@ def test_nano_banana_body_is_normalized_for_gpt_fallback_requests():
     assert body["n"] == 2
     assert body["image_url"] == "https://example.com/ref.png"
     assert body["image_urls"] == ["https://example.com/ref.png"]
+
+
+def test_image_download_timeout_payload_is_detected_for_video_image_fallback():
+    assert _is_image_download_interrupted_payload(
+        {
+            "error": {
+                "message": "Timed out while downloading image from ip:port",
+                "type": "new_api_error",
+                "code": "unknown_error",
+            }
+        }
+    )
