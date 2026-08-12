@@ -2860,6 +2860,7 @@ async def proxy_images_edits(
             data[key] = str(value)
 
     data["model"] = _upstream_model(model, entry)
+    data.setdefault("response_format", "url")
     if not files:
         raise HTTPException(400, "缺少 image 文件")
 
