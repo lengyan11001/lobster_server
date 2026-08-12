@@ -34,7 +34,7 @@ from .mobile_identity import online_user_for_mobile_user
 from .scheduled_tasks import (
     ScheduledTaskCreate,
     _SERVER_SIDE_TASK_KINDS,
-    _cancel_pending_runs_for_task,
+    _cancel_unfinished_runs_for_task,
     _create_task_row,
     _delete_task_row,
     _local_bestseller_profile_from_persona,
@@ -1491,7 +1491,13 @@ def _pause_task_ids(db: Session, task_ids: list[int], now: datetime) -> None:
             task.status = "paused"
             task.next_run_at = None
             task.updated_at = now
-        _cancel_pending_runs_for_task(db, task, now)
+        _cancel_unfinished_runs_for_task(
+            db,
+            task,
+            now,
+            message="\u5de5\u4f5c\u6d41\u5df2\u505c\u7528\uff0c\u6267\u884c\u5df2\u505c\u6b62",
+            event_reason="workflow_stopped",
+        )
 
 
 def _stop_active_for_device(db: Session, user_id: int, installation_id: str, now: datetime) -> list[int]:

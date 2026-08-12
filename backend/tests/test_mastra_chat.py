@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -327,6 +330,140 @@ def test_dispatch_online_capability_uses_typed_client_workflow_and_deduplicates(
     ]
 
 
+def test_dispatch_publish_content_resolves_device_account_from_chinese_platform_and_nickname(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.models import H5ChatDevicePresence, H5ChatMessage, ScheduledTaskRun
+
+    chat_session = _session(db_session, test_user.id, permission_mode="full")
+    parent = H5ChatMessage(
+        id="publish-online-parent",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        installation_id="desktop-a",
+        mode="mastra",
+        content="帮我把素材 1a8bc876a535 发布到抖音账号2",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    presence = H5ChatDevicePresence(
+        user_id=test_user.id,
+        installation_id="desktop-a",
+        display_name="演示电脑",
+        account_payload={
+            "accounts": [
+                {
+                    "platform": "douyin",
+                    "platform_name": "抖音",
+                    "account_id": "dy-account-2",
+                    "nickname": "抖音账号2",
+                    "status": "online",
+                }
+            ]
+        },
+        last_seen_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([parent, presence])
+    db_session.commit()
+
+    response = _client(db_session_factory, test_user.id).post(
+        "/api/mastra-chat/online-capability-dispatch",
+        json={
+            "capability_id": "online.publish_content",
+            "params": {
+                "platform": "抖音",
+                "asset_id": "1a8bc876a535",
+                "account_nickname": "账号2",
+                "media_type": "video",
+            },
+            "parent_message_id": parent.id,
+            "installation_id": "desktop-a",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    with db_session_factory() as session:
+        run = session.query(ScheduledTaskRun).filter(
+            ScheduledTaskRun.h5_message_id == response.json()["message"]["id"]
+        ).one()
+        assert run.installation_id == "desktop-a"
+        assert run.payload["action"] == "publish_content"
+        assert run.payload["params"] == {
+            "platform": "douyin",
+            "platform_name": "抖音",
+            "asset_id": "1a8bc876a535",
+            "account_id": "dy-account-2",
+            "account_nickname": "抖音账号2",
+            "installation_id": "desktop-a",
+            "publish_installation_id": "desktop-a",
+            "media_type": "video",
+        }
+
+
+def test_preview_publish_content_approval_uses_resolved_device_account_label(
+    db_session, db_session_factory, test_user
+):
+    from backend.app.models import H5ChatDevicePresence, H5ChatMessage
+
+    chat_session = _session(db_session, test_user.id, permission_mode="confirm")
+    parent = H5ChatMessage(
+        id="publish-preview-parent",
+        user_id=test_user.id,
+        session_id=chat_session.id,
+        installation_id="desktop-a",
+        mode="mastra",
+        content="帮我把素材发布到抖音账号2",
+        status="processing",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    presence = H5ChatDevicePresence(
+        user_id=test_user.id,
+        installation_id="desktop-a",
+        display_name="演示电脑",
+        account_payload={
+            "accounts": [
+                {
+                    "platform": "douyin",
+                    "platform_name": "抖音",
+                    "account_id": "-1002",
+                    "nickname": "抖音账号2",
+                    "status": "online",
+                }
+            ]
+        },
+        last_seen_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([parent, presence])
+    db_session.commit()
+
+    response = _client(db_session_factory, test_user.id).post(
+        "/api/mastra-chat/online-capability-preview",
+        json={
+            "capability_id": "online.publish_content",
+            "params": {
+                "platform": "抖音",
+                "asset_id": "1a8bc876a535",
+                "account_nickname": "账号2",
+                "media_type": "video",
+            },
+            "parent_message_id": parent.id,
+            "installation_id": "desktop-a",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["params"]["platform"] == "douyin"
+    assert payload["params"]["account_id"] == "-1002"
+    assert payload["params"]["account_nickname"] == "抖音账号2"
+    assert "抖音账号2" in payload["task"]
+    assert '"account_nickname":"账号2"' not in payload["task"]
+
+
 def test_dispatch_online_capability_rejects_invalid_params_before_queueing(
     db_session, db_session_factory, test_user
 ):
@@ -433,17 +570,17 @@ def test_mastra_diagnostics_reports_structured_and_unmatched_dispatches(
     assert payload["unmatched_requests"][0]["task_preview"] == "打开一个尚未结构化的桌面工具"
 
 
-def test_runner_falls_back_to_online_without_holding_failed_parent(
+def test_runner_marks_unexecuted_mastra_failure_without_online_fallback(
     db_session, db_session_factory, test_user, monkeypatch
 ):
-    from backend.app.models import H5ChatMessage
+    from backend.app.models import H5ChatEvent, H5ChatMessage
     from backend.app.services import mastra_chat_runner
 
     parent = H5ChatMessage(
         id="fallback-mastra-message",
         user_id=test_user.id,
         mode="mastra",
-        content="打开本机微信",
+        content="一张纸巾的照片。",
         status="processing",
         claimed_by_installation_id="mastra-server",
         created_at=datetime.utcnow(),
@@ -455,12 +592,107 @@ def test_runner_falls_back_to_online_without_holding_failed_parent(
 
     result = mastra_chat_runner._fallback_or_fail_sync(parent.id, "connection refused")
 
-    assert result == "fallback_online"
+    assert result == "failed"
     with db_session_factory() as session:
         saved = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
-        assert saved.mode == "direct"
-        assert saved.status == "pending"
-        assert saved.claimed_by_installation_id is None
+        assert saved.mode == "mastra"
+        assert saved.status == "failed"
+        assert saved.claimed_by_installation_id == "mastra-server"
+        assert saved.finished_at is not None
+        assert "AI 调度服务暂时中断" in saved.error
+        error_event = (
+            session.query(H5ChatEvent)
+            .filter(H5ChatEvent.message_id == parent.id, H5ChatEvent.event_type == "error")
+            .one()
+        )
+        assert "未下发任务" in error_event.payload["error"]
+
+
+def test_runner_retries_mastra_stream_disconnect_before_completing(
+    db_session, db_session_factory, test_user, monkeypatch
+):
+    from backend.app.models import H5ChatEvent, H5ChatMessage
+    from backend.app.services import mastra_chat_runner
+
+    parent = H5ChatMessage(
+        id="mastra-retry-message",
+        user_id=test_user.id,
+        mode="mastra",
+        content="生成一张纸巾照片",
+        status="pending",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(parent)
+    db_session.commit()
+    monkeypatch.setattr(mastra_chat_runner, "SessionLocal", db_session_factory)
+    monkeypatch.setattr(mastra_chat_runner, "_stream_retry_attempts", lambda: 2)
+
+    async def empty_summary(_job):
+        return ""
+
+    async def safe_attachments(_attachments):
+        return None
+
+    monkeypatch.setattr(mastra_chat_runner, "_refresh_conversation_summary", empty_summary)
+    monkeypatch.setattr(mastra_chat_runner, "assert_safe_remote_mastra_images", safe_attachments)
+
+    attempts = {"count": 0}
+
+    class FakeStreamResponse:
+        status_code = 200
+
+        def __init__(self, lines):
+            self._lines = lines
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            for line in self._lines:
+                if isinstance(line, Exception):
+                    raise line
+                yield line
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        @asynccontextmanager
+        async def stream(self, *args, **kwargs):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                yield FakeStreamResponse([httpx.RemoteProtocolError("peer closed connection")])
+            else:
+                yield FakeStreamResponse([
+                    json.dumps({"type": "thinking", "text": "重试后继续"}),
+                    json.dumps({"type": "final", "reply": "图片能力已准备", "dispatches": [], "usage": None}),
+                ])
+
+    monkeypatch.setattr(mastra_chat_runner.httpx, "AsyncClient", FakeAsyncClient)
+
+    job = mastra_chat_runner._claim_jobs_sync(1)[0]
+
+    asyncio.run(mastra_chat_runner._run_job_request(job))
+
+    with db_session_factory() as session:
+        saved = session.query(H5ChatMessage).filter(H5ChatMessage.id == parent.id).one()
+        events = (
+            session.query(H5ChatEvent)
+            .filter(H5ChatEvent.message_id == parent.id)
+            .order_by(H5ChatEvent.id.asc())
+            .all()
+        )
+        assert attempts["count"] == 2
+        assert saved.status == "completed"
+        assert saved.reply_text == "图片能力已准备"
+        assert any("自动重试" in str(event.payload.get("text") or "") for event in events)
 
 
 def test_parent_waits_for_orchestrator_reply_before_merging_online_result(

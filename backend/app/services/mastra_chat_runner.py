@@ -111,8 +111,39 @@ def _stale_after_seconds() -> int:
         return 1200
 
 
+def _stream_retry_attempts() -> int:
+    try:
+        return max(1, min(3, int(os.environ.get("LOBSTER_MASTRA_STREAM_RETRY_ATTEMPTS") or "2")))
+    except (TypeError, ValueError):
+        return 2
+
+
 def _mastra_base_url() -> str:
     return (os.environ.get("LOBSTER_MASTRA_URL") or "http://127.0.0.1:4111").strip().rstrip("/")
+
+
+def _is_retryable_mastra_stream_error(error: Exception) -> bool:
+    text = str(error or "").lower()
+    return isinstance(
+        error,
+        (
+            httpx.RemoteProtocolError,
+            httpx.ReadError,
+            httpx.ReadTimeout,
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+        ),
+    ) or any(
+        marker in text
+        for marker in (
+            "incomplete chunked read",
+            "peer closed connection",
+            "connection reset",
+            "terminated",
+            "socket",
+            "timeout",
+        )
+    )
 
 
 def _internal_secret() -> str:
@@ -670,6 +701,19 @@ def _complete_sync(
         db.close()
 
 
+def _child_message_exists_sync(message_id: str, user_id: int) -> bool:
+    db = SessionLocal()
+    try:
+        return (
+            db.query(H5ChatMessage.id)
+            .filter(H5ChatMessage.parent_message_id == message_id, H5ChatMessage.user_id == user_id)
+            .first()
+            is not None
+        )
+    finally:
+        db.close()
+
+
 def _fallback_or_fail_sync(message_id: str, error: str) -> str:
     db = SessionLocal()
     try:
@@ -690,18 +734,25 @@ def _fallback_or_fail_sync(message_id: str, error: str) -> str:
             _add_event(db, row, "progress", {"text": "已下发的任务继续由 Online 处理"})
             result = "waiting_online"
         else:
-            row.mode = "direct"
-            row.status = "pending"
-            row.claimed_by_installation_id = None
-            row.claimed_at = None
+            row.status = "failed"
+            row.error = "AI 调度服务暂时中断，本轮未下发任务，请重试。"
+            row.finished_at = now
             row.updated_at = now
             _add_event(
                 db,
                 row,
-                "progress",
-                {"text": "AI 调度服务暂时不可用，已自动转交 Online 处理"},
+                "error",
+                {"error": row.error, "detail": str(error or "")[:500]},
             )
-            result = "fallback_online"
+            approvals = db.query(H5ChatApproval).filter(
+                H5ChatApproval.message_id == row.id,
+                H5ChatApproval.status == "executing",
+            ).all()
+            for approval in approvals:
+                approval.status = "failed"
+                approval.finished_at = now
+                approval.updated_at = now
+            result = "failed"
         db.commit()
         logger.warning("[mastra_chat] message=%s result=%s error=%s", message_id, result, error[:500])
         return result
@@ -917,67 +968,83 @@ async def _run_job_request(job: MastraChatJob) -> None:
         last_delta_flush = asyncio.get_running_loop().time()
         await _append_event(job.message_id, "delta", {"text": text})
 
-    try:
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            async with client.stream(
-                "POST",
-                f"{_mastra_base_url()}/internal/chat/stream",
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Lobster-Mastra-Secret": _internal_secret(),
-                },
-                json=body,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-                    event = json.loads(line)
-                    event_type = str(event.get("type") or "").strip().lower()
-                    remember_media_tasks(event)
-                    if event_type == "delta":
-                        delta_buffer += str(event.get("text") or "")
-                        elapsed = asyncio.get_running_loop().time() - last_delta_flush
-                        if len(delta_buffer) >= 160 or elapsed >= 0.25:
-                            await flush_delta()
-                        continue
+    attempts = _stream_retry_attempts()
+    for attempt in range(1, attempts + 1):
+        final_received = False
+        try:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+                async with client.stream(
+                    "POST",
+                    f"{_mastra_base_url()}/internal/chat/stream",
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Lobster-Mastra-Secret": _internal_secret(),
+                    },
+                    json=body,
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        event = json.loads(line)
+                        event_type = str(event.get("type") or "").strip().lower()
+                        remember_media_tasks(event)
+                        if event_type == "delta":
+                            delta_buffer += str(event.get("text") or "")
+                            elapsed = asyncio.get_running_loop().time() - last_delta_flush
+                            if len(delta_buffer) >= 160 or elapsed >= 0.25:
+                                await flush_delta()
+                            continue
 
-                    await flush_delta()
-                    if event_type in _STREAM_EVENT_TYPES:
-                        payload = {key: value for key, value in event.items() if key != "type"}
-                        await _append_event(job.message_id, event_type, payload)
-                        continue
-                    if event_type == "final":
-                        final_received = True
-                        await asyncio.to_thread(
-                            _complete_sync,
-                            job.message_id,
-                            str(event.get("reply") or ""),
-                            list(event.get("dispatches") or []),
-                            event.get("usage") if isinstance(event.get("usage"), dict) else None,
-                            list(event.get("media_tasks") or []),
-                            list(event.get("saved_assets") or []),
-                        )
-                        continue
-                    if event_type == "error":
-                        raise RuntimeError(str(event.get("error") or "AI 调度失败"))
-        await flush_delta()
-        if not final_received:
-            raise RuntimeError("AI 调度服务未返回最终结果")
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        await flush_delta()
-        if observed_media_tasks:
-            await asyncio.to_thread(
-                _requeue_media_sync,
-                job.message_id,
-                list(observed_media_tasks.values()),
-                str(exc),
-            )
-            await asyncio.sleep(3)
-        else:
+                        await flush_delta()
+                        if event_type in _STREAM_EVENT_TYPES:
+                            payload = {key: value for key, value in event.items() if key != "type"}
+                            await _append_event(job.message_id, event_type, payload)
+                            continue
+                        if event_type == "final":
+                            final_received = True
+                            await asyncio.to_thread(
+                                _complete_sync,
+                                job.message_id,
+                                str(event.get("reply") or ""),
+                                list(event.get("dispatches") or []),
+                                event.get("usage") if isinstance(event.get("usage"), dict) else None,
+                                list(event.get("media_tasks") or []),
+                                list(event.get("saved_assets") or []),
+                            )
+                            continue
+                        if event_type == "error":
+                            raise RuntimeError(str(event.get("error") or "AI 调度失败"))
+            await flush_delta()
+            if not final_received:
+                raise RuntimeError("AI 调度服务未返回最终结果")
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await flush_delta()
+            if observed_media_tasks:
+                await asyncio.to_thread(
+                    _requeue_media_sync,
+                    job.message_id,
+                    list(observed_media_tasks.values()),
+                    str(exc),
+                )
+                await asyncio.sleep(3)
+                return
+            if await asyncio.to_thread(_child_message_exists_sync, job.message_id, job.user_id):
+                await asyncio.to_thread(_fallback_or_fail_sync, job.message_id, str(exc))
+                return
+            if attempt < attempts and _is_retryable_mastra_stream_error(exc):
+                await _append_event(
+                    job.message_id,
+                    "progress",
+                    {"text": f"AI 调度连接中断，正在自动重试（{attempt + 1}/{attempts}）"},
+                )
+                await asyncio.sleep(min(2.0 * attempt, 5.0))
+                continue
             await asyncio.to_thread(_fallback_or_fail_sync, job.message_id, str(exc))
+            return
 
 
 def _message_cancelled_sync(message_id: str) -> bool:

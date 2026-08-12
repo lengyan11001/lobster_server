@@ -407,6 +407,38 @@ async function approvalForWrite(
   }
 }
 
+async function previewOnlineCapabilityTask(
+  context: RequestContext<LobsterContext> | undefined,
+  capabilityId: string,
+  params: Record<string, unknown>,
+): Promise<{ task: string; params: Record<string, unknown> }> {
+  const fallbackTask = `${capabilityId}: ${JSON.stringify(params)}`
+  try {
+    const result = await backendJson(
+      '/api/mastra-chat/online-capability-preview',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          capability_id: capabilityId,
+          params,
+          parent_message_id: contextValue(context, 'parentMessageId'),
+          installation_id: contextValue(context, 'installationId'),
+        }),
+      },
+      context,
+    )
+    const previewParams = result?.params && typeof result.params === 'object' && !Array.isArray(result.params)
+      ? result.params as Record<string, unknown>
+      : params
+    return {
+      task: String(result?.task || '').trim() || `${capabilityId}: ${JSON.stringify(previewParams)}`,
+      params: previewParams,
+    }
+  } catch {
+    return { task: fallbackTask, params }
+  }
+}
+
 function memoryMetadata(doc: Record<string, unknown>) {
   return {
     doc_id: String(doc.doc_id || ''),
@@ -777,14 +809,14 @@ const dispatchOnlineCapability = createTool({
   }),
   execute: async ({ capability_id, params, reason }, executionContext) => {
     const context = executionContext?.requestContext as RequestContext<LobsterContext> | undefined
-    const task = `${capability_id}: ${JSON.stringify(params)}`
     if (contextValue(context, 'permissionMode') !== 'full' && !contextValue(context, 'approvalGranted')) {
+      const preview = await previewOnlineCapabilityTask(context, capability_id, params)
       const approval = await backendJson(
         '/api/mastra-chat/approval-request',
         {
           method: 'POST',
           body: JSON.stringify({
-            task,
+            task: preview.task,
             reason,
             execution_target: 'online',
             parent_message_id: contextValue(context, 'parentMessageId'),

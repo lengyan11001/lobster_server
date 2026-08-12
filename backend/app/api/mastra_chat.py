@@ -46,9 +46,15 @@ from ..services.mastra_attachment_security import (
     UnsafeMastraImageError,
     assert_safe_mastra_image,
 )
-from .h5_chat import _add_event, _serialize_message
+from .h5_chat import (
+    _add_event,
+    _collect_device_publish_accounts,
+    _collect_server_publish_accounts,
+    _serialize_message,
+)
 from .installation_slots import optional_installation_id_from_request
 from .mobile_identity import online_user_for_mobile_user
+from .publish import SUPPORTED_PLATFORMS
 from .skills import user_can_use_capability
 
 router = APIRouter()
@@ -113,6 +119,13 @@ class OnlineCapabilityDispatchCreate(BaseModel):
     parent_message_id: str = Field(..., min_length=8, max_length=64)
     installation_id: Optional[str] = Field(default=None, max_length=128)
     approval_id: str = Field(default="", max_length=64)
+
+
+class OnlineCapabilityPreviewCreate(BaseModel):
+    capability_id: str = Field(..., min_length=3, max_length=128)
+    params: Dict[str, Any] = Field(default_factory=dict)
+    parent_message_id: str = Field(..., min_length=8, max_length=64)
+    installation_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class MastraAuthorizedWrite(BaseModel):
@@ -183,6 +196,222 @@ def _online_available(db: Session, user_id: int, installation_id: Optional[str])
     if installation_id:
         query = query.filter(H5ChatDevicePresence.installation_id == installation_id)
     return query.first() is not None
+
+
+_PUBLISH_PLATFORM_ALIASES = {
+    "抖音": "douyin",
+    "douyin": "douyin",
+    "dy": "douyin",
+    "小红书": "xiaohongshu",
+    "xiaohongshu": "xiaohongshu",
+    "xhs": "xiaohongshu",
+    "快手": "kuaishou",
+    "kuaishou": "kuaishou",
+    "视频号": "wechat_channels",
+    "微信视频号": "wechat_channels",
+    "wechatchannels": "wechat_channels",
+    "channels": "wechat_channels",
+    "sph": "wechat_channels",
+    "b站": "bilibili",
+    "哔哩哔哩": "bilibili",
+    "bilibili": "bilibili",
+    "头条": "toutiao",
+    "今日头条": "toutiao",
+    "toutiao": "toutiao",
+    "朋友圈": "wechat_moments",
+    "微信朋友圈": "wechat_moments",
+    "wechatmoments": "wechat_moments",
+}
+
+
+def _publish_text_token(value: Any) -> str:
+    return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
+
+
+def _canonical_publish_platform(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    token = _publish_text_token(raw)
+    if token in _PUBLISH_PLATFORM_ALIASES:
+        return _PUBLISH_PLATFORM_ALIASES[token]
+    for platform, info in SUPPORTED_PLATFORMS.items():
+        if token in {_publish_text_token(platform), _publish_text_token((info or {}).get("name"))}:
+            return platform
+    return raw.lower()
+
+
+def _publish_platform_name(platform: str, fallback: Any = "") -> str:
+    key = _canonical_publish_platform(platform)
+    if key == "wechat_moments":
+        return "微信朋友圈"
+    return str(fallback or (SUPPORTED_PLATFORMS.get(key) or {}).get("name") or platform or "").strip()
+
+
+def _publish_nickname_tokens(value: Any, platform: Any = "") -> set[str]:
+    raw = str(value or "").strip()
+    base = _publish_text_token(raw)
+    tokens = {base} if base else set()
+    platform_name = _publish_platform_name(_canonical_publish_platform(platform), "")
+    platform_token = _publish_text_token(platform_name)
+    if platform_token and base.startswith(platform_token):
+        stripped = base[len(platform_token) :]
+        if stripped:
+            tokens.add(stripped)
+    return tokens
+
+
+def _publish_account_match(row: Dict[str, Any], *, account_id: str, nickname: str) -> bool:
+    ids = {
+        str(row.get("account_id") or "").strip(),
+        str(row.get("id") or "").strip(),
+        str(row.get("select_id") or "").strip(),
+        str(row.get("account_key") or "").strip(),
+    }
+    if account_id and account_id in ids:
+        return True
+    row_tokens = _publish_nickname_tokens(row.get("nickname"), row.get("platform"))
+    requested_tokens = _publish_nickname_tokens(nickname, row.get("platform"))
+    if nickname and row_tokens and requested_tokens and not row_tokens.isdisjoint(requested_tokens):
+        return True
+    return False
+
+
+def _rank_publish_account(row: Dict[str, Any], requested_installation_id: str) -> int:
+    score = 0
+    row_installation_id = str(row.get("installation_id") or "").strip()
+    if requested_installation_id and row_installation_id == requested_installation_id:
+        score += 100
+    elif requested_installation_id and row_installation_id:
+        score -= 100
+    if str(row.get("source") or "") == "publish_device":
+        score += 10
+    if bool(row.get("online")):
+        score += 5
+    return score
+
+
+def _resolve_mastra_publish_account(
+    db: Session,
+    *,
+    user_id: int,
+    params: Dict[str, Any],
+    selected_installation_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    platform = _canonical_publish_platform(params.get("platform"))
+    account_id = str(params.get("account_id") or params.get("publish_account_id") or "").strip()
+    nickname = str(
+        params.get("account_nickname")
+        or params.get("publish_account_nickname")
+        or params.get("account")
+        or ""
+    ).strip()
+    requested_installation_id = str(
+        params.get("publish_installation_id")
+        or params.get("installation_id")
+        or selected_installation_id
+        or ""
+    ).strip()
+
+    now = datetime.utcnow()
+    device_accounts, _, _ = _collect_device_publish_accounts(db, user_id, now)
+    accounts = device_accounts + _collect_server_publish_accounts(db, user_id)
+    candidates = [
+        row
+        for row in accounts
+        if not platform or _canonical_publish_platform(row.get("platform")) == platform
+    ]
+    if account_id or nickname:
+        matches = [
+            row
+            for row in candidates
+            if _publish_account_match(row, account_id=account_id, nickname=nickname)
+        ]
+    else:
+        matches = list(candidates)
+
+    if requested_installation_id:
+        scoped = [
+            row
+            for row in matches
+            if not str(row.get("installation_id") or "").strip()
+            or str(row.get("installation_id") or "").strip() == requested_installation_id
+        ]
+        if scoped:
+            matches = scoped
+
+    if not matches:
+        return None
+
+    ranked = sorted(matches, key=lambda row: _rank_publish_account(row, requested_installation_id), reverse=True)
+    if len(ranked) == 1:
+        return dict(ranked[0])
+    top_score = _rank_publish_account(ranked[0], requested_installation_id)
+    second_score = _rank_publish_account(ranked[1], requested_installation_id)
+    return dict(ranked[0]) if top_score > second_score else None
+
+
+def _normalize_mastra_publish_content_params(
+    db: Session,
+    *,
+    user_id: int,
+    params: Dict[str, Any],
+    selected_installation_id: Optional[str],
+) -> tuple[Dict[str, Any], Optional[str]]:
+    normalized = dict(params or {})
+    platform = _canonical_publish_platform(normalized.get("platform"))
+    if platform:
+        normalized["platform"] = platform
+        normalized.setdefault("platform_name", _publish_platform_name(platform))
+
+    account = _resolve_mastra_publish_account(
+        db,
+        user_id=user_id,
+        params=normalized,
+        selected_installation_id=selected_installation_id,
+    )
+    if not account:
+        return normalized, selected_installation_id
+
+    account_platform = _canonical_publish_platform(account.get("platform") or platform)
+    if account_platform:
+        normalized["platform"] = account_platform
+        normalized["platform_name"] = _publish_platform_name(account_platform, account.get("platform_name"))
+    account_id = str(account.get("account_id") or account.get("id") or "").strip()
+    if account_id:
+        normalized["account_id"] = account_id
+    nickname = str(account.get("nickname") or "").strip()
+    if nickname:
+        normalized["account_nickname"] = nickname
+    installation_id = str(account.get("installation_id") or selected_installation_id or "").strip()
+    if installation_id:
+        normalized["publish_installation_id"] = installation_id
+        normalized["installation_id"] = installation_id
+    return normalized, installation_id or selected_installation_id
+
+
+def _normalize_mastra_online_capability_for_dispatch(
+    db: Session,
+    *,
+    user_id: int,
+    capability_id: str,
+    params: Dict[str, Any],
+    selected_installation_id: Optional[str],
+) -> tuple[Dict[str, Any], Optional[str]]:
+    normalized = normalize_mastra_online_params(capability_id, dict(params or {}))
+    if str(capability_id or "").strip().lower() == "online.publish_content":
+        return _normalize_mastra_publish_content_params(
+            db,
+            user_id=user_id,
+            params=normalized,
+            selected_installation_id=selected_installation_id,
+        )
+    return normalized, selected_installation_id
+
+
+def _mastra_online_capability_task_text(capability_id: str, params: Dict[str, Any]) -> str:
+    compact = json.dumps(params or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"{str(capability_id or '').strip().lower()}: {compact}"
 
 
 def _attachment_media_type(value: str) -> str:
@@ -1461,6 +1690,53 @@ def _online_scheduled_run_payload(db: Session, message_id: str) -> Optional[Dict
     }
 
 
+@router.post("/api/mastra-chat/online-capability-preview", summary="AI 调度结构化 Online 能力确认预览")
+def preview_online_capability(
+    body: OnlineCapabilityPreviewCreate,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    owner = online_user_for_mobile_user(db, current_user)
+    definition = mastra_online_capability(body.capability_id)
+    if not definition:
+        raise HTTPException(status_code=400, detail="不支持的 Online 能力")
+    parent = (
+        db.query(H5ChatMessage)
+        .filter(
+            H5ChatMessage.id == body.parent_message_id,
+            H5ChatMessage.user_id == owner.id,
+            H5ChatMessage.mode == "mastra",
+        )
+        .first()
+    )
+    if not parent:
+        raise HTTPException(status_code=404, detail="调度会话不存在")
+    installation_id = _selected_installation(request, body.installation_id) or parent.installation_id
+    capability_id = str(body.capability_id or "").strip().lower()
+    try:
+        params, installation_id = _normalize_mastra_online_capability_for_dispatch(
+            db,
+            user_id=owner.id,
+            capability_id=capability_id,
+            params=dict(body.params or {}),
+            selected_installation_id=installation_id,
+        )
+    except OnlineCapabilityParamsError as exc:
+        raise HTTPException(status_code=400, detail=f"Online 能力参数无效：{exc}") from exc
+    canonical_params = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if len(canonical_params) > 100_000:
+        raise HTTPException(status_code=400, detail="Online 能力参数过大")
+    return {
+        "ok": True,
+        "capability_id": capability_id,
+        "action": str(definition.get("action") or "").strip(),
+        "params": params,
+        "installation_id": installation_id,
+        "task": _mastra_online_capability_task_text(capability_id, params),
+    }
+
+
 @router.post("/api/mastra-chat/online-capability-dispatch", summary="AI 调度结构化下发 Online 能力")
 def dispatch_online_capability(
     body: OnlineCapabilityDispatchCreate,
@@ -1480,14 +1756,20 @@ def dispatch_online_capability(
         installation_id=body.installation_id,
         approval_id=body.approval_id,
     )
+    capability_id = str(body.capability_id or "").strip().lower()
     try:
-        params = normalize_mastra_online_params(body.capability_id, dict(body.params or {}))
+        params, installation_id = _normalize_mastra_online_capability_for_dispatch(
+            db,
+            user_id=owner.id,
+            capability_id=capability_id,
+            params=dict(body.params or {}),
+            selected_installation_id=installation_id,
+        )
     except OnlineCapabilityParamsError as exc:
         raise HTTPException(status_code=400, detail=f"Online 能力参数无效：{exc}") from exc
     canonical_params = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if len(canonical_params) > 100_000:
         raise HTTPException(status_code=400, detail="Online 能力参数过大")
-    capability_id = str(body.capability_id or "").strip().lower()
     action = str(definition.get("action") or "").strip()
     if not action:
         raise HTTPException(status_code=500, detail="Online 能力缺少执行动作")

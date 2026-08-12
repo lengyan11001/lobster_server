@@ -916,6 +916,16 @@
               </span>
               <b>进入</b>
             </button>
+            <button class="profile-entry live-executor-profile-entry" type="button" data-tab-target="liveExecutor">
+              <span class="profile-entry-icon tone-blue" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 5h16v10H4z"></path><path d="M8 19h8M12 15v4"></path><path d="m8 10 2 2 5-5"></path></svg>
+              </span>
+              <span>
+                <strong>现场执行台</strong>
+                <small>选择在线设备，拍照或上传素材后下发秘书、获客、视频和个微任务</small>
+              </span>
+              <b>进入</b>
+            </button>
             <button class="profile-entry" type="button" data-tab-target="mountedAccounts">
               <span class="profile-entry-icon tone-blue" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><path d="M20 8v6m3-3h-6"></path></svg>
@@ -967,6 +977,80 @@
               <b>进入</b>
             </button>
           </div>
+        </div>
+      </section>
+
+      <section class="view" id="liveExecutorView">
+        <div class="live-executor-page">
+          <header class="panel live-executor-hero">
+            <div>
+              <span class="live-executor-kicker">LIVE COMMAND</span>
+              <h2>现场执行台</h2>
+              <p>选择一台在线 Online 设备，上传图片或现场拍照，然后把秘书、获客、生成视频、个人微信任务依次下发到执行台。页面不跳走，结果在这里查看。</p>
+            </div>
+            <button class="ghost" type="button" id="liveExecutorRefreshBtn">刷新设备</button>
+          </header>
+
+          <section class="panel live-executor-console">
+            <div class="live-executor-device-row">
+              <label for="liveExecutorDeviceSelect">在线设备</label>
+              <select id="liveExecutorDeviceSelect"></select>
+              <span id="liveExecutorDeviceHint">正在读取设备状态...</span>
+            </div>
+
+            <div class="live-executor-source">
+              <div class="live-executor-image-card">
+                <div class="live-executor-image-preview" id="liveExecutorImagePreview">
+                  <span>现场图片</span>
+                </div>
+                <div class="live-executor-image-actions">
+                  <label class="ghost live-executor-upload-btn" for="liveExecutorImageFile">上传图片</label>
+                  <input id="liveExecutorImageFile" type="file" accept="image/*" hidden>
+                  <button class="ghost" type="button" data-camera-target="liveExecutorImageFile" data-camera-mode="photo">拍一张</button>
+                </div>
+                <div class="live-executor-status" id="liveExecutorImageStatus">图片可选；生成视频时会作为参考图。</div>
+              </div>
+
+              <div class="live-executor-command">
+                <label for="liveExecutorPrompt">现场要求 / 语音指令</label>
+                <textarea id="liveExecutorPrompt" data-voice-input rows="4" placeholder="例如：用这张图生成一个高级感介绍视频；或者说：开始秘书、抖音获客、接管微信。这里只识别这 4 个场景，其它复杂调度请去 AI 调度助手。"></textarea>
+                <div class="live-executor-command-actions">
+                  <button type="button" id="liveExecutorVoiceRouteBtn">按指令执行</button>
+                  <button class="ghost" type="button" id="liveExecutorClearPromptBtn">清空</button>
+                </div>
+                <small>语音只控制：秘书、获客、生成视频、个人微信。其它语音调度请到 AI 调度助手。</small>
+              </div>
+            </div>
+
+            <div class="live-executor-actions">
+              <button type="button" data-live-action="secretary">
+                <span>秘书</span>
+                <small>开始/结束长录音，自动转写整理</small>
+              </button>
+              <button type="button" data-live-action="leads">
+                <span>获客</span>
+                <small>触发搜索采集任务</small>
+              </button>
+              <button type="button" data-live-action="video">
+                <span>生成视频</span>
+                <small>调用创意分镜头能力</small>
+              </button>
+              <button type="button" data-live-action="wechat">
+                <span>个人微信</span>
+                <small>触发一轮个微接管</small>
+              </button>
+            </div>
+          </section>
+
+          <section class="panel live-executor-board">
+            <div class="section-title">
+              <h3>现场任务</h3>
+              <span class="hint" id="liveExecutorQueueHint">任务会依次下发，但不会锁住页面操作。</span>
+            </div>
+            <div class="live-executor-task-grid" id="liveExecutorTaskGrid">
+              <div class="empty">还没有现场任务。选择设备后，可以同时发起多个任务。</div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -1851,6 +1935,18 @@
         <button class="hidden" type="button" id="cameraCaptureDone">使用素材</button>
       </footer>
     </section>
+  </div>
+
+  <div class="employee-modal live-executor-result-modal hidden" id="liveExecutorResultModal" role="dialog" aria-modal="true" aria-labelledby="liveExecutorResultTitle" aria-hidden="true">
+    <button class="employee-modal-backdrop" type="button" id="liveExecutorResultBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover live-executor-result-panel">
+      <button class="employee-popover-close" type="button" id="liveExecutorResultClose" aria-label="关闭">×</button>
+      <div class="live-executor-result-head">
+        <span id="liveExecutorResultType">现场任务</span>
+        <strong id="liveExecutorResultTitle">执行结果</strong>
+      </div>
+      <div class="live-executor-result-body" id="liveExecutorResultBody"></div>
+    </div>
   </div>
 
   <div class="employee-modal upload-dialog hidden" id="assetVoiceModal" role="dialog" aria-modal="true" aria-labelledby="assetVoiceTitle">

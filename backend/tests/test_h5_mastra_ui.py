@@ -42,6 +42,11 @@ def test_h5_chat_voice_permission_and_cancellation_are_race_safe():
     assert 'typeof canRetry === "function" && !canRetry()' in script
     assert "attempt === 0 ? constraints : { audio: true }" in script
     assert "cleanupAssetVoiceRecordRuntime();" in open_voice
+    assert "state.voiceWs.onmessage = null" in script
+    assert "state.voiceWs.onclose = null" in script
+    assert "state.voiceWs.onerror = null" in script
+    assert "function recoverFieldVoicePartialBeforeReset" in script
+    assert "已保留已识别内容" in script
 
     stop_voice_start = script.index("function stopVoiceCapture")
     stop_voice_end = script.index("function stopComposerVoiceDurationTimer", stop_voice_start)

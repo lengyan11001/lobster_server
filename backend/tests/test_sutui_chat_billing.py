@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal
 
+import httpx
 import pytest
+from starlette.requests import Request
 
 
 def _user(credits: str = "100.0000"):
@@ -214,3 +218,78 @@ def test_charge_chat_turn_accepts_legacy_long_source(db_session, monkeypatch):
     row = db_session.query(CreditLedger).filter(CreditLedger.user_id == user.id).one()
     assert row.meta["source"] == "online_chat_stream_task_status_f"
     assert len(row.meta["source"]) == 32
+
+
+@pytest.mark.asyncio
+async def test_stream_disconnect_after_usage_chunk_does_not_deduct(db_session, db_session_factory, monkeypatch):
+    from backend.app.api import sutui_chat_proxy
+    from backend.app.core.config import settings
+    from backend.app.models import CreditLedger
+
+    monkeypatch.setattr(settings, "lobster_edition", "online", raising=False)
+    monkeypatch.setattr(settings, "lobster_independent_auth", True, raising=False)
+    monkeypatch.setattr(sutui_chat_proxy, "next_sutui_server_token_with_pool", lambda **_: _async_value(("test-token", "default")))
+    monkeypatch.setattr(sutui_chat_proxy, "SessionLocal", db_session_factory)
+
+    class FakeStreamResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_bytes(self):
+            yield b'data: {"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\n\n'
+            raise httpx.RemoteProtocolError("peer closed connection without sending complete message body")
+
+    @asynccontextmanager
+    async def fake_stream_chat_upstream(*args, **kwargs):
+        yield FakeStreamResponse()
+
+    monkeypatch.setattr(sutui_chat_proxy, "_stream_chat_upstream", fake_stream_chat_upstream)
+
+    user = _user("100.0000")
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    body = json.dumps(
+        {
+            "model": "openai/gpt-5.6-sol",
+            "stream": True,
+            "messages": [{"role": "user", "content": "生成一张图片"}],
+        }
+    ).encode("utf-8")
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.disconnect"}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/sutui-chat/completions",
+            "headers": [],
+        },
+        receive,
+    )
+
+    response = await sutui_chat_proxy.sutui_chat_completions(request, current_user=user, db=db_session)
+
+    try:
+        async for _chunk in response.body_iterator:
+            pass
+    except httpx.RemoteProtocolError:
+        pass
+
+    db_session.refresh(user)
+    assert user.credits == Decimal("100.0000")
+    assert db_session.query(CreditLedger).filter(CreditLedger.user_id == user.id).count() == 0
+
+
+async def _async_value(value):
+    return value

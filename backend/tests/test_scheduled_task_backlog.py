@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from backend.app.api.auth import get_current_user
 from backend.app.api import scheduled_tasks
+from backend.app.db import get_db
 from backend.app.models import H5ChatMessage, ScheduledTask, ScheduledTaskRun
 
 
@@ -90,6 +94,77 @@ def test_recurring_enqueue_refreshes_one_pending_run_in_place(db_session, test_u
     assert second.created_at == second_at
     assert second.progress["coalesced_count"] == 1
     assert task.run_count == 2
+
+
+def test_pausing_scheduled_task_cancels_processing_run(
+    db_session,
+    db_session_factory,
+    test_user,
+    patch_fuiou_settings,
+):
+    now = datetime.utcnow()
+    task = _task(test_user.id, title="native wechat takeover", schedule_type="interval")
+    task.task_kind = "client_workflow"
+    task.payload = {"action": "native_wechat_poll"}
+    task.target_installation_ids = ["device-a"]
+    db_session.add(task)
+    db_session.flush()
+    message = H5ChatMessage(
+        id="pause-processing-message",
+        user_id=test_user.id,
+        installation_id="device-a",
+        claimed_by_installation_id="device-a",
+        mode="scheduled_task",
+        content="native wechat takeover",
+        status="processing",
+        created_at=now,
+        updated_at=now,
+        claimed_at=now,
+    )
+    run = _run(
+        run_id="pause-processing-run",
+        user_id=test_user.id,
+        task_id=task.id,
+        task_kind="client_workflow",
+        status="processing",
+        created_at=now,
+        installation_id="device-a",
+    )
+    run.h5_message_id = message.id
+    db_session.add_all([message, run])
+    db_session.commit()
+    task_id = task.id
+
+    app = FastAPI()
+    app.include_router(scheduled_tasks.router, prefix="")
+
+    def _get_db_override():
+        s = db_session_factory()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    def _get_current_user_override():
+        s = db_session_factory()
+        try:
+            from backend.app.models import User
+
+            return s.query(User).filter(User.id == test_user.id).first()
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    app.dependency_overrides[get_current_user] = _get_current_user_override
+    client = TestClient(app)
+
+    response = client.patch(f"/api/scheduled-tasks/tasks/{task_id}", json={"status": "paused"})
+
+    assert response.status_code == 200
+    db_session.expire_all()
+    assert db_session.get(ScheduledTask, task_id).status == "paused"
+    assert db_session.get(ScheduledTaskRun, run.id).status == "cancelled"
+    assert db_session.get(H5ChatMessage, message.id).status == "cancelled"
 
 
 def test_recurring_backlog_keeps_latest_and_skips_expired_without_touching_once_or_processing(

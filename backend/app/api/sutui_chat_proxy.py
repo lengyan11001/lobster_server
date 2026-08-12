@@ -2059,8 +2059,6 @@ async def sutui_chat_completions(
 
                             billing_model_holder[0] = mid_try
                             billing_is_direct_holder[0] = att_is_direct
-                            stream_completed_ok = True
-                            _record_model_success(f"{mid_try}@{att['provider']}")
                             logger.info(
                                 "[chat_trace] trace_id=%s stream_started http=200 model=%s provider=%s",
                                 trace_id, mid_try or "-", att["provider"],
@@ -2133,6 +2131,8 @@ async def sutui_chat_completions(
                                         or u.get("total_tokens") is not None
                                     ):
                                         last_usage = u
+                            stream_completed_ok = True
+                            _record_model_success(f"{mid_try}@{att['provider']}")
                             break
                 except WorkloadQueueFull:
                     logger.warning(

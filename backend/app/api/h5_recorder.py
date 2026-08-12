@@ -99,6 +99,7 @@ SOURCE_LABELS = {
     "local": "本地音频",
     "memory": "记忆文件",
     "personal": "个人 IP 资料",
+    "live_executor": "现场执行台",
 }
 
 

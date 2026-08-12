@@ -3234,7 +3234,13 @@ def patch_scheduled_task(
         now = datetime.utcnow()
         task.status = status
         if status in {"paused", "cancelled"}:
-            _cancel_pending_runs_for_task(db, task, now)
+            _cancel_unfinished_runs_for_task(
+                db,
+                task,
+                now,
+                message="\u4efb\u52a1\u5df2\u6682\u505c" if status == "paused" else "\u4efb\u52a1\u5df2\u53d6\u6d88",
+                event_reason="task_paused" if status == "paused" else "task_cancelled",
+            )
         if status == "active" and not task.next_run_at:
             if task.schedule_type == "interval":
                 task.next_run_at = now

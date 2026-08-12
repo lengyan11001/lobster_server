@@ -49,6 +49,23 @@
       chatSessionManageMode: "rename",
       devices: [],
       selectedInstallationId: localStorage.getItem(brandStorageKey("lobster_h5_selected_installation_id")) || "",
+      liveExecutor: {
+        image: null,
+        imagePreviewUrl: "",
+        imageUploadPromise: null,
+        imageUploading: false,
+        tasks: [],
+        queue: Promise.resolve(),
+        poller: null,
+        recorder: {
+          stream: null,
+          recorder: null,
+          chunks: [],
+          startedAt: 0,
+          timer: null,
+          taskId: "",
+        },
+      },
       tasks: [],
       runs: [],
       runStatusSnapshot: {},
@@ -1631,23 +1648,28 @@
     async function requestMicrophoneStream(constraints = { audio: true }, canRetry = null) {
       const retryDelays = IS_ANDROID_APP ? [0, 700, 1600, 3000] : [0];
       let lastError = null;
-      for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
-        const delay = retryDelays[attempt];
-        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-        if (attempt > 0 && typeof canRetry === "function" && !canRetry()) throw lastError;
-        const diagnostics = prepareAndroidMicrophoneCapture();
-        try {
-          return await navigator.mediaDevices.getUserMedia(attempt === 0 ? constraints : { audio: true });
-        } catch (error) {
-          lastError = error;
-          console.warn("Microphone start attempt failed", {
-            attempt: attempt + 1,
-            name: String(error && error.name || ""),
-            message: String(error && error.message || ""),
-            diagnostics,
-          });
-          if (!IS_ANDROID_APP || !isTransientMicrophoneStartError(error)) throw error;
+      try {
+        for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
+          const delay = retryDelays[attempt];
+          if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+          if (attempt > 0 && typeof canRetry === "function" && !canRetry()) throw lastError;
+          const diagnostics = prepareAndroidMicrophoneCapture();
+          try {
+            return await navigator.mediaDevices.getUserMedia(attempt === 0 ? constraints : { audio: true });
+          } catch (error) {
+            lastError = error;
+            console.warn("Microphone start attempt failed", {
+              attempt: attempt + 1,
+              name: String(error && error.name || ""),
+              message: String(error && error.message || ""),
+              diagnostics,
+            });
+            if (!IS_ANDROID_APP || !isTransientMicrophoneStartError(error)) throw error;
+          }
         }
+      } catch (error) {
+        reportMicrophoneStartupFailure(error);
+        throw error;
       }
       reportMicrophoneStartupFailure(lastError);
       throw lastError || new Error("Microphone startup failed");
@@ -9227,6 +9249,10 @@
       state.cameraCapturedFiles[inputId] = rows;
       assignFilesToInput(inputId, rows);
       updateCapturedInputStatus(inputId, rows);
+      if (inputId === "liveExecutorImageFile") {
+        const file = rows[rows.length - 1];
+        if (file) uploadLiveExecutorImageFile(file).catch((err) => toast(err.message || "现场图片上传失败"));
+      }
     }
 
     function clearCapturedFilesForInput(inputId, clearNative = false) {
@@ -12579,6 +12605,689 @@
       return ensureSelectedInstallationId();
     }
 
+    function liveExecutorState() {
+      if (!state.liveExecutor || typeof state.liveExecutor !== "object") {
+        state.liveExecutor = {
+          image: null,
+          imagePreviewUrl: "",
+          imageUploadPromise: null,
+          imageUploading: false,
+          tasks: [],
+          queue: Promise.resolve(),
+          poller: null,
+          recorder: { stream: null, recorder: null, chunks: [], startedAt: 0, timer: null, taskId: "" },
+        };
+      }
+      if (!state.liveExecutor.recorder) {
+        state.liveExecutor.recorder = { stream: null, recorder: null, chunks: [], startedAt: 0, timer: null, taskId: "" };
+      }
+      return state.liveExecutor;
+    }
+
+    function liveExecutorPromptText() {
+      return String(($("liveExecutorPrompt") && $("liveExecutorPrompt").value) || "").trim();
+    }
+
+    function liveExecutorSelectedInstallationId() {
+      const selectValue = String(($("liveExecutorDeviceSelect") && $("liveExecutorDeviceSelect").value) || "").trim();
+      if (selectValue) return selectValue;
+      return currentInstallationId();
+    }
+
+    function liveExecutorDeviceLabel(device) {
+      if (!device) return "未选择设备";
+      const name = deviceDisplayName(device) || "Online 设备";
+      const short = String(device.installation_id || "").slice(0, 8);
+      return short ? `${name} · ${short}` : name;
+    }
+
+    function renderLiveExecutorDeviceSelect() {
+      const select = $("liveExecutorDeviceSelect");
+      const hint = $("liveExecutorDeviceHint");
+      if (!select) return;
+      const rows = (state.devices || []).filter((device) => device && device.online && device.installation_id);
+      select.innerHTML = rows.length
+        ? rows.map((device) => optionHtml(device.installation_id || "", liveExecutorDeviceLabel(device))).join("")
+        : '<option value="">暂无在线设备</option>';
+      const current = String(state.selectedInstallationId || "").trim();
+      if (current && rows.some((device) => String(device.installation_id || "") === current)) {
+        select.value = current;
+      } else if (rows[0]) {
+        setSelectedInstallationId(rows[0].installation_id || "");
+        select.value = rows[0].installation_id || "";
+      }
+      if (hint) {
+        hint.textContent = rows.length
+          ? `在线 ${rows.length} 台，任务会下发到当前选择设备`
+          : "请先启动并登录 Online 客户端";
+      }
+    }
+
+    function revokeLiveExecutorImagePreview() {
+      const live = liveExecutorState();
+      if (live.imagePreviewUrl) {
+        try { URL.revokeObjectURL(live.imagePreviewUrl); } catch {}
+      }
+      live.imagePreviewUrl = "";
+    }
+
+    function renderLiveExecutorImage() {
+      const live = liveExecutorState();
+      const preview = $("liveExecutorImagePreview");
+      const status = $("liveExecutorImageStatus");
+      const image = live.image || {};
+      const src = live.imagePreviewUrl || image.source_url || image.url || "";
+      if (preview) {
+        preview.innerHTML = src
+          ? `<img src="${escapeHtml(src)}" alt="现场图片">`
+          : "<span>现场图片</span>";
+      }
+      if (status) {
+        if (live.imageUploading) {
+          status.textContent = image.progress ? `图片上传 ${image.progress}%` : "图片上传中...";
+        } else if (image.source_url || image.asset_id) {
+          status.textContent = image.filename ? `已选择：${image.filename}` : "图片已准备好，可用于生成视频";
+        } else if (image.error) {
+          status.textContent = image.error;
+        } else {
+          status.textContent = "图片可选；生成视频时会作为参考图。";
+        }
+      }
+    }
+
+    function liveExecutorUploadFile(path, formData, options = {}) {
+      const headers = options.headers || authHeaders();
+      const onProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+      const timeoutMs = Math.max(60000, Number(options.timeoutMs || 30 * 60 * 1000));
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open(String(options.method || "POST"), apiUrl(path), true);
+        Object.entries(headers).forEach(([key, value]) => {
+          if (value !== undefined && value !== null && String(value) !== "") xhr.setRequestHeader(key, String(value));
+        });
+        xhr.timeout = timeoutMs;
+        xhr.upload.onprogress = (event) => {
+          if (!onProgress) return;
+          const total = event.lengthComputable ? Number(event.total || 0) : 0;
+          const loaded = Number(event.loaded || 0);
+          const percent = total > 0 ? Math.max(0, Math.min(100, Math.round(loaded * 100 / total))) : 0;
+          onProgress({ loaded, total, percent });
+        };
+        xhr.onload = () => {
+          let data = {};
+          try { data = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch { data = { detail: xhr.responseText || "" }; }
+          if (xhr.status < 200 || xhr.status >= 300 || data.ok === false) {
+            reject(new Error(readableApiError(xhr.status, xhr.responseText, data)));
+            return;
+          }
+          resolve(data);
+        };
+        xhr.onerror = () => reject(new Error("网络连接异常，请检查网络后重试"));
+        xhr.ontimeout = () => reject(new Error("上传超时，请检查网络后重试"));
+        xhr.onabort = () => reject(new Error("上传已取消"));
+        xhr.send(formData);
+      });
+    }
+
+    async function uploadLiveExecutorImageFile(file) {
+      if (!file) return null;
+      const type = String(file.type || "").toLowerCase();
+      const name = String(file.name || "").toLowerCase();
+      if (!type.startsWith("image/") && !/\.(jpg|jpeg|png|webp|gif)$/i.test(name)) {
+        throw new Error("请选择图片文件");
+      }
+      const live = liveExecutorState();
+      revokeLiveExecutorImagePreview();
+      live.imagePreviewUrl = URL.createObjectURL(file);
+      live.image = { filename: file.name || "现场图片", progress: 0 };
+      live.imageUploading = true;
+      renderLiveExecutorImage();
+      const fd = new FormData();
+      fd.append("file", file, file.name || "live-image.jpg");
+      const upload = liveExecutorUploadFile("/api/assets/upload", fd, {
+        onProgress: ({ percent }) => {
+          live.image = { ...(live.image || {}), progress: percent };
+          renderLiveExecutorImage();
+        },
+      }).then((data) => {
+        live.image = {
+          asset_id: data.asset_id || "",
+          source_url: data.source_url || data.url || "",
+          filename: data.filename || file.name || "现场图片",
+          media_type: data.media_type || "image",
+        };
+        return live.image;
+      }).catch((err) => {
+        live.image = { error: err.message || "图片上传失败" };
+        throw err;
+      }).finally(() => {
+        live.imageUploading = false;
+        renderLiveExecutorImage();
+      });
+      live.imageUploadPromise = upload;
+      return upload;
+    }
+
+    function liveExecutorAddTask(type, title, detail = "") {
+      const live = liveExecutorState();
+      const id = `live_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      const task = {
+        id,
+        type,
+        title,
+        status: "queued",
+        detail: detail || "已加入下发队列",
+        runId: "",
+        recordId: "",
+        error: "",
+        result: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      live.tasks.unshift(task);
+      renderLiveExecutorTasks();
+      return task;
+    }
+
+    function liveExecutorUpdateTask(task, patch = {}) {
+      if (!task) return;
+      Object.assign(task, patch, { updatedAt: new Date().toISOString() });
+      renderLiveExecutorTasks();
+    }
+
+    function liveExecutorStatusLabel(status) {
+      return {
+        queued: "待下发",
+        dispatching: "下发中",
+        pending: "已下发",
+        recording: "录音中",
+        uploading: "上传中",
+        processing: "执行中",
+        completed: "已完成",
+        failed: "失败",
+      }[String(status || "").toLowerCase()] || "处理中";
+    }
+
+    function liveExecutorTaskRun(task) {
+      if (!task || !task.runId) return null;
+      return (state.runs || []).find((row) => String(row.id || "") === String(task.runId)) || null;
+    }
+
+    function liveExecutorTaskHasResult(task) {
+      if (!task) return false;
+      if (task.type === "secretary") return !!task.recordId || !!task.result || task.status === "completed" || task.status === "failed";
+      const run = liveExecutorTaskRun(task);
+      return !!run && !isActiveRun(run);
+    }
+
+    function renderLiveExecutorTasks() {
+      const host = $("liveExecutorTaskGrid");
+      if (!host) return;
+      const live = liveExecutorState();
+      const tasks = Array.isArray(live.tasks) ? live.tasks : [];
+      if (!tasks.length) {
+        host.innerHTML = '<div class="empty">还没有现场任务。选择设备后，可以同时发起多个任务。</div>';
+        return;
+      }
+      host.innerHTML = tasks.map((task) => {
+        const run = liveExecutorTaskRun(task);
+        const status = run ? (isActiveRun(run) ? "processing" : String(run.status || task.status)) : task.status;
+        const result = run ? runDisplayResult(run) : "";
+        const detail = task.error || result || task.detail || "";
+        const hasResult = liveExecutorTaskHasResult(task);
+        const classes = ["live-executor-task-card", status === "failed" ? "failed" : "", status === "completed" ? "completed" : "", hasResult ? "has-result" : ""].filter(Boolean).join(" ");
+        return `<article class="${classes}" data-live-task-id="${escapeHtml(task.id)}">
+          <div class="live-executor-task-top">
+            <div><strong>${escapeHtml(task.title || "现场任务")}</strong></div>
+            <span>${escapeHtml(liveExecutorStatusLabel(status))}</span>
+          </div>
+          <p>${escapeHtml(detail || "等待执行结果...")}</p>
+          <div class="live-executor-task-meta">
+            <span>${escapeHtml(fmtTime(task.createdAt) || "")}</span>
+            ${task.runId ? `<span>Run ${escapeHtml(String(task.runId).slice(0, 8))}</span>` : ""}
+            ${task.recordId ? `<span>录音 ${escapeHtml(String(task.recordId))}</span>` : ""}
+          </div>
+          ${hasResult ? '<button class="ghost live-executor-open-result" type="button">查看结果</button>' : ""}
+        </article>`;
+      }).join("");
+    }
+
+    function liveExecutorQueueTask(task, runner) {
+      const live = liveExecutorState();
+      live.queue = (live.queue || Promise.resolve())
+        .catch(() => {})
+        .then(async () => {
+          liveExecutorUpdateTask(task, { status: "dispatching", detail: "正在下发到 Online..." });
+          await runner(task);
+        })
+        .catch((err) => {
+          liveExecutorUpdateTask(task, { status: "failed", error: err.message || "下发失败" });
+        });
+      renderLiveExecutorTasks();
+      return live.queue;
+    }
+
+    async function submitLiveExecutorPlan(plan, task) {
+      const taskKind = String((plan && (plan.taskKind || plan.task_kind)) || "client_workflow").trim() || "client_workflow";
+      const serverSide = isServerSideScheduledKind(taskKind) || !!(plan && plan.serverSide);
+      const installationId = serverSide ? "" : (plan.installationId || liveExecutorSelectedInstallationId() || currentInstallationId());
+      if (!serverSide && !installationId) throw new Error("请先选择在线 Online 设备");
+      const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
+      payload.live_executor = true;
+      payload.live_executor_type = task && task.type || "";
+      payload.live_executor_prompt = liveExecutorPromptText();
+      const body = {
+        title: plan.title || "现场执行任务",
+        task_kind: taskKind,
+        content: plan.content || "H5 现场执行台下发任务",
+        payload,
+        schedule_type: "once",
+        interval_seconds: 60,
+        start_at: "",
+        daily_times: [],
+        timezone_offset_minutes: timezoneOffsetMinutes(),
+        installation_ids: serverSide ? [] : [installationId],
+      };
+      const data = await api("/api/scheduled-tasks/tasks", {
+        method: "POST",
+        blocking: false,
+        json: body,
+        headers: installationId ? { "X-Installation-Id": installationId } : {},
+      });
+      if (data.task) {
+        state.tasks = [data.task].concat((state.tasks || []).filter((row) => String(row.id) !== String(data.task.id)));
+      }
+      if (Array.isArray(data.runs)) mergeRuns(data.runs);
+      const run = Array.isArray(data.runs) ? data.runs[0] : null;
+      liveExecutorUpdateTask(task, {
+        status: run ? (String(run.status || "pending").toLowerCase()) : "pending",
+        runId: run && run.id ? String(run.id) : "",
+        detail: run ? "任务已下发，等待 Online 领取执行" : "任务已创建，等待执行记录同步",
+      });
+      renderOfficeEmployees();
+      renderWorkList();
+      startLiveExecutorPolling();
+      loadRuns({ reset: true, limit: 80, compact: false, preserveExisting: true, silent: true }).catch(() => {});
+      return data;
+    }
+
+    function liveExecutorVideoPlan() {
+      const live = liveExecutorState();
+      const image = live.image || {};
+      const prompt = liveExecutorPromptText();
+      if (live.imageUploading && live.imageUploadPromise) throw new Error("图片还在上传中，请稍等几秒再生成视频");
+      if (!image.source_url && !image.asset_id) throw new Error("请先上传或拍摄一张现场图片");
+      const payload = {
+        action: "start_pipeline",
+        image_url: image.source_url || "",
+        asset_id: image.asset_id || "",
+        reference_image_urls: image.source_url ? [image.source_url] : [],
+        reference_asset_ids: image.asset_id ? [image.asset_id] : [],
+        reference_purposes: ["storyboard"],
+        task_text: prompt || "根据现场图片生成一条高级、有节奏感的创意分镜头短视频。",
+        total_duration_seconds: 10,
+        segment_count: 1,
+        segment_duration_seconds: 10,
+        workflow_mode: "storyboard",
+        merge_clips: true,
+        auto_save: true,
+        analysis_model: "",
+        image_model: "",
+        image_model_fallback: "gpt-image-2-yunwu",
+        video_model: "grok-imagine-video-1.5-preview",
+        video_channel: "openmind",
+        video_fallbacks: [],
+        aspect_ratio: "9:16",
+        visual_tone: "clean_bright",
+        rhythm: "smooth",
+        generate_audio: true,
+        watermark: false,
+      };
+      return buildCapabilityTaskPlan({
+        capabilityId: "comfly.seedance.tvc.pipeline",
+        title: "现场生成视频",
+        content: "H5 现场执行台：生成视频",
+        payload,
+      });
+    }
+
+    function liveExecutorLeadsPlan() {
+      const prompt = liveExecutorPromptText();
+      const keyword = prompt || "同城获客";
+      return {
+        title: `现场获客 - ${keyword.slice(0, 20)}`,
+        taskKind: "douyin_leads",
+        content: "H5 现场执行台：获客搜索采集",
+        payload: {
+          action: "search_collect",
+          params: {
+            keyword,
+            max_results: 50,
+            regions: ["全国"],
+            region_list: ["全国"],
+            area_list: ["全国"],
+            region_mode: "nationwide",
+            mode: "script",
+          },
+        },
+      };
+    }
+
+    function liveExecutorWechatPlan() {
+      const note = liveExecutorPromptText() || "现场执行台触发一轮个人微信接管，只处理本轮待回复消息。";
+      const plan = nativeWechatWorkflowPlan("native_wechat_poll", note, {
+        live_executor: true,
+        one_round: true,
+        note,
+        prompt: note,
+      });
+      return { title: "现场个人微信接管", taskKind: plan.task_kind, content: "H5 现场执行台：个人微信接管", payload: plan.payload };
+    }
+
+    async function handleLiveExecutorAction(action) {
+      const key = String(action || "").trim();
+      if (key === "secretary") {
+        await toggleLiveExecutorSecretary();
+        return;
+      }
+      const titles = { leads: "现场获客", video: "现场生成视频", wechat: "现场个人微信" };
+      const task = liveExecutorAddTask(key, titles[key] || "现场任务");
+      liveExecutorQueueTask(task, async () => {
+        if (key === "video") {
+          const live = liveExecutorState();
+          if (live.imageUploading && live.imageUploadPromise) {
+            liveExecutorUpdateTask(task, { detail: "等待现场图片上传完成..." });
+            await live.imageUploadPromise;
+          }
+          await submitLiveExecutorPlan(liveExecutorVideoPlan(), task);
+          return;
+        }
+        if (key === "leads") {
+          await submitLiveExecutorPlan(liveExecutorLeadsPlan(), task);
+          return;
+        }
+        if (key === "wechat") {
+          await submitLiveExecutorPlan(liveExecutorWechatPlan(), task);
+          return;
+        }
+        throw new Error("这个现场动作暂不支持");
+      });
+    }
+
+    function liveExecutorAudioMime() {
+      const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/mpeg"];
+      if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") return "";
+      return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) || "";
+    }
+
+    function liveExecutorAudioFileName(mime) {
+      const suffix = /mp4|mpeg|m4a/i.test(String(mime || "")) ? "m4a" : "webm";
+      return `live-secretary-${Date.now()}.${suffix}`;
+    }
+
+    function syncLiveSecretaryButton() {
+      const live = liveExecutorState();
+      const active = !!(live.recorder && live.recorder.recorder);
+      const btn = document.querySelector('[data-live-action="secretary"]');
+      if (!btn) return;
+      btn.classList.toggle("is-recording", active);
+      const span = btn.querySelector("span");
+      const small = btn.querySelector("small");
+      if (span) span.textContent = active ? "结束秘书录音" : "秘书";
+      if (small) small.textContent = active ? `录音中 ${recorderFormatDuration(Math.floor((Date.now() - Number(live.recorder.startedAt || Date.now())) / 1000))}` : "开始/结束长录音，自动转写整理";
+    }
+
+    async function toggleLiveExecutorSecretary() {
+      const live = liveExecutorState();
+      if (live.recorder && live.recorder.recorder) {
+        stopLiveExecutorSecretaryRecording();
+        return;
+      }
+      await startLiveExecutorSecretaryRecording();
+    }
+
+    async function startLiveExecutorSecretaryRecording() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === "undefined") {
+        throw new Error("当前浏览器不支持长录音，请使用支持麦克风录制的浏览器");
+      }
+      if (state.voiceRecording) {
+        state.voiceRecording = false;
+        cleanupVoiceRuntime();
+      }
+      const task = liveExecutorAddTask("secretary", "现场秘书整理", "正在录音，结束后自动上传转写");
+      const live = liveExecutorState();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mime = liveExecutorAudioMime();
+        const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+        live.recorder = { stream, recorder, chunks: [], startedAt: Date.now(), timer: null, taskId: task.id, mime };
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) live.recorder.chunks.push(event.data);
+        };
+        recorder.onerror = (event) => {
+          liveExecutorUpdateTask(task, { status: "failed", error: (event && event.error && event.error.message) || "录音失败" });
+          cleanupLiveExecutorSecretaryRecording();
+        };
+        recorder.onstop = () => finishLiveExecutorSecretaryRecording(task).catch((err) => {
+          liveExecutorUpdateTask(task, { status: "failed", error: err.message || "录音上传失败" });
+        });
+        recorder.start(1000);
+        liveExecutorUpdateTask(task, { status: "recording", detail: "录音中，点击“秘书”结束录音" });
+        syncLiveSecretaryButton();
+        live.recorder.timer = setInterval(() => {
+          syncLiveSecretaryButton();
+          liveExecutorUpdateTask(task, { status: "recording", detail: `录音中 ${recorderFormatDuration(Math.floor((Date.now() - Number(live.recorder.startedAt || Date.now())) / 1000))}` });
+        }, 1000);
+      } catch (err) {
+        cleanupLiveExecutorSecretaryRecording();
+        liveExecutorUpdateTask(task, { status: "failed", error: err.message || "无法启动麦克风" });
+        throw err;
+      }
+    }
+
+    function stopLiveExecutorSecretaryRecording() {
+      const live = liveExecutorState();
+      const recorder = live.recorder && live.recorder.recorder;
+      if (!recorder) return;
+      try {
+        recorder.stop();
+      } catch (err) {
+        cleanupLiveExecutorSecretaryRecording();
+        throw err;
+      }
+    }
+
+    function cleanupLiveExecutorSecretaryRecording() {
+      const live = liveExecutorState();
+      const rec = live.recorder || {};
+      if (rec.timer) clearInterval(rec.timer);
+      if (rec.stream) {
+        try { rec.stream.getTracks().forEach((track) => track.stop()); } catch {}
+      }
+      live.recorder = { stream: null, recorder: null, chunks: [], startedAt: 0, timer: null, taskId: "" };
+      syncLiveSecretaryButton();
+    }
+
+    async function finishLiveExecutorSecretaryRecording(task) {
+      const live = liveExecutorState();
+      const rec = live.recorder || {};
+      const chunks = Array.isArray(rec.chunks) ? rec.chunks : [];
+      const mime = rec.mime || "audio/webm";
+      cleanupLiveExecutorSecretaryRecording();
+      if (!chunks.length) throw new Error("没有录到音频内容");
+      const blob = new Blob(chunks, { type: mime });
+      if (blob.size < 1024) throw new Error("录音太短，请重新录制");
+      const file = new File([blob], liveExecutorAudioFileName(mime), { type: mime });
+      const iid = liveExecutorSelectedInstallationId() || currentInstallationId();
+      const form = new FormData();
+      form.append("file", file, file.name);
+      form.append("source_type", "live_executor");
+      form.append("source_name", "现场执行台秘书录音");
+      form.append("installation_id", iid || "");
+      liveExecutorUpdateTask(task, { status: "uploading", detail: "录音已结束，正在上传转写..." });
+      const data = await liveExecutorUploadFile("/api/h5/recorder/files", form, {
+        headers: authHeaders(iid ? { "X-Installation-Id": iid } : {}),
+        onProgress: ({ percent }) => liveExecutorUpdateTask(task, { status: "uploading", detail: `录音上传 ${percent}%` }),
+      });
+      const record = data && data.record ? data.record : {};
+      liveExecutorUpdateTask(task, {
+        status: "processing",
+        recordId: record.id || "",
+        result: record,
+        detail: "录音已提交，正在生成秘书摘要...",
+      });
+      startLiveExecutorPolling();
+      loadRecorderRecords().catch(() => {});
+    }
+
+    function liveExecutorInferVoiceAction(text) {
+      const raw = String(text || "").trim();
+      if (!raw) return "";
+      if (/秘书|录音|会议|转写|整理|摘要/.test(raw)) return "secretary";
+      if (/获客|线索|采集|客户|抖音|搜索/.test(raw)) return "leads";
+      if (/视频|分镜|短片|生成片|成片/.test(raw)) return "video";
+      if (/个微|个人微信|微信|接管|私信|回复/.test(raw)) return "wechat";
+      return "";
+    }
+
+    function executeLiveExecutorVoiceCommand() {
+      const text = liveExecutorPromptText();
+      const action = liveExecutorInferVoiceAction(text);
+      if (!action) {
+        toast("这个现场入口只支持秘书、获客、生成视频、个人微信；复杂调度请去 AI 调度助手");
+        return;
+      }
+      handleLiveExecutorAction(action).catch((err) => toast(err.message || "执行失败"));
+    }
+
+    async function refreshLiveExecutorTasks() {
+      const live = liveExecutorState();
+      const tasks = Array.isArray(live.tasks) ? live.tasks : [];
+      if (!tasks.length) return;
+      const hasRunTasks = tasks.some((task) => task.runId);
+      if (hasRunTasks) {
+        await loadRuns({ reset: true, limit: 80, compact: false, preserveExisting: true, silent: true }).catch(() => {});
+        tasks.forEach((task) => {
+          const run = liveExecutorTaskRun(task);
+          if (!run) return;
+          const status = isActiveRun(run) ? "processing" : String(run.status || "").toLowerCase();
+          liveExecutorUpdateTask(task, {
+            status: status || task.status,
+            detail: isActiveRun(run) ? (runProgressText(run) || "执行中") : (runDisplayResult(run) || "执行完成"),
+            error: String(run.error || ""),
+          });
+        });
+      }
+      const secretaryTasks = tasks.filter((task) => task.type === "secretary" && task.recordId && !["completed", "failed"].includes(String(task.status || "")));
+      await Promise.all(secretaryTasks.map(async (task) => {
+        try {
+          const row = await api(`/api/h5/recorder/files/${encodeURIComponent(task.recordId)}`, { blocking: false });
+          const nextStatus = String(row.status || "").toLowerCase();
+          liveExecutorUpdateTask(task, {
+            status: nextStatus === "completed" ? "completed" : (nextStatus === "failed" ? "failed" : "processing"),
+            result: row,
+            detail: nextStatus === "completed" ? (row.summary_text || "秘书整理完成") : (row.error_message || "正在生成秘书摘要..."),
+            error: row.error_message || "",
+          });
+        } catch (err) {
+          liveExecutorUpdateTask(task, { detail: err.message || "秘书记录刷新失败" });
+        }
+      }));
+    }
+
+    function startLiveExecutorPolling() {
+      const live = liveExecutorState();
+      if (live.poller) return;
+      live.poller = setInterval(() => {
+        if (!document.querySelector("#liveExecutorView.active")) return;
+        refreshLiveExecutorTasks().catch(() => {});
+      }, 4000);
+    }
+
+    function loadLiveExecutorPage() {
+      renderLiveExecutorDeviceSelect();
+      renderLiveExecutorImage();
+      renderLiveExecutorTasks();
+      decorateVoiceFillFields($("liveExecutorView") || document);
+      refreshDeviceStatus().then(() => renderLiveExecutorDeviceSelect()).catch(() => renderLiveExecutorDeviceSelect());
+      startLiveExecutorPolling();
+      refreshLiveExecutorTasks().catch(() => {});
+    }
+
+    function closeLiveExecutorResultModal() {
+      const modal = $("liveExecutorResultModal");
+      if (!modal) return;
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
+      modal.querySelectorAll("video, audio").forEach((media) => {
+        try { media.pause(); } catch {}
+      });
+    }
+
+    function liveExecutorMediaHtml(run) {
+      const entries = collectRunMediaEntries(run);
+      const rows = entries.filter((entry) => entry && (entry.url || entry.source_url));
+      if (!rows.length) return "";
+      return `<div class="live-executor-result-media">${rows.map((entry) => {
+        const src = mediaProxyUrl(entry.url || entry.source_url || "", "inline", entry.title || "result");
+        const type = String(entry.media_type || "").toLowerCase();
+        return type === "video"
+          ? `<video src="${escapeHtml(src)}" controls playsinline preload="metadata"></video>`
+          : `<img src="${escapeHtml(src)}" alt="${escapeHtml(entry.title || "执行结果")}">`;
+      }).join("")}</div>`;
+    }
+
+    function liveExecutorTableHtml(value) {
+      const rows = [];
+      const walkRows = Array.isArray(value) ? value.slice(0, 30) : [];
+      walkRows.forEach((item, index) => {
+        if (!item || typeof item !== "object") return;
+        rows.push(`<tr><th>${index + 1}</th><td>${escapeHtml(JSON.stringify(item, null, 2))}</td></tr>`);
+      });
+      return rows.length ? `<table class="live-executor-result-table"><tbody>${rows.join("")}</tbody></table>` : "";
+    }
+
+    async function openLiveExecutorTaskResult(taskId) {
+      const live = liveExecutorState();
+      const task = (live.tasks || []).find((row) => String(row.id) === String(taskId));
+      if (!task) return;
+      const modal = $("liveExecutorResultModal");
+      const title = $("liveExecutorResultTitle");
+      const type = $("liveExecutorResultType");
+      const body = $("liveExecutorResultBody");
+      if (!modal || !title || !type || !body) return;
+      title.textContent = task.title || "执行结果";
+      type.textContent = ({ secretary: "AI秘书", leads: "获客数据", video: "生成视频", wechat: "个人微信" }[task.type] || "现场任务");
+      body.innerHTML = '<div class="hint">正在读取结果...</div>';
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      if (task.type === "secretary") {
+        const row = task.recordId
+          ? await api(`/api/h5/recorder/files/${encodeURIComponent(task.recordId)}`, { blocking: false }).catch(() => task.result || {})
+          : (task.result || {});
+        body.innerHTML = `
+          <div class="live-executor-result-pre">${escapeHtml(row.summary_text || row.error_message || task.detail || "秘书摘要生成中")}</div>
+          ${row.transcript_text ? `<h4>完整转写</h4><div class="live-executor-result-pre">${escapeHtml(row.transcript_text)}</div>` : ""}
+        `;
+        return;
+      }
+      const run = liveExecutorTaskRun(task);
+      if (!run) {
+        body.innerHTML = `<div class="live-executor-result-pre">${escapeHtml(task.detail || task.error || "暂未同步到执行结果")}</div>`;
+        return;
+      }
+      const payload = run.result_payload && typeof run.result_payload === "object" ? run.result_payload : {};
+      const media = task.type === "video" ? liveExecutorMediaHtml(run) : "";
+      const list = payload.items || payload.customers || payload.results || payload.records || payload.data;
+      const table = Array.isArray(list) ? liveExecutorTableHtml(list) : "";
+      body.innerHTML = [
+        media,
+        `<div class="live-executor-result-pre">${escapeHtml(runDisplayResult(run) || run.error || "执行完成")}</div>`,
+        table,
+        `<details><summary>查看原始结果</summary><div class="live-executor-result-pre">${escapeHtml(JSON.stringify(payload || {}, null, 2))}</div></details>`,
+      ].filter(Boolean).join("");
+    }
+
     function deviceDisplayName(device) {
       if (!device) return "";
       return String(device.display_name || device.installation_id || "").trim();
@@ -12648,7 +13357,7 @@
     }
 
     function refreshMyAreaDeviceStatus(key = activeViewKey()) {
-      if (!["profile", "personalSettings", "recorder", "mountedAccounts"].includes(String(key || ""))) return;
+      if (!["profile", "personalSettings", "recorder", "mountedAccounts", "liveExecutor"].includes(String(key || ""))) return;
       refreshDeviceStatus().catch(() => {});
     }
 
@@ -13392,6 +14101,7 @@
         messages: ["AI 调度助手", "用文字或语音安排工作"],
         voice: ["龙虾AI语音助手", ""],
         profile: ["个人中心", "账号和功能入口"],
+        liveExecutor: ["现场执行台", "拍照、语音和四类现场任务"],
         recorder: ["AI秘书", "整理录音、提炼重点、跟进待办"],
         recorderDetail: ["秘书记录", "摘要、待办和完整转写"],
         personalMemoryDetail: ["记忆文件", "查看完整内容"],
@@ -13447,6 +14157,9 @@
       if (key === "mountedAccounts") {
         renderProfileDeviceSelect();
         refreshMountedAccounts().catch(() => {});
+      }
+      if (key === "liveExecutor") {
+        loadLiveExecutorPage();
       }
       if (key === "wechatIntelligence") {
         renderWechatIntelligence();
@@ -13909,6 +14622,11 @@
         state.voiceAudioContext = null;
       }
       if (state.voiceWs) {
+        try {
+          state.voiceWs.onmessage = null;
+          state.voiceWs.onclose = null;
+          state.voiceWs.onerror = null;
+        } catch {}
         try { state.voiceWs.close(); } catch {}
         state.voiceWs = null;
       }
@@ -14070,6 +14788,14 @@
       if (!cancelled && transcript) fillVoiceTranscriptIntoField(field, transcript);
       resetFieldVoiceCapture(cancelled ? "cancelled" : "resolved");
       if (!cancelled && !transcript) toast("没有识别到语音，请按住后再说一次");
+    }
+
+    function recoverFieldVoicePartialBeforeReset(status = "error") {
+      const field = state.voiceFieldTarget;
+      const transcript = String(state.voiceDraft || state.voicePartial || "").trim();
+      if (transcript) fillVoiceTranscriptIntoField(field, transcript);
+      resetFieldVoiceCapture(status);
+      return !!transcript;
     }
 
     async function startFieldVoiceCapture(evt, field, button) {
@@ -14263,9 +14989,9 @@
           if (type === "error") {
             const message = String(payload.message || "语音识别失败");
             if (target === "composer") {
-              resetComposerVoiceCapture({ status: "error", clearTranscript: true });
+              resetComposerVoiceCapture({ status: "error", clearTranscript: !String(state.voiceDraft || state.voicePartial || "").trim() });
             } else if (target === "field") {
-              resetFieldVoiceCapture("error");
+              recoverFieldVoicePartialBeforeReset("error");
             } else {
               state.voiceRecording = false;
               state.voiceStatus = "error";
@@ -14282,11 +15008,11 @@
         if (sessionNonce !== state.voiceSessionNonce) return;
         state.voiceWs = null;
         if (target === "composer" && (state.voiceRecording || state.composerVoicePendingSend)) {
-          resetComposerVoiceCapture({ status: "error", clearTranscript: true });
+          resetComposerVoiceCapture({ status: "error", clearTranscript: !String(state.voiceDraft || state.voicePartial || "").trim() });
           toast("语音识别连接已中断，请重试");
         } else if (target === "field" && state.voiceFieldTarget) {
-          resetFieldVoiceCapture("error");
-          toast("语音识别连接已中断，请重试");
+          const recovered = recoverFieldVoicePartialBeforeReset("error");
+          toast(recovered ? "语音识别连接中断，已保留已识别内容" : "语音识别连接已中断，请重试");
         } else if (target !== "composer" && state.voiceRecording) {
           state.voiceRecording = false;
           state.voiceStatus = "error";
@@ -14297,11 +15023,11 @@
       ws.onerror = () => {
         if (sessionNonce !== state.voiceSessionNonce) return;
         if (target === "composer") {
-          resetComposerVoiceCapture({ status: "error", clearTranscript: true });
+          resetComposerVoiceCapture({ status: "error", clearTranscript: !String(state.voiceDraft || state.voicePartial || "").trim() });
           toast("语音识别连接异常，请重试");
         } else if (target === "field") {
-          resetFieldVoiceCapture("error");
-          toast("语音识别连接异常，请重试");
+          const recovered = recoverFieldVoicePartialBeforeReset("error");
+          toast(recovered ? "语音识别连接异常，已保留已识别内容" : "语音识别连接异常，请重试");
         }
       };
       ws.send(JSON.stringify({ type: "start", format: "pcm_s16le", sample_rate: 16000, channels: 1 }));
@@ -23698,6 +24424,38 @@
         openHomeTarget(target, activeViewKey() || "office");
       });
     });
+    $("liveExecutorRefreshBtn")?.addEventListener("click", () => {
+      refreshDeviceStatus().then(() => {
+        renderLiveExecutorDeviceSelect();
+        toast("设备状态已刷新");
+      }).catch((err) => toast(err.message || "设备刷新失败"));
+    });
+    $("liveExecutorDeviceSelect")?.addEventListener("change", (evt) => {
+      setSelectedInstallationId(evt.currentTarget.value || "");
+      renderLiveExecutorDeviceSelect();
+    });
+    $("liveExecutorImageFile")?.addEventListener("change", (evt) => {
+      const file = evt.currentTarget && evt.currentTarget.files && evt.currentTarget.files[0];
+      if (!file) return;
+      uploadLiveExecutorImageFile(file).catch((err) => toast(err.message || "现场图片上传失败"));
+    });
+    $("liveExecutorClearPromptBtn")?.addEventListener("click", () => {
+      if ($("liveExecutorPrompt")) $("liveExecutorPrompt").value = "";
+    });
+    $("liveExecutorVoiceRouteBtn")?.addEventListener("click", executeLiveExecutorVoiceCommand);
+    $("liveExecutorView")?.addEventListener("click", (evt) => {
+      const actionBtn = evt.target.closest("[data-live-action]");
+      if (actionBtn) {
+        handleLiveExecutorAction(actionBtn.dataset.liveAction || "").catch((err) => toast(err.message || "执行失败"));
+        return;
+      }
+      const taskCard = evt.target.closest("[data-live-task-id]");
+      if (taskCard && (evt.target.closest(".live-executor-open-result") || taskCard.classList.contains("has-result"))) {
+        openLiveExecutorTaskResult(taskCard.dataset.liveTaskId || "").catch((err) => toast(err.message || "结果读取失败"));
+      }
+    });
+    $("liveExecutorResultBackdrop")?.addEventListener("click", closeLiveExecutorResultModal);
+    $("liveExecutorResultClose")?.addEventListener("click", closeLiveExecutorResultModal);
     $("creationQuickBackdrop")?.addEventListener("click", closeCreationQuickSheet);
     $("creationQuickClose")?.addEventListener("click", closeCreationQuickSheet);
     $("creationQuickGrid")?.addEventListener("click", (evt) => {
