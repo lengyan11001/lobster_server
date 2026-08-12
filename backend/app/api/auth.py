@@ -530,14 +530,6 @@ async def login(request: Request, db: Session = Depends(get_db)):
     iid = scoped_installation_id(raw_iid, brand_mark)
     if iid:
         ensure_installation_slot(db, user.id, iid)
-    if raw_iid:
-        claim_installation_slot(
-            db,
-            user_id=user.id,
-            installation_id=raw_iid,
-            brand_mark=brand_mark,
-            auth_session_id=auth_session_id_from_token(access_token),
-        )
     return Token(access_token=access_token)
 
 
@@ -559,14 +551,6 @@ def login_phone_password(body: PhonePasswordLoginBody, request: Request, db: Ses
     iid = scoped_installation_id(raw_iid, brand_mark)
     if iid:
         ensure_installation_slot(db, user.id, iid)
-    if raw_iid:
-        claim_installation_slot(
-            db,
-            user_id=user.id,
-            installation_id=raw_iid,
-            brand_mark=brand_mark,
-            auth_session_id=auth_session_id_from_token(access_token),
-        )
     return Token(access_token=access_token)
 
 
@@ -666,14 +650,6 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
         reg_iid = scoped_installation_id(raw_reg_iid, brand_mark)
         if reg_iid:
             ensure_installation_slot(db, existing.id, reg_iid)
-        if raw_reg_iid:
-            claim_installation_slot(
-                db,
-                user_id=existing.id,
-                installation_id=raw_reg_iid,
-                brand_mark=brand_mark,
-                auth_session_id=auth_session_id_from_token(access_token),
-            )
         if password_initialized:
             db.add(existing)
             db.commit()
@@ -731,14 +707,6 @@ def register_phone(body: RegisterPhoneBody, request: Request, db: Session = Depe
     access_token = create_access_token(data=access_token_claims(user))
     if reg_iid:
         ensure_installation_slot(db, user.id, reg_iid)
-    if raw_reg_iid:
-        claim_installation_slot(
-            db,
-            user_id=user.id,
-            installation_id=raw_reg_iid,
-            brand_mark=brand_mark,
-            auth_session_id=auth_session_id_from_token(access_token),
-        )
     return Token(access_token=access_token)
 
 
@@ -964,13 +932,6 @@ def sutui_login_with_token(body: LoginWithTokenBody, request: Request, db: Sessi
         iid = scoped_installation_id(raw_iid, brand_mark)
         if iid:
             ensure_installation_slot(db, user.id, iid)
-        claim_installation_slot(
-            db,
-            user_id=user.id,
-            installation_id=raw_iid,
-            brand_mark=brand_mark,
-            auth_session_id=auth_session_id_from_token(access_token),
-        )
     return Token(access_token=access_token, token_type="bearer")
 
 

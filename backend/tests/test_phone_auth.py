@@ -184,6 +184,162 @@ def test_set_password_then_phone_password_login(db_session, db_session_factory, 
     assert login_res.json()["access_token"]
 
 
+def test_password_login_does_not_claim_execution_slot(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import get_password_hash
+    from backend.app.models import InstallationSlotOwner, User, UserInstallation
+
+    owner = User(
+        email="13900139110@sms.lobster.local",
+        hashed_password=get_password_hash("owner-pass"),
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    login_user = User(
+        email="13900139111@sms.lobster.local",
+        hashed_password=get_password_hash("login-pass"),
+        password_initialized=True,
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([owner, login_user])
+    db_session.flush()
+    slot = InstallationSlotOwner(
+        installation_id="shared-login-slot-001",
+        user_id=owner.id,
+        brand_mark="bihuo",
+        lease_version=1,
+        claimed_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db_session.add(slot)
+    db_session.commit()
+
+    res = _client(db_session_factory, monkeypatch).post(
+        "/auth/login-phone-password",
+        json={"phone": "13900139111", "password": "login-pass"},
+        headers={"X-Installation-Id": "shared-login-slot-001"},
+    )
+
+    assert res.status_code == 200
+    with db_session_factory() as s:
+        owner_row = s.query(InstallationSlotOwner).filter_by(installation_id="shared-login-slot-001").one()
+        assert owner_row.user_id == owner.id
+        assert (
+            s.query(UserInstallation)
+            .filter_by(user_id=login_user.id, installation_id="shared-login-slot-001")
+            .count()
+            == 1
+        )
+
+
+def test_sms_login_does_not_claim_execution_slot(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import get_password_hash
+    from backend.app.models import InstallationSlotOwner, User
+
+    owner = User(
+        email="13900139120@sms.lobster.local",
+        hashed_password=get_password_hash("owner-pass"),
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    login_user = User(
+        email="13900139121@sms.lobster.local",
+        hashed_password=get_password_hash("custom-password"),
+        password_initialized=True,
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([owner, login_user])
+    db_session.flush()
+    db_session.add(
+        InstallationSlotOwner(
+            installation_id="shared-sms-slot-001",
+            user_id=owner.id,
+            brand_mark="bihuo",
+            lease_version=1,
+            claimed_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+    )
+    db_session.commit()
+    _put_sms_code(db_session, "13900139121")
+
+    res = _client(db_session_factory, monkeypatch).post(
+        "/auth/register-phone",
+        json={"phone": "13900139121", "code": "123456"},
+        headers={"X-Installation-Id": "shared-sms-slot-001"},
+    )
+
+    assert res.status_code == 200
+    with db_session_factory() as s:
+        owner_row = s.query(InstallationSlotOwner).filter_by(installation_id="shared-sms-slot-001").one()
+        assert owner_row.user_id == owner.id
+
+
+def test_explicit_claim_installation_slot_still_transfers_owner(db_session, db_session_factory, monkeypatch):
+    from backend.app.api.auth import get_password_hash
+    from backend.app.models import InstallationSlotOwner, User
+
+    old_owner = User(
+        email="13900139130@sms.lobster.local",
+        hashed_password=get_password_hash("owner-pass"),
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    new_owner = User(
+        email="13900139131@sms.lobster.local",
+        hashed_password=get_password_hash("new-pass"),
+        password_initialized=True,
+        credits=Decimal("100.0000"),
+        role="user",
+        preferred_model="sutui",
+        created_at=datetime.utcnow(),
+    )
+    db_session.add_all([old_owner, new_owner])
+    db_session.flush()
+    db_session.add(
+        InstallationSlotOwner(
+            installation_id="explicit-claim-slot-001",
+            user_id=old_owner.id,
+            brand_mark="bihuo",
+            lease_version=1,
+            claimed_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+    )
+    db_session.commit()
+
+    client = _client(db_session_factory, monkeypatch)
+    login = client.post(
+        "/auth/login-phone-password",
+        json={"phone": "13900139131", "password": "new-pass"},
+        headers={"X-Installation-Id": "explicit-claim-slot-001"},
+    )
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+
+    claim = client.post(
+        "/auth/claim-installation-slot",
+        headers={"Authorization": f"Bearer {token}", "X-Installation-Id": "explicit-claim-slot-001"},
+    )
+
+    assert claim.status_code == 200
+    assert claim.json()["transferred"] is True
+    with db_session_factory() as s:
+        owner_row = s.query(InstallationSlotOwner).filter_by(installation_id="explicit-claim-slot-001").one()
+        assert owner_row.user_id == new_owner.id
+
+
 def test_sms_login_does_not_replace_an_initialized_password(db_session, db_session_factory, monkeypatch):
     from backend.app.api.auth import get_password_hash, verify_password
     from backend.app.models import User
