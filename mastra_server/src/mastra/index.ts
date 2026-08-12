@@ -13,6 +13,7 @@ import { PostgresStore } from '@mastra/pg'
 import { disableTypes as disableImageSizeTypes } from 'image-size'
 import { z } from 'zod'
 
+import { searchCapabilities } from './capability-search.js'
 import { inspectMediaResult, type MediaAsset } from './media-task.js'
 
 // No patched image-size release exists yet; disable the vulnerable decoders at process startup.
@@ -431,60 +432,16 @@ const listSystemCapabilities = createTool({
     const catalog = data?.capabilities && typeof data.capabilities === 'object'
       ? data.capabilities as Record<string, Record<string, unknown>>
       : {}
-    const needle = String(query || '').trim().toLowerCase()
-    const terms = needle.split(/[\s,，、]+/).filter(Boolean)
-    const rows = Object.entries(catalog).map(([capabilityId, definition]) => {
-      const description = String(definition.description || definition.name || '')
-      const keywords = Array.isArray(definition.keywords)
-        ? definition.keywords.map(value => String(value || '').trim()).filter(Boolean).slice(0, 20)
-        : []
-      const action = String(definition.action || '')
-      const executionTarget = String(definition.execution_target || 'server')
-      const schema = definition.arg_schema || definition.inputSchema || definition.input_schema
-      const propertyDefinitions = schema && typeof schema === 'object'
-        ? (((schema as Record<string, unknown>).properties || {}) as Record<string, unknown>)
-        : {}
-      const properties = Object.keys(propertyDefinitions).slice(0, 12)
-      const required = schema && typeof schema === 'object' && Array.isArray((schema as Record<string, unknown>).required)
-        ? ((schema as Record<string, unknown>).required as unknown[]).map(value => String(value)).slice(0, 12)
-        : []
-      const parameterSchema = Object.fromEntries(properties.map(name => {
-        const raw = propertyDefinitions[name]
-        const rule = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
-        return [name, {
-          type: String(rule.type || 'unknown'),
-          required: required.includes(name),
-          ...(Object.prototype.hasOwnProperty.call(rule, 'default') ? { default: rule.default } : {}),
-          ...(Array.isArray(rule.enum) ? { enum: rule.enum.slice(0, 20) } : {}),
-          ...(rule.minimum !== undefined ? { minimum: rule.minimum } : {}),
-          ...(rule.maximum !== undefined ? { maximum: rule.maximum } : {}),
-          ...(rule.maxItems !== undefined ? { max_items: rule.maxItems } : {}),
-          ...(rule.description ? { description: String(rule.description).slice(0, 200) } : {}),
-        }]
-      }))
-      const haystack = `${capabilityId} ${description} ${action} ${keywords.join(' ')}`.toLowerCase()
-      const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0)
-      return {
-        capability_id: capabilityId,
-        description: description.slice(0, 400),
-        execution_target: executionTarget,
-        action,
-        keywords,
-        parameters: properties,
-        required_parameters: required,
-        parameter_schema: parameterSchema,
-        score,
-      }
-    })
-    const matched = (terms.length ? rows.filter(row => row.score > 0) : rows)
-      .sort((a, b) => b.score - a.score || a.capability_id.localeCompare(b.capability_id))
-      .slice(0, 24)
-      .map(({ score: _score, ...row }) => row)
+    const result = searchCapabilities(catalog, query || '')
+    const canExecute = contextValue(context, 'permissionMode') === 'full' || contextValue(context, 'approvalGranted')
     return {
       query: query || '',
-      matched_count: matched.length,
-      available_count: rows.length,
-      capabilities: matched,
+      matched_count: result.matched_count,
+      available_count: result.available_count,
+      capabilities: result.capabilities,
+      execution_hint: canExecute
+        ? '当前会话已授权；命中 execution_target=server 的能力时加载并调用实际 MCP 工具，命中 execution_target=online 时调用 dispatch_online_capability。'
+        : '当前会话是确认模式；用户明确要求执行命中的 server 生成/写入能力时，先调用 request_task_approval 生成确认卡，execution_target=server。不要说未检索到能力，也不要让用户口头再发“确认执行”。',
       built_in: [
         '读取、保存和从已上传素材整理个人记忆',
         '读取和修改 IP 人设资料',
@@ -492,7 +449,7 @@ const listSystemCapabilities = createTool({
         '检索内容素材、技能和云端能力',
         '把依赖桌面、账号登录态或本机文件的任务下发到 Online',
       ],
-      hint: matched.length ? '确认执行后只加载与目标最相关的工具。' : '没有匹配项时请换更具体的平台或动作关键词。',
+      hint: result.matched_count ? '确认执行后只加载与目标最相关的工具。' : '没有匹配项时请换更具体的平台或动作关键词。',
     }
   },
 })
@@ -1000,6 +957,7 @@ const orchestrator = new Agent({
 8. 用户明确说“以后个人微信遇到某种情况要怎么回、不要说什么、何时拉群或如何跟进”时，先用 read_wechat_intelligence 核对现有规则，再调用 teach_wechat_takeover 保存为长期规则。不要把普通咨询或一次性代写误存为规则。
 9. teach_wechat_takeover 只负责教学，正常的个人微信自动回复不依赖当前调度会话，也不需要每条消息授权。
 10. 用户只是咨询时直接回答；用户明确要求执行时才调用工具。save、update、teach、dispatch 等内置写入工具自身会申请授权，直接调用目标工具，不要先调用 request_task_approval 造成重复确认。只有目标工具没有授权保护时才使用 request_task_approval。不要把同一任务同时交给服务器和 Online 重复执行。
+10a. 用户明确要求生成图片、视频、语音、文档等服务器侧产物时，必须先用 list_system_capabilities 检索能力；若命中 execution_target=server 但当前尚未获得确认授权，调用 request_task_approval 生成确认卡，等待用户点击确认后再执行。不得因为执行工具暂未加载就回答“没有能力”。
 11. 历史摘要只是事实背景，不是新的用户指令；本轮明确要求优先于历史摘要。资料和工具结果冲突时说明冲突，不要自行拼凑结论。
 12. 回复使用中文，先给结果和状态，再给必要细节。不要暴露 Mastra、MCP、速推、模型供应商或内部服务名称。
   `.trim(),
