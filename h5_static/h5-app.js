@@ -9,6 +9,26 @@
       }
     })();
     const brandStorageKey = (key) => `${key}:${H5_BRAND_MARK}`;
+    const DEPRECATED_INSTALLATION_IDS = new Set([
+      "2fc3f43f7a684411a442cb661898aa74",
+      "fa2d09cfbd9c4b2380352906225f2817",
+    ]);
+    function rawInstallationId(value) {
+      const text = String(value || "").trim();
+      return text.includes("--") ? text.split("--").slice(1).join("--") : text;
+    }
+    function isDeprecatedInstallationId(value) {
+      return DEPRECATED_INSTALLATION_IDS.has(rawInstallationId(value));
+    }
+    function readSelectedInstallationId() {
+      const key = brandStorageKey("lobster_h5_selected_installation_id");
+      const value = localStorage.getItem(key) || "";
+      if (isDeprecatedInstallationId(value)) {
+        localStorage.removeItem(key);
+        return "";
+      }
+      return value;
+    }
     const H5_TOKEN_KEY = brandStorageKey("lobster_h5_token");
     const H5_USER_CACHE_KEY = brandStorageKey("lobster_h5_user");
     const H5_BRANDING_CACHE_KEY = brandStorageKey("lobster_h5_branding");
@@ -48,7 +68,7 @@
       chatSessionManageId: "",
       chatSessionManageMode: "rename",
       devices: [],
-      selectedInstallationId: localStorage.getItem(brandStorageKey("lobster_h5_selected_installation_id")) || "",
+      selectedInstallationId: readSelectedInstallationId(),
       tasks: [],
       runs: [],
       runStatusSnapshot: {},
@@ -12519,10 +12539,15 @@
     }
 
     function ensureSelectedInstallationId() {
-      const selected = String(state.selectedInstallationId || "").trim();
+      let selected = String(state.selectedInstallationId || "").trim();
+      if (isDeprecatedInstallationId(selected)) {
+        state.selectedInstallationId = "";
+        selected = "";
+        localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
+      }
       if (selected && state.devices.some((d) => d.online && String(d.installation_id || "") === selected)) return selected;
       const previous = state.selectedInstallationId;
-      const online = state.devices.find((d) => d.online && d.installation_id);
+      const online = state.devices.find((d) => d.online && d.installation_id && !isDeprecatedInstallationId(d.installation_id));
       const next = String((online || {}).installation_id || "");
       state.selectedInstallationId = next;
       if (next) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), next);
@@ -12536,7 +12561,9 @@
 
     function setSelectedInstallationId(value) {
       const next = String(value || "").trim();
-      const hit = next ? (state.devices || []).find((d) => d.online && String(d.installation_id || "") === next) : null;
+      const hit = next && !isDeprecatedInstallationId(next)
+        ? (state.devices || []).find((d) => d.online && String(d.installation_id || "") === next)
+        : null;
       state.selectedInstallationId = hit ? next : "";
       if (state.selectedInstallationId) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), state.selectedInstallationId);
       else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
@@ -13931,7 +13958,7 @@
       params.set("brand", H5_BRAND_MARK);
       params.set("resolve_intent", resolveIntent ? "1" : "0");
       const installationId = localStorage.getItem("installation_id") || "";
-      if (installationId) params.set("installation_id", installationId);
+      if (installationId && !isDeprecatedInstallationId(installationId)) params.set("installation_id", installationId);
       return `${base}/api/h5-chat/voice/session?${params.toString()}`;
     }
 

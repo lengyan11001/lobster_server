@@ -20,6 +20,7 @@ from ..models import (
     UserInstallation,
 )
 from .brand_context import scoped_installation_id, user_brand_mark
+from .installation_id_policy import is_deprecated_installation_id
 
 _INSTALLATION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{8,128}$")
 _ACTIVE_STATUSES = {"pending", "processing"}
@@ -339,6 +340,8 @@ def claim_installation_slot(
     raw_installation_id = _normalize_installation_id(installation_id)
     if not raw_installation_id:
         return {"ok": False, "claimed": False, "reason": "invalid_installation_id"}
+    if is_deprecated_installation_id(raw_installation_id):
+        return {"ok": False, "claimed": False, "reason": "deprecated_installation_id"}
 
     now = datetime.utcnow()
     session_id = str(auth_session_id or "").strip()[:128]
@@ -425,6 +428,8 @@ def assert_installation_slot_owner(
     raw_installation_id = _normalize_installation_id(installation_id)
     if not raw_installation_id:
         raise HTTPException(status_code=400, detail="缺少或无效的 X-Installation-Id")
+    if is_deprecated_installation_id(raw_installation_id):
+        raise HTTPException(status_code=409, detail="installation_id_deprecated")
     owner = (
         db.query(InstallationSlotOwner)
         .filter(InstallationSlotOwner.installation_id == raw_installation_id)

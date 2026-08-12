@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from ..core.config import settings
 from ..models import InstallationSignupBonusClaim, User, UserInstallation
 from ..services.brand_context import scoped_installation_id, user_brand_mark
+from ..services.installation_id_policy import is_deprecated_installation_id
 
 INSTALLATION_ID_HEADER = "X-Installation-Id"
 MAX_USER_INSTALLATIONS = 20
@@ -34,6 +35,8 @@ def parse_installation_id_strict(raw: Optional[str]) -> str:
             status_code=400,
             detail="缺少 X-Installation-Id 请求头，请使用最新客户端。",
         )
+    if is_deprecated_installation_id(s):
+        raise HTTPException(status_code=409, detail="installation_id_deprecated")
     if len(s) < 8 or len(s) > 128:
         raise HTTPException(status_code=400, detail="X-Installation-Id 长度无效。")
     if not re.match(r"^[a-zA-Z0-9\-_]+$", s):
@@ -49,6 +52,8 @@ def optional_installation_id_from_request(request: Request) -> Optional[str]:
         request.headers.get(INSTALLATION_ID_HEADER) or request.headers.get("x-installation-id") or ""
     ).strip()
     if not raw:
+        return None
+    if is_deprecated_installation_id(raw):
         return None
     if len(raw) < 8 or len(raw) > 128:
         return None
@@ -69,7 +74,7 @@ def installation_slot_id_for_user(db: Session, user_id: int, installation_id: st
 
 def ensure_installation_slot(db: Session, user_id: int, installation_id: str) -> None:
     """登记或刷新 last_seen；满 20 条时删除最久未访问的一条再插入。"""
-    if not installation_id:
+    if not installation_id or is_deprecated_installation_id(installation_id):
         return
     now = datetime.utcnow()
     row = (

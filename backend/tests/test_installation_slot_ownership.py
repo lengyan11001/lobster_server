@@ -299,3 +299,46 @@ def test_stale_account_heartbeat_cannot_reclaim_transferred_slot(
     assert client.post("/api/h5-chat/device-heartbeat", headers=new_headers, json={}).status_code == 200
     owner = db_session.query(InstallationSlotOwner).filter_by(installation_id=installation_id).one()
     assert owner.user_id == other_user.id
+
+
+def test_deprecated_polluted_installation_id_cannot_heartbeat_or_claim(
+    db_session,
+    db_session_factory,
+    test_user,
+    patch_fuiou_settings,
+):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from backend.app.api.auth import access_token_claims, create_access_token
+    from backend.app.api.h5_chat import router as h5_chat_router
+    from backend.app.db import get_db
+
+    polluted_installation_id = "2fc3f43f7a684411a442cb661898aa74"
+    app = FastAPI()
+    app.include_router(h5_chat_router)
+
+    def get_db_override():
+        session = db_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = get_db_override
+    client = TestClient(app)
+    token = create_access_token(access_token_claims(test_user))
+
+    res = client.post(
+        "/api/h5-chat/device-heartbeat",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Installation-Id": polluted_installation_id,
+            "X-Lobster-Brand": "bihuo",
+        },
+        json={},
+    )
+
+    assert res.status_code == 409
+    assert db_session.query(InstallationSlotOwner).filter_by(installation_id=polluted_installation_id).count() == 0
+    assert db_session.query(H5ChatDevicePresence).filter_by(installation_id=polluted_installation_id).count() == 0
