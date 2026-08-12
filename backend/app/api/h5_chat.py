@@ -241,6 +241,32 @@ def _mounted_default_rows(db: Session, user_id: int) -> Dict[str, H5MountedAccou
     return {str(row.scope or ""): row for row in rows if row.scope}
 
 
+def _installation_id_from_mounted_account(row: Dict[str, Any]) -> str:
+    raw = str(row.get("installation_id") or "").strip()
+    if raw:
+        return raw[:128]
+    key = str(row.get("select_id") or row.get("account_key") or "").strip()
+    head = key.split(":", 1)[0].strip() if ":" in key else ""
+    if head and head not in {"server", "wechat"} and len(head) >= 8:
+        return head[:128]
+    return ""
+
+
+def _mounted_default_installation_id(row: H5MountedAccountDefault) -> str:
+    raw = str(row.installation_id or "").strip()
+    if raw:
+        return raw[:128]
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    raw = _installation_id_from_mounted_account(payload)
+    if raw:
+        return raw
+    key = str(row.account_key or "").strip()
+    head = key.split(":", 1)[0].strip() if ":" in key else ""
+    if head and head not in {"server", "wechat"} and len(head) >= 8:
+        return head[:128]
+    return ""
+
+
 def _mounted_default_payload(row: H5MountedAccountDefault) -> Dict[str, Any]:
     return {
         "scope": row.scope,
@@ -248,7 +274,7 @@ def _mounted_default_payload(row: H5MountedAccountDefault) -> Dict[str, Any]:
         "platform": row.platform or "",
         "account_id": row.account_id or "",
         "account_label": row.account_label or "",
-        "installation_id": row.installation_id or "",
+        "installation_id": _mounted_default_installation_id(row),
         "source": row.source or "",
         "updated_at": _iso(row.updated_at),
     }
@@ -1834,7 +1860,7 @@ def h5_set_mounted_account_default(
     row.platform = platform[:64] or None
     row.account_id = str(account.get("account_id") or "")[:128] or None
     row.account_label = str(account.get("nickname") or "")[:255] or None
-    row.installation_id = str(account.get("installation_id") or "")[:128] or None
+    row.installation_id = _installation_id_from_mounted_account(account) or None
     row.source = str(account.get("source") or "")[:64] or None
     row.payload = account
     row.updated_at = now

@@ -648,6 +648,21 @@ def _mounted_publish_default(db: Session, user_id: int, platform: str) -> Option
     return None
 
 
+def _mounted_default_installation_id(row: H5MountedAccountDefault) -> str:
+    raw = _clean_text(row.installation_id, 128)
+    if raw:
+        return raw
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    raw = _clean_text(payload.get("installation_id"), 128)
+    if raw:
+        return raw
+    key = _clean_text(payload.get("select_id") or row.account_key, 255)
+    head = _clean_text(key.split(":", 1)[0] if ":" in key else "", 128)
+    if head and head not in {"server", "wechat"} and len(head) >= 8:
+        return head
+    return ""
+
+
 def _device_is_online(db: Session, user_id: int, installation_id: str) -> bool:
     iid = _clean_text(installation_id, 128)
     if not iid:
@@ -811,7 +826,7 @@ def _prepare_publish_action_nodes(
             if default_platform != platform:
                 missing.append(f"发布{_workflow_platform_label(platform)}：默认发布账号不是{_workflow_platform_label(platform)}账号")
                 continue
-            default_iid = _clean_text(publish_default.installation_id, 128)
+            default_iid = _mounted_default_installation_id(publish_default)
             if default_iid != _clean_text(installation_id, 128):
                 missing.append(f"发布{_workflow_platform_label(platform)}：默认发布账号不在当前启用设备上")
                 continue

@@ -1,9 +1,12 @@
+from datetime import datetime
+
 from backend.app.api.h5_workflows import (
     _apply_sales_digital_human_defaults,
     _apply_workflow_runtime_options,
+    _prepare_publish_action_nodes,
     _sales_digital_human_template_id,
 )
-from backend.app.models import IPContentScheduleTemplate
+from backend.app.models import H5ChatDevicePresence, H5MountedAccountDefault, IPContentScheduleTemplate
 
 
 def _node(node_id: str, action: str) -> dict:
@@ -93,3 +96,63 @@ def test_current_ip_template_can_explicitly_report_missing_sales_template():
     )
 
     assert _sales_digital_human_template_id(personal, current) == ""
+
+
+def test_publish_default_uses_payload_installation_id_when_column_is_empty(db_session, test_user):
+    installation_id = "2fc3f43f7a684411a442cb661898aa74"
+    now = datetime.utcnow()
+    db_session.add(
+        H5ChatDevicePresence(
+            user_id=test_user.id,
+            installation_id=installation_id,
+            display_name="local-online",
+            last_seen_at=now,
+            created_at=now,
+        )
+    )
+    db_session.add(
+        H5MountedAccountDefault(
+            user_id=test_user.id,
+            scope="publish:douyin",
+            account_key=f"{installation_id}:douyin:-1001",
+            platform="douyin",
+            account_id="-1001",
+            account_label="抖音账号1",
+            installation_id=None,
+            source="publish_device",
+            payload={
+                "account_key": f"{installation_id}:douyin:-1001",
+                "platform": "douyin",
+                "account_id": "-1001",
+                "nickname": "抖音账号1",
+                "installation_id": installation_id,
+            },
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.commit()
+    nodes = [
+        {
+            "id": "content",
+            "ability_label": "同城爆款视频",
+            "children": [
+                {
+                    "id": "publish-douyin",
+                    "platform": "douyin",
+                    "plan": {"payload": {"action": "publish_content", "params": {}}},
+                }
+            ],
+        }
+    ]
+
+    prepared = _prepare_publish_action_nodes(
+        db=db_session,
+        owner=test_user,
+        installation_id=installation_id,
+        nodes=nodes,
+    )
+
+    params = prepared[0]["children"][0]["plan"]["payload"]["params"]
+    assert params["installation_id"] == installation_id
+    assert params["publish_installation_id"] == installation_id
