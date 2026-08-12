@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import hashlib
 import hmac
 import json
 import logging
@@ -44,7 +45,7 @@ from ..services.credit_ledger import append_credit_ledger
 from ..services.brand_context import explicit_request_brand_mark
 from ..services.credits_amount import quantize_credits, credits_json_float, user_balance_decimal
 from ..services.model_usage_monitor import log_model_usage_event
-from ..services.runtime_cache import cache_get, cache_set, cache_set_if_absent
+from ..services.runtime_cache import cache_delete, cache_get, cache_set, cache_set_if_absent
 from ..services.user_feature_flags import OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID, user_has_feature
 from ..services.workload_guard import WorkloadQueueFull, background_heavy_slot, spawn_tracked_task
 from .assets import _run_asset_upload_io, _save_bytes_or_tos
@@ -1044,6 +1045,77 @@ def _extract_image_result_urls(payload: Any) -> List[str]:
 
     visit(payload)
     return result
+
+
+def _image_edit_idempotency_key(user_id: int, raw: Any) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    safe = "".join(ch for ch in value if ch.isalnum() or ch in {"-", "_", ":"})[:96]
+    if not safe:
+        return ""
+    return f"comfly:image_edit:result:{int(user_id)}:{safe}"
+
+
+def _image_edit_fingerprint_key(user_id: int, data: Dict[str, str], files: List[Tuple[str, Tuple[Any, ...]]]) -> str:
+    hasher = hashlib.sha256()
+    for key in sorted(data.keys()):
+        if key in {"response_format"}:
+            continue
+        hasher.update(str(key).encode("utf-8", "ignore"))
+        hasher.update(b"=")
+        hasher.update(str(data.get(key) or "").encode("utf-8", "ignore")[:2048])
+        hasher.update(b"\n")
+    for field_name, file_tuple in files[:12]:
+        filename = str(file_tuple[0] if len(file_tuple) > 0 else "")
+        file_obj = file_tuple[1] if len(file_tuple) > 1 else None
+        content_type = str(file_tuple[2] if len(file_tuple) > 2 else "")
+        try:
+            current_pos = file_obj.tell()
+            file_obj.seek(0, os.SEEK_END)
+            size = int(file_obj.tell())
+            file_obj.seek(0)
+            head = file_obj.read(min(size, 65536)) or b""
+            tail = b""
+            if size > 65536:
+                file_obj.seek(max(0, size - 65536))
+                tail = file_obj.read(65536) or b""
+            file_obj.seek(current_pos)
+        except Exception:
+            size = -1
+            head = b""
+            tail = b""
+        hasher.update(str(field_name).encode("utf-8", "ignore"))
+        hasher.update(filename.encode("utf-8", "ignore"))
+        hasher.update(content_type.encode("utf-8", "ignore"))
+        hasher.update(str(size).encode("ascii", "ignore"))
+        hasher.update(hashlib.sha256(head).digest())
+        hasher.update(hashlib.sha256(tail).digest())
+    return f"comfly:image_edit:result:{int(user_id)}:fp:{hasher.hexdigest()[:32]}"
+
+
+def _cached_image_edit_response(key: str) -> Optional[Dict[str, Any]]:
+    raw = cache_get(key) if key else None
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+async def _wait_cached_image_edit_response(key: str, *, max_seconds: float = 75.0) -> Optional[Dict[str, Any]]:
+    if not key or max_seconds <= 0:
+        return None
+    deadline = asyncio.get_running_loop().time() + max_seconds
+    while True:
+        payload = _cached_image_edit_response(key)
+        if payload is not None:
+            return payload
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(1.0)
 
 
 def _guess_image_ext(content_type: str, url: str) -> str:
@@ -2870,6 +2942,52 @@ async def proxy_images_edits(
         raise HTTPException(400, "缺少 image 文件")
 
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
+    client_request_id = (
+        data.pop("client_request_id", None)
+        or data.pop("job_id", None)
+        or request.headers.get("X-Client-Request-Id")
+        or request.headers.get("X-Idempotency-Key")
+        or ""
+    )
+    idempotency_key = _image_edit_idempotency_key(billing_user_id, client_request_id)
+    if not idempotency_key:
+        idempotency_key = _image_edit_fingerprint_key(billing_user_id, data, files)
+    cached_payload = _cached_image_edit_response(idempotency_key)
+    if cached_payload is not None:
+        _audit(
+            "image_edit_cached",
+            user_id=billing_user_id,
+            request_user_id=request_user_id,
+            model=model,
+            client_request_id=str(client_request_id or "")[:120],
+        )
+        return JSONResponse(cached_payload)
+    pending_key = f"{idempotency_key}:pending" if idempotency_key else ""
+    if pending_key:
+        claimed = cache_set_if_absent(pending_key, "1", ttl_seconds=max(60, int(_TIMEOUT_IMAGE) + 120))
+        if not claimed:
+            try:
+                wait_seconds = max(0.0, min(120.0, float(os.environ.get("COMFLY_IMAGE_EDIT_PENDING_WAIT_SECONDS") or "75")))
+            except (TypeError, ValueError):
+                wait_seconds = 75.0
+            cached_payload = await _wait_cached_image_edit_response(idempotency_key, max_seconds=wait_seconds)
+            if cached_payload is not None:
+                _audit(
+                    "image_edit_cached_after_wait",
+                    user_id=billing_user_id,
+                    request_user_id=request_user_id,
+                    model=model,
+                    client_request_id=str(client_request_id or "")[:120],
+                )
+                return JSONResponse(cached_payload)
+            _audit(
+                "image_edit_pending_duplicate",
+                user_id=billing_user_id,
+                request_user_id=request_user_id,
+                model=model,
+                client_request_id=str(client_request_id or "")[:120],
+            )
+            raise HTTPException(status_code=409, detail="同一个图片任务仍在生成中，请稍后刷新结果，不会重复扣费")
     estimated = estimate_comfly_credits(model, data, for_user=True) or 1
     pre = _do_pre_deduct_by_user_id(
         billing_user_id,
@@ -2923,6 +3041,8 @@ async def proxy_images_edits(
             await asyncio.sleep(0.8 * retry_index)
 
     if resp is None:
+        if pending_key:
+            cache_delete(pending_key)
         _do_full_refund_by_user_id(billing_user_id, pre=pre,
                         capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="image_edit", error=last_error)
         _audit(
@@ -2934,7 +3054,41 @@ async def proxy_images_edits(
         )
         raise HTTPException(502, f"Comfly image edits 调用失败：{last_error}")
 
-    _audit("image_edit_ok", user_id=billing_user_id, request_user_id=request_user_id, model=model, pre=credits_json_float(pre))
+    result_urls = _extract_image_result_urls(resp)
+    if not result_urls:
+        if pending_key:
+            cache_delete(pending_key)
+        error = "Comfly image edits returned no usable image URL"
+        _do_full_refund_by_user_id(
+            billing_user_id,
+            pre=pre,
+            capability_id=_CAPABILITY_FOR_BILLING,
+            model=model,
+            endpoint="image_edit",
+            error=error,
+        )
+        _audit(
+            "image_edit_empty_result",
+            user_id=billing_user_id,
+            request_user_id=request_user_id,
+            model=model,
+            response_keys=list(resp.keys())[:12] if isinstance(resp, dict) else [],
+        )
+        raise HTTPException(502, "Comfly image edits returned no usable image result")
+
+    if idempotency_key:
+        cache_set(idempotency_key, json.dumps(resp, ensure_ascii=False, default=str), ttl_seconds=86400)
+        if pending_key:
+            cache_delete(pending_key)
+    _audit(
+        "image_edit_ok",
+        user_id=billing_user_id,
+        request_user_id=request_user_id,
+        model=model,
+        pre=credits_json_float(pre),
+        result_count=len(result_urls),
+        client_request_id=str(client_request_id or "")[:120],
+    )
     return JSONResponse(resp)
 
 
