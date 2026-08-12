@@ -173,6 +173,15 @@ def test_h5_editor_opens_blank_draft_and_keeps_template_copy_support():
     assert "20260730-workflow-menu-v2" in html
 
 
+def test_custom_workflow_with_local_bestseller_requests_plan_day():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    activation = script.split("async function activateWorkflowTemplate", 1)[1].split("async function stopWorkflowActive", 1)[0]
+
+    assert "function workflowTemplateRequiresPlanDay(tpl)" in script
+    assert "workflowTemplateRequiresPlanDay(tpl)" in activation
+    assert "workflowTemplateIsSales(tpl)" not in activation
+
+
 def test_workflow_template_drawer_keeps_four_system_slots_and_restores_personal_sales():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")

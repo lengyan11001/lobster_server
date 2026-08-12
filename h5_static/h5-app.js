@@ -4463,6 +4463,27 @@
       });
     }
 
+    function workflowNodeRequiresPlanDay(node) {
+      if (!node || typeof node !== "object") return false;
+      const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const inner = payload.payload && typeof payload.payload === "object" ? payload.payload : {};
+      const action = String(
+        payload.action
+        || inner.action
+        || node.workflowAction
+        || node.workQuickKey
+        || node.key
+        || ""
+      ).trim().toLowerCase();
+      if (action === "local_bestseller_daily_video" || action === "local_bestseller") return true;
+      return workflowChildActions(node).some((child) => workflowNodeRequiresPlanDay(child));
+    }
+
+    function workflowTemplateRequiresPlanDay(tpl) {
+      return (Array.isArray(tpl && tpl.nodes) ? tpl.nodes : []).some((node) => workflowNodeRequiresPlanDay(node));
+    }
+
     function personalSystemWorkflowTemplate(templateKey) {
       const key = String(templateKey || "").trim();
       const ownRows = userWorkflowTemplateRows();
@@ -5800,7 +5821,7 @@
       const tpl = workflowTemplateById(id);
       if (tpl && !workflowTemplateCanActivate(tpl)) throw new Error("该员工暂未开放");
       let planDay;
-      if (workflowTemplateIsSales(tpl)) {
+      if (workflowTemplateRequiresPlanDay(tpl)) {
         planDay = await requestWorkflowPlanDay();
         if (planDay === null) return;
       }
