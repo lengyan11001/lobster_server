@@ -794,6 +794,83 @@
       padding: 0 12px;
     }
 
+    .live-executor-config-panel {
+      width: min(760px, calc(100vw - 18px));
+      max-height: min(720px, calc(100vh - 18px));
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      overflow: hidden;
+      border-color: rgba(117, 231, 255, 0.24);
+      background:
+        radial-gradient(circle at 86% 0%, rgba(27, 230, 255, 0.22), transparent 30%),
+        linear-gradient(145deg, rgba(6, 18, 34, 0.98), rgba(10, 30, 54, 0.98));
+    }
+
+    .live-executor-config-head {
+      padding: 16px 18px 10px;
+    }
+
+    .live-executor-config-head p {
+      font-size: 13px;
+    }
+
+    .live-executor-config-device {
+      margin: 10px 18px 0;
+    }
+
+    .live-executor-config-panel .live-executor-source {
+      grid-template-columns: 1fr;
+      gap: 10px;
+      min-height: 0;
+      overflow: auto;
+      padding: 12px 18px;
+    }
+
+    .live-executor-config-panel .live-executor-image-card,
+    .live-executor-config-panel .live-executor-command {
+      border-color: rgba(117, 231, 255, 0.18);
+      background: rgba(255, 255, 255, 0.07);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    }
+
+    .live-executor-config-panel .live-executor-image-preview {
+      max-height: 240px;
+      aspect-ratio: 16 / 9;
+      border: 1px dashed rgba(117, 231, 255, 0.24);
+      background:
+        radial-gradient(circle at 30% 20%, rgba(82, 176, 255, 0.18), transparent 36%),
+        linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+      color: rgba(230, 247, 255, 0.68);
+    }
+
+    .live-executor-config-panel .live-executor-command label {
+      color: #f3fbff;
+    }
+
+    .live-executor-config-panel .live-executor-command textarea {
+      min-height: 132px;
+      max-height: 230px;
+      border-color: rgba(117, 231, 255, 0.24);
+      background: rgba(3, 12, 26, 0.72);
+      color: #f7fcff;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+
+    .live-executor-config-panel .live-executor-command textarea::placeholder {
+      color: rgba(230, 247, 255, 0.46);
+    }
+
+    .live-executor-config-panel .live-executor-command small,
+    .live-executor-config-panel .live-executor-status {
+      color: rgba(230, 247, 255, 0.66);
+    }
+
+    .live-executor-config-actions {
+      padding: 10px 18px 16px;
+      border-top: 1px solid rgba(117, 231, 255, 0.12);
+      background: rgba(4, 13, 27, 0.74);
+    }
+
     @media (max-width: 760px) {
       .live-executor-page {
         min-height: calc(100vh - 90px);
@@ -816,6 +893,36 @@
       }
       .live-executor-actions button {
         min-height: 78px;
+      }
+      .live-executor-config-panel {
+        width: min(430px, calc(100vw - 12px));
+        max-height: calc(100dvh - 12px);
+        border-radius: 22px;
+      }
+      .live-executor-config-head {
+        padding: 14px 14px 8px;
+      }
+      .live-executor-config-head strong {
+        font-size: 21px;
+      }
+      .live-executor-config-head p {
+        display: none;
+      }
+      .live-executor-config-device {
+        margin: 8px 14px 0;
+        font-size: 12px;
+      }
+      .live-executor-config-panel .live-executor-source {
+        padding: 10px 14px;
+      }
+      .live-executor-config-panel .live-executor-image-preview {
+        max-height: 170px;
+      }
+      .live-executor-config-panel .live-executor-command textarea {
+        min-height: 118px;
+      }
+      .live-executor-config-actions {
+        padding: 10px 14px 14px;
       }
     }
     * { box-sizing: border-box; }

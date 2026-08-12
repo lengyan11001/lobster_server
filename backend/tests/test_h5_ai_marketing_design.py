@@ -229,6 +229,10 @@ def test_live_executor_uses_compact_modal_configuration_flow():
 
     assert 'id="liveExecutorVoiceOpenBtn"' in view
     assert 'live-executor-action-grid' in view
+    for label in ("总经办", "市场部", "设计部", "客服部"):
+        assert label in view
+    for old_label in ("<span>秘书</span>", "<span>获客</span>", "<span>个人微信</span>"):
+        assert old_label not in view
     assert '<h2>现场执行台</h2>' not in view
     assert '选择在线设备后，4 个现场动作直接在这里下发' not in view
     assert 'id="liveExecutorLatestCard"' in view
@@ -249,6 +253,8 @@ def test_live_executor_uses_compact_modal_configuration_flow():
     assert 'if (key === "video" && !options.fromConfig)' in script
     assert "handleLiveExecutorAction(action, { fromConfig: true })" in script
     assert ".live-executor-config-panel" in css
+    assert ".live-executor-config-panel .live-executor-command textarea" in css
+    assert ".live-executor-config-panel .live-executor-image-card" in css
     assert ".live-executor-action-grid" in css
     assert ".live-executor-latest-card" in css
 

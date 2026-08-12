@@ -13153,7 +13153,7 @@
         openLiveExecutorConfig(key);
         return;
       }
-      const titles = { leads: "现场获客", video: "现场生成视频", wechat: "现场个人微信" };
+      const titles = { leads: "市场部获客", video: "设计部生成视频", wechat: "客服部个微" };
       const task = liveExecutorAddTask(key, titles[key] || "现场任务");
       liveExecutorQueueTask(task, async () => {
         if (key === "video") {
@@ -13196,8 +13196,8 @@
       btn.classList.toggle("is-recording", active);
       const span = btn.querySelector("span");
       const small = btn.querySelector("small");
-      if (span) span.textContent = active ? "结束秘书录音" : "秘书";
-      if (small) small.textContent = active ? `录音中 ${recorderFormatDuration(Math.floor((Date.now() - Number(live.recorder.startedAt || Date.now())) / 1000))}` : "长录音转写摘要";
+      if (span) span.textContent = active ? "结束录音" : "总经办";
+      if (small) small.textContent = active ? `秘书录音中 ${recorderFormatDuration(Math.floor((Date.now() - Number(live.recorder.startedAt || Date.now())) / 1000))}` : "秘书 · 长录音转写摘要";
     }
 
     async function toggleLiveExecutorSecretary() {
@@ -13217,7 +13217,7 @@
         state.voiceRecording = false;
         cleanupVoiceRuntime();
       }
-      const task = liveExecutorAddTask("secretary", "现场秘书整理", "正在录音，结束后自动上传转写");
+      const task = liveExecutorAddTask("secretary", "总经办秘书整理", "正在录音，结束后自动上传转写");
       const live = liveExecutorState();
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -13235,7 +13235,7 @@
           liveExecutorUpdateTask(task, { status: "failed", error: err.message || "录音上传失败" });
         });
         recorder.start(1000);
-        liveExecutorUpdateTask(task, { status: "recording", detail: "录音中，点击“秘书”结束录音" });
+        liveExecutorUpdateTask(task, { status: "recording", detail: "录音中，点击“总经办”结束录音" });
         syncLiveSecretaryButton();
         live.recorder.timer = setInterval(() => {
           syncLiveSecretaryButton();
@@ -13426,7 +13426,7 @@
       const body = $("liveExecutorResultBody");
       if (!modal || !title || !type || !body) return;
       title.textContent = task.title || "执行结果";
-      type.textContent = ({ secretary: "AI秘书", leads: "获客数据", video: "生成视频", wechat: "个人微信" }[task.type] || "现场任务");
+      type.textContent = ({ secretary: "总经办秘书", leads: "市场部获客", video: "设计部生成视频", wechat: "客服部个微" }[task.type] || "现场任务");
       body.innerHTML = '<div class="hint">正在读取结果...</div>';
       modal.classList.remove("hidden");
       modal.setAttribute("aria-hidden", "false");
