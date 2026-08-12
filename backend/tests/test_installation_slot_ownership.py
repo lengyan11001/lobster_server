@@ -190,7 +190,7 @@ def test_same_account_relogin_does_not_cancel_its_pending_work(db_session, test_
     assert owner.lease_version == 1
 
 
-def test_new_login_session_replaces_previous_source_even_for_same_account(db_session, test_user):
+def test_same_account_new_session_does_not_cancel_its_pending_work(db_session, test_user):
     now = datetime.utcnow()
     installation_id = "same-user-new-source-001"
     claim_installation_slot(
@@ -221,21 +221,19 @@ def test_new_login_session_replaces_previous_source_even_for_same_account(db_ses
         auth_session_id="login-session-b",
     )
 
-    assert result["transferred"] is True
-    assert result["previous_user_ids"] == [test_user.id]
+    assert result["transferred"] is False
+    assert result["previous_user_ids"] == []
     db_session.refresh(message)
-    assert message.status == "cancelled"
+    assert message.status == "pending"
     owner = db_session.query(InstallationSlotOwner).filter_by(installation_id=installation_id).one()
     assert owner.auth_session_id == "login-session-b"
-    assert owner.lease_version == 2
-    with pytest.raises(HTTPException) as exc_info:
-        assert_installation_slot_owner(
-            db_session,
-            user_id=test_user.id,
-            installation_id=installation_id,
-            auth_session_id="login-session-a",
-        )
-    assert exc_info.value.status_code == 409
+    assert owner.lease_version == 1
+    assert_installation_slot_owner(
+        db_session,
+        user_id=test_user.id,
+        installation_id=installation_id,
+        auth_session_id="login-session-a",
+    )
     assert_installation_slot_owner(
         db_session,
         user_id=test_user.id,

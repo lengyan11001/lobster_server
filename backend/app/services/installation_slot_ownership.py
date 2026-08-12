@@ -362,9 +362,7 @@ def claim_installation_slot(
             updated_at=now,
         )
         db.add(owner)
-    elif owner.user_id != user_id or (
-        session_id and str(owner.auth_session_id or "").strip() != session_id
-    ):
+    elif owner.user_id != user_id:
         previous_user_ids.add(int(owner.user_id))
         previous_user_ids.update(_legacy_conflicting_user_ids(db, user_id, raw_installation_id))
         owner.user_id = user_id
@@ -375,6 +373,8 @@ def claim_installation_slot(
         owner.updated_at = now
     else:
         owner.brand_mark = str(brand_mark or owner.brand_mark or "bihuo")[:64]
+        if session_id:
+            owner.auth_session_id = session_id
         owner.updated_at = now
         previous_user_ids.update(_legacy_conflicting_user_ids(db, user_id, raw_installation_id))
 
@@ -439,13 +439,7 @@ def assert_installation_slot_owner(
             auth_session_id=auth_session_id,
         )
         return
-    requested_session_id = str(auth_session_id or "").strip()
-    session_mismatch = bool(
-        owner
-        and str(owner.auth_session_id or "").strip()
-        and str(owner.auth_session_id or "").strip() != requested_session_id
-    )
-    if owner is None or int(owner.user_id) != int(user_id) or session_mismatch:
+    if owner is None or int(owner.user_id) != int(user_id):
         raise HTTPException(
             status_code=409,
             detail="该槽位已被后登录来源接管，当前登录不能继续下发任务",
