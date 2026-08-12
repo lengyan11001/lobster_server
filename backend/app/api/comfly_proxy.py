@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import copy
 import hashlib
 import hmac
 import json
@@ -87,6 +88,7 @@ _MAX_PROXY_VIDEO_TASK_TRACK = 5000
 _MAX_GROK_REFERENCE_BYTES = 30 * 1024 * 1024
 _MAX_PROXY_FILE_BYTES = 512 * 1024 * 1024
 _MAX_IMAGE_EDIT_TOTAL_BYTES = 120 * 1024 * 1024
+_MAX_CHAT_IMAGE_PREPARE_BYTES = 20 * 1024 * 1024
 _proxy_video_task_meta: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 _openmind_tos_url_cache: "OrderedDict[str, str]" = OrderedDict()
 _MAX_OPENMIND_TOS_URL_CACHE = 1000
@@ -1145,6 +1147,63 @@ async def _download_image_bytes(url: str) -> Tuple[bytes, str, str]:
     resp.raise_for_status()
     media_type = (resp.headers.get("content-type") or "image/png").split(";", 1)[0].strip() or "image/png"
     return resp.content, media_type, _guess_image_ext(media_type, src)
+
+
+def _is_remote_http_url(value: Any) -> bool:
+    src = str(value or "").strip().lower()
+    return src.startswith("http://") or src.startswith("https://")
+
+
+async def _prepare_chat_image_urls_for_upstream(body: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    """Comfly chat rejects remote image URLs, so inline only chat image parts before proxying."""
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body, 0
+
+    prepared_body = copy.deepcopy(body)
+    prepared_count = 0
+    url_cache: Dict[str, str] = {}
+    max_bytes = _env_int(
+        "COMFLY_CHAT_IMAGE_PREPARE_MAX_MB",
+        int(_MAX_CHAT_IMAGE_PREPARE_BYTES / (1024 * 1024)),
+        min_value=1,
+        max_value=80,
+    ) * 1024 * 1024
+
+    async def _to_data_url(url: str) -> str:
+        cached = url_cache.get(url)
+        if cached:
+            return cached
+        data, media_type, _ext = await _download_image_bytes(url)
+        if len(data) > max_bytes:
+            raise RuntimeError(f"图片过大，当前上限 {int(max_bytes / (1024 * 1024))}MB")
+        import base64
+
+        data_url = f"data:{media_type or 'image/png'};base64,{base64.b64encode(data).decode('ascii')}"
+        url_cache[url] = data_url
+        return data_url
+
+    prepared_messages = prepared_body.get("messages")
+    if not isinstance(prepared_messages, list):
+        return prepared_body, 0
+    for message in prepared_messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        parts = content if isinstance(content, list) else [content] if isinstance(content, dict) else []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            image_url = part.get("image_url")
+            if isinstance(image_url, dict):
+                url = str(image_url.get("url") or "").strip()
+                if _is_remote_http_url(url):
+                    image_url["url"] = await _to_data_url(url)
+                    prepared_count += 1
+            elif isinstance(image_url, str) and _is_remote_http_url(image_url):
+                part["image_url"] = {"url": await _to_data_url(image_url)}
+                prepared_count += 1
+    return prepared_body, prepared_count
 
 
 async def _persist_generated_image_asset(
@@ -2503,6 +2562,17 @@ async def proxy_chat_completions(
     entry = _require_model_entry(model)
     upstream_body = _body_for_upstream_model(body, model, entry)
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=False)
+    try:
+        upstream_body, prepared_image_count = await _prepare_chat_image_urls_for_upstream(upstream_body)
+    except Exception as e:
+        _audit(
+            "chat_image_prepare_failed",
+            user_id=billing_user_id,
+            request_user_id=request_user_id,
+            model=model,
+            error=str(e)[:300],
+        )
+        raise HTTPException(502, f"Comfly chat 图片准备失败：{e}")
 
     # 预扣（按典型 token 估算）
     estimated = estimate_comfly_credits(model, {}, for_user=True) or 1
@@ -2512,8 +2582,16 @@ async def proxy_chat_completions(
         capability_id=_CAPABILITY_FOR_BILLING,
         model=model,
         endpoint="chat",
+        extra_meta={"prepared_image_count": prepared_image_count},
     )
-    _audit("chat_pre_deduct", user_id=billing_user_id, request_user_id=request_user_id, model=model, estimated=estimated)
+    _audit(
+        "chat_pre_deduct",
+        user_id=billing_user_id,
+        request_user_id=request_user_id,
+        model=model,
+        estimated=estimated,
+        prepared_image_count=prepared_image_count,
+    )
 
     try:
         resp = await _comfly_request("POST", _comfly_url("/v1/chat/completions", model),
@@ -2529,9 +2607,9 @@ async def proxy_chat_completions(
     actual = estimate_comfly_credits(model, {"usage": usage}, for_user=True) or estimated
     _do_settle_by_user_id(billing_user_id, pre=pre, actual=int(actual),
                capability_id=_CAPABILITY_FOR_BILLING, model=model, endpoint="chat",
-               extra_meta={"usage": usage})
+               extra_meta={"usage": usage, "prepared_image_count": prepared_image_count})
     _audit("chat_settled", user_id=billing_user_id, request_user_id=request_user_id, model=model,
-           pre=credits_json_float(pre), actual=int(actual), usage=usage)
+           pre=credits_json_float(pre), actual=int(actual), usage=usage, prepared_image_count=prepared_image_count)
     return JSONResponse(resp)
 
 
