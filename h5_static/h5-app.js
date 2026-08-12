@@ -54,6 +54,7 @@
         imagePreviewUrl: "",
         imageUploadPromise: null,
         imageUploading: false,
+        configAction: "",
         tasks: [],
         queue: Promise.resolve(),
         poller: null,
@@ -12612,6 +12613,7 @@
           imagePreviewUrl: "",
           imageUploadPromise: null,
           imageUploading: false,
+          configAction: "",
           tasks: [],
           queue: Promise.resolve(),
           poller: null,
@@ -12661,6 +12663,123 @@
           ? `在线 ${rows.length} 台，任务会下发到当前选择设备`
           : "请先启动并登录 Online 客户端";
       }
+      renderLiveExecutorConfigModal();
+    }
+
+    function liveExecutorActionMeta(action) {
+      const key = String(action || "").trim();
+      const map = {
+        voice: {
+          title: "语音指令",
+          kicker: "VOICE ROUTE",
+          desc: "说出或输入要执行的现场任务，只识别秘书、获客、生成视频、个人微信这 4 个场景。",
+          submit: "识别并执行",
+          hint: "如果语音要生成视频，请先上传或拍一张现场图片；复杂调度请去 AI 调度助手。",
+          placeholder: "例如：用这张图生成一个高级感介绍视频；或者说：开始抖音获客、接管微信。",
+          needsImage: true,
+        },
+        leads: {
+          title: "现场获客",
+          kicker: "LEADS",
+          desc: "补充搜索方向后下发到当前 Online 设备执行，结果会回到现场任务里查看。",
+          submit: "下发获客",
+          hint: "留空则按“同城获客”默认方向执行。",
+          placeholder: "例如：深圳餐饮老板、广州装修客户、附近高客单私域创业者。",
+          needsImage: false,
+        },
+        video: {
+          title: "现场生成视频",
+          kicker: "VIDEO",
+          desc: "上传或拍摄一张现场参考图，再补充视频要求，调用创意分镜头能力生成视频。",
+          submit: "生成视频",
+          hint: "生成视频必须先上传或拍摄一张图片，执行完成后点击任务卡预览成片。",
+          placeholder: "例如：美女介绍讲述，商务高级感，画面干净，节奏自然，9:16。",
+          needsImage: true,
+        },
+        wechat: {
+          title: "个人微信接管",
+          kicker: "WECHAT",
+          desc: "触发当前设备执行一轮个人微信接管，只展示本轮处理数据，不主动跳走。",
+          submit: "开始接管",
+          hint: "留空则按已配置的接管规则执行一轮。",
+          placeholder: "例如：只处理新消息，语气自然克制，需要拉群时按关键词判断。",
+          needsImage: false,
+        },
+      };
+      return map[key] || map.voice;
+    }
+
+    function renderLiveExecutorConfigModal() {
+      const live = liveExecutorState();
+      const action = live.configAction || "voice";
+      const meta = liveExecutorActionMeta(action);
+      const modal = $("liveExecutorConfigModal");
+      if (!modal) return;
+      const title = $("liveExecutorConfigTitle");
+      const kicker = $("liveExecutorConfigKicker");
+      const desc = $("liveExecutorConfigDesc");
+      const hint = $("liveExecutorConfigHint");
+      const submit = $("liveExecutorConfigSubmitBtn");
+      const prompt = $("liveExecutorPrompt");
+      const imageBlock = $("liveExecutorConfigImageBlock");
+      const deviceName = $("liveExecutorConfigDeviceName");
+      const selected = liveExecutorSelectedInstallationId();
+      const device = selected ? (state.devices || []).find((row) => String(row.installation_id || "") === selected) : null;
+      if (title) title.textContent = meta.title;
+      if (kicker) kicker.textContent = meta.kicker;
+      if (desc) desc.textContent = meta.desc;
+      if (hint) hint.textContent = meta.hint;
+      if (submit) submit.textContent = meta.submit;
+      if (prompt) prompt.placeholder = meta.placeholder;
+      if (imageBlock) imageBlock.classList.toggle("hidden", !meta.needsImage);
+      if (deviceName) deviceName.textContent = selected
+        ? `当前设备：${liveExecutorDeviceLabel(device || { installation_id: selected })}`
+        : "当前设备：未选择在线设备";
+    }
+
+    function openLiveExecutorConfig(action = "voice") {
+      const live = liveExecutorState();
+      live.configAction = String(action || "voice").trim() || "voice";
+      renderLiveExecutorConfigModal();
+      renderLiveExecutorImage();
+      const modal = $("liveExecutorConfigModal");
+      if (!modal) return;
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      decorateVoiceFillFields(modal);
+      setTimeout(() => {
+        const prompt = $("liveExecutorPrompt");
+        if (prompt && document.activeElement !== prompt) prompt.focus();
+      }, 30);
+    }
+
+    function closeLiveExecutorConfigModal() {
+      const modal = $("liveExecutorConfigModal");
+      if (!modal) return;
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
+      liveExecutorState().configAction = "";
+    }
+
+    function liveExecutorVideoHasImageOrUpload() {
+      const live = liveExecutorState();
+      const image = live.image || {};
+      return !!(live.imageUploading || image.source_url || image.asset_id);
+    }
+
+    async function submitLiveExecutorConfig() {
+      const live = liveExecutorState();
+      const action = String(live.configAction || "voice").trim() || "voice";
+      if (action === "voice") {
+        executeLiveExecutorVoiceCommand();
+        return;
+      }
+      if (action === "video" && !liveExecutorVideoHasImageOrUpload()) {
+        toast("请先上传或拍摄一张现场图片");
+        return;
+      }
+      closeLiveExecutorConfigModal();
+      await handleLiveExecutorAction(action, { fromConfig: true });
     }
 
     function revokeLiveExecutorImagePreview() {
@@ -12984,10 +13103,15 @@
       return { title: "现场个人微信接管", taskKind: plan.task_kind, content: "H5 现场执行台：个人微信接管", payload: plan.payload };
     }
 
-    async function handleLiveExecutorAction(action) {
+    async function handleLiveExecutorAction(action, options = {}) {
       const key = String(action || "").trim();
       if (key === "secretary") {
+        closeLiveExecutorConfigModal();
         await toggleLiveExecutorSecretary();
+        return;
+      }
+      if (!options.fromConfig) {
+        openLiveExecutorConfig(key);
         return;
       }
       const titles = { leads: "现场获客", video: "现场生成视频", wechat: "现场个人微信" };
@@ -13034,7 +13158,7 @@
       const span = btn.querySelector("span");
       const small = btn.querySelector("small");
       if (span) span.textContent = active ? "结束秘书录音" : "秘书";
-      if (small) small.textContent = active ? `录音中 ${recorderFormatDuration(Math.floor((Date.now() - Number(live.recorder.startedAt || Date.now())) / 1000))}` : "开始/结束长录音，自动转写整理";
+      if (small) small.textContent = active ? `录音中 ${recorderFormatDuration(Math.floor((Date.now() - Number(live.recorder.startedAt || Date.now())) / 1000))}` : "长录音转写摘要";
     }
 
     async function toggleLiveExecutorSecretary() {
@@ -13157,7 +13281,13 @@
         toast("这个现场入口只支持秘书、获客、生成视频、个人微信；复杂调度请去 AI 调度助手");
         return;
       }
-      handleLiveExecutorAction(action).catch((err) => toast(err.message || "执行失败"));
+      if (action === "video" && !liveExecutorVideoHasImageOrUpload()) {
+        toast("要生成视频，请先上传或拍摄一张现场图片");
+        openLiveExecutorConfig("voice");
+        return;
+      }
+      closeLiveExecutorConfigModal();
+      handleLiveExecutorAction(action, { fromConfig: true }).catch((err) => toast(err.message || "执行失败"));
     }
 
     async function refreshLiveExecutorTasks() {
@@ -24434,6 +24564,7 @@
       setSelectedInstallationId(evt.currentTarget.value || "");
       renderLiveExecutorDeviceSelect();
     });
+    $("liveExecutorVoiceOpenBtn")?.addEventListener("click", () => openLiveExecutorConfig("voice"));
     $("liveExecutorImageFile")?.addEventListener("change", (evt) => {
       const file = evt.currentTarget && evt.currentTarget.files && evt.currentTarget.files[0];
       if (!file) return;
@@ -24443,6 +24574,12 @@
       if ($("liveExecutorPrompt")) $("liveExecutorPrompt").value = "";
     });
     $("liveExecutorVoiceRouteBtn")?.addEventListener("click", executeLiveExecutorVoiceCommand);
+    $("liveExecutorConfigBackdrop")?.addEventListener("click", closeLiveExecutorConfigModal);
+    $("liveExecutorConfigClose")?.addEventListener("click", closeLiveExecutorConfigModal);
+    $("liveExecutorConfigCancel")?.addEventListener("click", closeLiveExecutorConfigModal);
+    $("liveExecutorConfigSubmitBtn")?.addEventListener("click", () => {
+      submitLiveExecutorConfig().catch((err) => toast(err.message || "执行失败"));
+    });
     $("liveExecutorView")?.addEventListener("click", (evt) => {
       const actionBtn = evt.target.closest("[data-live-action]");
       if (actionBtn) {

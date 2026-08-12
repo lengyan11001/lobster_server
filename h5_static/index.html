@@ -983,61 +983,47 @@
       <section class="view" id="liveExecutorView">
         <div class="live-executor-page">
           <header class="panel live-executor-hero">
-            <div>
+            <div class="live-executor-hero-copy">
               <span class="live-executor-kicker">LIVE COMMAND</span>
               <h2>现场执行台</h2>
-              <p>选择一台在线 Online 设备，上传图片或现场拍照，然后把秘书、获客、生成视频、个人微信任务依次下发到执行台。页面不跳走，结果在这里查看。</p>
+              <p>选择在线设备后，4 个现场动作直接在这里下发；需要图片、拍照或补充指令时，再进入弹窗配置，结果不跳走。</p>
             </div>
-            <button class="ghost" type="button" id="liveExecutorRefreshBtn">刷新设备</button>
-          </header>
-
-          <section class="panel live-executor-console">
             <div class="live-executor-device-row">
               <label for="liveExecutorDeviceSelect">在线设备</label>
               <select id="liveExecutorDeviceSelect"></select>
+              <button class="ghost" type="button" id="liveExecutorRefreshBtn">刷新</button>
               <span id="liveExecutorDeviceHint">正在读取设备状态...</span>
             </div>
+          </header>
 
-            <div class="live-executor-source">
-              <div class="live-executor-image-card">
-                <div class="live-executor-image-preview" id="liveExecutorImagePreview">
-                  <span>现场图片</span>
-                </div>
-                <div class="live-executor-image-actions">
-                  <label class="ghost live-executor-upload-btn" for="liveExecutorImageFile">上传图片</label>
-                  <input id="liveExecutorImageFile" type="file" accept="image/*" hidden>
-                  <button class="ghost" type="button" data-camera-target="liveExecutorImageFile" data-camera-mode="photo">拍一张</button>
-                </div>
-                <div class="live-executor-status" id="liveExecutorImageStatus">图片可选；生成视频时会作为参考图。</div>
+          <section class="panel live-executor-console">
+            <div class="live-executor-command-strip">
+              <div>
+                <strong>现场动作</strong>
+                <span>秘书长录音直接开始/结束；其它动作点击后配置素材和指令。</span>
               </div>
-
-              <div class="live-executor-command">
-                <label for="liveExecutorPrompt">现场要求 / 语音指令</label>
-                <textarea id="liveExecutorPrompt" data-voice-input rows="4" placeholder="例如：用这张图生成一个高级感介绍视频；或者说：开始秘书、抖音获客、接管微信。这里只识别这 4 个场景，其它复杂调度请去 AI 调度助手。"></textarea>
-                <div class="live-executor-command-actions">
-                  <button type="button" id="liveExecutorVoiceRouteBtn">按指令执行</button>
-                  <button class="ghost" type="button" id="liveExecutorClearPromptBtn">清空</button>
-                </div>
-                <small>语音只控制：秘书、获客、生成视频、个人微信。其它语音调度请到 AI 调度助手。</small>
-              </div>
+              <button class="ghost live-executor-voice-open" type="button" id="liveExecutorVoiceOpenBtn">语音指令</button>
             </div>
-
-            <div class="live-executor-actions">
+            <div class="live-executor-actions live-executor-action-grid">
               <button type="button" data-live-action="secretary">
+                <i>01</i>
                 <span>秘书</span>
-                <small>开始/结束长录音，自动转写整理</small>
+                <small>长录音转写摘要</small>
               </button>
               <button type="button" data-live-action="leads">
+                <i>02</i>
                 <span>获客</span>
-                <small>触发搜索采集任务</small>
+                <small>搜索采集线索</small>
               </button>
               <button type="button" data-live-action="video">
+                <i>03</i>
                 <span>生成视频</span>
-                <small>调用创意分镜头能力</small>
+                <small>图片到分镜视频</small>
               </button>
               <button type="button" data-live-action="wechat">
+                <i>04</i>
                 <span>个人微信</span>
-                <small>触发一轮个微接管</small>
+                <small>执行一轮接管</small>
               </button>
             </div>
           </section>
@@ -1946,6 +1932,46 @@
         <strong id="liveExecutorResultTitle">执行结果</strong>
       </div>
       <div class="live-executor-result-body" id="liveExecutorResultBody"></div>
+    </div>
+  </div>
+
+  <div class="employee-modal live-executor-config-modal hidden" id="liveExecutorConfigModal" role="dialog" aria-modal="true" aria-labelledby="liveExecutorConfigTitle" aria-hidden="true">
+    <button class="employee-modal-backdrop" type="button" id="liveExecutorConfigBackdrop" aria-label="关闭"></button>
+    <div class="employee-popover live-executor-config-panel">
+      <button class="employee-popover-close" type="button" id="liveExecutorConfigClose" aria-label="关闭">×</button>
+      <div class="live-executor-config-head">
+        <span id="liveExecutorConfigKicker">LIVE SETUP</span>
+        <strong id="liveExecutorConfigTitle">配置现场任务</strong>
+        <p id="liveExecutorConfigDesc">补充现场素材和执行要求后下发到当前在线设备。</p>
+      </div>
+      <div class="live-executor-config-device" id="liveExecutorConfigDeviceName">当前设备：未选择</div>
+      <div class="live-executor-source">
+        <div class="live-executor-image-card" id="liveExecutorConfigImageBlock">
+          <div class="live-executor-image-preview" id="liveExecutorImagePreview">
+            <span>现场图片</span>
+          </div>
+          <div class="live-executor-image-actions">
+            <label class="ghost live-executor-upload-btn" for="liveExecutorImageFile">上传图片</label>
+            <input id="liveExecutorImageFile" type="file" accept="image/*" hidden>
+            <button class="ghost" type="button" data-camera-target="liveExecutorImageFile" data-camera-mode="photo">拍一张</button>
+          </div>
+          <div class="live-executor-status" id="liveExecutorImageStatus">生成视频时需要一张参考图。</div>
+        </div>
+
+        <div class="live-executor-command">
+          <label for="liveExecutorPrompt">现场要求 / 语音指令</label>
+          <textarea id="liveExecutorPrompt" data-voice-input rows="4" placeholder="例如：用这张图生成一个高级感介绍视频；或者说：开始秘书、抖音获客、接管微信。这里只识别这 4 个场景，其它复杂调度请去 AI 调度助手。"></textarea>
+          <div class="live-executor-command-actions">
+            <button class="ghost" type="button" id="liveExecutorVoiceRouteBtn">按指令识别任务</button>
+            <button class="ghost" type="button" id="liveExecutorClearPromptBtn">清空</button>
+          </div>
+          <small id="liveExecutorConfigHint">语音只控制：秘书、获客、生成视频、个人微信。其它语音调度请到 AI 调度助手。</small>
+        </div>
+      </div>
+      <div class="live-executor-config-actions">
+        <button class="ghost" type="button" id="liveExecutorConfigCancel">取消</button>
+        <button type="button" id="liveExecutorConfigSubmitBtn">下发执行</button>
+      </div>
     </div>
   </div>
 

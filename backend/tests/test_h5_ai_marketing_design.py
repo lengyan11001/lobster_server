@@ -220,6 +220,29 @@ def test_ai_marketing_advanced_settings_keep_defaults_and_persona_visible():
     assert 'workflowParamValue(`${prefix}ImageModel`) || "gpt-image-2"' in script
 
 
+def test_live_executor_uses_compact_modal_configuration_flow():
+    html = (H5 / "index.html").read_text(encoding="utf-8")
+    script = (H5 / "h5-app.js").read_text(encoding="utf-8")
+    css = (H5 / "h5-app.css").read_text(encoding="utf-8")
+    view = html.split('id="liveExecutorView"', 1)[1].split('id="recorderView"', 1)[0]
+    modal = html.split('id="liveExecutorConfigModal"', 1)[1].split('id="assetVoiceModal"', 1)[0]
+
+    assert 'id="liveExecutorVoiceOpenBtn"' in view
+    assert 'live-executor-action-grid' in view
+    assert 'id="liveExecutorImageFile"' not in view
+    assert 'id="liveExecutorPrompt"' not in view
+    assert 'id="liveExecutorImageFile"' in modal
+    assert 'data-camera-target="liveExecutorImageFile"' in modal
+    assert 'id="liveExecutorPrompt"' in modal
+    assert 'id="liveExecutorConfigSubmitBtn"' in modal
+    assert "function openLiveExecutorConfig" in script
+    assert "function submitLiveExecutorConfig" in script
+    assert "openLiveExecutorConfig(key)" in script
+    assert "handleLiveExecutorAction(action, { fromConfig: true })" in script
+    assert ".live-executor-config-panel" in css
+    assert ".live-executor-action-grid" in css
+
+
 def test_local_bestseller_defaults_to_persona_and_clears_it_for_other_styles():
     script = (H5 / "h5-app.js").read_text(encoding="utf-8")
     css = (H5 / "h5-designer-v2.css").read_text(encoding="utf-8")
