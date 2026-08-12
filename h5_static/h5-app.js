@@ -12643,11 +12643,42 @@
       return short ? `${name} · ${short}` : name;
     }
 
+    function liveExecutorOnlineRows() {
+      return (state.devices || []).filter((device) => device && device.online && device.installation_id);
+    }
+
+    async function ensureLiveExecutorOnlineInstallationId(options = {}) {
+      const refresh = !!(options && options.refresh);
+      const preferred = String((options && options.preferred) || liveExecutorSelectedInstallationId() || "").trim();
+      if (refresh || !liveExecutorOnlineRows().length || (preferred && !liveExecutorOnlineRows().some((device) => String(device.installation_id || "") === preferred))) {
+        await refreshDeviceStatus().catch(() => {});
+      }
+      const rows = liveExecutorOnlineRows();
+      const current = String((options && options.preferred) || liveExecutorSelectedInstallationId() || "").trim();
+      const hit = current ? rows.find((device) => String(device.installation_id || "") === current) : null;
+      const next = hit || rows[0] || null;
+      if (!next) {
+        state.selectedInstallationId = "";
+        localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
+        renderLiveExecutorDeviceSelect();
+        throw new Error("当前没有在线 Online 设备，请先启动或刷新 Online 客户端");
+      }
+      const iid = String(next.installation_id || "").trim();
+      if (iid && iid !== String(state.selectedInstallationId || "").trim()) {
+        state.selectedInstallationId = iid;
+        localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), iid);
+      }
+      const select = $("liveExecutorDeviceSelect");
+      if (select) select.value = iid;
+      renderLiveExecutorDeviceSelect();
+      return iid;
+    }
+
     function renderLiveExecutorDeviceSelect() {
       const select = $("liveExecutorDeviceSelect");
       const hint = $("liveExecutorDeviceHint");
       if (!select) return;
-      const rows = (state.devices || []).filter((device) => device && device.online && device.installation_id);
+      const rows = liveExecutorOnlineRows();
       select.innerHTML = rows.length
         ? rows.map((device) => optionHtml(device.installation_id || "", liveExecutorDeviceLabel(device))).join("")
         : '<option value="">暂无在线设备</option>';
@@ -12940,35 +12971,38 @@
     }
 
     function renderLiveExecutorTasks() {
-      const host = $("liveExecutorTaskGrid");
+      const host = $("liveExecutorLatestCard");
       if (!host) return;
       const live = liveExecutorState();
       const tasks = Array.isArray(live.tasks) ? live.tasks : [];
       if (!tasks.length) {
-        host.innerHTML = '<div class="empty">还没有现场任务。选择设备后，可以同时发起多个任务。</div>';
+        host.className = "live-executor-latest-card empty";
+        host.removeAttribute("data-live-task-id");
+        host.textContent = "暂无执行记录";
         return;
       }
-      host.innerHTML = tasks.map((task) => {
-        const run = liveExecutorTaskRun(task);
-        const status = run ? (isActiveRun(run) ? "processing" : String(run.status || task.status)) : task.status;
-        const result = run ? runDisplayResult(run) : "";
-        const detail = task.error || result || task.detail || "";
-        const hasResult = liveExecutorTaskHasResult(task);
-        const classes = ["live-executor-task-card", status === "failed" ? "failed" : "", status === "completed" ? "completed" : "", hasResult ? "has-result" : ""].filter(Boolean).join(" ");
-        return `<article class="${classes}" data-live-task-id="${escapeHtml(task.id)}">
-          <div class="live-executor-task-top">
-            <div><strong>${escapeHtml(task.title || "现场任务")}</strong></div>
-            <span>${escapeHtml(liveExecutorStatusLabel(status))}</span>
+      const task = tasks[0];
+      const run = liveExecutorTaskRun(task);
+      const status = run ? (isActiveRun(run) ? "processing" : String(run.status || task.status)) : task.status;
+      const result = run ? runDisplayResult(run) : "";
+      const detail = task.error || result || task.detail || "";
+      const hasResult = liveExecutorTaskHasResult(task);
+      host.className = ["live-executor-latest-card", status === "failed" ? "failed" : "", status === "completed" ? "completed" : "", hasResult ? "has-result" : ""].filter(Boolean).join(" ");
+      host.dataset.liveTaskId = task.id || "";
+      host.innerHTML = `
+        <div class="live-executor-task-top">
+          <div>
+            <strong>${escapeHtml(task.title || "现场任务")}</strong>
+            <small>${escapeHtml(fmtTime(task.createdAt) || "")}</small>
           </div>
-          <p>${escapeHtml(detail || "等待执行结果...")}</p>
-          <div class="live-executor-task-meta">
-            <span>${escapeHtml(fmtTime(task.createdAt) || "")}</span>
-            ${task.runId ? `<span>Run ${escapeHtml(String(task.runId).slice(0, 8))}</span>` : ""}
-            ${task.recordId ? `<span>录音 ${escapeHtml(String(task.recordId))}</span>` : ""}
-          </div>
-          ${hasResult ? '<button class="ghost live-executor-open-result" type="button">查看结果</button>' : ""}
-        </article>`;
-      }).join("");
+          <span>${escapeHtml(liveExecutorStatusLabel(status))}</span>
+        </div>
+        <p>${escapeHtml(detail || "等待执行结果...")}</p>
+        <div class="live-executor-task-meta">
+          ${task.runId ? `<span>Run ${escapeHtml(String(task.runId).slice(0, 8))}</span>` : ""}
+          ${task.recordId ? `<span>录音 ${escapeHtml(String(task.recordId))}</span>` : ""}
+          ${hasResult ? '<button class="ghost live-executor-open-result" type="button">查看</button>' : ""}
+        </div>`;
     }
 
     function liveExecutorQueueTask(task, runner) {
@@ -12980,7 +13014,11 @@
           await runner(task);
         })
         .catch((err) => {
-          liveExecutorUpdateTask(task, { status: "failed", error: err.message || "下发失败" });
+          const raw = String((err && err.message) || "");
+          const message = /requested device not found/i.test(raw)
+            ? "当前选择的 Online 设备已离线，请刷新设备后重试"
+            : (raw || "下发失败");
+          liveExecutorUpdateTask(task, { status: "failed", error: message });
         });
       renderLiveExecutorTasks();
       return live.queue;
@@ -12989,12 +13027,12 @@
     async function submitLiveExecutorPlan(plan, task) {
       const taskKind = String((plan && (plan.taskKind || plan.task_kind)) || "client_workflow").trim() || "client_workflow";
       const serverSide = isServerSideScheduledKind(taskKind) || !!(plan && plan.serverSide);
-      const installationId = serverSide ? "" : (plan.installationId || liveExecutorSelectedInstallationId() || currentInstallationId());
+      const installationId = serverSide ? "" : await ensureLiveExecutorOnlineInstallationId({ refresh: true, preferred: (plan && plan.installationId) || "" });
       if (!serverSide && !installationId) throw new Error("请先选择在线 Online 设备");
       const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
       payload.live_executor = true;
       payload.live_executor_type = task && task.type || "";
-      payload.live_executor_prompt = liveExecutorPromptText();
+      payload.live_executor_prompt = String(plan.liveExecutorPrompt ?? liveExecutorPromptText());
       const body = {
         title: plan.title || "现场执行任务",
         task_kind: taskKind,
@@ -13070,13 +13108,14 @@
       });
     }
 
-    function liveExecutorLeadsPlan() {
-      const prompt = liveExecutorPromptText();
+    function liveExecutorLeadsPlan(promptText = "") {
+      const prompt = String(promptText || "").trim();
       const keyword = prompt || "同城获客";
       return {
         title: `现场获客 - ${keyword.slice(0, 20)}`,
         taskKind: "douyin_leads",
         content: "H5 现场执行台：获客搜索采集",
+        liveExecutorPrompt: prompt,
         payload: {
           action: "search_collect",
           params: {
@@ -13092,15 +13131,15 @@
       };
     }
 
-    function liveExecutorWechatPlan() {
-      const note = liveExecutorPromptText() || "现场执行台触发一轮个人微信接管，只处理本轮待回复消息。";
+    function liveExecutorWechatPlan(noteText = "") {
+      const note = String(noteText || "").trim() || "现场执行台触发一轮个人微信接管，只处理本轮待回复消息。";
       const plan = nativeWechatWorkflowPlan("native_wechat_poll", note, {
         live_executor: true,
         one_round: true,
         note,
         prompt: note,
       });
-      return { title: "现场个人微信接管", taskKind: plan.task_kind, content: "H5 现场执行台：个人微信接管", payload: plan.payload };
+      return { title: "现场个人微信接管", taskKind: plan.task_kind, content: "H5 现场执行台：个人微信接管", liveExecutorPrompt: note, payload: plan.payload };
     }
 
     async function handleLiveExecutorAction(action, options = {}) {
@@ -13110,7 +13149,7 @@
         await toggleLiveExecutorSecretary();
         return;
       }
-      if (!options.fromConfig) {
+      if (key === "video" && !options.fromConfig) {
         openLiveExecutorConfig(key);
         return;
       }
@@ -13127,11 +13166,11 @@
           return;
         }
         if (key === "leads") {
-          await submitLiveExecutorPlan(liveExecutorLeadsPlan(), task);
+          await submitLiveExecutorPlan(liveExecutorLeadsPlan(""), task);
           return;
         }
         if (key === "wechat") {
-          await submitLiveExecutorPlan(liveExecutorWechatPlan(), task);
+          await submitLiveExecutorPlan(liveExecutorWechatPlan(""), task);
           return;
         }
         throw new Error("这个现场动作暂不支持");
@@ -13242,7 +13281,7 @@
       const blob = new Blob(chunks, { type: mime });
       if (blob.size < 1024) throw new Error("录音太短，请重新录制");
       const file = new File([blob], liveExecutorAudioFileName(mime), { type: mime });
-      const iid = liveExecutorSelectedInstallationId() || currentInstallationId();
+      const iid = await ensureLiveExecutorOnlineInstallationId({ refresh: true });
       const form = new FormData();
       form.append("file", file, file.name);
       form.append("source_type", "live_executor");
@@ -16322,10 +16361,12 @@
           if (currentView === "profile" || currentView === "mountedAccounts") renderProfileDeviceSelect();
           if (currentView === "workflow") renderWorkflowDeviceSelect();
           if (currentView === "office") renderOfficeEmployees();
+          if (currentView === "liveExecutor") renderLiveExecutorDeviceSelect();
         } catch (err) {
           const view = activeViewKey();
           if (view === "profile" || view === "mountedAccounts") renderProfileDeviceSelect();
           if (view === "workflow") renderWorkflowDeviceSelect();
+          if (view === "liveExecutor") renderLiveExecutorDeviceSelect();
           $("profileDeviceText").textContent = "设备状态获取失败";
           renderChatAvailabilityStatus();
           if (view === "office") renderOfficeEmployees();

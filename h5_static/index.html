@@ -983,11 +983,6 @@
       <section class="view" id="liveExecutorView">
         <div class="live-executor-page">
           <header class="panel live-executor-hero">
-            <div class="live-executor-hero-copy">
-              <span class="live-executor-kicker">LIVE COMMAND</span>
-              <h2>现场执行台</h2>
-              <p>选择在线设备后，4 个现场动作直接在这里下发；需要图片、拍照或补充指令时，再进入弹窗配置，结果不跳走。</p>
-            </div>
             <div class="live-executor-device-row">
               <label for="liveExecutorDeviceSelect">在线设备</label>
               <select id="liveExecutorDeviceSelect"></select>
@@ -999,8 +994,8 @@
           <section class="panel live-executor-console">
             <div class="live-executor-command-strip">
               <div>
-                <strong>现场动作</strong>
-                <span>秘书长录音直接开始/结束；其它动作点击后配置素材和指令。</span>
+                <span class="live-executor-kicker">LIVE COMMAND</span>
+                <strong>快捷中控</strong>
               </div>
               <button class="ghost live-executor-voice-open" type="button" id="liveExecutorVoiceOpenBtn">语音指令</button>
             </div>
@@ -1030,11 +1025,11 @@
 
           <section class="panel live-executor-board">
             <div class="section-title">
-              <h3>现场任务</h3>
-              <span class="hint" id="liveExecutorQueueHint">任务会依次下发，但不会锁住页面操作。</span>
+              <h3>最近执行</h3>
+              <span class="hint" id="liveExecutorQueueHint">只显示最近一条，点击查看结果。</span>
             </div>
-            <div class="live-executor-task-grid" id="liveExecutorTaskGrid">
-              <div class="empty">还没有现场任务。选择设备后，可以同时发起多个任务。</div>
+            <div class="live-executor-latest-card empty" id="liveExecutorLatestCard">
+              暂无执行记录
             </div>
           </section>
         </div>
