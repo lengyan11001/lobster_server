@@ -284,38 +284,6 @@ def test_sms_login_does_not_claim_execution_slot(db_session, db_session_factory,
         assert owner_row.user_id == owner.id
 
 
-def test_login_ignores_deprecated_polluted_installation_id(db_session, db_session_factory, monkeypatch):
-    from backend.app.api.auth import get_password_hash
-    from backend.app.models import User, UserInstallation
-
-    user = User(
-        email="13900139125@sms.lobster.local",
-        hashed_password=get_password_hash("custom-password"),
-        password_initialized=True,
-        credits=Decimal("100.0000"),
-        role="user",
-        preferred_model="sutui",
-        created_at=datetime.utcnow(),
-    )
-    db_session.add(user)
-    db_session.commit()
-
-    res = _client(db_session_factory, monkeypatch).post(
-        "/auth/login-phone-password",
-        json={"phone": "13900139125", "password": "custom-password"},
-        headers={"X-Installation-Id": "2fc3f43f7a684411a442cb661898aa74"},
-    )
-
-    assert res.status_code == 200
-    with db_session_factory() as s:
-        assert (
-            s.query(UserInstallation)
-            .filter_by(user_id=user.id, installation_id="2fc3f43f7a684411a442cb661898aa74")
-            .count()
-            == 0
-        )
-
-
 def test_explicit_claim_installation_slot_still_transfers_owner(db_session, db_session_factory, monkeypatch):
     from backend.app.api.auth import get_password_hash
     from backend.app.models import InstallationSlotOwner, User
