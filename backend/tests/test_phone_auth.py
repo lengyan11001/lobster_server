@@ -284,7 +284,7 @@ def test_sms_login_does_not_claim_execution_slot(db_session, db_session_factory,
         assert owner_row.user_id == owner.id
 
 
-def test_explicit_claim_installation_slot_still_transfers_owner(db_session, db_session_factory, monkeypatch):
+def test_explicit_claim_installation_slot_does_not_steal_shared_raw_slot(db_session, db_session_factory, monkeypatch):
     from backend.app.api.auth import get_password_hash
     from backend.app.models import InstallationSlotOwner, User
 
@@ -334,10 +334,11 @@ def test_explicit_claim_installation_slot_still_transfers_owner(db_session, db_s
     )
 
     assert claim.status_code == 200
-    assert claim.json()["transferred"] is True
+    assert claim.json()["transferred"] is False
     with db_session_factory() as s:
         owner_row = s.query(InstallationSlotOwner).filter_by(installation_id="explicit-claim-slot-001").one()
-        assert owner_row.user_id == new_owner.id
+        assert owner_row.user_id == old_owner.id
+        assert s.query(InstallationSlotOwner).filter_by(user_id=new_owner.id).count() == 1
 
 
 def test_sms_login_does_not_replace_an_initialized_password(db_session, db_session_factory, monkeypatch):

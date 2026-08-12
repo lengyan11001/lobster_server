@@ -3,9 +3,6 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-import pytest
-from fastapi import HTTPException
-
 from backend.app.models import (
     H5ChatDevicePresence,
     H5ChatEvent,
@@ -21,7 +18,7 @@ from backend.app.services.installation_slot_ownership import (
 )
 
 
-def test_latest_login_takes_slot_and_cancels_previous_account_work(
+def test_same_raw_slot_across_accounts_does_not_cancel_previous_account_work(
     db_session,
     test_user,
     other_user,
@@ -119,34 +116,32 @@ def test_latest_login_takes_slot_and_cancels_previous_account_work(
     )
     assert first["transferred"] is False
 
-    transferred = claim_installation_slot(
+    second = claim_installation_slot(
         db_session,
         user_id=other_user.id,
         installation_id=installation_id,
         brand_mark="jinghai",
     )
 
-    assert transferred["transferred"] is True
-    assert transferred["previous_user_ids"] == [test_user.id]
-    owner = db_session.query(InstallationSlotOwner).filter_by(installation_id=installation_id).one()
-    assert owner.user_id == other_user.id
-    assert owner.brand_mark == "jinghai"
-    assert owner.lease_version == 2
-    assert db_session.query(H5WorkflowActivation).one().status == "stopped"
-    assert db_session.query(ScheduledTask).filter_by(id=task.id).one().status == "paused"
-    assert db_session.query(ScheduledTaskRun).filter_by(id=run_id).one().status == "cancelled"
-    assert db_session.query(H5ChatMessage).filter_by(id=message_id).one().status == "cancelled"
-    assert db_session.query(H5ChatMessage).filter_by(id=direct_message_id).one().status == "cancelled"
-    assert db_session.query(H5ChatDevicePresence).filter_by(user_id=test_user.id).count() == 0
-    assert db_session.query(H5ChatEvent).filter_by(event_type="cancelled").count() == 2
+    assert second["transferred"] is False
+    assert second["previous_user_ids"] == []
+    assert db_session.query(InstallationSlotOwner).filter_by(user_id=test_user.id).count() == 1
+    other_owner = db_session.query(InstallationSlotOwner).filter_by(user_id=other_user.id).one()
+    assert other_owner.brand_mark == "jinghai"
+    assert other_owner.lease_version == 1
+    assert db_session.query(H5WorkflowActivation).one().status == "active"
+    assert db_session.query(ScheduledTask).filter_by(id=task.id).one().status == "active"
+    assert db_session.query(ScheduledTaskRun).filter_by(id=run_id).one().status == "processing"
+    assert db_session.query(H5ChatMessage).filter_by(id=message_id).one().status == "processing"
+    assert db_session.query(H5ChatMessage).filter_by(id=direct_message_id).one().status == "pending"
+    assert db_session.query(H5ChatDevicePresence).filter_by(user_id=test_user.id).count() == 1
+    assert db_session.query(H5ChatEvent).filter_by(event_type="cancelled").count() == 0
 
-    with pytest.raises(HTTPException) as exc_info:
-        assert_installation_slot_owner(
-            db_session,
-            user_id=test_user.id,
-            installation_id=installation_id,
-        )
-    assert exc_info.value.status_code == 409
+    assert_installation_slot_owner(
+        db_session,
+        user_id=test_user.id,
+        installation_id=installation_id,
+    )
     assert_installation_slot_owner(
         db_session,
         user_id=other_user.id,
@@ -186,7 +181,7 @@ def test_same_account_relogin_does_not_cancel_its_pending_work(db_session, test_
     assert result["transferred"] is False
     db_session.refresh(message)
     assert message.status == "pending"
-    owner = db_session.query(InstallationSlotOwner).filter_by(installation_id=installation_id).one()
+    owner = db_session.query(InstallationSlotOwner).filter_by(user_id=test_user.id).one()
     assert owner.lease_version == 1
 
 
@@ -225,7 +220,7 @@ def test_same_account_new_session_does_not_cancel_its_pending_work(db_session, t
     assert result["previous_user_ids"] == []
     db_session.refresh(message)
     assert message.status == "pending"
-    owner = db_session.query(InstallationSlotOwner).filter_by(installation_id=installation_id).one()
+    owner = db_session.query(InstallationSlotOwner).filter_by(user_id=test_user.id).one()
     assert owner.auth_session_id == "login-session-b"
     assert owner.lease_version == 1
     assert_installation_slot_owner(
@@ -242,7 +237,7 @@ def test_same_account_new_session_does_not_cancel_its_pending_work(db_session, t
     )
 
 
-def test_stale_account_heartbeat_cannot_reclaim_transferred_slot(
+def test_same_raw_slot_heartbeats_are_scoped_per_account(
     db_session,
     db_session_factory,
     test_user,
@@ -292,8 +287,7 @@ def test_stale_account_heartbeat_cannot_reclaim_transferred_slot(
     )
 
     stale = client.post("/api/h5-chat/device-heartbeat", headers=old_headers, json={})
-    assert stale.status_code == 409
-    assert "后登录来源" in stale.json()["detail"]
+    assert stale.status_code == 200
     assert client.post("/api/h5-chat/device-heartbeat", headers=new_headers, json={}).status_code == 200
-    owner = db_session.query(InstallationSlotOwner).filter_by(installation_id=installation_id).one()
-    assert owner.user_id == other_user.id
+    assert db_session.query(InstallationSlotOwner).filter_by(user_id=test_user.id).count() == 1
+    assert db_session.query(InstallationSlotOwner).filter_by(user_id=other_user.id).count() == 1

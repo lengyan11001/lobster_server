@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, Set
@@ -29,6 +30,12 @@ _SLOT_TRANSFER_REASON = "该槽位已被后登录来源接管，先前来源任�
 def _normalize_installation_id(value: str) -> str:
     installation_id = str(value or "").strip()
     return installation_id if _INSTALLATION_ID_RE.fullmatch(installation_id) else ""
+
+
+def _owner_record_id(user_id: int, installation_id: str) -> str:
+    """Store slot ownership by user+slot so packaged devices sharing an ID do not collide."""
+    digest = hashlib.sha1(installation_id.encode("utf-8")).hexdigest()
+    return f"u{int(user_id)}-{digest}"
 
 
 def _lock_installation_slot(db: Session, installation_id: str) -> None:
@@ -342,18 +349,18 @@ def claim_installation_slot(
 
     now = datetime.utcnow()
     session_id = str(auth_session_id or "").strip()[:128]
-    _lock_installation_slot(db, raw_installation_id)
+    owner_record_id = _owner_record_id(user_id, raw_installation_id)
+    _lock_installation_slot(db, owner_record_id)
     owner = (
         db.query(InstallationSlotOwner)
-        .filter(InstallationSlotOwner.installation_id == raw_installation_id)
+        .filter(InstallationSlotOwner.installation_id == owner_record_id)
         .with_for_update()
         .first()
     )
     previous_user_ids: Set[int] = set()
     if owner is None:
-        previous_user_ids.update(_legacy_conflicting_user_ids(db, user_id, raw_installation_id))
         owner = InstallationSlotOwner(
-            installation_id=raw_installation_id,
+            installation_id=owner_record_id,
             user_id=user_id,
             brand_mark=str(brand_mark or "bihuo")[:64],
             auth_session_id=session_id or None,
@@ -376,7 +383,6 @@ def claim_installation_slot(
         if session_id:
             owner.auth_session_id = session_id
         owner.updated_at = now
-        previous_user_ids.update(_legacy_conflicting_user_ids(db, user_id, raw_installation_id))
 
     totals: Dict[str, int] = {}
     for previous_user_id in sorted(previous_user_ids):
@@ -407,7 +413,7 @@ def installation_slot_owned_by(db: Session, *, user_id: int, installation_id: st
         return False
     owner = (
         db.query(InstallationSlotOwner)
-        .filter(InstallationSlotOwner.installation_id == raw_installation_id)
+        .filter(InstallationSlotOwner.installation_id == _owner_record_id(user_id, raw_installation_id))
         .first()
     )
     return owner is not None and int(owner.user_id) == int(user_id)
@@ -427,7 +433,7 @@ def assert_installation_slot_owner(
         raise HTTPException(status_code=400, detail="缺少或无效的 X-Installation-Id")
     owner = (
         db.query(InstallationSlotOwner)
-        .filter(InstallationSlotOwner.installation_id == raw_installation_id)
+        .filter(InstallationSlotOwner.installation_id == _owner_record_id(user_id, raw_installation_id))
         .first()
     )
     if owner is None and claim_if_unowned:
