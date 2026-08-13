@@ -1,4 +1,4 @@
-"""在线独立认证：安装身份槽位（每用户最多 20 条，LRU 淘汰最久未用）。"""
+"""在线独立认证：安装身份槽位（每用户最多 100 条，LRU 淘汰最久未用）。"""
 from __future__ import annotations
 
 import re
@@ -16,7 +16,7 @@ from ..models import InstallationSignupBonusClaim, User, UserInstallation
 from ..services.brand_context import scoped_installation_id, user_brand_mark
 
 INSTALLATION_ID_HEADER = "X-Installation-Id"
-MAX_USER_INSTALLATIONS = 20
+MAX_USER_INSTALLATIONS = 100
 
 
 def installation_slots_enabled() -> bool:
@@ -68,7 +68,7 @@ def installation_slot_id_for_user(db: Session, user_id: int, installation_id: st
 
 
 def ensure_installation_slot(db: Session, user_id: int, installation_id: str) -> None:
-    """登记或刷新 last_seen；满 20 条时删除最久未访问的一条再插入。"""
+    """登记或刷新 last_seen；满 100 条时删除最久未访问的一条再插入。"""
     if not installation_id:
         return
     now = datetime.utcnow()

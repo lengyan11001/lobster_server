@@ -931,13 +931,30 @@ class AgentCommissionLedger(Base):
 
 
 class UserInstallation(Base):
-    """在线版：同一账号最多绑定 3 个安装身份（installation_id），LRU 顶掉最久未访问。"""
+    """Online installation slots kept for one account; old entries are LRU-pruned."""
 
     __tablename__ = "user_installations"
     __table_args__ = (UniqueConstraint("user_id", "installation_id", name="uq_user_installation"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class UserMachineIdentity(Base):
+    """Persistent local machine identity used to separate copied legacy slots."""
+
+    __tablename__ = "user_machine_identities"
+    __table_args__ = (
+        UniqueConstraint("user_id", "machine_instance_id", name="uq_user_machine_identity"),
+        Index("ix_user_machine_identity_user_slot", "user_id", "installation_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    machine_instance_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     installation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

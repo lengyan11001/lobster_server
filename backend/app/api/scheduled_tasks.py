@@ -1822,7 +1822,7 @@ def _reported_publish_accounts_from_devices(
     query = db.query(H5ChatDevicePresence).filter(H5ChatDevicePresence.user_id == user_id)
     if installation_id:
         query = query.filter(H5ChatDevicePresence.installation_id == installation_id)
-    devices = query.order_by(H5ChatDevicePresence.last_seen_at.desc()).limit(30).all()
+    devices = query.order_by(H5ChatDevicePresence.last_seen_at.desc()).limit(100).all()
     out: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for device in devices:
@@ -1871,7 +1871,7 @@ def _reported_wechat_moments_accounts_from_devices(
     query = db.query(H5ChatDevicePresence).filter(H5ChatDevicePresence.user_id == user_id)
     if installation_id:
         query = query.filter(H5ChatDevicePresence.installation_id == installation_id)
-    devices = query.order_by(H5ChatDevicePresence.last_seen_at.desc()).limit(30).all()
+    devices = query.order_by(H5ChatDevicePresence.last_seen_at.desc()).limit(100).all()
     out: List[Dict[str, Any]] = []
     for device in devices:
         age = (now - device.last_seen_at).total_seconds() if device.last_seen_at else 999999
@@ -3903,7 +3903,7 @@ def admin_list_task_devices(
         db.query(H5ChatDevicePresence)
         .filter(H5ChatDevicePresence.user_id == user_id)
         .order_by(H5ChatDevicePresence.last_seen_at.desc())
-        .limit(50)
+        .limit(100)
         .all()
     )
     return {
@@ -3962,7 +3962,7 @@ def agent_list_task_devices(
         db.query(H5ChatDevicePresence)
         .filter(H5ChatDevicePresence.user_id == user_id)
         .order_by(H5ChatDevicePresence.last_seen_at.desc())
-        .limit(50)
+        .limit(100)
         .all()
     )
     return {

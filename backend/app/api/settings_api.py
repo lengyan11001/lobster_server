@@ -1,21 +1,223 @@
 """User settings: model selection, preferences."""
+import hashlib
+import hmac
 import json
+import re
+import secrets
 import socket
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from .auth import get_current_user
-from ..models import User
+from .auth import get_current_user, request_auth_session_id
+from .installation_slots import ensure_installation_slot, optional_installation_id_from_request
+from ..models import H5ChatDevicePresence, User, UserInstallation, UserMachineIdentity
+from ..services.brand_context import normalize_brand_mark, scoped_installation_id, user_brand_mark
+from ..services.installation_slot_ownership import claim_installation_slot
 
 router = APIRouter()
 
 _CUSTOM_CONFIGS_FILE = Path(__file__).resolve().parent.parent.parent.parent / "custom_configs.json"
+_INSTALLATION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{8,128}$")
+
+
+class InstallationIdEnsureRequest(BaseModel):
+    candidate: Optional[str] = None
+    force_new: bool = False
+    brand_mark: Optional[str] = None
+
+
+class InstallationIdBindRequest(BaseModel):
+    installation_id: Optional[str] = None
+    device_id: Optional[str] = None
+    machine_instance_id: Optional[str] = None
+    force_new: bool = False
+
+
+def _normalize_installation_id(raw: Optional[str]) -> str:
+    value = (raw or "").strip()
+    return value if _INSTALLATION_ID_RE.fullmatch(value) else ""
+
+
+def _request_installation_brand(request: Request, raw_brand: Optional[str] = None) -> str:
+    return normalize_brand_mark(
+        raw_brand
+        or request.headers.get("x-lobster-brand")
+        or request.headers.get("X-Lobster-Brand")
+        or "bihuo",
+        strict=False,
+    )
+
+
+def _installation_id_variants(installation_id: str, brand_mark: str = "") -> set[str]:
+    raw = _normalize_installation_id(installation_id)
+    if not raw:
+        return set()
+    values = {raw}
+    if brand_mark:
+        scoped = scoped_installation_id(raw, brand_mark)
+        if scoped:
+            values.add(scoped)
+    return values
+
+
+def _installation_id_usage(
+    db: Session,
+    installation_id: str,
+    *,
+    brand_mark: str = "",
+    exclude_user_id: Optional[int] = None,
+) -> dict[str, Any]:
+    raw = _normalize_installation_id(installation_id)
+    if not raw:
+        return {
+            "valid": False,
+            "taken": False,
+            "user_ids": [],
+            "presence_user_ids": [],
+            "installation_ids": [],
+        }
+    variants = _installation_id_variants(raw, brand_mark)
+    suffix = f"--{raw}"
+    user_ids: set[int] = set()
+    presence_user_ids: set[int] = set()
+    matched_ids: set[str] = set()
+
+    q = db.query(UserInstallation.user_id, UserInstallation.installation_id).filter(
+        or_(
+            UserInstallation.installation_id.in_(tuple(variants)),
+            UserInstallation.installation_id.like(f"%{suffix}"),
+        )
+    )
+    for uid, iid in q.all():
+        try:
+            user_id = int(uid)
+        except (TypeError, ValueError):
+            continue
+        if exclude_user_id is not None and user_id == int(exclude_user_id):
+            continue
+        user_ids.add(user_id)
+        if iid:
+            matched_ids.add(str(iid))
+
+    p = db.query(H5ChatDevicePresence.user_id, H5ChatDevicePresence.installation_id).filter(
+        or_(
+            H5ChatDevicePresence.installation_id.in_(tuple(variants)),
+            H5ChatDevicePresence.installation_id.like(f"%{suffix}"),
+        )
+    )
+    for uid, iid in p.all():
+        try:
+            user_id = int(uid)
+        except (TypeError, ValueError):
+            continue
+        if exclude_user_id is not None and user_id == int(exclude_user_id):
+            continue
+        presence_user_ids.add(user_id)
+        if iid:
+            matched_ids.add(str(iid))
+
+    all_user_ids = sorted(user_ids | presence_user_ids)
+    return {
+        "valid": True,
+        "taken": bool(all_user_ids),
+        "user_ids": all_user_ids,
+        "presence_user_ids": sorted(presence_user_ids),
+        "installation_ids": sorted(matched_ids),
+    }
+
+
+def _new_unique_installation_id(db: Session, *, brand_mark: str = "") -> str:
+    for _ in range(32):
+        candidate = secrets.token_hex(16)
+        if not _installation_id_usage(db, candidate, brand_mark=brand_mark).get("taken"):
+            return candidate
+    raise HTTPException(status_code=503, detail="unable to allocate unique installation id")
+
+
+def _signed_installation_id_for_user(
+    user: User,
+    device_id: str,
+    brand_mark: str,
+    machine_instance_id: str = "",
+) -> str:
+    raw_device_id = _normalize_installation_id(device_id)
+    if not raw_device_id:
+        raise HTTPException(status_code=400, detail="missing or invalid device id")
+    machine_id = _normalize_installation_id(machine_instance_id) or raw_device_id
+    user_id = int(user.id)
+    account = str(getattr(user, "email", "") or user_id).strip().lower()
+    secret = str(getattr(settings, "secret_key", "") or "lobster-installation-slot").encode("utf-8")
+    payload = (
+        f"{normalize_brand_mark(brand_mark or 'bihuo', strict=False)}\0"
+        f"{user_id}\0{account}\0{machine_id}\0{raw_device_id}"
+    ).encode("utf-8")
+    digest = hmac.new(secret, payload, hashlib.sha256).hexdigest()[:32]
+    return f"u{user_id}-{digest}"
+
+
+def _is_signed_installation_id_for_user(value: str, user_id: int) -> bool:
+    return bool(re.fullmatch(rf"u{int(user_id)}-[a-f0-9]{{32}}", str(value or "").strip(), flags=re.IGNORECASE))
+
+
+def _signed_installation_id_conflicts(
+    db: Session,
+    installation_id: str,
+    *,
+    user_id: int,
+    machine_instance_id: str,
+    brand_mark: str,
+) -> bool:
+    if _installation_id_usage(
+        db,
+        installation_id,
+        brand_mark=brand_mark,
+        exclude_user_id=user_id,
+    ).get("taken"):
+        return True
+    return bool(
+        db.query(UserMachineIdentity.id)
+        .filter(
+            UserMachineIdentity.user_id == user_id,
+            UserMachineIdentity.installation_id == installation_id,
+            UserMachineIdentity.machine_instance_id != machine_instance_id,
+        )
+        .first()
+    )
+
+
+def _unique_signed_installation_id_for_user(
+    db: Session,
+    user: User,
+    device_id: str,
+    brand_mark: str,
+    machine_instance_id: str,
+) -> str:
+    machine_id = _normalize_installation_id(machine_instance_id) or _normalize_installation_id(device_id)
+    for attempt in range(16):
+        signed_machine_id = machine_id if attempt == 0 else f"{machine_id[:96]}-{secrets.token_hex(8)}"
+        signed_id = _signed_installation_id_for_user(
+            user,
+            device_id,
+            brand_mark,
+            machine_instance_id=signed_machine_id,
+        )
+        if not _signed_installation_id_conflicts(
+            db,
+            signed_id,
+            user_id=int(user.id),
+            machine_instance_id=machine_id,
+            brand_mark=brand_mark,
+        ):
+            return signed_id
+    raise HTTPException(status_code=503, detail="unable to allocate unique signed installation id")
 
 
 def _read_server_tos_config_dict() -> Optional[Dict[str, Any]]:
@@ -60,6 +262,193 @@ def get_edition():
         if not use_independent:
             out["recharge_url"] = (getattr(settings, "sutui_recharge_url", None) or "").strip() or None
     return out
+
+
+@router.post("/api/installation-id/ensure", summary="Ensure an installation id is not already used")
+def ensure_unique_installation_id(
+    body: InstallationIdEnsureRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Public lightweight endpoint used only when a client creates a fresh local slot id."""
+    brand_mark = _request_installation_brand(request, body.brand_mark)
+    candidate = _normalize_installation_id(body.candidate)
+    usage = _installation_id_usage(db, candidate, brand_mark=brand_mark) if candidate else {
+        "valid": False,
+        "taken": False,
+        "user_ids": [],
+        "presence_user_ids": [],
+        "installation_ids": [],
+    }
+    if body.force_new or not candidate or usage.get("taken"):
+        installation_id = _new_unique_installation_id(db, brand_mark=brand_mark)
+    else:
+        installation_id = candidate
+    return {
+        "ok": True,
+        "installation_id": installation_id,
+        "candidate": candidate,
+        "changed": installation_id != candidate,
+        "duplicate": bool(usage.get("taken")),
+        "duplicate_user_count": len(usage.get("user_ids") or []),
+        "presence_user_count": len(usage.get("presence_user_ids") or []),
+    }
+
+
+@router.get("/api/installation-id/status", summary="Current installation id duplicate status")
+def current_installation_id_status(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    raw = optional_installation_id_from_request(request)
+    installation_id = _normalize_installation_id(raw)
+    if not installation_id:
+        raise HTTPException(status_code=400, detail="missing or invalid installation id")
+    brand_mark = user_brand_mark(current_user)
+    scoped_id = scoped_installation_id(installation_id, brand_mark) or installation_id
+    ensure_installation_slot(db, current_user.id, scoped_id)
+    usage = _installation_id_usage(
+        db,
+        installation_id,
+        brand_mark=brand_mark,
+        exclude_user_id=current_user.id,
+    )
+    return {
+        "ok": True,
+        "installation_id": installation_id,
+        "scoped_installation_id": scoped_id,
+        "duplicate": bool(usage.get("taken")),
+        "duplicate_user_count": len(usage.get("user_ids") or []),
+        "presence_user_count": len(usage.get("presence_user_ids") or []),
+        "matched_installation_ids": usage.get("installation_ids") or [],
+    }
+
+
+@router.post("/api/installation-id/bind", summary="Bind a unique installation id to current user")
+def bind_unique_installation_id(
+    body: InstallationIdBindRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    brand_mark = user_brand_mark(current_user)
+    current_installation_id = _normalize_installation_id(body.installation_id) or _normalize_installation_id(
+        optional_installation_id_from_request(request)
+    )
+    device_id = _normalize_installation_id(body.device_id)
+    machine_instance_id = _normalize_installation_id(body.machine_instance_id)
+    has_machine_identity = bool(machine_instance_id)
+    if body.force_new and not device_id:
+        device_id = _new_unique_installation_id(db, brand_mark=brand_mark)
+    if not device_id:
+        device_id = current_installation_id
+    if not device_id:
+        raise HTTPException(status_code=400, detail="missing or invalid device id")
+
+    # Old clients do not send a machine identity. Falling back to device_id
+    # preserves their previous behavior while new clients can separate two
+    # machines that arrived with the same copied legacy slot.
+    machine_id = machine_instance_id or device_id
+    known_machine = (
+        db.query(UserMachineIdentity)
+        .filter(
+            UserMachineIdentity.user_id == current_user.id,
+            UserMachineIdentity.machine_instance_id == machine_id,
+        )
+        .first()
+    )
+    current_is_signed = _is_signed_installation_id_for_user(current_installation_id, current_user.id)
+    if body.force_new:
+        installation_id = _unique_signed_installation_id_for_user(db, current_user, device_id, brand_mark, f"{machine_id}-{secrets.token_hex(8)}")
+        duplicate_before = False
+        signed = True
+        signature_reason = "force_new"
+    elif known_machine is not None:
+        # Once a machine has a slot, keep using that exact slot forever. This
+        # is what makes a normal login idempotent across restarts and OTA.
+        installation_id = _normalize_installation_id(known_machine.installation_id) or current_installation_id
+        duplicate_before = False
+        signed = _is_signed_installation_id_for_user(installation_id, current_user.id)
+        signature_reason = "known_machine"
+    elif current_is_signed:
+        # A signed slot is the final effective slot. Keep it stable even if an
+        # OTA repairs/recreates the local machine identity later.
+        installation_id = current_installation_id
+        duplicate_before = False
+        signed = True
+        signature_reason = "already_signed"
+    else:
+        preferred_id = device_id if body.force_new or not current_installation_id else current_installation_id
+        usage_before = _installation_id_usage(
+            db,
+            preferred_id,
+            brand_mark=brand_mark,
+            exclude_user_id=current_user.id,
+        )
+        same_user_machine_conflict = bool(
+            has_machine_identity
+            and db.query(UserMachineIdentity)
+            .filter(
+                UserMachineIdentity.user_id == current_user.id,
+                UserMachineIdentity.installation_id == preferred_id,
+                UserMachineIdentity.machine_instance_id != machine_id,
+            )
+            .first()
+        )
+        duplicate_before = bool(usage_before.get("taken") or same_user_machine_conflict)
+        if duplicate_before:
+            installation_id = _unique_signed_installation_id_for_user(db, current_user, device_id, brand_mark, machine_id)
+            signed = True
+            signature_reason = "duplicate_machine" if same_user_machine_conflict and not usage_before.get("taken") else "duplicate"
+        else:
+            installation_id = preferred_id
+            signed = False
+            signature_reason = ""
+    replaced = current_installation_id if current_installation_id and current_installation_id != installation_id else ""
+
+    scoped_id = scoped_installation_id(installation_id, brand_mark) or installation_id
+    ensure_installation_slot(db, current_user.id, scoped_id)
+    claim = claim_installation_slot(
+        db,
+        user_id=current_user.id,
+        installation_id=installation_id,
+        brand_mark=brand_mark,
+        auth_session_id=request_auth_session_id(request),
+    )
+    if known_machine is None:
+        known_machine = UserMachineIdentity(
+            user_id=current_user.id,
+            machine_instance_id=machine_id,
+            installation_id=installation_id,
+            created_at=datetime.utcnow(),
+            last_seen_at=datetime.utcnow(),
+        )
+        db.add(known_machine)
+    else:
+        known_machine.installation_id = installation_id
+        known_machine.last_seen_at = datetime.utcnow()
+    db.commit()
+    usage_after = _installation_id_usage(
+        db,
+        installation_id,
+        brand_mark=brand_mark,
+        exclude_user_id=current_user.id,
+    )
+    return {
+        "ok": True,
+        "installation_id": installation_id,
+        "device_id": device_id,
+        "machine_instance_id": machine_id,
+        "scoped_installation_id": scoped_id,
+        "replaced_installation_id": replaced,
+        "signed": signed,
+        "signature_reason": signature_reason,
+        "duplicate": bool(duplicate_before or usage_after.get("taken")),
+        "duplicate_user_count": len(usage_after.get("user_ids") or []),
+        "presence_user_count": len(usage_after.get("presence_user_ids") or []),
+        "claim": claim,
+    }
 
 
 def _get_lan_ip() -> str:

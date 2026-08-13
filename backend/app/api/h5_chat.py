@@ -367,7 +367,7 @@ def _collect_device_publish_accounts(
         db.query(H5ChatDevicePresence)
         .filter(H5ChatDevicePresence.user_id == user_id)
         .order_by(H5ChatDevicePresence.last_seen_at.desc())
-        .limit(30)
+        .limit(100)
         .all()
     )
     device_rows = [_device_payload(row, now) for row in devices]
@@ -452,7 +452,7 @@ def _collect_douyin_lead_accounts(db: Session, user_id: int, device_by_id: Dict[
         db.query(DouyinDashboardDeviceState)
         .filter(DouyinDashboardDeviceState.user_id == user_id)
         .order_by(DouyinDashboardDeviceState.updated_at.desc())
-        .limit(30)
+        .limit(100)
         .all()
     )
     out: list[Dict[str, Any]] = []
@@ -1649,7 +1649,7 @@ def h5_devices_status(
         db.query(H5ChatDevicePresence)
         .filter(H5ChatDevicePresence.user_id == owner_user.id)
         .order_by(H5ChatDevicePresence.last_seen_at.desc())
-        .limit(20)
+        .limit(100)
         .all()
     )
     devices = []

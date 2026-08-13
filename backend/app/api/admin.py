@@ -465,7 +465,7 @@ def admin_user_detail(
         db.query(H5ChatDevicePresence)
         .filter(H5ChatDevicePresence.user_id == user_id)
         .order_by(H5ChatDevicePresence.last_seen_at.desc())
-        .limit(20)
+        .limit(100)
         .all()
     )
     task_count = db.query(func.count(ScheduledTask.id)).filter(ScheduledTask.user_id == user_id).scalar() or 0
