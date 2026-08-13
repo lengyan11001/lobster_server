@@ -1661,8 +1661,12 @@ def _normalize_scheduled_completion_error(body: ScheduledTaskCompleteIn) -> str:
             ).strip()
             if bool(publish_result.get("need_login")) or status in {"need_login", "login_required"}:
                 return nested_error or "发布账号未登录，请登录后重试"
-            if publish_result.get("ok") is False or status in {"failed", "failure", "error", "timeout", "cancelled", "canceled"}:
+            if publish_result.get("ok") is False or status in {"failed", "failure", "error", "timeout", "partial_failed", "cancelled", "canceled"}:
                 return nested_error or f"发布失败{f'（{status}）' if status else ''}"
+            task = publish_result.get("task") if isinstance(publish_result.get("task"), dict) else {}
+            task_status = str(task.get("status") or "").strip().lower()
+            if bool(publish_result.get("queued")) or status in _RUNNING_STATUSES or task_status in _RUNNING_STATUSES:
+                return nested_error or "发布仍在本机执行队列中，尚未返回最终成功结果"
     capability_id = str(payload.get("capability_id") or "").strip()
     if capability_id != "goal.video.pipeline":
         return ""

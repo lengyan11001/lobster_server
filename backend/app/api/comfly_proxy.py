@@ -26,6 +26,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import sys
 import tempfile
 from collections import OrderedDict
@@ -627,6 +628,26 @@ def _image_generation_model_attempts_for_user(model: str, *, openai_official_fir
     return _image_generation_model_attempts(model)
 
 
+def _image_edit_model_attempts_for_user(model: str, *, openai_official_first: bool) -> List[str]:
+    return _image_generation_model_attempts_for_user(model, openai_official_first=openai_official_first)
+
+
+def _openai_official_image_first_for_user(user_id: int) -> bool:
+    db_flags = None
+    try:
+        db_flags = SessionLocal()
+        return bool(user_has_feature(db_flags, int(user_id), OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID))
+    except Exception:
+        logger.warning("[image_generate] failed to read openai official channel flag user_id=%s", user_id, exc_info=True)
+        return False
+    finally:
+        if db_flags is not None:
+            try:
+                db_flags.close()
+            except Exception:
+                pass
+
+
 def _audit(event: str, **kw: Any) -> None:
     """JSONL 审计日志（与 sutui_audit 同 logger 风格）。"""
     try:
@@ -922,6 +943,24 @@ def _is_retryable_image_error(exc: BaseException) -> bool:
     return any(token in msg for token in retry_tokens)
 
 
+def _extract_upstream_trace_id(error: Any) -> str:
+    text = str(error or "")
+    match = re.search(r"(?:traceid|trace_id|trace-id)\s*[:：]\s*([A-Za-z0-9_-]{8,96})", text, flags=re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def _image_edit_failure_detail(error: Any) -> str:
+    text = str(error or "")
+    trace_id = _extract_upstream_trace_id(text)
+    suffix = f"（traceid: {trace_id}）" if trace_id else ""
+    lower = text.lower()
+    if "系统繁忙" in text or "busy" in lower or "http 500" in lower or "http 503" in lower or "http 504" in lower:
+        return f"图片生成上游服务繁忙，已自动重试但仍未成功，已自动退款，请稍后重试或切换模型。{suffix}"
+    if "content_policy" in lower or "safety" in lower or "防护限制" in text or "违反" in text:
+        return "图片生成失败：内容可能触发上游安全限制，已自动退款。请调整提示词或参考图后重试。"
+    return f"图片生成失败，已自动重试但仍未成功，已自动退款，请稍后重试或切换模型。{suffix}"
+
+
 def _public_image_failure_detail() -> str:
     return "图片生成失败，已自动重试但仍未成功，请稍后重试或切换模型。"
 
@@ -1145,6 +1184,126 @@ def _image_edit_fingerprint_key(user_id: int, data: Dict[str, str], files: List[
         hasher.update(hashlib.sha256(head).digest())
         hasher.update(hashlib.sha256(tail).digest())
     return f"comfly:image_edit:result:{int(user_id)}:fp:{hasher.hexdigest()[:32]}"
+
+
+async def _buffer_image_edit_uploads(
+    files: List[Tuple[str, Tuple[Any, ...]]],
+) -> List[Tuple[str, str, bytes, str]]:
+    buffered: List[Tuple[str, str, bytes, str]] = []
+    total = 0
+    for field_name, file_tuple in files:
+        filename = str(file_tuple[0] if len(file_tuple) > 0 else "image.png") or "image.png"
+        file_obj = file_tuple[1] if len(file_tuple) > 1 else None
+        content_type = str(file_tuple[2] if len(file_tuple) > 2 else "application/octet-stream") or "application/octet-stream"
+        if file_obj is None:
+            continue
+        try:
+            file_obj.seek(0)
+        except Exception:
+            pass
+        raw = await asyncio.to_thread(file_obj.read)
+        if not isinstance(raw, (bytes, bytearray)) or not raw:
+            continue
+        raw_bytes = bytes(raw)
+        if len(raw_bytes) > _MAX_GROK_REFERENCE_BYTES:
+            raise HTTPException(status_code=413, detail="单张参考图不能超过 30MB")
+        total += len(raw_bytes)
+        if total > _MAX_IMAGE_EDIT_TOTAL_BYTES:
+            raise HTTPException(status_code=413, detail="参考图总量不能超过 120MB")
+        buffered.append((str(field_name), filename, raw_bytes, content_type))
+    return buffered
+
+
+def _image_edit_files_from_buffer(
+    buffered: List[Tuple[str, str, bytes, str]],
+) -> List[Tuple[str, Tuple[str, bytes, str]]]:
+    return [(field_name, (filename, raw, content_type)) for field_name, filename, raw, content_type in buffered]
+
+
+def _image_edit_data_for_attempt(
+    source_data: Dict[str, str],
+    *,
+    requested_model: str,
+    attempt_model: str,
+    entry: Dict[str, Any],
+) -> Dict[str, str]:
+    token_group = str(entry.get("token_group") or "").strip().lower()
+    if attempt_model == requested_model:
+        data = dict(source_data)
+    else:
+        forwarded = _body_for_upstream_model(dict(source_data), attempt_model, entry)
+        data = {}
+        for key, value in forwarded.items():
+            if value is None:
+                continue
+            if isinstance(value, (dict, list, tuple)):
+                data[key] = json.dumps(value, ensure_ascii=False, default=str)
+            else:
+                data[key] = str(value)
+
+    data["model"] = _upstream_model(attempt_model, entry)
+    data.setdefault("prompt", str(source_data.get("prompt") or ""))
+    data.setdefault("response_format", str(source_data.get("response_format") or "url") or "url")
+
+    if token_group == "openai_official":
+        try:
+            num_images = max(1, int(data.get("n") or data.get("num_images") or source_data.get("n") or 1))
+        except (TypeError, ValueError):
+            num_images = 1
+        official_data = {
+            "model": data["model"],
+            "prompt": str(data.get("prompt") or ""),
+            "size": _coerce_openai_official_image_size(
+                data.get("size")
+                or data.get("image_size")
+                or data.get("aspect_ratio")
+                or data.get("ratio")
+                or source_data.get("size")
+                or source_data.get("image_size")
+                or source_data.get("aspect_ratio")
+                or "1024x1024"
+            ),
+            "n": str(num_images),
+        }
+        response_format = str(data.get("response_format") or "").strip()
+        if response_format:
+            official_data["response_format"] = response_format
+        return official_data
+
+    return data
+
+
+async def _submit_image_edit_attempt(
+    *,
+    attempt_model: str,
+    entry: Dict[str, Any],
+    data: Dict[str, str],
+    files: List[Tuple[str, Tuple[str, bytes, str]]],
+) -> Dict[str, Any]:
+    token_group = str(entry.get("token_group") or "").strip().lower()
+    if token_group == "openai_official":
+        return await _openai_official_multipart_request(
+            _openai_official_image_url("/images/edits"),
+            data,
+            files,
+            {"Authorization": f"Bearer {_openai_official_image_api_key()}", "Accept": "application/json"},
+            _TIMEOUT_IMAGE,
+        )
+    if token_group == "yunwu":
+        return await _yunwu_multipart_request(
+            f"{_yunwu_base_url()}/v1/images/edits",
+            data,
+            files,
+            _yunwu_auth_headers(),
+            _TIMEOUT_IMAGE,
+        )
+    return await _comfly_multipart_request(
+        _comfly_url("/v1/images/edits", attempt_model),
+        data,
+        files,
+        _comfly_auth_headers(attempt_model),
+        _TIMEOUT_IMAGE,
+    )
 
 
 def _cached_image_edit_response(key: str) -> Optional[Dict[str, Any]]:
@@ -2716,11 +2875,7 @@ async def proxy_images_generations(
     if not model:
         raise HTTPException(400, "缺少 model")
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
-    db_flags = SessionLocal()
-    try:
-        openai_official_first = user_has_feature(db_flags, billing_user_id, OPENAI_OFFICIAL_IMAGE_CHANNEL_FEATURE_ID)
-    finally:
-        db_flags.close()
+    openai_official_first = _openai_official_image_first_for_user(billing_user_id)
     attempt_models = _image_generation_model_attempts_for_user(model, openai_official_first=openai_official_first)
     if len(attempt_models) == 1:
         _require_model_entry(model)
@@ -3144,8 +3299,13 @@ async def proxy_images_edits(
     data.setdefault("response_format", "url")
     if not files:
         raise HTTPException(400, "缺少 image 文件")
+    buffered_files = await _buffer_image_edit_uploads(files)
+    if not buffered_files:
+        raise HTTPException(400, "缺少 image 文件")
 
     request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
+    openai_official_first = _openai_official_image_first_for_user(billing_user_id)
+    attempt_models = _image_edit_model_attempts_for_user(model, openai_official_first=openai_official_first)
     client_request_id = (
         data.pop("client_request_id", None)
         or data.pop("job_id", None)
@@ -3209,40 +3369,106 @@ async def proxy_images_edits(
     )
 
     attempts = _env_int("COMFLY_IMAGE_EDIT_RETRY_ATTEMPTS", 3, min_value=1, max_value=4)
+    errors: List[str] = []
     last_error = ""
     resp: Dict[str, Any] | None = None
-    for retry_index in range(1, attempts + 1):
+    used_model = model
+    used_entry = entry
+    requested_data = dict(data)
+    for attempt_index, attempt_model in enumerate(attempt_models, start=1):
         try:
+            attempt_entry = _require_model_entry(attempt_model)
+        except HTTPException as e:
+            last_error = str(e.detail)
+            errors.append(f"{attempt_model}: {last_error}")
             _audit(
-                "image_edit_attempt",
+                "image_edit_channel_skipped",
                 user_id=billing_user_id,
                 request_user_id=request_user_id,
-                model=model,
-                retry=retry_index,
-                retries=attempts,
-            )
-            resp = await _comfly_multipart_request(
-                _comfly_url("/v1/images/edits", model),
-                data,
-                files,
-                _comfly_auth_headers(model),
-                _TIMEOUT_IMAGE,
-            )
-            break
-        except Exception as e:
-            last_error = str(e)
-            _audit(
-                "image_edit_attempt_failed",
-                user_id=billing_user_id,
-                request_user_id=request_user_id,
-                model=model,
-                retry=retry_index,
-                retries=attempts,
+                requested_model=model,
+                model=attempt_model,
+                attempt=attempt_index,
                 error=last_error[:300],
             )
-            if retry_index >= attempts or not _is_retryable_image_error(e):
+            continue
+
+        provider_label = _image_generation_provider_label(attempt_entry, attempt_model)
+        if not _image_generation_channel_available(provider_label, attempt_model):
+            last_error = f"{provider_label} temporarily disabled after recent upstream failures"
+            errors.append(f"{attempt_model}: {last_error}")
+            _audit(
+                "image_edit_channel_circuit_skipped",
+                user_id=billing_user_id,
+                request_user_id=request_user_id,
+                requested_model=model,
+                model=attempt_model,
+                provider=provider_label,
+                attempt=attempt_index,
+                error=last_error[:300],
+            )
+            continue
+
+        attempt_data = _image_edit_data_for_attempt(
+            requested_data,
+            requested_model=model,
+            attempt_model=attempt_model,
+            entry=attempt_entry,
+        )
+        for retry_index in range(1, attempts + 1):
+            try:
+                _audit(
+                    "image_edit_attempt",
+                    user_id=billing_user_id,
+                    request_user_id=request_user_id,
+                    requested_model=model,
+                    model=attempt_model,
+                    attempt=attempt_index,
+                    retry=retry_index,
+                    retries=attempts,
+                    token_group=(attempt_entry.get("token_group") or ""),
+                )
+                attempt_files = _image_edit_files_from_buffer(buffered_files)
+                resp = await _submit_image_edit_attempt(
+                    attempt_model=attempt_model,
+                    entry=attempt_entry,
+                    data=attempt_data,
+                    files=attempt_files,
+                )
+                used_model = attempt_model
+                used_entry = attempt_entry
                 break
-            await asyncio.sleep(0.8 * retry_index)
+            except Exception as e:
+                last_error = str(e)
+                _mark_image_generation_channel_failure(provider_label, attempt_model, last_error)
+                errors.append(f"{attempt_model}: {last_error[:300]}")
+                _audit(
+                    "image_edit_attempt_failed",
+                    user_id=billing_user_id,
+                    request_user_id=request_user_id,
+                    model=attempt_model,
+                    retry=retry_index,
+                    retries=attempts,
+                    error=last_error[:300],
+                )
+                _audit(
+                    "image_edit_channel_attempt_failed",
+                    user_id=billing_user_id,
+                    request_user_id=request_user_id,
+                    requested_model=model,
+                    model=attempt_model,
+                    attempt=attempt_index,
+                    retry=retry_index,
+                    retries=attempts,
+                    provider=provider_label,
+                    error=last_error[:300],
+                )
+                if retry_index >= attempts or not _is_retryable_image_error(e):
+                    break
+                await asyncio.sleep(0.8 * retry_index)
+        if resp is not None:
+            break
+        if last_error and not _is_retryable_image_error(RuntimeError(last_error)):
+            break
 
     if resp is None:
         if pending_key:
@@ -3255,8 +3481,9 @@ async def proxy_images_edits(
             request_user_id=request_user_id,
             model=model,
             error=last_error[:300],
+            errors=errors[-5:],
         )
-        raise HTTPException(502, f"Comfly image edits 调用失败：{last_error}")
+        raise HTTPException(502, _image_edit_failure_detail(last_error))
 
     result_urls = _extract_image_result_urls(resp)
     if not result_urls:
@@ -3275,10 +3502,35 @@ async def proxy_images_edits(
             "image_edit_empty_result",
             user_id=billing_user_id,
             request_user_id=request_user_id,
-            model=model,
+            model=used_model,
+            requested_model=model,
             response_keys=list(resp.keys())[:12] if isinstance(resp, dict) else [],
         )
-        raise HTTPException(502, "Comfly image edits returned no usable image result")
+        raise HTTPException(502, "图片生成成功但没有返回可用图片结果，已自动退款，请稍后重试或切换模型。")
+
+    actual = estimate_comfly_credits(used_model, requested_data, for_user=True) or estimated
+    if quantize_credits(int(actual)) != pre:
+        _do_settle_by_user_id(
+            billing_user_id,
+            pre=pre,
+            actual=int(actual),
+            capability_id=_CAPABILITY_FOR_BILLING,
+            model=used_model,
+            endpoint="image_edit",
+            extra_meta={"requested_model": model, "fallback_used": used_model != model},
+        )
+    asset_persistence_queued = _queue_generated_image_asset_persistence(
+        billing_user_id,
+        response_payload=resp,
+        prompt=str(requested_data.get("prompt") or ""),
+        model=used_model,
+        limit=int(requested_data.get("n") or requested_data.get("num_images") or 1),
+    ) if isinstance(resp, dict) else False
+    if isinstance(resp, dict) and used_model != model:
+        resp = dict(resp)
+        fallback = resp.setdefault("_lobster_fallback", {})
+        if isinstance(fallback, dict):
+            fallback.update({"requested_model": model, "used_model": used_model, "provider": _image_generation_provider_label(used_entry, used_model)})
 
     if idempotency_key:
         cache_set(idempotency_key, json.dumps(resp, ensure_ascii=False, default=str), ttl_seconds=86400)
@@ -3288,10 +3540,13 @@ async def proxy_images_edits(
         "image_edit_ok",
         user_id=billing_user_id,
         request_user_id=request_user_id,
-        model=model,
+        requested_model=model,
+        model=used_model,
         pre=credits_json_float(pre),
+        actual=actual,
         result_count=len(result_urls),
         client_request_id=str(client_request_id or "")[:120],
+        asset_persistence_queued=asset_persistence_queued,
     )
     return JSONResponse(resp)
 

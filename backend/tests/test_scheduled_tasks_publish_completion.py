@@ -30,6 +30,18 @@ def test_publish_failed_status_uses_nested_error():
     assert _normalize_scheduled_completion_error(body) == "页面未检测到发布成功提示"
 
 
+def test_publish_queued_status_cannot_complete_successfully():
+    body = _publish_completion(
+        {
+            "queued": True,
+            "status": "pending",
+            "task": {"id": "local-task", "status": "pending"},
+        }
+    )
+
+    assert _normalize_scheduled_completion_error(body) == "发布仍在本机执行队列中，尚未返回最终成功结果"
+
+
 def test_publish_explicit_failure_without_error_gets_fallback():
     body = _publish_completion({"ok": False})
 
