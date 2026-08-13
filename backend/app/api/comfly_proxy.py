@@ -3579,10 +3579,6 @@ async def proxy_images_generations_start(
     }
 
 
-@router.get(
-    "/api/comfly-proxy/api/comfly-proxy/v1/images/jobs/{job_id}",
-    include_in_schema=False,
-)
 @router.get("/api/comfly-proxy/v1/images/jobs/{job_id}", summary="Get async image proxy job status")
 async def proxy_images_job_status(
     job_id: str,
