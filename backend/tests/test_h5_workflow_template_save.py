@@ -270,6 +270,7 @@ def test_native_wechat_takeover_uses_parent_group_switch_and_keeps_moments_child
     assert 'params.followup_action' in detector  # legacy-template detection remains for migration
     assert 'values.push("native_wechat_moments_engage")' in options
     assert 'values.push("native_wechat_group_invite", "native_wechat_moments_engage")' not in options
+    assert 'label: "微信自动拉群"' not in script
     assert 'workflowParamNativeWechatGroupInviteEnabled' in script
     assert 'String(params.followup_action || "").trim().toLowerCase() === "group_invite"' in script
     assert '"native_wechat_moments_engage",' in script
