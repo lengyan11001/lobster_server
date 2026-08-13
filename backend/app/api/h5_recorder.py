@@ -323,15 +323,55 @@ def _audio_duration_seconds(source: Path) -> float:
         ],
         timeout=60,
     )
+    duration = 0.0
     try:
         duration = float(str(raw or "").strip().splitlines()[0])
-    except (IndexError, TypeError, ValueError) as exc:
-        raise RuntimeError("无法读取音频时长，请确认音频文件可以正常播放") from exc
+    except (IndexError, TypeError, ValueError):
+        duration = _audio_duration_from_packets(source)
     if not math.isfinite(duration) or duration <= 0:
         raise RuntimeError("音频时长无效，请确认音频文件可以正常播放")
     if duration > STT_MAX_AUDIO_SECONDS:
         max_hours = STT_MAX_AUDIO_SECONDS / 3600
         raise RuntimeError(f"单个音频不能超过 {max_hours:g} 小时，请拆分后再转写")
+    return duration
+
+
+def _audio_duration_from_packets(source: Path) -> float:
+    """MediaRecorder WebM may omit container duration; packet timestamps still decode."""
+    raw = _run_cmd(
+        [
+            _find_ffprobe_bin(),
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "packet=pts_time,duration_time",
+            "-of",
+            "csv=p=0",
+            str(source),
+        ],
+        timeout=120,
+    )
+    duration = 0.0
+    for line in str(raw or "").splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if not parts:
+            continue
+        try:
+            pts = float(parts[0])
+        except (TypeError, ValueError):
+            continue
+        packet_duration = 0.0
+        if len(parts) > 1:
+            try:
+                packet_duration = float(parts[1])
+            except (TypeError, ValueError):
+                packet_duration = 0.0
+        if math.isfinite(pts) and pts >= 0:
+            duration = max(duration, pts + max(0.0, packet_duration))
+    if not math.isfinite(duration) or duration <= 0:
+        raise RuntimeError("无法读取音频时长，请确认音频文件可以正常播放")
     return duration
 
 

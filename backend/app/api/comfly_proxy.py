@@ -608,7 +608,6 @@ def _image_generation_model_attempts(model: str) -> List[str]:
             "gpt-image-2",
             "gpt-image-2-gaisc",
             "gpt-image-2-openmindapi",
-            "gpt-image-2-yunwu",
             "nano-banana-2",
         ]
     return [model]
@@ -623,7 +622,6 @@ def _image_generation_model_attempts_for_user(model: str, *, openai_official_fir
             "gpt-image-2-openai-official",
             "gpt-image-2-gaisc",
             "gpt-image-2-openmindapi",
-            "gpt-image-2-yunwu",
             "nano-banana-2",
         ]
     return _image_generation_model_attempts(model)

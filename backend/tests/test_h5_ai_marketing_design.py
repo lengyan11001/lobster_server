@@ -343,7 +343,7 @@ def test_h5_storyboard_video_uses_online_workbench_payload_contract():
     assert 'return { model: "grok-imagine-video-1.5-preview", channel: "openmind" };' in script
     assert 'return { model: "veo3.1", channel: "yunwu" };' in script
     assert 'seedanceIsYunwuVeoModel(model) ? 8 : 10' in script
-    assert 'image_model_fallback: "gpt-image-2-yunwu"' in payload_builder
+    assert 'image_model_fallback: "nano-banana-2"' in payload_builder
     assert 'video_fallbacks: seedanceIsYunwuVeoModel(model) ? [{ channel: "comfly", model: "veo3.1-fast" }] : []' in payload_builder
     assert 'workflow_mode: useDirectVideo ? "direct_video" : "storyboard"' in payload_builder
     assert 'seedanceNormalizedDurationForModel(model, requestedDuration)' in payload_builder

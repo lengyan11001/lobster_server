@@ -104,6 +104,27 @@ def test_recorder_stt_default_chunk_size_is_two_minutes():
     assert h5_recorder.DEFAULT_STT_CHUNK_SECONDS == 120
 
 
+def test_audio_duration_falls_back_to_packet_timestamps(monkeypatch, tmp_path):
+    source = tmp_path / "live-secretary.webm"
+    source.write_bytes(b"webm")
+    calls = []
+
+    def fake_run_cmd(cmd, timeout):
+        calls.append(list(cmd))
+        if "format=duration" in " ".join(cmd):
+            return '{"format":{"format_name":"matroska,webm","size":"201947"}}'
+        if "packet=pts_time,duration_time" in " ".join(cmd):
+            return "0.000000,0.060000\n12.539000,0.060000\n"
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(h5_recorder, "_find_ffprobe_bin", lambda: "ffprobe")
+    monkeypatch.setattr(h5_recorder, "_run_cmd", fake_run_cmd)
+
+    assert h5_recorder._audio_duration_seconds(source) == pytest.approx(12.599, rel=0.001)
+    assert any("format=duration" in " ".join(cmd) for cmd in calls)
+    assert any("packet=pts_time,duration_time" in " ".join(cmd) for cmd in calls)
+
+
 def test_stt_chunk_merge_restores_original_timeline_order():
     text, segments = _merge_stt_parts([
         (600.0, {
