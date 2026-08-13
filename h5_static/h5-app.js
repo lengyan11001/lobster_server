@@ -943,9 +943,9 @@
         prompt,
         ...(params && typeof params === "object" ? params : {}),
       };
-      const groupInvite = baseParams.followup_action === "group_invite" || prompt.includes("自动拉群");
+      const groupInvite = !!baseParams.group_invite_enabled || baseParams.followup_action === "group_invite" || prompt.includes("自动拉群");
       if (groupInvite) {
-        baseParams.followup_action = "group_invite";
+        delete baseParams.followup_action;
         baseParams.group_invite_enabled = true;
         baseParams.group_invite_rule_status = baseParams.group_invite_rule_status || "pending_rules";
         baseParams.trigger = baseParams.trigger || "qualified_intent";
@@ -1052,7 +1052,60 @@
 
     function normalizeSalesWorkflowNodes(nodes) {
       const normalized = (Array.isArray(nodes) ? nodes : []).map(normalizeSalesWorkflowNode).filter(Boolean);
-      return migrateSalesDouyinAddFriendChildren(normalized);
+      return migrateSalesDouyinAddFriendChildren(migrateWechatGroupInviteNodes(normalized));
+    }
+
+    function migrateWechatGroupInviteNodes(nodes) {
+      const list = Array.isArray(nodes) ? nodes : [];
+      const isGroup = (node) => {
+        const plan = node && node.plan && typeof node.plan === "object" ? node.plan : {};
+        const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+        const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+        const text = [node && node.ability_label, node && node.note, plan.title].map((value) => String(value || "")).join(" ");
+        return String(payload.action || (node && node.ability_key) || "") === "native_wechat_poll"
+          && (String(params.followup_action || "").toLowerCase() === "group_invite" || String(node && (node.action_type || node.type) || "") === "native_wechat_group_invite" || text.includes("自动拉群"));
+      };
+      const enable = (parent, source = {}) => {
+        const plan = parent.plan && typeof parent.plan === "object" ? { ...parent.plan } : {};
+        const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
+        const params = payload.params && typeof payload.params === "object" ? { ...payload.params } : {};
+        const sourceParams = source && typeof source === "object" ? source : {};
+        ["group_invite_memory_doc_id", "group_invite_keywords", "group_invite_contacts", "group_invite_primary_contact", "group_invite_primary_contact_name", "group_invite_welcome_message", "group_invite_rule_status", "group_invite_targets_source", "group_invite_members", "group_invite_manager_contacts", "trigger"].forEach((key) => {
+          if (sourceParams[key] !== undefined && sourceParams[key] !== "" && !(Array.isArray(sourceParams[key]) && !sourceParams[key].length)) params[key] = sourceParams[key];
+        });
+        params.group_invite_enabled = true;
+        delete params.followup_action;
+        params.group_invite_rule_status = params.group_invite_rule_status || "pending_rules";
+        params.trigger = params.trigger || "qualified_intent";
+        payload.params = params;
+        plan.payload = payload;
+        plan.title = "个微私信接管";
+        plan.content = "H5 工作流：个微私信接管";
+        parent.plan = plan;
+        if (String(parent.ability_label || "").includes("自动拉群")) parent.ability_label = "微信私信接管";
+        if (String(parent.note || "").includes("自动拉群")) parent.note = "微信私信接管";
+      };
+      const out = [];
+      list.forEach((node) => {
+        const parent = [...out].reverse().find((item) => String(item && item.ability_key || "") === "native_wechat_poll" && !isGroup(item));
+        if (isGroup(node) && parent) {
+          const payload = node.plan && node.plan.payload && typeof node.plan.payload === "object" ? node.plan.payload : {};
+          enable(parent, payload.params || {});
+          return;
+        }
+        if (Array.isArray(node && node.children)) {
+          const children = [];
+          node.children.forEach((child) => {
+            if (isGroup(child)) {
+              const payload = child.plan && child.plan.payload && typeof child.plan.payload === "object" ? child.plan.payload : {};
+              enable(node, payload.params || {});
+            } else children.push(child);
+          });
+          node = { ...node, children };
+        }
+        out.push(node);
+      });
+      return out;
     }
 
     function salesWorkflowActionForNote(note) {
@@ -3491,7 +3544,8 @@
           + taskFieldHtml("备注", taskTextareaHtml("workflowParamWecomNote", "可选"), true);
       }
       if (key === "native_wechat_poll") {
-        return taskFieldHtml("备注", taskTextareaHtml("workflowParamNativeWechatNote", "可选"), true);
+        return taskFieldHtml("自动拉群", workCheckboxHtml("workflowParamNativeWechatGroupInviteEnabled", "命中拉群规则后立即执行", false))
+          + taskFieldHtml("备注", taskTextareaHtml("workflowParamNativeWechatNote", "可选"), true);
       }
       if (key === "native_wechat_add_friend") {
         return taskFieldHtml("手机号/微信号", taskTextareaHtml("workflowParamNativeWechatTargets", "多个目标用逗号或换行分隔"), true)
@@ -3904,6 +3958,7 @@
         return nativeWechatWorkflowPlan(key, workflowParamValue("workflowParamNativeWechatNote"), {
           targets: workSplitList(workflowParamValue("workflowParamNativeWechatTargets")),
           apply_message: workflowParamValue("workflowParamNativeWechatApplyMessage"),
+          group_invite_enabled: workflowParamChecked("workflowParamNativeWechatGroupInviteEnabled"),
           moment_action: workflowParamValue("workflowParamNativeWechatMomentAction") || "like_comment",
         }, { requireTargets: key !== "native_wechat_poll" });
       }
@@ -4302,37 +4357,18 @@
 
     function attachSalesWechatGroupInvite(parentNode, row, index) {
       if (!parentNode) return false;
-      const child = salesWorkflowNativeChild(parentNode, row, index, {
-        action_type: "native_wechat_group_invite",
-        params: {
-          followup_action: "group_invite",
-          group_invite_enabled: true,
-          group_invite_rule_status: "pending_rules",
-          trigger: "qualified_intent",
-          group_invite_targets_source: "qualified_intent",
-          group_invite_members: [],
-          group_invite_manager_contacts: [],
-        },
-      });
-      if (!appendSalesWorkflowChild(parentNode, child)) return false;
-      const existingRules = (((parentNode.plan || {}).payload || {}).params || {}).group_invite_rules;
       mergeSalesWorkflowParentParams(parentNode, {
         group_invite_enabled: true,
         group_invite_rule_status: "pending_rules",
         group_invite_targets_source: "qualified_intent",
         group_invite_members: [],
         group_invite_manager_contacts: [],
-        group_invite_rules: [
-          ...(Array.isArray(existingRules) ? existingRules : []),
-          {
-            child_node_id: child.id,
-            time: child.time,
-            trigger: "qualified_intent",
-            members: [],
-            manager_contacts: [],
-          },
-        ],
       });
+      const params = parentNode.plan && parentNode.plan.payload && parentNode.plan.payload.params;
+      if (params) {
+        delete params.followup_action;
+        delete params.group_invite_rules;
+      }
       return true;
     }
 
@@ -4570,16 +4606,15 @@
       const all = [
         { value: "publish", label: "发布内容" },
         { value: "native_wechat_add_friend", label: "自动加好友" },
-        { value: "native_wechat_group_invite", label: "自动拉群" },
         { value: "native_wechat_moments_engage", label: "朋友圈点赞评论" },
       ];
       const values = [];
       if (isSalesDouyinPrivateNode(parentNode)) values.push("native_wechat_add_friend");
       if (workflowNodeIsNativeWechatTakeover(parentNode)) {
-        values.push("native_wechat_group_invite", "native_wechat_moments_engage");
+        values.push("native_wechat_moments_engage");
       }
       values.push("publish");
-      if (currentType && !values.includes(currentType)) values.push(currentType);
+      if (currentType && currentType !== "native_wechat_group_invite" && !values.includes(currentType)) values.push(currentType);
       return values.map((value) => all.find((item) => item.value === value)).filter(Boolean);
     }
 
@@ -4656,18 +4691,6 @@
           targets: Array.isArray(source.targets) ? source.targets : [],
         });
       }
-      if (type === "native_wechat_group_invite") {
-        return nativeWechatWorkflowPlan("native_wechat_poll", "微信私信接管命中意向后自动拉群", {
-          ...source,
-          followup_action: "group_invite",
-          group_invite_enabled: true,
-          group_invite_rule_status: source.group_invite_rule_status || "pending_rules",
-          trigger: source.trigger || "qualified_intent",
-          group_invite_targets_source: source.group_invite_targets_source || "qualified_intent",
-          group_invite_members: Array.isArray(source.group_invite_members) ? source.group_invite_members : [],
-          group_invite_manager_contacts: Array.isArray(source.group_invite_manager_contacts) ? source.group_invite_manager_contacts : [],
-        });
-      }
       if (type === "native_wechat_moments_engage") {
         return nativeWechatWorkflowPlan("native_wechat_moments_engage", "微信朋友圈点赞评论", {
           ...source,
@@ -4686,7 +4709,6 @@
       const id = String(existing && existing.id || `wf_action_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`);
       const nativeKeys = {
         native_wechat_add_friend: "native_wechat_add_friend",
-        native_wechat_group_invite: "native_wechat_poll",
         native_wechat_moments_engage: "native_wechat_moments_engage",
       };
       const label = workflowActionLabel({ action_type: type, platform });
@@ -4713,24 +4735,20 @@
 
     function syncWorkflowParentActionRules(parentNode) {
       const next = { ...(parentNode || {}) };
-      const children = workflowChildActions(next).slice();
+      let children = workflowChildActions(next).slice();
       const plan = next.plan && typeof next.plan === "object" ? { ...next.plan } : {};
       const payload = plan.payload && typeof plan.payload === "object" ? { ...plan.payload } : {};
       const params = payload.params && typeof payload.params === "object" ? { ...payload.params } : {};
       const groups = children.filter((item) => workflowActionKind(item) === "native_wechat_group_invite");
+      children = children.filter((item) => workflowActionKind(item) !== "native_wechat_group_invite");
       const friends = children.filter((item) => workflowActionKind(item) === "native_wechat_add_friend");
-      if (groups.length || Object.prototype.hasOwnProperty.call(params, "group_invite_rules")) {
-        params.group_invite_enabled = groups.length > 0;
-        params.group_invite_rule_status = groups.length ? "pending_rules" : params.group_invite_rule_status;
+      if (groups.length) {
+        params.group_invite_enabled = true;
+        params.group_invite_rule_status = "pending_rules";
         params.group_invite_targets_source = "qualified_intent";
-        params.group_invite_rules = groups.map((item) => ({
-          child_node_id: item.id,
-          time: item.time,
-          trigger: "qualified_intent",
-          members: [],
-          manager_contacts: [],
-        }));
       }
+      delete params.followup_action;
+      delete params.group_invite_rules;
       if (friends.length || Object.prototype.hasOwnProperty.call(params, "wechat_add_friend_rules")) {
         params.wechat_add_friend_enabled = friends.length > 0;
         params.wechat_add_friend_targets_source = "douyin_private_message_phone";
@@ -4959,6 +4977,11 @@
       }
       if (payload.action === "wecom_poll_reply" || nodeInfo.workQuickKey === "wecom_reply") {
         setFieldValue("workflowParamWecomNote", params.note || node.note || "");
+        return;
+      }
+      if (nodeInfo.key === "native_wechat_poll") {
+        setFieldValue("workflowParamNativeWechatGroupInviteEnabled", params.group_invite_enabled === true);
+        setFieldValue("workflowParamNativeWechatNote", params.note || node.note || "");
         return;
       }
       if (capabilityId === "ip_content_daily") {
@@ -5279,7 +5302,6 @@
           const canEditAction = [
             "publish",
             "native_wechat_add_friend",
-            "native_wechat_group_invite",
             "native_wechat_moments_engage",
           ].includes(workflowActionKind(action));
           const actionStatus = workflowStatusInfo(action, workflowTaskForNodeDateOrCurrent(action, tasks, selectedKey), workflowLatestRunForNode(action, runs), selectedKey);
@@ -15833,6 +15855,8 @@
         ].join("");
         inviteMemorySelect.value = String(row.group_invite_memory_doc_id || "");
       }
+      const inviteEnabled = $("mountedWechatGroupInviteEnabled");
+      if (inviteEnabled) inviteEnabled.checked = !!row.group_invite_enabled;
       const primaryInput = $("mountedWechatGroupInvitePrimaryContact");
       if (primaryInput && document.activeElement !== primaryInput) {
         const selected = String(row.group_invite_primary_contact || (Array.isArray(row.group_invite_contacts) ? row.group_invite_contacts[0] : "") || "").trim();
@@ -16056,6 +16080,7 @@
             account_id: row.account_id || "pc-wechat-default",
             interval_seconds: Number(row.auto_reply_interval_seconds || 1800),
             memory_doc_ids: memoryDocId ? [memoryDocId] : [],
+            group_invite_enabled: !!$("mountedWechatGroupInviteEnabled")?.checked,
             group_invite_memory_doc_id: String($("mountedWechatGroupInviteMemoryDocSelect")?.value || "").trim(),
             group_invite_keywords: "",
             group_invite_contacts: primaryContact ? [primaryContact] : [],

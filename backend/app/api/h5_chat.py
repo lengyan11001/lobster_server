@@ -154,6 +154,7 @@ class H5WechatAutoReplyIn(BaseModel):
     account_key: Optional[str] = Field(default="wechat:pc-default", max_length=255)
     account_id: Optional[str] = Field(default="pc-wechat-default", max_length=160)
     interval_seconds: int = Field(default=1800, ge=300, le=86400)
+    group_invite_enabled: Optional[bool] = None
     memory_doc_ids: Optional[List[str]] = Field(default=None, max_length=20)
     group_invite_memory_doc_id: Optional[str] = Field(default=None, max_length=64)
     group_invite_keywords: Optional[str] = Field(default=None, max_length=2000)
@@ -558,6 +559,16 @@ def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
             ][:20]
             row["group_invite_memory_doc_id"] = str(auto_reply_payload.get("group_invite_memory_doc_id") or "").strip()
             row["group_invite_keywords"] = str(auto_reply_payload.get("group_invite_keywords") or "").strip()
+            row["group_invite_enabled"] = bool(
+                auto_reply_payload.get("group_invite_enabled")
+                if "group_invite_enabled" in auto_reply_payload
+                else (
+                    auto_reply_payload.get("group_invite_memory_doc_id")
+                    or auto_reply_payload.get("group_invite_keywords")
+                    or auto_reply_payload.get("group_invite_contacts")
+                    or auto_reply_payload.get("group_invite_primary_contact")
+                )
+            )
             row["group_invite_contacts"] = [
                 str(item or "").strip()
                 for item in (auto_reply_payload.get("group_invite_contacts") or [])
@@ -1758,6 +1769,15 @@ def h5_set_wechat_auto_reply(
         else body.group_invite_welcome_message
     )
     welcome_message = str(welcome_message or "").strip()[:4000]
+    group_invite_enabled = (
+        current_pref_payload.get("group_invite_enabled")
+        if body.group_invite_enabled is None
+        else body.group_invite_enabled
+    )
+    if body.group_invite_enabled is None and "group_invite_enabled" not in current_pref_payload:
+        group_invite_enabled = bool(
+            group_invite_memory_doc_id or group_invite_keywords or group_invite_contacts or primary_contact
+        )
     if primary_contact:
         group_invite_contacts = [primary_contact]
     pref.payload = {
@@ -1766,6 +1786,7 @@ def h5_set_wechat_auto_reply(
         "account_id": account_id,
         "account_key": account_key,
         "memory_doc_ids": memory_doc_ids,
+        "group_invite_enabled": bool(group_invite_enabled),
         "group_invite_memory_doc_id": group_invite_memory_doc_id,
         "group_invite_keywords": str(group_invite_keywords or "").strip()[:2000],
         "group_invite_contacts": group_invite_contacts,
@@ -1781,6 +1802,7 @@ def h5_set_wechat_auto_reply(
         "enabled": bool(body.enabled),
         "interval_seconds": interval_seconds,
         "memory_doc_ids": memory_doc_ids,
+        "group_invite_enabled": bool(group_invite_enabled),
         "group_invite_memory_doc_id": group_invite_memory_doc_id,
         "group_invite_keywords": str(group_invite_keywords or "").strip()[:2000],
         "group_invite_contacts": group_invite_contacts,

@@ -253,7 +253,7 @@ def test_workflow_action_menu_stays_above_children_and_closes_before_modal():
     assert "20260803-workflow-child-menu-v3" in html
 
 
-def test_native_wechat_takeover_can_add_and_edit_group_and_moments_children():
+def test_native_wechat_takeover_uses_parent_group_switch_and_keeps_moments_children():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
     styles = (ROOT / "h5_static" / "h5-designer-v2.css").read_text(encoding="utf-8")
@@ -267,9 +267,11 @@ def test_native_wechat_takeover_can_add_and_edit_group_and_moments_children():
 
     assert 'action === "native_wechat_poll"' in detector
     assert 'text.includes("微信私信接管")' in detector
-    assert 'params.followup_action' in detector
-    assert 'values.push("native_wechat_group_invite", "native_wechat_moments_engage")' in options
-    assert '"native_wechat_group_invite",' in script
+    assert 'params.followup_action' in detector  # legacy-template detection remains for migration
+    assert 'values.push("native_wechat_moments_engage")' in options
+    assert 'values.push("native_wechat_group_invite", "native_wechat_moments_engage")' not in options
+    assert 'workflowParamNativeWechatGroupInviteEnabled' in script
+    assert 'String(params.followup_action || "").trim().toLowerCase() === "group_invite"' in script
     assert '"native_wechat_moments_engage",' in script
     assert "#workflowActionPlatformField[hidden]" in styles
     assert "20260808-workflow-action-fields-v1" in html
