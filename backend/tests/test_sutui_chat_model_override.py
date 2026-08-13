@@ -4,18 +4,17 @@ from backend.app.api.sutui_chat_proxy import (
 )
 
 
-def test_forced_model_override_uses_single_exact_xskill_route():
+def test_model_override_still_keeps_deepseek_fallback_route():
     attempts = _sutui_chat_attempts_for_models(
-        ["openai/gpt-4.1"],
+        _sutui_chat_model_candidates("openai/gpt-4.1"),
         "sutui-token",
-        forced_model_override=True,
+        forced_model_override=False,
     )
 
-    assert len(attempts) == 1
     assert attempts[0]["model"] == "openai/gpt-4.1"
-    assert attempts[0]["provider"] == "xskill-forced"
+    assert attempts[0]["provider"] == "xskill"
     assert attempts[0]["is_direct"] is False
-    assert attempts[0]["forced_model"] is True
+    assert ("deepseek-chat", "direct:deepseek") in [(a["model"], a["provider"]) for a in attempts]
 
 
 def test_default_deepseek_chat_keeps_existing_fallback_routes():

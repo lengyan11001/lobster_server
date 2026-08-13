@@ -13090,12 +13090,13 @@
       const prompt = liveExecutorPromptText();
       if (live.imageUploading && live.imageUploadPromise) throw new Error("图片还在上传中，请稍等几秒再生成视频");
       if (!image.source_url && !image.asset_id) throw new Error("请先上传或拍摄一张现场图片");
+      const hasSourceUrl = /^https?:\/\//i.test(String(image.source_url || ""));
       const payload = {
         action: "start_pipeline",
-        image_url: image.source_url || "",
-        asset_id: image.asset_id || "",
-        reference_image_urls: image.source_url ? [image.source_url] : [],
-        reference_asset_ids: image.asset_id ? [image.asset_id] : [],
+        image_url: hasSourceUrl ? image.source_url : "",
+        asset_id: hasSourceUrl ? "" : (image.asset_id || ""),
+        reference_image_urls: hasSourceUrl ? [image.source_url] : [],
+        reference_asset_ids: hasSourceUrl ? [] : (image.asset_id ? [image.asset_id] : []),
         reference_purposes: ["storyboard"],
         task_text: prompt || "根据现场图片生成一条高级、有节奏感的创意分镜头短视频。",
         total_duration_seconds: 10,
@@ -13432,6 +13433,20 @@
       return rows.length ? `<table class="live-executor-result-table"><tbody>${rows.join("")}</tbody></table>` : "";
     }
 
+    function liveExecutorFriendlyResultMessage(run, task) {
+      const raw = String((run && (run.error || run.result_text)) || (task && (task.error || task.detail)) || "").trim();
+      if (/asset_id\s*与\s*image_url\s*请勿同时传/i.test(raw)) {
+        return "生成视频失败：现场图片参数重复，已修复为只传一个图片来源，请重新生成。";
+      }
+      if (/source_url|公网|TOS|CDN|转存|准备云端可访问图片/.test(raw)) {
+        return "生成视频失败：图片还没有准备成云端可访问素材，请重新上传或稍后重试。";
+      }
+      if (/insufficient|余额不足|积分不足|quota|balance/i.test(raw)) {
+        return "生成失败：上游模型余额或额度不足，请稍后切换模型或联系管理员处理。";
+      }
+      return raw || runDisplayResult(run) || "任务执行完成。";
+    }
+
     async function openLiveExecutorTaskResult(taskId) {
       const live = liveExecutorState();
       const task = (live.tasks || []).find((row) => String(row.id) === String(taskId));
@@ -13465,11 +13480,14 @@
       const media = task.type === "video" ? liveExecutorMediaHtml(run) : "";
       const list = payload.items || payload.customers || payload.results || payload.records || payload.data;
       const table = Array.isArray(list) ? liveExecutorTableHtml(list) : "";
+      const friendly = liveExecutorFriendlyResultMessage(run, task);
+      const rawDetail = JSON.stringify(payload || {}, null, 2);
+      const hasRawDetail = rawDetail && rawDetail !== "{}";
       body.innerHTML = [
         media,
-        `<div class="live-executor-result-pre">${escapeHtml(runDisplayResult(run) || run.error || "执行完成")}</div>`,
+        `<div class="live-executor-result-pre">${escapeHtml(friendly)}</div>`,
         table,
-        `<details><summary>查看原始结果</summary><div class="live-executor-result-pre">${escapeHtml(JSON.stringify(payload || {}, null, 2))}</div></details>`,
+        hasRawDetail ? `<details><summary>查看原始结果</summary><div class="live-executor-result-pre">${escapeHtml(rawDetail)}</div></details>` : "",
       ].filter(Boolean).join("");
     }
 

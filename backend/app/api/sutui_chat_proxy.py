@@ -790,7 +790,7 @@ def _sutui_chat_model_candidates(
     if init and init not in seen:
         seen.add(init)
         out.append(init)
-    fallback_chain = [*_parse_sutui_chat_fallback_chain_env(), *(required_fallbacks or [])]
+    fallback_chain = [*_parse_sutui_chat_fallback_chain_env(), *(required_fallbacks or []), "deepseek-chat"]
     for fb in fallback_chain:
         m = _remap_model_id_for_sutui(fb)
         if m and m not in seen:
@@ -1628,7 +1628,7 @@ async def sutui_chat_completions(
             current_user.id,
             original_model or "-",
             llm_model_override,
-            not mastra_chat_profile,
+            False,
         )
     _optimize_request_body(body, preserve_local_tools=openclaw_skill_request)
     _enforce_single_search_models_tool_call(body, trace_id)
@@ -1654,7 +1654,7 @@ async def sutui_chat_completions(
     model_id = (body.get("model") or "").strip()
     requested_model_id = model_id
     _req_has_tools = bool(body.get("tools")) and body.get("tool_choice") != "none"
-    force_exact_model = bool(llm_model_override and not mastra_chat_profile)
+    force_exact_model = False
     model_candidates = [model_id] if force_exact_model else _sutui_chat_model_candidates(
         model_id,
         has_tools=_req_has_tools,
