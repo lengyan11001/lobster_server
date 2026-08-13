@@ -1639,7 +1639,7 @@ async def sutui_chat_completions(
     if not token:
         raise HTTPException(
             status_code=503,
-            detail=f"服务器未配置当前 OEM 品牌对应的速推 Token 池（pool={sutui_pool or 'none'}）",
+            detail=f"服务器未配置共享速推 Token 池（pool={sutui_pool or 'none'}）",
         )
     chat_billing_recon = sutui_token_recon_meta(token, sutui_pool)
 

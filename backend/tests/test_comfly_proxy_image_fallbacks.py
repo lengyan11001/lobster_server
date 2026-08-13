@@ -13,6 +13,7 @@ def test_gpt_image2_attempts_append_nano_banana_for_regular_users():
     assert _image_generation_model_attempts("gpt-image-2") == [
         "gpt-image-2",
         "gpt-image-2-gaisc",
+        "gpt-image-2-sutui",
         "gpt-image-2-openmindapi",
         "nano-banana-2",
     ]
@@ -25,9 +26,28 @@ def test_gpt_image2_attempts_append_nano_banana_for_official_channel_users():
     ) == [
         "gpt-image-2-openai-official",
         "gpt-image-2-gaisc",
+        "gpt-image-2-sutui",
         "gpt-image-2-openmindapi",
         "nano-banana-2",
     ]
+
+
+def test_openai_gpt_image2_alias_uses_same_fallback_chain():
+    assert _image_generation_model_attempts("openai/gpt-image-2") == [
+        "gpt-image-2",
+        "gpt-image-2-gaisc",
+        "gpt-image-2-sutui",
+        "gpt-image-2-openmindapi",
+        "nano-banana-2",
+    ]
+
+
+def test_sutui_gpt_image2_pricing_entry_exists():
+    entry = lookup_comfly_model("gpt-image-2-sutui")
+
+    assert entry is not None
+    assert entry["token_group"] == "sutui"
+    assert entry["comfly_model"] == "openai/gpt-image-2"
 
 def test_non_gpt_image2_models_keep_original_attempt_sequence():
     assert _image_generation_model_attempts("nano-banana-2") == ["nano-banana-2"]

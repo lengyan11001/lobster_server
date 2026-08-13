@@ -29,6 +29,8 @@ import os
 import re
 import sys
 import tempfile
+import time
+import uuid
 from collections import OrderedDict
 from decimal import Decimal
 from pathlib import Path
@@ -64,6 +66,7 @@ from mcp.comfly_upstream import (  # noqa: E402
     get_comfly_config,
     lookup_comfly_model,
 )
+from mcp.sutui_tokens import next_sutui_server_token_with_pool  # noqa: E402
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -91,6 +94,7 @@ _MAX_PROXY_FILE_BYTES = 512 * 1024 * 1024
 _MAX_IMAGE_EDIT_TOTAL_BYTES = 120 * 1024 * 1024
 _MAX_CHAT_IMAGE_PREPARE_BYTES = 20 * 1024 * 1024
 _MAX_GENERATED_IMAGE_PERSIST_BYTES = 40 * 1024 * 1024
+_IMAGE_PROXY_JOB_TTL_SECONDS = 24 * 60 * 60
 _proxy_video_task_meta: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 _openmind_tos_url_cache: "OrderedDict[str, str]" = OrderedDict()
 _MAX_OPENMIND_TOS_URL_CACHE = 1000
@@ -277,7 +281,7 @@ def _image_generation_channel_disable_ttl_seconds(provider: str, error: str) -> 
         return _env_int("COMFLY_IMAGE_PROVIDER_ACCOUNT_DISABLE_SECONDS", 600, min_value=60, max_value=3600)
     if "invalid api key" in msg or "invalid_api_key" in msg or "unauthorized" in msg or "forbidden" in msg:
         return _env_int("COMFLY_IMAGE_PROVIDER_AUTH_DISABLE_SECONDS", 1800, min_value=60, max_value=7200)
-    if "http 429" in msg and provider in {"openai_official", "gaisc", "openmindapi", "openmind", "yunwu"}:
+    if "http 429" in msg and provider in {"openai_official", "gaisc", "openmindapi", "openmind", "yunwu", "sutui"}:
         return _env_int("COMFLY_IMAGE_PROVIDER_RATE_LIMIT_DISABLE_SECONDS", 120, min_value=30, max_value=900)
     return 0
 
@@ -295,6 +299,109 @@ def _mark_image_generation_channel_failure(provider: str, model: str, error: str
         str(error or "")[:300],
     )
     return True
+
+
+def _image_proxy_job_key(job_id: str) -> str:
+    safe = "".join(ch for ch in str(job_id or "") if ch.isalnum() or ch in {"-", "_"})[:96]
+    return f"comfly:image-proxy-job:{safe}" if safe else ""
+
+
+def _new_image_proxy_job_id() -> str:
+    return f"img_{uuid.uuid4().hex}"
+
+
+def _store_image_proxy_job(job_id: str, payload: Dict[str, Any]) -> None:
+    key = _image_proxy_job_key(job_id)
+    if not key:
+        return
+    compact = dict(payload or {})
+    compact.setdefault("job_id", job_id)
+    compact["updated_at_ts"] = int(time.time())
+    cache_set(key, json.dumps(compact, ensure_ascii=False, default=str), ttl_seconds=_IMAGE_PROXY_JOB_TTL_SECONDS)
+
+
+def _load_image_proxy_job(job_id: str) -> Optional[Dict[str, Any]]:
+    raw = cache_get(_image_proxy_job_key(job_id))
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _image_proxy_job_public_payload(job: Dict[str, Any]) -> Dict[str, Any]:
+    status = str(job.get("status") or "").strip() or "unknown"
+    out: Dict[str, Any] = {
+        "ok": status != "failed",
+        "async": True,
+        "job_id": job.get("job_id"),
+        "status": status,
+        "stage": job.get("stage") or status,
+        "created_at_ts": job.get("created_at_ts"),
+        "updated_at_ts": job.get("updated_at_ts"),
+    }
+    if status == "completed":
+        result = job.get("result") if isinstance(job.get("result"), dict) else {}
+        out["result"] = result
+        if isinstance(result, dict):
+            out.update(result)
+    elif status == "failed":
+        out["error"] = str(job.get("error") or _public_image_failure_detail())
+        if job.get("errors"):
+            out["errors"] = job.get("errors")
+    return out
+
+
+def _compact_image_proxy_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(result, dict):
+        return {}
+    urls = [url for url in _extract_image_result_urls(result) if str(url).startswith(("http://", "https://"))]
+    compact: Dict[str, Any] = {"data": [{"url": url} for url in urls]}
+    for key in ("_lobster_fallback", "fallback_used", "fallback_provider", "_provider", "_requested_model"):
+        value = result.get(key)
+        if value not in (None, "", [], {}):
+            compact[key] = value
+    return compact
+
+
+def _start_image_proxy_job(
+    *,
+    kind: str,
+    request_user_id: int,
+    billing_user_id: int,
+    requested_model: str,
+) -> str:
+    job_id = _new_image_proxy_job_id()
+    now = int(time.time())
+    _store_image_proxy_job(
+        job_id,
+        {
+            "job_id": job_id,
+            "kind": kind,
+            "status": "queued",
+            "stage": "queued",
+            "request_user_id": int(request_user_id),
+            "billing_user_id": int(billing_user_id),
+            "requested_model": requested_model,
+            "created_at_ts": now,
+            "updated_at_ts": now,
+        },
+    )
+    return job_id
+
+
+def _update_image_proxy_job(job_id: str, **updates: Any) -> None:
+    job = _load_image_proxy_job(job_id) or {"job_id": job_id, "created_at_ts": int(time.time())}
+    job.update(updates)
+    _store_image_proxy_job(job_id, job)
+
+
+def _job_error_detail(exc: BaseException) -> str:
+    if isinstance(exc, HTTPException):
+        return str(exc.detail or "")
+    return str(exc or "")
 
 
 def _should_deduct_credits() -> bool:
@@ -549,6 +656,20 @@ def _normalized_model_id(model_id: str) -> str:
     return (model_id or "").strip().lower().replace("_", "-")
 
 
+_GPT_IMAGE_2_REQUEST_ALIASES = {
+    "gpt-image-2",
+    "gpt-image2",
+    "gpt-image",
+    "openai/gpt-image-2",
+    "openai/gpt-image2",
+    "openai/gpt-image",
+}
+
+
+def _is_gpt_image_2_request_model(model_id: str) -> bool:
+    return _normalized_model_id(model_id) in _GPT_IMAGE_2_REQUEST_ALIASES
+
+
 def _collect_image_ref_values(value: Any, *, max_depth: int = 4) -> List[str]:
     refs: List[str] = []
 
@@ -603,11 +724,11 @@ def _normalized_image_refs_from_payload(payload: Dict[str, Any]) -> Tuple[str, L
 
 def _image_generation_model_attempts(model: str) -> List[str]:
     """Return billing model ids to try for one image generation request."""
-    normalized = _normalized_model_id(model)
-    if normalized in {"gpt-image-2", "gpt-image2", "gpt-image"}:
+    if _is_gpt_image_2_request_model(model):
         return [
             "gpt-image-2",
             "gpt-image-2-gaisc",
+            "gpt-image-2-sutui",
             "gpt-image-2-openmindapi",
             "nano-banana-2",
         ]
@@ -615,13 +736,13 @@ def _image_generation_model_attempts(model: str) -> List[str]:
 
 
 def _image_generation_model_attempts_for_user(model: str, *, openai_official_first: bool) -> List[str]:
-    normalized = _normalized_model_id(model)
-    if normalized not in {"gpt-image-2", "gpt-image2", "gpt-image"}:
+    if not _is_gpt_image_2_request_model(model):
         return [model]
     if openai_official_first:
         return [
             "gpt-image-2-openai-official",
             "gpt-image-2-gaisc",
+            "gpt-image-2-sutui",
             "gpt-image-2-openmindapi",
             "nano-banana-2",
         ]
@@ -919,9 +1040,99 @@ def _yunwu_auth_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {_yunwu_api_key()}", "Accept": "application/json"}
 
 
+def _provider_route_label(token_group: str) -> str:
+    group = str(token_group or "").strip().lower()
+    return group if group else "comfly"
+
+
+def _sutui_image_base_url() -> str:
+    base = (
+        os.environ.get("SUTUI_IMAGE_API_BASE")
+        or os.environ.get("SUTUI_API_BASE")
+        or getattr(settings, "sutui_api_base", None)
+        or "https://api.xskill.ai"
+    )
+    return str(base or "https://api.xskill.ai").strip().rstrip("/")
+
+
+async def _sutui_image_headers(*, multipart: bool = False) -> Dict[str, str]:
+    token, pool_key = await next_sutui_server_token_with_pool()
+    if not token:
+        raise RuntimeError(f"Sutui shared token pool is not configured (pool={pool_key or 'none'})")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+    if not multipart:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+async def _sutui_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]:
+    body = dict(source_body or {})
+    if not str(body.get("model") or "").strip():
+        body["model"] = "openai/gpt-image-2"
+    if body.get("size") and not body.get("image_size"):
+        body["image_size"] = body.get("size")
+    async with httpx.AsyncClient(timeout=_TIMEOUT_IMAGE, trust_env=False) as client:
+        resp = await client.post(
+            f"{_sutui_image_base_url()}/v1/images/generations",
+            headers=await _sutui_image_headers(),
+            json=body,
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Sutui HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    try:
+        payload = resp.json() if resp.content else {}
+    except Exception:
+        payload = {"_raw_text": resp.text}
+    if isinstance(payload, dict):
+        payload.setdefault("fallback_used", True)
+        payload.setdefault("fallback_provider", "sutui")
+        payload.setdefault("_provider", "sutui")
+        payload.setdefault("_requested_model", body.get("model"))
+    return payload
+
+
+async def _sutui_multipart_request(
+    path: str,
+    data: Dict[str, str],
+    files: List[Tuple[str, Tuple[Any, ...]]],
+    timeout: float,
+) -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        resp = await client.post(
+            f"{_sutui_image_base_url()}{path}",
+            headers=await _sutui_image_headers(multipart=True),
+            data=data,
+            files=files,
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Sutui HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    try:
+        payload = resp.json() if resp.content else {}
+    except Exception:
+        payload = {"_raw_text": resp.text}
+    if isinstance(payload, dict):
+        payload.setdefault("fallback_used", True)
+        payload.setdefault("fallback_provider", "sutui")
+        payload.setdefault("_provider", "sutui")
+        payload.setdefault("_requested_model", data.get("model"))
+    return payload
+
+
 def _is_retryable_image_error(exc: BaseException) -> bool:
     msg = str(exc or "").lower()
-    if "comfly http 400" in msg or "comfly http 401" in msg or "comfly http 403" in msg or "comfly http 404" in msg:
+    if (
+        "comfly http 400" in msg
+        or "comfly http 401" in msg
+        or "comfly http 403" in msg
+        or "comfly http 404" in msg
+        or "sutui http 400" in msg
+        or "sutui http 401" in msg
+        or "sutui http 403" in msg
+        or "sutui http 404" in msg
+    ):
         return False
     retry_tokens = (
         "comfly http 408",
@@ -929,6 +1140,11 @@ def _is_retryable_image_error(exc: BaseException) -> bool:
         "comfly http 425",
         "comfly http 429",
         "comfly http 5",
+        "sutui http 408",
+        "sutui http 409",
+        "sutui http 425",
+        "sutui http 429",
+        "sutui http 5",
         "timeout",
         "connect",
         "connection",
@@ -1186,6 +1402,30 @@ def _image_edit_fingerprint_key(user_id: int, data: Dict[str, str], files: List[
     return f"comfly:image_edit:result:{int(user_id)}:fp:{hasher.hexdigest()[:32]}"
 
 
+def _image_edit_buffer_fingerprint_key(
+    user_id: int,
+    data: Dict[str, str],
+    buffered_files: List[Tuple[str, str, bytes, str]],
+) -> str:
+    hasher = hashlib.sha256()
+    for key in sorted(data.keys()):
+        if key in {"response_format"}:
+            continue
+        hasher.update(str(key).encode("utf-8", "ignore"))
+        hasher.update(b"=")
+        hasher.update(str(data.get(key) or "").encode("utf-8", "ignore")[:2048])
+        hasher.update(b"\n")
+    for field_name, filename, raw, content_type in buffered_files[:12]:
+        raw_bytes = bytes(raw or b"")
+        hasher.update(str(field_name).encode("utf-8", "ignore"))
+        hasher.update(str(filename).encode("utf-8", "ignore"))
+        hasher.update(str(content_type).encode("utf-8", "ignore"))
+        hasher.update(str(len(raw_bytes)).encode("ascii", "ignore"))
+        hasher.update(hashlib.sha256(raw_bytes[:65536]).digest())
+        hasher.update(hashlib.sha256(raw_bytes[-65536:] if raw_bytes else b"").digest())
+    return f"comfly:image_edit:result:{int(user_id)}:fp:{hasher.hexdigest()[:32]}"
+
+
 async def _buffer_image_edit_uploads(
     files: List[Tuple[str, Tuple[Any, ...]]],
 ) -> List[Tuple[str, str, bytes, str]]:
@@ -1295,6 +1535,13 @@ async def _submit_image_edit_attempt(
             data,
             files,
             _yunwu_auth_headers(),
+            _TIMEOUT_IMAGE,
+        )
+    if token_group == "sutui":
+        return await _sutui_multipart_request(
+            "/v1/images/edits",
+            data,
+            files,
             _TIMEOUT_IMAGE,
         )
     return await _comfly_multipart_request(
@@ -2865,16 +3112,13 @@ async def proxy_chat_completions(
     return JSONResponse(resp)
 
 
-@router.post("/api/comfly-proxy/v1/images/generations", summary="Comfly images 透明 proxy（按 per_call 计费）")
-async def proxy_images_generations(
-    request: Request,
-):
-    _check_request_authorized_for_billing(request)
-    body = await request.json()
-    model = (body.get("model") or "").strip()
-    if not model:
-        raise HTTPException(400, "缺少 model")
-    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
+async def _execute_image_generation_request(
+    *,
+    request_user_id: int,
+    billing_user_id: int,
+    model: str,
+    body: Dict[str, Any],
+) -> Dict[str, Any]:
     openai_official_first = _openai_official_image_first_for_user(billing_user_id)
     attempt_models = _image_generation_model_attempts_for_user(model, openai_official_first=openai_official_first)
     if len(attempt_models) == 1:
@@ -2970,12 +3214,11 @@ async def proxy_images_generations(
                 if token_group == "openai_official":
                     if reference_urls:
                         edit_data, edit_files = await _build_image_edit_request_parts(body, attempt_model, entry, reference_urls)
-                        resp = await _openai_official_multipart_request(
-                            _openai_official_image_url("/images/edits"),
-                            edit_data,
-                            edit_files,
-                            {"Authorization": f"Bearer {_openai_official_image_api_key()}", "Accept": "application/json"},
-                            _TIMEOUT_IMAGE,
+                        resp = await _submit_image_edit_attempt(
+                            attempt_model=attempt_model,
+                            entry=entry,
+                            data=edit_data,
+                            files=edit_files,
                         )
                     else:
                         resp = await _openai_official_image_request(upstream_body)
@@ -2984,22 +3227,14 @@ async def proxy_images_generations(
                         resp = await _openmind_image_request(upstream_body)
                     else:
                         edit_data, edit_files = await _build_image_edit_request_parts(body, attempt_model, entry, reference_urls)
-                        if token_group == "yunwu":
-                            resp = await _yunwu_multipart_request(
-                                f"{_yunwu_base_url()}/v1/images/edits",
-                                edit_data,
-                                edit_files,
-                                _yunwu_auth_headers(),
-                                _TIMEOUT_IMAGE,
-                            )
-                        else:
-                            resp = await _comfly_multipart_request(
-                                _comfly_url(endpoint_path, attempt_model),
-                                edit_data,
-                                edit_files,
-                                _comfly_auth_headers(attempt_model),
-                                _TIMEOUT_IMAGE,
-                            )
+                        resp = await _submit_image_edit_attempt(
+                            attempt_model=attempt_model,
+                            entry=entry,
+                            data=edit_data,
+                            files=edit_files,
+                        )
+                elif token_group == "sutui":
+                    resp = await _sutui_image_request(upstream_body)
                 else:
                     resp = await _comfly_request(
                         "POST",
@@ -3043,7 +3278,7 @@ async def proxy_images_generations(
                     model=attempt_model,
                     provider=(entry.get("token_group") or "comfly"),
                     channel=(entry.get("token_group") or "comfly"),
-                    route="openai_official" if token_group == "openai_official" else "comfly",
+                    route=_provider_route_label(token_group),
                     endpoint=endpoint_path,
                     meta={"attempt": index, "retry": retry_index, "asset_persistence_queued": asset_persistence_queued, "refs": len(reference_urls)},
                 )
@@ -3057,12 +3292,12 @@ async def proxy_images_generations(
                     model=attempt_model,
                     provider=(entry.get("token_group") or "comfly"),
                     channel=(entry.get("token_group") or "comfly"),
-                    route="openai_official" if token_group == "openai_official" else "comfly",
+                    route=_provider_route_label(token_group),
                     endpoint=endpoint_path,
                     meta={"attempt": index, "retry": retry_index, "asset_persistence_queued": asset_persistence_queued, "refs": len(reference_urls)},
                 )
                 channel_succeeded = True
-                return JSONResponse(resp)
+                return resp
             except Exception as e:
                 last_error = str(e)
                 _mark_image_generation_channel_failure(provider_label, attempt_model, last_error)
@@ -3088,7 +3323,7 @@ async def proxy_images_generations(
                     model=attempt_model,
                     provider=(entry.get("token_group") or "comfly"),
                     channel=(entry.get("token_group") or "comfly"),
-                    route="openai_official" if token_group == "openai_official" else "comfly",
+                    route=_provider_route_label(token_group),
                     endpoint=endpoint_path,
                     error_message=last_error[:1000],
                     meta={"attempt": index, "retry": retry_index, "retries": attempts_per_model, "refs": len(reference_urls)},
@@ -3157,7 +3392,7 @@ async def proxy_images_generations(
                     meta={"attempt": index, "asset_persistence_queued": asset_persistence_queued, "refs": len(reference_urls)},
                 )
                 channel_succeeded = True
-                return JSONResponse(resp)
+                return resp
             except Exception as fallback_error:
                 _mark_image_generation_channel_failure(openmind_fallback_provider, attempt_model, str(fallback_error))
                 _audit(
@@ -3258,17 +3493,111 @@ async def proxy_images_generations(
     raise HTTPException(502, _public_image_failure_detail())
 
 
-@router.post("/api/comfly-proxy/v1/images/edits", summary="Comfly image edits 透明 proxy（multipart，按 per_call 计费）")
-async def proxy_images_edits(
+async def _run_image_generation_proxy_job(
+    *,
+    job_id: str,
+    request_user_id: int,
+    billing_user_id: int,
+    model: str,
+    body: Dict[str, Any],
+) -> None:
+    _update_image_proxy_job(job_id, status="running", stage="generating")
+    try:
+        async with background_heavy_slot("image_proxy_generation"):
+            result = await _execute_image_generation_request(
+                request_user_id=request_user_id,
+                billing_user_id=billing_user_id,
+                model=model,
+                body=body,
+            )
+        _update_image_proxy_job(
+            job_id,
+            status="completed",
+            stage="completed",
+            result=_compact_image_proxy_result(result),
+            error=None,
+        )
+    except Exception as exc:
+        logger.warning("[image_generate] async proxy job failed job_id=%s err=%s", job_id, exc)
+        _update_image_proxy_job(job_id, status="failed", stage="failed", error=_job_error_detail(exc)[:2000])
+
+
+@router.post("/api/comfly-proxy/v1/images/generations", summary="Comfly images transparent proxy")
+async def proxy_images_generations(
     request: Request,
 ):
     _check_request_authorized_for_billing(request)
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(400, "missing model")
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
+    resp = await _execute_image_generation_request(
+        request_user_id=request_user_id,
+        billing_user_id=billing_user_id,
+        model=model,
+        body=body,
+    )
+    return JSONResponse(resp)
+
+
+@router.post("/api/comfly-proxy/v1/images/generations/start", summary="Start async image generation proxy job")
+async def proxy_images_generations_start(
+    request: Request,
+):
+    _check_request_authorized_for_billing(request)
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(400, "missing model")
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
+    job_id = _start_image_proxy_job(
+        kind="generation",
+        request_user_id=request_user_id,
+        billing_user_id=billing_user_id,
+        requested_model=model,
+    )
+    task_coro = _run_image_generation_proxy_job(
+        job_id=job_id,
+        request_user_id=request_user_id,
+        billing_user_id=billing_user_id,
+        model=model,
+        body=body,
+    )
+    try:
+        spawn_tracked_task(task_coro, name=f"image-proxy-generation-{job_id}")
+    except Exception:
+        task_coro.close()
+        _update_image_proxy_job(job_id, status="failed", stage="failed", error="image job queue unavailable")
+        raise HTTPException(503, "image job queue unavailable")
+    return {
+        "ok": True,
+        "async": True,
+        "job_id": job_id,
+        "status": "queued",
+        "poll_path": f"/api/comfly-proxy/v1/images/jobs/{job_id}",
+    }
+
+
+@router.get("/api/comfly-proxy/v1/images/jobs/{job_id}", summary="Get async image proxy job status")
+async def proxy_images_job_status(
+    job_id: str,
+    request: Request,
+):
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
+    job = _load_image_proxy_job(job_id)
+    if not job:
+        raise HTTPException(404, "image job not found or expired")
+    if int(job.get("request_user_id") or -1) != int(request_user_id) and int(job.get("billing_user_id") or -1) != int(billing_user_id):
+        raise HTTPException(403, "forbidden")
+    return JSONResponse(_image_proxy_job_public_payload(job))
+
+
+async def _parse_image_edit_form_payload(request: Request) -> Tuple[str, Dict[str, str], List[Tuple[str, str, bytes, str]], str]:
     form = await request.form()
     model = str(form.get("model") or "").strip()
     if not model:
         raise HTTPException(400, "缺少 model")
-    entry = _require_model_entry(model)
-
     data: Dict[str, str] = {}
     files: List[Tuple[str, Tuple[Any, ...]]] = []
     total_file_bytes = 0
@@ -3295,6 +3624,7 @@ async def proxy_images_edits(
         else:
             data[key] = str(value)
 
+    entry = _require_model_entry(model)
     data["model"] = _upstream_model(model, entry)
     data.setdefault("response_format", "url")
     if not files:
@@ -3303,9 +3633,6 @@ async def proxy_images_edits(
     if not buffered_files:
         raise HTTPException(400, "缺少 image 文件")
 
-    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
-    openai_official_first = _openai_official_image_first_for_user(billing_user_id)
-    attempt_models = _image_edit_model_attempts_for_user(model, openai_official_first=openai_official_first)
     client_request_id = (
         data.pop("client_request_id", None)
         or data.pop("job_id", None)
@@ -3313,9 +3640,24 @@ async def proxy_images_edits(
         or request.headers.get("X-Idempotency-Key")
         or ""
     )
+    return model, data, buffered_files, str(client_request_id or "")
+
+
+async def _execute_image_edit_request(
+    *,
+    request_user_id: int,
+    billing_user_id: int,
+    model: str,
+    data: Dict[str, str],
+    buffered_files: List[Tuple[str, str, bytes, str]],
+    client_request_id: str = "",
+) -> Dict[str, Any]:
+    entry = _require_model_entry(model)
+    openai_official_first = _openai_official_image_first_for_user(billing_user_id)
+    attempt_models = _image_edit_model_attempts_for_user(model, openai_official_first=openai_official_first)
     idempotency_key = _image_edit_idempotency_key(billing_user_id, client_request_id)
     if not idempotency_key:
-        idempotency_key = _image_edit_fingerprint_key(billing_user_id, data, files)
+        idempotency_key = _image_edit_buffer_fingerprint_key(billing_user_id, data, buffered_files)
     cached_payload = _cached_image_edit_response(idempotency_key)
     if cached_payload is not None:
         _audit(
@@ -3325,7 +3667,7 @@ async def proxy_images_edits(
             model=model,
             client_request_id=str(client_request_id or "")[:120],
         )
-        return JSONResponse(cached_payload)
+        return cached_payload
     pending_key = f"{idempotency_key}:pending" if idempotency_key else ""
     if pending_key:
         claimed = cache_set_if_absent(pending_key, "1", ttl_seconds=max(60, int(_TIMEOUT_IMAGE) + 120))
@@ -3343,7 +3685,7 @@ async def proxy_images_edits(
                     model=model,
                     client_request_id=str(client_request_id or "")[:120],
                 )
-                return JSONResponse(cached_payload)
+                return cached_payload
             _audit(
                 "image_edit_pending_duplicate",
                 user_id=billing_user_id,
@@ -3467,8 +3809,6 @@ async def proxy_images_edits(
                 await asyncio.sleep(0.8 * retry_index)
         if resp is not None:
             break
-        if last_error and not _is_retryable_image_error(RuntimeError(last_error)):
-            break
 
     if resp is None:
         if pending_key:
@@ -3548,7 +3888,95 @@ async def proxy_images_edits(
         client_request_id=str(client_request_id or "")[:120],
         asset_persistence_queued=asset_persistence_queued,
     )
+    return resp
+
+
+async def _run_image_edit_proxy_job(
+    *,
+    job_id: str,
+    request_user_id: int,
+    billing_user_id: int,
+    model: str,
+    data: Dict[str, str],
+    buffered_files: List[Tuple[str, str, bytes, str]],
+    client_request_id: str,
+) -> None:
+    _update_image_proxy_job(job_id, status="running", stage="editing")
+    try:
+        async with background_heavy_slot("image_proxy_edit"):
+            result = await _execute_image_edit_request(
+                request_user_id=request_user_id,
+                billing_user_id=billing_user_id,
+                model=model,
+                data=data,
+                buffered_files=buffered_files,
+                client_request_id=client_request_id,
+            )
+        _update_image_proxy_job(
+            job_id,
+            status="completed",
+            stage="completed",
+            result=_compact_image_proxy_result(result),
+            error=None,
+        )
+    except Exception as exc:
+        logger.warning("[image_edit] async proxy job failed job_id=%s err=%s", job_id, exc)
+        _update_image_proxy_job(job_id, status="failed", stage="failed", error=_job_error_detail(exc)[:2000])
+
+
+@router.post("/api/comfly-proxy/v1/images/edits", summary="Comfly image edits transparent proxy")
+async def proxy_images_edits(
+    request: Request,
+):
+    _check_request_authorized_for_billing(request)
+    model, data, buffered_files, client_request_id = await _parse_image_edit_form_payload(request)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
+    resp = await _execute_image_edit_request(
+        request_user_id=request_user_id,
+        billing_user_id=billing_user_id,
+        model=model,
+        data=data,
+        buffered_files=buffered_files,
+        client_request_id=client_request_id,
+    )
     return JSONResponse(resp)
+
+
+@router.post("/api/comfly-proxy/v1/images/edits/start", summary="Start async image edit proxy job")
+async def proxy_images_edits_start(
+    request: Request,
+):
+    _check_request_authorized_for_billing(request)
+    model, data, buffered_files, client_request_id = await _parse_image_edit_form_payload(request)
+    request_user_id, billing_user_id = _resolve_proxy_user_ids_from_request(request, map_to_online_user=True)
+    job_id = _start_image_proxy_job(
+        kind="edit",
+        request_user_id=request_user_id,
+        billing_user_id=billing_user_id,
+        requested_model=model,
+    )
+    task_coro = _run_image_edit_proxy_job(
+        job_id=job_id,
+        request_user_id=request_user_id,
+        billing_user_id=billing_user_id,
+        model=model,
+        data=data,
+        buffered_files=buffered_files,
+        client_request_id=client_request_id,
+    )
+    try:
+        spawn_tracked_task(task_coro, name=f"image-proxy-edit-{job_id}")
+    except Exception:
+        task_coro.close()
+        _update_image_proxy_job(job_id, status="failed", stage="failed", error="image edit job queue unavailable")
+        raise HTTPException(503, "image edit job queue unavailable")
+    return {
+        "ok": True,
+        "async": True,
+        "job_id": job_id,
+        "status": "queued",
+        "poll_path": f"/api/comfly-proxy/v1/images/jobs/{job_id}",
+    }
 
 
 @router.post("/api/comfly-proxy/v2/videos/generations", summary="Comfly Veo 视频提交 proxy（按 per_call 预扣）")

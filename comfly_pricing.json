@@ -17,6 +17,15 @@
       "token_group": "gaisc",
       "note": "G-AISC image channel used after the default Comfly channel and before OpenMind/Yunwu fallbacks."
     },
+    "gpt-image-2-sutui": {
+      "price_type": "per_call",
+      "price_per_unit": 30,
+      "api_format": "dalle",
+      "comfly_model": "openai/gpt-image-2",
+      "token_group": "sutui",
+      "sutui_equivalent": ["openai/gpt-image-2", "openai/gpt-image2"],
+      "note": "Same image model routed through the shared Sutui token pool as a fallback channel."
+    },
     "gpt-image-2-vip": {
       "price_type": "per_call",
       "price_per_unit": 30,

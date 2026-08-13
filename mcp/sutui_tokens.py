@@ -1,12 +1,8 @@
-"""Server-side Sutui token pools shared by OEM brands.
+"""Server-side Sutui token pool shared by every OEM brand.
 
-Physical pools use ``SUTUI_SERVER_TOKENS_<POOL>`` or
-``SUTUI_SERVER_TOKEN_<POOL>``. OEM brands use their same-name pool when one is
-configured; otherwise they inherit ``SUTUI_DEFAULT_BRAND_POOL`` (``bihuo`` by
-default). ``SUTUI_BRAND_POOL_MAP`` can explicitly map brands to pools as JSON,
-for example ``{"daka":"bihuo","another_brand":"yingshi"}``.
-
-Legacy unscoped tokens remain internal-probe-only and are never a user fallback.
+User-facing requests intentionally ignore ``brand_mark`` and use one shared
+server token pool.  Legacy branded env names are still accepted as a startup
+compatibility fallback, but they no longer create brand-specific routing.
 """
 from __future__ import annotations
 
@@ -101,18 +97,25 @@ def _tokens_for_pool(pool_key: str) -> List[str]:
     return _parse_pool(f"SUTUI_SERVER_TOKENS_{suffix}", f"SUTUI_SERVER_TOKEN_{suffix}")
 
 
+def _shared_user_pool_and_list() -> Tuple[str, List[str]]:
+    shared = _legacy_sutui_tokens_list()
+    if shared:
+        return "shared", shared
+    # Compatibility for already deployed servers that only configured the old
+    # branded env names.  The brand passed by the caller is ignored.
+    for pk, lst in (
+        ("bihuo", get_sutui_tokens_list_bihuo()),
+        ("yingshi", get_sutui_tokens_list_yingshi()),
+    ):
+        if lst:
+            return pk, lst
+    return "none", []
+
+
 def sutui_pool_key_for_brand(brand_mark: Optional[str]) -> str:
-    """Resolve any valid OEM brand to a configured physical token pool."""
-    brand = _normalized_brand_or_pool(brand_mark)
-    if not brand:
-        return "none"
-    explicit = _configured_brand_pool_map().get(brand)
-    if explicit:
-        return explicit
-    if brand in {"bihuo", "yingshi"} or _tokens_for_pool(brand):
-        return brand
-    default_pool = _normalized_brand_or_pool(os.environ.get("SUTUI_DEFAULT_BRAND_POOL") or "bihuo")
-    return default_pool or "none"
+    """Return the effective shared Sutui pool; ``brand_mark`` is ignored."""
+    pool_key, _ = _shared_user_pool_and_list()
+    return pool_key
 
 
 def sutui_token_ref_from_secret(token: Optional[str]) -> str:
@@ -133,9 +136,8 @@ def sutui_token_recon_meta(token: Optional[str], pool_key: str) -> Dict[str, Any
 
 
 def _tokens_and_pool_key_user(*, brand_mark: Optional[str]) -> Tuple[str, List[str]]:
-    """Resolve an OEM brand without falling back to unscoped legacy tokens."""
-    pool_key = sutui_pool_key_for_brand(brand_mark)
-    return pool_key, _tokens_for_pool(pool_key)
+    """Resolve the shared user-facing token pool; ``brand_mark`` is ignored."""
+    return _shared_user_pool_and_list()
 
 
 def _internal_probe_pool_and_list() -> Tuple[str, List[str]]:

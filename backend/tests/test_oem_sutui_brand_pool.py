@@ -4,6 +4,8 @@ from pathlib import Path
 
 def _clear_pool_env(monkeypatch):
     for name in (
+        "SUTUI_SERVER_TOKENS",
+        "SUTUI_SERVER_TOKEN",
         "SUTUI_BRAND_POOL_MAP",
         "SUTUI_DEFAULT_BRAND_POOL",
         "SUTUI_SERVER_TOKENS_BIHUO",
@@ -16,40 +18,54 @@ def _clear_pool_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_oem_brand_inherits_default_physical_pool(monkeypatch):
+def test_all_oem_brands_use_shared_sutui_pool(monkeypatch):
     from mcp.sutui_tokens import next_sutui_server_token_with_pool
 
     _clear_pool_env(monkeypatch)
-    monkeypatch.setenv("SUTUI_SERVER_TOKENS_BIHUO", "token-a,token-b")
+    monkeypatch.setenv("SUTUI_SERVER_TOKENS", "shared-a,shared-b")
 
-    token, pool = asyncio.run(next_sutui_server_token_with_pool(brand_mark="daka"))
+    bihuo_token, bihuo_pool = asyncio.run(next_sutui_server_token_with_pool(brand_mark="bihuo"))
+    jinghai_token, jinghai_pool = asyncio.run(next_sutui_server_token_with_pool(brand_mark="jinghai"))
 
-    assert token == "token-a"
-    assert pool == "bihuo"
+    assert (bihuo_token, bihuo_pool) == ("shared-a", "shared")
+    assert (jinghai_token, jinghai_pool) == ("shared-a", "shared")
 
 
-def test_oem_brand_can_map_to_a_dedicated_or_shared_pool(monkeypatch):
+def test_brand_pool_map_is_ignored_when_shared_pool_exists(monkeypatch):
     from mcp.sutui_tokens import next_sutui_server_token_with_pool
 
     _clear_pool_env(monkeypatch)
     monkeypatch.setenv("SUTUI_BRAND_POOL_MAP", '{"daka":"yingshi"}')
+    monkeypatch.setenv("SUTUI_SERVER_TOKEN", "shared-token")
     monkeypatch.setenv("SUTUI_SERVER_TOKEN_YINGSHI", "token-y")
     monkeypatch.setenv("SUTUI_SERVER_TOKEN_WHITE_LABEL", "token-w")
 
     mapped_token, mapped_pool = asyncio.run(next_sutui_server_token_with_pool(brand_mark="daka"))
     own_token, own_pool = asyncio.run(next_sutui_server_token_with_pool(brand_mark="white-label"))
 
-    assert (mapped_token, mapped_pool) == ("token-y", "yingshi")
-    assert (own_token, own_pool) == ("token-w", "white_label")
+    assert (mapped_token, mapped_pool) == ("shared-token", "shared")
+    assert (own_token, own_pool) == ("shared-token", "shared")
 
 
-def test_missing_brand_never_uses_a_user_fallback(monkeypatch):
+def test_legacy_bihuo_env_is_only_shared_compatibility_fallback(monkeypatch):
     from mcp.sutui_tokens import next_sutui_server_token_with_pool
 
     _clear_pool_env(monkeypatch)
     monkeypatch.setenv("SUTUI_SERVER_TOKEN_BIHUO", "token-a")
 
     token, pool = asyncio.run(next_sutui_server_token_with_pool(brand_mark=""))
+    jinghai_token, jinghai_pool = asyncio.run(next_sutui_server_token_with_pool(brand_mark="jinghai"))
+
+    assert (token, pool) == ("token-a", "bihuo")
+    assert (jinghai_token, jinghai_pool) == ("token-a", "bihuo")
+
+
+def test_no_sutui_token_returns_none(monkeypatch):
+    from mcp.sutui_tokens import next_sutui_server_token_with_pool
+
+    _clear_pool_env(monkeypatch)
+
+    token, pool = asyncio.run(next_sutui_server_token_with_pool(brand_mark="jinghai"))
 
     assert token is None
     assert pool == "none"
