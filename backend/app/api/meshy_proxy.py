@@ -5,7 +5,10 @@ import os
 from typing import Any, Dict
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
+
+from ..models import User
+from .auth import get_current_user
 
 
 router = APIRouter()
@@ -75,6 +78,16 @@ async def _meshy_request(method: str, path: str, *, timeout: float, json_body: A
     return data if isinstance(data, dict) else {"data": data}
 
 
+def _public_balance_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "configured": True,
+        "provider": "meshy",
+        "balance": data.get("balance") if isinstance(data, dict) else None,
+        "balance_unit": "credits",
+    }
+
+
 @router.get("/api/meshy-proxy/health", summary="Meshy relay health")
 async def meshy_proxy_health():
     return {"ok": True, "configured": bool(_api_key()), "requires_secret": bool(_secret())}
@@ -84,6 +97,11 @@ async def meshy_proxy_health():
 async def meshy_proxy_balance(x_lobster_meshy_proxy_secret: str | None = Header(default=None)):
     _require_secret(x_lobster_meshy_proxy_secret)
     return await _meshy_request("GET", "/balance", timeout=_TIMEOUT_BALANCE)
+
+
+@router.get("/api/meshy-proxy/user-balance", summary="Relay Meshy balance for logged-in users")
+async def meshy_proxy_user_balance(_current_user: User = Depends(get_current_user)):
+    return _public_balance_payload(await _meshy_request("GET", "/balance", timeout=_TIMEOUT_BALANCE))
 
 
 @router.post("/api/meshy-proxy/image-to-3d", summary="Relay Meshy image-to-3d submit")
