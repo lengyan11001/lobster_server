@@ -3299,6 +3299,30 @@
       return workflowLeafLookups().find((item) => item.department.id === departmentId && String(item.node.key || "") === key) || null;
     }
 
+    function workflowSelectedNodeLookup() {
+      return workflowLookupFromValue($("workflowNodeAbility") ? $("workflowNodeAbility").value : "");
+    }
+
+    function workflowLookupIsNativeWechatTakeover(lookup) {
+      const node = lookup && lookup.node || {};
+      const key = String(node.key || node.workQuickKey || "").trim();
+      return key === "native_wechat_poll";
+    }
+
+    function syncWorkflowNodeModalFields(reset = false) {
+      const lookup = workflowSelectedNodeLookup();
+      const showGroupInvite = workflowLookupIsNativeWechatTakeover(lookup);
+      const field = $("workflowNodeNativeWechatGroupInviteField");
+      if (field) field.classList.toggle("hidden", !showGroupInvite);
+      const checkbox = $("workflowNodeNativeWechatGroupInviteEnabled");
+      if (!checkbox) return;
+      if (!showGroupInvite) {
+        checkbox.checked = false;
+        return;
+      }
+      if (reset) checkbox.checked = false;
+    }
+
     function workflowAbilityOptionsHtml() {
       const groups = new Map();
       workflowLeafLookups().forEach((lookup) => {
@@ -4087,7 +4111,14 @@
       const time = ($("workflowNodeTime") && $("workflowNodeTime").value || "").trim();
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
       const note = (($("workflowNodeNote") && $("workflowNodeNote").value) || lookup.defaultNote || "").trim();
-      const plan = workflowPlanForLookup(lookup, note);
+      const nodeKey = String(lookup.node && (lookup.node.key || lookup.node.workQuickKey) || "").trim();
+      const plan = nodeKey === "native_wechat_poll"
+        ? nativeWechatWorkflowPlan(nodeKey, note, workflowParamChecked("workflowNodeNativeWechatGroupInviteEnabled") ? {
+            group_invite_enabled: true,
+            group_invite_rule_status: "pending_rules",
+            trigger: "qualified_intent",
+          } : { group_invite_enabled: false })
+        : workflowPlanForLookup(lookup, note);
       const salesPreset = lookup.optionId != null;
       return {
         id: `wf_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
@@ -4108,6 +4139,7 @@
       if (!modal) return;
       if ($("workflowNodeTime") && !$("workflowNodeTime").value) $("workflowNodeTime").value = "09:00";
       renderWorkflowAbilitySelect();
+      syncWorkflowNodeModalFields(true);
       modal.classList.remove("hidden");
       const first = $("workflowNodeTime") || modal.querySelector("input, textarea, select");
       if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 80);
@@ -8428,15 +8460,8 @@
           });
           return;
         }
-        const mediaType = ["image", "video", "document"].includes(item.mediaType) ? item.mediaType : "document";
-        openContentActionAbility("publish_center", "workPublishMaterial", () => {
-          setFieldValue("workPublishMaterial", material);
-          setFieldValue("workPublishMediaType", mediaType);
-          setFieldValue("workPublishTitle", title);
-          setFieldValue("workPublishDescription", text);
-          setFieldValue("workPublishTags", tags);
-          setFieldValue("workPublishAiCopy", !text);
-        });
+        const publishMediaType = ["image", "video", "document"].includes(mediaType) ? mediaType : "document";
+        await openContentItemPublishModal(item, title, text, tags, publishMediaType, creativePrompt);
       }
     }
 
@@ -15775,6 +15800,10 @@
       return rows.find((row) => row.is_default) || null;
     }
 
+    function publishRunAvailableAccounts() {
+      return (state.publishAccounts || []).filter((row) => row && mountedAccountDeviceOnline(row));
+    }
+
     function mountedAccountDeviceOnline(row) {
       if (!row) return false;
       const installationId = String(row.installation_id || "").trim();
@@ -16983,7 +17012,7 @@
     }
 
     function findPublishAccountForDraft(draft = {}, platform = "") {
-      const rows = state.publishAccounts || [];
+      const rows = publishRunAvailableAccounts();
       const draftPlatform = String(platform || draft.platform || "").trim();
       const draftAccountId = String(draft.account_id || "").trim();
       const draftInstallationId = String(draft.installation_id || "").trim();
@@ -17005,7 +17034,7 @@
       const preferred = defaultPublishAccount(draft.platform || (draftAccount && draftAccount.platform) || "");
       const current = sel.value || draft.platform || (draftAccount && draftAccount.platform) || (preferred && preferred.platform) || "";
       const byPlatform = new Map();
-      (state.publishAccounts || []).forEach((row) => {
+      publishRunAvailableAccounts().forEach((row) => {
         const platform = String(row && row.platform || "").trim();
         if (!platform) return;
         if (!byPlatform.has(platform)) byPlatform.set(platform, row.platform_name || platformDisplayName(platform));
@@ -17014,7 +17043,7 @@
         ? Array.from(byPlatform.entries())
           .sort((a, b) => publishPlatformOrder(a[0]) - publishPlatformOrder(b[0]))
           .map(([platform, label]) => optionHtml(platform, label)).join("")
-        : optionHtml("", "暂无账号");
+        : optionHtml("", "暂无在线账号");
       if (current && byPlatform.has(current)) sel.value = current;
       else if (byPlatform.size) sel.value = Array.from(byPlatform.keys())[0];
       fillPublishRunAccountSelect();
@@ -17025,7 +17054,7 @@
       if (!sel) return;
       const draft = state.publishRunDraft || {};
       const platform = $("publishRunPlatform") ? $("publishRunPlatform").value : "";
-      const rows = (state.publishAccounts || []).filter((row) => !platform || row.platform === platform);
+      const rows = publishRunAvailableAccounts().filter((row) => !platform || row.platform === platform);
       const preferred = defaultPublishAccount(platform);
       const preferredId = preferred ? publishAccountSelectId(preferred) : "";
       const draftAccount = findPublishAccountForDraft(draft, platform);
@@ -17033,7 +17062,7 @@
       const current = sel.value || draftSelectId || preferredId;
       sel.innerHTML = rows.length
         ? optionHtml("", "请选择账号") + rows.map((row) => optionHtml(publishAccountSelectId(row), publishAccountOptionLabel(row))).join("")
-        : optionHtml("", "暂无账号");
+        : optionHtml("", "暂无在线账号");
       if (current && rows.some((row) => publishAccountSelectId(row) === String(current))) {
         sel.value = String(current);
       } else if (draft.installation_id) {
@@ -20275,7 +20304,8 @@
           + taskFieldHtml("备注", taskTextareaHtml("workWecomNote", "可选：这次希望客服重点关注的业务场景或回复口径"), true);
       }
       if (key === "native_wechat_poll") {
-        return taskFieldHtml("备注", taskTextareaHtml("workNativeWechatNote", "可选"), true);
+        return taskFieldHtml("是否拉群", workCheckboxHtml("workNativeWechatGroupInviteEnabled", "命中拉群规则后立即执行", false))
+          + taskFieldHtml("备注", taskTextareaHtml("workNativeWechatNote", "可选"), true);
       }
       if (key === "native_wechat_add_friend") {
         return taskFieldHtml("手机号/微信号", taskTextareaHtml("workNativeWechatTargets", "多个目标用逗号或换行分隔"), true)
@@ -20500,6 +20530,7 @@
         const plan = nativeWechatWorkflowPlan(key, workValue("workNativeWechatNote"), {
           targets: workSplitList(workValue("workNativeWechatTargets")),
           apply_message: workValue("workNativeWechatApplyMessage"),
+          group_invite_enabled: !!($("workNativeWechatGroupInviteEnabled") && $("workNativeWechatGroupInviteEnabled").checked),
           moment_action: workValue("workNativeWechatMomentAction") || "like_comment",
         }, { requireTargets: key !== "native_wechat_poll" });
         return { title: plan.title, taskKind: plan.task_kind, content: "H5 安排工作：" + plan.title, payload: plan.payload };
@@ -22758,6 +22789,87 @@
       await loadPublishAccounts();
     }
 
+    async function openContentItemPublishModal(item, title = "", description = "", tags = "", mediaType = "", creativePrompt = "") {
+      const source = item && typeof item === "object" ? item : {};
+      const type = String(mediaType || source.mediaType || mediaTypeFromUrl(source.url || source.imageUrl || "") || "document").trim().toLowerCase();
+      const normalizedType = type === "file" ? "document" : (["image", "video", "document", "image_text"].includes(type) ? type : "document");
+      const sourceUrl = String(source.imageUrl || source.url || source.source_url || "").trim();
+      const assetId = String(source.assetId || source.asset_id || "").trim();
+      const imageRefs = [];
+      const addImageRef = (rawUrl, rawAssetId) => {
+        const imageUrl = String(rawUrl || "").trim();
+        const imageAssetId = String(rawAssetId || "").trim();
+        if (!imageUrl && !imageAssetId) return;
+        const existing = imageRefs.find((ref) => (
+          (imageUrl && ref.image_url === imageUrl) || (imageAssetId && ref.image_asset_id === imageAssetId)
+        ));
+        if (existing) {
+          if (imageUrl && !existing.image_url) existing.image_url = imageUrl;
+          if (imageAssetId && !existing.image_asset_id) existing.image_asset_id = imageAssetId;
+          return;
+        }
+        imageRefs.push({ image_url: imageUrl, image_asset_id: imageAssetId });
+      };
+      (Array.isArray(source.imageRefs) ? source.imageRefs : []).forEach((ref) => addImageRef(
+        ref && (ref.image_url || ref.source_url || ref.url),
+        ref && (ref.image_asset_id || ref.asset_id),
+      ));
+      if (!imageRefs.length) {
+        const urls = Array.isArray(source.imageUrls) ? source.imageUrls : [];
+        const assetIds = Array.isArray(source.imageAssetIds) ? source.imageAssetIds : [];
+        for (let index = 0; index < Math.max(urls.length, assetIds.length); index += 1) {
+          addImageRef(urls[index], assetIds[index]);
+        }
+      }
+      if (normalizedType === "image" || source.sourceKind === "ip_moments") addImageRef(sourceUrl, assetId);
+      const sourcePrompt = contentActionCreativePromptValue(
+        creativePrompt,
+        source.creativePrompt,
+        source.prompt,
+        contentActionPromptFromMeta(source.meta),
+      );
+      const isMoment = String(source.sourceKind || "").trim().toLowerCase() === "ip_moments"
+        || String(source.sourceTask || "").trim().toLowerCase() === "moments_candidate"
+        || !!source.momentsCandidate;
+      if (!assetId && !sourceUrl && !description && !title) {
+        toast("当前内容没有可发布的素材或文案");
+        return;
+      }
+      state.publishRunDraft = {
+        run_id: "",
+        content_record_source: String(source.recordSource || "").trim(),
+        content_record_source_id: String(source.recordSourceId || "").trim(),
+        platform: isMoment ? "wechat_moments" : "",
+        platform_name: isMoment ? platformDisplayName("wechat_moments") : "",
+        account_id: "",
+        account_nickname: "",
+        installation_id: currentInstallationId(),
+        asset_id: assetId,
+        url: sourceUrl,
+        source_url: sourceUrl,
+        image_urls: imageRefs.map((ref) => ref.image_url || ""),
+        image_asset_ids: imageRefs.map((ref) => ref.image_asset_id || ""),
+        images: imageRefs,
+        title: String(title || "").trim(),
+        description: String(description || "").trim(),
+        tags: String(tags || "").trim(),
+        media_type: isMoment ? "image_text" : normalizedType,
+        source_prompt: sourcePrompt,
+        options: sourcePrompt ? { _source_prompt: sourcePrompt } : {},
+        ai_publish_copy: !contentActionTextValue(title, description),
+      };
+      setPublishRunValue("publishRunMaterial", assetId || sourceUrl || "");
+      setPublishRunValue("publishRunTitleInput", state.publishRunDraft.title || "");
+      setPublishRunValue("publishRunDescription", state.publishRunDraft.description || "");
+      setPublishRunValue("publishRunMediaType", state.publishRunDraft.media_type || "document");
+      setPublishRunValue("publishRunTags", state.publishRunDraft.tags || "");
+      setPublishRunValue("publishRunPlatform", "");
+      setPublishRunValue("publishRunAccount", "");
+      if ($("publishRunAiCopy")) $("publishRunAiCopy").checked = !!state.publishRunDraft.ai_publish_copy;
+      $("publishRunModal")?.classList.remove("hidden");
+      await loadPublishAccounts();
+    }
+
     async function openMomentRecordPublishModal(btn) {
       if (!btn) return;
       const runId = btn.dataset.publishRun || "";
@@ -22851,7 +22963,42 @@
 
     function selectedPublishRunAccount() {
       const accountId = $("publishRunAccount") ? $("publishRunAccount").value : "";
-      return (state.publishAccounts || []).find((row) => publishAccountSelectId(row) === String(accountId)) || null;
+      return publishRunAvailableAccounts().find((row) => publishAccountSelectId(row) === String(accountId)) || null;
+    }
+
+    async function submitPublishDraftClientTask(body) {
+      const params = {
+        asset_id: body.asset_id || "",
+        url: body.source_url || body.url || "",
+        source_url: body.source_url || body.url || "",
+        media_type: body.media_type || "video",
+        platform: body.platform || "",
+        platform_name: body.platform_name || platformDisplayName(body.platform),
+        account_id: body.account_id || "",
+        account_nickname: body.account_nickname || "",
+        publish_installation_id: body.installation_id || "",
+        installation_id: body.installation_id || "",
+        title: body.title || "",
+        description: body.description || "",
+        tags: body.tags || "",
+        ai_publish_copy: !!body.ai_publish_copy,
+        source_prompt: body.source_prompt || "",
+        options: body.options || {},
+      };
+      if (Array.isArray(body.images) && body.images.length) {
+        params.images = body.images;
+        params.image_urls = body.image_urls || [];
+        params.image_asset_ids = body.image_asset_ids || [];
+        params.attachments = body.attachments || [];
+      }
+      await submitOnceClientTask({
+        title: body.title || body.description || "发布内容",
+        taskKind: "client_workflow",
+        content: "H5 内容发布",
+        payload: { action: "publish_content", params },
+      });
+      toast("已提交发布，Online 会用选中的在线账号执行");
+      return true;
     }
 
     async function submitPublishRunForm(evt) {
@@ -22871,7 +23018,7 @@
       const description = $("publishRunDescription") ? $("publishRunDescription").value.trim() : "";
       const title = $("publishRunTitleInput") ? $("publishRunTitleInput").value.trim() : "";
       const isWechatMoments = String(platform || (account && account.platform) || "").trim().toLowerCase() === "wechat_moments";
-      if (!assetId && !isWechatMoments) {
+      if (!assetId && !sourceUrl && !isWechatMoments) {
         toast("当前素材还没有入库，不能直接发布");
         return;
       }
@@ -22883,6 +23030,11 @@
         toast("请选择发布账号");
         return;
       }
+      const sourcePrompt = String(draft.source_prompt || draft.creative_prompt || draft.prompt || "").trim();
+      const bodyOptions = draft.options && typeof draft.options === "object" && !Array.isArray(draft.options)
+        ? { ...draft.options }
+        : {};
+      if (sourcePrompt && !bodyOptions._source_prompt) bodyOptions._source_prompt = sourcePrompt;
       const body = {
         ...draft,
         asset_id: assetId,
@@ -22897,6 +23049,8 @@
         description,
         tags: $("publishRunTags") ? $("publishRunTags").value.trim() : "",
         ai_publish_copy: !!($("publishRunAiCopy") && $("publishRunAiCopy").checked),
+        source_prompt: sourcePrompt,
+        options: bodyOptions,
         status: "ready",
       };
       if (isWechatMoments) {
@@ -22949,7 +23103,7 @@
         let ok = false;
         if (runId) {
           ok = await requestRunPublish(runId, btn, body);
-        } else if (draft.content_record_source && draft.content_record_source_id) {
+        } else if (isWechatMoments && draft.content_record_source && draft.content_record_source_id) {
           try {
             await api("/api/content-records/publish-request", {
               method: "POST",
@@ -22967,7 +23121,11 @@
             toast(err.message || "提交发布失败");
           }
         } else {
-          toast("缺少内容记录 ID");
+          try {
+            ok = await submitPublishDraftClientTask(body);
+          } catch (err) {
+            toast(err.message || "提交发布失败");
+          }
         }
         if (ok) closePublishRunModal();
       } finally {
@@ -24934,6 +25092,7 @@
     $("workflowNodeBackdrop")?.addEventListener("click", closeWorkflowNodeModal);
     $("workflowNodeClose")?.addEventListener("click", closeWorkflowNodeModal);
     $("workflowNodeCancel")?.addEventListener("click", closeWorkflowNodeModal);
+    $("workflowNodeAbility")?.addEventListener("change", () => syncWorkflowNodeModalFields(true));
     $("workflowNodeForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
       try {

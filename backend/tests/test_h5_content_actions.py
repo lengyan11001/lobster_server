@@ -36,7 +36,11 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert 'setTaskAbility("goal.video.pipeline")' not in script
     assert 'taskAbility: "goal.video.pipeline"' not in script
     assert 'openContentActionAbility("hifly.video.create_by_tts", "workHiflyScript"' in script
-    assert 'openContentActionAbility("publish_center", "workPublishMaterial"' in script
+    assert "async function openContentItemPublishModal" in script
+    assert 'await openContentItemPublishModal(item, title, text, tags, publishMediaType, creativePrompt)' in script
+    assert 'openContentActionAbility("publish_center", "workPublishMaterial"' not in script
+    assert "async function submitPublishDraftClientTask(body)" in script
+    assert 'payload: { action: "publish_content", params }' in script
     assert 'state.assetAvatarPrefillFile = file' in script
     assert 'if ($("assetAvatarVersion")) $("assetAvatarVersion").value = "v2"' in script
     assert 'if ($("assetAvatarSourceType")) $("assetAvatarSourceType").value = mediaType' in script
@@ -49,8 +53,8 @@ def test_content_actions_route_to_matching_workbench_with_prefill():
     assert 'selectAssetPickerRow("workImageReference", {' in script
     assert 'setFieldValue("taskSeedanceText", creativePrompt)' in script
     assert 'setFieldValue("workHiflyScript", script)' in script
-    assert 'setFieldValue("workPublishDescription", text)' in script
-    assert 'setFieldValue("workPublishTags", tags)' in script
+    assert 'setPublishRunValue("publishRunDescription", state.publishRunDraft.description || "")' in script
+    assert 'setPublishRunValue("publishRunTags", state.publishRunDraft.tags || "")' in script
     assert 'if (String(source.mediaType || "").trim().toLowerCase() === "image")' in script
     assert 'return String(source.url || source.assetId || "").trim()' in script
     assert 'openContentActionAbility("wewrite.article.pipeline", "abilityArticleIdea"' in script

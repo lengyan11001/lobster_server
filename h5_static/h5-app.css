@@ -3464,13 +3464,46 @@
       font-size: 12px;
     }
     .mounted-wechat-takeover-grid label.full { grid-column: 1 / -1; }
-    .mounted-wechat-takeover-grid input,
+    .mounted-wechat-takeover-grid input:not([type="checkbox"]),
     .mounted-wechat-takeover-grid select,
     .mounted-wechat-takeover-grid textarea { width: 100%; min-width: 0; }
-    .mounted-wechat-takeover-grid input,
+    .mounted-wechat-takeover-grid input:not([type="checkbox"]),
     .mounted-wechat-takeover-grid select { height: 40px; }
+    .mounted-wechat-takeover-grid input[type="checkbox"] {
+      width: 18px !important;
+      height: 18px !important;
+      min-width: 18px !important;
+      min-height: 0 !important;
+      max-width: 18px;
+      padding: 0 !important;
+      margin: 0;
+      flex: 0 0 18px;
+      box-shadow: none;
+      appearance: auto;
+      -webkit-appearance: checkbox;
+      accent-color: var(--designer-blue);
+    }
+    .mounted-wechat-inline-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 40px;
+      width: fit-content;
+      max-width: 100%;
+      padding: 0 12px;
+      border: 1px solid #dfe5ef;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #fff, #f8fbff);
+      color: #25324a;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.9);
+    }
+    .mounted-wechat-inline-switch span {
+      line-height: 1.35;
+    }
     .mounted-wechat-takeover-grid textarea { min-height: 76px; resize: vertical; }
-    .mounted-wechat-contact-trigger { width: 100%; min-width: 0; height: 48px; padding: 7px 11px; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #25324a; border: 1px solid #dfe5ef; border-radius: 9px; background: #fff; box-shadow: none; text-align: left; }
+    .mounted-wechat-contact-trigger { width: 100%; min-width: 0; height: 48px; padding: 7px 11px; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #25324a; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; box-shadow: none; text-align: left; }
     .mounted-wechat-contact-trigger span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 400; }
     .mounted-wechat-contact-trigger small { flex: 0 0 auto; color: #738096; font-size: 11px; font-weight: 400; }
     .mounted-wechat-contact-modal { z-index: 170; align-items: end; padding: 0; }
