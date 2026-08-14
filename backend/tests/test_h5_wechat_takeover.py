@@ -84,6 +84,45 @@ def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_sessio
     assert command["group_invite_welcome_message"].startswith("您好")
 
 
+def test_wechat_auto_reply_uses_fixed_thirty_minute_interval(db_session, test_user, monkeypatch):
+    monkeypatch.setattr(h5_chat, "online_user_for_mobile_user", lambda _db, user: user)
+
+    def mounted_payload(_db, _user_id):
+        return {
+            "ok": True,
+            "accounts": [
+                {
+                    "scope": "wechat",
+                    "online": True,
+                    "installation_id": "device-1",
+                    "account_key": "wechat:pc-default",
+                    "account_id": "pc-wechat-default",
+                    "nickname": "本机微信",
+                }
+            ],
+            "defaults": {},
+        }
+
+    monkeypatch.setattr(h5_chat, "_mounted_accounts_payload", mounted_payload)
+
+    h5_chat.h5_set_wechat_auto_reply(
+        H5WechatAutoReplyIn(
+            enabled=True,
+            installation_id="device-1",
+            interval_seconds=60,
+        ),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    pref = db_session.query(H5MountedAccountDefault).filter_by(user_id=test_user.id, scope="wechat_auto_reply").one()
+    assert pref.payload["interval_seconds"] == 1800
+
+    message = db_session.query(H5ChatMessage).order_by(H5ChatMessage.created_at.desc()).first()
+    command = json.loads(message.content.removeprefix(h5_chat._H5_CLIENT_COMMAND_PREFIX))
+    assert command["interval_seconds"] == 1800
+
+
 def test_add_friend_child_defaults_to_douyin_private_message_phone():
     parent = {"id": "douyin-private", "ability_label": "抖音私信接管", "department_id": "sales"}
     actions = _clean_action_nodes(

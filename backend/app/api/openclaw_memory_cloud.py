@@ -773,7 +773,6 @@ def sync_openclaw_memory_for_installation(
         db.query(OpenClawMemoryDocument)
         .filter(
             OpenClawMemoryDocument.target_user_id == current_user.id,
-            OpenClawMemoryDocument.installation_id == iid,
         )
         .order_by(OpenClawMemoryDocument.updated_at.desc())
         .limit(500)
@@ -794,10 +793,18 @@ def sync_openclaw_memory_for_installation(
         if parent:
             grants = (
                 db.query(H5AgentMemoryGrant)
-                .filter(H5AgentMemoryGrant.owner_user_id == parent.id, H5AgentMemoryGrant.target_user_id == current_user.id)
+                .filter(
+                    H5AgentMemoryGrant.owner_user_id == parent.id,
+                    H5AgentMemoryGrant.target_user_id == current_user.id,
+                    H5AgentMemoryGrant.status == "active",
+                )
                 .all()
             )
-            active_doc_ids = [str(row.memory_doc_id or "") for row in grants if row.status == "active" and str(row.memory_doc_id or "").strip()]
+            active_doc_ids = [
+                str(row.memory_doc_id or "")
+                for row in grants
+                if str(row.memory_doc_id or "").strip()
+            ]
             if grants:
                 if active_doc_ids:
                     agent_rows = (

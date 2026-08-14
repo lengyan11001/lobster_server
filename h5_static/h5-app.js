@@ -911,6 +911,7 @@
       if (!node) return false;
       const id = String(node.id || "");
       const key = String(node.ability_key || node.key || "");
+      if (key === "native_wechat_poll") return false;
       if (node.sales_preset || id.startsWith("sales_")) return true;
       return String(node.department_id || "") === "sales" && SALES_PERSONA_DEFAULT_KEYS.has(key);
     }
@@ -3538,7 +3539,7 @@
           + taskFieldHtml("备注", taskTextareaHtml("workflowParamWecomNote", "可选"), true);
       }
       if (key === "native_wechat_poll") {
-        return taskFieldHtml("自动拉群", workCheckboxHtml("workflowParamNativeWechatGroupInviteEnabled", "命中拉群规则后立即执行", false))
+        return taskFieldHtml("是否拉群", workCheckboxHtml("workflowParamNativeWechatGroupInviteEnabled", "命中拉群规则后立即执行", false))
           + taskFieldHtml("备注", taskTextareaHtml("workflowParamNativeWechatNote", "可选"), true);
       }
       if (key === "native_wechat_add_friend") {
@@ -17195,8 +17196,37 @@
       return personalUniqueIds(values || []).map((id) => Number(id)).filter((id) => available.has(id));
     }
 
-    function prunePersonalSelectedIntMap(map, rows) {
-      const available = new Set((rows || []).map((row) => String((row && row.id) || "")).filter(Boolean));
+    function personalTemplateResourceRows(kind) {
+      const key = kind === "competitor" ? "competitors" : "keywords";
+      const out = [];
+      const seen = new Set();
+      const addRows = (rows) => (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const id = String((row && row.id) || "").trim();
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        out.push({ ...row, source: row.source || "template" });
+      });
+      addRows(state.personalDefault && state.personalDefault[key]);
+      (state.personalTemplates || []).forEach((row) => addRows(row && row[key]));
+      return out;
+    }
+
+    function personalCombinedIntRows(kind, rows) {
+      const out = [];
+      const seen = new Set();
+      const addRows = (list) => (Array.isArray(list) ? list : []).forEach((row) => {
+        const id = String((row && row.id) || "").trim();
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        out.push(row);
+      });
+      addRows(rows || []);
+      addRows(personalTemplateResourceRows(kind));
+      return out;
+    }
+
+    function prunePersonalSelectedIntMap(map, rows, extraRows = []) {
+      const available = new Set([...(rows || []), ...(extraRows || [])].map((row) => String((row && row.id) || "")).filter(Boolean));
       Object.keys(map || {}).forEach((id) => {
         if (!available.has(String(id))) delete map[id];
       });
@@ -17452,8 +17482,8 @@
       if (parts.memories) jobs.push(loadPersonalMemoryDocs().then((rows) => { state.personalMemoryDocs = Array.isArray(rows) ? rows : []; }).catch(() => {}));
       if (parts.templates) jobs.push(loadPersonalTemplateRows().then((rows) => { state.personalTemplates = Array.isArray(rows) ? rows : []; }).catch(() => {}));
       await Promise.all(jobs);
-      if (parts.keywords) prunePersonalSelectedIntMap(state.personalSelectedKeywords, state.personalKeywords);
-      if (parts.competitors) prunePersonalSelectedIntMap(state.personalSelectedCompetitors, state.personalCompetitors);
+      if (parts.keywords) prunePersonalSelectedIntMap(state.personalSelectedKeywords, state.personalKeywords, personalTemplateResourceRows("keyword"));
+      if (parts.competitors) prunePersonalSelectedIntMap(state.personalSelectedCompetitors, state.personalCompetitors, personalTemplateResourceRows("competitor"));
       state.personalSettingsLoaded = true;
       renderPersonalSettings();
     }
@@ -17557,24 +17587,24 @@
     }
 
     function personalMemorySourceDocRows() {
-      const rows = (state.personalMemoryDocs || []).filter((doc) => !doc.read_only && doc.source !== "agent");
+      const rows = (state.personalMemoryDocs || []).slice();
       const uploadRows = rows.filter(isPersonalUploadedMemoryDoc);
       return uploadRows.length ? uploadRows : rows;
     }
 
     function personalUploadedDocRows() {
-      return (state.personalMemoryDocs || []).filter((doc) => !doc.read_only && doc.source !== "agent" && isPersonalUploadedMemoryDoc(doc));
+      return (state.personalMemoryDocs || []).filter((doc) => !doc.read_only && isPersonalUploadedMemoryDoc(doc));
     }
 
     function ensurePersonalMemorySourceSelections() {
       if (state.personalMemoryUseProfile !== false) state.personalMemoryUseProfile = true;
       state.personalMemorySourceKeywords = personalSyncSelectionMap(
         state.personalMemorySourceKeywords || {},
-        (state.personalKeywords || []).map((row) => row.id)
+        personalCombinedIntRows("keyword", state.personalKeywords).map((row) => row.id)
       );
       state.personalMemorySourceCompetitors = personalSyncSelectionMap(
         state.personalMemorySourceCompetitors || {},
-        (state.personalCompetitors || []).map((row) => row.id)
+        personalCombinedIntRows("competitor", state.personalCompetitors).map((row) => row.id)
       );
       state.personalMemorySourceDocs = personalSyncSelectionMap(
         state.personalMemorySourceDocs || {},
@@ -17593,12 +17623,12 @@
 
     function selectedPersonalMemoryKeywordRows() {
       ensurePersonalMemorySourceSelections();
-      return (state.personalKeywords || []).filter((row) => state.personalMemorySourceKeywords[String(row.id || "")]);
+      return personalCombinedIntRows("keyword", state.personalKeywords).filter((row) => state.personalMemorySourceKeywords[String(row.id || "")]);
     }
 
     function selectedPersonalMemoryCompetitorRows() {
       ensurePersonalMemorySourceSelections();
-      return (state.personalCompetitors || []).filter((row) => state.personalMemorySourceCompetitors[String(row.id || "")]);
+      return personalCombinedIntRows("competitor", state.personalCompetitors).filter((row) => state.personalMemorySourceCompetitors[String(row.id || "")]);
     }
 
     function selectedPersonalMemorySourceDocs() {
@@ -17651,7 +17681,7 @@
       if (profile) profile.checked = state.personalMemoryUseProfile !== false;
       renderPersonalSourceOptions(
         "personalMemoryKeywordSourceList",
-        state.personalKeywords || [],
+        personalCombinedIntRows("keyword", state.personalKeywords),
         state.personalMemorySourceKeywords,
         "keyword",
         (row) => row.keyword || `关键词 #${row.id}`,
@@ -17659,7 +17689,7 @@
       );
       renderPersonalSourceOptions(
         "personalMemoryCompetitorSourceList",
-        state.personalCompetitors || [],
+        personalCombinedIntRows("competitor", state.personalCompetitors),
         state.personalMemorySourceCompetitors,
         "competitor",
         (row) => row.display_name || row.account_key || `同行 #${row.id}`,
@@ -18046,8 +18076,8 @@
       setPersonalSettingsTab(state.personalSettingsTab);
       const tpl = $("personalTemplateList");
       if (tpl) {
-        const keywordRows = state.personalKeywords.map((row) => ({ ...row, _kind: "keyword" }));
-        const competitorRows = state.personalCompetitors.map((row) => ({ ...row, _kind: "competitor" }));
+        const keywordRows = personalCombinedIntRows("keyword", state.personalKeywords).map((row) => ({ ...row, _kind: "keyword" }));
+        const competitorRows = personalCombinedIntRows("competitor", state.personalCompetitors).map((row) => ({ ...row, _kind: "competitor" }));
         const memoryRows = state.personalMemoryDocs.map((row) => ({ ...row, _kind: "memory_doc" }));
         const section = (label, rows, selectedMap, kind, titleFn, subtitleFn) => {
           const count = rows.filter((row) => selectedMap[kind === "memory_doc" ? personalDocId(row) : String(row.id || "")]).length;
@@ -18720,8 +18750,8 @@
 
     async function savePersonalDefaultSilently() {
       const existing = state.personalDefault || {};
-      const keywordIds = personalExistingIntIds([...(Array.isArray(existing.keyword_ids) ? existing.keyword_ids : []), ...personalCleanIntIds(state.personalSelectedKeywords)], state.personalKeywords);
-      const competitorIds = personalExistingIntIds([...(Array.isArray(existing.competitor_ids) ? existing.competitor_ids : []), ...personalCleanIntIds(state.personalSelectedCompetitors)], state.personalCompetitors);
+      const keywordIds = personalExistingIntIds([...(Array.isArray(existing.keyword_ids) ? existing.keyword_ids : []), ...personalCleanIntIds(state.personalSelectedKeywords)], personalCombinedIntRows("keyword", state.personalKeywords));
+      const competitorIds = personalExistingIntIds([...(Array.isArray(existing.competitor_ids) ? existing.competitor_ids : []), ...personalCleanIntIds(state.personalSelectedCompetitors)], personalCombinedIntRows("competitor", state.personalCompetitors));
       const memoryIds = personalUniqueIds([...(Array.isArray(existing.memory_doc_ids) ? existing.memory_doc_ids : []), ...personalCleanStringIds(state.personalSelectedMemories)]);
       const selectedDocs = state.personalMemoryDocs
         .filter((doc) => memoryIds.includes(personalDocId(doc)))

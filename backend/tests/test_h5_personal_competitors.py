@@ -21,5 +21,8 @@ def test_h5_template_save_filters_deleted_competitor_ids():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
 
     assert "function personalExistingIntIds(values, rows)" in script
+    assert "function personalTemplateResourceRows(kind)" in script
+    assert "function personalCombinedIntRows(kind, rows)" in script
     assert "competitor_ids: personalExistingIntIds" in script
+    assert 'personalCombinedIntRows("competitor", state.personalCompetitors)' in script
     assert "prunePersonalSelectedIntMap(state.personalSelectedCompetitors" in script

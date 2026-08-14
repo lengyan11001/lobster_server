@@ -271,12 +271,18 @@ def test_native_wechat_takeover_uses_parent_group_switch_and_keeps_moments_child
     assert 'values.push("native_wechat_moments_engage")' in options
     assert 'values.push("native_wechat_group_invite", "native_wechat_moments_engage")' not in options
     assert 'label: "微信自动拉群"' not in script
+    assert 'if (key === "native_wechat_poll") return false;' in script
+    assert 'taskFieldHtml("是否拉群"' in script
     assert 'workflowParamNativeWechatGroupInviteEnabled' in script
+    assert 'group_invite_enabled: workflowParamChecked("workflowParamNativeWechatGroupInviteEnabled")' in script
+    assert 'baseParams.group_invite_enabled = true' in script
+    assert 'baseParams.trigger = baseParams.trigger || "qualified_intent"' in script
     assert 'String(params.followup_action || "").trim().toLowerCase() === "group_invite"' in script
     assert '"native_wechat_moments_engage",' in script
     assert "#workflowActionPlatformField[hidden]" in styles
     assert "20260808-workflow-action-fields-v1" in html
     assert "20260808-workflow-native-children-v1" in html
+    assert "20260814-wechat-group-switch-v1" in html
 
 
 def test_workflow_title_and_controls_use_an_operation_menu_in_normal_flow():

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..db import get_db
-from ..models import Asset, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
+from ..models import Asset, H5AgentTemplateGrant, IPContentScheduleTemplate, ShanjianDigitalHumanProfile, ShanjianDigitalHumanVideoTask, User
 from ..services.brand_context import brand_short_name, normalize_brand_mark, user_brand_mark
 from .assets import _find_asset_ffmpeg, _gen_asset_id, _get_tos_config, _save_bytes_or_tos, get_asset_public_url
 from .auth import get_current_user
@@ -1001,11 +1001,23 @@ def _default_digital_human_template(
             db.query(IPContentScheduleTemplate)
             .filter(
                 IPContentScheduleTemplate.id == current_template_id,
-                IPContentScheduleTemplate.user_id == int(user_id),
                 IPContentScheduleTemplate.status == "active",
             )
             .first()
         )
+        if current is not None and int(current.user_id) != int(user_id):
+            grant = (
+                db.query(H5AgentTemplateGrant.id)
+                .filter(
+                    H5AgentTemplateGrant.template_id == current.id,
+                    H5AgentTemplateGrant.owner_user_id == current.user_id,
+                    H5AgentTemplateGrant.target_user_id == int(user_id),
+                    H5AgentTemplateGrant.status == "active",
+                )
+                .first()
+            )
+            if not grant:
+                current = None
         if current is not None:
             configured, template_meta = _stored_digital_human_template(current.meta)
             if configured:

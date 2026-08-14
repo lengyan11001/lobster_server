@@ -577,6 +577,7 @@ def _current_personal_schedule_template(
         db.query(H5AgentTemplateGrant.id)
         .filter(
             H5AgentTemplateGrant.template_id == row.id,
+            H5AgentTemplateGrant.owner_user_id == row.user_id,
             H5AgentTemplateGrant.target_user_id == user_id,
             H5AgentTemplateGrant.status == "active",
         )

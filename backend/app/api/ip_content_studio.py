@@ -2677,10 +2677,12 @@ def _template_payload(
     owner: Optional[User] = None,
     source: str = "own",
     grants: Optional[list[int]] = None,
+    keywords: Optional[list[IPContentKeyword]] = None,
+    competitors: Optional[list[ContentCompetitorAccount]] = None,
 ) -> dict[str, Any]:
     memory_docs = row.memory_docs or []
     memory_doc_ids = _clean_memory_doc_ids(row.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
-    return {
+    payload = {
         "id": row.id,
         "user_id": row.user_id,
         "owner_user_id": row.user_id,
@@ -2698,6 +2700,52 @@ def _template_payload(
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
+    if keywords is not None:
+        payload["keywords"] = [_keyword_payload(item) for item in keywords]
+    if competitors is not None:
+        payload["competitors"] = [_competitor_payload(item) for item in competitors]
+    return payload
+
+
+def _rows_ordered_by_ids(rows: list[Any], ids: list[int]) -> list[Any]:
+    by_id = {int(getattr(row, "id", 0) or 0): row for row in rows}
+    return [by_id[item_id] for item_id in ids if item_id in by_id]
+
+
+def _template_resource_rows(db: Session, row: IPContentScheduleTemplate) -> tuple[list[IPContentKeyword], list[ContentCompetitorAccount]]:
+    keyword_ids = _clean_int_ids(row.keyword_ids, 50)
+    competitor_ids = _clean_int_ids(row.competitor_ids, 50)
+    keywords = (
+        db.query(IPContentKeyword)
+        .filter(IPContentKeyword.user_id == row.user_id, IPContentKeyword.status == "active", IPContentKeyword.id.in_(keyword_ids))
+        .all()
+        if keyword_ids
+        else []
+    )
+    competitors = (
+        db.query(ContentCompetitorAccount)
+        .filter(
+            ContentCompetitorAccount.user_id == row.user_id,
+            ContentCompetitorAccount.status == "active",
+            ContentCompetitorAccount.id.in_(competitor_ids),
+        )
+        .all()
+        if competitor_ids
+        else []
+    )
+    return _rows_ordered_by_ids(keywords, keyword_ids), _rows_ordered_by_ids(competitors, competitor_ids)
+
+
+def _template_payload_with_resources(
+    db: Session,
+    row: IPContentScheduleTemplate,
+    *,
+    owner: Optional[User] = None,
+    source: str = "own",
+    grants: Optional[list[int]] = None,
+) -> dict[str, Any]:
+    keywords, competitors = _template_resource_rows(db, row)
+    return _template_payload(row, owner=owner, source=source, grants=grants, keywords=keywords, competitors=competitors)
 
 
 def _personal_default_template_payload(row: Optional[IPContentScheduleTemplate]) -> dict[str, Any]:
@@ -2719,6 +2767,29 @@ def _personal_default_template_payload(row: Optional[IPContentScheduleTemplate])
     payload["meta"] = dict(payload.get("meta") or {})
     payload["meta"]["source"] = "personal_settings"
     payload["meta"]["is_personal_default"] = True
+    return payload
+
+
+def _personal_default_template_payload_with_resources(db: Session, row: Optional[IPContentScheduleTemplate]) -> dict[str, Any]:
+    payload = _personal_default_template_payload(row)
+    if row is None:
+        return payload
+    reference = _granted_template_for_user(db, int(row.user_id), _current_template_id_from_meta(row.meta)) or row
+    if int(reference.id or 0) != int(row.id or 0):
+        if not payload.get("keyword_ids"):
+            payload["keyword_ids"] = _clean_int_ids(reference.keyword_ids, 50)
+        if not payload.get("competitor_ids"):
+            payload["competitor_ids"] = _clean_int_ids(reference.competitor_ids, 50)
+        if not payload.get("memory_doc_ids"):
+            payload["memory_doc_ids"] = _clean_memory_doc_ids(reference.memory_doc_ids, 50) or _memory_doc_ids_from_docs(reference.memory_docs or [], 50)
+        if not payload.get("memory_docs"):
+            payload["memory_docs"] = reference.memory_docs or []
+        payload["requirements"] = {**(reference.requirements or {}), **(payload.get("requirements") or {})}
+    keywords, competitors = _template_resource_rows(db, reference)
+    keyword_id_set = set(_clean_int_ids(payload.get("keyword_ids"), 50))
+    competitor_id_set = set(_clean_int_ids(payload.get("competitor_ids"), 50))
+    payload["keywords"] = [_keyword_payload(item) for item in keywords if int(item.id) in keyword_id_set]
+    payload["competitors"] = [_competitor_payload(item) for item in competitors if int(item.id) in competitor_id_set]
     return payload
 
 
@@ -2813,6 +2884,85 @@ def _validate_template_refs(db: Session, user_id: int, keyword_ids: list[int], c
             raise HTTPException(status_code=400, detail=f"同行账号不属于当前用户：{foreign[:5]}")
         clean_competitor_ids = [item_id for item_id in clean_competitor_ids if owners.get(item_id) == user_id]
     return clean_keyword_ids, clean_competitor_ids
+
+
+def _granted_template_for_user(db: Session, user_id: int, template_id: Any) -> Optional[IPContentScheduleTemplate]:
+    try:
+        tid = int(template_id or 0)
+    except Exception:
+        tid = 0
+    if tid <= 0:
+        return None
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(IPContentScheduleTemplate.id == tid, IPContentScheduleTemplate.status == "active")
+        .first()
+    )
+    if row is None:
+        return None
+    if int(row.user_id) == int(user_id):
+        return row
+    grant = (
+        db.query(H5AgentTemplateGrant.id)
+        .filter(
+            H5AgentTemplateGrant.template_id == row.id,
+            H5AgentTemplateGrant.owner_user_id == row.user_id,
+            H5AgentTemplateGrant.target_user_id == user_id,
+            H5AgentTemplateGrant.status == "active",
+        )
+        .first()
+    )
+    return row if grant else None
+
+
+def _current_template_id_from_meta(meta: Any) -> int:
+    if not isinstance(meta, dict):
+        return 0
+    try:
+        return int(meta.get("current_template_id") or meta.get("template_id") or 0)
+    except Exception:
+        return 0
+
+
+def _filter_template_refs_for_owner(db: Session, user_id: int, keyword_ids: list[int], competitor_ids: list[int]) -> tuple[list[int], list[int]]:
+    clean_keyword_ids = _clean_int_ids(keyword_ids, 50)
+    clean_competitor_ids = _clean_int_ids(competitor_ids, 50)
+    if clean_keyword_ids:
+        owned = {
+            int(row_id)
+            for (row_id,) in db.query(IPContentKeyword.id)
+            .filter(
+                IPContentKeyword.user_id == user_id,
+                IPContentKeyword.status == "active",
+                IPContentKeyword.id.in_(clean_keyword_ids),
+            )
+            .all()
+        }
+        clean_keyword_ids = [item_id for item_id in clean_keyword_ids if item_id in owned]
+    if clean_competitor_ids:
+        owned = {
+            int(row_id)
+            for (row_id,) in db.query(ContentCompetitorAccount.id)
+            .filter(
+                ContentCompetitorAccount.user_id == user_id,
+                ContentCompetitorAccount.status == "active",
+                ContentCompetitorAccount.id.in_(clean_competitor_ids),
+            )
+            .all()
+        }
+        clean_competitor_ids = [item_id for item_id in clean_competitor_ids if item_id in owned]
+    return clean_keyword_ids, clean_competitor_ids
+
+
+def _personal_default_template_reference(
+    db: Session,
+    current_user: User,
+    body: ScheduleTemplateBody,
+) -> Optional[IPContentScheduleTemplate]:
+    template = _granted_template_for_user(db, int(current_user.id), _current_template_id_from_meta(body.meta))
+    if template is None:
+        return None
+    return template
 
 
 def _remove_template_reference(db: Session, user_id: int, field: str, reference_id: int) -> int:
@@ -3829,9 +3979,15 @@ async def run_ip_content_daily_scheduled(
         template_payload = _template_payload(template)
         if not keyword_ids:
             keyword_ids = _clean_int_ids(template.keyword_ids, 50)
+        template_keyword_ids, _ = _filter_template_refs_for_owner(db, int(template.user_id), keyword_ids, [])
+        if template_keyword_ids:
+            keyword_ids = template_keyword_ids
             keyword_owner_user_id = int(template.user_id)
         if not competitor_ids:
             competitor_ids = _clean_int_ids(template.competitor_ids, 50)
+        _, template_competitor_ids = _filter_template_refs_for_owner(db, int(template.user_id), [], competitor_ids)
+        if template_competitor_ids:
+            competitor_ids = template_competitor_ids
             competitor_owner_user_id = int(template.user_id)
         merged_requirements = dict(template.requirements or {})
         merged_requirements.update({k: v for k, v in requirements.items() if _clean_long_text(v, 1)})
@@ -4278,7 +4434,7 @@ def list_schedule_templates(
         for grant in grants:
             grant_map.setdefault(int(grant.template_id), []).append(int(grant.target_user_id))
 
-    items = [_template_payload(row, source="own", grants=grant_map.get(int(row.id), [])) for row in rows]
+    items = [_template_payload_with_resources(db, row, source="own", grants=grant_map.get(int(row.id), [])) for row in rows]
 
     granted = (
         db.query(H5AgentTemplateGrant)
@@ -4300,7 +4456,7 @@ def list_schedule_templates(
         owner_ids = {int(row.user_id) for row in granted_rows}
         owners = {row.id: row for row in db.query(User).filter(User.id.in_(owner_ids)).all()} if owner_ids else {}
         items.extend(
-            _template_payload(row, owner=owners.get(row.user_id), source="agent")
+            _template_payload_with_resources(db, row, owner=owners.get(row.user_id), source="agent")
             for row in granted_rows
             if int(row.id) not in own_ids
         )
@@ -4322,7 +4478,7 @@ def get_personal_default_ip_content_config(
         .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
         .first()
     )
-    return {"ok": True, "item": _personal_default_template_payload(row)}
+    return {"ok": True, "item": _personal_default_template_payload_with_resources(db, row)}
 
 
 @router.put("/api/ip-content/personal-default", summary="保存用户个人默认 IP 日更配置")
@@ -4331,8 +4487,23 @@ def save_personal_default_ip_content_config(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
-    memory_docs = _memory_payload_from_docs(body.memory_docs, content_limit=3200)
+    template_ref = _personal_default_template_reference(db, current_user, body)
+    if template_ref is not None:
+        keyword_ids, competitor_ids = _filter_template_refs_for_owner(db, int(template_ref.user_id), body.keyword_ids, body.competitor_ids)
+        if not keyword_ids:
+            keyword_ids, _ = _filter_template_refs_for_owner(db, int(template_ref.user_id), template_ref.keyword_ids, [])
+        if not competitor_ids:
+            _, competitor_ids = _filter_template_refs_for_owner(db, int(template_ref.user_id), [], template_ref.competitor_ids)
+    else:
+        keyword_ids, competitor_ids = _validate_template_refs(db, current_user.id, body.keyword_ids, body.competitor_ids)
+    incoming_memory_docs = body.memory_docs
+    incoming_memory_doc_ids = body.memory_doc_ids
+    if template_ref is not None:
+        if not incoming_memory_docs:
+            incoming_memory_docs = list(template_ref.memory_docs or [])
+        if not incoming_memory_doc_ids:
+            incoming_memory_doc_ids = list(template_ref.memory_doc_ids or [])
+    memory_docs = _memory_payload_from_docs(incoming_memory_docs, content_limit=3200)
     row = (
         db.query(IPContentScheduleTemplate)
         .filter(
@@ -4349,12 +4520,25 @@ def save_personal_default_ip_content_config(
         )
         db.add(row)
     existing_requirements = row.requirements if row is not None else {}
+    incoming_requirements = body.requirements
+    if template_ref is not None:
+        template_requirements = dict(template_ref.requirements or {})
+        if isinstance(incoming_requirements, dict) and incoming_requirements:
+            incoming_requirements = {**template_requirements, **incoming_requirements}
+        elif isinstance(existing_requirements, dict) and existing_requirements:
+            incoming_requirements = {**template_requirements, **existing_requirements}
+        else:
+            incoming_requirements = template_requirements
     row.keyword_ids = keyword_ids
     row.competitor_ids = competitor_ids
-    row.memory_doc_ids = _clean_memory_doc_ids(body.memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
+    row.memory_doc_ids = _clean_memory_doc_ids(incoming_memory_doc_ids, 50) or _memory_doc_ids_from_docs(memory_docs, 50)
     row.memory_docs = memory_docs
-    row.requirements = _jsonable(_personal_default_requirements_for_save(body.requirements, existing_requirements, body.meta))
-    row.meta = _jsonable({**(body.meta or {}), "source": "personal_settings", "is_personal_default": True})
+    row.requirements = _jsonable(_personal_default_requirements_for_save(incoming_requirements, existing_requirements, body.meta))
+    meta = {**(body.meta or {}), "source": "personal_settings", "is_personal_default": True}
+    if template_ref is not None:
+        meta["current_template_id"] = int(template_ref.id)
+        meta["source_template_owner_user_id"] = int(template_ref.user_id)
+    row.meta = _jsonable(meta)
     row.status = "active"
     row.updated_at = _utcnow()
     try:
@@ -4363,7 +4547,7 @@ def save_personal_default_ip_content_config(
         db.rollback()
         raise HTTPException(status_code=409, detail="个人默认配置保存冲突，请刷新后重试")
     db.refresh(row)
-    return {"ok": True, "item": _personal_default_template_payload(row)}
+    return {"ok": True, "item": _personal_default_template_payload_with_resources(db, row)}
 
 
 @router.post("/api/ip-content/schedule-templates", summary="保存 IP 日更定时任务模板")

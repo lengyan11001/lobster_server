@@ -383,7 +383,6 @@ async def _queue_online_memory_generation(
 def _doc_query(db: Session, user_id: int, installation_id: str):
     return db.query(OpenClawMemoryDocument).filter(
         OpenClawMemoryDocument.target_user_id == user_id,
-        OpenClawMemoryDocument.installation_id == installation_id,
         OpenClawMemoryDocument.status == "active",
     )
 
@@ -398,7 +397,11 @@ def _memory_row(db: Session, user_id: int, installation_id: str, doc_id: str) ->
     return row
 
 
-def _agent_granted_memory_rows(db: Session, target_user: User, doc_ids: Optional[list[str]] = None) -> list[OpenClawMemoryDocument]:
+def _agent_memory_grant_rows(
+    db: Session,
+    target_user: User,
+    doc_ids: Optional[list[str]] = None,
+) -> list[H5AgentMemoryGrant]:
     parent_id = int(getattr(target_user, "parent_user_id", 0) or 0)
     if not parent_id:
         return []
@@ -412,13 +415,25 @@ def _agent_granted_memory_rows(db: Session, target_user: User, doc_ids: Optional
     )
     if doc_ids:
         grant_query = grant_query.filter(H5AgentMemoryGrant.memory_doc_id.in_(doc_ids))
-    granted_ids = [str(row.memory_doc_id or "") for row in grant_query.all() if str(row.memory_doc_id or "").strip()]
+    return [row for row in grant_query.all() if str(row.memory_doc_id or "").strip()]
+
+
+def _agent_granted_memory_rows(
+    db: Session,
+    target_user: User,
+    doc_ids: Optional[list[str]] = None,
+) -> list[OpenClawMemoryDocument]:
+    grants = _agent_memory_grant_rows(db, target_user, doc_ids)
+    granted_ids = [str(row.memory_doc_id or "") for row in grants if str(row.memory_doc_id or "").strip()]
     if not granted_ids:
+        return []
+    parent_id = int(getattr(target_user, "parent_user_id", 0) or 0)
+    if not parent_id:
         return []
     return (
         db.query(OpenClawMemoryDocument)
         .filter(
-            OpenClawMemoryDocument.target_user_id == parent.id,
+            OpenClawMemoryDocument.target_user_id == parent_id,
             OpenClawMemoryDocument.doc_id.in_(granted_ids),
             OpenClawMemoryDocument.status == "active",
         )
@@ -427,7 +442,12 @@ def _agent_granted_memory_rows(db: Session, target_user: User, doc_ids: Optional
     )
 
 
-def _memory_summary(row: OpenClawMemoryDocument, *, include_content: bool, source: str) -> dict[str, Any]:
+def _memory_summary(
+    row: OpenClawMemoryDocument,
+    *,
+    include_content: bool,
+    source: str,
+) -> dict[str, Any]:
     data = _doc_summary(row, include_content=include_content)
     data["source"] = source
     data["read_only"] = source != "own"
@@ -1278,7 +1298,7 @@ async def list_memory_documents(
     installation_id = _installation_id(request)
     target_user = _owner_user(db, current_user)
     ensure_installation_slot(db, target_user.id, installation_id)
-    rows = _doc_query(db, target_user.id, installation_id).order_by(OpenClawMemoryDocument.updated_at.desc()).limit(200).all()
+    rows = _doc_query(db, target_user.id, installation_id).order_by(OpenClawMemoryDocument.updated_at.desc()).limit(300).all()
     agent_rows = _agent_granted_memory_rows(db, target_user)
     documents = [_memory_summary(row, include_content=include_content, source="own") for row in rows]
     documents.extend(_memory_summary(row, include_content=include_content, source="agent") for row in agent_rows)

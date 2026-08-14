@@ -153,7 +153,7 @@ class H5WechatAutoReplyIn(BaseModel):
     installation_id: Optional[str] = Field(default=None, max_length=128)
     account_key: Optional[str] = Field(default="wechat:pc-default", max_length=255)
     account_id: Optional[str] = Field(default="pc-wechat-default", max_length=160)
-    interval_seconds: int = Field(default=1800, ge=300, le=86400)
+    interval_seconds: int = Field(default=1800, ge=1, le=86400)
     group_invite_enabled: Optional[bool] = None
     memory_doc_ids: Optional[List[str]] = Field(default=None, max_length=20)
     group_invite_memory_doc_id: Optional[str] = Field(default=None, max_length=64)
@@ -1706,7 +1706,7 @@ def h5_set_wechat_auto_reply(
 
     account_key = (body.account_key or str(account.get("account_key") or "") or "wechat:pc-default").strip()
     account_id = (body.account_id or str(account.get("account_id") or "") or "pc-wechat-default").strip()
-    interval_seconds = max(300, min(int(body.interval_seconds or 1800), 86400))
+    interval_seconds = 1800
     now = datetime.utcnow()
 
     pref = (

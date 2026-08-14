@@ -1015,6 +1015,95 @@ def test_ip_content_batch_sizes_split_into_stable_chunks():
     assert studio._ip_content_batch_sizes(99, 8) == [8, 8, 4]
 
 
+def test_personal_default_preserves_granted_agent_template_refs(db_session, test_user, other_user):
+    from backend.app.api import ip_content_studio as studio
+    from backend.app.models import ContentCompetitorAccount, H5AgentTemplateGrant, IPContentKeyword, IPContentScheduleTemplate
+
+    keyword = IPContentKeyword(
+        user_id=test_user.id,
+        keyword="agent-hot-keyword",
+        display_name="Agent Hot Keyword",
+    )
+    competitor = ContentCompetitorAccount(
+        user_id=test_user.id,
+        platform="douyin",
+        display_name="Agent Competitor",
+        account_key="agent_competitor_001",
+    )
+    db_session.add_all([keyword, competitor])
+    db_session.flush()
+    template = IPContentScheduleTemplate(
+        user_id=test_user.id,
+        name="agent-ip-template",
+        keyword_ids=[keyword.id],
+        competitor_ids=[competitor.id],
+        memory_doc_ids=["agent-doc-1"],
+        memory_docs=[{"id": "agent-doc-1", "title": "Agent Doc", "content": "agent memory"}],
+        requirements={"common": "agent common", "moments": "agent moments"},
+        meta={"digital_human_template": {"style_id": "agent-style-1", "name": "Agent Style"}},
+    )
+    db_session.add(template)
+    db_session.flush()
+    db_session.add(
+        H5AgentTemplateGrant(
+            template_id=template.id,
+            owner_user_id=test_user.id,
+            target_user_id=other_user.id,
+            status="active",
+        )
+    )
+    db_session.commit()
+
+    body = studio.ScheduleTemplateBody(
+        name="agent-ip-template",
+        keyword_ids=[keyword.id],
+        competitor_ids=[competitor.id],
+        memory_doc_ids=["agent-doc-1"],
+        memory_docs=[{"id": "agent-doc-1", "title": "Agent Doc", "content": "agent memory"}],
+        requirements={"common": "child common"},
+        meta={"current_template_id": template.id, "source": "h5_personal_current_template"},
+    )
+
+    result = studio.save_personal_default_ip_content_config(body, current_user=other_user, db=db_session)
+
+    item = result["item"]
+    assert item["keyword_ids"] == [keyword.id]
+    assert item["competitor_ids"] == [competitor.id]
+    assert item["memory_doc_ids"] == ["agent-doc-1"]
+    assert item["keywords"][0]["keyword"] == "agent-hot-keyword"
+    assert item["competitors"][0]["account_key"] == "agent_competitor_001"
+    assert item["requirements"]["common"] == "child common"
+    assert item["requirements"]["moments"] == "agent moments"
+    assert item["meta"]["current_template_id"] == template.id
+    assert item["meta"]["source_template_owner_user_id"] == test_user.id
+
+    stored = (
+        db_session.query(IPContentScheduleTemplate)
+        .filter(IPContentScheduleTemplate.user_id == other_user.id, IPContentScheduleTemplate.name == studio._PERSONAL_DEFAULT_TEMPLATE_NAME)
+        .one()
+    )
+    assert stored.keyword_ids == [keyword.id]
+    assert stored.competitor_ids == [competitor.id]
+    assert stored.memory_doc_ids == ["agent-doc-1"]
+
+    silent_body = studio.ScheduleTemplateBody(
+        name="personal default",
+        keyword_ids=[],
+        competitor_ids=[],
+        memory_doc_ids=[],
+        memory_docs=[],
+        requirements={},
+        meta={"current_template_id": template.id, "source": "h5_personal_settings"},
+    )
+
+    silent_result = studio.save_personal_default_ip_content_config(silent_body, current_user=other_user, db=db_session)
+
+    assert silent_result["item"]["keyword_ids"] == [keyword.id]
+    assert silent_result["item"]["competitor_ids"] == [competitor.id]
+    assert silent_result["item"]["memory_doc_ids"] == ["agent-doc-1"]
+    assert silent_result["item"]["requirements"]["moments"] == "agent moments"
+
+
 def test_keyword_text_seed_briefs_deduplicate_template_keywords():
     from backend.app.api import ip_content_studio as studio
 
