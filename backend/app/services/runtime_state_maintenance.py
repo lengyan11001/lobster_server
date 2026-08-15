@@ -18,6 +18,21 @@ _ACTIVE_APPROVAL_STATUSES = {"pending", "approved", "executing"}
 _ACTIVE_CREATIVE_STATUSES = {"pending", "processing", "running"}
 
 
+def fail_client_runs_on_startup_sync(now: datetime | None = None) -> int:
+    """Fail only client work that was already abandoned before server startup."""
+    now = now or datetime.utcnow()
+    db = SessionLocal()
+    try:
+        failed = _fail_abandoned_client_runs(db, now)
+        db.commit()
+        return failed
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _env_hours(name: str, default: int, *, minimum: int = 1, maximum: int = 24 * 30) -> int:
     try:
         return max(minimum, min(maximum, int(os.environ.get(name) or default)))

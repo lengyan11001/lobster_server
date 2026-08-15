@@ -48,7 +48,10 @@ from backend.app.services.provider_balance_monitor import (
     provider_balance_monitor_loop_forever,
 )
 from backend.app.services.runtime_monitor import is_runtime_monitor_enabled, runtime_monitor_loop_forever
-from backend.app.services.runtime_state_maintenance import runtime_state_maintenance_loop
+from backend.app.services.runtime_state_maintenance import (
+    fail_client_runs_on_startup_sync,
+    runtime_state_maintenance_loop,
+)
 from backend.app.services.sutui_llm_probe import (
     is_sutui_llm_probe_enabled_for_this_instance,
     sutui_llm_probe_loop_forever,
@@ -132,6 +135,12 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
 
 
 async def main_async() -> int:
+    try:
+        abandoned = await asyncio.to_thread(fail_client_runs_on_startup_sync)
+        logger.warning("[background] startup abandoned client runs failed=%s", abandoned)
+    except Exception:
+        logger.exception("[background] failed to reconcile client runs on startup")
+
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

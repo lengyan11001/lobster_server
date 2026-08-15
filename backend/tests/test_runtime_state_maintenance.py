@@ -108,3 +108,57 @@ def test_runtime_state_maintenance_repairs_durable_state(
         assert db.get(CreativeGenerationJob, stale_without_provider.id).status == "failed"
         assert db.get(CreativeGenerationJob, stale_with_provider.id).status == "failed"
         assert db.get(CreativeGenerationJob, active_job.id).status == "running"
+
+
+def test_startup_fails_client_runs_but_preserves_server_runs(db_session, db_session_factory, test_user, monkeypatch):
+    from backend.app.models import ScheduledTaskRun
+    from backend.app.services import runtime_state_maintenance
+
+    now = datetime.utcnow()
+    stale_client_run = ScheduledTaskRun(
+        id="startup-client-run",
+        user_id=test_user.id,
+        title="client",
+        task_kind="client_workflow",
+        content="",
+        payload={"action": "native_wechat_poll"},
+        status="processing",
+        progress={"stage": "running"},
+        created_at=now,
+        updated_at=now - timedelta(hours=3),
+    )
+    active_client_run = ScheduledTaskRun(
+        id="startup-active-client-run",
+        user_id=test_user.id,
+        title="active client",
+        task_kind="client_workflow",
+        content="",
+        payload={"action": "native_wechat_poll"},
+        status="processing",
+        progress={"stage": "running"},
+        created_at=now,
+        updated_at=now,
+    )
+    server_run = ScheduledTaskRun(
+        id="startup-server-run",
+        user_id=test_user.id,
+        title="server",
+        task_kind="ip_content_daily",
+        content="",
+        payload={},
+        status="processing",
+        progress={"stage": "running"},
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([stale_client_run, active_client_run, server_run])
+    db_session.commit()
+    monkeypatch.setattr(runtime_state_maintenance, "SessionLocal", db_session_factory)
+
+    assert runtime_state_maintenance.fail_client_runs_on_startup_sync(now) == 1
+
+    with db_session_factory() as db:
+        assert db.get(ScheduledTaskRun, stale_client_run.id).status == "failed"
+        assert db.get(ScheduledTaskRun, stale_client_run.id).progress["stage"] == "client_progress_timeout"
+        assert db.get(ScheduledTaskRun, active_client_run.id).status == "processing"
+        assert db.get(ScheduledTaskRun, server_run.id).status == "processing"
