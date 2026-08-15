@@ -849,7 +849,6 @@
     const SALES_WORKFLOW_PRESET = [
       { time: "06:00", endTime: "06:30", key: "local_bestseller", label: "创作同城爆款视频", note: "创作一条同城爆款视频（用于发公域平台）", actions: [{ time: "08:45", platform: "douyin", label: "同城爆款视频发布抖音", note: "同城爆款视频发布抖音，配文案、带标签发布" }, { time: "09:00", platform: "wechat_channels", label: "同城爆款视频发布视频号", note: "同城爆款视频发布视频号，配文案、带标签发布" }] },
       { time: "06:30", endTime: "07:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "09:30", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
-      { time: "07:00", endTime: "07:15", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中识别客户发送的手机号并加好友，没有手机号则跳过", params: { source_mode: "douyin_private_message_phone", trigger: "clear_mobile", skip_without_clear_mobile: true } },
       { time: "07:15", endTime: "07:30", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "07:45", endTime: "08:15", key: "douyin_leads", label: "抖音自动养号", note: "抖音自动养号" },
       { time: "08:15", endTime: "08:45", key: "wechat_channels_nurture", label: "视频号自动养号（敬请期待）", note: "视频号自动养号", comingSoon: true },
@@ -862,7 +861,6 @@
       { time: "12:00", endTime: "12:15", key: "douyin_leads", label: "抖音回复精准客户评论10个", note: "抖音回复精准客户评论10个" },
       { time: "12:15", endTime: "12:30", key: "douyin_leads", label: "抖音自己评论区接管", note: "抖音自己评论区接管，评论并@10个精准客户" },
       { time: "12:30", endTime: "12:45", key: "douyin_leads", label: "抖音关注精准客户并评论首条作品", note: "抖音关注10个精准客户，并找到他的首条作品去评论" },
-      { time: "12:45", endTime: "13:00", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中识别客户发送的手机号并加好友，没有手机号则跳过", params: { source_mode: "douyin_private_message_phone", trigger: "clear_mobile", skip_without_clear_mobile: true } },
       { time: "13:00", endTime: "13:15", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "13:30", endTime: "13:45", key: "native_wechat_moments_engage", label: "微信朋友圈自己评论区接管", note: "微信朋友圈自己评论区接管", params: { moment_action: "comment" } },
       { time: "13:45", endTime: "14:15", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "14:15", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
@@ -878,14 +876,12 @@
       { time: "17:30", endTime: "17:45", key: "douyin_leads", label: "抖音回复精准客户评论10个", note: "抖音回复精准客户评论10个" },
       { time: "17:45", endTime: "18:00", key: "douyin_leads", label: "抖音自己评论区接管", note: "抖音自己评论区接管，评论并@10个精准客户" },
       { time: "18:00", endTime: "18:15", key: "douyin_leads", label: "抖音关注精准客户并评论首条作品", note: "抖音关注10个精准客户，并找到他的首条作品去评论" },
-      { time: "18:15", endTime: "18:30", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中识别客户发送的手机号并加好友，没有手机号则跳过", params: { source_mode: "douyin_private_message_phone", trigger: "clear_mobile", skip_without_clear_mobile: true } },
       { time: "18:30", endTime: "18:45", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "19:00", endTime: "19:15", key: "douyin_leads", label: "抖音主动私信精准客户", note: "抖音主动私信10个精准客户" },
       { time: "19:15", endTime: "19:30", key: "douyin_leads", label: "抖音私信接管", note: "抖音私信接管" },
       { time: "19:30", endTime: "20:00", key: "hifly.video.create_by_tts", label: "创作数字人口播视频", note: "创作一条数字人口播视频（用于发朋友圈）", actions: [{ time: "20:00", platform: "wechat_moments", label: "微信朋友圈发布", note: "微信朋友圈发布，数字人口播视频配文案发布" }] },
       { time: "20:15", endTime: "20:30", key: "wechat_channels_comment", label: "视频号评论区接管（敬请期待）", note: "视频号评论区接管", comingSoon: true },
       { time: "20:30", endTime: "20:45", key: "wechat_channels_message", label: "视频号私信接管（敬请期待）", note: "视频号私信接管", comingSoon: true },
-      { time: "20:45", endTime: "21:00", key: "native_wechat_add_friend", label: "微信自动加好友", note: "从抖音私信接管结果中识别客户发送的手机号并加好友，没有手机号则跳过", params: { source_mode: "douyin_private_message_phone", trigger: "clear_mobile", skip_without_clear_mobile: true } },
       { time: "21:00", endTime: "22:00", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管", params: { group_invite_enabled: true, group_invite_rule_status: "pending_rules", trigger: "qualified_intent" } },
       { time: "22:15", endTime: "22:30", key: "native_wechat_moments_engage", label: "朋友圈点赞评论（微信）", note: "朋友圈点赞评论（微信）" },
       { time: "22:30", endTime: "23:00", key: "native_wechat_poll", label: "微信私信接管", note: "微信私信接管" },
@@ -912,6 +908,7 @@
       const id = String(node.id || "");
       const key = String(node.ability_key || node.key || "");
       if (key === "native_wechat_poll") return false;
+      if (key === "douyin_leads" && isSalesDouyinPrivateNode(node)) return false;
       if (node.sales_preset || id.startsWith("sales_")) return true;
       return String(node.department_id || "") === "sales" && SALES_PERSONA_DEFAULT_KEYS.has(key);
     }
@@ -3541,6 +3538,9 @@
       if (key === "comfly.daihuo.pipeline") return workflowCapabilityFieldsHtml("comfly.daihuo.pipeline");
       if (key === "hifly.video.create_by_tts") return workflowCapabilityFieldsHtml("hifly.video.create_by_tts");
       if (key === "douyin_leads") {
+        if (item && item.privateTakeover) {
+          return taskFieldHtml("自动加微信好友", workCheckboxHtml("workflowParamDouyinWechatAddFriend", "从新私信中识别手机号后提交好友申请", true));
+        }
         return taskFieldHtml("采集关键词", taskTextareaHtml("workflowParamDouyinKeyword", "例如：深圳装修、口腔种植、母婴门店"), true)
           + taskFieldHtml("地区", workInputHtml("workflowParamDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
           + taskFieldHtml("搜索数量", workInputHtml("workflowParamDouyinMaxResults", "number", "50", 'min="10" max="100"'))
@@ -3585,7 +3585,10 @@
       if (platform) return workflowSocialFieldsHtml(platform);
       if (node.key === "linkedin_leads") return workflowLinkedinFieldsHtml();
       if (node.key === "wechat_channels_transcript") return workflowWechatTranscriptFieldsHtml();
-      if (node.workQuickKey) return workflowQuickFieldsHtml(workQuickItemByKey(node.workQuickKey) || node);
+       if (node.workQuickKey) {
+         const quick = workQuickItemByKey(node.workQuickKey) || node;
+         return workflowQuickFieldsHtml(isSalesDouyinPrivateNode(workflowNode) ? { ...quick, privateTakeover: true } : quick);
+       }
       if (node.capabilityId || node.serverTask) return workflowCapabilityFieldsHtml(node.capabilityId || node.key);
       if (node.routeTab) return `<div class="quick-empty">这个节点是页面入口，不能加入定时工作流。</div>`;
       return workflowCapabilityFieldsHtml(node.key);
@@ -3904,13 +3907,26 @@
       });
     }
 
-    function collectWorkflowQuickPlan(quick) {
+    function collectWorkflowQuickPlan(quick, workflowNode = null) {
       const key = String(quick && quick.key || "");
       if (key === "image_composer_studio") return collectWorkflowCapabilityPlan({ ...quick, key: "goal.image.pipeline", capabilityId: "goal.image.pipeline", label: quick.label || "创作图片" });
       if (key === "comfly.seedance.tvc.pipeline") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "comfly.seedance.tvc.pipeline", label: quick.label || "创意分镜头视频" });
       if (key === "comfly.daihuo.pipeline") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "comfly.daihuo.pipeline", label: quick.label || "爆款TVC" });
       if (key === "hifly.video.create_by_tts") return collectWorkflowCapabilityPlan({ ...quick, capabilityId: "hifly.video.create_by_tts", label: quick.label || "数字人口播" });
       if (key === "douyin_leads") {
+        if (workflowNode && isSalesDouyinPrivateNode(workflowNode)) {
+          return {
+            title: "抖音私信接管",
+            task_kind: "douyin_leads",
+            content: "H5 工作流：抖音私信接管",
+            payload: {
+              action: "stranger_message",
+              params: {
+                wechat_add_friend_enabled: workflowParamChecked("workflowParamDouyinWechatAddFriend"),
+              },
+            },
+          };
+        }
         const keyword = workflowParamValue("workflowParamDouyinKeyword");
         if (!keyword) throw new Error("请填写采集关键词");
         const regions = workSplitList(workflowParamValue("workflowParamDouyinRegions"));
@@ -4001,7 +4017,7 @@
         const payload = collectWorkflowWechatPayload(node);
         return { title: payload.title || "视频号文案提取", task_kind: "wechat_channels_transcript", content: "H5 工作流：视频号文案提取", payload };
       }
-      if (node.workQuickKey) return collectWorkflowQuickPlan(workQuickItemByKey(node.workQuickKey) || node);
+      if (node.workQuickKey) return collectWorkflowQuickPlan(workQuickItemByKey(node.workQuickKey) || node, workflowNode);
       if (node.capabilityId || node.serverTask) return collectWorkflowCapabilityPlan(node);
       return workflowPlanForLookup(lookup, note);
     }
@@ -4472,9 +4488,34 @@
       return prepared;
     }
 
+    function migrateSalesDouyinAddFriendChildren(nodes) {
+      const list = Array.isArray(nodes) ? nodes : [];
+      const parents = list.filter(isSalesDouyinPrivateNode);
+      if (!parents.length) return list;
+      const legacyRows = list.filter(isSalesWechatAddFriendRow);
+      const prepared = list.filter((node) => !isSalesWechatAddFriendRow(node));
+      parents.forEach((parentNode) => {
+        const plan = parentNode.plan && typeof parentNode.plan === "object" ? parentNode.plan : {};
+        const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+        const params = payload.params && typeof payload.params === "object" ? { ...payload.params } : {};
+        const children = workflowChildActions(parentNode).filter((child) => !isSalesWechatAddFriendRow(child));
+        const hadLegacyChild = children.length !== workflowChildActions(parentNode).length;
+        params.wechat_add_friend_enabled = Object.prototype.hasOwnProperty.call(params, "wechat_add_friend_enabled")
+          ? Boolean(params.wechat_add_friend_enabled)
+          : Boolean(hadLegacyChild || legacyRows.length);
+        params.wechat_add_friend_targets_source = "douyin_private_message_phone";
+        delete params.wechat_add_friend_rules;
+        payload.params = params;
+        plan.payload = payload;
+        parentNode.plan = plan;
+        if (children.length) parentNode.children = children;
+        else delete parentNode.children;
+      });
+      return prepared;
+    }
+
     function buildSalesWorkflowPresetNodes() {
       const nodes = [];
-      const addFriendPreset = SALES_WORKFLOW_PRESET.find(isSalesWechatAddFriendRow);
       SALES_WORKFLOW_PRESET.forEach((row, index) => {
         if (isSalesWechatAddFriendRow(row)) {
           return;
@@ -4506,13 +4547,13 @@
           node.children = actions.map((action, actionIndex) => salesWorkflowPublishAction(node, action, actionIndex));
         }
         nodes.push(node);
-        if (isSalesDouyinPrivateNode(node) && addFriendPreset) {
-          const rowAfterParent = {
-            ...addFriendPreset,
-            time: node.end_time || node.time || addFriendPreset.time,
-            endTime: "",
+        if (isSalesDouyinPrivateNode(node)) {
+          node.plan.payload = node.plan.payload || {};
+          node.plan.payload.params = {
+            ...(node.plan.payload.params || {}),
+            wechat_add_friend_enabled: true,
+            wechat_add_friend_targets_source: "douyin_private_message_phone",
           };
-          attachSalesWechatAddFriend(node, rowAfterParent, index);
         }
       });
       return nodes.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
@@ -4636,7 +4677,6 @@
         { value: "native_wechat_moments_engage", label: "朋友圈点赞评论" },
       ];
       const values = [];
-      if (isSalesDouyinPrivateNode(parentNode)) values.push("native_wechat_add_friend");
       if (workflowNodeIsNativeWechatTakeover(parentNode)) {
         values.push("native_wechat_moments_engage");
       }
@@ -4776,15 +4816,13 @@
       }
       delete params.followup_action;
       delete params.group_invite_rules;
-      if (friends.length || Object.prototype.hasOwnProperty.call(params, "wechat_add_friend_rules")) {
-        params.wechat_add_friend_enabled = friends.length > 0;
+      if (friends.length) {
+        params.wechat_add_friend_enabled = true;
         params.wechat_add_friend_targets_source = "douyin_private_message_phone";
-        params.wechat_add_friend_rules = friends.map((item) => ({
-          child_node_id: item.id,
-          time: item.time,
-          trigger: "clear_mobile",
-          skip_without_clear_mobile: true,
-        }));
+      }
+      if (Object.prototype.hasOwnProperty.call(params, "wechat_add_friend_rules")) {
+        params.wechat_add_friend_targets_source = "douyin_private_message_phone";
+        delete params.wechat_add_friend_rules;
       }
       payload.params = params;
       plan.payload = payload;
@@ -4964,6 +5002,10 @@
         setFieldValue("workflowParamWechatQuery", payload.query || payload.username || node.note || "");
         setFieldValue("workflowParamWechatPages", payload.max_pages || 1);
         setFieldValue("workflowParamWechatLimit", payload.limit || 10);
+        return;
+      }
+      if (nodeInfo.workQuickKey === "douyin_leads" && isSalesDouyinPrivateNode(node)) {
+        setFieldValue("workflowParamDouyinWechatAddFriend", params.wechat_add_friend_enabled !== false);
         return;
       }
       if (payload.action === "search_collect" || nodeInfo.workQuickKey === "douyin_leads") {

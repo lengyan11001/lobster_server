@@ -370,6 +370,8 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         item = {
             "id": str(raw.get("id") or f"node_{len(cleaned) + 1}")[:64],
             "time": _clean_time(raw.get("time")),
+            "end_time": _clean_time(raw.get("end_time")) if str(raw.get("end_time") or "").strip() else "",
+            "time_range": str(raw.get("time_range") or "").strip()[:32],
             "ability_key": str(raw.get("ability_key") or raw.get("abilityKey") or "").strip()[:128],
             "ability_label": str(raw.get("ability_label") or raw.get("abilityLabel") or raw.get("label") or title).strip()[:160],
             "department_id": str(raw.get("department_id") or raw.get("departmentId") or "").strip()[:64],
@@ -393,6 +395,13 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not cleaned:
         raise HTTPException(status_code=400, detail="请至少添加一个工作流节点")
     cleaned.sort(key=lambda item: item["time"])
+    for idx, item in enumerate(cleaned):
+        next_item = cleaned[idx + 1] if idx + 1 < len(cleaned) else None
+        end_time = str(item.get("end_time") or "").strip()
+        if not end_time and next_item:
+            end_time = str(next_item.get("time") or "").strip()
+        item["end_time"] = end_time
+        item["time_range"] = f"{item['time']}-{end_time}" if end_time else item["time"]
     return cleaned[:96]
 
 
@@ -976,7 +985,15 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
             action = requested_action
     if not action:
         action = inferred_action
-    return {"action": action or "search_collect"}
+    result: dict[str, Any] = {"action": action or "search_collect"}
+    # Private-message takeover keeps add-friend behavior on the parent node.
+    # Older templates may still contain a child; the migration below converts
+    # that child into this explicit Online contract.
+    if action == "stranger_message" and "wechat_add_friend_enabled" in params:
+        result["params"] = {
+            "wechat_add_friend_enabled": bool(params.get("wechat_add_friend_enabled")),
+        }
+    return result
 
 
 _NATIVE_WECHAT_WORKFLOW_ACTIONS = _WORKFLOW_CHILD_CLIENT_ACTIONS
@@ -1216,6 +1233,49 @@ def _ensure_sales_douyin_add_friend_children(nodes: list[dict[str, Any]]) -> lis
         parent_plan["payload"] = parent_payload
         parent["plan"] = parent_plan
 
+    return prepared
+
+
+def _ensure_sales_douyin_add_friend_children(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Migrate legacy add-friend children into the Douyin parent switch.
+
+    The name is retained for old callers, but new data never gets a child
+    action. A legacy child only supplies the initial switch value.
+    """
+    parents = [node for node in nodes if isinstance(node, dict) and _is_douyin_private_takeover_node(node)]
+    if not parents:
+        return nodes
+
+    legacy_rows = [node for node in nodes if isinstance(node, dict) and _is_native_wechat_add_friend_node(node)]
+    prepared = [node for node in nodes if not (isinstance(node, dict) and _is_native_wechat_add_friend_node(node))]
+    for parent in parents:
+        parent_plan = parent.get("plan") if isinstance(parent.get("plan"), dict) else {}
+        parent_payload = parent_plan.get("payload") if isinstance(parent_plan.get("payload"), dict) else {}
+        parent_params = dict(parent_payload.get("params") if isinstance(parent_payload.get("params"), dict) else {})
+        current_enabled = parent_params.get("wechat_add_friend_enabled")
+        has_legacy_child = any(
+            _is_native_wechat_add_friend_node(child)
+            for child in _workflow_child_nodes(parent)
+        )
+        parent_params["wechat_add_friend_enabled"] = (
+            bool(current_enabled)
+            if current_enabled is not None
+            else bool(has_legacy_child or legacy_rows)
+        )
+        parent_params["wechat_add_friend_targets_source"] = "douyin_private_message_phone"
+        parent_params.pop("wechat_add_friend_rules", None)
+        parent_payload["params"] = parent_params
+        parent_plan["payload"] = parent_payload
+        parent["plan"] = parent_plan
+
+        remaining_children = [
+            child for child in _workflow_child_nodes(parent)
+            if not _is_native_wechat_add_friend_node(child)
+        ]
+        if remaining_children:
+            parent["children"] = remaining_children
+        else:
+            parent.pop("children", None)
     return prepared
 
 
@@ -1664,6 +1724,10 @@ def _activate_nodes_for_device(
                 "workflow_template_key": (snapshot_extra or {}).get("template_key") or "",
                 "workflow_node_id": node.get("id"),
                 "workflow_node_time": node.get("time"),
+                "workflow_node_end_time": node.get("end_time") or "",
+                "workflow_node_time_range": node.get("time_range") or (
+                    f"{node.get('time')}-{node.get('end_time')}" if node.get("end_time") else node.get("time")
+                ),
                 "ability_key": node.get("ability_key"),
                 "ability_label": node.get("ability_label"),
                 "department_id": node.get("department_id"),
@@ -1674,6 +1738,12 @@ def _activate_nodes_for_device(
                     {
                         "workflow_parent_node_id": parent_node.get("id"),
                         "workflow_parent_node_time": parent_node.get("time"),
+                        "workflow_parent_node_end_time": parent_node.get("end_time") or "",
+                        "workflow_parent_node_time_range": parent_node.get("time_range") or (
+                            f"{parent_node.get('time')}-{parent_node.get('end_time')}"
+                            if parent_node.get("end_time")
+                            else parent_node.get("time")
+                        ),
                         "workflow_parent_ability_key": parent_node.get("ability_key"),
                         "workflow_parent_ability_label": parent_node.get("ability_label"),
                         "workflow_action_type": node.get("action_type") or node.get("type"),

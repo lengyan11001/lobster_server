@@ -194,8 +194,9 @@ def test_h5_exposes_wechat_memory_and_group_condition_settings():
     assert 'id="mountedWechatGroupInviteWelcomeMessage"' in html
     assert "function saveMountedWechatTakeoverConfig" in script
     assert 'source_mode: "douyin_private_message_phone"' in script
-    assert "if (isSalesDouyinPrivateNode(node) && addFriendPreset)" in script
-    assert "attachSalesWechatAddFriend(node, rowAfterParent, index);" in script
+    assert "workflowParamDouyinWechatAddFriend" in script
+    assert "wechat_add_friend_enabled" in script
+    assert "if (isSalesDouyinPrivateNode(node) && addFriendPreset)" not in script
 
 
 def test_wechat_contact_snapshot_only_keeps_contact_selector_fields():
@@ -260,17 +261,12 @@ def test_legacy_sales_add_friend_rows_migrate_under_each_douyin_takeover():
     migrated_again = _ensure_sales_douyin_add_friend_children(migrated)
 
     assert [node["id"] for node in migrated_again] == ["douyin-private-1", "douyin-private-2"]
-    for parent, expected_time in zip(migrated_again, ["15:00", "19:30"]):
-        children = parent["children"]
-        assert len(children) == 1
-        child = children[0]
-        params = child["plan"]["payload"]["params"]
-        assert child["parent_node_id"] == parent["id"]
-        assert child["time"] == expected_time
-        assert params["source_workflow_node_id"] == parent["id"]
-        assert params["source_mode"] == "douyin_private_message_phone"
-        assert params["targets"] == []
-        assert len(parent["plan"]["payload"]["params"]["wechat_add_friend_rules"]) == 1
+    for parent in migrated_again:
+        assert parent.get("children", []) == []
+        params = parent["plan"]["payload"]["params"]
+        assert params["wechat_add_friend_enabled"] is True
+        assert params["wechat_add_friend_targets_source"] == "douyin_private_message_phone"
+        assert "wechat_add_friend_rules" not in params
 
 
 def test_h5_migrates_legacy_add_friend_rows_when_loading_sales_templates():

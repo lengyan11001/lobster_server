@@ -412,11 +412,35 @@ def get_wechat_intelligence_context(
         used_chars += len(content)
         if len(selected) >= 12:
             break
+    verified_group_rows = (
+        db.query(WechatInteractionOutcome)
+        .filter(
+            WechatInteractionOutcome.user_id == owner.id,
+            WechatInteractionOutcome.account_id == body.account_id,
+            WechatInteractionOutcome.contact_key == body.contact_key,
+            WechatInteractionOutcome.event_type == "group_created",
+            WechatInteractionOutcome.status == "completed",
+        )
+        .order_by(WechatInteractionOutcome.happened_at.desc())
+        .limit(20)
+        .all()
+    )
+    group_invite_verified = any(
+        isinstance(row.payload, dict) and bool(row.payload.get("group_verified"))
+        for row in verified_group_rows
+    )
+    contact_payload = _serialize_contact(contact) if contact else None
+    if isinstance(contact_payload, dict):
+        contact_payload["group_invite_verified"] = group_invite_verified
     return {
         "ok": True,
-        "contact": _serialize_contact(contact) if contact else None,
+        "contact": contact_payload,
         "rules": selected,
-        "limits": {"rule_count": len(selected), "rule_chars": used_chars},
+        "limits": {
+            "rule_count": len(selected),
+            "rule_chars": used_chars,
+            "group_invite_verified": group_invite_verified,
+        },
     }
 
 
