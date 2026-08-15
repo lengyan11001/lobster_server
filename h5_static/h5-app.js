@@ -15944,12 +15944,8 @@
       const primaryInput = $("mountedWechatGroupInvitePrimaryContact");
       if (primaryInput && document.activeElement !== primaryInput) {
         const selected = String(row.group_invite_primary_contact || (Array.isArray(row.group_invite_contacts) ? row.group_invite_contacts[0] : "") || "").trim();
-        const match = (Array.isArray(row.wechat_contacts) ? row.wechat_contacts : []).find((item) => String(item && item.value || "") === selected);
-        const name = String((match && match.name) || row.group_invite_primary_contact_name || selected).trim();
         primaryInput.value = selected;
-        primaryInput.dataset.contactName = name;
-        const text = $("mountedWechatGroupInvitePrimaryContactText");
-        if (text) text.textContent = name || (row.wechat_contacts?.length ? "请选择主联系人" : "暂无通讯录，请先在 Online 同步");
+        primaryInput.dataset.contactName = selected;
       }
       const welcome = $("mountedWechatGroupInviteWelcomeMessage");
       if (welcome && document.activeElement !== welcome) {
@@ -16153,7 +16149,7 @@
         const memoryDocId = String($("mountedWechatMemoryDocSelect")?.value || "").trim();
         const primaryInput = $("mountedWechatGroupInvitePrimaryContact");
         const primaryContact = String(primaryInput?.value || "").trim();
-        const primaryContactName = primaryContact ? String(primaryInput?.dataset.contactName || primaryContact).trim() : "";
+        const primaryContactName = primaryContact;
         const data = await api("/api/h5-chat/mounted-accounts/wechat-auto-reply", {
           method: "POST",
           blocking: "正在保存微信接管设置",
@@ -25573,7 +25569,6 @@
     $("mountedWechatTakeoverSaveBtn")?.addEventListener("click", (evt) => {
       saveMountedWechatTakeoverConfig(evt.currentTarget).catch((err) => toast(err.message || "微信接管设置保存失败"));
     });
-    $("mountedWechatGroupInvitePrimaryContactChooseBtn")?.addEventListener("click", openMountedWechatContactPicker);
     $("mountedWechatContactSearch")?.addEventListener("input", (evt) => {
       state.mountedWechatContactSearch = evt.target.value || "";
       renderMountedWechatContactPicker();
