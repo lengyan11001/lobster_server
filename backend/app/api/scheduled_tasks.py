@@ -21,6 +21,7 @@ from ..models import (
     H5ChatEvent,
     H5ChatMessage,
     H5AgentTemplateGrant,
+    H5MountedAccountDefault,
     H5WorkflowActivation,
     ContentCompetitorAccount,
     IPContentKeyword,
@@ -81,6 +82,16 @@ _PERSONAL_DEFAULT_TEMPLATE_NAME = "\u4e2a\u4eba\u9ed8\u8ba4\u914d\u7f6e"
 _LOCAL_BESTSELLER_ACTIONS = {"local_bestseller_plan", "local_bestseller_scene_batch", "local_bestseller_daily_video"}
 _SERIAL_CLIENT_TASK_KINDS = {"douyin_leads"}
 _SERIAL_CLIENT_WORKFLOW_ACTIONS = {"native_wechat_poll"}
+_NATIVE_WECHAT_RUNTIME_SETTING_KEYS = (
+    "memory_doc_ids",
+    "group_invite_enabled",
+    "group_invite_memory_doc_id",
+    "group_invite_keywords",
+    "group_invite_contacts",
+    "group_invite_primary_contact",
+    "group_invite_primary_contact_name",
+    "group_invite_welcome_message",
+)
 _WECHAT_MOMENTS_PLATFORM = "wechat_moments"
 _WECHAT_MOMENTS_ACCOUNT_ID = "pc-wechat-default"
 _WECHAT_MOMENTS_PLATFORM_NAME = "微信朋友圈"
@@ -791,6 +802,44 @@ def _enrich_local_bestseller_workflow_payload(
     h5_context.setdefault("workflow_day_start", _iso(now))
     h5_context["persona_source"] = "h5_custom_profile" if profile_source == "custom" else ("h5_profile_override" if profile_override else "ip_persona_default")
     out["h5_context"] = h5_context
+    return out
+
+
+def _enrich_native_wechat_workflow_payload(
+    db: Session,
+    *,
+    payload: Dict[str, Any],
+    target_user_id: int,
+) -> Dict[str, Any]:
+    if _clean_profile_text(payload.get("action"), 80) != "native_wechat_poll":
+        return payload
+    out = dict(payload)
+    params = dict(out.get("params") if isinstance(out.get("params"), dict) else {})
+    pref = (
+        db.query(H5MountedAccountDefault)
+        .filter(
+            H5MountedAccountDefault.user_id == target_user_id,
+            H5MountedAccountDefault.scope == "wechat_auto_reply",
+        )
+        .first()
+    )
+    saved = pref.payload if pref and isinstance(pref.payload, dict) else {}
+    for key in _NATIVE_WECHAT_RUNTIME_SETTING_KEYS:
+        if key not in saved:
+            continue
+        current = params.get(key)
+        if current not in (None, "", [], {}):
+            continue
+        params[key] = copy.deepcopy(saved[key])
+    if pref and not _clean_profile_text(params.get("account_id"), 128):
+        params["account_id"] = _clean_profile_text(pref.account_id, 128) or "pc-wechat-default"
+    if params.get("group_invite_enabled"):
+        has_rules = bool(
+            _clean_profile_text(params.get("group_invite_memory_doc_id"), 64)
+            or _clean_profile_text(params.get("group_invite_keywords"), 2000)
+        )
+        params["group_invite_rule_status"] = "configured" if has_rules else "pending_rules"
+    out["params"] = params
     return out
 
 
@@ -2112,6 +2161,11 @@ def _run_payload_for_task(db: Session, task: ScheduledTask, now: datetime) -> Di
             target_user_id=task.user_id,
             now=now,
         )
+        run_payload = _enrich_native_wechat_workflow_payload(
+            db,
+            payload=dict(run_payload),
+            target_user_id=task.user_id,
+        )
         run_payload = _enrich_digital_human_voice_payload(
             db,
             payload=run_payload,
@@ -3143,6 +3197,11 @@ def _create_task_row(
     now = datetime.utcnow()
     if task_kind == "client_workflow":
         payload = _enrich_local_bestseller_workflow_payload(db, payload=dict(payload), target_user_id=target_user_id, now=now)
+        payload = _enrich_native_wechat_workflow_payload(
+            db,
+            payload=dict(payload),
+            target_user_id=target_user_id,
+        )
     tz_offset = int(body.timezone_offset_minutes if body.timezone_offset_minutes is not None else 480)
     start_at_utc = None if schedule_type == "daily_times" else _parse_client_datetime(body.start_at, tz_offset)
     schedule_config: Dict[str, Any] = {

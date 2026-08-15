@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 from backend.app.api import h5_chat
 from backend.app.api.h5_chat import H5WechatAutoReplyIn
 from backend.app.api.h5_workflows import _clean_action_nodes, _ensure_sales_douyin_add_friend_children, _native_wechat_plan
+from backend.app.api.scheduled_tasks import _enrich_native_wechat_workflow_payload
 from backend.app.models import H5ChatMessage, H5MountedAccountDefault
 
 
@@ -123,6 +125,54 @@ def test_wechat_auto_reply_uses_fixed_thirty_minute_interval(db_session, test_us
     assert command["interval_seconds"] == 1800
 
 
+def test_native_wechat_task_uses_saved_group_invite_settings(db_session, test_user):
+    now = datetime.utcnow()
+    db_session.add(
+        H5MountedAccountDefault(
+            user_id=test_user.id,
+            scope="wechat_auto_reply",
+            account_key="wechat:pc-default",
+            platform="wechat",
+            account_id="pc-wechat-default",
+            installation_id="device-1",
+            source="pc_wechat",
+            payload={
+                "memory_doc_ids": ["faq-doc"],
+                "group_invite_enabled": True,
+                "group_invite_memory_doc_id": "group-rules",
+                "group_invite_keywords": "报价,合作",
+                "group_invite_contacts": ["wxid_manager"],
+                "group_invite_primary_contact": "wxid_manager",
+                "group_invite_primary_contact_name": "九变",
+                "group_invite_welcome_message": "欢迎进群",
+            },
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.commit()
+
+    payload = _enrich_native_wechat_workflow_payload(
+        db_session,
+        payload={
+            "action": "native_wechat_poll",
+            "params": {
+                "group_invite_enabled": True,
+            },
+        },
+        target_user_id=test_user.id,
+    )
+
+    params = payload["params"]
+    assert params["memory_doc_ids"] == ["faq-doc"]
+    assert params["group_invite_memory_doc_id"] == "group-rules"
+    assert params["group_invite_keywords"] == "报价,合作"
+    assert params["group_invite_contacts"] == ["wxid_manager"]
+    assert params["group_invite_primary_contact"] == "wxid_manager"
+    assert params["group_invite_primary_contact_name"] == "九变"
+    assert params["group_invite_welcome_message"] == "欢迎进群"
+    assert params["group_invite_rule_status"] == "configured"
+
 def test_add_friend_child_defaults_to_douyin_private_message_phone():
     parent = {"id": "douyin-private", "ability_label": "抖音私信接管", "department_id": "sales"}
     actions = _clean_action_nodes(
@@ -143,43 +193,6 @@ def test_add_friend_child_defaults_to_douyin_private_message_phone():
     assert params["source_workflow_node_id"] == "douyin-private"
     assert params["source_mode"] == "douyin_private_message_phone"
     assert params["trigger"] == "clear_mobile"
-
-
-def test_legacy_group_invite_child_is_folded_into_wechat_takeover_parent():
-    parent = {
-        "id": "wechat-takeover",
-        "ability_key": "native_wechat_poll",
-        "ability_label": "微信私信接管",
-        "plan": {"payload": {"action": "native_wechat_poll", "params": {}}},
-    }
-    actions = _clean_action_nodes(
-        [
-            {
-                "id": "legacy-group-invite",
-                "time": "15:30",
-                "action_type": "native_wechat_group_invite",
-                "ability_key": "native_wechat_poll",
-                "plan": {
-                    "payload": {
-                        "action": "native_wechat_poll",
-                        "params": {
-                            "group_invite_memory_doc_id": "group-rules",
-                            "group_invite_primary_contact": "张老师",
-                            "group_invite_welcome_message": "欢迎进群",
-                        },
-                    }
-                },
-            }
-        ],
-        parent,
-    )
-
-    assert actions == []
-    params = parent["plan"]["payload"]["params"]
-    assert params["group_invite_enabled"] is True
-    assert params["group_invite_memory_doc_id"] == "group-rules"
-    assert params["group_invite_primary_contact"] == "张老师"
-    assert "followup_action" not in params
 
 
 def test_h5_exposes_wechat_memory_and_group_condition_settings():
@@ -269,9 +282,11 @@ def test_legacy_sales_add_friend_rows_migrate_under_each_douyin_takeover():
         assert "wechat_add_friend_rules" not in params
 
 
-def test_h5_migrates_legacy_add_friend_rows_when_loading_sales_templates():
+def test_h5_migrates_add_friend_rows_when_loading_sales_templates():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
 
-    assert "migrateSalesDouyinAddFriendChildren(migrateWechatGroupInviteNodes(normalized))" in script
+    assert "return migrateSalesDouyinAddFriendChildren(normalized);" in script
+    assert "migrateWechatGroupInviteNodes" not in script
+    assert "native_wechat_group_invite" not in script
     assert "function migrateSalesDouyinAddFriendChildren(nodes)" in script
     assert "const prepared = list.filter((node) => !isSalesWechatAddFriendRow(node));" in script

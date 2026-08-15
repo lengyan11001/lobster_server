@@ -267,7 +267,7 @@ def test_native_wechat_takeover_uses_parent_group_switch_and_keeps_moments_child
 
     assert 'action === "native_wechat_poll"' in detector
     assert 'text.includes("微信私信接管")' in detector
-    assert 'params.followup_action' in detector  # legacy-template detection remains for migration
+    assert 'params.followup_action' not in detector
     assert 'values.push("native_wechat_moments_engage")' in options
     assert 'values.push("native_wechat_group_invite", "native_wechat_moments_engage")' not in options
     assert 'label: "微信自动拉群"' not in script
@@ -277,7 +277,7 @@ def test_native_wechat_takeover_uses_parent_group_switch_and_keeps_moments_child
     assert 'group_invite_enabled: workflowParamChecked("workflowParamNativeWechatGroupInviteEnabled")' in script
     assert 'baseParams.group_invite_enabled = true' in script
     assert 'baseParams.trigger = baseParams.trigger || "qualified_intent"' in script
-    assert 'String(params.followup_action || "").trim().toLowerCase() === "group_invite"' in script
+    assert 'native_wechat_group_invite' not in script
     assert '"native_wechat_moments_engage",' in script
     assert "#workflowActionPlatformField[hidden]" in styles
     assert "20260808-workflow-action-fields-v1" in html

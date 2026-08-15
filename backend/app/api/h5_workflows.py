@@ -56,7 +56,6 @@ _WORKFLOW_CHILD_CLIENT_ACTIONS = {
 _WORKFLOW_CHILD_ACTION_TYPES = {
     "client_workflow",
     "native_wechat_add_friend",
-    "native_wechat_group_invite",
     "native_wechat_moments_engage",
 }
 _ENABLED_SYSTEM_WORKFLOW_KEYS = {"system_sales"}
@@ -123,17 +122,6 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
                 raise HTTPException(status_code=400, detail="动作节点暂时只支持发布或系统销售微信动作")
             params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
             params = dict(params or {})
-            is_group_invite = (
-                action == "native_wechat_poll"
-                and (
-                    action_type == "native_wechat_group_invite"
-                    or params.get("followup_action") == "group_invite"
-                    or "自动拉群" in _clean_text(raw.get("note") or raw.get("ability_label"), 200)
-                )
-            )
-            if is_group_invite:
-                _enable_group_invite_on_parent(parent, params)
-                continue
             params.update(
                 {
                     "source_workflow_node_id": parent_id,
@@ -215,93 +203,6 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
         )
     actions.sort(key=lambda item: item["time"])
     return actions
-
-
-def _enable_group_invite_on_parent(parent: dict[str, Any], source_params: Optional[dict[str, Any]] = None) -> None:
-    """Fold the legacy timed group-invite action into its WeChat takeover parent."""
-    plan = parent.get("plan") if isinstance(parent.get("plan"), dict) else {}
-    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
-    params = dict(payload.get("params") if isinstance(payload.get("params"), dict) else {})
-    source = dict(source_params or {})
-    for key in (
-        "group_invite_memory_doc_id",
-        "group_invite_keywords",
-        "group_invite_contacts",
-        "group_invite_primary_contact",
-        "group_invite_primary_contact_name",
-        "group_invite_welcome_message",
-        "group_invite_rule_status",
-        "group_invite_targets_source",
-        "group_invite_members",
-        "group_invite_manager_contacts",
-        "trigger",
-    ):
-        if key in source and source[key] not in (None, "", [], {}):
-            params[key] = copy.deepcopy(source[key])
-    params["group_invite_enabled"] = True
-    params.pop("followup_action", None)
-    params.setdefault("group_invite_rule_status", "pending_rules")
-    params.setdefault("trigger", "qualified_intent")
-    params.setdefault("group_invite_targets_source", "qualified_intent")
-    params.setdefault("group_invite_members", [])
-    params.setdefault("group_invite_manager_contacts", [])
-    payload["params"] = params
-    plan["payload"] = payload
-    parent["plan"] = plan
-    if "自动拉群" in _clean_text(parent.get("ability_label") or parent.get("note"), 240):
-        parent["ability_label"] = "微信私信接管"
-        parent["note"] = "微信私信接管"
-        plan["title"] = "个微私信接管"
-        plan["content"] = "H5 工作流：个微私信接管"
-
-
-def _is_group_invite_node(node: dict[str, Any]) -> bool:
-    if not isinstance(node, dict):
-        return False
-    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
-    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
-    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
-    action = _clean_text(payload.get("action") or node.get("ability_key"), 128)
-    text = _clean_text(" ".join(str(value or "") for value in (node.get("ability_label"), node.get("note"), plan.get("title"))), 300)
-    return action == "native_wechat_poll" and (
-        str(params.get("followup_action") or "").strip().lower() == "group_invite"
-        or _clean_text(node.get("action_type") or node.get("type"), 80) == "native_wechat_group_invite"
-        or "自动拉群" in text
-    )
-
-
-def _is_wechat_takeover_node(node: dict[str, Any]) -> bool:
-    if not isinstance(node, dict) or _is_group_invite_node(node):
-        return False
-    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
-    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
-    return _clean_text(payload.get("action") or node.get("ability_key"), 128) == "native_wechat_poll"
-
-
-def _migrate_group_invite_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert legacy standalone/child group rows into a takeover-node switch."""
-    prepared = [node for node in nodes if isinstance(node, dict)]
-    for parent in prepared:
-        children = _workflow_child_nodes(parent)
-        retained: list[dict[str, Any]] = []
-        for child in children:
-            if _is_group_invite_node(child):
-                _enable_group_invite_on_parent(parent, _node_payload(child).get("params"))
-            else:
-                retained.append(child)
-        if children:
-            parent["children"] = retained
-
-    result: list[dict[str, Any]] = []
-    for node in prepared:
-        if _is_group_invite_node(node):
-            parent = next((candidate for candidate in reversed(result) if _is_wechat_takeover_node(candidate)), None)
-            if parent is not None:
-                _enable_group_invite_on_parent(parent, _node_payload(node).get("params"))
-                continue
-            _enable_group_invite_on_parent(node, _node_payload(node).get("params"))
-        result.append(node)
-    return result
 
 
 def _is_workflow_placeholder(node: Any) -> bool:
@@ -391,7 +292,6 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if children:
             item["children"] = children
         cleaned.append(item)
-    cleaned = _migrate_group_invite_nodes(cleaned)
     if not cleaned:
         raise HTTPException(status_code=400, detail="请至少添加一个工作流节点")
     cleaned.sort(key=lambda item: item["time"])
@@ -1018,14 +918,9 @@ def _native_wechat_plan(action_key: str, note: Any, params: Optional[dict[str, A
     base_params.setdefault("account_id", "pc-wechat-default")
     base_params.setdefault("note", note_text)
     base_params.setdefault("prompt", note_text)
-    group_invite = (
-        bool(base_params.get("group_invite_enabled"))
-        or base_params.get("followup_action") == "group_invite"
-        or "自动拉群" in note_text
-    )
+    group_invite = bool(base_params.get("group_invite_enabled"))
     if group_invite:
         base_params["group_invite_enabled"] = True
-        base_params.pop("followup_action", None)
         base_params.setdefault("group_invite_rule_status", "pending_rules")
         base_params.setdefault("trigger", "qualified_intent")
     if action_key == "native_wechat_poll":
