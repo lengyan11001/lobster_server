@@ -80,6 +80,7 @@ _pending_empty_cache: Dict[str, float] = {}
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "\u4e2a\u4eba\u9ed8\u8ba4\u914d\u7f6e"
 _LOCAL_BESTSELLER_ACTIONS = {"local_bestseller_plan", "local_bestseller_scene_batch", "local_bestseller_daily_video"}
 _SERIAL_CLIENT_TASK_KINDS = {"douyin_leads"}
+_SERIAL_CLIENT_WORKFLOW_ACTIONS = {"native_wechat_poll"}
 _WECHAT_MOMENTS_PLATFORM = "wechat_moments"
 _WECHAT_MOMENTS_ACCOUNT_ID = "pc-wechat-default"
 _WECHAT_MOMENTS_PLATFORM_NAME = "微信朋友圈"
@@ -956,6 +957,14 @@ def _header_installation_id(request: Request) -> str:
         or request.headers.get("x-installation-id")
         or ""
     ).strip()
+
+
+def _header_client_process_id(request: Request) -> str:
+    return (
+        request.headers.get("X-Client-Process-Id")
+        or request.headers.get("x-client-process-id")
+        or ""
+    ).strip()[:128]
 
 
 def _touch_installation_slot_lazy(db: Session, user_id: int, installation_id: str) -> None:
@@ -1920,6 +1929,7 @@ def _claim_pending_run(
     user_id: int,
     installation_id: str,
     now: datetime,
+    client_process_id: str = "",
 ) -> Optional[ScheduledTaskRun]:
     claimed_by = installation_id or "unknown"
     stmt = (
@@ -1941,12 +1951,24 @@ def _claim_pending_run(
     result = db.execute(stmt)
     if int(result.rowcount or 0) != 1:
         return None
-    return db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == run_id).first()
+    row = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == run_id).first()
+    if row is not None and client_process_id:
+        row.progress = _merge_run_progress(
+            row,
+            {
+                "client_process_id": client_process_id,
+                "claimed_at": now.isoformat(),
+            },
+        )
+    return row
 
 
 def _serial_client_run_key(row: ScheduledTaskRun, installation_id: str) -> str:
     kind = str(row.task_kind or "").strip()
-    if kind not in _SERIAL_CLIENT_TASK_KINDS:
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    action = str(payload.get("action") or "").strip().lower()
+    serial_workflow = kind == "client_workflow" and action in _SERIAL_CLIENT_WORKFLOW_ACTIONS
+    if kind not in _SERIAL_CLIENT_TASK_KINDS and not serial_workflow:
         return ""
     effective_installation_id = (
         str(row.installation_id or "").strip()
@@ -1954,7 +1976,7 @@ def _serial_client_run_key(row: ScheduledTaskRun, installation_id: str) -> str:
         or str(installation_id or "").strip()
         or "unknown"
     )
-    return f"{kind}:{effective_installation_id}"
+    return f"{kind}:{action or '-'}:{effective_installation_id}"
 
 
 def _serial_client_run_is_blocked(
@@ -1969,7 +1991,7 @@ def _serial_client_run_is_blocked(
         return False
     if key in claimed_keys:
         return True
-    q = db.query(ScheduledTaskRun.id).filter(
+    q = db.query(ScheduledTaskRun).filter(
         ScheduledTaskRun.user_id == candidate.user_id,
         ScheduledTaskRun.id != candidate.id,
         ScheduledTaskRun.task_kind == candidate.task_kind,
@@ -1982,6 +2004,16 @@ def _serial_client_run_is_blocked(
                 ScheduledTaskRun.installation_id == effective_installation_id,
                 ScheduledTaskRun.claimed_by_installation_id == effective_installation_id,
             )
+        )
+    if str(candidate.task_kind or "").strip() == "client_workflow":
+        candidate_payload = candidate.payload if isinstance(candidate.payload, dict) else {}
+        candidate_action = str(candidate_payload.get("action") or "").strip().lower()
+        if candidate_action not in _SERIAL_CLIENT_WORKFLOW_ACTIONS:
+            return False
+        return any(
+            str((row.payload if isinstance(row.payload, dict) else {}).get("action") or "").strip().lower()
+            == candidate_action
+            for row in q.all()
         )
     return q.first() is not None
 
@@ -1998,6 +2030,70 @@ def _client_processing_run_is_stale(row: ScheduledTaskRun, now: datetime) -> boo
     action = str(payload.get("action") or "").strip().lower()
     timeout_minutes = 45 if action in _LONG_RUNNING_CLIENT_ACTIONS else 10
     return last_activity < now - timedelta(minutes=timeout_minutes)
+
+
+def _fail_previous_client_runs(
+    db: Session,
+    *,
+    user_id: int,
+    installation_id: str,
+    client_process_id: str,
+    now: datetime,
+) -> int:
+    """Close runs owned by an earlier online process before claiming new work."""
+    process_id = str(client_process_id or "").strip()
+    install_id = str(installation_id or "").strip()
+    if not process_id or not install_id:
+        return 0
+    rows = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.user_id == user_id,
+            ScheduledTaskRun.status == "processing",
+            ScheduledTaskRun.task_kind.notin_(list(_SERVER_SIDE_TASK_KINDS)),
+            or_(
+                ScheduledTaskRun.installation_id == install_id,
+                ScheduledTaskRun.claimed_by_installation_id == install_id,
+            ),
+        )
+        .with_for_update(skip_locked=True)
+        .limit(200)
+        .all()
+    )
+    interrupted = 0
+    message = "客户端已重启，上一轮任务已中断"
+    for row in rows:
+        progress = row.progress if isinstance(row.progress, dict) else {}
+        if str(progress.get("client_process_id") or "").strip() == process_id:
+            continue
+        row.status = "failed"
+        row.error = message
+        row.finished_at = now
+        row.updated_at = now
+        row.progress = _merge_run_progress(
+            row,
+            {
+                "stage": "client_restarted",
+                "text": message,
+                "reason": "client_process_restarted",
+                "failed_at": now.isoformat(),
+                "client_process_id": process_id,
+            },
+        )
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
+        if task:
+            task.last_error = message
+            task.updated_at = now
+        _sync_h5_message_from_run(db, row, now)
+        _add_h5_event(
+            db,
+            row.h5_message_id,
+            row.user_id,
+            "error",
+            {"error": message, "reason": "client_process_restarted"},
+        )
+        interrupted += 1
+    return interrupted
 
 
 def _run_payload_for_task(db: Session, task: ScheduledTask, now: datetime) -> Dict[str, Any]:
@@ -3414,6 +3510,7 @@ def pending_scheduled_task_runs(
     db: Session = Depends(get_db),
 ):
     xi = _header_installation_id(request)
+    client_process_id = _header_client_process_id(request)
     assert_installation_slot_owner(
         db,
         user_id=current_user_id,
@@ -3421,6 +3518,16 @@ def pending_scheduled_task_runs(
         claim_if_unowned=True,
         auth_session_id=request_auth_session_id(request),
     )
+    if client_process_id:
+        interrupted = _fail_previous_client_runs(
+            db,
+            user_id=current_user_id,
+            installation_id=xi,
+            client_process_id=client_process_id,
+            now=datetime.utcnow(),
+        )
+        if interrupted:
+            db.commit()
     pending_key = _pending_cache_key("run", current_user_id, xi)
     if _pending_empty_recent(pending_key, _RUN_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}
@@ -3455,11 +3562,25 @@ def pending_scheduled_task_runs(
     for row in stale_rows:
         if not _client_processing_run_is_stale(row, now):
             continue
-        row.status = "pending"
-        row.claimed_by_installation_id = None
-        row.claimed_at = None
+        row.status = "failed"
+        row.error = "客户端长时间未上报进度，本轮任务已结束"
+        row.finished_at = now
         row.updated_at = now
-        _add_h5_event(db, row.h5_message_id, row.user_id, "queued", {"reason": "processing_timeout_requeued"})
+        row.progress = _merge_run_progress(
+            row,
+            {
+                "stage": "client_progress_timeout",
+                "text": row.error,
+                "failed_at": now.isoformat(),
+                "reason": "processing_timeout_failed",
+            },
+        )
+        task = db.query(ScheduledTask).filter(ScheduledTask.id == row.task_id).first() if row.task_id else None
+        if task:
+            task.last_error = row.error
+            task.updated_at = now
+        _sync_h5_message_from_run(db, row, now)
+        _add_h5_event(db, row.h5_message_id, row.user_id, "error", {"error": row.error, "reason": "processing_timeout_failed"})
 
     candidates = (
         db.query(ScheduledTaskRun)
@@ -3484,7 +3605,14 @@ def pending_scheduled_task_runs(
             claimed_keys=claimed_serial_keys,
         ):
             continue
-        row = _claim_pending_run(db, run_id=candidate.id, user_id=current_user_id, installation_id=xi, now=now)
+        row = _claim_pending_run(
+            db,
+            run_id=candidate.id,
+            user_id=current_user_id,
+            installation_id=xi,
+            now=now,
+            client_process_id=client_process_id,
+        )
         if not row:
             continue
         refreshed_payload = _enrich_digital_human_voice_payload(
@@ -3701,7 +3829,11 @@ def submit_scheduled_task_event(
         request_auth_session_id(request),
     )
     now = datetime.utcnow()
-    row.progress = body.payload or {}
+    progress = dict(body.payload or {})
+    client_process_id = _header_client_process_id(request)
+    if client_process_id:
+        progress["client_process_id"] = client_process_id
+    row.progress = _merge_run_progress(row, progress)
     row.updated_at = now
     _add_h5_event(db, row.h5_message_id, row.user_id, body.type, body.payload)
     db.commit()

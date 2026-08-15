@@ -402,3 +402,48 @@ def test_pending_claim_scans_past_blocked_serial_runs(db_session, test_user, mon
     assert [item["id"] for item in result["items"]] == ["workflow-pending"]
     assert db_session.get(ScheduledTaskRun, "douyin-pending").status == "pending"
     assert db_session.get(ScheduledTaskRun, "workflow-pending").status == "processing"
+
+
+def test_pending_claim_serializes_native_wechat_runs_per_installation(db_session, test_user, monkeypatch):
+    now = datetime.utcnow()
+    processing = _run(
+        run_id="wechat-processing",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="processing",
+        created_at=now,
+    )
+    processing.payload = {"action": "native_wechat_poll"}
+    pending_wechat = _run(
+        run_id="wechat-pending",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="pending",
+        created_at=now - timedelta(minutes=2),
+    )
+    pending_wechat.payload = {"action": "native_wechat_poll"}
+    available_video = _run(
+        run_id="video-pending",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="pending",
+        created_at=now - timedelta(minutes=1),
+    )
+    available_video.payload = {"action": "shanjian_digital_human_video"}
+    db_session.add_all([processing, pending_wechat, available_video])
+    db_session.commit()
+    monkeypatch.setattr(scheduled_tasks, "_enqueue_due_tasks", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(scheduled_tasks, "_touch_installation_slot_lazy", lambda *_args, **_kwargs: None)
+
+    result = scheduled_tasks.pending_scheduled_task_runs(
+        _request(),
+        limit=2,
+        current_user_id=test_user.id,
+        db=db_session,
+    )
+
+    assert [item["id"] for item in result["items"]] == ["video-pending"]
+    assert db_session.get(ScheduledTaskRun, "wechat-pending").status == "pending"

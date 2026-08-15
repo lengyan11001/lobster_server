@@ -77,6 +77,39 @@ def test_native_wechat_takeover_is_not_requeued_during_its_thirty_minute_session
     assert scheduled_tasks._client_processing_run_is_stale(row, now) is True
 
 
+def test_client_restart_fails_previous_process_runs_and_keeps_current_run(db_session, test_user):
+    now = datetime.utcnow()
+    previous = _run(run_id="previous-process", user_id=test_user.id, task_kind="client_workflow")
+    previous.installation_id = "online-1"
+    previous.claimed_by_installation_id = "online-1"
+    previous.progress = {"stage": "running", "client_process_id": "old-process"}
+    current = _run(run_id="current-process", user_id=test_user.id, task_kind="client_workflow")
+    current.installation_id = "online-1"
+    current.claimed_by_installation_id = "online-1"
+    current.progress = {"stage": "running", "client_process_id": "new-process"}
+    other_device = _run(run_id="other-device", user_id=test_user.id, task_kind="client_workflow")
+    other_device.installation_id = "online-2"
+    other_device.claimed_by_installation_id = "online-2"
+    db_session.add_all([previous, current, other_device])
+    db_session.commit()
+
+    failed = scheduled_tasks._fail_previous_client_runs(
+        db_session,
+        user_id=test_user.id,
+        installation_id="online-1",
+        client_process_id="new-process",
+        now=now,
+    )
+    db_session.commit()
+
+    assert failed == 1
+    assert previous.status == "failed"
+    assert previous.error == "客户端已重启，上一轮任务已中断"
+    assert previous.progress["stage"] == "client_restarted"
+    assert current.status == "processing"
+    assert other_device.status == "processing"
+
+
 def test_scheduled_task_heartbeat_preserves_initial_claim_time(db_session, test_user):
     from starlette.requests import Request
 
