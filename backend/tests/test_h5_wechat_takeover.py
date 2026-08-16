@@ -197,6 +197,33 @@ def test_add_friend_child_defaults_to_douyin_private_message_phone():
     assert params["trigger"] == "clear_mobile"
 
 
+def test_workflow_child_end_time_is_preserved_and_defaults_to_next_start_or_parent_end():
+    actions = _clean_action_nodes(
+        [
+            {
+                "id": "publish-1",
+                "time": "15:00",
+                "action_type": "publish",
+                "platform": "douyin",
+                "plan": {"payload": {"params": {}}},
+            },
+            {
+                "id": "publish-2",
+                "time": "15:30",
+                "end_time": "15:45",
+                "action_type": "publish",
+                "platform": "wechat_channels",
+                "plan": {"payload": {"params": {}}},
+            },
+        ],
+        {"id": "parent", "end_time": "16:00", "ability_label": "parent"},
+    )
+
+    assert actions[0]["end_time"] == "15:30"
+    assert actions[0]["time_range"] == "15:00-15:30"
+    assert actions[1]["end_time"] == "15:45"
+
+
 def test_h5_exposes_wechat_memory_and_group_condition_settings():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")

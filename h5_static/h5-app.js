@@ -4071,6 +4071,7 @@
       const lookup = workflowLookupFromValue($("workflowNodeAbility") ? $("workflowNodeAbility").value : "");
       if (!lookup) throw new Error("请选择任务节点");
       const time = ($("workflowNodeTime") && $("workflowNodeTime").value || "").trim();
+      const endTime = ($("workflowNodeEndTime") && $("workflowNodeEndTime").value || "").trim();
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
       const note = (($("workflowNodeNote") && $("workflowNodeNote").value) || lookup.defaultNote || "").trim();
       const nodeKey = String(lookup.node && (lookup.node.key || lookup.node.workQuickKey) || "").trim();
@@ -4082,9 +4083,12 @@
           } : { group_invite_enabled: false })
         : workflowPlanForLookup(lookup, note);
       const salesPreset = lookup.optionId != null;
+      const scheduledPlan = withWorkflowSchedule(plan, time, endTime);
       return {
         id: `wf_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
         time,
+        end_time: endTime,
+        time_range: endTime ? `${time}-${endTime}` : time,
         ability_key: lookup.node.key || "",
         ability_label: lookup.optionLabel || lookup.node.label || lookup.node.key || "",
         department_id: lookup.department.id,
@@ -4092,14 +4096,28 @@
         note,
         sales_preset: salesPreset,
         param_configured: false,
-        plan,
+        plan: scheduledPlan,
       };
+    }
+
+    function withWorkflowSchedule(plan, startTime, endTime) {
+      const next = plan && typeof plan === "object" ? JSON.parse(JSON.stringify(plan)) : {};
+      const payload = next.payload && typeof next.payload === "object" ? { ...next.payload } : {};
+      const params = payload.params && typeof payload.params === "object" ? { ...payload.params } : {};
+      params.workflow_node_time = startTime || "";
+      params.workflow_node_end_time = endTime || "";
+      params.sales_schedule_start = startTime || "";
+      params.sales_schedule_end = endTime || "";
+      payload.params = params;
+      next.payload = payload;
+      return next;
     }
 
     function openWorkflowNodeModal() {
       const modal = $("workflowNodeModal");
       if (!modal) return;
       if ($("workflowNodeTime") && !$("workflowNodeTime").value) $("workflowNodeTime").value = "09:00";
+      if ($("workflowNodeEndTime")) $("workflowNodeEndTime").value = "";
       renderWorkflowAbilitySelect();
       syncWorkflowNodeModalFields(true);
       modal.classList.remove("hidden");
@@ -4135,6 +4153,7 @@
       if ($("workflowActionTitle")) $("workflowActionTitle").textContent = action ? "编辑动作" : "添加动作";
       if ($("workflowActionParent")) $("workflowActionParent").textContent = parentNode.ability_label || parentNode.note || "上级节点";
       if ($("workflowActionTime")) $("workflowActionTime").value = action && action.time || parentNode.time || "09:30";
+      if ($("workflowActionEndTime")) $("workflowActionEndTime").value = action && action.end_time || "";
       renderWorkflowActionTypeOptions(parentNode, action ? workflowActionKind(action) : "");
       if ($("workflowActionPlatform")) $("workflowActionPlatform").value = action && action.platform || "douyin";
       syncWorkflowActionModalFields();
@@ -4157,6 +4176,7 @@
       if (parentIndex < 0) throw new Error("未找到上级节点");
       const parentNode = state.workflowNodesDraft[parentIndex];
       const time = (($("workflowActionTime") && $("workflowActionTime").value) || "").trim();
+      const endTime = (($("workflowActionEndTime") && $("workflowActionEndTime").value) || "").trim();
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择动作时间");
       const actionType = (($("workflowActionType") && $("workflowActionType").value) || "publish").trim();
       const platform = (($("workflowActionPlatform") && $("workflowActionPlatform").value) || "douyin").trim();
@@ -4174,7 +4194,7 @@
       });
       if (duplicate) throw new Error(actionType === "publish" ? "这个平台已经有发布动作了" : "这个子动作已经添加过了");
       const existing = editId ? currentChildren.find((item) => String(item && item.id || "") === editId) : null;
-      const nextAction = workflowActionPayload(parentNode, { time, action_type: actionType, platform }, existing);
+      const nextAction = workflowActionPayload(parentNode, { time, end_time: endTime, action_type: actionType, platform }, existing);
       const children = currentChildren
         .filter((item) => String(item && item.id || "") !== String(nextAction.id || ""))
         .concat(nextAction)
@@ -4234,7 +4254,9 @@
         sales_node_label: row && (row.label || row.note) || params.sales_node_label || "",
       };
       if (next.payload && next.payload.action === "native_wechat_poll") {
-        mergedParams.takeover_session_minutes = Number(mergedParams.takeover_session_minutes || salesWorkflowDurationMinutes(row) || 30);
+        const durationMinutes = salesWorkflowDurationMinutes(row);
+        if (durationMinutes > 0) mergedParams.takeover_session_minutes = durationMinutes;
+        else delete mergedParams.takeover_session_minutes;
         mergedParams.message_poll_interval_seconds = Number(mergedParams.message_poll_interval_seconds || 15);
         mergedParams.accept_friend_requests_once = mergedParams.accept_friend_requests_once !== false;
       }
@@ -4254,6 +4276,7 @@
     function salesWorkflowPublishAction(parentNode, action, index) {
       const child = workflowActionPayload(parentNode, {
         time: action && action.time,
+        end_time: action && action.endTime,
         action_type: "publish",
         platform: action && action.platform,
       }, null);
@@ -4484,8 +4507,29 @@
       return nodes.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
     }
 
+    function normalizeWorkflowScheduleNodes(nodes) {
+      const items = Array.isArray(nodes) ? nodes : [];
+      items.sort((a, b) => String(a && a.time || "").localeCompare(String(b && b.time || "")));
+      items.forEach((node, index) => {
+        if (!node || typeof node !== "object") return;
+        const next = items[index + 1];
+        const endTime = String(node.end_time || "").trim() || String(next && next.time || "").trim();
+        node.end_time = endTime;
+        node.time_range = endTime ? `${node.time || ""}-${endTime}` : String(node.time || "");
+        const children = workflowChildActions(node).slice().sort((a, b) => String(a && a.time || "").localeCompare(String(b && b.time || "")));
+        children.forEach((child, childIndex) => {
+          const nextChild = children[childIndex + 1];
+          const childEnd = String(child && child.end_time || "").trim() || String(nextChild && nextChild.time || endTime || "").trim();
+          child.end_time = childEnd;
+          child.time_range = childEnd ? `${child.time || ""}-${childEnd}` : String(child.time || "");
+        });
+        if (children.length) node.children = children;
+      });
+      return items;
+    }
+
     function cloneWorkflowNodes(nodes) {
-      return normalizeSalesWorkflowNodes(JSON.parse(JSON.stringify(Array.isArray(nodes) ? nodes : [])));
+      return normalizeWorkflowScheduleNodes(normalizeSalesWorkflowNodes(JSON.parse(JSON.stringify(Array.isArray(nodes) ? nodes : []))));
     }
 
     function normalizeWorkflowTemplate(tpl) {
@@ -4692,6 +4736,7 @@
       const platform = String(formData.platform || (existing && existing.platform) || "douyin").trim().toLowerCase();
       const type = String(formData.action_type || (existing && (existing.action_type || existing.type)) || "publish").trim().toLowerCase();
       const time = String(formData.time || (existing && existing.time) || "").trim();
+      const endTime = String(formData.end_time || (existing && existing.end_time) || "").trim();
       const id = String(existing && existing.id || `wf_action_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`);
       const nativeKeys = {
         native_wechat_add_friend: "native_wechat_add_friend",
@@ -4702,6 +4747,8 @@
         ...(existing || {}),
         id,
         time,
+        end_time: endTime,
+        time_range: endTime ? `${time}-${endTime}` : time,
         action_type: type,
         type,
         platform: type === "publish" ? platform : "",
@@ -4716,6 +4763,7 @@
       };
       if (type === "publish") action.plan = workflowPublishActionPlan(parentNode, action);
       else action.plan = workflowNativeActionPlan(parentNode, type, existing);
+      action.plan = withWorkflowSchedule(action.plan, time, endTime);
       return action;
     }
 
@@ -4843,6 +4891,7 @@
       state.workflowParamNodeId = "";
       if ($("workflowTemplateName")) $("workflowTemplateName").value = "销售24小时员工";
       if ($("workflowNodeTime")) $("workflowNodeTime").value = "09:00";
+      if ($("workflowNodeEndTime")) $("workflowNodeEndTime").value = "";
       if ($("workflowNodeNote")) $("workflowNodeNote").value = "";
     }
 
@@ -4877,6 +4926,7 @@
       state.workflowParamNodeId = "";
       if ($("workflowTemplateName")) $("workflowTemplateName").value = "";
       if ($("workflowNodeTime")) $("workflowNodeTime").value = "09:00";
+      if ($("workflowNodeEndTime")) $("workflowNodeEndTime").value = "";
       if ($("workflowNodeNote")) $("workflowNodeNote").value = "";
       renderWorkflow();
     }
@@ -5090,6 +5140,7 @@
       $("workflowParamTitle").textContent = node.ability_label || "节点设置";
       $("workflowParamSubTitle").textContent = `${node.department_name || ""}${node.time ? ` · ${node.time}` : ""}`;
       $("workflowParamTime").value = node.time || "09:00";
+      $("workflowParamEndTime").value = node.end_time || "";
       $("workflowParamNote").value = node.note || "";
       $("workflowParamFields").innerHTML = workflowFieldsHtmlForNode(lookup.node, node);
       modal.classList.remove("hidden");
@@ -5114,12 +5165,15 @@
       const lookup = workflowLookupForNode(current);
       if (!lookup) throw new Error("未找到任务节点");
       const time = workflowParamValue("workflowParamTime");
+      const endTime = workflowParamValue("workflowParamEndTime");
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
       const note = workflowParamValue("workflowParamNote");
-      const plan = workflowPlanFromParamFields(lookup, note, current);
+      const plan = withWorkflowSchedule(workflowPlanFromParamFields(lookup, note, current), time, endTime);
       state.workflowNodesDraft[idx] = {
         ...current,
         time,
+        end_time: endTime,
+        time_range: endTime ? `${time}-${endTime}` : time,
         note,
         param_configured: true,
         plan,
@@ -5286,7 +5340,7 @@
           const actionStatus = workflowStatusInfo(action, workflowTaskForNodeDateOrCurrent(action, tasks, selectedKey), workflowLatestRunForNode(action, runs), selectedKey);
           return `
             <div class="workflow-node-card workflow-action-card workflow-time-node">
-              <div class="workflow-node-time action">${escapeHtml(action.time || "--:--")}</div>
+              <div class="workflow-node-time action">${escapeHtml(action.time || "--:--")}${action.end_time ? `<br><small>${escapeHtml(action.end_time)}</small>` : ""}</div>
               <div class="workflow-node-main" ${canEditAction ? `data-workflow-parent-node="${escapeHtml(node.id || "")}" data-workflow-action-node="${escapeHtml(action.id || "")}"` : ""}>
                 <strong>${escapeHtml(action.ability_label || workflowActionLabel(action))}</strong>
                 <span>使用上级节点输出素材</span>
@@ -5309,7 +5363,7 @@
         return `
           <div class="workflow-timeline-entry${expanded ? " is-expanded" : ""}" data-workflow-timeline-node="${escapeHtml(nodeId)}">
             <div class="workflow-node-card workflow-time-node${placeholder ? " is-placeholder" : ""}">
-              <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}</div>
+              <div class="workflow-node-time">${escapeHtml(node.time || "--:--")}${node.end_time ? `<br><small>${escapeHtml(node.end_time)}</small>` : ""}</div>
               <div class="workflow-node-main"${placeholder ? "" : ` data-workflow-edit-node="${escapeHtml(node.id || "")}"`}>
                 <strong>${escapeHtml(node.ability_label || "任务节点")}</strong>
                 <span>${placeholder ? "敬请期待" : escapeHtml(node.department_name || node.note || "点击查看节点配置")}</span>

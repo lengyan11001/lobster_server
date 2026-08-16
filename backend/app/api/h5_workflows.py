@@ -139,6 +139,8 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
                 {
                     "id": action_id,
                     "time": _clean_time(raw.get("time")),
+                    "end_time": _clean_time(raw.get("end_time")) if str(raw.get("end_time") or "").strip() else "",
+                    "time_range": str(raw.get("time_range") or "").strip()[:32],
                     "parent_node_id": parent_id,
                     "action_type": action_type,
                     "type": action_type,
@@ -182,6 +184,8 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
             {
                 "id": action_id,
                 "time": _clean_time(raw.get("time")),
+                "end_time": _clean_time(raw.get("end_time")) if str(raw.get("end_time") or "").strip() else "",
+                "time_range": str(raw.get("time_range") or "").strip()[:32],
                 "parent_node_id": parent_id,
                 "action_type": action_type,
                 "type": action_type,
@@ -202,6 +206,14 @@ def _clean_action_nodes(raw_actions: Any, parent: dict[str, Any]) -> list[dict[s
             }
         )
     actions.sort(key=lambda item: item["time"])
+    parent_end_time = str(parent.get("end_time") or "").strip()
+    for index, item in enumerate(actions):
+        end_time = str(item.get("end_time") or "").strip()
+        if not end_time:
+            next_item = actions[index + 1] if index + 1 < len(actions) else None
+            end_time = str(next_item.get("time") if next_item else parent_end_time).strip()
+        item["end_time"] = end_time
+        item["time_range"] = f"{item['time']}-{end_time}" if end_time else item["time"]
     return actions
 
 
@@ -723,6 +735,8 @@ def _apply_workflow_runtime_options(
             session_minutes = _workflow_minutes_between(node.get("time"), node.get("end_time"))
             if session_minutes > 0:
                 params["takeover_session_minutes"] = session_minutes
+            else:
+                params.pop("takeover_session_minutes", None)
             params["message_poll_interval_seconds"] = max(
                 1,
                 _safe_int(params.get("message_poll_interval_seconds") or 15, 15, min_value=1, max_value=300),
