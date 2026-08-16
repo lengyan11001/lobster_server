@@ -6,6 +6,7 @@ from pathlib import Path
 
 from backend.app.api import h5_chat
 from backend.app.api.h5_chat import H5WechatAutoReplyIn
+import backend.app.api.h5_workflows as h5_workflows
 from backend.app.api.h5_workflows import _clean_action_nodes, _ensure_sales_douyin_add_friend_children, _native_wechat_plan
 from backend.app.api.scheduled_tasks import _enrich_native_wechat_workflow_payload
 from backend.app.models import H5ChatMessage, H5MountedAccountDefault
@@ -14,11 +15,12 @@ from backend.app.models import H5ChatMessage, H5MountedAccountDefault
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_native_wechat_takeover_plan_scans_friends_once_and_messages_every_15_seconds():
+def test_native_wechat_takeover_plan_scans_friends_once_and_messages_every_15_seconds(monkeypatch):
+    monkeypatch.setattr(h5_workflows, "_workflow_minutes_between", lambda *args, **kwargs: 60)
     plan = _native_wechat_plan("native_wechat_poll", "微信私信接管")
     params = plan["payload"]["params"]
 
-    assert params["takeover_session_minutes"] == 30
+    assert params["takeover_session_minutes"] == 60
     assert params["message_poll_interval_seconds"] == 15
     assert params["accept_friend_requests_once"] is True
 
@@ -86,7 +88,7 @@ def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_sessio
     assert command["group_invite_welcome_message"].startswith("您好")
 
 
-def test_wechat_auto_reply_uses_fixed_thirty_minute_interval(db_session, test_user, monkeypatch):
+def test_wechat_auto_reply_uses_fixed_fifteen_second_interval(db_session, test_user, monkeypatch):
     monkeypatch.setattr(h5_chat, "online_user_for_mobile_user", lambda _db, user: user)
 
     def mounted_payload(_db, _user_id):
@@ -118,11 +120,11 @@ def test_wechat_auto_reply_uses_fixed_thirty_minute_interval(db_session, test_us
     )
 
     pref = db_session.query(H5MountedAccountDefault).filter_by(user_id=test_user.id, scope="wechat_auto_reply").one()
-    assert pref.payload["interval_seconds"] == 1800
+    assert pref.payload["interval_seconds"] == 15
 
     message = db_session.query(H5ChatMessage).order_by(H5ChatMessage.created_at.desc()).first()
     command = json.loads(message.content.removeprefix(h5_chat._H5_CLIENT_COMMAND_PREFIX))
-    assert command["interval_seconds"] == 1800
+    assert command["interval_seconds"] == 15
 
 
 def test_native_wechat_task_uses_saved_group_invite_settings(db_session, test_user):

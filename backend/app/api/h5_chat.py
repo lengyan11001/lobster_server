@@ -153,7 +153,7 @@ class H5WechatAutoReplyIn(BaseModel):
     installation_id: Optional[str] = Field(default=None, max_length=128)
     account_key: Optional[str] = Field(default="wechat:pc-default", max_length=255)
     account_id: Optional[str] = Field(default="pc-wechat-default", max_length=160)
-    interval_seconds: int = Field(default=1800, ge=1, le=86400)
+    interval_seconds: int = Field(default=15, ge=1, le=86400)
     group_invite_enabled: Optional[bool] = None
     memory_doc_ids: Optional[List[str]] = Field(default=None, max_length=20)
     group_invite_memory_doc_id: Optional[str] = Field(default=None, max_length=64)
@@ -551,7 +551,8 @@ def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
         row["is_default"] = bool(pref and pref.account_key == row.get("account_key"))
         if row.get("scope") == "wechat":
             row["auto_reply_enabled"] = bool(auto_reply_payload.get("enabled") or auto_reply_payload.get("auto_reply_enabled"))
-            row["auto_reply_interval_seconds"] = int(auto_reply_payload.get("interval_seconds") or 1800)
+            auto_reply_interval = int(auto_reply_payload.get("interval_seconds") or 15)
+            row["auto_reply_interval_seconds"] = 15 if auto_reply_interval == 1800 else auto_reply_interval
             row["auto_reply_memory_doc_ids"] = [
                 str(item or "").strip()
                 for item in (auto_reply_payload.get("memory_doc_ids") or [])
@@ -1706,7 +1707,7 @@ def h5_set_wechat_auto_reply(
 
     account_key = (body.account_key or str(account.get("account_key") or "") or "wechat:pc-default").strip()
     account_id = (body.account_id or str(account.get("account_id") or "") or "pc-wechat-default").strip()
-    interval_seconds = 1800
+    interval_seconds = 15
     now = datetime.utcnow()
 
     pref = (

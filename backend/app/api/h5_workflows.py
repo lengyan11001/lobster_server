@@ -719,6 +719,15 @@ def _apply_workflow_runtime_options(
             params["virtualman_rotation_slot"] = digital_human_slot
             params["virtualman_selection_mode"] = "daily_sequence"
             digital_human_slot += 1
+        if action == "native_wechat_poll":
+            session_minutes = _workflow_minutes_between(node.get("time"), node.get("end_time"))
+            if session_minutes > 0:
+                params["takeover_session_minutes"] = session_minutes
+            params["message_poll_interval_seconds"] = max(
+                1,
+                _safe_int(params.get("message_poll_interval_seconds") or 15, 15, min_value=1, max_value=300),
+            )
+            params["accept_friend_requests_once"] = params.get("accept_friend_requests_once", True) is not False
         payload["params"] = params
         plan["payload"] = payload
         node["plan"] = plan
@@ -925,10 +934,17 @@ def _native_wechat_plan(action_key: str, note: Any, params: Optional[dict[str, A
         base_params.setdefault("trigger", "qualified_intent")
     if action_key == "native_wechat_poll":
         title = "个微私信接管"
-        if not group_invite:
-            base_params["takeover_session_minutes"] = 30
-            base_params["message_poll_interval_seconds"] = 15
-            base_params["accept_friend_requests_once"] = True
+        session_minutes = _workflow_minutes_between(
+            base_params.get("workflow_node_time") or base_params.get("sales_schedule_start") or base_params.get("time"),
+            base_params.get("workflow_node_end_time")
+            or base_params.get("sales_schedule_end")
+            or base_params.get("end_time"),
+        )
+        if session_minutes <= 0:
+            session_minutes = 30
+        base_params["takeover_session_minutes"] = session_minutes
+        base_params["message_poll_interval_seconds"] = 15
+        base_params["accept_friend_requests_once"] = True
         return {
             "title": title,
             "task_kind": "client_workflow",
@@ -994,7 +1010,10 @@ def _normalize_sales_native_wechat_node(node: dict[str, Any]) -> None:
     if is_sales and action == "wecom_poll_reply":
         note = _clean_text(node.get("note") or node.get("ability_label") or plan.get("title"), 2000)
         native_key = _native_wechat_key_from_sales_note(note)
-        native_plan = _native_wechat_plan(native_key, note, params) if native_key else {}
+        native_params = dict(params)
+        native_params.setdefault("workflow_node_time", _clean_text(node.get("time"), 5))
+        native_params.setdefault("workflow_node_end_time", _clean_text(node.get("end_time"), 5))
+        native_plan = _native_wechat_plan(native_key, note, native_params) if native_key else {}
         if native_plan:
             node["ability_key"] = native_key
             node["department_id"] = "sales"
@@ -1011,6 +1030,20 @@ def _workflow_time_after(value: Any, minutes: int = 15) -> str:
         return "00:15"
     total = (int(match.group(1)) * 60 + int(match.group(2)) + minutes) % (24 * 60)
     return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def _workflow_minutes_between(start: Any, end: Any, *, default: int = 30) -> int:
+    start_text = _clean_text(start, 5)
+    end_text = _clean_text(end, 5)
+    start_match = _TIME_RE.match(start_text)
+    end_match = _TIME_RE.match(end_text)
+    if not start_match or not end_match:
+        return max(1, int(default))
+    start_total = int(start_match.group(1)) * 60 + int(start_match.group(2))
+    end_total = int(end_match.group(1)) * 60 + int(end_match.group(2))
+    if end_total < start_total:
+        end_total += 24 * 60
+    return max(1, end_total - start_total)
 
 
 def _is_douyin_private_takeover_node(node: dict[str, Any]) -> bool:

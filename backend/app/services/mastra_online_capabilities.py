@@ -95,7 +95,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
     },
     "online.wechat_takeover": {
         "name": "个人微信接管",
-        "description": "接管本机个人微信：首次检查好友申请，然后在上一轮结束 15 秒后继续巡检，默认持续 30 分钟。",
+        "description": "接管本机个人微信：首次检查好友申请，然后在上一轮结束 15 秒后继续巡检，接管时长按节点结束时间换算，未配置时默认 30 分钟。",
         "keywords": ["个人微信", "微信接管", "自动回复", "好友申请", "私信"],
         "execution_target": "online",
         "task_kind": "client_workflow",
@@ -104,7 +104,7 @@ _ONLINE_CAPABILITIES: Dict[str, Dict[str, Any]] = {
             {
                 "account_id": {"type": "string", "default": "pc-wechat-default"},
                 "message_poll_interval_seconds": {"type": "integer", "minimum": 1, "maximum": 300, "default": 15},
-                "takeover_session_minutes": {"type": "integer", "minimum": 1, "maximum": 30, "default": 30},
+                "takeover_session_minutes": {"type": "integer", "minimum": 1, "maximum": 1440, "default": 30},
             }
         ),
     },

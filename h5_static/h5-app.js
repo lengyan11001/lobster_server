@@ -4233,6 +4233,11 @@
         sales_schedule_duration_minutes: salesWorkflowDurationMinutes(row),
         sales_node_label: row && (row.label || row.note) || params.sales_node_label || "",
       };
+      if (next.payload && next.payload.action === "native_wechat_poll") {
+        mergedParams.takeover_session_minutes = Number(mergedParams.takeover_session_minutes || salesWorkflowDurationMinutes(row) || 30);
+        mergedParams.message_poll_interval_seconds = Number(mergedParams.message_poll_interval_seconds || 15);
+        mergedParams.accept_friend_requests_once = mergedParams.accept_friend_requests_once !== false;
+      }
       payload.params = mergedParams;
       next.payload = payload;
       return next;
@@ -5482,7 +5487,7 @@
         const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
         const nodeKey = `${tpl.id || ""}@@${node.id || index}`;
         return `<div class="custom-employee-node">
-          <span>${escapeHtml(node.time || "--:--")}</span>
+          <span>${escapeHtml(node.time || "--:--")}${node.end_time ? `<br><small style="color:#a0aaba;font-size:.61rem;font-weight:400">${escapeHtml(node.end_time)}</small>` : ""}</span>
           <strong>${escapeHtml(node.ability_label || plan.title || "任务节点")}</strong>
           ${workflowNodeIsPlaceholder(node) ? `<em>敬请期待</em>` : `<button class="ghost" type="button" data-custom-employee-demo-node="${escapeHtml(nodeKey)}">演示</button>`}
           ${node.note ? `<em>${escapeHtml(node.note)}</em>` : ""}
@@ -5514,7 +5519,7 @@
         `).join("");
         return `<div class="custom-employee-timeline-entry">
           <div class="custom-employee-node">
-            <time>${escapeHtml(node.time || "--:--")}</time>
+            <time>${escapeHtml(node.time || "--:--")}${node.end_time ? `<br><small style="color:#a0aaba;font-size:.61rem;font-weight:400">${escapeHtml(node.end_time)}</small>` : ""}</time>
             <div class="custom-employee-node-copy">
               <strong>${escapeHtml(node.ability_label || plan.title || "任务节点")}</strong>
               ${node.note ? `<small>${escapeHtml(node.note)}</small>` : ""}
@@ -16034,7 +16039,7 @@
           json: {
             enabled: !!enabled,
             installation_id: installationId || state.selectedInstallationId || "",
-            interval_seconds: 1800,
+            interval_seconds: 15,
           },
         });
         state.mountedAccounts = Array.isArray(data.accounts) ? data.accounts : state.mountedAccounts;
@@ -16063,7 +16068,7 @@
             installation_id: row.installation_id || state.selectedInstallationId || "",
             account_key: row.account_key || "wechat:pc-default",
             account_id: row.account_id || "pc-wechat-default",
-            interval_seconds: Number(row.auto_reply_interval_seconds || 1800),
+            interval_seconds: Number(row.auto_reply_interval_seconds || 15),
             memory_doc_ids: memoryDocId ? [memoryDocId] : [],
             group_invite_enabled: !!$("mountedWechatGroupInviteEnabled")?.checked,
             group_invite_memory_doc_id: String($("mountedWechatGroupInviteMemoryDocSelect")?.value || "").trim(),
