@@ -4096,12 +4096,14 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
     if low_model.startswith("apiz/veo3.1/image-to-video") or low_model.startswith("apiz/veo3.1/reference-to-video"):
         low_channel = "grok"
 
-    if low_channel in {"openmind", "grok", "xai", "official-xai", "x-ai"} or low_model in {"grok-video-3", "grok-imagine-video-1.5", "grok-imagine-video-1.5-preview", "grok-imagine-1.0-video", "yingmeng1.5plus"} or low_model.startswith("xai/grok-imagine-video/"):
+    if low_channel in {"openmind", "grok", "xai", "official-xai", "x-ai"} or low_model in {"grok-video-3", "grok-imagine-video-1.5", "grok-imagine-video-1.5-preview", "grok-imagine-1.0-video", "yingmeng1.5plus"} or low_model.startswith("xai/grok-imagine-video/") or low_model.startswith("xai/grok-imagine-video-1.5/"):
         return {
             "ok": True,
             "model_family": "grok",
             "providers": [
                 {"channel": "xai", "model": "grok-imagine-video-1.5", "base_url": proxy_base},
+                {"channel": "openmind", "model": "grok-video-3", "base_url": proxy_base},
+                {"channel": "comfly", "model": "grok-video-3", "base_url": proxy_base},
             ],
         }
 

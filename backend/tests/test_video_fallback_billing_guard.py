@@ -101,7 +101,7 @@ def test_xai_video_body_maps_duration_and_first_image():
 
 
 def test_xai_video_is_first_provider_for_grok_family():
-    policy = _video_provider_policy("xai/grok-imagine-video/image-to-video")
+    policy = _video_provider_policy("xai/grok-imagine-video-1.5/image-to-video")
 
     assert policy["ok"] is True
     assert policy["model_family"] == "grok"
@@ -110,7 +110,23 @@ def test_xai_video_is_first_provider_for_grok_family():
         "model": "grok-imagine-video-1.5",
         "base_url": "/api/comfly-proxy",
     }
-    assert len(policy["providers"]) == 1
+    assert policy["providers"] == [
+        {
+            "channel": "xai",
+            "model": "grok-imagine-video-1.5",
+            "base_url": "/api/comfly-proxy",
+        },
+        {
+            "channel": "openmind",
+            "model": "grok-video-3",
+            "base_url": "/api/comfly-proxy",
+        },
+        {
+            "channel": "comfly",
+            "model": "grok-video-3",
+            "base_url": "/api/comfly-proxy",
+        },
+    ]
 
 
 def test_veo_family_falls_back_to_xai_direct_only():

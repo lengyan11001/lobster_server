@@ -271,9 +271,14 @@ def test_video_fallback_policy_depends_on_input_mode():
         {"prompt": "image video", "image_url": "https://example.com/a.png"}
     )
 
-    assert text_candidates == [{"channel": "xai", "model": "grok-imagine-video-1.5"}]
-    assert image_candidates[0] == {"channel": "xai", "model": "grok-imagine-video-1.5"}
-    assert [item["channel"] for item in image_candidates] == ["xai"]
+    assert text_candidates == [
+        {"channel": "comfly", "model": "veo3.1-fast"},
+        {"channel": "openmind", "model": "grok-video-3"},
+    ]
+    assert image_candidates == [
+        {"channel": "openmind", "model": "grok-video-3"},
+        {"channel": "comfly", "model": "grok-video-3"},
+    ]
 
 
 def test_comfly_veo_payload_drops_apiz_only_parameters():
@@ -443,7 +448,7 @@ async def test_fallback_stops_after_non_retryable_candidate_error(monkeypatch):
     state["provider_task_id"] = ""
     result = await mcp_server._start_next_video_fallback(state, "jwt", None)
 
-    assert attempts == ["xai"]
+    assert attempts == ["comfly"]
     assert result["status"] == "failed"
 
 
