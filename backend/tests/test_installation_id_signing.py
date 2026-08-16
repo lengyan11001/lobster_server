@@ -268,10 +268,15 @@ def test_h5_device_status_dispatch_and_online_claim_use_the_same_slot(
     slot_b = "signed-slot-beta"
 
     for slot, name in ((slot_a, "Online A"), (slot_b, "Online B")):
+        heartbeat_body = {"display_name": name, "capabilities": ["asset_video_split_v1"]}
+        if slot == slot_a:
+            heartbeat_body["wechat_contacts"] = [
+                {"display_name": "测试联系人", "wx_no": "wxid_contact_alpha"},
+            ]
         resp = client.post(
             "/api/h5-chat/device-heartbeat",
             headers={**auth, "X-Installation-Id": slot},
-            json={"display_name": name, "capabilities": ["asset_video_split_v1"]},
+            json=heartbeat_body,
         )
         assert resp.status_code == 200
 
@@ -280,6 +285,10 @@ def test_h5_device_status_dispatch_and_online_claim_use_the_same_slot(
     devices = status.json()["devices"]
     assert {row["installation_id"] for row in devices} >= {slot_a, slot_b}
     assert all(row["online"] for row in devices if row["installation_id"] in {slot_a, slot_b})
+    slot_a_status = next(row for row in devices if row["installation_id"] == slot_a)
+    assert len(slot_a_status["wechat_contacts"]) == 1
+    assert slot_a_status["wechat_contacts"][0]["name"] == "测试联系人"
+    assert slot_a_status["wechat_contacts"][0]["wx_no"] == "wxid_contact_alpha"
 
     created = client.post(
         "/api/scheduled-tasks/tasks",

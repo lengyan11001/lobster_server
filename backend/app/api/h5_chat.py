@@ -149,7 +149,8 @@ class H5MountedAccountDefaultIn(BaseModel):
 
 
 class H5WechatAutoReplyIn(BaseModel):
-    enabled: bool = False
+    # Configuration-only clients may omit runtime control; preserve the saved state.
+    enabled: Optional[bool] = None
     installation_id: Optional[str] = Field(default=None, max_length=128)
     account_key: Optional[str] = Field(default="wechat:pc-default", max_length=255)
     account_id: Optional[str] = Field(default="pc-wechat-default", max_length=160)
@@ -204,10 +205,13 @@ def _normalize_wechat_contact_snapshot(contacts: Optional[List[Dict[str, Any]]])
     for item in contacts:
         if not isinstance(item, dict):
             continue
-        value = str(item.get("value") or item.get("remark") or item.get("name") or "").strip()[:240]
-        name = str(item.get("name") or value).strip()[:240]
-        if not value or value.lower() in seen:
+        wx_no = str(item.get("wx_no") or item.get("wechat_id") or "").strip()[:240]
+        name = str(item.get("display_name") or item.get("name") or item.get("remark") or wx_no).strip()[:240]
+        value = str(item.get("value") or item.get("remark") or name or wx_no).strip()[:240]
+        identity = (wx_no or value).lower()
+        if not value or identity in seen or value.lower() in seen:
             continue
+        seen.add(identity)
         seen.add(value.lower())
         out.append(
             {
@@ -215,7 +219,7 @@ def _normalize_wechat_contact_snapshot(contacts: Optional[List[Dict[str, Any]]])
                 "name": name or value,
                 "contact_key": str(item.get("contact_key") or "").strip()[:240],
                 "remark": str(item.get("remark") or "").strip()[:240],
-                "wx_no": str(item.get("wx_no") or "").strip()[:240],
+                "wx_no": wx_no,
             }
         )
         if len(out) >= 500:
@@ -1657,6 +1661,8 @@ def h5_devices_status(
     for r in rows:
         account_payload = r.account_payload if isinstance(r.account_payload, dict) else {}
         capabilities = account_payload.get("capabilities") if isinstance(account_payload.get("capabilities"), list) else []
+        wechat_contacts = account_payload.get("wechat_contacts") if isinstance(account_payload.get("wechat_contacts"), list) else []
+        wechat_contacts = [contact for contact in wechat_contacts[:500] if isinstance(contact, dict)]
         devices.append(
             {
                 "installation_id": r.installation_id,
@@ -1665,6 +1671,7 @@ def h5_devices_status(
                 "online": is_device_online(r.last_seen_at, now=now),
                 "publish_account_count": len((r.account_payload or {}).get("accounts") or []) if isinstance(r.account_payload, dict) else 0,
                 "capabilities": capabilities,
+                "wechat_contacts": wechat_contacts,
             }
         )
     return {"ok": True, "online": any(d["online"] for d in devices), "devices": devices}
@@ -1725,6 +1732,7 @@ def h5_set_wechat_auto_reply(
     pref.installation_id = installation_id
     pref.source = "pc_wechat"
     current_pref_payload = pref.payload if isinstance(pref.payload, dict) else {}
+    enabled = current_pref_payload.get("enabled") if body.enabled is None else bool(body.enabled)
     memory_doc_ids = current_pref_payload.get("memory_doc_ids") if body.memory_doc_ids is None else body.memory_doc_ids
     memory_doc_ids = list(
         dict.fromkeys(
@@ -1782,7 +1790,7 @@ def h5_set_wechat_auto_reply(
     if primary_contact:
         group_invite_contacts = [primary_contact]
     pref.payload = {
-        "enabled": bool(body.enabled),
+        "enabled": bool(enabled),
         "interval_seconds": interval_seconds,
         "account_id": account_id,
         "account_key": account_key,
@@ -1800,7 +1808,6 @@ def h5_set_wechat_auto_reply(
     command = {
         "action": "native_wechat_auto_reply_config",
         "account_id": account_id,
-        "enabled": bool(body.enabled),
         "interval_seconds": interval_seconds,
         "memory_doc_ids": memory_doc_ids,
         "group_invite_enabled": bool(group_invite_enabled),
@@ -1811,6 +1818,8 @@ def h5_set_wechat_auto_reply(
         "group_invite_primary_contact_name": primary_contact_name,
         "group_invite_welcome_message": welcome_message,
     }
+    if body.enabled is not None:
+        command["enabled"] = bool(body.enabled)
     message = H5ChatMessage(
         id=uuid.uuid4().hex,
         user_id=owner_user.id,

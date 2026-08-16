@@ -1544,6 +1544,13 @@ async def _submit_image_edit_attempt(
             files,
             _TIMEOUT_IMAGE,
         )
+    if token_group == "openmindapi":
+        return await _openmind_multipart_request(
+            "/v1/images/edits",
+            data,
+            files,
+            _TIMEOUT_IMAGE,
+        )
     return await _comfly_multipart_request(
         _comfly_url("/v1/images/edits", attempt_model),
         data,
@@ -1775,6 +1782,34 @@ async def _openmind_image_request(source_body: Dict[str, Any]) -> Dict[str, Any]
     if isinstance(payload, dict):
         payload.setdefault("fallback_used", True)
         payload.setdefault("fallback_provider", "openmind")
+    return payload
+
+
+async def _openmind_multipart_request(
+    path: str,
+    data: Dict[str, str],
+    files: List[Tuple[str, Tuple[Any, ...]]],
+    timeout: float,
+) -> Dict[str, Any]:
+    headers = _openmind_image_headers()
+    headers.pop("Content-Type", None)
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        resp = await client.post(
+            f"{_openmind_image_base_url()}{path}",
+            headers=headers,
+            data=data,
+            files=files,
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"OpenMind HTTP {resp.status_code}: {(resp.text or '')[:500]}")
+    try:
+        payload = resp.json() if resp.content else {}
+    except Exception:
+        payload = {"_raw_text": resp.text}
+    if isinstance(payload, dict):
+        payload.setdefault("fallback_used", True)
+        payload.setdefault("fallback_provider", "openmind")
+        payload.setdefault("_provider", "openmind")
     return payload
 
 

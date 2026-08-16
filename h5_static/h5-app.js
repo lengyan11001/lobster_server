@@ -250,6 +250,12 @@
       workflowParamNodeId: "",
       workflowActionParentNodeId: "",
       workflowActionEditId: "",
+      workflowNodeMomentContactPage: 1,
+      workflowNodeMomentContactSearch: "",
+      workflowNodeMomentSelected: {},
+      workflowActionMomentContactPage: 1,
+      workflowActionMomentContactSearch: "",
+      workflowActionMomentSelected: {},
       workflowPlanDayResolve: null,
       agentUsers: [],
       agentUsersTotal: 0,
@@ -961,15 +967,33 @@
         };
       }
       if (actionKey === "native_wechat_moments_engage") {
-        const targets = Array.isArray(baseParams.targets) ? baseParams.targets.filter(Boolean) : [];
+        const rawTargets = Array.isArray(baseParams.contact_wx_nos) ? baseParams.contact_wx_nos : baseParams.targets;
+        const targets = Array.from(new Set((Array.isArray(rawTargets) ? rawTargets : []).map((value) => String(value || "").trim()).filter(Boolean)));
         if (options.requireTargets && !targets.length) throw new Error("请选择或填写朋友圈联系人");
+        const momentParams = { ...baseParams };
+        [
+          "group_invite_enabled",
+          "group_invite_memory_doc_id",
+          "group_invite_keywords",
+          "group_invite_contacts",
+          "group_invite_primary_contact",
+          "group_invite_primary_contact_name",
+          "group_invite_welcome_message",
+          "group_invite_rule_status",
+          "group_invite_targets_source",
+          "group_invite_members",
+          "group_invite_manager_contacts",
+          "followup_action",
+          "group_invite_rules",
+          "trigger",
+        ].forEach((key) => delete momentParams[key]);
         return {
           title: "朋友圈点赞评论",
           task_kind: "client_workflow",
           content: "H5 工作流：朋友圈点赞评论",
           payload: {
             action: "native_wechat_moments_engage",
-            params: { ...baseParams, targets, moment_action: baseParams.moment_action || "like_comment", max_scrolls: baseParams.max_scrolls || 6 },
+            params: { ...momentParams, contact_wx_nos: targets, targets, moment_action: baseParams.moment_action || "like_comment", max_scrolls: baseParams.max_scrolls || 6 },
           },
         };
       }
@@ -3252,18 +3276,143 @@
       return key === "native_wechat_poll";
     }
 
+    function workflowLookupIsNativeWechatMoments(lookup) {
+      const node = lookup && lookup.node || {};
+      return String(node.key || node.workQuickKey || "").trim() === "native_wechat_moments_engage";
+    }
+
+    function workflowMomentContacts() {
+      const device = selectedDevice();
+      const rows = device && Array.isArray(device.wechat_contacts) ? device.wechat_contacts : [];
+      const seen = new Set();
+      return rows.map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const wxNo = String(item.wx_no || item.wxNo || item.wechat_id || item.wechatId || item.contact_key || "").trim();
+        if (!wxNo || seen.has(wxNo)) return null;
+        seen.add(wxNo);
+        const name = String(item.display_name || item.name || item.remark || item.nickname || wxNo).trim() || wxNo;
+        return { wx_no: wxNo, name, remark: String(item.remark || "").trim() };
+      }).filter(Boolean);
+    }
+
+    function workflowMomentPickerConfig(scope) {
+      return scope === "action"
+        ? {
+            field: "workflowActionMomentField",
+            trigger: "workflowActionMomentTrigger",
+            search: "workflowActionMomentSearch",
+            list: "workflowActionMomentContacts",
+            prev: "workflowActionMomentPrev",
+            next: "workflowActionMomentNext",
+            page: "workflowActionMomentPage",
+            summary: "workflowActionMomentSummary",
+            action: "workflowActionMomentAction",
+            pageKey: "workflowActionMomentContactPage",
+            searchKey: "workflowActionMomentContactSearch",
+            selectedKey: "workflowActionMomentSelected",
+          }
+        : {
+            field: "workflowNodeMomentField",
+            trigger: "workflowNodeMomentTrigger",
+            search: "workflowNodeMomentSearch",
+            list: "workflowNodeMomentContacts",
+            prev: "workflowNodeMomentPrev",
+            next: "workflowNodeMomentNext",
+            page: "workflowNodeMomentPage",
+            summary: "workflowNodeMomentSummary",
+            action: "workflowNodeMomentAction",
+            pageKey: "workflowNodeMomentContactPage",
+            searchKey: "workflowNodeMomentContactSearch",
+            selectedKey: "workflowNodeMomentSelected",
+          };
+    }
+
+    function workflowMomentSelectedValues(scope) {
+      const cfg = workflowMomentPickerConfig(scope);
+      const selected = state[cfg.selectedKey] && typeof state[cfg.selectedKey] === "object" ? state[cfg.selectedKey] : {};
+      return Object.keys(selected).filter(Boolean);
+    }
+
+    function initializeWorkflowMomentPicker(scope, values = []) {
+      const cfg = workflowMomentPickerConfig(scope);
+      state[cfg.pageKey] = 1;
+      state[cfg.searchKey] = "";
+      state[cfg.selectedKey] = {};
+      (Array.isArray(values) ? values : []).forEach((value) => {
+        const wxNo = String(value || "").trim();
+        if (wxNo) state[cfg.selectedKey][wxNo] = true;
+      });
+      if ($(cfg.search)) $(cfg.search).value = "";
+      renderWorkflowMomentPicker(scope);
+    }
+
+    function renderWorkflowMomentPicker(scope) {
+      const cfg = workflowMomentPickerConfig(scope);
+      const list = $(cfg.list);
+      if (!list) return;
+      const query = String(state[cfg.searchKey] || "").trim().toLowerCase();
+      const rows = workflowMomentContacts().filter((item) => !query || [item.name, item.remark, item.wx_no].join(" ").toLowerCase().includes(query));
+      const pageSize = 20;
+      const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+      state[cfg.pageKey] = Math.min(Math.max(1, Number(state[cfg.pageKey] || 1)), totalPages);
+      const selected = state[cfg.selectedKey] || {};
+      const start = (state[cfg.pageKey] - 1) * pageSize;
+      const pageRows = rows.slice(start, start + pageSize);
+      list.innerHTML = pageRows.length
+        ? pageRows.map((item) => `<label class="workflow-moment-contact"><input type="checkbox" data-workflow-moment-contact="${escapeHtml(item.wx_no)}" data-workflow-moment-scope="${scope}"${selected[item.wx_no] ? " checked" : ""}><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.wx_no)}${item.remark && item.remark !== item.name ? ` · ${escapeHtml(item.remark)}` : ""}</small></span></label>`).join("")
+        : `<div class="workflow-moment-empty">当前设备没有可用微信号通讯录，或没有匹配联系人</div>`;
+      if ($(cfg.page)) $(cfg.page).textContent = `${state[cfg.pageKey]} / ${totalPages}`;
+      if ($(cfg.prev)) $(cfg.prev).disabled = state[cfg.pageKey] <= 1;
+      if ($(cfg.next)) $(cfg.next).disabled = state[cfg.pageKey] >= totalPages;
+      const selectedCount = workflowMomentSelectedValues(scope).length;
+      if ($(cfg.trigger)) $(cfg.trigger).textContent = selectedCount ? `已选择 ${selectedCount} 位联系人` : "选择通讯录联系人";
+      if ($(cfg.summary)) $(cfg.summary).textContent = `已选择 ${selectedCount} 人，任务将按微信号定位`;
+    }
+
+    function syncWorkflowMomentPicker(scope, visible) {
+      const cfg = workflowMomentPickerConfig(scope);
+      $(cfg.field)?.classList.toggle("hidden", !visible);
+      if (visible) renderWorkflowMomentPicker(scope);
+    }
+
+    function bindWorkflowMomentPicker(scope) {
+      const cfg = workflowMomentPickerConfig(scope);
+      $(cfg.search)?.addEventListener("input", (event) => {
+        state[cfg.searchKey] = String(event.target.value || "");
+        state[cfg.pageKey] = 1;
+        renderWorkflowMomentPicker(scope);
+      });
+      $(cfg.list)?.addEventListener("change", (event) => {
+        const checkbox = event.target.closest("[data-workflow-moment-contact]");
+        if (!checkbox) return;
+        const wxNo = String(checkbox.dataset.workflowMomentContact || "").trim();
+        if (!wxNo) return;
+        if (!state[cfg.selectedKey] || typeof state[cfg.selectedKey] !== "object") state[cfg.selectedKey] = {};
+        if (checkbox.checked) state[cfg.selectedKey][wxNo] = true;
+        else delete state[cfg.selectedKey][wxNo];
+        renderWorkflowMomentPicker(scope);
+      });
+      $(cfg.prev)?.addEventListener("click", () => {
+        state[cfg.pageKey] = Math.max(1, Number(state[cfg.pageKey] || 1) - 1);
+        renderWorkflowMomentPicker(scope);
+      });
+      $(cfg.next)?.addEventListener("click", () => {
+        state[cfg.pageKey] = Number(state[cfg.pageKey] || 1) + 1;
+        renderWorkflowMomentPicker(scope);
+      });
+    }
+
     function syncWorkflowNodeModalFields(reset = false) {
       const lookup = workflowSelectedNodeLookup();
       const showGroupInvite = workflowLookupIsNativeWechatTakeover(lookup);
+      const showMoments = workflowLookupIsNativeWechatMoments(lookup);
       const field = $("workflowNodeNativeWechatGroupInviteField");
       if (field) field.classList.toggle("hidden", !showGroupInvite);
+      syncWorkflowMomentPicker("node", showMoments);
       const checkbox = $("workflowNodeNativeWechatGroupInviteEnabled");
-      if (!checkbox) return;
-      if (!showGroupInvite) {
-        checkbox.checked = false;
-        return;
-      }
-      if (reset) checkbox.checked = false;
+      if (checkbox && !showGroupInvite) checkbox.checked = false;
+      else if (checkbox && reset) checkbox.checked = false;
+      if (reset && showMoments) initializeWorkflowMomentPicker("node", []);
     }
 
     function workflowAbilityOptionsHtml() {
@@ -4081,13 +4230,25 @@
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("请选择执行时间");
       const note = (($("workflowNodeNote") && $("workflowNodeNote").value) || lookup.defaultNote || "").trim();
       const nodeKey = String(lookup.node && (lookup.node.key || lookup.node.workQuickKey) || "").trim();
-      const plan = nodeKey === "native_wechat_poll"
-        ? nativeWechatWorkflowPlan(nodeKey, note, workflowParamChecked("workflowNodeNativeWechatGroupInviteEnabled") ? {
+      let plan;
+      if (nodeKey === "native_wechat_poll") {
+        plan = nativeWechatWorkflowPlan(nodeKey, note, workflowParamChecked("workflowNodeNativeWechatGroupInviteEnabled") ? {
             group_invite_enabled: true,
             group_invite_rule_status: "pending_rules",
             trigger: "qualified_intent",
-          } : { group_invite_enabled: false })
-        : workflowPlanForLookup(lookup, note);
+          } : { group_invite_enabled: false });
+      } else if (nodeKey === "native_wechat_moments_engage") {
+        const wxNos = workflowMomentSelectedValues("node");
+        if (!wxNos.length) throw new Error("请选择至少一个朋友圈联系人");
+        plan = nativeWechatWorkflowPlan(nodeKey, note, {
+          contact_wx_nos: wxNos,
+          targets: wxNos,
+          moment_action: workflowParamValue("workflowNodeMomentAction") || "like_comment",
+          max_scrolls: 6,
+        }, { requireTargets: true });
+      } else {
+        plan = workflowPlanForLookup(lookup, note);
+      }
       const salesPreset = lookup.optionId != null;
       const scheduledPlan = withWorkflowSchedule(plan, time, endTime);
       return {
@@ -4162,6 +4323,10 @@
       if ($("workflowActionEndTime")) $("workflowActionEndTime").value = action && action.end_time || "";
       renderWorkflowActionTypeOptions(parentNode, action ? workflowActionKind(action) : "");
       if ($("workflowActionPlatform")) $("workflowActionPlatform").value = action && action.platform || "douyin";
+      const actionPayload = action && action.plan && action.plan.payload && typeof action.plan.payload === "object" ? action.plan.payload : {};
+      const actionParams = actionPayload.params && typeof actionPayload.params === "object" ? actionPayload.params : {};
+      if ($("workflowActionMomentAction")) $("workflowActionMomentAction").value = actionParams.moment_action || "like_comment";
+      initializeWorkflowMomentPicker("action", Array.isArray(actionParams.contact_wx_nos) ? actionParams.contact_wx_nos : actionParams.targets);
       syncWorkflowActionModalFields();
       modal.classList.remove("hidden");
       const first = $("workflowActionTime") || modal.querySelector("input, select");
@@ -4200,7 +4365,16 @@
       });
       if (duplicate) throw new Error(actionType === "publish" ? "这个平台已经有发布动作了" : "这个子动作已经添加过了");
       const existing = editId ? currentChildren.find((item) => String(item && item.id || "") === editId) : null;
-      const nextAction = workflowActionPayload(parentNode, { time, end_time: endTime, action_type: actionType, platform }, existing);
+      const wxNos = actionType === "native_wechat_moments_engage" ? workflowMomentSelectedValues("action") : [];
+      if (actionType === "native_wechat_moments_engage" && !wxNos.length) throw new Error("请选择至少一个朋友圈联系人");
+      const nextAction = workflowActionPayload(parentNode, {
+        time,
+        end_time: endTime,
+        action_type: actionType,
+        platform,
+        contact_wx_nos: wxNos,
+        moment_action: workflowParamValue("workflowActionMomentAction") || "like_comment",
+      }, existing);
       const children = currentChildren
         .filter((item) => String(item && item.id || "") !== String(nextAction.id || ""))
         .concat(nextAction)
@@ -4664,10 +4838,12 @@
     }
 
     function syncWorkflowActionModalFields() {
-      const publish = String($("workflowActionType") && $("workflowActionType").value || "publish") === "publish";
+      const type = String($("workflowActionType") && $("workflowActionType").value || "publish");
+      const publish = type === "publish";
       const field = $("workflowActionPlatformField");
       if (field) field.hidden = !publish;
       if ($("workflowActionPlatform")) $("workflowActionPlatform").disabled = !publish;
+      syncWorkflowMomentPicker("action", type === "native_wechat_moments_engage");
     }
 
     function workflowActionPlatformLabel(platform) {
@@ -4709,7 +4885,7 @@
       };
     }
 
-    function workflowNativeActionPlan(parentNode, type, existing = null) {
+    function workflowNativeActionPlan(parentNode, type, existing = null, formData = {}) {
       const existingPlan = existing && existing.plan && typeof existing.plan === "object" ? existing.plan : {};
       const existingPayload = existingPlan.payload && typeof existingPlan.payload === "object" ? existingPlan.payload : {};
       const existingParams = existingPayload.params && typeof existingPayload.params === "object" ? existingPayload.params : {};
@@ -4728,10 +4904,14 @@
         });
       }
       if (type === "native_wechat_moments_engage") {
+        const wxNos = Array.isArray(formData.contact_wx_nos)
+          ? formData.contact_wx_nos.map((value) => String(value || "").trim()).filter(Boolean)
+          : (Array.isArray(source.contact_wx_nos) ? source.contact_wx_nos : source.targets || []);
         return nativeWechatWorkflowPlan("native_wechat_moments_engage", "微信朋友圈点赞评论", {
           ...source,
-          targets: Array.isArray(source.targets) ? source.targets : [],
-          moment_action: source.moment_action || "like_comment",
+          contact_wx_nos: wxNos,
+          targets: wxNos,
+          moment_action: formData.moment_action || source.moment_action || "like_comment",
           max_scrolls: Number(source.max_scrolls || 6),
         });
       }
@@ -4768,7 +4948,7 @@
         param_configured: true,
       };
       if (type === "publish") action.plan = workflowPublishActionPlan(parentNode, action);
-      else action.plan = workflowNativeActionPlan(parentNode, type, existing);
+      else action.plan = workflowNativeActionPlan(parentNode, type, existing, formData);
       action.plan = withWorkflowSchedule(action.plan, time, endTime);
       return action;
     }
@@ -17217,9 +17397,8 @@
     }
 
     function selectedPersonalIds(kind) {
-      return Array.from(document.querySelectorAll(`[data-personal-select="${kind}"]:checked`))
-        .map((el) => String(el.value || "").trim())
-        .filter(Boolean);
+      const map = personalSelectedMap(kind);
+      return Object.keys(map || {}).filter((id) => map[id]).map((id) => String(id || "").trim()).filter(Boolean);
     }
 
     function personalSelectedMap(kind) {
@@ -17557,6 +17736,101 @@
       }
     }
 
+    const PERSONAL_MULTI_SELECT_PAGE_SIZE = 8;
+    const PERSONAL_LIST_PAGE_SIZE = 8;
+    const personalMultiPages = Object.create(null);
+    const personalListPages = Object.create(null);
+    let personalUiPagingBound = false;
+
+    function personalPageInfo(targetId, rows, size, store) {
+      const totalPages = Math.max(1, Math.ceil(rows.length / size));
+      let page = Number(store[targetId] || 1);
+      if (!Number.isFinite(page) || page < 1) page = 1;
+      if (page > totalPages) page = totalPages;
+      store[targetId] = page;
+      return { page, totalPages, start: (page - 1) * size };
+    }
+
+    function personalPagerMarkup(targetId, page, totalPages, multi = false, scope = "list") {
+      if (totalPages <= 1) return "";
+      const attr = multi ? "data-personal-multi-page" : "data-personal-list-page";
+      return `<div class="personal-list-pager">
+        <button type="button" class="ghost" ${attr}="${escapeHtml(targetId)}" data-page-delta="-1" data-page-scope="${escapeHtml(scope)}" ${page <= 1 ? "disabled" : ""}>上一页</button>
+        <span>${page} / ${totalPages}</span>
+        <button type="button" class="ghost" ${attr}="${escapeHtml(targetId)}" data-page-delta="1" data-page-scope="${escapeHtml(scope)}" ${page >= totalPages ? "disabled" : ""}>下一页</button>
+      </div>`;
+    }
+
+    function personalMultiSelectMarkup(targetId, rows, selectedMap, kind, titleFn, subtitleFn, options = {}) {
+      rows = Array.isArray(rows) ? rows : [];
+      if (!rows.length) return `<div class="personal-template-empty">暂无可选${escapeHtml(options.label || "资料")}</div>`;
+      const info = personalPageInfo(targetId, rows, PERSONAL_MULTI_SELECT_PAGE_SIZE, personalMultiPages);
+      const pageRows = rows.slice(info.start, info.start + PERSONAL_MULTI_SELECT_PAGE_SIZE);
+      const idFn = options.id || ((row) => kind === "memory_doc" ? personalDocId(row) : String(row.id || ""));
+      const kindFn = options.kindFn || (() => kind);
+      const attr = options.attributeName || "data-personal-select";
+      const selectedRows = rows.filter((row) => !!selectedMap[String(idFn(row))]);
+      const selectedNames = selectedRows.slice(0, 2).map((row) => titleFn(row));
+      const summary = selectedRows.length
+        ? `已选 ${selectedRows.length} 项${selectedNames.length ? ` · ${selectedNames.join("、")}` : ""}`
+        : "未选择";
+      return `<details class="personal-multi-select" data-personal-multi="${escapeHtml(targetId)}">
+        <summary><span>${escapeHtml(options.label || "选择资料")}</span><strong data-personal-multi-summary>${escapeHtml(summary)}</strong><i>⌄</i></summary>
+        <div class="personal-multi-select-menu">
+          <div class="personal-multi-select-options">${pageRows.map((row) => {
+            const id = String(idFn(row) || "");
+            const rowKind = String(kindFn(row) || "");
+            const subtitle = subtitleFn ? String(subtitleFn(row) || "") : "";
+            const checked = selectedMap[id] ? " checked" : "";
+            return `<label class="personal-template-choice${checked ? " checked" : ""}">
+              <input type="checkbox" ${attr}="${escapeHtml(rowKind)}" value="${escapeHtml(id)}"${checked}>
+              <span><strong>${escapeHtml(titleFn(row))}</strong>${subtitle ? `<em>${escapeHtml(subtitle)}</em>` : ""}</span>
+            </label>`;
+          }).join("")}</div>
+          ${personalPagerMarkup(targetId, info.page, info.totalPages, true, options.scope || "template")}
+        </div>
+      </details>`;
+    }
+
+    function personalListPageRows(targetId, rows) {
+      const info = personalPageInfo(targetId, rows, PERSONAL_LIST_PAGE_SIZE, personalListPages);
+      return { rows: rows.slice(info.start, info.start + PERSONAL_LIST_PAGE_SIZE), pager: personalPagerMarkup(targetId, info.page, info.totalPages) };
+    }
+
+    function ensurePersonalUiPagingHandlers() {
+      if (personalUiPagingBound) return;
+      personalUiPagingBound = true;
+      document.addEventListener("click", (evt) => {
+        const multi = evt.target.closest?.("[data-personal-multi-page]");
+        if (multi) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          const id = multi.dataset.personalMultiPage || "";
+          const current = personalMultiPages[id] || 1;
+          personalMultiPages[id] = Math.max(1, current + Number(multi.dataset.pageDelta || 0));
+          if (multi.dataset.pageScope === "memory") renderPersonalMemorySourceSelectors();
+          else renderPersonalSettings();
+          const details = Array.from(document.querySelectorAll("[data-personal-multi]"))
+            .find((node) => node.dataset.personalMulti === id);
+          if (details) details.open = true;
+          return;
+        }
+        const list = evt.target.closest?.("[data-personal-list-page]");
+        if (!list) return;
+        evt.preventDefault();
+        personalListPages[list.dataset.personalListPage || ""] = Math.max(1, (personalListPages[list.dataset.personalListPage || ""] || 1) + Number(list.dataset.pageDelta || 0));
+        renderPersonalSettings();
+      });
+    }
+
+    function updatePersonalMultiSelectSummary(input) {
+      const box = input?.closest?.(".personal-multi-select");
+      const summary = box?.querySelector?.("[data-personal-multi-summary]");
+      if (!summary) return;
+      const checked = Array.from(box.querySelectorAll("input[type=checkbox]:checked"));
+      summary.textContent = checked.length ? `已选 ${checked.length} 项` : "未选择";
+    }
+
     function renderPersonalRows(targetId, rows, kind, titleFn, subtitleFn, deleteAttr, actionLabel = "删除", syncAttr = "") {
       const el = $(targetId);
       if (!el) return;
@@ -17565,7 +17839,8 @@
         return;
       }
       const selectedMap = personalSelectedMap(kind);
-      el.innerHTML = rows.map((row) => {
+      const page = personalListPageRows(targetId, rows);
+      el.innerHTML = page.rows.map((row) => {
         const id = kind === "memory_doc" ? personalDocId(row) : String(row.id || "");
         const title = titleFn(row);
         const subtitle = subtitleFn ? subtitleFn(row) : "";
@@ -17577,7 +17852,7 @@
           return `<div class="personal-row"><span>${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span>${actions}</div>`;
         }
         return `<div class="personal-row"><label><input type="checkbox" data-personal-select="${escapeHtml(kind)}" value="${escapeHtml(id)}"${checked}><span>${escapeHtml(title)}${subtitle ? ` · ${escapeHtml(subtitle)}` : ""}</span></label>${actions}</div>`;
-      }).join("");
+      }).join("") + page.pager;
     }
 
     function bindPersonalOptionChecks(root = document) {
@@ -17589,6 +17864,7 @@
           const group = input.closest(".personal-template-resource-group");
           const countEl = group ? group.querySelector("[data-personal-template-selected-count]") : null;
           if (countEl && group) countEl.textContent = String(group.querySelectorAll("[data-personal-select]:checked").length);
+          updatePersonalMultiSelectSummary(input);
         };
       });
     }
@@ -17703,6 +17979,23 @@
     function renderPersonalSourceOptions(targetId, rows, selectedMap, kind, titleFn, subtitleFn) {
       const el = $(targetId);
       if (!el) return;
+      const entries = (Array.isArray(rows) ? rows : []).map((row) => ({ row, sourceKind: kind }));
+      if (targetId === "personalMemoryUploadSourceList") {
+        selectedPersonalUploadFiles().forEach((file) => entries.push({ row: file, sourceKind: "source_file" }));
+      }
+      el.innerHTML = personalMultiSelectMarkup(targetId, entries, selectedMap, kind, (entry) => {
+        return entry.sourceKind === "source_file" ? (entry.row.name || "未命名文件") : titleFn(entry.row);
+      }, (entry) => {
+        if (entry.sourceKind === "source_file") return entry.row.size ? `${Math.ceil(entry.row.size / 1024)}KB` : "当前选择";
+        return subtitleFn ? subtitleFn(entry.row) : "";
+      }, {
+        attributeName: "data-personal-memory-source",
+        kindFn: (entry) => entry.sourceKind,
+        id: (entry) => entry.sourceKind === "source_file" ? personalUploadFileKey(entry.row) : (entry.sourceKind === "source_doc" ? personalDocId(entry.row) : String(entry.row.id || "")),
+        label: "选择资料",
+        scope: "memory",
+      });
+      return;
       if (!rows.length) {
         el.innerHTML = `<div class="personal-empty">暂无</div>`;
         return;
@@ -17718,6 +18011,7 @@
     }
 
     function renderPersonalMemorySourceSelectors() {
+      ensurePersonalUiPagingHandlers();
       ensurePersonalMemorySourceSelections();
       const profile = $("personalMemoryUseProfile");
       if (profile) profile.checked = state.personalMemoryUseProfile !== false;
@@ -17745,7 +18039,7 @@
         personalMemoryTitle,
         (row) => row.notes || row.filename || ""
       );
-      const currentFiles = selectedPersonalUploadFiles();
+      const currentFiles = [];
       if (currentFiles.length) {
         const box = $("personalMemoryUploadSourceList");
         const fileHtml = currentFiles.map((file) => {
@@ -18063,8 +18357,9 @@
         list.innerHTML = `<div class="personal-empty">暂无模板</div>`;
         return;
       }
+      const page = personalListPageRows("personalSavedTemplateList", rows);
       const editingId = String(state.personalEditingTemplateId || "");
-      list.innerHTML = rows.map((row) => {
+      list.innerHTML = page.rows.map((row) => {
         const id = String(row.id || "");
         const own = row.source !== "agent";
         const isDefault = isActivePersonalTemplate(row);
@@ -18089,7 +18384,7 @@
             ${grantBtn}
           </div>
         </div>`;
-      }).join("");
+      }).join("") + page.pager;
     }
 
     function renderPersonalCurrentTemplate() {
@@ -18123,7 +18418,8 @@
         const memoryRows = state.personalMemoryDocs.map((row) => ({ ...row, _kind: "memory_doc" }));
         const section = (label, rows, selectedMap, kind, titleFn, subtitleFn) => {
           const count = rows.filter((row) => selectedMap[kind === "memory_doc" ? personalDocId(row) : String(row.id || "")]).length;
-          const body = rows.length
+          const body = personalMultiSelectMarkup(`personalTemplate:${kind}`, rows, selectedMap, kind, titleFn, subtitleFn, { label, scope: "template" });
+          const legacyBody = rows.length
             ? `<div class="personal-template-choice-grid">` + rows.map((row) => {
                 const id = kind === "memory_doc" ? personalDocId(row) : String(row.id || "");
                 const subtitle = subtitleFn ? subtitleFn(row) : "";
@@ -18163,8 +18459,9 @@
       const uploadDocs = $("personalUploadDocList");
       if (uploadDocs) {
         const rows = personalUploadedDocRows();
+        const page = personalListPageRows("personalUploadDocList", rows);
         uploadDocs.innerHTML = rows.length
-          ? rows.map((doc) => {
+          ? page.rows.map((doc) => {
               const id = personalDocId(doc);
               return `<div class="personal-row personal-memory-row">
                 <span>${escapeHtml(personalMemoryTitle(doc))}</span>
@@ -18173,13 +18470,14 @@
                   <button type="button" data-delete-personal-memory="${escapeHtml(id)}">删除</button>
                 </div>
               </div>`;
-            }).join("")
+            }).join("") + page.pager
           : `<div class="personal-empty">暂无上传资料</div>`;
       }
       const mem = $("personalMemoryList");
       if (mem) {
+        const page = personalListPageRows("personalMemoryList", state.personalMemoryDocs);
         mem.innerHTML = state.personalMemoryDocs.length
-          ? state.personalMemoryDocs.map((doc) => {
+          ? page.rows.map((doc) => {
               const id = personalDocId(doc);
               const readOnly = !!doc.read_only || doc.source === "agent";
               const tag = readOnly ? "代理商" : "个人";
@@ -18190,9 +18488,10 @@
                   ${readOnly ? "" : `<button type="button" data-delete-personal-memory="${escapeHtml(id)}">删除</button>`}
                 </div>
               </div>`;
-            }).join("")
+            }).join("") + page.pager
           : `<div class="personal-empty">暂无记忆文件</div>`;
       }
+      ensurePersonalUiPagingHandlers();
       bindPersonalOptionChecks(document);
       renderPersonalMemorySelect();
       renderPersonalSelectedFiles();
@@ -25109,6 +25408,8 @@
     });
     $("workflowDeviceSelect")?.addEventListener("change", (evt) => {
       setSelectedInstallationId(evt.target.value || "");
+      renderWorkflowMomentPicker("node");
+      renderWorkflowMomentPicker("action");
       loadWorkflowActive().catch((err) => toast(err.message || "工作流状态加载失败"));
     });
     $("workflowOpenAddNodeBtn")?.addEventListener("click", openWorkflowNodeModal);
@@ -25116,6 +25417,7 @@
     $("workflowNodeClose")?.addEventListener("click", closeWorkflowNodeModal);
     $("workflowNodeCancel")?.addEventListener("click", closeWorkflowNodeModal);
     $("workflowNodeAbility")?.addEventListener("change", () => syncWorkflowNodeModalFields(true));
+    bindWorkflowMomentPicker("node");
     $("workflowNodeForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
       try {
@@ -25128,6 +25430,7 @@
     $("workflowActionClose")?.addEventListener("click", closeWorkflowActionModal);
     $("workflowActionCancel")?.addEventListener("click", closeWorkflowActionModal);
     $("workflowActionType")?.addEventListener("change", syncWorkflowActionModalFields);
+    bindWorkflowMomentPicker("action");
     $("workflowActionForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
       try {
@@ -25807,6 +26110,7 @@
             ? state.personalMemorySourceDocs
             : (kind === "recording" ? state.personalMemorySourceRecordings : state.personalMemorySourceFiles)));
       if (input.value) map[String(input.value)] = !!input.checked;
+      updatePersonalMultiSelectSummary(input);
     };
     $("personalSettingsView")?.addEventListener("change", handlePersonalMemorySourceChange);
     $("personalMemoryGenerateModal")?.addEventListener("change", handlePersonalMemorySourceChange);

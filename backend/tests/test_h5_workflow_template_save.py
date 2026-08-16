@@ -320,3 +320,20 @@ def test_workflow_day_dialog_and_template_drawer_stay_above_page_content():
     assert "#workflowView .workflow-template-drawer {" in styles
     assert "z-index: 300;" in styles
     assert "20260803-workflow-dialog-keyboard-v2" in html
+
+
+def test_moments_workflow_node_selects_paginated_contacts_by_wechat_id():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+    styles = (ROOT / "h5_static" / "h5-app.css").read_text(encoding="utf-8")
+
+    assert 'id="workflowNodeMomentField"' in html
+    assert 'id="workflowActionMomentField"' in html
+    assert 'id="workflowNodeMomentPrev"' in html
+    assert 'id="workflowNodeMomentNext"' in html
+    assert "function workflowMomentContacts()" in script
+    assert "const pageSize = 20;" in script
+    assert "contact_wx_nos: wxNos" in script
+    assert "targets: wxNos" in script
+    assert 'throw new Error("请选择至少一个朋友圈联系人")' in script
+    assert ".workflow-moment-list" in styles

@@ -1711,6 +1711,28 @@
               <span>命中拉群规则后立即执行</span>
             </label>
           </div>
+          <div class="field full hidden" id="workflowNodeMomentField">
+            <label for="workflowNodeMomentSearch">朋友圈联系人（按微信号保存，可多选）</label>
+            <details class="workflow-moment-dropdown">
+              <summary id="workflowNodeMomentTrigger">选择通讯录联系人</summary>
+              <div class="workflow-moment-picker">
+                <input id="workflowNodeMomentSearch" type="search" placeholder="搜索昵称、备注或微信号">
+                <div class="workflow-moment-list" id="workflowNodeMomentContacts"></div>
+                <div class="workflow-moment-footer">
+                  <button class="ghost" id="workflowNodeMomentPrev" type="button">上一页</button>
+                  <span id="workflowNodeMomentPage">1 / 1</span>
+                  <button class="ghost" id="workflowNodeMomentNext" type="button">下一页</button>
+                </div>
+                <div class="workflow-moment-summary" id="workflowNodeMomentSummary"></div>
+              </div>
+            </details>
+            <label for="workflowNodeMomentAction">互动动作</label>
+            <select id="workflowNodeMomentAction">
+              <option value="like_comment">点赞并评论</option>
+              <option value="like">只点赞</option>
+              <option value="comment">只评论</option>
+            </select>
+          </div>
         </div>
         <div class="work-dispatch-actions">
           <button class="ghost" type="button" id="workflowNodeCancel">取消</button>
@@ -1756,6 +1778,28 @@
               <option value="toutiao">头条</option>
               <option value="wechat_channels">视频号</option>
               <option value="wechat_moments">朋友圈图文</option>
+            </select>
+          </div>
+          <div class="field full hidden" id="workflowActionMomentField">
+            <label for="workflowActionMomentSearch">朋友圈联系人（按微信号保存，可多选）</label>
+            <details class="workflow-moment-dropdown">
+              <summary id="workflowActionMomentTrigger">选择通讯录联系人</summary>
+              <div class="workflow-moment-picker">
+                <input id="workflowActionMomentSearch" type="search" placeholder="搜索昵称、备注或微信号">
+                <div class="workflow-moment-list" id="workflowActionMomentContacts"></div>
+                <div class="workflow-moment-footer">
+                  <button class="ghost" id="workflowActionMomentPrev" type="button">上一页</button>
+                  <span id="workflowActionMomentPage">1 / 1</span>
+                  <button class="ghost" id="workflowActionMomentNext" type="button">下一页</button>
+                </div>
+                <div class="workflow-moment-summary" id="workflowActionMomentSummary"></div>
+              </div>
+            </details>
+            <label for="workflowActionMomentAction">互动动作</label>
+            <select id="workflowActionMomentAction">
+              <option value="like_comment">点赞并评论</option>
+              <option value="like">只点赞</option>
+              <option value="comment">只评论</option>
             </select>
           </div>
         </div>

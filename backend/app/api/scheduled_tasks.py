@@ -81,7 +81,10 @@ _pending_empty_cache: Dict[str, float] = {}
 _PERSONAL_DEFAULT_TEMPLATE_NAME = "\u4e2a\u4eba\u9ed8\u8ba4\u914d\u7f6e"
 _LOCAL_BESTSELLER_ACTIONS = {"local_bestseller_plan", "local_bestseller_scene_batch", "local_bestseller_daily_video"}
 _SERIAL_CLIENT_TASK_KINDS = {"douyin_leads"}
-_SERIAL_CLIENT_WORKFLOW_ACTIONS = {"native_wechat_poll"}
+_SERIAL_CLIENT_WORKFLOW_ACTIONS = {
+    "native_wechat_poll",
+    "native_wechat_moments_engage",
+}
 _NATIVE_WECHAT_RUNTIME_SETTING_KEYS = (
     "memory_doc_ids",
     "group_invite_enabled",

@@ -4261,6 +4261,30 @@
     .personal-source-option small { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .personal-source-option input,
     .personal-source-profile input { width: auto; min-height: auto; margin-top: 2px; }
+    .personal-multi-select { position: relative; min-width: 0; }
+    .personal-multi-select > summary {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 40px;
+      padding: 8px 10px;
+      border: 1px solid rgba(26,48,88,.14);
+      border-radius: 12px;
+      color: #64748b;
+      background: #fff;
+      cursor: pointer;
+      list-style: none;
+    }
+    .personal-multi-select > summary::-webkit-details-marker { display: none; }
+    .personal-multi-select > summary strong { min-width: 0; overflow: hidden; color: #263858; font-size: 12px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+    .personal-multi-select > summary i { color: var(--blue); font-style: normal; }
+    .personal-multi-select[open] > summary { border-color: rgba(36,92,255,.38); box-shadow: 0 0 0 3px rgba(36,92,255,.08); }
+    .personal-multi-select-menu { display: grid; gap: 7px; margin-top: 6px; padding: 8px; border: 1px solid rgba(26,48,88,.12); border-radius: 12px; background: #fff; box-shadow: 0 16px 30px rgba(20,36,64,.12); }
+    .personal-multi-select-options { display: grid; gap: 5px; max-height: 230px; overflow: auto; }
+    .personal-multi-select-options .personal-template-choice { min-height: 38px; padding: 7px 8px; border-radius: 10px; }
+    .personal-list-pager { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 11px; }
+    .personal-list-pager button { min-height: 28px; padding: 4px 9px; }
     .personal-doc-types { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .personal-doc-types label {
       display: flex;
@@ -7841,6 +7865,60 @@
       min-height: 96px;
       resize: vertical;
     }
+    .workflow-moment-picker {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid rgba(211,222,239,.95);
+      border-radius: 12px;
+      background: #f7f9fd;
+    }
+    .workflow-moment-dropdown {
+      overflow: hidden;
+      border: 1px solid rgba(211,222,239,.95);
+      border-radius: 12px;
+      background: #fff;
+    }
+    .workflow-moment-dropdown summary {
+      display: flex;
+      align-items: center;
+      min-height: 42px;
+      padding: 0 12px;
+      color: #40516a;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      list-style: none;
+    }
+    .workflow-moment-dropdown summary::-webkit-details-marker { display: none; }
+    .workflow-moment-dropdown summary::after { content: "v"; margin-left: auto; color: #8190a4; font-size: 14px; }
+    .workflow-moment-dropdown[open] summary { border-bottom: 1px solid rgba(211,222,239,.95); }
+    .workflow-moment-dropdown[open] summary::after { transform: rotate(180deg); }
+    .workflow-moment-list {
+      display: grid;
+      gap: 5px;
+      max-height: 250px;
+      overflow: auto;
+    }
+    .workflow-moment-contact {
+      display: flex !important;
+      align-items: center;
+      gap: 9px;
+      min-height: 44px;
+      padding: 7px 9px;
+      border-radius: 9px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .workflow-moment-contact input { width: auto; min-height: auto; }
+    .workflow-moment-contact span { min-width: 0; display: grid; gap: 2px; }
+    .workflow-moment-contact strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+    .workflow-moment-contact small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8290a5; font-size: 11px; font-weight: 500; }
+    .workflow-moment-empty { padding: 14px 8px; color: #8793a7; font-size: 12px; text-align: center; }
+    .workflow-moment-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .workflow-moment-footer button { min-width: 72px; min-height: 34px; padding: 0 10px; }
+    .workflow-moment-footer span,
+    .workflow-moment-summary { color: #687991; font-size: 12px; }
     .workflow-timeline {
       display: grid;
       gap: 9px;

@@ -975,14 +975,34 @@ def _native_wechat_plan(action_key: str, note: Any, params: Optional[dict[str, A
             "payload": {"action": action_key, "params": base_params},
         }
     if action_key == "native_wechat_moments_engage":
-        base_params.setdefault("targets", [])
-        base_params.setdefault("moment_action", "like_comment")
-        base_params.setdefault("max_scrolls", 6)
+        moment_params = {
+            key: value
+            for key, value in base_params.items()
+            if key not in {
+                "group_invite_enabled",
+                "group_invite_memory_doc_id",
+                "group_invite_keywords",
+                "group_invite_contacts",
+                "group_invite_primary_contact",
+                "group_invite_primary_contact_name",
+                "group_invite_welcome_message",
+                "group_invite_rule_status",
+                "group_invite_targets_source",
+                "group_invite_members",
+                "group_invite_manager_contacts",
+                "followup_action",
+                "group_invite_rules",
+                "trigger",
+            }
+        }
+        moment_params.setdefault("targets", [])
+        moment_params.setdefault("moment_action", "like_comment")
+        moment_params.setdefault("max_scrolls", 6)
         return {
             "title": "朋友圈点赞评论",
             "task_kind": "client_workflow",
             "content": "H5 工作流：朋友圈点赞评论",
-            "payload": {"action": action_key, "params": base_params},
+            "payload": {"action": action_key, "params": moment_params},
         }
     return {}
 

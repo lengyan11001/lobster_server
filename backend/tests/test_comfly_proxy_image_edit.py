@@ -185,6 +185,40 @@ def test_image_edit_falls_back_to_next_channel_after_comfly_busy(monkeypatch):
     assert any(event == "image_edit_ok" and data["model"] == "gpt-image-2-gaisc" for event, data in captured["audits"])
 
 
+def test_image_edit_openmind_api_channel_uses_openmind_multipart_route(monkeypatch):
+    captured = {}
+
+    async def _fake_openmind_multipart_request(path, data, files, timeout):
+        captured["path"] = path
+        captured["data"] = dict(data)
+        captured["files"] = list(files)
+        captured["timeout"] = timeout
+        return {"data": [{"url": "https://example.com/openmind-edit.png"}]}
+
+    async def _unexpected_comfly_multipart_request(*_args, **_kwargs):
+        raise AssertionError("OpenMind image edit must not route through Comfly multipart")
+
+    monkeypatch.setattr(comfly_proxy, "_openmind_multipart_request", _fake_openmind_multipart_request)
+    monkeypatch.setattr(comfly_proxy, "_comfly_multipart_request", _unexpected_comfly_multipart_request)
+
+    import asyncio
+
+    result = asyncio.run(
+        comfly_proxy._submit_image_edit_attempt(
+            attempt_model="gpt-image-2-openmindapi",
+            entry={"token_group": "openmindapi"},
+            data={"model": "gpt-image-2", "prompt": "openmind edit"},
+            files=[("image", ("reference.png", b"image", "image/png"))],
+        )
+    )
+
+    assert result["data"][0]["url"] == "https://example.com/openmind-edit.png"
+    assert captured["path"] == "/v1/images/edits"
+    assert captured["data"]["prompt"] == "openmind edit"
+    assert captured["files"][0][0] == "image"
+    assert captured["timeout"] == comfly_proxy._TIMEOUT_IMAGE
+
+
 def test_image_edit_busy_failure_returns_friendly_refunded_error(monkeypatch):
     captured = {"refunds": 0}
 
