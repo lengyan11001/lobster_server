@@ -426,7 +426,11 @@ def get_wechat_intelligence_context(
         .all()
     )
     group_invite_verified = any(
-        isinstance(row.payload, dict) and bool(row.payload.get("group_verified"))
+        isinstance(row.payload, dict)
+        and (
+            bool(row.payload.get("group_verified"))
+            or row.event_type == "group_created"
+        )
         for row in verified_group_rows
     )
     contact_payload = _serialize_contact(contact) if contact else None

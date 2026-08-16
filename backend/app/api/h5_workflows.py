@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -37,6 +37,7 @@ from .scheduled_tasks import (
     _cancel_unfinished_runs_for_task,
     _create_task_row,
     _delete_task_row,
+    _enqueue_task,
     _local_bestseller_profile_from_persona,
     _serialize_task,
 )
@@ -1614,6 +1615,43 @@ def _stop_active_for_device(db: Session, user_id: int, installation_id: str, now
     return stopped_ids
 
 
+def _workflow_node_should_start_now(
+    node: dict[str, Any],
+    *,
+    task_kind: str,
+    now_utc: datetime,
+    timezone_offset_minutes: int,
+) -> bool:
+    """Start a long-running takeover when it is enabled inside today's window."""
+    if task_kind != "client_workflow":
+        return False
+    plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+    payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+    if str(payload.get("action") or "").strip() != "native_wechat_poll":
+        return False
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    start_text = str(node.get("time") or params.get("sales_schedule_start") or "").strip()
+    end_text = str(
+        node.get("end_time")
+        or params.get("workflow_node_end_time")
+        or params.get("sales_schedule_end")
+        or "23:59"
+    ).strip()
+    if not re.match(r"^\d{2}:\d{2}$", start_text) or not re.match(r"^\d{2}:\d{2}$", end_text):
+        return False
+    start_hour, start_minute = (int(item) for item in start_text.split(":", 1))
+    end_hour, end_minute = (int(item) for item in end_text.split(":", 1))
+    if start_hour > 23 or end_hour > 23 or start_minute > 59 or end_minute > 59:
+        return False
+    local_now = now_utc + timedelta(minutes=int(timezone_offset_minutes or 0))
+    current = local_now.hour * 60 + local_now.minute
+    start = start_hour * 60 + start_minute
+    end = end_hour * 60 + end_minute
+    if end < start:
+        return current >= start or current <= end
+    return start <= current <= end
+
+
 def _activate_nodes_for_device(
     *,
     db: Session,
@@ -1659,6 +1697,13 @@ def _activate_nodes_for_device(
             plan = node.get("plan") or {}
             task_kind = str(plan.get("task_kind") or "").strip().lower()
             payload = dict(plan.get("payload") or {})
+            if task_kind == "douyin_leads":
+                # Each H5 workflow trigger is one finite Online action. The
+                # workflow schedule may trigger it again later, but it must
+                # never start a persistent Douyin monitor.
+                payload["h5_task_source"] = "workflow"
+                payload["h5_one_shot"] = True
+                payload["douyin_execution_mode"] = "one_shot"
             payload["h5_context"] = {
                 **(payload.get("h5_context") if isinstance(payload.get("h5_context"), dict) else {}),
                 "workflow_template_id": template_id,
@@ -1708,6 +1753,14 @@ def _activate_nodes_for_device(
                 created_by_user_id=current_user.id,
                 created_by_role="workflow",
             )
+            if _workflow_node_should_start_now(
+                node,
+                task_kind=task_kind,
+                now_utc=now,
+                timezone_offset_minutes=timezone_offset_minutes if timezone_offset_minutes is not None else 480,
+            ):
+                scheduled.next_run_at = now
+                _enqueue_task(db, scheduled, now)
             created_task_ids.append(int(scheduled.id))
     except Exception:
         try:

@@ -5,6 +5,7 @@ from backend.app.api.h5_workflows import (
     _apply_workflow_runtime_options,
     _prepare_publish_action_nodes,
     _sales_digital_human_template_id,
+    _workflow_node_should_start_now,
 )
 from backend.app.models import H5ChatDevicePresence, H5MountedAccountDefault, IPContentScheduleTemplate
 
@@ -33,6 +34,36 @@ def test_sales_activation_day_is_only_applied_to_local_bestseller():
     assert local_params["day"] == 7
     assert local_params["day_mode"] == "activation_selected"
     assert "day" not in digital_params
+
+
+def test_native_wechat_takeover_starts_when_activation_is_inside_window():
+    node = _node("wechat", "native_wechat_poll")
+    node["end_time"] = "23:59"
+
+    assert _workflow_node_should_start_now(
+        node,
+        task_kind="client_workflow",
+        now_utc=datetime(2026, 8, 16, 8, 21),
+        timezone_offset_minutes=480,
+    ) is True
+    assert _workflow_node_should_start_now(
+        node,
+        task_kind="client_workflow",
+        now_utc=datetime(2026, 8, 16, 16, 30),
+        timezone_offset_minutes=480,
+    ) is False
+
+
+def test_non_takeover_workflow_nodes_keep_daily_schedule_on_activation():
+    node = _node("video", "shanjian_digital_human_video")
+    node["end_time"] = "23:59"
+
+    assert _workflow_node_should_start_now(
+        node,
+        task_kind="client_workflow",
+        now_utc=datetime(2026, 8, 16, 8, 21),
+        timezone_offset_minutes=480,
+    ) is False
 
 
 def test_digital_human_nodes_receive_distinct_sequence_slots():

@@ -55,6 +55,17 @@ def test_h5_sales_preset_dispatches_douyin_without_business_params():
     assert 'payload: { action: "search_collect", params: { keyword: prompt, sales_action:' not in script
 
 
+def test_h5_douyin_nodes_are_marked_as_one_shot():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    workflow_source = (ROOT / "backend" / "app" / "api" / "h5_workflows.py").read_text(encoding="utf-8")
+
+    assert "payload.h5_one_shot = true" in script
+    assert 'h5_task_source: "h5"' in script
+    assert 'douyin_execution_mode: "one_shot"' in script
+    assert 'payload["h5_one_shot"] = True' in workflow_source
+    assert 'payload["douyin_execution_mode"] = "one_shot"' in workflow_source
+
+
 def test_h5_renders_all_sales_douyin_results_and_private_message_content():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
 

@@ -3867,6 +3867,9 @@
             content: "H5 工作流：抖音私信接管",
             payload: {
               action: "stranger_message",
+              h5_task_source: "h5",
+              h5_one_shot: true,
+              douyin_execution_mode: "one_shot",
               params: {
                 wechat_add_friend_enabled: workflowParamChecked("workflowParamDouyinWechatAddFriend"),
               },
@@ -3882,6 +3885,9 @@
           content: "H5 工作流：抖音获客",
           payload: {
             action: "search_collect",
+            h5_task_source: "h5",
+            h5_one_shot: true,
+            douyin_execution_mode: "one_shot",
             params: {
               keyword,
               max_results: workflowParamNumber("workflowParamDouyinMaxResults", 50, 10, 100),
@@ -13081,6 +13087,11 @@
       payload.live_executor = true;
       payload.live_executor_type = task && task.type || "";
       payload.live_executor_prompt = String(plan.liveExecutorPrompt ?? liveExecutorPromptText());
+      if (taskKind === "douyin_leads") {
+        payload.h5_task_source = "h5";
+        payload.h5_one_shot = true;
+        payload.douyin_execution_mode = "one_shot";
+      }
       const body = {
         title: plan.title || "现场执行任务",
         task_kind: taskKind,
@@ -21753,7 +21764,12 @@
         title,
         task_kind: "douyin_leads",
         content: `执行抖音获客任务：${douyinPayload.action}`,
-        payload: douyinPayload,
+        payload: {
+          ...douyinPayload,
+          h5_task_source: "h5",
+          h5_one_shot: true,
+          douyin_execution_mode: "one_shot",
+        },
         schedule_type: scheduleType,
         interval_seconds: Math.max(60, (Number.isNaN(interval) ? 60 : interval) * 60),
         start_at: ($("douyinTaskStartAt") || {}).value || "",
@@ -21781,7 +21797,12 @@
         title: `抖音获客 - ${actionInfo.label || voicePayload.action}`,
         task_kind: "douyin_leads",
         content: `执行抖音获客任务：${voicePayload.action}`,
-        payload: voicePayload,
+        payload: {
+          ...(voicePayload && typeof voicePayload === "object" ? voicePayload : {}),
+          h5_task_source: "h5",
+          h5_one_shot: true,
+          douyin_execution_mode: "one_shot",
+        },
         schedule_type: "once",
         interval_seconds: 60,
         start_at: "",
