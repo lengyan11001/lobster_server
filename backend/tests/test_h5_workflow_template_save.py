@@ -336,4 +336,8 @@ def test_moments_workflow_node_selects_paginated_contacts_by_wechat_id():
     assert "contact_wx_nos: wxNos" in script
     assert "targets: wxNos" in script
     assert 'throw new Error("请选择至少一个朋友圈联系人")' in script
+    assert 'workflowParamNativeWechatMomentField' in script
+    assert 'workflowParamNativeWechatMomentContacts' in script
+    assert 'workflowMomentSelectedValues("param")' in script
+    assert 'String(nodeInfo.key || nodeInfo.workQuickKey || "") === "native_wechat_moments_engage"' in script
     assert ".workflow-moment-list" in styles

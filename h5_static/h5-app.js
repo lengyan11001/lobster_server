@@ -256,6 +256,9 @@
       workflowActionMomentContactPage: 1,
       workflowActionMomentContactSearch: "",
       workflowActionMomentSelected: {},
+      workflowParamMomentContactPage: 1,
+      workflowParamMomentContactSearch: "",
+      workflowParamMomentSelected: {},
       workflowPlanDayResolve: null,
       agentUsers: [],
       agentUsersTotal: 0,
@@ -3296,7 +3299,22 @@
     }
 
     function workflowMomentPickerConfig(scope) {
-      return scope === "action"
+      return scope === "param"
+        ? {
+            field: "workflowParamNativeWechatMomentField",
+            trigger: "workflowParamNativeWechatMomentTrigger",
+            search: "workflowParamNativeWechatMomentSearch",
+            list: "workflowParamNativeWechatMomentContacts",
+            prev: "workflowParamNativeWechatMomentPrev",
+            next: "workflowParamNativeWechatMomentNext",
+            page: "workflowParamNativeWechatMomentPage",
+            summary: "workflowParamNativeWechatMomentSummary",
+            action: "workflowParamNativeWechatMomentAction",
+            pageKey: "workflowParamMomentContactPage",
+            searchKey: "workflowParamMomentContactSearch",
+            selectedKey: "workflowParamMomentSelected",
+          }
+        : scope === "action"
         ? {
             field: "workflowActionMomentField",
             trigger: "workflowActionMomentTrigger",
@@ -3324,7 +3342,24 @@
             pageKey: "workflowNodeMomentContactPage",
             searchKey: "workflowNodeMomentContactSearch",
             selectedKey: "workflowNodeMomentSelected",
-          };
+        };
+    }
+
+    function workflowMomentPickerFieldHtml(scope = "param") {
+      const cfg = workflowMomentPickerConfig(scope);
+      return `<details class="workflow-moment-dropdown" id="${cfg.field}">
+        <summary id="${cfg.trigger}">选择通讯录联系人</summary>
+        <div class="workflow-moment-picker">
+          <input id="${cfg.search}" type="search" placeholder="搜索昵称、备注或微信号">
+          <div class="workflow-moment-list" id="${cfg.list}"></div>
+          <div class="workflow-moment-footer">
+            <button class="ghost" id="${cfg.prev}" type="button">上一页</button>
+            <span id="${cfg.page}">1 / 1</span>
+            <button class="ghost" id="${cfg.next}" type="button">下一页</button>
+          </div>
+          <div class="workflow-moment-summary" id="${cfg.summary}"></div>
+        </div>
+      </details>`;
     }
 
     function workflowMomentSelectedValues(scope) {
@@ -3666,7 +3701,7 @@
           + taskFieldHtml("申请语", workInputHtml("workflowParamNativeWechatApplyMessage", "text", "", 'placeholder="可选"'));
       }
       if (key === "native_wechat_moments_engage") {
-        return taskFieldHtml("联系人", taskTextareaHtml("workflowParamNativeWechatTargets", "多个联系人用逗号或换行分隔"), true)
+        return taskFieldHtml("朋友圈联系人（按微信号，可多选）", workflowMomentPickerFieldHtml("param"), true)
           + taskFieldHtml("动作", taskSelectHtml("workflowParamNativeWechatMomentAction", optionHtml("like_comment", "点赞并评论") + optionHtml("like", "只点赞") + optionHtml("comment", "只评论")))
           + taskFieldHtml("备注", taskTextareaHtml("workflowParamNativeWechatNote", "可选"), true);
       }
@@ -3723,6 +3758,7 @@
         loadPersonalDigitalHumanTemplates(false).then(renderWorkflowHiflyTemplateOptions).catch(() => {});
       }
       if ($("workflowParamSeedanceModel")) bindSeedanceControls("workflowParamSeedance");
+      if ($("workflowParamNativeWechatMomentContacts")) bindWorkflowMomentPicker("param");
     }
 
     function workflowLookupForNode(node) {
@@ -4091,6 +4127,14 @@
         };
       }
       if (isNativeWechatWorkflowKey(key)) {
+        if (key === "native_wechat_moments_engage") {
+          const wxNos = workflowMomentSelectedValues("param");
+          return nativeWechatWorkflowPlan(key, workflowParamValue("workflowParamNativeWechatNote"), {
+            contact_wx_nos: wxNos,
+            targets: wxNos,
+            moment_action: workflowParamValue("workflowParamNativeWechatMomentAction") || "like_comment",
+          }, { requireTargets: true });
+        }
         return nativeWechatWorkflowPlan(key, workflowParamValue("workflowParamNativeWechatNote"), {
           targets: workSplitList(workflowParamValue("workflowParamNativeWechatTargets")),
           apply_message: workflowParamValue("workflowParamNativeWechatApplyMessage"),
@@ -5199,6 +5243,12 @@
         setFieldValue("workflowParamNativeWechatNote", params.note || node.note || "");
         return;
       }
+      if (String(nodeInfo.key || nodeInfo.workQuickKey || "") === "native_wechat_moments_engage") {
+        setFieldValue("workflowParamNativeWechatMomentAction", params.moment_action || "like_comment");
+        setFieldValue("workflowParamNativeWechatNote", params.note || node.note || "");
+        initializeWorkflowMomentPicker("param", Array.isArray(params.contact_wx_nos) ? params.contact_wx_nos : params.targets);
+        return;
+      }
       if (capabilityId === "ip_content_daily") {
         const setTemplate = () => setFieldValue("workflowParamIpTemplate", payload.template_id || "");
         if (state.ipTemplatesLoaded) setTemplate();
@@ -5340,6 +5390,9 @@
       const modal = $("workflowParamModal");
       if (modal) modal.classList.add("hidden");
       state.workflowParamNodeId = "";
+      state.workflowParamMomentContactPage = 1;
+      state.workflowParamMomentContactSearch = "";
+      state.workflowParamMomentSelected = {};
       if ($("workflowParamFields")) $("workflowParamFields").innerHTML = "";
     }
 
