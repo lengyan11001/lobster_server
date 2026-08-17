@@ -1358,6 +1358,14 @@ def _prepare_sales_workflow_nodes(
         if task_kind == "client_workflow" and action in _NATIVE_WECHAT_WORKFLOW_ACTIONS:
             has_wechat = True
 
+        if task_kind == "client_workflow" and action == "native_wechat_poll":
+            payload = dict(payload)
+            params = dict(payload.get("params") if isinstance(payload.get("params"), dict) else {})
+            params.setdefault("language", template_language)
+            params.setdefault("target_language", template_language)
+            payload["params"] = params
+            plan["payload"] = payload
+
         if task_kind == "client_workflow" and action == "shanjian_digital_human_video":
             has_hifly = True
             if digital_human_provider == _SALES_DH_PROVIDER_LEGACY:

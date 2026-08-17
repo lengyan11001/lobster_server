@@ -32,6 +32,7 @@ from ..models import (
     H5ChatApproval,
     H5ChatMessage,
     H5MountedAccountDefault,
+    IPContentScheduleTemplate,
     PublishAccount,
     ScheduledTaskRun,
     User,
@@ -155,6 +156,8 @@ class H5WechatAutoReplyIn(BaseModel):
     account_key: Optional[str] = Field(default="wechat:pc-default", max_length=255)
     account_id: Optional[str] = Field(default="pc-wechat-default", max_length=160)
     interval_seconds: int = Field(default=15, ge=1, le=86400)
+    language: Optional[str] = Field(default=None, max_length=64)
+    target_language: Optional[str] = Field(default=None, max_length=64)
     group_invite_enabled: Optional[bool] = None
     memory_doc_ids: Optional[List[str]] = Field(default=None, max_length=20)
     group_invite_memory_doc_id: Optional[str] = Field(default=None, max_length=64)
@@ -163,6 +166,63 @@ class H5WechatAutoReplyIn(BaseModel):
     group_invite_primary_contact: Optional[str] = Field(default=None, max_length=240)
     group_invite_primary_contact_name: Optional[str] = Field(default=None, max_length=240)
     group_invite_welcome_message: Optional[str] = Field(default=None, max_length=4000)
+
+
+_WECHAT_REPLY_LANGUAGE_ALIASES = {
+    "zh": "zh-CN",
+    "zh-cn": "zh-CN",
+    "chinese": "zh-CN",
+    "中文": "zh-CN",
+    "简体中文": "zh-CN",
+    "en-us": "en",
+    "en-gb": "en",
+    "english": "en",
+    "英文": "en",
+    "英语": "en",
+    "japanese": "ja",
+    "ja-jp": "ja",
+    "日文": "ja",
+    "日语": "ja",
+    "korean": "ko",
+    "ko-kr": "ko",
+    "韩文": "ko",
+    "韩语": "ko",
+}
+_WECHAT_REPLY_LANGUAGES = {"zh-CN", "en", "ja", "ko", "th", "vi", "id", "ms", "es", "pt", "fr", "de", "ru", "ar"}
+
+
+def _normalize_wechat_reply_language(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "zh-CN"
+    lowered = raw.lower()
+    normalized = _WECHAT_REPLY_LANGUAGE_ALIASES.get(lowered, raw)
+    return normalized if normalized in _WECHAT_REPLY_LANGUAGES else "zh-CN"
+
+
+def _personal_template_language(db: Session, user_id: int) -> str:
+    """Read the language from the active personal template used by H5 workflows."""
+    row = (
+        db.query(IPContentScheduleTemplate)
+        .filter(
+            IPContentScheduleTemplate.user_id == int(user_id),
+            IPContentScheduleTemplate.name == "个人默认配置",
+            IPContentScheduleTemplate.status == "active",
+        )
+        .order_by(IPContentScheduleTemplate.updated_at.desc(), IPContentScheduleTemplate.id.desc())
+        .first()
+    )
+    if not row:
+        return "zh-CN"
+    requirements = row.requirements if isinstance(row.requirements, dict) else {}
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    return _normalize_wechat_reply_language(
+        requirements.get("language")
+        or requirements.get("target_language")
+        or meta.get("language")
+        or meta.get("target_language")
+        or meta.get("profile_language")
+    )
 
 
 def _normalize_publish_account_snapshot(accounts: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
@@ -562,6 +622,11 @@ def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
                 for item in (auto_reply_payload.get("memory_doc_ids") or [])
                 if str(item or "").strip()
             ][:20]
+            row["auto_reply_language"] = _normalize_wechat_reply_language(
+                _personal_template_language(db, user_id)
+                or auto_reply_payload.get("language")
+                or auto_reply_payload.get("target_language")
+            )
             row["group_invite_memory_doc_id"] = str(auto_reply_payload.get("group_invite_memory_doc_id") or "").strip()
             row["group_invite_keywords"] = str(auto_reply_payload.get("group_invite_keywords") or "").strip()
             row["group_invite_enabled"] = bool(
@@ -1733,6 +1798,13 @@ def h5_set_wechat_auto_reply(
     pref.source = "pc_wechat"
     current_pref_payload = pref.payload if isinstance(pref.payload, dict) else {}
     enabled = current_pref_payload.get("enabled") if body.enabled is None else bool(body.enabled)
+    language = _normalize_wechat_reply_language(
+        body.language
+        or body.target_language
+        or _personal_template_language(db, owner_user.id)
+        or current_pref_payload.get("language")
+        or current_pref_payload.get("target_language")
+    )
     memory_doc_ids = current_pref_payload.get("memory_doc_ids") if body.memory_doc_ids is None else body.memory_doc_ids
     memory_doc_ids = list(
         dict.fromkeys(
@@ -1794,6 +1866,8 @@ def h5_set_wechat_auto_reply(
         "interval_seconds": interval_seconds,
         "account_id": account_id,
         "account_key": account_key,
+        "language": language,
+        "target_language": language,
         "memory_doc_ids": memory_doc_ids,
         "group_invite_enabled": bool(group_invite_enabled),
         "group_invite_memory_doc_id": group_invite_memory_doc_id,
@@ -1809,6 +1883,8 @@ def h5_set_wechat_auto_reply(
         "action": "native_wechat_auto_reply_config",
         "account_id": account_id,
         "interval_seconds": interval_seconds,
+        "language": language,
+        "target_language": language,
         "memory_doc_ids": memory_doc_ids,
         "group_invite_enabled": bool(group_invite_enabled),
         "group_invite_memory_doc_id": group_invite_memory_doc_id,

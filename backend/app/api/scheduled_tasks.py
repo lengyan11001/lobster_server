@@ -87,6 +87,8 @@ _SERIAL_CLIENT_WORKFLOW_ACTIONS = {
 }
 _NATIVE_WECHAT_RUNTIME_SETTING_KEYS = (
     "memory_doc_ids",
+    "language",
+    "target_language",
     "group_invite_enabled",
     "group_invite_memory_doc_id",
     "group_invite_keywords",
