@@ -916,7 +916,7 @@
       if (!node) return false;
       const id = String(node.id || "");
       const key = String(node.ability_key || node.key || "");
-      if (key === "native_wechat_poll") return false;
+      if (isNativeWechatWorkflowKey(key)) return false;
       if (key === "douyin_leads" && isSalesDouyinPrivateNode(node)) return false;
       if (node.sales_preset || id.startsWith("sales_")) return true;
       return String(node.department_id || "") === "sales" && SALES_PERSONA_DEFAULT_KEYS.has(key);
@@ -3284,11 +3284,22 @@
       return String(node.key || node.workQuickKey || "").trim() === "native_wechat_moments_engage";
     }
 
-    function workflowMomentContacts() {
-      const device = selectedDevice();
-      const rows = device && Array.isArray(device.wechat_contacts) ? device.wechat_contacts : [];
+    function workflowMomentContacts(scope = "param") {
+      const cfg = workflowMomentPickerConfig(scope);
+      const selectedId = String(state.selectedInstallationId || "").trim();
+      const device = selectedId
+        ? (state.devices || []).find((item) => String(item && item.installation_id || "") === selectedId)
+        : selectedDevice();
+      let rows = device && Array.isArray(device.wechat_contacts) ? device.wechat_contacts : [];
+      if (!rows.length) {
+        const mountedRow = (state.mountedAccounts || []).find((item) => {
+          if (!item || item.scope !== "wechat" || !Array.isArray(item.wechat_contacts)) return false;
+          return !selectedId || String(item.installation_id || "") === selectedId;
+        });
+        rows = mountedRow && Array.isArray(mountedRow.wechat_contacts) ? mountedRow.wechat_contacts : [];
+      }
       const seen = new Set();
-      return rows.map((item) => {
+      const normalized = rows.map((item) => {
         if (!item || typeof item !== "object") return null;
         const wxNo = String(item.wx_no || item.wxNo || item.wechat_id || item.wechatId || item.contact_key || "").trim();
         if (!wxNo || seen.has(wxNo)) return null;
@@ -3296,6 +3307,14 @@
         const name = String(item.display_name || item.name || item.remark || item.nickname || wxNo).trim() || wxNo;
         return { wx_no: wxNo, name, remark: String(item.remark || "").trim() };
       }).filter(Boolean);
+      const selected = state[cfg.selectedKey] && typeof state[cfg.selectedKey] === "object" ? state[cfg.selectedKey] : {};
+      Object.keys(selected).forEach((wxNo) => {
+        const value = String(wxNo || "").trim();
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        normalized.push({ wx_no: value, name: value, remark: "已保存的微信号" });
+      });
+      return normalized;
     }
 
     function workflowMomentPickerConfig(scope) {
@@ -3386,7 +3405,7 @@
       const list = $(cfg.list);
       if (!list) return;
       const query = String(state[cfg.searchKey] || "").trim().toLowerCase();
-      const rows = workflowMomentContacts().filter((item) => !query || [item.name, item.remark, item.wx_no].join(" ").toLowerCase().includes(query));
+      const rows = workflowMomentContacts(scope).filter((item) => !query || [item.name, item.remark, item.wx_no].join(" ").toLowerCase().includes(query));
       const pageSize = 20;
       const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
       state[cfg.pageKey] = Math.min(Math.max(1, Number(state[cfg.pageKey] || 1)), totalPages);
@@ -3435,6 +3454,13 @@
         state[cfg.pageKey] = Number(state[cfg.pageKey] || 1) + 1;
         renderWorkflowMomentPicker(scope);
       });
+    }
+
+    async function refreshWorkflowMomentContactSource() {
+      await refreshDeviceStatus();
+      if (!state.mountedAccountsLoaded && !state.mountedAccountsLoading) {
+        await loadMountedAccounts(true).catch(() => {});
+      }
     }
 
     function syncWorkflowNodeModalFields(reset = false) {
@@ -4373,6 +4399,11 @@
       initializeWorkflowMomentPicker("action", Array.isArray(actionParams.contact_wx_nos) ? actionParams.contact_wx_nos : actionParams.targets);
       syncWorkflowActionModalFields();
       modal.classList.remove("hidden");
+      if (workflowActionKind(action || {}) === "native_wechat_moments_engage") {
+        refreshWorkflowMomentContactSource().then(() => {
+          if (String(state.workflowActionEditId || "") === String(actionId || "")) renderWorkflowMomentPicker("action");
+        }).catch(() => {});
+      }
       const first = $("workflowActionTime") || modal.querySelector("input, select");
       if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 80);
     }
@@ -4417,7 +4448,7 @@
         action_type: actionType,
         platform,
         contact_wx_nos: wxNos,
-        moment_action: workflowParamValue("workflowActionMomentAction") || "like_comment",
+        moment_action: (($("workflowActionMomentAction") && $("workflowActionMomentAction").value) || "like_comment").trim(),
       }, existing);
       const children = currentChildren
         .filter((item) => String(item && item.id || "") !== String(nextAction.id || ""))
@@ -5382,6 +5413,11 @@
       modal.classList.remove("hidden");
       initWorkflowParamControls(lookup.node);
       refillWorkflowParamFields(node, lookup);
+      if (String(lookup.node.key || lookup.node.workQuickKey || "") === "native_wechat_moments_engage") {
+        refreshWorkflowMomentContactSource().then(() => {
+          if (String(state.workflowParamNodeId || "") === String(node.id || "")) renderWorkflowMomentPicker("param");
+        }).catch(() => {});
+      }
       const first = modal.querySelector("input, textarea, select");
       if (first && typeof first.focus === "function") setTimeout(() => first.focus(), 80);
     }
@@ -25463,6 +25499,7 @@
       setSelectedInstallationId(evt.target.value || "");
       renderWorkflowMomentPicker("node");
       renderWorkflowMomentPicker("action");
+      renderWorkflowMomentPicker("param");
       loadWorkflowActive().catch((err) => toast(err.message || "工作流状态加载失败"));
     });
     $("workflowOpenAddNodeBtn")?.addEventListener("click", openWorkflowNodeModal);

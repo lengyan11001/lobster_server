@@ -271,7 +271,7 @@ def test_native_wechat_takeover_uses_parent_group_switch_and_keeps_moments_child
     assert 'values.push("native_wechat_moments_engage")' in options
     assert 'values.push("native_wechat_group_invite", "native_wechat_moments_engage")' not in options
     assert 'label: "微信自动拉群"' not in script
-    assert 'if (key === "native_wechat_poll") return false;' in script
+    assert 'if (isNativeWechatWorkflowKey(key)) return false;' in script
     assert 'taskFieldHtml("是否拉群"' in script
     assert 'workflowParamNativeWechatGroupInviteEnabled' in script
     assert 'group_invite_enabled: workflowParamChecked("workflowParamNativeWechatGroupInviteEnabled")' in script
@@ -331,7 +331,12 @@ def test_moments_workflow_node_selects_paginated_contacts_by_wechat_id():
     assert 'id="workflowActionMomentField"' in html
     assert 'id="workflowNodeMomentPrev"' in html
     assert 'id="workflowNodeMomentNext"' in html
-    assert "function workflowMomentContacts()" in script
+    assert 'function workflowMomentContacts(scope = "param")' in script
+    assert "if (isNativeWechatWorkflowKey(key)) return false;" in script
+    assert "async function refreshWorkflowMomentContactSource()" in script
+    assert 'renderWorkflowMomentPicker("param")' in script
+    assert 'workflowActionMomentAction") && $("workflowActionMomentAction").value' in script
+    assert 'remark: "已保存的微信号"' in script
     assert "const pageSize = 20;" in script
     assert "contact_wx_nos: wxNos" in script
     assert "targets: wxNos" in script
