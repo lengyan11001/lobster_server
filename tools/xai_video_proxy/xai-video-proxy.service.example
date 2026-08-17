@@ -1,0 +1,18 @@
+[Unit]
+Description=Lobster xAI Video Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/xai_video_proxy
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/xai_video_proxy/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 19802
+Restart=always
+RestartSec=3
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
