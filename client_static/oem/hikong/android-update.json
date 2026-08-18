@@ -1,15 +1,15 @@
 {
-  "schema_version": 1,
-  "brand": "hikong",
-  "package_name": "com.bihuo.lobsterh5.hikong",
-  "version_code": 9,
-  "version_name": "1.1.7",
-  "apk_url": "/client/oem/hikong/android-1.1.7.apk",
-  "sha256": "eadc435931376a72e72cda28634f4cf806a542b7908edc42c32cb80164c812cd",
-  "size": 173094,
-  "published_at": "2026-08-09T19:38:18Z",
-  "force_update": false,
-  "min_supported_version_code": 1,
-  "title": "发现新版本",
-  "notes": ""
+    "schema_version":  1,
+    "brand":  "hikong",
+    "package_name":  "com.bihuo.lobsterh5.hikong",
+    "version_code":  10,
+    "version_name":  "1.1.8",
+    "apk_url":  "/client/oem/hikong/android-1.1.8.apk",
+    "sha256":  "91bb8818fe8d29a4b028c47b711acf270420a6c9c588c1e00d4352ddeb84d75d",
+    "size":  185382,
+    "published_at":  "2026-08-18T09:52:35Z",
+    "force_update":  false,
+    "min_supported_version_code":  1,
+    "title":  "发现新版本",
+    "notes":  "1.1.8 新版，包含应用内升级能力"
 }
