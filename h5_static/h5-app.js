@@ -2886,7 +2886,7 @@
     }
 
     function employeeName(device, index) {
-      return String((device && device.display_name) || "").trim() || "实习员工";
+      return deviceDisplayName(device) || "实习员工";
     }
 
     function stableHash(value) {
@@ -5536,7 +5536,7 @@
       const current = state.selectedInstallationId || "";
       const rows = state.devices || [];
       sel.innerHTML = rows.length
-        ? rows.map((device, idx) => optionHtml(device.installation_id || "", `${employeeName(device, idx)}${device.online ? "" : "（离线）"}`)).join("")
+        ? rows.map((device) => optionHtml(device.installation_id || "", `${deviceSelectorLabel(device)}${device.online ? "" : "（离线）"}`)).join("")
         : optionHtml("", "暂无设备");
       if (current && rows.some((device) => String(device.installation_id || "") === current)) sel.value = current;
       else sel.value = currentInstallationId();
@@ -12961,9 +12961,7 @@
 
     function liveExecutorDeviceLabel(device) {
       if (!device) return "未选择设备";
-      const name = deviceDisplayName(device) || "Online 设备";
-      const short = String(device.installation_id || "").slice(0, 8);
-      return short ? `${name} · ${short}` : name;
+      return deviceSelectorLabel(device);
     }
 
     function liveExecutorOnlineRows() {
@@ -13805,7 +13803,16 @@
 
     function deviceDisplayName(device) {
       if (!device) return "";
-      return String(device.display_name || device.installation_id || "").trim();
+      return String(device.display_name || device.device_name || "").trim();
+    }
+
+    function deviceSelectorLabel(device) {
+      if (!device) return "未命名设备";
+      const id = String(device.installation_id || "").trim();
+      const alias = deviceDisplayName(device);
+      const shortId = id.slice(0, 8);
+      if (alias) return shortId ? `${alias} · ${shortId}` : alias;
+      return shortId ? `设备 ${shortId}` : "未命名设备";
     }
 
     function scrollMessagesToBottom() {
@@ -15999,16 +16006,15 @@
       sel.innerHTML = rows.length
         ? rows.map((device) => {
             const id = String(device.installation_id || "");
-            const name = deviceDisplayName(device) || id;
             const accountCount = Number(device.publish_account_count || 0);
             const suffix = accountCount ? ` / ${accountCount}个账号` : "";
-            return optionHtml(id, `${name}${suffix}`);
+            return optionHtml(id, `${deviceSelectorLabel(device)}${suffix}`);
           }).join("")
         : optionHtml("", "暂无在线设备");
       sel.value = state.selectedInstallationId || "";
       const selected = selectedDevice();
       const text = selected
-        ? `在线 / ${deviceDisplayName(selected)}`
+        ? `在线 / ${deviceSelectorLabel(selected)}`
         : "暂无在线设备";
       if ($("profileSelectedDeviceText")) $("profileSelectedDeviceText").textContent = text;
     }
