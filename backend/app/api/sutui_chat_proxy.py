@@ -746,7 +746,7 @@ def _xskill_upstream_pool_quota_error(data: Any) -> bool:
 def _parse_sutui_chat_fallback_chain_env() -> List[str]:
     """主→备模型顺序：默认主模型 → openai/gpt-5.6-sol → deepseek-chat。"""
     raw = (os.environ.get("SUTUI_CHAT_MODEL_FALLBACK_CHAIN_JSON") or "").strip()
-    default = ["openai/gpt-5.6-sol", "deepseek-chat"]
+    default = ["openai/gpt-5.6-terra", "deepseek-chat"]
     if not raw:
         return default
     try:
@@ -760,11 +760,26 @@ def _parse_sutui_chat_fallback_chain_env() -> List[str]:
     return out if out else default
 
 
+def _disabled_sutui_chat_models() -> set[str]:
+    raw = (os.environ.get("SUTUI_CHAT_DISABLED_MODELS_JSON") or "").strip()
+    default = {"openai/gpt-5.6-sol", "gpt-5.6-sol"}
+    if not raw:
+        return default
+    try:
+        arr = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("[sutui-chat] SUTUI_CHAT_DISABLED_MODELS_JSON 不是合法 JSON，已用默认禁用列表")
+        return default
+    if not isinstance(arr, list):
+        return default
+    return {str(x).strip() for x in arr if str(x).strip()}
+
+
 def _remap_model_id_for_sutui(mid: str) -> str:
     """对单个 model id 应用 SUTUI_CHAT_MODEL_MAP_JSON（与 body 一致）。"""
     normalized = (mid or "").strip()
     # This xskill route requires its provider-qualified model ID.
-    if normalized == "openai/gpt-5.6-sol":
+    if normalized in {"openai/gpt-5.6-sol", "openai/gpt-5.6-terra"}:
         return normalized
     b: Dict[str, Any] = {"model": normalized}
     if not b["model"]:
@@ -778,6 +793,7 @@ def _sutui_chat_model_candidates(
     *,
     has_tools: bool = False,
     required_fallbacks: Optional[List[str]] = None,
+    fallback_chain: Optional[List[str]] = None,
 ) -> List[str]:
     """
     对话编排：优先用入站（已 remap）的 model，再按 fallback chain 尝试其它通道，去重。
@@ -790,18 +806,35 @@ def _sutui_chat_model_candidates(
     if init and init not in seen:
         seen.add(init)
         out.append(init)
-    fallback_chain = [*_parse_sutui_chat_fallback_chain_env(), *(required_fallbacks or []), "deepseek-chat"]
-    for fb in fallback_chain:
+    configured_chain = (
+        list(fallback_chain)
+        if fallback_chain is not None
+        else _parse_sutui_chat_fallback_chain_env()
+    )
+    configured_chain.extend(required_fallbacks or [])
+    configured_chain.append("deepseek-chat")
+    for fb in configured_chain:
         m = _remap_model_id_for_sutui(fb)
         if m and m not in seen:
             seen.add(m)
             out.append(m)
     if not out:
         return [init] if init else []
+    disabled = _disabled_sutui_chat_models()
+    if disabled:
+        before_disabled = list(out)
+        out = [m for m in out if m not in disabled]
+        skipped_disabled = set(before_disabled) - set(out)
+        if skipped_disabled:
+            logger.info("[sutui-chat] skipping disabled chat models: %s", skipped_disabled)
     filtered = [m for m in out if not _is_model_tripped(m)]
     if not filtered:
-        logger.info("[circuit-breaker] all candidates tripped, using first: %s", out[0])
-        return [out[0]]
+        if out:
+            logger.info("[circuit-breaker] all candidates tripped, using first: %s", out[0])
+            return [out[0]]
+        fallback = "deepseek-chat"
+        logger.warning("[sutui-chat] all candidates disabled, using emergency fallback: %s", fallback)
+        return [fallback]
     if len(filtered) < len(out):
         skipped = set(out) - set(filtered)
         logger.info("[circuit-breaker] skipping tripped models: %s", skipped)
@@ -1624,11 +1657,11 @@ async def sutui_chat_completions(
         original_model = (body.get("model") or "").strip()
         body["model"] = llm_model_override
         logger.info(
-            "[sutui-chat] user-level LLM model override user_id=%s original_model=%s forced_model=%s no_fallback=%s",
+            "[sutui-chat] user-level LLM model preference user_id=%s original_model=%s preferred_model=%s fallback_enabled=%s",
             current_user.id,
             original_model or "-",
             llm_model_override,
-            False,
+            True,
         )
     _optimize_request_body(body, preserve_local_tools=openclaw_skill_request)
     _enforce_single_search_models_tool_call(body, trace_id)
@@ -1655,10 +1688,16 @@ async def sutui_chat_completions(
     requested_model_id = model_id
     _req_has_tools = bool(body.get("tools")) and body.get("tool_choice") != "none"
     force_exact_model = False
+    preferred_model_fallback_chain = (
+        ["openai/gpt-5.6-terra", "deepseek-chat"]
+        if llm_model_override
+        else None
+    )
     model_candidates = [model_id] if force_exact_model else _sutui_chat_model_candidates(
         model_id,
         has_tools=_req_has_tools,
         required_fallbacks=["deepseek-chat"] if mastra_chat_profile else None,
+        fallback_chain=preferred_model_fallback_chain,
     )
     _tok = (token or "").strip()
     _tok_ref = sutui_token_ref_from_secret(_tok) or "-"
@@ -1970,6 +2009,10 @@ async def sutui_chat_completions(
         stream_completed_ok = False
         try:
             for cand_idx, att in enumerate(attempts):
+                line_buf.clear()
+                stream_event_count = 0
+                stream_error_payload: Optional[Any] = None
+                pending_stream_chunks: List[bytes] = []
                 mid_try = att["model"]
                 _epfx = att.get("endpoint_prefix", "/v1")
                 att_url = f"{att['api_base']}{_epfx}/chat/completions"
@@ -2101,7 +2144,7 @@ async def sutui_chat_completions(
                                 },
                             )
                             async for chunk in resp.aiter_bytes():
-                                yield chunk
+                                before_event_count = stream_event_count
                                 line_buf.extend(chunk)
                                 while True:
                                     nl = line_buf.find(b"\n")
@@ -2121,6 +2164,10 @@ async def sutui_chat_completions(
                                         continue
                                     if not isinstance(obj, dict):
                                         continue
+                                    if obj.get("error"):
+                                        stream_error_payload = obj.get("error")
+                                        continue
+                                    stream_event_count += 1
                                     for _bk in ("x_billing", "X-Billing"):
                                         if _bk in obj and obj[_bk] is not None:
                                             stream_upstream_billing[_bk] = obj[_bk]
@@ -2131,6 +2178,56 @@ async def sutui_chat_completions(
                                         or u.get("total_tokens") is not None
                                     ):
                                         last_usage = u
+                                if stream_event_count > 0 and stream_error_payload is None:
+                                    for pending_chunk in pending_stream_chunks:
+                                        yield pending_chunk
+                                    pending_stream_chunks.clear()
+                                    yield chunk
+                                elif before_event_count == 0:
+                                    pending_stream_chunks.append(bytes(chunk))
+                            if stream_error_payload is not None:
+                                error_preview = str(stream_error_payload)[:500]
+                                logger.warning(
+                                    "[chat_trace] trace_id=%s stream_invalid http=200 model=%s provider=%s reason=upstream_error_event error=%s",
+                                    trace_id,
+                                    mid_try,
+                                    att["provider"],
+                                    error_preview,
+                                )
+                                if cand_idx < len(attempts) - 1:
+                                    logger.warning(
+                                        "[chat_trace] trace_id=%s stream_fallback reason=upstream_error_event from=%s(%s) to=%s(%s)",
+                                        trace_id,
+                                        mid_try,
+                                        att["provider"],
+                                        attempts[cand_idx + 1]["model"],
+                                        attempts[cand_idx + 1]["provider"],
+                                    )
+                                    continue
+                                yield _stream_upstream_error_sse_bytes(502, error_preview)
+                                return
+                            if stream_event_count == 0:
+                                empty_stream_error = (
+                                    f"HTTP 200 but no valid SSE events from {mid_try} ({att['provider']})"
+                                )
+                                logger.warning(
+                                    "[chat_trace] trace_id=%s stream_invalid http=200 model=%s provider=%s reason=empty_or_truncated_sse",
+                                    trace_id,
+                                    mid_try,
+                                    att["provider"],
+                                )
+                                if cand_idx < len(attempts) - 1:
+                                    logger.warning(
+                                        "[chat_trace] trace_id=%s stream_fallback reason=empty_or_truncated_sse from=%s(%s) to=%s(%s)",
+                                        trace_id,
+                                        mid_try,
+                                        att["provider"],
+                                        attempts[cand_idx + 1]["model"],
+                                        attempts[cand_idx + 1]["provider"],
+                                    )
+                                    continue
+                                yield _stream_upstream_error_sse_bytes(502, empty_stream_error)
+                                return
                             stream_completed_ok = True
                             _record_model_success(f"{mid_try}@{att['provider']}")
                             break
