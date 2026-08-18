@@ -2395,6 +2395,15 @@ def _coalesce_recurring_pending_runs(
     installation_id: str,
     now: datetime,
 ) -> int:
+    online_installation_ids = {
+        str(row.installation_id or "")
+        for row in (
+            db.query(H5ChatDevicePresence)
+            .filter(H5ChatDevicePresence.user_id == user_id)
+            .all()
+        )
+        if str(row.installation_id or "") and is_device_online(row.last_seen_at, now=now)
+    }
     query = (
         db.query(ScheduledTaskRun, ScheduledTask)
         .join(ScheduledTask, ScheduledTask.id == ScheduledTaskRun.task_id)
@@ -2445,12 +2454,17 @@ def _coalesce_recurring_pending_runs(
         newest_by_target[key] = run
         cutoff = now - timedelta(seconds=_recurring_pending_max_age_seconds(task))
         if run.created_at < cutoff:
+            target_is_online = bool(run.installation_id and str(run.installation_id) in online_installation_ids)
             _skip_pending_recurring_run(
                 db,
                 run,
                 now=now,
-                reason="expired_recurring_run",
-                message="设备离线期间未执行，该计划已过有效时间并自动跳过。",
+                reason="expired_recurring_run_while_busy" if target_is_online else "expired_recurring_run",
+                message=(
+                    "设备在线但正在执行其他任务，本轮计划在队列中超过有效时间，已自动跳过。"
+                    if target_is_online
+                    else "设备离线期间未执行，该计划已过有效时间并自动跳过。"
+                ),
             )
             skipped += 1
     return skipped
