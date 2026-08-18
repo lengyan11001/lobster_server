@@ -726,8 +726,8 @@ def _image_generation_model_attempts(model: str) -> List[str]:
     """Return billing model ids to try for one image generation request."""
     if _is_gpt_image_2_request_model(model):
         return [
-            "gpt-image-2",
             "gpt-image-2-gaisc",
+            "gpt-image-2",
             "gpt-image-2-sutui",
             "gpt-image-2-openmindapi",
             "nano-banana-2",
@@ -1843,16 +1843,44 @@ def _openmind_video_base_url() -> str:
     return base or "https://www.openmindapi.com"
 
 
-def _openmind_video_api_key() -> str:
+def _is_openmind_seedance_model(model: str) -> bool:
+    value = str(model or "").strip().lower().replace("_", "-").replace(" ", "")
+    return value in {
+        "doubao-seedance-2-0-260128",
+        "doubao-seedance-2-0-fast-260128",
+        "seedance-2-0-260128",
+        "seedance-2-0-fast-260128",
+        "seedance2.0",
+        "seedance2.0-hd",
+        "seedance2.0-4k",
+        "seedance2.0-480",
+        "seedance2.0-mini-720",
+        "seedance2.0-mini-480",
+    }
+
+
+def _openmind_video_api_key(model: str = "") -> str:
+    if _is_openmind_seedance_model(model):
+        key = (
+            os.environ.get("OPENMIND_SEEDANCE_API_KEY")
+            or os.environ.get("OPENMIND_API_KEY")
+            or ""
+        ).strip()
+        if not key:
+            raise HTTPException(
+                503,
+                "Server missing OPENMIND_SEEDANCE_API_KEY or OPENMIND_API_KEY",
+            )
+        return key
     key = (os.environ.get("OPENMIND_API_KEY") or "").strip()
     if not key:
         raise HTTPException(503, "Server missing OPENMIND_API_KEY")
     return key
 
 
-def _openmind_video_headers() -> Dict[str, str]:
+def _openmind_video_headers(model: str = "") -> Dict[str, str]:
     return {
-        "Authorization": f"Bearer {_openmind_video_api_key()}",
+        "Authorization": f"Bearer {_openmind_video_api_key(model)}",
         "Content-Type": "application/json",
         "Accept": "application/json",
         "User-Agent": "Mozilla/5.0 Chrome/126 Safari/537.36",
@@ -1867,6 +1895,12 @@ def _openmind_enabled_for_video() -> bool:
 def _openmind_video_model(model: str) -> str:
     raw = (model or "").strip()
     low = raw.lower().replace("_", "-").replace(" ", "")
+    seedance_model = (
+        os.environ.get("OPENMIND_SEEDANCE_MODEL") or "seedance2.0"
+    ).strip() or "seedance2.0"
+    seedance_fast_model = (
+        os.environ.get("OPENMIND_SEEDANCE_FAST_MODEL") or seedance_model
+    ).strip() or seedance_model
     explicit = {
         "veo3.1": os.environ.get("OPENMIND_VEO31_MODEL") or "veo31",
         "veo3.1-fast": os.environ.get("OPENMIND_VEO31_FAST_MODEL") or "veo31-fast",
@@ -1874,8 +1908,8 @@ def _openmind_video_model(model: str) -> str:
         "veo31-fast": os.environ.get("OPENMIND_VEO31_FAST_MODEL") or "veo31-fast",
         "grok-video-3": os.environ.get("OPENMIND_GROK_VIDEO_MODEL") or "grok-imagine-video-1.5",
         "grok-imagine-video-1.5-preview": os.environ.get("OPENMIND_GROK_VIDEO_MODEL") or "grok-imagine-video-1.5",
-        "doubao-seedance-2-0-260128": os.environ.get("OPENMIND_SEEDANCE_MODEL") or "doubao-seedance-2-0-260128",
-        "doubao-seedance-2-0-fast-260128": os.environ.get("OPENMIND_SEEDANCE_FAST_MODEL") or "doubao-seedance-2-0-260128",
+        "doubao-seedance-2-0-260128": seedance_model,
+        "doubao-seedance-2-0-fast-260128": seedance_fast_model,
     }
     if low in explicit:
         return (explicit[low] or "").strip() or raw
@@ -1924,7 +1958,11 @@ async def _openmind_video_submit(body: Dict[str, Any], model: str, entry: Dict[s
     url = f"{_openmind_video_base_url()}/v1/videos"
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT_OPENMIND_VIDEO_SUBMIT, follow_redirects=True) as client:
-            r = await client.post(url, headers=_openmind_video_headers(), json=upstream_body)
+            r = await client.post(
+                url,
+                headers=_openmind_video_headers(model),
+                json=upstream_body,
+            )
     except httpx.TimeoutException as exc:
         raise RuntimeError(f"OpenMind videos submit timeout after {_TIMEOUT_OPENMIND_VIDEO_SUBMIT}s") from exc
     except httpx.TransportError as exc:
@@ -2133,12 +2171,12 @@ async def _mirror_openmind_video_to_tos(payload: Dict[str, Any], task_id: str) -
     return payload
 
 
-async def _openmind_video_poll(task_id: str) -> Dict[str, Any]:
+async def _openmind_video_poll(task_id: str, model: str = "") -> Dict[str, Any]:
     if not _openmind_enabled_for_video():
         raise RuntimeError("OpenMind video channel disabled")
     url = f"{_openmind_video_base_url()}/v1/videos/{task_id}"
     async with httpx.AsyncClient(timeout=_TIMEOUT_VIDEO_POLL, follow_redirects=True) as client:
-        r = await client.get(url, headers=_openmind_video_headers())
+        r = await client.get(url, headers=_openmind_video_headers(model))
     if r.status_code >= 400:
         raise RuntimeError(f"OpenMind videos poll HTTP {r.status_code}: {(r.text or '')[:500]}")
     try:
@@ -2187,7 +2225,7 @@ def _xing_seedance_body(body: Dict[str, Any], model: str) -> Dict[str, Any]:
     if ratio not in {"16:9", "9:16"}:
         ratio = "9:16"
     return {
-        "model": (os.environ.get("XING_SEEDANCE_MODEL") or model or "seedance2.0-900").strip(),
+        "model": (model or os.environ.get("XING_SEEDANCE_MODEL") or "seedance2.0-900").strip(),
         "prompt": prompt,
         "duration": duration,
         "resolution": str(source.get("resolution") or "720p").strip() or "720p",
@@ -2509,14 +2547,14 @@ def _normalize_retried_video_poll_payload(
     return normalized
 
 
-async def _openmind_video_content(task_id: str) -> Response:
+async def _openmind_video_content(task_id: str, model: str = "") -> Response:
     """Fetch protected OpenMind video bytes with the server-side provider key."""
     safe_task_id = (task_id or "").strip()
     if not safe_task_id:
         raise HTTPException(400, "missing task_id")
     url = f"{_openmind_video_base_url()}/v1/videos/{safe_task_id}/content"
     async with httpx.AsyncClient(timeout=_TIMEOUT_VIDEO_POLL, follow_redirects=True, trust_env=False) as client:
-        upstream = await client.get(url, headers=_openmind_video_headers())
+        upstream = await client.get(url, headers=_openmind_video_headers(model))
     if upstream.status_code >= 400:
         raise HTTPException(upstream.status_code, f"OpenMind video content HTTP {upstream.status_code}: {(upstream.text or '')[:500]}")
     media_type = upstream.headers.get("content-type") or "video/mp4"
@@ -4151,6 +4189,15 @@ def _video_provider_policy(model: str, channel: str = "") -> Dict[str, Any]:
             ],
         }
 
+    if low_model in {"seedance-2.5", "seedance2.5", "seedance2-5", "yingmeng2.5", "影梦2.5"}:
+        return {
+            "ok": True,
+            "model_family": "seedance25",
+            "providers": [
+                {"channel": "xing", "model": "seedance-2.5", "base_url": proxy_base},
+            ],
+        }
+
     if low_model in {"seedance-2-0-pro-250528", "seedance-2-0-lite-250428", "seedance-2-0-260128", "seedance-2-0-fast-260128", "doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "seedance2.0-900", "seedance2-0-900"}:
         if low_model in {"seedance2.0-900", "seedance2-0-900"}:
             return {
@@ -4320,7 +4367,8 @@ async def proxy_openmind_video_poll(
             )
         )
     try:
-        resp = await _openmind_video_poll(active_task_id)
+        poll_model = str((retry_context or {}).get("model") or "").strip()
+        resp = await _openmind_video_poll(active_task_id, model=poll_model)
         replacement = await _maybe_resubmit_interrupted_video(
             root_task_id,
             provider="openmind",
@@ -4347,7 +4395,16 @@ async def proxy_openmind_video_content(
     current_user: User = Depends(get_current_user),
 ):
     _check_request_authorized_for_billing(request)
-    return await _openmind_video_content(task_id)
+    root_task_id, active_task_id, retry_context = _video_image_retry_poll_target(
+        task_id,
+        provider="openmind",
+        request_user_id=current_user.id,
+    )
+    content_model = str((retry_context or {}).get("model") or "").strip()
+    return await _openmind_video_content(
+        active_task_id or root_task_id or task_id,
+        model=content_model,
+    )
 
 
 @router.post("/api/comfly-proxy/xing/v1/videos/generations", summary="Xing Seedance2.0-900 video submit proxy")

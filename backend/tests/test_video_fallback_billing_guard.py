@@ -13,11 +13,14 @@ from backend.app.api.comfly_proxy import (
     _maybe_resubmit_interrupted_video,
     _mirror_openmind_video_to_tos,
     _openmind_video_body,
+    _openmind_video_headers,
+    _openmind_video_model,
     _remember_video_image_retry_context,
     _video_image_retry_contexts,
     _video_image_retry_poll_target,
     _video_image_retry_roots,
     _video_provider_policy,
+    _xing_seedance_body,
     _xai_video_body,
 )
 
@@ -76,6 +79,28 @@ def test_openmind_video_body_uses_integer_duration_and_all_references():
     assert body["image_urls"] == body["images"]
     assert body["aspect_ratio"] == "4:5"
     assert body["size"] == "864x1080"
+
+
+def test_openmind_seedance_uses_dedicated_key_without_changing_other_video_channels(monkeypatch):
+    from backend.app.api import comfly_proxy
+
+    monkeypatch.setenv("OPENMIND_API_KEY", "global-openmind-key")
+    monkeypatch.setenv("OPENMIND_SEEDANCE_API_KEY", "seedance-openmind-key")
+
+    seedance_headers = _openmind_video_headers("doubao-seedance-2-0-260128")
+    grok_headers = _openmind_video_headers("grok-video-3")
+
+    assert seedance_headers["Authorization"] == "Bearer seedance-openmind-key"
+    assert grok_headers["Authorization"] == "Bearer global-openmind-key"
+    assert comfly_proxy._is_openmind_seedance_model("seedance2.0-HD")
+
+
+def test_openmind_seedance_default_model_uses_verified_model(monkeypatch):
+    monkeypatch.delenv("OPENMIND_SEEDANCE_MODEL", raising=False)
+    monkeypatch.delenv("OPENMIND_SEEDANCE_FAST_MODEL", raising=False)
+
+    assert _openmind_video_model("doubao-seedance-2-0-260128") == "seedance2.0"
+    assert _openmind_video_model("doubao-seedance-2-0-fast-260128") == "seedance2.0"
 
 
 def test_xai_video_body_maps_duration_and_first_image():
@@ -141,6 +166,32 @@ def test_veo_family_falls_back_to_xai_direct_only():
             "base_url": "/api/comfly-proxy",
         }
     ]
+
+
+def test_seedance25_uses_xing_provider():
+    policy = _video_provider_policy("seedance-2.5")
+
+    assert policy["ok"] is True
+    assert policy["model_family"] == "seedance25"
+    assert policy["providers"] == [
+        {
+            "channel": "xing",
+            "model": "seedance-2.5",
+            "base_url": "/api/comfly-proxy",
+        }
+    ]
+
+
+def test_xing_seedance_requested_model_overrides_env_default(monkeypatch):
+    monkeypatch.setenv("XING_SEEDANCE_MODEL", "seedance2.0-900")
+
+    body = _xing_seedance_body(
+        {"prompt": "test video", "duration": 10, "aspect_ratio": "16:9"},
+        "seedance-2.5",
+    )
+
+    assert body["model"] == "seedance-2.5"
+    assert body["ratio"] == "16:9"
 
 
 def test_xai_video_model_has_billable_pricing_entry():

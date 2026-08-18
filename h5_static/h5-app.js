@@ -16850,7 +16850,13 @@
       return ["grok-imagine-video-1.5-preview", "yingmeng1.5plus", "影梦1.5plus"].includes(value);
     }
 
+    function seedanceIsXing25Model(model) {
+      const value = String(model || "").toLowerCase().replace(/\s+/g, "");
+      return ["seedance-2.5", "seedance2.5", "yingmeng2.5", "影梦2.5"].includes(value);
+    }
+
     function seedanceVideoRequestForModel(model) {
+      if (seedanceIsXing25Model(model)) return { model: "seedance-2.5", channel: "xing" };
       if (seedanceIsOpenMindGrokModel(model)) return { model: "grok-imagine-video-1.5-preview", channel: "openmind" };
       if (seedanceIsYunwuVeoModel(model)) return { model: "veo3.1", channel: "yunwu" };
       return { model: String(model || "doubao-seedance-2-0-260128").trim(), channel: "" };
@@ -16882,6 +16888,7 @@
         ["yunwu-veo3.1-plus", "影梦 1.0 Plus"],
         ["grok-imagine-video-1.5-preview", "影梦 1.5 Plus"],
         ["doubao-seedance-2-0-260128", "影梦 2.0 Pro"],
+        ["seedance-2.5", "影梦 2.5"],
       ].map(([model, label]) => `<option value="${escapeHtml(model)}" ${model === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
     }
 
@@ -17024,6 +17031,7 @@
       const channel = String(payload.video_channel || "").trim().toLowerCase();
       const model = String(payload.video_model || "").trim();
       if (channel === "yunwu" || seedanceIsYunwuVeoModel(model)) return "yunwu-veo3.1-plus";
+      if (channel === "xing" && seedanceIsXing25Model(model)) return "seedance-2.5";
       if (channel === "openmind" || seedanceIsOpenMindGrokModel(model)) return "grok-imagine-video-1.5-preview";
       return model || "grok-imagine-video-1.5-preview";
     }
