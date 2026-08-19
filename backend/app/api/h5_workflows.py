@@ -270,7 +270,8 @@ def _clean_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         plan = raw.get("plan") if isinstance(raw.get("plan"), dict) else raw
         task_kind = str(plan.get("task_kind") or plan.get("taskKind") or "").strip().lower()
-        payload = plan.get("payload") if isinstance(plan.get("payload"), dict) else {}
+        payload = copy.deepcopy(plan.get("payload")) if isinstance(plan.get("payload"), dict) else {}
+        _normalize_douyin_private_switch(raw, plan, payload)
         title = str(plan.get("title") or raw.get("label") or raw.get("ability_label") or "工作流任务").strip()[:160]
         content = str(plan.get("content") or f"H5 工作流：{title}").strip()[:12000]
         if _is_workflow_placeholder(raw) or payload.get("action") == "workflow_coming_soon":
@@ -338,6 +339,48 @@ def _bool_param(value: Any, default: bool = False) -> bool:
     if text in {"0", "false", "no", "n", "off", "disabled"}:
         return False
     return bool(default)
+
+
+def _normalize_douyin_private_switch(
+    node: dict[str, Any],
+    plan: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    task_kind = _clean_text(plan.get("task_kind") or plan.get("taskKind"), 64).lower()
+    params = dict(payload.get("params") if isinstance(payload.get("params"), dict) else {})
+    action = _clean_text(payload.get("action") or params.get("sales_action"), 128).lower()
+    ability_key = _clean_text(node.get("ability_key") or node.get("abilityKey"), 128).lower()
+    marker = " ".join(
+        _clean_text(value, 200)
+        for value in (node.get("ability_label"), node.get("abilityLabel"), node.get("note"), plan.get("title"))
+    )
+    is_private = action == "stranger_message" or (
+        task_kind == "douyin_leads"
+        and ability_key == "douyin_leads"
+        and ("私信接管" in marker or "private takeover" in marker.lower())
+    )
+    if task_kind != "douyin_leads" or not is_private:
+        return
+    params["wechat_add_friend_enabled"] = _bool_param(params.get("wechat_add_friend_enabled"), False)
+    params["wechat_add_friend_targets_source"] = "douyin_private_message_phone"
+    params.pop("wechat_add_friend_rules", None)
+    payload["params"] = params
+
+
+def _canonical_workflow_nodes(nodes: Any) -> list[dict[str, Any]]:
+    prepared = _visible_workflow_nodes(nodes)
+    for node in prepared:
+        plan = node.get("plan") if isinstance(node.get("plan"), dict) else {}
+        payload = copy.deepcopy(plan.get("payload")) if isinstance(plan.get("payload"), dict) else {}
+        _normalize_douyin_private_switch(node, plan, payload)
+        if plan:
+            plan["payload"] = payload
+            node["plan"] = plan
+        if isinstance(node.get("children"), list):
+            node["children"] = _canonical_workflow_nodes(node["children"])
+        elif isinstance(node.get("actions"), list):
+            node["actions"] = _canonical_workflow_nodes(node["actions"])
+    return prepared
 
 
 def _safe_int(value: Any, default: int = 0, *, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
@@ -1538,7 +1581,7 @@ def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, 
         "owner_user_id": row.owner_user_id,
         "owner_name": owner.email if owner else "",
         "name": row.name,
-        "nodes": _visible_workflow_nodes(row.nodes),
+        "nodes": _canonical_workflow_nodes(row.nodes),
         "status": row.status,
         "source": source,
         "meta": row.meta or {},
@@ -1561,7 +1604,7 @@ def _activation_payload(row: H5WorkflowActivation, template: Optional[H5Workflow
         "template_key": snapshot.get("template_key") or "",
         "template_source": snapshot.get("source") or "",
         "template_name": template.name if template else snapshot.get("name", ""),
-        "template_nodes": _visible_workflow_nodes(template_nodes),
+        "template_nodes": _canonical_workflow_nodes(template_nodes),
         "status": row.status,
         "scheduled_task_ids": row.scheduled_task_ids or [],
         "started_at": _iso(row.started_at),

@@ -5278,7 +5278,7 @@
       }
       const isDouyinLookup = workflowLookupIsDouyinLeads(nodeInfo);
       if (isDouyinLookup && isSalesDouyinPrivateNode(node)) {
-        setFieldValue("workflowParamDouyinWechatAddFriend", workflowBoolParam(params.wechat_add_friend_enabled, true));
+        setFieldValue("workflowParamDouyinWechatAddFriend", workflowBoolParam(params.wechat_add_friend_enabled, false));
         return;
       }
       if (payload.action === "search_collect" || isDouyinLookup) {
@@ -5484,7 +5484,7 @@
       if ($("workflowParamFields")) $("workflowParamFields").innerHTML = "";
     }
 
-    function saveWorkflowParamNode() {
+    async function saveWorkflowParamNode() {
       const nodeId = String(state.workflowParamNodeId || "");
       const idx = (state.workflowNodesDraft || []).findIndex((item) => String(item.id || "") === nodeId);
       if (idx < 0) throw new Error("未找到节点");
@@ -5506,9 +5506,24 @@
         plan,
       };
       state.workflowNodesDraft.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
-      closeWorkflowParamModal();
       renderWorkflow();
-      toast("节点参数已保存");
+      const saveButton = $("workflowParamSave");
+      const previousLabel = saveButton ? saveButton.textContent : "";
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = "保存中...";
+      }
+      try {
+        await saveWorkflowTemplate({ notify: false });
+        closeWorkflowParamModal();
+        renderWorkflow();
+        toast("节点参数已保存到服务器");
+      } finally {
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = previousLabel || "保存节点";
+        }
+      }
     }
 
     function workflowDemoPlan(node) {
@@ -6170,7 +6185,7 @@
       renderWorkflowGrantPanel();
     }
 
-    async function saveWorkflowTemplate() {
+    async function saveWorkflowTemplate({ notify = true } = {}) {
       if (state.workflowTemplateSaving) return;
       const name = ($("workflowTemplateName") && $("workflowTemplateName").value || "").trim();
       if (!name) {
@@ -6220,7 +6235,7 @@
         } else if (savedTemplate) {
           applyWorkflowTemplate(savedTemplate);
         }
-        toast(systemTemplateKey === "system_sales" ? "销售已保存" : "工作流已保存");
+        if (notify) toast(systemTemplateKey === "system_sales" ? "销售已保存" : "工作流已保存");
       } finally {
         state.workflowTemplateSaving = false;
         if (saveButton) {
@@ -25807,11 +25822,7 @@
     $("workflowParamCancel")?.addEventListener("click", closeWorkflowParamModal);
     $("workflowParamForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
-      try {
-        saveWorkflowParamNode();
-      } catch (err) {
-        toast(err.message || "保存失败");
-      }
+      saveWorkflowParamNode().catch((err) => toast(err.message || "保存失败"));
     });
     $("leadDomainTabs")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-lead-domain]");

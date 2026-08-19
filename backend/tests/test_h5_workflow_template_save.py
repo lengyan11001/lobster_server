@@ -29,6 +29,50 @@ def _sales_body(label: str) -> WorkflowTemplateIn:
     )
 
 
+def _douyin_private_body(params: dict | None = None) -> WorkflowTemplateIn:
+    return WorkflowTemplateIn(
+        name="抖音私信员工",
+        nodes=[
+            {
+                "id": "douyin_private_1",
+                "time": "14:45",
+                "ability_key": "douyin_leads",
+                "ability_label": "抖音私信接管",
+                "note": "抖音私信接管",
+                "plan": {
+                    "title": "抖音私信接管",
+                    "task_kind": "douyin_leads",
+                    "payload": {"action": "stranger_message", "params": params or {}},
+                },
+            }
+        ],
+    )
+
+
+def test_douyin_private_switch_is_explicitly_stored_and_returned(db_session, test_user):
+    created = create_workflow_template(
+        _douyin_private_body({"wechat_add_friend_enabled": False}),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    response_params = created["template"]["nodes"][0]["plan"]["payload"]["params"]
+    stored_params = db_session.get(H5WorkflowTemplate, created["template"]["id"]).nodes[0]["plan"]["payload"]["params"]
+    assert response_params["wechat_add_friend_enabled"] is False
+    assert stored_params["wechat_add_friend_enabled"] is False
+    assert stored_params["wechat_add_friend_targets_source"] == "douyin_private_message_phone"
+
+
+def test_legacy_douyin_private_switch_defaults_to_false_in_server_payload():
+    legacy_node = _douyin_private_body().nodes[0]
+    row = H5WorkflowTemplate(owner_user_id=1, name="旧抖音员工", nodes=[legacy_node])
+
+    params = _template_payload(row)["nodes"][0]["plan"]["payload"]["params"]
+
+    assert params["wechat_add_friend_enabled"] is False
+    assert params["wechat_add_friend_targets_source"] == "douyin_private_message_phone"
+
+
 def test_system_sales_save_creates_one_personal_mirror_and_then_updates_it(db_session, test_user):
     first = create_workflow_template(_sales_body("第一次保存"), current_user=test_user, db=db_session)
     second = create_workflow_template(_sales_body("第二次保存"), current_user=test_user, db=db_session)

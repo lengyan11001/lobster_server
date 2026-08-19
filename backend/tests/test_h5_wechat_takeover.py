@@ -460,7 +460,18 @@ def test_h5_custom_employee_reopens_add_friend_switch_from_server_payload():
     assert 'action === "stranger_message"' in detect_source
     assert "function workflowLookupIsDouyinLeads" in detect_source
     assert "const isDouyinLookup = workflowLookupIsDouyinLeads(nodeInfo);" in refill_source
-    assert "workflowBoolParam(params.wechat_add_friend_enabled, true)" in refill_source
+    assert "workflowBoolParam(params.wechat_add_friend_enabled, false)" in refill_source
+
+
+def test_h5_node_save_persists_template_and_reloads_server_copy():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    save_start = script.index("async function saveWorkflowParamNode")
+    save_end = script.index("function workflowDemoPlan", save_start)
+    save_source = script[save_start:save_end]
+
+    assert "await saveWorkflowTemplate({ notify: false });" in save_source
+    assert "节点参数已保存到服务器" in save_source
+    assert 'saveWorkflowParamNode().catch((err) => toast(err.message || "保存失败"))' in script
 
 
 def test_h5_migrates_add_friend_rows_when_loading_sales_templates():
