@@ -136,8 +136,8 @@ def _task_factories() -> List[tuple[str, Callable[[], Awaitable[None]]]]:
 
 async def main_async() -> int:
     try:
-        abandoned = await asyncio.to_thread(fail_client_runs_on_startup_sync)
-        logger.warning("[background] startup abandoned client runs failed=%s", abandoned)
+        reconciled = await asyncio.to_thread(fail_client_runs_on_startup_sync)
+        logger.warning("[background] startup client runs reconciled=%s", reconciled)
     except Exception:
         logger.exception("[background] failed to reconcile client runs on startup")
 

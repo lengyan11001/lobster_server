@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI
+import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from backend.app.api.auth import get_current_user
 from backend.app.api import scheduled_tasks
 from backend.app.db import get_db
-from backend.app.models import H5ChatMessage, ScheduledTask, ScheduledTaskRun
+from backend.app.models import H5ChatEvent, H5ChatMessage, ScheduledTask, ScheduledTaskRun
 
 
 def _task(user_id: int, *, title: str = "周期任务", schedule_type: str = "daily_times") -> ScheduledTask:
@@ -70,6 +71,22 @@ def _request(installation_id: str = "test-installation") -> Request:
             "query_string": b"",
         }
     )
+
+
+def _workflow_payload(*, action: str, start: str, end: str, timezone_offset_minutes: int = 480) -> dict:
+    return {
+        "action": action,
+        "h5_task_source": "workflow",
+        "h5_context": {
+            "workflow_node_id": f"node-{start}-{end}",
+            "workflow_node_time": start,
+            "workflow_node_end_time": end,
+        },
+        "schedule_config": {
+            "timezone_offset_minutes": timezone_offset_minutes,
+            "daily_times": [start],
+        },
+    }
 
 
 def test_recurring_enqueue_refreshes_one_pending_run_in_place(db_session, test_user):
@@ -359,6 +376,296 @@ def test_background_cleanup_fails_abandoned_client_run_and_mirror(db_session, te
     assert stale.progress["stage"] == "client_progress_timeout"
     assert message.status == "failed"
     assert fresh.status == "processing"
+
+
+def test_workflow_node_deadline_uses_run_day_timezone_and_overnight_window():
+    payload = _workflow_payload(action="direct_message", start="22:15", end="22:30")
+
+    assert scheduled_tasks._workflow_node_deadline_utc(
+        payload,
+        reference_at=datetime(2026, 8, 18, 14, 15),
+    ) == datetime(2026, 8, 18, 14, 30)
+
+    overnight = _workflow_payload(action="direct_message", start="23:45", end="00:15")
+    assert scheduled_tasks._workflow_node_deadline_utc(
+        overnight,
+        reference_at=datetime(2026, 8, 18, 15, 45),
+    ) == datetime(2026, 8, 18, 16, 15)
+    assert scheduled_tasks._workflow_node_deadline_utc({}, reference_at=datetime.utcnow()) is None
+
+
+def test_workflow_node_deadline_prefers_materialized_absolute_deadline():
+    payload = _workflow_payload(action="direct_message", start="22:15", end="22:30")
+    materialized = scheduled_tasks._materialize_workflow_node_window(
+        payload,
+        scheduled_at=datetime(2026, 8, 19, 14, 15),
+    )
+
+    assert scheduled_tasks._workflow_node_deadline_utc(
+        materialized,
+        reference_at=datetime(2026, 8, 2, 14, 15),
+    ) == datetime(2026, 8, 19, 14, 30)
+    assert materialized["h5_context"]["workflow_node_scheduled_at"] == "2026-08-19T14:15:00"
+    assert materialized["h5_context"]["workflow_node_deadline_at"] == "2026-08-19T14:30:00"
+    assert "workflow_node_deadline_at" not in payload["h5_context"]
+
+
+def test_materialized_workflow_node_replaces_a_stale_absolute_deadline():
+    payload = _workflow_payload(action="direct_message", start="22:15", end="22:30")
+    payload["h5_context"]["workflow_node_scheduled_at"] = "2026-08-18T14:15:00"
+    payload["h5_context"]["workflow_node_deadline_at"] = "2026-08-18T14:30:00"
+
+    materialized = scheduled_tasks._materialize_workflow_node_window(
+        payload,
+        scheduled_at=datetime(2026, 8, 19, 14, 15),
+    )
+
+    assert materialized["h5_context"]["workflow_node_scheduled_at"] == "2026-08-19T14:15:00"
+    assert materialized["h5_context"]["workflow_node_deadline_at"] == "2026-08-19T14:30:00"
+
+
+def test_materialized_workflow_run_uses_scheduled_trigger_day(db_session, test_user):
+    task = _task(test_user.id, title="workflow node")
+    task.task_kind = "douyin_leads"
+    task.created_by_role = "workflow"
+    task.payload = _workflow_payload(action="direct_message", start="22:15", end="22:30")
+    db_session.add(task)
+    db_session.commit()
+
+    run = scheduled_tasks._create_run_for_target(
+        db_session,
+        task,
+        "test-installation",
+        datetime(2026, 8, 20, 14, 45),
+        scheduled_at=datetime(2026, 8, 19, 14, 15),
+    )
+
+    assert run.payload["h5_context"]["workflow_node_scheduled_at"] == "2026-08-19T14:15:00"
+    assert run.payload["h5_context"]["workflow_node_deadline_at"] == "2026-08-19T14:30:00"
+    assert "workflow_node_deadline_at" not in task.payload["h5_context"]
+
+
+def test_pending_materializes_due_run_before_honoring_empty_cache(db_session, test_user, monkeypatch):
+    calls: list[str] = []
+
+    def fake_enqueue(*_args, **_kwargs):
+        calls.append("enqueue")
+        return 0
+
+    def fake_empty_cache(*_args, **_kwargs):
+        calls.append("cache")
+        return True
+
+    monkeypatch.setattr(scheduled_tasks, "_enqueue_due_tasks", fake_enqueue)
+    monkeypatch.setattr(scheduled_tasks, "_pending_empty_recent", fake_empty_cache)
+
+    result = scheduled_tasks.pending_scheduled_task_runs(
+        _request(),
+        limit=1,
+        current_user_id=test_user.id,
+        db=db_session,
+    )
+
+    assert result["throttled"] is True
+    assert calls[:2] == ["enqueue", "cache"]
+
+
+def test_pending_claim_skips_expired_workflow_node_before_claim(db_session, test_user, monkeypatch):
+    now = datetime.utcnow().replace(second=0, microsecond=0)
+    created_at = now - timedelta(hours=2)
+    local_start = (created_at + timedelta(hours=8)).replace(second=0, microsecond=0)
+    local_end = local_start + timedelta(minutes=1)
+    expired = _run(
+        run_id="expired-workflow-pending",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="douyin_leads",
+        status="pending",
+        created_at=created_at,
+    )
+    expired.payload = _workflow_payload(
+        action="direct_message",
+        start=local_start.strftime("%H:%M"),
+        end=local_end.strftime("%H:%M"),
+    )
+    expired.created_by_role = "workflow"
+    expired.h5_message_id = "expired-workflow-pending-message"
+    message = H5ChatMessage(
+        id=expired.h5_message_id,
+        user_id=test_user.id,
+        mode="scheduled_task",
+        content="expired workflow node",
+        status="pending",
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    available = _run(
+        run_id="available-after-expired-pending",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="pending",
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add_all([expired, message, available])
+    db_session.commit()
+    monkeypatch.setattr(scheduled_tasks, "_enqueue_due_tasks", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(scheduled_tasks, "_touch_installation_slot_lazy", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduled_tasks, "_pending_empty_recent", lambda *_args, **_kwargs: False)
+
+    result = scheduled_tasks.pending_scheduled_task_runs(
+        _request(),
+        limit=1,
+        current_user_id=test_user.id,
+        db=db_session,
+    )
+
+    db_session.expire_all()
+    assert [item["id"] for item in result["items"]] == [available.id]
+    cancelled = db_session.get(ScheduledTaskRun, expired.id)
+    assert cancelled.status == "cancelled"
+    assert cancelled.progress["reason"] == "workflow_node_deadline_expired"
+    assert db_session.get(H5ChatMessage, message.id).status == "cancelled"
+    assert any(
+        event.payload.get("reason") == "workflow_node_deadline_expired"
+        for event in db_session.query(H5ChatEvent).filter(H5ChatEvent.message_id == message.id).all()
+    )
+
+
+def test_expired_processing_workflow_node_releases_next_douyin_run(db_session, test_user, monkeypatch):
+    now = datetime.utcnow().replace(second=0, microsecond=0)
+    created_at = now - timedelta(hours=2)
+    local_start = (created_at + timedelta(hours=8)).replace(second=0, microsecond=0)
+    local_end = local_start + timedelta(minutes=1)
+    processing = _run(
+        run_id="expired-workflow-processing",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="douyin_leads",
+        status="processing",
+        created_at=created_at,
+    )
+    processing.payload = _workflow_payload(
+        action="direct_message",
+        start=local_start.strftime("%H:%M"),
+        end=local_end.strftime("%H:%M"),
+    )
+    processing.created_by_role = "workflow"
+    processing.h5_message_id = "expired-workflow-processing-message"
+    message = H5ChatMessage(
+        id=processing.h5_message_id,
+        user_id=test_user.id,
+        mode="scheduled_task",
+        content="expired processing workflow node",
+        status="processing",
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    next_node = _run(
+        run_id="next-douyin-node",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="douyin_leads",
+        status="pending",
+        created_at=now - timedelta(minutes=1),
+    )
+    next_node.payload = {"action": "stranger_message"}
+    db_session.add_all([processing, message, next_node])
+    db_session.commit()
+    monkeypatch.setattr(scheduled_tasks, "_enqueue_due_tasks", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(scheduled_tasks, "_touch_installation_slot_lazy", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduled_tasks, "_pending_empty_recent", lambda *_args, **_kwargs: False)
+
+    result = scheduled_tasks.pending_scheduled_task_runs(
+        _request(),
+        limit=1,
+        current_user_id=test_user.id,
+        db=db_session,
+    )
+
+    db_session.expire_all()
+    assert [item["id"] for item in result["items"]] == [next_node.id]
+    assert db_session.get(ScheduledTaskRun, processing.id).status == "cancelled"
+    assert db_session.get(H5ChatMessage, message.id).status == "cancelled"
+    assert db_session.get(ScheduledTaskRun, next_node.id).status == "processing"
+
+
+def test_expired_workflow_node_heartbeat_cancels_instead_of_extending_run(db_session, test_user):
+    now = datetime.utcnow().replace(second=0, microsecond=0)
+    created_at = now - timedelta(hours=2)
+    local_start = (created_at + timedelta(hours=8)).replace(second=0, microsecond=0)
+    local_end = local_start + timedelta(minutes=1)
+    run = _run(
+        run_id="expired-workflow-heartbeat",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="client_workflow",
+        status="processing",
+        created_at=created_at,
+    )
+    run.payload = _workflow_payload(
+        action="native_wechat_poll",
+        start=local_start.strftime("%H:%M"),
+        end=local_end.strftime("%H:%M"),
+    )
+    run.h5_message_id = "expired-workflow-heartbeat-message"
+    message = H5ChatMessage(
+        id=run.h5_message_id,
+        user_id=test_user.id,
+        mode="scheduled_task",
+        content="expired workflow heartbeat",
+        status="processing",
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    db_session.add_all([run, message])
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        scheduled_tasks.submit_scheduled_task_event(
+            run.id,
+            scheduled_tasks.ScheduledTaskEventIn(type="heartbeat", payload={"heartbeat": True}),
+            _request(),
+            test_user,
+            db_session,
+        )
+
+    db_session.expire_all()
+    assert exc_info.value.status_code == 409
+    cancelled = db_session.get(ScheduledTaskRun, run.id)
+    assert cancelled.status == "cancelled"
+    assert cancelled.progress["reason"] == "workflow_node_deadline_expired"
+    assert db_session.get(H5ChatMessage, message.id).status == "cancelled"
+
+
+def test_expired_server_side_workflow_node_is_cancelled_before_execution(db_session, test_user):
+    now = datetime.utcnow().replace(second=0, microsecond=0)
+    created_at = now - timedelta(hours=2)
+    local_start = (created_at + timedelta(hours=8)).replace(second=0, microsecond=0)
+    local_end = local_start + timedelta(minutes=1)
+    run = _run(
+        run_id="expired-server-workflow-node",
+        user_id=test_user.id,
+        task_id=None,
+        task_kind="ip_content_daily",
+        status="pending",
+        created_at=created_at,
+    )
+    run.created_by_role = "workflow"
+    run.payload = _workflow_payload(
+        action="server_content",
+        start=local_start.strftime("%H:%M"),
+        end=local_end.strftime("%H:%M"),
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    scheduled_tasks._execute_server_side_run(db_session, run, now=now)
+
+    db_session.expire_all()
+    cancelled = db_session.get(ScheduledTaskRun, run.id)
+    assert cancelled.status == "cancelled"
+    assert cancelled.progress["reason"] == "workflow_node_deadline_expired"
 
 
 def test_pending_claim_scans_past_blocked_serial_runs(db_session, test_user, monkeypatch):

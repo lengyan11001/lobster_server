@@ -7,7 +7,11 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import or_
 
-from ..api.scheduled_tasks import _cleanup_recurring_pending_backlog, _fail_abandoned_client_runs
+from ..api.scheduled_tasks import (
+    _cleanup_recurring_pending_backlog,
+    _expire_workflow_node_runs,
+    _fail_abandoned_client_runs,
+)
 from ..db import SessionLocal
 from ..models import CreativeGenerationJob, H5ChatApproval, H5ChatEvent, H5ChatMessage
 
@@ -19,13 +23,14 @@ _ACTIVE_CREATIVE_STATUSES = {"pending", "processing", "running"}
 
 
 def fail_client_runs_on_startup_sync(now: datetime | None = None) -> int:
-    """Fail only client work that was already abandoned before server startup."""
+    """Expire workflow nodes and fail client work that was already abandoned before startup."""
     now = now or datetime.utcnow()
     db = SessionLocal()
     try:
+        expired = _expire_workflow_node_runs(db, now)
         failed = _fail_abandoned_client_runs(db, now)
         db.commit()
-        return failed
+        return expired + failed
     except Exception:
         db.rollback()
         raise
@@ -45,6 +50,7 @@ def cleanup_runtime_state_sync(now: datetime | None = None) -> dict[str, int]:
     now = now or datetime.utcnow()
     result = {
         "recurring_runs_cancelled": 0,
+        "workflow_node_runs_expired": 0,
         "abandoned_runs_failed": 0,
         "chat_messages_expired": 0,
         "approvals_repaired": 0,
@@ -53,6 +59,7 @@ def cleanup_runtime_state_sync(now: datetime | None = None) -> dict[str, int]:
     db = SessionLocal()
     try:
         result["recurring_runs_cancelled"] = _cleanup_recurring_pending_backlog(db, now)
+        result["workflow_node_runs_expired"] = _expire_workflow_node_runs(db, now)
         result["abandoned_runs_failed"] = _fail_abandoned_client_runs(db, now)
 
         terminal_approvals = (

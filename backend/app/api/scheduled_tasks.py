@@ -992,6 +992,93 @@ def _schedule_config_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
+def _parse_utc_datetime(value: Any) -> Optional[datetime]:
+    """Parse an ISO timestamp into the naive UTC representation used by the DB."""
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _workflow_node_deadline_utc(payload: Any, *, reference_at: Optional[datetime]) -> Optional[datetime]:
+    """Return the absolute UTC end of a workflow node carried by a scheduled run."""
+    source = payload if isinstance(payload, dict) else {}
+    context = source.get("h5_context")
+    if not isinstance(context, dict):
+        return None
+    # New runs store this at enqueue time. It remains correct when a delayed
+    # scheduler poll, a recurring-run coalesce, or a recovery changes created_at.
+    absolute_deadline = _parse_utc_datetime(context.get("workflow_node_deadline_at"))
+    if absolute_deadline is not None:
+        return absolute_deadline
+    start_match = _DAILY_TIME_RE.match(str(context.get("workflow_node_time") or "").strip())
+    end_match = _DAILY_TIME_RE.match(str(context.get("workflow_node_end_time") or "").strip())
+    if not start_match or not end_match:
+        return None
+    cfg = _schedule_config_from_payload(source)
+    try:
+        offset = int(cfg.get("timezone_offset_minutes") if cfg.get("timezone_offset_minutes") is not None else 480)
+    except (TypeError, ValueError):
+        offset = 480
+    offset = max(-720, min(840, offset))
+    anchor = reference_at or datetime.utcnow()
+    if anchor.tzinfo is not None:
+        anchor = anchor.astimezone(timezone.utc).replace(tzinfo=None)
+    local_anchor = anchor + timedelta(minutes=offset)
+    start_hour, start_minute = int(start_match.group(1)), int(start_match.group(2))
+    end_hour, end_minute = int(end_match.group(1)), int(end_match.group(2))
+    local_end = datetime(local_anchor.year, local_anchor.month, local_anchor.day, end_hour, end_minute)
+    if (end_hour, end_minute) < (start_hour, start_minute):
+        local_end += timedelta(days=1)
+    return local_end - timedelta(minutes=offset)
+
+
+def _workflow_node_deadline_for_run(run: ScheduledTaskRun) -> Optional[datetime]:
+    payload = run.payload if isinstance(run.payload, dict) else {}
+    context = payload.get("h5_context")
+    if not isinstance(context, dict) or not str(context.get("workflow_node_id") or "").strip():
+        return None
+    return _workflow_node_deadline_utc(
+        payload,
+        reference_at=run.created_at or run.claimed_at or run.started_at,
+    )
+
+
+def _materialize_workflow_node_window(
+    payload: Dict[str, Any],
+    *,
+    scheduled_at: Optional[datetime],
+) -> Dict[str, Any]:
+    """Attach an immutable absolute deadline to one materialized workflow run."""
+    materialized = copy.deepcopy(payload if isinstance(payload, dict) else {})
+    context = materialized.get("h5_context")
+    if not isinstance(context, dict) or not str(context.get("workflow_node_id") or "").strip():
+        return materialized
+    # A task definition can be reused every day. Never let a deadline copied
+    # from an earlier materialized run survive into this new instance.
+    context.pop("workflow_node_scheduled_at", None)
+    context.pop("workflow_node_deadline_at", None)
+    anchor = scheduled_at or datetime.utcnow()
+    if anchor.tzinfo is not None:
+        anchor = anchor.astimezone(timezone.utc).replace(tzinfo=None)
+    deadline = _workflow_node_deadline_utc(materialized, reference_at=anchor)
+    if deadline is None:
+        return materialized
+    context["workflow_node_scheduled_at"] = anchor.isoformat()
+    context["workflow_node_deadline_at"] = deadline.isoformat()
+    materialized["h5_context"] = context
+    return materialized
+
+
 def _task_schedule_label(row: ScheduledTask) -> str:
     cfg = _schedule_config_from_payload(row.payload or {})
     if row.schedule_type == "interval":
@@ -2252,8 +2339,16 @@ def _refresh_pending_recurring_run(
     return run
 
 
-def _create_run_for_target(db: Session, task: ScheduledTask, installation_id: Optional[str], now: datetime) -> ScheduledTaskRun:
+def _create_run_for_target(
+    db: Session,
+    task: ScheduledTask,
+    installation_id: Optional[str],
+    now: datetime,
+    *,
+    scheduled_at: Optional[datetime] = None,
+) -> ScheduledTaskRun:
     run_payload = _run_payload_for_task(db, task, now)
+    run_payload = _materialize_workflow_node_window(run_payload, scheduled_at=scheduled_at or now)
     existing = _pending_run_for_recurring_target(db, task, installation_id)
     if existing is not None:
         return _refresh_pending_recurring_run(
@@ -2334,6 +2429,94 @@ def _sync_h5_message_from_run(db: Session, run: ScheduledTaskRun, now: Optional[
             from .h5_chat import _finish_mastra_parent_from_children
 
             _finish_mastra_parent_from_children(db, message)
+
+
+def _expire_workflow_node_run(
+    db: Session,
+    run: ScheduledTaskRun,
+    *,
+    now: datetime,
+) -> bool:
+    """Cancel a workflow-owned local run once its scheduled node window has ended."""
+    if str(run.status or "").strip().lower() not in {"pending", "processing"}:
+        return False
+    deadline = _workflow_node_deadline_for_run(run)
+    if deadline is None or deadline > now:
+        return False
+    message = "节点时间已结束，本次任务已自动停止，后续节点继续执行。"
+    run.status = "cancelled"
+    run.error = message
+    run.finished_at = now
+    run.updated_at = now
+    run.progress = _merge_run_progress(
+        run,
+        {
+            "stage": "workflow_node_deadline_expired",
+            "text": message,
+            "reason": "workflow_node_deadline_expired",
+            "deadline_at": deadline.isoformat(),
+            "cancelled_at": now.isoformat(),
+        },
+    )
+    task = db.query(ScheduledTask).filter(ScheduledTask.id == run.task_id).first() if run.task_id else None
+    if task:
+        task.last_error = message
+        task.updated_at = now
+    _sync_h5_message_from_run(db, run, now)
+    _add_h5_event(
+        db,
+        run.h5_message_id,
+        run.user_id,
+        "cancelled",
+        {
+            "reason": "workflow_node_deadline_expired",
+            "deadline_at": deadline.isoformat(),
+            "text": message,
+        },
+    )
+    return True
+
+
+def _expire_workflow_node_runs(
+    db: Session,
+    now: Optional[datetime] = None,
+    *,
+    user_id: Optional[int] = None,
+    installation_id: str = "",
+    limit: int = 500,
+) -> int:
+    """Expire workflow node runs independently of client heartbeats or task serialisation."""
+    now = now or datetime.utcnow()
+    if now.tzinfo is not None:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
+    query = (
+        db.query(ScheduledTaskRun)
+        .filter(
+            ScheduledTaskRun.status.in_(["pending", "processing"]),
+            ScheduledTaskRun.created_by_role == "workflow",
+        )
+    )
+    if user_id is not None:
+        query = query.filter(ScheduledTaskRun.user_id == user_id)
+    target = str(installation_id or "").strip()
+    if target:
+        query = query.filter(
+            or_(
+                ScheduledTaskRun.installation_id.is_(None),
+                ScheduledTaskRun.installation_id == target,
+                ScheduledTaskRun.claimed_by_installation_id == target,
+            )
+        )
+    query = (
+        query.order_by(ScheduledTaskRun.created_at.asc(), ScheduledTaskRun.id.asc())
+        .with_for_update(skip_locked=True)
+        .limit(max(1, min(int(limit or 1), 2000)))
+    )
+    expired = 0
+    for run in query.all():
+        if _expire_workflow_node_run(db, run, now=now):
+            expired += 1
+    return expired
 
 
 def _recurring_pending_max_age_seconds(task: ScheduledTask) -> int:
@@ -2624,6 +2807,12 @@ def _execute_server_side_run(
     now = now or datetime.utcnow()
     if run.task_kind not in _SERVER_SIDE_TASK_KINDS:
         return
+    if str(run.status or "").strip().lower() in _FINAL_STATUSES:
+        return
+    if _expire_workflow_node_run(db, run, now=now):
+        db.commit()
+        return
+    deadline = _workflow_node_deadline_for_run(run)
     user = db.query(User).filter(User.id == run.user_id).first()
     if user is None:
         run.status = "failed"
@@ -2657,8 +2846,20 @@ def _execute_server_side_run(
     db.flush()
     db.commit()
     timeout_seconds = _server_side_timeout_seconds(run.task_kind)
+    if deadline is not None:
+        remaining_seconds = (deadline - datetime.utcnow()).total_seconds()
+        if remaining_seconds <= 0:
+            db.refresh(run)
+            if _expire_workflow_node_run(db, run, now=datetime.utcnow()):
+                db.commit()
+            return
+        timeout_seconds = min(timeout_seconds, max(0.1, remaining_seconds))
 
     def progress(stage: str, text: str, extra: Optional[Dict[str, Any]] = None) -> None:
+        progress_now = datetime.utcnow()
+        if deadline is not None and _expire_workflow_node_run(db, run, now=progress_now):
+            db.commit()
+            return
         _set_server_side_run_progress(db, run, stage=stage, text=text, extra=extra)
 
     try:
@@ -2763,6 +2964,11 @@ def _execute_server_side_run(
             return
         finished = datetime.utcnow()
         db.refresh(run)
+        if _expire_workflow_node_run(db, run, now=finished):
+            db.commit()
+            return
+        if str(run.status or "").strip().lower() in _FINAL_STATUSES:
+            return
         failed_count = int(result.get("failed_count") or 0) if isinstance(result, dict) else 0
         job_count = int(result.get("job_count") or 0) if isinstance(result, dict) else 0
         result_status = str(result.get("status") or "").strip().lower() if isinstance(result, dict) else ""
@@ -2795,6 +3001,11 @@ def _execute_server_side_run(
             db.refresh(run)
         except Exception:
             pass
+        if _expire_workflow_node_run(db, run, now=failed):
+            db.commit()
+            return
+        if str(run.status or "").strip().lower() in _FINAL_STATUSES:
+            return
         message = f"服务器执行超过 {int(timeout_seconds)} 秒，已自动停止等待，请稍后重试。"
         run.status = "failed"
         run.error = message
@@ -2822,6 +3033,11 @@ def _execute_server_side_run(
             db.refresh(run)
         except Exception:
             pass
+        if _expire_workflow_node_run(db, run, now=failed):
+            db.commit()
+            return
+        if str(run.status or "").strip().lower() in _FINAL_STATUSES:
+            return
         run.status = "failed"
         run.error = str(exc.detail or exc)
         run.progress = _merge_run_progress(
@@ -2847,6 +3063,11 @@ def _execute_server_side_run(
             db.refresh(run)
         except Exception:
             pass
+        if _expire_workflow_node_run(db, run, now=failed):
+            db.commit()
+            return
+        if str(run.status or "").strip().lower() in _FINAL_STATUSES:
+            return
         run.status = "failed"
         run.error = str(exc)[:2000]
         run.progress = _merge_run_progress(
@@ -2947,7 +3168,13 @@ def _fail_stale_server_side_runs(db: Session, now: Optional[datetime] = None) ->
     return count
 
 
-def _enqueue_task(db: Session, task: ScheduledTask, now: Optional[datetime] = None) -> List[ScheduledTaskRun]:
+def _enqueue_task(
+    db: Session,
+    task: ScheduledTask,
+    now: Optional[datetime] = None,
+    *,
+    scheduled_at: Optional[datetime] = None,
+) -> List[ScheduledTaskRun]:
     now = now or datetime.utcnow()
     disabled_capability = _disabled_scheduled_capability(task.payload or {}) if task.task_kind == "capability" else ""
     if disabled_capability:
@@ -2961,7 +3188,10 @@ def _enqueue_task(db: Session, task: ScheduledTask, now: Optional[datetime] = No
         targets = [""]
     if not targets:
         targets = [""]
-    runs = [_create_run_for_target(db, task, target or None, now) for target in targets]
+    runs = [
+        _create_run_for_target(db, task, target or None, now, scheduled_at=scheduled_at or now)
+        for target in targets
+    ]
     if task.schedule_type == "once":
         task.status = "completed"
         task.next_run_at = None
@@ -3014,10 +3244,11 @@ def _enqueue_due_tasks(db: Session, user_id: Optional[int] = None) -> int:
     q = q.order_by(ScheduledTask.next_run_at.asc(), ScheduledTask.id.asc()).limit(50).with_for_update(skip_locked=True)
     count = 0
     for candidate in q.all():
+        scheduled_at = candidate.next_run_at
         task = _reserve_due_task_for_enqueue(db, candidate, now)
         if not task:
             continue
-        _enqueue_task(db, task, now)
+        _enqueue_task(db, task, now, scheduled_at=scheduled_at)
         count += 1
     if count:
         db.commit()
@@ -3589,6 +3820,7 @@ def pending_scheduled_task_runs(
 ):
     xi = _header_installation_id(request)
     client_process_id = _header_client_process_id(request)
+    now = datetime.utcnow()
     assert_installation_slot_owner(
         db,
         user_id=current_user_id,
@@ -3602,25 +3834,43 @@ def pending_scheduled_task_runs(
             user_id=current_user_id,
             installation_id=xi,
             client_process_id=client_process_id,
-            now=datetime.utcnow(),
+            now=now,
         )
         if interrupted:
             db.commit()
+    expired_before_poll = _expire_workflow_node_runs(
+        db,
+        now,
+        user_id=current_user_id,
+        installation_id=xi,
+    )
+    if expired_before_poll:
+        db.commit()
+    # Always materialize newly due runs before honoring a recent empty-result
+    # cache. Otherwise a node that becomes due immediately after an empty poll
+    # can wait for the cache TTL before the client is even allowed to see it.
+    _enqueue_due_tasks(db, current_user_id)
+
     pending_key = _pending_cache_key("run", current_user_id, xi)
     if _pending_empty_recent(pending_key, _RUN_PENDING_EMPTY_CACHE_SECONDS):
         return {"ok": True, "items": [], "throttled": True}
     if xi:
         _touch_installation_slot_lazy(db, current_user_id, xi)
-    _enqueue_due_tasks(db, current_user_id)
 
     now = datetime.utcnow()
+    expired_after_enqueue = _expire_workflow_node_runs(
+        db,
+        now,
+        user_id=current_user_id,
+        installation_id=xi,
+    )
     skipped_pending = _coalesce_recurring_pending_runs(
         db,
         user_id=current_user_id,
         installation_id=xi,
         now=now,
     )
-    if skipped_pending:
+    if skipped_pending or expired_after_enqueue:
         db.flush()
     stale_cutoff = now - timedelta(minutes=10)
     stale_rows = (
@@ -3675,6 +3925,9 @@ def pending_scheduled_task_runs(
     for candidate in candidates:
         if len(rows) >= limit:
             break
+        if _expire_workflow_node_run(db, candidate, now=now):
+            db.flush()
+            continue
         serial_key = _serial_client_run_key(candidate, xi)
         if _serial_client_run_is_blocked(
             db,
@@ -3907,6 +4160,9 @@ def submit_scheduled_task_event(
         request_auth_session_id(request),
     )
     now = datetime.utcnow()
+    if _expire_workflow_node_run(db, row, now=now):
+        db.commit()
+        raise HTTPException(status_code=409, detail=row.error or "节点时间已结束，任务已取消")
     progress = dict(body.payload or {})
     client_process_id = _header_client_process_id(request)
     if client_process_id:
@@ -3934,6 +4190,9 @@ def complete_scheduled_task_run(
         request_auth_session_id(request),
     )
     now = datetime.utcnow()
+    if _expire_workflow_node_run(db, row, now=now):
+        db.commit()
+        raise HTTPException(status_code=409, detail=row.error or "节点时间已结束，任务已取消")
     error = _normalize_scheduled_completion_error(body)
     result_text = (body.result_text or "").strip()
     row.status = "failed" if error else "completed"

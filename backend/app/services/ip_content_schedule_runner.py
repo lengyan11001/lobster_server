@@ -10,6 +10,7 @@ from sqlalchemy import update
 from ..api.scheduled_tasks import (
     _SERVER_SIDE_TASK_KINDS,
     _enqueue_task,
+    _expire_workflow_node_runs,
     _fail_stale_server_side_runs,
     _recover_interrupted_server_side_runs,
 )
@@ -31,6 +32,9 @@ def _tick_once_sync() -> int:
     db = SessionLocal()
     try:
         now = datetime.utcnow()
+        expired_count = _expire_workflow_node_runs(db, now)
+        if expired_count:
+            logger.warning("[server-side-schedule] expired workflow node runs=%s", expired_count)
         stale_count = _fail_stale_server_side_runs(db, now)
         if stale_count:
             logger.warning("[server-side-schedule] marked stale processing runs failed=%s", stale_count)
@@ -48,6 +52,7 @@ def _tick_once_sync() -> int:
         )
         count = 0
         for candidate in rows:
+            scheduled_at = candidate.next_run_at
             result = db.execute(
                 update(ScheduledTask)
                 .where(
@@ -63,9 +68,9 @@ def _tick_once_sync() -> int:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == candidate.id).first()
             if not task:
                 continue
-            _enqueue_task(db, task, now)
+            _enqueue_task(db, task, now, scheduled_at=scheduled_at)
             count += 1
-        if count:
+        if count or expired_count:
             db.commit()
         return count
     finally:

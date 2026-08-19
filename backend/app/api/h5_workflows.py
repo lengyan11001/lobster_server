@@ -1788,7 +1788,7 @@ def _activate_nodes_for_device(
                 timezone_offset_minutes=timezone_offset_minutes if timezone_offset_minutes is not None else 480,
             ):
                 scheduled.next_run_at = now
-                _enqueue_task(db, scheduled, now)
+                _enqueue_task(db, scheduled, now, scheduled_at=scheduled.next_run_at)
             created_task_ids.append(int(scheduled.id))
     except Exception:
         try:
