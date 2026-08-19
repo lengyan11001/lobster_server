@@ -51,7 +51,10 @@ def test_h5_sales_preset_dispatches_douyin_without_business_params():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
 
     assert "payload: { action: salesAction }" in script
-    assert "next.payload = { action: salesWorkflowActionForNote" in script
+    assert "const preservedParams = {};" in script
+    assert 'action === "stranger_message"' in script
+    assert "preservedParams.wechat_add_friend_enabled = Boolean(rowParams.wechat_add_friend_enabled);" in script
+    assert "preservedParams.wechat_add_friend_enabled = Boolean(planParams.wechat_add_friend_enabled);" in script
     assert 'payload: { action: "search_collect", params: { keyword: prompt, sales_action:' not in script
 
 

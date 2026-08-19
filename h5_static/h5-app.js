@@ -4174,6 +4174,19 @@
     function workflowPlanFromParamFields(lookup, note, workflowNode = null) {
       const node = lookup && lookup.node;
       if (!node) throw new Error("未找到任务节点");
+      // A sales Douyin private-message node has persona defaults for its
+      // other settings, but this checkbox is an explicit per-node override.
+      // Handle it before the generic persona-default shortcut so save/reopen
+      // does not discard the value.
+      if (
+        isSalesDouyinPrivateNode(workflowNode)
+        && (node.key === "douyin_leads" || node.workQuickKey === "douyin_leads")
+      ) {
+        return collectWorkflowQuickPlan(
+          workQuickItemByKey(node.workQuickKey || node.key) || node,
+          workflowNode,
+        );
+      }
       if (workflowNodeUsesPersonaDefaults(workflowNode)) return workflowPlanForLookup(lookup, note);
       const platform = socialPlatformFromAbilityKey(node.key);
       if (platform) {
@@ -4496,7 +4509,24 @@
       const next = JSON.parse(JSON.stringify(plan || {}));
       const payload = next.payload && typeof next.payload === "object" ? next.payload : {};
       if (next.task_kind === "douyin_leads") {
-        next.payload = { action: salesWorkflowActionForNote(row && (row.note || row.label)) };
+        const action = salesWorkflowActionForNote(row && (row.note || row.label));
+        const rowParams = row && row.params && typeof row.params === "object" ? row.params : {};
+        const planParams = payload.params && typeof payload.params === "object" ? payload.params : {};
+        const preservedParams = {};
+        // Sales Douyin nodes normally use the Online account configuration,
+        // but this explicit per-node switch must survive preset rebuilding.
+        if (action === "stranger_message") {
+          if (Object.prototype.hasOwnProperty.call(planParams, "wechat_add_friend_enabled")) {
+            preservedParams.wechat_add_friend_enabled = Boolean(planParams.wechat_add_friend_enabled);
+          }
+          if (Object.prototype.hasOwnProperty.call(rowParams, "wechat_add_friend_enabled")) {
+            preservedParams.wechat_add_friend_enabled = Boolean(rowParams.wechat_add_friend_enabled);
+          }
+          preservedParams.wechat_add_friend_targets_source = "douyin_private_message_phone";
+        }
+        next.payload = Object.keys(preservedParams).length
+          ? { action, params: preservedParams }
+          : { action };
         return next;
       }
       const params = payload.params && typeof payload.params === "object" ? payload.params : {};

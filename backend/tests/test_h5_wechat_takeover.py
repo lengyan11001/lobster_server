@@ -7,7 +7,13 @@ from pathlib import Path
 from backend.app.api import h5_chat
 from backend.app.api.h5_chat import H5WechatAutoReplyIn
 import backend.app.api.h5_workflows as h5_workflows
-from backend.app.api.h5_workflows import _clean_action_nodes, _ensure_sales_douyin_add_friend_children, _native_wechat_plan
+from backend.app.api.h5_workflows import (
+    _clean_action_nodes,
+    _clean_nodes,
+    _ensure_sales_douyin_add_friend_children,
+    _native_wechat_plan,
+    _sales_douyin_action_payload,
+)
 from backend.app.api.scheduled_tasks import _enrich_native_wechat_workflow_payload
 from backend.app.models import H5ChatMessage, H5MountedAccountDefault
 
@@ -309,6 +315,100 @@ def test_legacy_sales_add_friend_rows_migrate_under_each_douyin_takeover():
         assert params["wechat_add_friend_enabled"] is True
         assert params["wechat_add_friend_targets_source"] == "douyin_private_message_phone"
         assert "wechat_add_friend_rules" not in params
+
+
+def test_douyin_takeover_add_friend_switch_persists_false_through_save_and_activation():
+    raw_node = {
+        "id": "douyin-private",
+        "time": "14:45",
+        "end_time": "15:00",
+        "ability_key": "douyin_leads",
+        "ability_label": "抖音私信接管",
+        "department_id": "sales",
+        "note": "抖音私信接管",
+        "plan": {
+            "title": "抖音私信接管",
+            "task_kind": "douyin_leads",
+            "content": "H5 工作流：抖音私信接管",
+            "payload": {
+                "action": "stranger_message",
+                "params": {
+                    "wechat_add_friend_enabled": False,
+                    "wechat_add_friend_targets_source": "douyin_private_message_phone",
+                },
+            },
+        },
+    }
+
+    saved = _clean_nodes([raw_node])
+    saved_params = saved[0]["plan"]["payload"]["params"]
+    assert saved_params["wechat_add_friend_enabled"] is False
+
+    migrated = _ensure_sales_douyin_add_friend_children(saved)
+    migrated_params = migrated[0]["plan"]["payload"]["params"]
+    assert migrated_params["wechat_add_friend_enabled"] is False
+
+    dispatched = _sales_douyin_action_payload(
+        migrated[0],
+        migrated[0]["plan"]["payload"],
+    )
+    assert dispatched == {
+        "action": "stranger_message",
+        "params": {"wechat_add_friend_enabled": False},
+    }
+
+
+def test_douyin_takeover_add_friend_switch_persists_true_through_save_and_activation():
+    raw_node = {
+        "id": "douyin-private-enabled",
+        "time": "14:45",
+        "end_time": "15:00",
+        "ability_key": "douyin_leads",
+        "ability_label": "Douyin private takeover",
+        "department_id": "sales",
+        "note": "Douyin private takeover",
+        "plan": {
+            "title": "Douyin private takeover",
+            "task_kind": "douyin_leads",
+            "content": "H5 workflow: Douyin private takeover",
+            "payload": {
+                "action": "stranger_message",
+                "params": {
+                    "wechat_add_friend_enabled": True,
+                    "wechat_add_friend_targets_source": "douyin_private_message_phone",
+                },
+            },
+        },
+    }
+
+    saved = _clean_nodes([raw_node])
+    saved_params = saved[0]["plan"]["payload"]["params"]
+    assert saved_params["wechat_add_friend_enabled"] is True
+
+    migrated = _ensure_sales_douyin_add_friend_children(saved)
+    migrated_params = migrated[0]["plan"]["payload"]["params"]
+    assert migrated_params["wechat_add_friend_enabled"] is True
+
+    dispatched = _sales_douyin_action_payload(
+        migrated[0],
+        migrated[0]["plan"]["payload"],
+    )
+    assert dispatched == {
+        "action": "stranger_message",
+        "params": {"wechat_add_friend_enabled": True},
+    }
+
+
+def test_h5_custom_employee_collects_add_friend_switch_before_generic_defaults():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    function_start = script.index("function workflowPlanFromParamFields")
+    function_end = script.index("function workflowPlanForLookup", function_start)
+    function_source = script[function_start:function_end]
+
+    switch_branch = function_source.index("isSalesDouyinPrivateNode(workflowNode)")
+    default_branch = function_source.index("workflowNodeUsesPersonaDefaults(workflowNode)")
+    assert switch_branch < default_branch
+    assert "collectWorkflowQuickPlan" in function_source
 
 
 def test_h5_migrates_add_friend_rows_when_loading_sales_templates():
