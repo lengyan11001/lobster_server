@@ -247,6 +247,31 @@ def test_workflow_template_drawer_keeps_four_system_slots_and_restores_personal_
     assert "系统推荐模板" in html
 
 
+def test_h5_workflow_save_reopens_server_template_after_persisting():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    save = script.split("async function saveWorkflowTemplate", 1)[1].split("async function activateWorkflowTemplate", 1)[0]
+
+    assert "const savedTemplate = normalizeWorkflowTemplate(data.template || null);" in save
+    assert "state.workflowNodesDraft = cloneWorkflowNodes(savedTemplate.nodes);" in save
+    assert "await loadWorkflowTemplates(true);" in save
+    assert "const freshTemplate = workflowTemplateById(state.workflowEditingTemplateId)" in save
+    assert "applyWorkflowTemplate(freshTemplate);" in save
+
+
+def test_h5_sales_and_employee_editors_force_reload_server_templates():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    sales_entry = script.split('if (key === "salesWorkflow")', 1)[1].split('if (key === "aiMarketingCreation")', 1)[0]
+    strip_handler = script.split('$("customEmployeeStrip")?.addEventListener("click"', 1)[1].split('$("customEmployeeBackdrop")', 1)[0]
+    dialog_handler = script.split('$("customEmployeeDialogBody")?.addEventListener("click"', 1)[1].split('if (copyBtn)', 1)[0]
+    floor_handler = script.split('$("employeeFloor").addEventListener("click"', 1)[1].split('const homeTargetBtn', 1)[0]
+
+    assert "loadWorkflowTemplates(true)" in sales_entry
+    assert "if (state.workflowTemplatesLoaded)" not in sales_entry
+    assert "loadWorkflowTemplates(true)" in strip_handler
+    assert "loadWorkflowTemplates(true).then(() => {" in dialog_handler
+    assert "loadWorkflowTemplates(true)" in floor_handler
+
+
 def test_home_employee_cards_open_the_editor_without_the_detail_dialog():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     strip_handler = script.split('$("customEmployeeStrip")?.addEventListener("click"', 1)[1].split('$("customEmployeeBackdrop")', 1)[0]

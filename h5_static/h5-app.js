@@ -944,7 +944,8 @@
         prompt,
         ...(params && typeof params === "object" ? params : {}),
       };
-      const groupInvite = !!baseParams.group_invite_enabled;
+      const groupInvite = workflowBoolParam(baseParams.group_invite_enabled, false);
+      if (Object.prototype.hasOwnProperty.call(baseParams, "group_invite_enabled")) baseParams.group_invite_enabled = groupInvite;
       if (groupInvite) {
         baseParams.group_invite_enabled = true;
         baseParams.group_invite_rule_status = baseParams.group_invite_rule_status || "pending_rules";
@@ -3508,6 +3509,15 @@
       return !!(el && el.checked);
     }
 
+    function workflowBoolParam(value, fallback = false) {
+      if (typeof value === "boolean") return value;
+      if (typeof value === "number") return value !== 0;
+      const raw = String(value == null ? "" : value).trim().toLowerCase();
+      if (["1", "true", "yes", "y", "on", "enabled"].includes(raw)) return true;
+      if (["0", "false", "no", "n", "off", "disabled"].includes(raw)) return false;
+      return !!fallback;
+    }
+
     function workflowParamNumber(id, fallback, min, max) {
       return workNumber(workflowParamValue(id), fallback, min, max);
     }
@@ -4518,10 +4528,10 @@
         // but this explicit per-node switch must survive preset rebuilding.
         if (action === "stranger_message") {
           if (Object.prototype.hasOwnProperty.call(planParams, "wechat_add_friend_enabled")) {
-            preservedParams.wechat_add_friend_enabled = Boolean(planParams.wechat_add_friend_enabled);
+            preservedParams.wechat_add_friend_enabled = workflowBoolParam(planParams.wechat_add_friend_enabled, false);
           }
           if (Object.prototype.hasOwnProperty.call(rowParams, "wechat_add_friend_enabled")) {
-            preservedParams.wechat_add_friend_enabled = Boolean(rowParams.wechat_add_friend_enabled);
+            preservedParams.wechat_add_friend_enabled = workflowBoolParam(rowParams.wechat_add_friend_enabled, false);
           }
           preservedParams.wechat_add_friend_targets_source = "douyin_private_message_phone";
         }
@@ -4749,7 +4759,7 @@
         const children = workflowChildActions(parentNode).filter((child) => !isSalesWechatAddFriendRow(child));
         const hadLegacyChild = children.length !== workflowChildActions(parentNode).length;
         params.wechat_add_friend_enabled = Object.prototype.hasOwnProperty.call(params, "wechat_add_friend_enabled")
-          ? Boolean(params.wechat_add_friend_enabled)
+          ? workflowBoolParam(params.wechat_add_friend_enabled, false)
           : Boolean(hadLegacyChild || legacyRows.length);
         params.wechat_add_friend_targets_source = "douyin_private_message_phone";
         delete params.wechat_add_friend_rules;
@@ -5268,7 +5278,7 @@
       }
       const isDouyinLookup = workflowLookupIsDouyinLeads(nodeInfo);
       if (isDouyinLookup && isSalesDouyinPrivateNode(node)) {
-        setFieldValue("workflowParamDouyinWechatAddFriend", params.wechat_add_friend_enabled !== false);
+        setFieldValue("workflowParamDouyinWechatAddFriend", workflowBoolParam(params.wechat_add_friend_enabled, true));
         return;
       }
       if (payload.action === "search_collect" || isDouyinLookup) {
@@ -6190,14 +6200,26 @@
           method: id ? "PATCH" : "POST",
           json: { name, nodes: state.workflowNodesDraft, meta },
         });
-        state.workflowEditingTemplateId = String((data.template && data.template.id) || id || "");
-        state.workflowEditingTemplateMeta = data.template && data.template.meta && typeof data.template.meta === "object"
-          ? { ...data.template.meta }
+        const savedTemplate = normalizeWorkflowTemplate(data.template || null);
+        state.workflowEditingTemplateId = String((savedTemplate && savedTemplate.id) || id || "");
+        state.workflowEditingTemplateMeta = savedTemplate && savedTemplate.meta && typeof savedTemplate.meta === "object"
+          ? { ...savedTemplate.meta }
           : meta;
         state.workflowViewingTemplateId = state.workflowEditingTemplateId;
         state.workflowViewingTemplateKey = String(state.workflowEditingTemplateMeta.system_template_key || "").trim();
+        if (savedTemplate && Array.isArray(savedTemplate.nodes)) {
+          state.workflowNodesDraft = cloneWorkflowNodes(savedTemplate.nodes);
+          if ($("workflowTemplateName")) $("workflowTemplateName").value = savedTemplate.name || name;
+        }
         state.workflowTemplatesLoaded = false;
         await loadWorkflowTemplates(true);
+        const freshTemplate = workflowTemplateById(state.workflowEditingTemplateId)
+          || (state.workflowViewingTemplateKey ? personalSystemWorkflowTemplate(state.workflowViewingTemplateKey) : null);
+        if (freshTemplate && workflowTemplateCanEdit(freshTemplate)) {
+          applyWorkflowTemplate(freshTemplate);
+        } else if (savedTemplate) {
+          applyWorkflowTemplate(savedTemplate);
+        }
         toast(systemTemplateKey === "system_sales" ? "销售已保存" : "工作流已保存");
       } finally {
         state.workflowTemplateSaving = false;
@@ -6220,6 +6242,7 @@
       if (!iid) throw new Error("请选择设备");
       const tpl = workflowTemplateById(id);
       if (tpl && !workflowTemplateCanActivate(tpl)) throw new Error("该员工暂未开放");
+      if (tpl && tpl.source !== "system" && String(tpl.id || "")) id = String(tpl.id || "");
       let planDay;
       if (workflowTemplateRequiresPlanDay(tpl)) {
         planDay = await requestWorkflowPlanDay();
@@ -13965,16 +13988,12 @@
           prepareSalesWorkflowDraft();
           switchTab("workflow");
         };
-        if (state.workflowTemplatesLoaded) {
-          openSalesWorkflow();
-        } else {
-          loadWorkflowTemplates(true)
-            .then(openSalesWorkflow)
-            .catch((err) => {
-              openSalesWorkflow();
-              toast(err.message || "模板加载失败，已打开系统销售模板");
-            });
-        }
+        loadWorkflowTemplates(true)
+          .then(openSalesWorkflow)
+          .catch((err) => {
+            openSalesWorkflow();
+            toast(err.message || "模板加载失败，已打开系统销售模板");
+          });
         return;
       }
       if (key === "aiMarketingCreation") {
@@ -25477,16 +25496,15 @@
     });
     $("customEmployeeCreateBtn")?.addEventListener("click", () => openHomeTarget("workflowNew", "office"));
     $("customEmployeeMoreBtn")?.addEventListener("click", () => {
-      loadWorkflowTemplates().then(openCustomEmployeeList).catch((err) => toast(err.message || "员工模板加载失败"));
+      loadWorkflowTemplates(true).then(openCustomEmployeeList).catch((err) => toast(err.message || "员工模板加载失败"));
     });
     $("customEmployeeStrip")?.addEventListener("click", (evt) => {
       const btn = evt.target.closest("[data-custom-employee-detail]");
       if (!btn) return;
-      try {
-        openWorkflowTemplateEditor(btn.dataset.customEmployeeDetail || "");
-      } catch (err) {
-        toast(err.message || "员工模板打开失败");
-      }
+      const id = btn.dataset.customEmployeeDetail || "";
+      loadWorkflowTemplates(true)
+        .then(() => openWorkflowTemplateEditor(id))
+        .catch((err) => toast(err.message || "员工模板打开失败"));
     });
     $("customEmployeeBackdrop")?.addEventListener("click", closeCustomEmployeeDialog);
     $("customEmployeeCloseBtn")?.addEventListener("click", closeCustomEmployeeDialog);
@@ -25526,14 +25544,17 @@
         return;
       }
       if (editBtn) {
-        const tpl = workflowTemplateById(editBtn.dataset.customEmployeeEdit || "");
-        if (!tpl || !workflowTemplateCanEdit(tpl)) {
-          toast("只能编辑自己创建的模板");
-          return;
-        }
-        applyWorkflowTemplate(tpl);
-        closeCustomEmployeeDialog();
-        switchTab("workflow");
+        const id = editBtn.dataset.customEmployeeEdit || "";
+        loadWorkflowTemplates(true).then(() => {
+          const tpl = workflowTemplateById(id);
+          if (!tpl || !workflowTemplateCanEdit(tpl)) {
+            toast("只能编辑自己创建的模板");
+            return;
+          }
+          applyWorkflowTemplate(tpl);
+          closeCustomEmployeeDialog();
+          switchTab("workflow");
+        }).catch((err) => toast(err.message || "员工模板打开失败"));
         return;
       }
       if (copyBtn) {
@@ -26388,11 +26409,10 @@
       if (customEmployeeBtn) {
         evt.preventDefault();
         evt.stopPropagation();
-        try {
-          openWorkflowTemplateEditor(customEmployeeBtn.dataset.customEmployeeDetail || "");
-        } catch (err) {
-          toast(err.message || "员工模板打开失败");
-        }
+        const id = customEmployeeBtn.dataset.customEmployeeDetail || "";
+        loadWorkflowTemplates(true)
+          .then(() => openWorkflowTemplateEditor(id))
+          .catch((err) => toast(err.message || "员工模板打开失败"));
         return;
       }
       const homeTargetBtn = evt.target.closest("[data-home-target]");

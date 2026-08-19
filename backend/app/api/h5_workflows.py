@@ -325,6 +325,21 @@ def _clean_text(value: Any, limit: int = 500) -> str:
     return re.sub(r"\s+", " ", text)[:limit]
 
 
+def _bool_param(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return bool(default)
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = _clean_text(value, 32).lower()
+    if text in {"1", "true", "yes", "y", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disabled"}:
+        return False
+    return bool(default)
+
+
 def _safe_int(value: Any, default: int = 0, *, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
     try:
         out = int(value)
@@ -915,7 +930,7 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
     # that child into this explicit Online contract.
     if action == "stranger_message" and "wechat_add_friend_enabled" in params:
         result["params"] = {
-            "wechat_add_friend_enabled": bool(params.get("wechat_add_friend_enabled")),
+            "wechat_add_friend_enabled": _bool_param(params.get("wechat_add_friend_enabled"), False),
             "wechat_add_friend_targets_source": _clean_text(params.get("wechat_add_friend_targets_source"), 128)
             or "douyin_private_message_phone",
         }
@@ -944,7 +959,9 @@ def _native_wechat_plan(action_key: str, note: Any, params: Optional[dict[str, A
     base_params.setdefault("account_id", "pc-wechat-default")
     base_params.setdefault("note", note_text)
     base_params.setdefault("prompt", note_text)
-    group_invite = bool(base_params.get("group_invite_enabled"))
+    group_invite = _bool_param(base_params.get("group_invite_enabled"), False)
+    if "group_invite_enabled" in base_params:
+        base_params["group_invite_enabled"] = group_invite
     if group_invite:
         base_params["group_invite_enabled"] = True
         base_params.setdefault("group_invite_rule_status", "pending_rules")
@@ -1223,7 +1240,7 @@ def _ensure_sales_douyin_add_friend_children(nodes: list[dict[str, Any]]) -> lis
             for child in _workflow_child_nodes(parent)
         )
         parent_params["wechat_add_friend_enabled"] = (
-            bool(current_enabled)
+            _bool_param(current_enabled, False)
             if current_enabled is not None
             else bool(has_legacy_child or legacy_rows)
         )

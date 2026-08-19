@@ -405,6 +405,36 @@ def test_douyin_takeover_add_friend_switch_persists_true_through_save_and_activa
     }
 
 
+def test_douyin_takeover_add_friend_switch_treats_string_false_as_false():
+    raw_node = {
+        "id": "douyin-private-string-false",
+        "time": "14:45",
+        "end_time": "15:00",
+        "ability_key": "douyin_leads",
+        "ability_label": "抖音私信接管",
+        "department_id": "sales",
+        "note": "抖音私信接管",
+        "plan": {
+            "title": "抖音私信接管",
+            "task_kind": "douyin_leads",
+            "content": "H5 工作流：抖音私信接管",
+            "payload": {
+                "action": "stranger_message",
+                "params": {
+                    "wechat_add_friend_enabled": "false",
+                    "wechat_add_friend_targets_source": "douyin_private_message_phone",
+                },
+            },
+        },
+    }
+
+    migrated = _ensure_sales_douyin_add_friend_children(_clean_nodes([raw_node]))
+    dispatched = _sales_douyin_action_payload(migrated[0], migrated[0]["plan"]["payload"])
+
+    assert migrated[0]["plan"]["payload"]["params"]["wechat_add_friend_enabled"] is False
+    assert dispatched["params"]["wechat_add_friend_enabled"] is False
+
+
 def test_h5_custom_employee_collects_add_friend_switch_before_generic_defaults():
     script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
     function_start = script.index("function workflowPlanFromParamFields")
@@ -430,7 +460,7 @@ def test_h5_custom_employee_reopens_add_friend_switch_from_server_payload():
     assert 'action === "stranger_message"' in detect_source
     assert "function workflowLookupIsDouyinLeads" in detect_source
     assert "const isDouyinLookup = workflowLookupIsDouyinLeads(nodeInfo);" in refill_source
-    assert "params.wechat_add_friend_enabled !== false" in refill_source
+    assert "workflowBoolParam(params.wechat_add_friend_enabled, true)" in refill_source
 
 
 def test_h5_migrates_add_friend_rows_when_loading_sales_templates():
