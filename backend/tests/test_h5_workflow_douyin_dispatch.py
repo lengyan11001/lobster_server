@@ -30,6 +30,24 @@ def test_sales_douyin_action_can_be_recovered_from_old_node_title():
     }
 
 
+def test_sales_douyin_stranger_message_keeps_online_runtime_params():
+    node = {"ability_key": "douyin_leads", "note": "抖音私信接管"}
+
+    assert _sales_douyin_action_payload(
+        node,
+        {
+            "action": "stranger_message",
+            "params": {"wechat_add_friend_enabled": False},
+        },
+    ) == {
+        "action": "stranger_message",
+        "params": {
+            "wechat_add_friend_enabled": False,
+            "wechat_add_friend_targets_source": "douyin_private_message_phone",
+        },
+    }
+
+
 def test_all_sales_douyin_preset_titles_map_to_the_expected_action():
     cases = {
         "抖音自动养号": "account_nurture",

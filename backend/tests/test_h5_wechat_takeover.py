@@ -354,7 +354,10 @@ def test_douyin_takeover_add_friend_switch_persists_false_through_save_and_activ
     )
     assert dispatched == {
         "action": "stranger_message",
-        "params": {"wechat_add_friend_enabled": False},
+        "params": {
+            "wechat_add_friend_enabled": False,
+            "wechat_add_friend_targets_source": "douyin_private_message_phone",
+        },
     }
 
 
@@ -395,7 +398,10 @@ def test_douyin_takeover_add_friend_switch_persists_true_through_save_and_activa
     )
     assert dispatched == {
         "action": "stranger_message",
-        "params": {"wechat_add_friend_enabled": True},
+        "params": {
+            "wechat_add_friend_enabled": True,
+            "wechat_add_friend_targets_source": "douyin_private_message_phone",
+        },
     }
 
 
@@ -409,6 +415,22 @@ def test_h5_custom_employee_collects_add_friend_switch_before_generic_defaults()
     default_branch = function_source.index("workflowNodeUsesPersonaDefaults(workflowNode)")
     assert switch_branch < default_branch
     assert "collectWorkflowQuickPlan" in function_source
+
+
+def test_h5_custom_employee_reopens_add_friend_switch_from_server_payload():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    detect_start = script.index("function isSalesDouyinPrivateNode")
+    detect_end = script.index("function appendSalesWorkflowChild", detect_start)
+    detect_source = script[detect_start:detect_end]
+    refill_start = script.index("function refillWorkflowParamFields")
+    refill_end = script.index("function openWorkflowParamModal", refill_start)
+    refill_source = script[refill_start:refill_end]
+
+    assert 'payload.action || params.sales_action' in detect_source
+    assert 'action === "stranger_message"' in detect_source
+    assert "function workflowLookupIsDouyinLeads" in detect_source
+    assert "const isDouyinLookup = workflowLookupIsDouyinLeads(nodeInfo);" in refill_source
+    assert "params.wechat_add_friend_enabled !== false" in refill_source
 
 
 def test_h5_migrates_add_friend_rows_when_loading_sales_templates():

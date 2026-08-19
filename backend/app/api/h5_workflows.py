@@ -916,6 +916,8 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
     if action == "stranger_message" and "wechat_add_friend_enabled" in params:
         result["params"] = {
             "wechat_add_friend_enabled": bool(params.get("wechat_add_friend_enabled")),
+            "wechat_add_friend_targets_source": _clean_text(params.get("wechat_add_friend_targets_source"), 128)
+            or "douyin_private_message_phone",
         }
     return result
 
@@ -1643,6 +1645,26 @@ def _stop_active_for_device(db: Session, user_id: int, installation_id: str, now
     return stopped_ids
 
 
+def _stop_active_for_template(db: Session, template_id: int, template_owner_user_id: int, now: datetime) -> list[int]:
+    stopped_ids: list[int] = []
+    rows = (
+        db.query(H5WorkflowActivation)
+        .filter(
+            H5WorkflowActivation.template_id == template_id,
+            H5WorkflowActivation.template_owner_user_id == template_owner_user_id,
+            H5WorkflowActivation.status == "active",
+        )
+        .all()
+    )
+    for row in rows:
+        row.status = "stopped"
+        row.stopped_at = now
+        row.updated_at = now
+        stopped_ids.append(row.id)
+        _pause_task_ids(db, [int(x) for x in (row.scheduled_task_ids or []) if str(x).isdigit()], now)
+    return stopped_ids
+
+
 def _workflow_node_should_start_now(
     node: dict[str, Any],
     *,
@@ -1957,10 +1979,12 @@ def delete_workflow_template(
 ):
     owner = online_user_for_mobile_user(db, current_user)
     row = _own_template(db, template_id, owner.id)
+    now = datetime.utcnow()
     row.status = "deleted"
-    row.updated_at = datetime.utcnow()
+    row.updated_at = now
+    stopped_ids = _stop_active_for_template(db, row.id, owner.id, now)
     db.commit()
-    return {"ok": True, "deleted": True}
+    return {"ok": True, "deleted": True, "stopped_activation_ids": stopped_ids}
 
 
 @router.get("/api/h5-workflows/agent/sub-users", summary="代理商下级用户列表")

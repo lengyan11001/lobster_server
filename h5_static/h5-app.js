@@ -4083,6 +4083,7 @@
               douyin_execution_mode: "one_shot",
               params: {
                 wechat_add_friend_enabled: workflowParamChecked("workflowParamDouyinWechatAddFriend"),
+                wechat_add_friend_targets_source: "douyin_private_message_phone",
               },
             },
           };
@@ -4595,8 +4596,18 @@
     }
 
     function isSalesDouyinPrivateNode(node) {
+      if (!node || String(node.ability_key || node.key || "") !== "douyin_leads") return false;
+      const plan = node.plan && typeof node.plan === "object" ? node.plan : {};
+      const payload = plan.payload && typeof plan.payload === "object" ? plan.payload : {};
+      const params = payload.params && typeof payload.params === "object" ? payload.params : {};
+      const action = String(payload.action || params.sales_action || "").trim();
+      if (action === "stranger_message") return true;
       const text = salesWorkflowRowText(node);
-      return String(node && node.ability_key || "") === "douyin_leads" && text.includes("抖音私信接管");
+      return text.includes("抖音私信接管") || text.includes("抖音私信引流");
+    }
+
+    function workflowLookupIsDouyinLeads(nodeInfo) {
+      return ["key", "workQuickKey", "ability_key"].some((name) => String(nodeInfo && nodeInfo[name] || "") === "douyin_leads");
     }
 
     function appendSalesWorkflowChild(parentNode, child) {
@@ -5255,11 +5266,12 @@
         setFieldValue("workflowParamWechatLimit", payload.limit || 10);
         return;
       }
-      if (nodeInfo.workQuickKey === "douyin_leads" && isSalesDouyinPrivateNode(node)) {
+      const isDouyinLookup = workflowLookupIsDouyinLeads(nodeInfo);
+      if (isDouyinLookup && isSalesDouyinPrivateNode(node)) {
         setFieldValue("workflowParamDouyinWechatAddFriend", params.wechat_add_friend_enabled !== false);
         return;
       }
-      if (payload.action === "search_collect" || nodeInfo.workQuickKey === "douyin_leads") {
+      if (payload.action === "search_collect" || isDouyinLookup) {
         setFieldValue("workflowParamDouyinKeyword", params.keyword || params.query || node.note || "");
         setFieldValue("workflowParamDouyinRegions", valueLabel(params.regions || params.region_list || params.area_list || ["全国"]));
         setFieldValue("workflowParamDouyinMaxResults", params.max_results || 50);
@@ -6020,10 +6032,10 @@
       return copied || data.template;
     }
 
-    async function deleteWorkflowTemplateById(id) {
+    async function deleteWorkflowTemplateById(id, options = {}) {
       const tpl = workflowTemplateById(id);
       if (!tpl || !workflowTemplateCanEdit(tpl)) throw new Error("只能删除自己创建的模板");
-      if (!confirm(`删除自定义员工「${tpl.name || "未命名"}」？`)) return;
+      if (!confirm(`删除自定义员工「${tpl.name || "未命名"}」？删除后该员工会从服务器移除，已启用的该员工也会停用。`)) return;
       await api(`/api/h5-workflows/templates/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (String(state.workflowEditingTemplateId) === String(id)) {
         state.workflowEditingTemplateId = "";
@@ -6035,8 +6047,9 @@
       }
       state.workflowTemplatesLoaded = false;
       await loadWorkflowTemplates(true);
-      toast("模板已删除");
-      openCustomEmployeeList();
+      await loadWorkflowActive().catch(() => {});
+      toast("员工已删除");
+      if (options.openList !== false) openCustomEmployeeList();
     }
 
     function renderWorkflowGrantPanel() {
@@ -6058,6 +6071,10 @@
       }
       if ($("workflowActivateBtn")) $("workflowActivateBtn").disabled = !!state.workflowSubmitting;
       if ($("workflowStopBtn")) $("workflowStopBtn").disabled = !active || !!state.workflowSubmitting;
+      if ($("workflowDeleteTemplateBtn")) {
+        const editingTpl = workflowTemplateById(state.workflowEditingTemplateId || "");
+        $("workflowDeleteTemplateBtn").disabled = !workflowTemplateCanEdit(editingTpl) || !!state.workflowSubmitting;
+      }
       renderWorkflowDayBoard();
       renderWorkflowTimeline();
       renderWorkflowTemplates();
@@ -25679,6 +25696,10 @@
     $("workflowSaveTemplateBtn")?.addEventListener("click", () => saveWorkflowTemplate().catch((err) => toast(err.message || "保存失败")));
     $("workflowActivateBtn")?.addEventListener("click", () => activateWorkflowTemplate().catch(handleWorkflowActivateError));
     $("workflowStopBtn")?.addEventListener("click", () => stopWorkflowActive().catch((err) => toast(err.message || "停用失败")));
+    $("workflowDeleteTemplateBtn")?.addEventListener("click", () => {
+      const id = String(state.workflowEditingTemplateId || "");
+      deleteWorkflowTemplateById(id, { openList: false }).catch((err) => toast(err.message || "删除失败"));
+    });
     $("workflowTemplateListBtn")?.addEventListener("click", () => {
       $("workflowTemplateDrawer")?.classList.toggle("hidden");
       loadWorkflowTemplates(true).catch((err) => toast(err.message || "模板加载失败"));
@@ -25732,21 +25753,7 @@
         return;
       }
       if (deleteBtn) {
-        const id = deleteBtn.dataset.workflowDelete || "";
-        api(`/api/h5-workflows/templates/${encodeURIComponent(id)}`, { method: "DELETE" })
-          .then(() => {
-            if (String(state.workflowEditingTemplateId) === String(id)) {
-              state.workflowEditingTemplateId = "";
-              state.workflowEditingTemplateMeta = {};
-              state.workflowViewingTemplateId = "";
-              state.workflowViewingTemplateKey = "";
-              state.workflowNodesDraft = [];
-            }
-            state.workflowTemplatesLoaded = false;
-            return loadWorkflowTemplates(true);
-          })
-          .then(() => toast("模板已删除"))
-          .catch((err) => toast(err.message || "删除失败"));
+        deleteWorkflowTemplateById(deleteBtn.dataset.workflowDelete || "").catch((err) => toast(err.message || "删除失败"));
         return;
       }
     });

@@ -4,9 +4,10 @@ from backend.app.api.h5_workflows import (
     WorkflowTemplateIn,
     _template_payload,
     create_workflow_template,
+    delete_workflow_template,
     update_workflow_template,
 )
-from backend.app.models import H5WorkflowTemplate
+from backend.app.models import H5WorkflowActivation, H5WorkflowTemplate, ScheduledTask
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -81,6 +82,50 @@ def test_plain_save_creates_blank_editor_template(db_session, test_user):
     assert created["created"] is True
     assert created["template"]["name"] == "普通保存"
     assert db_session.query(H5WorkflowTemplate).count() == 1
+
+
+def test_deleting_custom_template_stops_active_activation_and_tasks(db_session, test_user):
+    created = create_workflow_template(
+        WorkflowTemplateIn(name="待删除员工", nodes=_sales_body("删除测试").nodes),
+        current_user=test_user,
+        db=db_session,
+    )
+    template_id = int(created["template"]["id"])
+    task = ScheduledTask(
+        user_id=test_user.id,
+        title="workflow task",
+        task_kind="client_workflow",
+        content="run",
+        payload={"action": "local_bestseller_daily_video"},
+        schedule_type="daily_times",
+        target_installation_ids=["delete-template-device"],
+        status="active",
+    )
+    db_session.add(task)
+    db_session.flush()
+    activation = H5WorkflowActivation(
+        user_id=test_user.id,
+        installation_id="delete-template-device",
+        template_id=template_id,
+        template_owner_user_id=test_user.id,
+        status="active",
+        scheduled_task_ids=[task.id],
+    )
+    db_session.add(activation)
+    db_session.commit()
+
+    result = delete_workflow_template(template_id, current_user=test_user, db=db_session)
+
+    db_session.expire_all()
+    template = db_session.get(H5WorkflowTemplate, template_id)
+    activation = db_session.get(H5WorkflowActivation, activation.id)
+    task = db_session.get(ScheduledTask, task.id)
+    assert result["deleted"] is True
+    assert result["stopped_activation_ids"] == [activation.id]
+    assert template.status == "deleted"
+    assert activation.status == "stopped"
+    assert task.status == "paused"
+    assert task.next_run_at is None
 
 
 def test_custom_template_cannot_take_an_existing_system_sales_identity(db_session, test_user):
@@ -301,7 +346,10 @@ def test_workflow_title_and_controls_use_an_operation_menu_in_normal_flow():
     assert "syncWorkflowControlCardBounds" not in script
     assert 'id="workflowOperationMenu"' in html
     assert 'id="workflowOperationList"' in html
+    assert 'id="workflowDeleteTemplateBtn"' in html
+    assert 'deleteWorkflowTemplateById(id, { openList: false })' in script
     assert "#workflowView .workflow-operation-list {" in styles
+    assert "#workflowView .workflow-operation-list .danger-text" in styles
     assert "20260803-workflow-dialog-keyboard-v2" in html
 
 

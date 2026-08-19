@@ -4927,6 +4927,14 @@ body * {
   background: #2563eb;
 }
 
+#workflowView .workflow-operation-list .danger-text {
+  color: #dc2626;
+}
+
+#workflowView .workflow-operation-list .danger-text:active {
+  background: #fef2f2;
+}
+
 #workflowView .workflow-actions {
   position: static !important;
   inset: auto !important;
