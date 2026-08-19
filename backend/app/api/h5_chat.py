@@ -147,6 +147,7 @@ class H5DeviceDisplayNameIn(BaseModel):
 class H5MountedAccountDefaultIn(BaseModel):
     scope: str = Field(..., min_length=1, max_length=32)
     account_key: str = Field(..., min_length=1, max_length=255)
+    installation_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class H5WechatAutoReplyIn(BaseModel):
@@ -426,10 +427,14 @@ def _collect_device_publish_accounts(
     db: Session,
     user_id: int,
     now: datetime,
+    installation_id: str = "",
 ) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]], Dict[str, list[Dict[str, str]]]]:
+    device_query = db.query(H5ChatDevicePresence).filter(H5ChatDevicePresence.user_id == user_id)
+    selected_installation_id = str(installation_id or "").strip()
+    if selected_installation_id:
+        device_query = device_query.filter(H5ChatDevicePresence.installation_id == selected_installation_id)
     devices = (
-        db.query(H5ChatDevicePresence)
-        .filter(H5ChatDevicePresence.user_id == user_id)
+        device_query
         .order_by(H5ChatDevicePresence.last_seen_at.desc())
         .limit(100)
         .all()
@@ -511,10 +516,18 @@ def _collect_server_publish_accounts(db: Session, user_id: int) -> list[Dict[str
     ]
 
 
-def _collect_douyin_lead_accounts(db: Session, user_id: int, device_by_id: Dict[str, Dict[str, Any]]) -> list[Dict[str, Any]]:
+def _collect_douyin_lead_accounts(
+    db: Session,
+    user_id: int,
+    device_by_id: Dict[str, Dict[str, Any]],
+    installation_id: str = "",
+) -> list[Dict[str, Any]]:
+    state_query = db.query(DouyinDashboardDeviceState).filter(DouyinDashboardDeviceState.user_id == user_id)
+    selected_installation_id = str(installation_id or "").strip()
+    if selected_installation_id:
+        state_query = state_query.filter(DouyinDashboardDeviceState.installation_id == selected_installation_id)
     rows = (
-        db.query(DouyinDashboardDeviceState)
-        .filter(DouyinDashboardDeviceState.user_id == user_id)
+        state_query
         .order_by(DouyinDashboardDeviceState.updated_at.desc())
         .limit(100)
         .all()
@@ -528,6 +541,8 @@ def _collect_douyin_lead_accounts(db: Session, user_id: int, device_by_id: Dict[
             if not isinstance(item, dict):
                 continue
             installation_id = str(item.get("installation_id") or state_row.installation_id or "").strip()
+            if selected_installation_id and installation_id != selected_installation_id:
+                continue
             account_id = str(item.get("account_id") or item.get("id") or "").strip()
             nickname = str(item.get("nickname") or item.get("name") or account_id or "").strip()
             if not (account_id or nickname):
@@ -569,7 +584,6 @@ def _collect_wechat_account(
 ) -> list[Dict[str, Any]]:
     if not device_rows:
         return []
-    selected = next((row for row in device_rows if row.get("online")), device_rows[0])
     return [
         _mounted_account_row(
             scope="wechat",
@@ -592,18 +606,25 @@ def _collect_wechat_account(
                 )[:500]
             },
         )
+        for selected in device_rows
     ]
 
 
-def _mounted_accounts_payload(db: Session, user_id: int) -> Dict[str, Any]:
+def _mounted_accounts_payload(db: Session, user_id: int, installation_id: str = "") -> Dict[str, Any]:
     now = datetime.utcnow()
-    publish_device_accounts, device_rows, wechat_contacts_by_device = _collect_device_publish_accounts(db, user_id, now)
+    selected_installation_id = str(installation_id or "").strip()
+    publish_device_accounts, device_rows, wechat_contacts_by_device = _collect_device_publish_accounts(
+        db,
+        user_id,
+        now,
+        installation_id=selected_installation_id,
+    )
     device_by_id = {str(row.get("installation_id") or ""): row for row in device_rows}
     accounts = (
         _collect_wechat_account(device_rows, wechat_contacts_by_device)
         + publish_device_accounts
-        + _collect_server_publish_accounts(db, user_id)
-        + _collect_douyin_lead_accounts(db, user_id, device_by_id)
+        + ([] if selected_installation_id else _collect_server_publish_accounts(db, user_id))
+        + _collect_douyin_lead_accounts(db, user_id, device_by_id, installation_id=selected_installation_id)
     )
     defaults = _mounted_default_rows(db, user_id)
     default_payload = {scope: _mounted_default_payload(row) for scope, row in defaults.items()}
@@ -1744,11 +1765,13 @@ def h5_devices_status(
 
 @router.get("/api/h5-chat/mounted-accounts", summary="H5 已挂载平台账号列表")
 def h5_mounted_accounts(
+    installation_id: str = Query("", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
-    return _mounted_accounts_payload(db, owner_user.id)
+    selected_installation_id = installation_id.strip() if isinstance(installation_id, str) else ""
+    return _mounted_accounts_payload(db, owner_user.id, installation_id=selected_installation_id)
 
 
 @router.post("/api/h5-chat/mounted-accounts/wechat-auto-reply", summary="H5 设置个人微信自动回复")
@@ -1758,8 +1781,8 @@ def h5_set_wechat_auto_reply(
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
-    payload = _mounted_accounts_payload(db, owner_user.id)
     target_installation = (body.installation_id or "").strip()
+    payload = _mounted_accounts_payload(db, owner_user.id, installation_id=target_installation)
     account = next(
         (
             row
@@ -1912,7 +1935,7 @@ def h5_set_wechat_auto_reply(
     _clear_pending_empty_for_target(owner_user.id, installation_id)
     db.commit()
     db.refresh(message)
-    result = _mounted_accounts_payload(db, owner_user.id)
+    result = _mounted_accounts_payload(db, owner_user.id, installation_id=installation_id)
     return {
         "ok": True,
         "message": _serialize_message(message),
@@ -1936,7 +1959,8 @@ def h5_set_mounted_account_default(
     else:
         raise HTTPException(status_code=400, detail="该类型不支持设置默认账号")
     account_key = (body.account_key or "").strip()
-    payload = _mounted_accounts_payload(db, owner_user.id)
+    target_installation = (body.installation_id or "").strip()
+    payload = _mounted_accounts_payload(db, owner_user.id, installation_id=target_installation)
     account = next(
         (
             row
@@ -1974,7 +1998,7 @@ def h5_set_mounted_account_default(
     row.updated_at = now
     db.commit()
     db.refresh(row)
-    result = _mounted_accounts_payload(db, owner_user.id)
+    result = _mounted_accounts_payload(db, owner_user.id, installation_id=target_installation)
     return {"ok": True, "default": _mounted_default_payload(row), "accounts": result.get("accounts", []), "defaults": result.get("defaults", {})}
 
 

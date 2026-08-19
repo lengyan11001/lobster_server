@@ -118,6 +118,9 @@ def _ensure_recorder_audio_columns() -> None:
                 connection.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN source_type VARCHAR(32) NOT NULL DEFAULT 'device'"))
             if "source_doc_id" not in columns:
                 connection.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN source_doc_id VARCHAR(64)"))
+            if "installation_id" not in columns:
+                connection.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN installation_id VARCHAR(128) NOT NULL DEFAULT ''"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_recorder_audio_records_installation_id ON recorder_audio_records (installation_id)"))
     except Exception as exc:
         logger.warning("H5 recorder column migration skipped: %s", exc)
 

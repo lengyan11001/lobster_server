@@ -3543,13 +3543,25 @@ def create_scheduled_task(
 def list_scheduled_tasks(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    installation_id: str = Query("", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
     query = db.query(ScheduledTask).filter(ScheduledTask.user_id == owner_user.id)
-    total = query.with_entities(func.count(ScheduledTask.id)).scalar() or 0
-    rows = query.order_by(ScheduledTask.created_at.desc()).offset(offset).limit(limit).all()
+    selected_installation_id = installation_id.strip() if isinstance(installation_id, str) else ""
+    if selected_installation_id:
+        matching_rows = [
+            row
+            for row in query.order_by(ScheduledTask.created_at.desc()).all()
+            if _is_server_side_task(row)
+            or selected_installation_id in _clean_installation_ids(row.target_installation_ids or [])
+        ]
+        total = len(matching_rows)
+        rows = matching_rows[offset : offset + limit]
+    else:
+        total = query.with_entities(func.count(ScheduledTask.id)).scalar() or 0
+        rows = query.order_by(ScheduledTask.created_at.desc()).offset(offset).limit(limit).all()
     return {
         "ok": True,
         "tasks": [_serialize_task(r) for r in rows],
@@ -3595,7 +3607,8 @@ def list_h5_scheduled_publish_accounts(
         owner_user.id,
         installation_id=(installation_id or "").strip(),
     )
-    rows = (
+    selected_installation_id = (installation_id or "").strip()
+    rows = [] if selected_installation_id else (
         db.query(PublishAccount)
         .filter(PublishAccount.user_id == owner_user.id)
         .order_by(PublishAccount.created_at.desc())
@@ -3757,12 +3770,22 @@ def list_scheduled_task_runs(
     compact: Optional[bool] = Query(None),
     date: str = Query("", max_length=10),
     timezone_offset_minutes: int = Query(480, ge=-720, le=840),
+    installation_id: str = Query("", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
     _enqueue_due_tasks(db, owner_user.id)
     query = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.user_id == owner_user.id)
+    selected_installation_id = installation_id.strip() if isinstance(installation_id, str) else ""
+    if selected_installation_id:
+        query = query.filter(
+            or_(
+                ScheduledTaskRun.installation_id == selected_installation_id,
+                ScheduledTaskRun.claimed_by_installation_id == selected_installation_id,
+                ScheduledTaskRun.task_kind.in_(list(_SERVER_SIDE_TASK_KINDS)),
+            )
+        )
     date_key = (date or "").strip()
     if date_key:
         try:

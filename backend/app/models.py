@@ -1777,6 +1777,7 @@ class RecorderAudioRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    installation_id: Mapped[str] = mapped_column(String(128), default="", nullable=False, index=True)
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     device_name: Mapped[str] = mapped_column(String(128), default="", nullable=False)

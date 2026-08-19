@@ -5335,6 +5335,38 @@ body * {
   gap: 5px;
 }
 
+#profileView .profile-device-picker {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+}
+
+#profileView .profile-device-picker > span {
+  color: rgba(255, 255, 255, .72);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+#profileView .profile-device-picker .device-select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 28px 0 9px;
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 8px;
+  color: #fff;
+  background-color: rgba(255, 255, 255, .14);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+#profileView .profile-device-picker .device-select option {
+  color: #102036;
+  background: #fff;
+}
+
 #profileView .profile-head h2 {
   overflow: hidden;
   margin: 0;

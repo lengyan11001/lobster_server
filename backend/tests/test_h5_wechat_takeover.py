@@ -34,7 +34,7 @@ def test_native_wechat_takeover_plan_scans_friends_once_and_messages_every_15_se
 def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_session, test_user, monkeypatch):
     monkeypatch.setattr(h5_chat, "online_user_for_mobile_user", lambda _db, user: user)
 
-    def mounted_payload(_db, _user_id):
+    def mounted_payload(_db, _user_id, **_kwargs):
         return {
             "ok": True,
             "accounts": [
@@ -97,7 +97,7 @@ def test_wechat_auto_reply_config_persists_memory_and_group_conditions(db_sessio
 def test_wechat_auto_reply_uses_fixed_fifteen_second_interval(db_session, test_user, monkeypatch):
     monkeypatch.setattr(h5_chat, "online_user_for_mobile_user", lambda _db, user: user)
 
-    def mounted_payload(_db, _user_id):
+    def mounted_payload(_db, _user_id, **_kwargs):
         return {
             "ok": True,
             "accounts": [

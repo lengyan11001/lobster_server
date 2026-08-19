@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -147,6 +147,7 @@ def _serialize(row: RecorderAudioRecord, detail: bool = False) -> dict[str, Any]
     source_type = str(row.source_type or "device").strip().lower()
     data = {
         "id": row.id,
+        "installation_id": row.installation_id or "",
         "file_name": row.file_name,
         "display_name": row.display_name or row.file_name,
         "device_name": row.device_name,
@@ -221,9 +222,11 @@ def _new_audio_record(
     source_type: str,
     source_name: str,
     source_doc_id: str = "",
+    installation_id: str = "",
 ) -> RecorderAudioRecord:
     row = RecorderAudioRecord(
         user_id=user_id,
+        installation_id=str(installation_id or "").strip()[:128],
         file_name=name,
         display_name=name,
         device_name=(source_name or SOURCE_LABELS.get(source_type) or "音频文件")[:128],
@@ -854,11 +857,13 @@ async def upload_recording(
     if source_type not in SOURCE_LABELS:
         source_type = "local"
     _validate_audio_upload(file, name, source_type)
+    iid = installation_id.strip() or request.headers.get("X-Installation-Id", "").strip()
     if source_type == "device":
         existing = db.query(RecorderAudioRecord).filter(
             RecorderAudioRecord.user_id == current_user.id,
             RecorderAudioRecord.file_name == name,
             RecorderAudioRecord.source_type == "device",
+            RecorderAudioRecord.installation_id == iid,
         ).first()
         if existing:
             return {"ok": True, "duplicate": True, "record": _serialize(existing, detail=True)}
@@ -895,8 +900,8 @@ async def upload_recording(
         size=size,
         source_type=source_type,
         source_name=source_name.strip() or device_name.strip(),
+        installation_id=iid,
     )
-    iid = installation_id.strip() or request.headers.get("X-Installation-Id", "").strip()
     background.add_task(_process, row.id, request, iid)
     return {"ok": True, "record": _serialize(row, detail=True)}
 
@@ -1018,6 +1023,7 @@ async def transcribe_memory_audio_file(
         source_type="memory",
         source_name=source_name,
         source_doc_id=source_key,
+        installation_id=installation_id,
     )
     background.add_task(_process, record.id, request, installation_id)
     return {"ok": True, "record": _serialize(record, detail=True)}
@@ -1028,10 +1034,19 @@ def list_recordings(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=50),
     source_type: str = Query(default=""),
+    installation_id: str = Query(default="", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     query = db.query(RecorderAudioRecord).filter(RecorderAudioRecord.user_id == current_user.id)
+    selected_installation_id = installation_id.strip() if isinstance(installation_id, str) else ""
+    if selected_installation_id:
+        query = query.filter(
+            or_(
+                RecorderAudioRecord.installation_id == selected_installation_id,
+                RecorderAudioRecord.installation_id == "",
+            )
+        )
     clean_source_type = str(source_type or "").strip().lower()
     if clean_source_type in SOURCE_LABELS:
         query = query.filter(RecorderAudioRecord.source_type == clean_source_type)
@@ -1041,11 +1056,24 @@ def list_recordings(
 
 
 @router.get("/api/h5/recorder/known-names")
-def recorder_known_names(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    rows = db.query(RecorderAudioRecord.file_name).filter(
+def recorder_known_names(
+    installation_id: str = Query(default="", max_length=128),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(RecorderAudioRecord.file_name).filter(
         RecorderAudioRecord.user_id == current_user.id,
         RecorderAudioRecord.source_type == "device",
-    ).all()
+    )
+    selected_installation_id = installation_id.strip() if isinstance(installation_id, str) else ""
+    if selected_installation_id:
+        query = query.filter(
+            or_(
+                RecorderAudioRecord.installation_id == selected_installation_id,
+                RecorderAudioRecord.installation_id == "",
+            )
+        )
+    rows = query.all()
     return {"items": [row[0] for row in rows]}
 
 

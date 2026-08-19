@@ -48,6 +48,7 @@
       chatSessionManageId: "",
       chatSessionManageMode: "rename",
       devices: [],
+      devicesLoaded: false,
       selectedInstallationId: localStorage.getItem(brandStorageKey("lobster_h5_selected_installation_id")) || "",
       liveExecutor: {
         image: null,
@@ -73,6 +74,7 @@
       runStatusReady: false,
       taskListOffset: 0,
       taskListHasNext: false,
+      taskListRequestSeq: 0,
       taskEditId: "",
       runListOffset: 0,
       runListHasNext: false,
@@ -117,6 +119,8 @@
       recorderPage: 1,
       recorderPageSize: 20,
       recorderTotal: 0,
+      recorderRecordsRequestSeq: 0,
+      recorderKnownRequestSeq: 0,
       recorderSubtab: "records",
       recorderDetailId: null,
       recorderDetailRecord: null,
@@ -141,11 +145,16 @@
       publishAccounts: [],
       publishAccountsLoaded: false,
       publishAccountsLoading: false,
+      publishAccountsRequestSeq: 0,
       mountedAccounts: [],
       mountedAccountDefaults: {},
       mountedAccountsLoaded: false,
       mountedAccountsLoading: false,
+      mountedAccountsRequestSeq: 0,
       deviceStatusPromise: null,
+      deviceContextRequestSeq: 0,
+      workflowActiveRequestSeq: 0,
+      douyinStatusRequestSeq: 0,
       mountedAccountTab: "wechat",
       mountedWechatMemoryLoading: false,
       mountedWechatContactSearch: "",
@@ -6161,12 +6170,14 @@
 
     async function loadWorkflowActive() {
       const iid = currentInstallationId();
+      const requestId = ++state.workflowActiveRequestSeq;
       if (!iid) {
         state.workflowActive = null;
         renderWorkflow();
         return;
       }
       const data = await api(`/api/h5-workflows/active?installation_id=${encodeURIComponent(iid)}`);
+      if (requestId !== state.workflowActiveRequestSeq || iid !== currentInstallationId()) return;
       state.workflowActive = normalizeWorkflowActivation(data.activation || null);
       renderWorkflow();
       if (document.querySelector("#officeView.active")) renderOfficeEmployees();
@@ -7841,7 +7852,9 @@
     function renderOfficeEmployees() {
       const floor = $("employeeFloor");
       if (!floor) return;
-      const devices = state.devices || [];
+      const selectedInstallationId = String(state.selectedInstallationId || "").trim();
+      const currentDevice = (state.devices || []).find((device) => String(device.installation_id || "") === selectedInstallationId) || null;
+      const devices = currentDevice ? [currentDevice] : [];
       const snapshots = devices.map((device) => ({ device, snapshot: deviceSnapshot(device) }));
       const workingCount = snapshots.filter((row) => row.snapshot.mode === "working").length;
       const idleCount = snapshots.filter((row) => row.snapshot.mode === "idle").length;
@@ -12974,35 +12987,96 @@
       }
     }
 
+    function invalidateSelectedDeviceData() {
+      state.deviceContextRequestSeq += 1;
+      state.taskListRequestSeq += 1;
+      state.runListRequestSeq += 1;
+      state.mountedAccountsRequestSeq += 1;
+      state.publishAccountsRequestSeq += 1;
+      state.workflowActiveRequestSeq += 1;
+      state.douyinStatusRequestSeq += 1;
+      state.recorderRecordsRequestSeq += 1;
+      state.recorderKnownRequestSeq += 1;
+      state.tasks = [];
+      state.runs = [];
+      state.taskListOffset = 0;
+      state.taskListHasNext = false;
+      state.runListOffset = 0;
+      state.runListHasNext = false;
+      state.runListTotal = 0;
+      state.runListLoading = false;
+      state.workflowRunDateLoaded = {};
+      state.workflowRunDateLoading = {};
+      state.workflowActive = null;
+      state.mountedAccounts = [];
+      state.mountedAccountDefaults = {};
+      state.mountedAccountsLoaded = false;
+      state.mountedAccountsLoading = false;
+      state.publishAccounts = [];
+      state.publishAccountsLoaded = false;
+      state.publishAccountsLoading = false;
+      state.douyinStatus = null;
+      state.recorderRecords = [];
+      state.recorderKnownNames = [];
+      state.recorderSyncedFiles = [];
+      state.recorderPage = 1;
+      state.recorderTotal = 0;
+      state.officeSummaryLoadedAt = 0;
+      state.officeSummaryLoading = null;
+    }
+
     function ensureSelectedInstallationId() {
       const selected = String(state.selectedInstallationId || "").trim();
-      if (selected && state.devices.some((d) => d.online && String(d.installation_id || "") === selected)) return selected;
+      if (!state.devicesLoaded && !(state.devices || []).length) return selected;
+      if (selected && state.devices.some((d) => String(d.installation_id || "") === selected)) return selected;
       const previous = state.selectedInstallationId;
-      const online = state.devices.find((d) => d.online && d.installation_id);
-      const next = String((online || {}).installation_id || "");
+      const preferred = state.devices.find((d) => d.online && d.installation_id) || state.devices.find((d) => d.installation_id);
+      const next = String((preferred || {}).installation_id || "");
       state.selectedInstallationId = next;
       if (next) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), next);
       else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
-      if (previous !== next) {
-        state.publishAccountsLoaded = false;
-        state.publishAccounts = [];
-      }
+      if (previous !== next) invalidateSelectedDeviceData();
       return next;
+    }
+
+    async function refreshSelectedDeviceData(requestId = state.deviceContextRequestSeq) {
+      const installationId = currentInstallationId();
+      if (!installationId || requestId !== state.deviceContextRequestSeq) return;
+      const requests = [
+        loadMountedAccounts(true),
+        loadTasks({ reset: true, limit: 80 }),
+        loadRuns({ reset: true, limit: 20, compact: true }),
+        loadWorkflowActive(),
+      ];
+      if (activeViewKey() === "douyinLeads") requests.push(loadDouyinStatus());
+      if (activeViewKey() === "recorder") {
+        requests.push(loadRecorderRecords());
+        requests.push(loadRecorderKnownNames());
+      }
+      await Promise.allSettled(requests);
+      if (requestId !== state.deviceContextRequestSeq || installationId !== currentInstallationId()) return;
+      await loadPublishAccounts(true).catch(() => {});
+      renderMountedAccounts();
+      renderOfficeEmployees();
+      renderWorkList();
     }
 
     function setSelectedInstallationId(value) {
       const next = String(value || "").trim();
-      const hit = next ? (state.devices || []).find((d) => d.online && String(d.installation_id || "") === next) : null;
+      const hit = next ? (state.devices || []).find((d) => String(d.installation_id || "") === next) : null;
+      const previous = String(state.selectedInstallationId || "").trim();
       state.selectedInstallationId = hit ? next : "";
       if (state.selectedInstallationId) localStorage.setItem(brandStorageKey("lobster_h5_selected_installation_id"), state.selectedInstallationId);
       else localStorage.removeItem(brandStorageKey("lobster_h5_selected_installation_id"));
-      state.publishAccountsLoaded = false;
-      state.publishAccounts = [];
+      renderProfileDeviceSelect();
+      if (previous === state.selectedInstallationId) return;
+      invalidateSelectedDeviceData();
       renderProfileDeviceSelect();
       fillPublishPlatformSelect();
       fillPublishRunPlatformSelect();
-      loadPublishAccounts().catch((err) => toast(err.message || "发布账号加载失败"));
-      if (activeViewKey() === "workflow") loadWorkflowActive().catch((err) => toast(err.message || "工作流状态加载失败"));
+      syncRecorderNativeAuth();
+      const requestId = state.deviceContextRequestSeq;
+      refreshSelectedDeviceData(requestId).catch((err) => toast(err.message || "设备数据刷新失败"));
     }
 
     function selectedDevice() {
@@ -14448,7 +14522,12 @@
     }
 
     async function loadRecorderRecords() {
-      const data = await api(`/api/h5/recorder/files?page=${state.recorderPage}&page_size=${state.recorderPageSize}`);
+      const params = new URLSearchParams({ page: String(state.recorderPage), page_size: String(state.recorderPageSize) });
+      const installationId = currentInstallationId();
+      const requestId = ++state.recorderRecordsRequestSeq;
+      if (installationId) params.set("installation_id", installationId);
+      const data = await api(`/api/h5/recorder/files?${params.toString()}`);
+      if (requestId !== state.recorderRecordsRequestSeq || installationId !== currentInstallationId()) return;
       state.recorderPage = Number(data.page || 1);
       state.recorderTotal = Number(data.total || 0);
       state.recorderRecords = (Array.isArray(data.items) ? data.items : []).slice().sort((left, right) => {
@@ -14468,7 +14547,11 @@
     }
 
     async function loadRecorderKnownNames() {
-      const data = await api("/api/h5/recorder/known-names");
+      const installationId = currentInstallationId();
+      const requestId = ++state.recorderKnownRequestSeq;
+      const query = installationId ? `?installation_id=${encodeURIComponent(installationId)}` : "";
+      const data = await api(`/api/h5/recorder/known-names${query}`);
+      if (requestId !== state.recorderKnownRequestSeq || installationId !== currentInstallationId()) return;
       state.recorderKnownNames = Array.isArray(data.items) ? data.items : [];
       renderRecorderDeviceFiles();
     }
@@ -16080,23 +16163,29 @@
     }
 
     function renderProfileDeviceSelect() {
-      const sel = $("profileDeviceSelect");
-      if (!sel) return;
+      const selects = [$("profileHeaderDeviceSelect"), $("profileDeviceSelect")].filter(Boolean);
+      if (!selects.length) return;
       ensureSelectedInstallationId();
-      const rows = (state.devices || []).filter((device) => device.online && device.installation_id);
-      sel.innerHTML = rows.length
+      const rows = (state.devices || []).filter((device) => device.installation_id);
+      const options = rows.length
         ? rows.map((device) => {
             const id = String(device.installation_id || "");
             const accountCount = Number(device.publish_account_count || 0);
-            const suffix = accountCount ? ` / ${accountCount}个账号` : "";
-            return optionHtml(id, `${deviceSelectorLabel(device)}${suffix}`);
+            const status = device.online ? "" : " / 离线";
+            const suffix = accountCount ? ` / ${accountCount}个发布账号` : "";
+            return optionHtml(id, `${deviceSelectorLabel(device)}${status}${suffix}`);
           }).join("")
-        : optionHtml("", "暂无在线设备");
-      sel.value = state.selectedInstallationId || "";
+        : optionHtml("", "暂无设备");
+      selects.forEach((select) => {
+        select.innerHTML = options;
+        select.value = state.selectedInstallationId || "";
+        select.disabled = !rows.length;
+      });
       const selected = selectedDevice();
       const text = selected
-        ? `在线 / ${deviceSelectorLabel(selected)}`
-        : "暂无在线设备";
+        ? `${selected.online ? "在线" : "离线"} / ${deviceSelectorLabel(selected)}`
+        : "暂无设备";
+      if ($("profileDeviceText")) $("profileDeviceText").textContent = text;
       if ($("profileSelectedDeviceText")) $("profileSelectedDeviceText").textContent = text;
     }
 
@@ -16146,6 +16235,8 @@
     function mountedDefaultInstallationId(scope) {
       const pref = mountedDefault(scope);
       const installationId = String((pref && pref.installation_id) || "").trim();
+      const selectedInstallationId = String(state.selectedInstallationId || "").trim();
+      if (selectedInstallationId && installationId && installationId !== selectedInstallationId) return "";
       if (!installationId) return "";
       if ((state.devices || []).length && !(state.devices || []).some((device) => device.online && String(device.installation_id || "") === installationId)) return "";
       return installationId;
@@ -16207,13 +16298,12 @@
 
     function mountedAccountRowsForTab(scope) {
       const activeScope = String(scope || state.mountedAccountTab || "wechat");
-      const onlineIds = onlineMountedDeviceIds();
+      const selectedInstallationId = currentInstallationId();
       return (Array.isArray(state.mountedAccounts) ? state.mountedAccounts : [])
         .filter((row) => {
-          if (!row || row.scope !== activeScope || !row.online) return false;
+          if (!row || row.scope !== activeScope) return false;
           const installationId = String(row.installation_id || "").trim();
-          if (activeScope === "wechat") return !installationId || onlineIds.has(installationId);
-          return !!installationId && onlineIds.has(installationId);
+          return !!selectedInstallationId && installationId === selectedInstallationId;
         });
     }
 
@@ -16341,8 +16431,9 @@
       const list = $("mountedAccountList");
       const summary = $("mountedAccountSummary");
       if (summary) {
-        const onlineCount = ["wechat", "publish", "douyin"].reduce((sum, scope) => sum + mountedAccountRowsForTab(scope).length, 0);
-        summary.textContent = state.mountedAccountsLoaded ? `${onlineCount}个在线账号` : "微信、发布中心、抖音获客";
+        const rows = ["wechat", "publish", "douyin"].flatMap((scope) => mountedAccountRowsForTab(scope));
+        const onlineCount = rows.filter((row) => row.online).length;
+        summary.textContent = state.mountedAccountsLoaded ? `${rows.length}个账号 · ${onlineCount}个在线` : "微信、发布中心、抖音获客";
       }
       renderMountedAccountTabs();
       if (!list) return;
@@ -16353,7 +16444,7 @@
       }
       const rows = mountedAccountRowsForTab().slice();
       if (!rows.length) {
-        list.innerHTML = `<div class="mounted-account-empty">暂无在线${escapeHtml(mountedScopeLabel(state.mountedAccountTab))}账号</div>`;
+        list.innerHTML = `<div class="mounted-account-empty">当前设备暂无${escapeHtml(mountedScopeLabel(state.mountedAccountTab))}账号</div>`;
         renderMountedWechatTakeoverConfig();
         return;
       }
@@ -16397,15 +16488,19 @@
 
     async function loadMountedAccounts(force = false) {
       if (!state.token) return;
-      if (state.mountedAccountsLoading) return;
+      if (state.mountedAccountsLoading && !force) return;
       if (!force && state.mountedAccountsLoaded) {
         renderMountedAccounts();
         return;
       }
+      const installationId = currentInstallationId();
+      const requestId = ++state.mountedAccountsRequestSeq;
       state.mountedAccountsLoading = true;
       renderMountedAccounts();
       try {
-        const data = await api("/api/h5-chat/mounted-accounts");
+        const query = installationId ? `?installation_id=${encodeURIComponent(installationId)}` : "";
+        const data = await api(`/api/h5-chat/mounted-accounts${query}`);
+        if (requestId !== state.mountedAccountsRequestSeq || installationId !== currentInstallationId()) return;
         state.mountedAccounts = Array.isArray(data.accounts) ? data.accounts : [];
         state.mountedAccountDefaults = data.defaults || {};
         if (state.publishAccountsLoaded) state.publishAccounts = applyPublishAccountDefaults(state.publishAccounts);
@@ -16418,12 +16513,15 @@
           }).catch(() => {}).finally(() => { state.mountedWechatMemoryLoading = false; });
         }
       } catch (err) {
+        if (requestId !== state.mountedAccountsRequestSeq) return;
         state.mountedAccounts = [];
         state.mountedAccountDefaults = {};
         if ($("mountedAccountSummary")) $("mountedAccountSummary").textContent = "账号状态获取失败";
       } finally {
-        state.mountedAccountsLoading = false;
-        renderMountedAccounts();
+        if (requestId === state.mountedAccountsRequestSeq) {
+          state.mountedAccountsLoading = false;
+          renderMountedAccounts();
+        }
       }
     }
 
@@ -16438,7 +16536,11 @@
       const row = (state.mountedAccounts || []).find((item) => item.scope === sourceScope && item.account_key === accountKey);
       const data = await api("/api/h5-chat/mounted-accounts/default", {
         method: "POST",
-        json: { scope, account_key: accountKey },
+        json: {
+          scope,
+          account_key: accountKey,
+          installation_id: (row && row.installation_id) || currentInstallationId(),
+        },
       });
       state.mountedAccounts = Array.isArray(data.accounts) ? data.accounts : state.mountedAccounts;
       state.mountedAccountDefaults = data.defaults || state.mountedAccountDefaults || {};
@@ -16786,6 +16888,8 @@
           }
           const data = await api("/api/h5-chat/devices/status");
           state.devices = Array.isArray(data.devices) ? data.devices : [];
+          state.devicesLoaded = true;
+          const previousInstallationId = String(state.selectedInstallationId || "").trim();
           ensureSelectedInstallationId();
           state.publishAccountsLoaded = false;
           const online = state.devices.filter((d) => d.online).length;
@@ -16794,13 +16898,18 @@
           $("profileDeviceText").textContent = text;
           renderChatAvailabilityStatus();
           const currentView = activeViewKey();
-          if (currentView === "profile" || currentView === "mountedAccounts") renderProfileDeviceSelect();
+          renderProfileDeviceSelect();
           if (currentView === "workflow") renderWorkflowDeviceSelect();
           if (currentView === "office") renderOfficeEmployees();
           if (currentView === "liveExecutor") renderLiveExecutorDeviceSelect();
+          const selectedInstallationId = String(state.selectedInstallationId || "").trim();
+          if (previousInstallationId !== selectedInstallationId && selectedInstallationId && currentView !== "mountedAccounts") {
+            const requestId = state.deviceContextRequestSeq;
+            refreshSelectedDeviceData(requestId).catch(() => {});
+          }
         } catch (err) {
           const view = activeViewKey();
-          if (view === "profile" || view === "mountedAccounts") renderProfileDeviceSelect();
+          renderProfileDeviceSelect();
           if (view === "workflow") renderWorkflowDeviceSelect();
           if (view === "liveExecutor") renderLiveExecutorDeviceSelect();
           $("profileDeviceText").textContent = "设备状态获取失败";
@@ -17453,8 +17562,8 @@
       }
     }
 
-    async function loadPublishAccounts() {
-      if (state.publishAccountsLoaded || state.publishAccountsLoading) {
+    async function loadPublishAccounts(force = false) {
+      if (!force && (state.publishAccountsLoaded || state.publishAccountsLoading)) {
         fillPublishPlatformSelect();
         fillPublishRunPlatformSelect();
         fillWorkPublishAccountSelect();
@@ -17463,21 +17572,26 @@
       if (!state.mountedAccountsLoaded && !state.mountedAccountsLoading) {
         await loadMountedAccounts(true).catch(() => {});
       }
+      const installationId = currentInstallationId();
+      const requestId = ++state.publishAccountsRequestSeq;
       state.publishAccountsLoading = true;
       try {
-        const installationId = currentInstallationId();
         const query = installationId ? `?installation_id=${encodeURIComponent(installationId)}` : "";
         const data = await api(`/api/scheduled-tasks/publish/accounts${query}`);
+        if (requestId !== state.publishAccountsRequestSeq || installationId !== currentInstallationId()) return;
         state.publishAccounts = applyPublishAccountDefaults(data.accounts);
         state.publishAccountsLoaded = true;
       } catch (err) {
+        if (requestId !== state.publishAccountsRequestSeq) return;
         state.publishAccounts = [];
         toast(err.message || "发布账号加载失败");
       } finally {
-        state.publishAccountsLoading = false;
-        fillPublishPlatformSelect();
-        fillPublishRunPlatformSelect();
-        fillWorkPublishAccountSelect();
+        if (requestId === state.publishAccountsRequestSeq) {
+          state.publishAccountsLoading = false;
+          fillPublishPlatformSelect();
+          fillPublishRunPlatformSelect();
+          fillWorkPublishAccountSelect();
+        }
       }
     }
 
@@ -22182,6 +22296,8 @@
     }
 
     async function loadDouyinStatus() {
+      const installationId = currentInstallationId();
+      const requestId = ++state.douyinStatusRequestSeq;
       const accountList = $("douyinAccountList");
       const runtimeList = $("douyinRuntimeList");
       const metricGrid = $("douyinMetricGrid");
@@ -22192,9 +22308,12 @@
         if (!state.mountedAccountsLoaded && !state.mountedAccountsLoading) {
           await loadMountedAccounts(true).catch(() => {});
         }
-        const data = await api('/api/douyin/dashboard-status');
+        const query = installationId ? `?installation_id=${encodeURIComponent(installationId)}` : "";
+        const data = await api(`/api/douyin/dashboard-status${query}`);
+        if (requestId !== state.douyinStatusRequestSeq || installationId !== currentInstallationId()) return;
         state.douyinStatus = data || {};
       } catch (err) {
+        if (requestId !== state.douyinStatusRequestSeq) return;
         state.douyinStatus = {
           accounts: [],
           metrics: {
@@ -22448,6 +22567,8 @@
       const pageSize = Math.max(1, Math.min(200, parseInt(options.limit || "200", 10) || 200));
       const box = $("taskList");
       if (!state.token) return;
+      const installationId = currentInstallationId();
+      const requestId = ++state.taskListRequestSeq;
       if (reset) {
         state.taskListOffset = 0;
         state.taskListHasNext = false;
@@ -22455,7 +22576,10 @@
       const offset = append ? state.taskListOffset : 0;
       if (box && !append) box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
-        const data = await api(`/api/scheduled-tasks/tasks?limit=${pageSize}&offset=${offset}`);
+        const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
+        if (installationId) params.set("installation_id", installationId);
+        const data = await api(`/api/scheduled-tasks/tasks?${params.toString()}`);
+        if (requestId !== state.taskListRequestSeq || installationId !== currentInstallationId()) return false;
         const rows = Array.isArray(data.tasks) ? data.tasks : [];
         const pagination = data.pagination || {};
         state.taskListOffset = offset + rows.length;
@@ -22488,6 +22612,7 @@
         }).join("");
         $("loadMoreTasksBtn")?.classList.toggle("hidden", !state.taskListHasNext);
       } catch (err) {
+        if (requestId !== state.taskListRequestSeq) return false;
         state.tasks = [];
         state.taskListHasNext = false;
         renderWorkList();
@@ -24626,6 +24751,7 @@
       const box = $("runList");
       if (!state.token) return;
       if (state.runListLoading) return false;
+      const installationId = currentInstallationId();
       const requestId = ++state.runListRequestSeq;
       state.runListLoading = true;
       if (reset) {
@@ -24637,8 +24763,10 @@
       const offset = append ? state.runListOffset : 0;
       if (box && document.querySelector("#runListView.active") && !append && !silent) box.innerHTML = `<div class="hint">加载中...</div>`;
       try {
-        const data = await api(`/api/scheduled-tasks/runs?limit=${pageSize}&offset=${offset}&compact=${compact ? "1" : "0"}`);
-        if (requestId !== state.runListRequestSeq) return false;
+        const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset), compact: compact ? "1" : "0" });
+        if (installationId) params.set("installation_id", installationId);
+        const data = await api(`/api/scheduled-tasks/runs?${params.toString()}`);
+        if (requestId !== state.runListRequestSeq || installationId !== currentInstallationId()) return false;
         const rows = Array.isArray(data.runs) ? data.runs : [];
         const pagination = data.pagination || {};
         state.runListOffset = offset + rows.length;
@@ -24704,12 +24832,22 @@
     async function loadWorkflowRunsForDate(dateKey, options = {}) {
       const key = String(dateKey || workflowSelectedDateKey() || "").trim();
       if (!key) return;
+      const installationId = currentInstallationId();
       if (!options.force && state.workflowRunDateLoaded && state.workflowRunDateLoaded[key]) return;
       if (state.workflowRunDateLoading && state.workflowRunDateLoading[key]) return;
       state.workflowRunDateLoading = { ...(state.workflowRunDateLoading || {}), [key]: true };
       renderWorkflowTimeline();
       try {
-        const data = await api(`/api/scheduled-tasks/runs?limit=200&offset=0&compact=1&date=${encodeURIComponent(key)}&timezone_offset_minutes=${encodeURIComponent(String(timezoneOffsetMinutes()))}`);
+        const params = new URLSearchParams({
+          limit: "200",
+          offset: "0",
+          compact: "1",
+          date: key,
+          timezone_offset_minutes: String(timezoneOffsetMinutes()),
+        });
+        if (installationId) params.set("installation_id", installationId);
+        const data = await api(`/api/scheduled-tasks/runs?${params.toString()}`);
+        if (installationId !== currentInstallationId()) return;
         mergeRuns(Array.isArray(data.runs) ? data.runs : []);
         state.workflowRunDateLoaded = { ...(state.workflowRunDateLoaded || {}), [key]: true };
       } finally {
@@ -26001,7 +26139,9 @@
       window.speechSynthesis.addEventListener?.("voiceschanged", refreshSpeechVoices);
       refreshSpeechVoices();
     }
-    $("profileDeviceSelect")?.addEventListener("change", (evt) => setSelectedInstallationId(evt.target.value || ""));
+    [$("profileHeaderDeviceSelect"), $("profileDeviceSelect")].filter(Boolean).forEach((select) => {
+      select.addEventListener("change", (evt) => setSelectedInstallationId(evt.target.value || ""));
+    });
     $("mountedAccountRefreshBtn")?.addEventListener("click", () => {
       refreshMountedAccounts().catch((err) => toast(err.message || "刷新失败"));
     });
@@ -26483,9 +26623,11 @@
       state.companyName = name;
       localStorage.setItem(brandStorageKey("lobster_h5_company_name"), name);
       updateCompanySign();
+      const selectedOfficeDevice = selectedDevice();
+      const selectedOfficeSnapshot = selectedOfficeDevice ? deviceSnapshot(selectedOfficeDevice) : null;
       updateBossOfficeStats(
-        state.devices.filter((d) => d.online).length,
-        state.devices.filter((d) => d.online && (activeRunForDevice(d) || unassignedActiveRunForDevice(d) || activeMessageForDevice(d))).length
+        selectedOfficeDevice && selectedOfficeDevice.online ? 1 : 0,
+        selectedOfficeSnapshot && selectedOfficeSnapshot.mode === "working" ? 1 : 0
       );
     });
     document.querySelectorAll("[data-device-filter]").forEach((btn) => {

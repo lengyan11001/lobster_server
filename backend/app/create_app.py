@@ -164,6 +164,9 @@ def _migrate_recorder_audio_columns():
                 conn.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN source_type VARCHAR(32) NOT NULL DEFAULT 'device'"))
             if "source_doc_id" not in cols:
                 conn.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN source_doc_id VARCHAR(64)"))
+            if "installation_id" not in cols:
+                conn.execute(text("ALTER TABLE recorder_audio_records ADD COLUMN installation_id VARCHAR(128) NOT NULL DEFAULT ''"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_recorder_audio_records_installation_id ON recorder_audio_records (installation_id)"))
     except Exception as e:
         logger.warning("Migration recorder audio columns skipped: %s", e)
 

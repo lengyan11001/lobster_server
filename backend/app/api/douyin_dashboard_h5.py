@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -105,20 +105,25 @@ def report_douyin_dashboard_status(
 
 @router.get("/api/douyin/dashboard-status", summary="H5 查询抖音获客工作台状态")
 def get_douyin_dashboard_status(
+    installation_id: str = Query("", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner_user = online_user_for_mobile_user(db, current_user)
+    selected_installation_id = installation_id.strip() if isinstance(installation_id, str) else ""
+    device_query = db.query(H5ChatDevicePresence).filter(H5ChatDevicePresence.user_id == owner_user.id)
+    state_query = db.query(DouyinDashboardDeviceState).filter(DouyinDashboardDeviceState.user_id == owner_user.id)
+    if selected_installation_id:
+        device_query = device_query.filter(H5ChatDevicePresence.installation_id == selected_installation_id)
+        state_query = state_query.filter(DouyinDashboardDeviceState.installation_id == selected_installation_id)
     device_rows = (
-        db.query(H5ChatDevicePresence)
-        .filter(H5ChatDevicePresence.user_id == owner_user.id)
+        device_query
         .order_by(H5ChatDevicePresence.last_seen_at.desc())
         .limit(20)
         .all()
     )
     state_rows = (
-        db.query(DouyinDashboardDeviceState)
-        .filter(DouyinDashboardDeviceState.user_id == owner_user.id)
+        state_query
         .order_by(DouyinDashboardDeviceState.updated_at.desc())
         .limit(20)
         .all()
@@ -148,6 +153,8 @@ def get_douyin_dashboard_status(
             if not isinstance(item, dict):
                 continue
             installation_id = str(item.get("installation_id") or state_row.installation_id or "").strip()
+            if selected_installation_id and installation_id != selected_installation_id:
+                continue
             account_id = str(item.get("account_id") or item.get("id") or "").strip()
             nickname = str(item.get("nickname") or item.get("name") or account_id or "").strip()
             if not (account_id or nickname):
