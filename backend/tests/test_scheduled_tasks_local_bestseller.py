@@ -40,6 +40,29 @@ def test_local_bestseller_resolves_server_photo_for_older_online_clients(db_sess
     assert payload["params"]["profile_photo_source_asset_id"] == "server-photo-1"
 
 
+def test_employee_workflow_keeps_its_original_day_start_across_daily_runs(db_session, test_user):
+    first_payload = scheduled_tasks._enrich_local_bestseller_workflow_payload(
+        db_session,
+        payload={
+            "action": "local_bestseller_daily_video",
+            "params": {"start_day": 7, "day_mode": "workflow_elapsed"},
+        },
+        target_user_id=test_user.id,
+        now=datetime(2026, 8, 20, 0, 0),
+    )
+    second_payload = scheduled_tasks._enrich_local_bestseller_workflow_payload(
+        db_session,
+        payload=first_payload,
+        target_user_id=test_user.id,
+        now=datetime(2026, 8, 21, 0, 0),
+    )
+
+    assert second_payload["params"]["start_day"] == 7
+    assert second_payload["params"]["day_mode"] == "workflow_elapsed"
+    assert second_payload["h5_context"]["workflow_started_at"] == first_payload["h5_context"]["workflow_started_at"]
+    assert second_payload["h5_context"]["workflow_day_start"] == first_payload["h5_context"]["workflow_day_start"]
+
+
 def test_existing_scheduled_task_refreshes_server_photo_when_run_is_created(db_session, test_user):
     _add_persona_and_photo(db_session, test_user.id)
     task = ScheduledTask(

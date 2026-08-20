@@ -26,13 +26,15 @@ def test_sales_activation_day_is_only_applied_to_local_bestseller():
         _node("local", "local_bestseller_daily_video"),
         _node("digital", "shanjian_digital_human_video"),
     ]
+    nodes[0]["plan"]["payload"]["params"]["day"] = 3
 
     result = _apply_workflow_runtime_options(nodes, local_bestseller_plan_day=7)
 
     local_params = result[0]["plan"]["payload"]["params"]
     digital_params = result[1]["plan"]["payload"]["params"]
-    assert local_params["day"] == 7
-    assert local_params["day_mode"] == "activation_selected"
+    assert local_params["start_day"] == 7
+    assert local_params["day_mode"] == "workflow_elapsed"
+    assert "day" not in local_params
     assert "day" not in digital_params
 
 

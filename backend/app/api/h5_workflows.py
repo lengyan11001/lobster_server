@@ -786,8 +786,11 @@ def _apply_workflow_runtime_options(
         params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
         params = dict(params)
         if action == "local_bestseller_daily_video" and plan_day is not None:
-            params["day"] = plan_day
-            params["day_mode"] = "activation_selected"
+            # The activation choice is the first day of a recurring employee
+            # workflow, not a fixed day to repeat forever.
+            params.pop("day", None)
+            params["start_day"] = plan_day
+            params["day_mode"] = "workflow_elapsed"
         if action == "shanjian_digital_human_video":
             params["virtualman_rotation_slot"] = digital_human_slot
             params["virtualman_selection_mode"] = "daily_sequence"
