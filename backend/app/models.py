@@ -1351,6 +1351,9 @@ class H5WorkflowTemplate(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # A custom employee belongs to the installation slot selected in H5/Online.
+    # Empty keeps legacy templates visible until they are edited and rebound.
+    installation_id: Mapped[str] = mapped_column(String(128), default="", nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     nodes: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)

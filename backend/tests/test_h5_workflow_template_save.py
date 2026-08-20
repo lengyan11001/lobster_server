@@ -128,6 +128,35 @@ def test_plain_save_creates_blank_editor_template(db_session, test_user):
     assert db_session.query(H5WorkflowTemplate).count() == 1
 
 
+def test_workflow_template_persists_installation_slot(db_session, test_user):
+    body = WorkflowTemplateIn(
+        name="设备 A 员工",
+        nodes=_sales_body("槽位绑定").nodes,
+        installation_id="slot-a",
+    )
+    created = create_workflow_template(body, current_user=test_user, db=db_session)
+
+    row = db_session.get(H5WorkflowTemplate, created["template"]["id"])
+    assert row.installation_id == "slot-a"
+    assert created["template"]["installation_id"] == "slot-a"
+
+
+def test_system_sales_mirror_is_separate_per_installation_slot(db_session, test_user):
+    first = create_workflow_template(
+        WorkflowTemplateIn(name="设备 A 销售", nodes=_sales_body("A").nodes, installation_id="slot-a", meta={"system_template_key": "system_sales"}),
+        current_user=test_user,
+        db=db_session,
+    )
+    second = create_workflow_template(
+        WorkflowTemplateIn(name="设备 B 销售", nodes=_sales_body("B").nodes, installation_id="slot-b", meta={"system_template_key": "system_sales"}),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    assert first["template"]["id"] != second["template"]["id"]
+    assert db_session.query(H5WorkflowTemplate).count() == 2
+
+
 def test_deleting_custom_template_stops_active_activation_and_tasks(db_session, test_user):
     created = create_workflow_template(
         WorkflowTemplateIn(name="待删除员工", nodes=_sales_body("删除测试").nodes),

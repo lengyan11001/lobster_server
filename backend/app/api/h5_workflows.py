@@ -6,9 +6,10 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from ..db import get_db
 from ..models import (
@@ -68,6 +69,7 @@ class WorkflowTemplateIn(BaseModel):
     name: str = Field("", max_length=160)
     nodes: list[dict[str, Any]] = Field(default_factory=list)
     meta: dict[str, Any] = Field(default_factory=dict)
+    installation_id: Optional[str] = Field(None, max_length=128)
 
 
 class WorkflowGrantIn(BaseModel):
@@ -1579,6 +1581,7 @@ def _template_payload(row: H5WorkflowTemplate, *, owner: Optional[User] = None, 
     return {
         "id": row.id,
         "owner_user_id": row.owner_user_id,
+        "installation_id": _clean_text(row.installation_id, 128),
         "owner_name": owner.email if owner else "",
         "name": row.name,
         "nodes": _canonical_workflow_nodes(row.nodes),
@@ -1634,14 +1637,20 @@ def _system_workflow_template(
     system_template_key: str,
     *,
     exclude_template_id: Optional[int] = None,
+    installation_id: str = "",
 ) -> Optional[H5WorkflowTemplate]:
     query = db.query(H5WorkflowTemplate).filter(
         H5WorkflowTemplate.owner_user_id == owner_user_id,
         H5WorkflowTemplate.status == "active",
+        or_(H5WorkflowTemplate.installation_id == installation_id, H5WorkflowTemplate.installation_id == ""),
     )
     if exclude_template_id is not None:
         query = query.filter(H5WorkflowTemplate.id != exclude_template_id)
-    for item in query.order_by(H5WorkflowTemplate.id.asc()).all():
+    rows = query.order_by(H5WorkflowTemplate.id.asc()).all()
+    # Prefer a template already bound to this slot; only fall back to a legacy
+    # unbound mirror when migrating an older account.
+    rows.sort(key=lambda item: (0 if _clean_text(item.installation_id, 128) == installation_id and installation_id else 1, item.id))
+    for item in rows:
         if _clean_text((item.meta or {}).get("system_template_key"), 128) == system_template_key:
             return item
     return None
@@ -1907,13 +1916,17 @@ def _activate_nodes_for_device(
 
 @router.get("/api/h5-workflows/templates", summary="H5 工作流模板列表")
 def list_workflow_templates(
+    installation_id: str = Query("", max_length=128),
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     owner = online_user_for_mobile_user(db, current_user)
+    iid = _clean_text(installation_id or x_installation_id, 128)
+    template_scope = or_(H5WorkflowTemplate.installation_id == "", H5WorkflowTemplate.installation_id == iid) if iid else H5WorkflowTemplate.installation_id == ""
     own_rows = (
         db.query(H5WorkflowTemplate)
-        .filter(H5WorkflowTemplate.owner_user_id == owner.id, H5WorkflowTemplate.status == "active")
+        .filter(H5WorkflowTemplate.owner_user_id == owner.id, H5WorkflowTemplate.status == "active", template_scope)
         .order_by(H5WorkflowTemplate.updated_at.desc())
         .all()
     )
@@ -1927,7 +1940,7 @@ def list_workflow_templates(
     if granted_ids:
         granted_rows = (
             db.query(H5WorkflowTemplate)
-            .filter(H5WorkflowTemplate.id.in_(granted_ids), H5WorkflowTemplate.status == "active")
+            .filter(H5WorkflowTemplate.id.in_(granted_ids), H5WorkflowTemplate.status == "active", template_scope)
             .order_by(H5WorkflowTemplate.updated_at.desc())
             .all()
         )
@@ -1957,6 +1970,7 @@ def list_workflow_templates(
 @router.post("/api/h5-workflows/templates", summary="保存 H5 工作流模板")
 def create_workflow_template(
     body: WorkflowTemplateIn,
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1965,21 +1979,24 @@ def create_workflow_template(
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
     meta = dict(body.meta or {})
+    installation_id = _clean_text(body.installation_id or x_installation_id, 128)
     system_template_key = _clean_text(meta.get("system_template_key"), 128)
     if system_template_key and system_template_key not in _ENABLED_SYSTEM_WORKFLOW_KEYS:
         raise HTTPException(status_code=400, detail="该系统员工模板暂未开放")
     if system_template_key:
-        existing = _system_workflow_template(db, owner.id, system_template_key)
+        existing = _system_workflow_template(db, owner.id, system_template_key, installation_id=installation_id)
         if existing:
             existing.name = name
             existing.nodes = _clean_nodes(body.nodes)
             existing.meta = {**(existing.meta or {}), **meta}
+            existing.installation_id = installation_id
             existing.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(existing)
             return {"ok": True, "created": False, "template": _template_payload(existing, source="own")}
     row = H5WorkflowTemplate(
         owner_user_id=owner.id,
+        installation_id=installation_id,
         name=name,
         nodes=_clean_nodes(body.nodes),
         status="active",
@@ -1997,6 +2014,7 @@ def create_workflow_template(
 def update_workflow_template(
     template_id: int,
     body: WorkflowTemplateIn,
+    x_installation_id: str = Header("", alias="X-Installation-Id", max_length=128),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -2006,6 +2024,8 @@ def update_workflow_template(
     if not name:
         raise HTTPException(status_code=400, detail="请填写模板名称")
     meta: Optional[dict[str, Any]] = None
+    if body.installation_id is not None or x_installation_id:
+        row.installation_id = _clean_text(body.installation_id or x_installation_id, 128)
     if body.meta:
         meta = dict(body.meta)
         system_template_key = _clean_text(meta.get("system_template_key"), 128)
@@ -2016,6 +2036,7 @@ def update_workflow_template(
             owner.id,
             system_template_key,
             exclude_template_id=row.id,
+            installation_id=_clean_text(row.installation_id, 128),
         )
         if duplicate_system_template:
             meta.pop("system_template_key", None)
@@ -2159,6 +2180,13 @@ def activate_workflow_template(
     if not iid:
         raise HTTPException(status_code=400, detail="请选择设备")
     template = _accessible_template(db, body.template_id, owner.id)
+    bound_iid = _clean_text(template.installation_id, 128)
+    if bound_iid and bound_iid != iid:
+        raise HTTPException(status_code=409, detail="该员工已绑定其他设备槽位，请从当前设备的员工列表进入")
+    if not bound_iid and template.owner_user_id == owner.id:
+        template.installation_id = iid
+        template.updated_at = datetime.utcnow()
+        db.commit()
     nodes = _clean_nodes(template.nodes or [])
     template_meta = template.meta if isinstance(template.meta, dict) else {}
     system_template_key = _clean_text(template_meta.get("system_template_key"), 128)

@@ -171,6 +171,33 @@ def _migrate_recorder_audio_columns():
         logger.warning("Migration recorder audio columns skipped: %s", e)
 
 
+def _migrate_h5_workflow_template_installation():
+    """Add the installation slot binding for saved H5 employees."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("h5_workflow_templates"):
+            return
+        cols = {c["name"] for c in insp.get_columns("h5_workflow_templates")}
+        with engine.begin() as conn:
+            if "installation_id" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE h5_workflow_templates "
+                        "ADD COLUMN installation_id VARCHAR(128) NOT NULL DEFAULT ''"
+                    )
+                )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_h5_workflow_templates_installation_id "
+                    "ON h5_workflow_templates (installation_id)"
+                )
+            )
+    except Exception as e:
+        logger.warning("Migration h5 workflow template installation skipped: %s", e)
+
+
 def _migrate_juhe_wechat_config_owner_columns():
     """Add Juhe WeChat config columns introduced after the initial table."""
     from sqlalchemy import inspect, text
@@ -1135,6 +1162,7 @@ def create_app() -> FastAPI:
         _migrate_capability_configs_extra_config()
         _migrate_model_usage_events_table()
         _migrate_recorder_audio_columns()
+        _migrate_h5_workflow_template_installation()
         _migrate_juhe_wechat_config_owner_columns()
         _migrate_ip_content_schedule_template_memory_doc_ids()
         _migrate_h5_device_presence_account_payload()

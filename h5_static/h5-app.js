@@ -1845,7 +1845,12 @@
     }
 
     function authHeaders(extra = {}) {
-      const headers = { "X-Lobster-Brand": H5_BRAND_MARK, ...extra };
+      const selectedInstallationId = String(state.selectedInstallationId || "").trim();
+      const headers = {
+        "X-Lobster-Brand": H5_BRAND_MARK,
+        ...(selectedInstallationId ? { "X-Installation-Id": selectedInstallationId } : {}),
+        ...extra,
+      };
       return state.token ? { Authorization: `Bearer ${state.token}`, ...headers } : headers;
     }
 
@@ -5606,17 +5611,7 @@
       }
     }
 
-    function renderWorkflowDeviceSelect() {
-      const sel = $("workflowDeviceSelect");
-      if (!sel) return;
-      const current = state.selectedInstallationId || "";
-      const rows = state.devices || [];
-      sel.innerHTML = rows.length
-        ? rows.map((device) => optionHtml(device.installation_id || "", `${deviceSelectorLabel(device)}${device.online ? "" : "（离线）"}`)).join("")
-        : optionHtml("", "暂无设备");
-      if (current && rows.some((device) => String(device.installation_id || "") === current)) sel.value = current;
-      else sel.value = currentInstallationId();
-    }
+    function renderWorkflowDeviceSelect() {}
 
     function renderWorkflowAbilitySelect() {
       const sel = $("workflowNodeAbility");
@@ -6051,6 +6046,7 @@
           name: copiedWorkflowTemplateName(tpl),
           nodes: cloneWorkflowNodes(tpl.nodes),
           meta: { copied_from: String(tpl.id || ""), copied_source: tpl.source || "" },
+          installation_id: currentInstallationId(),
         },
       });
       state.workflowTemplatesLoaded = false;
@@ -6156,7 +6152,9 @@
       state.workflowTemplatesLoading = true;
       renderWorkflowTemplates();
       try {
-        const data = await api("/api/h5-workflows/templates");
+        const iid = currentInstallationId();
+        const query = iid ? `?installation_id=${encodeURIComponent(iid)}` : "";
+        const data = await api(`/api/h5-workflows/templates${query}`);
         state.workflowTemplates = (Array.isArray(data.templates) ? data.templates : []).map(normalizeWorkflowTemplate);
         state.workflowCanGrant = !!data.can_grant;
         state.workflowTemplatesLoaded = true;
@@ -6224,7 +6222,7 @@
       try {
         const data = await api(id ? `/api/h5-workflows/templates/${encodeURIComponent(id)}` : "/api/h5-workflows/templates", {
           method: id ? "PATCH" : "POST",
-          json: { name, nodes: state.workflowNodesDraft, meta },
+          json: { name, nodes: state.workflowNodesDraft, meta, installation_id: currentInstallationId() },
         });
         const savedTemplate = normalizeWorkflowTemplate(data.template || null);
         state.workflowEditingTemplateId = String((savedTemplate && savedTemplate.id) || id || "");
@@ -13047,6 +13045,7 @@
         loadTasks({ reset: true, limit: 80 }),
         loadRuns({ reset: true, limit: 20, compact: true }),
         loadWorkflowActive(),
+        loadWorkflowTemplates(true),
       ];
       if (activeViewKey() === "douyinLeads") requests.push(loadDouyinStatus());
       if (activeViewKey() === "recorder") {
@@ -25729,13 +25728,6 @@
       if (deleteBtn) {
         deleteWorkflowTemplateById(deleteBtn.dataset.customEmployeeDelete || "").catch((err) => toast(err.message || "删除失败"));
       }
-    });
-    $("workflowDeviceSelect")?.addEventListener("change", (evt) => {
-      setSelectedInstallationId(evt.target.value || "");
-      renderWorkflowMomentPicker("node");
-      renderWorkflowMomentPicker("action");
-      renderWorkflowMomentPicker("param");
-      loadWorkflowActive().catch((err) => toast(err.message || "工作流状态加载失败"));
     });
     $("workflowOpenAddNodeBtn")?.addEventListener("click", openWorkflowNodeModal);
     $("workflowNodeBackdrop")?.addEventListener("click", closeWorkflowNodeModal);

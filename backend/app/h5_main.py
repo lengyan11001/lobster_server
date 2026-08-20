@@ -151,6 +151,33 @@ def _ensure_h5_home_preference_columns() -> None:
         logger.warning("H5 home preference column migration skipped: %s", exc)
 
 
+def _ensure_h5_workflow_template_columns() -> None:
+    """Bind saved employee templates to the H5/Online installation slot."""
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(engine)
+        if not inspector.has_table("h5_workflow_templates"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("h5_workflow_templates")}
+        with engine.begin() as connection:
+            if "installation_id" not in columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE h5_workflow_templates "
+                        "ADD COLUMN installation_id VARCHAR(128) NOT NULL DEFAULT ''"
+                    )
+                )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_h5_workflow_templates_installation_id "
+                    "ON h5_workflow_templates (installation_id)"
+                )
+            )
+    except Exception as exc:
+        logger.warning("H5 workflow template slot migration skipped: %s", exc)
+
+
 def create_h5_app() -> FastAPI:
     """Dedicated H5 app: auth, remote chat, scheduled tasks, and lightweight HiFly resources."""
     logger.info("[H5] create_h5_app start")
@@ -159,6 +186,7 @@ def create_h5_app() -> FastAPI:
     _ensure_h5_chat_mastra_columns()
     _ensure_recorder_audio_columns()
     _ensure_h5_home_preference_columns()
+    _ensure_h5_workflow_template_columns()
     ensure_user_brand_schema(engine)
     seed_brand_configs(SessionLocal)
     interrupted_recordings = mark_interrupted_recordings_failed()
