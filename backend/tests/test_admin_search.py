@@ -196,6 +196,22 @@ def test_admin_skill_visibility_lists_and_saves_social_leads_permissions(db_sess
     assert after_add.status_code == 200
     assert "tiktok_leads" in after_add.json()["visible_ids"]
 
+    official_add = client.post(
+        f"/admin/api/user-skill-visibility/{user.id}",
+        headers=headers,
+        json={"add": ["openai_official_image_channel"]},
+    )
+    assert official_add.status_code == 200
+    assert "openai_official_image_channel" in official_add.json()["added"]
+
+    official_remove = client.post(
+        f"/admin/api/user-skill-visibility/{user.id}",
+        headers=headers,
+        json={"remove": ["openai_official_image_channel"]},
+    )
+    assert official_remove.status_code == 200
+    assert "openai_official_image_channel" in official_remove.json()["removed"]
+
 
 def test_admin_add_credits_accepts_negative_adjustment(db_session_factory, db_session, monkeypatch):
     monkeypatch.setattr(admin_api.settings, "lobster_admin_username", "admin", raising=False)
