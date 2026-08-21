@@ -62,7 +62,7 @@ from ..services.installation_slot_ownership import assert_installation_slot_owne
 
 router = APIRouter()
 
-_TASK_KINDS = {"openclaw_message", "chat_message", "capability", "ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript", "douyin_leads", "client_workflow"}
+_TASK_KINDS = {"chat_message", "capability", "ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript", "douyin_leads", "client_workflow"}
 _SERVER_SIDE_TASK_KINDS = {"ip_content_daily", "lead_collection_templates", "social_leads", "linkedin_mining", "wechat_channels_transcript"}
 _SCHEDULE_TYPES = {"once", "interval", "daily_times"}
 _RECURRING_SCHEDULE_TYPES = {"interval", "daily_times"}
@@ -592,7 +592,7 @@ def _creative_candidate_group(meta: Optional[dict]) -> str:
 class ScheduledTaskCreate(BaseModel):
     user_id: Optional[int] = None
     title: str = Field("", max_length=160)
-    task_kind: str = "openclaw_message"
+    task_kind: str = "chat_message"
     content: str = Field("", max_length=12000)
     payload: Dict[str, Any] = Field(default_factory=dict)
     schedule_type: str = "once"
@@ -1175,7 +1175,10 @@ def _clean_installation_ids(values: Optional[List[str]]) -> List[str]:
 
 
 def _normalize_task_kind(value: str) -> str:
-    kind = (value or "openclaw_message").strip().lower()
+    kind = (value or "chat_message").strip().lower()
+    if kind == "openclaw_message":
+        # Compatibility for old Online/H5 builds. The old executor is retired.
+        kind = "chat_message"
     if kind not in _TASK_KINDS:
         raise HTTPException(status_code=400, detail="不支持的任务类型")
     return kind
@@ -3395,7 +3398,7 @@ def _create_task_row(
             payload=dict(payload),
             target_user_id=target_user_id,
         )
-    if task_kind in {"openclaw_message", "chat_message"} and not content:
+    if task_kind == "chat_message" and not content:
         raise HTTPException(status_code=400, detail="消息内容不能为空")
     if task_kind == "capability" and not str(payload.get("capability_id") or "").strip():
         raise HTTPException(status_code=400, detail="能力调用任务需要 payload.capability_id")

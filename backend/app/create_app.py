@@ -21,7 +21,6 @@ from .api.comfly_proxy import router as comfly_proxy_router
 from .api.mcp_gateway import router as mcp_gateway_router
 # 自定义配置已迁至客户端；openclaw_config 保留（含 sutui/balance、recharge 等支付）
 # from .api.custom_config import router as custom_config_router
-from .api.openclaw_config import router as openclaw_config_router
 from .api.openclaw_memory_cloud import router as openclaw_memory_cloud_router
 from .api.scheduled_tasks import router as scheduled_tasks_router
 from .api.billing import router as billing_router
@@ -84,6 +83,7 @@ from .core.config import settings
 from .db import Base, engine, SessionLocal, reset_db_request_context, set_db_request_context
 from . import models  # noqa: F401
 from .services.workload_guard import install_workload_guard
+from .services.retire_openclaw_tasks import migrate_openclaw_task_kinds
 
 logger = logging.getLogger(__name__)
 _STARTUP_DB_LOCK_KEY = 510051001
@@ -1172,7 +1172,7 @@ def create_app() -> FastAPI:
         _seed_capability_catalog()
         _upsert_missing_capabilities_from_catalog()
         _sync_catalog_capability_definitions()
-    _auto_start_openclaw()
+        migrate_openclaw_task_kinds()
 
     app = FastAPI(
         title="龙虾 (Lobster) API",
@@ -1228,7 +1228,6 @@ def create_app() -> FastAPI:
     app.include_router(comfly_proxy_router, prefix="")
     app.include_router(chat_router, prefix="")
     app.include_router(mcp_gateway_router, prefix="")
-    app.include_router(openclaw_config_router, prefix="")
     app.include_router(openclaw_memory_cloud_router, prefix="")
     # 自定义配置已迁至客户端；server 仅保留支付相关（sutui/balance、recharge 在 openclaw_config 中）
     # app.include_router(custom_config_router, prefix="")
