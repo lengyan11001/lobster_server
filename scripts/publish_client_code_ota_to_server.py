@@ -56,12 +56,33 @@ DEFAULT_CLIENT_CODE_OTA_PATHS = [
     "CLIENT_CODE_VERSION.json",
 ]
 
+WEBSITE_CLIENT_CODE_OTA_PATHS = [
+    "backend",
+    "static/css",
+    "static/js",
+    "static/views",
+    "static/douyin-origin",
+    "static/vendor",
+    "static/data",
+    "static/branding/brands.json",
+    "static/index.html",
+    "static/ai3d-model-preview.html",
+    "static/lobster-bridge.js",
+    "static/client_version.json",
+    "CLIENT_CODE_VERSION.json",
+]
+
 
 def manifest_paths_for_zip(zip_path: Path) -> list[str]:
     with zipfile.ZipFile(zip_path) as zf:
         names = set(zf.namelist())
+    has_full_code_roots = any(
+        any(name.startswith(root + "/") for name in names)
+        for root in ("desktop", "mcp", "publisher", "scripts", "skills", "openclaw")
+    )
+    candidate_paths = DEFAULT_CLIENT_CODE_OTA_PATHS if has_full_code_roots else WEBSITE_CLIENT_CODE_OTA_PATHS
     paths = []
-    for path in DEFAULT_CLIENT_CODE_OTA_PATHS:
+    for path in candidate_paths:
         normalized = path.replace("\\", "/").rstrip("/")
         if normalized in names or any(name.startswith(normalized + "/") for name in names):
             paths.append(path)

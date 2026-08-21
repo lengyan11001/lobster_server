@@ -69,3 +69,27 @@ def test_encrypted_loader_ota_is_accepted(tmp_path):
         archive.writestr("backend/app.pyc", b"compiled")
 
     assert module.is_encrypted_ota_zip(zip_path) is True
+
+
+def test_website_ota_manifest_keeps_static_paths_granular(tmp_path):
+    module = _load_publish_module()
+    zip_path = tmp_path / "website.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("backend/app.pyc", b"compiled")
+        archive.writestr("static/js/app.js", "code")
+        archive.writestr("static/css/common.css", "code")
+        archive.writestr("static/index.html", "code")
+        archive.writestr("static/client_version.json", "{}")
+        archive.writestr("CLIENT_CODE_VERSION.json", "{}")
+
+    paths = module.manifest_paths_for_zip(zip_path)
+
+    assert "static" not in paths
+    assert paths == [
+        "backend",
+        "static/css",
+        "static/js",
+        "static/index.html",
+        "static/client_version.json",
+        "CLIENT_CODE_VERSION.json",
+    ]
