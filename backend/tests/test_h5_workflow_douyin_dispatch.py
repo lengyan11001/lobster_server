@@ -62,6 +62,24 @@ def test_sales_douyin_stranger_message_parses_string_false_switch():
     assert payload["params"]["wechat_add_friend_enabled"] is False
 
 
+def test_sales_douyin_stranger_message_preserves_ai_lead_reply_mode():
+    node = {"ability_key": "douyin_leads", "note": "鎶栭煶绉佷俊鎺ョ"}
+
+    payload = _sales_douyin_action_payload(
+        node,
+        {
+            "action": "stranger_message",
+            "params": {
+                "reply_mode": "ai_lead",
+                "wechat_add_friend_enabled": True,
+            },
+        },
+    )
+
+    assert payload["params"]["reply_mode"] == "ai_lead"
+    assert payload["params"]["wechat_add_friend_enabled"] is True
+
+
 def test_all_sales_douyin_preset_titles_map_to_the_expected_action():
     cases = {
         "抖音自动养号": "account_nurture",
@@ -85,6 +103,8 @@ def test_h5_sales_preset_dispatches_douyin_without_business_params():
     assert "payload: { action: salesAction }" in script
     assert "const preservedParams = {};" in script
     assert 'action === "stranger_message"' in script
+    assert 'workflowParamDouyinReplyMode' in script
+    assert 'preservedParams.reply_mode = replyMode === "ai_lead" ? "ai_lead" : "fixed";' in script
     assert "preservedParams.wechat_add_friend_enabled = workflowBoolParam(rowParams.wechat_add_friend_enabled, false);" in script
     assert "preservedParams.wechat_add_friend_enabled = workflowBoolParam(planParams.wechat_add_friend_enabled, false);" in script
     assert 'payload: { action: "search_collect", params: { keyword: prompt, sales_action:' not in script

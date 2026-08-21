@@ -3719,7 +3719,8 @@
       if (key === "hifly.video.create_by_tts") return workflowCapabilityFieldsHtml("hifly.video.create_by_tts");
       if (key === "douyin_leads") {
         if (item && item.privateTakeover) {
-          return taskFieldHtml("自动加微信好友", workCheckboxHtml("workflowParamDouyinWechatAddFriend", "从新私信中识别手机号后提交好友申请", true));
+          return taskFieldHtml("回复策略", taskSelectHtml("workflowParamDouyinReplyMode", optionHtml("fixed", "固定话术") + optionHtml("ai_lead", "AI 引导加绿泡泡")))
+            + taskFieldHtml("自动加微信好友", workCheckboxHtml("workflowParamDouyinWechatAddFriend", "从新私信中识别手机号后提交好友申请", true));
         }
         return taskFieldHtml("采集关键词", taskTextareaHtml("workflowParamDouyinKeyword", "例如：深圳装修、口腔种植、母婴门店"), true)
           + taskFieldHtml("地区", workInputHtml("workflowParamDouyinRegions", "text", "全国", 'placeholder="全国，或用逗号分隔多个城市"'))
@@ -4106,6 +4107,7 @@
               h5_one_shot: true,
               douyin_execution_mode: "one_shot",
               params: {
+                reply_mode: workflowParamValue("workflowParamDouyinReplyMode") || "fixed",
                 wechat_add_friend_enabled: workflowParamChecked("workflowParamDouyinWechatAddFriend"),
                 wechat_add_friend_targets_source: "douyin_private_message_phone",
               },
@@ -4541,6 +4543,10 @@
         // Sales Douyin nodes normally use the Online account configuration,
         // but this explicit per-node switch must survive preset rebuilding.
         if (action === "stranger_message") {
+          const replyMode = String(
+            planParams.reply_mode || rowParams.reply_mode || "fixed"
+          ).trim().toLowerCase();
+          preservedParams.reply_mode = replyMode === "ai_lead" ? "ai_lead" : "fixed";
           if (Object.prototype.hasOwnProperty.call(planParams, "wechat_add_friend_enabled")) {
             preservedParams.wechat_add_friend_enabled = workflowBoolParam(planParams.wechat_add_friend_enabled, false);
           }
@@ -5292,6 +5298,7 @@
       }
       const isDouyinLookup = workflowLookupIsDouyinLeads(nodeInfo);
       if (isDouyinLookup && isSalesDouyinPrivateNode(node)) {
+        setFieldValue("workflowParamDouyinReplyMode", String(params.reply_mode || "fixed").toLowerCase() === "ai_lead" ? "ai_lead" : "fixed");
         setFieldValue("workflowParamDouyinWechatAddFriend", workflowBoolParam(params.wechat_add_friend_enabled, false));
         return;
       }

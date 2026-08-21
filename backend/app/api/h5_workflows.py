@@ -365,6 +365,16 @@ def _normalize_douyin_private_switch(
         return
     params["wechat_add_friend_enabled"] = _bool_param(params.get("wechat_add_friend_enabled"), False)
     params["wechat_add_friend_targets_source"] = "douyin_private_message_phone"
+    # The reply strategy is selected on the private-message node, while the
+    # actual AI prompt/contact are loaded from Online's saved monitor config.
+    # Keep the mode in the server-owned workflow payload so H5 one-shot runs
+    # cannot silently fall back to the fixed-message path.
+    # Keep legacy nodes byte-for-byte compatible when they never had this
+    # option. New H5/Online editors always send the field explicitly; the
+    # worker treats an omitted value as fixed mode.
+    if "reply_mode" in params:
+        raw_reply_mode = _clean_text(params.get("reply_mode"), 32).lower()
+        params["reply_mode"] = raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead"} else "fixed"
     params.pop("wechat_add_friend_rules", None)
     payload["params"] = params
 
@@ -976,12 +986,17 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
     # Private-message takeover keeps add-friend behavior on the parent node.
     # Older templates may still contain a child; the migration below converts
     # that child into this explicit Online contract.
-    if action == "stranger_message" and "wechat_add_friend_enabled" in params:
+    if action == "stranger_message" and (
+        "wechat_add_friend_enabled" in params or "reply_mode" in params
+    ):
         result["params"] = {
             "wechat_add_friend_enabled": _bool_param(params.get("wechat_add_friend_enabled"), False),
             "wechat_add_friend_targets_source": _clean_text(params.get("wechat_add_friend_targets_source"), 128)
             or "douyin_private_message_phone",
         }
+        if "reply_mode" in params:
+            raw_reply_mode = _clean_text(params.get("reply_mode"), 32).lower()
+            result["params"]["reply_mode"] = raw_reply_mode if raw_reply_mode in {"fixed", "ai_lead"} else "fixed"
     return result
 
 

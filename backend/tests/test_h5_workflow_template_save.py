@@ -63,6 +63,17 @@ def test_douyin_private_switch_is_explicitly_stored_and_returned(db_session, tes
     assert stored_params["wechat_add_friend_targets_source"] == "douyin_private_message_phone"
 
 
+def test_douyin_private_reply_mode_is_server_owned(db_session, test_user):
+    created = create_workflow_template(
+        _douyin_private_body({"reply_mode": "ai_lead", "wechat_add_friend_enabled": True}),
+        current_user=test_user,
+        db=db_session,
+    )
+
+    params = created["template"]["nodes"][0]["plan"]["payload"]["params"]
+    assert params["reply_mode"] == "ai_lead"
+
+
 def test_legacy_douyin_private_switch_defaults_to_false_in_server_payload():
     legacy_node = _douyin_private_body().nodes[0]
     row = H5WorkflowTemplate(owner_user_id=1, name="旧抖音员工", nodes=[legacy_node])
