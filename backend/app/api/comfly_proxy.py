@@ -281,7 +281,7 @@ def _image_generation_channel_disable_ttl_seconds(provider: str, error: str) -> 
         return _env_int("COMFLY_IMAGE_PROVIDER_ACCOUNT_DISABLE_SECONDS", 600, min_value=60, max_value=3600)
     if "invalid api key" in msg or "invalid_api_key" in msg or "unauthorized" in msg or "forbidden" in msg:
         return _env_int("COMFLY_IMAGE_PROVIDER_AUTH_DISABLE_SECONDS", 1800, min_value=60, max_value=7200)
-    if "http 429" in msg and provider in {"openai_official", "gaisc", "openmindapi", "openmind", "yunwu", "sutui"}:
+    if "http 429" in msg and provider in {"openai_official", "gaisc", "comfyui_official", "openmindapi", "openmind", "yunwu", "sutui"}:
         return _env_int("COMFLY_IMAGE_PROVIDER_RATE_LIMIT_DISABLE_SECONDS", 120, min_value=30, max_value=900)
     return 0
 
@@ -728,6 +728,7 @@ def _image_generation_model_attempts(model: str) -> List[str]:
         return [
             "gpt-image-2-gaisc",
             "gpt-image-2",
+            "gpt-image-2-comfyui-official",
             "gpt-image-2-sutui",
             "gpt-image-2-openmindapi",
             "nano-banana-2",
@@ -742,6 +743,8 @@ def _image_generation_model_attempts_for_user(model: str, *, openai_official_fir
         return [
             "gpt-image-2-openai-official",
             "gpt-image-2-gaisc",
+            "gpt-image-2",
+            "gpt-image-2-comfyui-official",
             "gpt-image-2-sutui",
             "gpt-image-2-openmindapi",
             "nano-banana-2",

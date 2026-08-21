@@ -9,10 +9,11 @@ from backend.app.api.comfly_proxy import (
 from mcp.comfly_upstream import lookup_comfly_model
 
 
-def test_gpt_image2_attempts_append_nano_banana_for_regular_users():
+def test_gpt_image2_attempts_put_comfyui_official_after_default_comfly():
     assert _image_generation_model_attempts("gpt-image-2") == [
-        "gpt-image-2",
         "gpt-image-2-gaisc",
+        "gpt-image-2",
+        "gpt-image-2-comfyui-official",
         "gpt-image-2-sutui",
         "gpt-image-2-openmindapi",
         "nano-banana-2",
@@ -26,6 +27,8 @@ def test_gpt_image2_attempts_append_nano_banana_for_official_channel_users():
     ) == [
         "gpt-image-2-openai-official",
         "gpt-image-2-gaisc",
+        "gpt-image-2",
+        "gpt-image-2-comfyui-official",
         "gpt-image-2-sutui",
         "gpt-image-2-openmindapi",
         "nano-banana-2",
@@ -34,8 +37,9 @@ def test_gpt_image2_attempts_append_nano_banana_for_official_channel_users():
 
 def test_openai_gpt_image2_alias_uses_same_fallback_chain():
     assert _image_generation_model_attempts("openai/gpt-image-2") == [
-        "gpt-image-2",
         "gpt-image-2-gaisc",
+        "gpt-image-2",
+        "gpt-image-2-comfyui-official",
         "gpt-image-2-sutui",
         "gpt-image-2-openmindapi",
         "nano-banana-2",
@@ -48,6 +52,14 @@ def test_sutui_gpt_image2_pricing_entry_exists():
     assert entry is not None
     assert entry["token_group"] == "sutui"
     assert entry["comfly_model"] == "openai/gpt-image-2"
+
+
+def test_comfyui_official_gpt_image2_pricing_entry_exists():
+    entry = lookup_comfly_model("gpt-image-2-comfyui-official")
+
+    assert entry is not None
+    assert entry["token_group"] == "comfyui_official"
+    assert entry["comfly_model"] == "gpt-image-2"
 
 def test_non_gpt_image2_models_keep_original_attempt_sequence():
     assert _image_generation_model_attempts("nano-banana-2") == ["nano-banana-2"]
@@ -114,6 +126,7 @@ def test_image_generation_channel_failure_temporarily_skips_known_bad_provider(m
     assert marked is True
     assert not _image_generation_channel_available("openai_official", "gpt-image-2-openai-official")
     assert _image_generation_channel_available("gaisc", "gpt-image-2-gaisc")
+    assert _image_generation_channel_available("comfyui_official", "gpt-image-2-comfyui-official")
 
 
 def test_image_generation_channel_failure_ignores_ordinary_retryable_error(monkeypatch):
