@@ -1708,6 +1708,21 @@
               <span>命中拉群规则后立即执行</span>
             </label>
           </div>
+          <div class="field full hidden" id="workflowNodeDouyinCollectionField">
+            <label for="workflowNodeDouyinKeyword">精准获客参数</label>
+            <textarea id="workflowNodeDouyinKeyword" rows="3" placeholder="采集关键词，例如：深圳装修、口腔种植、母婴门店"></textarea>
+            <label for="workflowNodeDouyinRegions">地区</label>
+            <input id="workflowNodeDouyinRegions" type="text" value="全国" placeholder="全国，或用逗号分隔多个城市">
+            <label for="workflowNodeDouyinMaxResults">搜索数量</label>
+            <input id="workflowNodeDouyinMaxResults" type="number" min="10" max="100" step="1" value="50">
+            <label for="workflowNodeDouyinMode">搜索方式</label>
+            <select id="workflowNodeDouyinMode"><option value="script">浏览器脚本</option><option value="api">接口模式</option></select>
+            <label>采集后继续执行（可多选）</label>
+            <label class="task-checkbox"><input id="workflowNodeDouyinFollowupReplyComments" type="checkbox" checked><span>回复客户评论</span></label>
+            <label class="task-checkbox"><input id="workflowNodeDouyinFollowupMentionComment" type="checkbox" checked><span>评论并@客户</span></label>
+            <label class="task-checkbox"><input id="workflowNodeDouyinFollowupFollowComment" type="checkbox" checked><span>关注并评论</span></label>
+            <label class="task-checkbox"><input id="workflowNodeDouyinFollowupDirectMessage" type="checkbox" checked><span>主动私信</span></label>
+          </div>
           <div class="field full hidden" id="workflowNodeMomentField">
             <label for="workflowNodeMomentSearch">朋友圈联系人（按微信号保存，可多选）</label>
             <details class="workflow-moment-dropdown">

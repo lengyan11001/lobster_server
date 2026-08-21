@@ -59,6 +59,31 @@ def test_sales_douyin_collection_preserves_explicit_empty_followup_actions():
     assert payload["params"]["followup_actions"] == []
 
 
+def test_sales_douyin_collection_dispatch_preserves_server_node_params():
+    payload = _sales_douyin_action_payload(
+        {"note": "抖音获客·关键词抓取精准客户"},
+        {
+            "action": "search_collect",
+            "params": {
+                "keyword": "服务器关键词",
+                "regions": ["深圳", "东莞"],
+                "max_results": 80,
+                "mode": "api",
+                "followup_actions": ["direct_message"],
+            },
+        },
+    )
+
+    assert payload["params"] == {
+        "keyword": "服务器关键词",
+        "regions": ["深圳", "东莞"],
+        "max_results": 80,
+        "mode": "api",
+        "followup_actions": ["direct_message"],
+        "customer_scope": "current_collection_batch",
+    }
+
+
 def test_sales_douyin_stranger_message_keeps_online_runtime_params():
     node = {"ability_key": "douyin_leads", "note": "抖音私信接管"}
 
@@ -147,6 +172,27 @@ def test_h5_sales_preset_dispatches_douyin_without_business_params():
     assert "preservedParams.wechat_add_friend_enabled = workflowBoolParam(rowParams.wechat_add_friend_enabled, false);" in script
     assert "preservedParams.wechat_add_friend_enabled = workflowBoolParam(planParams.wechat_add_friend_enabled, false);" in script
     assert 'payload: { action: "search_collect", params: { keyword: prompt, sales_action:' not in script
+
+
+def test_h5_add_and_edit_expose_and_persist_collection_params():
+    script = (ROOT / "h5_static" / "h5-app.js").read_text(encoding="utf-8")
+    html = (ROOT / "h5_static" / "index.html").read_text(encoding="utf-8")
+
+    for field_id in (
+        "workflowNodeDouyinKeyword",
+        "workflowNodeDouyinRegions",
+        "workflowNodeDouyinMaxResults",
+        "workflowNodeDouyinMode",
+        "workflowNodeDouyinFollowupReplyComments",
+        "workflowNodeDouyinFollowupMentionComment",
+        "workflowNodeDouyinFollowupFollowComment",
+        "workflowNodeDouyinFollowupDirectMessage",
+    ):
+        assert f'id="{field_id}"' in html
+    assert 'async function addWorkflowNodeFromInput()' in script
+    assert 'await saveWorkflowTemplate({ notify: false });' in script
+    assert 'workflowParamDouyinKeyword' in script
+    assert 'setFieldValue("workflowParamDouyinKeyword"' in script
 
 
 def test_h5_douyin_nodes_are_marked_as_one_shot():

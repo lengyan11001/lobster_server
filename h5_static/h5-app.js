@@ -919,6 +919,7 @@
       const key = String(node.ability_key || node.key || "");
       if (isNativeWechatWorkflowKey(key)) return false;
       if (key === "douyin_leads" && isSalesDouyinPrivateNode(node)) return false;
+      if (key === "douyin_leads" && isSalesDouyinCollectionNode(node)) return false;
       if (node.sales_preset || id.startsWith("sales_")) return true;
       return String(node.department_id || "") === "sales" && SALES_PERSONA_DEFAULT_KEYS.has(key);
     }
@@ -3564,13 +3565,29 @@
       const lookup = workflowSelectedNodeLookup();
       const showGroupInvite = workflowLookupIsNativeWechatTakeover(lookup);
       const showMoments = workflowLookupIsNativeWechatMoments(lookup);
+      const selectedNote = String(lookup && (lookup.defaultNote || lookup.optionLabel) || "");
+      const showDouyinCollection = workflowLookupIsDouyinLeads(lookup && lookup.node)
+        && salesWorkflowActionForNote(selectedNote) === "search_collect";
       const field = $("workflowNodeNativeWechatGroupInviteField");
       if (field) field.classList.toggle("hidden", !showGroupInvite);
+      $("workflowNodeDouyinCollectionField")?.classList.toggle("hidden", !showDouyinCollection);
       syncWorkflowMomentPicker("node", showMoments);
       const checkbox = $("workflowNodeNativeWechatGroupInviteEnabled");
       if (checkbox && !showGroupInvite) checkbox.checked = false;
       else if (checkbox && reset) checkbox.checked = false;
       if (reset && showMoments) initializeWorkflowMomentPicker("node", []);
+      if (reset && showDouyinCollection) {
+        setFieldValue("workflowNodeDouyinKeyword", "");
+        setFieldValue("workflowNodeDouyinRegions", "全国");
+        setFieldValue("workflowNodeDouyinMaxResults", 50);
+        setFieldValue("workflowNodeDouyinMode", "script");
+        [
+          "workflowNodeDouyinFollowupReplyComments",
+          "workflowNodeDouyinFollowupMentionComment",
+          "workflowNodeDouyinFollowupFollowComment",
+          "workflowNodeDouyinFollowupDirectMessage",
+        ].forEach((id) => setFieldValue(id, true));
+      }
     }
 
     function workflowAbilityOptionsHtml() {
@@ -4309,6 +4326,15 @@
           workflowNode,
         );
       }
+      if (
+        isSalesDouyinCollectionNode(workflowNode)
+        && (node.key === "douyin_leads" || node.workQuickKey === "douyin_leads")
+      ) {
+        return collectWorkflowQuickPlan(
+          workQuickItemByKey(node.workQuickKey || node.key) || node,
+          workflowNode,
+        );
+      }
       if (workflowNodeUsesPersonaDefaults(workflowNode)) return workflowPlanForLookup(lookup, note);
       const platform = socialPlatformFromAbilityKey(node.key);
       if (platform) {
@@ -4451,6 +4477,37 @@
           moment_action: workflowParamValue("workflowNodeMomentAction") || "like_comment",
           max_scrolls: 6,
         }, { requireTargets: true });
+      } else if (
+        workflowLookupIsDouyinLeads(lookup.node)
+        && salesWorkflowActionForNote(lookup.defaultNote || lookup.optionLabel || note) === "search_collect"
+      ) {
+        const keyword = workflowParamValue("workflowNodeDouyinKeyword");
+        if (!keyword) throw new Error("请填写采集关键词");
+        const regions = workSplitList(workflowParamValue("workflowNodeDouyinRegions"));
+        plan = {
+          title: `抖音获客 - ${keyword.slice(0, 24)}`,
+          task_kind: "douyin_leads",
+          content: "H5 工作流：抖音获客",
+          payload: {
+            action: "search_collect",
+            h5_task_source: "h5",
+            h5_one_shot: true,
+            douyin_execution_mode: "one_shot",
+            params: {
+              keyword,
+              regions: regions.length ? regions : ["全国"],
+              max_results: workflowParamNumber("workflowNodeDouyinMaxResults", 50, 10, 100),
+              mode: workflowParamValue("workflowNodeDouyinMode") || "script",
+              followup_actions: normalizeSalesDouyinFollowupActions([
+                workflowParamChecked("workflowNodeDouyinFollowupReplyComments") ? "reply_comments" : "",
+                workflowParamChecked("workflowNodeDouyinFollowupMentionComment") ? "mention_comment" : "",
+                workflowParamChecked("workflowNodeDouyinFollowupFollowComment") ? "follow_comment" : "",
+                workflowParamChecked("workflowNodeDouyinFollowupDirectMessage") ? "direct_message" : "",
+              ]),
+              customer_scope: "current_collection_batch",
+            },
+          },
+        };
       } else {
         plan = workflowPlanForLookup(lookup, note);
       }
@@ -4502,12 +4559,15 @@
       if (modal) modal.classList.add("hidden");
     }
 
-    function addWorkflowNodeFromInput() {
+    async function addWorkflowNodeFromInput() {
       state.workflowNodesDraft.push(workflowNodePayloadFromInput());
       state.workflowNodesDraft.sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
       if ($("workflowNodeNote")) $("workflowNodeNote").value = "";
       renderWorkflow();
+      await saveWorkflowTemplate({ notify: false });
       closeWorkflowNodeModal();
+      renderWorkflow();
+      toast("节点参数已保存到服务器");
     }
 
     function openWorkflowActionModal(parentNodeId, actionId = "") {
@@ -4650,8 +4710,16 @@
           }
           preservedParams.wechat_add_friend_targets_source = "douyin_private_message_phone";
         }
-        if (action === "search_collect" && Object.prototype.hasOwnProperty.call(rowParams, "followup_actions")) {
-          preservedParams.followup_actions = normalizeSalesDouyinFollowupActions(rowParams.followup_actions);
+        if (action === "search_collect") {
+          ["keyword", "regions", "max_results", "mode"].forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(planParams, key)) preservedParams[key] = planParams[key];
+            else if (Object.prototype.hasOwnProperty.call(rowParams, key)) preservedParams[key] = rowParams[key];
+          });
+          const hasPlanFollowups = Object.prototype.hasOwnProperty.call(planParams, "followup_actions");
+          const hasRowFollowups = Object.prototype.hasOwnProperty.call(rowParams, "followup_actions");
+          preservedParams.followup_actions = hasPlanFollowups || hasRowFollowups
+            ? normalizeSalesDouyinFollowupActions(hasPlanFollowups ? planParams.followup_actions : rowParams.followup_actions)
+            : [...SALES_DOUYIN_FOLLOWUP_ACTIONS];
           preservedParams.customer_scope = "current_collection_batch";
         }
         next.payload = Object.keys(preservedParams).length
@@ -25846,15 +25914,17 @@
     $("workflowNodeBackdrop")?.addEventListener("click", closeWorkflowNodeModal);
     $("workflowNodeClose")?.addEventListener("click", closeWorkflowNodeModal);
     $("workflowNodeCancel")?.addEventListener("click", closeWorkflowNodeModal);
-    $("workflowNodeAbility")?.addEventListener("change", () => syncWorkflowNodeModalFields(true));
+    $("workflowNodeAbility")?.addEventListener("change", () => {
+      const lookup = workflowSelectedNodeLookup();
+      if ($("workflowNodeNote")) {
+        $("workflowNodeNote").value = String(lookup && (lookup.defaultNote || lookup.optionLabel) || "");
+      }
+      syncWorkflowNodeModalFields(true);
+    });
     bindWorkflowMomentPicker("node");
     $("workflowNodeForm")?.addEventListener("submit", (evt) => {
       evt.preventDefault();
-      try {
-        addWorkflowNodeFromInput();
-      } catch (err) {
-        toast(err.message || "添加失败");
-      }
+      addWorkflowNodeFromInput().catch((err) => toast(err.message || "添加失败"));
     });
     $("workflowActionBackdrop")?.addEventListener("click", closeWorkflowActionModal);
     $("workflowActionClose")?.addEventListener("click", closeWorkflowActionModal);

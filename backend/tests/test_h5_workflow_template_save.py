@@ -113,6 +113,44 @@ def test_legacy_douyin_followup_nodes_fold_into_collection_properties():
     assert params["customer_scope"] == "current_collection_batch"
 
 
+def test_douyin_collection_editor_params_survive_server_normalization():
+    raw = {
+        "id": "collection",
+        "time": "09:00",
+        "end_time": "10:00",
+        "department_id": "sales",
+        "ability_key": "douyin_leads",
+        "ability_label": "抖音获客·关键词抓取精准客户",
+        "note": "抖音获客·关键词抓取精准客户",
+        "sales_preset": True,
+        "plan": {
+            "title": "抖音精准获客",
+            "task_kind": "douyin_leads",
+            "payload": {
+                "action": "search_collect",
+                "params": {
+                    "keyword": "深圳机械加工",
+                    "regions": ["深圳", "东莞"],
+                    "max_results": 80,
+                    "mode": "api",
+                    "followup_actions": ["reply_comments", "direct_message"],
+                    "customer_scope": "current_collection_batch",
+                },
+            },
+        },
+    }
+
+    cleaned = _clean_nodes([raw])
+    assert len(cleaned) == 1
+    params = cleaned[0]["plan"]["payload"]["params"]
+    assert params["keyword"] == "深圳机械加工"
+    assert params["regions"] == ["深圳", "东莞"]
+    assert params["max_results"] == 80
+    assert params["mode"] == "api"
+    assert params["followup_actions"] == ["reply_comments", "direct_message"]
+    assert params["customer_scope"] == "current_collection_batch"
+
+
 def test_legacy_sales_action_children_fold_into_parent_properties():
     nodes = [
         {

@@ -1181,6 +1181,10 @@ def _sales_douyin_action_payload(node: dict[str, Any], payload: dict[str, Any]) 
             "followup_actions": followup_actions,
             "customer_scope": "current_collection_batch",
         }
+        for key in ("keyword", "regions", "max_results", "max_videos_per_run", "mode"):
+            value = params.get(key)
+            if value not in (None, "", []):
+                result["params"][key] = copy.deepcopy(value)
     # Private-message takeover keeps add-friend behavior on the parent node.
     # Older templates may still contain a child; the migration below converts
     # that child into this explicit Online contract.
